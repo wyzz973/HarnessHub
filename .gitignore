@@ -1,0 +1,13 @@
+.DS_Store
+node_modules/
+/dist/
+/coverage/
+/.cache/
+/.tmp/
+/data/
+/artifacts/
+/runtime-data/
+.env
+.env.*
+!.env.example
+*.log
