@@ -445,11 +445,11 @@ flowchart TD
 
 ### HH-039 面向GitHub的使用、架构与API文档交付
 
-- [ ] 文档与 Mac 本地检查已验证，GitHub发布待完成；P0；前置：HH-038；负责人：主 Agent；范围：README/使用指南/架构导览/逐接口参考/OpenAPI/示例/发布检查。
+- [x] 文档、Mac 本地检查、公开GitHub发布与Ubuntu CI已验证；P0；前置：HH-038；负责人：主 Agent；范围：README/使用指南/架构导览/逐接口参考/OpenAPI/示例/发布检查。Windows仍归独立验收。
 
 交付：新克隆可运行的无Key demo，当前40项API的输入输出、处理链路、存储/副作用与错误；生成/新鲜度检查和拒绝样例；第三方来源与许可状态；修正设计计划与已实现能力的差异。核查提交及历史不含运行数据/凭证后创建GitHub仓库并推送。远端CI结果独立报告。
 
-本地证据见 [文档交付验收](docs/verification/2026-09-05-github-documentation.md)：139项测试、生产前端构建、API同步、实际HTTP示例与浏览器刷新通过；历史和拟提交目录凭证扫描无命中。
+证据见 [文档交付验收](docs/verification/2026-09-05-github-documentation.md)：139项Mac测试、生产前端构建、API同步、实际HTTP示例与浏览器刷新通过；历史和拟提交目录凭证扫描无命中；[公开仓库](https://github.com/wyzz973/HarnessHub)已推送main，[首次CI](https://github.com/wyzz973/HarnessHub/actions/runs/33973899563)通过。
 
 ## 并行与文件所有权
 

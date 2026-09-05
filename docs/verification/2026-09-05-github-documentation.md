@@ -1,6 +1,6 @@
 # 验收：使用、架构、API 文档与 GitHub 交付
 
-日期：2026-09-05。范围：HH-039；基线 `39aa243` 加当前引擎发现、独立配置及文档变更。负责人：主 Agent；文档另经独立只读读者检查。当前记录证明本地文档与 Mac 验证；GitHub 发布和远端 CI 在实际完成后补充。
+日期：2026-09-05。范围：HH-039；发布实现提交 `f2983b85b7b43f8ff42e2677789db306a47b33c7`，在基线 `39aa243` 上包含引擎发现、独立配置及文档变更。负责人：主 Agent；文档另经独立只读读者检查。文档、Mac 验证、公开仓库及首次 Ubuntu CI 已完成；此记录的后续补充为纯文档变更。
 
 ## 交付内容
 
@@ -36,8 +36,12 @@ API 人工说明只有 `api-catalog.ts` 一个来源，schema 继续由所属路
 
 ## 发布检查与边界
 
-Gitleaks 8.30.1 的 macOS arm64 二进制来自官方 release，并核对其公布 SHA-256。扫描全部 8 个现有 Git 提交和拟提交源码目录，均未发现凭证命中；另外审查文件清单，未纳入运行数据库、轨迹、截图、日志、私有配置或引擎安装。此检查降低泄漏风险，不是对所有形式敏感信息的绝对保证。
+Gitleaks 8.30.1 的 macOS arm64 二进制来自官方 release，并核对其公布 SHA-256。先扫描全部 8 个现有 Git 提交和拟提交源码目录，发布提交形成后再扫描全部 9 个提交，均未发现凭证命中；另外审查文件清单，未纳入运行数据库、轨迹、截图、日志、私有配置或引擎安装。此检查降低泄漏风险，不是对所有形式敏感信息的绝对保证。
 
-GitHub 仓库按用户明确选择设为 public，目标为 `wyzz973/HarnessHub`。自有代码尚未指定开源许可证，公开访问不等于授予开源许可；本次不发布 npm 包。
+已创建[公开仓库 wyzz973/HarnessHub](https://github.com/wyzz973/HarnessHub)，默认分支 main。实现提交推送后使用 `git ls-remote` 核对远端 SHA 与本地一致；从 GitHub 重新浅克隆，得到相同提交、223 个受版本控制文件，`node scripts/check-docs.mjs` 检查 51 个 Markdown 通过。自有代码尚未指定开源许可证，公开访问不等于授予开源许可；本次不发布 npm 包。
+
+## GitHub Actions
+
+[首次完整 CI](https://github.com/wyzz973/HarnessHub/actions/runs/33973899563)在 Ubuntu 上对 `f2983b85b7b43f8ff42e2677789db306a47b33c7` 执行 `pnpm install --frozen-lockfile` 与 `pnpm check`，结论 success。工具链 27、单元 35、集成 73、入口 smoke 3 项通过，合计 138；1 项 macOS Keychain 测试因非 Mac 平台跳过，该项在本机 Mac 验证通过。类型、lint、格式、模块边界、文档、40 项 API 同步与前端生产构建通过。Ubuntu 结果不能替代 Windows 原生行为证明；后续提交的状态查询[项目 Actions](https://github.com/wyzz973/HarnessHub/actions)。
 
 Windows 原生监督、运行和发行未验证；其他真实引擎/远端模型的结果沿用各自注明环境的历史记录，本次自动检查不能替代它们。远端 CI 结果以对应 GitHub Actions 运行记录为准。
