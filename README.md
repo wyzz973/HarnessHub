@@ -1,6 +1,6 @@
 # HarnessHub
 
-HarnessHub 为多个 Agent Harness 提供统一执行入口。当前已实现可运行的 Gateway、SQLite、独立 Worker、取消/期限、权限往返、SSE、产物和 JSONL 导出；假引擎端到端及本地 ACP 对端已验证。真实 OpenCode/Pi/DSH 任务、Windows 和 Benchmark 尚未完成验收。
+HarnessHub 为多个 Agent Harness 提供统一执行入口。Gateway、SQLite、独立Worker、取消/期限、权限、SSE和导出已实现；macOS上Codex、Claude Code、OpenCode、DSH已通过真实文本任务。OpenClaw协议可连接但模型OAuth失效；复杂工具任务、Pi、Windows和Benchmark仍待验收。
 
 架构已确定为 Gateway + 独立 Engine Worker、SQLite 公共状态与事件、JSONL 轨迹导出；接入顺序为 OpenCode → Pi → DSH。具体职责和实施阶段见 [DESIGN.md](DESIGN.md)。
 
@@ -10,6 +10,7 @@ HarnessHub 为多个 Agent Harness 提供统一执行入口。当前已实现可
 - [TODO.md](TODO.md)：开发任务、依赖、优先级、进度和验收。
 - [文档索引](docs/README.md)：开发、测试、文档和决策记录。
 - [源码调研](<HarnessHub 源码阅读与技术选型讨论稿.md>)：参考仓库与固定源码版本。
+- [macOS已安装引擎](docs/macos-engines.md)：现成本机CLI、登录引用与真实连接结果。
 
 ## 当前可运行检查
 

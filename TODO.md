@@ -1,6 +1,6 @@
 # HarnessHub 开发任务
 
-更新：2026-09-05。任务状态：阶段 A（HH-001～HH-012）的文本执行服务已完成 macOS 验收，HH-013/HH-015 的本地 ACP 后端已验证；真实引擎、Windows 和 Benchmark 按外部条件继续推进。
+更新：2026-09-05。任务状态：阶段 A（HH-001～HH-012）的文本执行服务已完成 macOS 验收，HH-013/HH-015 的本地 ACP 后端已验证；macOS已安装引擎专题验证中，Codex/Claude Code/OpenCode/DSH均已通过真实文本任务；Windows与Benchmark仍单独推进。
 
 本文件拥有任务依赖、优先级和进度；架构契约由 [DESIGN.md](DESIGN.md)拥有，开发与验收按 [AGENTS.md](AGENTS.md)及 [测试要求](docs/testing.md)执行。任务勾选不改变架构，也不代替证据。
 
@@ -215,9 +215,9 @@ flowchart TD
 
 ### HH-016 OpenCode 真任务纵向链路
 
-- [ ] 待模型运行配置及引擎兼容性确认；P0；前置：HH-015；外部条件：固定版本引擎和明确模型/凭证/预算；负责范围：OpenCode Profile、真实引擎用例与运行说明。
+- [ ] macOS文本连接已通过，完整验收待继续；P0；前置：HH-015；外部条件：固定版本引擎和明确模型/凭证/预算；负责范围：OpenCode Profile、真实引擎用例与运行说明。
 
-进展：宿主OpenCode1.1.21单次initialize探针17秒未响应，未发送prompt；未确认不兼容，也未升级或重复尝试。 证据见 [本次执行记录](docs/verification/2026-09-05-runtime-mvp.md)。
+进展：macOS OpenCode 1.1.21 经原配置/缓存引用后，Gateway默认opencode/big-pickle任务9.414s通过；完整工具任务、权限/取消和Windows尚待验收。 证据见 [macOS引擎验收](docs/verification/2026-09-05-macos-engines.md)。
 
 交付：准备固定版本的 OpenCode，经正式 Gateway/Worker 执行可用文件内容或确定评判器验证的任务，产生产物、事件和 Rollout。
 
@@ -251,7 +251,9 @@ flowchart TD
 
 ### HH-020 DSH 接入与 resume/close 差异
 
-- [ ] 待开始；P1；前置：HH-019；外部条件：固定 DSH 与模型运行配置；负责范围：DSH Profile、必要的薄适配及引擎验收。
+- [ ] macOS文本连接已通过，完整验收待继续；P1；前置：HH-019；外部条件：固定 DSH 与模型运行配置；负责范围：DSH Profile、必要的薄适配及引擎验收。
+
+进展：已提前按用户指定通过本机DSH现有CLI/profile完成Gateway真实文本任务（deepseek-v4-flash，2.738s）；resume、工具与Windows差异仍未完整验收。 证据见 [macOS引擎验收](docs/verification/2026-09-05-macos-engines.md)。
 
 交付：通过 DSH ACP profile 接入，验证模型选择、权限和 `session/resume` / `session/close`；公共历史仍由 HarnessHub 事件查询和导出提供。
 
@@ -283,6 +285,16 @@ flowchart TD
 
 验收：从发布产物而非源码入口启动，完成真任务、取消、重启查询、JSONL 和 Benchmark smoke；任务执行期间不下载或更新依赖；清理和产物结果可复核；以目标 OS/架构分别记录，不用开发机结果代替发行验收。
 
+## 用户追加：本机已有引擎连接
+
+### HH-024 macOS 已安装引擎连接与最小任务
+
+- [x] 检查已完成；P0；前置：HH-015；负责范围：本地Profile、官方Adapter、认证目录引用和实际连接证据。
+
+交付：按用户指定验证Codex、Claude Code、OpenCode、OpenClaw、DSH，保留独立workspace和Gateway轨迹，不升级系统CLI、不复制凭证。
+
+验收结果：前四个实际成功引擎为Codex、Claude Code、OpenCode、DSH，均经HarnessHub回复精确标记且工具事件为0；OpenClaw已完成协议检查，但模型OAuth失效，未计作模型通过。四个Gateway Session关闭后lease为0、所属进程组不存在。证据见 [macOS引擎验收](docs/verification/2026-09-05-macos-engines.md)。这不替代复杂任务、上下文恢复或Windows验收。
+
 ## 并行与文件所有权
 
 最早安全的并行窗口是 HH-002 完成之后：HH-003 负责 Store，HH-004 负责 Worker；HH-013 可用独立探针提前验证 acpx。HH-005 由主负责人组装，必须使用相同版本的公共接口。
@@ -306,4 +318,4 @@ HH-005 后，HH-006 → HH-007 → HH-008 → HH-010 依次修改 Runtime，默�
 
 ## 下一批工作
 
-阶段 A 的文本执行服务已交付。下一批先完成 HH-016 的真实引擎运行配置与兼容性确认，并补齐 VMware 自动化访问以推进 HH-014/HH-018。只对新增或受影响范围验证；评测工作可从 HH-021 的无凭证部分并行开始。
+阶段 A 的文本执行服务已交付。已安装的四个引擎已通过macOS文本连接。下一批可用这些现成Profile推进真实工具/文件任务和上下文恢复；OpenClaw先恢复模型认证，VMware自动化访问另行补齐。只对新增或受影响范围验证；评测工作可从 HH-021 的无凭证部分并行开始。

@@ -9,6 +9,7 @@ node_modules/
 /artifacts/
 /runtime-data/
 /engines/local.yaml
+/engines/dsh-local.patch.yaml
 .env
 .env.*
 !.env.example

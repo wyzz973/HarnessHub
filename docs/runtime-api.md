@@ -53,7 +53,7 @@ Run 查询中的 artifacts 可用 `GET /v1/artifacts/ARTIFACT_ID` 读取；服�
 
 参考 [配置示例](../engines/example.yaml)。命令必须是 argv 数组，不经额外 shell 拼接；执行期间不安装引擎。可配置全局/每引擎并发、排队数量、常驻 Worker 数、默认期限和取消 grace。`maxWorkers` 默认 16，容量满时新 Worker 返回明确失败，需要先关闭闲置 Session；不会静默回收未验证可恢复的上下文。`AGENT_ENGINE` 只影响新 Session 的默认引擎。
 
-`credentialEnv` 仅填写环境变量名称。Host 从启动时的环境快照提取明确允许的凭证，值不写入 Profile、IPC 或 SQLite。每个 Session 的 HOME、XDG/AppData 和临时目录位于其后端数据目录；引擎不会自动读取用户原 HOME 的登录配置。
+`credentialEnv` 仅填写环境变量名称。Host 从启动时的环境快照提取明确允许的凭证，值不写入 Profile、IPC 或 SQLite。每个 Worker 的 HOME、XDG/AppData 和临时目录位于其后端数据目录，默认不自动读取用户原HOME。需要复用现有CLI登录时，可由本地Profile显式引用原生配置目录；这会共享部分引擎状态，接法及边界见 [macOS接入](macos-engines.md)。
 
 当前 ACPDriver 使用 `acpx/runtime` 的稳定入口，关闭它的 turn timeout，由父 Runtime 管总期限。权限采用 deny-all 基线，Agent 主动上抛的单次权限请求可走 Gateway 往返；客户端文件/terminal 路径不因此自动获准。同一种权限 kind 有多个 optionId 时明确拒绝，避免 acpx 的按 kind 决定误选实际选项。
 

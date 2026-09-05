@@ -14,6 +14,8 @@ Status: accepted
 
 Worker使用明确允许的系统环境及Profile声明的credentialEnv，HOME/XDG/AppData/tmp归每个Session所有。默认限制常驻Worker数量，不能恢复的会话不会静默回收。未验证恢复能力的ACP Session在重启或异常释放Worker后关闭，历史仍可查询。
 
+用户明确选择复用本机已登录CLI时，本地Profile可通过固定argv显式引用原生配置目录；Worker/acpx本身仍用私有HOME，但相关Adapter/CLI会共享原生登录与部分状态。macOS Claude的默认Keychain namespace需要这种原HOME引用，采用该方式避免提取或复制token。具体入口与验证见 [macOS接入](../macos-engines.md)，不把它当作默认环境继承或完整安全隔离。
+
 SQLite owner保证同一数据库只有一个Gateway实例负责状态；旧Worker依持久lease中的token/命令/PGID核实后恢复清理。清理未确认的资源保持隔离并计入容量，握手和Run等待均明确失败，避免无限等待。
 
 ACP使用startTurn的独立result，turn timeout关闭以接受父进程的统一deadline。权限决定必须保留实际optionId；acpx只能按kind返回，多个同kind选项时明确拒绝。applied只表示Worker接受映射，不能表示外部工具成功。
