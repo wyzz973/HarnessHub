@@ -5,12 +5,12 @@ import path from "node:path";
 import test from "node:test";
 import { loadConfig } from "../../src/engine/registry.js";
 
-void test("profile resolution rejects invalid fields and requires an explicit demo or engine registration", async (t) => {
+void test("profile resolution rejects invalid fields and allows an empty registry for dynamic registration", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "harnesshub-config-"));
   t.after(async () => rm(directory, { recursive: true, force: true }));
-  await assert.rejects(
-    loadConfig({ cwd: directory, demo: false }),
-    /Register a default/,
+  assert.equal(
+    (await loadConfig({ cwd: directory, demo: false })).defaultEngine,
+    "",
   );
   assert.equal(
     (await loadConfig({ cwd: directory, demo: true })).defaultEngine,

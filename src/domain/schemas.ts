@@ -196,17 +196,86 @@ export const enginesResponseSchema = {
         required: ["id", "driver", "revision", "enabled", "capabilities"],
         properties: {
           id: text,
-          driver: { enum: ["fake", "acp"] },
+          driver: { enum: ["fake", "acp", "cli"] },
           revision: text,
           enabled: { type: "boolean" },
           command: { type: "array", items: text },
           model: text,
           credentialEnv: { type: "array", items: text },
+          cli: jsonObject,
           maxConcurrency: timestamp,
           capabilities: jsonObject,
         },
         additionalProperties: false,
       },
     },
+  },
+} as const;
+
+/** Management commands accept registrations, never computed revision/capability claims. */
+export const engineRegistrationSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "driver", "command"],
+  properties: {
+    id: { type: "string", pattern: "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,99}$" },
+    driver: { enum: ["acp", "cli"] },
+    command: {
+      type: "array",
+      minItems: 1,
+      maxItems: 256,
+      items: { type: "string", minLength: 1, maxLength: 8192 },
+    },
+    enabled: { type: "boolean" },
+    model: { type: "string", minLength: 1 },
+    credentialEnv: {
+      type: "array",
+      uniqueItems: true,
+      items: { type: "string", pattern: "^[A-Z][A-Z0-9_]*$" },
+    },
+    maxConcurrency: { type: "integer", minimum: 1, maximum: 86400000 },
+    cli: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        inputMode: { enum: ["stdin", "argv"] },
+        maxOutputBytes: { type: "integer", minimum: 1, maximum: 4194304 },
+      },
+    },
+  },
+} as const;
+export const engineResponseSchema =
+  enginesResponseSchema.properties.engines.items;
+export const discoveryResponseSchema = {
+  type: "object",
+  required: ["candidates"],
+  properties: {
+    candidates: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "name", "executable", "source", "status", "notes"],
+        properties: {
+          id: text,
+          name: text,
+          executable: text,
+          source: { enum: ["path", "known-location", "manifest"] },
+          status: { enum: ["ready", "adapter-required"] },
+          registration: engineRegistrationSchema,
+          notes: { type: "array", items: text },
+        },
+      },
+    },
+  },
+} as const;
+export const registryStatusSchema = {
+  type: "object",
+  required: ["defaultEngine", "watching", "lastReloadAt", "lastError"],
+  properties: {
+    defaultEngine: text,
+    watching: { type: "boolean" },
+    lastReloadAt: { anyOf: [timestamp, { type: "null" }] },
+    lastError: { anyOf: [text, { type: "null" }] },
   },
 } as const;

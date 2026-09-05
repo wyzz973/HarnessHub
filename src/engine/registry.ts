@@ -54,6 +54,136 @@ function freeze<T>(value: T): T {
   }
   return value;
 }
+/** Parse configuration/API/manifest input into a frozen, content-addressed execution revision. */
+export function normalizeEngine(input: unknown): EngineProfile {
+  const e = object(input);
+  keys(e, [
+    "id",
+    "driver",
+    "enabled",
+    "command",
+    "model",
+    "maxConcurrency",
+    "credentialEnv",
+    "cli",
+  ]);
+  const id = string(e.id, "engine.id");
+  if (["fake", "default", "discover", "registry", "reload"].includes(id))
+    throw new HubError(
+      "ENGINE_RESERVED",
+      "Engine id is reserved by the Gateway",
+      400,
+    );
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,99}$/.test(id))
+    throw new HubError(
+      "INVALID_CONFIG",
+      "Engine id must be 1-100 letters, digits, dots, underscores or hyphens",
+    );
+  if (e.enabled !== undefined && typeof e.enabled !== "boolean")
+    throw new HubError("INVALID_CONFIG", "enabled must be a boolean");
+  if (
+    e.credentialEnv !== undefined &&
+    (!Array.isArray(e.credentialEnv) ||
+      !e.credentialEnv.every(
+        (v: unknown) => typeof v === "string" && /^[A-Z][A-Z0-9_]*$/.test(v),
+      ) ||
+      new Set(e.credentialEnv).size !== e.credentialEnv.length)
+  )
+    throw new HubError(
+      "INVALID_CONFIG",
+      "credentialEnv must contain unique environment variable names only",
+    );
+  if (e.driver !== "acp" && e.driver !== "cli")
+    throw new HubError(
+      "INVALID_CONFIG",
+      "Configured engines must use acp or cli",
+    );
+  if (
+    !Array.isArray(e.command) ||
+    !e.command.length ||
+    e.command.length > 256 ||
+    !e.command.every(
+      (v: unknown) =>
+        typeof v === "string" &&
+        v.length > 0 &&
+        v.length <= 8192 &&
+        !v.includes("\0"),
+    )
+  )
+    throw new HubError(
+      "INVALID_CONFIG",
+      "command must be a bounded non-empty argv array without NUL bytes",
+    );
+  // Common secret arguments must be references via credentialEnv/config files instead.
+  // Arbitrary script contents cannot be classified; callers must never embed secrets there.
+  if (
+    e.command.some(
+      (arg: string) =>
+        /^(?:[A-Z0-9_]*(?:API_KEY|ACCESS_TOKEN|AUTH_TOKEN|PASSWORD|SECRET)|TOKEN)=/i.test(
+          arg,
+        ) ||
+        /^--?(?:api[-_]?(?:key|token)|access[-_]?token|auth[-_]?token|token|password|secret|authorization)(?:=|$)/i.test(
+          arg,
+        ),
+    )
+  )
+    throw new HubError(
+      "INVALID_CONFIG",
+      "Use credentialEnv names or configuration file references instead of secret command arguments",
+    );
+  let cli: EngineProfile["cli"];
+  if (e.driver === "cli") {
+    const c = e.cli === undefined ? {} : object(e.cli);
+    keys(c, ["inputMode", "maxOutputBytes"]);
+    const inputMode = c.inputMode ?? "stdin";
+    if (inputMode !== "stdin" && inputMode !== "argv")
+      throw new HubError(
+        "INVALID_CONFIG",
+        "CLI inputMode must be stdin or argv",
+      );
+    if (
+      inputMode === "argv" &&
+      (e.command[0] === "{prompt}" ||
+        e.command.filter((v) => v === "{prompt}").length !== 1)
+    )
+      throw new HubError(
+        "INVALID_CONFIG",
+        "CLI argv input requires exactly one standalone {prompt} argument",
+      );
+    const maxOutputBytes = integer(c.maxOutputBytes, 4 * 1024 * 1024);
+    if (maxOutputBytes > 4 * 1024 * 1024)
+      throw new HubError(
+        "INVALID_CONFIG",
+        "CLI output must fit the 4 MiB result limit",
+      );
+    cli = { inputMode, maxOutputBytes };
+  } else if (e.cli !== undefined) {
+    throw new HubError("INVALID_CONFIG", "cli options require the cli driver");
+  }
+  const profile: Omit<EngineProfile, "revision"> = {
+    id,
+    driver: e.driver,
+    enabled: e.enabled !== false,
+    command: [...e.command] as string[],
+    ...(e.model !== undefined ? { model: string(e.model, "model") } : {}),
+    ...(e.credentialEnv !== undefined
+      ? { credentialEnv: [...(e.credentialEnv as string[])] }
+      : {}),
+    ...(cli ? { cli } : {}),
+    maxConcurrency: integer(e.maxConcurrency, 1),
+    capabilities: {
+      resume: false,
+      permissions: e.driver === "acp",
+      images: false,
+    },
+  };
+  return freeze({
+    ...profile,
+    revision: createHash("sha256")
+      .update(JSON.stringify(profile))
+      .digest("hex"),
+  });
+}
 /** Resolve all deployment defaults once; no environment access occurs in run execution. */
 export async function loadConfig(options: {
   file?: string;
@@ -85,64 +215,7 @@ export async function loadConfig(options: {
   const base = options.file
     ? path.dirname(path.resolve(options.file))
     : options.cwd;
-  const engines: EngineProfile[] = entries.map((entry: unknown) => {
-    const e = object(entry);
-    keys(e, [
-      "id",
-      "driver",
-      "enabled",
-      "command",
-      "model",
-      "maxConcurrency",
-      "credentialEnv",
-    ]);
-    if (e.enabled !== undefined && typeof e.enabled !== "boolean")
-      throw new HubError("INVALID_CONFIG", "enabled must be a boolean");
-    if (
-      e.credentialEnv !== undefined &&
-      (!Array.isArray(e.credentialEnv) ||
-        !e.credentialEnv.every(
-          (v: unknown) => typeof v === "string" && /^[A-Z][A-Z0-9_]*$/.test(v),
-        ))
-    )
-      throw new HubError(
-        "INVALID_CONFIG",
-        "credentialEnv must contain environment variable names only",
-      );
-    if (e.driver !== "acp")
-      throw new HubError(
-        "INVALID_CONFIG",
-        "Configured engines must use the acp driver",
-      );
-    if (
-      !Array.isArray(e.command) ||
-      !e.command.length ||
-      !e.command.every((v: unknown) => typeof v === "string" && v.length > 0)
-    )
-      throw new HubError(
-        "INVALID_CONFIG",
-        "command must be a non-empty argv array",
-      );
-    const profile = {
-      id: string(e.id, "engine.id"),
-      driver: "acp" as const,
-      enabled: e.enabled !== false,
-      command: e.command as string[],
-      ...(e.model !== undefined ? { model: string(e.model, "model") } : {}),
-      ...(e.credentialEnv !== undefined
-        ? { credentialEnv: e.credentialEnv as string[] }
-        : {}),
-      maxConcurrency: integer(e.maxConcurrency, 1),
-      // Configured expectations are not verified runtime capabilities.
-      capabilities: { resume: false, permissions: true, images: false },
-    };
-    return {
-      ...profile,
-      revision: createHash("sha256")
-        .update(JSON.stringify(profile))
-        .digest("hex"),
-    };
-  });
+  const engines: EngineProfile[] = entries.map(normalizeEngine);
   if (options.demo)
     engines.push({
       id: "fake",
@@ -179,19 +252,19 @@ export async function loadConfig(options: {
       ? raw.defaultWorkspace
       : workspaces[0]?.id;
   if (
-    !defaultEngine ||
-    !engines.some((e) => e.id === defaultEngine && e.enabled) ||
+    (defaultEngine !== undefined &&
+      !engines.some((e) => e.id === defaultEngine && e.enabled)) ||
     !defaultWorkspace ||
     !workspaces.some((w) => w.id === defaultWorkspace)
   )
     throw new HubError(
       "INVALID_CONFIG",
-      "Register a default engine/workspace using --config or enable --demo",
+      "Configured default engine/workspace is not available",
     );
   return freeze({
     engines,
     workspaces,
-    defaultEngine,
+    defaultEngine: defaultEngine ?? "",
     defaultWorkspace,
     maxConcurrency: integer(raw.maxConcurrency, 4),
     maxWorkers: integer(raw.maxWorkers, 16),

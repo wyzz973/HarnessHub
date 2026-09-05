@@ -12,7 +12,7 @@ pnpm start --demo --port 3180 --data-dir ./data
 
 进程 stdout 输出一条包含 URL 和 PID 的 ready JSON。`/health/live` 报告进程存活，`/health/ready` 在 Runtime 停止或持久化故障时返回 503。服务绑定本机，不包含远程用户认证。
 
-假引擎只能通过 `--demo` 启用；真实引擎需要 `--config <file>`，不能把假引擎结果作为真实模型能力证据。默认工作目录为启动 cwd；配置中的相对 Workspace 路径按配置文件所在目录解析。
+假引擎只能通过 `--demo` 启用；真实引擎可通过 `--config <file>` 或 [动态管理 API](engine-management.md)登记，未提供时允许空目录启动，不能把假引擎结果作为真实模型能力证据。默认工作目录为启动 cwd；配置中的相对 Workspace 路径按配置文件所在目录解析。
 
 ## 创建并执行任务
 
@@ -51,7 +51,7 @@ Run 查询中的 artifacts 可用 `GET /v1/artifacts/ARTIFACT_ID` 读取；服�
 
 ## 本地配置
 
-参考 [配置示例](../engines/example.yaml)。命令必须是 argv 数组，不经额外 shell 拼接；执行期间不安装引擎。可配置全局/每引擎并发、排队数量、常驻 Worker 数、默认期限和取消 grace。`maxWorkers` 默认 16，容量满时新 Worker 返回明确失败，需要先关闭闲置 Session；不会静默回收未验证可恢复的上下文。`AGENT_ENGINE` 只影响新 Session 的默认引擎。
+参考 [配置示例](../engines/example.yaml)。命令必须是 argv 数组，不经额外 shell 拼接；执行期间不安装引擎。可配置全局/每引擎并发、排队数量、常驻 Worker 数、默认期限和取消 grace。`maxWorkers` 默认 16，容量满时新 Worker 返回明确失败，需要先关闭闲置 Session；不会静默回收未验证可恢复的上下文。`AGENT_ENGINE` 只影响新 Session 的默认引擎；与持久动态目录的优先级见 [管理说明](engine-management.md)。
 
 `credentialEnv` 仅填写环境变量名称。Host 从启动时的环境快照提取明确允许的凭证，值不写入 Profile、IPC 或 SQLite。每个 Worker 的 HOME、XDG/AppData 和临时目录位于其后端数据目录，默认不自动读取用户原HOME。需要复用现有CLI登录时，可由本地Profile显式引用原生配置目录；这会共享部分引擎状态，接法及边界见 [macOS接入](macos-engines.md)。
 
@@ -69,6 +69,6 @@ Session/Run保存安全配置快照，包含配置标识、模型选择、凭证
 
 Worker IPC 每条消息上限 8 MiB，文本产物入口上限 4 MiB，HTTP body 上限 2 MiB，超限明确失败而非截断；这些传输限制不等于模型 token 预算。Host 对 IPC 用 ACK 控制背压，但不能据此声称 acpx 内部队列或全部输出已受同样约束。
 
-Windows 进程监督尚未原生验收；当前没有统一读/写/网络沙箱。API `/v1/engines` 把能力分为configured、observed和validated：observed只含本进程实际记录的Runtime控制/模型信息，不推导恢复或平台支持；没有验证时validated为null。Benchmark、通用原生/CLI Driver、跨引擎续聊均未实现。
+Windows 进程监督尚未原生验收；当前没有统一读/写/网络沙箱。API `/v1/engines` 把能力分为configured、observed和validated：observed按profile revision区分，只含本进程实际记录的Runtime控制/模型信息，不推导恢复或平台支持；没有验证时validated为null。[通用 CLI Driver](cli-driver.md)、[动态发现与管理](engine-management.md)和 [文本 Benchmark](benchmark.md)已实现；直接 Native SDK Driver、跨引擎续聊仍未实现。
 
 独立导出命令为 `node dist/src/cli.js rollout --url http://127.0.0.1:3180 --run RUN_ID --output FILE`。它读取同一Gateway轨迹接口，流式写入新文件，拒绝覆盖，失败清理半成品。对运行中的Run，导出只包含当时已提交的事件，不能称为完整终态轨迹。

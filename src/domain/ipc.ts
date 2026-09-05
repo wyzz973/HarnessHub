@@ -64,11 +64,15 @@ const result = object(
 const profile = object(
   {
     id: string,
-    driver: { enum: ["fake", "acp"] },
+    driver: { enum: ["fake", "acp", "cli"] },
     revision: string,
     enabled: { type: "boolean" },
     command: { type: "array", items: string, minItems: 1 },
     model: string,
+    cli: object({
+      inputMode: { enum: ["stdin", "argv"] },
+      maxOutputBytes: { type: "integer", minimum: 1, maximum: 4 * 1024 * 1024 },
+    }),
     credentialEnv: {
       type: "array",
       uniqueItems: true,

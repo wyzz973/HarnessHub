@@ -29,7 +29,7 @@ Gateway 规范尚未提供，按通用任务 API 开发设计；未来赛题通�
 | HTTP 服务 | Fastify 5；REST + SSE；OpenAPI 契约 |
 | 输入与 IPC 校验 | JSON Schema / Ajv，与公共类型保持一致 |
 | ACP Driver | `acpx/runtime`，使用稳定 ACP v1；SDK 类型限制在 Adapter 内 |
-| 配置 | YAML/JSON + 不可变内存快照 |
+| 配置 | YAML/JSON 基础目录 + SQLite 动态 overlay + 不可变 revision |
 | 业务存储 | SQLite，经自有 Store 接口访问；优先 `node:sqlite`，固定版本验证其 release-candidate API |
 | 产物与导出 | 本地文件产物 + JSONL Rollout |
 | 进程通信 | 本地 Node 子进程 IPC，独立 schemaVersion |
@@ -37,7 +37,7 @@ Gateway 规范尚未提供，按通用任务 API 开发设计；未来赛题通�
 | 测试与验收 | 公共运行契约、真实引擎链路、Windows 原生行为 |
 | Benchmark | Node CLI，复用 Application Service |
 
-ACP Runtime、Adapter、Harness、模型配置分别记录版本。依赖先通过安装与兼容性检查再锁定；运行任务时不自动更新或临时下载引擎。
+ACP Runtime、Adapter、Harness、模型配置应分别记录版本；当前 Benchmark 自动记录 Hub/Node/OS、配置 revision 和配置模型，真实引擎/Adapter 版本及实际模型仍需验收记录补充。依赖先通过安装与兼容性检查再锁定；运行任务时不自动更新或临时下载引擎。
 
 不因引入 Worker 额外引入 Go/Rust 服务。Windows 原生监督能力若确需 helper，单独评估与封装，其接口不进入业务域。
 
@@ -74,7 +74,9 @@ flowchart TD
 
 Gateway 父进程是公共状态的唯一逻辑写入者。Worker 不直接写 HarnessHub 数据库，只上报事件、权限请求和后端结果。若存储操作下沉线程，写入权仍由 Gateway 的单一 Store 管理。
 
-Driver 类型由 HarnessHub 定义，公共接口不泄露 ACP/SDK 类型。NativeDriver、CLIDriver 仅预留扩展边界，遇到实际接入对象再实现。
+Driver 类型由 HarnessHub 定义，公共接口不泄露 ACP/SDK 类型。ACPDriver 与通用 CLIDriver 已实现；CLI 逐 Run 启动并在结果发布前回收 Worker 进程组，适合非 ACP 命令和 SDK 包装程序。NativeDriver 暂无独立实现；引擎的原生 SDK 仍可由包装程序接入。
+
+EngineManager 提供运行中发现、注册、替换、禁用、移除和默认选择；文件配置只热更新引擎和默认项。发现仅检查本机安装与 manifest，不自动调用模型或登记候选。API overlay 与历史 revision 先提交 SQLite 再发布；Session 固定 revision，旧 Run 不因热更新迁移。行为、优先级与限制见 [动态引擎管理](docs/engine-management.md)，取舍见 [ADR 0003](docs/decisions/0003-dynamic-engines.md)。
 
 工具编排通常归 Harness；部分 ACP 文件、terminal 操作由 acpx 执行。公共权限回调并不自动覆盖所有工具路径，能力与审批覆盖范围必须如实报告。
 
@@ -82,7 +84,7 @@ Driver 类型由 HarnessHub 定义，公共接口不泄露 ACP/SDK 类型。Nati
 
 Session 固定绑定 engineId、profileRevision、workspaceId 和不透明 backend handle。`AGENT_ENGINE` 只决定新 Session 的默认引擎；显式 engineId 可覆盖默认值，已有 Session 不被迁移。
 
-同一 Session 同时只有一个活动 Run，后续 Run 按接收顺序排队。多个 Session 可并行，受全局和每引擎的有限并发配置约束。每个 Run 保存实际模型、权限、配置版本与预算快照。
+同一 Session 同时只有一个活动 Run，后续 Run 按接收顺序排队。多个 Session 可并行，受全局和每引擎的有限并发配置约束。每个 Run 保存模型选择、配置版本与期限快照，权限决定单独持久化；运行时观测到的模型另以事件为据，不把配置声明当成实际模型。
 
 Worker 按 Session 归属，懒启动；并不要求所有持久 Session 都常驻进程。空闲回收必须满足：无活动或待决权限请求、后端 checkpoint 已完成、会话具有已验证的恢复能力。不能恢复的后端保留活进程直至显式关闭，或按明确的会话过期策略结束；不得静默丢失上下文。
 
@@ -117,7 +119,7 @@ queued → starting → running ↔ waiting_permission
 
 ## 6. 业务存储与事件
 
-首版表：`sessions`、`runs`、`events`、`permissions`、`artifacts`。Benchmark 增加 `benchmark_attempts` 与 `evaluations`。外部配置和后端 Store 不能更改这些表的状态权威。
+首版表：`sessions`、`runs`、`events`、`permissions`、`artifacts`。Benchmark 已增加 `benchmark_attempts` 与 `evaluations`，附加表由独立 `benchmark_metadata.schema_version=1` 管理；`runtime_metadata` 保存 Gateway owner 与 version 1 引擎目录。外部配置和后端 Store 不能更改这些表的状态权威。
 
 事件信封包含 `schemaVersion / eventId / sessionId / runId / seq / occurredAt / observedAt / type / data`。message、tool、permission 保留独立关联 ID。父进程生成 Run 内递增 seq；Worker 原始序号与 generation 用于去重。日志、后端重复输出及旧 generation 事件不得创造重复公共终态。
 
@@ -144,6 +146,7 @@ Gateway 重启后先核实 Worker 归属与残留进程，对缺少明确终态�
 | 方法与路径 | 职责 |
 |---|---|
 | `GET /v1/engines` | 引擎、可用性与能力摘要 |
+| `GET /v1/engines/discover`、`POST /v1/engines`、`PUT/DELETE /v1/engines/:id` | 发现、动态完整注册/替换、移除；默认和 reload 见管理 API |
 | `POST /v1/sessions` | 创建公共 Session，指定 Engine/Profile/Workspace |
 | `GET /v1/sessions/:id` | 会话状态和可恢复性 |
 | `POST /v1/sessions/:id/close` | 停止接收 Run，取消排队和活动 Run，收敛执行资源，保留历史 |

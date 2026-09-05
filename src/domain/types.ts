@@ -28,12 +28,13 @@ export type CleanupStatus = "confirmed" | "unconfirmed" | "failed";
 /** A locally registered engine. Credentials belong to process environment, never this record. */
 export interface EngineProfile {
   id: string;
-  driver: "fake" | "acp";
+  driver: "fake" | "acp" | "cli";
   revision: string;
   enabled: boolean;
   command?: string[];
   model?: string;
   credentialEnv?: string[];
+  cli?: { inputMode: "stdin" | "argv"; maxOutputBytes: number };
   maxConcurrency: number;
   capabilities: { resume: boolean; permissions: boolean; images: boolean };
 }

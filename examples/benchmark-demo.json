@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "harnesshub-demo",
+  "version": "1",
+  "tasks": [
+    {
+      "id": "echo",
+      "version": "1",
+      "input": { "text": "结果 中文 ✓", "timeoutMs": 5000 },
+      "evaluator": { "id": "text-exact", "version": "1", "expected": "结果 中文 ✓" }
+    },
+    {
+      "id": "artifact",
+      "version": "1",
+      "input": { "text": "artifact 中文 ✓", "timeoutMs": 5000, "fixture": { "scenario": "artifact" } },
+      "evaluator": { "id": "text-exact", "version": "1", "expected": "artifact 中文 ✓", "artifactName": "result.txt" }
+    }
+  ]
+}

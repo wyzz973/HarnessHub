@@ -1,0 +1,13 @@
+{
+  "name": "CLI stdin/stdout example",
+  "registration": {
+    "id": "echo-cli",
+    "driver": "cli",
+    "command": ["/bin/cat"],
+    "maxConcurrency": 1,
+    "cli": {
+      "inputMode": "stdin",
+      "maxOutputBytes": 4194304
+    }
+  }
+}

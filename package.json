@@ -24,7 +24,8 @@
     "test:smoke": "node --test dist/tests/smoke/*.test.js",
     "test": "pnpm build && pnpm test:tooling && pnpm test:unit && pnpm test:integration && pnpm test:smoke",
     "check": "pnpm check:runtime && pnpm lint && pnpm format:check && pnpm check:boundaries && pnpm check:docs && pnpm test",
-    "start": "node dist/src/main.js"
+    "start": "node dist/src/main.js",
+    "benchmark": "node dist/src/benchmark-main.js"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.4.0",

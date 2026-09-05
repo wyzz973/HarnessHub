@@ -1,3 +1,5 @@
+import type { EngineManagement } from "../domain/engines.js";
+import { HubError } from "../domain/errors.js";
 import type { Runtime } from "../runtime/runtime.js";
 import type {
   ArtifactId,
@@ -15,6 +17,7 @@ export class HubApplication {
     private readonly artifactReader: (
       artifact: ArtifactRecord,
     ) => Promise<Buffer>,
+    private readonly engineManagement?: EngineManagement,
   ) {}
   isReady() {
     return this.runtime.isReady();
@@ -24,10 +27,38 @@ export class HubApplication {
       ...profile,
       capabilities: {
         configured: profile.capabilities,
-        observed: this.runtime.engineEvidence(profile.id),
+        observed: this.runtime.engineEvidence(profile.id, profile.revision),
         validated: null,
       },
     }));
+  }
+  private management(): EngineManagement {
+    if (!this.engineManagement)
+      throw new HubError(
+        "ENGINE_MANAGEMENT_UNAVAILABLE",
+        "Engine management is not configured",
+        503,
+      );
+    return this.engineManagement;
+  }
+  registerEngine(input: unknown) {
+    return this.management().register(input);
+  }
+  removeEngine(id: string) {
+    return this.management().remove(id);
+  }
+  setDefaultEngine(id: string) {
+    return this.management().setDefault(id);
+  }
+  discoverEngines() {
+    return this.management().discover();
+  }
+  reloadEngines() {
+    return this.management().reload();
+  }
+  engineRegistryStatus() {
+    const m = this.management();
+    return { ...m.status(), defaultEngine: m.defaultId() };
   }
   createSession(input: { engineId?: string; workspaceId?: string }) {
     return this.runtime.createSession(input);
@@ -80,7 +111,8 @@ export class HubApplication {
       }
     }
   }
-  close() {
-    return this.runtime.close();
+  async close() {
+    await this.engineManagement?.close();
+    await this.runtime.close();
   }
 }

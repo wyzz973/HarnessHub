@@ -1,6 +1,6 @@
 # HarnessHub 开发任务
 
-更新：2026-09-05。任务状态：阶段 A（HH-001～HH-012）的文本执行服务已完成 macOS 验收，HH-013/HH-015 的本地 ACP 后端已验证；macOS已安装引擎专题验证中，Codex/Claude Code/OpenCode/DSH均已通过真实文本任务；Windows与Benchmark仍单独推进。
+更新：2026-09-05。任务状态：阶段 A（HH-001～HH-012）的文本执行服务已完成 macOS 验收，HH-013/HH-015 的本地 ACP 后端已验证；Codex/Claude Code/OpenCode/DSH 均已通过真实文本任务；已追加动态引擎发现/管理、通用 CLI 和文本 Benchmark，Mac 动态文件任务已通过。Windows 与完整真实引擎恢复继续单独验收。
 
 本文件拥有任务依赖、优先级和进度；架构契约由 [DESIGN.md](DESIGN.md)拥有，开发与验收按 [AGENTS.md](AGENTS.md)及 [测试要求](docs/testing.md)执行。任务勾选不改变架构，也不代替证据。
 
@@ -253,7 +253,7 @@ flowchart TD
 
 - [ ] macOS文本连接已通过，完整验收待继续；P1；前置：HH-019；外部条件：固定 DSH 与模型运行配置；负责范围：DSH Profile、必要的薄适配及引擎验收。
 
-进展：已提前按用户指定通过本机DSH现有CLI/profile完成Gateway真实文本任务（deepseek-v4-flash，2.738s）；resume、工具与Windows差异仍未完整验收。 证据见 [macOS引擎验收](docs/verification/2026-09-05-macos-engines.md)。
+进展：已提前按用户指定通过本机DSH现有CLI/profile完成Gateway真实文本任务（deepseek-v4-flash，2.738s）；本轮动态注册后完成了实际文件write任务（3.639s，独立文件hash核对）；resume、真实权限和Windows差异仍未完整验收。 证据见 [macOS引擎验收](docs/verification/2026-09-05-macos-engines.md)。
 
 交付：通过 DSH ACP profile 接入，验证模型选择、权限和 `session/resume` / `session/close`；公共历史仍由 HarnessHub 事件查询和导出提供。
 
@@ -263,7 +263,9 @@ flowchart TD
 
 ### HH-021 Benchmark attempt 与 Evaluator
 
-- [ ] 待开始；P1；前置：HH-012；负责范围：`src/benchmark/`、必要存储迁移和评判器 fixtures。
+- [ ] 文本与登记Artifact范围已验证，通用文件采集待补；P1；前置：HH-012；负责范围：`src/benchmark/`、必要存储迁移和评判器 fixtures。
+
+进展：正式 CLI 复用 Application/Runtime、独立 attempt/workspace、SQLite 证据与 Evaluation、离线重新评分、提交/评分崩溃窗口与数据污染校验已实现；DSH/OpenCode 两次真实文本 Benchmark 均通过。尚不包含原始 Workspace 文件自动采集与 GUI 隔离。证据见 [本轮验收](docs/verification/2026-09-05-dynamic-engines.md)。
 
 交付：CLI 通过 Application Service 提交任务；创建独立 attempt、准备/重置环境、登记输入和版本、持久化 Evaluation。先用假引擎与确定评判器开发，正式多引擎验收在 HH-022 完成。
 
@@ -271,7 +273,9 @@ flowchart TD
 
 ### HH-022 成绩矩阵与可复查评测
 
-- [ ] 待开始；P1；前置：HH-019、HH-020、HH-021；外部条件：版本化任务集、评判器和运行预算；负责范围：评测汇总、导出和复现说明。
+- [ ] 最小文本矩阵已验证，完整任务集与成本采集待补；P1；前置：HH-019、HH-020、HH-021；外部条件：版本化任务集、评判器和运行预算；负责范围：评测汇总、导出和复现说明。
+
+进展：已实现 --report，从持久 attempt/最新评分重建矩阵、按批次和dataset分组、失败归因、重评分次数和事后覆盖率；对真实 DSH/OpenCode 批次生成矩阵，无重复模型调用。缺失实际模型/usage/cost明确为null，未跑任务不假记失败；完整版本自动采集和比赛任务集仍待完成。证据见 [本轮验收](docs/verification/2026-09-05-dynamic-engines.md)。
 
 交付：Task × Engine × Model × Attempt 矩阵、单引擎结果、失败归因、离线 best-of-engines 覆盖和运行成本依据。
 
@@ -294,6 +298,48 @@ flowchart TD
 交付：按用户指定验证Codex、Claude Code、OpenCode、OpenClaw、DSH，保留独立workspace和Gateway轨迹，不升级系统CLI、不复制凭证。
 
 验收结果：前四个实际成功引擎为Codex、Claude Code、OpenCode、DSH，均经HarnessHub回复精确标记且工具事件为0；OpenClaw已完成协议检查，但模型OAuth失效，未计作模型通过。四个Gateway Session关闭后lease为0、所属进程组不存在。证据见 [macOS引擎验收](docs/verification/2026-09-05-macos-engines.md)。这不替代复杂任务、上下文恢复或Windows验收。
+
+## 当前优先：动态引擎与 Mac 可运行交付
+
+### HH-025 动态注册、版本归档与配置热加载
+
+- [x] Mac范围已验证；P0；前置：HH-006、HH-024；负责人：主 Agent；范围：Engine Catalog、SQLite、Runtime、API、组合根。
+
+交付：支持空目录启动、运行中新增/替换/禁用/移除引擎和修改默认引擎；配置文件自动重读及手动 reload；无效更新保留最后有效配置。注册与历史 revision 持久化，老 Session 固定原 revision，运行和排队任务不被配置更新迁移。
+
+验收：正式 HTTP 新增后直接执行；更新/移除后旧会话仍用旧版本、新会话使用新版本；重启后动态注册可用；无效热更新不覆盖有效目录。
+
+证据见 [本轮动态引擎验收](docs/verification/2026-09-05-dynamic-engines.md)。
+
+### HH-026 本机发现与开放 manifest
+
+- [x] Mac范围已验证；P0；前置：HH-025；范围：本机发现器、配置样例、API。
+
+交付：按 PATH 和已知安装路径发现本机 Agent/Adapter；可用 manifest 声明任意新引擎；发现仅报告安装/适配状态，选择注册后参与任务分配，不调用模型、不安装包、不复制认证。
+
+验收：Mac 发现已安装引擎；新增 manifest 无需改源码即可发现；经发现 → 注册 → Session → Run 完成真实任务。
+
+证据见 [本轮动态引擎验收](docs/verification/2026-09-05-dynamic-engines.md)。
+
+### HH-027 通用 CLI Driver
+
+- [x] Mac范围已验证；P0；前置：HH-025；范围：CLI Driver、Worker 组合、IPC。
+
+交付：非 ACP 命令可通过 stdin 或 argv prompt 占位符接入，统一文本事件、结果、失败、取消和输出上限；SDK 可由本地 CLI 包装程序接入。CLI 不宣称支持权限交互或跨轮上下文。
+
+验收：编译后的真实 Worker 验证 stdin/argv、UTF-8、失败、输出溢出及超时清理；通过 Gateway 动态注册后执行。
+
+证据见 [本轮动态引擎验收](docs/verification/2026-09-05-dynamic-engines.md)。
+
+### HH-028 Mac 动态多引擎组合验收
+
+- [x] Mac组合链路已验证；P0；前置：HH-025、HH-026、HH-027；范围：真实 Mac Gateway 与文档。
+
+交付：保持服务运行时发现/增加/切换引擎并分配任务；保存真实引擎结果、版本、profile revision 和清理证据；继续推进 HH-021 的评测入口。仅运行新增能力所需的真实模型任务。
+
+验收：真实任务内容被确定逻辑核对；注册和结果重启可查；服务可留给用户继续调用；Windows、OAuth 与未经验证的恢复能力分别保留状态。
+
+证据见 [本轮动态引擎验收](docs/verification/2026-09-05-dynamic-engines.md)。
 
 ## 并行与文件所有权
 
@@ -318,4 +364,4 @@ HH-005 后，HH-006 → HH-007 → HH-008 → HH-010 依次修改 Runtime，默�
 
 ## 下一批工作
 
-阶段 A 的文本执行服务已交付。已安装的四个引擎已通过macOS文本连接。下一批可用这些现成Profile推进真实工具/文件任务和上下文恢复；OpenClaw先恢复模型认证，VMware自动化访问另行补齐。只对新增或受影响范围验证；评测工作可从 HH-021 的无凭证部分并行开始。
+已完成本轮 HH-025～HH-028 的 Mac 动态目录和执行入口，以及 HH-021/HH-022 的文本评测最小范围。下一批按比赛需要优先补原始 Workspace 文件采集/确定判分、真实任务集和已安装引擎的恢复验收；OpenClaw 先补登录，VMware 自动化访问独立补齐。Pi 可通过 manifest/现成 ACP Adapter 接入，不再被静态注册代码限制。已通过且输入未变化的验证不重复运行。

@@ -1,5 +1,9 @@
 import { parseArgs } from "node:util";
-import { mkdir } from "node:fs/promises";
+import { homedir } from "node:os";
+import { EngineManager } from "./engine/manager.js";
+import { discoverEngines } from "./engine/discovery.js";
+import type { Workspace } from "./domain/types.js";
+import { mkdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./engine/registry.js";
@@ -21,13 +25,32 @@ export async function startHub(options: {
   cwd: string;
   port: number;
   defaultEngine?: string;
+  workspaces?: Workspace[];
 }) {
-  const config = await loadConfig({
-    demo: options.demo,
-    cwd: options.cwd,
-    ...(options.configFile ? { file: options.configFile } : {}),
-    ...(options.defaultEngine ? { defaultEngine: options.defaultEngine } : {}),
-  });
+  const resolveConfig = async () => {
+    const config = await loadConfig({
+      demo: options.demo,
+      cwd: options.cwd,
+      ...(options.configFile ? { file: options.configFile } : {}),
+    });
+    if (!options.workspaces) return config;
+    if (
+      !options.workspaces.length ||
+      new Set(options.workspaces.map((w) => w.id)).size !==
+        options.workspaces.length
+    )
+      throw new Error("Workspace override must contain unique workspaces");
+    const workspaces = await Promise.all(
+      options.workspaces.map(async (w) => {
+        const location = await realpath(w.path);
+        if (!(await stat(location)).isDirectory())
+          throw new Error("Workspace override must be a directory");
+        return { id: w.id, path: location };
+      }),
+    );
+    return { ...config, workspaces, defaultWorkspace: workspaces[0]!.id };
+  };
+  const config = await resolveConfig();
   const dataDir = path.resolve(options.dataDir);
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   const artifactRoot = path.join(dataDir, "artifacts");
@@ -44,16 +67,38 @@ export async function startHub(options: {
     leaseDir: path.join(dataDir, "workers"),
   });
   let runtime: Runtime | undefined;
+  let manager: EngineManager | undefined;
   try {
+    manager = new EngineManager({
+      config,
+      persistence: store,
+      load: resolveConfig,
+      ...(options.defaultEngine
+        ? { initialDefault: options.defaultEngine }
+        : {}),
+      ...(options.configFile
+        ? { configFile: path.resolve(options.configFile) }
+        : {}),
+      discover: () =>
+        discoverEngines({
+          cwd: options.cwd,
+          home: homedir(),
+          pathEnv: process.env.PATH ?? "",
+          nodeExecutable: process.execPath,
+        }),
+    });
     const recoveredWorkers = await host.recover();
     runtime = new Runtime(store, host, {
       ...config,
+      catalog: manager,
       stateDir: path.join(dataDir, "backends"),
       recoveredWorkers,
       publishArtifact: createArtifactPublisher(artifactRoot),
     });
-    const app = new HubApplication(runtime, async (artifact) =>
-      readArtifact(artifactRoot, artifact),
+    const app = new HubApplication(
+      runtime,
+      async (artifact) => readArtifact(artifactRoot, artifact),
+      manager,
     );
     const server = await createGateway(app);
     server.addHook("onClose", async () => {
@@ -62,6 +107,7 @@ export async function startHub(options: {
     const url = await server.listen({ host: "127.0.0.1", port: options.port });
     return { server, app, url };
   } catch (error) {
+    await manager?.close();
     try {
       await runtime?.close();
     } catch {
@@ -92,7 +138,7 @@ if (
   });
   if (values.help)
     console.log(
-      "HarnessHub: node dist/src/main.js [--demo | --config engines/local.yaml] [--port 3180] [--data-dir ./data]",
+      "HarnessHub: node dist/src/main.js [--demo] [--config engines/local.yaml] [--port 3180] [--data-dir ./data]",
     );
   else {
     const port = Number(values.port);

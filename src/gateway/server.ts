@@ -14,6 +14,10 @@ import {
   permissionResponseSchema,
   errorResponseSchema,
   enginesResponseSchema,
+  engineRegistrationSchema,
+  engineResponseSchema,
+  discoveryResponseSchema,
+  registryStatusSchema,
 } from "../domain/schemas.js";
 import { isTerminal } from "../domain/types.js";
 import type {
@@ -35,9 +39,32 @@ const responses = (schema: object, code = 200) => ({
 });
 /** Creates routes from the same schemas used by request validation and OpenAPI generation. */
 export async function createGateway(app: HubApplication) {
-  const server = Fastify({ logger: false, bodyLimit: 2 * 1024 * 1024 });
+  const server = Fastify({
+    logger: false,
+    bodyLimit: 2 * 1024 * 1024,
+    ajv: { customOptions: { removeAdditional: false } },
+  });
   await server.register(swagger, {
     openapi: { info: { title: "HarnessHub", version: "0.1.0" } },
+  });
+  server.addHook("onRequest", async (request) => {
+    const host = request.headers.host ?? "";
+    if (!/^(localhost|127\.0\.0\.1|\[::1\])(?::[0-9]+)?$/.test(host))
+      throw new HubError(
+        "LOCAL_ACCESS_REQUIRED",
+        "Gateway requires a loopback Host",
+        403,
+      );
+    const origin = request.headers.origin;
+    if (
+      (origin && origin !== `http://${host}`) ||
+      request.headers["sec-fetch-site"] === "cross-site"
+    )
+      throw new HubError(
+        "LOCAL_ACCESS_REQUIRED",
+        "Cross-origin Gateway requests are not accepted",
+        403,
+      );
   });
   server.setErrorHandler<FastifyError>((error, _request, reply) => {
     if (error instanceof HubError)
@@ -89,6 +116,98 @@ export async function createGateway(app: HubApplication) {
     "/v1/engines",
     { schema: { response: responses(enginesResponseSchema) } },
     async () => ({ engines: app.engines() }),
+  );
+  server.get(
+    "/v1/engines/discover",
+    { schema: { response: responses(discoveryResponseSchema) } },
+    async () => ({ candidates: await app.discoverEngines() }),
+  );
+  server.get(
+    "/v1/engines/registry",
+    { schema: { response: responses(registryStatusSchema) } },
+    async () => app.engineRegistryStatus(),
+  );
+  server.post<{ Body: unknown }>(
+    "/v1/engines",
+    {
+      schema: {
+        body: engineRegistrationSchema,
+        response: responses(engineResponseSchema, 201),
+      },
+    },
+    async (request, reply) =>
+      reply.code(201).send(await app.registerEngine(request.body)),
+  );
+  server.put<{ Params: { id: string }; Body: { id: string } }>(
+    "/v1/engines/:id",
+    {
+      schema: {
+        params: idParams,
+        body: engineRegistrationSchema,
+        response: responses(engineResponseSchema),
+      },
+    },
+    async (request) => {
+      if (request.params.id !== request.body.id)
+        throw new HubError(
+          "ENGINE_ID_MISMATCH",
+          "Path and registration engine ids must match",
+        );
+      return app.registerEngine(request.body);
+    },
+  );
+  server.delete<{ Params: { id: string } }>(
+    "/v1/engines/:id",
+    {
+      schema: {
+        params: idParams,
+        response: responses({
+          type: "object",
+          required: ["removed"],
+          properties: { removed: { const: true } },
+        }),
+      },
+    },
+    async (request) => {
+      await app.removeEngine(request.params.id);
+      return { removed: true };
+    },
+  );
+  server.put<{ Body: { engineId: string } }>(
+    "/v1/engines/default",
+    {
+      schema: {
+        body: {
+          type: "object",
+          additionalProperties: false,
+          required: ["engineId"],
+          properties: {
+            engineId: { type: "string", minLength: 1, maxLength: 100 },
+          },
+        },
+        response: responses(registryStatusSchema),
+      },
+    },
+    async (request) => {
+      await app.setDefaultEngine(request.body.engineId);
+      return app.engineRegistryStatus();
+    },
+  );
+  server.post(
+    "/v1/engines/reload",
+    {
+      schema: {
+        response: responses({
+          type: "object",
+          required: ["engines", "defaultEngine"],
+          properties: {
+            engines: { type: "integer" },
+            defaultEngine: { type: "string" },
+          },
+        }),
+      },
+    },
+    async () => app.reloadEngines(),
   );
   server.post<{ Body: { engineId?: string; workspaceId?: string } }>(
     "/v1/sessions",

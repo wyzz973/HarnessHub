@@ -538,9 +538,12 @@ export class ProcessWorkerHost implements WorkerHost {
         if (!(
           error instanceof Error &&
           "code" in error &&
-          error.code === "ESRCH"
+          (error.code === "ESRCH" || error.code === "EPERM")
         ))
           return "failed";
+        // A group can briefly reject signalling while its last members exit on
+        // macOS. EPERM proves neither absence nor cleanup: keep the owned group
+        // quarantined and let the bounded exit check below establish ESRCH.
       }
       if (await this.waitGroupExit(worker, this.shutdownGraceMs))
         return "confirmed";
@@ -556,6 +559,8 @@ export class ProcessWorkerHost implements WorkerHost {
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ESRCH")
         return false;
+      if (error instanceof Error && "code" in error && error.code === "EPERM")
+        return true;
       throw error;
     }
   }

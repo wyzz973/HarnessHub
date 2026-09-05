@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "harnesshub-text-smoke",
+  "version": "1",
+  "tasks": [
+    {
+      "id": "exact-marker",
+      "version": "1",
+      "input": {
+        "text": "Reply with exactly HARNESSHUB_BENCHMARK_OK and no other text. Do not use tools.",
+        "timeoutMs": 90000
+      },
+      "evaluator": {
+        "id": "text-exact",
+        "version": "1",
+        "expected": "HARNESSHUB_BENCHMARK_OK"
+      }
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+import type { EngineCatalog } from "../domain/engines.js";
 import path from "node:path";
 import { HubError } from "../domain/errors.js";
 import type {
@@ -23,6 +24,7 @@ import type {
 } from "../domain/types.js";
 
 interface RuntimeOptions {
+  catalog?: EngineCatalog;
   engines: EngineProfile[];
   workspaces: Workspace[];
   defaultEngine: string;
@@ -74,14 +76,17 @@ export class Runtime {
       }
     }
     for (const session of store.listSessions()) {
-      const profile = options.engines.find(
-        (engine) => engine.id === session.engineId,
-      );
-      if (
-        session.status === "open" &&
-        profile?.driver === "acp" &&
-        !profile.capabilities.resume
-      )
+      if (session.status !== "open") continue;
+      let profile: EngineProfile;
+      try {
+        profile = this.profile(session.engineId, session.profileRevision);
+      } catch (error) {
+        if (!(error instanceof HubError) || error.code !== "ENGINE_UNAVAILABLE")
+          throw error;
+        store.setSessionStatus(session.id, "closed");
+        continue;
+      }
+      if (profile.driver === "acp" && !profile.capabilities.resume)
         store.setSessionStatus(session.id, "closed");
     }
   }
@@ -89,14 +94,19 @@ export class Runtime {
     return !this.closed && !this.failure;
   }
   listEngines(): EngineProfile[] {
-    return this.options.engines.map((e) => ({ ...e }));
+    return (this.options.catalog?.list() ?? this.options.engines).map((e) =>
+      structuredClone(e),
+    );
   }
   /** Live protocol observations, not proof of real-task or platform support. */
-  engineEvidence(id: string): JsonObject | null {
-    return this.observedEngines.get(id) ?? null;
+  engineEvidence(id: string, revision: string): JsonObject | null {
+    return this.observedEngines.get(`${id}:${revision}`) ?? null;
   }
-  private profile(id: string): EngineProfile {
-    const profile = this.options.engines.find((e) => e.id === id && e.enabled);
+  private profile(id: string, revision?: string): EngineProfile {
+    if (this.options.catalog) return this.options.catalog.resolve(id, revision);
+    const profile = this.options.engines.find(
+      (e) => e.id === id && (revision ? e.revision === revision : e.enabled),
+    );
     if (!profile)
       throw new HubError(
         "ENGINE_UNAVAILABLE",
@@ -110,7 +120,11 @@ export class Runtime {
     workspaceId?: string;
   }): SessionRecord {
     this.assertReady();
-    const profile = this.profile(input.engineId ?? this.options.defaultEngine);
+    const profile = this.profile(
+      input.engineId ??
+        this.options.catalog?.defaultId() ??
+        this.options.defaultEngine,
+    );
     const workspace = this.options.workspaces.find(
       (w) => w.id === (input.workspaceId ?? this.options.defaultWorkspace),
     );
@@ -131,13 +145,7 @@ export class Runtime {
     const session = this.store.getSession(sessionId);
     if (session.status !== "open")
       throw new HubError("SESSION_CLOSED", "Session is closed", 409);
-    const profile = this.profile(session.engineId);
-    if (session.profileRevision !== profile.revision)
-      throw new HubError(
-        "PROFILE_CHANGED",
-        "Create a new session for the changed engine profile",
-        409,
-      );
+    const profile = this.profile(session.engineId, session.profileRevision);
     if (input.fixture && profile.driver !== "fake")
       throw new HubError(
         "UNSUPPORTED_CAPABILITY",
@@ -211,7 +219,7 @@ export class Runtime {
           this.deadlines.delete(run.id);
           continue;
         }
-        const profile = this.profile(session.engineId);
+        const profile = this.profile(session.engineId, session.profileRevision);
         const count = [...this.active.values()].filter(
           (v) => v.profile.id === profile.id,
         ).length;
@@ -252,6 +260,11 @@ export class Runtime {
       if (active.stop) await active.handle.cancel();
       const result = await active.handle.result;
       backendFailed = result.status === "failed";
+      // CLI turns are stateless: reclaim the full worker group before another turn.
+      // Any failed backend also loses reuse eligibility, even when it returns a result.
+      let cleanup: CleanupStatus = "confirmed";
+      if (!active.stop && (active.profile.driver === "cli" || backendFailed))
+        cleanup = await this.host.closeSession(session.id);
       if (!active.stop && Date.now() >= run.deadlineAt)
         await this.stop(run.id, "timed_out");
       if (active.stop) {
@@ -261,7 +274,7 @@ export class Runtime {
         this.store.finishRun(run.id, {
           status: result.status,
           stopReason: result.stopReason ?? result.status,
-          cleanupStatus: "confirmed",
+          cleanupStatus: cleanup,
           ...(result.output !== undefined ? { output: result.output } : {}),
           ...(result.error ? { error: result.error } : {}),
         });
@@ -328,12 +341,15 @@ export class Runtime {
           sourceSeq: message.seq,
         });
         if (committed && message.event.type === "engine.capabilities")
-          this.observedEngines.set(active.profile.id, {
-            ...message.event.data,
-            sourceRunId: run.id,
-            profileRevision: active.profile.revision,
-            observedAt: committed.observedAt,
-          });
+          this.observedEngines.set(
+            `${active.profile.id}:${active.profile.revision}`,
+            {
+              ...message.event.data,
+              sourceRunId: run.id,
+              profileRevision: active.profile.revision,
+              observedAt: committed.observedAt,
+            },
+          );
         break;
       }
       case "permission":

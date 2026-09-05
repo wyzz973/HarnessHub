@@ -3,6 +3,7 @@ import type { PermissionId, PermissionOption } from "../domain/types.js";
 import type { Driver, DriverChannel } from "../drivers/driver.js";
 import { FakeDriver } from "../drivers/fake/driver.js";
 import { AcpDriver } from "../drivers/acp/driver.js";
+import { CliDriver } from "../drivers/cli/driver.js";
 import {
   assertMessageSize,
   matchesIdentity,
@@ -186,6 +187,9 @@ process.on("message", (raw: unknown) => {
             break;
           case "acp":
             driver = new AcpDriver();
+            break;
+          case "cli":
+            driver = new CliDriver();
             break;
         }
       }

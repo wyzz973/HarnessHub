@@ -12,6 +12,10 @@
 | [决策记录](decisions/README.md) | 重要决定、替代方案和代价 |
 | [验收记录模板](templates/verification.md) | 记录实际命令、产物、版本与未验证项 |
 | [运行/API 说明](runtime-api.md) | 已实现服务的启动、接口、配置与能力限制 |
+| [动态引擎管理](engine-management.md) | 运行中注册/替换、热加载、默认选择与版本归档 |
+| [本机发现](engine-discovery.md) | PATH、已有安装、开放 manifest 与发现边界 |
+| [CLI Driver](cli-driver.md) | 非 ACP 命令、输入输出、取消和清理 |
+| [Benchmark](benchmark.md) | 独立 attempt、确定评分和离线复查 |
 | [macOS引擎接入](macos-engines.md) | 现有CLI和认证引用、已通过的真实文本任务 |
 
 当前有效决策：
@@ -25,3 +29,5 @@
 真实引擎：[macOS已安装引擎连接验收](verification/2026-09-05-macos-engines.md)。
 
 新增教程、API 参考、子系统说明和运行手册时，从这里链接实际存在的文档。计划中的文件使用代码文本描述，不创建指向不存在文件的链接。
+
+动态引擎与评测：[本轮 Mac 验收](verification/2026-09-05-dynamic-engines.md)。

@@ -1,8 +1,10 @@
 # HarnessHub
 
-HarnessHub 为多个 Agent Harness 提供统一执行入口。Gateway、SQLite、独立Worker、取消/期限、权限、SSE和导出已实现；macOS上Codex、Claude Code、OpenCode、DSH已通过真实文本任务。OpenClaw协议可连接但模型OAuth失效；复杂工具任务、Pi、Windows和Benchmark仍待验收。
+HarnessHub 为多个 Agent Harness 提供统一执行入口。Gateway、SQLite、独立Worker、取消/期限、权限、SSE和导出已实现；macOS上Codex、Claude Code、OpenCode、DSH已通过真实文本任务。已支持动态发现/注册、配置热加载、通用 CLI Driver 和文本 Benchmark；DSH 在动态注册后完成真实文件任务。OpenClaw 模型 OAuth、Pi、上下文恢复与 Windows 仍待处理。
 
 架构已确定为 Gateway + 独立 Engine Worker、SQLite 公共状态与事件、JSONL 轨迹导出；接入顺序为 OpenCode → Pi → DSH。具体职责和实施阶段见 [DESIGN.md](DESIGN.md)。
+
+当前 Mac 动态演示服务为 `http://127.0.0.1:3182`，操作见 [动态引擎管理](docs/engine-management.md)。新引擎可以通过 API 或本地 manifest 接入，无需改源码或重启；已有 Session 保留原配置版本。
 
 ## 开发入口
 
@@ -25,6 +27,8 @@ pnpm start --demo
 服务默认监听 `127.0.0.1:3180`。`--demo` 显式启用假引擎，不调用模型；配置真实引擎时使用 `pnpm start --config engines/local.yaml`。配置格式见 [示例](engines/example.yaml)和 [运行/API 说明](docs/runtime-api.md)。
 
 本机开发过程中下载的 Node 位于 `.tools/node/bin`，可通过 `PATH="$PWD/.tools/node/bin:$PATH" pnpm start --demo` 使用；该目录被忽略，不是发行依赖。
+
+评测入口：`pnpm benchmark --demo --dataset examples/benchmark-demo.json --engines fake --data-dir data/benchmark-demo`；真实引擎、离线重新评分与结果说明见 [Benchmark](docs/benchmark.md)。
 
 常用检查的实际定义在 [package.json](package.json)：`pnpm build` 同时做严格类型检查和编译，`pnpm test:integration`/`test:smoke` 使用编译产物。`pnpm check` 执行完整本地检查；日常按改动运行必要项，不重复已通过且输入未变化的检查。
 

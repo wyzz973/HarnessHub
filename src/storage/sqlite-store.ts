@@ -133,6 +133,7 @@ function configSnapshot(engine: EngineProfile): JsonObject {
     ...(engine.model !== undefined ? { model: engine.model } : {}),
     credentialEnv: [...(engine.credentialEnv ?? [])],
     maxConcurrency: engine.maxConcurrency,
+    ...(engine.cli ? { cli: { ...engine.cli } } : {}),
     capabilities: { ...engine.capabilities },
     commandHash:
       engine.command === undefined
@@ -259,6 +260,29 @@ export class SqliteStore implements Store {
         .run(token);
     });
     if (this.ownerToken === token) this.ownerToken = undefined;
+  }
+
+  /** Versioned operational catalog; the owner must acquire this database first. */
+  readEngineCatalog(): unknown {
+    if (!this.ownerToken)
+      throw new Error("Engine catalog requires Gateway ownership");
+    const row = this.db
+      .prepare(
+        "SELECT value FROM runtime_metadata WHERE key = 'engine_catalog'",
+      )
+      .get();
+    return row ? (JSON.parse(String(row.value)) as unknown) : undefined;
+  }
+
+  /** Commit a complete catalog revision before making it visible to new sessions. */
+  writeEngineCatalog(value: unknown): void {
+    if (!this.ownerToken)
+      throw new Error("Engine catalog requires Gateway ownership");
+    this.db
+      .prepare(
+        "INSERT INTO runtime_metadata (key, value) VALUES ('engine_catalog', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      )
+      .run(JSON.stringify(value));
   }
 
   createSession(engine: EngineProfile, workspace: Workspace): SessionRecord {
