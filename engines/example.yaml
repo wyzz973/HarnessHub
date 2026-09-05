@@ -1,0 +1,18 @@
+# Copy to a private local configuration and use already installed executable paths.
+defaultEngine: opencode
+defaultWorkspace: default
+maxConcurrency: 2
+defaultTimeoutMs: 600000
+engines:
+  - id: opencode
+    driver: acp
+    command: [opencode, acp]
+    credentialEnv: [OPENAI_API_KEY]
+    maxConcurrency: 1
+  - id: pi
+    driver: acp
+    command: [pi-acp]
+    maxConcurrency: 1
+workspaces:
+  - id: default
+    path: ..

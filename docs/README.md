@@ -11,11 +11,14 @@
 | [文档规范](documentation.md) | 文档归属、JSDoc、示例、链接和状态 |
 | [决策记录](decisions/README.md) | 重要决定、替代方案和代价 |
 | [验收记录模板](templates/verification.md) | 记录实际命令、产物、版本与未验证项 |
+| [运行/API 说明](runtime-api.md) | 已实现服务的启动、接口、配置与能力限制 |
 
 当前有效决策：
 
 - [开发与文档治理](decisions/0001-development-governance.md)：参考 DSH 后采用的规则及裁剪理由。
 
 验收记录：[开发规范与文档检查](verification/2026-09-05-development-rules.md)。记录只证明所列版本和范围，不代表产品整体完成。
+
+执行服务：[首条执行链路验收](verification/2026-09-05-runtime-mvp.md)。
 
 新增教程、API 参考、子系统说明和运行手册时，从这里链接实际存在的文档。计划中的文件使用代码文本描述，不创建指向不存在文件的链接。

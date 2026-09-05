@@ -1,6 +1,6 @@
 # HarnessHub
 
-HarnessHub 为多个 Agent Harness 提供统一执行入口，管理 Session、Run、事件与评测。当前处于设计和开发规范阶段，尚无可运行的 Gateway 或真实引擎接入。
+HarnessHub 为多个 Agent Harness 提供统一执行入口。当前已实现可运行的 Gateway、SQLite、独立 Worker、取消/期限、权限往返、SSE、产物和 JSONL 导出；假引擎端到端及本地 ACP 对端已验证。真实 OpenCode/Pi/DSH 任务、Windows 和 Benchmark 尚未完成验收。
 
 架构已确定为 Gateway + 独立 Engine Worker、SQLite 公共状态与事件、JSONL 轨迹导出；接入顺序为 OpenCode → Pi → DSH。具体职责和实施阶段见 [DESIGN.md](DESIGN.md)。
 
@@ -13,7 +13,21 @@ HarnessHub 为多个 Agent Harness 提供统一执行入口，管理 Session、R
 
 ## 当前可运行检查
 
-下列检查使用 Node.js 标准库，无需安装项目依赖：
+项目固定 Node.js 24.20.0、pnpm 10.12.3。先按锁文件安装并构建：
+
+```sh
+pnpm install --frozen-lockfile
+pnpm build
+pnpm start --demo
+```
+
+服务默认监听 `127.0.0.1:3180`。`--demo` 显式启用假引擎，不调用模型；配置真实引擎时使用 `pnpm start --config engines/local.yaml`。配置格式见 [示例](engines/example.yaml)和 [运行/API 说明](docs/runtime-api.md)。
+
+本机开发过程中下载的 Node 位于 `.tools/node/bin`，可通过 `PATH="$PWD/.tools/node/bin:$PATH" pnpm start --demo` 使用；该目录被忽略，不是发行依赖。
+
+常用检查的实际定义在 [package.json](package.json)：`pnpm build` 同时做严格类型检查和编译，`pnpm test:integration`/`test:smoke` 使用编译产物。`pnpm check` 执行完整本地检查；日常按改动运行必要项，不重复已通过且输入未变化的检查。
+
+独立的文档检查无需安装项目依赖：
 
 ```sh
 node scripts/check-docs.mjs
@@ -22,4 +36,4 @@ node --test scripts/check-docs.test.mjs
 
 检查范围见 [文档检查](docs/documentation.md#自动检查与人工审查)。它们不代表业务代码、引擎或 Windows 已验证。
 
-当前尚无 `package.json`、Git 仓库或 CI 配置。首次实现业务骨架时建立固定版本的 Node 24/pnpm 工具链和 [计划中的质量检查](docs/testing.md#检查入口与接入顺序)；不得把未存在的 `pnpm` 命令写成已通过。
+Git、锁文件和 [CI 配置](.github/workflows/ci.yml)已建立；远端 CI 尚未运行。阶段进度及未完成验收见 [TODO](TODO.md)，本次运行证据见 [执行服务验收](docs/verification/2026-09-05-runtime-mvp.md)。

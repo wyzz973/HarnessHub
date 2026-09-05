@@ -53,7 +53,7 @@ Windows 用原生环境验证中文/空格路径、env 大小写、cmd/PowerShel
 
 当前实际可运行入口在 [README](../README.md#当前可运行检查)。文档检查是局部检查，不等于完整构建或质量检查。
 
-下表按所属模块与实施阶段逐步实现并接入 CI。首个业务骨架落实已建立模块对应的检查；真实引擎检查随引擎接入，Windows 原生验收在 DESIGN 阶段 B 完成前必需取得证据。目前这些目标未接入，不应直接作为可运行命令引用：
+下表按所属模块与实施阶段逐步实现。当前类型、lint/格式、边界、单元、DB/IPC/HTTP 集成、构建入口 smoke 和文档检查已在 [package.json](../package.json)接入，并有 [CI 配置](../.github/workflows/ci.yml)；远端 CI 尚未运行。真实引擎 `test:engine`、Windows `test:windows` 尚未接入，不应作为已可运行命令引用；Windows 原生验收在 DESIGN 阶段 B 完成前必需取得证据。
 
 | 目标检查名 | 职责与接入点 |
 |---|---|
@@ -66,7 +66,7 @@ Windows 用原生环境验证中文/空格路径、env 大小写、cmd/PowerShel
 | `test:engine` | 首个真实引擎接入时运行；缺凭证明确未验证 |
 | `test:windows` | 首个 ProcessHost 路径建立时接入 Windows 原生执行；发布前必需 |
 
-实际 script 名称、参数与依赖顺序由未来的 `package.json` 和 CI 配置拥有，本页只说明职责。启动脚本存在但没有调用真实检查，或 CI 总判定没有依赖必需任务，均视为未接入。
+实际 script 名称、参数与依赖顺序由 [package.json](../package.json)和 [CI 配置](../.github/workflows/ci.yml)拥有，本页只说明职责。启动脚本存在但没有调用真实检查，或 CI 总判定没有依赖必需任务，均视为未接入。
 
 本地提交前做改动范围的格式、类型和行为检查；后续 hook 只运行快速检查。CI 负责完整类型、边界、测试、构建、文档和平台矩阵；必需任务失败、取消、异常跳过均不能汇总为成功。观察性任务可以不阻断，但必须明确标明覆盖范围。
 

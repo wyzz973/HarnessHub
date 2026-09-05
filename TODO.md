@@ -1,6 +1,6 @@
 # HarnessHub 开发任务
 
-更新：2026-09-05。任务状态：开发计划已整理，下面 23 项业务开发及交付任务均未开始。
+更新：2026-09-05。任务状态：阶段 A（HH-001～HH-012）的文本执行服务已完成 macOS 验收，HH-013/HH-015 的本地 ACP 后端已验证；真实引擎、Windows 和 Benchmark 按外部条件继续推进。
 
 本文件拥有任务依赖、优先级和进度；架构契约由 [DESIGN.md](DESIGN.md)拥有，开发与验收按 [AGENTS.md](AGENTS.md)及 [测试要求](docs/testing.md)执行。任务勾选不改变架构，也不代替证据。
 
@@ -59,7 +59,9 @@ flowchart TD
 
 ### HH-001 工程与工具链基线
 
-- [ ] 待开始；P0；前置：无；负责范围：根配置、构建、开发脚本与 CI 基础。
+- [x] 已验证；P0；前置：无；负责范围：根配置、构建、开发脚本与 CI 基础。
+
+进展：Node24、锁文件离线干净安装/编译、Git基线与CI配置已建立；远端CI未运行。 证据见 [本次执行记录](docs/verification/2026-09-05-runtime-mvp.md)。
 
 交付：初始化可恢复的 Git 基线；固定并核实 Node 24 patch、pnpm 和锁文件；建立 strict ESM、build、typecheck、lint/format 及已有文档检查入口。建立最小 CI 配置与可本地执行的同等检查；远端任务实际运行另附证据。
 
@@ -67,7 +69,9 @@ flowchart TD
 
 ### HH-002 首条链路契约与模块约束
 
-- [ ] 待开始；P0；前置：HH-001；负责范围：`src/domain/`、边界 schema、公开接口说明、导入检查。
+- [x] 契约基线已验证；P0；前置：HH-001；负责范围：`src/domain/`、边界 schema、公开接口说明、导入检查。
+
+进展：领域类型、IPC/HTTP输入与响应schema、OpenAPI和AST边界均已落地；未支持的输入能力明确拒绝。 证据见 [本次执行记录](docs/verification/2026-09-05-runtime-mvp.md)。
 
 交付：定义品牌 ID、Session/Run/结果/事件/权限/能力类型、Store 与 DriverRun/ProcessHost 接口、IPC 版本和 generation、基础 HTTP 请求响应与错误码。建立与边界 schema 共用定义的 OpenAPI 生成方式，公开清单只列实际已实现端点。明确状态转移、提交点、事件序号、取消和 deadline 的仲裁规则；定义本地 EngineProfile/Workspace 最小配置。
 
@@ -75,7 +79,9 @@ flowchart TD
 
 ### HH-003 SQLite Store 与持久接收
 
-- [ ] 待开始；P0；前置：HH-002；负责范围：`src/storage/`、初始迁移与 Store 集成测试。
+- [x] 已验证；P0；前置：HH-002；负责范围：`src/storage/`、初始迁移与 Store 集成测试。
+
+进展：7项真SQLite测试通过；含事务故障回滚、跨连接终态竞争与重开；1001次事务测量已记录。 证据见 [本次执行记录](docs/verification/2026-09-05-runtime-mvp.md)。
 
 交付：初始 schema、Session/Run 创建、幂等接收、事件追加与查询、终态事务和必要的权限/产物登记接口。公共写入仅由 Gateway Store 拥有，串行写入、批量和积压均有明确上限与背压行为。
 
@@ -83,7 +89,9 @@ flowchart TD
 
 ### HH-004 Worker、IPC 与可控假引擎
 
-- [ ] 待开始；P0；前置：HH-002；负责范围：`src/process/`、`src/worker/`、测试专用 Driver 与 fixtures。
+- [x] macOS已验证；P0；前置：HH-002；负责范围：`src/process/`、`src/worker/`、测试专用 Driver 与 fixtures。
+
+进展：真实Worker/IPC、ACK背压、私有环境、权限与ACP本地对端通过；Windows原生能力由HH-014负责。 证据见 [本次执行记录](docs/verification/2026-09-05-runtime-mvp.md)。
 
 交付：正式 Worker 编译入口、启动握手、IPC 校验、进程身份、退出与清理接口；假 Driver 可用 barrier 触发输出、完成、错误、权限、取消和异常退出。使用 HH-002 的最小配置进行显式测试组合，假引擎不成为发布默认引擎。
 
@@ -91,7 +99,9 @@ flowchart TD
 
 ### HH-005 首条可运行纵向链路
 
-- [ ] 待开始；P0；前置：HH-003、HH-004；负责范围：`src/application/`、`src/runtime/` 基础流程、`src/gateway/` 和启动组合根。
+- [x] 已验证；P0；前置：HH-003、HH-004；负责范围：`src/application/`、`src/runtime/` 基础流程、`src/gateway/` 和启动组合根。
+
+进展：正式CLI与HTTP链路、SSE、幂等、产物、重启查询可用，已保留运行中的演示服务。 证据见 [本次执行记录](docs/verification/2026-09-05-runtime-mvp.md)。
 
 交付：组装最小 Runtime 和 Gateway，实现 live/ready、创建与查询 Session、持久接收 Run、执行成功、查询 Run 结果和基本 SSE；仅使用明确登记的测试 Profile。启动与 HTTP 实例复用正式执行服务，已实现路由同步进入 OpenAPI。
 
@@ -101,7 +111,9 @@ flowchart TD
 
 ### HH-006 Profile、Workspace、会话队列与并发
 
-- [ ] 待开始；P0；前置：HH-005；负责范围：`src/engine/`、Runtime 调度、Session 应用服务。
+- [x] 已验证；P0；前置：HH-005；负责范围：`src/engine/`、Runtime 调度、Session 应用服务。
+
+进展：不可变Profile、Session/Run安全配置快照、声明/观测/验证能力分层、FIFO、并发、队列及常驻Worker容量已实现并通过相关用例。 证据见 [本次执行记录](docs/verification/2026-09-05-runtime-mvp.md)。
 
 交付：YAML/JSON 配置解析与不可变 spec、Engine/Workspace 注册、配置指纹和能力期望、`GET /v1/engines` 查询、`AGENT_ENGINE` 新会话默认选择、Session FIFO、全局及每引擎有限并发。按 Profile 构造环境快照和独立后端目录，接口同步更新 OpenAPI。
 
@@ -109,7 +121,9 @@ flowchart TD
 
 ### HH-007 取消、deadline 与终态仲裁
 
-- [ ] 待开始；P0；前置：HH-006；负责范围：Runtime 生命周期、ProcessHost 终止控制、取消 API。
+- [x] 已验证；P0；前置：HH-006；负责范围：Runtime 生命周期、ProcessHost 终止控制、取消 API。
+
+进展：已覆盖排队/启动/活动取消、期限、同轮完成竞争与迟到结果；清理失败会拒绝握手/结果并隔离资源，不无限等待。 证据见 [本次执行记录](docs/verification/2026-09-05-runtime-mvp.md)。
 
 交付：接收时起算的总 deadline、精确 Run/generation 取消、串行终态仲裁、协议取消到升级终止的控制、cleanupStatus 与待清理资源隔离。
 
@@ -117,7 +131,9 @@ flowchart TD
 
 ### HH-008 权限往返与持久决定
 
-- [ ] 待开始；P0；前置：HH-007；负责范围：Runtime 权限管理、Worker 响应桥接、权限 API。
+- [x] 已验证；P0；前置：HH-007；负责范围：Runtime 权限管理、Worker 响应桥接、权限 API。
+
+进展：实际optionId、持久决定、Worker确认、重复决定及过期拒绝已验证；应用确认不冒充外部工具执行成功。 证据见 [本次执行记录](docs/verification/2026-09-05-runtime-mvp.md)。
 
 交付：权限请求归属和有效期、实际 optionId 校验、决定事务、下发与后端应用确认、等待期间取消和超时。
 
@@ -125,7 +141,9 @@ flowchart TD
 
 ### HH-009 SSE 重连、游标与慢消费者
 
-- [ ] 待开始；P0；前置：HH-005；负责范围：Gateway SSE、事件查询适配及独立集成测试。
+- [x] 已验证；P0；前置：HH-005；负责范围：Gateway SSE、事件查询适配及独立集成测试。
+
+进展：SSE游标、断流继续、无效游标与慢消费场景通过；暂停SSE不阻止另一Run期限收敛，公共查询和IPC均有界。 证据见 [本次执行记录](docs/verification/2026-09-05-runtime-mvp.md)。
 
 交付：Last-Event-ID/afterSeq、稳定事件 ID、有界批量查询、历史到实时流的衔接及慢订阅者追赶。需要 Store 查询变更时由 HH-003 所有者合入。
 
@@ -133,7 +151,9 @@ flowchart TD
 
 ### HH-010 崩溃恢复、Session close 与 Worker 回收
 
-- [ ] 待开始；P0；前置：HH-007、HH-008；负责范围：Runtime 恢复、Engine Worker 管理、关闭会话 API。
+- [x] macOS已验证；P0；前置：HH-007、HH-008；负责范围：Runtime 恢复、Engine Worker 管理、关闭会话 API。
+
+进展：SQLite Gateway独占owner、死PID原子接管、旧Worker token/命令/PGID核实恢复、未知身份隔离及崩溃后interrupted已验证；真实引擎上下文恢复由HH-017/HH-020验收。 证据见 [本次执行记录](docs/verification/2026-09-05-runtime-mvp.md)。
 
 交付：Gateway 重启核对、Worker 异常退出归因、DB 失败时停止接收和清理、Session close 收敛排队/活动 Run、按恢复能力决定空闲回收。
 
@@ -141,7 +161,9 @@ flowchart TD
 
 ### HH-011 产物登记、读取与 JSONL 导出
 
-- [ ] 待开始；P0；前置：HH-005；负责范围：`src/artifacts/`、`src/rollout/`、产物读取 API 和导出 CLI。
+- [x] 已验证文本产物与独立导出；P0；前置：HH-005；负责范围：`src/artifacts/`、`src/rollout/`、产物读取 API 和导出 CLI。
+
+进展：产物登记/hash读取、JSONL重建和compiled导出CLI通过；CLI拒绝覆盖、失败清理半成品；二进制上传与通用文件采集不在当前文本版范围。 证据见 [本次执行记录](docs/verification/2026-09-05-runtime-mvp.md)。
 
 交付：写入完成后校验与登记的文件产物、hash/大小/mediaType、受控读取、从已提交事件生成 JSONL、临时孤儿文件清理。迁移或 Store 接口调整由存储所有者串行合入。
 
@@ -149,7 +171,9 @@ flowchart TD
 
 ### HH-012 阶段 A 组合验收
 
-- [ ] 待开始；P0；前置：HH-006、HH-007、HH-008、HH-009、HH-010、HH-011；负责范围：正式入口验收、CI 必需检查和运行文档。
+- [x] 阶段A文本版已验证；P0；前置：HH-006、HH-007、HH-008、HH-009、HH-010、HH-011；负责范围：正式入口验收、CI 必需检查和运行文档。
+
+进展：正式入口、控制竞态、DB故障、Worker归属恢复、慢SSE、权限过期、响应契约与独立导出均按新增范围通过；未重复运行未变的整套检查。 证据见 [本次执行记录](docs/verification/2026-09-05-runtime-mvp.md)。
 
 交付：假引擎正式入口验收用例、复现说明及 [验收记录](docs/templates/verification.md)；把本阶段已有类型、边界、单元、集成、构建、文档检查接入统一执行方式与 CI。
 
@@ -159,7 +183,9 @@ flowchart TD
 
 ### HH-013 acpx 公开接口与执行边界探针
 
-- [ ] 待开始；P0；前置：HH-001、HH-002；负责范围：独立 ACP 探针、可复用 fixtures 和接入决策记录。
+- [x] 本地ACP后端已验证；P0；前置：HH-001、HH-002；负责范围：独立 ACP 探针、可复用 fixtures 和接入决策记录。
+
+进展：真实acpx/runtime连接本地SDK对端、双轮复用、精确权限映射、运行时能力/模型信息与私有home日志引用已验证；真实引擎可用性另由HH-016验收。 证据见 [本次执行记录](docs/verification/2026-09-05-runtime-mvp.md)。
 
 交付：固定候选 acpx/SDK 版本，在编译后程序里连接本地可控 ACP 对端，验证 events/result/cancel、权限回调、模型/恢复能力读取以及 stateDir、默认 home 日志和环境传递的实际落点。涉及依赖变更交给工程基线负责人。
 
@@ -167,7 +193,9 @@ flowchart TD
 
 ### HH-014 Windows 进程监督可行性
 
-- [ ] 待开始；P0；前置：HH-004；外部条件：Windows 原生执行环境；负责范围：平台探针与 ProcessHost 平台适配。
+- [ ] 等待Windows自动化访问条件；P0；前置：HH-004；外部条件：Windows 原生执行环境；负责范围：平台探针与 ProcessHost 平台适配。
+
+进展：已发现运行中的Windows11 ARM VMware虚拟机；vmrun访问受加密密码限制，未进行Guest原生验收。 证据见 [本次执行记录](docs/verification/2026-09-05-runtime-mvp.md)。
 
 交付：验证 Worker → 模拟 Agent → MCP/工具子孙进程的启动、stdio、身份和终止；据证据决定 Job Object/受控 launcher 的实现方式。需要新 native helper 时记录实际取舍，不能绕过公共进程接口。
 
@@ -177,7 +205,9 @@ flowchart TD
 
 ### HH-015 共享 ACPDriver
 
-- [ ] 待开始；P0；前置：HH-012、HH-013；负责范围：`src/drivers/acp/`、Worker Driver 组合与契约测试。
+- [x] 本地协议契约已验证；P0；前置：HH-012、HH-013；负责范围：`src/drivers/acp/`、Worker Driver 组合与契约测试。
+
+进展：共享ACPDriver已复用公开runtime入口；事件、结果、权限与会话双轮验证通过，能力不足明确保守处理；真实OpenCode任务仍待HH-016。 证据见 [本次执行记录](docs/verification/2026-09-05-runtime-mvp.md)。
 
 交付：包装 acpx/runtime，完成 Session handle、事件规范化、结果证据、精确取消、权限响应、能力协商与配置应用；复用探针中有效的 ACP fixtures。
 
@@ -185,7 +215,9 @@ flowchart TD
 
 ### HH-016 OpenCode 真任务纵向链路
 
-- [ ] 待开始；P0；前置：HH-015；外部条件：固定版本引擎和明确模型/凭证/预算；负责范围：OpenCode Profile、真实引擎用例与运行说明。
+- [ ] 待模型运行配置及引擎兼容性确认；P0；前置：HH-015；外部条件：固定版本引擎和明确模型/凭证/预算；负责范围：OpenCode Profile、真实引擎用例与运行说明。
+
+进展：宿主OpenCode1.1.21单次initialize探针17秒未响应，未发送prompt；未确认不兼容，也未升级或重复尝试。 证据见 [本次执行记录](docs/verification/2026-09-05-runtime-mvp.md)。
 
 交付：准备固定版本的 OpenCode，经正式 Gateway/Worker 执行可用文件内容或确定评判器验证的任务，产生产物、事件和 Rollout。
 
@@ -264,7 +296,7 @@ HH-005 后，HH-006 → HH-007 → HH-008 → HH-010 依次修改 Runtime，默�
 | 条件 | 需要时间 | 当前处理方式 |
 |---|---|---|
 | Node 24 与包管理/CI 基础 | HH-001 | 实际核实版本；不能因路径名含 node@24 就认为版本正确 |
-| Windows 原生执行环境及 runner | HH-014 开始前 | 尚未在计划中登记具体环境；准备与阶段 A 并行，阶段 B 验收必需 |
+| Windows 原生执行环境及 runner | HH-014 开始前 | Windows 11 ARM 虚拟机已运行；vmrun 加密认证仍待配置，阶段 B 验收必需 |
 | 模型、凭证与预算 | HH-016 及后续真引擎用例前 | 在运行前核实明确配置；本计划不代表已取得凭证或执行预算 |
 | 固定引擎与 Adapter 安装产物 | HH-013/HH-016/HH-019/HH-020 | 准备阶段解析和锁定，运行时不下载 |
 | 任务与评判器 fixture | HH-021/HH-022 | 优先可通过文件/确定逻辑验证的任务，保持版本化 |
@@ -274,4 +306,4 @@ HH-005 后，HH-006 → HH-007 → HH-008 → HH-010 依次修改 Runtime，默�
 
 ## 下一批工作
 
-首先执行 HH-001，再完成 HH-002。契约确定后并行 HH-003 / HH-004，必要时同时做 HH-013，随后立即集成 HH-005。第一批目标是可从正式入口演示成功执行；再推进 HH-006～HH-012 达到阶段 A 的完整验收。
+阶段 A 的文本执行服务已交付。下一批先完成 HH-016 的真实引擎运行配置与兼容性确认，并补齐 VMware 自动化访问以推进 HH-014/HH-018。只对新增或受影响范围验证；评测工作可从 HH-021 的无凭证部分并行开始。
