@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type {
   Brand,
   JsonObject,
+  JsonValue,
   RunId,
   RunInput,
   SessionId,
@@ -19,12 +20,33 @@ export interface TextEvaluator {
   expected: string;
   artifactName?: string;
 }
+export interface JsonEvaluator {
+  id: "json-equal";
+  version: "1";
+  expected: JsonValue;
+  artifactName?: string;
+}
+export interface FileHashEvaluator {
+  id: "file-sha256";
+  version: "1";
+  expected: string;
+  artifactName: string;
+}
+export type BenchmarkEvaluator =
+  TextEvaluator | JsonEvaluator | FileHashEvaluator;
+/** UTF-8 fixture contents are versioned in the dataset, never copied from arbitrary host paths. */
+export interface BenchmarkFixtureFile {
+  path: string;
+  text: string;
+}
 export interface BenchmarkTask {
   id: string;
   version: string;
   input: RunInput;
-  evaluator: TextEvaluator;
+  evaluator: BenchmarkEvaluator;
+  fixtureFiles?: BenchmarkFixtureFile[];
 }
+export type BenchmarkPermissionPolicy = "deny" | "allow-once";
 export interface BenchmarkDataset {
   schemaVersion: 1;
   id: string;
@@ -56,6 +78,16 @@ export interface BenchmarkAttempt {
   finishedAt?: number;
   errorCode?: string;
   evidence?: BenchmarkEvidence;
+  initialFiles?: { path: string; size: number; sha256: string }[];
+  permissionPolicy?: BenchmarkPermissionPolicy;
+  observations?: {
+    model: string | null;
+    usage: JsonObject | null;
+    usageScope?: string | null;
+    installation?: JsonObject | null;
+    permissions?: { id: string; decision: string | null; status: string }[];
+    sourceEventSeqs: number[];
+  };
 }
 /** A bounded copy of selected output, bound to both attempt and Run for offline regrading. */
 export interface BenchmarkEvidence {
@@ -63,14 +95,24 @@ export interface BenchmarkEvidence {
   runId: RunId;
   source: "output" | "artifact";
   artifactId?: string;
-  text: string;
+  text?: string;
+  /** Only binary evaluator evidence uses base64; its raw byte hash is verified on every regrade. */
+  bytesBase64?: string;
+  /** Optional for historical v1 text records; new captures always include raw byte size. */
+  size?: number;
+  requiredArtifacts?: {
+    id: string;
+    name: string;
+    size: number;
+    sha256: string;
+  }[];
   sha256: string;
 }
 export interface BenchmarkEvaluation {
   id: EvaluationId;
   attemptId: AttemptId;
   runId?: RunId;
-  evaluator: TextEvaluator;
+  evaluator: BenchmarkEvaluator;
   status:
     | "passed"
     | "failed"
@@ -106,22 +148,63 @@ const object = (
   properties,
   required,
 });
-const evaluator = object(
+const evaluator = {
+  oneOf: [
+    object(
+      {
+        id: { const: "text-exact" },
+        version: { const: "1" },
+        expected: { type: "string", maxLength: 1_048_576 },
+        artifactName: string,
+      },
+      ["id", "version", "expected"],
+    ),
+    object(
+      {
+        id: { const: "json-equal" },
+        version: { const: "1" },
+        expected: { $ref: "benchmark-json-value" },
+        artifactName: string,
+      },
+      ["id", "version", "expected"],
+    ),
+    object({
+      id: { const: "file-sha256" },
+      version: { const: "1" },
+      expected: hash,
+      artifactName: string,
+    }),
+  ],
+};
+const task = object(
   {
-    id: { const: "text-exact" },
-    version: { const: "1" },
-    expected: { type: "string", maxLength: 1_048_576 },
-    artifactName: string,
+    id: string,
+    version: string,
+    input: { ...runInputSchema, required: ["text", "timeoutMs"] },
+    evaluator,
+    fixtureFiles: {
+      type: "array",
+      maxItems: 32,
+      items: object({
+        path: { type: "string", minLength: 1, maxLength: 500 },
+        text: { type: "string", maxLength: 1_048_576 },
+      }),
+    },
   },
-  ["id", "version", "expected"],
+  ["id", "version", "input", "evaluator"],
 );
-const task = object({
-  id: string,
-  version: string,
-  input: { ...runInputSchema, required: ["text", "timeoutMs"] },
-  evaluator,
-});
 const ajv = new Ajv({ allErrors: true, strict: true });
+ajv.addSchema({
+  $id: "benchmark-json-value",
+  anyOf: [
+    { type: "null" },
+    { type: "string" },
+    { type: "number" },
+    { type: "boolean" },
+    { type: "array", items: { $ref: "benchmark-json-value" } },
+    { type: "object", additionalProperties: { $ref: "benchmark-json-value" } },
+  ],
+});
 /** Validate untrusted datasets before creating directories or submitting Runs. */
 export const isBenchmarkDataset = ajv.compile<BenchmarkDataset>(
   object({
@@ -158,6 +241,33 @@ export const isBenchmarkAttempt = ajv.compile<BenchmarkAttempt>(
       },
       finishedAt: timestamp,
       errorCode: string,
+      initialFiles: {
+        type: "array",
+        maxItems: 32,
+        items: object({ path: string, size: timestamp, sha256: hash }),
+      },
+      permissionPolicy: { enum: ["deny", "allow-once"] },
+      observations: object(
+        {
+          model: { anyOf: [string, { type: "null" }] },
+          usage: { anyOf: [{ type: "object" }, { type: "null" }] },
+          usageScope: { anyOf: [string, { type: "null" }] },
+          installation: { anyOf: [{ type: "object" }, { type: "null" }] },
+          permissions: {
+            type: "array",
+            items: object({
+              id: string,
+              decision: { anyOf: [string, { type: "null" }] },
+              status: string,
+            }),
+          },
+          sourceEventSeqs: {
+            type: "array",
+            items: { type: "integer", minimum: 1 },
+          },
+        },
+        ["model", "usage", "sourceEventSeqs"],
+      ),
       evidence: object(
         {
           attemptId: string,
@@ -165,9 +275,26 @@ export const isBenchmarkAttempt = ajv.compile<BenchmarkAttempt>(
           source: { enum: ["output", "artifact"] },
           artifactId: string,
           text: { type: "string", maxLength: 8_388_608 },
+          bytesBase64: {
+            type: "string",
+            maxLength: 11_184_812,
+            pattern:
+              "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+          },
+          size: { type: "integer", minimum: 0, maximum: 8_388_608 },
+          requiredArtifacts: {
+            type: "array",
+            maxItems: 32,
+            items: object({
+              id: string,
+              name: string,
+              size: timestamp,
+              sha256: hash,
+            }),
+          },
           sha256: hash,
         },
-        ["attemptId", "runId", "source", "text", "sha256"],
+        ["attemptId", "runId", "source", "sha256"],
       ),
     },
     [
@@ -210,6 +337,6 @@ export const isBenchmarkEvaluation = ajv.compile<BenchmarkEvaluation>(
 );
 
 /** Hashes UTF-8 bytes without whitespace normalization. */
-export function benchmarkHash(text: string): string {
+export function benchmarkHash(text: string | Uint8Array): string {
   return createHash("sha256").update(text).digest("hex");
 }

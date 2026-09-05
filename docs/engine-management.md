@@ -31,7 +31,7 @@ curl -s -X POST http://127.0.0.1:3180/v1/sessions \
 | `POST /v1/engines/reload` | 手动重新读取配置文件，全体校验通过后应用 |
 | `GET /v1/engines/registry` | 默认引擎、文件监视状态、最后成功 reload 时间和错误码 |
 
-注册字段为 `id`、`driver`、`command`，以及可选的 `enabled`、`model`、`credentialEnv`、`maxConcurrency`、`cli`。全部字段由 [公共 schema](../src/domain/schemas.ts)约束并进入生成的 OpenAPI。未知字段包括嵌套拼写错误直接失败，不会被删除后偷偷使用默认值。禁用使用完整注册配置并设置 `enabled:false`。`fake/default/discover/registry/reload` 是保留 ID。
+注册字段为 `id`、`driver`、`command`，以及可选的 `enabled`、`model`、`credentialEnv`、`maxConcurrency`、`cli`、`acp`。全部字段由 [公共 schema](../src/domain/schemas.ts)约束并进入生成的 OpenAPI。未知字段包括嵌套拼写错误直接失败，不会被删除后偷偷使用默认值。禁用使用完整注册配置并设置 `enabled:false`。`fake/default/discover/registry/reload` 是保留 ID。
 
 ## 配置更新与持久化
 
@@ -43,7 +43,7 @@ curl -s -X POST http://127.0.0.1:3180/v1/sessions \
 
 使用 `--config` 时每 500 ms 检查文件变化，支持编辑器的原子替换保存。完整解析和校验成功才应用；失败保留最后有效配置，错误码可从 registry 状态查询。Workspace、并发总额、Worker 数、期限默认等部署设置仍在启动时固定；修改这些字段的 reload 返回 `CONFIG_RESTART_REQUIRED`，该次引擎修改也不部分生效。仅更新引擎及其默认选择可热加载。
 
-在活进程内更新、禁用或移除引擎不会迁移旧 Session，活动及排队 Run 继续解析原 `engineId + profileRevision`。旧 revision 中的命令、模型选择及限制保持不变。恢复仍按 Driver 自身契约：ACP 上下文未验证时重启会关闭其 Session；CLI 每轮无上下文，历史命令 revision 可继续使用。这不等于跨引擎迁移或 ACP 上下文恢复。
+在活进程内更新、禁用或移除引擎不会迁移旧 Session，活动及排队 Run 继续解析原 `engineId + profileRevision`。旧 revision 中的命令、模型选择及限制保持不变。恢复仍按 Driver 自身契约：未显式启用恢复的 ACP Profile 在重启时关闭 Session；启用后的条件和 DSH 实证见 [严格恢复](session-recovery.md)；CLI 每轮无上下文，历史命令 revision 可继续使用。这不等于跨引擎迁移或 ACP 上下文恢复。
 
 ## 本机调用边界
 

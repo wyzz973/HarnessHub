@@ -1,4 +1,14 @@
 /** Schemas for untrusted HTTP inputs. Defaults are resolved by application configuration. */
+export const fileOutputSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["path", "name"],
+  properties: {
+    path: { type: "string", minLength: 1, maxLength: 1024 },
+    name: { type: "string", minLength: 1, maxLength: 255 },
+    mediaType: { type: "string", minLength: 1, maxLength: 255 },
+  },
+} as const;
 export const createSessionSchema = {
   type: "object",
   additionalProperties: false,
@@ -14,6 +24,12 @@ export const runInputSchema = {
   properties: {
     text: { type: "string", minLength: 1, maxLength: 1_048_576 },
     timeoutMs: { type: "integer", minimum: 1, maximum: 86_400_000 },
+    outputs: {
+      type: "array",
+      minItems: 1,
+      maxItems: 32,
+      items: fileOutputSchema,
+    },
     fixture: {
       type: "object",
       additionalProperties: false,
@@ -80,6 +96,7 @@ export const sessionResponseSchema = {
     createdAt: timestamp,
     updatedAt: timestamp,
     configSnapshot: jsonObject,
+    backendSessionId: text,
   },
 } as const;
 export const permissionResponseSchema = {
@@ -203,6 +220,7 @@ export const enginesResponseSchema = {
           model: text,
           credentialEnv: { type: "array", items: text },
           cli: jsonObject,
+          acp: jsonObject,
           maxConcurrency: timestamp,
           capabilities: jsonObject,
         },
@@ -234,6 +252,12 @@ export const engineRegistrationSchema = {
       items: { type: "string", pattern: "^[A-Z][A-Z0-9_]*$" },
     },
     maxConcurrency: { type: "integer", minimum: 1, maximum: 86400000 },
+    acp: {
+      type: "object",
+      additionalProperties: false,
+      required: ["sessionMode"],
+      properties: { sessionMode: { const: "resume" } },
+    },
     cli: {
       type: "object",
       additionalProperties: false,

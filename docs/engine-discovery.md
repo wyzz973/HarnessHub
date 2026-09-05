@@ -44,3 +44,5 @@ manifest 的 `command[0]` 若为无路径命令名，按 Gateway PATH 查找并�
 ## 验证范围
 
 [发现测试](../tests/unit/discovery.test.ts) 覆盖安装和 Adapter 变化、PATH 优先级、DSH 文件引用、运行时新增 manifest、无效输入拒绝，以及发现期间没有执行程序。真实模型与 Gateway 注册执行的证据由对应验收记录维护，不能从文件存在推导。
+
+OpenClaw 若项目中存在专用 Bridge launcher，发现配置会使用独立原生会话名，避免默认ACP前缀冲突；参见 [OpenClaw说明](openclaw-engine.md)。Pi 和独立 OpenCode DeepSeek 可通过本机 manifest 加入发现，不需要扩展 Gateway 分支。

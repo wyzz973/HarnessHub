@@ -21,6 +21,7 @@ export async function benchmarkMain(args: string[]): Promise<number> {
       config: { type: "string" },
       engines: { type: "string" },
       repeat: { type: "string", default: "1" },
+      permissions: { type: "string", default: "deny" },
       "data-dir": { type: "string", default: "./data/benchmark" },
       demo: { type: "boolean", default: false },
       regrade: { type: "string" },
@@ -31,10 +32,12 @@ export async function benchmarkMain(args: string[]): Promise<number> {
   });
   if (values.help) {
     console.log(
-      "HarnessHub Benchmark: node dist/src/benchmark-main.js --dataset examples/benchmark-text.json --engines dsh --config engines/local.yaml [--repeat 1] [--data-dir ./data/benchmark]\nRegrade captured evidence: --regrade ATTEMPT_ID --data-dir DATA_DIR [--config engines/local.yaml | --demo]\nReport saved attempts: --report --data-dir DATA_DIR [--batch BATCH_ID] [--config engines/local.yaml | --demo]",
+      "HarnessHub Benchmark: node dist/src/benchmark-main.js --dataset examples/benchmark-text.json --engines dsh --config engines/local.yaml [--repeat 1] [--permissions deny|allow-once] [--data-dir ./data/benchmark]\nRegrade captured evidence: --regrade ATTEMPT_ID --data-dir DATA_DIR [--config engines/local.yaml | --demo]\nReport saved attempts: --report --data-dir DATA_DIR [--batch BATCH_ID] [--config engines/local.yaml | --demo]",
     );
     return 0;
   }
+  if (values.permissions !== "deny" && values.permissions !== "allow-once")
+    throw new Error("--permissions must be deny or allow-once");
   if (values.report && (values.dataset || values.engines || values.regrade))
     throw new Error(
       "Use --report independently from --dataset/--engines/--regrade",
@@ -67,6 +70,7 @@ export async function benchmarkMain(args: string[]): Promise<number> {
           engines: values.engines!.split(",").map((engine) => engine.trim()),
           repeat: Number(values.repeat),
           hubVersion: packageValue.version,
+          permissionPolicy: values.permissions,
         });
   const hub = await startHub({
     dataDir,

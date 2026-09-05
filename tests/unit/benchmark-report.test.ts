@@ -266,3 +266,42 @@ void test(
     }
   },
 );
+
+void test("report presents event-backed model, usage scope, cost and once-permission evidence without manufacturing totals", () => {
+  const observed = attempt("observed", "task", "engine", {
+    configSnapshot: { model: "configured" },
+    permissionPolicy: "allow-once",
+    observations: {
+      model: "actual-model",
+      usage: {
+        cumulative: { inputTokens: 12, outputTokens: 5 },
+        cost: { amount: 0.05, currency: "USD" },
+      },
+      usageScope: "acp-session-checkpoint",
+      installation: null,
+      permissions: [
+        {
+          id: "permission-1",
+          decision: "backend-actual-option",
+          status: "applied",
+        },
+      ],
+      sourceEventSeqs: [3, 8],
+    },
+  });
+  const group = buildBenchmarkReport({
+    list: () => [observed],
+    evaluations: () => [],
+  }).groups[0]!;
+  const row = group.matrix[0]!;
+  assert.equal(row.configuredModel, "configured");
+  assert.equal(row.observedModel, "actual-model");
+  assert.deepEqual(row.usage, observed.observations!.usage);
+  assert.equal(row.usageScope, "acp-session-checkpoint");
+  assert.deepEqual(row.cost, { amount: 0.05, currency: "USD" });
+  assert.deepEqual(row.observationEventSeqs, [3, 8]);
+  assert.equal(row.permissions?.[0]?.decision, "backend-actual-option");
+  assert.equal(row.installation, null);
+  assert.equal(group.usage, null);
+  assert.equal(group.cost, null);
+});

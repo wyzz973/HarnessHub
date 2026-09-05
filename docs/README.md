@@ -15,6 +15,13 @@
 | [动态引擎管理](engine-management.md) | 运行中注册/替换、热加载、默认选择与版本归档 |
 | [本机发现](engine-discovery.md) | PATH、已有安装、开放 manifest 与发现边界 |
 | [CLI Driver](cli-driver.md) | 非 ACP 命令、输入输出、取消和清理 |
+| [文件产物](file-artifacts.md) | 显式输出采集、二进制下载、完整性与限额 |
+| [会话恢复](session-recovery.md) | ACP backend 身份、suspend、重启续聊与失败 |
+| [安装快照](engine-installation.md) | 启动文件hash、包版本与只读取消 |
+| [Pi](pi-engine.md) | 固定安装、现有DeepSeek引用与真实任务 |
+| [OpenCode独立配置](opencode-engine.md) | 免费限流处理、独立DeepSeek与文件任务 |
+| [OpenClaw Bridge](openclaw-engine.md) | 独立会话名修复及配置边界 |
+| [VMware验收](vmware-validation.md) | 后续Windows安装与验收顺序 |
 | [Benchmark](benchmark.md) | 独立 attempt、确定评分和离线复查 |
 | [macOS引擎接入](macos-engines.md) | 现有CLI和认证引用、已通过的真实文本任务 |
 
@@ -31,3 +38,5 @@
 新增教程、API 参考、子系统说明和运行手册时，从这里链接实际存在的文档。计划中的文件使用代码文本描述，不创建指向不存在文件的链接。
 
 动态引擎与评测：[本轮 Mac 验收](verification/2026-09-05-dynamic-engines.md)。
+
+文件与恢复：[本轮 Mac 验收](verification/2026-09-05-file-tasks-and-recovery.md)。

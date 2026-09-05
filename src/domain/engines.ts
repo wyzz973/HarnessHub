@@ -10,6 +10,7 @@ export interface EngineRegistration {
   credentialEnv?: string[];
   maxConcurrency?: number;
   cli?: { inputMode?: "stdin" | "argv"; maxOutputBytes?: number };
+  acp?: { sessionMode: "resume" };
 }
 
 /** Discovery reports installation evidence only, never model authentication or task success. */

@@ -1,10 +1,22 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readdir, realpath, lstat } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { HubApplication } from "../application/service.js";
 import { HubError } from "../domain/errors.js";
-import { isTerminal, type SessionRecord } from "../domain/types.js";
+import {
+  isTerminal,
+  type JsonObject,
+  type SessionRecord,
+  type RunId,
+  type PermissionId,
+} from "../domain/types.js";
+import {
+  checkWorkspace,
+  initializeFixtures,
+  validateFixtures,
+} from "./workspace.js";
+import { gradeEvidence } from "./evaluation.js";
 import {
   benchmarkHash,
   isBenchmarkDataset,
@@ -15,6 +27,7 @@ import {
   type BenchmarkEvidence,
   type BenchmarkStore,
   type EvaluationId,
+  type BenchmarkPermissionPolicy,
 } from "../domain/benchmark.js";
 
 /** Rejects malformed/ambiguous tasks before any model execution. */
@@ -27,16 +40,18 @@ export function parseDataset(value: unknown): BenchmarkDataset {
       "INVALID_BENCHMARK_DATASET",
       "Dataset must contain distinct versioned tasks and supported evaluators",
     );
+  for (const task of value.tasks) validateFixtures(task);
   return structuredClone(value);
 }
 
-/** Prepares exclusive, empty workspaces. Caller registers these with startHub before running. */
+/** Prepares exclusive workspaces with versioned fixtures. Caller registers these with startHub before running. */
 export async function prepareAttempts(options: {
   dataDir: string;
   dataset: BenchmarkDataset;
   engines: string[];
   repeat: number;
   hubVersion: string;
+  permissionPolicy?: BenchmarkPermissionPolicy;
 }): Promise<BenchmarkAttempt[]> {
   const dataset = parseDataset(options.dataset);
   if (
@@ -82,29 +97,13 @@ export async function prepareAttempts(options: {
           },
           createdAt: Date.now(),
           status: "prepared",
+          initialFiles: await initializeFixtures(directory, task),
+          permissionPolicy: options.permissionPolicy ?? "deny",
         });
       }
   return attempts;
 }
 
-async function checkWorkspace(
-  attempt: BenchmarkAttempt,
-  empty: boolean,
-): Promise<void> {
-  const location = attempt.workspace.path;
-  const metadata = await lstat(location);
-  if (
-    !metadata.isDirectory() ||
-    metadata.isSymbolicLink() ||
-    (await realpath(location)) !== location ||
-    (empty && (await readdir(location)).length !== 0)
-  )
-    throw new HubError(
-      "BENCHMARK_WORKSPACE_POLLUTED",
-      "Attempt workspace must retain its identity and start empty",
-      409,
-    );
-}
 function errorCode(error: unknown): string {
   return error instanceof HubError ? error.code : "BENCHMARK_OPERATION_FAILED";
 }
@@ -166,6 +165,7 @@ export class BenchmarkRunner {
       this.store.update(attempt);
       const runId = run.id;
       let cancelRequested = false;
+      const decisions = new Set<PermissionId>();
       for (;;) {
         const run = this.app.getRun(runId);
         if (isTerminal(run.status)) {
@@ -174,6 +174,7 @@ export class BenchmarkRunner {
             status: "finished",
             runStatus: run.status,
             finishedAt: Date.now(),
+            observations: this.observe(runId),
             ...(run.configSnapshot
               ? { configSnapshot: run.configSnapshot }
               : {}),
@@ -193,6 +194,36 @@ export class BenchmarkRunner {
         if (signal?.aborted && !cancelRequested) {
           cancelRequested = true;
           await this.app.cancel(runId);
+        }
+        if (!cancelRequested) {
+          for (const permission of run.permissions) {
+            if (permission.status !== "pending" || decisions.has(permission.id))
+              continue;
+            const kind =
+              attempt.permissionPolicy === "allow-once"
+                ? "allow_once"
+                : "reject_once";
+            const options = permission.options.filter(
+              (option) => option.kind === kind,
+            );
+            decisions.add(permission.id);
+            if (options.length !== 1) {
+              cancelRequested = true;
+              await this.app.cancel(runId);
+              break;
+            }
+            try {
+              await this.app.decide(permission.id, options[0]!.id);
+            } catch (error) {
+              // Deadline/terminal can win while the permission decision awaits its Worker response.
+              if (
+                !(error instanceof HubError) ||
+                error.code !== "PERMISSION_EXPIRED" ||
+                !isTerminal(this.app.getRun(runId).status)
+              )
+                throw error;
+            }
+          }
         }
         if (!this.app.isReady())
           throw new HubError(
@@ -225,7 +256,46 @@ export class BenchmarkRunner {
   ): Promise<BenchmarkEvidence | undefined> {
     if (!attempt.runId) throw new Error("Attempt is not bound to a Run");
     const run = this.app.getRun(attempt.runId);
+    if (run.sessionId !== attempt.sessionId)
+      throw new HubError(
+        "BENCHMARK_OWNERSHIP_CONFLICT",
+        "Run belongs to another attempt session",
+        409,
+      );
+    const requiredArtifacts: NonNullable<
+      BenchmarkEvidence["requiredArtifacts"]
+    > = [];
+    for (const output of attempt.task.input.outputs ?? []) {
+      const matches = run.artifacts.filter(
+        (artifact) => artifact.name === output.name,
+      );
+      if (!matches.length) return undefined;
+      if (matches.length !== 1)
+        throw new HubError(
+          "BENCHMARK_ARTIFACT_AMBIGUOUS",
+          "Output name must identify exactly one artifact",
+          409,
+        );
+      const { record, bytes } = await this.app.artifact(matches[0]!.id);
+      if (
+        record.runId !== attempt.runId ||
+        bytes.length !== record.size ||
+        benchmarkHash(bytes) !== record.sha256
+      )
+        throw new HubError(
+          "BENCHMARK_EVIDENCE_INTEGRITY",
+          "Output bytes must belong to the attempt and match committed metadata",
+          409,
+        );
+      requiredArtifacts.push({
+        id: record.id,
+        name: record.name,
+        size: record.size,
+        sha256: record.sha256,
+      });
+    }
     let text = run.output;
+    let content: Buffer | undefined;
     let artifactId: string | undefined;
     const name = attempt.task.evaluator.artifactName;
     if (name !== undefined) {
@@ -247,22 +317,37 @@ export class BenchmarkRunner {
           "Artifact belongs to another attempt Run",
           409,
         );
-      text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      if (
+        bytes.length !== record.size ||
+        benchmarkHash(bytes) !== record.sha256
+      )
+        throw new HubError(
+          "BENCHMARK_EVIDENCE_INTEGRITY",
+          "Artifact bytes do not match committed metadata",
+          409,
+        );
+      content = bytes;
       artifactId = record.id;
     }
-    if (text === undefined) return undefined;
-    if (Buffer.byteLength(text) > 8 * 1024 * 1024)
+    if (content === undefined && text === undefined) return undefined;
+    const bytes = content ?? Buffer.from(text!);
+    if (bytes.length > 8 * 1024 * 1024)
       throw new HubError(
         "BENCHMARK_EVIDENCE_TOO_LARGE",
-        "Selected text evidence exceeds 8 MiB",
+        "Selected evidence exceeds 8 MiB",
       );
+    const binary = attempt.task.evaluator.id === "file-sha256";
+    if (!binary && content !== undefined)
+      text = new TextDecoder("utf-8", { fatal: true }).decode(content);
     return {
       attemptId: attempt.id,
       runId: attempt.runId,
       source: name === undefined ? "output" : "artifact",
       ...(artifactId ? { artifactId } : {}),
-      text,
-      sha256: benchmarkHash(text),
+      ...(binary ? { bytesBase64: bytes.toString("base64") } : { text: text! }),
+      size: bytes.length,
+      sha256: benchmarkHash(bytes),
+      requiredArtifacts,
     };
   }
 
@@ -304,41 +389,7 @@ export class BenchmarkRunner {
         score: null,
         reason: attempt.errorCode,
       };
-    else {
-      const evidence = attempt.evidence;
-      if (!evidence)
-        result = {
-          ...base,
-          status: "failed",
-          score: 0,
-          reason: "required_output_missing",
-        };
-      else if (
-        evidence.attemptId !== id ||
-        evidence.runId !== attempt.runId ||
-        benchmarkHash(evidence.text) !== evidence.sha256 ||
-        evidence.source !==
-          (attempt.task.evaluator.artifactName === undefined
-            ? "output"
-            : "artifact")
-      )
-        result = {
-          ...base,
-          status: "evaluator_error",
-          score: null,
-          reason: "BENCHMARK_EVIDENCE_INTEGRITY",
-        };
-      else {
-        const passed = evidence.text === attempt.task.evaluator.expected;
-        result = {
-          ...base,
-          status: passed ? "passed" : "failed",
-          score: passed ? 1 : 0,
-          reason: passed ? "exact_match" : "text_mismatch",
-          evidenceSha256: evidence.sha256,
-        };
-      }
-    }
+    else result = { ...base, ...gradeEvidence(attempt) };
     this.store.saveEvaluation(result);
     return result;
   }
@@ -371,6 +422,8 @@ export class BenchmarkRunner {
           status: "finished",
           runStatus: run.status,
           finishedAt: Date.now(),
+          observations: this.observe(run.id),
+          ...(run.configSnapshot ? { configSnapshot: run.configSnapshot } : {}),
         };
         if (run.status === "completed") {
           try {
@@ -384,5 +437,75 @@ export class BenchmarkRunner {
       this.store.update(attempt);
       this.regrade(attempt.id);
     }
+  }
+
+  private observe(runId: RunId): NonNullable<BenchmarkAttempt["observations"]> {
+    let model: string | null = null;
+    let usage: JsonObject | null = null;
+    let usageScope: string | null = null;
+    let installation: JsonObject | null = null;
+    const sourceEventSeqs: number[] = [];
+    let cursor = 0;
+    for (;;) {
+      const events = this.app.events(runId, cursor, 100);
+      if (!events.length) break;
+      for (const event of events) {
+        cursor = event.seq;
+        const models = event.data.models;
+        const installed = event.data.installation;
+        if (
+          (event.type === "engine.capabilities" ||
+            event.type === "engine.installation") &&
+          installed &&
+          typeof installed === "object" &&
+          !Array.isArray(installed)
+        ) {
+          installation = installed;
+          sourceEventSeqs.push(event.seq);
+        }
+        if (
+          (event.type === "engine.capabilities" ||
+            event.type === "engine.usage") &&
+          models &&
+          typeof models === "object" &&
+          !Array.isArray(models) &&
+          typeof models.currentModelId === "string"
+        ) {
+          model = models.currentModelId;
+          sourceEventSeqs.push(event.seq);
+        } else if (
+          event.type === "engine.model" &&
+          typeof event.data.model === "string"
+        ) {
+          model = event.data.model;
+          sourceEventSeqs.push(event.seq);
+        }
+        if (
+          event.type === "engine.usage" &&
+          event.data.usage &&
+          typeof event.data.usage === "object" &&
+          !Array.isArray(event.data.usage)
+        ) {
+          usage = event.data.usage;
+          usageScope =
+            typeof event.data.source === "string"
+              ? event.data.source
+              : "unspecified";
+          sourceEventSeqs.push(event.seq);
+        }
+      }
+    }
+    return {
+      model,
+      usage,
+      usageScope,
+      installation,
+      sourceEventSeqs: [...new Set(sourceEventSeqs)],
+      permissions: this.app.getRun(runId).permissions.map((permission) => ({
+        id: permission.id,
+        decision: permission.decision ?? null,
+        status: permission.status,
+      })),
+    };
   }
 }

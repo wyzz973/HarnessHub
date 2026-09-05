@@ -35,6 +35,7 @@ export interface EngineProfile {
   model?: string;
   credentialEnv?: string[];
   cli?: { inputMode: "stdin" | "argv"; maxOutputBytes: number };
+  acp?: { sessionMode: "resume" };
   maxConcurrency: number;
   capabilities: { resume: boolean; permissions: boolean; images: boolean };
 }
@@ -50,6 +51,7 @@ export interface SessionRecord {
   cwd: string;
   status: "open" | "closing" | "closed";
   configSnapshot?: JsonObject;
+  backendSessionId?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -59,10 +61,17 @@ export interface FakeOptions {
   delayMs?: number;
   chunks?: number;
 }
+/** Explicit expected workspace outputs; capture never scans unrelated files. */
+export interface FileOutput {
+  path: string;
+  name: string;
+  mediaType?: string;
+}
 export interface RunInput {
   text: string;
   timeoutMs: number;
   fixture?: FakeOptions;
+  outputs?: FileOutput[];
 }
 export interface PublicError {
   code: string;

@@ -1,3 +1,4 @@
+import { isRelativeFilePath } from "../domain/files.js";
 import { HubError } from "../domain/errors.js";
 import type {
   AgentEvent,
@@ -62,6 +63,24 @@ function runInput(value: unknown): value is RunInput {
     value.timeoutMs < 1
   )
     return false;
+  if (
+    !optional(
+      value.outputs,
+      (outputs) =>
+        Array.isArray(outputs) &&
+        outputs.length > 0 &&
+        outputs.length <= 32 &&
+        outputs.every(
+          (o) =>
+            object(o) &&
+            string(o.path) &&
+            isRelativeFilePath(o.path) &&
+            id(o.name) &&
+            optional(o.mediaType, id),
+        ),
+    )
+  )
+    return false;
   const fixture = value.fixture;
   return (
     fixture === undefined ||
@@ -89,6 +108,7 @@ export function sessionRecord(value: unknown): value is SessionRecord {
     member(value.status, ["open", "closing", "closed"]) &&
     integer(value.createdAt) &&
     integer(value.updatedAt) &&
+    optional(value.backendSessionId, id) &&
     optional(value.configSnapshot, jsonObject)
   );
 }

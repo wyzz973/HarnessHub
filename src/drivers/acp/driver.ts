@@ -1,16 +1,17 @@
 import { randomUUID } from "node:crypto";
-import {
-  createAcpRuntime,
-  createAgentRegistry,
-  createFileSessionStore,
-} from "acpx/runtime";
+import { createAcpRuntime, createAgentRegistry } from "acpx/runtime";
 import type {
   AcpPermissionDecision,
   AcpPermissionRequest,
   AcpRuntime,
   AcpRuntimeEvent,
   AcpRuntimeHandle,
+  AcpSessionStore,
 } from "acpx/runtime";
+import {
+  AcpSessionRecoveryError,
+  openPinnedSessionStore,
+} from "./session-store.js";
 import type { Driver, DriverChannel } from "../driver.js";
 import type { ExecutionSpec } from "../../domain/ports.js";
 import type {
@@ -25,6 +26,7 @@ import type {
 export class AcpDriver implements Driver {
   private runtime: AcpRuntime | undefined;
   private handle: AcpRuntimeHandle | undefined;
+  private store: AcpSessionStore | undefined;
   private current: { channel: DriverChannel; signal: AbortSignal } | undefined;
 
   async execute(
@@ -37,11 +39,15 @@ export class AcpDriver implements Driver {
     if (!spec.profile.command?.length)
       throw new Error("ACP profile requires a fixed command argv");
     this.current = { channel, signal };
+    const recovering = !this.runtime && spec.backendSessionId !== undefined;
     try {
       if (!this.runtime) {
+        if (recovering && spec.profile.acp?.sessionMode !== "resume")
+          return recoveryUnsupported();
+        this.store = await openPinnedSessionStore(spec);
         this.runtime = createAcpRuntime({
           cwd: spec.cwd,
-          sessionStore: createFileSessionStore({ stateDir: spec.stateDir }),
+          sessionStore: this.store,
           agentRegistry: createAgentRegistry({
             overrides: { [spec.profile.id]: spec.profile.command },
           }),
@@ -53,15 +59,42 @@ export class AcpDriver implements Driver {
         });
       }
       signal.throwIfAborted();
+      const firstConnection = !this.handle;
       this.handle ??= await this.runtime.ensureSession({
         sessionKey: spec.sessionId,
         agent: spec.profile.id,
         mode: "persistent",
         cwd: spec.cwd,
+        ...(spec.backendSessionId
+          ? { resumeSessionId: spec.backendSessionId }
+          : {}),
         ...(spec.profile.model
           ? { sessionOptions: { model: spec.profile.model } }
           : {}),
       });
+      if (
+        !this.handle.backendSessionId ||
+        (spec.backendSessionId !== undefined &&
+          this.handle.backendSessionId !== spec.backendSessionId)
+      )
+        throw new AcpSessionRecoveryError();
+      const checkpoint = await this.store?.load(spec.sessionId);
+      const advertisedResume =
+        checkpoint?.agentCapabilities?.loadSession === true ||
+        checkpoint?.agentCapabilities?.sessionCapabilities?.resume != null;
+      if (spec.profile.acp?.sessionMode === "resume" && !advertisedResume)
+        return recoveryUnsupported();
+      if (firstConnection && !recovering)
+        await channel.emit({
+          type: "event",
+          event: {
+            type: "engine.session",
+            data: {
+              backendSessionId: this.handle.backendSessionId,
+              resumed: false,
+            },
+          },
+        });
       signal.throwIfAborted();
       const capabilities = await this.runtime.getCapabilities?.({
         handle: this.handle,
@@ -75,6 +108,7 @@ export class AcpDriver implements Driver {
             controls: capabilities?.controls ?? [],
             configOptionKeys: capabilities?.configOptionKeys ?? [],
             models: status?.models ? json(status.models) : null,
+            resumeAdvertised: advertisedResume,
           },
         },
       });
@@ -88,8 +122,31 @@ export class AcpDriver implements Driver {
       });
       // Result is independently owned even when event delivery fails or a consumer disconnects.
       void turn.result.catch(() => undefined);
+      void turn.promptStarted.catch(() => undefined);
       const output: string[] = [];
       try {
+        if (recovering) {
+          try {
+            // ensureSession can reuse a file without connecting. This promise proves
+            // persistent same-session reconnect succeeded before prompt submission.
+            await turn.promptStarted;
+          } catch {
+            const result = await turn.result;
+            if (signal.aborted || result.status === "cancelled")
+              return { status: "cancelled", stopReason: "cancelled" };
+            throw new AcpSessionRecoveryError();
+          }
+          await channel.emit({
+            type: "event",
+            event: {
+              type: "engine.session",
+              data: {
+                backendSessionId: this.handle.backendSessionId,
+                resumed: true,
+              },
+            },
+          });
+        }
         for await (const event of turn.events) {
           if (event.type === "text_delta" && event.stream !== "thought")
             output.push(event.text);
@@ -99,6 +156,20 @@ export class AcpDriver implements Driver {
           });
         }
         const result = await turn.result;
+        const finalStatus = await this.runtime.getStatus?.({
+          handle: this.handle,
+        });
+        await channel.emit({
+          type: "event",
+          event: {
+            type: "engine.usage",
+            data: {
+              source: "acp-session-checkpoint",
+              models: finalStatus?.models ? json(finalStatus.models) : null,
+              usage: finalStatus?.usage ? json(finalStatus.usage) : null,
+            },
+          },
+        });
         switch (result.status) {
           case "completed":
             return {
@@ -113,6 +184,8 @@ export class AcpDriver implements Driver {
               output: output.join(""),
             };
           case "failed":
+            if (result.error.detailCode === "SESSION_RESUME_REQUIRED")
+              throw new AcpSessionRecoveryError();
             return {
               status: "failed",
               error: {
@@ -127,6 +200,14 @@ export class AcpDriver implements Driver {
         await turn.result;
         throw error;
       }
+    } catch (error) {
+      if (error instanceof AcpSessionRecoveryError)
+        return {
+          status: "failed",
+          stopReason: "session_recovery_failed",
+          error: { code: error.code, message: error.message },
+        };
+      throw error;
     } finally {
       this.current = undefined;
     }
@@ -189,7 +270,20 @@ export class AcpDriver implements Driver {
       });
     this.handle = undefined;
     this.runtime = undefined;
+    this.store = undefined;
   }
+}
+
+function recoveryUnsupported(): DriverResult {
+  return {
+    status: "failed",
+    stopReason: "session_recovery_unsupported",
+    error: {
+      code: "ACP_SESSION_RECOVERY_UNSUPPORTED",
+      message:
+        "ACP session recovery must be enabled and advertised by the engine",
+    },
+  };
 }
 
 function json(value: unknown): JsonValue {

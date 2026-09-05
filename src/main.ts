@@ -2,6 +2,7 @@ import { parseArgs } from "node:util";
 import { homedir } from "node:os";
 import { EngineManager } from "./engine/manager.js";
 import { discoverEngines } from "./engine/discovery.js";
+import { inspectEngineInstallation } from "./engine/installation.js";
 import type { Workspace } from "./domain/types.js";
 import { mkdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
@@ -12,7 +13,9 @@ import { ProcessWorkerHost } from "./process/worker-host.js";
 import {
   createArtifactPublisher,
   readArtifact,
+  discardArtifacts,
 } from "./artifacts/publisher.js";
+import { createFileArtifactCollector } from "./artifacts/collector.js";
 import { Runtime } from "./runtime/runtime.js";
 import { HubApplication } from "./application/service.js";
 import { createGateway } from "./gateway/server.js";
@@ -51,8 +54,9 @@ export async function startHub(options: {
     return { ...config, workspaces, defaultWorkspace: workspaces[0]!.id };
   };
   const config = await resolveConfig();
-  const dataDir = path.resolve(options.dataDir);
-  await mkdir(dataDir, { recursive: true, mode: 0o700 });
+  const requestedDataDir = path.resolve(options.dataDir);
+  await mkdir(requestedDataDir, { recursive: true, mode: 0o700 });
+  const dataDir = await realpath(requestedDataDir);
   const artifactRoot = path.join(dataDir, "artifacts");
   const store = new SqliteStore(path.join(dataDir, "harnesshub.sqlite"));
   try {
@@ -94,6 +98,13 @@ export async function startHub(options: {
       stateDir: path.join(dataDir, "backends"),
       recoveredWorkers,
       publishArtifact: createArtifactPublisher(artifactRoot),
+      collectArtifacts: createFileArtifactCollector(artifactRoot),
+      discardArtifacts: (records) => discardArtifacts(artifactRoot, records),
+      inspectInstallation: (profile, signal) =>
+        inspectEngineInstallation(profile, {
+          pathEnv: process.env.PATH ?? "",
+          signal,
+        }),
     });
     const app = new HubApplication(
       runtime,

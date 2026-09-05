@@ -73,6 +73,7 @@ const profile = object(
       inputMode: { enum: ["stdin", "argv"] },
       maxOutputBytes: { type: "integer", minimum: 1, maximum: 4 * 1024 * 1024 },
     }),
+    acp: object({ sessionMode: { const: "resume" } }),
     credentialEnv: {
       type: "array",
       uniqueItems: true,
@@ -87,13 +88,17 @@ const profile = object(
   },
   ["id", "driver", "revision", "enabled", "maxConcurrency", "capabilities"],
 );
-const spec = object({
-  ...identity,
-  profile,
-  cwd: string,
-  stateDir: string,
-  input: { ...runInputSchema, required: ["text", "timeoutMs"] },
-});
+const spec = object(
+  {
+    ...identity,
+    profile,
+    cwd: string,
+    stateDir: string,
+    backendSessionId: string,
+    input: { ...runInputSchema, required: ["text", "timeoutMs"] },
+  },
+  ["sessionId", "runId", "generation", "profile", "cwd", "stateDir", "input"],
+);
 const command = (
   type: string,
   properties: Record<string, unknown> = {},

@@ -4,6 +4,7 @@ import type {
   BenchmarkStore,
 } from "../domain/benchmark.js";
 import { HubError } from "../domain/errors.js";
+import type { JsonObject } from "../domain/types.js";
 
 /** One persisted attempt and its latest committed Evaluation; missing observations remain null. */
 export interface BenchmarkReportRow {
@@ -11,7 +12,12 @@ export interface BenchmarkReportRow {
   taskVersion: string;
   engineId: string;
   configuredModel: string | null;
-  observedModel: null;
+  observedModel: string | null;
+  installation: JsonObject | null;
+  observationEventSeqs: number[];
+  permissionPolicy: NonNullable<BenchmarkAttempt["permissionPolicy"]> | null;
+  permissions:
+    NonNullable<BenchmarkAttempt["observations"]>["permissions"] | null;
   profileRevision: string | null;
   attemptId: string;
   repetition: number;
@@ -26,8 +32,9 @@ export interface BenchmarkReportRow {
   regradeCount: number;
   evidenceSha256: string | null;
   timeoutMs: number;
-  usage: null;
-  cost: null;
+  usage: JsonObject | null;
+  usageScope: string | null;
+  cost: JsonObject | null;
 }
 interface EngineSummary {
   engineId: string;
@@ -127,7 +134,11 @@ export function buildBenchmarkReport(
         typeof attempt.configSnapshot?.model === "string"
           ? attempt.configSnapshot.model
           : null,
-      observedModel: null,
+      observedModel: attempt.observations?.model ?? null,
+      installation: attempt.observations?.installation ?? null,
+      observationEventSeqs: attempt.observations?.sourceEventSeqs ?? [],
+      permissionPolicy: attempt.permissionPolicy ?? null,
+      permissions: attempt.observations?.permissions ?? null,
       profileRevision: attempt.profileRevision ?? null,
       attemptId: attempt.id,
       repetition: attempt.repetition,
@@ -150,8 +161,14 @@ export function buildBenchmarkReport(
       regradeCount: Math.max(0, evaluations.length - 1),
       evidenceSha256: latest?.evidenceSha256 ?? null,
       timeoutMs: attempt.task.input.timeoutMs,
-      usage: null,
-      cost: null,
+      usage: attempt.observations?.usage ?? null,
+      usageScope: attempt.observations?.usageScope ?? null,
+      cost:
+        attempt.observations?.usage?.cost &&
+        typeof attempt.observations.usage.cost === "object" &&
+        !Array.isArray(attempt.observations.usage.cost)
+          ? attempt.observations.usage.cost
+          : null,
     });
   }
   for (const group of groups.values()) {

@@ -45,7 +45,7 @@ curl -s http://127.0.0.1:3180/v1/sessions/SESSION_ID/runs \
 
 Run 查询返回 `permissions`。向 `POST /v1/permissions/PERMISSION_ID/decision` 发送 `{"optionId":"实际选项ID"}`；不存在选项返回 400，冲突或过期返回 409。`applied` 及 `PERMISSION_APPLIED.acknowledgement=worker` 表示 Worker 已接收并应用映射后的决定，不代表外部工具已执行成功。
 
-Run 查询中的 artifacts 可用 `GET /v1/artifacts/ARTIFACT_ID` 读取；服务核对登记大小和 SHA-256。`GET /v1/runs/RUN_ID/rollout` 将已提交事件导出 NDJSON，可从数据库重建。二进制上传和通用文件采集尚未实现，当前 Worker 产物入口接受文本内容。
+Run 查询中的 artifacts 可用 `GET /v1/artifacts/ARTIFACT_ID` 读取；服务核对登记大小和 SHA-256。`GET /v1/runs/RUN_ID/rollout` 将已提交事件导出 NDJSON，可从数据库重建。已支持 Run 显式 `outputs` 的普通文件与二进制采集，说明见 [文件产物](file-artifacts.md)。下载使用 attachment、nosniff 与 sandbox；独立二进制上传接口仍未实现。
 
 `GET /openapi.json` 从实际注册路由生成接口清单、输入与JSON响应schema；SSE、NDJSON和文件内容以流式字符串/二进制描述。尚不支持的多模态输入或上传字段会被请求校验拒绝。
 
@@ -61,7 +61,7 @@ Run 查询中的 artifacts 可用 `GET /v1/artifacts/ARTIFACT_ID` 读取；服�
 
 Gateway 重启后，未终结的 Run 标为 interrupted，cleanupStatus 来自旧Worker lease的核实结果，无法证明清理时为unconfirmed；关联 Session 关闭，不会自动重跑有副作用的任务。已完成 Run 和事件可查询、重放、导出。
 
-当前实际引擎的上下文恢复能力没有完成端到端验收，配置能力采取保守值。ACP Session 在 Gateway 重启、失败或取消导致 Worker 释放后关闭，用户需创建新 Session；不会把新空会话冒充原上下文恢复。成功会话中的 Worker 可供后续 Run 复用。
+DSH 已完成 Mac 上的严格上下文恢复验收：显式 `acp.sessionMode: resume` 后，idle suspend 和 Gateway 正常重启可恢复固定 backend ID。未开启恢复的 ACP Profile 继续保守关闭；执行中崩溃/取消/失败按现有策略保留历史并关闭公共会话，不自动重跑。成功会话中的 Worker 可供后续 Run 复用，细节及其它引擎边界见 [会话恢复](session-recovery.md)。
 
 数据库有独占Gateway owner，同一目录被活实例占用时新实例拒绝启动。重启先按旧Worker lease的token、完整命令及PGID核实归属；可确认退出或回收的进程记confirmed，身份不明则保留unconfirmed与隔离容量，不盲杀PID。Windows恢复仍保守返回unconfirmed。
 
@@ -69,6 +69,6 @@ Session/Run保存安全配置快照，包含配置标识、模型选择、凭证
 
 Worker IPC 每条消息上限 8 MiB，文本产物入口上限 4 MiB，HTTP body 上限 2 MiB，超限明确失败而非截断；这些传输限制不等于模型 token 预算。Host 对 IPC 用 ACK 控制背压，但不能据此声称 acpx 内部队列或全部输出已受同样约束。
 
-Windows 进程监督尚未原生验收；当前没有统一读/写/网络沙箱。API `/v1/engines` 把能力分为configured、observed和validated：observed按profile revision区分，只含本进程实际记录的Runtime控制/模型信息，不推导恢复或平台支持；没有验证时validated为null。[通用 CLI Driver](cli-driver.md)、[动态发现与管理](engine-management.md)和 [文本 Benchmark](benchmark.md)已实现；直接 Native SDK Driver、跨引擎续聊仍未实现。
+Windows 进程监督尚未原生验收；当前没有统一读/写/网络沙箱。API `/v1/engines` 把能力分为configured、observed和validated：observed按profile revision区分，只含本进程实际记录的Runtime控制/模型信息，不推导恢复或平台支持；没有验证时validated为null。[通用 CLI Driver](cli-driver.md)、[动态发现与管理](engine-management.md)和 [文件与文本 Benchmark](benchmark.md)已实现；直接 Native SDK Driver、跨引擎续聊仍未实现。
 
 独立导出命令为 `node dist/src/cli.js rollout --url http://127.0.0.1:3180 --run RUN_ID --output FILE`。它读取同一Gateway轨迹接口，流式写入新文件，拒绝覆盖，失败清理半成品。对运行中的Run，导出只包含当时已提交的事件，不能称为完整终态轨迹。

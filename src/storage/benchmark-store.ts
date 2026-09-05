@@ -92,6 +92,10 @@ export class SqliteBenchmarkStore implements BenchmarkStore {
           previous.sessionId !== attempt.sessionId) ||
         previous.engineId !== attempt.engineId ||
         previous.workspace.id !== attempt.workspace.id ||
+        previous.workspace.path !== attempt.workspace.path ||
+        previous.permissionPolicy !== attempt.permissionPolicy ||
+        JSON.stringify(previous.initialFiles) !==
+          JSON.stringify(attempt.initialFiles) ||
         JSON.stringify(previous.task) !== JSON.stringify(attempt.task)
       )
         throw new HubError(
@@ -101,9 +105,13 @@ export class SqliteBenchmarkStore implements BenchmarkStore {
         );
       if (attempt.runId) {
         const run = this.db
-          .prepare("SELECT session_id FROM runs WHERE id = ?")
+          .prepare("SELECT session_id, idempotency_key FROM runs WHERE id = ?")
           .get(attempt.runId);
-        if (run?.session_id !== attempt.sessionId)
+        if (
+          !run ||
+          run.session_id !== attempt.sessionId ||
+          run.idempotency_key !== attempt.id
+        )
           throw new HubError(
             "BENCHMARK_OWNERSHIP_CONFLICT",
             "Run does not belong to this attempt session",

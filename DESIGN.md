@@ -84,9 +84,11 @@ EngineManager 提供运行中发现、注册、替换、禁用、移除和默认
 
 Session 固定绑定 engineId、profileRevision、workspaceId 和不透明 backend handle。`AGENT_ENGINE` 只决定新 Session 的默认引擎；显式 engineId 可覆盖默认值，已有 Session 不被迁移。
 
-同一 Session 同时只有一个活动 Run，后续 Run 按接收顺序排队。多个 Session 可并行，受全局和每引擎的有限并发配置约束。每个 Run 保存模型选择、配置版本与期限快照，权限决定单独持久化；运行时观测到的模型另以事件为据，不把配置声明当成实际模型。
+同一 Session 同时只有一个活动 Run，后续 Run 按接收顺序排队。多个 Session 可并行，受全局和每引擎的有限并发配置约束。每个 Run 保存模型选择、配置版本与期限快照，权限决定单独持久化；运行时观测到的模型/usage及只读安装快照另以事件为据，不把配置声明当成实际模型。
 
 Worker 按 Session 归属，懒启动；并不要求所有持久 Session 都常驻进程。空闲回收必须满足：无活动或待决权限请求、后端 checkpoint 已完成、会话具有已验证的恢复能力。不能恢复的后端保留活进程直至显式关闭，或按明确的会话过期策略结束；不得静默丢失上下文。
+
+显式开启 `acp.sessionMode: resume` 的引擎，首次后端ID与事件提交并ACK后才发prompt；idle suspend 和正常重启后，按公共backendSessionId与私有checkpoint严格恢复。DSH已在Mac取得真实证据；执行中的未知结果、其它引擎与Windows分别验收。
 
 恢复失败报告明确错误，不创建同名空会话冒充恢复成功。Worker 崩溃不会触发原 Run 的自动重跑；公共 Session 恢复、轨迹重放与新建 Run 是不同操作。
 
@@ -133,6 +135,8 @@ Worker 事件 → Runtime 校验、归属与规范化 → SQLite 事务提交
 
 SSE 从已提交日志重放，允许连接恢复时重复投递，客户端按 eventId/seq 去重。慢订阅者用游标追赶；不让订阅者持有无界执行缓冲。
 
+Run 可以声明相对 `outputs`，Gateway 在正常回合结束到公共终态之间收集稳定普通文件，复制成不可变Artifact；缺失输出记事件，评判器独立判失败。采集计入deadline、拒绝链接/越界并回收未登记文件。Benchmark可准备版本化fixtureFiles，使用文本、JSON结构或文件hash判分。详见 [文件说明](docs/file-artifacts.md)和 [ADR 0004](docs/decisions/0004-file-tasks-and-resume.md)。
+
 JSONL 可从 SQLite 重建，不与数据库双写为两个事实源。二进制及大输出存文件，校验并发布文件后再登记 hash、大小、mediaType 与内部路径。未完整登记的产物不能以完成状态返回；临时孤儿文件可另行清理。
 
 acpx Store 与日志在独立后端目录管理，仅保存恢复材料。凭证只在运行环境解析，数据库和配置快照保存引用，不把秘密写入会话选项或轨迹。
@@ -149,6 +153,7 @@ Gateway 重启后先核实 Worker 归属与残留进程，对缺少明确终态�
 | `GET /v1/engines/discover`、`POST /v1/engines`、`PUT/DELETE /v1/engines/:id` | 发现、动态完整注册/替换、移除；默认和 reload 见管理 API |
 | `POST /v1/sessions` | 创建公共 Session，指定 Engine/Profile/Workspace |
 | `GET /v1/sessions/:id` | 会话状态和可恢复性 |
+| `POST /v1/sessions/:id/suspend` | 释放空闲、显式可恢复的ACP Worker，保留Session与backend ID |
 | `POST /v1/sessions/:id/close` | 停止接收 Run，取消排队和活动 Run，收敛执行资源，保留历史 |
 | `POST /v1/sessions/:id/runs` | 提交执行，持久接收后返回 202 + Run ID |
 | `GET /v1/runs/:id` | 状态、结果、usage、清理状态和产物 |

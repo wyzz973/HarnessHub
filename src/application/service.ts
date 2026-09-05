@@ -91,6 +91,9 @@ export class HubApplication {
   decide(id: PermissionId, optionId: string) {
     return this.runtime.decide(id, optionId);
   }
+  suspendSession(id: SessionId) {
+    return this.runtime.suspendSession(id);
+  }
   closeSession(id: SessionId) {
     return this.runtime.closeSession(id);
   }

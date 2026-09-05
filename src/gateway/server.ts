@@ -228,6 +228,23 @@ export async function createGateway(app: HubApplication) {
     async (request) => app.getSession(request.params.id as SessionId),
   );
   server.post<{ Params: { id: string } }>(
+    "/v1/sessions/:id/suspend",
+    {
+      schema: {
+        params: idParams,
+        response: responses({
+          type: "object",
+          required: ["session", "cleanupStatus"],
+          properties: {
+            session: sessionResponseSchema,
+            cleanupStatus: { enum: ["confirmed", "unconfirmed", "failed"] },
+          },
+        }),
+      },
+    },
+    async (request) => app.suspendSession(request.params.id as SessionId),
+  );
+  server.post<{ Params: { id: string } }>(
     "/v1/sessions/:id/close",
     {
       schema: { params: idParams, response: responses(sessionResponseSchema) },
@@ -392,6 +409,12 @@ export async function createGateway(app: HubApplication) {
       return reply
         .type(record.mediaType)
         .header("X-Content-SHA256", record.sha256)
+        .header(
+          "Content-Disposition",
+          `attachment; filename*=UTF-8''${encodeURIComponent(record.name)}`,
+        )
+        .header("X-Content-Type-Options", "nosniff")
+        .header("Content-Security-Policy", "sandbox; default-src 'none'")
         .send(bytes);
     },
   );

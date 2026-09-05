@@ -66,6 +66,7 @@ export function normalizeEngine(input: unknown): EngineProfile {
     "maxConcurrency",
     "credentialEnv",
     "cli",
+    "acp",
   ]);
   const id = string(e.id, "engine.id");
   if (["fake", "default", "discover", "registry", "reload"].includes(id))
@@ -160,6 +161,17 @@ export function normalizeEngine(input: unknown): EngineProfile {
   } else if (e.cli !== undefined) {
     throw new HubError("INVALID_CONFIG", "cli options require the cli driver");
   }
+  let acp: EngineProfile["acp"];
+  if (e.acp !== undefined) {
+    const a = object(e.acp);
+    keys(a, ["sessionMode"]);
+    if (e.driver !== "acp" || a.sessionMode !== "resume")
+      throw new HubError(
+        "INVALID_CONFIG",
+        "acp sessionMode resume requires the ACP driver",
+      );
+    acp = { sessionMode: "resume" };
+  }
   const profile: Omit<EngineProfile, "revision"> = {
     id,
     driver: e.driver,
@@ -170,9 +182,10 @@ export function normalizeEngine(input: unknown): EngineProfile {
       ? { credentialEnv: [...(e.credentialEnv as string[])] }
       : {}),
     ...(cli ? { cli } : {}),
+    ...(acp ? { acp } : {}),
     maxConcurrency: integer(e.maxConcurrency, 1),
     capabilities: {
-      resume: false,
+      resume: acp?.sessionMode === "resume",
       permissions: e.driver === "acp",
       images: false,
     },

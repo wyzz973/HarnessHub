@@ -58,6 +58,15 @@ function inputHash(input: RunInput): string {
       JSON.stringify({
         text: input.text,
         timeoutMs: input.timeoutMs,
+        ...(input.outputs
+          ? {
+              outputs: input.outputs.map((o) => ({
+                path: o.path,
+                name: o.name,
+                ...(o.mediaType ? { mediaType: o.mediaType } : {}),
+              })),
+            }
+          : {}),
         ...(input.fixture
           ? {
               fixture: {
@@ -134,6 +143,7 @@ function configSnapshot(engine: EngineProfile): JsonObject {
     credentialEnv: [...(engine.credentialEnv ?? [])],
     maxConcurrency: engine.maxConcurrency,
     ...(engine.cli ? { cli: { ...engine.cli } } : {}),
+    ...(engine.acp ? { acp: { ...engine.acp } } : {}),
     capabilities: { ...engine.capabilities },
     commandHash:
       engine.command === undefined
@@ -341,6 +351,53 @@ export class SqliteStore implements Store {
         .prepare("UPDATE sessions SET record = ? WHERE id = ?")
         .run(JSON.stringify(updated), id);
       return updated;
+    });
+  }
+
+  bindBackendSession(
+    runId: RunId,
+    backendSessionId: string,
+    event: EventDraft,
+  ): AgentEvent | undefined {
+    return this.transaction(() => {
+      const run = this.getRun(runId);
+      if (isTerminal(run.status)) return undefined;
+      if (
+        event.type !== "engine.session" ||
+        event.data.backendSessionId !== backendSessionId ||
+        !backendSessionId
+      )
+        throw new HubError(
+          "BACKEND_SESSION_INVALID",
+          "Backend identity event is invalid",
+          409,
+        );
+      const session = this.getSession(run.sessionId);
+      if (
+        session.backendSessionId !== undefined &&
+        session.backendSessionId !== backendSessionId
+      )
+        throw new HubError(
+          "BACKEND_SESSION_CHANGED",
+          "An existing backend session cannot be replaced",
+          409,
+        );
+      if (
+        event.sourceSeq !== undefined &&
+        this.db
+          .prepare("SELECT 1 FROM events WHERE run_id = ? AND source_seq = ?")
+          .get(runId, event.sourceSeq)
+      )
+        return undefined;
+      this.db.prepare("UPDATE sessions SET record = ? WHERE id = ?").run(
+        JSON.stringify({
+          ...session,
+          backendSessionId,
+          updatedAt: Date.now(),
+        }),
+        session.id,
+      );
+      return this.insertEvent(run, event);
     });
   }
 

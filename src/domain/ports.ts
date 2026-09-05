@@ -5,6 +5,7 @@ import type {
   CleanupStatus,
   DriverResult,
   EngineProfile,
+  FileOutput,
   EventDraft,
   FinishInput,
   PermissionId,
@@ -27,6 +28,12 @@ export interface Store {
     id: SessionId,
     status: SessionRecord["status"],
   ): SessionRecord;
+  /** Bind the immutable backend identity and commit its source event in one transaction. */
+  bindBackendSession(
+    runId: RunId,
+    backendSessionId: string,
+    event: EventDraft,
+  ): AgentEvent | undefined;
   acceptRun(
     sessionId: SessionId,
     input: RunInput,
@@ -64,7 +71,15 @@ export interface ExecutionSpec extends ExecutionIdentity {
   cwd: string;
   input: RunInput;
   stateDir: string;
+  backendSessionId?: string;
 }
+/** Gateway collects complete immutable copies before registering their metadata. */
+export type FileArtifactCollector = (
+  runId: RunId,
+  cwd: string,
+  outputs: FileOutput[],
+  signal: AbortSignal,
+) => Promise<{ artifacts: ArtifactRecord[]; missing: string[] }>;
 export type WorkerMessage = ExecutionIdentity & { version: 1; seq: number } & (
     | { type: "started" }
     | { type: "event"; event: EventDraft }

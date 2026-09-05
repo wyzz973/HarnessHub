@@ -1,8 +1,10 @@
+import { validateFileOutputs } from "../domain/files.js";
 import type { EngineCatalog } from "../domain/engines.js";
 import path from "node:path";
 import { HubError } from "../domain/errors.js";
 import type {
   ExecutionHandle,
+  FileArtifactCollector,
   Store,
   WorkerHost,
   WorkerMessage,
@@ -25,6 +27,12 @@ import type {
 
 interface RuntimeOptions {
   catalog?: EngineCatalog;
+  collectArtifacts?: FileArtifactCollector;
+  discardArtifacts?: (artifacts: ArtifactRecord[]) => Promise<void>;
+  inspectInstallation?: (
+    profile: EngineProfile,
+    signal: AbortSignal,
+  ) => Promise<JsonObject>;
   engines: EngineProfile[];
   workspaces: Workspace[];
   defaultEngine: string;
@@ -44,6 +52,8 @@ interface ActiveRun {
   run: RunRecord;
   profile: EngineProfile;
   handle?: ExecutionHandle;
+  collectionAbort?: AbortController;
+  startupAbort?: AbortController;
   stop?: "cancelled" | "timed_out";
   stopping?: Promise<CleanupStatus>;
   settlement?: Promise<void>;
@@ -52,6 +62,8 @@ interface ActiveRun {
 export class Runtime {
   private readonly active = new Map<SessionId, ActiveRun>();
   private readonly queue: RunId[] = [];
+  private readonly suspending = new Set<SessionId>();
+  private readonly installations = new Map<SessionId, JsonObject>();
   private readonly deadlines = new Map<RunId, NodeJS.Timeout>();
   private readonly tasks = new Set<Promise<void>>();
   private closed = false;
@@ -86,7 +98,12 @@ export class Runtime {
         store.setSessionStatus(session.id, "closed");
         continue;
       }
-      if (profile.driver === "acp" && !profile.capabilities.resume)
+      if (
+        profile.driver === "acp" &&
+        (!profile.capabilities.resume ||
+          (!session.backendSessionId &&
+            store.listRuns(session.id).some((r) => r.startedAt !== undefined)))
+      )
         store.setSessionStatus(session.id, "closed");
     }
   }
@@ -145,6 +162,20 @@ export class Runtime {
     const session = this.store.getSession(sessionId);
     if (session.status !== "open")
       throw new HubError("SESSION_CLOSED", "Session is closed", 409);
+    if (this.suspending.has(sessionId))
+      throw new HubError(
+        "SESSION_BUSY",
+        "Session is releasing its Worker",
+        409,
+      );
+    if (input.outputs) {
+      validateFileOutputs(input.outputs);
+      if (!this.options.collectArtifacts || !this.options.discardArtifacts)
+        throw new HubError(
+          "UNSUPPORTED_CAPABILITY",
+          "Workspace artifact collection is not configured",
+        );
+    }
     const profile = this.profile(session.engineId, session.profileRevision);
     if (input.fixture && profile.driver !== "fake")
       throw new HubError(
@@ -245,6 +276,51 @@ export class Runtime {
     let backendFailed = false;
     try {
       this.store.setRunStatus(run.id, "starting");
+      if (
+        active.profile.driver !== "fake" &&
+        this.options.inspectInstallation
+      ) {
+        let installation = this.installations.get(session.id);
+        if (!installation) {
+          active.startupAbort = new AbortController();
+          const signal = active.startupAbort.signal;
+          const aborted = Promise.withResolvers<never>();
+          const abort = () =>
+            aborted.reject(
+              new HubError(
+                "RUN_STOPPED",
+                "Run stopped during installation inspection",
+                409,
+              ),
+            );
+          signal.addEventListener("abort", abort, { once: true });
+          try {
+            installation = {
+              ...(await Promise.race([
+                this.options.inspectInstallation(active.profile, signal),
+                aborted.promise,
+              ])),
+              capturedAt: Date.now(),
+            };
+          } finally {
+            signal.removeEventListener("abort", abort);
+            delete active.startupAbort;
+          }
+          this.installations.set(session.id, installation);
+        }
+        if (!active.stop && Date.now() >= run.deadlineAt)
+          await this.stop(run.id, "timed_out");
+        if (active.stop)
+          throw new HubError(
+            "RUN_STOPPED",
+            "Run stopped before Worker startup",
+            409,
+          );
+        this.store.appendEvent(run.id, {
+          type: "engine.installation",
+          data: { installation },
+        });
+      }
       active.handle = await this.host.start(
         {
           sessionId: session.id,
@@ -254,6 +330,9 @@ export class Runtime {
           cwd: session.cwd,
           input: run.input,
           stateDir: path.join(this.options.stateDir, session.id),
+          ...(session.backendSessionId
+            ? { backendSessionId: session.backendSessionId }
+            : {}),
         },
         async (message) => this.receive(active, message),
       );
@@ -265,6 +344,10 @@ export class Runtime {
       let cleanup: CleanupStatus = "confirmed";
       if (!active.stop && (active.profile.driver === "cli" || backendFailed))
         cleanup = await this.host.closeSession(session.id);
+      if (!active.stop && Date.now() >= run.deadlineAt)
+        await this.stop(run.id, "timed_out");
+      if (!active.stop && result.status === "completed" && run.input.outputs)
+        await this.collectOutputs(active, session);
       if (!active.stop && Date.now() >= run.deadlineAt)
         await this.stop(run.id, "timed_out");
       if (active.stop) {
@@ -313,11 +396,50 @@ export class Runtime {
       clearTimeout(this.deadlines.get(run.id));
       this.deadlines.delete(run.id);
       this.active.delete(session.id);
+      if (active.profile.driver === "cli" || active.stop || backendFailed)
+        this.installations.delete(session.id);
       if (active.profile.driver === "acp" && (active.stop || backendFailed))
         this.store.setSessionStatus(session.id, "closed");
       queueMicrotask(() => this.pump());
     }
   }
+  private async collectOutputs(
+    active: ActiveRun,
+    session: SessionRecord,
+  ): Promise<void> {
+    const collect = this.options.collectArtifacts;
+    const discard = this.options.discardArtifacts;
+    const outputs = active.run.input.outputs;
+    if (!collect || !discard || !outputs)
+      throw new Error("Artifact collection is not configured");
+    this.store.setRunStatus(active.run.id, "finalizing");
+    active.collectionAbort = new AbortController();
+    const captured = await collect(
+      active.run.id,
+      session.cwd,
+      outputs,
+      active.collectionAbort.signal,
+    );
+    const unregistered = [...captured.artifacts];
+    try {
+      if (!active.stop && Date.now() >= active.run.deadlineAt)
+        await this.stop(active.run.id, "timed_out");
+      if (active.stop) return;
+      for (const artifact of captured.artifacts) {
+        this.store.registerArtifact(artifact);
+        unregistered.shift();
+      }
+      for (const name of captured.missing)
+        this.store.appendEvent(active.run.id, {
+          type: "ARTIFACT_MISSING",
+          data: { name },
+        });
+    } finally {
+      await discard(unregistered);
+      delete active.collectionAbort;
+    }
+  }
+
   private async receive(
     active: ActiveRun,
     message: WorkerMessage,
@@ -336,10 +458,26 @@ export class Runtime {
         this.store.setRunStatus(run.id, "running");
         break;
       case "event": {
-        const committed = this.store.appendEvent(run.id, {
-          ...message.event,
-          sourceSeq: message.seq,
-        });
+        const draft = { ...message.event, sourceSeq: message.seq };
+        let committed;
+        if (message.event.type === "engine.session") {
+          const backendSessionId = message.event.data.backendSessionId;
+          if (
+            typeof backendSessionId !== "string" ||
+            !backendSessionId ||
+            active.profile.driver !== "acp"
+          )
+            throw new HubError(
+              "BACKEND_SESSION_INVALID",
+              "ACP backend identity is invalid",
+              409,
+            );
+          committed = this.store.bindBackendSession(
+            run.id,
+            backendSessionId,
+            draft,
+          );
+        } else committed = this.store.appendEvent(run.id, draft);
         if (committed && message.event.type === "engine.capabilities")
           this.observedEngines.set(
             `${active.profile.id}:${active.profile.revision}`,
@@ -373,8 +511,15 @@ export class Runtime {
           run.id,
           message.artifact,
         );
-        if (!isTerminal(this.store.getRun(run.id).status) && !active.stop)
-          this.store.registerArtifact(artifact);
+        let registered = false;
+        try {
+          if (!isTerminal(this.store.getRun(run.id).status) && !active.stop) {
+            this.store.registerArtifact(artifact);
+            registered = true;
+          }
+        } finally {
+          if (!registered) await this.options.discardArtifacts?.([artifact]);
+        }
         break;
       }
       case "result":
@@ -415,6 +560,8 @@ export class Runtime {
     }
     if (active.stop) return;
     active.stop = reason;
+    active.startupAbort?.abort();
+    active.collectionAbort?.abort();
     this.store.setRunStatus(id, "cancelling");
     active.stopping = (async () => {
       const handle = active.handle;
@@ -473,7 +620,52 @@ export class Runtime {
       await active.handle.respondPermission(id, optionId);
     return permission;
   }
+  /** Releases an idle, explicitly resumable ACP Worker while preserving the public Session. */
+  async suspendSession(
+    id: SessionId,
+  ): Promise<{ session: SessionRecord; cleanupStatus: CleanupStatus }> {
+    this.assertReady();
+    const session = this.store.getSession(id);
+    if (session.status !== "open")
+      throw new HubError("SESSION_CLOSED", "Session is closed", 409);
+    const profile = this.profile(session.engineId, session.profileRevision);
+    if (profile.acp?.sessionMode !== "resume" || !session.backendSessionId)
+      throw new HubError(
+        "UNSUPPORTED_CAPABILITY",
+        "Session has no resumable ACP checkpoint",
+        409,
+      );
+    if (
+      this.suspending.has(id) ||
+      this.active.has(id) ||
+      this.store.listRuns(id).some((r) => !isTerminal(r.status))
+    )
+      throw new HubError(
+        "SESSION_BUSY",
+        "Only an idle session can release its Worker",
+        409,
+      );
+    this.suspending.add(id);
+    try {
+      const cleanupStatus = await this.host.closeSession(id);
+      if (cleanupStatus !== "confirmed")
+        throw new HubError(
+          "SESSION_SUSPEND_UNCONFIRMED",
+          "Worker cleanup could not be confirmed; resources remain quarantined",
+          503,
+        );
+      this.installations.delete(id);
+      return { session: this.store.getSession(id), cleanupStatus };
+    } finally {
+      this.suspending.delete(id);
+    }
+  }
   async closeSession(id: SessionId): Promise<SessionRecord> {
+    this.installations.delete(id);
+    if (this.store.getSession(id).status === "closed") {
+      await this.host.closeSession(id);
+      return this.store.getSession(id);
+    }
     this.store.setSessionStatus(id, "closing");
     for (const run of this.store.listRuns(id))
       if (!isTerminal(run.status)) await this.stop(run.id, "cancelled");

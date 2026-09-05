@@ -147,13 +147,21 @@ async function nativeCandidate(
       "acp",
     ];
   } else {
+    const bridge = path.join(options.cwd, "scripts", "launch-openclaw-acp.mjs");
+    const isolatedBridge = await fileExists(bridge);
     command = [
       "/usr/bin/env",
       `OPENCLAW_STATE_DIR=${path.join(options.home, ".openclaw")}`,
       `OPENCLAW_CONFIG_PATH=${path.join(options.home, ".openclaw", "openclaw.json")}`,
-      executable,
-      "acp",
+      ...(isolatedBridge
+        ? [options.nodeExecutable, bridge, executable]
+        : [executable, "acp"]),
     ];
+    candidate.notes.push(
+      isolatedBridge
+        ? "Uses a separate native Gateway session per Worker; bridge session recovery is not enabled."
+        : "This installation may need a bridge launcher to avoid the OpenClaw ACP session-key namespace conflict.",
+    );
     candidate.notes.push(
       "Requires the user's existing OpenClaw Gateway and valid model credentials.",
     );
@@ -302,6 +310,7 @@ async function manifestCandidates(
         ? { credentialEnv: profile.credentialEnv }
         : {}),
       ...(profile.cli !== undefined ? { cli: profile.cli } : {}),
+      ...(profile.acp !== undefined ? { acp: profile.acp } : {}),
     };
     result.push({
       id: profile.id,

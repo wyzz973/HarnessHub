@@ -1,6 +1,6 @@
 # HarnessHub 开发任务
 
-更新：2026-09-05。任务状态：阶段 A（HH-001～HH-012）的文本执行服务已完成 macOS 验收，HH-013/HH-015 的本地 ACP 后端已验证；Codex/Claude Code/OpenCode/DSH 均已通过真实文本任务；已追加动态引擎发现/管理、通用 CLI 和文本 Benchmark，Mac 动态文件任务已通过。Windows 与完整真实引擎恢复继续单独验收。
+更新：2026-09-05。任务状态：阶段 A（HH-001～HH-012）的文本执行服务已完成 macOS 验收，HH-013/HH-015 的本地 ACP 后端已验证；六种本机引擎已接入；DSH、OpenCode独立DeepSeek、Pi 已通过同一文件任务，DSH 已通过 idle suspend/Gateway重启恢复；文件产物、确定判分和版本/模型观测已落地。Windows 留待用户准备VMware后原生验收。
 
 本文件拥有任务依赖、优先级和进度；架构契约由 [DESIGN.md](DESIGN.md)拥有，开发与验收按 [AGENTS.md](AGENTS.md)及 [测试要求](docs/testing.md)执行。任务勾选不改变架构，也不代替证据。
 
@@ -215,9 +215,9 @@ flowchart TD
 
 ### HH-016 OpenCode 真任务纵向链路
 
-- [ ] macOS文本连接已通过，完整验收待继续；P0；前置：HH-015；外部条件：固定版本引擎和明确模型/凭证/预算；负责范围：OpenCode Profile、真实引擎用例与运行说明。
+- [ ] Mac文件/真实权限已验证，取消/故障与Windows专项仍待补；P0；前置：HH-015；外部条件：固定版本引擎和明确模型/凭证/预算；负责范围：OpenCode Profile、真实引擎用例与运行说明。
 
-进展：macOS OpenCode 1.1.21 经原配置/缓存引用后，Gateway默认opencode/big-pickle任务9.414s通过；完整工具任务、权限/取消和Windows尚待验收。 证据见 [macOS引擎验收](docs/verification/2026-09-05-macos-engines.md)。
+进展：macOS OpenCode 1.1.21 经原配置/缓存引用后，Gateway默认opencode/big-pickle任务9.414s通过；新增独立DeepSeek Profile已在10.017s完成CSV/JSON文件任务，两次实际权限均applied；原免费模型429记录保留。取消/故障和Windows专项尚待验收。 证据见 [macOS引擎验收](docs/verification/2026-09-05-macos-engines.md)。
 
 交付：准备固定版本的 OpenCode，经正式 Gateway/Worker 执行可用文件内容或确定评判器验证的任务，产生产物、事件和 Rollout。
 
@@ -225,7 +225,7 @@ flowchart TD
 
 ### HH-017 OpenCode 恢复与回收资格
 
-- [ ] 待开始；P0；前置：HH-016；负责范围：恢复能力验证、Profile 验证记录与通用生命周期用例。
+- [ ] DSH同套机制已先验证，OpenCode恢复仍待专项；P0；前置：HH-016；负责范围：恢复能力验证、Profile 验证记录与通用生命周期用例。
 
 交付：验证同一后端 Session 在新 Worker 中恢复、关闭和空闲回收；把已验证能力提供给通用 Worker 管理策略。
 
@@ -243,7 +243,9 @@ flowchart TD
 
 ### HH-019 Pi 经 pi-acp 接入并验收
 
-- [ ] 待开始；P0；前置：HH-018；外部条件：固定 Pi/pi-acp 版本和运行配置；负责范围：Pi Profile、兼容适配与同套契约验收。
+- [ ] Mac文本/文件任务已验证，恢复/取消/Windows仍待补；P0；前置：HH-018；外部条件：固定 Pi/pi-acp 版本和运行配置；负责范围：Pi Profile、兼容适配与同套契约验收。
+
+进展：Pi0.85.0 + pi-acp0.0.33已固定安装，复用现有DeepSeek引用，正式Gateway文本与文件任务均通过；文件任务8.798s、两份产物正确、0残留lease。真实审批未触发，不能冒称全工具覆盖。见 [本轮验收](docs/verification/2026-09-05-file-tasks-and-recovery.md)。
 
 交付：Pi 经现成 pi-acp 使用共享 ACPDriver，记录 Harness 与 Adapter 各自版本和协商/实测能力。测试专用模型/权限配置独立，不能影响 OpenCode 默认配置。
 
@@ -251,9 +253,9 @@ flowchart TD
 
 ### HH-020 DSH 接入与 resume/close 差异
 
-- [ ] macOS文本连接已通过，完整验收待继续；P1；前置：HH-019；外部条件：固定 DSH 与模型运行配置；负责范围：DSH Profile、必要的薄适配及引擎验收。
+- [ ] Mac文件与严格上下文恢复已验证，异常中断/Windows仍待专项；P1；前置：HH-019；外部条件：固定 DSH 与模型运行配置；负责范围：DSH Profile、必要的薄适配及引擎验收。
 
-进展：已提前按用户指定通过本机DSH现有CLI/profile完成Gateway真实文本任务（deepseek-v4-flash，2.738s）；本轮动态注册后完成了实际文件write任务（3.639s，独立文件hash核对）；resume、真实权限和Windows差异仍未完整验收。 证据见 [macOS引擎验收](docs/verification/2026-09-05-macos-engines.md)。
+进展：已提前按用户指定通过本机DSH现有CLI/profile完成Gateway真实文本任务（deepseek-v4-flash，2.738s）；本轮动态注册后完成了实际文件write任务（3.639s，独立文件hash核对）；本轮补齐正式Gateway idle suspend及重启后同backend ID/nonce恢复；真实权限未触发、执行中异常与Windows差异仍待专项。 证据见 [macOS引擎验收](docs/verification/2026-09-05-macos-engines.md)。
 
 交付：通过 DSH ACP profile 接入，验证模型选择、权限和 `session/resume` / `session/close`；公共历史仍由 HarnessHub 事件查询和导出提供。
 
@@ -263,9 +265,9 @@ flowchart TD
 
 ### HH-021 Benchmark attempt 与 Evaluator
 
-- [ ] 文本与登记Artifact范围已验证，通用文件采集待补；P1；前置：HH-012；负责范围：`src/benchmark/`、必要存储迁移和评判器 fixtures。
+- [x] Mac文本/普通文件/二进制证据范围已验证；P1；前置：HH-012；负责范围：`src/benchmark/`、必要存储迁移和评判器 fixtures。
 
-进展：正式 CLI 复用 Application/Runtime、独立 attempt/workspace、SQLite 证据与 Evaluation、离线重新评分、提交/评分崩溃窗口与数据污染校验已实现；DSH/OpenCode 两次真实文本 Benchmark 均通过。尚不包含原始 Workspace 文件自动采集与 GUI 隔离。证据见 [本轮验收](docs/verification/2026-09-05-dynamic-engines.md)。
+进展：正式 CLI 复用 Application/Runtime、独立 attempt/workspace、SQLite 证据与 Evaluation、离线重新评分、提交/评分崩溃窗口与数据污染校验已实现；DSH/OpenCode 两次真实文本 Benchmark 均通过。本轮新增显式outputs、版本化fixtureFiles、JSON结构/二进制hash判分、显式权限策略；DSH/OpenCode/Pi三次同文件题通过。GUI桌面隔离不在当前支持任务集。证据见 [本轮验收](docs/verification/2026-09-05-dynamic-engines.md)。
 
 交付：CLI 通过 Application Service 提交任务；创建独立 attempt、准备/重置环境、登记输入和版本、持久化 Evaluation。先用假引擎与确定评判器开发，正式多引擎验收在 HH-022 完成。
 
@@ -273,9 +275,9 @@ flowchart TD
 
 ### HH-022 成绩矩阵与可复查评测
 
-- [ ] 最小文本矩阵已验证，完整任务集与成本采集待补；P1；前置：HH-019、HH-020、HH-021；外部条件：版本化任务集、评判器和运行预算；负责范围：评测汇总、导出和复现说明。
+- [ ] 文件矩阵/模型观测已验证，正式任务集与后端成本信息待补；P1；前置：HH-019、HH-020、HH-021；外部条件：版本化任务集、评判器和运行预算；负责范围：评测汇总、导出和复现说明。
 
-进展：已实现 --report，从持久 attempt/最新评分重建矩阵、按批次和dataset分组、失败归因、重评分次数和事后覆盖率；对真实 DSH/OpenCode 批次生成矩阵，无重复模型调用。缺失实际模型/usage/cost明确为null，未跑任务不假记失败；完整版本自动采集和比赛任务集仍待完成。证据见 [本轮验收](docs/verification/2026-09-05-dynamic-engines.md)。
+进展：已实现 --report，从持久 attempt/最新评分重建矩阵、按批次和dataset分组、失败归因、重评分次数和事后覆盖率；对真实 DSH/OpenCode 批次生成矩阵，无重复模型调用。缺失实际模型/usage/cost明确为null，未跑任务不假记失败；本轮自动保存启动文件hash/可识别包版本及ACP模型/usage来源；后端未提供的usage/cost仍null。完整后端版本自动采集和比赛任务集仍待补。证据见 [本轮验收](docs/verification/2026-09-05-dynamic-engines.md)。
 
 交付：Task × Engine × Model × Attempt 矩阵、单引擎结果、失败归因、离线 best-of-engines 覆盖和运行成本依据。
 
@@ -341,6 +343,48 @@ flowchart TD
 
 证据见 [本轮动态引擎验收](docs/verification/2026-09-05-dynamic-engines.md)。
 
+## 当前追加：Mac 文件任务与恢复
+
+### HH-029 声明式文件采集与下载
+
+- [x] Mac范围已验证；P0；前置：HH-028；范围：Run outputs、Collector、Runtime、Artifact API。
+
+交付：只采集明确声明的相对输出文件；支持二进制、不可变快照、hash和完整性读取；采集纳入deadline，缺失与不安全路径分别报告。
+
+验收：正式Gateway执行产生JSON和二进制→登记→HTTP读取→重启读取；覆盖越界/链接/变化/容量/取消/持久失败和孤儿回收。
+
+证据见 [本轮文件与恢复验收](docs/verification/2026-09-05-file-tasks-and-recovery.md)。
+
+### HH-030 文件任务评判与权限策略
+
+- [x] Mac范围已验证；P0；前置：HH-029、HH-021；范围：fixtureFiles、json-equal/file-sha256、证据/报告与CLI。
+
+交付：版本化输入文件；多步骤文件任务；显式deny/allow-once策略走持久权限API；文件证据支持离线重评与模型/usage事件归属。
+
+验收：确定fixture及Mac真实DSH/OpenCode各完成同一CSV读取/计算/两文件写入任务；错误内容、缺文件、污染、旧评分和权限拒绝不会被计成功。
+
+证据见 [本轮文件与恢复验收](docs/verification/2026-09-05-file-tasks-and-recovery.md)。
+
+### HH-031 严格ACP会话恢复
+
+- [x] Mac范围已验证；P0；前置：HH-028；范围：ACP Driver、持久backend身份、Runtime idle suspend及API。
+
+交付：显式开启resume，保存并约束同一backendSessionId；idle Worker释放后或Gateway正常重启后新Run恢复旧上下文；checkpoint丢失/不匹配/能力不支持明确失败，不创建替代会话。
+
+验收：真实Mac DSH两Worker nonce证明；正式Gateway suspend/重启仍同backend ID；中断Run不自动重跑；原有不支持恢复的Profile保持保守关闭。
+
+证据见 [本轮文件与恢复验收](docs/verification/2026-09-05-file-tasks-and-recovery.md)。
+
+### HH-032 Mac比赛验收集与VMware交接
+
+- [x] Mac验收集和VMware交接文档已交付；P0；前置：HH-029、HH-030、HH-031；范围：真实任务、环境清单、运行文档与Windows测试入口。
+
+交付：将Mac通过的确定任务和命令保存，可在后续Windows环境复用；原有Windows检查不标通过。OpenClaw Bridge/Pi接入已通过Mac验证，未返回的版本/成本信息明确保留未知。
+
+验收：可复现数据/输出/评分/恢复结果；不重复未变化的整套测试；用户准备VMware后按同一任务集做原生验证。
+
+交付见 [VMware验收](docs/vmware-validation.md)与 [本轮证据](docs/verification/2026-09-05-file-tasks-and-recovery.md)；Windows原生执行本身仍归HH-014/018/023，不因交接文档完成而勾选。
+
 ## 并行与文件所有权
 
 最早安全的并行窗口是 HH-002 完成之后：HH-003 负责 Store，HH-004 负责 Worker；HH-013 可用独立探针提前验证 acpx。HH-005 由主负责人组装，必须使用相同版本的公共接口。
@@ -364,4 +408,4 @@ HH-005 后，HH-006 → HH-007 → HH-008 → HH-010 依次修改 Runtime，默�
 
 ## 下一批工作
 
-已完成本轮 HH-025～HH-028 的 Mac 动态目录和执行入口，以及 HH-021/HH-022 的文本评测最小范围。下一批按比赛需要优先补原始 Workspace 文件采集/确定判分、真实任务集和已安装引擎的恢复验收；OpenClaw 先补登录，VMware 自动化访问独立补齐。Pi 可通过 manifest/现成 ACP Adapter 接入，不再被静态注册代码限制。已通过且输入未变化的验证不重复运行。
+HH-029～HH-032的Mac范围已完成：文件产物/判分、DSH严格恢复、三个引擎同文件题、OpenClaw Bridge修复、Pi接入与VMware交接。下一步等待用户准备Windows Guest后执行HH-014/018/023，并按实际比赛任务补齐各引擎异常中断/恢复覆盖、正式任务集和后端usage/cost。原免费OpenCode受429影响，使用独立opencode-deepseek Profile；该次失败仍保留，不通过删除记录美化矩阵。
