@@ -1,3 +1,6 @@
+import { SqliteWorkflowStore } from "./storage/workflow-store.js";
+import { WorkflowService } from "./application/workflows.js";
+import { ObservationService } from "./application/observability.js";
 import { parseArgs } from "node:util";
 import { homedir } from "node:os";
 import { EngineManager } from "./engine/manager.js";
@@ -72,6 +75,8 @@ export async function startHub(options: {
   });
   let runtime: Runtime | undefined;
   let manager: EngineManager | undefined;
+  let workflowStore: SqliteWorkflowStore | undefined;
+  let workflows: WorkflowService | undefined;
   try {
     manager = new EngineManager({
       config,
@@ -111,13 +116,23 @@ export async function startHub(options: {
       async (artifact) => readArtifact(artifactRoot, artifact),
       manager,
     );
-    const server = await createGateway(app);
+    workflowStore = new SqliteWorkflowStore(
+      path.join(dataDir, "harnesshub.sqlite"),
+    );
+    workflows = new WorkflowService(app, workflowStore);
+    const observations = new ObservationService({
+      store,
+      engines: () => runtime!.listEngines(),
+    });
+    const server = await createGateway(app, { workflows, observations });
     server.addHook("onClose", async () => {
+      workflowStore?.close();
       store.close();
     });
     const url = await server.listen({ host: "127.0.0.1", port: options.port });
     return { server, app, url };
   } catch (error) {
+    await workflows?.close();
     await manager?.close();
     try {
       await runtime?.close();
@@ -129,6 +144,7 @@ export async function startHub(options: {
     } catch {
       /* Unconfirmed process leases remain available to the next startup. */
     }
+    workflowStore?.close();
     store.close();
     throw error;
   }

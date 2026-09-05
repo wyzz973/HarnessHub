@@ -295,7 +295,11 @@ export class SqliteStore implements Store {
       .run(JSON.stringify(value));
   }
 
-  createSession(engine: EngineProfile, workspace: Workspace): SessionRecord {
+  createSession(
+    engine: EngineProfile,
+    workspace: Workspace,
+    routing?: JsonObject,
+  ): SessionRecord {
     const now = Date.now();
     const session: SessionRecord = {
       id: randomUUID() as SessionId,
@@ -306,7 +310,10 @@ export class SqliteStore implements Store {
       status: "open",
       createdAt: now,
       updatedAt: now,
-      configSnapshot: configSnapshot(engine),
+      configSnapshot: {
+        ...configSnapshot(engine),
+        ...(routing ? { routing } : {}),
+      },
     };
     this.db
       .prepare("INSERT INTO sessions (id, created_at, record) VALUES (?, ?, ?)")

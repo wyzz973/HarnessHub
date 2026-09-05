@@ -23,9 +23,15 @@
     "test:integration": "node --test dist/tests/integration/*.test.js",
     "test:smoke": "node --test dist/tests/smoke/*.test.js",
     "test": "pnpm build && pnpm test:tooling && pnpm test:unit && pnpm test:integration && pnpm test:smoke",
-    "check": "pnpm check:runtime && pnpm lint && pnpm format:check && pnpm check:boundaries && pnpm check:docs && pnpm test",
+    "check": "pnpm check:runtime && pnpm lint && pnpm format:check && pnpm check:boundaries && pnpm check:docs && pnpm test && pnpm check:console",
     "start": "node dist/src/main.js",
-    "benchmark": "node dist/src/benchmark-main.js"
+    "benchmark": "node dist/src/benchmark-main.js",
+    "dev:console": "pnpm --filter @harnesshub/console dev",
+    "build:console": "pnpm --filter @harnesshub/console build",
+    "start:console": "pnpm --filter @harnesshub/console start",
+    "typecheck:console": "pnpm --filter @harnesshub/console typecheck",
+    "lint:console": "eslint web/app web/components web/lib web/next.config.ts --max-warnings=0",
+    "check:console": "pnpm lint:console && pnpm build:console"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.4.0",

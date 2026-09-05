@@ -1,3 +1,14 @@
+import { registerWorkflowRoutes } from "./workflow-routes.js";
+import { registerObservationRoutes } from "./observation-routes.js";
+import {
+  selectWorkflowEngine,
+  type WorkflowService,
+} from "../application/workflows.js";
+import type { ObservationService } from "../application/observability.js";
+import {
+  engineSelectionSchema,
+  type WorkflowCapability,
+} from "../domain/workflows.js";
 import { once } from "node:events";
 import { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
@@ -38,7 +49,13 @@ const responses = (schema: object, code = 200) => ({
   default: errorResponseSchema,
 });
 /** Creates routes from the same schemas used by request validation and OpenAPI generation. */
-export async function createGateway(app: HubApplication) {
+export async function createGateway(
+  app: HubApplication,
+  options: {
+    workflows?: WorkflowService;
+    observations?: ObservationService;
+  } = {},
+) {
   const server = Fastify({
     logger: false,
     bodyLimit: 2 * 1024 * 1024,
@@ -110,7 +127,13 @@ export async function createGateway(app: HubApplication) {
     "/health/ready",
     { schema: { response: { 200: readiness, 503: readiness } } },
     async (_req, reply) =>
-      reply.code(app.isReady() ? 200 : 503).send({ ready: app.isReady() }),
+      reply
+        .code(
+          app.isReady() && (options.workflows?.isReady() ?? true) ? 200 : 503,
+        )
+        .send({
+          ready: app.isReady() && (options.workflows?.isReady() ?? true),
+        }),
   );
   server.get(
     "/v1/engines",
@@ -208,6 +231,190 @@ export async function createGateway(app: HubApplication) {
       },
     },
     async () => app.reloadEngines(),
+  );
+  server.get(
+    "/v1/workspaces",
+    {
+      schema: {
+        response: responses({
+          type: "object",
+          required: ["workspaces", "defaultEngine", "defaultWorkspace"],
+          properties: {
+            workspaces: {
+              type: "array",
+              items: {
+                type: "object",
+                required: ["id", "path"],
+                properties: {
+                  id: { type: "string" },
+                  path: { type: "string" },
+                },
+              },
+            },
+            defaultEngine: { type: "string" },
+            defaultWorkspace: { type: "string" },
+          },
+        }),
+      },
+    },
+    async () => ({
+      workspaces: app.workspaces(),
+      defaultEngine: app.defaultEngine(),
+      defaultWorkspace: app.defaultWorkspace(),
+    }),
+  );
+  const pageQuery = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      limit: { type: "integer", minimum: 1, maximum: 200, default: 100 },
+    },
+  };
+  server.get<{ Querystring: { limit?: number } }>(
+    "/v1/sessions",
+    {
+      schema: {
+        querystring: pageQuery,
+        response: responses({
+          type: "object",
+          required: ["sessions"],
+          properties: {
+            sessions: { type: "array", items: sessionResponseSchema },
+          },
+        }),
+      },
+    },
+    async (request) => ({
+      sessions: app
+        .sessions()
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, request.query.limit ?? 100),
+    }),
+  );
+  server.get<{ Querystring: { limit?: number } }>(
+    "/v1/runs",
+    {
+      schema: {
+        querystring: pageQuery,
+        response: responses({
+          type: "object",
+          required: ["runs"],
+          properties: { runs: { type: "array", items: runResponseSchema } },
+        }),
+      },
+    },
+    async (request) => ({
+      runs: app
+        .runs()
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, request.query.limit ?? 100),
+    }),
+  );
+  server.get<{ Params: { id: string } }>(
+    "/v1/sessions/:id/runs",
+    {
+      schema: {
+        params: idParams,
+        response: responses({
+          type: "object",
+          required: ["runs"],
+          properties: { runs: { type: "array", items: runResponseSchema } },
+        }),
+      },
+    },
+    async (request) => {
+      app.getSession(request.params.id as SessionId);
+      return { runs: app.runs(request.params.id as SessionId).slice(-200) };
+    },
+  );
+  server.get<{
+    Params: { id: string };
+    Querystring: { afterSeq?: number; limit?: number };
+  }>(
+    "/v1/runs/:id/event-log",
+    {
+      schema: {
+        params: idParams,
+        querystring: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            afterSeq: { type: "integer", minimum: 0 },
+            limit: { type: "integer", minimum: 1, maximum: 1000 },
+          },
+        },
+        response: responses({
+          type: "object",
+          required: ["events"],
+          properties: {
+            events: {
+              type: "array",
+              items: { type: "object", additionalProperties: true },
+            },
+          },
+        }),
+      },
+    },
+    async (request) => ({
+      events: app.events(
+        request.params.id as RunId,
+        request.query.afterSeq ?? 0,
+        request.query.limit ?? 1000,
+      ),
+    }),
+  );
+  server.post<{
+    Body: { workspaceId?: string; requiredCapabilities?: WorkflowCapability[] };
+  }>(
+    "/v1/sessions/auto",
+    {
+      schema: {
+        body: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            workspaceId: { type: "string", minLength: 1, maxLength: 100 },
+            requiredCapabilities: {
+              type: "array",
+              uniqueItems: true,
+              items: { enum: ["permissions", "images"] },
+            },
+          },
+        },
+        response: responses(
+          {
+            type: "object",
+            required: ["session", "selection"],
+            properties: {
+              session: sessionResponseSchema,
+              selection: engineSelectionSchema,
+            },
+          },
+          201,
+        ),
+      },
+    },
+    async (request, reply) => {
+      const selection = selectWorkflowEngine(app, {
+        engineId: "auto",
+        ...(request.body.requiredCapabilities
+          ? { requiredCapabilities: request.body.requiredCapabilities }
+          : {}),
+      });
+      const session = app.createSession({
+        engineId: selection.engineId,
+        routing: {
+          ...selection,
+          candidates: selection.candidates.map((candidate) => ({
+            ...candidate,
+          })),
+        },
+        ...(request.body.workspaceId
+          ? { workspaceId: request.body.workspaceId }
+          : {}),
+      });
+      return reply.code(201).send({ session, selection });
+    },
   );
   server.post<{ Body: { engineId?: string; workspaceId?: string } }>(
     "/v1/sessions",
@@ -418,7 +625,24 @@ export async function createGateway(app: HubApplication) {
         .send(bytes);
     },
   );
+  if (options.workflows) registerWorkflowRoutes(server, options.workflows);
+  if (options.observations)
+    registerObservationRoutes(server, options.observations);
   server.get("/openapi.json", async () => server.swagger());
-  server.addHook("preClose", async () => app.close());
+  server.addHook("preClose", async () => {
+    const failures: unknown[] = [];
+    try {
+      await options.workflows?.close();
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      await app.close();
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length)
+      throw new AggregateError(failures, "Gateway cleanup failed");
+  });
   return server;
 }

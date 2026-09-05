@@ -1,5 +1,7 @@
 # HarnessHub
 
+本机可视化控制台：`http://127.0.0.1:3330`。已支持自动任务规划、计划确认、自动引擎选择、流式对话、权限/产物与完整观测，前端采用 Next.js / React + shadcn/ui + assistant-ui + AI Elements + Streamdown + Lucide。启动和组件说明见 [Console](web/README.md)。
+
 HarnessHub 为多个 Agent Harness 提供统一执行入口。Gateway、SQLite、独立Worker、取消/期限、权限、SSE和导出已实现；macOS上Codex、Claude Code、OpenCode、DSH已通过真实文本任务。已支持动态发现/注册、配置热加载、通用 CLI、文件产物与确定判分；DSH/OpenCode/Pi 已通过同一多步骤文件任务，DSH 已通过 Worker 释放及 Gateway 重启后的上下文恢复，OpenClaw ACP 也已修复并调用成功。Windows 原生验收后续在 VMware 进行。
 
 架构已确定为 Gateway + 独立 Engine Worker、SQLite 公共状态与事件、JSONL 轨迹导出；接入顺序为 OpenCode → Pi → DSH。具体职责和实施阶段见 [DESIGN.md](DESIGN.md)。

@@ -57,6 +57,7 @@ interface ActiveRun {
   stop?: "cancelled" | "timed_out";
   stopping?: Promise<CleanupStatus>;
   settlement?: Promise<void>;
+  cleanup?: { durationMs: number; status: CleanupStatus; performed: boolean };
 }
 /** Owns public execution outcomes. All asynchronous backend work remains tied to a run generation. */
 export class Runtime {
@@ -110,6 +111,16 @@ export class Runtime {
   isReady(): boolean {
     return !this.closed && !this.failure;
   }
+  /** Current default and registered workspace snapshots for shared UI/planning consumers. */
+  defaultEngine(): string {
+    return this.options.catalog?.defaultId() ?? this.options.defaultEngine;
+  }
+  defaultWorkspace(): string {
+    return this.options.defaultWorkspace;
+  }
+  workspaces(): Workspace[] {
+    return this.options.workspaces.map((w) => ({ ...w }));
+  }
   listEngines(): EngineProfile[] {
     return (this.options.catalog?.list() ?? this.options.engines).map((e) =>
       structuredClone(e),
@@ -135,6 +146,7 @@ export class Runtime {
   createSession(input: {
     engineId?: string;
     workspaceId?: string;
+    routing?: JsonObject;
   }): SessionRecord {
     this.assertReady();
     const profile = this.profile(
@@ -151,7 +163,7 @@ export class Runtime {
         "Workspace is not registered",
         404,
       );
-    return this.store.createSession(profile, workspace);
+    return this.store.createSession(profile, workspace, input.routing);
   }
   submit(
     sessionId: SessionId,
@@ -343,7 +355,7 @@ export class Runtime {
       // Any failed backend also loses reuse eligibility, even when it returns a result.
       let cleanup: CleanupStatus = "confirmed";
       if (!active.stop && (active.profile.driver === "cli" || backendFailed))
-        cleanup = await this.host.closeSession(session.id);
+        cleanup = await this.closeWorker(active);
       if (!active.stop && Date.now() >= run.deadlineAt)
         await this.stop(run.id, "timed_out");
       if (!active.stop && result.status === "completed" && run.input.outputs)
@@ -352,8 +364,10 @@ export class Runtime {
         await this.stop(run.id, "timed_out");
       if (active.stop) {
         const cleanup = (await active.stopping) ?? "unconfirmed";
+        this.recordCleanup(active, cleanup);
         this.finish(run.id, active.stop, active.stop, cleanup);
       } else {
+        this.recordCleanup(active, cleanup);
         this.store.finishRun(run.id, {
           status: result.status,
           stopReason: result.stopReason ?? result.status,
@@ -378,9 +392,10 @@ export class Runtime {
           /* The storage failure remains the primary fault. */
         });
       }
-      const cleanup = await (
-        active.stopping ?? this.host.closeSession(session.id)
-      ).catch((): CleanupStatus => "failed");
+      const cleanup = await (active.stopping ?? this.closeWorker(active)).catch(
+        (): CleanupStatus => "failed",
+      );
+      this.recordCleanup(active, cleanup);
       if (active.stop) this.finish(run.id, active.stop, active.stop, cleanup);
       else
         this.store.finishRun(run.id, {
@@ -403,6 +418,27 @@ export class Runtime {
       queueMicrotask(() => this.pump());
     }
   }
+  private async closeWorker(active: ActiveRun): Promise<CleanupStatus> {
+    const started = performance.now();
+    let status: CleanupStatus = "failed";
+    try {
+      status = await this.host.closeSession(active.run.sessionId);
+      return status;
+    } finally {
+      active.cleanup = {
+        durationMs: Math.max(0, Math.round(performance.now() - started)),
+        status,
+        performed: true,
+      };
+    }
+  }
+  private recordCleanup(active: ActiveRun, status: CleanupStatus): void {
+    this.store.appendEvent(active.run.id, {
+      type: "runtime.cleanup",
+      data: active.cleanup ?? { durationMs: 0, status, performed: false },
+    });
+  }
+
   private async collectOutputs(
     active: ActiveRun,
     session: SessionRecord,
@@ -553,6 +589,10 @@ export class Runtime {
     if (!active || active.run.id !== id) {
       const index = this.queue.indexOf(id);
       if (index >= 0) this.queue.splice(index, 1);
+      this.store.appendEvent(id, {
+        type: "runtime.cleanup",
+        data: { durationMs: 0, status: "confirmed", performed: false },
+      });
       this.finish(id, reason, reason, "confirmed");
       clearTimeout(this.deadlines.get(id));
       this.deadlines.delete(id);
@@ -585,7 +625,7 @@ export class Runtime {
           clearTimeout(timer);
         }
       }
-      return this.host.closeSession(run.sessionId);
+      return this.closeWorker(active);
     })();
     // execute() consumes this promise; attach immediately to avoid a rejection gap.
     void active.stopping.catch(() => {

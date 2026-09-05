@@ -5,6 +5,7 @@ import type {
   CleanupStatus,
   DriverResult,
   EngineProfile,
+  JsonObject,
   FileOutput,
   EventDraft,
   FinishInput,
@@ -21,7 +22,11 @@ import type {
 
 /** Synchronous bounded transactions; implementation must never expose uncommitted events. */
 export interface Store {
-  createSession(engine: EngineProfile, workspace: Workspace): SessionRecord;
+  createSession(
+    engine: EngineProfile,
+    workspace: Workspace,
+    routing?: JsonObject,
+  ): SessionRecord;
   getSession(id: SessionId): SessionRecord;
   listSessions(): SessionRecord[];
   setSessionStatus(

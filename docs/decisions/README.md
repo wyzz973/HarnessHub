@@ -12,5 +12,6 @@ ADR 记录重要且未来可能重新讨论的决定。适用范围见 [文档�
 - [0002：执行链路协议与运行限制](0002-runtime-mvp.md)
 - [0003：动态引擎目录与通用 CLI 接入](0003-dynamic-engines.md)
 - [0004：文件任务、严格恢复与本机接入修复](0004-file-tasks-and-resume.md)
+- [0005：控制台、自动规划和完整观测](0005-console-workflows-observability.md)
 
 Worker、SQLite 和首批引擎三项已采纳决定及依据直接由 [DESIGN.md](../../DESIGN.md#1-已确认的三个决定)和 [源码调研](<../../HarnessHub 源码阅读与技术选型讨论稿.md>)拥有，暂不重复创建同内容 ADR。以后改变其中决定时在这里记录新的取舍。

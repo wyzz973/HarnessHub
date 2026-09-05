@@ -16,7 +16,7 @@
 | 数据边界 | 从 MVP 使用 SQLite 保存公共状态和规范化事件 | Gateway 是唯一业务写入者；JSONL 是导出格式；acpx Store 仅保存后端恢复材料 |
 | 首批引擎 | OpenCode → Pi（经 pi-acp） | 共用 ACPDriver；第二个引擎接入不修改 Gateway 业务代码；随后接 DSH |
 
-第一版目标是多引擎可替换执行、可观察轨迹和可复现评测。跨引擎会话迁移、跨机器调度、自动选路、跨引擎协作不进入本轮 MVP。
+第一版执行基础已完成；用户随后明确加入本机控制台、模型生成计划和自动引擎选择，已按 [ADR 0005](docs/decisions/0005-console-workflows-observability.md)扩展。跨引擎无损会话迁移和跨机器调度仍不在当前范围。
 
 Gateway 规范尚未提供，按通用任务 API 开发设计；未来赛题通过入口适配层对接。Windows 10/11 是目标平台，实际兼容性、隔离能力和比赛计分均须独立验证。
 
@@ -36,8 +36,12 @@ Gateway 规范尚未提供，按通用任务 API 开发设计；未来赛题通�
 | 开发组织 | 单仓库、单主包、按模块分目录；按实际需要再拆包 |
 | 测试与验收 | 公共运行契约、真实引擎链路、Windows 原生行为 |
 | Benchmark | Node CLI，复用 Application Service |
+| 控制台 | Next.js / React，shadcn/ui、assistant-ui、AI Elements、Streamdown、Lucide |
+| Workflow | Application Service生成有界DAG、确认后串行调度，SQLite持久化 |
 
 ACP Runtime、Adapter、Harness、模型配置应分别记录版本；当前 Benchmark 自动记录 Hub/Node/OS、配置 revision 和配置模型，真实引擎/Adapter 版本及实际模型仍需验收记录补充。依赖先通过安装与兼容性检查再锁定；运行任务时不自动更新或临时下载引擎。
+
+控制台位于独立 `web` 包，共用 pnpm workspace 锁；Next 仅代理本机 Gateway，assistant-ui Runtime 为前端消息适配，不替代后端执行所有权。
 
 不因引入 Worker 额外引入 Go/Rust 服务。Windows 原生监督能力若确需 helper，单独评估与封装，其接口不进入业务域。
 
@@ -149,6 +153,9 @@ Gateway 重启后先核实 Worker 归属与残留进程，对缺少明确终态�
 
 | 方法与路径 | 职责 |
 |---|---|
+| `GET /v1/workflows`、`POST /v1/workflows`、`POST /v1/workflows/:id/approve` | 自动规划、历史和具体计划确认；取消/重启语义见Workflow说明 |
+| `GET /v1/observability`、`GET /v1/runs/:id/observations` | 从持久事件重建模型、用量、成本来源、性能与覆盖 |
+| `POST /v1/sessions/auto` | 按能力、历史、负载与默认偏好选择并记录引擎 |
 | `GET /v1/engines` | 引擎、可用性与能力摘要 |
 | `GET /v1/engines/discover`、`POST /v1/engines`、`PUT/DELETE /v1/engines/:id` | 发现、动态完整注册/替换、移除；默认和 reload 见管理 API |
 | `POST /v1/sessions` | 创建公共 Session，指定 Engine/Profile/Workspace |

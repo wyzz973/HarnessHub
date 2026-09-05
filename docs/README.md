@@ -11,6 +11,9 @@
 | [文档规范](documentation.md) | 文档归属、JSDoc、示例、链接和状态 |
 | [决策记录](decisions/README.md) | 重要决定、替代方案和代价 |
 | [验收记录模板](templates/verification.md) | 记录实际命令、产物、版本与未验证项 |
+| [可视化控制台](../web/README.md) | 组件架构、页面和本机启动 |
+| [自动工作流](workflows.md) | 模型拆分、引擎选择、审批/取消和持久化 |
+| [完整观测](observability.md) | Run归属、原生token、费用来源、时序和覆盖 |
 | [运行/API 说明](runtime-api.md) | 已实现服务的启动、接口、配置与能力限制 |
 | [动态引擎管理](engine-management.md) | 运行中注册/替换、热加载、默认选择与版本归档 |
 | [本机发现](engine-discovery.md) | PATH、已有安装、开放 manifest 与发现边界 |
@@ -40,3 +43,5 @@
 动态引擎与评测：[本轮 Mac 验收](verification/2026-09-05-dynamic-engines.md)。
 
 文件与恢复：[本轮 Mac 验收](verification/2026-09-05-file-tasks-and-recovery.md)。
+
+控制台与自动规划：[本轮浏览器验收](verification/2026-09-05-console.md)。

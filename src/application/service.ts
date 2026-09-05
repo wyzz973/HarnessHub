@@ -3,6 +3,7 @@ import { HubError } from "../domain/errors.js";
 import type { Runtime } from "../runtime/runtime.js";
 import type {
   ArtifactId,
+  JsonObject,
   ArtifactRecord,
   PermissionId,
   RunId,
@@ -21,6 +22,21 @@ export class HubApplication {
   ) {}
   isReady() {
     return this.runtime.isReady();
+  }
+  defaultEngine() {
+    return this.runtime.defaultEngine();
+  }
+  defaultWorkspace() {
+    return this.runtime.defaultWorkspace();
+  }
+  workspaces() {
+    return this.runtime.workspaces();
+  }
+  sessions() {
+    return this.runtime.store.listSessions();
+  }
+  runs(sessionId?: SessionId) {
+    return this.runtime.store.listRuns(sessionId);
   }
   engines() {
     return this.runtime.listEngines().map((profile) => ({
@@ -60,7 +76,11 @@ export class HubApplication {
     const m = this.management();
     return { ...m.status(), defaultEngine: m.defaultId() };
   }
-  createSession(input: { engineId?: string; workspaceId?: string }) {
+  createSession(input: {
+    engineId?: string;
+    workspaceId?: string;
+    routing?: JsonObject;
+  }) {
     return this.runtime.createSession(input);
   }
   getSession(id: SessionId) {

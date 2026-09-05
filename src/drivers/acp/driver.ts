@@ -13,6 +13,11 @@ import {
   openPinnedSessionStore,
 } from "./session-store.js";
 import type { Driver, DriverChannel } from "../driver.js";
+import {
+  acpUsageObservation,
+  captureNativeUsage,
+  nativeUsageObservation,
+} from "./observations.js";
 import type { ExecutionSpec } from "../../domain/ports.js";
 import type {
   DriverResult,
@@ -112,6 +117,16 @@ export class AcpDriver implements Driver {
           },
         },
       });
+      const observationIdentity = {
+        backendSessionId: this.handle.backendSessionId,
+        requestId: `${spec.runId}:${spec.generation}`,
+        freshSession: firstConnection && !recovering,
+      };
+      const nativeBefore = await captureNativeUsage(
+        spec,
+        this.handle.backendSessionId,
+      );
+      signal.throwIfAborted();
       const turn = this.runtime.startTurn({
         handle: this.handle,
         text: spec.input.text,
@@ -159,6 +174,27 @@ export class AcpDriver implements Driver {
         const finalStatus = await this.runtime.getStatus?.({
           handle: this.handle,
         });
+        const acpObservation = acpUsageObservation(
+          status?.usage,
+          finalStatus?.usage,
+          observationIdentity,
+        );
+        const nativeObservation = nativeUsageObservation(
+          nativeBefore,
+          await captureNativeUsage(spec, this.handle.backendSessionId),
+          observationIdentity,
+        );
+        const observation =
+          nativeObservation.scope === "run" &&
+          nativeObservation.tokens.input !== null &&
+          nativeObservation.tokens.output !== null
+            ? nativeObservation
+            : acpObservation;
+        if (
+          observation.cost.amount === null &&
+          acpObservation.cost.amount !== null
+        )
+          observation.cost = acpObservation.cost;
         await channel.emit({
           type: "event",
           event: {
@@ -167,6 +203,12 @@ export class AcpDriver implements Driver {
               source: "acp-session-checkpoint",
               models: finalStatus?.models ? json(finalStatus.models) : null,
               usage: finalStatus?.usage ? json(finalStatus.usage) : null,
+              observation: json(observation),
+              nativeMissingReason: nativeObservation.missingReason,
+              sessionObservation:
+                nativeObservation.scope === "session"
+                  ? json(nativeObservation)
+                  : null,
             },
           },
         });

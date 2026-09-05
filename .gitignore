@@ -17,3 +17,13 @@ node_modules/
 
 # Local discovery registrations reference installed commands and user configuration.
 engines/manifests/
+
+# Next.js console build/cache
+web/.next/
+web/out/
+web/next-env.d.ts
+web/*.tsbuildinfo
+
+# Local console configuration and browser verification artifacts
+engines/*.local.yaml
+/output/
