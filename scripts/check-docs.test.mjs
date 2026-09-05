@@ -46,6 +46,7 @@ test('generated temp and runtime data are excluded; the same invalid document el
   const root = await fixture(t, {
     'README.md': '# Project\n',
     '.tmp/generated.md': invalid,
+    '.tools/node/README.md': invalid,
     'runtime-data/run/output.md': invalid,
   });
   assert.deepEqual(await checkDocs(root), { checkedFiles: 1, diagnostics: [] });

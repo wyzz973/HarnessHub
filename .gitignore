@@ -4,9 +4,11 @@ node_modules/
 /coverage/
 /.cache/
 /.tmp/
+/.tools/
 /data/
 /artifacts/
 /runtime-data/
+/engines/local.yaml
 .env
 .env.*
 !.env.example

@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 
 const GENERATED_DIRECTORIES = new Set([
   '.git', 'node_modules', 'dist', 'build', 'coverage', 'data', 'artifacts',
-  '.cache', '.next', 'out', 'tmp', '.tmp', 'temp', 'runtime-data', '.worktrees',
+  '.cache', '.next', 'out', 'tmp', '.tmp', '.tools', 'temp', 'runtime-data', '.worktrees',
 ]);
 const DEFAULT_ROOT = fileURLToPath(new URL('../', import.meta.url));
 

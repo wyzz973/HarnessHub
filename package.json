@@ -1,0 +1,49 @@
+{
+  "name": "harnesshub",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Provider-neutral Agent Harness execution gateway",
+  "engines": {
+    "node": "24.20.0",
+    "pnpm": "10.12.3"
+  },
+  "packageManager": "pnpm@10.12.3",
+  "scripts": {
+    "check:runtime": "node scripts/check-runtime.mjs",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src tests --max-warnings=0",
+    "format:check": "prettier --check package.json tsconfig.json eslint.config.mjs \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/check-boundaries*.mjs\" \"scripts/check-runtime*.mjs\" \".github/workflows/*.yml\"",
+    "format": "prettier --write package.json tsconfig.json eslint.config.mjs \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/check-boundaries*.mjs\" \"scripts/check-runtime*.mjs\" \".github/workflows/*.yml\"",
+    "check:boundaries": "node scripts/check-boundaries.mjs",
+    "check:docs": "node scripts/check-docs.mjs",
+    "test:tooling": "node --test scripts/check-*.test.mjs",
+    "test:unit": "node --test dist/tests/unit/*.test.js",
+    "test:integration": "node --test dist/tests/integration/*.test.js",
+    "test:smoke": "node --test dist/tests/smoke/*.test.js",
+    "test": "pnpm build && pnpm test:tooling && pnpm test:unit && pnpm test:integration && pnpm test:smoke",
+    "check": "pnpm check:runtime && pnpm lint && pnpm format:check && pnpm check:boundaries && pnpm check:docs && pnpm test",
+    "start": "node dist/src/main.js"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "1.4.0",
+    "@fastify/swagger": "9.8.1",
+    "acpx": "0.13.2",
+    "ajv": "8.20.0",
+    "fastify": "5.12.3",
+    "yaml": "2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "eslint": "10.10.0",
+    "prettier": "3.9.6",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.56.1"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}
