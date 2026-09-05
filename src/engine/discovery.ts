@@ -4,6 +4,7 @@ import path from "node:path";
 import type { EngineCandidate, EngineRegistration } from "../domain/engines.js";
 import { HubError } from "../domain/errors.js";
 import { normalizeEngine } from "./registry.js";
+import { builtinEngines, type BuiltinEngine } from "./builtins.js";
 
 interface DiscoveryOptions {
   cwd: string;
@@ -11,6 +12,9 @@ interface DiscoveryOptions {
   pathEnv: string;
   nodeExecutable: string;
   manifestDir?: string;
+  includeManifests?: boolean;
+  /** Physical system search roots; tests inject private directories instead. */
+  systemBinDirectories?: readonly string[];
 }
 
 const verificationNote =
@@ -65,35 +69,30 @@ function searchDirectories(options: DiscoveryOptions): string[] {
 }
 
 async function nativeCandidate(
-  id: "codex" | "claude" | "opencode" | "openclaw",
+  definition: BuiltinEngine,
   options: DiscoveryOptions,
   directories: string[],
 ): Promise<EngineCandidate | undefined> {
-  const onPath = await locate([id], directories);
+  const { id } = definition;
+  const onPath = await locate([definition.binary], directories);
   const executable =
     onPath ??
     (await locate(
-      [id],
-      [
-        path.join(options.home, ".local", "bin"),
-        path.join(options.home, ".opencode", "bin"),
-        path.join(options.home, ".npm-global", "bin"),
-      ],
+      [definition.binary],
+      fallbackDirectories(options, definition),
     ));
   if (!executable) return undefined;
   const candidate: EngineCandidate = {
     id,
-    name: {
-      codex: "Codex",
-      claude: "Claude Code",
-      opencode: "OpenCode",
-      openclaw: "OpenClaw",
-    }[id],
+    name: definition.name,
     executable,
     source: onPath ? "path" : "known-location",
     status: "ready",
-    notes: [verificationNote],
+    notes: [verificationNote, ...(definition.notes ?? [])],
   };
+  if (definition.launch.kind !== "managed-acp") {
+    return recipeCandidate(candidate, definition, options, directories);
+  }
   let command: string[];
   if (id === "codex" || id === "claude") {
     const adapterName = id === "codex" ? "codex-acp" : "claude-agent-acp";
@@ -146,7 +145,7 @@ async function nativeCandidate(
       executable,
       "acp",
     ];
-  } else {
+  } else if (id === "openclaw") {
     const bridge = path.join(options.cwd, "scripts", "launch-openclaw-acp.mjs");
     const isolatedBridge = await fileExists(bridge);
     command = [
@@ -165,6 +164,8 @@ async function nativeCandidate(
     candidate.notes.push(
       "Requires the user's existing OpenClaw Gateway and valid model credentials.",
     );
+  } else {
+    throw new Error(`No managed ACP recipe for ${id}`);
   }
   candidate.notes.push(
     "Registration references the existing user configuration; executing it can update the engine's native state.",
@@ -173,11 +174,120 @@ async function nativeCandidate(
   return candidate;
 }
 
+function fallbackDirectories(
+  options: DiscoveryOptions,
+  definition?: BuiltinEngine,
+): string[] {
+  const homeBins = [
+    ".local/bin",
+    ".npm-global/bin",
+    ".bun/bin",
+    ".volta/bin",
+    "Library/pnpm",
+    ".local/share/pnpm",
+    ".nvm/current/bin",
+    ...(definition?.homeBins ?? []),
+  ];
+  return [
+    ...homeBins.map((directory) => path.join(options.home, directory)),
+    ...(definition?.id === "pi"
+      ? [path.join(options.cwd, ".tools/pi/node_modules/.bin")]
+      : []),
+    ...(options.systemBinDirectories ??
+      (process.platform === "darwin"
+        ? ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
+        : process.platform === "win32"
+          ? []
+          : ["/usr/local/bin", "/usr/bin", "/bin"])),
+  ];
+}
+
+async function recipeCandidate(
+  candidate: EngineCandidate,
+  definition: BuiltinEngine,
+  options: DiscoveryOptions,
+  directories: string[],
+): Promise<EngineCandidate> {
+  const { launch } = definition;
+  const env = [
+    `HOME=${options.home}`,
+    `XDG_CONFIG_HOME=${path.join(options.home, ".config")}`,
+    `XDG_DATA_HOME=${path.join(options.home, ".local/share")}`,
+    `XDG_CACHE_HOME=${path.join(options.home, ".cache")}`,
+    `XDG_STATE_HOME=${path.join(options.home, ".local/state")}`,
+  ];
+  let command: string[];
+  switch (launch.kind) {
+    case "managed-acp":
+      throw new Error("Managed ACP recipes must use nativeCandidate");
+    case "pi-acp": {
+      const localAdapter = path.join(
+        options.cwd,
+        ".tools/pi/node_modules/pi-acp/dist/index.js",
+      );
+      const adapter = await locate(
+        ["pi-acp"],
+        [...directories, ...fallbackDirectories(options)],
+      );
+      if (!adapter && !(await fileExists(localAdapter))) {
+        candidate.status = "adapter-required";
+        candidate.notes.push(
+          "Install a pinned pi-acp adapter in .tools/pi or on PATH before ACP registration.",
+        );
+        return candidate;
+      }
+      env.push(
+        `PI_ACP_PI_COMMAND=${candidate.executable}`,
+        `PI_CODING_AGENT_DIR=${path.join(options.home, ".pi/agent")}`,
+      );
+      command = adapter ? [adapter] : [options.nodeExecutable, localAdapter];
+      break;
+    }
+    case "acp":
+      if (definition.id === "hermes")
+        env.push(`HERMES_HOME=${path.join(options.home, ".hermes")}`);
+      if (definition.id === "mimo")
+        env.push("MIMOCODE_DISABLE_AUTOUPDATE=true");
+      command = [candidate.executable, ...launch.args];
+      break;
+    case "cli":
+      command = [candidate.executable, ...launch.args];
+      candidate.notes.push(
+        "Text-only CLI: each Run is independent; structured tool events, interactive permissions and session recovery are not exposed. Native permission defaults remain in effect.",
+      );
+      break;
+  }
+  // Workers isolate HOME. Keep the discovered executable's real user config and
+  // interpreter lookup usable without modifying the Gateway's global environment.
+  env.push(
+    `PATH=${Array.from(new Set([path.dirname(candidate.executable), path.dirname(options.nodeExecutable), ...directories, ...fallbackDirectories(options, definition)])).join(path.delimiter)}`,
+  );
+  candidate.registration = {
+    id: candidate.id,
+    driver: launch.kind === "cli" ? "cli" : "acp",
+    command: ["/usr/bin/env", ...env, ...command],
+    maxConcurrency: 1,
+    ...(launch.kind === "cli"
+      ? {
+          cli: {
+            inputMode: launch.args.includes("{prompt}") ? "argv" : "stdin",
+          } as const,
+        }
+      : {}),
+  };
+  candidate.notes.push(
+    "Registration references existing user configuration; installed version, optional dependencies and authentication must be verified before relying on execution.",
+  );
+  return candidate;
+}
+
 async function dshCandidate(
   options: DiscoveryOptions,
   directories: string[],
 ): Promise<EngineCandidate | undefined> {
   const onPath = await locate(["dsh"], directories);
+  const installed =
+    onPath ?? (await locate(["dsh"], fallbackDirectories(options)));
   const sibling = path.resolve(
     options.cwd,
     "..",
@@ -188,12 +298,12 @@ async function dshCandidate(
     "bin.js",
   );
   const executable =
-    onPath ?? ((await fileExists(sibling)) ? sibling : undefined);
+    installed ?? ((await fileExists(sibling)) ? sibling : undefined);
   if (!executable) return undefined;
   const launcher = path.join(options.cwd, "scripts", "launch-dsh-acp.mjs");
   const patch = path.join(options.cwd, "engines", "dsh-local.patch.yaml");
   const usePatch =
-    !onPath && (await fileExists(launcher)) && (await fileExists(patch));
+    !installed && (await fileExists(launcher)) && (await fileExists(patch));
   const command = usePatch
     ? [
         options.nodeExecutable,
@@ -208,7 +318,7 @@ async function dshCandidate(
         "/usr/bin/env",
         `DSH_HOME=${path.join(options.home, ".dsh")}`,
         "DSH_TELEMETRY_DISABLED=1",
-        ...(onPath ? [executable] : [options.nodeExecutable, executable]),
+        ...(installed ? [executable] : [options.nodeExecutable, executable]),
         "--profile",
         "acp",
       ];
@@ -309,6 +419,9 @@ async function manifestCandidates(
       ...(profile.credentialEnv !== undefined
         ? { credentialEnv: profile.credentialEnv }
         : {}),
+      ...(profile.configuration !== undefined
+        ? { configuration: profile.configuration }
+        : {}),
       ...(profile.cli !== undefined ? { cli: profile.cli } : {}),
       ...(profile.acp !== undefined ? { acp: profile.acp } : {}),
     };
@@ -338,17 +451,23 @@ export async function discoverEngines(
   options: DiscoveryOptions,
 ): Promise<EngineCandidate[]> {
   const directories = searchDirectories(options);
+  const manifests =
+    options.includeManifests === false
+      ? []
+      : await manifestCandidates(options, [
+          ...directories,
+          ...fallbackDirectories(options),
+        ]);
+  const manifestIds = new Set(manifests.map((candidate) => candidate.id));
+  if (manifestIds.size !== manifests.length)
+    throw manifestError("Duplicate engine IDs in local manifests");
   const candidates = await Promise.all([
-    ...(["codex", "claude", "opencode", "openclaw"] as const).map((id) =>
-      nativeCandidate(id, options, directories),
-    ),
-    dshCandidate(options, directories),
+    ...builtinEngines
+      .filter((definition) => !manifestIds.has(definition.id))
+      .map((definition) => nativeCandidate(definition, options, directories)),
+    ...(manifestIds.has("dsh") ? [] : [dshCandidate(options, directories)]),
   ]);
   const result = candidates.filter((candidate) => candidate !== undefined);
-  result.push(...(await manifestCandidates(options, directories)));
-  if (new Set(result.map((candidate) => candidate.id)).size !== result.length)
-    throw manifestError(
-      "Duplicate engine IDs in discovery candidates; use a distinct manifest ID",
-    );
+  result.push(...manifests);
   return result;
 }

@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   Check,
@@ -22,6 +22,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { EngineConfigurationDialog } from "./engine-configuration-dialog";
 import { api } from "@/lib/api";
 import {
   registrationSchema,
@@ -35,14 +36,22 @@ export function EnginePage({
   defaultEngine,
   refresh,
   report,
+  testModel,
 }: {
   engines: Engine[];
   defaultEngine: string;
   refresh: () => Promise<void>;
   report: (error: unknown) => void;
+  testModel: (engineId: string) => Promise<void>;
 }) {
-  const [discovering, setDiscovering] = useState(false);
+  const [discovering, setDiscovering] = useState(true);
+  const discoveryRequest = useRef<AbortController | null>(null);
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
+  const [editing, setEditing] = useState<Engine | null>(null);
+  const [checkResult, setCheckResult] = useState<{
+    engineId: string;
+    checks: { name: string; status: string; message: string }[];
+  } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [registration, setRegistration] = useState(
@@ -60,17 +69,38 @@ export function EnginePage({
       setBusy(null);
     }
   }
-  async function discover() {
+  const discover = useCallback(async () => {
+    discoveryRequest.current?.abort();
+    const controller = new AbortController();
+    discoveryRequest.current = controller;
     setDiscovering(true);
     try {
-      const response = await api.discovery();
-      setCandidates(response.candidates);
+      const response = await api.discovery(controller.signal);
+      if (!controller.signal.aborted) setCandidates(response.candidates);
     } catch (error) {
-      report(error);
+      if (!controller.signal.aborted) report(error);
     } finally {
-      setDiscovering(false);
+      if (!controller.signal.aborted) {
+        discoveryRequest.current = null;
+        setDiscovering(false);
+      }
     }
-  }
+  }, [report]);
+  useEffect(() => {
+    void discover();
+    const scanWhenVisible = () => {
+      if (document.visibilityState === "visible" && !discoveryRequest.current)
+        void discover();
+    };
+    const interval = window.setInterval(scanWhenVisible, 60_000);
+    document.addEventListener("visibilitychange", scanWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", scanWhenVisible);
+      discoveryRequest.current?.abort();
+      discoveryRequest.current = null;
+    };
+  }, [discover]);
   async function submit() {
     setLocalError(null);
     let input: unknown;
@@ -108,6 +138,7 @@ export function EnginePage({
       enabled,
       maxConcurrency: engine.maxConcurrency,
       ...(engine.model ? { model: engine.model } : {}),
+      ...(engine.configuration ? { configuration: engine.configuration } : {}),
       ...(engine.credentialEnv ? { credentialEnv: engine.credentialEnv } : {}),
       ...(engine.cli ? { cli: engine.cli } : {}),
       ...(engine.acp ? { acp: engine.acp } : {}),
@@ -135,7 +166,7 @@ export function EnginePage({
               disabled={discovering}
             >
               <FolderSearch className={discovering ? "animate-pulse" : ""} />
-              {discovering ? "扫描中" : "发现本机引擎"}
+              {discovering ? "扫描中" : "重新扫描"}
             </Button>
             <Button size="sm" onClick={() => setDialogOpen(true)}>
               <CirclePlus />
@@ -194,7 +225,7 @@ export function EnginePage({
               </Button>
             </div>
             <p className="mb-4 text-xs leading-6 text-muted-foreground">
-              检测到安装不代表已经登录或模型可用。登记后可在任务中选择。
+              自动检测本机安装，每分钟刷新。检测到安装不代表已经登录或模型可用；登记后可在任务中选择。
             </p>
             <div className="space-y-2">
               {candidates.map((candidate) => {
@@ -270,6 +301,28 @@ export function EnginePage({
             重载配置
           </Button>
         </div>
+        {checkResult ? (
+          <div role="status" className="mb-4 rounded-lg border p-4 text-xs">
+            <p className="mb-2 font-medium">
+              {checkResult.engineId} · 配置与协议检查
+            </p>
+            {checkResult.checks.map((check, index) => (
+              <p
+                key={index}
+                className={
+                  check.status === "passed"
+                    ? "text-[#52714a]"
+                    : "text-destructive"
+                }
+              >
+                {check.status === "passed" ? "通过" : "未通过"}：{check.message}
+              </p>
+            ))}
+            <p className="mt-2 text-muted-foreground">
+              此检查不调用模型，不代表 API Key 或模型权限已验证。
+            </p>
+          </div>
+        ) : null}
         <div className="overflow-x-auto rounded-xl border">
           <table className="data-table min-w-[630px]">
             <thead>
@@ -345,6 +398,43 @@ export function EnginePage({
                   <td className="tabular">{engine.maxConcurrency}</td>
                   <td>
                     <div className="flex justify-end gap-1">
+                      {engine.driver !== "fake" ? (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={!!busy}
+                            onClick={() => setEditing(engine)}
+                          >
+                            配置
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={!!busy}
+                            onClick={() =>
+                              void action(engine.id, async () =>
+                                setCheckResult(
+                                  await api.testEngineConfiguration(engine.id),
+                                ),
+                              )
+                            }
+                          >
+                            检查连接
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={!!busy || !engine.enabled}
+                            title="会使用当前引擎配置发送简短模型请求，并打开正式任务记录"
+                            onClick={() =>
+                              void action(engine.id, () => testModel(engine.id))
+                            }
+                          >
+                            测试模型
+                          </Button>
+                        </>
+                      ) : null}
                       {engine.enabled && engine.id !== defaultEngine ? (
                         <Button
                           size="sm"
@@ -390,6 +480,16 @@ export function EnginePage({
         <p className="mt-4 text-[11px] leading-6 text-muted-foreground">
           配置变更只影响新会话。正在执行的任务继续使用已固定的引擎版本。
         </p>
+        {editing ? (
+          <EngineConfigurationDialog
+            engine={editing}
+            onClose={() => setEditing(null)}
+            onSaved={() => {
+              setCheckResult(null);
+              return refresh();
+            }}
+          />
+        ) : null}
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent className="sm:max-w-[540px]">
             <DialogHeader>

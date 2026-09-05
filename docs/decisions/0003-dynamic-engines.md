@@ -12,6 +12,10 @@ EngineManager 管理当前目录、API overlay、默认选择和历史不可变 
 
 发现器只检查 PATH、已知安装文件和 JSON manifest；扫描不调用模型、不执行任意程序、不导入插件代码。用户选择候选的注册配置后即可执行；未知引擎通过 manifest 或管理 API 描述，无需穷举系统所有二进制的用途。
 
+2026-09-05 扩展：主流 Harness 识别与启动信息集中为可审核配方，控制台进入引擎页及页面可见期间主动重新发现。同 ID 的有效本地 manifest 优先于内置配方；多个 manifest 重名仍拒绝，所有 manifest 先校验。原因是新增内置 Pi 等识别后，原有自定义模型和 launcher 不应变成重复 ID 错误，也不应被内置配置覆盖。这只调整发现的优先级，不修改持久目录、历史 revision 或 Session 绑定。
+
+Multica 使用登录 shell 修补桌面进程 PATH；当前采用常见用户、包管理器及系统目录的只读检查，保持发现不执行程序的边界。shell 专属临时路径通过继承 PATH 或绝对路径 manifest 处理。版本/协议探测和模型任务是单独验证步骤，不能因清单包含引擎就宣称已验证；来源和本轮证据见 [主流发现验收](../verification/2026-09-05-mainstream-discovery.md)。
+
 通用 CLI Driver 使用 argv + stdin/stdout 接入本机非 ACP 工具或 SDK 包装程序，每轮独立进程和统一事件。CLI 不虚构交互权限、模型选择、历史或恢复能力；每轮结束经 Host 回收进程组，再发布 cleanupStatus。直接 SDK Driver 尚无具体目标，不提前增加任意模块动态导入协议。
 
 配置文件只热更新引擎目录与默认选择。Workspace 和 Runtime 总限额变更需要重启；无效文件保持最后有效状态。API 的 overlay 优先于文件，启动显式默认在合并目录后校验，详细优先级见 [管理说明](../engine-management.md)。

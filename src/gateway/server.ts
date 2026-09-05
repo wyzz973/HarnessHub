@@ -1,3 +1,7 @@
+import { normalizeOpenApiDocument } from "./openapi.js";
+import { apiCatalog } from "./api-catalog.js";
+import { registerEngineConfigurationRoutes } from "./engine-configuration-routes.js";
+import type { ConfigurationManagement } from "../domain/engine-configuration.js";
 import { registerWorkflowRoutes } from "./workflow-routes.js";
 import { registerObservationRoutes } from "./observation-routes.js";
 import {
@@ -54,6 +58,7 @@ export async function createGateway(
   options: {
     workflows?: WorkflowService;
     observations?: ObservationService;
+    configuration?: ConfigurationManagement;
   } = {},
 ) {
   const server = Fastify({
@@ -61,8 +66,30 @@ export async function createGateway(
     bodyLimit: 2 * 1024 * 1024,
     ajv: { customOptions: { removeAdditional: false } },
   });
+  server.addHook("onRoute", (route) => {
+    const method = Array.isArray(route.method) ? route.method[0] : route.method;
+    const apiPath = route.url.replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, "{$1}");
+    const doc = apiCatalog.find(
+      (entry) => entry.method === method && entry.path === apiPath,
+    );
+    if (doc)
+      route.schema = {
+        ...route.schema,
+        operationId: doc.operationId,
+        summary: doc.title,
+        tags: [doc.group],
+        description: `${doc.implementation}\n\n输入：${doc.request}\n\n返回：${doc.response}\n\n副作用：${doc.effects}\n\n失败与边界：${doc.errors}`,
+      };
+  });
   await server.register(swagger, {
     openapi: { info: { title: "HarnessHub", version: "0.1.0" } },
+    transformObject: (input) => {
+      const document = structuredClone(
+        "openapiObject" in input ? input.openapiObject : input.swaggerObject,
+      );
+      normalizeOpenApiDocument(document);
+      return document;
+    },
   });
   server.addHook("onRequest", async (request) => {
     const host = request.headers.host ?? "";
@@ -135,6 +162,8 @@ export async function createGateway(
           ready: app.isReady() && (options.workflows?.isReady() ?? true),
         }),
   );
+  if (options.configuration)
+    registerEngineConfigurationRoutes(server, options.configuration);
   server.get(
     "/v1/engines",
     { schema: { response: responses(enginesResponseSchema) } },
@@ -628,7 +657,15 @@ export async function createGateway(
   if (options.workflows) registerWorkflowRoutes(server, options.workflows);
   if (options.observations)
     registerObservationRoutes(server, options.observations);
-  server.get("/openapi.json", async () => server.swagger());
+  server.get(
+    "/openapi.json",
+    {
+      schema: {
+        response: { 200: { type: "object", additionalProperties: true } },
+      },
+    },
+    async () => server.swagger(),
+  );
   server.addHook("preClose", async () => {
     const failures: unknown[] = [];
     try {

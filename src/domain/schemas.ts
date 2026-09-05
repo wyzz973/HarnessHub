@@ -1,3 +1,4 @@
+import { engineConfigurationSchema } from "./engine-configuration.js";
 /** Schemas for untrusted HTTP inputs. Defaults are resolved by application configuration. */
 export const fileOutputSchema = {
   type: "object",
@@ -218,6 +219,7 @@ export const enginesResponseSchema = {
           enabled: { type: "boolean" },
           command: { type: "array", items: text },
           model: text,
+          configuration: engineConfigurationSchema,
           credentialEnv: { type: "array", items: text },
           cli: jsonObject,
           acp: jsonObject,
@@ -246,6 +248,7 @@ export const engineRegistrationSchema = {
     },
     enabled: { type: "boolean" },
     model: { type: "string", minLength: 1 },
+    configuration: engineConfigurationSchema,
     credentialEnv: {
       type: "array",
       uniqueItems: true,

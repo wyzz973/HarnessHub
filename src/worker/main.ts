@@ -1,3 +1,8 @@
+import {
+  prepareConfiguration,
+  type PreparedConfiguration,
+} from "../drivers/configuration/prepare.js";
+import { HubError } from "../domain/errors.js";
 import type { ExecutionSpec } from "../domain/ports.js";
 import type { PermissionId, PermissionOption } from "../domain/types.js";
 import type { Driver, DriverChannel } from "../drivers/driver.js";
@@ -27,6 +32,7 @@ interface Active {
 }
 let active: Active | undefined;
 let driver: Driver | undefined;
+let preparation: PreparedConfiguration | undefined;
 let anchor: string | undefined;
 let shuttingDown: Promise<void> | undefined;
 
@@ -105,8 +111,25 @@ function createChannel(owned: Active): DriverChannel {
 async function execute(owned: Active, selected: Driver): Promise<void> {
   try {
     await emit(owned, { type: "started" });
+    preparation ??= await prepareConfiguration(owned.spec, process.env);
+    // This process belongs to one Session; no Gateway or other Worker's environment is changed.
+    Object.assign(process.env, preparation.env);
+    if (selected instanceof AcpDriver)
+      selected.configureMcp(preparation.mcpServers);
+    const executionSpec = {
+      ...owned.spec,
+      profile: {
+        ...owned.spec.profile,
+        command: preparation.command,
+        ...(preparation.model ? { model: preparation.model } : {}),
+      },
+      input: {
+        ...owned.spec.input,
+        text: preparation.instructionPrefix + owned.spec.input.text,
+      },
+    };
     const result = await selected.execute(
-      owned.spec,
+      executionSpec,
       createChannel(owned),
       owned.abort.signal,
     );
@@ -120,9 +143,11 @@ async function execute(owned: Active, selected: Driver): Promise<void> {
         status: owned.abort.signal.aborted ? "cancelled" : "failed",
         stopReason: owned.abort.signal.aborted ? "cancelled" : "driver_error",
         error: {
-          code: "DRIVER_ERROR",
+          code: error instanceof HubError ? error.code : "DRIVER_ERROR",
           message:
-            "Engine execution failed; inspect the local engine configuration",
+            error instanceof HubError
+              ? error.message
+              : "Engine execution failed; inspect the local engine configuration",
         },
       },
     });

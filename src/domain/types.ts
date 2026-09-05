@@ -1,3 +1,4 @@
+import type { EngineConfiguration } from "./engine-configuration.js";
 /** Public runtime records. These types carry no third-party SDK or storage implementation. */
 export type Brand<T, Name extends string> = T & { readonly __brand: Name };
 export type SessionId = Brand<string, "SessionId">;
@@ -34,6 +35,7 @@ export interface EngineProfile {
   command?: string[];
   model?: string;
   credentialEnv?: string[];
+  configuration?: EngineConfiguration;
   cli?: { inputMode: "stdin" | "argv"; maxOutputBytes: number };
   acp?: { sessionMode: "resume" };
   maxConcurrency: number;

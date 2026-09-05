@@ -1,3 +1,4 @@
+import { configurationEnvironmentNames } from "../domain/engine-configuration.js";
 import { fork, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { chmodSync, lstatSync, mkdirSync } from "node:fs";
@@ -364,6 +365,7 @@ export class ProcessWorkerHost implements WorkerHost {
     for (const name of [
       ...systemNames,
       ...(spec.profile.credentialEnv ?? []),
+      ...configurationEnvironmentNames(spec.profile.configuration),
     ]) {
       const value = inherited.get(normalize(name));
       if (value !== undefined) env[normalize(name)] = value;

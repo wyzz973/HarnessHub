@@ -427,6 +427,30 @@ flowchart TD
 
 证据见 [控制台与自动规划验收](docs/verification/2026-09-05-console.md)。
 
+### HH-037 主流 Harness 主动发现与启动适配
+
+- [x] Mac 发现、启动配方传输与浏览器已验证；P0；前置：HH-026、HH-027、HH-035；负责人：主 Agent；范围：内置配方、发现、控制台与验收。新增真实引擎模型任务与 Windows 未验证。
+
+交付：核对 Multica / AgentSpace 的发现机制，覆盖主流 Harness 及常见 Mac 安装路径，生成 ACP / CLI 启动配置；控制台主动重新扫描，保留本地 manifest 与已注册配置。发现、协议握手和模型执行分开报告。
+
+验收：正式 Gateway 发现→注册→SQLite / Worker / ACP 或 CLI 执行与清理；本机 Hermes / MiMo / Gemini 协议探测；浏览器自动展示、刷新与重扫；来源与证据见 [主流发现验收](docs/verification/2026-09-05-mainstream-discovery.md)。Windows及未安装引擎的真实任务另验。
+
+### HH-038 引擎独立配置与检查
+
+- [x] Mac 配置层、组合运行、Keychain与浏览器已验证；P0；前置：HH-037；负责人：主 Agent；范围：Profile/schema、配置解析、Worker/Driver、Keychain、API 与控制台。未支持的Provider组合、远端模型和Windows按能力矩阵另验。
+
+交付：每引擎模型/Provider/API URL、密钥引用与写入、便携 Skills、ACP MCP、能力拒绝、配置检查、标准模板切换、旧目录迁移和浏览器编辑。
+
+验收：配置保存/重启/旧 revision，同名秘密变量跨引擎隔离、Skill 指纹与启停、MCP 秘密下发、真实 Keychain、真实 Harness 配合本地模型/MCP 模拟服务、浏览器保存与重载。证据见 [本轮配置验收](docs/verification/2026-09-05-engine-configuration.md)。原生账号绑定引擎的任意 Provider、原生 Skills 包安装、Windows Keychain 不作为已实现能力。
+
+### HH-039 面向GitHub的使用、架构与API文档交付
+
+- [ ] 文档与 Mac 本地检查已验证，GitHub发布待完成；P0；前置：HH-038；负责人：主 Agent；范围：README/使用指南/架构导览/逐接口参考/OpenAPI/示例/发布检查。
+
+交付：新克隆可运行的无Key demo，当前40项API的输入输出、处理链路、存储/副作用与错误；生成/新鲜度检查和拒绝样例；第三方来源与许可状态；修正设计计划与已实现能力的差异。核查提交及历史不含运行数据/凭证后创建GitHub仓库并推送。远端CI结果独立报告。
+
+本地证据见 [文档交付验收](docs/verification/2026-09-05-github-documentation.md)：139项测试、生产前端构建、API同步、实际HTTP示例与浏览器刷新通过；历史和拟提交目录凭证扫描无命中。
+
 ## 并行与文件所有权
 
 最早安全的并行窗口是 HH-002 完成之后：HH-003 负责 Store，HH-004 负责 Worker；HH-013 可用独立探针提前验证 acpx。HH-005 由主负责人组装，必须使用相同版本的公共接口。

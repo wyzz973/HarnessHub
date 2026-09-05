@@ -1,3 +1,14 @@
+import { EngineConfigurationService } from "./application/engine-configuration.js";
+import { prepareEngine } from "./engine/registry.js";
+import { providerProtocols } from "./engine/configuration.js";
+import { configurationAdapters } from "./domain/engine-configuration.js";
+import { createSecret } from "./drivers/configuration/secrets.js";
+import { prepareConfiguration } from "./drivers/configuration/prepare.js";
+import { probeConfiguration } from "./drivers/configuration/probe.js";
+import { HubError } from "./domain/errors.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import type { RunId, SessionId } from "./domain/types.js";
 import { SqliteWorkflowStore } from "./storage/workflow-store.js";
 import { WorkflowService } from "./application/workflows.js";
 import { ObservationService } from "./application/observability.js";
@@ -124,7 +135,125 @@ export async function startHub(options: {
       store,
       engines: () => runtime!.listEngines(),
     });
-    const server = await createGateway(app, { workflows, observations });
+    const activeProbes = new Set<AbortController>();
+    const probeTasks = new Set<Promise<unknown>>();
+    const configuration = new EngineConfigurationService({
+      templates: () =>
+        discoverEngines({
+          cwd: options.cwd,
+          home: homedir(),
+          pathEnv: process.env.PATH ?? "",
+          nodeExecutable: process.execPath,
+          includeManifests: false,
+        }),
+      inspect: prepareEngine,
+      createSecret,
+      adapters: () =>
+        configurationAdapters.map((id) => ({
+          id,
+          providerProtocols: [...providerProtocols[id]],
+          description: providerProtocols[id].length
+            ? "支持独立 Provider 配置；Skills 使用便携上下文；MCP 需要 ACP"
+            : "使用原生账号配置或显式环境引用；Skills 使用便携上下文；MCP 需要 ACP",
+        })),
+      test: async (id) => {
+        const profile = manager!.list().find((p) => p.id === id);
+        if (!profile || profile.driver === "fake")
+          throw new HubError(
+            "ENGINE_UNAVAILABLE",
+            "Configured engine not found",
+            404,
+          );
+        if (activeProbes.size >= 2)
+          throw new HubError(
+            "PROBE_BUSY",
+            "Two configuration tests are already running",
+            429,
+          );
+        const abort = new AbortController();
+        activeProbes.add(abort);
+        const task = (async () => {
+          let directory: string | undefined;
+          try {
+            directory = await mkdtemp(
+              path.join(dataDir, "configuration-test-"),
+            );
+            const prepared = await prepareConfiguration(
+              {
+                profile,
+                cwd: options.cwd,
+                stateDir: directory,
+                sessionId: randomUUID() as SessionId,
+                runId: randomUUID() as RunId,
+                generation: 1,
+                input: { text: "", timeoutMs: 10000 },
+              },
+              process.env,
+            );
+            const probe = await probeConfiguration(
+              prepared,
+              profile.driver,
+              options.cwd,
+              abort.signal,
+            );
+            return {
+              engineId: id,
+              revision: profile.revision,
+              checkedAt: Date.now(),
+              modelCalled: false as const,
+              checks: [
+                {
+                  name: "configuration",
+                  status: "passed" as const,
+                  message:
+                    "模型配置、密钥引用与 Skill 指纹已解析；未向模型发送任务",
+                },
+                probe,
+              ],
+            };
+          } catch (error) {
+            return {
+              engineId: id,
+              revision: profile.revision,
+              checkedAt: Date.now(),
+              modelCalled: false as const,
+              checks: [
+                {
+                  name: "configuration",
+                  status: "failed" as const,
+                  message:
+                    error instanceof HubError
+                      ? error.message
+                      : "配置文件、可执行文件或凭证引用不可用",
+                },
+              ],
+            };
+          } finally {
+            try {
+              if (directory)
+                await rm(directory, { recursive: true, force: true });
+            } finally {
+              activeProbes.delete(abort);
+            }
+          }
+        })();
+        probeTasks.add(task);
+        try {
+          return await task;
+        } finally {
+          probeTasks.delete(task);
+        }
+      },
+    });
+    const server = await createGateway(app, {
+      workflows,
+      observations,
+      configuration,
+    });
+    server.addHook("onClose", async () => {
+      for (const abort of activeProbes) abort.abort();
+      await Promise.allSettled([...probeTasks]);
+    });
     server.addHook("onClose", async () => {
       workflowStore?.close();
       store.close();

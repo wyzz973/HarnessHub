@@ -6,7 +6,7 @@ import type {
 } from "../domain/engines.js";
 import { HubError } from "../domain/errors.js";
 import type { EngineProfile } from "../domain/types.js";
-import { normalizeEngine, type HubConfig } from "./registry.js";
+import { normalizeEngine, prepareEngine, type HubConfig } from "./registry.js";
 
 interface CatalogState {
   revisions: Map<string, EngineProfile>;
@@ -45,7 +45,7 @@ function loadState(raw: unknown): CatalogState {
   if (raw === undefined) return empty;
   const value = record(raw);
   if (
-    value.version !== 1 ||
+    (value.version !== 1 && value.version !== 2) ||
     !Array.isArray(value.revisions) ||
     !Array.isArray(value.overrides) ||
     !(
@@ -195,7 +195,7 @@ export class EngineManager implements EngineManagement {
         409,
       );
     this.options.persistence.writeEngineCatalog({
-      version: 1,
+      version: 2,
       revisions: [...state.revisions.values()],
       overrides: [...state.overrides].map(([id, profile]) => ({ id, profile })),
       defaultOverride: state.defaultOverride,
@@ -204,8 +204,8 @@ export class EngineManager implements EngineManagement {
     this.config = config;
   }
   register(input: unknown): Promise<EngineProfile> {
-    return this.serialize(() => {
-      const p = normalizeEngine(input);
+    return this.serialize(async () => {
+      const p = await prepareEngine(input);
       if (this.config.engines.some((e) => e.id === p.id && e.driver === "fake"))
         throw new HubError(
           "ENGINE_RESERVED",

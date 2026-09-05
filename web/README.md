@@ -12,21 +12,30 @@ pnpm build
 pnpm build:console
 ```
 
-先启动 Gateway，再在另一个终端启动控制台。以下是本机已准备的配置和实际端口，配置文件不包含密钥，仅包含本机路径引用：
+先启动Gateway，再在另一个终端启动控制台。新克隆可直接使用以下demo，不需要本机配置或API Key：
 
 ```sh
-pnpm start --config engines/console.local.yaml --data-dir data/console --port 3184
-HARNESSHUB_GATEWAY_URL=http://127.0.0.1:3184 pnpm start:console
+pnpm start --demo --data-dir data/demo --port 3180
 ```
 
-页面位于 `http://127.0.0.1:3330`。开发页面使用 `pnpm dev:console`；后台地址环境变量相同。未设置环境变量时代理连接 `http://127.0.0.1:3182`。`engines/console.local.yaml` 是本机忽略文件，新环境需要按 [配置说明](../docs/engine-management.md)准备自己的引擎和工作区。前后端均绑定 loopback，原有 3000 端口的服务没有被占用或替换。
+第二个终端在仓库根目录运行：
+
+```sh
+HARNESSHUB_GATEWAY_URL=http://127.0.0.1:3180 pnpm start:console
+```
+
+页面位于 `http://127.0.0.1:3330`。开发页面使用 `HARNESSHUB_GATEWAY_URL=http://127.0.0.1:3180 pnpm dev:console`。未设置环境变量时代理保留历史兼容默认 `http://127.0.0.1:3182`，新环境应显式指定。真实引擎的自有配置按 [配置说明](../docs/engine-management.md)准备。
+
+demo需将“执行模式”切为“直接执行”，选择fake后发送文本；页面默认“自动规划”，该模式会排除fake，需要另行登记真实引擎。
+
+历史验收服务使用3184与忽略的`engines/console.local.yaml`，它不随仓库提供，不是首次运行前提。macOS的Keychain helper需要Xcode Command Line Tools；通用前置条件见 [快速开始](../README.md#快速开始不需要-api-key)。前后端均绑定loopback。
 
 ## 页面与状态
 
 - 任务工作台：自动规划/直接执行、引擎和工作区选择、任务历史、流式正文、思考展开、工具详情和实际权限请求。
 - 自动计划：先展示步骤、依赖、产物与选择依据，确认后执行；失败或取消不偷偷重试。
 - 执行详情：模型、阶段耗时、token、费用来源、安装版本、覆盖缺口、产物下载和轨迹导出。
-- 引擎管理：发现、注册、启停、默认选择和热加载；安装证据不等于模型可用。
+- 引擎管理：进入页面主动发现，可见期间每分钟及重新可见时刷新；注册、启停、默认选择和热加载。识别清单与各引擎接入方式见 [本机发现](../docs/engine-discovery.md)，安装证据不等于模型可用。每行支持 [独立配置与检查](../docs/engine-configuration.md)，可编辑模型、Provider、Keychain/环境/文件密钥引用、Skills 和 MCP。
 - 运行观测：真实状态计数、负载、p50/p95、已知 token 与样本覆盖、按 Run 追溯。
 
 当前任务 ID 保存在 URL 中，刷新从持久数据恢复。SSE 使用真实命名事件与序号，40ms 合并显示更新；网络断开时以事件游标和持久查询追赶。关闭页面不取消任务，停止按钮才发出取消请求。没有生成静态伪任务、伪曲线或用零代替未知用量。

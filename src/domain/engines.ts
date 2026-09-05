@@ -1,3 +1,4 @@
+import type { EngineConfiguration } from "./engine-configuration.js";
 import type { EngineProfile } from "./types.js";
 
 /** Local executable registration. Commands are argv, never a shell expression. */
@@ -8,6 +9,7 @@ export interface EngineRegistration {
   enabled?: boolean;
   model?: string;
   credentialEnv?: string[];
+  configuration?: EngineConfiguration;
   maxConcurrency?: number;
   cli?: { inputMode?: "stdin" | "argv"; maxOutputBytes?: number };
   acp?: { sessionMode: "resume" };

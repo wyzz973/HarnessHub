@@ -31,13 +31,13 @@ curl -s -X POST http://127.0.0.1:3180/v1/sessions \
 | `POST /v1/engines/reload` | 手动重新读取配置文件，全体校验通过后应用 |
 | `GET /v1/engines/registry` | 默认引擎、文件监视状态、最后成功 reload 时间和错误码 |
 
-注册字段为 `id`、`driver`、`command`，以及可选的 `enabled`、`model`、`credentialEnv`、`maxConcurrency`、`cli`、`acp`。全部字段由 [公共 schema](../src/domain/schemas.ts)约束并进入生成的 OpenAPI。未知字段包括嵌套拼写错误直接失败，不会被删除后偷偷使用默认值。禁用使用完整注册配置并设置 `enabled:false`。`fake/default/discover/registry/reload` 是保留 ID。
+注册字段为 `id`、`driver`、`command`，以及可选的 `enabled`、`model`、`credentialEnv`、`maxConcurrency`、`cli`、`acp`、`configuration`。独立模型/Provider、密钥引用、Skills、MCP 及校验见 [引擎配置](engine-configuration.md)。全部字段由 [公共 schema](../src/domain/schemas.ts)约束并进入生成的 OpenAPI。未知字段包括嵌套拼写错误直接失败，不会被删除后偷偷使用默认值。禁用使用完整注册配置并设置 `enabled:false`。`fake/default/discover/registry/reload` 是保留 ID。
 
 ## 配置更新与持久化
 
 文件中的 YAML/JSON 引擎配置作为基础目录，API 登记是持久 overlay，同 ID 时 API 配置优先。DELETE 保存移除标记，因此文件 reload 或服务重启不会让已移除引擎重新出现；再次 POST/PUT 可以重新启用。文件更新只改变未被 API 覆盖的条目。要替换 API 管理的条目，继续使用 PUT，不靠修改其基础文件副本。
 
-每次写入先在 Gateway 所有的 SQLite 提交 `runtime_metadata.engine_catalog` 的 version 1 数据，再发布内存目录；包含 overlay、默认选择和完整历史执行 revision。Session/Run 继续只保存安全配置快照与命令 hash。既有数据库在首次新版启动时增加该 metadata key，不修改已有记录或 `user_version`；未知 catalog 版本或内容 hash 不匹配明确拒绝启动。
+每次写入先在 Gateway 所有的 SQLite 提交 `runtime_metadata.engine_catalog` 的 version 2 数据（兼容读取并升级 version 1），再发布内存目录；包含 overlay、默认选择和完整历史执行 revision。Session/Run 继续只保存安全配置快照与命令 hash。既有数据库在首次新版启动时增加该 metadata key，不修改已有记录或 `user_version`；未知 catalog 版本或内容 hash 不匹配明确拒绝启动。
 
 启动时显式 `AGENT_ENGINE` 在合并持久目录后校验，并保存为新的默认选择；之后 API 可以更新它。没有显式启动选择时，先用已保存默认，再用配置默认；均未选择时取首个启用引擎。已选择的默认引擎被移除或禁用后，无 `engineId` 的新 Session 返回 `ENGINE_UNAVAILABLE`，需要显式选定可用引擎，避免自动改派。
 

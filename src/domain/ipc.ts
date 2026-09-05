@@ -1,3 +1,4 @@
+import { engineConfigurationSchema } from "./engine-configuration.js";
 import { Ajv } from "ajv";
 import type {
   ExecutionIdentity,
@@ -69,6 +70,7 @@ const profile = object(
     enabled: { type: "boolean" },
     command: { type: "array", items: string, minItems: 1 },
     model: string,
+    configuration: engineConfigurationSchema,
     cli: object({
       inputMode: { enum: ["stdin", "argv"] },
       maxOutputBytes: { type: "integer", minimum: 1, maximum: 4 * 1024 * 1024 },

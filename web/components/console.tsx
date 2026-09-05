@@ -835,6 +835,19 @@ export function Console() {
                 defaultEngine={defaultEngine}
                 refresh={refresh}
                 report={report}
+                testModel={async (id) => {
+                  const session = await api.createSession(
+                    id,
+                    workspaceId || undefined,
+                  );
+                  await api.submit(
+                    session.id,
+                    "连接测试：请仅回复 HARNESSHUB_CONNECTION_OK。不要使用工具或修改文件。",
+                    crypto.randomUUID(),
+                  );
+                  await refresh();
+                  choose({ type: "session", id: session.id });
+                }}
               />
             ) : page === "observability" ? (
               <ObservabilityPage

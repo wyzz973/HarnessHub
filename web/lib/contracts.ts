@@ -1,3 +1,4 @@
+import { configurationSchema } from "./engine-configuration";
 import { z } from "zod";
 
 const object = z.record(z.string(), z.unknown());
@@ -86,6 +87,7 @@ export const engineSchema = z.object({
   enabled: z.boolean(),
   command: z.array(z.string()).optional(),
   model: z.string().optional(),
+  configuration: configurationSchema.optional(),
   credentialEnv: z.array(z.string()).optional(),
   maxConcurrency: z.number(),
   cli: z
@@ -112,6 +114,7 @@ export const registrationSchema = z
     command: z.array(z.string()).min(1),
     enabled: z.boolean().optional(),
     model: z.string().optional(),
+    configuration: configurationSchema.optional(),
     credentialEnv: z.array(z.string()).optional(),
     maxConcurrency: z.number().optional(),
     cli: z

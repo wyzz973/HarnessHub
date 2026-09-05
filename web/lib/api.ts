@@ -1,3 +1,8 @@
+import {
+  adapterIds,
+  configurationTestSchema,
+  secretReferenceSchema,
+} from "./engine-configuration";
 import { z } from "zod";
 import {
   candidateSchema,
@@ -145,10 +150,49 @@ export const api = {
       workflowSchema,
       post(),
     ),
-  discovery: () =>
+  discovery: (signal?: AbortSignal) =>
     request(
       "/v1/engines/discover",
       z.object({ candidates: z.array(candidateSchema) }),
+      { signal },
+    ),
+  configurationAdapters: (signal?: AbortSignal) =>
+    request(
+      "/v1/engine-configuration/adapters",
+      z.object({
+        adapters: z.array(
+          z.object({
+            id: z.enum(adapterIds),
+            providerProtocols: z.array(z.string()),
+            description: z.string(),
+          }),
+        ),
+      }),
+      { signal },
+    ),
+  configurationTemplates: (signal?: AbortSignal) =>
+    request(
+      "/v1/engine-configuration/templates",
+      z.object({ candidates: z.array(candidateSchema) }),
+      { signal },
+    ),
+  inspectConfiguration: (registration: z.infer<typeof registrationSchema>) =>
+    request(
+      "/v1/engine-configuration/inspect",
+      z.object({ configuration: z.unknown().optional() }),
+      post(registration),
+    ),
+  testEngineConfiguration: (id: string) =>
+    request(
+      `/v1/engines/${encodeURIComponent(id)}/test`,
+      configurationTestSchema,
+      post({}),
+    ),
+  createSecret: (value: string) =>
+    request(
+      "/v1/secrets",
+      z.object({ reference: secretReferenceSchema }),
+      post({ value }),
     ),
   register: (registration: z.infer<typeof registrationSchema>) =>
     request("/v1/engines", accepted, post(registration)),

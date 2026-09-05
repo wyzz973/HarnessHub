@@ -1,3 +1,7 @@
+import {
+  parseEngineConfiguration,
+  pinConfigurationSkills,
+} from "./configuration.js";
 import { createHash } from "node:crypto";
 import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
@@ -65,6 +69,7 @@ export function normalizeEngine(input: unknown): EngineProfile {
     "model",
     "maxConcurrency",
     "credentialEnv",
+    "configuration",
     "cli",
     "acp",
   ]);
@@ -172,6 +177,18 @@ export function normalizeEngine(input: unknown): EngineProfile {
       );
     acp = { sessionMode: "resume" };
   }
+  if (
+    e.configuration &&
+    typeof e.configuration === "object" &&
+    "provider" in e.configuration &&
+    e.command.some((arg: string) =>
+      /launch-(?:pi|opencode|dsh|openclaw)-acp\.mjs$/.test(arg),
+    )
+  )
+    throw new HubError(
+      "ENGINE_CONFIGURATION_UNSUPPORTED",
+      "该自定义启动脚本固定了 Provider；请先选择标准启动模板",
+    );
   const profile: Omit<EngineProfile, "revision"> = {
     id,
     driver: e.driver,
@@ -180,6 +197,15 @@ export function normalizeEngine(input: unknown): EngineProfile {
     ...(e.model !== undefined ? { model: string(e.model, "model") } : {}),
     ...(e.credentialEnv !== undefined
       ? { credentialEnv: [...(e.credentialEnv as string[])] }
+      : {}),
+    ...(e.configuration !== undefined
+      ? {
+          configuration: parseEngineConfiguration(
+            e.configuration,
+            e.driver,
+            typeof e.model === "string" ? e.model : undefined,
+          ),
+        }
       : {}),
     ...(cli ? { cli } : {}),
     ...(acp ? { acp } : {}),
@@ -228,7 +254,9 @@ export async function loadConfig(options: {
   const base = options.file
     ? path.dirname(path.resolve(options.file))
     : options.cwd;
-  const engines: EngineProfile[] = entries.map(normalizeEngine);
+  const engines: EngineProfile[] = await Promise.all(
+    entries.map(prepareEngine),
+  );
   if (options.demo)
     engines.push({
       id: "fake",
@@ -285,4 +313,15 @@ export async function loadConfig(options: {
     defaultTimeoutMs: integer(raw.defaultTimeoutMs, 60_000),
     cancelGraceMs: integer(raw.cancelGraceMs, 500),
   });
+}
+
+/** Resolve local skill fingerprints before publishing a configuration revision. */
+export async function prepareEngine(input: unknown): Promise<EngineProfile> {
+  const profile = await pinConfigurationSkills(normalizeEngine(input));
+  const {
+    revision: _revision,
+    capabilities: _capabilities,
+    ...registration
+  } = profile;
+  return normalizeEngine(registration);
 }

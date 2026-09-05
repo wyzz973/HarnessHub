@@ -5,6 +5,7 @@ import {
   mkdtemp,
   readFile,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -12,6 +13,7 @@ import path from "node:path";
 import test from "node:test";
 import type { TestContext } from "node:test";
 import { discoverEngines } from "../../src/engine/discovery.js";
+import { normalizeEngine } from "../../src/engine/registry.js";
 
 async function fixture(t: TestContext) {
   const directory = await mkdtemp(
@@ -22,7 +24,13 @@ async function fixture(t: TestContext) {
   const home = path.join(directory, "home");
   const bin = path.join(directory, "bin");
   await Promise.all([cwd, home, bin].map((location) => mkdir(location)));
-  const options = { cwd, home, pathEnv: bin, nodeExecutable: process.execPath };
+  const options = {
+    cwd,
+    home,
+    pathEnv: bin,
+    nodeExecutable: process.execPath,
+    systemBinDirectories: [],
+  };
   return { directory, cwd, home, bin, options };
 }
 
@@ -66,6 +74,39 @@ void test("discovery checks executable installation evidence and adapter presenc
   assert.ok(after[0]?.registration?.command.includes(`CODEX_PATH=${codex}`));
   assert.equal(after[0]?.registration?.model, undefined);
   await assert.rejects(readFile(marker), { code: "ENOENT" });
+});
+
+void test("mainstream harnesses are found outside a GUI PATH and scans observe installs/removals without execution", async (t) => {
+  const { home, bin, options } = await fixture(t);
+  const hermes = path.join(home, ".local/bin/hermes");
+  const mimo = path.join(home, ".mimocode/bin/mimo");
+  const cursor = path.join(home, ".local/bin/cursor-agent");
+  await file(hermes, true);
+  await file(mimo, true);
+  await file(cursor, true);
+  await file(path.join(bin, "gemini"), true);
+  const found = await discoverEngines(options);
+  assert.equal(found.find((c) => c.id === "hermes")?.executable, hermes);
+  assert.equal(found.find((c) => c.id === "mimo")?.executable, mimo);
+  assert.equal(
+    found.find((c) => c.id === "cursor")?.registration?.driver,
+    "cli",
+  );
+  assert.equal(
+    found.find((c) => c.id === "gemini")?.registration?.command.at(-1),
+    "--acp",
+  );
+  await rm(mimo);
+  await file(path.join(bin, "kimi"), true);
+  const next = await discoverEngines(options);
+  assert.equal(
+    next.some((c) => c.id === "mimo"),
+    false,
+  );
+  assert.equal(
+    next.find((c) => c.id === "kimi")?.registration?.command.at(-1),
+    "acp",
+  );
 });
 
 void test("discovery uses PATH precedence, home installations and sibling DSH with existing reference patch", async (t) => {
@@ -152,7 +193,6 @@ void test("bad manifest schemas, unavailable commands, duplicate IDs and non-fil
     JSON.stringify({
       registration: { ...registration, command: ["missing-engine"] },
     }),
-    JSON.stringify({ registration: { ...registration, id: "opencode" } }),
   ]) {
     await writeFile(location, value);
     await assert.rejects(discoverEngines(options), {
@@ -169,4 +209,71 @@ void test("bad manifest schemas, unavailable commands, duplicate IDs and non-fil
   await assert.rejects(discoverEngines(options), {
     code: "INVALID_ENGINE_MANIFEST",
   });
+});
+
+void test("local manifests replace built-in recipes without losing custom configuration; duplicate manifests fail", async (t) => {
+  const { cwd, bin, options } = await fixture(t);
+  await file(path.join(bin, "mimo"), true);
+  const manifestDir = path.join(cwd, "engines/manifests");
+  await mkdir(manifestDir, { recursive: true });
+  const manifest = JSON.stringify({
+    name: "My MiMo",
+    registration: {
+      id: "mimo",
+      driver: "acp",
+      command: ["mimo", "acp"],
+      model: "custom/model",
+    },
+  });
+  await writeFile(path.join(manifestDir, "mimo.json"), manifest);
+  const found = await discoverEngines(options);
+  assert.equal(found.filter((c) => c.id === "mimo").length, 1);
+  assert.equal(found[0]?.source, "manifest");
+  assert.equal(found[0]?.registration?.model, "custom/model");
+  await writeFile(path.join(manifestDir, "duplicate.json"), manifest);
+  await assert.rejects(discoverEngines(options), {
+    code: "INVALID_ENGINE_MANIFEST",
+  });
+});
+
+void test("package-manager paths, executable permissions and Pi adapter evidence remain distinct", async (t) => {
+  const { cwd, home, bin, options } = await fixture(t);
+  const systemBin = path.join(cwd, "homebrew/bin");
+  await file(path.join(systemBin, "gemini"), true);
+  await file(path.join(home, ".volta/bin/qwen"), true);
+  await file(path.join(home, ".local/bin/hermes"));
+  await symlink(path.join(bin, "missing"), path.join(bin, "mimo"));
+  await file(path.join(bin, "pi"), true);
+  let found = await discoverEngines({
+    ...options,
+    systemBinDirectories: [systemBin],
+  });
+  assert.equal(found.find((c) => c.id === "gemini")?.source, "known-location");
+  assert.equal(found.find((c) => c.id === "qwen")?.source, "known-location");
+  assert.equal(
+    found.some((c) => c.id === "hermes" || c.id === "mimo"),
+    false,
+  );
+  assert.equal(found.find((c) => c.id === "pi")?.status, "adapter-required");
+  await file(path.join(cwd, ".tools/pi/node_modules/pi-acp/dist/index.js"));
+  await file(path.join(bin, "gemini"), true);
+  found = await discoverEngines({
+    ...options,
+    systemBinDirectories: [systemBin],
+  });
+  assert.equal(
+    found.find((c) => c.id === "gemini")?.executable,
+    path.join(bin, "gemini"),
+  );
+  const pi = found.find((c) => c.id === "pi");
+  assert.equal(pi?.status, "ready");
+  assert.ok(
+    pi?.registration?.command.includes(
+      `PI_ACP_PI_COMMAND=${path.join(bin, "pi")}`,
+    ),
+  );
+  for (const candidate of found) {
+    assert.ok(candidate.registration);
+    assert.doesNotThrow(() => normalizeEngine(candidate.registration));
+  }
 });

@@ -13,7 +13,7 @@ Workflow 把用户目标变成可审核的步骤，再调用已有 Session/Run �
 例如：
 
 ```sh
-curl -s http://127.0.0.1:3182/v1/workflows \
+curl -s http://127.0.0.1:3180/v1/workflows \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: report-demo-1' \
   -d '{"goal":"分析当前工作目录里的示例数据，写出 summary.json 和说明文档","engineId":"auto","timeoutMs":90000}'

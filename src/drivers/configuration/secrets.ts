@@ -1,0 +1,107 @@
+import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import { lstat, readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import type { SecretReference } from "../../domain/engine-configuration.js";
+import { HubError } from "../../domain/errors.js";
+function failure(): HubError {
+  return new HubError(
+    "SECRET_UNAVAILABLE",
+    "The credential reference is missing, locked or unreadable",
+    400,
+  );
+}
+async function keychain(
+  operation: string,
+  id: string,
+  value?: string,
+): Promise<string | undefined> {
+  if (process.platform !== "darwin")
+    throw new HubError(
+      "KEYCHAIN_UNSUPPORTED",
+      "Use an environment or file reference on this platform",
+      400,
+    );
+  const executable = fileURLToPath(
+    new URL("../../../native/harnesshub-keychain", import.meta.url),
+  );
+  const child = spawn(executable, [], { stdio: ["pipe", "pipe", "ignore"] });
+  let output = "";
+  const timeout = setTimeout(() => child.kill("SIGKILL"), 5000);
+  try {
+    const completion = new Promise<number | null>((resolve, reject) => {
+      child.once("error", () => reject(failure()));
+      child.once("close", resolve);
+      child.stdout.on("data", (data: Buffer) => {
+        output += data.toString();
+        if (Buffer.byteLength(output) > 32768) child.kill("SIGKILL");
+      });
+      child.stdin.on("error", () => {
+        /* exit/error settles the operation */
+      });
+    });
+    child.stdin.end(
+      JSON.stringify({
+        operation,
+        id,
+        ...(value === undefined ? {} : { value }),
+      }),
+    );
+    if ((await completion) !== 0) throw failure();
+    const result: unknown = JSON.parse(output);
+    if (!result || typeof result !== "object") throw failure();
+    if ("value" in result && typeof result.value === "string")
+      return result.value;
+    if (operation === "read") throw failure();
+    return undefined;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+/** Store an immutable Keychain item. Returned references are safe to persist; values are write-only. */
+export async function createSecret(value: string): Promise<SecretReference> {
+  if (
+    !value.trim() ||
+    Buffer.byteLength(value) > 8192 ||
+    /[\r\n\0]/.test(value)
+  )
+    throw new HubError(
+      "INVALID_SECRET",
+      "Credential must be a non-empty single-line value up to 8 KiB",
+    );
+  const id = randomUUID();
+  await keychain("create", id, value);
+  return { kind: "keychain", value: id };
+}
+/** Remove only an explicitly owned HarnessHub item, used by fixture cleanup. */
+export async function deleteSecret(ref: SecretReference): Promise<void> {
+  if (ref.kind !== "keychain") throw failure();
+  await keychain("delete", ref.value);
+}
+/** Resolve at execution/test time; callers own the in-memory value and must not log it. */
+export async function resolveSecret(
+  ref: SecretReference,
+  environment: Readonly<NodeJS.ProcessEnv>,
+): Promise<string> {
+  let value: string | undefined;
+  if (ref.kind === "env") value = environment[ref.value];
+  else if (ref.kind === "keychain") value = await keychain("read", ref.value);
+  else {
+    try {
+      const info = await lstat(ref.value);
+      if (
+        !info.isFile() ||
+        info.isSymbolicLink() ||
+        info.size > 8192 ||
+        (process.platform !== "win32" && (info.mode & 0o077) !== 0)
+      )
+        throw failure();
+      value = (await readFile(ref.value, "utf8")).trim();
+    } catch {
+      throw failure();
+    }
+  }
+  if (!value || Buffer.byteLength(value) > 8192 || /[\r\n\0]/.test(value))
+    throw failure();
+  return value;
+}

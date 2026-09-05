@@ -1,3 +1,4 @@
+import type { RuntimeMcpServer } from "../configuration/prepare.js";
 import { randomUUID } from "node:crypto";
 import { createAcpRuntime, createAgentRegistry } from "acpx/runtime";
 import type {
@@ -30,6 +31,11 @@ import type {
 /** ACP types terminate here. Credentials are inherited only through the Worker environment. */
 export class AcpDriver implements Driver {
   private runtime: AcpRuntime | undefined;
+  private mcpServers: RuntimeMcpServer[] = [];
+  /** Worker supplies resolved server credentials in memory before the first connection. */
+  configureMcp(servers: RuntimeMcpServer[]): void {
+    if (!this.runtime) this.mcpServers = servers;
+  }
   private handle: AcpRuntimeHandle | undefined;
   private store: AcpSessionStore | undefined;
   private current: { channel: DriverChannel; signal: AbortSignal } | undefined;
@@ -52,6 +58,7 @@ export class AcpDriver implements Driver {
         this.store = await openPinnedSessionStore(spec);
         this.runtime = createAcpRuntime({
           cwd: spec.cwd,
+          mcpServers: this.mcpServers,
           sessionStore: this.store,
           agentRegistry: createAgentRegistry({
             overrides: { [spec.profile.id]: spec.profile.command },

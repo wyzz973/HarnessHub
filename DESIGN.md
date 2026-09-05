@@ -62,7 +62,7 @@ flowchart TD
   D --> ACP[ACPDriver: acpx/runtime]
   ACP --> O[OpenCode]
   ACP --> PI[pi-acp + Pi]
-  ACP -. 后续 .-> DSH[DSH]
+  ACP --> DSH[DSH]
 ```
 
 | 模块 | 拥有的职责 |
@@ -81,6 +81,8 @@ Gateway 父进程是公共状态的唯一逻辑写入者。Worker 不直接写 H
 Driver 类型由 HarnessHub 定义，公共接口不泄露 ACP/SDK 类型。ACPDriver 与通用 CLIDriver 已实现；CLI 逐 Run 启动并在结果发布前回收 Worker 进程组，适合非 ACP 命令和 SDK 包装程序。NativeDriver 暂无独立实现；引擎的原生 SDK 仍可由包装程序接入。
 
 EngineManager 提供运行中发现、注册、替换、禁用、移除和默认选择；文件配置只热更新引擎和默认项。发现仅检查本机安装与 manifest，不自动调用模型或登记候选。API overlay 与历史 revision 先提交 SQLite 再发布；Session 固定 revision，旧 Run 不因热更新迁移。行为、优先级与限制见 [动态引擎管理](docs/engine-management.md)，取舍见 [ADR 0003](docs/decisions/0003-dynamic-engines.md)。
+
+引擎可选独立配置层按 [ADR 0006](docs/decisions/0006-engine-configuration.md)转换 Provider 与秘密引用，Skills 使用显式便携上下文，MCP 经 ACP 下发；秘密仅在所属 Worker 解析。版本、支持矩阵和检查边界见 [配置说明](docs/engine-configuration.md)。
 
 工具编排通常归 Harness；部分 ACP 文件、terminal 操作由 acpx 执行。公共权限回调并不自动覆盖所有工具路径，能力与审批覆盖范围必须如实报告。
 
@@ -125,7 +127,7 @@ queued → starting → running ↔ waiting_permission
 
 ## 6. 业务存储与事件
 
-首版表：`sessions`、`runs`、`events`、`permissions`、`artifacts`。Benchmark 已增加 `benchmark_attempts` 与 `evaluations`，附加表由独立 `benchmark_metadata.schema_version=1` 管理；`runtime_metadata` 保存 Gateway owner 与 version 1 引擎目录。外部配置和后端 Store 不能更改这些表的状态权威。
+首版表：`sessions`、`runs`、`events`、`permissions`、`artifacts`。Benchmark 已增加 `benchmark_attempts` 与 `evaluations`，附加表由独立 `benchmark_metadata.schema_version=1` 管理；`runtime_metadata` 保存 Gateway owner 与 version 2 引擎目录（兼容读取 version 1）。Workflow另有同库的 workflows / workflow_metadata（schema_version=1），要求当前Gateway进程拥有数据库。外部配置和后端 Store 不能更改这些表的状态权威。
 
 事件信封包含 `schemaVersion / eventId / sessionId / runId / seq / occurredAt / observedAt / type / data`。message、tool、permission 保留独立关联 ID。父进程生成 Run 内递增 seq；Worker 原始序号与 generation 用于去重。日志、后端重复输出及旧 generation 事件不得创造重复公共终态。
 
@@ -170,9 +172,9 @@ Gateway 重启后先核实 Worker 归属与残留进程，对缺少明确终态�
 | `GET /v1/artifacts/:id` | 获取已登记产物 |
 | `GET /health/live`、`GET /health/ready` | 进程存活与服务就绪，具体 Engine 状态另报 |
 
-Run 创建使用 Idempotency-Key，按 Session 和调用方范围隔离；同 key/同输入返回同一 Run，同 key/不同输入报冲突。创建失败不得返回已接收的 Run。
+Run 创建使用 Idempotency-Key，按 Session 范围隔离（当前没有调用方身份）；同 key/同输入返回同一 Run，同 key/不同输入报冲突。创建失败不得返回已接收的 Run。
 
-输入使用有序内容块及 artifact references，能力不足时拒绝不支持的图像或资源。公开请求引用登记的 Workspace 和 Engine，不传任意 executable 或原始凭证。
+当前输入是 text、可选 timeoutMs 和 outputs；不接受图像、有序多模态内容块或 artifact references。公开执行请求引用登记的 Workspace 和 Engine，不传任意 executable 或原始凭证；后续扩展输入类型需同步schema、能力检查与Driver。
 
 MVP 默认绑定本机。公开网络访问时增加认证及 Session/Run 所有权校验；后续赛题的同步返回或字段变化由 ingress adapter 转换。
 
@@ -188,7 +190,7 @@ Windows 验收至少覆盖：中文/空格路径、直接 argv 与 cmd/PowerShel
 
 ## 9. 目录与实施顺序
 
-具体开发任务、依赖和进度由 [TODO.md](TODO.md)维护；本节保留阶段目标，不重复记录任务状态。
+当前代码调用链与源码地图见 [架构实现导览](docs/architecture.md)，逐HTTP接口的实现见 [API参考](docs/api/reference.md)。具体开发任务、依赖和进度由 [TODO.md](TODO.md)维护；本节保留阶段目标，不重复记录任务状态。
 
 模块布局如下；当前公开行为与限制见 [运行/API 说明](docs/runtime-api.md)。
 

@@ -27,3 +27,6 @@ web/*.tsbuildinfo
 # Local console configuration and browser verification artifacts
 engines/*.local.yaml
 /output/
+
+# Browser automation evidence is local runtime data.
+.playwright-mcp/
