@@ -1,1 +1,2 @@
-* text=auto eol=lf
+# Unified patch context has a required space prefix before upstream tab indentation.
+patches/*.patch whitespace=-space-before-tab
