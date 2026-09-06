@@ -12,13 +12,17 @@ pnpm build
 pnpm build:console
 ```
 
-先启动Gateway，再在另一个终端启动控制台。新克隆可直接使用以下demo，不需要本机配置或API Key：
+Windows 可直接用 `pnpm start:local --demo` 同时启动两个服务，固定本地 Node 与 PowerShell 调用见 [Windows 启动说明](../docs/windows.md)。
+
+手动分别启动时，先启动 Gateway，再在另一个终端启动控制台。新克隆可直接使用以下 demo，不需要本机配置或 API Key：
 
 ```sh
 pnpm start --demo --data-dir data/demo --port 3180
 ```
 
 第二个终端在仓库根目录运行：
+
+下面使用 POSIX 环境变量语法；Windows 按 [PowerShell 启动说明](../docs/windows.md) 设置环境变量。
 
 ```sh
 HARNESSHUB_GATEWAY_URL=http://127.0.0.1:3180 pnpm start:console

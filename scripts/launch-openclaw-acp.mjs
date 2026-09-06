@@ -6,7 +6,7 @@
  * Credentials/configuration remain inherited references. Session resume is not
  * enabled for profiles using this process-local session mapping.
  */
-import { spawn } from "node:child_process";
+import { spawnEngine as spawn } from "./spawn-engine.mjs";
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 
@@ -21,6 +21,7 @@ const key = `agent:main:harnesshub:${randomUUID()}`;
 const child = spawn(executable, ["acp", "--session", key], {
   stdio: "inherit",
   env: process.env,
+  windowsHide: true,
 });
 for (const signal of ["SIGINT", "SIGTERM"])
   process.on(signal, () => child.kill(signal));

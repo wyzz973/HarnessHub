@@ -6,6 +6,7 @@ import {
   mkdir,
   realpath,
   rm,
+  rmdir,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -165,9 +166,20 @@ void test("Pi session identity and immutable message IDs give run usage; native 
     "native-session-identity-mismatch",
   );
   await rm(sessionFile);
-  const outside = path.join(directory, "outside.jsonl");
-  await writeFile(outside, JSON.stringify(header));
-  await symlink(outside, sessionFile);
+  if (process.platform === "win32") {
+    const outside = path.join(directory, "outside");
+    await mkdir(outside);
+    await writeFile(
+      path.join(outside, path.basename(sessionFile)),
+      JSON.stringify(header),
+    );
+    await rmdir(path.dirname(sessionFile));
+    await symlink(outside, path.dirname(sessionFile), "junction");
+  } else {
+    const outside = path.join(directory, "outside.jsonl");
+    await writeFile(outside, JSON.stringify(header));
+    await symlink(outside, sessionFile);
+  }
   assert.equal(
     (await captureNativeUsage(spec, identity.backendSessionId)).missingReason,
     "native-evidence-symlink-rejected",

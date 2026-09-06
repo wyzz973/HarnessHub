@@ -114,8 +114,12 @@ async function execute(owned: Active, selected: Driver): Promise<void> {
     preparation ??= await prepareConfiguration(owned.spec, process.env);
     // This process belongs to one Session; no Gateway or other Worker's environment is changed.
     Object.assign(process.env, preparation.env);
-    if (selected instanceof AcpDriver)
+    if (selected instanceof AcpDriver) {
       selected.configureMcp(preparation.mcpServers);
+      selected.configureNativeModelSelection(
+        preparation.nativeModelSelection ?? false,
+      );
+    }
     const executionSpec = {
       ...owned.spec,
       profile: {

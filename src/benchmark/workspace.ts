@@ -13,6 +13,7 @@ import {
   type BenchmarkTask,
 } from "../domain/benchmark.js";
 import { HubError } from "../domain/errors.js";
+import { isRelativeFilePath } from "../domain/files.js";
 
 const maximumFixtureBytes = 8 * 1024 * 1024;
 
@@ -21,18 +22,7 @@ export function validateFixtures(task: BenchmarkTask): void {
   const names: string[] = [];
   let bytes = 0;
   for (const fixture of task.fixtureFiles ?? []) {
-    const components = fixture.path.split("/");
-    if (
-      components.some(
-        (component) =>
-          !component ||
-          component === "." ||
-          component === ".." ||
-          /[\\\u0000-\u001f<>:"|?*]/u.test(component) ||
-          /[. ]$/u.test(component) ||
-          /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(component),
-      )
-    )
+    if (!isRelativeFilePath(fixture.path))
       throw new HubError(
         "INVALID_BENCHMARK_FIXTURE",
         "Fixture paths must be safe portable relative file names",
@@ -110,7 +100,7 @@ export async function checkWorkspace(
   if (
     !metadata.isDirectory() ||
     metadata.isSymbolicLink() ||
-    (await realpath(location)) !== location
+    path.relative(await realpath(location), location) !== ""
   )
     throw reject();
   if (!initial) return;

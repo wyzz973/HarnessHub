@@ -1,8 +1,14 @@
 # Pi 引擎接入
 
-Pi 通过现成 `pi-acp` Adapter 复用 HarnessHub 的 ACPDriver。2026-09-05 已在 Mac 从正式 Gateway 动态注册后完成真实文本任务，并通过读取输入、计算、写文件、自动采集和确定判分的多步骤任务；取消、上下文恢复和 Windows 尚未完成 Pi 专项验收。
+Pi 通过现成 `pi-acp` Adapter 复用 HarnessHub 的 ACPDriver。当前 Windows 发行组合与下文 2026-09-05 的 macOS 历史配置分别记录，不应混用版本、入口或认证目录。
 
-## 固定安装
+## 当前 Windows 发布组合
+
+[便携发布包](portable-bundle.md)固定 `@earendil-works/pi-coding-agent@0.85.1` 与 `pi-acp@0.0.33`，通过包内 Node 启动 Pi 的 `dist/bundle/cli.js`。完整依赖由开发机按 distribution 锁文件准备，裁判机不再安装 Pi 或补充包。不要替换成旧 0.73.1；该版本没有 Adapter 用于结束请求的 `agent_settled` 事件。
+
+比赛 Provider 使用 [独立配置](engine-configuration.md)生成私有 models.json/settings.json，并以 `$HARNESSHUB_PROVIDER_KEY` 引用子进程密钥。它支持配置矩阵中的 OpenAI Completions、Responses 和 Anthropic；不引用下文的个人 DSH 凭证文件。统一 ACP MCP 注入明确拒绝，原生扩展与工具调用须另行验证。实际模型、文件、取消和恢复证据以对应 Windows 验收记录为准。
+
+## 2026-09-05 macOS 固定安装
 
 采用 ACP Registry 指向的 [svkozak/pi-acp](https://github.com/svkozak/pi-acp)，其方式是启动 Pi 的 RPC 模式并转换 ACP 消息。Pi 本体来自 [earendil-works/pi](https://github.com/earendil-works/pi)。本次锁定版本如下：
 
@@ -35,7 +41,7 @@ Launcher 只接受 DSH `agent-default-model.provider: deepseek-official`，沿�
 
 Launcher 拒绝使用操作系统用户的原始 HOME，避免直接运行时改写其全局 Pi 设置。它关闭启动阶段的版本检查与安装遥测，使用固定的 Pi 可执行路径。`PI_OFFLINE=1` 按 Pi 的 [设置说明](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/settings.md)仅禁止启动阶段网络操作；实际模型请求仍发送给原有 DeepSeek API。
 
-## 当前验收
+## 2026-09-05 macOS 历史验收
 
 测试通过独立 Gateway 与私有数据目录完成：
 
@@ -63,4 +69,4 @@ PATH="$PWD/.tools/node/bin:$PATH" node dist/src/benchmark-main.js --config .tmp/
 - Adapter 在握手中声明 `session/load`；这只是能力声明，本配置尚未设置 `acp.sessionMode: resume`，需另做上下文恢复验收。
 - Pi 的工具由引擎本地执行。不能把 ACPDriver 支持权限往返理解为 Pi 的全部工具都有审批；本次文件任务没有触发权限请求。
 - 本次 `engine.usage` 的模型信息存在，但 `usage` 为 `null`，因此没有 token 或费用完成数据。
-- Pi 专项的取消与强制退出、上下文恢复及 Windows 原生进程清理仍待后续任务覆盖。以上 Mac 文本和文件结果不替代这些验收。
+- 以上 Mac 文本和文件结果不覆盖 Pi 专项的取消、强制退出、上下文恢复或 Windows 原生进程清理；这些能力须查对应版本和平台的验收记录。

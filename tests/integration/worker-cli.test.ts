@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -142,13 +143,9 @@ void test(
 );
 
 void test(
-  "CLI cancellation awaits direct child exit and Host close reclaims the owned descendant group",
+  "CLI cancellation awaits direct child exit and Host close reclaims owned descendants",
   {
     timeout: 15_000,
-    skip:
-      process.platform === "win32"
-        ? "Windows process-tree cleanup is not verified"
-        : false,
   },
   async (t) => {
     const directory = await mkdtemp(join(tmpdir(), "harnesshub-cli-cancel-"));
@@ -181,13 +178,9 @@ void test(
 );
 
 void test(
-  "Gateway owns CLI deadline and confirms cleanup of a process that ignores SIGTERM",
+  "Gateway deadline expires after a CLI readiness barrier and confirms descendant cleanup",
   {
     timeout: 15_000,
-    skip:
-      process.platform === "win32"
-        ? "Windows process-tree cleanup is not verified"
-        : false,
   },
   async (t) => {
     const directory = await mkdtemp(join(tmpdir(), "harnesshub-cli-deadline-"));
@@ -214,8 +207,34 @@ void test(
       demo: false,
       port: 0,
     });
+    // Keep OS process readiness and test/teardown deadlines on the real clock.
+    // Only the Gateway's acceptance clock is held until its CLI has emitted PIDs.
+    const realDelay = delay;
+    let clockEnabled = false;
     t.after(async () => {
-      await hub.server.close();
+      const closing = hub.server.close();
+      if (clockEnabled) {
+        let closed = false;
+        void closing
+          .finally(() => {
+            closed = true;
+          })
+          .catch(() => undefined);
+        const cleanupUntil = performance.now() + 8000;
+        try {
+          while (!closed) {
+            assert.ok(
+              performance.now() < cleanupUntil,
+              "Gateway teardown did not settle",
+            );
+            t.mock.timers.tick(20);
+            await realDelay(20);
+          }
+          await closing;
+        } finally {
+          t.mock.timers.reset();
+        }
+      } else await closing;
       await rm(directory, { recursive: true });
     });
     const session = (await (
@@ -225,22 +244,74 @@ void test(
         body: "{}",
       })
     ).json()) as SessionRecord;
-    const accepted = await fetch(`${hub.url}/v1/sessions/${session.id}/runs`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: "deadline", timeoutMs: 1500 }),
-    });
+    // node:http keeps transport progress independent of the mocked application
+    // timers; the requests still traverse the real listening Gateway socket.
+    const request = (url: string, body?: string) =>
+      new Promise<{ status: number; body: string }>((resolve, reject) => {
+        const outgoing = httpRequest(
+          url,
+          {
+            method: body === undefined ? "GET" : "POST",
+            headers:
+              body === undefined ? {} : { "content-type": "application/json" },
+            agent: false,
+          },
+          (response) => {
+            let text = "";
+            response.setEncoding("utf8");
+            response.on("data", (chunk: string) => {
+              text += chunk;
+            });
+            response.once("error", reject);
+            response.once("end", () =>
+              resolve({ status: response.statusCode ?? 0, body: text }),
+            );
+          },
+        );
+        outgoing.once("error", reject);
+        outgoing.end(body);
+      });
+    t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
+    clockEnabled = true;
+    const accepted = await request(
+      `${hub.url}/v1/sessions/${session.id}/runs`,
+      JSON.stringify({ text: "deadline", timeoutMs: 1500 }),
+    );
     assert.equal(accepted.status, 202);
-    let run = (await accepted.json()) as RunRecord;
-    const until = Date.now() + 8000;
-    while (run.status !== "timed_out") {
-      if (Date.now() > until)
-        throw new Error(`Deadline did not settle: ${JSON.stringify(run)}`);
-      await delay(20);
-      run = (await (
-        await fetch(`${hub.url}/v1/runs/${run.id}`)
-      ).json()) as RunRecord;
+    let run = JSON.parse(accepted.body) as RunRecord;
+    const readinessUntil = performance.now() + 8000;
+    let readyText = "";
+    while (!readyText.includes("\n")) {
+      assert.ok(
+        performance.now() < readinessUntil,
+        "CLI did not emit its process-tree readiness barrier",
+      );
+      readyText = hub.app
+        .events(run.id)
+        .filter((event) => event.type === "message.delta")
+        .map((event) =>
+          typeof event.data.text === "string" ? event.data.text : "",
+        )
+        .join("");
+      if (!readyText.includes("\n")) await realDelay(20);
     }
+    const readyPids = parsePids(readyText);
+    assert.doesNotThrow(() => process.kill(readyPids.parent, 0));
+    assert.doesNotThrow(() => process.kill(readyPids.child, 0));
+    assert.equal(run.deadlineAt - run.createdAt, 1500);
+    t.mock.timers.tick(1500);
+    const until = performance.now() + 8000;
+    while (run.status !== "timed_out") {
+      if (performance.now() > until)
+        throw new Error(`Deadline did not settle: ${JSON.stringify(run)}`);
+      await realDelay(20);
+      t.mock.timers.tick(20);
+      run = JSON.parse(
+        (await request(`${hub.url}/v1/runs/${run.id}`)).body,
+      ) as RunRecord;
+    }
+    t.mock.timers.reset();
+    clockEnabled = false;
     assert.equal(run.cleanupStatus, "confirmed");
     assert.ok(run.startedAt);
     const events = await (
@@ -269,6 +340,7 @@ void test(
       })
       .join("");
     const pids = parsePids(text);
+    assert.deepEqual(pids, readyPids);
     assert.throws(() => process.kill(pids.parent, 0), { code: "ESRCH" });
     assert.throws(() => process.kill(pids.child, 0), { code: "ESRCH" });
   },
@@ -278,10 +350,6 @@ void test(
   "Gateway reaps CLI background descendants before publishing completed or failed results",
   {
     timeout: 15_000,
-    skip:
-      process.platform === "win32"
-        ? "Windows process-tree cleanup is not verified"
-        : false,
   },
   async (t) => {
     const directory = await mkdtemp(join(tmpdir(), "harnesshub-cli-reap-"));

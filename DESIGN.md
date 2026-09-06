@@ -82,9 +82,9 @@ Driver 类型由 HarnessHub 定义，公共接口不泄露 ACP/SDK 类型。ACPD
 
 EngineManager 提供运行中发现、注册、替换、禁用、移除和默认选择；文件配置只热更新引擎和默认项。发现仅检查本机安装与 manifest，不自动调用模型或登记候选。API overlay 与历史 revision 先提交 SQLite 再发布；Session 固定 revision，旧 Run 不因热更新迁移。行为、优先级与限制见 [动态引擎管理](docs/engine-management.md)，取舍见 [ADR 0003](docs/decisions/0003-dynamic-engines.md)。
 
-引擎可选独立配置层按 [ADR 0006](docs/decisions/0006-engine-configuration.md)转换 Provider 与秘密引用，Skills 使用显式便携上下文，MCP 经 ACP 下发；秘密仅在所属 Worker 解析。版本、支持矩阵和检查边界见 [配置说明](docs/engine-configuration.md)。
+引擎可选独立配置层按 [ADR 0006](docs/decisions/0006-engine-configuration.md)转换 Provider 与秘密引用，Skills 使用显式便携上下文，MCP 经 ACP 或有验证依据的 Session 私有原生配置下发；秘密仅在所属 Worker 解析。Copilot stdio 的原生映射见 [ADR 0009](docs/decisions/0009-portable-engine-distribution.md)。版本、支持矩阵和检查边界见 [配置说明](docs/engine-configuration.md)。
 
-工具编排通常归 Harness；部分 ACP 文件、terminal 操作由 acpx 执行。公共权限回调并不自动覆盖所有工具路径，能力与审批覆盖范围必须如实报告。
+工具编排归 Harness；当前客户端明确不提供 ACP 文件/terminal 操作，引擎使用原生工具，理由见 [ADR 0010](docs/decisions/0010-acpx-client-capabilities.md)。公共权限回调并不自动覆盖所有原生工具路径，能力与审批覆盖范围必须如实报告。
 
 ## 4. Session、Worker 与引擎切换
 
@@ -187,6 +187,8 @@ Windows 原生 supervisor 优先研究 Job Object/受控 launcher；DSH 提供�
 独立 Worker 不自动提供 OS 隔离；DSH ACL 的写限制也不意味着禁读、禁网。若没有实现某项限制，应报告 unsupported，不能静默宣称已生效。
 
 Windows 验收至少覆盖：中文/空格路径、直接 argv 与 cmd/PowerShell 差异、流式 stdio、MCP 与孙进程、启动中及执行中取消、强制退出后残留、重启恢复、文件完整性。GUI/桌面任务需要独立或可重置的桌面环境，不能只换 cwd。
+
+Windows 原生实现按 [ADR 0007](docs/decisions/0007-windows-process-supervision.md) 使用 Job Object helper；文件与秘密使用原生 ACL/锁及 [DPAPI](docs/decisions/0008-windows-secret-storage.md)。这些实现不改变 Gateway/Worker 业务写入权，也不代表文件/网络/桌面隔离。当前宿主与验证范围见 [Windows 指南](docs/windows.md)。
 
 ## 9. 目录与实施顺序
 

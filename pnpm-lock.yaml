@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  acpx@0.13.2:
+    hash: 7cfd3a143b0d4caea74dff139a9451f4d298da88bd469fed06ad4a6fe0650f6a
+    path: patches/acpx@0.13.2.patch
+
 importers:
 
   .:
@@ -16,10 +21,13 @@ importers:
         version: 9.8.1
       acpx:
         specifier: 0.13.2
-        version: 0.13.2
+        version: 0.13.2(patch_hash=7cfd3a143b0d4caea74dff139a9451f4d298da88bd469fed06ad4a6fe0650f6a)
       ajv:
         specifier: 8.20.0
         version: 8.20.0
+      cross-spawn:
+        specifier: 7.0.6
+        version: 7.0.6
       fastify:
         specifier: 5.12.3
         version: 5.12.3
@@ -27,6 +35,9 @@ importers:
         specifier: 2.9.0
         version: 2.9.0
     devDependencies:
+      '@types/cross-spawn':
+        specifier: 6.0.6
+        version: 6.0.6
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -1494,6 +1505,9 @@ packages:
 
   '@tailwindcss/postcss@4.3.3':
     resolution: {integrity: sha512-JTSZZGQi1AyKirbLN3azmjVzef92tcX7h+iSqPdaeStyFpGpDlKvvpxeOE8njhbUanbRwr3z8DyzhICWnMtQeg==}
+
+  '@types/cross-spawn@6.0.6':
+    resolution: {integrity: sha512-fXRhhUkG4H3TQk5dBhQ7m/JDdSNHKwR2BBia62lhwEIq9xGiQKLxd6LymNhn47SjXhsUEPmxi+PKw2OkW4LLjA==}
 
   '@types/debug@4.1.13':
     resolution: {integrity: sha512-KSVgmQmzMwPlmtljOomayoR89W4FynCAi3E8PPs7vmDVPe84hT+vGPKkJfThkmXs0x0jAaa9U8uW8bbfyS2fWw==}
@@ -4193,6 +4207,10 @@ snapshots:
       postcss: 8.5.28
       tailwindcss: 4.3.3
 
+  '@types/cross-spawn@6.0.6':
+    dependencies:
+      '@types/node': 24.13.3
+
   '@types/debug@4.1.13':
     dependencies:
       '@types/ms': 2.1.0
@@ -4338,7 +4356,7 @@ snapshots:
 
   acorn@8.18.0: {}
 
-  acpx@0.13.2:
+  acpx@0.13.2(patch_hash=7cfd3a143b0d4caea74dff139a9451f4d298da88bd469fed06ad4a6fe0650f6a):
     dependencies:
       '@agentclientprotocol/sdk': 1.4.0(zod@4.5.4)
       commander: 15.0.0

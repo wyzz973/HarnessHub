@@ -169,13 +169,26 @@ export function normalizeEngine(input: unknown): EngineProfile {
   let acp: EngineProfile["acp"];
   if (e.acp !== undefined) {
     const a = object(e.acp);
-    keys(a, ["sessionMode"]);
-    if (e.driver !== "acp" || a.sessionMode !== "resume")
+    keys(a, ["sessionMode", "initializeTimeoutMs"]);
+    if (
+      e.driver !== "acp" ||
+      (a.sessionMode !== undefined && a.sessionMode !== "resume")
+    )
       throw new HubError(
         "INVALID_CONFIG",
         "acp sessionMode resume requires the ACP driver",
       );
-    acp = { sessionMode: "resume" };
+    acp = {};
+    if (a.sessionMode === "resume") acp.sessionMode = "resume";
+    if (a.initializeTimeoutMs !== undefined) {
+      const timeout = integer(a.initializeTimeoutMs, 10_000);
+      if (timeout > 60_000)
+        throw new HubError(
+          "INVALID_CONFIG",
+          "ACP initializeTimeoutMs must not exceed 60000 ms",
+        );
+      acp.initializeTimeoutMs = timeout;
+    }
   }
   if (
     e.configuration &&

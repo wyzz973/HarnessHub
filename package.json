@@ -11,7 +11,7 @@
   "packageManager": "pnpm@10.12.3",
   "scripts": {
     "check:runtime": "node scripts/check-runtime.mjs",
-    "build": "tsc -p tsconfig.json && node scripts/build-keychain.mjs",
+    "build": "tsc -p tsconfig.json && node scripts/build-keychain.mjs && node scripts/build-windows-job.mjs && node scripts/build-windows-acl.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src tests --max-warnings=0",
     "format:check": "prettier --check package.json tsconfig.json eslint.config.mjs \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/check-boundaries*.mjs\" \"scripts/check-runtime*.mjs\" \".github/workflows/*.yml\"",
@@ -33,17 +33,24 @@
     "start:console": "pnpm --filter @harnesshub/console start",
     "typecheck:console": "pnpm --filter @harnesshub/console typecheck",
     "lint:console": "eslint web/app web/components web/lib web/next.config.ts --max-warnings=0",
-    "check:console": "pnpm lint:console && pnpm build:console"
+    "check:console": "pnpm lint:console && pnpm build:console",
+    "start:local": "node scripts/start-local.mjs",
+    "test:windows": "pnpm build && node scripts/check-windows.mjs",
+    "prepare:contest": "node scripts/prepare-contest.mjs",
+    "package:contest": "node scripts/package-bundle.mjs",
+    "tools": "node dist/src/tool-packages-main.js"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.4.0",
     "@fastify/swagger": "9.8.1",
     "acpx": "0.13.2",
     "ajv": "8.20.0",
+    "cross-spawn": "7.0.6",
     "fastify": "5.12.3",
     "yaml": "2.9.0"
   },
   "devDependencies": {
+    "@types/cross-spawn": "6.0.6",
     "@types/node": "24.13.3",
     "eslint": "10.10.0",
     "prettier": "3.9.6",
@@ -53,6 +60,9 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild"
-    ]
+    ],
+    "patchedDependencies": {
+      "acpx@0.13.2": "patches/acpx@0.13.2.patch"
+    }
   }
 }

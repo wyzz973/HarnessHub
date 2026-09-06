@@ -5,12 +5,18 @@ import type { EngineCandidate, EngineRegistration } from "../domain/engines.js";
 import { HubError } from "../domain/errors.js";
 import { normalizeEngine } from "./registry.js";
 import { builtinEngines, type BuiltinEngine } from "./builtins.js";
+import { availableExecutable, locateExecutable } from "./executables.js";
+import { fileURLToPath } from "node:url";
 
 interface DiscoveryOptions {
   cwd: string;
   home: string;
   pathEnv: string;
   nodeExecutable: string;
+  platform?: NodeJS.Platform;
+  pathExt?: string;
+  appData?: string;
+  localAppData?: string;
   manifestDir?: string;
   includeManifests?: boolean;
   /** Physical system search roots; tests inject private directories instead. */
@@ -47,21 +53,34 @@ async function fileExists(
 async function locate(
   names: string[],
   directories: string[],
+  options: DiscoveryOptions,
 ): Promise<string | undefined> {
-  for (const directory of directories) {
-    for (const name of names) {
-      const location = path.join(directory, name);
-      if (await fileExists(location, true)) return location;
-    }
-  }
-  return undefined;
+  return locateExecutable(
+    names,
+    directories,
+    options.platform,
+    options.pathExt,
+  );
+}
+
+const portableLauncher = fileURLToPath(
+  new URL("../../../scripts/launch-engine.mjs", import.meta.url),
+);
+
+function envCommand(
+  options: DiscoveryOptions,
+  env: string[],
+  command: string[],
+): string[] {
+  return [options.nodeExecutable, portableLauncher, ...env, "--", ...command];
 }
 
 function searchDirectories(options: DiscoveryOptions): string[] {
   return Array.from(
     new Set([
       ...options.pathEnv
-        .split(path.delimiter)
+        .split((options.platform ?? process.platform) === "win32" ? ";" : ":")
+        .map((directory) => directory.replace(/^"(.*)"$/, "$1"))
         .filter((directory) => directory.length > 0)
         .map((directory) => path.resolve(options.cwd, directory)),
     ]),
@@ -74,12 +93,13 @@ async function nativeCandidate(
   directories: string[],
 ): Promise<EngineCandidate | undefined> {
   const { id } = definition;
-  const onPath = await locate([definition.binary], directories);
+  const onPath = await locate([definition.binary], directories, options);
   const executable =
     onPath ??
     (await locate(
       [definition.binary],
-      fallbackDirectories(options, definition),
+      await fallbackDirectories(options, definition),
+      options,
     ));
   if (!executable) return undefined;
   const candidate: EngineCandidate = {
@@ -113,49 +133,52 @@ async function nativeCandidate(
       );
       return candidate;
     }
-    command = [
-      "/usr/bin/env",
-      ...(id === "codex"
-        ? [
-            `CODEX_HOME=${path.join(options.home, ".codex")}`,
-            `CODEX_PATH=${executable}`,
-            "INITIAL_AGENT_MODE=read-only",
-          ]
-        : [
-            `HOME=${options.home}`,
-            `CLAUDE_CODE_EXECUTABLE=${executable}`,
-            "CLAUDE_CODE_SAFE_MODE=1",
-          ]),
-      options.nodeExecutable,
-      adapter,
-    ];
+    command = envCommand(
+      options,
+      [
+        ...commonEnvironment(options, executable, directories),
+        ...(id === "codex"
+          ? [
+              `CODEX_HOME=${path.join(options.home, ".codex")}`,
+              `CODEX_PATH=${executable}`,
+              "INITIAL_AGENT_MODE=read-only",
+            ]
+          : [
+              `HOME=${options.home}`,
+              `CLAUDE_CODE_EXECUTABLE=${executable}`,
+              "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+              "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL=1",
+            ]),
+      ],
+      [options.nodeExecutable, adapter],
+    );
     if (id === "codex")
       candidate.notes.push(
         "Uses the existing Codex model default; select a supported model when registering if that default is unavailable.",
       );
   } else if (id === "opencode") {
-    command = [
-      "/usr/bin/env",
-      `HOME=${options.home}`,
-      `XDG_CONFIG_HOME=${path.join(options.home, ".config")}`,
-      `XDG_DATA_HOME=${path.join(options.home, ".local", "share")}`,
-      `XDG_CACHE_HOME=${path.join(options.home, ".cache")}`,
-      `XDG_STATE_HOME=${path.join(options.home, ".local", "state")}`,
-      "OPENCODE_DISABLE_AUTOUPDATE=true",
-      executable,
-      "acp",
-    ];
+    command = envCommand(
+      options,
+      [
+        ...commonEnvironment(options, executable, directories),
+        "OPENCODE_DISABLE_AUTOUPDATE=true",
+      ],
+      [executable, "acp"],
+    );
   } else if (id === "openclaw") {
     const bridge = path.join(options.cwd, "scripts", "launch-openclaw-acp.mjs");
     const isolatedBridge = await fileExists(bridge);
-    command = [
-      "/usr/bin/env",
-      `OPENCLAW_STATE_DIR=${path.join(options.home, ".openclaw")}`,
-      `OPENCLAW_CONFIG_PATH=${path.join(options.home, ".openclaw", "openclaw.json")}`,
-      ...(isolatedBridge
+    command = envCommand(
+      options,
+      [
+        ...commonEnvironment(options, executable, directories),
+        `OPENCLAW_STATE_DIR=${path.join(options.home, ".openclaw")}`,
+        `OPENCLAW_CONFIG_PATH=${path.join(options.home, ".openclaw", "openclaw.json")}`,
+      ],
+      isolatedBridge
         ? [options.nodeExecutable, bridge, executable]
-        : [executable, "acp"]),
-    ];
+        : [executable, "acp"],
+    );
     candidate.notes.push(
       isolatedBridge
         ? "Uses a separate native Gateway session per Worker; bridge session recovery is not enabled."
@@ -174,10 +197,10 @@ async function nativeCandidate(
   return candidate;
 }
 
-function fallbackDirectories(
+async function fallbackDirectories(
   options: DiscoveryOptions,
   definition?: BuiltinEngine,
-): string[] {
+): Promise<string[]> {
   const homeBins = [
     ".local/bin",
     ".npm-global/bin",
@@ -188,17 +211,80 @@ function fallbackDirectories(
     ".nvm/current/bin",
     ...(definition?.homeBins ?? []),
   ];
+  const windows = (options.platform ?? process.platform) === "win32";
+  const localAppData =
+    options.localAppData ?? path.join(options.home, "AppData", "Local");
+  const appData =
+    options.appData ?? path.join(options.home, "AppData", "Roaming");
+  const codexBins: string[] = [];
+  if (windows && definition?.id === "codex") {
+    const root = path.join(localAppData, "OpenAI", "Codex", "bin");
+    try {
+      const entries = await readdir(root, { withFileTypes: true });
+      // Version directories are opaque; never infer recency or execute a directory listing.
+      // Ambiguous off-PATH installations require an explicit selection in PATH/manifest.
+      const candidates = entries.filter((entry) => entry.isDirectory());
+      if (candidates.length === 1)
+        codexBins.push(path.join(root, candidates[0]!.name));
+      codexBins.push(root);
+    } catch (error) {
+      if (!missing(error)) throw error;
+    }
+  }
   return [
     ...homeBins.map((directory) => path.join(options.home, directory)),
+    ...(windows
+      ? [
+          path.join(appData, "npm"),
+          path.join(localAppData, "pnpm"),
+          path.join(options.home, "scoop", "shims"),
+          path.join(options.home, ".volta", "bin"),
+          ...codexBins,
+          ...(definition?.id === "hermes"
+            ? [
+                path.join(
+                  options.home,
+                  ".hermes",
+                  "hermes-agent",
+                  "venv",
+                  "Scripts",
+                ),
+              ]
+            : []),
+        ]
+      : []),
     ...(definition?.id === "pi"
       ? [path.join(options.cwd, ".tools/pi/node_modules/.bin")]
       : []),
     ...(options.systemBinDirectories ??
-      (process.platform === "darwin"
+      ((options.platform ?? process.platform) === "darwin"
         ? ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
-        : process.platform === "win32"
+        : windows
           ? []
           : ["/usr/local/bin", "/usr/bin", "/bin"])),
+  ];
+}
+
+function commonEnvironment(
+  options: DiscoveryOptions,
+  executable: string,
+  directories: string[],
+): string[] {
+  const windows = (options.platform ?? process.platform) === "win32";
+  return [
+    `HOME=${options.home}`,
+    ...(windows
+      ? [
+          `USERPROFILE=${options.home}`,
+          `APPDATA=${options.appData ?? path.join(options.home, "AppData", "Roaming")}`,
+          `LOCALAPPDATA=${options.localAppData ?? path.join(options.home, "AppData", "Local")}`,
+        ]
+      : []),
+    `XDG_CONFIG_HOME=${path.join(options.home, ".config")}`,
+    `XDG_DATA_HOME=${path.join(options.home, ".local/share")}`,
+    `XDG_CACHE_HOME=${path.join(options.home, ".cache")}`,
+    `XDG_STATE_HOME=${path.join(options.home, ".local/state")}`,
+    `PATH=${Array.from(new Set([path.dirname(executable), path.dirname(options.nodeExecutable), ...directories])).join(windows ? ";" : ":")}`,
   ];
 }
 
@@ -209,13 +295,10 @@ async function recipeCandidate(
   directories: string[],
 ): Promise<EngineCandidate> {
   const { launch } = definition;
-  const env = [
-    `HOME=${options.home}`,
-    `XDG_CONFIG_HOME=${path.join(options.home, ".config")}`,
-    `XDG_DATA_HOME=${path.join(options.home, ".local/share")}`,
-    `XDG_CACHE_HOME=${path.join(options.home, ".cache")}`,
-    `XDG_STATE_HOME=${path.join(options.home, ".local/state")}`,
-  ];
+  const env = commonEnvironment(options, candidate.executable, [
+    ...directories,
+    ...(await fallbackDirectories(options, definition)),
+  ]);
   let command: string[];
   switch (launch.kind) {
     case "managed-acp":
@@ -227,7 +310,8 @@ async function recipeCandidate(
       );
       const adapter = await locate(
         ["pi-acp"],
-        [...directories, ...fallbackDirectories(options)],
+        [...directories, ...(await fallbackDirectories(options))],
+        options,
       );
       if (!adapter && !(await fileExists(localAdapter))) {
         candidate.status = "adapter-required";
@@ -259,13 +343,10 @@ async function recipeCandidate(
   }
   // Workers isolate HOME. Keep the discovered executable's real user config and
   // interpreter lookup usable without modifying the Gateway's global environment.
-  env.push(
-    `PATH=${Array.from(new Set([path.dirname(candidate.executable), path.dirname(options.nodeExecutable), ...directories, ...fallbackDirectories(options, definition)])).join(path.delimiter)}`,
-  );
   candidate.registration = {
     id: candidate.id,
     driver: launch.kind === "cli" ? "cli" : "acp",
-    command: ["/usr/bin/env", ...env, ...command],
+    command: envCommand(options, env, command),
     maxConcurrency: 1,
     ...(launch.kind === "cli"
       ? {
@@ -285,9 +366,10 @@ async function dshCandidate(
   options: DiscoveryOptions,
   directories: string[],
 ): Promise<EngineCandidate | undefined> {
-  const onPath = await locate(["dsh"], directories);
+  const onPath = await locate(["dsh"], directories, options);
   const installed =
-    onPath ?? (await locate(["dsh"], fallbackDirectories(options)));
+    onPath ??
+    (await locate(["dsh"], await fallbackDirectories(options), options));
   const sibling = path.resolve(
     options.cwd,
     "..",
@@ -314,14 +396,19 @@ async function dshCandidate(
         "--patch",
         patch,
       ]
-    : [
-        "/usr/bin/env",
-        `DSH_HOME=${path.join(options.home, ".dsh")}`,
-        "DSH_TELEMETRY_DISABLED=1",
-        ...(installed ? [executable] : [options.nodeExecutable, executable]),
-        "--profile",
-        "acp",
-      ];
+    : envCommand(
+        options,
+        [
+          ...commonEnvironment(options, executable, directories),
+          `DSH_HOME=${path.join(options.home, ".dsh")}`,
+          "DSH_TELEMETRY_DISABLED=1",
+        ],
+        [
+          ...(installed ? [executable] : [options.nodeExecutable, executable]),
+          "--profile",
+          "acp",
+        ],
+      );
   return {
     id: "dsh",
     name: "DeepSeek Harness",
@@ -404,10 +491,17 @@ async function manifestCandidates(
         "Manifest registration requires an ACP or CLI command",
       );
     const executable =
-      first.includes(path.sep) || path.isAbsolute(first)
-        ? path.resolve(manifestDir, first)
-        : await locate([first], directories);
-    if (!executable || !(await fileExists(executable, true)))
+      first.includes("/") || first.includes("\\") || path.isAbsolute(first)
+        ? await locate(
+            [path.basename(first)],
+            [path.dirname(path.resolve(manifestDir, first))],
+            options,
+          )
+        : await locate([first], directories, options);
+    if (
+      !executable ||
+      !(await availableExecutable(executable, options.platform))
+    )
       throw manifestError("The manifest command executable is not available");
     const registration: EngineRegistration = {
       id: profile.id,
@@ -456,7 +550,7 @@ export async function discoverEngines(
       ? []
       : await manifestCandidates(options, [
           ...directories,
-          ...fallbackDirectories(options),
+          ...(await fallbackDirectories(options)),
         ]);
   const manifestIds = new Set(manifests.map((candidate) => candidate.id));
   if (manifestIds.size !== manifests.length)

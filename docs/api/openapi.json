@@ -498,14 +498,16 @@
                               "acp": {
                                 "type": "object",
                                 "additionalProperties": false,
-                                "required": [
-                                  "sessionMode"
-                                ],
                                 "properties": {
                                   "sessionMode": {
                                     "enum": [
                                       "resume"
                                     ]
+                                  },
+                                  "initializeTimeoutMs": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 60000
                                   }
                                 }
                               },
@@ -1020,14 +1022,16 @@
                   "acp": {
                     "type": "object",
                     "additionalProperties": false,
-                    "required": [
-                      "sessionMode"
-                    ],
                     "properties": {
                       "sessionMode": {
                         "enum": [
                           "resume"
                         ]
+                      },
+                      "initializeTimeoutMs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 60000
                       }
                     }
                   },
@@ -1370,7 +1374,19 @@
                     },
                     "acp": {
                       "type": "object",
-                      "additionalProperties": true
+                      "additionalProperties": false,
+                      "properties": {
+                        "sessionMode": {
+                          "enum": [
+                            "resume"
+                          ]
+                        },
+                        "initializeTimeoutMs": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 60000
+                        }
+                      }
                     },
                     "maxConcurrency": {
                       "type": "integer",
@@ -1552,7 +1568,7 @@
         "tags": [
           "configuration"
         ],
-        "description": "createSecret → Swift Security helper；stdin传值，固定HarnessHub service和新UUID写入Keychain。\n\n输入：JSON：value，非空单行、至多8KiB；不要用真实值写入脚本/文档。\n\n返回：201：reference={kind:keychain,value:UUID}；不返回原密钥。\n\n副作用：写操作，仅macOS；新引用不可变，历史引用不自动删除。业务库不保存密钥值。\n\n失败与边界：INVALID_SECRET；KEYCHAIN_UNSUPPORTED；SECRET_UNAVAILABLE（锁定、缺失或不可读）。",
+        "description": "createSecret → 平台秘密helper；stdin传值，新UUID写入macOS Keychain或Windows当前用户DPAPI密文目录。\n\n输入：JSON：value，非空单行、至多8KiB；不要用真实值写入脚本/文档。\n\n返回：201：reference={kind:keychain,value:UUID}；不返回原密钥。\n\n副作用：写操作，仅macOS；新引用不可变，历史引用不自动删除。业务库不保存密钥值。\n\n失败与边界：INVALID_SECRET；KEYCHAIN_UNSUPPORTED；SECRET_UNAVAILABLE（锁定、缺失或不可读）。",
         "requestBody": {
           "required": true,
           "content": {
@@ -1986,7 +2002,19 @@
                           },
                           "acp": {
                             "type": "object",
-                            "additionalProperties": true
+                            "additionalProperties": false,
+                            "properties": {
+                              "sessionMode": {
+                                "enum": [
+                                  "resume"
+                                ]
+                              },
+                              "initializeTimeoutMs": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 60000
+                              }
+                            }
                           },
                           "maxConcurrency": {
                             "type": "integer",
@@ -2373,14 +2401,16 @@
                   "acp": {
                     "type": "object",
                     "additionalProperties": false,
-                    "required": [
-                      "sessionMode"
-                    ],
                     "properties": {
                       "sessionMode": {
                         "enum": [
                           "resume"
                         ]
+                      },
+                      "initializeTimeoutMs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 60000
                       }
                     }
                   },
@@ -2723,7 +2753,19 @@
                     },
                     "acp": {
                       "type": "object",
-                      "additionalProperties": true
+                      "additionalProperties": false,
+                      "properties": {
+                        "sessionMode": {
+                          "enum": [
+                            "resume"
+                          ]
+                        },
+                        "initializeTimeoutMs": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 60000
+                        }
+                      }
                     },
                     "maxConcurrency": {
                       "type": "integer",
@@ -3152,14 +3194,16 @@
                               "acp": {
                                 "type": "object",
                                 "additionalProperties": false,
-                                "required": [
-                                  "sessionMode"
-                                ],
                                 "properties": {
                                   "sessionMode": {
                                     "enum": [
                                       "resume"
                                     ]
+                                  },
+                                  "initializeTimeoutMs": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 60000
                                   }
                                 }
                               },
@@ -3661,14 +3705,16 @@
                   "acp": {
                     "type": "object",
                     "additionalProperties": false,
-                    "required": [
-                      "sessionMode"
-                    ],
                     "properties": {
                       "sessionMode": {
                         "enum": [
                           "resume"
                         ]
+                      },
+                      "initializeTimeoutMs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 60000
                       }
                     }
                   },
@@ -4023,7 +4069,19 @@
                     },
                     "acp": {
                       "type": "object",
-                      "additionalProperties": true
+                      "additionalProperties": false,
+                      "properties": {
+                        "sessionMode": {
+                          "enum": [
+                            "resume"
+                          ]
+                        },
+                        "initializeTimeoutMs": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 60000
+                        }
+                      }
                     },
                     "maxConcurrency": {
                       "type": "integer",

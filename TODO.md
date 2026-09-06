@@ -1,6 +1,6 @@
 # HarnessHub 开发任务
 
-更新：2026-09-05。任务状态：阶段 A（HH-001～HH-012）的文本执行服务已完成 macOS 验收，HH-013/HH-015 的本地 ACP 后端已验证；六种本机引擎已接入；DSH、OpenCode独立DeepSeek、Pi 已通过同一文件任务，DSH 已通过 idle suspend/Gateway重启恢复；文件产物、确定判分和版本/模型观测已落地。Windows 留待用户准备VMware后原生验收。
+更新：2026-09-06。阶段 A（HH-001～HH-012）、HH-013/HH-015 及既有 macOS 引擎证据保留。Windows 11 ARM64 原生环境已可直接开发；已补入发现、脚本启动、Job 监督/恢复、文件 ACL/锁与 DPAPI。Codex 的真实文本、只读工具和流式取消已通过；历史范围见 [Windows 验收](docs/verification/2026-09-06-windows.md)。本轮 11 个引擎通过 DeepSeek V4 Flash 短任务，最新检查、工具与发行进展见 [便携引擎验收](docs/verification/2026-09-06-portable-engines.md)。其余平台范围见 [Windows 指南](docs/windows.md)，不以单个引擎通过代替全部发行验收。
 
 本文件拥有任务依赖、优先级和进度；架构契约由 [DESIGN.md](DESIGN.md)拥有，开发与验收按 [AGENTS.md](AGENTS.md)及 [测试要求](docs/testing.md)执行。任务勾选不改变架构，也不代替证据。
 
@@ -193,9 +193,9 @@ flowchart TD
 
 ### HH-014 Windows 进程监督可行性
 
-- [ ] 等待Windows自动化访问条件；P0；前置：HH-004；外部条件：Windows 原生执行环境；负责范围：平台探针与 ProcessHost 平台适配。
+- [x] Windows 11 ARM64 原生监督已验证；P0；前置：HH-004；负责范围：平台探针与 ProcessHost 平台适配。
 
-进展：已发现运行中的Windows11 ARM VMware虚拟机；vmrun访问受加密密码限制，未进行Guest原生验收。 证据见 [本次执行记录](docs/verification/2026-09-05-runtime-mvp.md)。
+进展：2026-09-06 直接在 Windows 11 ARM64 完成原生 Job Object helper、Worker 启动归属、取消、CLI 后代收敛、ACP 探测与 Gateway 崩溃恢复；Windows 专用及 Worker-host 12 项全部通过。仅 POSIX 信号注入不用于 Windows；文件/网络/桌面沙箱仍为 unsupported。证据见 [Windows 原生进程验收](docs/verification/2026-09-06-windows-process.md)。Windows 10/x64 尚待各自主机验收。
 
 交付：验证 Worker → 模拟 Agent → MCP/工具子孙进程的启动、stdio、身份和终止；据证据决定 Job Object/受控 launcher 的实现方式。需要新 native helper 时记录实际取舍，不能绕过公共进程接口。
 
@@ -233,7 +233,7 @@ flowchart TD
 
 ### HH-018 阶段 B Windows 原生验收
 
-- [ ] 待开始；P0；前置：HH-014、HH-016、HH-017；外部条件：Windows、真实引擎运行配置；负责范围：Windows CI/验收与平台说明。
+- [ ] 部分完成：Windows 11 ARM64 的公共运行契约与 Codex 已验证，OpenCode 真实恢复仍待专项；P0；前置：HH-014、HH-016、HH-017；负责范围：Windows CI/验收与平台说明。
 
 交付：在声明支持的 Windows 环境执行 OpenCode 真任务与恢复/关闭场景，核对平台能力声明；将可自动执行的部分纳入 Windows 检查。
 
@@ -285,7 +285,7 @@ flowchart TD
 
 ### HH-023 Windows 发布目录与发行验收
 
-- [ ] 待开始；P1；前置：HH-018、HH-019、HH-020、HH-022；外部条件：干净目标 Windows 环境；负责范围：发布脚本、版本清单、启动/安装与故障说明。
+- [ ] Windows 11 ARM64 发布目录构建成功，11 个 DeepSeek 引擎及 6 个 MCP 工具绑定已配置并启动；用户将本轮收尾范围缩为引擎配置，额外发行搬迁、取消、重启和 ZIP 验收待后续；P1；前置：HH-018、HH-019、HH-020、HH-022；负责范围：发布脚本、固定运行时与 16 个引擎模板、免安装工具包、版本清单和启动说明。11 个引擎真实短任务与 6 个 MCP/文件任务证据见 [本轮记录](docs/verification/2026-09-06-portable-engines.md)；未知裁判机和赛题规则不提前标通过。
 
 交付：平台 ZIP/发布目录包含固定 Node、编译 JS、已准备的引擎/Adapter 和启动配置；明确随包及需预装的组件、许可证、数据目录与凭证设置。只提供已验收版本和能力。
 
@@ -464,7 +464,7 @@ HH-005 后，HH-006 → HH-007 → HH-008 → HH-010 依次修改 Runtime，默�
 | 条件 | 需要时间 | 当前处理方式 |
 |---|---|---|
 | Node 24 与包管理/CI 基础 | HH-001 | 实际核实版本；不能因路径名含 node@24 就认为版本正确 |
-| Windows 原生执行环境及 runner | HH-014 开始前 | Windows 11 ARM 虚拟机已运行；vmrun 加密认证仍待配置，阶段 B 验收必需 |
+| Windows 原生执行环境及 runner | HH-014 开始前 | Windows 11 ARM64 已直接原生验证；Windows CI 已配置，Windows 10/x64 远端结果另验收 |
 | 模型、凭证与预算 | HH-016 及后续真引擎用例前 | 在运行前核实明确配置；本计划不代表已取得凭证或执行预算 |
 | 固定引擎与 Adapter 安装产物 | HH-013/HH-016/HH-019/HH-020 | 准备阶段解析和锁定，运行时不下载 |
 | 任务与评判器 fixture | HH-021/HH-022 | 优先可通过文件/确定逻辑验证的任务，保持版本化 |
@@ -474,4 +474,4 @@ HH-005 后，HH-006 → HH-007 → HH-008 → HH-010 依次修改 Runtime，默�
 
 ## 下一批工作
 
-HH-033～036已完成本机控制台、真实模型拆分/审批执行、启发式引擎选择及Run级原生观测；浏览器已经跑通两步文件任务、Pi用量与取消链路。后续按真实比赛接口/任务集继续验收，Windows待VMware就绪。远端多用户部署、并行DAG、大规模聚合与账单对账尚不属于已验证能力。
+HH-033～036已完成本机控制台、真实模型拆分/审批执行、启发式引擎选择及Run级原生观测；macOS 浏览器已有两步文件任务、Pi用量与取消证据。Windows 11 ARM64 已开展原生及真实 Codex 验收，其他引擎/平台继续按同套契约验证。远端多用户部署、并行DAG、大规模聚合与账单对账尚不属于已验证能力。

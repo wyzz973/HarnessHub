@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "component": "kimi",
+  "version": "1.50.0",
+  "license": "Apache-2.0",
+  "repository": "https://github.com/MoonshotAI/kimi-cli",
+  "tag": "1.50.0",
+  "commit": "86f136422a0aae6b217ea49e7ea1d2e8a1defcd2",
+  "files": [
+    {
+      "file": "LICENSE",
+      "source": "https://raw.githubusercontent.com/MoonshotAI/kimi-cli/86f136422a0aae6b217ea49e7ea1d2e8a1defcd2/LICENSE",
+      "gitBlob": "7a4a3ea2424c09fbe48d455aed1eaa94d9124835",
+      "sha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd",
+      "bytes": 11357
+    },
+    {
+      "file": "NOTICE",
+      "source": "https://raw.githubusercontent.com/MoonshotAI/kimi-cli/86f136422a0aae6b217ea49e7ea1d2e8a1defcd2/NOTICE",
+      "gitBlob": "53154614344bfa7439fc30dc0e48d8338cda57e0",
+      "sha256": "6bdd9ca6fd120dcd6ba5e16bf2bacc01f42781fd2d9754ec934c5db05fcdc395",
+      "bytes": 408
+    }
+  ],
+  "modelCalled": false
+}

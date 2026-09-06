@@ -53,6 +53,20 @@ void test(
       await hub.server.close();
       await rm(directory, { recursive: true, force: true });
     });
+    async function waitForTerminal(accepted: RunRecord) {
+      // Each submission owns the same eight-second wait bound. Downloads and
+      // Gateway restart must not consume the next Run's observation window.
+      const until = accepted.createdAt + 8000;
+      for (;;) {
+        const current = hub.app.getRun(accepted.id);
+        if (isTerminal(current.status)) return current;
+        assert.ok(
+          Date.now() < until,
+          `Run did not reach terminal: ${JSON.stringify(current)}`,
+        );
+        await delay(15);
+      }
+    }
     const session = (
       await hub.server.inject({
         method: "POST",
@@ -100,12 +114,7 @@ void test(
     });
     assert.equal(submit.statusCode, 202);
     const accepted = submit.json<RunRecord>();
-    const until = Date.now() + 8000;
-    while (!isTerminal(hub.app.getRun(accepted.id).status)) {
-      assert.ok(Date.now() < until);
-      await delay(15);
-    }
-    const run = hub.app.getRun(accepted.id);
+    const run = await waitForTerminal(accepted);
     assert.equal(run.status, "completed");
     assert.equal(run.cleanupStatus, "confirmed");
     assert.equal(run.artifacts.length, 2);
@@ -166,11 +175,8 @@ void test(
       timeoutMs: 5000,
       outputs: [{ path: "not-created.txt", name: "missing.txt" }],
     }).run;
-    while (!isTerminal(hub.app.getRun(missing.id).status)) {
-      assert.ok(Date.now() < until);
-      await delay(15);
-    }
-    assert.equal(hub.app.getRun(missing.id).status, "completed");
+    const missingRun = await waitForTerminal(missing);
+    assert.equal(missingRun.status, "completed");
     assert.equal(
       hub.app.events(missing.id).filter((e) => e.type === "ARTIFACT_MISSING")
         .length,

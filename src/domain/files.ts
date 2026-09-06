@@ -12,10 +12,13 @@ export function isRelativeFilePath(value: string): boolean {
       .every(
         (part) =>
           part.length > 0 &&
+          part.length <= 255 &&
           part !== "." &&
           part !== ".." &&
           !/[. ]$/.test(part) &&
-          !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part),
+          !/^(con|prn|aux|nul|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(
+            part,
+          ),
       )
   );
 }

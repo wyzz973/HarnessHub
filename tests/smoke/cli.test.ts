@@ -93,9 +93,6 @@ void test(
     ).json()) as { status: string; stopReason: string; cleanupStatus: string };
     assert.equal(recovered.status, "interrupted");
     assert.equal(recovered.stopReason, "gateway_restarted");
-    assert.equal(
-      recovered.cleanupStatus,
-      process.platform === "win32" ? "unconfirmed" : "confirmed",
-    );
+    assert.equal(recovered.cleanupStatus, "confirmed");
   },
 );

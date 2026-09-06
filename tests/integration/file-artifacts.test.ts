@@ -41,13 +41,19 @@ async function fixture(t: TestContext) {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), "harnesshub-file-artifacts-")),
   );
-  t.after(() => rm(directory, { recursive: true, force: true }));
+  const stores: SqliteStore[] = [];
+  const cleanup: (() => void)[] = [];
+  t.after(async () => {
+    for (const close of cleanup) close();
+    for (const entry of stores) entry.close();
+    await rm(directory, { recursive: true, force: true });
+  });
   const workspace = join(directory, "workspace");
   const root = join(directory, "artifacts");
   await mkdir(workspace);
   const database = join(directory, "state.sqlite");
   const store = new SqliteStore(database);
-  t.after(() => store.close());
+  stores.push(store);
   const session = store.createSession(engine, {
     id: "workspace",
     path: workspace,
@@ -58,7 +64,18 @@ async function fixture(t: TestContext) {
   }).run;
   const collect = createFileArtifactCollector(root);
   const signal = new AbortController().signal;
-  return { directory, workspace, root, database, store, run, collect, signal };
+  return {
+    directory,
+    workspace,
+    root,
+    database,
+    store,
+    stores,
+    cleanup,
+    run,
+    collect,
+    signal,
+  };
 }
 
 function hasCode(code: string) {
@@ -66,7 +83,7 @@ function hasCode(code: string) {
 }
 
 void test("binary and text output snapshots survive source mutation and SQLite reopen", async (t) => {
-  const { workspace, root, database, store, run, collect, signal } =
+  const { workspace, root, database, store, stores, run, collect, signal } =
     await fixture(t);
   const binary = Buffer.from([0, 255, 128, 13, 10, 127, 1]);
   await mkdir(join(workspace, "nested"));
@@ -96,7 +113,7 @@ void test("binary and text output snapshots survive source mutation and SQLite r
   await writeFile(join(workspace, "nested", "result.bin"), "later contents");
   store.close();
   const reopened = new SqliteStore(database);
-  t.after(() => reopened.close());
+  stores.push(reopened);
   assert.deepEqual(
     await readArtifact(root, reopened.getArtifact(artifact.id)),
     binary,
@@ -130,6 +147,71 @@ void test("missing files are explicit while undeclared files are never collected
     missing: ["missing.txt", "result.txt"],
   });
 });
+
+void test(
+  "Windows drive and directory case aliases retain artifact identity",
+  { skip: process.platform !== "win32" },
+  async (t) => {
+    const { workspace, root, run, signal } = await fixture(t);
+    await writeFile(join(workspace, "result.txt"), "case-stable bytes");
+    const collect = createFileArtifactCollector(root.toLowerCase());
+    const result = await collect(
+      run.id,
+      workspace.toLowerCase(),
+      [{ path: "result.txt", name: "result.txt" }],
+      signal,
+    );
+    assert.equal(result.artifacts.length, 1);
+    const artifact = result.artifacts[0]!;
+    assert.equal(
+      (
+        await readArtifact(root.toUpperCase(), {
+          ...artifact,
+          path: artifact.path.toUpperCase(),
+        })
+      ).toString(),
+      "case-stable bytes",
+    );
+    await assert.rejects(
+      readArtifact(root, {
+        ...artifact,
+        path: join(root, "foreign", artifact.id),
+      }),
+      hasCode("INVALID_ARTIFACT_PATH"),
+    );
+  },
+);
+
+void test(
+  "Windows source and published paths can exceed MAX_PATH",
+  { skip: process.platform !== "win32" },
+  async (t) => {
+    const { directory, workspace, run, signal } = await fixture(t);
+    const relative = Array.from(
+      { length: 5 },
+      (_, i) => `${i}-${"目录".repeat(22)}`,
+    ).join("/");
+    await mkdir(join(workspace, relative), { recursive: true });
+    await writeFile(
+      join(workspace, relative, "result.txt"),
+      "long path snapshot",
+    );
+    const parent = join(directory, relative);
+    await mkdir(parent, { recursive: true });
+    const root = join(parent, "artifacts");
+    assert.ok(root.length > 260);
+    const result = await createFileArtifactCollector(root)(
+      run.id,
+      workspace,
+      [{ path: `${relative}/result.txt`, name: "result.txt" }],
+      signal,
+    );
+    assert.equal(
+      (await readArtifact(root, result.artifacts[0]!)).toString(),
+      "long path snapshot",
+    );
+  },
+);
 
 void test("absolute paths, traversal, duplicate names and incompatible file names fail before publication", async (t) => {
   const { workspace, root, run, collect, signal } = await fixture(t);
@@ -165,16 +247,19 @@ void test("absolute paths, traversal, duplicate names and incompatible file name
   );
 });
 
-void test("leaf and ancestor symlinks, directories and hard links cannot become artifacts", async (t) => {
+void test("ancestor links, directories and hard links cannot become artifacts", async (t) => {
   const { directory, workspace, run, collect, signal } = await fixture(t);
   const outside = join(directory, "outside");
   await mkdir(outside);
   await writeFile(join(outside, "secret.txt"), "outside data");
-  await symlink(join(outside, "secret.txt"), join(workspace, "leaf.txt"));
-  await symlink(outside, join(workspace, "linked-directory"));
+  await symlink(
+    outside,
+    join(workspace, "linked-directory"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
   await mkdir(join(workspace, "directory"));
   await link(join(outside, "secret.txt"), join(workspace, "hard-link.txt"));
-  for (const relative of ["leaf.txt", "linked-directory/secret.txt"])
+  for (const relative of ["linked-directory/secret.txt"])
     await assert.rejects(
       collect(run.id, workspace, [{ path: relative, name: "result" }], signal),
       hasCode("INVALID_ARTIFACT_PATH"),
@@ -189,7 +274,11 @@ void test("leaf and ancestor symlinks, directories and hard links cannot become 
     "outside data",
   );
   await rename(workspace, `${workspace}-original`);
-  await symlink(outside, workspace);
+  await symlink(
+    outside,
+    workspace,
+    process.platform === "win32" ? "junction" : "dir",
+  );
   await assert.rejects(
     collect(
       run.id,
@@ -199,6 +288,49 @@ void test("leaf and ancestor symlinks, directories and hard links cannot become 
     ),
     hasCode("INVALID_ARTIFACT_PATH"),
   );
+});
+
+void test("leaf file symlinks cannot be collected or read as registered artifacts", async (t) => {
+  const { directory, workspace, root, run, collect, signal } = await fixture(t);
+  const outside = join(directory, "outside.txt");
+  await writeFile(outside, "outside bytes");
+  try {
+    await symlink(outside, join(workspace, "leaf.txt"), "file");
+  } catch (error) {
+    if (
+      process.platform === "win32" &&
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "EPERM"
+    ) {
+      t.skip(
+        "File symlink creation needs Windows Developer Mode or SeCreateSymbolicLinkPrivilege; junction and hard-link rejection run independently",
+      );
+      return;
+    }
+    throw error;
+  }
+  await assert.rejects(
+    collect(
+      run.id,
+      workspace,
+      [{ path: "leaf.txt", name: "leaf.txt" }],
+      signal,
+    ),
+    hasCode("INVALID_ARTIFACT_PATH"),
+  );
+  const record = await createArtifactPublisher(root)(run.id, {
+    name: "registered.txt",
+    mediaType: "text/plain",
+    text: "registered bytes",
+  });
+  await rm(record.path);
+  await symlink(outside, record.path, "file");
+  await assert.rejects(
+    readArtifact(root, record),
+    hasCode("INVALID_ARTIFACT_PATH"),
+  );
+  assert.equal(await readFile(outside, "utf8"), "outside bytes");
 });
 
 void test("an oversized output rolls back earlier unpublished files", async (t) => {
@@ -268,7 +400,7 @@ void test("abort prevents publication; unregistered successful results can be di
   assert.deepEqual(await readdir(join(root, run.id)), []);
 });
 
-void test("publisher and registered reader reject target symlinks and preserve legacy text delivery", async (t) => {
+void test("publisher rejects target directory links and preserves legacy text delivery", async (t) => {
   const { directory, root, run } = await fixture(t);
   const publisher = createArtifactPublisher(root);
   const text = await publisher(run.id, {
@@ -280,19 +412,15 @@ void test("publisher and registered reader reject target symlinks and preserve l
     (await readArtifact(root, text)).toString(),
     "中文 old transport",
   );
-  const outside = join(directory, "outside.txt");
-  await writeFile(outside, "outside");
-  await rm(text.path);
-  await symlink(outside, text.path);
-  await assert.rejects(
-    readArtifact(root, text),
-    hasCode("INVALID_ARTIFACT_PATH"),
-  );
   await rm(text.path);
   await rmdir(join(root, run.id));
   const other = join(directory, "other");
   await mkdir(other);
-  await symlink(other, join(root, run.id));
+  await symlink(
+    other,
+    join(root, run.id),
+    process.platform === "win32" ? "junction" : "dir",
+  );
   await assert.rejects(
     publisher(run.id, {
       name: "later.txt",
@@ -305,7 +433,7 @@ void test("publisher and registered reader reject target symlinks and preserve l
 });
 
 void test("a concurrently changing output is rejected instead of publishing unstable bytes", async (t) => {
-  const { workspace, run, collect, signal, store } = await fixture(t);
+  const { workspace, run, collect, signal, store, cleanup } = await fixture(t);
   const file = join(workspace, "changing.bin");
   await writeFile(file, Buffer.alloc(1024 * 1024));
   const descriptor = openSync(file, "r+");
@@ -316,7 +444,7 @@ void test("a concurrently changing output is rejected instead of publishing unst
     pending = setImmediate(change);
   };
   change();
-  t.after(() => {
+  cleanup.push(() => {
     clearImmediate(pending);
     closeSync(descriptor);
   });

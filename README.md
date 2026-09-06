@@ -13,9 +13,11 @@ HarnessHub 管理任务的生命周期与公共状态，具体推理和工具执
 - **工作流与评测**：模型生成计划、人工确认、有界 DAG 串行执行；文本/JSON/文件评判器与离线成绩汇总。
 - **本地控制台**：Next.js/React 工作台、引擎配置、连接检查、模型测试、执行详情与观测页。
 
-**验证范围**：macOS 上已取得指定版本的执行证据；自动测试使用真实 Gateway/SQLite/IPC/Worker 和确定的外部引擎替身。安装发现、协议握手、模型可用和任务正确性分别验证。Windows 原生运行仍待验收；不是已完成的跨平台发行版。详见 [能力范围](docs/engine-discovery.md)、[配置支持表](docs/engine-configuration.md)和 [验收记录](docs/README.md#验收与历史资料)。
+**验证范围**：macOS 和 Windows 11 ARM64 上已取得指定场景的执行证据；自动测试使用真实 Gateway/SQLite/IPC/Worker 和确定的外部引擎替身。Windows 已接入原生 Job 监督、路径/文件权限、脚本启动与 DPAPI 密钥存储，Codex 真实只读文本、文件读取与流式取消已验证。本轮另有 11 个引擎通过 DeepSeek V4 Flash 短任务，工具与发行目录单独验收，见 [便携引擎记录](docs/verification/2026-09-06-portable-engines.md)。Windows 10/x64、未列出的实际任务及 OS 沙箱仍未验证。安装发现、协议握手、模型可用和任务正确性分别验证。详见 [Windows 指南](docs/windows.md)、[能力范围](docs/engine-discovery.md)、[配置支持表](docs/engine-configuration.md)和 [验收记录](docs/README.md#验收与历史资料)。
 
 ## 快速开始：不需要 API Key
+
+用于裁判机的免安装包由开发机提前构建，运行时与引擎一起交付，模型 API Key 单独配置。入口是 `Start.cmd` / `hub.cmd`；制备步骤见 [Windows 便携发布包](docs/portable-bundle.md)，离线扩展见 [本地工具包](docs/tool-packages.md)。源码克隆本身不包含大体积第三方引擎二进制。
 
 前置条件：Git、**Node.js 24.20.0**、**pnpm 10.12.3**。macOS 构建另需 Xcode Command Line Tools（`swiftc` 用于 Keychain helper）；缺少时先运行 `xcode-select --install`。Linux 不构建此 macOS helper，可使用 env/file 秘密引用。
 
@@ -28,6 +30,8 @@ pnpm build:console
 ```
 
 公开仓库可直接克隆。新克隆不包含任何 API Key、本机引擎安装、用户配置或历史数据库。
+
+Windows 构建另使用系统 .NET Framework 编译原生 helper。完成构建后，可运行 `pnpm start:local --demo` 同时启动 Gateway 与控制台；固定 Node 的安装、PowerShell 环境变量和 Codex 接入见 [Windows 指南](docs/windows.md)。
 
 终端一，启动显式 demo Gateway：
 

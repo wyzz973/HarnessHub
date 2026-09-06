@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "component": "opencode",
+  "version": "1.18.29",
+  "license": "MIT",
+  "repository": "https://github.com/anomalyco/opencode",
+  "tag": "v1.18.29",
+  "commit": "16747470f976aca3d362ad730bcd3fe82ecc2c9a",
+  "files": [
+    {
+      "file": "LICENSE",
+      "source": "https://raw.githubusercontent.com/anomalyco/opencode/16747470f976aca3d362ad730bcd3fe82ecc2c9a/LICENSE",
+      "gitBlob": "6439474beed8e0271df9862eff97ffd70ec2464c",
+      "sha256": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b",
+      "bytes": 1065
+    }
+  ],
+  "modelCalled": false
+}

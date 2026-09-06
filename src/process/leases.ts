@@ -17,9 +17,10 @@ import { promisify } from "node:util";
 import { Ajv } from "ajv";
 import { HubError } from "../domain/errors.js";
 import type { CleanupStatus, SessionId } from "../domain/types.js";
+import { closeWindowsJob } from "./windows-job.js";
 
 export interface WorkerLease {
-  version: 1;
+  version: 1 | 2;
   id: string;
   sessionId: SessionId;
   pid: number;
@@ -44,7 +45,7 @@ const validate = new Ajv({ strict: true }).compile<WorkerLease>({
     "platform",
   ],
   properties: {
-    version: { const: 1 },
+    version: { enum: [1, 2] },
     id: { type: "string", minLength: 1 },
     sessionId: { type: "string", minLength: 1 },
     pid: { type: "integer", minimum: 1 },
@@ -84,7 +85,7 @@ export class WorkerLeaseStore {
   ): WorkerLease {
     const lease: WorkerLease = {
       ...input,
-      version: 1,
+      version: process.platform === "win32" ? 2 : 1,
       id: randomUUID(),
       startedAt: Date.now(),
       platform: process.platform,
@@ -219,6 +220,16 @@ export async function recoverWorkerLease(
   lease: WorkerLease,
   graceMs: number,
 ): Promise<CleanupStatus> {
+  if (process.platform === "win32" && lease.platform === "win32") {
+    // Version 1 never established native descendant ownership. Preserve it for manual reconciliation.
+    if (lease.version !== 2) return "unconfirmed";
+    const cleanup = await closeWindowsJob(lease.ownerToken);
+    // A missing Job plus a live root may mean assignment never happened or PID reuse.
+    // Neither case authorizes PID-only termination during recovery.
+    return cleanup === "confirmed" && !exists(lease.pid)
+      ? "confirmed"
+      : "unconfirmed";
+  }
   if (
     !["darwin", "linux"].includes(process.platform) ||
     lease.platform !== process.platform

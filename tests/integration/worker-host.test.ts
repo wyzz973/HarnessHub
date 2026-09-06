@@ -141,10 +141,6 @@ void test(
   "Worker recovery reclaims a verified prior lease and confirms the owned process exited",
   {
     timeout: 10_000,
-    skip:
-      process.platform === "win32"
-        ? "Windows recovery remains unverified and unsupported"
-        : false,
   },
   async (context) => {
     const directory = await mkdtemp(
@@ -195,10 +191,6 @@ void test(
   "Worker recovery retains a mismatched lease without signalling the live process",
   {
     timeout: 10_000,
-    skip:
-      process.platform === "win32"
-        ? "Windows recovery remains unverified and unsupported"
-        : false,
   },
   async (context) => {
     const directory = await mkdtemp(

@@ -11,9 +11,12 @@ const allowed = {
   engine: ["engine", "domain"],
   process: ["process", "domain"],
   worker: ["worker", "drivers", "domain"],
-  drivers: ["drivers", "domain"],
+  drivers: ["drivers", "domain", "platform"],
   storage: ["storage", "domain"],
-  artifacts: ["artifacts", "domain"],
+  artifacts: ["artifacts", "domain", "platform"],
+  platform: ["platform", "domain"],
+  distribution: ["distribution", "domain", "tool-packages"],
+  "tool-packages": ["tool-packages", "domain", "platform"],
   rollout: ["rollout", "application", "domain"],
   benchmark: ["benchmark", "application", "domain"],
 };
@@ -107,7 +110,7 @@ export function checkSource(filePath, contents, sourceRoot) {
     }
     if (
       (specifier === "node:child_process" || specifier === "child_process") &&
-      !["process", "drivers", "composition"].includes(owner)
+      !["process", "drivers", "platform", "composition"].includes(owner)
     ) {
       report(
         node,

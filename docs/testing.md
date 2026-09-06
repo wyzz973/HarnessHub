@@ -53,7 +53,7 @@ Windows 用原生环境验证中文/空格路径、env 大小写、cmd/PowerShel
 
 当前实际可运行入口在 [README](../README.md#当前可运行检查)。文档检查是局部检查，不等于完整构建或质量检查。
 
-下表按所属模块与实施阶段逐步实现。当前类型、lint/格式、边界、单元、DB/IPC/HTTP 集成、构建入口 smoke 和文档检查已在 [package.json](../package.json)接入，并有 [CI 配置](../.github/workflows/ci.yml)；首次 Ubuntu 远端 CI 已通过，版本与平台跳过项见 [发布验收](verification/2026-09-05-github-documentation.md#github-actions)。真实引擎 `test:engine`、Windows `test:windows` 尚未接入，不应作为已可运行命令引用；Windows 原生验收在 DESIGN 阶段 B 完成前必需取得证据。
+下表按所属模块与实施阶段逐步实现。当前类型、lint/格式、边界、单元、DB/IPC/HTTP 集成、构建入口 smoke 和文档检查已在 [package.json](../package.json)接入，并有 [CI 配置](../.github/workflows/ci.yml)。Windows 专用 `test:windows` 已接入，要求本机 Windows 并从正式编译产物执行测试；同组测试也包含在 `pnpm check` 的常规单元/集成组。CI 已增加 Windows matrix，远端运行结果与本机证据分别报告。首次 Ubuntu 远端 CI 见 [历史发布验收](verification/2026-09-05-github-documentation.md#github-actions)。真实引擎 `test:engine` 尚未接入；真实模型必须另有配置、预算和执行证据。
 
 | 目标检查名 | 职责与接入点 |
 |---|---|

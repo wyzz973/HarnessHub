@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "component": "kiro",
+  "version": "2.21.1",
+  "license": "proprietary; see official vendor terms",
+  "artifact": {
+    "source": "https://prod.download.cli.kiro.dev/stable/2.21.1/kiro-cli-x86_64-pc-windows-msvc.msi",
+    "sha256": "03023ff784db05fab665e7ca5a4bc2bcee02f70e5c562865efbb9bf244298c3a"
+  },
+  "originalLicenseTextIncluded": false,
+  "terms": [
+    "https://kiro.dev/license/",
+    "https://aws.amazon.com/agreement/",
+    "https://aws.amazon.com/legal/aws-ip-license-terms/"
+  ],
+  "packagingNotice": {
+    "file": "NOTICE.txt",
+    "sha256": "a62388f12dcfbf99d3da7f600db6bb5048911b0661244128d76cad1b39ec3c31"
+  },
+  "modelCalled": false
+}

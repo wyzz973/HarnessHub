@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "component": "cursor",
+  "version": "2026.09.02",
+  "license": "proprietary; see official vendor terms",
+  "artifact": {
+    "source": "https://downloads.cursor.com/lab/2026.09.02-c22c1a3/windows/arm64/agent-cli-package.zip",
+    "sha256": "a503b66a18c175ead4bad2c1dd7abf96161fd03a4fccb7d1372d4a74df1d0b07"
+  },
+  "originalLicenseTextIncluded": false,
+  "terms": [
+    "https://cursor.com/terms-of-service"
+  ],
+  "packagingNotice": {
+    "file": "NOTICE.txt",
+    "sha256": "7466be7f9d658fbf7d60553401ae10f055893d29f2067b7d09a92c2803ff2fac"
+  },
+  "modelCalled": false
+}

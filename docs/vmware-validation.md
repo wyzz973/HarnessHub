@@ -1,6 +1,6 @@
 # VMware Windows 后续验收
 
-本轮代码和任务集先在 macOS 验证，本文是 Windows 环境准备后的执行顺序，不代表 Windows 已通过。不要把 Mac 的 `.tools/node`、`node_modules`、Pi 二进制或已有运行数据库当成 Windows 安装产物直接运行。
+本页保留最初从 macOS 迁移到 Windows Guest 的准备流程。2026-09-06 已直接取得 Windows 11 ARM64 原生和 Codex 执行证据，当前入口见 [Windows 指南](windows.md)；本清单仍可用于其他 Windows 版本/架构的独立验收。不要把 Mac 的 `.tools/node`、`node_modules`、Pi 二进制或已有运行数据库当成 Windows 安装产物直接运行。
 
 ## 准备
 

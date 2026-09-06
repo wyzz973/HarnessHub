@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "defaultEngine": "opencode",
+  "modelProfiles": {
+    "deepseek-chat": { "model": "deepseek-v4-flash", "provider": { "protocol": "openai-completions", "baseUrl": "https://api.deepseek.com/v1", "apiKey": { "kind": "env", "value": "DEEPSEEK_API_KEY" } } },
+    "deepseek-responses": { "model": "deepseek-v4-flash", "provider": { "protocol": "openai-responses", "baseUrl": "https://api.deepseek.com", "apiKey": { "kind": "env", "value": "DEEPSEEK_API_KEY" } } },
+    "deepseek-anthropic": { "model": "deepseek-v4-flash", "provider": { "protocol": "anthropic", "baseUrl": "https://api.deepseek.com/anthropic", "apiKey": { "kind": "env", "value": "DEEPSEEK_API_KEY" } } }
+  },
+  "engines": {
+    "opencode": { "modelProfile": "deepseek-chat" },
+    "mimo": { "modelProfile": "deepseek-chat" },
+    "claude": { "modelProfile": "deepseek-anthropic" },
+    "codex": { "modelProfile": "deepseek-responses" },
+    "copilot": { "modelProfile": "deepseek-chat" },
+    "qwen": { "modelProfile": "deepseek-chat" },
+    "pi": { "modelProfile": "deepseek-chat" },
+    "hermes": { "modelProfile": "deepseek-chat" },
+    "kimi": { "modelProfile": "deepseek-chat" },
+    "openclaw": { "modelProfile": "deepseek-chat" },
+    "dsh": { "modelProfile": "deepseek-chat" },
+    "gemini": { "enabled": false },
+    "cursor": { "enabled": false },
+    "kiro": { "enabled": false },
+    "antigravity": { "enabled": false },
+    "qoder": { "enabled": false }
+  }
+}

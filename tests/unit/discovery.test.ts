@@ -47,7 +47,8 @@ void test("discovery checks executable installation evidence and adapter presenc
   await writeFile(codex, `#!/bin/sh\nprintf executed > '${marker}'\n`);
   await chmod(codex, 0o700);
   await file(path.join(bin, "opencode"), true);
-  await file(path.join(bin, "claude"));
+  // Windows has no Unix executable permission bit; native script extensions are covered below.
+  if (process.platform !== "win32") await file(path.join(bin, "claude"));
   await mkdir(path.join(bin, "openclaw"));
   const before = await discoverEngines(options);
   assert.deepEqual(
@@ -74,6 +75,35 @@ void test("discovery checks executable installation evidence and adapter presenc
   assert.ok(after[0]?.registration?.command.includes(`CODEX_PATH=${codex}`));
   assert.equal(after[0]?.registration?.model, undefined);
   await assert.rejects(readFile(marker), { code: "ENOENT" });
+});
+
+void test("Claude discovery disables background installation without disabling selected MCP tools", async (t) => {
+  const { cwd, bin, options } = await fixture(t);
+  const executable = path.join(
+    bin,
+    process.platform === "win32" ? "claude.cmd" : "claude",
+  );
+  await file(executable, true);
+  await file(
+    path.join(
+      cwd,
+      ".tools/adapters/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
+    ),
+  );
+  const candidate = (await discoverEngines(options)).find(
+    (entry) => entry.id === "claude",
+  );
+  assert.equal(candidate?.status, "ready");
+  const command = candidate?.registration?.command ?? [];
+  assert.ok(command.includes(`CLAUDE_CODE_EXECUTABLE=${executable}`));
+  assert.ok(command.includes("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"));
+  assert.ok(
+    command.includes("CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL=1"),
+  );
+  assert.equal(
+    command.some((value) => value.startsWith("CLAUDE_CODE_SAFE_MODE=")),
+    false,
+  );
 });
 
 void test("mainstream harnesses are found outside a GUI PATH and scans observe installs/removals without execution", async (t) => {
@@ -241,8 +271,10 @@ void test("package-manager paths, executable permissions and Pi adapter evidence
   const systemBin = path.join(cwd, "homebrew/bin");
   await file(path.join(systemBin, "gemini"), true);
   await file(path.join(home, ".volta/bin/qwen"), true);
-  await file(path.join(home, ".local/bin/hermes"));
-  await symlink(path.join(bin, "missing"), path.join(bin, "mimo"));
+  if (process.platform !== "win32") {
+    await file(path.join(home, ".local/bin/hermes"));
+    await symlink(path.join(bin, "missing"), path.join(bin, "mimo"));
+  }
   await file(path.join(bin, "pi"), true);
   let found = await discoverEngines({
     ...options,
@@ -276,4 +308,104 @@ void test("package-manager paths, executable permissions and Pi adapter evidence
     assert.ok(candidate.registration);
     assert.doesNotThrow(() => normalizeEngine(candidate.registration));
   }
+});
+
+void test("Windows discovery resolves executable extensions, quoted PATH precedence and npm/desktop locations without execution", async (t) => {
+  const { cwd, home, bin, options } = await fixture(t);
+  const second = path.join(cwd, "第二个 有空格 bin");
+  await file(path.join(bin, "opencode.cmd"));
+  await file(path.join(second, "opencode.exe"));
+  await file(path.join(second, "gemini.ps1"));
+  const npm = path.join(home, "AppData", "Roaming", "npm");
+  await file(path.join(npm, "qwen.cmd"));
+  const desktopCodex = path.join(
+    home,
+    "AppData",
+    "Local",
+    "OpenAI",
+    "Codex",
+    "bin",
+    "opaque-build",
+    "codex.exe",
+  );
+  await file(desktopCodex);
+  await mkdir(path.join(bin, "copilot.exe"));
+  const candidates = await discoverEngines({
+    ...options,
+    platform: "win32",
+    pathEnv: `;"${bin}";${second};;`,
+    pathExt: ".EXE;.CMD",
+  });
+  assert.equal(
+    candidates.find((candidate) => candidate.id === "opencode")?.executable,
+    path.join(bin, "opencode.cmd"),
+  );
+  assert.equal(
+    candidates.find((candidate) => candidate.id === "gemini")?.executable,
+    path.join(second, "gemini.ps1"),
+  );
+  assert.equal(
+    candidates.find((candidate) => candidate.id === "qwen")?.source,
+    "known-location",
+  );
+  assert.equal(
+    candidates.find((candidate) => candidate.id === "codex")?.executable,
+    desktopCodex,
+  );
+  assert.equal(
+    candidates.find((candidate) => candidate.id === "codex")?.status,
+    "adapter-required",
+  );
+  assert.equal(
+    candidates.some((candidate) => candidate.id === "copilot"),
+    false,
+  );
+  for (const candidate of candidates.filter((entry) => entry.registration)) {
+    assert.equal(candidate.registration?.command[0], process.execPath);
+    assert.equal(
+      candidate.registration?.command.includes("/usr/bin/env"),
+      false,
+    );
+    assert.ok(candidate.registration?.command.includes(`USERPROFILE=${home}`));
+    assert.ok(
+      candidate.registration?.command.some((entry) =>
+        entry.startsWith("PATH="),
+      ),
+    );
+  }
+});
+
+void test("Windows manifests pin relative forward-slash script paths and exclude empty PATH cwd lookups", async (t) => {
+  const { cwd, bin, options } = await fixture(t);
+  await file(path.join(cwd, "gemini.exe"));
+  await file(path.join(bin, "custom.ps1"));
+  const directory = path.join(cwd, "engines", "manifests");
+  await mkdir(directory, { recursive: true });
+  await writeFile(
+    path.join(directory, "custom.json"),
+    JSON.stringify({
+      registration: {
+        id: "custom",
+        driver: "cli",
+        command: [
+          path
+            .relative(directory, path.join(bin, "custom.ps1"))
+            .replaceAll("\\", "/"),
+        ],
+        cli: { inputMode: "stdin" },
+      },
+    }),
+  );
+  const candidates = await discoverEngines({
+    ...options,
+    platform: "win32",
+    pathEnv: ";;",
+  });
+  assert.deepEqual(
+    candidates.map((candidate) => candidate.id),
+    ["custom"],
+  );
+  assert.deepEqual(candidates[0]?.registration?.command, [
+    path.join(bin, "custom.ps1"),
+  ]);
 });

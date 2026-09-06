@@ -4,6 +4,7 @@ import path from "node:path";
 import { HubError } from "../domain/errors.js";
 import { validateFileOutputs } from "../domain/files.js";
 import type { ArtifactRecord, FileOutput, RunId } from "../domain/types.js";
+import { WindowsFileSession } from "../platform/windows-file-session.js";
 import { discardArtifacts, publishArtifactBytes } from "./publisher.js";
 
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
@@ -93,6 +94,7 @@ async function readOutput(
   relative: string,
   remaining: number,
   signal: AbortSignal,
+  windows: WindowsFileSession | undefined,
 ): Promise<Buffer | undefined> {
   signal.throwIfAborted();
   const chain = await directoryChain(root, relative);
@@ -122,50 +124,53 @@ async function readOutput(
       "Output exceeds the 16 MiB file or 64 MiB total limit",
       413,
     );
-  // O_NONBLOCK prevents a replacement FIFO from blocking open before fstat rejects it.
-  const handle = await open(
-    file,
-    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-  );
-  try {
-    const opened = await handle.stat({ bigint: true });
-    if (!unchanged(before, opened))
-      throw new HubError(
-        "ARTIFACT_CHANGED",
-        "Output changed before it could be opened",
-        409,
-      );
-    const bytes = Buffer.alloc(Number(opened.size) + 1);
-    let length = 0;
-    while (length < bytes.length) {
+  const read = async () => {
+    // O_NONBLOCK prevents a replacement FIFO from blocking open before fstat rejects it.
+    const handle = await open(
+      file,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    try {
+      const opened = await handle.stat({ bigint: true });
+      if (!unchanged(before, opened))
+        throw new HubError(
+          "ARTIFACT_CHANGED",
+          "Output changed before it could be opened",
+          409,
+        );
+      const bytes = Buffer.alloc(Number(opened.size) + 1);
+      let length = 0;
+      while (length < bytes.length) {
+        signal.throwIfAborted();
+        const result = await handle.read(
+          bytes,
+          length,
+          Math.min(CHUNK_BYTES, bytes.length - length),
+          null,
+        );
+        if (!result.bytesRead) break;
+        length += result.bytesRead;
+      }
+      const after = await handle.stat({ bigint: true });
+      const current = await lstat(file, { bigint: true });
+      await verifyChain(chain);
       signal.throwIfAborted();
-      const result = await handle.read(
-        bytes,
-        length,
-        Math.min(CHUNK_BYTES, bytes.length - length),
-        null,
-      );
-      if (!result.bytesRead) break;
-      length += result.bytesRead;
+      if (
+        !unchanged(opened, after) ||
+        !unchanged(opened, current) ||
+        length !== Number(opened.size)
+      )
+        throw new HubError(
+          "ARTIFACT_CHANGED",
+          "Output changed during collection",
+          409,
+        );
+      return bytes.subarray(0, length);
+    } finally {
+      await handle.close();
     }
-    const after = await handle.stat({ bigint: true });
-    const current = await lstat(file, { bigint: true });
-    await verifyChain(chain);
-    signal.throwIfAborted();
-    if (
-      !unchanged(opened, after) ||
-      !unchanged(opened, current) ||
-      length !== Number(opened.size)
-    )
-      throw new HubError(
-        "ARTIFACT_CHANGED",
-        "Output changed during collection",
-        409,
-      );
-    return bytes.subarray(0, length);
-  } finally {
-    await handle.close();
-  }
+  };
+  return windows ? windows.withReadLock(file, read) : read();
 }
 
 /**
@@ -185,7 +190,7 @@ export function createFileArtifactCollector(root: string) {
     validateFileOutputs(outputs);
     signal.throwIfAborted();
     const workspace = path.resolve(cwd);
-    if ((await realpath(cwd)) !== workspace)
+    if (path.relative(await realpath(cwd), workspace) !== "")
       throw new HubError(
         "INVALID_ARTIFACT_PATH",
         "Workspace path must retain its registered canonical directory",
@@ -194,6 +199,10 @@ export function createFileArtifactCollector(root: string) {
     const artifacts: ArtifactRecord[] = [];
     const missing: string[] = [];
     let remaining = MAX_TOTAL_BYTES;
+    const windows =
+      process.platform === "win32"
+        ? await WindowsFileSession.create(signal)
+        : undefined;
     try {
       for (const output of outputs) {
         const bytes = await readOutput(
@@ -201,6 +210,7 @@ export function createFileArtifactCollector(root: string) {
           output.path,
           remaining,
           signal,
+          windows,
         );
         if (bytes === undefined) {
           missing.push(output.name);
@@ -220,6 +230,7 @@ export function createFileArtifactCollector(root: string) {
               bytes,
             },
             signal,
+            windows,
           ),
         );
       }
@@ -250,6 +261,8 @@ export function createFileArtifactCollector(root: string) {
         "Output files could not be collected",
         500,
       );
+    } finally {
+      await windows?.close();
     }
   };
 }

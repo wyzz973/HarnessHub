@@ -14,5 +14,9 @@ ADR 记录重要且未来可能重新讨论的决定。适用范围见 [文档�
 - [0004：文件任务、严格恢复与本机接入修复](0004-file-tasks-and-resume.md)
 - [0005：控制台、自动规划和完整观测](0005-console-workflows-observability.md)
 - [0006：引擎独立配置、密钥引用与便携 Skills](0006-engine-configuration.md)
+- [0007：Windows Job Object 进程监督](0007-windows-process-supervision.md)
+- [0008：Windows 系统密钥存储](0008-windows-secret-storage.md)
+- [0009：Windows 便携引擎发行与工具包](0009-portable-engine-distribution.md)
+- [0010：ACP 客户端能力与精确权限选择](0010-acpx-client-capabilities.md)
 
 Worker、SQLite 和首批引擎三项已采纳决定及依据直接由 [DESIGN.md](../../DESIGN.md#1-已确认的三个决定)和 [源码调研](<../../HarnessHub 源码阅读与技术选型讨论稿.md>)拥有，暂不重复创建同内容 ADR。以后改变其中决定时在这里记录新的取舍。

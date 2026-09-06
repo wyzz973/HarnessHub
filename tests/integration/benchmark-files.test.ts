@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  rm,
+  rmdir,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -135,10 +142,20 @@ void test(
           "inputs/source.json",
         );
         await rm(location);
-        await symlink(
-          path.join(attempts[0]!.workspace.path, "inputs/source.json"),
-          location,
-        );
+        if (process.platform === "win32") {
+          await rmdir(path.dirname(location));
+          await symlink(
+            path.join(attempts[0]!.workspace.path, "inputs"),
+            path.dirname(location),
+            "junction",
+          );
+        } else {
+          await symlink(
+            path.join(attempts[0]!.workspace.path, "inputs/source.json"),
+            location,
+            "file",
+          );
+        }
       }
       if (attempt.task.id === "extra-file")
         await writeFile(

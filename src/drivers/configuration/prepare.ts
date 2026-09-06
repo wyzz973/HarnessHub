@@ -8,6 +8,8 @@ import type {
 } from "../../domain/engine-configuration.js";
 import { HubError } from "../../domain/errors.js";
 import { resolveSecret } from "./secrets.js";
+import { portableCommand, unwrapEnvironment } from "./launch.js";
+import { codexModelCatalog } from "./codex-models.js";
 export type RuntimeMcpServer =
   | {
       name: string;
@@ -28,6 +30,8 @@ export interface PreparedConfiguration {
   model?: string;
   instructionPrefix: string;
   mcpServers: RuntimeMcpServer[];
+  /** A fixed native provider sets the model before ACP starts and exposes no model-selection capability. */
+  nativeModelSelection?: boolean;
 }
 type Resolver = (reference: SecretReference) => Promise<string>;
 async function settledValues<T>(values: Promise<T>[]): Promise<T[]> {
@@ -83,16 +87,18 @@ async function mcp(
   server: EngineMcpServer,
   resolve: Resolver,
 ): Promise<RuntimeMcpServer> {
-  if (server.type === "stdio")
+  if (server.type === "stdio") {
+    const command = portableCommand([server.command!, ...(server.args ?? [])]);
     return {
       name: server.name,
-      command: server.command!,
-      args: server.args ?? [],
+      command: command[0]!,
+      args: command.slice(1),
       env: Object.entries({
         ...server.env,
         ...(await secretMap(server.secretEnv, resolve)),
       }).map(([name, value]) => ({ name, value })),
     };
+  }
   return {
     name: server.name,
     type: server.type,
@@ -113,24 +119,19 @@ export async function prepareConfiguration(
 ): Promise<PreparedConfiguration> {
   const config = spec.profile.configuration;
   const resolve = sessionSecretResolver(environment);
+  const launch = unwrapEnvironment(spec.profile.command ?? []);
   const result: PreparedConfiguration = {
-    command: [...(spec.profile.command ?? [])],
-    env: {},
+    command: launch.command,
+    env: launch.env,
     instructionPrefix: "",
     mcpServers: [],
     ...(spec.profile.model ? { model: spec.profile.model } : {}),
   };
-  if (!config) return result;
-  // Convert the known env argv wrapper to a child environment so configured values
-  // override it. Shell expressions and arbitrary launcher scripts are never rewritten.
-  if (result.command[0] === "/usr/bin/env") {
-    result.command.shift();
-    while (/^[A-Z][A-Z0-9_]*=/.test(result.command[0] ?? "")) {
-      const assignment = result.command.shift()!;
-      const split = assignment.indexOf("=");
-      result.env[assignment.slice(0, split)] = assignment.slice(split + 1);
-    }
-  }
+  const finish = () => {
+    result.command = portableCommand(result.command);
+    return result;
+  };
+  if (!config) return finish();
   Object.assign(
     result.env,
     config.env,
@@ -166,8 +167,62 @@ export async function prepareConfiguration(
       .filter((s) => s.enabled)
       .map((s) => mcp(s, resolve)),
   );
+  if (config.adapter === "qwen" && result.mcpServers.length > 0) {
+    // Qwen 0.23's ACP prompt can race its background MCP discovery. Its
+    // supported blocking mode completes registration during initialize so
+    // the first model request includes the selected server's tools.
+    result.env.QWEN_CODE_LEGACY_MCP_BLOCKING = "1";
+  }
+  if (config.adapter === "copilot") {
+    const stdio = result.mcpServers.filter((server) => "command" in server);
+    if (stdio.length) {
+      if (
+        result.command.some((argument) =>
+          /^--additional-mcp-config(?:=|$)/.test(argument),
+        )
+      )
+        unsupported(
+          "Remove the fixed additional MCP configuration before selecting managed stdio servers",
+        );
+      const directory = path.join(spec.stateDir, "configuration");
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+      const servers = Object.fromEntries(
+        stdio.map((server, serverIndex) => {
+          const env = Object.fromEntries(
+            server.env.map(({ name, value }, variableIndex) => {
+              const reference = `HARNESSHUB_COPILOT_MCP_${serverIndex}_${variableIndex}`;
+              result.env[reference] = value;
+              return [name, `\${${reference}}`];
+            }),
+          );
+          return [
+            server.name,
+            {
+              type: "stdio",
+              command: server.command,
+              args: server.args,
+              env,
+              tools: ["*"],
+            },
+          ];
+        }),
+      );
+      const file = path.join(directory, "copilot-mcp.json");
+      await writeFile(
+        file,
+        JSON.stringify({ mcpServers: servers }, null, 2) + "\n",
+        { mode: 0o600 },
+      );
+      result.command.push("--additional-mcp-config", `@${file}`);
+      // Copilot 1.0.83 deliberately rejects client-supplied ACP stdio servers.
+      // Its owner-supplied native config is loaded before the ACP server starts.
+      result.mcpServers = result.mcpServers.filter(
+        (server) => !("command" in server),
+      );
+    }
+  }
   if (spec.profile.driver === "cli" && spec.profile.model) {
-    if (!["cursor", "antigravity"].includes(config.adapter))
+    if (!["cursor", "antigravity", "kimi"].includes(config.adapter))
       unsupported("This CLI adapter cannot translate model selection");
     if (
       result.command.some(
@@ -178,16 +233,20 @@ export async function prepareConfiguration(
       unsupported(
         "Remove the fixed model command argument before using the model field",
       );
-    const at = result.command.indexOf("{prompt}");
-    result.command.splice(
-      at < 0 ? result.command.length : at,
-      0,
-      "--model",
-      spec.profile.model,
-    );
+    if (config.adapter === "kimi")
+      result.command.push("--model", spec.profile.model);
+    else {
+      const at = result.command.indexOf("{prompt}");
+      result.command.splice(
+        at < 0 ? result.command.length : at,
+        0,
+        "--model",
+        spec.profile.model,
+      );
+    }
   }
   const provider = config.provider;
-  if (!provider) return result;
+  if (!provider) return finish();
   if (
     result.command.some((arg) =>
       /launch-(?:pi|opencode|dsh|openclaw)-acp\.mjs$/.test(arg),
@@ -214,9 +273,14 @@ export async function prepareConfiguration(
       const codexHome = path.join(root, "codex");
       await mkdir(codexHome, { recursive: true, mode: 0o700 });
       const quote = JSON.stringify;
+      const catalog = codexModelCatalog(model);
+      const catalogFile = catalog
+        ? await jsonFile("codex-models.json", catalog)
+        : undefined;
       const lines = [
         `model = ${quote(model)}`,
         'model_provider = "harnesshub"',
+        ...(catalogFile ? [`model_catalog_json = ${quote(catalogFile)}`] : []),
         "[model_providers.harnesshub]",
         'name = "HarnessHub"',
         `base_url = ${quote(provider.baseUrl)}`,
@@ -286,6 +350,101 @@ export async function prepareConfiguration(
       result.model = `harnesshub/${model}`;
       break;
     }
+    case "dsh": {
+      const profileAt = result.command.indexOf("--profile");
+      if (
+        profileAt < 0 ||
+        result.command[profileAt + 1] !== "acp" ||
+        profileAt !== result.command.length - 2 ||
+        result.command.some(
+          (arg) => arg === "--patch" || arg.startsWith("--patch="),
+        )
+      )
+        unsupported(
+          "DSH managed providers require the standard --profile acp launch template without trailing application arguments or fixed patches",
+        );
+      // DSH 0.1.2-rc.1 overlays replace an entry's config. Configure the native
+      // route and both defaults; ACP's selector carries the full route as JSON.
+      const selection = { provider: "harnesshub", model };
+      const file = await jsonFile("dsh.patch.json", [
+        {
+          id: "llm-pi-ai",
+          config: {
+            providers: {
+              harnesshub: {
+                api:
+                  provider.protocol === "anthropic"
+                    ? "anthropic-messages"
+                    : provider.protocol,
+                baseURL: provider.baseUrl,
+                ...(key ? { apiKeyEnv: "HARNESSHUB_PROVIDER_KEY" } : {}),
+                models: [{ id: model, name: model }],
+              },
+            },
+          },
+        },
+        { id: "agent-default-model", config: selection },
+        { id: "acp", config: selection },
+      ]);
+      result.command.push("--patch", file);
+      result.env.DSH_HOME = root;
+      result.env.DSH_TELEMETRY_DISABLED = "1";
+      result.model = JSON.stringify([selection.provider, model]);
+      break;
+    }
+    case "openclaw": {
+      result.nativeModelSelection = true;
+      // SecretRef preserves the environment variable name when OpenClaw writes
+      // its models catalog; an interpolated ${KEY} could persist the value.
+      const nativeModel = `harnesshub/${model}`;
+      result.env.OPENCLAW_STATE_DIR = root;
+      result.env.OPENCLAW_CONFIG_PATH = await jsonFile("openclaw.json", {
+        ...(key
+          ? {
+              secrets: {
+                providers: {
+                  harnesshub: {
+                    source: "env",
+                    allowlist: ["HARNESSHUB_PROVIDER_KEY"],
+                  },
+                },
+              },
+            }
+          : {}),
+        models: {
+          mode: "replace",
+          catalogRefresh: { enabled: false },
+          providers: {
+            harnesshub: {
+              baseUrl: provider.baseUrl,
+              api:
+                provider.protocol === "anthropic"
+                  ? "anthropic-messages"
+                  : provider.protocol,
+              ...(key
+                ? {
+                    apiKey: {
+                      source: "env",
+                      provider: "harnesshub",
+                      id: "HARNESSHUB_PROVIDER_KEY",
+                    },
+                  }
+                : {}),
+              models: [{ id: model, name: model, input: ["text"] }],
+            },
+          },
+        },
+        agents: {
+          defaults: {
+            model: { primary: nativeModel },
+            models: { [nativeModel]: {} },
+            workspace: spec.cwd,
+          },
+        },
+      });
+      result.model = nativeModel;
+      break;
+    }
     case "claude":
       if (key) result.env.ANTHROPIC_API_KEY = key;
       if (provider.baseUrl) result.env.ANTHROPIC_BASE_URL = provider.baseUrl;
@@ -295,31 +454,93 @@ export async function prepareConfiguration(
       result.model = `custom:${model}`;
       await writeFile(
         path.join(root, "config.yaml"),
-        `model:\n  provider: custom\n  default: ${JSON.stringify(model)}\n  base_url: ${JSON.stringify(provider.baseUrl)}\n`,
+        `model:\n  provider: custom\n  default: ${JSON.stringify(model)}\n  base_url: ${JSON.stringify(provider.baseUrl)}\nproviders:\n  custom:\n    base_url: ${JSON.stringify(provider.baseUrl)}\n    default_model: ${JSON.stringify(model)}\n    transport: chat_completions\n${key ? "    key_env: HARNESSHUB_PROVIDER_KEY\n" : ""}security:\n  allow_lazy_installs: false\n`,
         { mode: 0o600 },
       );
       result.env.OPENAI_BASE_URL = provider.baseUrl!;
       result.env.CUSTOM_BASE_URL = provider.baseUrl!;
-      if (key) {
-        result.env.OPENAI_API_KEY = key;
-        result.env.CUSTOM_API_KEY = key;
-      }
       break;
     }
     case "qwen":
       result.env.OPENAI_BASE_URL = provider.baseUrl!;
       result.env.OPENAI_MODEL = model;
       if (key) result.env.OPENAI_API_KEY = key;
+      result.model = `$runtime|openai|${model}(openai)`;
       break;
     case "gemini":
       if (key) result.env.GEMINI_API_KEY = key;
       if (provider.baseUrl)
         result.env.GOOGLE_GEMINI_BASE_URL = provider.baseUrl;
       break;
+    case "kimi": {
+      if (
+        result.command.some((arg) =>
+          /^(?:--config(?:-file)?(?:=|$)|--?acp$)/.test(arg),
+        ) ||
+        result.command.includes("acp") ||
+        !result.command.some((arg) => arg === "--quiet" || arg === "--print")
+      )
+        unsupported(
+          "Kimi managed providers require a CLI --quiet/--print template without fixed --config/--config-file or ACP arguments",
+        );
+      const type = {
+        "openai-completions": "openai_legacy",
+        "openai-responses": "openai_responses",
+        anthropic: "anthropic",
+        google: "gemini",
+      }[provider.protocol];
+      // Kimi 1.50.0's print CLI accepts this file. Its ACP server requires native
+      // OAuth and its deprecated --acp mode rejects every protocol method.
+      const file = await jsonFile("kimi.json", {
+        default_model: model,
+        telemetry: false,
+        providers: {
+          harnesshub: { type, base_url: provider.baseUrl, api_key: "" },
+        },
+        models: {
+          [model]: {
+            provider: "harnesshub",
+            model,
+            max_context_size: Number(config.env!.KIMI_MODEL_MAX_CONTEXT_SIZE),
+          },
+        },
+      });
+      result.command.push("--config-file", file);
+      result.env.KIMI_SHARE_DIR = path.join(root, "kimi");
+      result.env.KIMI_DISABLE_TELEMETRY = "1";
+      if (provider.protocol === "anthropic") {
+        // The pinned Anthropic SDK emits Authorization: Bearer with this key.
+        // A gateway that only accepts X-Api-Key needs a different adapter.
+        if (key) result.env.ANTHROPIC_AUTH_TOKEN = key;
+      } else if (provider.protocol === "google") {
+        if (key) result.env.GOOGLE_API_KEY = key;
+      } else {
+        result.env.OPENAI_BASE_URL = provider.baseUrl!;
+        if (key) result.env.OPENAI_API_KEY = key;
+      }
+      break;
+    }
+    case "copilot":
+      result.nativeModelSelection = true;
+      if (
+        result.command.some(
+          (arg) => arg === "--model" || arg.startsWith("--model="),
+        )
+      )
+        unsupported(
+          "Remove the fixed Copilot --model argument before applying managed provider settings",
+        );
+      result.env.COPILOT_PROVIDER_TYPE =
+        provider.protocol === "anthropic" ? "anthropic" : "openai";
+      result.env.COPILOT_PROVIDER_BASE_URL = provider.baseUrl!;
+      result.env.COPILOT_MODEL = model;
+      result.env.COPILOT_OFFLINE = "true";
+      if (key) result.env.COPILOT_PROVIDER_API_KEY = key;
+      break;
     default:
       unsupported(
         "This engine uses native account/provider configuration; managed provider overrides are not supported",
       );
   }
-  return result;
+  return finish();
 }

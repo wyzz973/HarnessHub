@@ -105,6 +105,11 @@ export async function startHub(options: {
           home: homedir(),
           pathEnv: process.env.PATH ?? "",
           nodeExecutable: process.execPath,
+          ...(process.env.PATHEXT ? { pathExt: process.env.PATHEXT } : {}),
+          ...(process.env.APPDATA ? { appData: process.env.APPDATA } : {}),
+          ...(process.env.LOCALAPPDATA
+            ? { localAppData: process.env.LOCALAPPDATA }
+            : {}),
         }),
     });
     const recoveredWorkers = await host.recover();
@@ -144,6 +149,11 @@ export async function startHub(options: {
           home: homedir(),
           pathEnv: process.env.PATH ?? "",
           nodeExecutable: process.execPath,
+          ...(process.env.PATHEXT ? { pathExt: process.env.PATHEXT } : {}),
+          ...(process.env.APPDATA ? { appData: process.env.APPDATA } : {}),
+          ...(process.env.LOCALAPPDATA
+            ? { localAppData: process.env.LOCALAPPDATA }
+            : {}),
           includeManifests: false,
         }),
       inspect: prepareEngine,
@@ -195,6 +205,7 @@ export async function startHub(options: {
               profile.driver,
               options.cwd,
               abort.signal,
+              profile.acp?.initializeTimeoutMs,
             );
             return {
               engineId: id,

@@ -10,6 +10,75 @@ import { checkSource } from "./check-boundaries.mjs";
 const root = join(tmpdir(), "harnesshub-boundary-fixture", "src");
 const check = (file, contents) => checkSource(join(root, file), contents, root);
 
+test("release templates and tool packages cannot create a second execution path", () => {
+  assert.deepEqual(
+    check(
+      "distribution/config.ts",
+      'import type { EngineRegistration } from "../domain/engines.js";',
+    ),
+    [],
+  );
+  assert.deepEqual(
+    check(
+      "tool-packages/store.ts",
+      'import { openPrivate } from "../platform/windows-acl.js";',
+    ),
+    [],
+  );
+  assert.match(
+    check(
+      "distribution/run.ts",
+      'import { AcpDriver } from "../drivers/acp/driver.js";',
+    ).join("\n"),
+    /distribution cannot depend on drivers/,
+  );
+  assert.match(
+    check(
+      "tool-packages/run.ts",
+      'import { Runtime } from "../runtime/runtime.js";',
+    ).join("\n"),
+    /tool-packages cannot depend on runtime/,
+  );
+  assert.match(
+    check(
+      "gateway/tools.ts",
+      'import { installLocal } from "../tool-packages/index.js";',
+    ).join("\n"),
+    /gateway cannot depend on tool-packages/,
+  );
+});
+
+test("platform filesystem primitives have bounded dependencies and cannot leak into business modules", () => {
+  assert.deepEqual(
+    check(
+      "artifacts/files.ts",
+      'import { verifyPrivateFile } from "../platform/windows-acl.js";',
+    ),
+    [],
+  );
+  assert.deepEqual(
+    check(
+      "platform/windows-acl.ts",
+      'import { execFile } from "node:child_process";',
+    ),
+    [],
+  );
+  assert.match(
+    check(
+      "platform/windows-acl.ts",
+      'import { Runtime } from "../runtime/run.js";',
+    ).join("\n"),
+    /platform cannot depend on runtime/,
+  );
+  assert.match(
+    check(
+      "runtime/run.ts",
+      'import { verifyPrivateFile } from "../platform/windows-acl.js";',
+    ).join("\n"),
+    /runtime cannot depend on platform/,
+  );
+});
+
 test("allows domain ports, ACP implementation and composition injection", () => {
   assert.deepEqual(
     check("runtime/run.ts", 'import type { Run } from "../domain/run.js";'),

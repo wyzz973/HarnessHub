@@ -75,7 +75,13 @@ const profile = object(
       inputMode: { enum: ["stdin", "argv"] },
       maxOutputBytes: { type: "integer", minimum: 1, maximum: 4 * 1024 * 1024 },
     }),
-    acp: object({ sessionMode: { const: "resume" } }),
+    acp: object(
+      {
+        sessionMode: { const: "resume" },
+        initializeTimeoutMs: { type: "integer", minimum: 1, maximum: 60_000 },
+      },
+      [],
+    ),
     credentialEnv: {
       type: "array",
       uniqueItems: true,

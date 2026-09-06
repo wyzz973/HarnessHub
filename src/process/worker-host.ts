@@ -1,5 +1,5 @@
 import { configurationEnvironmentNames } from "../domain/engine-configuration.js";
-import { fork, spawn, type ChildProcess } from "node:child_process";
+import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { chmodSync, lstatSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -10,6 +10,7 @@ import {
   type WorkerLease,
 } from "./leases.js";
 import { settleWorkerCleanup } from "./cleanup-settlement.js";
+import { superviseWindowsWorker, type WindowsJob } from "./windows-job.js";
 import type {
   ExecutionHandle,
   ExecutionSpec,
@@ -41,6 +42,7 @@ interface ActiveRun {
   result: ReturnType<typeof deferred<DriverResult>>;
   seq: number;
   processing: boolean;
+  initializeTimer?: ReturnType<typeof setTimeout>;
 }
 interface SessionWorker {
   child: ChildProcess;
@@ -55,9 +57,10 @@ interface SessionWorker {
   ownerToken: string;
   workerPath: string;
   lease?: WorkerLease;
+  windowsJob?: WindowsJob;
 }
 
-/** Owns detached Workers. POSIX escalation targets only groups created by this instance. */
+/** Owns POSIX process groups or Windows kill-on-close Jobs, with awaited descendant cleanup. */
 export class ProcessWorkerHost implements WorkerHost {
   private readonly sessions = new Map<SessionId, SessionWorker>();
   private readonly quarantinedLeases = new Set<SessionId>();
@@ -168,12 +171,27 @@ export class ProcessWorkerHost implements WorkerHost {
     owned.active = active;
     try {
       await owned.ready.promise;
+      if (owned.windowsJob) await owned.windowsJob.ready;
       if (owned.closing || owned.failed || this.closing)
         throw new HubError(
           "WORKER_CLOSED",
           "Session Worker closed during startup",
           503,
         );
+      const initializeTimeoutMs = spec.profile.acp?.initializeTimeoutMs;
+      if (spec.profile.driver === "acp" && initializeTimeoutMs !== undefined) {
+        active.initializeTimer = setTimeout(() => {
+          if (owned.active === active && !owned.closing)
+            this.fail(
+              owned,
+              new HubError(
+                "ACP_INITIALIZE_TIMEOUT",
+                "ACP initialization timed out",
+                504,
+              ),
+            );
+        }, initializeTimeoutMs);
+      }
       await this.send(owned, { version: 1, type: "run", spec });
     } catch (error) {
       this.fail(owned, error);
@@ -236,6 +254,12 @@ export class ProcessWorkerHost implements WorkerHost {
       ownerToken,
       workerPath,
     };
+    if (process.platform === "win32") {
+      worker.windowsJob = superviseWindowsWorker(child, ownerToken);
+      void worker.windowsJob.ready.catch((error: unknown) =>
+        this.fail(worker, error),
+      );
+    }
     const handshake = setTimeout(
       () =>
         this.fail(
@@ -248,7 +272,7 @@ export class ProcessWorkerHost implements WorkerHost {
         ),
       this.handshakeTimeoutMs,
     );
-    void worker.ready.promise
+    void Promise.all([worker.ready.promise, worker.windowsJob?.ready])
       .finally(() => clearTimeout(handshake))
       .catch(() => undefined);
     child.on("message", (raw: unknown) => {
@@ -277,6 +301,12 @@ export class ProcessWorkerHost implements WorkerHost {
         }
         active.processing = true;
         active.seq = message.seq;
+        if (
+          message.type === "result" ||
+          (message.type === "event" &&
+            message.event.type === "engine.capabilities")
+        )
+          clearTimeout(active.initializeTimer);
         void (async () => {
           await active.sink(message);
           await this.send(worker, {
@@ -306,6 +336,7 @@ export class ProcessWorkerHost implements WorkerHost {
       }
     });
     child.once("exit", () => {
+      clearTimeout(worker.active?.initializeTimer);
       worker.hasExited = true;
       worker.exited.resolve();
       worker.ready.reject(
@@ -407,6 +438,7 @@ export class ProcessWorkerHost implements WorkerHost {
   }
 
   private fail(worker: SessionWorker, error: unknown): void {
+    clearTimeout(worker.active?.initializeTimer);
     if (worker.failed) return;
     worker.failed = true;
     worker.ready.reject(error);
@@ -439,6 +471,7 @@ export class ProcessWorkerHost implements WorkerHost {
         this.quarantinedLeases.has(id) ? "unconfirmed" : "confirmed",
       );
     if (worker.closing) return worker.closing;
+    clearTimeout(worker.active?.initializeTimer);
     const settle = (cleanup: CleanupStatus, error?: unknown): CleanupStatus => {
       const outcome = settleWorkerCleanup(
         worker,
@@ -497,38 +530,10 @@ export class ProcessWorkerHost implements WorkerHost {
     }
     const exitedGracefully = await this.waitExit(worker, this.shutdownGraceMs);
     if (process.platform === "win32") {
-      // Direct child exit is not evidence that its descendants are gone.
-      if (exitedGracefully) return "unconfirmed";
-      const pid = worker.child.pid;
-      if (pid === undefined) return "unconfirmed";
-      await new Promise<void>((resolve) => {
-        let settled = false;
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const finish = () => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          resolve();
-        };
-        const killer = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], {
-          stdio: "ignore",
-          windowsHide: true,
-        });
-        killer.once("error", finish);
-        killer.once("exit", finish);
-        timer = setTimeout(() => {
-          try {
-            killer.kill("SIGKILL");
-          } catch {
-            /* Helper termination failure remains an unconfirmed cleanup result. */
-          }
-          killer.unref();
-          finish();
-        }, this.shutdownGraceMs);
-      });
-      // Native Windows descendant behavior still requires its own platform acceptance test.
-      await this.waitExit(worker, this.shutdownGraceMs);
-      return "unconfirmed";
+      if (!worker.windowsJob) return "unconfirmed";
+      const cleanup = await worker.windowsJob.close();
+      const exited = await this.waitExit(worker, this.shutdownGraceMs);
+      return cleanup === "confirmed" && exited ? "confirmed" : "unconfirmed";
     }
     if (exitedGracefully && !this.groupExists(worker)) return "confirmed";
     for (const signal of ["SIGTERM", "SIGKILL"] as const) {

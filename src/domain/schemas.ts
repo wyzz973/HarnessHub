@@ -203,6 +203,14 @@ export const runResponseSchema = {
     artifacts: { type: "array", items: artifactResponseSchema },
   },
 } as const;
+const acpConfigurationSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    sessionMode: { const: "resume" },
+    initializeTimeoutMs: { type: "integer", minimum: 1, maximum: 60_000 },
+  },
+} as const;
 export const enginesResponseSchema = {
   type: "object",
   required: ["engines"],
@@ -222,7 +230,7 @@ export const enginesResponseSchema = {
           configuration: engineConfigurationSchema,
           credentialEnv: { type: "array", items: text },
           cli: jsonObject,
-          acp: jsonObject,
+          acp: acpConfigurationSchema,
           maxConcurrency: timestamp,
           capabilities: jsonObject,
         },
@@ -255,12 +263,7 @@ export const engineRegistrationSchema = {
       items: { type: "string", pattern: "^[A-Z][A-Z0-9_]*$" },
     },
     maxConcurrency: { type: "integer", minimum: 1, maximum: 86400000 },
-    acp: {
-      type: "object",
-      additionalProperties: false,
-      required: ["sessionMode"],
-      properties: { sessionMode: { const: "resume" } },
-    },
+    acp: acpConfigurationSchema,
     cli: {
       type: "object",
       additionalProperties: false,

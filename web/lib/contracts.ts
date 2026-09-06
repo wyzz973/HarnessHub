@@ -80,6 +80,12 @@ export const eventSchema = z.object({
   type: z.string(),
   data: object,
 });
+const acpSchema = z
+  .object({
+    sessionMode: z.literal("resume").optional(),
+    initializeTimeoutMs: z.number().int().min(1).max(60_000).optional(),
+  })
+  .strict();
 export const engineSchema = z.object({
   id: z.string(),
   driver: z.enum(["acp", "cli", "fake"]),
@@ -96,7 +102,7 @@ export const engineSchema = z.object({
       maxOutputBytes: z.number(),
     })
     .optional(),
-  acp: z.object({ sessionMode: z.literal("resume") }).optional(),
+  acp: acpSchema.optional(),
   capabilities: z.object({
     configured: z.object({
       resume: z.boolean(),
@@ -123,7 +129,7 @@ export const registrationSchema = z
         maxOutputBytes: z.number().optional(),
       })
       .optional(),
-    acp: z.object({ sessionMode: z.literal("resume") }).optional(),
+    acp: acpSchema.optional(),
   })
   .strict();
 export const candidateSchema = z.object({

@@ -1,0 +1,17 @@
+Kiro CLI 2.21.1
+
+This file is a HarnessHub packaging notice, not a vendor license grant.
+The fixed upstream program is included unchanged. No version-specific vendor
+license text was supplied with the selected standalone payload, and the full
+proprietary terms are not reproduced here. Vendor terms and account requirements
+still apply; a download URL is not a redistribution permission.
+
+Fixed official artifact: https://prod.download.cli.kiro.dev/stable/2.21.1/kiro-cli-x86_64-pc-windows-msvc.msi
+SHA-256: 03023ff784db05fab665e7ca5a4bc2bcee02f70e5c562865efbb9bf244298c3a
+
+Official terms and license references (web pages may change):
+- https://kiro.dev/license/
+- https://aws.amazon.com/agreement/
+- https://aws.amazon.com/legal/aws-ip-license-terms/
+
+Retain all upstream third-party notices shipped alongside this program.

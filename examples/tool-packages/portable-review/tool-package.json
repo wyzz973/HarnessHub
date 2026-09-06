@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "portable-review",
+  "version": "1.0.0",
+  "displayName": "Portable local review",
+  "files": [
+    {
+      "path": "skills/portable-review/SKILL.md",
+      "size": 593,
+      "sha256": "e8eab58b4096224c47969f0fb1c317f715c53aa1cd3cfab1a2d2bd4036df6102"
+    },
+    {
+      "path": "skills/portable-review/references/checklist.md",
+      "size": 519,
+      "sha256": "2167007c92ff4471ad5b507d83dae1a47fa8571174e39ddf1fd44452fc91290b"
+    }
+  ],
+  "skills": [
+    {
+      "path": "skills/portable-review/SKILL.md"
+    }
+  ]
+}

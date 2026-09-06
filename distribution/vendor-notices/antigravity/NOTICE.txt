@@ -1,0 +1,16 @@
+Google Antigravity ACP server 1.1.1
+
+This file is a HarnessHub packaging notice, not a vendor license grant.
+The fixed upstream program is included unchanged. No version-specific vendor
+license text was supplied with the selected standalone payload, and the full
+proprietary terms are not reproduced here. Vendor terms and account requirements
+still apply; a download URL is not a redistribution permission.
+
+Fixed official artifact: https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-agy_acp_server_1.1.1-windows-arm64.zip
+SHA-256: 35f4b1f47ba6a3fea7b0a3e30010df5ea73a64b4f0e7cf991cddc673ddfbcafc
+
+Official terms and license references (web pages may change):
+- https://antigravity.google/terms
+- https://policies.google.com/terms
+
+Retain all upstream third-party notices shipped alongside this program.

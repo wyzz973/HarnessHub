@@ -27,12 +27,12 @@ export const providerProtocols: Record<
   gemini: ["google"],
   qwen: ["openai-completions"],
   cursor: [],
-  copilot: [],
-  kimi: [],
+  copilot: ["openai-completions", "anthropic"],
+  kimi: ["openai-completions", "openai-responses", "anthropic", "google"],
   kiro: [],
   qoder: [],
-  dsh: [],
-  openclaw: [],
+  dsh: ["openai-completions", "openai-responses", "anthropic"],
+  openclaw: ["openai-completions", "openai-responses", "anthropic"],
   antigravity: [],
 };
 const forbidden =
@@ -110,13 +110,44 @@ export function parseEngineConfiguration(
     if (config.provider.baseUrl) url(config.provider.baseUrl);
     if (config.provider.apiKey) reference(config.provider.apiKey);
     if (
-      ["codex", "opencode", "mimo", "hermes", "pi", "qwen"].includes(
-        config.adapter,
-      ) &&
+      [
+        "codex",
+        "opencode",
+        "mimo",
+        "hermes",
+        "pi",
+        "qwen",
+        "copilot",
+        "kimi",
+        "dsh",
+        "openclaw",
+      ].includes(config.adapter) &&
       !config.provider.baseUrl
     )
       fail("A custom provider requires an explicit base URL");
+    if (config.adapter === "kimi") {
+      if (driver !== "cli")
+        fail(
+          "Kimi 1.50.0 ACP requires native OAuth; use a CLI --quiet --prompt {prompt} template for a managed provider",
+        );
+      const contextSize = config.env?.KIMI_MODEL_MAX_CONTEXT_SIZE;
+      if (
+        !contextSize ||
+        !/^[1-9][0-9]*$/.test(contextSize) ||
+        !Number.isSafeInteger(Number(contextSize))
+      )
+        fail(
+          "Kimi custom providers require env.KIMI_MODEL_MAX_CONTEXT_SIZE to be the model's positive integer context window",
+        );
+    }
   }
+  if (
+    ["pi", "openclaw"].includes(config.adapter) &&
+    config.mcpServers?.some((server) => server.enabled)
+  )
+    fail(
+      "This adapter does not consume ACP session MCP servers; configure a supported native MCP integration instead",
+    );
   if (driver === "cli" && config.mcpServers?.some((s) => s.enabled))
     fail(
       "MCP injection requires an ACP engine; this CLI adapter cannot apply it",
@@ -124,10 +155,10 @@ export function parseEngineConfiguration(
   if (
     driver === "cli" &&
     model &&
-    !["cursor", "antigravity"].includes(config.adapter)
+    !["cursor", "antigravity", "kimi"].includes(config.adapter)
   )
     fail(
-      "Automatic CLI model arguments are supported only for Cursor and Antigravity; use native command arguments for generic CLI",
+      "Automatic CLI model arguments are supported only for Cursor, Antigravity and Kimi; use native command arguments for generic CLI",
     );
   const servers = config.mcpServers ?? [];
   if (new Set(servers.map((s) => s.name)).size !== servers.length)

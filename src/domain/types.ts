@@ -37,7 +37,7 @@ export interface EngineProfile {
   credentialEnv?: string[];
   configuration?: EngineConfiguration;
   cli?: { inputMode: "stdin" | "argv"; maxOutputBytes: number };
-  acp?: { sessionMode: "resume" };
+  acp?: { sessionMode?: "resume"; initializeTimeoutMs?: number };
   maxConcurrency: number;
   capabilities: { resume: boolean; permissions: boolean; images: boolean };
 }

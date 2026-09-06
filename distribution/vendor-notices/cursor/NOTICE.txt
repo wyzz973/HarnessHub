@@ -1,0 +1,15 @@
+Cursor CLI 2026.09.02
+
+This file is a HarnessHub packaging notice, not a vendor license grant.
+The fixed upstream program is included unchanged. No version-specific vendor
+license text was supplied with the selected standalone payload, and the full
+proprietary terms are not reproduced here. Vendor terms and account requirements
+still apply; a download URL is not a redistribution permission.
+
+Fixed official artifact: https://downloads.cursor.com/lab/2026.09.02-c22c1a3/windows/arm64/agent-cli-package.zip
+SHA-256: a503b66a18c175ead4bad2c1dd7abf96161fd03a4fccb7d1372d4a74df1d0b07
+
+Official terms and license references (web pages may change):
+- https://cursor.com/terms-of-service
+
+Retain all upstream third-party notices shipped alongside this program.

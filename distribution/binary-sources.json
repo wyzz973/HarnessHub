@@ -1,0 +1,92 @@
+[
+  {
+    "id": "antigravity",
+    "name": "Google Antigravity",
+    "version": "1.1.1",
+    "license": "proprietary",
+    "source": "https://antigravity.google/docs/ide/extensions",
+    "targets": {
+      "arm64": {
+        "archive": "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-agy_acp_server_1.1.1-windows-arm64.zip",
+        "cmd": "./agy_acp_server.exe"
+      },
+      "x64": {
+        "archive": "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-agy_acp_server_1.1.1-windows-x86_64.zip",
+        "cmd": "./agy_acp_server.exe"
+      }
+    }
+  },
+  {
+    "id": "cursor",
+    "name": "Cursor",
+    "version": "2026.09.02",
+    "license": "proprietary",
+    "source": "https://cursor.com/docs/cli/acp",
+    "targets": {
+      "arm64": {
+        "archive": "https://downloads.cursor.com/lab/2026.09.02-c22c1a3/windows/arm64/agent-cli-package.zip",
+        "cmd": "./dist-package\\cursor-agent.cmd",
+        "args": [
+          "acp"
+        ]
+      },
+      "x64": {
+        "archive": "https://downloads.cursor.com/lab/2026.09.02-c22c1a3/windows/x64/agent-cli-package.zip",
+        "cmd": "./dist-package\\cursor-agent.cmd",
+        "args": [
+          "acp"
+        ]
+      }
+    }
+  },
+  {
+    "id": "kimi",
+    "name": "Kimi CLI",
+    "version": "1.50.0",
+    "license": "Apache-2.0",
+    "source": "https://moonshotai.github.io/kimi-cli/",
+    "targets": {
+      "arm64": {
+        "archive": "https://github.com/MoonshotAI/kimi-cli/releases/download/1.50.0/kimi-1.50.0-aarch64-pc-windows-msvc.zip",
+        "cmd": "./kimi.exe",
+        "args": [
+          "acp"
+        ],
+        "sha256": "45fdb98d41a37e5430c332290a9cd97cb0586c428c1d49f6e11c54c80efdfc85"
+      },
+      "x64": {
+        "archive": "https://github.com/MoonshotAI/kimi-cli/releases/download/1.50.0/kimi-1.50.0-x86_64-pc-windows-msvc.zip",
+        "cmd": "./kimi.exe",
+        "args": [
+          "acp"
+        ],
+        "sha256": "2752f041cd7ead131c81b06f32bd1cf30afadf9b2e4741f7273331877aef6b33"
+      }
+    }
+  },
+  {
+    "id": "opencode",
+    "name": "OpenCode",
+    "version": "1.18.29",
+    "license": "MIT",
+    "source": "https://opencode.ai",
+    "targets": {
+      "arm64": {
+        "archive": "https://github.com/anomalyco/opencode/releases/download/v1.18.29/opencode-windows-arm64.zip",
+        "cmd": "./opencode",
+        "args": [
+          "acp"
+        ],
+        "sha256": "f953f0f0f5263d723ff4ea6141d5aa094d4941cf2f5d9179fc66eb0eb2d9524b"
+      },
+      "x64": {
+        "archive": "https://github.com/anomalyco/opencode/releases/download/v1.18.29/opencode-windows-x64.zip",
+        "cmd": "./opencode.exe",
+        "args": [
+          "acp"
+        ],
+        "sha256": "b32618aa3d1415f6e4f473aec248edef25759203fb707d7d968359d86d4a35ee"
+      }
+    }
+  }
+]

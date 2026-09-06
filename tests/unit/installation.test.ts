@@ -15,6 +15,7 @@ import { test, type TestContext } from "node:test";
 import { HubError } from "../../src/domain/errors.js";
 import type { EngineProfile, JsonObject } from "../../src/domain/types.js";
 import { inspectEngineInstallation } from "../../src/engine/installation.js";
+import { portableLauncher } from "../../src/drivers/configuration/launch.js";
 
 function profile(command: string[]): EngineProfile {
   return {
@@ -96,12 +97,15 @@ void test("env assignments and secret configuration flags never become input fil
   const secret = join(root, "secret.mjs");
   await writeFile(launcher, "not executable content", { mode: 0o700 });
   await writeFile(script, "export {};\n");
-  await symlink(join(root, "missing-secret"), secret);
+  // A directory is an invalid startup input on every OS and needs no symlink privileges.
+  await mkdir(secret);
   const result = await inspectEngineInstallation(
     profile([
-      "/usr/bin/env",
+      process.execPath,
+      portableLauncher,
       `HOME=${secret}`,
       `PROVIDER_TOKEN=${secret}`,
+      "--",
       launcher,
       script,
       "--config",
@@ -114,7 +118,7 @@ void test("env assignments and secret configuration flags never become input fil
   );
   assert.deepEqual(
     files(result).map((entry) => entry.path),
-    [await realpath("/usr/bin/env"), launcher, script],
+    [await realpath(process.execPath), portableLauncher, launcher, script],
   );
   assert.equal(JSON.stringify(result).includes("secret.mjs"), false);
 });
@@ -196,15 +200,46 @@ void test("package lookup stops after three ancestors and does not traverse a ma
     pathEnv: "",
   });
   assert.equal(files(result)[0]?.package, null);
+  // Directory junctions exercise the same reparse rejection without administrator privileges.
   await symlink(
-    join(root, "package.json"),
+    process.platform === "win32" ? root : join(root, "package.json"),
     join(dirname(entry), "package.json"),
+    process.platform === "win32" ? "junction" : "file",
   );
   await assert.rejects(
     inspectEngineInstallation(profile([entry]), { pathEnv: "" }),
     errorCode("ENGINE_INSTALLATION_INVALID"),
   );
 });
+
+void test(
+  "Windows installation snapshots resolve executable suffixes and retain launcher targets",
+  { skip: process.platform !== "win32" },
+  async (t) => {
+    const root = await fixture(t);
+    const executable = join(root, "agent.exe");
+    await writeFile(executable, "not executed");
+    const result = await inspectEngineInstallation(profile(["agent"]), {
+      pathEnv: root,
+    });
+    assert.equal(files(result)[0]?.path, executable);
+    const wrapped = await inspectEngineInstallation(
+      profile([
+        process.execPath,
+        portableLauncher,
+        "HOME=private",
+        "--",
+        executable,
+      ]),
+      { pathEnv: "" },
+    );
+    assert.deepEqual(
+      files(wrapped).map((item) => item.path),
+      [await realpath(process.execPath), portableLauncher, executable],
+    );
+    assert.equal(JSON.stringify(wrapped).includes("HOME=private"), false);
+  },
+);
 
 void test("an aborted installation inspection preserves its reason before reading a launcher", async () => {
   const controller = new AbortController();

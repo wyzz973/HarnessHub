@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "component": "antigravity",
+  "version": "1.1.1",
+  "license": "proprietary; see official vendor terms",
+  "artifact": {
+    "source": "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-agy_acp_server_1.1.1-windows-arm64.zip",
+    "sha256": "35f4b1f47ba6a3fea7b0a3e30010df5ea73a64b4f0e7cf991cddc673ddfbcafc"
+  },
+  "originalLicenseTextIncluded": false,
+  "terms": [
+    "https://antigravity.google/terms",
+    "https://policies.google.com/terms"
+  ],
+  "packagingNotice": {
+    "file": "NOTICE.txt",
+    "sha256": "ae4d554656ced3cf668f7a0b0011c4be153879fe5de990a9dc7ae2894ab5e276"
+  },
+  "modelCalled": false
+}

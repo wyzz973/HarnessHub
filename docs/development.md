@@ -21,6 +21,11 @@
 | `worker` / `drivers` | IPC 契约、领域协议、所属 SDK 与后端状态 | 写 HarnessHub 公共数据库、分配公共事件序号、决定公共终态 |
 | `storage` / `process` | 所属技术实现与领域接口 | 反向依赖 Gateway 或驱动产品决策 |
 | `benchmark` / `rollout` | Application Service 或已提交数据的查询接口 | 创建第二套执行循环、独立推断业务终态 |
+| `platform` | 具体 Windows 文件系统 ACL 操作、domain 错误类型与 Node 系统库 | 依赖 Runtime、Gateway、Driver 或业务存储；向领域/业务模块泄露平台实现 |
+| `tool-packages` | domain 与 platform；本地包校验、私有复制、安装登记和绑定描述 | 启动模型、修改 Gateway 公共状态、读取账号配置 |
+| `distribution` | domain 与 tool-packages；发行清单、路径模板和 settings | 创建独立执行循环、引用 Runtime/Driver 实现 |
+
+`artifacts`、`drivers` 与 `tool-packages` 可使用 `platform` 的具体文件访问实现；其他模块不直接引用。Windows 进程树监督仍由 ProcessHost 与所属 Driver 负责。边界检查为该限制提供接受及拒绝样例。
 
 具体实现由启动组合根注入。公共端口由其调用方所需语义定义，不能为了方便第三方 SDK 直接透出原始类型。类型导入、动态 import 和 re-export 也受模块边界约束。
 

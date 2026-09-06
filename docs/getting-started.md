@@ -69,7 +69,7 @@ curl -s -X POST http://127.0.0.1:3180/v1/sessions \
 | 更新配置后老对话没变 | 正常；已有Session固定revision，为新配置创建新Session |
 | curl SSE结束/断开 | SSE断开不取消Run；带游标重连并查询Run状态 |
 | `RUNTIME_ALREADY_RUNNING` | 已有Gateway拥有该数据库；不要开第二个写入者或删除owner记录 |
-| Windows能否直接使用 | 尚未完成原生监督、脚本后缀与恢复验收；详见[平台边界](../DESIGN.md#8-windows-能力与验证边界) |
+| Windows能否直接使用 | 原生启动、Job 监督、脚本后缀、文件路径与 Codex 已取得 Windows 11 ARM64 证据；见 [Windows 指南](windows.md)及[平台边界](../DESIGN.md#8-windows-能力与验证边界) |
 
 ## 本地开发
 

@@ -16,24 +16,33 @@ async function keychain(
   id: string,
   value?: string,
 ): Promise<string | undefined> {
-  if (process.platform !== "darwin")
+  if (process.platform !== "darwin" && process.platform !== "win32")
     throw new HubError(
       "KEYCHAIN_UNSUPPORTED",
       "Use an environment or file reference on this platform",
       400,
     );
   const executable = fileURLToPath(
-    new URL("../../../native/harnesshub-keychain", import.meta.url),
+    new URL(
+      process.platform === "win32"
+        ? "../../../native/harnesshub-secrets.exe"
+        : "../../../native/harnesshub-keychain",
+      import.meta.url,
+    ),
   );
-  const child = spawn(executable, [], { stdio: ["pipe", "pipe", "ignore"] });
+  const child = spawn(executable, [], {
+    stdio: ["pipe", "pipe", "ignore"],
+    windowsHide: true,
+  });
   let output = "";
+  child.stdout.setEncoding("utf8");
   const timeout = setTimeout(() => child.kill("SIGKILL"), 5000);
   try {
     const completion = new Promise<number | null>((resolve, reject) => {
       child.once("error", () => reject(failure()));
       child.once("close", resolve);
-      child.stdout.on("data", (data: Buffer) => {
-        output += data.toString();
+      child.stdout.on("data", (data: string) => {
+        output += data;
         if (Buffer.byteLength(output) > 32768) child.kill("SIGKILL");
       });
       child.stdin.on("error", () => {
@@ -48,17 +57,23 @@ async function keychain(
       }),
     );
     if ((await completion) !== 0) throw failure();
-    const result: unknown = JSON.parse(output);
+    let result: unknown;
+    try {
+      result = JSON.parse(output) as unknown;
+    } catch {
+      throw failure();
+    }
     if (!result || typeof result !== "object") throw failure();
     if ("value" in result && typeof result.value === "string")
       return result.value;
     if (operation === "read") throw failure();
+    if (!("ok" in result) || result.ok !== true) throw failure();
     return undefined;
   } finally {
     clearTimeout(timeout);
   }
 }
-/** Store an immutable Keychain item. Returned references are safe to persist; values are write-only. */
+/** Store an immutable macOS Keychain / Windows user-scoped DPAPI item. Only references are persisted. */
 export async function createSecret(value: string): Promise<SecretReference> {
   if (
     !value.trim() ||
@@ -84,8 +99,16 @@ export async function resolveSecret(
   environment: Readonly<NodeJS.ProcessEnv>,
 ): Promise<string> {
   let value: string | undefined;
-  if (ref.kind === "env") value = environment[ref.value];
-  else if (ref.kind === "keychain") value = await keychain("read", ref.value);
+  if (ref.kind === "env") {
+    const names = Object.keys(environment).filter((name) =>
+      process.platform === "win32"
+        ? name.toUpperCase() === ref.value.toUpperCase()
+        : name === ref.value,
+    );
+    const values = new Set(names.map((name) => environment[name]));
+    if (values.size > 1) throw failure();
+    value = environment[names[0] ?? ref.value];
+  } else if (ref.kind === "keychain") value = await keychain("read", ref.value);
   else {
     try {
       const info = await lstat(ref.value);
@@ -96,7 +119,10 @@ export async function resolveSecret(
         (process.platform !== "win32" && (info.mode & 0o077) !== 0)
       )
         throw failure();
-      value = (await readFile(ref.value, "utf8")).trim();
+      value =
+        process.platform === "win32"
+          ? (await keychain("read-file", ref.value))?.trim()
+          : (await readFile(ref.value, "utf8")).trim();
     } catch {
       throw failure();
     }

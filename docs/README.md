@@ -32,7 +32,10 @@
 | [OpenCode独立配置](opencode-engine.md) | 指定DeepSeek配置与文件任务证据 |
 | [OpenClaw Bridge](openclaw-engine.md) | 独立原生会话命名、连接与限制 |
 | [macOS本机引擎](macos-engines.md) | 开发机的历史接入方式，不是新克隆配置文件 |
-| [Windows/VMware](vmware-validation.md) | 尚待原生验证的项目与操作清单 |
+| [Windows 使用](windows.md) | 原生安装、运行、Codex、密钥与能力边界 |
+| [Windows 便携发布包](portable-bundle.md) | 固定运行时、开发机制备、免安装发行与清单 |
+| [本地工具包](tool-packages.md) | 离线安装、SHA-256、Skill/MCP 绑定和注销 |
+| [Windows/VMware](vmware-validation.md) | 历史虚拟机准备与其他目标环境验收清单 |
 
 ## 开发与发布
 
@@ -59,5 +62,8 @@
 | [主流发现](verification/2026-09-05-mainstream-discovery.md) | Multica/AgentSpace参考、发现与启动配方 |
 | [引擎配置](verification/2026-09-05-engine-configuration.md) | Keychain、独立配置、Skills/MCP与浏览器 |
 | [GitHub 文档交付](verification/2026-09-05-github-documentation.md) | 使用与架构、40项API、独立目录检查、无Key示例与首次浏览器体验 |
+| [Windows 原生进程](verification/2026-09-06-windows-process.md) | Job 归属、取消、清理与 Gateway 崩溃恢复 |
+| [Windows 与 Codex](verification/2026-09-06-windows.md) | 原生开发、文件/密钥、真实 Codex、控制台与启动器 |
+| [Windows 便携引擎](verification/2026-09-06-portable-engines.md) | 固定引擎准备、DeepSeek 短任务、MCP/文件与发行验收范围 |
 
 研究输入：[原始架构提案](<../HarnessHub 多 Agent 引擎可替换架构设计.md>)、[固定源码阅读记录](<../HarnessHub 源码阅读与技术选型讨论稿.md>)。它们保留历史推演，若与现行DESIGN或API实现冲突，以当前规范与实现为准。

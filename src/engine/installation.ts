@@ -1,15 +1,20 @@
 import { createHash } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
-import { access, lstat, open, realpath } from "node:fs/promises";
+import { lstat, open, realpath } from "node:fs/promises";
 import path from "node:path";
 import { HubError } from "../domain/errors.js";
 import type { EngineProfile, JsonObject } from "../domain/types.js";
+import { locateExecutable } from "./executables.js";
+import { fileURLToPath } from "node:url";
 
 const MAX_STARTUP_FILES = 8;
 const MAX_FILE_BYTES = 512 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 1024 * 1024 * 1024;
 const MAX_PACKAGE_BYTES = 256 * 1024;
-const CODE_EXTENSION = /\.(?:[cm]?js|py|rb|sh|ps1)$/i;
+const CODE_EXTENSION = /\.(?:[cm]?js|py|rb|sh|ps1|cmd|bat)$/i;
+const PORTABLE_LAUNCHER = fileURLToPath(
+  new URL("../../../scripts/launch-engine.mjs", import.meta.url),
+);
 const ENV_ASSIGNMENT = /^[a-zA-Z_][a-zA-Z0-9_]*=/;
 const BOOLEAN_FLAGS = new Set([
   "--no-warnings",
@@ -51,20 +56,11 @@ async function executable(
     );
   for (const directory of pathEnv.split(path.delimiter)) {
     signal?.throwIfAborted();
-    if (!path.isAbsolute(directory)) continue;
-    const candidate = path.join(directory, command);
-    try {
-      await access(candidate, constants.X_OK);
-      signal?.throwIfAborted();
-      return candidate;
-    } catch (error) {
-      if (
-        isMissing(error) ||
-        (error instanceof Error && "code" in error && error.code === "EACCES")
-      )
-        continue;
-      throw error;
-    }
+    const root = directory.replace(/^"(.*)"$/, "$1");
+    if (!path.isAbsolute(root)) continue;
+    const candidate = await locateExecutable([command], [root]);
+    signal?.throwIfAborted();
+    if (candidate) return candidate;
   }
   throw failure(
     "Configured engine launcher was not found on the supplied PATH",
@@ -83,6 +79,14 @@ async function launchFiles(
   const candidates = [await executable(first, pathEnv, signal)];
   let position = 1;
   const notes: string[] = [];
+  if (command[1] === PORTABLE_LAUNCHER) {
+    candidates.push(PORTABLE_LAUNCHER);
+    position = 2;
+    while (ENV_ASSIGNMENT.test(command[position] ?? "")) position++;
+    if (command[position++] !== "--" || !command[position])
+      throw failure("Portable launcher does not identify an engine executable");
+    candidates.push(await executable(command[position++]!, pathEnv, signal));
+  }
   if (path.basename(first) === "env") {
     for (; position < command.length; position++) {
       const item = command[position]!;

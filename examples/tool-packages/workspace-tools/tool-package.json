@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "workspace-tools",
+  "version": "1.0.0",
+  "displayName": "Workspace list, read and search",
+  "files": [
+    {
+      "path": "workspace-tools.mjs",
+      "size": 16987,
+      "sha256": "2c84d7c9013fe2995f1e951172e1ee40b686841d044bbaaf688ba0b44dd39092"
+    },
+    {
+      "path": "skills/workspace-tools/SKILL.md",
+      "size": 1139,
+      "sha256": "0812e5477b408c4905e68aba33ff6f91748540e405ed5bed360ff68bd06b8b5a"
+    }
+  ],
+  "skills": [
+    {
+      "path": "skills/workspace-tools/SKILL.md"
+    }
+  ],
+  "mcpServers": [
+    {
+      "name": "files",
+      "launch": "node",
+      "entry": "workspace-tools.mjs",
+      "args": [
+        "--root",
+        {
+          "anchor": "workspace"
+        }
+      ]
+    }
+  ]
+}

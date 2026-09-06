@@ -12,7 +12,7 @@ export interface EngineRegistration {
   configuration?: EngineConfiguration;
   maxConcurrency?: number;
   cli?: { inputMode?: "stdin" | "argv"; maxOutputBytes?: number };
-  acp?: { sessionMode: "resume" };
+  acp?: { sessionMode?: "resume"; initializeTimeoutMs?: number };
 }
 
 /** Discovery reports installation evidence only, never model authentication or task success. */

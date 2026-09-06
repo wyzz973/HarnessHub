@@ -236,7 +236,7 @@
 
 - 输入：JSON：value，非空单行、至多8KiB；不要用真实值写入脚本/文档。
 - 返回：201：reference={kind:keychain,value:UUID}；不返回原密钥。
-- 实现链路：createSecret → Swift Security helper；stdin传值，固定HarnessHub service和新UUID写入Keychain。
+- 实现链路：createSecret → 平台秘密helper；stdin传值，新UUID写入macOS Keychain或Windows当前用户DPAPI密文目录。
 - 持久化与副作用：写操作，仅macOS；新引用不可变，历史引用不自动删除。业务库不保存密钥值。
 - 失败与边界：INVALID_SECRET；KEYCHAIN_UNSUPPORTED；SECRET_UNAVAILABLE（锁定、缺失或不可读）。
 

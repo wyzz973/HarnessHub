@@ -305,12 +305,12 @@ export function EngineConfigurationDialog({
                       }}
                     >
                       <option value="new">
-                        输入新 Key · 保存到 macOS 钥匙串
+                        输入新 Key · 保存到系统安全存储
                       </option>
                       <option value="env">环境变量引用</option>
                       <option value="file">本地密钥文件引用</option>
                       {secretKind === "keychain" ? (
-                        <option value="keychain">已保存的钥匙串引用</option>
+                        <option value="keychain">已保存的安全存储引用</option>
                       ) : null}
                     </select>
                   </label>
@@ -321,7 +321,7 @@ export function EngineConfigurationDialog({
                         ? "环境变量名称"
                         : secretKind === "file"
                           ? "密钥文件绝对路径"
-                          : "钥匙串引用 ID"}
+                          : "安全存储引用 ID"}
                     <input
                       type={secretKind === "new" ? "password" : "text"}
                       autoComplete="off"

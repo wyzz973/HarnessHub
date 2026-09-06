@@ -1,0 +1,21 @@
+{
+  "name": "harnesshub-contest-engines",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "pnpm@10.12.3",
+  "dependencies": {
+    "@agentclientprotocol/codex-acp": "1.10.0",
+    "@openai/codex": "0.153.4",
+    "@agentclientprotocol/claude-agent-acp": "0.75.1",
+    "@anthropic-ai/claude-code": "2.1.263",
+    "@google/gemini-cli": "0.58.0",
+    "@qwen-code/qwen-code": "0.23.0",
+    "@github/copilot": "1.0.83",
+    "@qoder-ai/qodercli": "0.2.14",
+    "@earendil-works/pi-coding-agent": "0.85.1",
+    "pi-acp": "0.0.33",
+    "@mimo-ai/cli": "0.1.14",
+    "@deepseek-ai/dsh": "0.1.2-rc.1",
+    "openclaw": "2026.9.2"
+  }
+}

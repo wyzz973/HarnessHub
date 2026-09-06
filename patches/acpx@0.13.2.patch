@@ -1,0 +1,69 @@
+diff --git a/dist/live-checkpoint-Gw2oGjhe.js b/dist/live-checkpoint-Gw2oGjhe.js
+index 1a7748c185233a94929b6bc8c8021098e33f0650..0974edc6ac5f084800502b77d1ab52e941c2078b 100644
+--- a/dist/live-checkpoint-Gw2oGjhe.js
++++ b/dist/live-checkpoint-Gw2oGjhe.js
+@@ -2446,6 +2446,11 @@ const DECISION_FALLBACK_ORDER = {
+ };
+ function decisionToResponse(params, decision) {
+ 	if (decision.outcome === "cancel") return cancelled();
++	if (decision.outcome === "selected") {
++		if (typeof decision.optionId !== "string" || decision.optionId.length === 0) return cancelled();
++		const matches = (params.options ?? []).filter((option) => option.optionId === decision.optionId);
++		return matches.length === 1 ? selected(decision.optionId) : cancelled();
++	}
+ 	const matched = pickOption(params.options ?? [], DECISION_FALLBACK_ORDER[decision.outcome]);
+ 	return matched ? selected(matched.optionId) : cancelled();
+ }
+diff --git a/dist/runtime.d.ts b/dist/runtime.d.ts
+index 0a6b870fe71e430a6f174ebcb3b84e0e67b91a31..604be9eecf93eb8146c4eb06f4ea7e86accf7959 100644
+--- a/dist/runtime.d.ts
++++ b/dist/runtime.d.ts
+@@ -303,6 +303,10 @@ type AcpRuntimeOptions = {
+   agentRegistry: AcpAgentRegistry;
+   mcpServers?: McpServer$1[];
+   permissionMode: PermissionMode;
++  /** Advertise client filesystem operations. Omission preserves the client default. */
++  fs?: boolean;
++  /** Advertise client terminal operations. Omission preserves the client default. */
++  terminal?: boolean;
+   nonInteractivePermissions?: NonInteractivePermissionPolicy;
+   permissionPolicy?: PermissionPolicy;
+   timeoutMs?: number;
+diff --git a/dist/runtime.js b/dist/runtime.js
+index a81099ac96b219c8035c75427c7ebf839fb677ee..0e0722fef5d49089ff34e6dbf5292339b143e247 100644
+--- a/dist/runtime.js
++++ b/dist/runtime.js
+@@ -788,7 +788,8 @@ var AcpRuntimeManager = class {
+ 		this.deps = deps;
+ 	}
+ 	createClient(options) {
+-		return this.deps.clientFactory?.(options) ?? new AcpClient(options);
++		const clientOptions = { ...options, fs: this.options.fs, terminal: this.options.terminal };
++		return this.deps.clientFactory?.(clientOptions) ?? new AcpClient(clientOptions);
+ 	}
+ 	createSessionOwner(input) {
+ 		const owner = {
+@@ -1897,6 +1898,8 @@ function createProbeClient(options, agentCommand, deps) {
+ 		cwd: options.cwd,
+ 		mcpServers: [...options.mcpServers ?? []],
+ 		permissionMode: options.permissionMode,
++		fs: options.fs,
++		terminal: options.terminal,
+ 		nonInteractivePermissions: options.nonInteractivePermissions,
+ 		permissionPolicy: options.permissionPolicy,
+ 		verbose: options.verbose
+diff --git a/dist/session-options-DwRDODlr.d.ts b/dist/session-options-DwRDODlr.d.ts
+index c3da1645235bbea22de3f8484149051cd7dca56b..b5c43ec78ceb446ec9429c90f1113665ca2a766a 100644
+--- a/dist/session-options-DwRDODlr.d.ts
++++ b/dist/session-options-DwRDODlr.d.ts
+@@ -9,6 +9,10 @@ type AcpPermissionRequest = {
+   inferredKind: ToolKind | undefined;
+ };
+ type AcpPermissionDecision = {
++  /** Select exactly one option advertised by this request; unknown or duplicate IDs cancel. */
++  outcome: "selected";
++  optionId: string;
++} | {
+   outcome: "allow_once";
+ } | {
+   outcome: "allow_always";

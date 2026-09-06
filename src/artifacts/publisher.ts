@@ -4,6 +4,11 @@ import { lstat, mkdir, open, realpath, unlink } from "node:fs/promises";
 import path from "node:path";
 import { HubError } from "../domain/errors.js";
 import type { ArtifactId, ArtifactRecord, RunId } from "../domain/types.js";
+import {
+  ensurePrivateDirectories,
+  verifyPrivatePaths,
+} from "../platform/windows-acl.js";
+import type { WindowsFileSession } from "../platform/windows-file-session.js";
 
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
 const CHUNK_BYTES = 64 * 1024;
@@ -62,7 +67,7 @@ async function privateDirectory(directory: string) {
   if (
     !info.isDirectory() ||
     info.isSymbolicLink() ||
-    (info.mode & 0o077n) !== 0n
+    (process.platform !== "win32" && (info.mode & 0o077n) !== 0n)
   )
     throw new HubError(
       "INVALID_ARTIFACT_PATH",
@@ -74,7 +79,7 @@ async function privateDirectory(directory: string) {
 async function artifactBase(root: string, create: boolean) {
   const absolute = path.resolve(root);
   const parent = await realpath(path.dirname(absolute));
-  if (parent !== path.dirname(absolute))
+  if (path.relative(parent, path.dirname(absolute)) !== "")
     throw new HubError(
       "INVALID_ARTIFACT_PATH",
       "Artifact root ancestors cannot be symlinks",
@@ -102,7 +107,7 @@ function checkedPath(
   const expected = path.join(base, artifact.runId, artifact.id);
   // Stored paths may use macOS's /var alias for /private/var. The caller's root is
   // canonicalized before new records are made; no artifact path is realpathed here.
-  if (path.resolve(artifact.path) !== expected)
+  if (path.relative(path.resolve(artifact.path), expected) !== "")
     throw new HubError(
       "INVALID_ARTIFACT_PATH",
       "Artifact path differs from its registered identity",
@@ -144,6 +149,7 @@ export async function publishArtifactBytes(
   runId: RunId,
   value: { name: string; mediaType: string; bytes: Buffer },
   signal?: AbortSignal,
+  windows?: WindowsFileSession,
 ): Promise<ArtifactRecord> {
   signal?.throwIfAborted();
   if (value.bytes.length > MAX_FILE_BYTES)
@@ -162,6 +168,11 @@ export async function publishArtifactBytes(
   const directory = path.join(base, runId);
   await privateDirectory(directory);
   const chain = await directories(directory);
+  if (process.platform === "win32") {
+    if (windows) await windows.ensurePrivateDirectories([base, directory]);
+    else await ensurePrivateDirectories([base, directory]);
+    await verifyDirectories(chain);
+  }
   const id = randomUUID() as ArtifactId;
   const file = path.join(directory, id);
   const handle = await open(
@@ -172,8 +183,9 @@ export async function publishArtifactBytes(
       constants.O_NOFOLLOW,
     0o600,
   );
-  const identity = await handle.stat({ bigint: true });
+  let identity: BigIntStats | undefined;
   try {
+    identity = await handle.stat({ bigint: true });
     for (let offset = 0; offset < value.bytes.length;) {
       signal?.throwIfAborted();
       const { bytesWritten } = await handle.write(
@@ -194,6 +206,7 @@ export async function publishArtifactBytes(
     const info = await lstat(file, { bigint: true });
     if (
       !info.isFile() ||
+      info.isSymbolicLink() ||
       !sameIdentity(identity, info) ||
       info.nlink !== 1n ||
       info.size !== BigInt(value.bytes.length)
@@ -218,7 +231,7 @@ export async function publishArtifactBytes(
   } catch (error) {
     await handle.close();
     try {
-      await removeOwnedFile(file, chain, identity);
+      if (identity) await removeOwnedFile(file, chain, identity);
     } catch (cleanupError) {
       throw new AggregateError(
         [error, cleanupError],
@@ -315,13 +328,22 @@ export async function readArtifact(
       "Artifact must be a regular unlinked file",
       403,
     );
+  if (process.platform === "win32") {
+    await verifyPrivatePaths([base, path.dirname(file), file]);
+    await verifyDirectories(chain);
+  }
   const handle = await open(
     file,
     constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
   );
   try {
     const opened = await handle.stat({ bigint: true });
-    if (!sameIdentity(before, opened) || opened.size !== BigInt(artifact.size))
+    if (
+      !opened.isFile() ||
+      opened.nlink !== 1n ||
+      !sameIdentity(before, opened) ||
+      opened.size !== BigInt(artifact.size)
+    )
       throw new HubError(
         "ARTIFACT_CORRUPT",
         "Artifact integrity check failed",
@@ -344,9 +366,17 @@ export async function readArtifact(
     await verifyDirectories(chain);
     if (
       length !== artifact.size ||
+      !current.isFile() ||
+      current.isSymbolicLink() ||
+      current.nlink !== 1n ||
+      after.nlink !== 1n ||
+      !sameIdentity(opened, after) ||
       !sameIdentity(opened, current) ||
       opened.mtimeNs !== after.mtimeNs ||
       opened.ctimeNs !== after.ctimeNs ||
+      opened.mtimeNs !== current.mtimeNs ||
+      opened.ctimeNs !== current.ctimeNs ||
+      current.size !== opened.size ||
       after.size !== opened.size ||
       createHash("sha256").update(bytes.subarray(0, length)).digest("hex") !==
         artifact.sha256

@@ -1,6 +1,10 @@
 import type { RuntimeMcpServer } from "../configuration/prepare.js";
 import { randomUUID } from "node:crypto";
-import { createAcpRuntime, createAgentRegistry } from "acpx/runtime";
+import {
+  createAcpRuntime,
+  createAgentRegistry,
+  isRequestedModelUnsupportedError,
+} from "acpx/runtime";
 import type {
   AcpPermissionDecision,
   AcpPermissionRequest,
@@ -32,6 +36,11 @@ import type {
 export class AcpDriver implements Driver {
   private runtime: AcpRuntime | undefined;
   private mcpServers: RuntimeMcpServer[] = [];
+  private nativeModelSelection = false;
+  /** Native provider configuration can own model selection when ACP advertises no model control. */
+  configureNativeModelSelection(enabled: boolean): void {
+    if (!this.runtime) this.nativeModelSelection = enabled;
+  }
   /** Worker supplies resolved server credentials in memory before the first connection. */
   configureMcp(servers: RuntimeMcpServer[]): void {
     if (!this.runtime) this.mcpServers = servers;
@@ -64,6 +73,8 @@ export class AcpDriver implements Driver {
             overrides: { [spec.profile.id]: spec.profile.command },
           }),
           permissionMode: "deny-all",
+          fs: false,
+          terminal: false,
           nonInteractivePermissions: "deny",
           timeoutMs: 0,
           onPermissionRequest: (request, context) =>
@@ -80,7 +91,7 @@ export class AcpDriver implements Driver {
         ...(spec.backendSessionId
           ? { resumeSessionId: spec.backendSessionId }
           : {}),
-        ...(spec.profile.model
+        ...(spec.profile.model && !this.nativeModelSelection
           ? { sessionOptions: { model: spec.profile.model } }
           : {}),
       });
@@ -112,18 +123,23 @@ export class AcpDriver implements Driver {
         handle: this.handle,
       });
       const status = await this.runtime.getStatus?.({ handle: this.handle });
-      await channel.emit({
-        type: "event",
-        event: {
-          type: "engine.capabilities",
-          data: {
-            controls: capabilities?.controls ?? [],
-            configOptionKeys: capabilities?.configOptionKeys ?? [],
-            models: status?.models ? json(status.models) : null,
-            resumeAdvertised: advertisedResume,
+      const emitCapabilities = () =>
+        channel.emit({
+          type: "event",
+          event: {
+            type: "engine.capabilities",
+            data: {
+              controls: capabilities?.controls ?? [],
+              configOptionKeys: capabilities?.configOptionKeys ?? [],
+              models: status?.models ? json(status.models) : null,
+              resumeAdvertised: advertisedResume,
+            },
           },
-        },
-      });
+        });
+      // A recovered handle can be satisfied by its checkpoint without a live
+      // connection. Keep the host's initialization budget armed until reconnect
+      // and resume have completed, as confirmed by promptStarted below.
+      if (!recovering) await emitCapabilities();
       const observationIdentity = {
         backendSessionId: this.handle.backendSessionId,
         requestId: `${spec.runId}:${spec.generation}`,
@@ -158,6 +174,7 @@ export class AcpDriver implements Driver {
               return { status: "cancelled", stopReason: "cancelled" };
             throw new AcpSessionRecoveryError();
           }
+          await emitCapabilities();
           await channel.emit({
             type: "event",
             event: {
@@ -250,6 +267,15 @@ export class AcpDriver implements Driver {
         throw error;
       }
     } catch (error) {
+      if (isRequestedModelUnsupportedError(error))
+        return {
+          status: "failed",
+          error: {
+            code: "ACP_MODEL_UNSUPPORTED",
+            message:
+              "The engine did not advertise the configured model or ACP model-selection capability",
+          },
+        };
       if (error instanceof AcpSessionRecoveryError)
         return {
           status: "failed",
@@ -274,10 +300,11 @@ export class AcpDriver implements Driver {
       if (raw.kind === "allow_once" || raw.kind === "reject_once")
         options.push({ id: raw.optionId, label: raw.name, kind: raw.kind });
     }
-    // acpx accepts a kind, not optionId. Ambiguous kinds cannot preserve an exact user's choice.
+    // Duplicate IDs cannot preserve the user's exact selection. Multiple
+    // different options with the same kind remain independently selectable.
     if (
       !options.length ||
-      new Set(options.map((option) => option.kind)).size !== options.length
+      new Set(options.map((option) => option.id)).size !== options.length
     ) {
       await current.channel.emit({
         type: "event",
@@ -304,7 +331,7 @@ export class AcpDriver implements Driver {
       );
       const selected = options.find((option) => option.id === optionId);
       if (!selected || signal.aborted) return { outcome: "cancel" };
-      return { outcome: selected.kind };
+      return { outcome: "selected", optionId: selected.id };
     } catch (error) {
       if (signal.aborted) return { outcome: "cancel" };
       throw error; // deny-all remains the acpx callback failure policy.
