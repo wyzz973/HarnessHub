@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -31,16 +32,22 @@ class ArchiveTests(unittest.TestCase):
         self.write_bundle()
 
     def tearDown(self):
+        if os.name == "nt":
+            self.assertEqual(self.root.parent, Path(tempfile.gettempdir()).resolve())
+            self.assertTrue(self.root.name.startswith("harnesshub-assets-test-"))
+            # This test exclusively owns the mkdtemp root; extended paths permit
+            # cleanup of the intentionally >300-character regression fixtures.
+            shutil.rmtree(MODULE.filesystem_path(self.root))
         self.temporary.cleanup()
 
     def write_bundle(self):
         for name, data in self.payload.items():
-            target = self.bundle / name
+            target = MODULE.filesystem_path(self.bundle / name)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
         records = [{"path": name, "size": len(data), "sha256": sha(data)} for name, data in self.payload.items()]
         self.raw_manifest = json.dumps({"schemaVersion": 1, "platform": "win32", "arch": "arm64", "files": records}).encode()
-        (self.bundle / "bundle.json").write_bytes(self.raw_manifest)
+        MODULE.filesystem_path(self.bundle / "bundle.json").write_bytes(self.raw_manifest)
 
     def assets(self, name="valid", split=False, secrets=()):
         archive = self.root / (name + ".zip")
@@ -69,6 +76,42 @@ class ArchiveTests(unittest.TestCase):
             zipfile.ZIP_FILECOUNT_LIMIT = previous
         self.assertIn(b"PK\x06\x06", (self.root / "zip64.zip").read_bytes())
         MODULE.verify_assets(manifest, quiet=True)
+
+    def test_windows_long_source_assets_and_temporary_paths(self):
+        if os.name != "nt":
+            self.skipTest("Extended Win32 path regression requires Windows")
+        nesting = Path(*[("directory-" + str(index) + "-" + "x" * 65) for index in range(4)])
+        self.bundle = self.root / "long-source" / nesting / "Source 中文"
+        MODULE.filesystem_path(self.bundle).mkdir(parents=True)
+        self.write_bundle()
+        output = self.root / "long-assets" / nesting / "artifacts"
+        MODULE.filesystem_path(output).mkdir(parents=True)
+        self.assertGreater(len(str(self.bundle)), 300)
+        self.assertGreater(len(str(output)), 300)
+        manifest_path = output / "long.offline.json"
+        MODULE.create_assets(self.bundle, output / "long.zip", quiet=True, asset_limit=512, part_bytes=256)
+        result = MODULE.verify_assets(manifest_path, quiet=True)
+        self.assertTrue(result["allZipFilesSizeAndSha256Verified"])
+        self.assertGreater(result["parts"], 1)
+        MODULE.filesystem_path(self.bundle / "binary.bin").write_bytes(b"z" * len(self.payload["binary.bin"]))
+        with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
+            MODULE.create_assets(self.bundle, output / "corrupt.zip", quiet=True)
+        self.assertFalse(MODULE.filesystem_path(output / "corrupt.offline.json").exists())
+        self.assertFalse(list(MODULE.filesystem_path(output).glob(".offline-*-*")))
+
+    def test_windows_path_prefix_rejects_relative_and_device_names(self):
+        with self.assertRaisesRegex(ValueError, "explicit absolute"):
+            MODULE.filesystem_path(Path("relative/file.zip"))
+        if os.name != "nt":
+            return
+        normal = Path(r"C:\temp\fixture.zip")
+        extended = MODULE.filesystem_path(normal)
+        self.assertEqual(str(extended), r"\\?\C:\temp\fixture.zip")
+        self.assertEqual(MODULE.filesystem_path(extended), extended)
+        self.assertEqual(str(MODULE.filesystem_path(Path(r"\\server\share\fixture.zip"))), r"\\?\UNC\server\share\fixture.zip")
+        for device in (r"\\.\C:\fixture.zip", r"\\?\GLOBALROOT\Device\HarddiskVolume1\fixture.zip"):
+            with self.assertRaisesRegex(ValueError, "device path"):
+                MODULE.filesystem_path(Path(device))
 
     def test_reject_source_extra_missing_and_hash_corruption(self):
         extra = self.bundle / "unlisted.txt"
@@ -185,6 +228,12 @@ class ArchiveTests(unittest.TestCase):
             self.skipTest("Windows PowerShell acceptance requires Windows")
         shell = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
         self.assertTrue(shell.is_file(), "Windows PowerShell is required, not silently skipped")
+        # Restore hashes ZIP members as streams: long internal paths are never
+        # passed to a Windows filesystem API or extracted by this script.
+        member = "/".join(["long-member-" + "q" * 65] * 4) + "/read.txt"
+        self.assertGreater(len(member), 300)
+        self.payload[member] = b"long member verified without extraction\n"
+        self.write_bundle()
         manifest, data = self.assets(split=True)
         destination = self.root / "restored.zip"
 

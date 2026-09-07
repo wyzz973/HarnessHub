@@ -10,6 +10,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { startHub } from "../../src/main.js";
 import type { RunRecord, SessionRecord } from "../../src/domain/types.js";
 import type { HubApplication } from "../../src/application/service.js";
+import { ensurePrivateDirectory } from "../../src/platform/windows-acl.js";
 
 void test(
   "Chat bridges retain MCP, Skills, artifact permission and cancellation through HTTP, SQLite and real Workers",
@@ -75,7 +76,8 @@ void test(
     assert.ok(address && typeof address !== "string");
     const key = join(root, "fixture.key"),
       skill = join(root, "SKILL.md");
-    await writeFile(key, "synthetic-bridge-integration-key");
+    if (process.platform === "win32") await ensurePrivateDirectory(root);
+    await writeFile(key, "synthetic-bridge-integration-key", { mode: 0o600 });
     await writeFile(skill, "bridge skill instruction");
     hub = await startHub({
       cwd: root,
@@ -151,7 +153,10 @@ void test(
         `/v1/engines/${adapter}/test`,
         {},
       );
-      assert.ok(check.checks.every((c) => c.status === "passed"));
+      assert.ok(
+        check.checks.every((c) => c.status === "passed"),
+        JSON.stringify(check),
+      );
       const session = await json<SessionRecord>("/v1/sessions", {
         engineId: adapter,
       });

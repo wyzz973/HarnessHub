@@ -8,6 +8,7 @@ import {
   readFile,
   readdir,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -40,16 +41,28 @@ test("OpenClaw preparation refuses an unpinned package before executing its scri
   );
   await assert.rejects(prepareOpenClaw(root), /fixed openclaw@2026.9.2/);
 });
-async function setup(t, pending = false) {
+async function setup(t, options = {}) {
   const root = await mkdtemp(path.join(tmpdir(), "hh-openclaw 中文 ")),
     state = path.join(root, "state"),
     entry = path.join(root, "openclaw.mjs");
   await mkdir(state);
   await copyFile(fixture, entry);
-  if (pending)
+  if (options.pending)
     await writeFile(path.join(root, ".openclaw-lifecycle-pending"), "pending");
+  let stateInput = state;
+  let configDirectory = state;
+  if (options.aliasedState) {
+    stateInput = path.join(root, "state-alias");
+    await symlink(state, stateInput, "junction");
+  }
+  if (options.escapedConfig) {
+    const foreign = path.join(root, "foreign");
+    await mkdir(foreign);
+    configDirectory = path.join(stateInput, "foreign-alias");
+    await symlink(foreign, configDirectory, "junction");
+  } else configDirectory = stateInput;
   await writeFile(
-    path.join(state, "openclaw.json"),
+    path.join(configDirectory, "openclaw.json"),
     JSON.stringify({
       models: {
         providers: { fixture: { baseUrl: "https://configured.invalid" } },
@@ -65,8 +78,8 @@ async function setup(t, pending = false) {
       PATH: "C:\\Windows\\System32",
       HOME: root,
       USERPROFILE: root,
-      OPENCLAW_STATE_DIR: state,
-      OPENCLAW_CONFIG_PATH: path.join(state, "openclaw.json"),
+      OPENCLAW_STATE_DIR: stateInput,
+      OPENCLAW_CONFIG_PATH: path.join(configDirectory, "openclaw.json"),
     },
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
@@ -112,12 +125,17 @@ async function setup(t, pending = false) {
     errors: () => err,
   };
 }
-for (const action of ["eof", "gateway-failure", "wrapper-crash"]) {
+for (const action of [
+  "eof",
+  "gateway-failure",
+  "wrapper-crash",
+  "aliased-state",
+]) {
   test(
     `OpenClaw bundled ${action} closes Gateway, ACP and both descendants`,
     { skip: process.platform !== "win32" },
     async (t) => {
-      const run = await setup(t);
+      const run = await setup(t, { aliasedState: action === "aliased-state" });
       run.child.stdin.write(
         JSON.stringify({
           jsonrpc: "2.0",
@@ -152,12 +170,12 @@ for (const action of ["eof", "gateway-failure", "wrapper-crash"]) {
         gateway.args.some((arg) => arg.includes(gateway.token)),
         false,
       );
-      if (action === "eof") run.child.stdin.end();
+      if (action === "eof" || action === "aliased-state") run.child.stdin.end();
       else if (action === "gateway-failure")
         await writeFile(path.join(run.state, "fail-gateway"), "fail");
       else run.child.kill("SIGKILL");
       const [code] = await run.closed;
-      if (action === "eof") assert.equal(code, 0);
+      if (action === "eof" || action === "aliased-state") assert.equal(code, 0);
       if (action === "gateway-failure") assert.notEqual(code, 0);
       const pids = [
           gateway.pid,
@@ -185,10 +203,28 @@ test(
   "OpenClaw bundled refuses pending package lifecycle without launching installation",
   { skip: process.platform !== "win32" },
   async (t) => {
-    const run = await setup(t, true);
+    const run = await setup(t, { pending: true });
     const [code] = await run.closed;
     assert.equal(code, 1);
     assert.match(run.errors(), /lifecycle is incomplete/);
+    assert.equal(run.output(), "");
+    await assert.rejects(readFile(path.join(run.state, "gateway.json")), {
+      code: "ENOENT",
+    });
+  },
+);
+
+test(
+  "OpenClaw bundled rejects a config directory alias escaping its private state",
+  { skip: process.platform !== "win32" },
+  async (t) => {
+    const run = await setup(t, { escapedConfig: true });
+    const [code] = await run.closed;
+    assert.equal(code, 1);
+    assert.match(
+      run.errors(),
+      /configuration (?:must be inside|escapes) its private state directory/,
+    );
     assert.equal(run.output(), "");
     await assert.rejects(readFile(path.join(run.state, "gateway.json")), {
       code: "ENOENT",

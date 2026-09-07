@@ -33,7 +33,7 @@
 
 ## 工具与 Skill
 
-离线归档工具 11 项合成测试通过，无跳过，包含 Windows PowerShell 5.1 逐成员恢复与损坏/错序/漏件/越界/覆盖拒绝。该工具测试本身不代表最终发行资产已压缩或上传。
+离线归档工具 13 项合成测试通过，无跳过，包含 Windows PowerShell 5.1 逐成员恢复与损坏/错序/漏件/越界/覆盖拒绝，以及真实超过 300 字符的 Windows 源、资产和临时路径。首次实际归档遇到 MAX_PATH 限制，已统一使用扩展绝对路径修复，没有更改系统策略。该工具测试本身不代表最终发行资产已压缩或上传。
 
 公司 Skill 通过 skill-creator 的 quick_validate，并由独立 Agent 以“有未提交鉴权改动、不能上传、无网络安装、Chat-only”场景审阅。已修正 PowerShell 的包路径、源/发行模板位置、总帮助入口，以及公司工作区的 bind/registration 应用流程。离线开发工具 4 项测试通过：现有目录保护、lock/补丁/依赖不匹配拒绝、被篡改 payload 拒绝，以及 web junction 越出 checkout 的拒绝。
 
@@ -45,7 +45,13 @@
 
 首轮检查与大体积打包并行运行，集成组出现多个短 Run 期限/冷启动超时；该次失败不记为通过。权限过期测试增加正式就绪 barrier 后保留原 1 秒期限。打包结束后，失败组按原期限与默认并发 12/12 通过（`.tmp/offline/failed-integration-recheck.log`），再执行上述完整检查通过。未改变其他用例的断言、期限或默认并发。
 
-发行目录、公司模拟 checkout 构建、最终归档和 GitHub Actions 的结果在完成后补充。
+最终发行目录有 160,557 个清单文件，共 3,908,036,314 字节；在生产文件冻结后同步 Gateway、MCP 扩展、离线开发工具和 Skill，并同步经过正反例验证的 OpenClaw 路径别名修正。逐文件 hash 与构建输入记录可核对。
+
+使用包内 Node、空 NODE_PATH、收窄 PATH 和拒绝代理，在独立 `.tmp/offline-company-checkout` 完成 `Dev.cmd` 对应的 prepare/typecheck/build：均退出 0，分别约 205 秒、6 秒、60 秒。实际生成 Gateway、Windows helper 和生产控制台；人为加入的公司模拟模块源码 SHA256 `ea66677457feb5e339da7c36e0c5612d4b5d2fd0033aae3f29351bf41f4506ca` 保持不变，并出现在编译产物中。没有运行 npm/pip 安装，未使用真实公司源码。日志在 `.tmp/offline/development-acceptance.log` 及 `dev-*.log`。
+
+[首个远端 GitHub Actions](https://github.com/wyzz973/HarnessHub/actions/runs/34133112452)失败，未记为通过。Linux 测试密钥文件权限不符合生产秘密契约，已固定为 0600；Windows 测试使用显式私有目录 ACL。Windows 的 canonical/lexical 路径别名比较问题已由本机真实 junction 复现：修正 OpenClaw 私有配置父目录比较，并让打包校验保留输入路径和 canonical 路径。逃逸目录仍拒绝，没有修改生产秘密校验或放宽断言。相应 tooling 16/16、正式 Chat 集成 1/1，以及类型/格式/lint 通过；最终远端环境结果须由新 CI 单独确认。
+
+最终搬迁、归档和远端 CI 结果在完成后补充。
 
 ## 限制与环境收尾
 

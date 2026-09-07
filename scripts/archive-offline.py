@@ -30,6 +30,34 @@ def require(condition, message):
         raise ValueError(message)
 
 
+def filesystem_path(value):
+    """Use Win32 extended absolute paths locally; never change machine policy.
+
+    Inventory and ZIP member names stay portable relative names. Only filesystem
+    operations receive the extended prefix, including temporary output paths.
+    Device namespaces other than an absolute drive or UNC share are rejected.
+    """
+    value = Path(value)
+    require(value.is_absolute(), "Filesystem paths must be explicit absolute paths")
+    if os.name != "nt":
+        return value
+    raw = os.path.normpath(str(value))
+    if raw.startswith("\\\\?\\UNC\\"):
+        suffix = raw[8:]
+        require(len(suffix.split("\\")) >= 2 and all(suffix.split("\\")[:2]), "Invalid extended UNC path")
+        return Path("\\\\?\\UNC\\" + suffix)
+    if raw.startswith("\\\\?\\"):
+        require(re.match(r"^[A-Za-z]:\\", raw[4:]) is not None, "Unsupported Windows device path")
+        return Path(raw)
+    require(not raw.startswith("\\\\.\\"), "Unsupported Windows device path")
+    if raw.startswith("\\\\"):
+        suffix = raw[2:]
+        require(len(suffix.split("\\")) >= 2 and all(suffix.split("\\")[:2]), "Invalid UNC path")
+        return Path("\\\\?\\UNC\\" + suffix)
+    require(re.match(r"^[A-Za-z]:\\", raw) is not None, "Expected an absolute Windows drive path")
+    return Path("\\\\?\\" + raw)
+
+
 def identity(name):
     return unicodedata.normalize("NFC", name).casefold()
 
@@ -51,6 +79,7 @@ def relative_name(value):
 
 
 def regular_stat(path, directory=False):
+    path = filesystem_path(path)
     info = path.lstat()
     require(not stat.S_ISLNK(info.st_mode) and not (getattr(info, "st_file_attributes", 0) & 0x400),
             f"Link/reparse point is not a release file: {path}")
@@ -115,6 +144,7 @@ def parse_inventory(manifest_bytes):
 
 def read_inventory(bundle):
     require(bundle.is_absolute(), "--bundle must be an explicit absolute path")
+    bundle = filesystem_path(bundle)
     regular_stat(bundle, directory=True)
     manifest_path = bundle / "bundle.json"
     require(regular_stat(manifest_path).st_size <= MANIFEST_LIMIT, "Oversized bundle.json")
@@ -122,6 +152,7 @@ def read_inventory(bundle):
 
 
 def audit_directory(bundle, inventory, progress, hashes=True, secrets=()):
+    bundle = filesystem_path(bundle)
     actual = {}
     directories = [bundle]
     empty_directories = 0
@@ -171,6 +202,7 @@ def zip_info(name, size=0, directory=False):
 
 
 def verify_archive(archive_path, inventory, manifest_bytes, root_name, progress, secrets=()):
+    archive_path = filesystem_path(archive_path)
     expected = {root_name + "/" + name: value for name, value in inventory.items()}
     expected_names = set(expected) | {root_name + "/"}
     progress.emit("verify-zip", total=len(inventory), force=True)
@@ -196,6 +228,8 @@ def verify_archive(archive_path, inventory, manifest_bytes, root_name, progress,
 
 
 def create_archive(bundle, destination, quiet=False, secrets=()):
+    bundle = filesystem_path(bundle)
+    destination = filesystem_path(destination)
     started = time.monotonic()
     progress = Progress(not quiet)
     require(destination.is_absolute() and destination.suffix.lower() == ".zip", "--zip must be an explicit absolute .zip path")
@@ -255,6 +289,7 @@ def create_archive(bundle, destination, quiet=False, secrets=()):
 
 def load_assets(manifest_path):
     require(manifest_path.is_absolute(), "--manifest must be an explicit absolute path")
+    manifest_path = filesystem_path(manifest_path)
     regular_stat(manifest_path.parent, directory=True)
     require(regular_stat(manifest_path).st_size <= MANIFEST_LIMIT, "Oversized asset manifest")
     manifest = json.loads(manifest_path.read_bytes())
@@ -284,6 +319,7 @@ def load_assets(manifest_path):
 
 
 def verify_zip_payload(archive_path, manifest, progress, secrets=()):
+    archive_path = filesystem_path(archive_path)
     with zipfile.ZipFile(archive_path, "r", allowZip64=True) as archive:
         member = archive.getinfo(manifest["bundleRootName"] + "/bundle.json")
         require(member.file_size <= MANIFEST_LIMIT, "Oversized archived bundle.json")
@@ -294,6 +330,7 @@ def verify_zip_payload(archive_path, manifest, progress, secrets=()):
 
 
 def verify_assets(manifest_path, quiet=False, secrets=()):
+    manifest_path = filesystem_path(manifest_path)
     manifest = load_assets(manifest_path)
     progress = Progress(not quiet)
     # The private temporary directory owns only this verification's assembled ZIP.
@@ -326,6 +363,8 @@ def verify_assets(manifest_path, quiet=False, secrets=()):
 
 
 def create_assets(bundle, destination, quiet=False, secrets=(), asset_limit=ASSET_LIMIT, part_bytes=PART_BYTES):
+    bundle = filesystem_path(bundle)
+    destination = filesystem_path(destination)
     require(destination.is_absolute() and destination.suffix.lower() == ".zip", "--zip must be an explicit absolute .zip path")
     regular_stat(destination.parent, directory=True)
     require(not destination.resolve().is_relative_to(bundle.resolve()), "Asset output must be outside the bundle")

@@ -40,11 +40,16 @@ async function packageAt(
   );
   await writeFile(path.join(directory, "index.cjs"), code);
 }
-async function node(args, cwd) {
+async function node(args, cwd, environment = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, args, {
       cwd,
-      env: { SystemRoot: process.env.SystemRoot, PATH: "", NODE_PATH: "" },
+      env: {
+        SystemRoot: process.env.SystemRoot,
+        PATH: "",
+        NODE_PATH: "",
+        ...environment,
+      },
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
@@ -425,6 +430,52 @@ void test("bundle rejects developer-local engine templates before creating outpu
   );
   await assert.rejects(
     packageBundle(prepared, output),
+    /metadata contains a build-machine path/,
+  );
+  await assert.rejects(readFile(path.join(output, "package.json")), {
+    code: "ENOENT",
+  });
+});
+
+void test("bundle rejects developer paths through the supplied prepared directory alias", async (t) => {
+  const root = await workspace(t);
+  const prepared = path.join(root, "prepared");
+  const alias = path.join(root, "source-alias");
+  const output = path.join(root, "output");
+  await mkdir(prepared);
+  await symlink(
+    prepared,
+    alias,
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  await writeFile(
+    path.join(prepared, "prepared.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      platform: "win32",
+      arch: "arm64",
+      nodeVersion: "24.20.0",
+      engines: [{ command: [path.join(alias, "engines", "engine.exe")] }],
+      components: [],
+    }),
+  );
+  // Exclude the fixture from the child process's HOME so this specifically
+  // proves prepared-input aliases, independent of the broader home guard.
+  await assert.rejects(
+    node(
+      [
+        "--input-type=module",
+        "-e",
+        `import { packageBundle } from ${JSON.stringify(new URL("./package-bundle.mjs", import.meta.url).href)}; await packageBundle(process.argv[1], process.argv[2]);`,
+        alias,
+        output,
+      ],
+      root,
+      {
+        HOME: path.join(root, "isolated-home"),
+        USERPROFILE: path.join(root, "isolated-home"),
+      },
+    ),
     /metadata contains a build-machine path/,
   );
   await assert.rejects(readFile(path.join(output, "package.json")), {

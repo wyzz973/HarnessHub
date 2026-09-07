@@ -12,6 +12,8 @@ python -I -B scripts/archive-offline.py create --bundle "C:\release\HarnessHub-w
 
 工具检查实际文件集合与 `bundle.json` 完全一致，逐文件核对大小和 SHA256，然后生成包含一个根目录的 ZIP64 归档。ZIP 成员顺序、时间戳、文件属性与压缩级别固定；同一 Python/zlib 环境下相同输入字节产生相同 ZIP。不同压缩库版本仍以本次输出记录的精确 SHA256 为准。
 
+Windows 磁盘访问统一使用扩展绝对路径，支持超过 260 字符的发行目录、依赖文件、资产及临时重组路径；不会修改机器的 `LongPathsEnabled` 或其他全局策略。ZIP 内仍保存普通相对路径。
+
 它拒绝 `state/`、`.incomplete`、文件树中的符号链接和 Windows reparse point，以及 `.env*`、DPAPI、SQLite、账号凭证、SSH 私钥等已列明的敏感文件。内容检查拒绝 PEM 私钥材料。可对本次测试实际使用的密钥补充精确检查，命令只传环境变量名：
 
 ```powershell
@@ -37,10 +39,12 @@ python -I -B scripts/archive-offline.py create --bundle "C:\release\HarnessHub-w
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Restore-Offline.ps1 -Manifest .\HarnessHub-Windows-ARM64.offline.json -OutputZip .\HarnessHub-restored.zip
-Expand-Archive -LiteralPath .\HarnessHub-restored.zip -DestinationPath .\HarnessHub
+Expand-Archive -LiteralPath .\HarnessHub-restored.zip -DestinationPath C:\HH
 ```
 
 `-ExecutionPolicy Bypass` 只对该 PowerShell 进程生效，不更改机器或用户的执行策略。脚本兼容 Windows PowerShell 5.1 和 PowerShell 7，使用系统 .NET ZIP/SHA256 能力，不连接网络。脚本先验证全部分片、重组后的完整 SHA256，再打开 ZIP，核对清单、所有成员、文件大小和每个文件 SHA256；成功后才把临时文件发布为指定输出。
+
+恢复脚本按 ZIP entry stream 校验内部文件，不把成员逐一写到磁盘，因此内部长路径不影响这个校验步骤。最终解压应选择 `C:\HH` 这类短目录，避免 Windows PowerShell 5.1 解压工具的路径长度限制；不要为此开启机器全局长路径策略。manifest、资产和输出 ZIP 本身也应放在短目录。
 
 缺少分片、多余分片、索引乱序、文件名不符、大小或散列错误、链接、ZIP 内额外文件、路径越界、成员损坏以及已有输出目标都会返回非零。失败时不会覆盖原目标，自己的 `.incomplete` 文件会清理。恢复需要额外容纳完整 ZIP 的磁盘空间；解压还需要容纳发行目录。仅在恢复脚本退出 0 后解压并按发行包说明启动。
 

@@ -150,6 +150,7 @@ export async function packageBundle(preparedDirectory, outputDirectory) {
   const forbiddenPaths = [
     repository.replace(/[\\/]$/, ""),
     prepared,
+    path.resolve(preparedDirectory),
     homedir(),
   ];
   const serializedMetadata = JSON.stringify(metadata).toLowerCase();

@@ -69,17 +69,23 @@ export async function runBundledOpenClaw(executable) {
     );
   await mkdir(stateInput, { recursive: true });
   const state = await realpath(stateInput);
-  if (!within(state, path.resolve(configInput)))
+  // Windows may supply a short-name or junction alias for the private state.
+  // Compare canonical parents, then independently reject a linked config file.
+  const configPath = path.join(
+    await realpath(path.dirname(configInput)),
+    path.basename(configInput),
+  );
+  if (!within(state, configPath))
     throw new Error(
       "OpenClaw configuration must be inside its private state directory",
     );
   let base = {};
-  if (await available(configInput)) {
-    if (!within(state, await realpath(configInput)))
+  if (await available(configPath)) {
+    if (!within(state, await realpath(configPath)))
       throw new Error(
         "OpenClaw configuration escapes its private state directory",
       );
-    const source = await readFile(configInput, "utf8");
+    const source = await readFile(configPath, "utf8");
     try {
       base = JSON.parse(source);
     } catch {
