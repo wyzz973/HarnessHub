@@ -14,23 +14,40 @@ import {
 import { ensurePrivateDirectory } from "../../src/platform/windows-acl.js";
 import type { SecretReference } from "../../src/domain/engine-configuration.js";
 import { HubError } from "../../src/domain/errors.js";
+import { writePrivateSecretFile } from "../fixtures/private-secret-file.js";
 
 const execute = promisify(execFile);
 
 async function privateAcl(file: string): Promise<unknown> {
-  const script = `$ErrorActionPreference = 'Stop';
-$request = [Console]::In.ReadToEnd() | ConvertFrom-Json;
+  return fixtureFileSecurity(
+    file,
+    `
 $security = [IO.File]::GetAccessControl($request.file);
 $user = [Security.Principal.WindowsIdentity]::GetCurrent().User;
 $rules = $security.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]);
 $onlyUser = @($rules | Where-Object { !$_.IdentityReference.Equals($user) -or $_.AccessControlType -ne 'Allow' -or $_.IsInherited }).Count -eq 0;
-[Console]::Write((@{ ownerMatches = $security.GetOwner([Security.Principal.SecurityIdentifier]).Equals($user); protected = $security.AreAccessRulesProtected; onlyUser = $onlyUser; ruleCount = $rules.Count } | ConvertTo-Json -Compress));`;
+[Console]::Write((@{ ownerMatches = $security.GetOwner([Security.Principal.SecurityIdentifier]).Equals($user); protected = $security.AreAccessRulesProtected; onlyUser = $onlyUser; ruleCount = $rules.Count } | ConvertTo-Json -Compress));`,
+  );
+}
+
+async function fixtureFileSecurity(
+  file: string,
+  script: string,
+): Promise<unknown> {
   const operation = execute(
     path.join(
       process.env.SystemRoot ?? "C:\\Windows",
       "System32/WindowsPowerShell/v1.0/powershell.exe",
     ),
-    ["-NoProfile", "-NonInteractive", "-Command", script],
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      `$ErrorActionPreference = 'Stop';
+[Console]::InputEncoding = [Text.UTF8Encoding]::new($false);
+$request = [Console]::In.ReadToEnd() | ConvertFrom-Json;
+${script}`,
+    ],
     { windowsHide: true, timeout: 10000 },
   );
   operation.child.stdin?.end(JSON.stringify({ file }));
@@ -104,11 +121,19 @@ void test(
     t.after(() => rm(directory, { recursive: true, force: true }));
     await ensurePrivateDirectory(directory);
     const file = path.join(directory, "fixture-key");
-    await writeFile(file, "fixture-value");
+    await writePrivateSecretFile(file, "fixture-value");
+    const acl = await privateAcl(file);
+    assert.deepEqual(acl, {
+      ownerMatches: true,
+      protected: true,
+      onlyUser: true,
+      ruleCount: 1,
+    });
     assert.equal(
       await resolveSecret({ kind: "file", value: file }, {}),
       "fixture-value",
     );
+    assert.deepEqual(await privateAcl(file), acl);
     const alias = path.join(directory, "alias");
     await symlink(directory, alias, "junction");
     await assert.rejects(
@@ -132,6 +157,45 @@ void test(
     await assert.rejects(resolveSecret({ kind: "file", value: file }, {}), {
       code: "SECRET_UNAVAILABLE",
     });
+  },
+);
+
+void test(
+  "Windows file references reject public allow grants without rewriting the file ACL",
+  { skip: process.platform !== "win32" },
+  async (t) => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), "hh-secret-invalid-acl-"),
+    );
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const file = path.join(directory, "fixture-key");
+    await writePrivateSecretFile(file, "synthetic-public-acl-fixture");
+    await fixtureFileSecurity(
+      file,
+      `
+$security = [IO.File]::GetAccessControl($request.file);
+$public = [Security.Principal.SecurityIdentifier]::new([Security.Principal.WellKnownSidType]::WorldSid, $null);
+$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($public, [Security.AccessControl.FileSystemRights]::Read, [Security.AccessControl.AccessControlType]::Allow));
+[IO.File]::SetAccessControl($request.file, $security);
+[Console]::Write('true');`,
+    );
+    const acl = await privateAcl(file);
+    assert.deepEqual(acl, {
+      ownerMatches: true,
+      protected: true,
+      onlyUser: false,
+      ruleCount: 2,
+    });
+    await assert.rejects(
+      resolveSecret({ kind: "file", value: file }, {}),
+      (error: unknown) => {
+        assert.ok(error instanceof HubError);
+        assert.equal(error.code, "SECRET_UNAVAILABLE");
+        assert.deepEqual(error.cause, { operation: "read-file", stage: "acl" });
+        return true;
+      },
+    );
+    assert.deepEqual(await privateAcl(file), acl);
   },
 );
 

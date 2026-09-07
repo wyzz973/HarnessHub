@@ -23,6 +23,13 @@ MANIFEST_LIMIT = 64 * 1024 * 1024
 ASSET_LIMIT = 2 * 1024 * 1024 * 1024
 PART_BYTES = 1932735283  # floor(1.8 GiB), below the GitHub single-asset limit.
 PRIVATE_KEY = re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----\r?\n[A-Za-z0-9+/]{30,}")
+# Public GnuTLS self-test keys, verified against 3.8.13 commit
+# b390d80208ed60f1b33ad899475951a8efb40ccd, lib/crypto-selftests-pk.c.
+# Exact byte/path review only; provenance and block comparison are documented in
+# docs/offline-artifacts.md. Explicit secret values never receive this exception.
+REVIEWED_PUBLIC_PEM_FILES = {
+    "bin/git/usr/bin/msys-gnutls-30.dll": "5f3019ca853a642a5d26b81661040f295cc11cfc588a43500fbcb2fbee7cc444",
+}
 
 
 def require(condition, message):
@@ -62,7 +69,7 @@ def identity(name):
     return unicodedata.normalize("NFC", name).casefold()
 
 
-def relative_name(value):
+def relative_name(value, *, directory=False):
     require(isinstance(value, str) and value, "Inventory path must be a nonempty string")
     name = value.replace("\\", "/")
     parts = name.split("/")
@@ -73,8 +80,9 @@ def relative_name(value):
     require(identity(parts[0]) not in ("state", ".incomplete"), f"Mutable/incomplete payload: {value}")
     lowered = [identity(part) for part in parts]
     require(not any(part in (".git", ".ssh", ".aws", ".azure", ".gnupg") for part in lowered), f"Private configuration directory: {value}")
-    require(lowered[-1] not in ("auth.json", "credentials.json", "credentials", ".npmrc", ".pypirc", "id_rsa", "id_ed25519")
-            and not re.search(r"(?:^\.env(?:\.|$)|\.(?:dpapi|sqlite(?:-wal|-shm)?|p12|pfx)$)", lowered[-1]), f"Credential/state file: {value}")
+    if not directory:
+        require(lowered[-1] not in ("auth.json", "credentials.json", "credentials", ".npmrc", ".pypirc", "id_rsa", "id_ed25519")
+                and not re.search(r"(?:^\.env(?:\.|$)|\.(?:dpapi|sqlite(?:-wal|-shm)?|p12|pfx)$)", lowered[-1]), f"Credential/state file: {value}")
     return name
 
 
@@ -92,20 +100,28 @@ def signature(info):
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
 
 
-def digest_stream(stream, destination=None, secrets=()):
+def digest_stream(stream, destination=None, secrets=(), *, payload_name=None):
     digest = hashlib.sha256()
     size = 0
     tail = b""
+    private_material = False
+    reviewed_hash = REVIEWED_PUBLIC_PEM_FILES.get(payload_name)
     overlap = max([2048] + [len(secret) for secret in secrets])
     while chunk := stream.read(CHUNK):
         sample = tail + chunk
-        require(PRIVATE_KEY.search(sample) is None and not any(secret in sample for secret in secrets), "Credential material detected in payload; value omitted")
+        require(not any(secret in sample for secret in secrets), "Credential material detected in payload; value omitted")
+        if PRIVATE_KEY.search(sample) is not None:
+            private_material = True
+            require(reviewed_hash is not None, "Credential material detected in payload; value omitted")
         tail = sample[-overlap:]
         digest.update(chunk)
         size += len(chunk)
         if destination is not None:
             destination.write(chunk)
-    return size, digest.hexdigest()
+    actual_hash = digest.hexdigest()
+    require(not private_material or actual_hash == reviewed_hash,
+            "Credential material detected outside the exact reviewed public file; value omitted")
+    return size, actual_hash
 
 
 class Progress:
@@ -164,8 +180,8 @@ def audit_directory(bundle, inventory, progress, hashes=True, secrets=()):
             empty_directories += 1
         for file in children:
             relative = file.relative_to(bundle).as_posix()
-            relative_name(relative)
             info = file.lstat()
+            relative_name(relative, directory=stat.S_ISDIR(info.st_mode))
             require(not stat.S_ISLNK(info.st_mode) and not (getattr(info, "st_file_attributes", 0) & 0x400),
                     f"Link/reparse point in payload: {relative}")
             if stat.S_ISDIR(info.st_mode):
@@ -185,7 +201,7 @@ def audit_directory(bundle, inventory, progress, hashes=True, secrets=()):
             before = regular_stat(file)
             require(before.st_size == expected["size"], f"Source size mismatch: {relative}")
             with file.open("rb") as stream:
-                actual_size, actual_hash = digest_stream(stream, secrets=secrets)
+                actual_size, actual_hash = digest_stream(stream, secrets=secrets, payload_name=relative)
             require(signature(before) == signature(regular_stat(file)), f"Source changed while hashing: {relative}")
             require((actual_size, actual_hash) == (expected["size"], expected["sha256"]), f"Source SHA-256 mismatch: {relative}")
             progress.emit("verify-source", index, len(inventory))
@@ -220,7 +236,7 @@ def verify_archive(archive_path, inventory, manifest_bytes, root_name, progress,
             require(not stat.S_ISLNK(member.external_attr >> 16), f"ZIP symlink: {name}")
             require(member.file_size == expected_file["size"], f"ZIP size mismatch: {name}")
             with archive.open(member, "r") as stream:
-                size, digest = digest_stream(stream, secrets=secrets)
+                size, digest = digest_stream(stream, secrets=secrets, payload_name=name[len(root_name) + 1:])
             require((size, digest) == (expected_file["size"], expected_file["sha256"]), f"ZIP SHA-256 mismatch: {name}")
             progress.emit("verify-zip", index, len(inventory))
         require(archive.read(root_name + "/bundle.json") == manifest_bytes, "ZIP bundle.json differs from source manifest")
@@ -237,7 +253,7 @@ def create_archive(bundle, destination, quiet=False, secrets=()):
     require(not destination.resolve().is_relative_to(bundle.resolve()), "ZIP output must be outside the bundle")
     report_path = destination.with_suffix(".verification.json")
     require(not destination.exists() and not report_path.exists(), "ZIP/report output already exists; overwrite is prohibited")
-    root_name = relative_name(bundle.name)
+    root_name = relative_name(bundle.name, directory=True)
     require("/" not in root_name, "Invalid ZIP root name")
     inventory, manifest_bytes = read_inventory(bundle)
     source = audit_directory(bundle, inventory, progress, secrets=secrets)
@@ -255,7 +271,7 @@ def create_archive(bundle, destination, quiet=False, secrets=()):
                 info = zip_info(root_name + "/" + relative, expected["size"])
                 info._compresslevel = 1
                 with file.open("rb") as source_file, archive.open(info, "w", force_zip64=True) as target:
-                    size, digest = digest_stream(source_file, target, secrets=secrets)
+                    size, digest = digest_stream(source_file, target, secrets=secrets, payload_name=relative)
                 require(signature(before) == signature(regular_stat(file)), f"Source changed during ZIP write: {relative}")
                 require((size, digest) == (expected["size"], expected["sha256"]), f"Source changed/hash mismatch during ZIP write: {relative}")
                 progress.emit("create-zip", index, len(inventory))
@@ -295,7 +311,7 @@ def load_assets(manifest_path):
     manifest = json.loads(manifest_path.read_bytes())
     require(isinstance(manifest, dict) and manifest.get("schemaVersion") == 1, "Unsupported asset manifest")
     for field in ("zipName", "bundleRootName"):
-        require(relative_name(manifest.get(field)) == manifest[field] and "/" not in manifest[field], f"Invalid {field}")
+        require(relative_name(manifest.get(field), directory=field == "bundleRootName") == manifest[field] and "/" not in manifest[field], f"Invalid {field}")
     require(manifest["zipName"].endswith(".zip"), "Archive name must end in .zip")
     for field in ("zipSha256", "bundleManifestSha256"):
         require(isinstance(manifest.get(field), str) and re.fullmatch(r"[a-f0-9]{64}", manifest[field]), f"Invalid {field}")

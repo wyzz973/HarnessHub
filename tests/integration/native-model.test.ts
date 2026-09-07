@@ -20,6 +20,7 @@ import {
   type SessionRecord,
 } from "../../src/domain/types.js";
 import { ensurePrivateDirectory } from "../../src/platform/windows-acl.js";
+import { writePrivateSecretFile } from "../fixtures/private-secret-file.js";
 
 void test(
   "Copilot BYOK selects its native model through real Workers while ACP-only selections still require advertised controls",
@@ -37,7 +38,7 @@ void test(
     else await chmod(directory, 0o700);
     const key = "synthetic-native-model-fixture-key";
     const keyFile = path.join(directory, "synthetic.key");
-    await writeFile(keyFile, key, { mode: 0o600 });
+    await writePrivateSecretFile(keyFile, key);
     const dataDir = path.join(directory, "data");
     hub = await startHub({ cwd: directory, dataDir, demo: false, port: 0 });
     const peer = fileURLToPath(

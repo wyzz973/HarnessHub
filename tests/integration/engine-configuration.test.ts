@@ -13,6 +13,7 @@ import {
   type RunRecord,
   type SessionRecord,
 } from "../../src/domain/types.js";
+import { writePrivateSecretFile } from "../fixtures/private-secret-file.js";
 const digest = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 void test(
@@ -60,7 +61,7 @@ void test(
     const registrations = [];
     for (const id of ["a", "b"] as const) {
       const file = path.join(directory, `${id}.key`);
-      await writeFile(file, keys[id], { mode: 0o600 });
+      await writePrivateSecretFile(file, keys[id]);
       const registration = {
         id,
         driver: "acp",

@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
 
 HERE = Path(__file__).resolve().parent
@@ -139,6 +140,28 @@ class ArchiveTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Credential/state file"):
             self.assets("auth")
 
+    def test_sdk_credentials_source_directory_is_allowed_and_secret_files_rejected(self):
+        source = "engines/npm/node_modules/@anthropic-ai/sdk/src/lib/credentials/types.ts"
+        self.payload[source] = b"export interface CredentialResult { token: string; }\n"
+        self.write_bundle()
+        manifest, _ = self.assets("sdk-source")
+        self.assertTrue(MODULE.verify_assets(manifest, quiet=True)["allZipFilesSizeAndSha256Verified"])
+        # A regular credentials file remains forbidden, even when listed with a
+        # matching hash beside the legitimate SDK source directory.
+        self.payload["configuration/credentials"] = b'{"api_key":"synthetic-private-token"}\n'
+        self.write_bundle()
+        with self.assertRaisesRegex(ValueError, "Credential/state file"):
+            self.assets("credentials-file")
+        del self.payload["configuration/credentials"]
+        MODULE.filesystem_path(self.bundle / "configuration/credentials").unlink()
+        # Allowing a source directory does not exempt content under it from the
+        # explicit secret scan or exact bundle inventory/hash checks.
+        secret = b"synthetic-company-auth-token"
+        self.payload[source] = b'export const accidentalToken = "' + secret + b'";\n'
+        self.write_bundle()
+        with self.assertRaisesRegex(ValueError, "Credential material"):
+            self.assets("sdk-secret", secrets=(secret,))
+
     def test_reject_private_key_and_explicit_secret_even_across_chunks(self):
         self.payload["leak.txt"] = b"-----BEGIN PRIVATE KEY-----\n" + b"A" * 64 + b"\n"
         self.write_bundle()
@@ -149,6 +172,65 @@ class ArchiveTests(unittest.TestCase):
         self.write_bundle()
         with self.assertRaisesRegex(ValueError, "Credential material"):
             self.assets("secret", secrets=(secret,))
+
+    def public_pem_fixture(self):
+        name = "bin/git/usr/bin/msys-gnutls-30.dll"
+        data = (b"synthetic-public-fixture-marker\n-----BEGIN PRIVATE KEY-----\n"
+                + b"A" * 64 + b"\n-----END PRIVATE KEY-----\n")
+        self.payload[name] = data
+        self.write_bundle()
+        return name, data
+
+    def test_exact_reviewed_public_pem_create_and_verify(self):
+        name, data = self.public_pem_fixture()
+        # Synthetic review is process-local test injection, never a CLI option or
+        # a production allowlist entry. Exercise source and ZIP-member reads.
+        with mock.patch.dict(MODULE.REVIEWED_PUBLIC_PEM_FILES, {name: sha(data)}, clear=True):
+            manifest, _ = self.assets("reviewed-public")
+            self.assertTrue(MODULE.verify_assets(manifest, quiet=True)["allZipFilesSizeAndSha256Verified"])
+        with self.assertRaisesRegex(ValueError, "Credential material"):
+            MODULE.verify_assets(manifest, quiet=True)
+
+    def test_reviewed_public_pem_rejects_one_changed_byte_even_with_updated_inventory(self):
+        name, data = self.public_pem_fixture()
+        changed = b"X" + data[1:]
+        with mock.patch.dict(MODULE.REVIEWED_PUBLIC_PEM_FILES, {name: sha(data)}, clear=True):
+            self.payload[name] = changed
+            self.write_bundle()
+            with self.assertRaisesRegex(ValueError, "exact reviewed public file"):
+                self.assets("changed-public")
+            # Construct a self-consistent hostile archive, then restore the real
+            # review policy before verification: updated inventory/asset hashes
+            # cannot authorize altered private-key-bearing bytes.
+            with mock.patch.dict(MODULE.REVIEWED_PUBLIC_PEM_FILES, {name: sha(changed)}):
+                manifest, _ = self.assets("changed-reviewed-fixture")
+            with self.assertRaisesRegex(ValueError, "exact reviewed public file"):
+                MODULE.verify_assets(manifest, quiet=True)
+
+    def test_reviewed_public_pem_rejects_same_bytes_at_other_path(self):
+        name, data = self.public_pem_fixture()
+        other = "elsewhere/msys-gnutls-30.dll"
+        del self.payload[name]
+        MODULE.filesystem_path(self.bundle / name).unlink()
+        self.payload[other] = data
+        self.write_bundle()
+        with mock.patch.dict(MODULE.REVIEWED_PUBLIC_PEM_FILES, {name: sha(data)}, clear=True):
+            with self.assertRaisesRegex(ValueError, "Credential material"):
+                self.assets("moved-public")
+            with mock.patch.dict(MODULE.REVIEWED_PUBLIC_PEM_FILES, {other: sha(data)}):
+                manifest, _ = self.assets("moved-reviewed-fixture")
+            with self.assertRaisesRegex(ValueError, "Credential material"):
+                MODULE.verify_assets(manifest, quiet=True)
+
+    def test_reviewed_public_pem_never_exempts_explicit_secret(self):
+        name, data = self.public_pem_fixture()
+        secret = b"synthetic-public-fixture-marker"
+        with mock.patch.dict(MODULE.REVIEWED_PUBLIC_PEM_FILES, {name: sha(data)}, clear=True):
+            manifest, _ = self.assets("reviewed-no-secret")
+            with self.assertRaisesRegex(ValueError, "Credential material"):
+                self.assets("reviewed-secret", secrets=(secret,))
+            with self.assertRaisesRegex(ValueError, "Credential material"):
+                MODULE.verify_assets(manifest, quiet=True, secrets=(secret,))
 
     def test_reject_link_directory(self):
         target = self.root / "external"

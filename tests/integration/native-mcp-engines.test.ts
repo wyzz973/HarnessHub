@@ -21,6 +21,7 @@ import type {
   RunRecord,
   SessionRecord,
 } from "../../src/domain/types.js";
+import { writePrivateSecretFile } from "../fixtures/private-secret-file.js";
 
 const repository = fileURLToPath(new URL("../../../", import.meta.url));
 const prepared = path.join(repository, ".tools/contest-prepared/win32-arm64");
@@ -112,8 +113,8 @@ for (const [adapter, mode] of [
       const mcpKey = "synthetic-mcp-only-key";
       const keyFile = path.join(directory, "model-key.txt");
       const mcpKeyFile = path.join(directory, "mcp-key.txt");
-      await writeFile(keyFile, modelKey);
-      await writeFile(mcpKeyFile, mcpKey);
+      await writePrivateSecretFile(keyFile, modelKey);
+      await writePrivateSecretFile(mcpKeyFile, mcpKey);
       const receipts: Receipt[] = [];
       const requests: {
         tools: string[];

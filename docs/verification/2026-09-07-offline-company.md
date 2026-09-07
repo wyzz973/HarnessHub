@@ -33,25 +33,27 @@
 
 ## 工具与 Skill
 
-离线归档工具 14 项合成测试通过，无跳过，包含 Windows PowerShell 5.1 逐成员恢复与损坏/错序/漏件/越界/覆盖拒绝，以及真实超过 300 字符的 Windows 源、资产和临时路径。首次实际归档遇到 MAX_PATH 限制，已统一使用扩展绝对路径修复，没有更改系统策略。随后修正 SDK `credentials` 源码目录被误当凭证文件的判定，实际凭证文件与目录内秘密内容仍由反例验证拒绝。该工具测试本身不代表最终发行资产已压缩或上传。
+离线归档工具 18 项合成测试通过，无跳过，包含 Windows PowerShell 5.1 逐成员恢复与损坏/错序/漏件/越界/覆盖拒绝，以及真实超过 300 字符的 Windows 源、资产和临时路径。首次实际归档遇到 MAX_PATH 限制，已统一使用扩展绝对路径修复，没有更改系统策略。随后修正 SDK `credentials` 源码目录被误当凭证文件的判定，实际凭证文件与目录内秘密内容仍由反例验证拒绝。全部文件诊断的唯一 PEM 命中是固定 Git 内 GnuTLS DLL 的公开自检常量：11 块均逐字节匹配固定上游源码，仅精确路径与整文件 hash 允许，改字节/换路径/显式秘密仍拒绝。来源与校验规则见 [公开自检审查](../offline-artifacts.md#公开自检材料审查清单)。该工具测试本身不代表最终发行资产已压缩或上传。
 
 公司 Skill 通过 skill-creator 的 quick_validate，并由独立 Agent 以“有未提交鉴权改动、不能上传、无网络安装、Chat-only”场景审阅。已修正 PowerShell 的包路径、源/发行模板位置、总帮助入口，以及公司工作区的 bind/registration 应用流程。离线开发工具 4 项测试通过：现有目录保护、lock/补丁/依赖不匹配拒绝、被篡改 payload 拒绝，以及 web junction 越出 checkout 的拒绝。
 
 ## 整体验收进展
 
-最终 `pnpm check` 退出 0（`.tmp/offline/check-final.log`）：tooling 62 通过/1 跳过，unit 81 通过，integration 107 通过/14 跳过，smoke 2 通过/1 跳过，合计 252 通过、16 跳过。跳过中 12 项为显式 opt-in 的固定引擎用例，已按上一节单独通过；其余 4 项为平台条件跳过。包含 lint、格式、模块边界、文档、40 项 API 同步及生产控制台构建。
+`f98e684` 实现阶段的本机 `pnpm check` 退出 0（`.tmp/offline/check-final.log`）：tooling 62 通过/1 跳过，unit 81 通过，integration 107 通过/14 跳过，smoke 2 通过/1 跳过，合计 252 通过、16 跳过。跳过中 12 项为显式 opt-in 的固定引擎用例，已按上一节单独通过；其余 4 项为平台条件跳过。包含 lint、格式、模块边界、文档、40 项 API 同步及生产控制台构建。
 
 使用固定 Node 24.20.0、Corepack 缓存 pnpm 10.12.3 和本次进程 PATH 中的 Corepack shims，`COREPACK_ENABLE_NETWORK=0`。系统全局 pnpm 11 shim 的提示不作为固定工具链证据。
 
 首轮检查与大体积打包并行运行，集成组出现多个短 Run 期限/冷启动超时；该次失败不记为通过。权限过期测试增加正式就绪 barrier 后保留原 1 秒期限。打包结束后，失败组按原期限与默认并发 12/12 通过（`.tmp/offline/failed-integration-recheck.log`），再执行上述完整检查通过。未改变其他用例的断言、期限或默认并发。
 
-最终发行目录有 160,557 个清单文件，共 3,908,036,314 字节；在生产文件冻结后同步 Gateway、MCP 扩展、离线开发工具和 Skill，并同步经过正反例验证的 OpenClaw 路径别名修正。逐文件 hash 与构建输入记录可核对。
+最终发行目录有 160,557 个清单文件，共 3,908,040,024 字节；在生产文件冻结后同步 Gateway、MCP 扩展、离线开发工具和 Skill，以及经过正反例验证的 OpenClaw 路径别名、DPAPI 与并发校验修正。`BUILD-INPUTS.json` 标记运行代码提交 `700de35c5794d0039d76a4258f27c484773b089d`；`bundle.json` SHA256 为 `be369dd9515305dd0a23679fc65d48301cb4187202c3958f85cbec16d5797bf4`，逐文件 hash 与构建输入记录可核对。后续测试夹具与文档修改不改变运行包字节。
 
 使用包内 Node、空 NODE_PATH、收窄 PATH 和拒绝代理，在独立 `.tmp/offline-company-checkout` 完成 `Dev.cmd` 对应的 prepare/typecheck/build：均退出 0，分别约 205 秒、6 秒、60 秒。实际生成 Gateway、Windows helper 和生产控制台；人为加入的公司模拟模块源码 SHA256 `ea66677457feb5e339da7c36e0c5612d4b5d2fd0033aae3f29351bf41f4506ca` 保持不变，并出现在编译产物中。没有运行 npm/pip 安装，未使用真实公司源码。日志在 `.tmp/offline/development-acceptance.log` 及 `dev-*.log`。
 
 [首个远端 GitHub Actions](https://github.com/wyzz973/HarnessHub/actions/runs/34133112452)失败，未记为通过。Linux 测试密钥文件权限不符合生产秘密契约，已固定为 0600；Windows 测试使用显式私有目录 ACL。Windows 的 canonical/lexical 路径别名比较问题已由本机真实 junction 复现：修正 OpenClaw 私有配置父目录比较，并让打包校验保留输入路径和 canonical 路径。逃逸目录仍拒绝，没有修改生产秘密校验或放宽断言。相应 tooling 16/16、正式 Chat 集成 1/1，以及类型/格式/lint 通过；最终远端环境结果须由新 CI 单独确认。
 
 `cab06dc` 的 [第二轮 CI](https://github.com/wyzz973/HarnessHub/actions/runs/34133923734)中 Ubuntu 完整检查通过；Windows tooling 66/66 通过，但秘密存储 unit 4 项失败，不记为整体通过。新增回归证明旧 DPAPI 文件依赖继承 ACL，现已在独占创建时原子指定当前用户 owner 和私有 DACL；原读取校验与 5 秒期限不变。相关 16/16 本机测试通过；保留主要错误并加入仅 operation/stage 的脱敏诊断，远端失败根因仍由后续运行确认。
+
+`700de35` 的 [第三轮 CI](https://github.com/wyzz973/HarnessHub/actions/runs/34134984252)中 Ubuntu 完整通过，Windows tooling 66/66、unit 82/83；DPAPI 各项通过，唯一失败是合成 file 凭证的 `read-file/owner` 校验。测试夹具改为显式当前用户 owner、受保护且仅当前用户可访问的原子文件创建，POSIX 仍用 0600；没有修改生产安全判断。包括 Gateway/Worker 的相关 21/21 本机测试通过，并验证读取前后 ACL 不变、额外公开读取权限仍拒绝。该测试修正不改变发行包。
 
 第一次最终包验收在引擎启动前的全量 hash 阶段因串行小文件读取耗时过长而中止，记录为未通过；没有启动引擎或调用模型。发行校验改为固定最多 16 个并发 reader，并等待每批全部关闭后才成功或抛错。6 项发行 unit 通过；独立真实 fs.open/read/close 验证跨批覆盖、尾文件篡改、首个错误优先、读取异常、元数据失败与关闭延迟，所有场景在 promise 结束时 active reader 为 0。相同 3,072 个小文件、9,407,082 字节，旧实现两次约 2.47/1.20 秒，新实现约 0.35/0.38 秒；性能仅记录观测，不以放宽数据校验实现。
 

@@ -14,13 +14,23 @@ python -I -B scripts/archive-offline.py create --bundle "C:\release\HarnessHub-w
 
 Windows 磁盘访问统一使用扩展绝对路径，支持超过 260 字符的发行目录、依赖文件、资产及临时重组路径；不会修改机器的 `LongPathsEnabled` 或其他全局策略。ZIP 内仍保存普通相对路径。
 
-它拒绝 `state/`、`.incomplete`、文件树中的符号链接和 Windows reparse point，以及 `.env*`、DPAPI、SQLite、账号凭证、SSH 私钥等已列明的敏感文件。内容检查拒绝 PEM 私钥材料。可对本次测试实际使用的密钥补充精确检查，命令只传环境变量名：
+它拒绝 `state/`、`.incomplete`、文件树中的符号链接和 Windows reparse point，以及 `.env*`、DPAPI、SQLite、账号凭证、SSH 私钥等已列明的敏感文件。内容检查拒绝 PEM 私钥材料，只有下述按精确路径和整文件 SHA256 审查过的公开上游自检数据例外。可对本次测试实际使用的密钥补充精确检查，命令只传环境变量名：
+
+凭证文件名规则只应用于文件；SDK 中名为 `credentials` 的源码目录可以保留，其内部文件仍接受精确库存、大小/SHA256 和内容秘密检查。`.ssh` 等私人配置目录和根 `state/` 的目录拒绝规则不受影响。
 
 ```powershell
 python -I -B scripts/archive-offline.py create --bundle "C:\release\HarnessHub-win32-arm64" --zip "C:\deliveries\HarnessHub-Windows-ARM64.zip" --secret-env DEEPSEEK_API_KEY
 ```
 
 该变量必须已经存在且至少 8 个字符；工具检查其 UTF-8、UTF-16LE 字节，跨读取块也能发现，不在日志或 manifest 中保存值。可以重复使用 `--secret-env` 检查多个已知凭证。上述检查不推断任意字符串是否为秘密，也不递归解包 ZIP 内嵌的第三方归档；发行目录仍应来自干净的打包流程，不能直接复制个人账号目录。
+
+### 公开自检材料审查清单
+
+唯一已审查的文件为 `bin/git/usr/bin/msys-gnutls-30.dll`（2,029,128 字节），SHA256 为 `5f3019ca853a642a5d26b81661040f295cc11cfc588a43500fbcb2fbee7cc444`。它来自 [PortableGit 2.55.0.5 ARM64 官方资产](https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.5/PortableGit-2.55.0.5-arm64.7z.exe)，原下载文件实际 SHA256 与准备收据一致：`49d1dd3158017fa9805d07268433dbab7021b2ec1c1cc3fbabaf8b8255764dd0`。
+
+2026-09-07 的只读审查把 DLL 中全部 11 个完整 PEM 私钥格式块，与 [GnuTLS 3.8.13 固定提交的公开自检代码](https://github.com/gnutls/gnutls/blob/b390d80208ed60f1b33ad899475951a8efb40ccd/lib/crypto-selftests-pk.c)逐块比对：解析 C 字符串后，从 BEGIN 到 END 标记的字节及 SHA256 全部相同。这些常量属于上游密码运算自检，并非本机账号私钥。该上游源码文件 SHA256 为 `6e596be00754107fd7f7d1f132c2dc8cd0ff12bbdfc6de08c162a1dd5eedc7e8`；本文和检查日志不记录 PEM 内容。
+
+归档器只允许上述路径与整文件 SHA256 同时匹配的文件携带这些公开常量；改动一个字节、移到其他路径，或升级为不同上游二进制都必须重新审查。该例外同时用于源文件读取、ZIP 写入和每个 ZIP 成员的复读验证，不能从命令行扩充。`--secret-env` 指定值仍无条件拒绝，公开自检例外不能绕过它；其他二进制和文本使用相同的默认内容检查。
 
 ## 生成的文件
 
