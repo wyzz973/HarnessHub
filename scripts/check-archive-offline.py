@@ -8,6 +8,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest import mock
 import zipfile
@@ -231,6 +233,196 @@ class ArchiveTests(unittest.TestCase):
                 self.assets("reviewed-secret", secrets=(secret,))
             with self.assertRaisesRegex(ValueError, "Credential material"):
                 MODULE.verify_assets(manifest, quiet=True, secrets=(secret,))
+
+    def test_parallel_batches_bound_memory_and_keep_single_sorted_writer(self):
+        for index in range(33):
+            self.payload[f"000-small/{index:02}.txt"] = (f"file-{index}\n" * 20).encode()
+        self.payload["limit.bin"] = b"L" * MODULE.PRELOAD_LIMIT
+        self.payload["large.bin"] = b"G" * (MODULE.PRELOAD_LIMIT + 1)
+        self.write_bundle()
+        original_read, original_batch = MODULE.read_verified_file, MODULE.verified_batch
+        original_write = MODULE.write_archive_member
+        lock, barrier = threading.Lock(), threading.Barrier(MODULE.READ_WORKERS, timeout=10)
+        active = peak = captured = 0
+        capture_names, retained_bytes, writer_threads = set(), [], set()
+
+        def read(*args, capture=False, **kwargs):
+            nonlocal active, peak, captured
+            with lock:
+                active += 1
+                peak = max(peak, active)
+                if capture:
+                    captured += 1
+                    capture_names.add(args[1])
+                first_batch = capture and captured <= MODULE.READ_WORKERS
+            try:
+                if first_batch:
+                    barrier.wait()
+                return original_read(*args, capture=capture, **kwargs)
+            finally:
+                with lock:
+                    active -= 1
+
+        def batch(*args, **kwargs):
+            self.assertLessEqual(len(args[2]), MODULE.READ_WORKERS)
+            result = original_batch(*args, **kwargs)
+            if kwargs.get("capture"):
+                retained_bytes.append(sum(len(value[0]) for value in result.values()))
+            return result
+
+        def write(*args, **kwargs):
+            writer_threads.add(threading.get_ident())
+            return original_write(*args, **kwargs)
+
+        with mock.patch.object(MODULE, "read_verified_file", side_effect=read), \
+                mock.patch.object(MODULE, "verified_batch", side_effect=batch), \
+                mock.patch.object(MODULE, "write_archive_member", side_effect=write):
+            manifest, _ = self.assets("parallel-batches")
+        self.assertEqual(peak, 16)
+        self.assertEqual(active, 0)
+        self.assertGreaterEqual(len(retained_bytes), 3)
+        self.assertLessEqual(max(retained_bytes), 16 * 1024 * 1024)
+        self.assertIn("limit.bin", capture_names)
+        self.assertNotIn("large.bin", capture_names)
+        self.assertEqual(writer_threads, {threading.get_ident()})
+        with zipfile.ZipFile(self.root / "parallel-batches.zip") as archive:
+            self.assertEqual(archive.namelist()[1:], sorted(archive.namelist()[1:]))
+        self.assets("different-completion-order")
+        self.assertEqual((self.root / "parallel-batches.zip").read_bytes(), (self.root / "different-completion-order.zip").read_bytes())
+        MODULE.verify_assets(manifest, quiet=True)
+
+    def test_parallel_late_batch_rejects_hash_corruption_and_explicit_secret(self):
+        for index in range(33):
+            self.payload[f"batch/{index:02}.txt"] = b"ordinary source data\n"
+        self.write_bundle()
+        target = "batch/25.txt"
+        MODULE.filesystem_path(self.bundle / target).write_bytes(b"X" * len(self.payload[target]))
+        with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
+            self.assets("late-hash")
+        secret = b"synthetic-late-batch-secret"
+        self.payload[target] = secret
+        self.write_bundle()
+        with self.assertRaisesRegex(ValueError, "Credential material"):
+            self.assets("late-secret", secrets=(secret,))
+
+    def test_preload_growth_is_bounded_and_closes_handle(self):
+        name = "bounded.bin"
+        self.payload[name] = b"A" * MODULE.PRELOAD_LIMIT
+        self.write_bundle()
+        expected = {"size": len(self.payload[name]), "sha256": sha(self.payload[name])}
+        original_open = Path.open
+        requests, handles = [], []
+
+        class GrowingReader:
+            def __init__(self, stream):
+                self.stream = stream
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return self.stream.__exit__(*args)
+            def read(self, size=-1):
+                requests.append(size)
+                return self.stream.read(size)
+
+        def open_file(file, mode="r", *args, **kwargs):
+            stream = original_open(file, mode, *args, **kwargs)
+            if file.name == name and mode == "rb":
+                handles.append(stream)
+                with original_open(file, "ab") as changed:
+                    changed.write(b"extra bytes after stat")
+                return GrowingReader(stream)
+            return stream
+
+        with mock.patch.object(Path, "open", new=open_file):
+            with self.assertRaisesRegex(ValueError, "bounded read"):
+                MODULE.read_verified_file(MODULE.filesystem_path(self.bundle), name, expected, capture=True)
+        self.assertEqual(requests, [MODULE.PRELOAD_LIMIT + 1])
+        self.assertTrue(handles and all(handle.closed for handle in handles))
+
+    def test_preload_change_before_zip_write_is_rejected(self):
+        original = MODULE.write_archive_member
+        changed = False
+
+        def change_then_write(archive, bundle, root, relative, expected, cached, secrets=()):
+            nonlocal changed
+            if cached is not None and relative == "binary.bin" and not changed:
+                changed = True
+                path = bundle / relative
+                before = path.stat()
+                path.write_bytes(b"Z" * expected["size"])
+                os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns + 1000000000))
+            return original(archive, bundle, root, relative, expected, cached, secrets)
+
+        with mock.patch.object(MODULE, "write_archive_member", side_effect=change_then_write):
+            with self.assertRaisesRegex(ValueError, "Source changed after preload"):
+                self.assets("changed-after-preload")
+        self.assertTrue(changed)
+        self.assertFalse((self.root / "changed-after-preload.offline.json").exists())
+        self.assertFalse(list(self.root.glob(".offline-*-*")))
+
+    def test_worker_failure_joins_siblings_and_closes_all_source_handles(self):
+        self.payload["workers/00-slow.txt"] = b"slow fixture"
+        self.payload["workers/05-fail.txt"] = b"failing fixture"
+        self.write_bundle()
+        for failing_capture in (False, True):
+            with self.subTest(preload=failing_capture):
+                original_open, original_batch = Path.open, MODULE.verified_batch
+                phase, handles = {"capture": None}, []
+                failed, slow_finished = threading.Event(), threading.Event()
+
+                class TrackedReader:
+                    def __init__(self, stream, name):
+                        self.stream, self.name = stream, name
+                    def __enter__(self):
+                        return self
+                    def __exit__(self, *args):
+                        return self.stream.__exit__(*args)
+                    def read(self, size=-1):
+                        if phase["capture"] == failing_capture:
+                            if self.name == "05-fail.txt":
+                                failed.set()
+                                raise ValueError("Injected nonfirst worker failure")
+                            if self.name == "00-slow.txt":
+                                if not failed.wait(10):
+                                    raise ValueError("Sibling failure did not arrive")
+                                time.sleep(0.03)
+                                slow_finished.set()
+                        return self.stream.read(size)
+
+                def open_file(file, mode="r", *args, **kwargs):
+                    stream = original_open(file, mode, *args, **kwargs)
+                    if file.name in ("00-slow.txt", "05-fail.txt") and mode == "rb":
+                        handles.append(stream)
+                        return TrackedReader(stream, file.name)
+                    return stream
+
+                def batch(*args, **kwargs):
+                    phase["capture"] = kwargs.get("capture", False)
+                    return original_batch(*args, **kwargs)
+
+                with mock.patch.object(Path, "open", new=open_file), \
+                        mock.patch.object(MODULE, "verified_batch", side_effect=batch):
+                    with self.assertRaisesRegex(ValueError, "Injected nonfirst worker failure"):
+                        self.assets("worker-error-" + str(failing_capture))
+                self.assertTrue(slow_finished.is_set(), "Failure escaped before the sibling worker completed")
+                self.assertTrue(handles and all(handle.closed for handle in handles))
+                self.assertFalse(list(self.root.glob("worker-error-*")))
+                self.assertFalse(list(self.root.glob(".offline-*-*")))
+
+    def test_synthetic_serial_and_parallel_read_measurements(self):
+        for index in range(256):
+            self.payload[f"measurement/{index:03}.txt"] = bytes([index]) * 4096
+        self.write_bundle()
+        inventory, _ = MODULE.read_inventory(self.bundle)
+        results = {}
+        for workers in (1, 16):
+            started = time.perf_counter()
+            with mock.patch.object(MODULE, "READ_WORKERS", workers):
+                report = MODULE.audit_directory(self.bundle, inventory, MODULE.Progress(False))
+            self.assertEqual(report["fileCount"], len(self.payload) + 1)
+            results[str(workers)] = round(time.perf_counter() - started, 4)
+        # Measure real temporary files without a timing-dependent pass threshold.
+        print(json.dumps({"syntheticReadBenchmark": results, "files": len(inventory), "bothVerified": True}), flush=True)
 
     def test_reject_link_directory(self):
         target = self.root / "external"

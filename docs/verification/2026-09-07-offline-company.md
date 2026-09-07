@@ -33,7 +33,7 @@
 
 ## 工具与 Skill
 
-离线归档工具 18 项合成测试通过，无跳过，包含 Windows PowerShell 5.1 逐成员恢复与损坏/错序/漏件/越界/覆盖拒绝，以及真实超过 300 字符的 Windows 源、资产和临时路径。首次实际归档遇到 MAX_PATH 限制，已统一使用扩展绝对路径修复，没有更改系统策略。随后修正 SDK `credentials` 源码目录被误当凭证文件的判定，实际凭证文件与目录内秘密内容仍由反例验证拒绝。全部文件诊断的唯一 PEM 命中是固定 Git 内 GnuTLS DLL 的公开自检常量：11 块均逐字节匹配固定上游源码，仅精确路径与整文件 hash 允许，改字节/换路径/显式秘密仍拒绝。来源与校验规则见 [公开自检审查](../offline-artifacts.md#公开自检材料审查清单)。该工具测试本身不代表最终发行资产已压缩或上传。
+离线归档工具 24 项合成测试通过，无跳过，包含 Windows PowerShell 5.1 逐成员恢复与损坏/错序/漏件/越界/覆盖拒绝，以及真实超过 300 字符的 Windows 源、资产和临时路径。首次实际归档遇到 MAX_PATH 限制，已统一使用扩展绝对路径修复，没有更改系统策略。随后修正 SDK `credentials` 源码目录被误当凭证文件的判定，实际凭证文件与目录内秘密内容仍由反例验证拒绝。全部文件诊断的唯一 PEM 命中是固定 Git 内 GnuTLS DLL 的公开自检常量：11 块均逐字节匹配固定上游源码，仅精确路径与整文件 hash 允许，改字节/换路径/显式秘密仍拒绝。来源与校验规则见 [公开自检审查](../offline-artifacts.md#公开自检材料审查清单)。该工具测试本身不代表最终发行资产已压缩或上传。
 
 公司 Skill 通过 skill-creator 的 quick_validate，并由独立 Agent 以“有未提交鉴权改动、不能上传、无网络安装、Chat-only”场景审阅。已修正 PowerShell 的包路径、源/发行模板位置、总帮助入口，以及公司工作区的 bind/registration 应用流程。离线开发工具 4 项测试通过：现有目录保护、lock/补丁/依赖不匹配拒绝、被篡改 payload 拒绝，以及 web junction 越出 checkout 的拒绝。
 
@@ -55,9 +55,23 @@
 
 `700de35` 的 [第三轮 CI](https://github.com/wyzz973/HarnessHub/actions/runs/34134984252)中 Ubuntu 完整通过，Windows tooling 66/66、unit 82/83；DPAPI 各项通过，唯一失败是合成 file 凭证的 `read-file/owner` 校验。测试夹具改为显式当前用户 owner、受保护且仅当前用户可访问的原子文件创建，POSIX 仍用 0600；没有修改生产安全判断。包括 Gateway/Worker 的相关 21/21 本机测试通过，并验证读取前后 ACL 不变、额外公开读取权限仍拒绝。该测试修正不改变发行包。
 
+`5b6d089` 的 [完整 CI](https://github.com/wyzz973/HarnessHub/actions/runs/34135677465)两平台均成功，固定 Node 24.20.0、pnpm 10.12.3：Windows Server 2025 x64 为 tooling 66/0、unit 84/0、integration 108/13、smoke 2/1，共 260 通过、14 跳过；Ubuntu 24.04 x64 为 59/7、73/11、95/26、3/0，共 230 通过、44 跳过。斜线后为跳过数。Windows 跳过包含 12 项 opt-in ARM64 固定引擎 MCP、1 项 POSIX 信号集成和 1 项 POSIX recipe smoke；Ubuntu 另有 Windows/macOS 专属分支跳过。两平台 lint、格式、边界、文档、构建、API 与生产控制台检查均通过，不能把跳过当作该平台真实引擎验收。
+
 第一次最终包验收在引擎启动前的全量 hash 阶段因串行小文件读取耗时过长而中止，记录为未通过；没有启动引擎或调用模型。发行校验改为固定最多 16 个并发 reader，并等待每批全部关闭后才成功或抛错。6 项发行 unit 通过；独立真实 fs.open/read/close 验证跨批覆盖、尾文件篡改、首个错误优先、读取异常、元数据失败与关闭延迟，所有场景在 promise 结束时 active reader 为 0。相同 3,072 个小文件、9,407,082 字节，旧实现两次约 2.47/1.20 秒，新实现约 0.35/0.38 秒；性能仅记录观测，不以放宽数据校验实现。
 
-最终搬迁、归档和远端 CI 结果在完成后补充。
+Windows 归档的串行源校验在 38,003/160,558 文件时按计划中止，ZIP 与完成 manifest 均未创建，该次不算通过。真实 256 个小文件共 1.59 MB 的采样显示，open 占 2.324/2.951 秒；据此对源校验和小文件预读加入固定 16 并发，ZIP 仍单线程按排序写入，所有 hash/秘密/变化检查保留。24 项回归验证跨批、1 MiB 边界、有界读取、单 writer、损坏/秘密拒绝及失败时句柄全部关闭；260 个真实临时文件的 1/16 线程观测为 1.4371/0.2252 秒，没有速度阈值断言。
+
+## 最终运行包组合验收
+
+`bundle.json` 保持上述同一 SHA256。`Sj86Co` 私有验收目录记录的正式 `verifyBundle(full=true)` 前后两遍均验证 160,557 文件、3,908,040,024 字节；10 个固定程序版本均通过，实际精确集合含 `bundle.json` 为 160,558 文件、13,389 目录，无链接、额外文件或 state。目录集合 hash 为 `1c9b7149c4da5a9366d7a6a84187e8f468a8c1022ecb6bc8e2d49967ae7aad1b`。
+
+最终证据由相同清单下的正式入口记录组成：`JVp1m5` 中 8 个 ACP 和 Kimi CLI 配置解析通过；`OoBuTX` 补验 OpenClaw 和 Pi，分别约 14.03 秒、0.92 秒。合计 9 个 ACP initialize 与 Kimi CLI 解析成功，探测不调用模型。两种离线工具包实际 install/verify 的 digest 一致，workspace-tools 完成 bind，MCP 命令 canonical 完整路径等于包内 Node，Skill 与工具入口位于经过验证的独立安装目录。
+
+`OoBuTX` 的 Pi Run `dfebe680-baf7-4eb2-ae99-69826935cfd5` 经正式 Gateway/SQLite/Worker 完成，恰好 2 次本地合成 Chat 请求；真实 `workspace_read` 返回仅存在于测试文件中的随机标记，固定 Skill 和 base_directory 出现在模型输入，最终回答标记严格匹配。Session 关闭后，实际 MCP PID 20728 与原生 Pi 父 PID 8484 均确认不存在；9 个所属 Job 命令退出码均为 0，残留进程与清理错误列表为空。结束时文件 metadata、精确文件/目录集合及清单字节未变；最终内容 hash 另由归档逐成员验证，不把复用证据写成重复执行。
+
+失败记录保留且不算通过：验收脚本先后写错 MCP namespaced 名称、用继承 ACL 创建合成凭证、误写 PowerShell 环境变量语法；这些均经独立反例定位后修正，生产包没有因此改变。OpenClaw 首次在归档 I/O 竞争下 45 秒 readiness 到期，最早配置加载已耗约 38 秒；无归档竞争、全新私有 HOME 的独立复验在 11.39 秒 ready、15.97 秒 ACP initialize，正式入口补验亦通过。未延长期限、改用全局缓存或重新安装。
+
+最终归档、恢复和 GitHub Release 结果在完成后补充。
 
 ## 限制与环境收尾
 

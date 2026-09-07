@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, wait
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -22,6 +24,8 @@ CHUNK = 1024 * 1024
 MANIFEST_LIMIT = 64 * 1024 * 1024
 ASSET_LIMIT = 2 * 1024 * 1024 * 1024
 PART_BYTES = 1932735283  # floor(1.8 GiB), below the GitHub single-asset limit.
+READ_WORKERS = 16
+PRELOAD_LIMIT = 1024 * 1024
 PRIVATE_KEY = re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----\r?\n[A-Za-z0-9+/]{30,}")
 # Public GnuTLS self-test keys, verified against 3.8.13 commit
 # b390d80208ed60f1b33ad899475951a8efb40ccd, lib/crypto-selftests-pk.c.
@@ -167,6 +171,40 @@ def read_inventory(bundle):
     return parse_inventory(manifest_path.read_bytes())
 
 
+def read_verified_file(bundle, relative, expected, secrets=(), *, capture=False):
+    """Own and close one source handle; optionally retain at most 1 MiB of data."""
+    file = filesystem_path(bundle / relative)
+    before = regular_stat(file)
+    require(before.st_size == expected["size"], f"Source size mismatch: {relative}")
+    data = None
+    with file.open("rb") as stream:
+        if capture:
+            require(expected["size"] <= PRELOAD_LIMIT, "Preload file exceeds bounded read size")
+            # One extra byte detects growth without an unbounded read/allocation.
+            data = stream.read(expected["size"] + 1)
+            require(len(data) == expected["size"], f"Source changed during bounded read: {relative}")
+            with io.BytesIO(data) as buffered:
+                size, digest = digest_stream(buffered, secrets=secrets, payload_name=relative)
+        else:
+            size, digest = digest_stream(stream, secrets=secrets, payload_name=relative)
+    after = regular_stat(file)
+    require(signature(before) == signature(after), f"Source changed while hashing: {relative}")
+    require((size, digest) == (expected["size"], expected["sha256"]), f"Source SHA-256 mismatch: {relative}")
+    return (data, signature(after)) if capture else None
+
+
+def verified_batch(pool, bundle, entries, secrets=(), *, capture=False):
+    """Join every bounded worker, including on failure, before exposing results."""
+    require(len(entries) <= READ_WORKERS, "Read batch exceeds fixed concurrency bound")
+    futures = []
+    try:
+        for relative, expected in entries:
+            futures.append(pool.submit(read_verified_file, bundle, relative, expected, secrets, capture=capture))
+    finally:
+        wait(futures)
+    return {relative: future.result() for (relative, _), future in zip(entries, futures)}
+
+
 def audit_directory(bundle, inventory, progress, hashes=True, secrets=()):
     bundle = filesystem_path(bundle)
     actual = {}
@@ -196,15 +234,12 @@ def audit_directory(bundle, inventory, progress, hashes=True, secrets=()):
     total = sum(item["size"] for item in inventory.values())
     if hashes:
         progress.emit("verify-source", total=len(inventory), force=True)
-        for index, (relative, expected) in enumerate(inventory.items(), 1):
-            file = bundle / relative
-            before = regular_stat(file)
-            require(before.st_size == expected["size"], f"Source size mismatch: {relative}")
-            with file.open("rb") as stream:
-                actual_size, actual_hash = digest_stream(stream, secrets=secrets, payload_name=relative)
-            require(signature(before) == signature(regular_stat(file)), f"Source changed while hashing: {relative}")
-            require((actual_size, actual_hash) == (expected["size"], expected["sha256"]), f"Source SHA-256 mismatch: {relative}")
-            progress.emit("verify-source", index, len(inventory))
+        entries = list(inventory.items())
+        with ThreadPoolExecutor(max_workers=READ_WORKERS) as pool:
+            for offset in range(0, len(entries), READ_WORKERS):
+                batch = entries[offset:offset + READ_WORKERS]
+                verified_batch(pool, bundle, batch, secrets)
+                progress.emit("verify-source", offset + len(batch), len(inventory))
     return {"fileCount": len(inventory), "uncompressedBytes": total, "emptyDirectoriesOmitted": empty_directories}
 
 
@@ -243,6 +278,22 @@ def verify_archive(archive_path, inventory, manifest_bytes, root_name, progress,
         return {"archiveMemberCount": len(members), "zip64EntryCount": sum(member.extract_version >= 45 for member in members)}
 
 
+def write_archive_member(archive, bundle, root_name, relative, expected, cached, secrets=()):
+    """Write one sorted member on the owner thread; cached bytes were verified."""
+    file = bundle / relative
+    before = regular_stat(file)
+    require(before.st_size == expected["size"], f"Source changed before ZIP write: {relative}")
+    if cached is not None:
+        require(signature(before) == cached[1], f"Source changed after preload: {relative}")
+    info = zip_info(root_name + "/" + relative, expected["size"])
+    info._compresslevel = 1
+    with (io.BytesIO(cached[0]) if cached is not None else file.open("rb")) as source_file:
+        with archive.open(info, "w", force_zip64=True) as target:
+            size, digest = digest_stream(source_file, target, secrets=secrets, payload_name=relative)
+    require(signature(before) == signature(regular_stat(file)), f"Source changed during ZIP write: {relative}")
+    require((size, digest) == (expected["size"], expected["sha256"]), f"Source changed/hash mismatch during ZIP write: {relative}")
+
+
 def create_archive(bundle, destination, quiet=False, secrets=()):
     bundle = filesystem_path(bundle)
     destination = filesystem_path(destination)
@@ -264,17 +315,20 @@ def create_archive(bundle, destination, quiet=False, secrets=()):
         progress.emit("create-zip", total=len(inventory), force=True)
         with zipfile.ZipFile(temporary, "x", compression=zipfile.ZIP_DEFLATED, compresslevel=1, allowZip64=True) as archive:
             archive.writestr(zip_info(root_name + "/", directory=True), b"")
-            for index, (relative, expected) in enumerate(sorted(inventory.items()), 1):
-                file = bundle / relative
-                before = regular_stat(file)
-                require(before.st_size == expected["size"], f"Source changed before ZIP write: {relative}")
-                info = zip_info(root_name + "/" + relative, expected["size"])
-                info._compresslevel = 1
-                with file.open("rb") as source_file, archive.open(info, "w", force_zip64=True) as target:
-                    size, digest = digest_stream(source_file, target, secrets=secrets, payload_name=relative)
-                require(signature(before) == signature(regular_stat(file)), f"Source changed during ZIP write: {relative}")
-                require((size, digest) == (expected["size"], expected["sha256"]), f"Source changed/hash mismatch during ZIP write: {relative}")
-                progress.emit("create-zip", index, len(inventory))
+            entries = sorted(inventory.items())
+            with ThreadPoolExecutor(max_workers=READ_WORKERS) as pool:
+                for offset in range(0, len(entries), READ_WORKERS):
+                    batch = entries[offset:offset + READ_WORKERS]
+                    small = [(name, entry) for name, entry in batch if entry["size"] <= PRELOAD_LIMIT]
+                    preloaded = verified_batch(pool, bundle, small, secrets, capture=True)
+                    try:
+                        for relative, expected in batch:
+                            write_archive_member(archive, bundle, root_name, relative, expected, preloaded.get(relative), secrets)
+                    finally:
+                        # Do not retain the previous batch while awaiting another:
+                        # live preloaded payload data is at most 16 * 1 MiB.
+                        preloaded.clear()
+                    progress.emit("create-zip", offset + len(batch), len(inventory))
         audit_directory(bundle, inventory, progress, hashes=False)
         verified = verify_archive(temporary, inventory, manifest_bytes, root_name, progress, secrets=secrets)
         progress.emit("hash-zip", force=True)

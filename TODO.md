@@ -1,6 +1,6 @@
 # HarnessHub 开发任务
 
-更新：2026-09-06。阶段 A（HH-001～HH-012）、HH-013/HH-015 及既有 macOS 引擎证据保留。Windows 11 ARM64 原生环境已可直接开发；已补入发现、脚本启动、Job 监督/恢复、文件 ACL/锁与 DPAPI。Codex 的真实文本、只读工具和流式取消已通过；历史范围见 [Windows 验收](docs/verification/2026-09-06-windows.md)。本轮 11 个引擎通过 DeepSeek V4 Flash 短任务，最新检查、工具与发行进展见 [便携引擎验收](docs/verification/2026-09-06-portable-engines.md)。其余平台范围见 [Windows 指南](docs/windows.md)，不以单个引擎通过代替全部发行验收。
+更新：2026-09-07。阶段 A（HH-001～HH-012）、HH-013/HH-015 及既有 macOS 引擎证据保留。Windows 11 ARM64 原生环境已可直接开发；已补入发现、脚本启动、Job 监督/恢复、文件 ACL/锁与 DPAPI。Codex 的真实文本、只读工具和流式取消已通过；历史范围见 [Windows 验收](docs/verification/2026-09-06-windows.md)。上一轮 11 个引擎通过 DeepSeek V4 Flash 短任务，最新检查、工具与发行进展见 [便携引擎验收](docs/verification/2026-09-06-portable-engines.md)。其余平台范围见 [Windows 指南](docs/windows.md)，不以单个引擎通过代替全部发行验收。
 
 本文件拥有任务依赖、优先级和进度；架构契约由 [DESIGN.md](DESIGN.md)拥有，开发与验收按 [AGENTS.md](AGENTS.md)及 [测试要求](docs/testing.md)执行。任务勾选不改变架构，也不代替证据。
 
@@ -476,9 +476,10 @@ HH-005 后，HH-006 → HH-007 → HH-008 → HH-010 依次修改 Runtime，默�
 
 ### HH-040 公司内网开源引擎与离线运行
 
-- [ ] 2026-09-07 开始；分支 `feat/offline-chat-completions`；基线 `1989d224b93f0344cae744444d656ad7519e8398`。目标为用户确认的 Windows 11 ARM64，模型服务仅 OpenAI Chat Completions。
+- [x] Windows 11 ARM64 公开代码及最终运行目录范围已验证；分支 `feat/offline-chat-completions`；基线 `1989d224b93f0344cae744444d656ad7519e8398`。模型服务仅 OpenAI Chat Completions；公司真实网关另在内网验收。
 - 范围：克隆并固定十个开源引擎及相关适配器源码，随分支携带可校验源码；准备全部运行依赖、内网无安装入口、统一 Chat 适配、原生 MCP 和便携 Skill。
 - 验收：损坏/缺失源码拒绝、闭源条目明确排除、固定真实引擎使用本地 Chat API 与 MCP/文件回合、取消及进程清理、离线开发依赖和移动后的运行目录；公司真实网关无法在外部验收，单独说明。
+- 证据见 [公司开源引擎验收](docs/verification/2026-09-07-offline-company.md)：14 源码归档、10 固定引擎的本地 Chat/MCP/Skill、最终目录 10 版本/9 ACP/Kimi CLI、Pi 实际工具回合、前后 hash、离线开发构建和双平台 CI；Release 交付归 HH-041。
 
 ### HH-041 公司 Agent 交接 Skill 与 GitHub 交付
 
