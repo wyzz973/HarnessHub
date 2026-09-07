@@ -249,7 +249,12 @@ export async function readBundle(root: string): Promise<BundleManifest> {
     files,
   };
 }
-/** Verify immutable payload bytes; failures identify the file, never credentials or file contents. */
+/**
+ * Verify immutable payload bytes with at most 16 concurrent file readers.
+ * Each batch is fully settled before returning or throwing, so callers can
+ * move or dispose of the payload after this promise settles. Failures identify
+ * the first failed file in inventory order, never credentials or file contents.
+ */
 export async function verifyBundle(
   root: string,
   manifest: BundleManifest,
@@ -257,23 +262,31 @@ export async function verifyBundle(
 ) {
   const physicalRoot = await realpath(root);
   let bytes = 0;
-  for (const file of manifest.files) {
-    const target = bundlePath(root, file.path);
-    const info = await lstat(target);
-    if (!info.isFile() || info.isSymbolicLink() || info.size !== file.size)
-      throw new Error(`Bundle file changed: ${file.path}`);
-    const physical = await realpath(target);
-    const relative = path.relative(physicalRoot, physical);
-    if (relative.startsWith("..") || path.isAbsolute(relative))
-      throw new Error(`Bundle link escapes root: ${file.path}`);
-    if (full) {
-      const hash = createHash("sha256");
-      for await (const chunk of createReadStream(target))
-        hash.update(chunk as Buffer);
-      if (hash.digest("hex") !== file.sha256)
-        throw new Error(`Bundle hash mismatch: ${file.path}`);
+  for (let offset = 0; offset < manifest.files.length; offset += 16) {
+    const results = await Promise.allSettled(
+      manifest.files.slice(offset, offset + 16).map(async (file) => {
+        const target = bundlePath(root, file.path);
+        const info = await lstat(target);
+        if (!info.isFile() || info.isSymbolicLink() || info.size !== file.size)
+          throw new Error(`Bundle file changed: ${file.path}`);
+        const physical = await realpath(target);
+        const relative = path.relative(physicalRoot, physical);
+        if (relative.startsWith("..") || path.isAbsolute(relative))
+          throw new Error(`Bundle link escapes root: ${file.path}`);
+        if (full) {
+          const hash = createHash("sha256");
+          for await (const chunk of createReadStream(target))
+            hash.update(chunk as Buffer);
+          if (hash.digest("hex") !== file.sha256)
+            throw new Error(`Bundle hash mismatch: ${file.path}`);
+        }
+        return info.size;
+      }),
+    );
+    for (const result of results) {
+      if (result.status === "rejected") throw result.reason;
+      bytes += result.value;
     }
-    bytes += info.size;
   }
   return { files: manifest.files.length, bytes, hashesVerified: full };
 }

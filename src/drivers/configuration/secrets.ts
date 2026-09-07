@@ -35,8 +35,12 @@ async function keychain(
     windowsHide: true,
   });
   let output = "";
+  let timedOut = false;
   child.stdout.setEncoding("utf8");
-  const timeout = setTimeout(() => child.kill("SIGKILL"), 5000);
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    child.kill("SIGKILL");
+  }, 5000);
   try {
     const completion = new Promise<number | null>((resolve, reject) => {
       child.once("error", () => reject(failure()));
@@ -56,7 +60,38 @@ async function keychain(
         ...(value === undefined ? {} : { value }),
       }),
     );
-    if ((await completion) !== 0) throw failure();
+    if ((await completion) !== 0) {
+      const error = failure();
+      let stage = "unavailable";
+      try {
+        const response: unknown = JSON.parse(output);
+        if (
+          response &&
+          typeof response === "object" &&
+          "stage" in response &&
+          typeof response.stage === "string" &&
+          [
+            "request",
+            "path",
+            "owner",
+            "acl",
+            "open",
+            "identity",
+            "read",
+            "profile",
+            "encrypt",
+            "create",
+            "decrypt",
+            "delete",
+          ].includes(response.stage)
+        )
+          stage = response.stage;
+      } catch {
+        // Native failures may produce no JSON. Raw output must never become diagnostic data.
+      }
+      error.cause = { operation, stage: timedOut ? "timeout" : stage };
+      throw error;
+    }
     let result: unknown;
     try {
       result = JSON.parse(output) as unknown;
@@ -123,7 +158,9 @@ export async function resolveSecret(
         process.platform === "win32"
           ? (await keychain("read-file", ref.value))?.trim()
           : (await readFile(ref.value, "utf8")).trim();
-    } catch {
+    } catch (error) {
+      if (error instanceof HubError && error.code === "SECRET_UNAVAILABLE")
+        throw error;
       throw failure();
     }
   }

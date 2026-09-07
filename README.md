@@ -7,7 +7,7 @@ HarnessHub 管理任务的生命周期与公共状态，具体推理和工具执
 ## 当前能力
 
 - **引擎发现与管理**：16 种已知 Harness 启动配方、PATH/常见目录扫描、自定义 manifest；运行中登记、替换、停用和切换默认引擎。
-- **独立配置**：按适配能力设置模型、Provider、API URL、Keychain/环境/文件密钥引用、便携 Skills 和 ACP MCP。已有 Session 固定原配置版本。
+- **独立配置**：按适配能力设置模型、Provider、API URL、Keychain/环境/文件密钥引用、便携 Skills 和 ACP/原生 MCP。已有 Session 固定原配置版本。
 - **执行控制**：独立 Worker、同 Session 串行、跨 Session 有界并发、期限、取消、权限决定与进程清理状态。
 - **可追溯结果**：SQLite 提交日志、SSE 重放、JSONL 导出、不可变文件产物、配置与实际模型/用量的分别记录。
 - **工作流与评测**：模型生成计划、人工确认、有界 DAG 串行执行；文本/JSON/文件评判器与离线成绩汇总。
@@ -75,7 +75,7 @@ cp engines/example.yaml engines/local.yaml
 pnpm start --config engines/local.yaml --port 3180 --data-dir ./data/local
 ```
 
-密钥只使用 [秘密引用](docs/engine-configuration.md#密钥与环境)，不要写入提交内容或 command。Skills 当前采用显式任务上下文模式；MCP 统一注入要求 ACP；任意 Provider URL 并非所有引擎都支持。
+密钥只使用 [秘密引用](docs/engine-configuration.md#密钥与环境)，不要写入提交内容或 command。Skills 当前采用显式任务上下文模式；MCP 通过 ACP 或已验证的原生配置下发，具体支持与限制见 [原生 MCP](docs/native-mcp.md)。任意 Provider URL 并非所有引擎都支持。
 
 ## 文档导航
 

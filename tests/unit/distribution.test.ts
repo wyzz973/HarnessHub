@@ -329,6 +329,44 @@ void test("bundle inventory rejects malformed platform types, aliases, unknown f
   await assert.rejects(verifyBundle(root, template, true), /link|escape|path/i);
 });
 
+void test("bundle verification covers many files and reports corruption in inventory order", async (t) => {
+  const root = await temporary();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const template = manifest();
+  const payload = "payload";
+  template.files.push(
+    ...Array.from({ length: 45 }, (_, index) => ({
+      path: `engines/中文 files/${index}.txt`,
+      size: payload.length,
+      sha256: digest(payload),
+    })),
+  );
+  for (const file of template.files) {
+    await mkdir(path.dirname(path.join(root, file.path)), { recursive: true });
+    await writeFile(path.join(root, file.path), payload);
+  }
+  await writeManifest(root, template);
+  const parsed = await readBundle(root);
+  assert.deepEqual(await verifyBundle(root, parsed, true), {
+    files: template.files.length,
+    bytes: template.files.length * payload.length,
+    hashesVerified: true,
+  });
+  const last = template.files.at(-1)!;
+  await writeFile(path.join(root, last.path), "changed");
+  await assert.rejects(verifyBundle(root, parsed, true), {
+    message: `Bundle hash mismatch: ${last.path}`,
+  });
+  const first = template.files[0]!;
+  await writeFile(path.join(root, first.path), "changed");
+  await assert.rejects(verifyBundle(root, parsed, true), {
+    message: `Bundle hash mismatch: ${first.path}`,
+  });
+  await writeFile(path.join(root, last.path), payload);
+  await writeFile(path.join(root, first.path), payload);
+  assert.equal((await verifyBundle(root, parsed, true)).hashesVerified, true);
+});
+
 void test("settings storage does not replace valid bytes on parsing failure or silently reset corrupt JSON", async (t) => {
   const root = await temporary();
   t.after(() => rm(root, { recursive: true, force: true }));

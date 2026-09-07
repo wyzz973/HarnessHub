@@ -2,6 +2,8 @@
 
 ## 保留公司改动
 
+不要求全局安装 Git 或 Node。下文的 `git`、`node` 可分别使用离线包内 `bin/git/cmd/git.exe`、`runtime/node.exe` 的绝对路径；PowerShell 用 `&` 调用带空格的路径，不修改公司全局 PATH。
+
 记录 `git branch --show-current`、`git rev-parse HEAD`、`git status --short`，与公共基线 `1989d224b93f0344cae744444d656ad7519e8398` 比较。未提交文件先备份到公司批准的本地位置；不要执行 reset、clean 或用公共目录覆盖公司 checkout。
 
 先用 `git bundle verify <本地 bundle 的绝对路径>` 校验附件，再用 `git fetch <本地 bundle 的绝对路径> feat/offline-chat-completions` 离线获取历史。核对实际提交及共同祖先，在公司自己的集成分支合并。脏 checkout 先保留 tracked/untracked 文件，在独立 worktree/分支集成，再逐项合并公司未提交修改。若只有源码快照或没有共同历史，先记录差异，再逐项移植；不要伪造 merge-base。冲突逐项解释，不能整批接受 ours/theirs。

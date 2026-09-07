@@ -10,6 +10,8 @@
 
 保留 `keychain` 引用类型和 UUID 格式。Windows 使用系统 .NET Framework 编译的窄 C# helper，以 stdin/stdout JSON 传递一次操作，固定应用命名空间，DPAPI CurrentUser 加密后写入 Windows LocalApplicationData/HarnessHub/secrets-v1。密文文件独占创建、目录 owner-only DACL；读取和删除验证 UUID、所有者和 reparse point。Windows 文件秘密引用也验证 DACL。构建缺失的系统依赖或解密失败明确报错。
 
+密文文件创建时也原子指定当前用户 owner、受保护且仅当前用户 FullControl 的 DACL，避免依赖提升权限进程的默认文件所有者。读取校验不接受更宽的 owner/ACL。原生失败仅返回固定阶段代号，Driver 保留脱敏的 operation/stage cause 供诊断；不包含路径、SID、请求值、原始 stderr 或异常正文。HTTP 错误码和说明不变，helper 的 5 秒上限不变。测试的秘密清理独立登记，清理失败不得覆盖主要断言或操作错误。
+
 平台相关文件访问由具体的 `platform/windows-acl` 模块支持产物目录与安全文件测试；该模块不能依赖 Runtime、Gateway 或业务存储。领域与业务模块不能直接引用平台实现，边界检查具有反例。
 
 ## 考虑过的替代方案

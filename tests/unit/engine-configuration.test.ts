@@ -587,17 +587,14 @@ void test(
       ? "System secret storage requires macOS or Windows"
       : false,
   },
-  async () => {
+  async (t) => {
     const ref = await createSecret("HarnessHub owned synthetic key fixture");
-    try {
-      assert.equal(ref.kind, "keychain");
-      assert.equal(
-        await resolveSecret(ref, {}),
-        "HarnessHub owned synthetic key fixture",
-      );
-    } finally {
-      await deleteSecret(ref);
-    }
+    t.after(() => deleteSecret(ref));
+    assert.equal(ref.kind, "keychain");
+    assert.equal(
+      await resolveSecret(ref, {}),
+      "HarnessHub owned synthetic key fixture",
+    );
   },
 );
 

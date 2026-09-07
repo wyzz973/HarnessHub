@@ -15,6 +15,7 @@ internal static class WindowsSecrets {
   private static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = 65536 };
   private static readonly SecurityIdentifier User = WindowsIdentity.GetCurrent().User;
   private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("HarnessHub/engine-credentials/v1");
+  private static string Stage = "request";
   [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
   private static extern SafeFileHandle CreateFile(string file, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
   [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -24,6 +25,7 @@ internal static class WindowsSecrets {
   private static extern bool GetUserProfileDirectory(IntPtr token, StringBuilder directory, ref uint size);
 
   private static void CheckPath(string location) {
+    Stage = "path";
     for (string current = Path.GetFullPath(location); current != null; current = Path.GetDirectoryName(current)) {
       if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) throw new IOException();
     }
@@ -35,10 +37,12 @@ internal static class WindowsSecrets {
   }
 
   private static void CheckSecurity(FileSystemSecurity acl) {
+    Stage = "owner";
     var owner = (SecurityIdentifier)acl.GetOwner(typeof(SecurityIdentifier));
     if (!owner.Equals(User)) throw new UnauthorizedAccessException();
     var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
     var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+    Stage = "acl";
     foreach (FileSystemAccessRule rule in acl.GetAccessRules(true, true, typeof(SecurityIdentifier))) {
       var sid = (SecurityIdentifier)rule.IdentityReference;
       if (rule.AccessControlType == AccessControlType.Allow && !sid.Equals(User) && !sid.Equals(system) && !sid.Equals(admins))
@@ -57,15 +61,19 @@ internal static class WindowsSecrets {
   }
 
   private static byte[] ReadPrivateFile(string file, int limit) {
+    Stage = "path";
     string full = Path.GetFullPath(file);
     if (!Path.IsPathRooted(file)) throw new IOException();
     CheckPath(full);
+    Stage = "open";
     using (SafeFileHandle handle = CreateFile(full, 0x80000000, 1, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero)) {
       if (handle.IsInvalid) throw new IOException();
       string actual = CanonicalPath(handle);
+      Stage = "identity";
       if (!String.Equals(full, actual, StringComparison.OrdinalIgnoreCase)) throw new IOException();
       using (var stream = new FileStream(handle, FileAccess.Read)) {
         CheckSecurity(stream.GetAccessControl());
+        Stage = "read";
         if (stream.Length > limit) throw new IOException();
         using (var output = new MemoryStream()) { stream.CopyTo(output); return output.ToArray(); }
       }
@@ -77,6 +85,7 @@ internal static class WindowsSecrets {
     // to the credential owner. Ask Windows for the token's profile so create,
     // read and delete retain one identity across these process environments.
     string parent;
+    Stage = "profile";
     using (WindowsIdentity identity = WindowsIdentity.GetCurrent()) {
       var profile = new StringBuilder(32768);
       uint length = (uint)profile.Capacity;
@@ -138,9 +147,17 @@ internal static class WindowsSecrets {
         byte[] plain = Encoding.UTF8.GetBytes(value);
         if (String.IsNullOrWhiteSpace(value) || plain.Length > 8192 || value.IndexOfAny(new[] {'\r', '\n', '\0'}) >= 0) throw new ArgumentException();
         byte[] encrypted;
+        Stage = "encrypt";
         try { encrypted = ProtectedData.Protect(plain, Entropy, DataProtectionScope.CurrentUser); }
         finally { Array.Clear(plain, 0, plain.Length); }
-        using (var stream = new FileStream(file, FileMode.CreateNew, FileAccess.Write, FileShare.None)) {
+        // Elevated tokens may use Administrators as their default file owner.
+        // Create our immutable file with the same explicit user ownership as its directory.
+        var security = new FileSecurity();
+        security.SetOwner(User);
+        security.SetAccessRuleProtection(true, false);
+        security.AddAccessRule(new FileSystemAccessRule(User, FileSystemRights.FullControl, AccessControlType.Allow));
+        Stage = "create";
+        using (var stream = new FileStream(file, FileMode.CreateNew, FileSystemRights.Write, FileShare.None, 4096, FileOptions.None, security)) {
           stream.Write(encrypted, 0, encrypted.Length);
           stream.Flush(true);
         }
@@ -149,16 +166,18 @@ internal static class WindowsSecrets {
         CheckAcl(file, false);
         if (operation == "read") {
           byte[] encrypted = ReadPrivateFile(file, 16384);
+          Stage = "decrypt";
           byte[] plain = ProtectedData.Unprotect(encrypted, Entropy, DataProtectionScope.CurrentUser);
           try { Console.Write(Json.Serialize(new { value = new UTF8Encoding(false, true).GetString(plain) })); }
           finally { Array.Clear(plain, 0, plain.Length); }
           return 0;
         }
         if (operation != "delete") throw new ArgumentException();
+        Stage = "delete";
         File.Delete(file);
       }
       Console.Write("{\"ok\":true}");
       return 0;
-    } catch { Console.Write("{\"error\":\"secret unavailable\"}"); return 1; }
+    } catch { Console.Write(Json.Serialize(new { error = "secret unavailable", stage = Stage })); return 1; }
   }
 }
