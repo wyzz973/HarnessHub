@@ -483,8 +483,8 @@ HH-005 后，HH-006 → HH-007 → HH-008 → HH-010 依次修改 Runtime，默�
 
 ### HH-041 公司 Agent 交接 Skill 与 GitHub 交付
 
-- [ ] 与 HH-040 同轮；交付能离线使用的 `harnesshub-company-gateway` Skill、合并基线与源代码/运行包清单；用户已授权新分支推送。
+- [x] 与 HH-040 同轮；已交付能离线使用的 `harnesshub-company-gateway` Skill、合并基线与源代码/运行包清单；新分支与公开离线 Release 已推送。
 - 公司已修改的网关代码禁止上传；Skill 指导公司 Agent 保留本地网关，按模块合并本分支，不用远端版本覆盖公司实现，不将个人凭证与运行状态放入交付。
-- 完成状态以实际源码校验、构建、Skill 验证、离线包和 GitHub 推送证据为准。
+- 证据见 [最终归档与交付](docs/verification/2026-09-07-offline-company.md#最终归档与交付)：实际归档、独立 Python 校验、系统 PowerShell 5.1 恢复和四附件远端 SHA256 均通过；[Release](https://github.com/wyzz973/HarnessHub/releases/tag/offline-win11-arm64-2026-09-07)已公开，无登录下载入口已核验。公司真实网关行为仍按 HH-040 在内网验收。
 
 HH-033～036已完成本机控制台、真实模型拆分/审批执行、启发式引擎选择及Run级原生观测；macOS 浏览器已有两步文件任务、Pi用量与取消证据。Windows 11 ARM64 已开展原生及真实 Codex 验收，其他引擎/平台继续按同套契约验证。远端多用户部署、并行DAG、大规模聚合与账单对账尚不属于已验证能力。

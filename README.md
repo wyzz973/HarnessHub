@@ -19,7 +19,7 @@ HarnessHub 管理任务的生命周期与公共状态，具体推理和工具执
 
 用于裁判机的免安装包由开发机提前构建，运行时与引擎一起交付，模型 API Key 单独配置。入口是 `Start.cmd` / `hub.cmd`；制备步骤见 [Windows 便携发布包](docs/portable-bundle.md)，离线扩展见 [本地工具包](docs/tool-packages.md)。源码克隆本身不包含大体积第三方引擎二进制。
 
-本分支提供 [公司离线交接](docs/offline-company.md)：10 个开源引擎、14 个固定仓库源码归档、Chat Completions 适配，以及 Windows 11 ARM64 的免安装运行包和 HarnessHub 开发依赖。公司 Agent 使用 [交接 Skill](skills/harnesshub-company-gateway/SKILL.md) 保留并合并公司现有网关代码。完整运行文件从 GitHub Release 单独获取，源码 ZIP 不能代替运行包。
+本分支提供 [公司离线交接](docs/offline-company.md)：10 个开源引擎、14 个固定仓库源码归档、Chat Completions 适配，以及 Windows 11 ARM64 的免安装运行包和 HarnessHub 开发依赖。公司 Agent 使用 [交接 Skill](skills/harnesshub-company-gateway/SKILL.md) 保留并合并公司现有网关代码。完整运行文件从 [Windows ARM64 离线 Release](https://github.com/wyzz973/HarnessHub/releases/tag/offline-win11-arm64-2026-09-07) 获取：下载运行 ZIP、`.offline.json`、`Restore-Offline.ps1` 和 Git bundle 四个附件，按 [恢复步骤](docs/offline-artifacts.md#windows-内网校验与恢复)带入内网。GitHub 自动生成的源码 ZIP 不能代替运行包。
 
 前置条件：Git、**Node.js 24.20.0**、**pnpm 10.12.3**。macOS 构建另需 Xcode Command Line Tools（`swiftc` 用于 Keychain helper）；缺少时先运行 `xcode-select --install`。Linux 不构建此 macOS helper，可使用 env/file 秘密引用。
 

@@ -49,12 +49,15 @@ python -I -B scripts/archive-offline.py create --bundle "C:\release\HarnessHub-w
 
 ## Windows 内网校验与恢复
 
-将 manifest、全部分片或单个 ZIP、`Restore-Offline.ps1` 放在同一目录。选择一个尚不存在的输出 `.zip`，例如：
+将 manifest、全部分片或单个 ZIP、`Restore-Offline.ps1` 放在同一目录。下面使用本次 Windows 11 ARM64 开源发行包的准确文件名；其他发行包应使用其对应 manifest。选择一个尚不存在的输出 `.zip`：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Restore-Offline.ps1 -Manifest .\HarnessHub-Windows-ARM64.offline.json -OutputZip .\HarnessHub-restored.zip
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Restore-Offline.ps1 -Manifest .\HarnessHub-OpenSource-Windows-ARM64.offline.json -OutputZip .\HarnessHub-restored.zip
+if ($LASTEXITCODE -ne 0) { throw '离线包恢复失败，请先检查上面的错误' }
 Expand-Archive -LiteralPath .\HarnessHub-restored.zip -DestinationPath C:\HH
 ```
+
+本次解压后的入口在 `C:\HH\HarnessHub-OpenSource-Windows-ARM64`。按 [内网启动](offline-company.md#内网启动)配置公司模型；若使用 `COMPANY_MODEL_API_KEY` 环境引用，在已设置该变量的同一 PowerShell 中执行 `& 'C:\HH\HarnessHub-OpenSource-Windows-ARM64\Start.cmd'`，让子进程继承密钥引用所需环境。
 
 `-ExecutionPolicy Bypass` 只对该 PowerShell 进程生效，不更改机器或用户的执行策略。脚本兼容 Windows PowerShell 5.1 和 PowerShell 7，使用系统 .NET ZIP/SHA256 能力，不连接网络。脚本先验证全部分片、重组后的完整 SHA256，再打开 ZIP，核对清单、所有成员、文件大小和每个文件 SHA256；成功后才把临时文件发布为指定输出。
 

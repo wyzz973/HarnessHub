@@ -71,7 +71,28 @@ Windows 归档的串行源校验在 38,003/160,558 文件时按计划中止，ZI
 
 失败记录保留且不算通过：验收脚本先后写错 MCP namespaced 名称、用继承 ACL 创建合成凭证、误写 PowerShell 环境变量语法；这些均经独立反例定位后修正，生产包没有因此改变。OpenClaw 首次在归档 I/O 竞争下 45 秒 readiness 到期，最早配置加载已耗约 38 秒；无归档竞争、全新私有 HOME 的独立复验在 11.39 秒 ready、15.97 秒 ACP initialize，正式入口补验亦通过。未延长期限、改用全局缓存或重新安装。
 
-最终归档、恢复和 GitHub Release 结果在完成后补充。
+发布源码 `36820367fbf5ef775477349d7c164e51696e1c71` 的 [最终 CI](https://github.com/wyzz973/HarnessHub/actions/runs/34137259809)两平台均成功，测试数量与上述 `5b6d089` 相同，均无失败或取消。Git bundle 已实际创建并通过 `git bundle verify`，携带完整历史，公开 ref `refs/heads/feat/offline-chat-completions` 指向该提交；运行包内容仍对应冻结的 `700de35`，其后只有测试、归档工具与文档变更。
+
+## 最终归档与交付
+
+最终归档命令退出 0（`.tmp/offline/archive-final-parallel.log`），源文件逐一验证后按固定顺序写 ZIP，创建流程两次读取全部 ZIP 成员验证大小与 SHA256。单个 ZIP 为 1,789,282,416 字节，低于 2 GiB，不需要分片；160,559 个 ZIP 成员包含根目录与 160,558 个文件，未压缩文件共 3,942,514,678 字节。独立 Python `verify` 再次完整读取归档，退出 0（`.tmp/offline/archive-independent-verify.log`）；没有使用网络。
+
+归档前执行完整清单、默认敏感路径和 PEM 内容检查；固定 Git GnuTLS 的公开自检常量仅按前述精确来源例外处理。未提供 `--secret-env`，因此显式环境秘密值检查数量为 0，不宣称扫描过此前 DeepSeek 密钥的原始字节；本次包从独立干净输入组装，没有个人状态目录。
+
+| 附件 | 字节数 | SHA256 |
+| --- | ---: | --- |
+| `HarnessHub-OpenSource-Windows-ARM64.zip` | 1,789,282,416 | `0033376482a02b3395e427f0cd6fbf0a52f72a263c1d13d27b1344fddf13d78a` |
+| `HarnessHub-OpenSource-Windows-ARM64.offline.json` | 1,483 | `35d8f384efb6b821fbf2de15fc4e638e7a82ac07fce2f29ae689f6610bb7aa61` |
+| `Restore-Offline.ps1` | 10,363 | `961bc376c9239b65bcf87c82454af47cbdbaed803b5443ab7275a8be4402afbd` |
+| `HarnessHub-offline-chat-completions.bundle` | 441,128,574 | `762ed3892c8a4ae7d46d13dc22becbc4ae1fbe275cb8f5fad8383f260231ea8c` |
+
+系统 Windows PowerShell 5.1 实际运行 `Restore-Offline.ps1` 退出 0，逐一验证 160,558 个内部文件后原子发布恢复 ZIP；另用 `Get-FileHash` 与文件长度独立确认恢复结果与表中 ZIP 完全相同，无 `.incomplete` 残留。证据为 `.tmp/offline/restore-check/restore-ps51.log` 与 `restore-evidence.json`。恢复按 ZIP stream 校验，未再把全部成员展开到磁盘；清单最长相对路径 196 字符，使用文档的 `C:\HH` 解压目录后没有路径达到 260 字符。
+
+恢复进程本身成功；第一次外层证据收集器误将带进度行的 stdout 整体作为 JSON 解析而退出 1。收集器改为提取末尾 JSON，再独立核对恢复 ZIP 大小/hash 后退出 0，未重跑恢复、修改原日志或锁定资产。
+
+[Windows ARM64 离线 Release](https://github.com/wyzz973/HarnessHub/releases/tag/offline-win11-arm64-2026-09-07)已公开发布（预发行版，Release ID `384184022`），不是草稿。tag 与 Git bundle 固定于 `36820367fbf5ef775477349d7c164e51696e1c71`；后续分支提交只补充发布证据、下载入口及恢复文档，不改写已发布包或 tag。`create`、`upload`、`verify`、`publish` 均退出 0，四附件完整集合、大小及 GitHub 返回的 SHA256 全部匹配上述表格，上传过程中也逐字节计算 hash 并核对本地文件未变化。
+
+另从无凭证的公开 GitHub API 与下载地址复核：四附件 HTTP 均为 200；小型 manifest 和恢复脚本完整下载并匹配 SHA256，大型 ZIP 与 Git bundle 用 HEAD 核对可下载性与长度，并与 API 的服务端 SHA256 比对，未把它们完整重新下载。日志为 `.tmp/offline/release-{create,upload,verify,publish}.log`、`release-public-check.log` 及 `release-public-verified.json`。公开源码、Skill、运行包、恢复脚本和带历史 Git bundle 均已交付，公司私有代码与账号状态没有进入附件。
 
 ## 限制与环境收尾
 
