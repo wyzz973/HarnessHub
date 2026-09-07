@@ -1,0 +1,24 @@
+{
+  "id": "codex-acp",
+  "repository": "https://github.com/agentclientprotocol/codex-acp",
+  "version": "1.10.0",
+  "tag": "v1.10.0",
+  "commit": "061f9a4a2e463a220d7a3ab2ae5e9732837085ef",
+  "license": "Apache-2.0",
+  "kind": "adapter",
+  "npmPackage": "@agentclientprotocol/codex-acp",
+  "sourceVersion": {
+    "file": "package.json",
+    "format": "json"
+  },
+  "archive": "vendor/engine-sources/codex-acp.zip",
+  "bytes": 895789,
+  "sha256": "8281f23c345485c3e274d7d058481231f2045280da3cfd6b53bbd5fb21292a6d",
+  "notices": [
+    {
+      "source": "LICENSE",
+      "file": "LICENSE",
+      "sha256": "72ea310b40e1ee2c4aa61935d22065155c50bfde288b114c9cfd3e1fa34f8049"
+    }
+  ]
+}

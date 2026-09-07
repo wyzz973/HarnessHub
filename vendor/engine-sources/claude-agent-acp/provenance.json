@@ -1,0 +1,24 @@
+{
+  "id": "claude-agent-acp",
+  "repository": "https://github.com/agentclientprotocol/claude-agent-acp",
+  "version": "0.75.1",
+  "tag": "v0.75.1",
+  "commit": "3e23c5b960b66a6d2c892e7524c952e731c076a7",
+  "license": "Apache-2.0",
+  "kind": "adapter",
+  "npmPackage": "@agentclientprotocol/claude-agent-acp",
+  "sourceVersion": {
+    "file": "package.json",
+    "format": "json"
+  },
+  "archive": "vendor/engine-sources/claude-agent-acp.zip",
+  "bytes": 569563,
+  "sha256": "ef402cb8cba9c4db30cc0e40a73c7f68aa0a1b20a1bdc3f4185ab1dedf2fbfe0",
+  "notices": [
+    {
+      "source": "LICENSE",
+      "file": "LICENSE",
+      "sha256": "6ed4f049cce59e05197d585bdf8a39980b45d546d6ea718ee344555f3a867c3a"
+    }
+  ]
+}

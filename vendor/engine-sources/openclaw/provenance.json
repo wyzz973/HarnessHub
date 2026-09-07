@@ -1,0 +1,41 @@
+{
+  "id": "openclaw",
+  "repository": "https://github.com/openclaw/openclaw",
+  "version": "2026.9.2",
+  "tag": "v2026.9.2",
+  "commit": "3928bad9badfcb6c7d140530435e806fb8092190",
+  "license": "MIT",
+  "kind": "engine",
+  "npmPackage": "openclaw",
+  "sourceVersion": {
+    "file": "package.json",
+    "format": "json"
+  },
+  "archive": "vendor/engine-sources/openclaw.zip",
+  "bytes": 146970870,
+  "sha256": "9d8839721baf15fc11a0bc4a03b617221e254f2861c656d8805776d8160100c7",
+  "parts": [
+    {
+      "file": "vendor/engine-sources/openclaw.zip.part001",
+      "bytes": 94371840,
+      "sha256": "03e41b7ff45562af76ba0bfdbad0a2034f94a475071be599bf5c4c02529358dc"
+    },
+    {
+      "file": "vendor/engine-sources/openclaw.zip.part002",
+      "bytes": 52599030,
+      "sha256": "dbfc6a4acf374bd818a6ca9400068b3ac97d8cd380441884a03e0e7976b7eeef"
+    }
+  ],
+  "notices": [
+    {
+      "source": "LICENSE",
+      "file": "LICENSE",
+      "sha256": "73571b25326281d369087f469842c02444fe39faaecebda4d82ed21ff3a1c29d"
+    },
+    {
+      "source": "THIRD_PARTY_NOTICES.md",
+      "file": "THIRD_PARTY_NOTICES.md.txt",
+      "sha256": "c84200f7a9bb8b3abc8563520433316716a9eb83915cfe7c3063d5e6fce5e7ca"
+    }
+  ]
+}

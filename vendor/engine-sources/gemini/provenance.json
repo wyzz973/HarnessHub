@@ -1,0 +1,24 @@
+{
+  "id": "gemini",
+  "repository": "https://github.com/google-gemini/gemini-cli",
+  "version": "0.58.0",
+  "tag": "v0.58.0",
+  "commit": "ac9431c9e2290d68af31a77614ff2fddb2391ca3",
+  "license": "Apache-2.0",
+  "kind": "engine",
+  "npmPackage": "@google/gemini-cli",
+  "sourceVersion": {
+    "file": "package.json",
+    "format": "json"
+  },
+  "archive": "vendor/engine-sources/gemini.zip",
+  "bytes": 24388501,
+  "sha256": "d2a1fe4671af0d2e16ada2caf6a318f8e1341c4ff75411d2e3999bba94e63b3b",
+  "notices": [
+    {
+      "source": "LICENSE",
+      "file": "LICENSE",
+      "sha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd"
+    }
+  ]
+}

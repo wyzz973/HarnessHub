@@ -1,0 +1,24 @@
+{
+  "id": "acpx",
+  "repository": "https://github.com/openclaw/acpx",
+  "version": "0.13.2",
+  "tag": "v0.13.2",
+  "commit": "fd173f04aa1b56f9e3f5ca5190c034ddcae28792",
+  "license": "MIT",
+  "kind": "runtime",
+  "npmPackage": "acpx",
+  "sourceVersion": {
+    "file": "package.json",
+    "format": "json"
+  },
+  "archive": "vendor/engine-sources/acpx.zip",
+  "bytes": 1058396,
+  "sha256": "3c633b9aaedfe1b80760ca2882c0c6768ed08ff9878a3728b206a6c2af89903a",
+  "notices": [
+    {
+      "source": "LICENSE",
+      "file": "LICENSE",
+      "sha256": "5c3dd08185d6d0a0045a45b9aea2fd9d85343f7ed5dbe23915e6f15e7b814f2d"
+    }
+  ]
+}

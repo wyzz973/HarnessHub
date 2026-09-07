@@ -1,0 +1,29 @@
+{
+  "id": "codex",
+  "repository": "https://github.com/openai/codex",
+  "version": "0.153.4",
+  "tag": "rust-v0.153.4",
+  "commit": "3d2ee51ca2d5db578f328aa75e20aa22c0197c9a",
+  "license": "Apache-2.0",
+  "kind": "engine",
+  "npmPackage": "@openai/codex",
+  "sourceVersion": {
+    "file": "codex-rs/Cargo.toml",
+    "format": "toml"
+  },
+  "archive": "vendor/engine-sources/codex.zip",
+  "bytes": 16686527,
+  "sha256": "1457da0a64d70c7b28e0ff8ccc7dc21d03e06ce1837a284fccf4b640210577e4",
+  "notices": [
+    {
+      "source": "LICENSE",
+      "file": "LICENSE",
+      "sha256": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc"
+    },
+    {
+      "source": "NOTICE",
+      "file": "NOTICE",
+      "sha256": "9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915"
+    }
+  ]
+}

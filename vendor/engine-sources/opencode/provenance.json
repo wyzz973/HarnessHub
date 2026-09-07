@@ -1,0 +1,23 @@
+{
+  "id": "opencode",
+  "repository": "https://github.com/anomalyco/opencode",
+  "version": "1.18.29",
+  "tag": "v1.18.29",
+  "commit": "16747470f976aca3d362ad730bcd3fe82ecc2c9a",
+  "license": "MIT",
+  "kind": "engine",
+  "sourceVersion": {
+    "file": "packages/opencode/package.json",
+    "format": "json"
+  },
+  "archive": "vendor/engine-sources/opencode.zip",
+  "bytes": 84499749,
+  "sha256": "d66ad811ba25ba3c2504754d58d4134b603f72b366144881b471f6efe7186bfc",
+  "notices": [
+    {
+      "source": "LICENSE",
+      "file": "LICENSE",
+      "sha256": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b"
+    }
+  ]
+}

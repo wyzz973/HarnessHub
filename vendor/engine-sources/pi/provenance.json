@@ -1,0 +1,24 @@
+{
+  "id": "pi",
+  "repository": "https://github.com/earendil-works/pi",
+  "version": "0.85.1",
+  "tag": "v0.85.1",
+  "commit": "d981de1229ef899957bbe968bc8dcda02a21f477",
+  "license": "MIT",
+  "kind": "engine",
+  "npmPackage": "@earendil-works/pi-coding-agent",
+  "sourceVersion": {
+    "file": "packages/coding-agent/package.json",
+    "format": "json"
+  },
+  "archive": "vendor/engine-sources/pi.zip",
+  "bytes": 7838003,
+  "sha256": "3c60fcbc3bdbb0a98ff96b0df8dca5deba5df92ce9c374019d88876223970b4f",
+  "notices": [
+    {
+      "source": "LICENSE",
+      "file": "LICENSE",
+      "sha256": "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48"
+    }
+  ]
+}

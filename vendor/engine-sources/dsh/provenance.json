@@ -1,0 +1,29 @@
+{
+  "id": "dsh",
+  "repository": "https://github.com/deepseek-ai/deepseek-harness",
+  "version": "0.1.2-rc.1",
+  "tag": "dsh-v0.1.2-rc.1",
+  "commit": "a66e4702047846cdaa10c66c9d3df3951f5ea70d",
+  "license": "MIT",
+  "kind": "engine",
+  "npmPackage": "@deepseek-ai/dsh",
+  "sourceVersion": {
+    "file": "apps/cli/package.json",
+    "format": "json"
+  },
+  "archive": "vendor/engine-sources/dsh.zip",
+  "bytes": 22459112,
+  "sha256": "322c37f3379bd123205573fae6813be775396f61cb4f86b6c7489fbd9c2c23f1",
+  "notices": [
+    {
+      "source": "LICENSE",
+      "file": "LICENSE",
+      "sha256": "ebb4f09972aee8608be255debaf78451a68e95c290f55c240dec2ecfa16ea6be"
+    },
+    {
+      "source": "THIRD_PARTY_NOTICES.md",
+      "file": "THIRD_PARTY_NOTICES.md.txt",
+      "sha256": "45c3d5ad23ea58fe6aaa2703488f74f03ea53cc0fa80c1024c24d63670570779"
+    }
+  ]
+}

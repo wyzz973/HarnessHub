@@ -1,0 +1,24 @@
+{
+  "id": "pi-acp",
+  "repository": "https://github.com/svkozak/pi-acp",
+  "version": "0.0.33",
+  "tag": "v0.0.33",
+  "commit": "1bfcb394088ed879db8fd936b570bb626017f878",
+  "license": "MIT",
+  "kind": "adapter",
+  "npmPackage": "pi-acp",
+  "sourceVersion": {
+    "file": "package.json",
+    "format": "json"
+  },
+  "archive": "vendor/engine-sources/pi-acp.zip",
+  "bytes": 116668,
+  "sha256": "97f2acc4976edd2870b75f77e85a7520a39f9b5488e0e15daf866726d8d5aa9d",
+  "notices": [
+    {
+      "source": "LICENSE",
+      "file": "LICENSE",
+      "sha256": "b9e63459a8c046806ee709828fe8cf04a08062c5a99847c9ae2a2be18009fa03"
+    }
+  ]
+}

@@ -1,0 +1,410 @@
+{
+  "schemaVersion": 1,
+  "auditedAt": "2026-09-07",
+  "sources": [
+    {
+      "id": "acpx",
+      "repository": "https://github.com/openclaw/acpx",
+      "version": "0.13.2",
+      "tag": "v0.13.2",
+      "commit": "fd173f04aa1b56f9e3f5ca5190c034ddcae28792",
+      "license": "MIT",
+      "kind": "runtime",
+      "npmPackage": "acpx",
+      "sourceVersion": {
+        "file": "package.json",
+        "format": "json"
+      },
+      "archive": "vendor/engine-sources/acpx.zip",
+      "bytes": 1058396,
+      "sha256": "3c633b9aaedfe1b80760ca2882c0c6768ed08ff9878a3728b206a6c2af89903a",
+      "notices": [
+        {
+          "source": "LICENSE",
+          "file": "LICENSE",
+          "sha256": "5c3dd08185d6d0a0045a45b9aea2fd9d85343f7ed5dbe23915e6f15e7b814f2d"
+        }
+      ]
+    },
+    {
+      "id": "claude-agent-acp",
+      "repository": "https://github.com/agentclientprotocol/claude-agent-acp",
+      "version": "0.75.1",
+      "tag": "v0.75.1",
+      "commit": "3e23c5b960b66a6d2c892e7524c952e731c076a7",
+      "license": "Apache-2.0",
+      "kind": "adapter",
+      "npmPackage": "@agentclientprotocol/claude-agent-acp",
+      "sourceVersion": {
+        "file": "package.json",
+        "format": "json"
+      },
+      "archive": "vendor/engine-sources/claude-agent-acp.zip",
+      "bytes": 569563,
+      "sha256": "ef402cb8cba9c4db30cc0e40a73c7f68aa0a1b20a1bdc3f4185ab1dedf2fbfe0",
+      "notices": [
+        {
+          "source": "LICENSE",
+          "file": "LICENSE",
+          "sha256": "6ed4f049cce59e05197d585bdf8a39980b45d546d6ea718ee344555f3a867c3a"
+        }
+      ]
+    },
+    {
+      "id": "codex",
+      "repository": "https://github.com/openai/codex",
+      "version": "0.153.4",
+      "tag": "rust-v0.153.4",
+      "commit": "3d2ee51ca2d5db578f328aa75e20aa22c0197c9a",
+      "license": "Apache-2.0",
+      "kind": "engine",
+      "npmPackage": "@openai/codex",
+      "sourceVersion": {
+        "file": "codex-rs/Cargo.toml",
+        "format": "toml"
+      },
+      "archive": "vendor/engine-sources/codex.zip",
+      "bytes": 16686527,
+      "sha256": "1457da0a64d70c7b28e0ff8ccc7dc21d03e06ce1837a284fccf4b640210577e4",
+      "notices": [
+        {
+          "source": "LICENSE",
+          "file": "LICENSE",
+          "sha256": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc"
+        },
+        {
+          "source": "NOTICE",
+          "file": "NOTICE",
+          "sha256": "9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915"
+        }
+      ]
+    },
+    {
+      "id": "codex-acp",
+      "repository": "https://github.com/agentclientprotocol/codex-acp",
+      "version": "1.10.0",
+      "tag": "v1.10.0",
+      "commit": "061f9a4a2e463a220d7a3ab2ae5e9732837085ef",
+      "license": "Apache-2.0",
+      "kind": "adapter",
+      "npmPackage": "@agentclientprotocol/codex-acp",
+      "sourceVersion": {
+        "file": "package.json",
+        "format": "json"
+      },
+      "archive": "vendor/engine-sources/codex-acp.zip",
+      "bytes": 895789,
+      "sha256": "8281f23c345485c3e274d7d058481231f2045280da3cfd6b53bbd5fb21292a6d",
+      "notices": [
+        {
+          "source": "LICENSE",
+          "file": "LICENSE",
+          "sha256": "72ea310b40e1ee2c4aa61935d22065155c50bfde288b114c9cfd3e1fa34f8049"
+        }
+      ]
+    },
+    {
+      "id": "dsh",
+      "repository": "https://github.com/deepseek-ai/deepseek-harness",
+      "version": "0.1.2-rc.1",
+      "tag": "dsh-v0.1.2-rc.1",
+      "commit": "a66e4702047846cdaa10c66c9d3df3951f5ea70d",
+      "license": "MIT",
+      "kind": "engine",
+      "npmPackage": "@deepseek-ai/dsh",
+      "sourceVersion": {
+        "file": "apps/cli/package.json",
+        "format": "json"
+      },
+      "archive": "vendor/engine-sources/dsh.zip",
+      "bytes": 22459112,
+      "sha256": "322c37f3379bd123205573fae6813be775396f61cb4f86b6c7489fbd9c2c23f1",
+      "notices": [
+        {
+          "source": "LICENSE",
+          "file": "LICENSE",
+          "sha256": "ebb4f09972aee8608be255debaf78451a68e95c290f55c240dec2ecfa16ea6be"
+        },
+        {
+          "source": "THIRD_PARTY_NOTICES.md",
+          "file": "THIRD_PARTY_NOTICES.md.txt",
+          "sha256": "45c3d5ad23ea58fe6aaa2703488f74f03ea53cc0fa80c1024c24d63670570779"
+        }
+      ]
+    },
+    {
+      "id": "gemini",
+      "repository": "https://github.com/google-gemini/gemini-cli",
+      "version": "0.58.0",
+      "tag": "v0.58.0",
+      "commit": "ac9431c9e2290d68af31a77614ff2fddb2391ca3",
+      "license": "Apache-2.0",
+      "kind": "engine",
+      "npmPackage": "@google/gemini-cli",
+      "sourceVersion": {
+        "file": "package.json",
+        "format": "json"
+      },
+      "archive": "vendor/engine-sources/gemini.zip",
+      "bytes": 24388501,
+      "sha256": "d2a1fe4671af0d2e16ada2caf6a318f8e1341c4ff75411d2e3999bba94e63b3b",
+      "notices": [
+        {
+          "source": "LICENSE",
+          "file": "LICENSE",
+          "sha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd"
+        }
+      ]
+    },
+    {
+      "id": "hermes",
+      "repository": "https://github.com/NousResearch/hermes-agent",
+      "version": "0.19.0",
+      "tag": "v2026.7.20",
+      "commit": "3ef6bbd201263d354fd83ec55b3c306ded2eb72a",
+      "license": "MIT",
+      "kind": "engine",
+      "sourceVersion": {
+        "file": "pyproject.toml",
+        "format": "toml"
+      },
+      "archive": "vendor/engine-sources/hermes.zip",
+      "bytes": 76466290,
+      "sha256": "47832fc4f1bea7fa2199f9992cee28b6a59ed134d8b4c8296ac70b6331cef0f9",
+      "notices": [
+        {
+          "source": "LICENSE",
+          "file": "LICENSE",
+          "sha256": "821556e6336796450ab852d375117b48a4887e71d255794fd6318d99982a5ab6"
+        }
+      ]
+    },
+    {
+      "id": "kimi",
+      "repository": "https://github.com/MoonshotAI/kimi-cli",
+      "version": "1.50.0",
+      "tag": "1.50.0",
+      "commit": "86f136422a0aae6b217ea49e7ea1d2e8a1defcd2",
+      "license": "Apache-2.0",
+      "kind": "engine",
+      "sourceVersion": {
+        "file": "pyproject.toml",
+        "format": "toml"
+      },
+      "archive": "vendor/engine-sources/kimi.zip",
+      "bytes": 10977499,
+      "sha256": "63766f6bf3f728c27eecedf44bd06b15e25069c47262acc47d362dff3e74dcd5",
+      "notices": [
+        {
+          "source": "LICENSE",
+          "file": "LICENSE",
+          "sha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd"
+        },
+        {
+          "source": "NOTICE",
+          "file": "NOTICE",
+          "sha256": "6bdd9ca6fd120dcd6ba5e16bf2bacc01f42781fd2d9754ec934c5db05fcdc395"
+        }
+      ]
+    },
+    {
+      "id": "mimo",
+      "repository": "https://github.com/XiaomiMiMo/MiMo-Code",
+      "version": "0.1.14",
+      "tag": "v0.1.14",
+      "commit": "2a0eb706e95a77cba34a319e9f11f33f26d4450c",
+      "license": "MIT",
+      "kind": "engine",
+      "npmPackage": "@mimo-ai/cli",
+      "sourceVersion": {
+        "file": "packages/opencode/package.json",
+        "format": "json"
+      },
+      "archive": "vendor/engine-sources/mimo.zip",
+      "bytes": 57483991,
+      "sha256": "73b1bc2ffc8d8a98d35a174a1c43fcaf1870acd2c560deb28490e12ccd19139f",
+      "notices": [
+        {
+          "source": "LICENSE",
+          "file": "LICENSE",
+          "sha256": "d7201a5532f4ce12324aec5469dc1dfe290654d085c2547bc7384932881ac448"
+        }
+      ]
+    },
+    {
+      "id": "openclaw",
+      "repository": "https://github.com/openclaw/openclaw",
+      "version": "2026.9.2",
+      "tag": "v2026.9.2",
+      "commit": "3928bad9badfcb6c7d140530435e806fb8092190",
+      "license": "MIT",
+      "kind": "engine",
+      "npmPackage": "openclaw",
+      "sourceVersion": {
+        "file": "package.json",
+        "format": "json"
+      },
+      "archive": "vendor/engine-sources/openclaw.zip",
+      "bytes": 146970870,
+      "sha256": "9d8839721baf15fc11a0bc4a03b617221e254f2861c656d8805776d8160100c7",
+      "parts": [
+        {
+          "file": "vendor/engine-sources/openclaw.zip.part001",
+          "bytes": 94371840,
+          "sha256": "03e41b7ff45562af76ba0bfdbad0a2034f94a475071be599bf5c4c02529358dc"
+        },
+        {
+          "file": "vendor/engine-sources/openclaw.zip.part002",
+          "bytes": 52599030,
+          "sha256": "dbfc6a4acf374bd818a6ca9400068b3ac97d8cd380441884a03e0e7976b7eeef"
+        }
+      ],
+      "notices": [
+        {
+          "source": "LICENSE",
+          "file": "LICENSE",
+          "sha256": "73571b25326281d369087f469842c02444fe39faaecebda4d82ed21ff3a1c29d"
+        },
+        {
+          "source": "THIRD_PARTY_NOTICES.md",
+          "file": "THIRD_PARTY_NOTICES.md.txt",
+          "sha256": "c84200f7a9bb8b3abc8563520433316716a9eb83915cfe7c3063d5e6fce5e7ca"
+        }
+      ]
+    },
+    {
+      "id": "opencode",
+      "repository": "https://github.com/anomalyco/opencode",
+      "version": "1.18.29",
+      "tag": "v1.18.29",
+      "commit": "16747470f976aca3d362ad730bcd3fe82ecc2c9a",
+      "license": "MIT",
+      "kind": "engine",
+      "sourceVersion": {
+        "file": "packages/opencode/package.json",
+        "format": "json"
+      },
+      "archive": "vendor/engine-sources/opencode.zip",
+      "bytes": 84499749,
+      "sha256": "d66ad811ba25ba3c2504754d58d4134b603f72b366144881b471f6efe7186bfc",
+      "notices": [
+        {
+          "source": "LICENSE",
+          "file": "LICENSE",
+          "sha256": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b"
+        }
+      ]
+    },
+    {
+      "id": "pi",
+      "repository": "https://github.com/earendil-works/pi",
+      "version": "0.85.1",
+      "tag": "v0.85.1",
+      "commit": "d981de1229ef899957bbe968bc8dcda02a21f477",
+      "license": "MIT",
+      "kind": "engine",
+      "npmPackage": "@earendil-works/pi-coding-agent",
+      "sourceVersion": {
+        "file": "packages/coding-agent/package.json",
+        "format": "json"
+      },
+      "archive": "vendor/engine-sources/pi.zip",
+      "bytes": 7838003,
+      "sha256": "3c60fcbc3bdbb0a98ff96b0df8dca5deba5df92ce9c374019d88876223970b4f",
+      "notices": [
+        {
+          "source": "LICENSE",
+          "file": "LICENSE",
+          "sha256": "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48"
+        }
+      ]
+    },
+    {
+      "id": "pi-acp",
+      "repository": "https://github.com/svkozak/pi-acp",
+      "version": "0.0.33",
+      "tag": "v0.0.33",
+      "commit": "1bfcb394088ed879db8fd936b570bb626017f878",
+      "license": "MIT",
+      "kind": "adapter",
+      "npmPackage": "pi-acp",
+      "sourceVersion": {
+        "file": "package.json",
+        "format": "json"
+      },
+      "archive": "vendor/engine-sources/pi-acp.zip",
+      "bytes": 116668,
+      "sha256": "97f2acc4976edd2870b75f77e85a7520a39f9b5488e0e15daf866726d8d5aa9d",
+      "notices": [
+        {
+          "source": "LICENSE",
+          "file": "LICENSE",
+          "sha256": "b9e63459a8c046806ee709828fe8cf04a08062c5a99847c9ae2a2be18009fa03"
+        }
+      ]
+    },
+    {
+      "id": "qwen",
+      "repository": "https://github.com/QwenLM/qwen-code",
+      "version": "0.23.0",
+      "tag": "v0.23.0",
+      "commit": "98a9c964158697dd5631d15a62174684ff7bbb53",
+      "license": "Apache-2.0",
+      "kind": "engine",
+      "npmPackage": "@qwen-code/qwen-code",
+      "sourceVersion": {
+        "file": "package.json",
+        "format": "json"
+      },
+      "archive": "vendor/engine-sources/qwen.zip",
+      "bytes": 52558858,
+      "sha256": "726c49cc7b673b9f8274afd704881e06262b9304d57ad3060c82a6f2f6089ca4",
+      "notices": [
+        {
+          "source": "LICENSE",
+          "file": "LICENSE",
+          "sha256": "55367b61ccd2a016a0159ad886bd66a3ee6cb5e873d0c75c803c897dd245b075"
+        }
+      ]
+    }
+  ],
+  "unavailable": [
+    {
+      "id": "claude",
+      "version": "2.1.263",
+      "repository": "https://github.com/anthropics/claude-code",
+      "reason": "Public repository provides documentation, plugins and issue tracking; Claude Code engine implementation is not open source.",
+      "availableAdapter": "claude-agent-acp"
+    },
+    {
+      "id": "copilot",
+      "version": "1.0.83",
+      "repository": "https://github.com/github/copilot-cli",
+      "reason": "Public repository is an issue/documentation/release distribution repository, not the Copilot engine source."
+    },
+    {
+      "id": "cursor",
+      "version": "2026.09.02",
+      "repository": null,
+      "reason": "No official public source repository for the Cursor agent CLI."
+    },
+    {
+      "id": "kiro",
+      "version": "2.21.1",
+      "repository": "https://github.com/kirodotdev/Kiro",
+      "reason": "Public repository provides issues and documentation; the Kiro CLI implementation is not public."
+    },
+    {
+      "id": "antigravity",
+      "version": "1.1.1",
+      "repository": null,
+      "reason": "No official public source repository for the Antigravity ACP engine."
+    },
+    {
+      "id": "qoder",
+      "version": "0.2.14",
+      "repository": "https://github.com/nicepkg/qodercli",
+      "reason": "The pinned npm package names this repository, but GitHub returned HTTP 404 during the 2026-09-07 audit; no accessible official engine source was found."
+    }
+  ]
+}

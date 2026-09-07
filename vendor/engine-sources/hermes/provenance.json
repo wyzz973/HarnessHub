@@ -1,0 +1,23 @@
+{
+  "id": "hermes",
+  "repository": "https://github.com/NousResearch/hermes-agent",
+  "version": "0.19.0",
+  "tag": "v2026.7.20",
+  "commit": "3ef6bbd201263d354fd83ec55b3c306ded2eb72a",
+  "license": "MIT",
+  "kind": "engine",
+  "sourceVersion": {
+    "file": "pyproject.toml",
+    "format": "toml"
+  },
+  "archive": "vendor/engine-sources/hermes.zip",
+  "bytes": 76466290,
+  "sha256": "47832fc4f1bea7fa2199f9992cee28b6a59ed134d8b4c8296ac70b6331cef0f9",
+  "notices": [
+    {
+      "source": "LICENSE",
+      "file": "LICENSE",
+      "sha256": "821556e6336796450ab852d375117b48a4887e71d255794fd6318d99982a5ab6"
+    }
+  ]
+}

@@ -1,2 +1,6 @@
+# Keep the repository's documented LF format on Windows checkouts as well.
+* text=auto eol=lf
+*.zip binary
+*.zip.part* binary
 # Unified patch context has a required space prefix before upstream tab indentation.
 patches/*.patch whitespace=-space-before-tab

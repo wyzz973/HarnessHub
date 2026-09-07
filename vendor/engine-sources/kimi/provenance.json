@@ -1,0 +1,28 @@
+{
+  "id": "kimi",
+  "repository": "https://github.com/MoonshotAI/kimi-cli",
+  "version": "1.50.0",
+  "tag": "1.50.0",
+  "commit": "86f136422a0aae6b217ea49e7ea1d2e8a1defcd2",
+  "license": "Apache-2.0",
+  "kind": "engine",
+  "sourceVersion": {
+    "file": "pyproject.toml",
+    "format": "toml"
+  },
+  "archive": "vendor/engine-sources/kimi.zip",
+  "bytes": 10977499,
+  "sha256": "63766f6bf3f728c27eecedf44bd06b15e25069c47262acc47d362dff3e74dcd5",
+  "notices": [
+    {
+      "source": "LICENSE",
+      "file": "LICENSE",
+      "sha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd"
+    },
+    {
+      "source": "NOTICE",
+      "file": "NOTICE",
+      "sha256": "6bdd9ca6fd120dcd6ba5e16bf2bacc01f42781fd2d9754ec934c5db05fcdc395"
+    }
+  ]
+}

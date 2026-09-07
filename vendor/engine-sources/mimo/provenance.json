@@ -1,0 +1,24 @@
+{
+  "id": "mimo",
+  "repository": "https://github.com/XiaomiMiMo/MiMo-Code",
+  "version": "0.1.14",
+  "tag": "v0.1.14",
+  "commit": "2a0eb706e95a77cba34a319e9f11f33f26d4450c",
+  "license": "MIT",
+  "kind": "engine",
+  "npmPackage": "@mimo-ai/cli",
+  "sourceVersion": {
+    "file": "packages/opencode/package.json",
+    "format": "json"
+  },
+  "archive": "vendor/engine-sources/mimo.zip",
+  "bytes": 57483991,
+  "sha256": "73b1bc2ffc8d8a98d35a174a1c43fcaf1870acd2c560deb28490e12ccd19139f",
+  "notices": [
+    {
+      "source": "LICENSE",
+      "file": "LICENSE",
+      "sha256": "d7201a5532f4ce12324aec5469dc1dfe290654d085c2547bc7384932881ac448"
+    }
+  ]
+}
