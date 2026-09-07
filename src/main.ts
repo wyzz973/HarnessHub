@@ -184,11 +184,13 @@ export async function startHub(options: {
         activeProbes.add(abort);
         const task = (async () => {
           let directory: string | undefined;
+          let prepared:
+            Awaited<ReturnType<typeof prepareConfiguration>> | undefined;
           try {
             directory = await mkdtemp(
               path.join(dataDir, "configuration-test-"),
             );
-            const prepared = await prepareConfiguration(
+            prepared = await prepareConfiguration(
               {
                 profile,
                 cwd: options.cwd,
@@ -241,6 +243,7 @@ export async function startHub(options: {
             };
           } finally {
             try {
+              await prepared?.modelBridge?.close();
               if (directory)
                 await rm(directory, { recursive: true, force: true });
             } finally {

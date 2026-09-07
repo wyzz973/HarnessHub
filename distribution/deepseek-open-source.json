@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "defaultEngine": "opencode",
+  "modelProfiles": {
+    "deepseek": {
+      "model": "deepseek-v4-flash",
+      "provider": {
+        "protocol": "openai-completions",
+        "baseUrl": "https://api.deepseek.com/v1",
+        "apiKey": { "kind": "env", "value": "DEEPSEEK_API_KEY" }
+      }
+    }
+  },
+  "engines": {
+    "codex": { "modelProfile": "deepseek" },
+    "gemini": { "modelProfile": "deepseek" },
+    "qwen": { "modelProfile": "deepseek" },
+    "pi": { "modelProfile": "deepseek" },
+    "mimo": { "modelProfile": "deepseek" },
+    "dsh": { "modelProfile": "deepseek" },
+    "openclaw": { "modelProfile": "deepseek" },
+    "kimi": { "modelProfile": "deepseek" },
+    "opencode": { "modelProfile": "deepseek" },
+    "hermes": { "modelProfile": "deepseek" }
+  }
+}

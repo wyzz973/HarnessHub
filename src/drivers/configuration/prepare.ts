@@ -10,6 +10,11 @@ import { HubError } from "../../domain/errors.js";
 import { resolveSecret } from "./secrets.js";
 import { portableCommand, unwrapEnvironment } from "./launch.js";
 import { codexModelCatalog } from "./codex-models.js";
+import { prepareNativeMcp } from "./native-mcp.js";
+import {
+  startModelBridge,
+  type ModelBridge,
+} from "../chat-completions/bridge.js";
 export type RuntimeMcpServer =
   | {
       name: string;
@@ -32,6 +37,8 @@ export interface PreparedConfiguration {
   mcpServers: RuntimeMcpServer[];
   /** A fixed native provider sets the model before ACP starts and exposes no model-selection capability. */
   nativeModelSelection?: boolean;
+  /** Session-owned protocol adapter; caller must bind Runs and await close, including failed probes. */
+  modelBridge?: ModelBridge;
 }
 type Resolver = (reference: SecretReference) => Promise<string>;
 async function settledValues<T>(values: Promise<T>[]): Promise<T[]> {
@@ -127,9 +134,15 @@ export async function prepareConfiguration(
     mcpServers: [],
     ...(spec.profile.model ? { model: spec.profile.model } : {}),
   };
-  const finish = () => {
-    result.command = portableCommand(result.command);
-    return result;
+  const finish = async () => {
+    try {
+      await prepareNativeMcp(spec, result);
+      result.command = portableCommand(result.command);
+      return result;
+    } catch (error) {
+      await result.modelBridge?.close();
+      throw error;
+    }
   };
   if (!config) return finish();
   Object.assign(
@@ -167,6 +180,22 @@ export async function prepareConfiguration(
       .filter((s) => s.enabled)
       .map((s) => mcp(s, resolve)),
   );
+  if (config.adapter === "mimo" && result.mcpServers.length > 0) {
+    // MiMo 0.1.14 logs the complete ACP session state, including resolved
+    // MCP credentials, at INFO. Set its native logger before initialization.
+    const levels = result.command.flatMap((argument, index) =>
+      argument === "--log-level"
+        ? [result.command[index + 1]]
+        : argument.startsWith("--log-level=")
+          ? [argument.slice("--log-level=".length)]
+          : [],
+    );
+    if (levels.some((level) => level !== "ERROR"))
+      unsupported(
+        "Managed MiMo MCP requires --log-level ERROR to keep credentials out of native session logs",
+      );
+    if (levels.length === 0) result.command.push("--log-level", "ERROR");
+  }
   if (config.adapter === "qwen" && result.mcpServers.length > 0) {
     // Qwen 0.23's ACP prompt can race its background MCP discovery. Its
     // supported blocking mode completes registration during initialize so
@@ -277,21 +306,55 @@ export async function prepareConfiguration(
       const catalogFile = catalog
         ? await jsonFile("codex-models.json", catalog)
         : undefined;
+      const bridge =
+        provider.protocol === "openai-completions"
+          ? await startModelBridge({
+              baseUrl: provider.baseUrl!,
+              model,
+              ...(key ? { apiKey: key } : {}),
+            })
+          : undefined;
+      if (bridge) {
+        result.modelBridge = bridge;
+        result.env.HARNESSHUB_PROVIDER_KEY = bridge.token;
+        // codex-acp's default uses a separately hosted Guardian model. Its
+        // official user-review mode keeps ACP approvals without that service.
+        result.env.INITIAL_AGENT_MODE = "read-only";
+      }
       const lines = [
         `model = ${quote(model)}`,
         'model_provider = "harnesshub"',
         ...(catalogFile ? [`model_catalog_json = ${quote(catalogFile)}`] : []),
+        ...(bridge
+          ? [
+              'model_reasoning_effort = "none"',
+              "model_supports_reasoning_summaries = false",
+              'web_search = "disabled"',
+            ]
+          : []),
         "[model_providers.harnesshub]",
         'name = "HarnessHub"',
-        `base_url = ${quote(provider.baseUrl)}`,
+        `base_url = ${quote(bridge?.baseUrl ?? provider.baseUrl)}`,
         'wire_api = "responses"',
-        ...(key ? ['env_key = "HARNESSHUB_PROVIDER_KEY"'] : []),
+        ...(key || bridge ? ['env_key = "HARNESSHUB_PROVIDER_KEY"'] : []),
+        ...(bridge
+          ? [
+              "supports_websockets = false",
+              "request_max_retries = 0",
+              "stream_max_retries = 0",
+            ]
+          : []),
       ];
-      await writeFile(
-        path.join(codexHome, "config.toml"),
-        lines.join("\n") + "\n",
-        { mode: 0o600 },
-      );
+      try {
+        await writeFile(
+          path.join(codexHome, "config.toml"),
+          lines.join("\n") + "\n",
+          { mode: 0o600 },
+        );
+      } catch (error) {
+        await bridge?.close();
+        throw error;
+      }
       result.env.CODEX_HOME = codexHome;
       break;
     }
@@ -467,11 +530,60 @@ export async function prepareConfiguration(
       if (key) result.env.OPENAI_API_KEY = key;
       result.model = `$runtime|openai|${model}(openai)`;
       break;
-    case "gemini":
-      if (key) result.env.GEMINI_API_KEY = key;
-      if (provider.baseUrl)
-        result.env.GOOGLE_GEMINI_BASE_URL = provider.baseUrl;
+    case "gemini": {
+      if (provider.protocol === "openai-completions") {
+        const bridge = await startModelBridge({
+          baseUrl: provider.baseUrl!,
+          model,
+          wire: "google",
+          ...(key ? { apiKey: key } : {}),
+        });
+        result.modelBridge = bridge;
+        result.env.HARNESSHUB_PROVIDER_KEY = bridge.token;
+        result.env.GEMINI_API_KEY = bridge.token;
+        result.env.GOOGLE_GEMINI_BASE_URL = bridge.baseUrl;
+        result.env.GEMINI_CLI_HOME = root;
+        result.env.GEMINI_CLI_TRUST_WORKSPACE = "true";
+        result.nativeModelSelection = true;
+        try {
+          result.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH = await jsonFile(
+            "gemini-settings.json",
+            {
+              security: { auth: { selectedType: "gemini-api-key" } },
+              model: { name: model },
+              telemetry: { enabled: false },
+              general: { enableAutoUpdate: false },
+              tools: { exclude: ["google_web_search", "web_fetch"] },
+              modelConfigs: {
+                customOverrides: [
+                  {
+                    match: { overrideScope: "core" },
+                    modelConfig: {
+                      model,
+                      generateContentConfig: {
+                        topK: null,
+                        thinkingConfig: {
+                          thinkingBudget: 0,
+                          includeThoughts: false,
+                        },
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          );
+        } catch (error) {
+          await bridge.close();
+          throw error;
+        }
+      } else {
+        if (key) result.env.GEMINI_API_KEY = key;
+        if (provider.baseUrl)
+          result.env.GOOGLE_GEMINI_BASE_URL = provider.baseUrl;
+      }
       break;
+    }
     case "kimi": {
       if (
         result.command.some((arg) =>

@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "open-source-chat-completions",
+  "engines": [
+    "codex",
+    "gemini",
+    "qwen",
+    "pi",
+    "mimo",
+    "dsh",
+    "openclaw",
+    "kimi",
+    "opencode",
+    "hermes"
+  ],
+  "npmDependencies": [
+    "@openai/codex",
+    "@agentclientprotocol/codex-acp",
+    "@google/gemini-cli",
+    "@qwen-code/qwen-code",
+    "@earendil-works/pi-coding-agent",
+    "pi-acp",
+    "@mimo-ai/cli",
+    "@deepseek-ai/dsh",
+    "openclaw"
+  ],
+  "nativeDirectories": ["hermes", "kimi", "opencode"],
+  "extraComponents": [
+    "python",
+    "pip",
+    "portable-git",
+    "pi-acp-windows-launch-patch"
+  ]
+}

@@ -35,6 +35,10 @@
 | [Windows 使用](windows.md) | 原生安装、运行、Codex、密钥与能力边界 |
 | [Windows 便携发布包](portable-bundle.md) | 固定运行时、开发机制备、免安装发行与清单 |
 | [本地工具包](tool-packages.md) | 离线安装、SHA-256、Skill/MCP 绑定和注销 |
+| [公司离线交接](offline-company.md) | Windows ARM64 开源引擎、Chat Completions、公司代码合并与开发包 |
+| [离线归档与恢复](offline-artifacts.md) | Release ZIP、分片 SHA256 与 Windows 无安装恢复 |
+| [开源引擎源码](open-source-engines.md) | 14 个固定仓库、源码归档、许可证和 SHA-256 |
+| [原生 MCP](native-mcp.md) | Pi 扩展、OpenClaw 原生配置、Kimi CLI 和秘密限制 |
 | [Windows/VMware](vmware-validation.md) | 历史虚拟机准备与其他目标环境验收清单 |
 
 ## 开发与发布
@@ -65,5 +69,6 @@
 | [Windows 原生进程](verification/2026-09-06-windows-process.md) | Job 归属、取消、清理与 Gateway 崩溃恢复 |
 | [Windows 与 Codex](verification/2026-09-06-windows.md) | 原生开发、文件/密钥、真实 Codex、控制台与启动器 |
 | [Windows 便携引擎](verification/2026-09-06-portable-engines.md) | 固定引擎准备、DeepSeek 短任务、MCP/文件与发行验收范围 |
+| [公司离线引擎](verification/2026-09-07-offline-company.md) | 固定开源源码、Chat 桥、十引擎 MCP、开发包与 GitHub 交付 |
 
 研究输入：[原始架构提案](<../HarnessHub 多 Agent 引擎可替换架构设计.md>)、[固定源码阅读记录](<../HarnessHub 源码阅读与技术选型讨论稿.md>)。它们保留历史推演，若与现行DESIGN或API实现冲突，以当前规范与实现为准。

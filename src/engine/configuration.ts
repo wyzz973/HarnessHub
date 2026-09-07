@@ -18,13 +18,13 @@ export const providerProtocols: Record<
   readonly string[]
 > = {
   generic: [],
-  codex: ["openai-responses"],
+  codex: ["openai-responses", "openai-completions"],
   claude: ["anthropic"],
   opencode: ["openai-completions", "openai-responses", "anthropic"],
   mimo: ["openai-completions", "openai-responses", "anthropic"],
   hermes: ["openai-completions"],
   pi: ["openai-completions", "openai-responses", "anthropic"],
-  gemini: ["google"],
+  gemini: ["google", "openai-completions"],
   qwen: ["openai-completions"],
   cursor: [],
   copilot: ["openai-completions", "anthropic"],
@@ -108,6 +108,12 @@ export function parseEngineConfiguration(
       );
     if (!model) fail("An explicit provider requires a model");
     if (config.provider.baseUrl) url(config.provider.baseUrl);
+    if (
+      config.adapter === "gemini" &&
+      config.provider.protocol === "openai-completions" &&
+      !config.provider.baseUrl
+    )
+      fail("A Chat gateway requires an explicit base URL");
     if (config.provider.apiKey) reference(config.provider.apiKey);
     if (
       [
@@ -143,12 +149,15 @@ export function parseEngineConfiguration(
   }
   if (
     ["pi", "openclaw"].includes(config.adapter) &&
-    config.mcpServers?.some((server) => server.enabled)
+    config.mcpServers?.some((server) => server.enabled) &&
+    (driver !== "acp" || !config.provider)
   )
-    fail(
-      "This adapter does not consume ACP session MCP servers; configure a supported native MCP integration instead",
-    );
-  if (driver === "cli" && config.mcpServers?.some((s) => s.enabled))
+    fail("Pi and OpenClaw managed MCP require ACP and a managed provider");
+  if (
+    driver === "cli" &&
+    config.adapter !== "kimi" &&
+    config.mcpServers?.some((s) => s.enabled)
+  )
     fail(
       "MCP injection requires an ACP engine; this CLI adapter cannot apply it",
     );
@@ -161,6 +170,18 @@ export function parseEngineConfiguration(
       "Automatic CLI model arguments are supported only for Cursor, Antigravity and Kimi; use native command arguments for generic CLI",
     );
   const servers = config.mcpServers ?? [];
+  if (
+    config.adapter === "kimi" &&
+    servers.some(
+      (server) =>
+        server.enabled &&
+        (Object.keys(server.secretEnv ?? {}).length > 0 ||
+          Object.keys(server.secretHeaders ?? {}).length > 0),
+    )
+  )
+    fail(
+      "Kimi native MCP cannot resolve secret references without persisting their values; use a local credential-free MCP server",
+    );
   if (new Set(servers.map((s) => s.name)).size !== servers.length)
     fail("MCP names must be unique");
   for (const server of servers) {

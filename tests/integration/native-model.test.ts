@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,7 +33,8 @@ void test(
       await hub?.server.close();
       await rm(directory, { recursive: true, force: true });
     });
-    await ensurePrivateDirectory(directory);
+    if (process.platform === "win32") await ensurePrivateDirectory(directory);
+    else await chmod(directory, 0o700);
     const key = "synthetic-native-model-fixture-key";
     const keyFile = path.join(directory, "synthetic.key");
     await writeFile(keyFile, key, { mode: 0o600 });

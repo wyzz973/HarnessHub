@@ -43,7 +43,7 @@ Gateway 和控制台的生产依赖均依据当前固定安装图物化，不重
 
 Kimi 1.50.0 的 Apache 2.0 LICENSE/NOTICE 和 OpenCode v1.18.29 的 MIT LICENSE 来自官方固定 tag 解析后的 commit，原文字节及 SHA-256 记录在各 `vendor-notices/source.json`。Antigravity、Cursor 和 Kiro 的同目录说明明确列出版本、原始分发地址、hash 和官方条款链接；没有可附的版本化许可原文时记录 `originalLicenseTextIncluded:false`。这些说明不授予额外再分发权，也不替代原产品条款。
 
-Pi 固定组合为 `@earendil-works/pi-coding-agent@0.85.1` 与 `pi-acp@0.0.33`，包内入口为 `dist/bundle/cli.js`。旧 Pi 0.73.1 不发送此 Adapter 完成请求所需的 `agent_settled` 事件，不能仅替换启动路径继续使用。新版本的 API Key 配置使用 `$HARNESSHUB_PROVIDER_KEY` 环境插值；统一 MCP 注入仍明确拒绝，原生扩展须单独准备与验证。
+Pi 固定组合为 `@earendil-works/pi-coding-agent@0.85.1` 与 `pi-acp@0.0.33`，包内入口为 `dist/bundle/cli.js`。旧 Pi 0.73.1 不发送此 Adapter 完成请求所需的 `agent_settled` 事件，不能仅替换启动路径继续使用。新版本的 API Key 配置使用 `$HARNESSHUB_PROVIDER_KEY` 环境插值；显式 MCP 使用随包本地扩展，见 [原生 MCP](native-mcp.md)。
 
 构建器不会复制源码仓库的 HOME、data、数据库、原生个人账号配置、`.env` 或本机发现注册。Next 写入的构建目录字段会替换成由服务器自身位置计算的目录；可执行文本与元数据中残留开发者 HOME、仓库或 prepared 绝对路径时构建失败。准备目录内的引擎配置模板必须使用运行时支持的占位符。`bundle.json` 记录组件、目标架构、console 入口和每个普通文件的大小及 SHA-256，自身不参与递归 hash。打包 ZIP 时必须完整保留此目录结构。
 
@@ -61,7 +61,13 @@ Pi 固定组合为 `@earendil-works/pi-coding-agent@0.85.1` 与 `pi-acp@0.0.33`�
 
 `launch-openclaw-bundled.mjs` 接收绝对 `openclaw.mjs` 路径，使用包内 Node、随机 loopback 端口和仅环境传递的随机内部 token，先检查本地 Gateway 就绪，再连接 ACP。stdout 只承载 ACP；Gateway 日志走 stderr，内部 token 被替换。两条子进程树分别由 Windows Job 持有，EOF、子进程异常及封装进程死亡均清理所属后代。它只接受明确的私有 `OPENCLAW_STATE_DIR` 和位于其内的 `OPENCLAW_CONFIG_PATH`，不连接个人 Gateway。
 
-统一 Provider 支持 OpenAI Completions、OpenAI Responses 和 Anthropic Messages；必须提供 base URL 和 model。生成的每 Session 配置使用 OpenClaw 的环境 SecretRef，密钥仅在子进程环境中；内置目录刷新、自动更新和定时任务关闭，模型在用户 Run 时调用。OpenClaw 的 ACP MCP 注入能力仍明确拒绝，不能把成功初始化当作工具或模型调用成功。
+统一 Provider 支持 OpenAI Completions、OpenAI Responses 和 Anthropic Messages；必须提供 base URL 和 model。生成的每 Session 配置使用 OpenClaw 的环境 SecretRef，密钥仅在子进程环境中；内置目录刷新、自动更新和定时任务关闭，模型在用户 Run 时调用。显式 MCP 写入原生 Gateway 的 `mcp.servers`，不重复通过 ACP 下发；不能把成功初始化当作工具或模型调用成功。
+
+## 公司开源发行版
+
+先完成上述固定程序制备，再运行 `node scripts/prepare-open-source.mjs --prepared .tools/contest-prepared/win32-arm64 --output .tools/open-source-prepared/win32-arm64`。此步骤使用匹配的 ARM64 Node，从已有依赖图挑选 [开源发行清单](../distribution/open-source-edition.json) 的 10 个引擎，不调用安装器或模型；输出目录必须不存在。
+
+以该输出作为 `scripts/package-bundle.mjs --prepared` 输入，会额外打包完整源码归档、公司 Chat 配置、交接 Skill 和 HarnessHub/控制台开发依赖。入口与内网合并流程见 [公司离线交接](offline-company.md)。固定源码来自 [源码制备工具](../scripts/vendor-engine-sources.mjs)，源码与运行程序的用途分别记录。
 
 引擎注册可通过 `acp.initializeTimeoutMs` 设置 1–60000 ms 的显式初始化预算；OpenClaw 发布模板使用 60000。协议 probe 接收此值，未配置时仍为 10000 ms；实际 Worker 从发送 Run 到收到 `engine.capabilities` 事件持有同一预算，超时报告 `ACP_INITIALIZE_TIMEOUT` 并关闭所属进程树。该预算不替代 Run 总期限，且在初始化完成后不限制 prompt 时长。
 

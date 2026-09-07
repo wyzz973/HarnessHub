@@ -245,6 +245,64 @@ export async function packageBundle(preparedDirectory, outputDirectory) {
     path.join(output, "node_modules"),
     { arch: metadata.arch },
   );
+  const developmentComponents = [];
+  if (metadata.edition === "open-source-chat-completions") {
+    for (const [label, directory] of [
+      ["root", repository],
+      ["web", path.join(repository, "web")],
+    ]) {
+      const modules = await materializeNodeModules(
+        directory,
+        path.join(output, "development", label, "node_modules"),
+        {
+          arch: metadata.arch,
+          includeDevelopment: true,
+          allowedRoot: path.join(repository, "node_modules"),
+        },
+      );
+      developmentComponents.push(...modules);
+      await copyTree(
+        path.join(directory, "package.json"),
+        path.join(output, "development", `${label}.package.json`),
+      );
+    }
+    await copyTree(
+      path.join(repository, "pnpm-lock.yaml"),
+      path.join(output, "development", "pnpm-lock.yaml"),
+    );
+    await copyTree(
+      path.join(repository, "scripts/offline-development.mjs"),
+      path.join(output, "scripts/offline-development.mjs"),
+    );
+    await copyTree(
+      path.join(repository, "scripts/lib/bundle-copy.mjs"),
+      path.join(output, "scripts/lib/bundle-copy.mjs"),
+    );
+    await copyTree(
+      path.join(repository, "vendor/engine-sources"),
+      path.join(output, "vendor/engine-sources"),
+    );
+    await copyTree(
+      path.join(repository, "distribution/source-repositories.json"),
+      path.join(output, "distribution/source-repositories.json"),
+    );
+    await copyTree(
+      path.join(repository, "skills"),
+      path.join(output, "skills"),
+    );
+    await writeFile(
+      path.join(output, "Dev.cmd"),
+      '@echo off\r\n"%~dp0runtime\\node.exe" "%~dp0scripts\\offline-development.mjs" %*\r\nexit /b %errorlevel%\r\n',
+      { flag: "wx" },
+    );
+  }
+  const nativeMcp = path.join(repository, "scripts/native-mcp");
+  try {
+    await lstat(nativeMcp);
+    await copyTree(nativeMcp, path.join(output, "scripts/native-mcp"));
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
   for (const name of ["runtime", "engines", "bin", "tools"]) {
     const source = path.join(prepared, name);
     try {
@@ -312,13 +370,29 @@ export async function packageBundle(preparedDirectory, outputDirectory) {
     { flag: "wx" },
   );
   await copyTree(
-    path.join(repository, "distribution/README.txt"),
+    path.join(
+      repository,
+      metadata.edition === "open-source-chat-completions"
+        ? "distribution/README-open-source.txt"
+        : "distribution/README.txt",
+    ),
     path.join(output, "README.txt"),
   );
   await copyTree(
-    path.join(repository, "distribution/deepseek.json"),
+    path.join(
+      repository,
+      metadata.edition === "open-source-chat-completions"
+        ? "distribution/deepseek-open-source.json"
+        : "distribution/deepseek.json",
+    ),
     path.join(output, "examples/deepseek.json"),
   );
+  if (metadata.edition === "open-source-chat-completions") {
+    await copyTree(
+      path.join(repository, "distribution/company-chat.json"),
+      path.join(output, "examples/company-chat.json"),
+    );
+  }
   await copyTree(
     path.join(repository, "distribution/THIRD_PARTY_NOTICES.md"),
     path.join(output, "THIRD_PARTY_NOTICES.md"),
@@ -369,6 +443,7 @@ export async function packageBundle(preparedDirectory, outputDirectory) {
       ...metadata.components,
       ...dependencies,
       ...consoleDependencies,
+      ...developmentComponents,
     ],
     consoleEntry: `console/${consoleRelative.replaceAll("\\", "/")}`,
     files,

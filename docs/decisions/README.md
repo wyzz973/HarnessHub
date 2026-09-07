@@ -18,5 +18,7 @@ ADR 记录重要且未来可能重新讨论的决定。适用范围见 [文档�
 - [0008：Windows 系统密钥存储](0008-windows-secret-storage.md)
 - [0009：Windows 便携引擎发行与工具包](0009-portable-engine-distribution.md)
 - [0010：ACP 客户端能力与精确权限选择](0010-acpx-client-capabilities.md)
+- [0011：公司 Chat Completions 网关适配](0011-chat-completions-bridge.md)
+- [0012：开源引擎与公司离线开发包](0012-offline-company-edition.md)
 
 Worker、SQLite 和首批引擎三项已采纳决定及依据直接由 [DESIGN.md](../../DESIGN.md#1-已确认的三个决定)和 [源码调研](<../../HarnessHub 源码阅读与技术选型讨论稿.md>)拥有，暂不重复创建同内容 ADR。以后改变其中决定时在这里记录新的取舍。

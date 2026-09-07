@@ -6,7 +6,7 @@ Pi 通过现成 `pi-acp` Adapter 复用 HarnessHub 的 ACPDriver。当前 Window
 
 [便携发布包](portable-bundle.md)固定 `@earendil-works/pi-coding-agent@0.85.1` 与 `pi-acp@0.0.33`，通过包内 Node 启动 Pi 的 `dist/bundle/cli.js`。完整依赖由开发机按 distribution 锁文件准备，裁判机不再安装 Pi 或补充包。不要替换成旧 0.73.1；该版本没有 Adapter 用于结束请求的 `agent_settled` 事件。
 
-比赛 Provider 使用 [独立配置](engine-configuration.md)生成私有 models.json/settings.json，并以 `$HARNESSHUB_PROVIDER_KEY` 引用子进程密钥。它支持配置矩阵中的 OpenAI Completions、Responses 和 Anthropic；不引用下文的个人 DSH 凭证文件。统一 ACP MCP 注入明确拒绝，原生扩展与工具调用须另行验证。实际模型、文件、取消和恢复证据以对应 Windows 验收记录为准。
+比赛 Provider 使用 [独立配置](engine-configuration.md)生成私有 models.json/settings.json，并以 `$HARNESSHUB_PROVIDER_KEY` 引用子进程密钥。它支持配置矩阵中的 OpenAI Completions、Responses 和 Anthropic；不引用下文的个人 DSH 凭证文件。显式 MCP 由随包本地扩展注册到 Pi，资源和验证范围见 [原生 MCP](native-mcp.md)。实际模型、文件、取消和恢复证据以对应 Windows 验收记录为准。
 
 ## 2026-09-05 macOS 固定安装
 

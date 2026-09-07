@@ -19,13 +19,13 @@ ACP 注册配置可单独填写 `acp.initializeTimeoutMs`，范围为 1–60,000
 
 | 配置适配器 | 支持的协议/行为 |
 |---|---|
-| Codex | OpenAI Responses；私有 CODEX_HOME/config.toml，独立 provider 与 env_key |
+| Codex | OpenAI Responses；显式 Chat Completions 使用本地 Driver bridge；私有 CODEX_HOME/config.toml |
 | Claude Code | Anthropic；进程级 ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL |
 | OpenCode、MiMo | OpenAI Chat Completions、Responses、Anthropic；进程级配置选择 harnesshub/model，Key 用环境替换语法 |
 | OpenClaw | OpenAI Chat Completions、Responses、Anthropic；独立 OPENCLAW_STATE_DIR 与原生 Gateway，models provider 使用环境 SecretRef |
 | Hermes | OpenAI Chat Completions；私有 HERMES_HOME/config.yaml，custom provider 使用 `key_env: HARNESSHUB_PROVIDER_KEY`；ACP 模型选择使用 custom:model |
 | Pi | OpenAI Chat Completions、Responses、Anthropic；私有 models.json/settings.json，固定 Pi 0.85.1 的 API Key 引用为 `$HARNESSHUB_PROVIDER_KEY` |
-| Gemini CLI | Google；GEMINI_API_KEY / GOOGLE_GEMINI_BASE_URL |
+| Gemini CLI | Google；显式 Chat Completions 使用本地 Driver bridge；独立模型与本地认证令牌 |
 | Qwen Code | OpenAI Chat Completions；OPENAI_MODEL / OPENAI_BASE_URL / OPENAI_API_KEY |
 | Copilot CLI | OpenAI Chat Completions、Anthropic；COPILOT_PROVIDER_TYPE / BASE_URL / API_KEY 与 COPILOT_MODEL；启用 COPILOT_OFFLINE，不需要 GitHub 账号 |
 | Cursor、Antigravity | model 转为 CLI 的 `--model` 参数；仍使用原生账号/API；不支持此层的任意 Provider URL |
@@ -43,7 +43,7 @@ Copilot 的映射针对固定 CLI 1.0.83，按[官方 BYOK 环境变量](https:/
 
 固定 Copilot 1.0.83 的 ACP 只接受 HTTP/SSE MCP。显式选择的 stdio 服务由配置适配器写入 Session 私有的 `copilot-mcp.json`，通过原生 `--additional-mcp-config @文件` 加载，不再重复向 ACP 注入。环境值只在文件中保存 Copilot 的变量引用，真实值传给所属子进程；HTTP/SSE 仍沿用 ACP。命令已经含该原生参数时明确拒绝管理，避免两个配置来源覆盖。配置文件和模板不会写入实际 MCP 秘密。
 
-Kimi 1.50.0 的[原生 ACP 服务](https://github.com/MoonshotAI/kimi-cli/blob/1.50.0/src/kimi_cli/acp/server.py)在创建会话时要求 Kimi OAuth；旧 `--acp` 入口已经拒绝协议方法。统一 API 应选择 CLI 模板 `["<绝对 kimi.exe 路径>","--quiet","--prompt","{prompt}"]`。它逐 Run 启动，沿用 CLI 输出与进程清理契约；不承诺 ACP 会话恢复、原生结构化用量或统一 MCP 注入。Skills 仍可作为任务指令前缀，工具由 Kimi 自身执行。
+Kimi 1.50.0 的[原生 ACP 服务](https://github.com/MoonshotAI/kimi-cli/blob/1.50.0/src/kimi_cli/acp/server.py)在创建会话时要求 Kimi OAuth；旧 `--acp` 入口已经拒绝协议方法。统一 API 应选择 CLI 模板 `["<绝对 kimi.exe 路径>","--quiet","--prompt","{prompt}"]`。它逐 Run 启动，沿用 CLI 输出与进程清理契约；不承诺 ACP 会话恢复或原生结构化用量。MCP 通过独立 `--mcp-config-file` 接入，print 模式原生自动批准工具；秘密字段限制见 [原生 MCP](native-mcp.md)。Skills 仍可作为任务指令前缀。
 
 Kimi 必须在普通 `env` 填写模型实际上下文窗口，例如 `{"KIMI_MODEL_MAX_CONTEXT_SIZE":"131072"}`；数值仅为格式示例，应按模型契约填写，系统不替用户猜测上下文预算。配置层生成私有 JSON，并传 `--config-file`；命令已有固定配置参数会拒绝。OpenAI 两协议使用 `OPENAI_API_KEY`；Google 使用 `GOOGLE_API_KEY`；Anthropic 使用 `ANTHROPIC_AUTH_TOKEN`，请求为 **Authorization: Bearer**，只接受 `X-Api-Key` 的网关须选其他适配器。Base URL 应填写该协议 SDK 的基址，Anthropic/Google SDK 会追加自身 API 路径。四种映射已经通过固定 Windows 二进制与本地合成 HTTP/SSE fixture 验证，真实模型认证、工具调用和额度另行验收。[协议与环境实现依据](https://github.com/MoonshotAI/kimi-cli/blob/1.50.0/src/kimi_cli/llm.py)。
 
@@ -63,7 +63,9 @@ Kimi 必须在普通 `env` 填写模型实际上下文窗口，例如 `{"KIMI_MO
 
 Skills 为 `{path,enabled,sha256?}` 数组，最多 16 项。每项主指令限 64 KiB、合计 256 KiB；这些是本层新增输入的限制，不更改模型的输出/上下文预算。保存时 pin 主指令 hash；运行中的 Worker 使用已读取的主指令，重建 Worker 时检查来源是否仍匹配。内容改变后需审阅并重新保存。附件仍引用原目录，不复制/固定整个 Skill 包。
 
-MCP 最多 16 项，名称唯一：stdio 需要 absolute command，可带 args/env/secretEnv；HTTP/SSE 需要 url，可带 headers/secretHeaders。URL 只允许 HTTP(S)，不允许内嵌身份、query 或 fragment；请用请求头秘密引用。程序按 argv 启动，配置本身不会执行脚本或安装包。enabled:false 不解析其秘密也不下发。普通 CLI 的统一 MCP 注入会明确拒绝。Pi 与 OpenClaw 的适配器不消费 ACP Session 的 mcpServers，因此启用统一 MCP 时也会拒绝保存；Pi 需要另行验证的扩展，OpenClaw 需要原生 Gateway 的 MCP 配置。其他 ACP 引擎下发后的服务器建立、工具审批和调用按引擎协议分别验证。
+MCP 最多 16 项，名称唯一：stdio 需要 absolute command，可带 args/env/secretEnv；HTTP/SSE 需要 url，可带 headers/secretHeaders。URL 只允许 HTTP(S)，不允许内嵌身份、query 或 fragment；请用请求头秘密引用。程序按 argv 启动，配置本身不会执行脚本或安装包。enabled:false 不解析其秘密也不下发。Pi 通过本地扩展注册工具，OpenClaw 使用原生 Gateway 的 `mcp.servers`，Kimi CLI 使用独立 MCP 文件，具体要求和验证见 [原生 MCP](native-mcp.md)。其他普通 CLI 明确拒绝统一注入；其他 ACP 引擎下发后的服务建立、工具审批和调用按引擎协议分别验证。
+
+公司只支持 Chat Completions 时，Codex/Gemini 可显式选择 `openai-completions`。协议转换范围、错误/断流/取消及资源责任见 [ADR 0011](decisions/0011-chat-completions-bridge.md)，免安装和公司代码合并见 [公司离线交接](offline-company.md)。原生托管搜索、多模态等未支持请求会明确失败，不提供所有厂商 API 的等价实现。
 
 Qwen 0.23.0 的 ACP 首次请求会与后台 MCP 发现竞争。选择启用的 MCP 时，配置层设置原生 `QWEN_CODE_LEGACY_MCP_BLOCKING=1`，使初始化等待工具注册后再调用模型；不改变模型选择、工具权限或 Run 总期限。没有启用的 MCP 时不设置该选项。已通过固定 Windows 包与本地合成 API 验证首次请求的工具列表、秘密环境和进程清理；真实模型任务另行记录。
 

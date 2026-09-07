@@ -25,7 +25,12 @@ interface Active {
   spec: ExecutionSpec;
   abort: AbortController;
   seq: number;
-  ack?: { seq: number; resolve: () => void; reject: (error: unknown) => void };
+  ack?: {
+    seq: number;
+    terminal: boolean;
+    resolve: () => void;
+    reject: (error: unknown) => void;
+  };
   delivery: Promise<void>;
   permissions: Map<PermissionId, PermissionWaiter>;
   completion: Promise<void>;
@@ -55,7 +60,12 @@ function emit(owned: Active, payload: WorkerPayload): Promise<void> {
     if (active !== owned) throw new Error("Execution ownership changed");
     const seq = ++owned.seq;
     const ack = Promise.withResolvers<void>();
-    owned.ack = { seq, resolve: ack.resolve, reject: ack.reject };
+    owned.ack = {
+      seq,
+      terminal: payload.type === "result",
+      resolve: ack.resolve,
+      reject: ack.reject,
+    };
     try {
       await send({
         version: 1,
@@ -112,6 +122,7 @@ async function execute(owned: Active, selected: Driver): Promise<void> {
   try {
     await emit(owned, { type: "started" });
     preparation ??= await prepareConfiguration(owned.spec, process.env);
+    preparation.modelBridge?.beginRun(owned.abort.signal);
     // This process belongs to one Session; no Gateway or other Worker's environment is changed.
     Object.assign(process.env, preparation.env);
     if (selected instanceof AcpDriver) {
@@ -137,8 +148,10 @@ async function execute(owned: Active, selected: Driver): Promise<void> {
       createChannel(owned),
       owned.abort.signal,
     );
+    await preparation.modelBridge?.endRun();
     await emit(owned, { type: "result", result });
   } catch (error) {
+    await preparation?.modelBridge?.endRun();
     if (!process.connected) throw error;
     // Public errors intentionally exclude backend stderr, credentials, and raw configuration.
     await emit(owned, {
@@ -173,7 +186,11 @@ function shutdown(): Promise<void> {
         owned.ack?.reject(new Error("Parent disconnected"));
       await owned.completion.catch(() => undefined);
     }
-    await driver?.close();
+    try {
+      await driver?.close();
+    } finally {
+      await preparation?.modelBridge?.close();
+    }
   })();
   return shuttingDown;
 }
@@ -242,6 +259,10 @@ process.on("message", (raw: unknown) => {
       case "ack":
         if (owned.ack?.seq !== command.seq)
           throw new Error("Unexpected delivery acknowledgement");
+        // The host may send the next Run immediately after its result ACK, in
+        // the same IPC delivery batch. Release ownership synchronously, after
+        // all Driver/bridge work finished and before resolving the awaiter.
+        if (owned.ack.terminal) active = undefined;
         owned.ack.resolve();
         break;
       case "cancel":

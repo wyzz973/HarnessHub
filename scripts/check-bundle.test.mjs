@@ -63,6 +63,69 @@ async function node(args, cwd) {
   });
 }
 
+void test("open-source preparation copies only selected declared engine graphs and explicitly includes offline build dependencies", async (t) => {
+  const root = await workspace(t),
+    source = path.join(root, "source");
+  await packageAt(source, "fixture", "1", { open: "1", closed: "1" });
+  await packageAt(
+    path.join(source, "node_modules/open"),
+    "open",
+    "1",
+    { shared: "1", string_decoder: "1" },
+    "module.exports = require('shared') + require('string_decoder/package.json').version;",
+  );
+  await packageAt(
+    path.join(source, "node_modules/string_decoder"),
+    "string_decoder",
+    "1",
+  );
+  await packageAt(
+    path.join(source, "node_modules/shared"),
+    "shared",
+    "1",
+    {},
+    "module.exports = 'portable';",
+  );
+  await packageAt(path.join(source, "node_modules/closed"), "closed", "1");
+  await packageAt(path.join(source, "node_modules/compiler"), "compiler", "1");
+  const manifest = JSON.parse(
+    await readFile(path.join(source, "package.json"), "utf8"),
+  );
+  manifest.devDependencies = { compiler: "1" };
+  await writeFile(path.join(source, "package.json"), JSON.stringify(manifest));
+  const target = path.join(root, "selected");
+  const result = await materializeNodeModules(
+    source,
+    path.join(target, "node_modules"),
+    { dependencies: ["open"] },
+  );
+  assert.deepEqual(result.map((item) => item.id).sort(), [
+    "npm:open",
+    "npm:shared",
+    "npm:string_decoder",
+  ]);
+  assert.equal(
+    (await node(["-e", "console.log(require('open'))"], target)).trim(),
+    "portable1",
+  );
+  await assert.rejects(
+    readFile(path.join(target, "node_modules/closed/package.json")),
+    { code: "ENOENT" },
+  );
+  for (const dependencies of [[], ["missing"], ["open", "open"]]) {
+    await assert.rejects(
+      materializeNodeModules(source, path.join(root, "bad"), { dependencies }),
+      /unique declared/,
+    );
+  }
+  const development = await materializeNodeModules(
+    source,
+    path.join(root, "development/node_modules"),
+    { includeDevelopment: true },
+  );
+  assert.ok(development.some((item) => item.id === "npm:compiler"));
+});
+
 void test("bundle dependencies preserve conflicting versions and cycles without links or development packages", async (t) => {
   const root = await workspace(t),
     source = path.join(root, "source"),

@@ -143,7 +143,9 @@ async function readPackage(directory) {
 
 async function resolvePackage(name, owner, allowedRoot) {
   const require = createRequire(path.join(owner, "package.json"));
-  for (const directory of require.resolve.paths(name) ?? []) {
+  // A registry package may share a built-in name (for example string_decoder).
+  // Resolve lookup directories through its package path, which is never a builtin.
+  for (const directory of require.resolve.paths(`${name}/package.json`) ?? []) {
     const candidate = path.join(directory, name);
     try {
       const canonical = await realpath(candidate);
@@ -194,6 +196,29 @@ export async function materializeNodeModules(
     options.allowedRoot ?? path.join(packageDirectory, "node_modules"),
   );
   const rootManifest = await readPackage(packageDirectory);
+  if (options.includeDevelopment === true) {
+    rootManifest.dependencies = {
+      ...rootManifest.dependencies,
+      ...rootManifest.devDependencies,
+    };
+  }
+  const rootDependencies = dependencies({
+    ...rootManifest,
+    peerDependencies: {},
+  });
+  if (options.dependencies !== undefined) {
+    if (
+      !Array.isArray(options.dependencies) ||
+      options.dependencies.length === 0 ||
+      new Set(options.dependencies).size !== options.dependencies.length ||
+      options.dependencies.some(
+        (name) => !rootDependencies.some((entry) => entry.name === name),
+      )
+    )
+      throw new Error(
+        "Selected dependencies must be unique declared package dependencies",
+      );
+  }
   const rootScope = { directory: destination, bindings: new Map() };
   const queue = [];
   const components = new Map();
@@ -208,7 +233,11 @@ export async function materializeNodeModules(
       scopes: [scope, ...parents],
     });
   }
-  for (const entry of dependencies({ ...rootManifest, peerDependencies: {} })) {
+  for (const entry of rootDependencies.filter(
+    (entry) =>
+      options.dependencies === undefined ||
+      options.dependencies.includes(entry.name),
+  )) {
     try {
       place(
         entry.name,

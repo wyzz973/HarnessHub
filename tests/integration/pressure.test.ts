@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
-import { get } from "node:http";
+import { get, type ClientRequest } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { startHub } from "../../src/main.js";
-import type {
-  RunRecord,
-  PermissionRecord,
-  SessionRecord,
+import {
+  isTerminal,
+  type RunRecord,
+  type PermissionRecord,
+  type SessionRecord,
 } from "../../src/domain/types.js";
 
 void test(
@@ -25,6 +26,12 @@ void test(
       cwd: directory,
       port: 0,
     });
+    let paused: ClientRequest | undefined;
+    t.after(async () => {
+      paused?.destroy();
+      await hub.server.close();
+      await rm(directory, { recursive: true, force: true });
+    });
     const request = async <T>(route: string, body?: unknown): Promise<T> =>
       (await (
         await fetch(hub.url + route, {
@@ -39,21 +46,34 @@ void test(
       ).json()) as T;
     const first = await request<SessionRecord>("/v1/sessions", {});
     const second = await request<SessionRecord>("/v1/sessions", {});
+    // Expiring an issued permission is the contract under test. Establish
+    // this Session's real Worker before its one-second permission Run.
+    let ready = await request<RunRecord>(`/v1/sessions/${second.id}/runs`, {
+      text: "permission worker ready",
+      timeoutMs: 8000,
+      fixture: { scenario: "echo" },
+    });
+    const readyDeadline = ready.createdAt + 10000;
+    while (!isTerminal(ready.status)) {
+      assert.ok(
+        Date.now() < readyDeadline,
+        "permission Worker did not become ready",
+      );
+      await delay(10);
+      ready = await request<RunRecord>(`/v1/runs/${ready.id}`);
+    }
+    assert.equal(ready.status, "completed");
+    assert.equal(ready.output, "permission worker ready");
     const run = await request<RunRecord>(`/v1/sessions/${first.id}/runs`, {
       text: "x".repeat(100_000),
       timeoutMs: 8000,
       fixture: { scenario: "echo", chunks: 128 },
     });
-    const paused = get(`${hub.url}/v1/runs/${run.id}/events`, (response) =>
+    paused = get(`${hub.url}/v1/runs/${run.id}/events`, (response) =>
       response.pause(),
     );
     paused.on("error", () => {
       /* Test teardown deliberately closes the paused subscriber. */
-    });
-    t.after(async () => {
-      paused.destroy();
-      await hub.server.close();
-      await rm(directory, { recursive: true, force: true });
     });
     const permissionRun = await request<RunRecord>(
       `/v1/sessions/${second.id}/runs`,

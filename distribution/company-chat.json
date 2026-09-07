@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "defaultEngine": "opencode",
+  "modelProfiles": {
+    "company": {
+      "model": "REPLACE_WITH_COMPANY_MODEL",
+      "provider": {
+        "protocol": "openai-completions",
+        "baseUrl": "https://company-gateway.invalid/v1",
+        "apiKey": { "kind": "env", "value": "COMPANY_MODEL_API_KEY" }
+      }
+    }
+  },
+  "engines": {
+    "codex": { "modelProfile": "company" },
+    "gemini": { "modelProfile": "company" },
+    "qwen": { "modelProfile": "company" },
+    "pi": { "modelProfile": "company" },
+    "mimo": { "modelProfile": "company" },
+    "dsh": { "modelProfile": "company" },
+    "openclaw": { "modelProfile": "company" },
+    "kimi": {
+      "modelProfile": "company",
+      "configuration": {
+        "adapter": "kimi",
+        "env": { "KIMI_MODEL_MAX_CONTEXT_SIZE": "REPLACE_WITH_CONTEXT_WINDOW" }
+      }
+    },
+    "opencode": { "modelProfile": "company" },
+    "hermes": { "modelProfile": "company" }
+  }
+}

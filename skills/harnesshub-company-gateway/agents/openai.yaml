@@ -1,0 +1,4 @@
+interface:
+  display_name: "HarnessHub ��˾��������"
+  short_description: "�ڹ�˾���������������أ����ߺϲ���Դ���桢Chat Completions��MCP �� Skill ����"
+  default_prompt: "ʹ�� $harnesshub-company-gateway ������������˾���ظĶ����ϲ�����֤�������桢Chat Completions �빤�����䡣"
