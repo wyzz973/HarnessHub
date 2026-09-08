@@ -46,7 +46,8 @@ function parseConfig(): { workspace: string; tools: CommandTool[] } {
       !Array.isArray(prefixArgs) ||
       prefixArgs.length > 128 ||
       !prefixArgs.every(
-        (arg) => typeof arg === "string" && arg.length > 0 && arg.length <= MAX_ARG,
+        (arg) =>
+          typeof arg === "string" && arg.length > 0 && arg.length <= MAX_ARG,
       ) ||
       (description !== undefined &&
         (typeof description !== "string" || description.length > 512))
@@ -59,7 +60,9 @@ function parseConfig(): { workspace: string; tools: CommandTool[] } {
       ...(typeof description === "string" ? { description } : {}),
     };
   });
-  if (new Set(tools.map((tool) => tool.name.toLowerCase())).size !== tools.length)
+  if (
+    new Set(tools.map((tool) => tool.name.toLowerCase())).size !== tools.length
+  )
     fail("Managed CLI tool names must be unique");
   return { workspace, tools };
 }
@@ -100,9 +103,7 @@ function dynamicArgs(value: unknown): string[] {
     args.length > MAX_ARGS ||
     !args.every(
       (arg) =>
-        typeof arg === "string" &&
-        arg.length <= MAX_ARG &&
-        !arg.includes("\0"),
+        typeof arg === "string" && arg.length <= MAX_ARG && !arg.includes("\0"),
     )
   )
     fail("CLI args must be a bounded string array");
@@ -186,7 +187,8 @@ async function execute(tool: CommandTool, args: string[]) {
 
 async function output(value: unknown) {
   const text = `${JSON.stringify(value)}\n`;
-  if (Buffer.byteLength(text) > MAX_OUTPUT) fail("MCP response size limit reached");
+  if (Buffer.byteLength(text) > MAX_OUTPUT)
+    fail("MCP response size limit reached");
   await new Promise<void>((resolve, reject) =>
     process.stdout.write(text, (error) => (error ? reject(error) : resolve())),
   );
@@ -251,7 +253,8 @@ async function handle(
     });
   }
   if (!state.ready) return error(-32002, "MCP client is not initialized");
-  if (request.method === "tools/list") return answer({ tools: toolDefinitions });
+  if (request.method === "tools/list")
+    return answer({ tools: toolDefinitions });
   if (request.method === "tools/call") {
     if (!object(request.params) || typeof request.params.name !== "string")
       return error(-32602, "Invalid tools/call request");
@@ -271,7 +274,8 @@ async function handle(
         content: [
           {
             type: "text",
-            text: cause instanceof Error ? cause.message : "CLI execution failed",
+            text:
+              cause instanceof Error ? cause.message : "CLI execution failed",
           },
         ],
         isError: true,

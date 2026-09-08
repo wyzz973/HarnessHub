@@ -194,7 +194,11 @@ export function parseManifest(input: unknown): ToolPackageInspection {
       "TOOL_PACKAGE_TOO_LARGE",
       "Package payload exceeds 256 MiB",
     );
-  if (!(manifest.skills?.length || manifest.mcpServers?.length || manifest.cliTools?.length))
+  if (!(
+    manifest.skills?.length ||
+    manifest.mcpServers?.length ||
+    manifest.cliTools?.length
+  ))
     throw packageError(
       "INVALID_TOOL_PACKAGE",
       "A package must provide Skills, MCP servers or CLI tools",
@@ -229,10 +233,14 @@ export function parseManifest(input: unknown): ToolPackageInspection {
     new Set(servers.map((server) => portableKey(server.name))).size !==
     servers.length
   )
-    throw packageError("INVALID_TOOL_PACKAGE", "MCP server names must be unique");
+    throw packageError(
+      "INVALID_TOOL_PACKAGE",
+      "MCP server names must be unique",
+    );
   const cliTools = manifest.cliTools ?? [];
   if (
-    new Set(cliTools.map((tool) => portableKey(tool.name))).size !== cliTools.length
+    new Set(cliTools.map((tool) => portableKey(tool.name))).size !==
+    cliTools.length
   )
     throw packageError("INVALID_TOOL_PACKAGE", "CLI tool names must be unique");
   const forbidden =
@@ -254,9 +262,7 @@ export function parseManifest(input: unknown): ToolPackageInspection {
       );
     for (const raw of item.args ?? []) {
       const argument = raw as
-        | string
-        | { anchor: "package"; path: string }
-        | { anchor: "workspace" };
+        string | { anchor: "package"; path: string } | { anchor: "workspace" };
       if (typeof argument === "string") {
         if (
           argument.includes("\0") ||

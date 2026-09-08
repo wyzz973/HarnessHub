@@ -23,12 +23,20 @@ export interface ToolPackageRoutesOptions {
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new HubError("INVALID_REQUEST", "Request body must be an object", 400);
+    throw new HubError(
+      "INVALID_REQUEST",
+      "Request body must be an object",
+      400,
+    );
   return value as Record<string, unknown>;
 }
 function text(value: unknown, field: string): string {
   if (typeof value !== "string" || !value.trim())
-    throw new HubError("INVALID_REQUEST", `${field} must be a non-empty string`, 400);
+    throw new HubError(
+      "INVALID_REQUEST",
+      `${field} must be a non-empty string`,
+      400,
+    );
   return value;
 }
 function merge<T>(existing: T[], incoming: T[], key: (item: T) => string): T[] {
@@ -76,11 +84,9 @@ export function registerToolPackageRoutes(
   app: HubApplication,
   options: ToolPackageRoutesOptions,
 ) {
-  server.get(
-    "/v1/tool-packs",
-    { schema: { hide: true } },
-    async () => ({ packages: await listInstalled(options.root) }),
-  );
+  server.get("/v1/tool-packs", { schema: { hide: true } }, async () => ({
+    packages: await listInstalled(options.root),
+  }));
 
   server.post(
     "/v1/tool-packs/apply",
@@ -139,7 +145,9 @@ export function registerToolPackageRoutes(
           base.configuration?.skills ?? [],
           fragment.skills,
           (skill) =>
-            process.platform === "win32" ? skill.path.toLowerCase() : skill.path,
+            process.platform === "win32"
+              ? skill.path.toLowerCase()
+              : skill.path,
         ),
         mcpServers: merge(
           base.configuration?.mcpServers ?? [],

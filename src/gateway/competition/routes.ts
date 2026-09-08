@@ -60,7 +60,11 @@ function sendError(reply: FastifyReply, error: unknown) {
 
 function requireObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new HubError("INVALID_REQUEST", "Request body must be an object", 400);
+    throw new HubError(
+      "INVALID_REQUEST",
+      "Request body must be an object",
+      400,
+    );
   return value as Record<string, unknown>;
 }
 
@@ -71,7 +75,11 @@ function stringField(
 ): string | undefined {
   if (value === undefined && !required) return undefined;
   if (typeof value !== "string" || !value.trim())
-    throw new HubError("INVALID_REQUEST", `${name} must be a non-empty string`, 400);
+    throw new HubError(
+      "INVALID_REQUEST",
+      `${name} must be a non-empty string`,
+      400,
+    );
   return value;
 }
 
@@ -106,7 +114,11 @@ function sessionResponse(app: HubApplication, session: SessionRecord) {
 function textFromPrompt(body: unknown): PromptBody {
   const input = requireObject(body);
   if (!Array.isArray(input.parts) || input.parts.length === 0)
-    throw new HubError("INVALID_REQUEST", "parts must be a non-empty array", 400);
+    throw new HubError(
+      "INVALID_REQUEST",
+      "parts must be a non-empty array",
+      400,
+    );
   const parts = input.parts.map((raw, index) => {
     const part = requireObject(raw);
     if (part.type !== "text")
@@ -117,7 +129,7 @@ function textFromPrompt(body: unknown): PromptBody {
       );
     return {
       type: "text" as const,
-      text: stringField(part.text, `parts[${index}].text`)! ,
+      text: stringField(part.text, `parts[${index}].text`)!,
     };
   });
   const modelInput = requireObject(input.model);
@@ -159,8 +171,7 @@ function toolParts(events: AgentEvent[]) {
 function messagesForRun(app: HubApplication, run: RunRecord) {
   const events = app.events(run.id, 0, 1000);
   const assistantParts: unknown[] = [];
-  if (run.output)
-    assistantParts.push({ type: "text", content: run.output });
+  if (run.output) assistantParts.push({ type: "text", content: run.output });
   assistantParts.push(...toolParts(events));
   if (isTerminal(run.status)) assistantParts.push({ type: "step-finish" });
   const finish =
@@ -191,7 +202,9 @@ async function approvePendingPermissions(app: HubApplication, runId: RunId) {
   const run = app.getRun(runId);
   for (const permission of run.permissions) {
     if (permission.status !== "pending") continue;
-    const allow = permission.options.find((option) => option.kind === "allow_once");
+    const allow = permission.options.find(
+      (option) => option.kind === "allow_once",
+    );
     if (allow) await app.decide(permission.id, allow.id);
   }
 }
@@ -308,17 +321,20 @@ export function registerCompetitionRoutes(
     }
   });
 
-  server.get<{ Params: { id: string } }>("/session/:id", async (request, reply) => {
-    try {
-      const session = app.getSession(request.params.id as SessionId);
-      return reply.send({
-        ...sessionResponse(app, session),
-        message_count: app.runs(session.id).length * 2,
-      });
-    } catch (error) {
-      return sendError(reply, error);
-    }
-  });
+  server.get<{ Params: { id: string } }>(
+    "/session/:id",
+    async (request, reply) => {
+      try {
+        const session = app.getSession(request.params.id as SessionId);
+        return reply.send({
+          ...sessionResponse(app, session),
+          message_count: app.runs(session.id).length * 2,
+        });
+      } catch (error) {
+        return sendError(reply, error);
+      }
+    },
+  );
 
   server.delete<{ Params: { id: string } }>(
     "/session/:id",
@@ -345,9 +361,15 @@ export function registerCompetitionRoutes(
           await approvePendingPermissions(app, run.id);
           const current = app.getRun(run.id);
           if (isTerminal(current.status)) {
-            if (current.status === "completed" || current.status === "cancelled")
+            if (
+              current.status === "completed" ||
+              current.status === "cancelled"
+            )
               return reply.code(204).send();
-            const message = current.error?.message ?? current.stopReason ?? "Agent run failed";
+            const message =
+              current.error?.message ??
+              current.stopReason ??
+              "Agent run failed";
             return reply.code(502).send({ code: "BAD_GATEWAY", message });
           }
           await delay(25);
@@ -393,14 +415,8 @@ export function registerCompetitionRoutes(
       return sendError(reply, error);
     }
   };
-  server.post<{ Params: { id: string } }>(
-    "/session/:id/abort",
-    abortHandler,
-  );
-  server.post<{ Params: { id: string } }>(
-    "/session/:id/stop",
-    abortHandler,
-  );
+  server.post<{ Params: { id: string } }>("/session/:id/abort", abortHandler);
+  server.post<{ Params: { id: string } }>("/session/:id/stop", abortHandler);
 
   server.get("/question", async () => []);
   server.post<{ Params: { id: string } }>(
@@ -449,9 +465,15 @@ export function registerCompetitionRoutes(
           if (found) break;
         }
         if (!found)
-          throw new HubError("PERMISSION_NOT_FOUND", "Permission not found", 404);
+          throw new HubError(
+            "PERMISSION_NOT_FOUND",
+            "Permission not found",
+            404,
+          );
         const kind = requested === "reject" ? "reject_once" : "allow_once";
-        const option = found.options.find((candidate) => candidate.kind === kind);
+        const option = found.options.find(
+          (candidate) => candidate.kind === kind,
+        );
         if (!option)
           throw new HubError(
             "PERMISSION_OPTION_UNAVAILABLE",
@@ -485,7 +507,9 @@ export function registerCompetitionRoutes(
       await writeSse(reply, { type: "server.connected", properties: {} });
       for (const run of app.runs()) cursors.set(run.id, run.lastSeq);
       while (!abort.signal.aborted) {
-        const sessions = app.sessions().filter((session) => session.status === "open");
+        const sessions = app
+          .sessions()
+          .filter((session) => session.status === "open");
         for (const session of sessions) {
           const state = sessionBusy(app, session.id) ? "busy" : "idle";
           const previous = states.get(session.id);
@@ -533,7 +557,9 @@ export function registerCompetitionRoutes(
     } catch (error) {
       if (!abort.signal.aborted)
         reply.raw.destroy(
-          error instanceof Error ? error : new Error("Competition event stream failed"),
+          error instanceof Error
+            ? error
+            : new Error("Competition event stream failed"),
         );
     } finally {
       reply.raw.off("close", onClose);
