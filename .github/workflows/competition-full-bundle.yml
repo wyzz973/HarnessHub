@@ -82,6 +82,7 @@ jobs:
             "hub.cmd",
             "Start.cmd",
             "Start-Competition.cmd",
+            "gateway.cmd",
             "dist\src\main.js",
             "dist\src\competition-bundle-main.js",
             "README-COMPETITION.txt"
@@ -101,7 +102,7 @@ jobs:
             }
           }
           $inventory = @($manifest.files | ForEach-Object { $_.path })
-          foreach ($entry in @("Start-Competition.cmd", "README-COMPETITION.txt", "dist/src/competition-bundle-main.js")) {
+          foreach ($entry in @("Start-Competition.cmd", "gateway.cmd", "README-COMPETITION.txt", "dist/src/competition-bundle-main.js")) {
             if ($inventory -notcontains $entry) {
               throw "Integrity manifest is missing: $entry"
             }
