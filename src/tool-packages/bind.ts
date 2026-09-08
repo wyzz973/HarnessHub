@@ -7,7 +7,11 @@ import type {
 import { canonicalDirectory, directories } from "./files.js";
 import { packageError } from "./manifest.js";
 import { verifyInstalled } from "./store.js";
-import type { ToolPackageBinding, ToolPackageConfiguration } from "./types.js";
+import type {
+  ToolPackageArgument,
+  ToolPackageBinding,
+  ToolPackageConfiguration,
+} from "./types.js";
 
 function secretReference(value: unknown): SecretReference {
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -58,9 +62,11 @@ export async function bindInstalled(
     installed.record.digest,
   );
   const workspace = await canonicalDirectory(options.workspace);
-  if (
-    installed.manifest.mcpServers?.some((server) => server.launch === "node")
-  ) {
+  const cliTools = installed.manifest.cliTools ?? [];
+  const needsNode =
+    cliTools.length > 0 ||
+    installed.manifest.mcpServers?.some((server) => server.launch === "node");
+  if (needsNode) {
     if (!path.isAbsolute(options.nodeExecutable))
       throw packageError(
         "INVALID_TOOL_PACKAGE_BINDING",
@@ -76,6 +82,24 @@ export async function bindInstalled(
       throw packageError(
         "INVALID_TOOL_PACKAGE_BINDING",
         "The bundled Node executable must be a regular executable file",
+      );
+  }
+  if (cliTools.length) {
+    if (!options.commandMcpEntry || !path.isAbsolute(options.commandMcpEntry))
+      throw packageError(
+        "INVALID_TOOL_PACKAGE_BINDING",
+        "CLI tools require the bundled HarnessHub command MCP entry",
+      );
+    const entry = await lstat(options.commandMcpEntry);
+    if (!entry.isFile() || entry.isSymbolicLink())
+      throw packageError(
+        "INVALID_TOOL_PACKAGE_BINDING",
+        "The HarnessHub command MCP entry must be a regular file",
+      );
+    if (installed.manifest.mcpServers?.some((server) => server.name.toLowerCase() === "cli"))
+      throw packageError(
+        "TOOL_PACKAGE_BIND_CONFLICT",
+        "MCP server name cli is reserved when cliTools are present",
       );
   }
   const slots = new Set(
@@ -104,6 +128,14 @@ export async function bindInstalled(
     );
   const resolve = (relative: string) =>
     path.join(object, ...relative.split("/"));
+  const resolveArgs = (args: ToolPackageArgument[] | undefined) =>
+    (args ?? []).map((argument) =>
+      typeof argument === "string"
+        ? argument
+        : argument.anchor === "workspace"
+          ? workspace
+          : resolve(argument.path),
+    );
   const skills = (installed.manifest.skills ?? []).map((skill) => ({
     path: resolve(skill.path),
     enabled: true,
@@ -113,13 +145,7 @@ export async function bindInstalled(
   const mcpServers: EngineMcpServer[] = (
     installed.manifest.mcpServers ?? []
   ).map((server) => {
-    const args = (server.args ?? []).map((argument) =>
-      typeof argument === "string"
-        ? argument
-        : argument.anchor === "workspace"
-          ? workspace
-          : resolve(argument.path),
-    );
+    const args = resolveArgs(server.args);
     return {
       name: `${id}-${server.name}`,
       type: "stdio",
@@ -142,5 +168,39 @@ export async function bindInstalled(
         : {}),
     };
   });
-  return { skills, mcpServers };
+  const exposedCliTools: string[] = [];
+  if (cliTools.length) {
+    const commandConfig = cliTools.map((tool) => {
+      const args = resolveArgs(tool.args);
+      exposedCliTools.push(`cli_${tool.name}`);
+      return {
+        name: tool.name,
+        ...(tool.description ? { description: tool.description } : {}),
+        command:
+          tool.launch === "node"
+            ? path.resolve(options.nodeExecutable)
+            : resolve(tool.entry),
+        prefixArgs:
+          tool.launch === "node" ? [resolve(tool.entry), ...args] : args,
+      };
+    });
+    const encoded = JSON.stringify(commandConfig);
+    if (encoded.length > 8192)
+      throw packageError(
+        "INVALID_TOOL_PACKAGE_BINDING",
+        "CLI tool declarations exceed the managed command MCP configuration limit",
+      );
+    mcpServers.push({
+      name: `${id}-cli`,
+      type: "stdio",
+      enabled: true,
+      command: path.resolve(options.nodeExecutable),
+      args: [path.resolve(options.commandMcpEntry!)],
+      env: {
+        HARNESSHUB_CLI_WORKSPACE: workspace,
+        HARNESSHUB_CLI_TOOLS_JSON: encoded,
+      },
+    });
+  }
+  return { skills, mcpServers, cliTools: exposedCliTools };
 }
