@@ -54,7 +54,15 @@ jobs:
           $ErrorActionPreference = "Stop"
           $extract = Join-Path $env:RUNNER_TEMP "competition-full-base"
           Remove-Item -Recurse -Force $extract -ErrorAction SilentlyContinue
-          Expand-Archive -LiteralPath $env:BASE_BUNDLE_ZIP -DestinationPath $extract
+          New-Item -ItemType Directory -Force -Path $extract | Out-Null
+          $sevenZip = Join-Path $env:ProgramFiles "7-Zip\7z.exe"
+          if (-not (Test-Path -LiteralPath $sevenZip -PathType Leaf)) {
+            throw "7-Zip is not available on this runner"
+          }
+          & $sevenZip x -y "-o$extract" $env:BASE_BUNDLE_ZIP | Out-Host
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to extract pinned engine bundle with 7-Zip"
+          }
           $matches = @(Get-ChildItem -LiteralPath $extract -Recurse -File -Filter bundle.json)
           if ($matches.Count -ne 1) {
             throw "Expected exactly one portable bundle.json, found $($matches.Count)"
