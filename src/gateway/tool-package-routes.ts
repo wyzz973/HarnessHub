@@ -1,7 +1,10 @@
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { HubApplication } from "../application/service.js";
-import type { EngineConfiguration } from "../domain/engine-configuration.js";
+import type {
+  EngineConfiguration,
+  SecretReference,
+} from "../domain/engine-configuration.js";
 import type { EngineRegistration } from "../domain/engines.js";
 import { HubError } from "../domain/errors.js";
 import type { EngineProfile } from "../domain/types.js";
@@ -73,81 +76,90 @@ export function registerToolPackageRoutes(
   app: HubApplication,
   options: ToolPackageRoutesOptions,
 ) {
-  server.get("/v1/tool-packs", async () => ({
-    packages: await listInstalled(options.root),
-  }));
+  server.get(
+    "/v1/tool-packs",
+    { schema: { hide: true } },
+    async () => ({ packages: await listInstalled(options.root) }),
+  );
 
-  server.post("/v1/tool-packs/apply", async (request, reply) => {
-    const body = object(request.body);
-    const engineId = text(body.engineId, "engineId");
-    const workspace = text(body.workspace, "workspace");
-    if (!path.isAbsolute(workspace))
-      throw new HubError(
-        "INVALID_REQUEST",
-        "workspace must be an absolute directory",
-        400,
-      );
-    const source =
-      body.source === undefined ? undefined : text(body.source, "source");
-    const packageInput =
-      body.package === undefined ? undefined : object(body.package);
-    if ((source ? 1 : 0) + (packageInput ? 1 : 0) !== 1)
-      throw new HubError(
-        "INVALID_REQUEST",
-        "Provide exactly one of source or package",
-        400,
-      );
-    let id: string;
-    let version: string;
-    if (source) {
-      if (!path.isAbsolute(source))
+  server.post(
+    "/v1/tool-packs/apply",
+    { schema: { hide: true } },
+    async (request, reply) => {
+      const body = object(request.body);
+      const engineId = text(body.engineId, "engineId");
+      const workspace = text(body.workspace, "workspace");
+      if (!path.isAbsolute(workspace))
         throw new HubError(
           "INVALID_REQUEST",
-          "source must be an absolute local Tool Pack directory",
+          "workspace must be an absolute directory",
           400,
         );
-      const installed = await installLocal(source, options.root);
-      id = installed.manifest.id;
-      version = installed.manifest.version;
-    } else {
-      id = text(packageInput!.id, "package.id");
-      version = text(packageInput!.version, "package.version");
-    }
-    const secretBindings =
-      body.secretBindings === undefined
-        ? undefined
-        : object(body.secretBindings);
-    const fragment = await bindInstalled(options.root, id, version, {
-      nodeExecutable: options.nodeExecutable,
-      commandMcpEntry: options.commandMcpEntry,
-      workspace,
-      ...(secretBindings ? { secretBindings } : {}),
-    });
-    const base = registration(app.engineProfile(engineId));
-    const configuration: EngineConfiguration = {
-      ...base.configuration,
-      adapter: base.configuration?.adapter ?? "generic",
-      skills: merge(base.configuration?.skills ?? [], fragment.skills, (skill) =>
-        process.platform === "win32" ? skill.path.toLowerCase() : skill.path,
-      ),
-      mcpServers: merge(
-        base.configuration?.mcpServers ?? [],
-        fragment.mcpServers,
-        (mcp) => mcp.name.toLowerCase(),
-      ),
-    };
-    const profile = await app.registerEngine({ ...base, configuration });
-    return reply.code(200).send({
-      ok: true,
-      package: { id, version },
-      engineId: profile.id,
-      revision: profile.revision,
-      capabilities: {
-        skills: fragment.skills.map((skill) => skill.path),
-        mcp: fragment.mcpServers.map((mcp) => mcp.name),
-        cli: fragment.cliTools,
-      },
-      note: "Existing sessions keep their pinned engine revision; new sessions use this revision.",
-    });
-  });
+      const source =
+        body.source === undefined ? undefined : text(body.source, "source");
+      const packageInput =
+        body.package === undefined ? undefined : object(body.package);
+      if ((source ? 1 : 0) + (packageInput ? 1 : 0) !== 1)
+        throw new HubError(
+          "INVALID_REQUEST",
+          "Provide exactly one of source or package",
+          400,
+        );
+      let id: string;
+      let version: string;
+      if (source) {
+        if (!path.isAbsolute(source))
+          throw new HubError(
+            "INVALID_REQUEST",
+            "source must be an absolute local Tool Pack directory",
+            400,
+          );
+        const installed = await installLocal(source, options.root);
+        id = installed.manifest.id;
+        version = installed.manifest.version;
+      } else {
+        id = text(packageInput!.id, "package.id");
+        version = text(packageInput!.version, "package.version");
+      }
+      const secretBindings =
+        body.secretBindings === undefined
+          ? undefined
+          : (object(body.secretBindings) as Record<string, SecretReference>);
+      const fragment = await bindInstalled(options.root, id, version, {
+        nodeExecutable: options.nodeExecutable,
+        commandMcpEntry: options.commandMcpEntry,
+        workspace,
+        ...(secretBindings ? { secretBindings } : {}),
+      });
+      const base = registration(app.engineProfile(engineId));
+      const configuration: EngineConfiguration = {
+        ...base.configuration,
+        adapter: base.configuration?.adapter ?? "generic",
+        skills: merge(
+          base.configuration?.skills ?? [],
+          fragment.skills,
+          (skill) =>
+            process.platform === "win32" ? skill.path.toLowerCase() : skill.path,
+        ),
+        mcpServers: merge(
+          base.configuration?.mcpServers ?? [],
+          fragment.mcpServers,
+          (mcp) => mcp.name.toLowerCase(),
+        ),
+      };
+      const profile = await app.registerEngine({ ...base, configuration });
+      return reply.code(200).send({
+        ok: true,
+        package: { id, version },
+        engineId: profile.id,
+        revision: profile.revision,
+        capabilities: {
+          skills: fragment.skills.map((skill) => skill.path),
+          mcp: fragment.mcpServers.map((mcp) => mcp.name),
+          cli: fragment.cliTools,
+        },
+        note: "Existing sessions keep their pinned engine revision; new sessions use this revision.",
+      });
+    },
+  );
 }
