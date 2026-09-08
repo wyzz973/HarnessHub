@@ -33,14 +33,30 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $root = Join-Path $PWD ".artifact\harnesshub-competition"
-          $zip = Join-Path $PWD ".artifact\harnesshub-competition-windows.zip"
+          $root = Join-Path $env:RUNNER_TEMP "harnesshub-competition"
+          $output = Join-Path $PWD ".artifact"
+          $zip = Join-Path $output "harnesshub-competition-windows.zip"
+          Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $root | Out-Null
           New-Item -ItemType Directory -Force -Path (Join-Path $root "runtime") | Out-Null
+          New-Item -ItemType Directory -Force -Path $output | Out-Null
 
           Copy-Item -Recurse -Force "dist" (Join-Path $root "dist")
-          Copy-Item -Recurse -Force "node_modules" (Join-Path $root "node_modules")
           Copy-Item -Force "package.json" (Join-Path $root "package.json")
+          Copy-Item -Force "pnpm-lock.yaml" (Join-Path $root "pnpm-lock.yaml")
+          Copy-Item -Force ".npmrc" (Join-Path $root ".npmrc")
+          Copy-Item -Recurse -Force "patches" (Join-Path $root "patches")
+
+          Push-Location $root
+          try {
+            pnpm install --prod --frozen-lockfile --offline
+            if ($LASTEXITCODE -ne 0) {
+              throw "Production dependency install failed with exit code $LASTEXITCODE"
+            }
+          } finally {
+            Pop-Location
+          }
+
           Copy-Item -Force (Get-Command node).Source (Join-Path $root "runtime\node.exe")
 
           @'
@@ -59,7 +75,7 @@ jobs:
           Example:
             Start-Competition.cmd --engine opencode --port 6217 --host localhost --config C:\path\to\engines\local.yaml
 
-          This artifact contains the Gateway runtime and npm dependencies. Agent engine executables are still resolved from the configured command paths or the HarnessHub offline engine bundle.
+          This artifact contains the Gateway runtime and production npm dependencies. Agent engine executables are still resolved from the configured command paths or the HarnessHub offline engine bundle.
           '@ | Set-Content -Encoding UTF8 (Join-Path $root "README-OFFLINE.txt")
 
           Compress-Archive -Path "$root\*" -DestinationPath $zip -CompressionLevel Optimal
@@ -69,7 +85,8 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $zip = Join-Path $PWD ".artifact\harnesshub-competition-windows.zip"
-          $verify = Join-Path $PWD ".artifact\verify"
+          $verify = Join-Path $env:RUNNER_TEMP "harnesshub-competition-verify"
+          Remove-Item -Recurse -Force $verify -ErrorAction SilentlyContinue
           Expand-Archive -LiteralPath $zip -DestinationPath $verify
           Push-Location $verify
           try {
