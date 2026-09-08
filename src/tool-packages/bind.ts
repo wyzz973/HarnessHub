@@ -96,10 +96,19 @@ export async function bindInstalled(
         "INVALID_TOOL_PACKAGE_BINDING",
         "The HarnessHub command MCP entry must be a regular file",
       );
-    if (installed.manifest.mcpServers?.some((server) => server.name.toLowerCase() === "cli"))
+    if (
+      installed.manifest.mcpServers?.some(
+        (server) => server.name.toLowerCase() === "cli",
+      )
+    )
       throw packageError(
         "TOOL_PACKAGE_BIND_CONFLICT",
         "MCP server name cli is reserved when cliTools are present",
+      );
+    if ((installed.manifest.mcpServers?.length ?? 0) >= 16)
+      throw packageError(
+        "INVALID_TOOL_PACKAGE_BINDING",
+        "A Tool Pack with CLI tools can contain at most 15 additional MCP servers",
       );
   }
   const slots = new Set(
@@ -197,8 +206,8 @@ export async function bindInstalled(
       command: path.resolve(options.nodeExecutable),
       args: [path.resolve(options.commandMcpEntry!)],
       env: {
-        HARNESSHUB_CLI_WORKSPACE: workspace,
-        HARNESSHUB_CLI_TOOLS_JSON: encoded,
+        HHCAP_CLI_WORKSPACE: workspace,
+        HHCAP_CLI_TOOLS_JSON: encoded,
       },
     });
   }
