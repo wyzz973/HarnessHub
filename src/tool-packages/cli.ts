@@ -20,6 +20,7 @@ import {
 export interface ToolPackageCliContext {
   root: string;
   nodeExecutable: string;
+  commandMcpEntry?: string;
   workspace?: string;
   /** Composition root injects the existing engine validator. No model invocation is required. */
   prepareEngine: (input: unknown) => Promise<EngineProfile>;
@@ -28,6 +29,7 @@ export interface ToolPackageBindResult {
   registration: EngineRegistration;
   revision: string;
   package: { id: string; version: string };
+  capabilities?: { skills: string[]; mcp: string[]; cli: string[] };
 }
 
 async function readJson(file: string, maximum: number): Promise<unknown> {
@@ -151,6 +153,9 @@ export async function runToolPackageCli(
   const fragment = await bindInstalled(context.root, id, version, {
     nodeExecutable: context.nodeExecutable,
     workspace,
+    ...(context.commandMcpEntry
+      ? { commandMcpEntry: context.commandMcpEntry }
+      : {}),
     ...(secretBindings !== undefined ? { secretBindings } : {}),
   });
   const configuration: EngineConfiguration = {
@@ -171,6 +176,11 @@ export async function runToolPackageCli(
     registration: { ...registration, configuration: prepared.configuration! },
     revision: prepared.revision,
     package: { id, version },
+    capabilities: {
+      skills: fragment.skills.map((skill) => skill.path),
+      mcp: fragment.mcpServers.map((server) => server.name),
+      cli: fragment.cliTools,
+    },
   };
   return result;
 }
