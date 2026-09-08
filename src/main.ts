@@ -33,6 +33,7 @@ import { createFileArtifactCollector } from "./artifacts/collector.js";
 import { Runtime } from "./runtime/runtime.js";
 import { HubApplication } from "./application/service.js";
 import { createGateway } from "./gateway/server.js";
+import { registerCompetitionRoutes } from "./gateway/competition/routes.js";
 
 /** Composition root: concrete implementations are assembled only here. */
 export async function startHub(options: {
@@ -41,8 +42,10 @@ export async function startHub(options: {
   demo: boolean;
   cwd: string;
   port: number;
+  host?: string;
   defaultEngine?: string;
   workspaces?: Workspace[];
+  competition?: boolean;
 }) {
   const resolveConfig = async () => {
     const config = await loadConfig({
@@ -264,6 +267,7 @@ export async function startHub(options: {
       observations,
       configuration,
     });
+    if (options.competition) registerCompetitionRoutes(server, app);
     server.addHook("onClose", async () => {
       for (const abort of activeProbes) abort.abort();
       await Promise.allSettled([...probeTasks]);
@@ -272,7 +276,10 @@ export async function startHub(options: {
       workflowStore?.close();
       store.close();
     });
-    const url = await server.listen({ host: "127.0.0.1", port: options.port });
+    const url = await server.listen({
+      host: options.host ?? "127.0.0.1",
+      port: options.port,
+    });
     return { server, app, url };
   } catch (error) {
     await workflows?.close();
@@ -300,35 +307,43 @@ if (
   const { values } = parseArgs({
     options: {
       demo: { type: "boolean", default: false },
+      competition: { type: "boolean", default: false },
       config: { type: "string" },
-      port: { type: "string", default: "3180" },
+      engine: { type: "string" },
+      host: { type: "string", default: "localhost" },
+      port: { type: "string" },
       "data-dir": { type: "string", default: "./data" },
       help: { type: "boolean" },
     },
   });
   if (values.help)
     console.log(
-      "HarnessHub: node dist/src/main.js [--demo] [--config engines/local.yaml] [--port 3180] [--data-dir ./data]",
+      "HarnessHub: node dist/src/main.js [--competition] [--engine opencode] [--host localhost] [--port 6217] [--config engines/local.yaml] [--data-dir ./data]",
     );
   else {
-    const port = Number(values.port);
+    const selectedEngine = values.engine ?? process.env.AGENT_ENGINE;
+    if (values.competition && !selectedEngine)
+      throw new Error("Competition mode requires --engine or AGENT_ENGINE");
+    const port = Number(values.port ?? (values.competition ? "6217" : "3180"));
     if (!Number.isInteger(port) || port < 0 || port > 65535)
       throw new Error("Invalid port");
     const hub = await startHub({
       dataDir: values["data-dir"],
       demo: values.demo,
+      competition: values.competition,
       port,
+      host: values.host,
       cwd: process.cwd(),
       ...(values.config ? { configFile: values.config } : {}),
-      ...(process.env.AGENT_ENGINE
-        ? { defaultEngine: process.env.AGENT_ENGINE }
-        : {}),
+      ...(selectedEngine ? { defaultEngine: selectedEngine } : {}),
     });
     console.log(
       JSON.stringify({
         event: "ready",
         url: hub.url,
         demo: values.demo,
+        competition: values.competition,
+        engine: selectedEngine ?? hub.app.defaultEngine(),
         pid: process.pid,
       }),
     );

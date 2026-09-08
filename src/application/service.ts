@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { realpath, stat } from "node:fs/promises";
 import type { EngineManagement } from "../domain/engines.js";
 import { HubError } from "../domain/errors.js";
 import type { Runtime } from "../runtime/runtime.js";
@@ -82,6 +84,43 @@ export class HubApplication {
     routing?: JsonObject;
   }) {
     return this.runtime.createSession(input);
+  }
+  async createSessionAtDirectory(input: {
+    directory: string;
+    engineId?: string;
+    routing?: JsonObject;
+  }) {
+    let directory: string;
+    try {
+      directory = await realpath(input.directory);
+      if (!(await stat(directory)).isDirectory())
+        throw new Error("not a directory");
+    } catch {
+      throw new HubError(
+        "INVALID_DIRECTORY",
+        "directory must reference an existing directory",
+        400,
+      );
+    }
+    const engineId = input.engineId ?? this.runtime.defaultEngine();
+    const profile = this.runtime
+      .listEngines()
+      .find((engine) => engine.id === engineId && engine.enabled);
+    if (!profile)
+      throw new HubError(
+        "ENGINE_UNAVAILABLE",
+        `Engine ${engineId} is not enabled`,
+        404,
+      );
+    const workspaceId = `directory-${createHash("sha256")
+      .update(directory)
+      .digest("hex")
+      .slice(0, 20)}`;
+    return this.runtime.store.createSession(
+      profile,
+      { id: workspaceId, path: directory },
+      input.routing,
+    );
   }
   getSession(id: SessionId) {
     return this.runtime.store.getSession(id);
