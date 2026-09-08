@@ -141,3 +141,23 @@ Start-Competition.cmd --engine opencode --port 6217 --host localhost --config C:
 ```
 
 目标机器不需要安装 Node 或 pnpm。Agent 引擎程序仍由 `engines/local.yaml` 指向现有安装位置，或者直接使用 HarnessHub 已有的离线引擎发行包。
+
+## Competition Full Bundle
+
+最终比赛交付可以使用 `Competition full bundle` workflow。它以固定 SHA-256 的 Windows ARM64 OpenSource Engine Bundle 为基底，保留 Codex、Gemini、Qwen、Pi、MiMo、DSH、OpenClaw、Kimi、OpenCode、Hermes 及包内 Node/Python/Git，然后覆盖当前比赛 Gateway，并重新生成 `bundle.json` 全文件哈希清单。
+
+目标机器不需要 Node、pnpm 或 Harness 安装。先按包内 `examples/company-chat.json` 准备私有模型配置并执行：
+
+```bat
+hub.cmd configure --file C:\private\competition-settings.json
+```
+
+随后按比赛规范启动：
+
+```bat
+gateway.cmd --engine opencode
+gateway.cmd --engine codex
+gateway.cmd --engine qwen
+```
+
+默认监听 `localhost:6217`，也可显式传入 `--port`、`--host`。`Start-Competition.cmd` 与 `gateway.cmd` 等价。引擎在启动时选择，不在请求处理中动态切换；模型、Skill、MCP、CLI Tool Pack 仍通过统一配置与 revision 机制下发。
