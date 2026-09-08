@@ -35,6 +35,7 @@
 | [Windows 使用](windows.md) | 原生安装、运行、Codex、密钥与能力边界 |
 | [Windows 便携发布包](portable-bundle.md) | 固定运行时、开发机制备、免安装发行与清单 |
 | [本地工具包](tool-packages.md) | 离线安装、SHA-256、Skill/MCP 绑定和注销 |
+| [Capability Pack](capability-packs.md) | 应用层一键安装并应用 Skill、MCP、CLI 与新 Engine revision |
 | [公司离线交接](offline-company.md) | Windows ARM64 开源引擎、Chat Completions、公司代码合并与开发包 |
 | [离线归档与恢复](offline-artifacts.md) | Release ZIP、分片 SHA256 与 Windows 无安装恢复 |
 | [开源引擎源码](open-source-engines.md) | 14 个固定仓库、源码归档、许可证和 SHA-256 |
