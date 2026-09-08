@@ -177,11 +177,9 @@ export async function bindInstalled(
         : {}),
     };
   });
-  const exposedCliTools: string[] = [];
   if (cliTools.length) {
     const commandConfig = cliTools.map((tool) => {
       const args = resolveArgs(tool.args);
-      exposedCliTools.push(`cli_${tool.name}`);
       return {
         name: tool.name,
         ...(tool.description ? { description: tool.description } : {}),
@@ -211,5 +209,5 @@ export async function bindInstalled(
       },
     });
   }
-  return { skills, mcpServers, cliTools: exposedCliTools };
+  return { skills, mcpServers };
 }
