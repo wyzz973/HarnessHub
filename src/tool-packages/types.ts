@@ -20,6 +20,15 @@ export interface ToolPackageMcp {
   /** Maps destination environment variables to explicit local binding slot names. */
   secretEnv?: Record<string, string>;
 }
+export interface ToolPackageCli {
+  /** Stable tool name exposed through the managed command MCP server. */
+  name: string;
+  description?: string;
+  launch: "node" | "native";
+  entry: string;
+  /** Fixed arguments prepended before model-supplied argv. */
+  args?: ToolPackageArgument[];
+}
 export interface ToolPackageManifest {
   schemaVersion: 1;
   id: string;
@@ -28,6 +37,8 @@ export interface ToolPackageManifest {
   files: ToolPackageFile[];
   skills?: { path: string }[];
   mcpServers?: ToolPackageMcp[];
+  /** CLI programs are exposed as allow-listed MCP tools; no shell command is accepted. */
+  cliTools?: ToolPackageCli[];
 }
 export interface ToolPackageInspection {
   manifest: ToolPackageManifest;
@@ -50,9 +61,11 @@ export interface InstalledToolPackage extends ToolPackageInspection {
 export interface ToolPackageBinding {
   /** Absolute executable from the caller's bundled runtime; never resolved through PATH. */
   nodeExecutable: string;
+  /** Compiled HarnessHub command MCP entry. Required only when cliTools are declared. */
+  commandMcpEntry?: string;
   workspace: string;
   secretBindings?: Record<string, SecretReference>;
 }
 export type ToolPackageConfiguration = Required<
   Pick<EngineConfiguration, "skills" | "mcpServers">
->;
+> & { cliTools: string[] };
