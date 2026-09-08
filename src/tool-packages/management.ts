@@ -9,7 +9,7 @@ import type { ToolPackageManagement } from "../domain/tool-packages.js";
 import type { EngineProfile } from "../domain/types.js";
 import { bindInstalled } from "./bind.js";
 import { canonicalJson } from "./manifest.js";
-import { installLocal, listInstalled } from "./store.js";
+import { installLocal, listInstalled, verifyInstalled } from "./store.js";
 
 export interface ToolPackageManagementOptions {
   root: string;
@@ -119,6 +119,10 @@ export function createToolPackageManagement(
         id = text(packageInput!.id, "package.id");
         version = text(packageInput!.version, "package.version");
       }
+      const installed = await verifyInstalled(options.root, id, version);
+      const cliTools = (installed.manifest.cliTools ?? []).map(
+        (tool) => `cli_${tool.name}`,
+      );
       const secretBindings =
         body.secretBindings === undefined
           ? undefined
@@ -156,7 +160,7 @@ export function createToolPackageManagement(
         capabilities: {
           skills: fragment.skills.map((skill) => skill.path),
           mcp: fragment.mcpServers.map((mcp) => mcp.name),
-          cli: fragment.cliTools,
+          cli: cliTools,
         },
         note: "Existing sessions keep their pinned engine revision; new sessions use this revision.",
       };
