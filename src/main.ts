@@ -34,6 +34,7 @@ import { Runtime } from "./runtime/runtime.js";
 import { HubApplication } from "./application/service.js";
 import { createGateway } from "./gateway/server.js";
 import { registerCompetitionRoutes } from "./gateway/competition/routes.js";
+import { registerToolPackageRoutes } from "./gateway/tool-package-routes.js";
 
 /** Composition root: concrete implementations are assembled only here. */
 export async function startHub(options: {
@@ -266,6 +267,13 @@ export async function startHub(options: {
       workflows,
       observations,
       configuration,
+    });
+    registerToolPackageRoutes(server, app, {
+      root: path.join(dataDir, "tool-packages"),
+      nodeExecutable: process.execPath,
+      commandMcpEntry: fileURLToPath(
+        new URL("./tool-packages/command-mcp.js", import.meta.url),
+      ),
     });
     if (options.competition) registerCompetitionRoutes(server, app);
     server.addHook("onClose", async () => {
