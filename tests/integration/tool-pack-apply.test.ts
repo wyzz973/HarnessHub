@@ -27,10 +27,7 @@ void test(
       await mkdtemp(path.join(os.tmpdir(), "hh-tool-apply-workspace-")),
     );
     const source = fileURLToPath(
-      new URL(
-        "../../../examples/tool-packages/developer-cli",
-        import.meta.url,
-      ),
+      new URL("../../../examples/tool-packages/developer-cli", import.meta.url),
     );
     const hub = await startHub({
       dataDir,
