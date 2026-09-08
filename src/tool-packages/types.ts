@@ -66,6 +66,7 @@ export interface ToolPackageBinding {
   workspace: string;
   secretBindings?: Record<string, SecretReference>;
 }
+/** A binding remains directly spreadable into EngineConfiguration for backward compatibility. */
 export type ToolPackageConfiguration = Required<
   Pick<EngineConfiguration, "skills" | "mcpServers">
-> & { cliTools: string[] };
+>;
