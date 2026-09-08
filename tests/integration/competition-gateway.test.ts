@@ -13,8 +13,12 @@ async function json<T>(
 ): Promise<{ status: number; value: T }> {
   const response = await fetch(`${base}${route}`, {
     method,
-    headers: body === undefined ? undefined : { "content-type": "application/json" },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    ...(body === undefined
+      ? {}
+      : {
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
   });
   return {
     status: response.status,
