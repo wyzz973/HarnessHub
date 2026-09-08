@@ -44,14 +44,22 @@ jobs:
           Copy-Item -Recurse -Force "dist" (Join-Path $root "dist")
           Copy-Item -Force "package.json" (Join-Path $root "package.json")
           Copy-Item -Force "pnpm-lock.yaml" (Join-Path $root "pnpm-lock.yaml")
-          Copy-Item -Force ".npmrc" (Join-Path $root ".npmrc")
           Copy-Item -Recurse -Force "patches" (Join-Path $root "patches")
+
+          @'
+          save-exact=true
+          strict-peer-dependencies=true
+          node-linker=hoisted
+          '@ | Set-Content -Encoding Ascii (Join-Path $root ".npmrc")
 
           Push-Location $root
           try {
             pnpm install --prod --frozen-lockfile --offline
             if ($LASTEXITCODE -ne 0) {
               throw "Production dependency install failed with exit code $LASTEXITCODE"
+            }
+            if (-not (Test-Path ".\node_modules\ajv\package.json")) {
+              throw "Portable production node_modules was not materialized"
             }
           } finally {
             Pop-Location
@@ -90,6 +98,9 @@ jobs:
           Expand-Archive -LiteralPath $zip -DestinationPath $verify
           Push-Location $verify
           try {
+            if (-not (Test-Path ".\node_modules\ajv\package.json")) {
+              throw "Extracted production dependencies are incomplete"
+            }
             & ".\runtime\node.exe" ".\dist\src\main.js" --help
             if ($LASTEXITCODE -ne 0) {
               throw "Extracted Gateway --help smoke test failed with exit code $LASTEXITCODE"
