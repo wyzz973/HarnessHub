@@ -1,0 +1,212 @@
+name: Competition full bundle x64
+
+on:
+  push:
+    branches:
+      - feat/competition-gateway-api
+    paths:
+      - .github/workflows/competition-full-bundle-x64.yml
+      - src/competition-bundle-main.ts
+      - scripts/build-competition-full-bundle.mjs
+      - scripts/prepare-contest.mjs
+      - scripts/prepare-open-source.mjs
+      - scripts/package-bundle.mjs
+      - distribution/**
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows-x64-full-bundle:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          architecture: x64
+          cache: pnpm
+
+      - name: Verify native x64 build runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ((node -p "process.platform") -ne "win32") {
+            throw "Expected native Windows runner"
+          }
+          if ((node -p "process.arch") -ne "x64") {
+            throw "Expected native x64 Node"
+          }
+          if ((node -p "process.versions.node") -ne "24.20.0") {
+            throw "Expected Node 24.20.0"
+          }
+
+      - name: Install and build current Gateway and console
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          pnpm install --frozen-lockfile
+          pnpm build
+          pnpm build:console
+          npm install --prefix .tools/pnpm-runner --no-package-lock --ignore-scripts --no-save pnpm@10.12.3
+
+      - name: Prepare fixed x64 engine payload
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $prepared = Join-Path $PWD ".tools\contest-prepared\win32-x64"
+          $pnpmJs = (Resolve-Path ".tools\pnpm-runner\node_modules\pnpm\bin\pnpm.cjs").Path
+          node scripts/prepare-contest.mjs --root "$prepared" --arch x64 --pnpm "$pnpmJs"
+          if ($LASTEXITCODE -ne 0) {
+            throw "x64 contest preparation failed"
+          }
+          node scripts/prepare-contest.mjs --root "$prepared" --arch x64 --pnpm "$pnpmJs" --check
+          if ($LASTEXITCODE -ne 0) {
+            throw "x64 contest preparation verification failed"
+          }
+          "PREPARED_X64=$prepared" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Derive open-source x64 engine edition
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $openSource = Join-Path $PWD ".tools\open-source-prepared\win32-x64"
+          Remove-Item -Recurse -Force $openSource -ErrorAction SilentlyContinue
+          node scripts/prepare-open-source.mjs --prepared "$env:PREPARED_X64" --output "$openSource"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Open-source x64 preparation failed"
+          }
+          "OPEN_SOURCE_X64=$openSource" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Package x64 Competition Full Bundle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = Join-Path $env:RUNNER_TEMP "HarnessHub-Competition-Windows-x64"
+          Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
+          node scripts/package-bundle.mjs --prepared "$env:OPEN_SOURCE_X64" --output "$root"
+          if ($LASTEXITCODE -ne 0) {
+            throw "x64 portable package construction failed"
+          }
+          node scripts/build-competition-full-bundle.mjs --bundle "$root"
+          if ($LASTEXITCODE -ne 0) {
+            throw "x64 Competition Gateway overlay failed"
+          }
+          "FULL_BUNDLE_X64=$root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Verify x64 full bundle hashes and launchers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = $env:FULL_BUNDLE_X64
+          $verify = Join-Path $env:RUNNER_TEMP "verify-competition-x64.mjs"
+          @'
+          import path from "node:path";
+          import { pathToFileURL } from "node:url";
+
+          const root = process.argv[2];
+          const moduleUrl = pathToFileURL(
+            path.join(root, "dist", "src", "distribution", "manifest.js"),
+          ).href;
+          const { readBundle, verifyBundle } = await import(moduleUrl);
+          const manifest = await readBundle(root);
+          if (process.platform !== "win32" || process.arch !== "x64")
+            throw new Error("Bundled runtime is not win32/x64");
+          if (manifest.platform !== "win32" || manifest.arch !== "x64")
+            throw new Error("Bundle metadata is not win32/x64");
+          if (manifest.nodeVersion !== "24.20.0")
+            throw new Error("Unexpected bundled Node version");
+          const expected = [
+            "codex",
+            "gemini",
+            "qwen",
+            "pi",
+            "mimo",
+            "dsh",
+            "openclaw",
+            "kimi",
+            "opencode",
+            "hermes",
+          ];
+          const ids = new Set(manifest.engines.map((engine) => engine.id));
+          for (const id of expected)
+            if (!ids.has(id)) throw new Error(`Missing bundled engine: ${id}`);
+          const result = await verifyBundle(root, manifest, true);
+          console.log(JSON.stringify({ ...result, engines: expected }));
+          '@ | Set-Content -Encoding UTF8 $verify
+          & (Join-Path $root "runtime\node.exe") $verify $root
+          if ($LASTEXITCODE -ne 0) {
+            throw "Full x64 bundle hash verification failed"
+          }
+          & (Join-Path $root "gateway.cmd") --help
+          if ($LASTEXITCODE -ne 0) {
+            throw "gateway.cmd x64 help smoke failed"
+          }
+          foreach ($required in @(
+            "bundle.json",
+            "runtime\node.exe",
+            "hub.cmd",
+            "gateway.cmd",
+            "Start-Competition.cmd",
+            "README-COMPETITION.txt"
+          )) {
+            if (-not (Test-Path -LiteralPath (Join-Path $root $required) -PathType Leaf)) {
+              throw "x64 full bundle missing required file: $required"
+            }
+          }
+
+      - name: Archive x64 bundle and create checksum
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $output = Join-Path $PWD ".artifact-x64"
+          Remove-Item -Recurse -Force $output -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $output | Out-Null
+          $zip = Join-Path $output "harnesshub-competition-full-windows-x64.zip"
+          $sevenZip = Join-Path $env:ProgramFiles "7-Zip\7z.exe"
+          if (-not (Test-Path -LiteralPath $sevenZip -PathType Leaf)) {
+            throw "7-Zip is not available on this runner"
+          }
+          Push-Location $env:FULL_BUNDLE_X64
+          try {
+            & $sevenZip a -tzip -mx=1 $zip ".\*" | Out-Host
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to archive x64 Full Bundle"
+            }
+          } finally {
+            Pop-Location
+          }
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
+          "$hash *harnesshub-competition-full-windows-x64.zip" | Set-Content -Encoding Ascii "$zip.sha256"
+          "X64_RELEASE_ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "X64_RELEASE_SHA=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "x64 ZIP bytes: $((Get-Item -LiteralPath $zip).Length)"
+          Write-Host "x64 SHA256: $hash"
+
+      - name: Publish x64 asset to competition-latest Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "competition-latest"
+          $zip = $env:X64_RELEASE_ZIP
+          $sha = "$zip.sha256"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $zip $sha --clobber
+          } else {
+            gh release create $tag $zip $sha --title "HarnessHub Competition Full Bundle" --prerelease --target "$env:GITHUB_SHA"
+          }
+          if ($LASTEXITCODE -ne 0) {
+            throw "x64 Competition Release publish failed"
+          }
+          Write-Host "Direct: https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/harnesshub-competition-full-windows-x64.zip"
+          Write-Host "SHA-256: $env:X64_RELEASE_SHA"
