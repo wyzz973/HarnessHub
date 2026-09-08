@@ -61,6 +61,13 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          $windowsPowerShellModules = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\Modules"
+          $env:PSModulePath = "$windowsPowerShellModules;$env:PSModulePath"
+          $windowsPowerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+          & $windowsPowerShell -NoProfile -NonInteractive -Command "Get-Command Get-FileHash | Out-Null; Get-Command Get-AuthenticodeSignature | Out-Null"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows PowerShell preparation cmdlets are unavailable"
+          }
           $prepared = Join-Path $PWD ".tools\contest-prepared\win32-x64"
           $pnpmJs = (Resolve-Path ".tools\pnpm-runner\node_modules\pnpm\bin\pnpm.cjs").Path
           node scripts/prepare-contest.mjs --root "$prepared" --arch x64 --pnpm "$pnpmJs"
