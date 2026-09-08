@@ -141,7 +141,18 @@ void test(
       content: { type: string; text: string }[];
     };
     assert.equal(callResult.isError, false);
-    const output = JSON.parse(callResult.content[0]!.text) as {
+    const execution = JSON.parse(callResult.content[0]!.text) as {
+      exitCode: number | null;
+      stdout: string;
+      stderr: string;
+      timedOut: boolean;
+      truncated: boolean;
+    };
+    assert.equal(execution.exitCode, 0);
+    assert.equal(execution.timedOut, false);
+    assert.equal(execution.truncated, false);
+    assert.equal(execution.stderr, "");
+    const output = JSON.parse(execution.stdout) as {
       tool: string;
       args: string[];
       cwd: string;
