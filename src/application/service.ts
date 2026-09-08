@@ -50,6 +50,18 @@ export class HubApplication {
       },
     }));
   }
+  engineProfile(id: string) {
+    const profile = this.runtime
+      .listEngines()
+      .find((engine) => engine.id === id && engine.enabled);
+    if (!profile)
+      throw new HubError(
+        "ENGINE_UNAVAILABLE",
+        `Engine ${id} is not enabled`,
+        404,
+      );
+    return profile;
+  }
   private management(): EngineManagement {
     if (!this.engineManagement)
       throw new HubError(
@@ -103,15 +115,7 @@ export class HubApplication {
       );
     }
     const engineId = input.engineId ?? this.runtime.defaultEngine();
-    const profile = this.runtime
-      .listEngines()
-      .find((engine) => engine.id === engineId && engine.enabled);
-    if (!profile)
-      throw new HubError(
-        "ENGINE_UNAVAILABLE",
-        `Engine ${engineId} is not enabled`,
-        404,
-      );
+    const profile = this.engineProfile(engineId);
     const workspaceId = `directory-${createHash("sha256")
       .update(directory)
       .digest("hex")
