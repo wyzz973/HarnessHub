@@ -23,8 +23,8 @@ function fail(message: string): never {
   throw new Error(message);
 }
 function parseConfig(): { workspace: string; tools: CommandTool[] } {
-  const workspace = process.env.HARNESSHUB_CLI_WORKSPACE;
-  const raw = process.env.HARNESSHUB_CLI_TOOLS_JSON;
+  const workspace = process.env.HHCAP_CLI_WORKSPACE;
+  const raw = process.env.HHCAP_CLI_TOOLS_JSON;
   if (!workspace || !path.isAbsolute(workspace) || !raw)
     fail("Managed CLI MCP configuration is missing");
   let value: unknown;
@@ -109,7 +109,11 @@ function dynamicArgs(value: unknown): string[] {
   return args as string[];
 }
 
-function boundedAppend(current: Buffer[], bytes: Buffer, state: { size: number; truncated: boolean }) {
+function boundedAppend(
+  current: Buffer[],
+  bytes: Buffer,
+  state: { size: number; truncated: boolean },
+) {
   if (state.size >= MAX_OUTPUT) {
     state.truncated = true;
     return;
@@ -147,8 +151,12 @@ async function execute(tool: CommandTool, args: string[]) {
       stdio: ["ignore", "pipe", "pipe"],
       signal: controller.signal,
     });
-    child.stdout.on("data", (chunk: Buffer) => boundedAppend(stdout, chunk, output));
-    child.stderr.on("data", (chunk: Buffer) => boundedAppend(stderr, chunk, output));
+    child.stdout.on("data", (chunk: Buffer) =>
+      boundedAppend(stdout, chunk, output),
+    );
+    child.stderr.on("data", (chunk: Buffer) =>
+      boundedAppend(stderr, chunk, output),
+    );
     child.once("error", (error) => {
       clearTimeout(timer);
       if (timedOut && error.name === "AbortError")
@@ -184,27 +192,54 @@ async function output(value: unknown) {
   );
 }
 
-async function handle(bytes: Buffer, state: { initialized: boolean; ready: boolean }) {
+async function handle(
+  bytes: Buffer,
+  state: { initialized: boolean; ready: boolean },
+) {
   let request: unknown;
   try {
-    request = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+    request = JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+    ) as unknown;
   } catch {
-    return output({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Invalid UTF-8 JSON" } });
+    return output({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32700, message: "Invalid UTF-8 JSON" },
+    });
   }
-  if (!object(request) || request.jsonrpc !== "2.0" || typeof request.method !== "string")
-    return output({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid JSON-RPC request" } });
+  if (
+    !object(request) ||
+    request.jsonrpc !== "2.0" ||
+    typeof request.method !== "string"
+  )
+    return output({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32600, message: "Invalid JSON-RPC request" },
+    });
   if (!Object.hasOwn(request, "id")) {
-    if (request.method === "notifications/initialized" && state.initialized) state.ready = true;
+    if (request.method === "notifications/initialized" && state.initialized)
+      state.ready = true;
     return;
   }
   const id = request.id;
   if (!(typeof id === "string" || Number.isSafeInteger(id)))
-    return output({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid request id" } });
+    return output({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32600, message: "Invalid request id" },
+    });
   const answer = (result: unknown) => output({ jsonrpc: "2.0", id, result });
-  const error = (code: number, message: string) => output({ jsonrpc: "2.0", id, error: { code, message } });
+  const error = (code: number, message: string) =>
+    output({ jsonrpc: "2.0", id, error: { code, message } });
   if (request.method === "ping") return answer({});
   if (request.method === "initialize") {
-    if (state.initialized || !object(request.params) || typeof request.params.protocolVersion !== "string")
+    if (
+      state.initialized ||
+      !object(request.params) ||
+      typeof request.params.protocolVersion !== "string"
+    )
       return error(-32602, "Invalid initialize request");
     state.initialized = true;
     return answer({
@@ -223,7 +258,10 @@ async function handle(bytes: Buffer, state: { initialized: boolean; ready: boole
     const tool = toolMap.get(request.params.name);
     if (!tool) return error(-32602, "Unknown CLI tool");
     try {
-      const result = await execute(tool, dynamicArgs(request.params.arguments ?? {}));
+      const result = await execute(
+        tool,
+        dynamicArgs(request.params.arguments ?? {}),
+      );
       return answer({
         content: [{ type: "text", text: JSON.stringify(result) }],
         isError: result.exitCode !== 0 || result.timedOut,
@@ -267,7 +305,11 @@ process.stdin.on("data", (chunk: Buffer) => {
     pending = pending.subarray(newline + 1);
     if (line.length === 0) continue;
     if (line.length > MAX_MESSAGE) {
-      void output({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Message too large" } });
+      void output({
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32600, message: "Message too large" },
+      });
       continue;
     }
     process.stdin.pause();
