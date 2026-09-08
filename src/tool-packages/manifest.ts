@@ -19,6 +19,34 @@ const strings = {
   additionalProperties: text,
   propertyNames: { pattern: "^[A-Z][A-Z0-9_]*$" },
 };
+const argument = {
+  anyOf: [
+    text,
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["anchor", "path"],
+      properties: { anchor: { const: "package" }, path: relative },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["anchor"],
+      properties: { anchor: { const: "workspace" } },
+    },
+  ],
+};
+const launchable = {
+  type: "object",
+  additionalProperties: false,
+  required: ["name", "launch", "entry"],
+  properties: {
+    name: { type: "string", pattern: "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,30}$" },
+    launch: { enum: ["node", "native"] },
+    entry: relative,
+    args: { type: "array", maxItems: 128, items: argument },
+  },
+};
 const validate = new Ajv({ allErrors: true }).compile<ToolPackageManifest>({
   type: "object",
   additionalProperties: false,
@@ -58,36 +86,22 @@ const validate = new Ajv({ allErrors: true }).compile<ToolPackageManifest>({
       type: "array",
       maxItems: 16,
       items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["name", "launch", "entry"],
+        ...launchable,
         properties: {
-          name: { type: "string", pattern: "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,30}$" },
-          launch: { enum: ["node", "native"] },
-          entry: relative,
-          args: {
-            type: "array",
-            maxItems: 128,
-            items: {
-              anyOf: [
-                text,
-                {
-                  type: "object",
-                  additionalProperties: false,
-                  required: ["anchor", "path"],
-                  properties: { anchor: { const: "package" }, path: relative },
-                },
-                {
-                  type: "object",
-                  additionalProperties: false,
-                  required: ["anchor"],
-                  properties: { anchor: { const: "workspace" } },
-                },
-              ],
-            },
-          },
+          ...launchable.properties,
           env: strings,
           secretEnv: strings,
+        },
+      },
+    },
+    cliTools: {
+      type: "array",
+      maxItems: 16,
+      items: {
+        ...launchable,
+        properties: {
+          ...launchable.properties,
+          description: { type: "string", minLength: 1, maxLength: 512 },
         },
       },
     },
@@ -180,10 +194,10 @@ export function parseManifest(input: unknown): ToolPackageInspection {
       "TOOL_PACKAGE_TOO_LARGE",
       "Package payload exceeds 256 MiB",
     );
-  if (!(manifest.skills?.length || manifest.mcpServers?.length))
+  if (!(manifest.skills?.length || manifest.mcpServers?.length || manifest.cliTools?.length))
     throw packageError(
       "INVALID_TOOL_PACKAGE",
-      "A package must provide Skills or MCP servers",
+      "A package must provide Skills, MCP servers or CLI tools",
     );
   const skills = manifest.skills ?? [];
   if (
@@ -215,25 +229,34 @@ export function parseManifest(input: unknown): ToolPackageInspection {
     new Set(servers.map((server) => portableKey(server.name))).size !==
     servers.length
   )
-    throw packageError(
-      "INVALID_TOOL_PACKAGE",
-      "MCP server names must be unique",
-    );
+    throw packageError("INVALID_TOOL_PACKAGE", "MCP server names must be unique");
+  const cliTools = manifest.cliTools ?? [];
+  if (
+    new Set(cliTools.map((tool) => portableKey(tool.name))).size !== cliTools.length
+  )
+    throw packageError("INVALID_TOOL_PACKAGE", "CLI tool names must be unique");
   const forbidden =
     /^(?:PATH|HOME|USERPROFILE|XDG_.*|NODE_OPTIONS|LD_.*|DYLD_.*|PYTHONPATH|PYTHONHOME|HARNESSHUB_.*)$/;
-  for (const server of servers) {
-    const entry = files.get(server.entry);
-    if (!entry || (server.launch === "native" && !entry.executable))
+  const validateLaunchable = (
+    item: { launch: "node" | "native"; entry: string; args?: unknown[] },
+    kind: "MCP" | "CLI",
+  ) => {
+    const entry = files.get(item.entry);
+    if (!entry || (item.launch === "native" && !entry.executable))
       throw packageError(
         "INVALID_TOOL_PACKAGE",
-        "MCP entry must be a declared file; native entries require executable:true",
+        `${kind} entry must be a declared file; native entries require executable:true`,
       );
-    if (server.launch === "node" && (server.args?.length ?? 0) > 127)
+    if (item.launch === "node" && (item.args?.length ?? 0) > 127)
       throw packageError(
         "INVALID_TOOL_PACKAGE",
-        "Node MCP entries allow 127 additional arguments",
+        `Node ${kind} entries allow 127 additional arguments`,
       );
-    for (const argument of server.args ?? []) {
+    for (const raw of item.args ?? []) {
+      const argument = raw as
+        | string
+        | { anchor: "package"; path: string }
+        | { anchor: "workspace" };
       if (typeof argument === "string") {
         if (
           argument.includes("\0") ||
@@ -243,7 +266,7 @@ export function parseManifest(input: unknown): ToolPackageInspection {
         )
           throw packageError(
             "INVALID_TOOL_PACKAGE",
-            "MCP credentials require explicit secret binding slots",
+            `${kind} credentials cannot be embedded in fixed arguments`,
           );
       } else if (
         argument.anchor === "package" &&
@@ -258,6 +281,9 @@ export function parseManifest(input: unknown): ToolPackageInspection {
           "Package arguments must refer to declared files or their directories",
         );
     }
+  };
+  for (const server of servers) {
+    validateLaunchable(server, "MCP");
     for (const [name, value] of Object.entries(server.env ?? {}))
       if (
         forbidden.test(name) ||
@@ -277,6 +303,7 @@ export function parseManifest(input: unknown): ToolPackageInspection {
           "Secret environment fields must name explicit local binding slots",
         );
   }
+  for (const tool of cliTools) validateLaunchable(tool, "CLI");
   manifest.files.sort((a, b) =>
     a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
   );
