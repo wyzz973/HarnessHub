@@ -6,10 +6,8 @@ export function registerToolPackageRoutes(
   server: FastifyInstance,
   management: ToolPackageManagement,
 ) {
-  server.get(
-    "/v1/tool-packs",
-    { schema: { hide: true } },
-    async () => management.list(),
+  server.get("/v1/tool-packs", { schema: { hide: true } }, async () =>
+    management.list(),
   );
 
   server.post(

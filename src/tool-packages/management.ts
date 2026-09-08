@@ -21,7 +21,11 @@ export interface ToolPackageManagementOptions {
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new HubError("INVALID_REQUEST", "Request body must be an object", 400);
+    throw new HubError(
+      "INVALID_REQUEST",
+      "Request body must be an object",
+      400,
+    );
   return value as Record<string, unknown>;
 }
 function text(value: unknown, field: string): string {
