@@ -91,8 +91,11 @@ void test(
       stdio: ["pipe", "pipe", "pipe"],
       shell: false,
     });
-    t.after(() => {
-      if (!child.killed) child.kill();
+    t.after(async () => {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill();
+        await once(child, "close");
+      }
     });
     const lines = createInterface({ input: child.stdout });
     t.after(() => lines.close());
@@ -162,5 +165,7 @@ void test(
     assert.equal(await realpath(output.cwd), workspace);
 
     child.stdin.end();
+    const [code] = (await once(child, "close")) as [number | null];
+    assert.equal(code, 0);
   },
 );
