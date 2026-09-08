@@ -1,0 +1,71 @@
+name: Competition gateway bundle
+
+on:
+  push:
+    branches:
+      - feat/competition-gateway-api
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows-bundle:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: Install dependencies on GitHub runner
+        run: pnpm install --frozen-lockfile
+
+      - name: Build gateway
+        run: pnpm build
+
+      - name: Assemble portable gateway
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = Join-Path $PWD ".artifact\harnesshub-competition"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          New-Item -ItemType Directory -Force -Path (Join-Path $root "runtime") | Out-Null
+
+          Copy-Item -Recurse -Force "dist" (Join-Path $root "dist")
+          Copy-Item -Recurse -Force "node_modules" (Join-Path $root "node_modules")
+          Copy-Item -Force "package.json" (Join-Path $root "package.json")
+          Copy-Item -Force (Get-Command node).Source (Join-Path $root "runtime\node.exe")
+
+          @'
+          @echo off
+          setlocal
+          set "ROOT=%~dp0"
+          "%ROOT%runtime\node.exe" "%ROOT%dist\src\main.js" --competition %*
+          exit /b %ERRORLEVEL%
+          '@ | Set-Content -Encoding Ascii (Join-Path $root "Start-Competition.cmd")
+
+          @'
+          HarnessHub competition gateway prebuilt artifact.
+
+          No pnpm or Node installation is required on the target machine.
+
+          Example:
+            Start-Competition.cmd --engine opencode --port 6217 --host localhost --config C:\path\to\engines\local.yaml
+
+          This artifact contains the Gateway runtime and npm dependencies. Agent engine executables are still resolved from the configured command paths or the HarnessHub offline engine bundle.
+          '@ | Set-Content -Encoding UTF8 (Join-Path $root "README-OFFLINE.txt")
+
+          Compress-Archive -Path "$root\*" -DestinationPath ".artifact\harnesshub-competition-windows.zip" -CompressionLevel Optimal
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: harnesshub-competition-windows
+          path: .artifact/harnesshub-competition-windows.zip
+          if-no-files-found: error
+          retention-days: 14
