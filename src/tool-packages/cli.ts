@@ -150,6 +150,10 @@ export async function runToolPackageCli(
           SecretReference
         >)
       : undefined;
+  const installed = await verifyInstalled(context.root, id, version);
+  const cliTools = (installed.manifest.cliTools ?? []).map(
+    (tool) => `cli_${tool.name}`,
+  );
   const fragment = await bindInstalled(context.root, id, version, {
     nodeExecutable: context.nodeExecutable,
     workspace,
@@ -179,7 +183,7 @@ export async function runToolPackageCli(
     capabilities: {
       skills: fragment.skills.map((skill) => skill.path),
       mcp: fragment.mcpServers.map((server) => server.name),
-      cli: fragment.cliTools,
+      cli: cliTools,
     },
   };
   return result;
