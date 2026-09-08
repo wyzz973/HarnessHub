@@ -37,10 +37,10 @@ export async function buildCompetitionFullBundle(bundleDirectory) {
       !path.extname(name) || name.endsWith(".js") || name.endsWith(".json"),
   });
 
-  await writeFile(
-    path.join(root, "Start-Competition.cmd"),
-    '@echo off\r\nsetlocal\r\ncd /d "%~dp0"\r\n"%~dp0runtime\\node.exe" "%~dp0dist\\src\\competition-bundle-main.js" %*\r\nexit /b %ERRORLEVEL%\r\n',
-  );
+  const launcher =
+    '@echo off\r\nsetlocal\r\ncd /d "%~dp0"\r\n"%~dp0runtime\\node.exe" "%~dp0dist\\src\\competition-bundle-main.js" %*\r\nexit /b %ERRORLEVEL%\r\n';
+  await writeFile(path.join(root, "Start-Competition.cmd"), launcher);
+  await writeFile(path.join(root, "gateway.cmd"), launcher);
   await writeFile(
     path.join(root, "README-COMPETITION.txt"),
     [
@@ -53,12 +53,12 @@ export async function buildCompetitionFullBundle(bundleDirectory) {
       "   hub.cmd configure --file <absolute-settings-json>",
       "",
       "2. Start the competition Gateway on the required port:",
-      "   Start-Competition.cmd --engine opencode",
-      "   Start-Competition.cmd --engine codex",
-      "   Start-Competition.cmd --engine qwen",
+      "   gateway.cmd --engine opencode",
+      "   gateway.cmd --engine codex",
+      "   gateway.cmd --engine qwen",
       "",
-      "Optional:",
-      "   --port 6217 --host localhost",
+      "Start-Competition.cmd is an equivalent convenience launcher.",
+      "Optional: --port 6217 --host localhost",
       "",
       "The competition HTTP API is exposed by the same HarnessHub Runtime/Worker/EngineConfiguration chain.",
       "Tool Packages, Skills, MCP and managed CLI capabilities remain revision-pinned and apply to new sessions.",
