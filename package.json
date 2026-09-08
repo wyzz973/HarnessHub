@@ -27,6 +27,7 @@
     "test": "pnpm build && pnpm test:tooling && pnpm test:unit && pnpm test:integration && pnpm test:smoke",
     "check": "pnpm check:runtime && pnpm lint && pnpm format:check && pnpm check:boundaries && pnpm check:docs && pnpm test && pnpm check:api && pnpm check:console",
     "start": "node dist/src/main.js",
+    "start:competition": "node dist/src/main.js --competition",
     "benchmark": "node dist/src/benchmark-main.js",
     "dev:console": "pnpm --filter @harnesshub/console dev",
     "build:console": "pnpm --filter @harnesshub/console build",
