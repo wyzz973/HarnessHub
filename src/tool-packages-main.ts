@@ -16,7 +16,7 @@ export async function toolPackagesMain(argv: string[]): Promise<unknown> {
     root,
     nodeExecutable: process.execPath,
     commandMcpEntry: fileURLToPath(
-      new URL("./tool-packages/command-mcp.js", import.meta.url),
+      new URL("./drivers/tool-command/command-mcp.js", import.meta.url),
     ),
     prepareEngine,
   });
