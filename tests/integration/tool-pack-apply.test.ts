@@ -4,13 +4,13 @@ import { once } from "node:events";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import readline from "node:readline";
+import { createInterface, type Interface } from "node:readline";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { startHub } from "../../src/main.js";
 
 async function nextJsonLine(
-  lines: readline.Interface,
+  lines: Interface,
 ): Promise<Record<string, unknown>> {
   const [line] = (await once(lines, "line")) as [string];
   return JSON.parse(line) as Record<string, unknown>;
@@ -97,7 +97,7 @@ void test(
     t.after(() => {
       if (!child.killed) child.kill();
     });
-    const lines = readline.createInterface({ input: child.stdout });
+    const lines = createInterface({ input: child.stdout });
     t.after(() => lines.close());
 
     child.stdin.write(
