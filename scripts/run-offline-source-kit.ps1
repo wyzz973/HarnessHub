@@ -76,6 +76,36 @@ if ($patched -eq $source) {
   throw "Native source snapshot block was not found; update run-offline-source-kit.ps1 for the new source layout"
 }
 
+# `pip download` evaluates Requires-Python against the hosted runner. Hermes 0.19.0
+# deliberately targets Python <3.14, while the latest GitHub Windows image may expose
+# Python 3.14 as `py -3`. Download the exact sdist selected by PyPI metadata instead.
+$hermesPattern = 'py -3 -m pip download --no-deps --no-binary=:all: "hermes-agent==0\.19\.0" --dest \$HermesPublished\r?\nif \(\$LASTEXITCODE -ne 0\) \{ throw "Failed to download exact Hermes source distribution" \}'
+$hermesReplacement = @'
+$HermesUrls = @(Get-OptionalProperty $HermesMeta "urls")
+$HermesSdist = $HermesUrls | Where-Object { $_.packagetype -eq "sdist" } | Select-Object -First 1
+if (-not $HermesSdist) { throw "PyPI metadata has no Hermes 0.19.0 source distribution" }
+$HermesSdistPath = Join-Path $HermesPublished ([string]$HermesSdist.filename)
+Invoke-WebRequest -Uri ([string]$HermesSdist.url) -OutFile $HermesSdistPath
+$HermesDigests = Get-OptionalProperty $HermesSdist "digests"
+$HermesExpectedSha = if ($HermesDigests) { [string](Get-OptionalProperty $HermesDigests "sha256") } else { "" }
+if ($HermesExpectedSha) {
+  $HermesActualSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $HermesSdistPath).Hash.ToLowerInvariant()
+  if ($HermesActualSha -ne $HermesExpectedSha.ToLowerInvariant()) {
+    throw "Hermes 0.19.0 source distribution hash mismatch"
+  }
+}
+'@
+$hermesRegex = [regex]::new($hermesPattern)
+$hermesEvaluator = [System.Text.RegularExpressions.MatchEvaluator]{
+  param($match)
+  return $hermesReplacement
+}
+$hermesPatched = $hermesRegex.Replace($patched, $hermesEvaluator, 1)
+if ($hermesPatched -eq $patched) {
+  throw "Hermes source download block was not found; update run-offline-source-kit.ps1 for the new source layout"
+}
+$patched = $hermesPatched
+
 try {
   Set-Content -LiteralPath $generatedPath -Value $patched -Encoding UTF8
   & $generatedPath -Prepared $Prepared -Output $Output
