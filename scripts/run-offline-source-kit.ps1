@@ -66,7 +66,12 @@ Add-NativeSourceSnapshot "opencode" "https://github.com/anomalyco/opencode.git" 
 ) "engines\opencode"
 '@
 
-$patched = [regex]::Replace($source, $pattern, $replacement, 1)
+$regex = [regex]::new($pattern)
+$evaluator = [System.Text.RegularExpressions.MatchEvaluator]{
+  param($match)
+  return $replacement
+}
+$patched = $regex.Replace($source, $evaluator, 1)
 if ($patched -eq $source) {
   throw "Native source snapshot block was not found; update run-offline-source-kit.ps1 for the new source layout"
 }
