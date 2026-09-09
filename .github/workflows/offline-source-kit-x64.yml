@@ -10,6 +10,10 @@ on:
       - scripts/run-offline-source-kit.ps1
   workflow_dispatch:
 
+concurrency:
+  group: offline-source-kit-x64-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
