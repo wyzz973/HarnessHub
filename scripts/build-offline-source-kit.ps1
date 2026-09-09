@@ -29,9 +29,8 @@ function Normalize-Repo([string]$Repository) {
 
 $HarnessHub = Join-Path $Kit "HarnessHub"
 New-Item -ItemType Directory -Force -Path $HarnessHub | Out-Null
-robocopy $Repo $HarnessHub /E /R:2 /W:1 /XD .git .tools .artifact-x64 .artifact-offline-source node_modules /XF *.zip *.7z *> $null
+robocopy $Repo $HarnessHub /E /R:2 /W:1 /XD .git .tools .artifact-x64 .artifact-offline-source node_modules dist .next /XF *.zip *.7z *> $null
 if ($LASTEXITCODE -gt 7) { throw "Failed to copy HarnessHub source" }
-Copy-Tree (Join-Path $Repo "node_modules") (Join-Path $HarnessHub "node_modules")
 
 $Tools = Join-Path $Kit "tools"
 New-Item -ItemType Directory -Force -Path (Join-Path $Tools "node") | Out-Null
@@ -42,6 +41,14 @@ if (Test-Path $NodeLicense) { Copy-Item $NodeLicense (Join-Path $Tools "node\LIC
 Copy-Tree (Join-Path $Repo ".tools\pnpm-runner") (Join-Path $Tools "pnpm-runner")
 
 $StorePath = (pnpm store path).Trim()
+Write-Host "Materializing portable HarnessHub node_modules from offline store"
+Push-Location $HarnessHub
+try {
+  pnpm install --offline --frozen-lockfile --store-dir $StorePath --config.node-linker=hoisted --package-import-method=copy
+  if ($LASTEXITCODE -ne 0) { throw "Offline HarnessHub dependency materialization failed" }
+} finally {
+  Pop-Location
+}
 Copy-Tree $StorePath (Join-Path $Kit "pnpm-store")
 Copy-Tree $Prepared (Join-Path $Kit "prepared\win32-x64")
 
@@ -52,8 +59,9 @@ $Manifest = New-Object System.Collections.Generic.List[object]
 
 function Add-NpmSnapshot([string]$Id,[string]$Spec,[string]$InstalledRelative) {
   Write-Host "Source snapshot: $Id <- $Spec"
-  $Meta = npm view $Spec --json | ConvertFrom-Json
+  $MetaJson = npm view $Spec --json
   if ($LASTEXITCODE -ne 0) { throw "npm metadata lookup failed: $Spec" }
+  $Meta = $MetaJson | ConvertFrom-Json
   $RepoValue = if ($Meta.repository -is [string]) { $Meta.repository } elseif ($Meta.repository) { $Meta.repository.url } else { $null }
   $Upstream = Normalize-Repo $RepoValue
   $GitHead = [string]$Meta.gitHead
@@ -62,17 +70,20 @@ function Add-NpmSnapshot([string]$Id,[string]$Spec,[string]$InstalledRelative) {
 
   if ($Upstream -and $GitHead) {
     try {
-      git clone --filter=blob:none --no-checkout $Upstream $Destination
-      if ($LASTEXITCODE -ne 0) { throw "clone failed" }
+      New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+      git -C $Destination init
+      if ($LASTEXITCODE -ne 0) { throw "git init failed" }
+      git -C $Destination remote add origin $Upstream
+      if ($LASTEXITCODE -ne 0) { throw "git remote failed" }
       git -C $Destination fetch --depth 1 origin $GitHead
       if ($LASTEXITCODE -ne 0) { throw "fetch gitHead failed" }
-      git -C $Destination checkout --detach $GitHead
+      git -C $Destination checkout --detach FETCH_HEAD
       if ($LASTEXITCODE -ne 0) { throw "checkout gitHead failed" }
       Remove-Item -Recurse -Force (Join-Path $Destination ".git")
       $Snapshot = "gitHead"
     } catch {
       Remove-Item -Recurse -Force $Destination -ErrorAction SilentlyContinue
-      Write-Warning "$Id exact repository snapshot unavailable; published package is retained. $($_.Exception.Message)"
+      Write-Warning "$Id exact repository snapshot unavailable; exact published package is retained. $($_.Exception.Message)"
     }
   }
 
@@ -188,7 +199,7 @@ set NODE=%ROOT%tools\node\node.exe
 set PNPM=%ROOT%tools\pnpm-runner\node_modules\pnpm\bin\pnpm.cjs
 cd /d "%ROOT%HarnessHub"
 if exist node_modules rmdir /s /q node_modules
-"%NODE%" "%PNPM%" install --offline --frozen-lockfile --store-dir "%ROOT%pnpm-store"
+"%NODE%" "%PNPM%" install --offline --frozen-lockfile --store-dir "%ROOT%pnpm-store" --config.node-linker=hoisted --package-import-method=copy
 exit /b %ERRORLEVEL%
 '@ | Set-Content -Encoding Ascii (Join-Path $Kit "Reinstall-Offline.cmd")
 
@@ -198,8 +209,8 @@ exit /b %ERRORLEVEL%
 This is an editable source workspace, not a prebuilt Competition Bundle.
 
 ## Included
-- `HarnessHub/`: editable HarnessHub source plus resolved Windows x64 `node_modules`.
-- `prepared/win32-x64/`: the fixed open-source engine runtime payload used by the Competition edition, kept separate from HarnessHub source.
+- `HarnessHub/`: editable HarnessHub source plus self-contained Windows x64 `node_modules` materialized from the included offline store.
+- `prepared/win32-x64/`: fixed open-source engine runtime payload used by the Competition edition, kept separate from HarnessHub source.
 - `engine-sources/`: exact upstream repository snapshots where package metadata/tags allow it.
 - `published-engine-packages/`: exact installed package/native runtime contents; Hermes also includes the exact 0.19.0 source distribution.
 - `pnpm-store/`: offline store for reinstalling HarnessHub dependencies.
