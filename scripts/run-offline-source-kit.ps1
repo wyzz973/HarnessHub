@@ -106,6 +106,26 @@ if ($hermesPatched -eq $patched) {
 }
 $patched = $hermesPatched
 
+# pnpm store path includes its layout version (for pnpm 10 this is typically `...\v10`).
+# `--store-dir` expects the parent store root and appends that version internally, so keep
+# the version directory inside the portable kit instead of flattening its contents.
+$storePattern = 'Copy-Tree \$StorePath \(Join-Path \$Kit "pnpm-store"\)'
+$storeReplacement = @'
+$StoreVersion = Split-Path $StorePath -Leaf
+$PortableStore = Join-Path $Kit "pnpm-store\$StoreVersion"
+Copy-Tree $StorePath $PortableStore
+'@
+$storeRegex = [regex]::new($storePattern)
+$storeEvaluator = [System.Text.RegularExpressions.MatchEvaluator]{
+  param($match)
+  return $storeReplacement
+}
+$storePatched = $storeRegex.Replace($patched, $storeEvaluator, 1)
+if ($storePatched -eq $patched) {
+  throw "pnpm store copy block was not found; update run-offline-source-kit.ps1 for the new source layout"
+}
+$patched = $storePatched
+
 try {
   Set-Content -LiteralPath $generatedPath -Value $patched -Encoding UTF8
   & $generatedPath -Prepared $Prepared -Output $Output
