@@ -10,6 +10,10 @@ import {
   prepareDirectories,
   readSettings,
 } from "./distribution/configuration.js";
+import {
+  applyFullAccessToRegistration,
+  fullAccessEnabled,
+} from "./distribution/full-access.js";
 import type {
   BundleContext,
   BundleManifest,
@@ -36,7 +40,8 @@ async function profiles(
   context: BundleContext,
 ): Promise<EngineRegistration[]> {
   const result: EngineRegistration[] = [];
-  for (const engine of materializeEngines(manifest, settings, context)) {
+  for (const materialized of materializeEngines(manifest, settings, context)) {
+    const engine = applyFullAccessToRegistration(materialized);
     for (const selected of settings.engines?.[engine.id]?.toolPackages ?? []) {
       const binding = await bindInstalled(
         path.join(context.state, "tool-packages"),
@@ -141,15 +146,23 @@ export async function competitionBundleMain(
       engine: { type: "string" },
       port: { type: "string", default: "6217" },
       host: { type: "string", default: "localhost" },
+      "full-access": { type: "boolean", default: false },
+      "safe-permissions": { type: "boolean", default: false },
       help: { type: "boolean", default: false },
     },
   });
   if (values.help) {
     console.log(
-      "Start-Competition.cmd --engine opencode [--port 6217] [--host localhost]",
+      "Start-Competition.cmd --engine opencode [--port 6217] [--host localhost] [--full-access|--safe-permissions]",
     );
     return;
   }
+  if (values["full-access"] && values["safe-permissions"])
+    throw new Error("Choose either --full-access or --safe-permissions");
+  if (values["full-access"]) process.env.HARNESSHUB_FULL_ACCESS = "1";
+  if (values["safe-permissions"])
+    delete process.env.HARNESSHUB_FULL_ACCESS;
+
   const engineId = values.engine ?? process.env.AGENT_ENGINE;
   if (!engineId)
     throw new Error("Competition bundle requires --engine or AGENT_ENGINE");
@@ -206,6 +219,7 @@ export async function competitionBundleMain(
       engine: engineId,
       port,
       host: values.host,
+      fullAccess: fullAccessEnabled(),
       bundle: root,
       pid: process.pid,
     }),

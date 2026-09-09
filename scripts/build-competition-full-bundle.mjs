@@ -37,10 +37,24 @@ export async function buildCompetitionFullBundle(bundleDirectory) {
       !path.extname(name) || name.endsWith(".js") || name.endsWith(".json"),
   });
 
-  const launcher =
-    '@echo off\r\nsetlocal\r\ncd /d "%~dp0"\r\n"%~dp0runtime\\node.exe" "%~dp0dist\\src\\competition-bundle-main.js" %*\r\nexit /b %ERRORLEVEL%\r\n';
-  await writeFile(path.join(root, "Start-Competition.cmd"), launcher);
-  await writeFile(path.join(root, "gateway.cmd"), launcher);
+  // Ship the repository's self-contained Capability Pack examples so the
+  // one-click installer can be exercised without downloading any dependency.
+  const toolPacks = path.join(root, "tool-packs");
+  await rm(toolPacks, { recursive: true, force: true });
+  await copyTree(path.join(repository, "examples", "tool-packages"), toolPacks, {
+    allowedRoots: [repository],
+  });
+
+  const fullAccessLauncher =
+    '@echo off\r\nsetlocal\r\nset "HARNESSHUB_FULL_ACCESS=1"\r\ncd /d "%~dp0"\r\n"%~dp0runtime\\node.exe" "%~dp0dist\\src\\competition-bundle-main.js" %*\r\nexit /b %ERRORLEVEL%\r\n';
+  const safeLauncher =
+    '@echo off\r\nsetlocal\r\nset "HARNESSHUB_FULL_ACCESS="\r\ncd /d "%~dp0"\r\n"%~dp0runtime\\node.exe" "%~dp0dist\\src\\competition-bundle-main.js" --safe-permissions %*\r\nexit /b %ERRORLEVEL%\r\n';
+  const toolPackLauncher =
+    '@echo off\r\nsetlocal\r\n"%~dp0runtime\\node.exe" "%~dp0dist\\src\\tool-packages-oneclick-main.js" %*\r\nexit /b %ERRORLEVEL%\r\n';
+  await writeFile(path.join(root, "Start-Competition.cmd"), fullAccessLauncher);
+  await writeFile(path.join(root, "gateway.cmd"), fullAccessLauncher);
+  await writeFile(path.join(root, "gateway-safe.cmd"), safeLauncher);
+  await writeFile(path.join(root, "Install-Tool-Pack.cmd"), toolPackLauncher);
   await writeFile(
     path.join(root, "README-COMPETITION.txt"),
     [
@@ -52,16 +66,26 @@ export async function buildCompetitionFullBundle(bundleDirectory) {
       "1. Configure the bundled model/provider once:",
       "   hub.cmd configure --file <absolute-settings-json>",
       "",
-      "2. Start the competition Gateway on the required port:",
+      "2. Optional: install one Capability Pack (Skill + MCP + CLI) across engines:",
+      "   Install-Tool-Pack.cmd --source <tool-pack-directory> --engines all --workspace <project-directory>",
+      "   Add --bindings <json-file> when the pack declares secret binding slots.",
+      "   Built-in examples are under .\\tool-packs\\",
+      "",
+      "3. Start the competition Gateway. gateway.cmd and Start-Competition.cmd enable Full Access:",
       "   gateway.cmd --engine opencode",
       "   gateway.cmd --engine codex",
       "   gateway.cmd --engine qwen",
       "",
-      "Start-Competition.cmd is an equivalent convenience launcher.",
-      "Optional: --port 6217 --host localhost",
+      "   Full Access sets HARNESSHUB_FULL_ACCESS=1, auto-approves ACP writes/shell requests,",
+      "   and maps supported harnesses to their native YOLO/full-access mode.",
+      "   Use gateway-safe.cmd --engine <id> to retain normal permission prompts/denials.",
+      "",
+      "Optional Gateway arguments: --port 6217 --host localhost",
       "",
       "The competition HTTP API is exposed by the same HarnessHub Runtime/Worker/EngineConfiguration chain.",
-      "Tool Packages, Skills, MCP and managed CLI capabilities remain revision-pinned and apply to new sessions.",
+      "Capability Pack installation verifies file hashes and preflights every selected Engine independently;",
+      "incompatible Engines are reported as skipped without preventing compatible Engines from being configured.",
+      "New Sessions use the saved Skill/MCP/CLI configuration; existing Sessions keep their pinned revision.",
       "",
     ].join("\r\n"),
   );
