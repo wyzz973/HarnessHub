@@ -62,7 +62,11 @@ export function applyFullAccessToRegistration(
   const adapter = input.configuration?.adapter ?? "generic";
   switch (adapter) {
     case "codex":
-      setLauncherEnvironment(command, "INITIAL_AGENT_MODE", "agent-full-access");
+      setLauncherEnvironment(
+        command,
+        "INITIAL_AGENT_MODE",
+        "agent-full-access",
+      );
       break;
     case "opencode":
       // OpenCode accepts the same JSON value as configuration.permission.

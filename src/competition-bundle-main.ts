@@ -160,8 +160,7 @@ export async function competitionBundleMain(
   if (values["full-access"] && values["safe-permissions"])
     throw new Error("Choose either --full-access or --safe-permissions");
   if (values["full-access"]) process.env.HARNESSHUB_FULL_ACCESS = "1";
-  if (values["safe-permissions"])
-    delete process.env.HARNESSHUB_FULL_ACCESS;
+  if (values["safe-permissions"]) delete process.env.HARNESSHUB_FULL_ACCESS;
 
   const engineId = values.engine ?? process.env.AGENT_ENGINE;
   if (!engineId)

@@ -322,8 +322,7 @@ export class AcpDriver implements Driver {
     }
     if (fullAccess()) {
       const allowed = options.find((option) => option.kind === "allow_once");
-      if (allowed)
-        return { outcome: "selected", optionId: allowed.id };
+      if (allowed) return { outcome: "selected", optionId: allowed.id };
     }
     const signal = AbortSignal.any([current.signal, callbackSignal]);
     try {

@@ -20,7 +20,11 @@ import type {
   EngineConfiguration,
   SecretReference,
 } from "./domain/engine-configuration.js";
-import { bindInstalled, installLocal, verifyInstalled } from "./tool-packages/index.js";
+import {
+  bindInstalled,
+  installLocal,
+  verifyInstalled,
+} from "./tool-packages/index.js";
 import { canonicalJson } from "./tool-packages/manifest.js";
 
 const help = `HarnessHub one-click Capability Pack installer
@@ -48,7 +52,8 @@ function errorResult(error: unknown): { code: string; message: string } {
   if (error instanceof Error) {
     const candidate = error as Error & { code?: unknown };
     return {
-      code: typeof candidate.code === "string" ? candidate.code : "INSTALL_FAILED",
+      code:
+        typeof candidate.code === "string" ? candidate.code : "INSTALL_FAILED",
       message: error.message,
     };
   }
@@ -60,7 +65,9 @@ async function secretBindings(file: string | undefined) {
   const target = path.resolve(file);
   const value: unknown = JSON.parse(await readFile(target, "utf8"));
   if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("--bindings must contain a JSON object of secret references");
+    throw new Error(
+      "--bindings must contain a JSON object of secret references",
+    );
   return value as Record<string, SecretReference>;
 }
 
@@ -83,7 +90,8 @@ function selectedEngines(
   if (new Set(requested).size !== requested.length)
     throw new Error("--engines contains duplicate engine ids");
   for (const id of requested)
-    if (!available.has(id)) throw new Error(`Engine ${id} is not in this bundle`);
+    if (!available.has(id))
+      throw new Error(`Engine ${id} is not in this bundle`);
   return requested;
 }
 
@@ -103,10 +111,8 @@ function withFragment(
     skills: merge(base?.skills ?? [], fragment.skills, (skill) =>
       process.platform === "win32" ? skill.path.toLowerCase() : skill.path,
     ),
-    mcpServers: merge(
-      base?.mcpServers ?? [],
-      fragment.mcpServers,
-      (server) => server.name.toLowerCase(),
+    mcpServers: merge(base?.mcpServers ?? [], fragment.mcpServers, (server) =>
+      server.name.toLowerCase(),
     ),
   };
   return {
@@ -139,7 +145,9 @@ export async function toolPackOneClickMain(
     return 0;
   }
   if (!values.source)
-    throw new Error("Usage: Install-Tool-Pack.cmd --source DIRECTORY [options]");
+    throw new Error(
+      "Usage: Install-Tool-Pack.cmd --source DIRECTORY [options]",
+    );
 
   const root = path.resolve(bundleRoot);
   const manifest = await readBundle(root);
@@ -209,7 +217,8 @@ export async function toolPackOneClickMain(
       const engine = materializeEngines(manifest, candidate, context).find(
         (item) => item.id === engineId,
       );
-      if (!engine) throw new Error(`Engine ${engineId} could not be materialized`);
+      if (!engine)
+        throw new Error(`Engine ${engineId} could not be materialized`);
       const prepared = await prepareEngine(engine);
       settings = candidate;
       results.push({
