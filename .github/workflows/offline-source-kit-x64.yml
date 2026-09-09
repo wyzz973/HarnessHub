@@ -1,0 +1,147 @@
+name: Offline source kit x64
+
+on:
+  push:
+    branches:
+      - feat/competition-gateway-api
+    paths:
+      - .github/workflows/offline-source-kit-x64.yml
+      - scripts/build-offline-source-kit.ps1
+      - scripts/run-offline-source-kit.ps1
+  workflow_dispatch:
+
+concurrency:
+  group: offline-source-kit-x64-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-offline-source-kit:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          architecture: x64
+          cache: pnpm
+
+      - name: Install and build HarnessHub
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw "HarnessHub install failed" }
+          pnpm build
+          if ($LASTEXITCODE -ne 0) { throw "HarnessHub build failed" }
+          pnpm build:console
+          if ($LASTEXITCODE -ne 0) { throw "HarnessHub console build failed" }
+          npm install --prefix .tools/pnpm-runner --no-package-lock --ignore-scripts --no-save pnpm@10.12.3
+          if ($LASTEXITCODE -ne 0) { throw "Pinned pnpm runner install failed" }
+
+      - name: Prepare fixed open-source engine runtime payload
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $windowsPowerShellModules = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\Modules"
+          $env:PSModulePath = "$windowsPowerShellModules;$env:PSModulePath"
+          $windowsPowerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+          & $windowsPowerShell -NoProfile -NonInteractive -Command "Get-Command Get-FileHash | Out-Null; Get-Command Get-AuthenticodeSignature | Out-Null"
+          if ($LASTEXITCODE -ne 0) { throw "Windows PowerShell preparation cmdlets are unavailable" }
+
+          $prepared = Join-Path $PWD ".tools\contest-prepared\win32-x64"
+          $pnpmJs = (Resolve-Path ".tools\pnpm-runner\node_modules\pnpm\bin\pnpm.cjs").Path
+          node scripts/prepare-contest.mjs --root "$prepared" --arch x64 --pnpm "$pnpmJs"
+          if ($LASTEXITCODE -ne 0) { throw "x64 contest preparation failed" }
+          node scripts/prepare-contest.mjs --root "$prepared" --arch x64 --pnpm "$pnpmJs" --check
+          if ($LASTEXITCODE -ne 0) { throw "x64 contest preparation verification failed" }
+
+          $openSource = Join-Path $PWD ".tools\open-source-prepared\win32-x64"
+          Remove-Item -Recurse -Force $openSource -ErrorAction SilentlyContinue
+          node scripts/prepare-open-source.mjs --prepared "$prepared" --output "$openSource"
+          if ($LASTEXITCODE -ne 0) { throw "Open-source runtime derivation failed" }
+          "OPEN_SOURCE_PREPARED=$openSource" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Assemble editable source workspace
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $kit = Join-Path $env:RUNNER_TEMP "HarnessHub-Offline-Dev-Windows-x64"
+          & .\scripts\run-offline-source-kit.ps1 -Prepared "$env:OPEN_SOURCE_PREPARED" -Output "$kit"
+          if ($LASTEXITCODE -ne 0) { throw "Offline source kit assembly failed" }
+          "OFFLINE_KIT=$kit" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Prove offline reinstall and build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:COREPACK_ENABLE_NETWORK = "0"
+          $env:COREPACK_ENABLE_DOWNLOAD_PROMPT = "0"
+          & (Join-Path $env:OFFLINE_KIT "Reinstall-Offline.cmd")
+          if ($LASTEXITCODE -ne 0) { throw "Included offline reinstall failed" }
+          & (Join-Path $env:OFFLINE_KIT "Build-HarnessHub.cmd")
+          if ($LASTEXITCODE -ne 0) { throw "Included offline build failed" }
+
+      - name: Archive offline source kit
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = Join-Path $PWD ".artifact-offline-source"
+          Remove-Item -Recurse -Force $out -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $zip = Join-Path $out "harnesshub-offline-dev-windows-x64.zip"
+          $sevenZip = Join-Path $env:ProgramFiles "7-Zip\7z.exe"
+          if (-not (Test-Path $sevenZip)) { throw "7-Zip is unavailable" }
+          Push-Location $env:OFFLINE_KIT
+          try {
+            & $sevenZip a -tzip -mx=5 $zip ".\*" | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "Archive failed" }
+          } finally { Pop-Location }
+          $sha = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+          "$sha *harnesshub-offline-dev-windows-x64.zip" | Set-Content -Encoding Ascii "$zip.sha256"
+          "OFFLINE_ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "OFFLINE_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "ZIP bytes: $((Get-Item $zip).Length)"
+          Write-Host "SHA256: $sha"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: harnesshub-offline-dev-windows-x64
+          path: |
+            .artifact-offline-source/harnesshub-offline-dev-windows-x64.zip
+            .artifact-offline-source/harnesshub-offline-dev-windows-x64.zip.sha256
+          compression-level: 0
+          retention-days: 7
+
+      - name: Publish offline dev kit release asset when size permits
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $zip = $env:OFFLINE_ZIP
+          $bytes = (Get-Item -LiteralPath $zip).Length
+          if ($bytes -ge 2147483648) {
+            Write-Warning "ZIP is >= 2 GiB; GitHub Release asset upload is skipped. Use the Actions artifact."
+            exit 0
+          }
+          $tag = "offline-dev-latest"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $zip "$zip.sha256" --clobber
+          } else {
+            gh release create $tag $zip "$zip.sha256" --title "HarnessHub Offline Development Kit" --prerelease --target "$env:GITHUB_SHA"
+          }
+          if ($LASTEXITCODE -ne 0) { throw "Offline development kit release upload failed" }
+          Write-Host "Direct: https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/harnesshub-offline-dev-windows-x64.zip"
+          Write-Host "SHA-256: $env:OFFLINE_SHA"

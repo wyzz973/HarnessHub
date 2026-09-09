@@ -13,8 +13,12 @@ async function json<T>(
 ): Promise<{ status: number; value: T }> {
   const response = await fetch(`${base}${route}`, {
     method,
-    headers: body === undefined ? undefined : { "content-type": "application/json" },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    ...(body === undefined
+      ? {}
+      : {
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
   });
   return {
     status: response.status,
@@ -26,8 +30,12 @@ void test(
   "competition API projects directory sessions and blocking prompts",
   { timeout: 20_000 },
   async (t) => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "harnesshub-competition-"));
-    const workspace = await mkdtemp(path.join(os.tmpdir(), "harnesshub-workspace-"));
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "harnesshub-competition-"),
+    );
+    const workspace = await mkdtemp(
+      path.join(os.tmpdir(), "harnesshub-workspace-"),
+    );
     const hub = await startHub({
       dataDir: root,
       demo: true,
@@ -103,7 +111,9 @@ void test(
 );
 
 void test("competition API uses flat validation errors", async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "harnesshub-competition-error-"));
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "harnesshub-competition-error-"),
+  );
   const hub = await startHub({
     dataDir: root,
     demo: true,

@@ -13,6 +13,7 @@ export type {
   ToolPackageFile,
   ToolPackageArgument,
   ToolPackageMcp,
+  ToolPackageCli,
   ToolPackageManifest,
   ToolPackageInspection,
   ToolPackageRecord,

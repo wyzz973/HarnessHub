@@ -32,6 +32,8 @@ import type {
   PermissionOption,
 } from "../../domain/types.js";
 
+const fullAccess = () => process.env.HARNESSHUB_FULL_ACCESS === "1";
+
 /** ACP types terminate here. Credentials are inherited only through the Worker environment. */
 export class AcpDriver implements Driver {
   private runtime: AcpRuntime | undefined;
@@ -72,7 +74,7 @@ export class AcpDriver implements Driver {
           agentRegistry: createAgentRegistry({
             overrides: { [spec.profile.id]: spec.profile.command },
           }),
-          permissionMode: "deny-all",
+          permissionMode: fullAccess() ? "approve-all" : "deny-all",
           fs: false,
           terminal: false,
           nonInteractivePermissions: "deny",
@@ -318,6 +320,10 @@ export class AcpDriver implements Driver {
       });
       return { outcome: "cancel" };
     }
+    if (fullAccess()) {
+      const allowed = options.find((option) => option.kind === "allow_once");
+      if (allowed) return { outcome: "selected", optionId: allowed.id };
+    }
     const signal = AbortSignal.any([current.signal, callbackSignal]);
     try {
       const optionId = await current.channel.permission(
@@ -334,7 +340,7 @@ export class AcpDriver implements Driver {
       return { outcome: "selected", optionId: selected.id };
     } catch (error) {
       if (signal.aborted) return { outcome: "cancel" };
-      throw error; // deny-all remains the acpx callback failure policy.
+      throw error;
     }
   }
 

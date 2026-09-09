@@ -1,0 +1,117 @@
+name: Competition gateway bundle
+
+on:
+  push:
+    branches:
+      - feat/competition-gateway-api
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows-bundle:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: Install dependencies on GitHub runner
+        run: pnpm install --frozen-lockfile
+
+      - name: Build gateway
+        run: pnpm build
+
+      - name: Assemble portable gateway
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = Join-Path $env:RUNNER_TEMP "harnesshub-competition"
+          $output = Join-Path $PWD ".artifact"
+          $zip = Join-Path $output "harnesshub-competition-windows.zip"
+          Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          New-Item -ItemType Directory -Force -Path (Join-Path $root "runtime") | Out-Null
+          New-Item -ItemType Directory -Force -Path $output | Out-Null
+
+          Copy-Item -Recurse -Force "dist" (Join-Path $root "dist")
+          Copy-Item -Force "package.json" (Join-Path $root "package.json")
+          Copy-Item -Force "pnpm-lock.yaml" (Join-Path $root "pnpm-lock.yaml")
+          Copy-Item -Recurse -Force "patches" (Join-Path $root "patches")
+
+          @'
+          save-exact=true
+          strict-peer-dependencies=true
+          node-linker=hoisted
+          '@ | Set-Content -Encoding Ascii (Join-Path $root ".npmrc")
+
+          Push-Location $root
+          try {
+            pnpm install --prod --frozen-lockfile --offline
+            if ($LASTEXITCODE -ne 0) {
+              throw "Production dependency install failed with exit code $LASTEXITCODE"
+            }
+            if (-not (Test-Path ".\node_modules\ajv\package.json")) {
+              throw "Portable production node_modules was not materialized"
+            }
+          } finally {
+            Pop-Location
+          }
+
+          Copy-Item -Force (Get-Command node).Source (Join-Path $root "runtime\node.exe")
+
+          @'
+          @echo off
+          setlocal
+          set "ROOT=%~dp0"
+          "%ROOT%runtime\node.exe" "%ROOT%dist\src\main.js" --competition %*
+          exit /b %ERRORLEVEL%
+          '@ | Set-Content -Encoding Ascii (Join-Path $root "Start-Competition.cmd")
+
+          @'
+          HarnessHub competition gateway prebuilt artifact.
+
+          No pnpm or Node installation is required on the target machine.
+
+          Example:
+            Start-Competition.cmd --engine opencode --port 6217 --host localhost --config C:\path\to\engines\local.yaml
+
+          This artifact contains the Gateway runtime and production npm dependencies. Agent engine executables are still resolved from the configured command paths or the HarnessHub offline engine bundle.
+          '@ | Set-Content -Encoding UTF8 (Join-Path $root "README-OFFLINE.txt")
+
+          Compress-Archive -Path "$root\*" -DestinationPath $zip -CompressionLevel Optimal
+
+      - name: Verify extracted offline bundle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $zip = Join-Path $PWD ".artifact\harnesshub-competition-windows.zip"
+          $verify = Join-Path $env:RUNNER_TEMP "harnesshub-competition-verify"
+          Remove-Item -Recurse -Force $verify -ErrorAction SilentlyContinue
+          Expand-Archive -LiteralPath $zip -DestinationPath $verify
+          Push-Location $verify
+          try {
+            if (-not (Test-Path ".\node_modules\ajv\package.json")) {
+              throw "Extracted production dependencies are incomplete"
+            }
+            & ".\runtime\node.exe" ".\dist\src\main.js" --help
+            if ($LASTEXITCODE -ne 0) {
+              throw "Extracted Gateway --help smoke test failed with exit code $LASTEXITCODE"
+            }
+          } finally {
+            Pop-Location
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: harnesshub-competition-windows
+          path: .artifact/harnesshub-competition-windows.zip
+          if-no-files-found: error
+          retention-days: 14

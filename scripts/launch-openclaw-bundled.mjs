@@ -141,8 +141,19 @@ export async function runBundledOpenClaw(executable) {
     await new Promise((resolve, reject) =>
       reservation.close((error) => (error ? reject(error) : resolve())),
     );
+    const fullAccess = process.env.HARNESSHUB_FULL_ACCESS === "1";
+    const baseTools = object(base.tools) ? base.tools : {};
+    const baseExec = object(baseTools.exec) ? baseTools.exec : {};
     const config = {
       ...base,
+      ...(fullAccess
+        ? {
+            tools: {
+              ...baseTools,
+              exec: { ...baseExec, host: "gateway", mode: "full" },
+            },
+          }
+        : {}),
       models: {
         ...base.models,
         catalogRefresh: { ...base.models?.catalogRefresh, enabled: false },
