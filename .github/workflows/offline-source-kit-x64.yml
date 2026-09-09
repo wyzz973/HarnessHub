@@ -1,0 +1,276 @@
+name: Offline source kit x64
+
+on:
+  push:
+    branches:
+      - feat/competition-gateway-api
+    paths:
+      - .github/workflows/offline-source-kit-x64.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-offline-source-kit:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          architecture: x64
+          cache: pnpm
+
+      - name: Install HarnessHub dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          pnpm install --frozen-lockfile
+          pnpm build
+          pnpm build:console
+          npm install --prefix .tools/pnpm-runner --no-package-lock --ignore-scripts --no-save pnpm@10.12.3
+
+      - name: Prepare fixed open-source engine runtime payload
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $prepared = Join-Path $PWD ".tools\contest-prepared\win32-x64"
+          $pnpmJs = (Resolve-Path ".tools\pnpm-runner\node_modules\pnpm\bin\pnpm.cjs").Path
+          node scripts/prepare-contest.mjs --root "$prepared" --arch x64 --pnpm "$pnpmJs"
+          node scripts/prepare-contest.mjs --root "$prepared" --arch x64 --pnpm "$pnpmJs" --check
+          $openSource = Join-Path $PWD ".tools\open-source-prepared\win32-x64"
+          Remove-Item -Recurse -Force $openSource -ErrorAction SilentlyContinue
+          node scripts/prepare-open-source.mjs --prepared "$prepared" --output "$openSource"
+          "OPEN_SOURCE_PREPARED=$openSource" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Assemble editable offline workspace and engine source snapshots
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $kit = Join-Path $env:RUNNER_TEMP "HarnessHub-Offline-Dev-Windows-x64"
+          Remove-Item -Recurse -Force $kit -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $kit | Out-Null
+          $hh = Join-Path $kit "HarnessHub"
+          New-Item -ItemType Directory -Force -Path $hh | Out-Null
+
+          robocopy $PWD $hh /E /XD .git .tools .artifact-x64 node_modules /XF *.zip *.7z *> $null
+          if ($LASTEXITCODE -gt 7) { throw "Failed to copy HarnessHub source" }
+          robocopy (Join-Path $PWD "node_modules") (Join-Path $hh "node_modules") /E *> $null
+          if ($LASTEXITCODE -gt 7) { throw "Failed to copy HarnessHub node_modules" }
+
+          $tools = Join-Path $kit "tools"
+          New-Item -ItemType Directory -Force -Path (Join-Path $tools "node") | Out-Null
+          Copy-Item -LiteralPath (Get-Command node).Source -Destination (Join-Path $tools "node\node.exe")
+          $nodeLicense = Join-Path (Split-Path (Get-Command node).Source) "LICENSE"
+          if (Test-Path $nodeLicense) { Copy-Item $nodeLicense (Join-Path $tools "node\LICENSE") }
+          robocopy (Join-Path $PWD ".tools\pnpm-runner") (Join-Path $tools "pnpm-runner") /E *> $null
+          if ($LASTEXITCODE -gt 7) { throw "Failed to copy pnpm runner" }
+
+          $storePath = (pnpm store path).Trim()
+          robocopy $storePath (Join-Path $kit "pnpm-store") /E *> $null
+          if ($LASTEXITCODE -gt 7) { throw "Failed to copy pnpm store" }
+
+          robocopy $env:OPEN_SOURCE_PREPARED (Join-Path $kit "prepared\win32-x64") /E *> $null
+          if ($LASTEXITCODE -gt 7) { throw "Failed to copy prepared engine runtime" }
+
+          $srcRoot = Join-Path $kit "engine-sources"
+          $pubRoot = Join-Path $kit "published-engine-packages"
+          New-Item -ItemType Directory -Force -Path $srcRoot,$pubRoot | Out-Null
+          $manifest = New-Object System.Collections.Generic.List[object]
+
+          function Normalize-Repo([string]$repo) {
+            if (-not $repo) { return $null }
+            $repo = $repo -replace '^git\+', ''
+            $repo = $repo -replace '^git://github.com/', 'https://github.com/'
+            $repo = $repo -replace '^github:', 'https://github.com/'
+            if ($repo -match '^https://github.com/.+\.git$') { return $repo }
+            if ($repo -match '^https://github.com/') { return ($repo.TrimEnd('/') + '.git') }
+            return $repo
+          }
+
+          function Snapshot-Npm([string]$id,[string]$spec,[string]$installedRelative) {
+            Write-Host "Source snapshot: $id <- $spec"
+            $meta = npm view $spec --json | ConvertFrom-Json
+            $repoValue = if ($meta.repository -is [string]) { $meta.repository } else { $meta.repository.url }
+            $repo = Normalize-Repo $repoValue
+            $gitHead = [string]$meta.gitHead
+            $dest = Join-Path $srcRoot $id
+            $status = "published-package-only"
+            if ($repo -and $gitHead) {
+              try {
+                git clone --filter=blob:none --no-checkout $repo $dest
+                if ($LASTEXITCODE -ne 0) { throw "clone failed" }
+                git -C $dest fetch --depth 1 origin $gitHead
+                if ($LASTEXITCODE -ne 0) { throw "fetch commit failed" }
+                git -C $dest checkout --detach $gitHead
+                if ($LASTEXITCODE -ne 0) { throw "checkout failed" }
+                Remove-Item -Recurse -Force (Join-Path $dest ".git")
+                $status = "gitHead"
+              } catch {
+                Remove-Item -Recurse -Force $dest -ErrorAction SilentlyContinue
+                Write-Warning "$id repository snapshot failed: $($_.Exception.Message)"
+              }
+            }
+            $installed = Join-Path $env:OPEN_SOURCE_PREPARED $installedRelative
+            if (Test-Path $installed) {
+              $pubDest = Join-Path $pubRoot $id
+              robocopy $installed $pubDest /E *> $null
+              if ($LASTEXITCODE -gt 7) { throw "Failed to copy published package $id" }
+            }
+            $manifest.Add([pscustomobject]@{ id=$id; package=$spec; repository=$repo; gitHead=$gitHead; snapshot=$status })
+          }
+
+          Snapshot-Npm "codex" "@openai/codex@0.153.4" "engines\npm\node_modules\@openai\codex"
+          Snapshot-Npm "codex-acp" "@agentclientprotocol/codex-acp@1.10.0" "engines\npm\node_modules\@agentclientprotocol\codex-acp"
+          Snapshot-Npm "gemini" "@google/gemini-cli@0.58.0" "engines\npm\node_modules\@google\gemini-cli"
+          Snapshot-Npm "qwen" "@qwen-code/qwen-code@0.23.0" "engines\npm\node_modules\@qwen-code\qwen-code"
+          Snapshot-Npm "pi" "@earendil-works/pi-coding-agent@0.85.1" "engines\npm\node_modules\@earendil-works\pi-coding-agent"
+          Snapshot-Npm "pi-acp" "pi-acp@0.0.33" "engines\npm\node_modules\pi-acp"
+          Snapshot-Npm "mimo" "@mimo-ai/cli@0.1.14" "engines\npm\node_modules\@mimo-ai\cli"
+          Snapshot-Npm "dsh" "@deepseek-ai/dsh@0.1.2-rc.1" "engines\npm\node_modules\@deepseek-ai\dsh"
+          Snapshot-Npm "openclaw" "openclaw@2026.9.2" "engines\npm\node_modules\openclaw"
+
+          function Snapshot-GitTag([string]$id,[string]$repo,[string[]]$refs) {
+            $dest = Join-Path $srcRoot $id
+            $used = $null
+            foreach ($ref in $refs) {
+              try {
+                git clone --depth 1 --branch $ref $repo $dest
+                if ($LASTEXITCODE -eq 0) { $used = $ref; break }
+              } catch {}
+              Remove-Item -Recurse -Force $dest -ErrorAction SilentlyContinue
+            }
+            if (-not $used) { throw "Unable to snapshot $id from $repo" }
+            Remove-Item -Recurse -Force (Join-Path $dest ".git")
+            $manifest.Add([pscustomobject]@{ id=$id; package=$null; repository=$repo; gitHead=$null; snapshot="tag:$used" })
+          }
+
+          Snapshot-GitTag "kimi" "https://github.com/MoonshotAI/kimi-cli.git" @("1.50.0","v1.50.0")
+          Snapshot-GitTag "opencode" "https://github.com/anomalyco/opencode.git" @("v1.18.29","1.18.29")
+
+          $hermesMeta = Invoke-RestMethod "https://pypi.org/pypi/hermes-agent/0.19.0/json"
+          $hermesRepo = @($hermesMeta.info.project_urls.PSObject.Properties.Value + $hermesMeta.info.home_page) | Where-Object { $_ -match '^https://github.com/' } | Select-Object -First 1
+          $hermesSnapshot = "sdist"
+          if ($hermesRepo) {
+            $hermesRepo = Normalize-Repo $hermesRepo
+            $dest = Join-Path $srcRoot "hermes"
+            foreach ($ref in @("v0.19.0","0.19.0")) {
+              try {
+                git clone --depth 1 --branch $ref $hermesRepo $dest
+                if ($LASTEXITCODE -eq 0) { $hermesSnapshot = "tag:$ref"; break }
+              } catch {}
+              Remove-Item -Recurse -Force $dest -ErrorAction SilentlyContinue
+            }
+            if (Test-Path (Join-Path $dest ".git")) { Remove-Item -Recurse -Force (Join-Path $dest ".git") }
+          }
+          $hermesPub = Join-Path $pubRoot "hermes"
+          New-Item -ItemType Directory -Force -Path $hermesPub | Out-Null
+          py -3 -m pip download --no-deps --no-binary=:all: "hermes-agent==0.19.0" --dest $hermesPub
+          if ($LASTEXITCODE -ne 0) { throw "Failed to download exact Hermes source distribution" }
+          $manifest.Add([pscustomobject]@{ id="hermes"; package="hermes-agent==0.19.0"; repository=$hermesRepo; gitHead=$null; snapshot=$hermesSnapshot })
+
+          $manifest | ConvertTo-Json -Depth 10 | Set-Content -Encoding UTF8 (Join-Path $kit "engine-source-manifest.json")
+          git rev-parse HEAD | Set-Content -Encoding Ascii (Join-Path $kit "HARNESSHUB_COMMIT.txt")
+
+          @'
+          @echo off
+          setlocal
+          set ROOT=%~dp0
+          set NODE=%ROOT%tools\node\node.exe
+          set PNPM=%ROOT%tools\pnpm-runner\node_modules\pnpm\bin\pnpm.cjs
+          cd /d "%ROOT%HarnessHub"
+          "%NODE%" "%PNPM%" build
+          exit /b %ERRORLEVEL%
+          '@ | Set-Content -Encoding Ascii (Join-Path $kit "Build-HarnessHub.cmd")
+
+          @'
+          @echo off
+          setlocal
+          set ROOT=%~dp0
+          set NODE=%ROOT%tools\node\node.exe
+          set PNPM=%ROOT%tools\pnpm-runner\node_modules\pnpm\bin\pnpm.cjs
+          cd /d "%ROOT%HarnessHub"
+          "%NODE%" "%PNPM%" test
+          exit /b %ERRORLEVEL%
+          '@ | Set-Content -Encoding Ascii (Join-Path $kit "Test-HarnessHub.cmd")
+
+          @'
+          @echo off
+          setlocal
+          set ROOT=%~dp0
+          set NODE=%ROOT%tools\node\node.exe
+          set PNPM=%ROOT%tools\pnpm-runner\node_modules\pnpm\bin\pnpm.cjs
+          cd /d "%ROOT%HarnessHub"
+          if exist node_modules rmdir /s /q node_modules
+          "%NODE%" "%PNPM%" install --offline --frozen-lockfile --store-dir "%ROOT%pnpm-store"
+          exit /b %ERRORLEVEL%
+          '@ | Set-Content -Encoding Ascii (Join-Path $kit "Reinstall-Offline.cmd")
+
+          @'
+          # HarnessHub Offline Development Kit (Windows x64)
+
+          This is an editable source workspace, not a prebuilt Competition Bundle.
+
+          ## What is included
+          - `HarnessHub/`: HarnessHub source at `HARNESSHUB_COMMIT.txt`, plus resolved Windows x64 `node_modules`.
+          - `prepared/win32-x64/`: fixed open-source engine runtime payload used by the Competition edition, not overlaid into a final Bundle.
+          - `engine-sources/`: upstream source snapshots for the 10 Competition engines plus ACP wrappers where the runtime depends on them.
+          - `published-engine-packages/`: exact published package contents / source distribution fallback.
+          - `pnpm-store/`: offline store for reinstalling HarnessHub dependencies.
+          - `tools/node`: Node 24.20.0 x64.
+          - `tools/pnpm-runner`: pnpm 10.12.3.
+
+          ## Edit and build without network
+          1. Edit files under `HarnessHub/src`.
+          2. Run `Build-HarnessHub.cmd`.
+          3. Run `Test-HarnessHub.cmd` when needed.
+          4. If `node_modules` is removed, run `Reinstall-Offline.cmd`; it uses the included store and `--offline`.
+
+          ## Engine versions
+          The authoritative engine selection is `HarnessHub/distribution/open-source-edition.json` and exact versions are pinned by `HarnessHub/distribution/npm/package.json`, `binary-sources.json`, and `extra-engine-sources.json`.
+
+          ## Local package after edits (optional)
+          The prepared engine payload is intentionally kept separate. If you later want a local package, build HarnessHub first and use the repository's existing `scripts/package-bundle.mjs` / Competition overlay scripts against `prepared/win32-x64`. No engine download is required for that packaging step.
+
+          ## Known local investigation
+          OpenCode Full Access was observed to fail when `OPENCODE_PERMISSION` was injected by `src/distribution/full-access.ts`; removing that launcher environment injection restored `204 No Content`. Keep this in mind while editing the Full Access implementation.
+          '@ | Set-Content -Encoding UTF8 (Join-Path $kit "README-OFFLINE.md")
+
+          "OFFLINE_KIT=$kit" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Archive offline source kit
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = Join-Path $PWD ".artifact-offline-source"
+          Remove-Item -Recurse -Force $out -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $zip = Join-Path $out "harnesshub-offline-dev-windows-x64.zip"
+          $sevenZip = Join-Path $env:ProgramFiles "7-Zip\7z.exe"
+          Push-Location $env:OFFLINE_KIT
+          try {
+            & $sevenZip a -tzip -mx=1 $zip ".\*" | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "Archive failed" }
+          } finally { Pop-Location }
+          $sha = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+          "$sha *harnesshub-offline-dev-windows-x64.zip" | Set-Content -Encoding Ascii "$zip.sha256"
+          Write-Host "ZIP bytes: $((Get-Item $zip).Length)"
+          Write-Host "SHA256: $sha"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: harnesshub-offline-dev-windows-x64
+          path: |
+            .artifact-offline-source/harnesshub-offline-dev-windows-x64.zip
+            .artifact-offline-source/harnesshub-offline-dev-windows-x64.zip.sha256
+          compression-level: 0
+          retention-days: 7
