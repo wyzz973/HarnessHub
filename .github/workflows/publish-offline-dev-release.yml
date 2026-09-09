@@ -1,0 +1,105 @@
+name: Publish offline dev release
+
+on:
+  push:
+    branches:
+      - feat/competition-gateway-api
+    paths:
+      - .github/workflows/publish-offline-dev-release.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download validated offline dev artifact
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $work = Join-Path $env:RUNNER_TEMP "offline-dev-release"
+          Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $work | Out-Null
+          gh run download 34317588132 -n harnesshub-offline-dev-windows-x64 -D $work
+          if ($LASTEXITCODE -ne 0) { throw "Failed to download validated offline dev artifact" }
+          $zip = Join-Path $work "harnesshub-offline-dev-windows-x64.zip"
+          if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) { throw "Validated offline ZIP is missing" }
+          $sha = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
+          if ($sha -ne "14053b9831c8617182e923544cc87fd52239f68b94da38acc38b981aac1a2de4") {
+            throw "Validated offline ZIP SHA256 mismatch: $sha"
+          }
+          "WORK_DIR=$work" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "OFFLINE_ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Split into Release-safe volumes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = Join-Path $env:WORK_DIR "release"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $sevenZip = Join-Path $env:ProgramFiles "7-Zip\7z.exe"
+          if (-not (Test-Path -LiteralPath $sevenZip -PathType Leaf)) { throw "7-Zip is unavailable" }
+          $base = Join-Path $out "harnesshub-offline-dev-windows-x64.7z"
+          & $sevenZip a -t7z -mx=0 -v1500m $base $env:OFFLINE_ZIP | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw "Failed to create split Release volumes" }
+          $parts = @(Get-ChildItem -LiteralPath $out -Filter "harnesshub-offline-dev-windows-x64.7z.*" | Sort-Object Name)
+          if ($parts.Count -lt 2) { throw "Expected multiple Release volumes" }
+          foreach ($part in $parts) {
+            if ($part.Length -ge 2147483648) { throw "Release volume is too large: $($part.Name)" }
+          }
+          $hashLines = foreach ($part in $parts) {
+            $h = (Get-FileHash -Algorithm SHA256 -LiteralPath $part.FullName).Hash.ToLowerInvariant()
+            "$h *$($part.Name)"
+          }
+          $hashLines | Set-Content -Encoding Ascii (Join-Path $out "parts.sha256")
+          @"
+HarnessHub Offline Development Kit - Windows x64
+
+Validated source ZIP SHA256:
+14053b9831c8617182e923544cc87fd52239f68b94da38acc38b981aac1a2de4
+
+Download ALL volume files into the same directory:
+  harnesshub-offline-dev-windows-x64.7z.001
+  harnesshub-offline-dev-windows-x64.7z.002
+
+Then extract the first volume with 7-Zip:
+  7z x harnesshub-offline-dev-windows-x64.7z.001
+
+This produces:
+  harnesshub-offline-dev-windows-x64.zip
+
+Then extract that ZIP normally.
+"@ | Set-Content -Encoding UTF8 (Join-Path $out "DOWNLOAD-README.txt")
+          "RELEASE_DIR=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Publish offline-dev-latest Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "offline-dev-latest"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --title "HarnessHub Offline Development Kit" --prerelease --target "$env:GITHUB_SHA" --notes "Validated offline editable source workspace. Download all split volumes and extract .001 with 7-Zip."
+            if ($LASTEXITCODE -ne 0) { throw "Failed to create offline-dev-latest Release" }
+          }
+          $assets = @(
+            (Join-Path $env:RELEASE_DIR "harnesshub-offline-dev-windows-x64.7z.001"),
+            (Join-Path $env:RELEASE_DIR "harnesshub-offline-dev-windows-x64.7z.002"),
+            (Join-Path $env:RELEASE_DIR "parts.sha256"),
+            (Join-Path $env:RELEASE_DIR "DOWNLOAD-README.txt")
+          )
+          gh release upload $tag @assets --clobber
+          if ($LASTEXITCODE -ne 0) { throw "Failed to upload split offline dev Release assets" }
+          Write-Host "Part 1: https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/harnesshub-offline-dev-windows-x64.7z.001"
+          Write-Host "Part 2: https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/harnesshub-offline-dev-windows-x64.7z.002"
+          Write-Host "Checksums: https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/parts.sha256"
