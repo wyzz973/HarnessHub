@@ -55,10 +55,13 @@ export async function buildCompetitionFullBundle(bundleDirectory) {
     '@echo off\r\nsetlocal\r\nset "HARNESSHUB_FULL_ACCESS="\r\ncd /d "%~dp0"\r\n"%~dp0runtime\\node.exe" "%~dp0dist\\src\\competition-bundle-main.js" --safe-permissions %*\r\nexit /b %ERRORLEVEL%\r\n';
   const toolPackLauncher =
     '@echo off\r\nsetlocal\r\n"%~dp0runtime\\node.exe" "%~dp0dist\\src\\tool-packages-oneclick-main.js" %*\r\nexit /b %ERRORLEVEL%\r\n';
+  const collectLogsLauncher =
+    '@echo off\r\nsetlocal\r\n"%~dp0runtime\\node.exe" "%~dp0dist\\src\\collect-logs-main.js" --root "%~dp0state" %*\r\nexit /b %ERRORLEVEL%\r\n';
   await writeFile(path.join(root, "Start-Competition.cmd"), fullAccessLauncher);
   await writeFile(path.join(root, "gateway.cmd"), fullAccessLauncher);
   await writeFile(path.join(root, "gateway-safe.cmd"), safeLauncher);
   await writeFile(path.join(root, "Install-Tool-Pack.cmd"), toolPackLauncher);
+  await writeFile(path.join(root, "Collect-Logs.cmd"), collectLogsLauncher);
   await writeFile(
     path.join(root, "README-COMPETITION.txt"),
     [
@@ -106,6 +109,14 @@ export async function buildCompetitionFullBundle(bundleDirectory) {
       '   While running: POST /v1/tool-packs/import {"source":"<path>","applyTo":"all"}',
       "   Examples are under .\\tool-packs\\. MCP servers and CLI tools run in each Session's",
       "   own directory.",
+      "",
+      "6. Diagnostic logs (JSON Lines, secrets redacted, rotated at 16 MiB):",
+      "   state\\competition-data\\logs\\gateway.log  - HTTP access, Session/Run lifecycle, Workers,",
+      "     permissions and one line per model call; lifecycle lines are also printed here.",
+      "   state\\competition-data\\backends\\<sessionId>\\diagnostics\\engine.log  - engine process,",
+      "     stderr, every ACP request/response, tool calls and model calls of that Session.",
+      '   $env:HARNESSHUB_LOG_LEVEL = "debug" adds 2 KiB payload excerpts (prompt text included).',
+      "   .\\Collect-Logs.cmd packs all of them plus engine-native *.log tails into logs-<time>.zip.",
       "",
       "Runs, settings and evidence live under state\\ (state\\competition-data\\harnesshub.sqlite).",
       "Use a fresh extraction for a clean evaluation.",

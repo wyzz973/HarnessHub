@@ -40,6 +40,7 @@
     "prepare:contest": "node scripts/prepare-contest.mjs",
     "package:contest": "node scripts/package-bundle.mjs",
     "tools": "node dist/src/tool-packages-main.js",
+    "logs:collect": "node dist/src/collect-logs-main.js",
     "acceptance:competition": "node scripts/competition-acceptance.mjs",
     "acceptance:matrix": "node scripts/competition-matrix.mjs",
     "selftest:competition": "node scripts/competition-selftest.mjs",

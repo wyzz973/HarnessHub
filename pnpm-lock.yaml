@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   acpx@0.13.2:
-    hash: 7cfd3a143b0d4caea74dff139a9451f4d298da88bd469fed06ad4a6fe0650f6a
+    hash: 2fc8dc1222d3663c1c357409b341ce293d920dbab00f71b069b42a732d6dba7f
     path: patches/acpx@0.13.2.patch
 
 importers:
@@ -21,7 +21,7 @@ importers:
         version: 9.8.1
       acpx:
         specifier: 0.13.2
-        version: 0.13.2(patch_hash=7cfd3a143b0d4caea74dff139a9451f4d298da88bd469fed06ad4a6fe0650f6a)
+        version: 0.13.2(patch_hash=2fc8dc1222d3663c1c357409b341ce293d920dbab00f71b069b42a732d6dba7f)
       ajv:
         specifier: 8.20.0
         version: 8.20.0
@@ -4356,7 +4356,7 @@ snapshots:
 
   acorn@8.18.0: {}
 
-  acpx@0.13.2(patch_hash=7cfd3a143b0d4caea74dff139a9451f4d298da88bd469fed06ad4a6fe0650f6a):
+  acpx@0.13.2(patch_hash=2fc8dc1222d3663c1c357409b341ce293d920dbab00f71b069b42a732d6dba7f):
     dependencies:
       '@agentclientprotocol/sdk': 1.4.0(zod@4.5.4)
       commander: 15.0.0

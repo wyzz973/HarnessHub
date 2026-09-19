@@ -206,6 +206,11 @@ Invoke-RestMethod -Method Delete -Uri "$base/session/$($session.id)"
 | 模型、用量与耗时观测 | `GET /v1/runs/{runId}/observations` |
 | 持久记录 | `<CODE>\competition\state\competition-data\`（`harnesshub.sqlite` 与 `artifacts\`） |
 | 准备与自检日志 | `<CODE>\logs\` |
+| Gateway 日志（请求、Session/Run/Worker 生命周期、每次模型调用） | `<CODE>\competition\state\competition-data\logs\gateway.log` |
+| 引擎日志（引擎进程与 stderr、每个 ACP 请求/响应、工具与权限、模型调用明细） | `<CODE>\competition\state\competition-data\backends\<sessionId>\diagnostics\engine.log`（`gateway.log` 中 `session.create` 行的 `engineLog`） |
+| 一键打包全部日志（已脱敏） | `.\competition\Collect-Logs.cmd`，生成 `<CODE>\competition\logs-<时间>.zip` |
+
+日志为每行一个 JSON 对象，密钥与 token 已脱敏，单个文件超过 16 MiB 自动轮转。需要看提示词与模型回答摘录时，在启动前设置 `$env:HARNESSHUB_LOG_LEVEL = "debug"`（取值只能是 `info` 或 `debug`，其他值拒绝启动）。
 
 `state` 目录只保存密钥的环境变量名，不保存密钥本身。需要干净的评测状态时，停止服务后删除 `<CODE>\competition\state`，或重新执行第 2 节。
 
@@ -219,4 +224,5 @@ Invoke-RestMethod -Method Delete -Uri "$base/session/$($session.id)"
 - **`prompt_async` 返回 502，原因含上游错误**：检查模型地址、密钥与网络连通性；`POST /v1/harness/model/test`（请求体 `{}`）会向模型发一条极短的流式请求用于诊断。
 - **`Setup-Competition-Offline.cmd` 失败**：查看 `<CODE>\logs\` 中最新日志。常见原因：磁盘空间不足；杀毒软件隔离了引擎程序（提示 `Prepared engine files are missing`，需恢复文件或加白名单）；路径过长（改用短路径重新解压）。依赖损坏时可加 `--reinstall` 重试。
 - **文件被 Windows 标记为来自网络**：在 PowerShell 中执行 `Get-ChildItem -Recurse <CODE> | Unblock-File` 后重试。
+- **引擎启动失败、卡住或返回异常**：先看 `gateway.log` 中该 Run 的 `run.finish` 与 `worker.exit`，再按 `session.create` 行的 `engineLog` 打开引擎日志：`engine.stderr` 是引擎自己的报错，`acp.response` 带 `ok:false` 的行是协议错误，`model.call` 的 `status`/`error` 是模型网关与上游的结果（`reasoning.missing` 大于 0 表示推理内容未回填）。需要交给他人分析时运行 `.\competition\Collect-Logs.cmd`，发送生成的 zip。
 - **需要确认只使用了统一模型**：`GET /v1/runs/{runId}/event-log` 中每条 `model.call` 事件的 `upstreamModel` 均为 `HARNESSHUB_MODEL` 的值。

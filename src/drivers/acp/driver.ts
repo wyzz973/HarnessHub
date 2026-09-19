@@ -24,6 +24,8 @@ import {
   nativeUsageObservation,
 } from "./observations.js";
 import type { ExecutionSpec } from "../../domain/ports.js";
+import { NO_LOG, type LogSink } from "../../domain/logging.js";
+import { AcpTrafficLog } from "./traffic-log.js";
 import type {
   DriverResult,
   JsonObject,
@@ -49,6 +51,11 @@ function engineMessage(value: unknown, fallback: string): string {
 
 export class AcpDriver implements Driver {
   private runtime: AcpRuntime | undefined;
+  private readonly traffic: AcpTrafficLog;
+  /** `log` receives this Session's ACP traffic, engine process and permission records. */
+  constructor(private readonly log: LogSink = NO_LOG) {
+    this.traffic = new AcpTrafficLog(log);
+  }
   private mcpServers: RuntimeMcpServer[] = [];
   private nativeModelSelection = false;
   /** Native provider configuration can own model selection when ACP advertises no model control. */
@@ -93,6 +100,9 @@ export class AcpDriver implements Driver {
           timeoutMs: 0,
           onPermissionRequest: (request, context) =>
             this.permission(request, context.signal),
+          onAcpMessage: (direction, message) =>
+            this.traffic.message(direction, message),
+          onAgentProcess: (event) => this.traffic.process(event),
         });
       }
       signal.throwIfAborted();
@@ -119,6 +129,12 @@ export class AcpDriver implements Driver {
       const advertisedResume =
         checkpoint?.agentCapabilities?.loadSession === true ||
         checkpoint?.agentCapabilities?.sessionCapabilities?.resume != null;
+      if (firstConnection)
+        this.log.info("acp.session", {
+          backendSessionId: this.handle.backendSessionId,
+          recovering,
+          resumeAdvertised: advertisedResume,
+        });
       if (spec.profile.acp?.sessionMode === "resume" && !advertisedResume)
         return recoveryUnsupported();
       if (firstConnection && !recovering)
@@ -335,9 +351,18 @@ export class AcpDriver implements Driver {
       });
       return { outcome: "cancel" };
     }
+    const toolCallId = request.raw.toolCall.toolCallId;
     if (fullAccess()) {
       const allowed = options.find((option) => option.kind === "allow_once");
-      if (allowed) return { outcome: "selected", optionId: allowed.id };
+      if (allowed) {
+        this.log.info("acp.permission", {
+          toolCallId,
+          title: request.raw.toolCall.title ?? null,
+          decision: "auto-allow",
+          optionId: allowed.id,
+        });
+        return { outcome: "selected", optionId: allowed.id };
+      }
     }
     const signal = AbortSignal.any([current.signal, callbackSignal]);
     try {
@@ -351,9 +376,20 @@ export class AcpDriver implements Driver {
         signal,
       );
       const selected = options.find((option) => option.id === optionId);
+      this.log.info("acp.permission", {
+        toolCallId,
+        title: request.raw.toolCall.title ?? null,
+        decision: selected && !signal.aborted ? selected.kind : "cancelled",
+        optionId: selected?.id ?? null,
+      });
       if (!selected || signal.aborted) return { outcome: "cancel" };
       return { outcome: "selected", optionId: selected.id };
     } catch (error) {
+      this.log.info("acp.permission", {
+        toolCallId,
+        decision: "cancelled",
+        reason: signal.aborted ? "run-ended" : "error",
+      });
       if (signal.aborted) return { outcome: "cancel" };
       throw error;
     }

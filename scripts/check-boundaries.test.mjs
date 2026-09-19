@@ -48,6 +48,44 @@ test("release templates and tool packages cannot create a second execution path"
   );
 });
 
+test("diagnostic log files are written by process owners, never by business modules", () => {
+  assert.deepEqual(
+    check(
+      "worker/log.ts",
+      'import { JsonLogFile } from "../logging/json-log-file.js";',
+    ),
+    [],
+  );
+  assert.deepEqual(
+    check(
+      "logging/json-log-file.ts",
+      'import type { LogSink } from "../domain/logging.js";',
+    ),
+    [],
+  );
+  assert.match(
+    check(
+      "logging/store.ts",
+      'import { Runtime } from "../runtime/runtime.js";',
+    ).join("\n"),
+    /logging cannot depend on runtime/,
+  );
+  assert.match(
+    check(
+      "gateway/log.ts",
+      'import { JsonLogFile } from "../logging/json-log-file.js";',
+    ).join("\n"),
+    /gateway cannot depend on logging/,
+  );
+  assert.match(
+    check(
+      "drivers/acp/log.ts",
+      'import { JsonLogFile } from "../../logging/json-log-file.js";',
+    ).join("\n"),
+    /drivers cannot depend on logging/,
+  );
+});
+
 test("platform filesystem primitives have bounded dependencies and cannot leak into business modules", () => {
   assert.deepEqual(
     check(
