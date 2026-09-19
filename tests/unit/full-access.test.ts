@@ -57,6 +57,7 @@ void test("full access only changes native approval switches and never model, pr
     gemini: ["GEMINI_CLI_TRUST_WORKSPACE=true", "--approval-mode", "yolo"],
     qwen: ["--approval-mode", "yolo"],
     hermes: ["HERMES_YOLO_MODE=1"],
+    dsh: ["DSH_PERMISSION_MODE=danger-full-access"],
   };
   for (const adapter of [
     "codex",

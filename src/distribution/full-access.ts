@@ -84,8 +84,20 @@ export function applyFullAccessToRegistration(
     case "hermes":
       setLauncherEnvironment(command, "HERMES_YOLO_MODE", "1");
       break;
-    // OpenCode, MiMo, DSH, Pi and OpenClaw receive ACP approve-all. OpenClaw's
-    // private exec policy is additionally widened by launch-openclaw-bundled.mjs.
+    // DSH 0.1.2-rc.1 starts every session in `workspace-write`, which on Windows runs
+    // its shell under a restricted token: external programs fail with "Access is
+    // denied" (hostname.exe on the x64 real-model run), so an office task could never
+    // open an application. DSH_PERMISSION_MODE is DSH's own deployment override; this
+    // value also sets its approval policy to `never`.
+    case "dsh":
+      setLauncherEnvironment(
+        command,
+        "DSH_PERMISSION_MODE",
+        "danger-full-access",
+      );
+      break;
+    // OpenCode, MiMo, Pi and OpenClaw receive ACP approve-all. OpenClaw's private
+    // exec policy is additionally widened by launch-openclaw-bundled.mjs.
     default:
       break;
   }
