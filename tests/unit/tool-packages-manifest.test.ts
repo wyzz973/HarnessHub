@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { limits, parseManifest } from "../../src/tool-packages/index.js";
-import { hash } from "../../src/tool-packages/manifest.js";
+import { hash, isStdioMcp } from "../../src/tool-packages/manifest.js";
 import type { ToolPackageManifest } from "../../src/tool-packages/types.js";
 
 function manifest(): ToolPackageManifest {
@@ -192,9 +192,61 @@ void test("tool package declarations require local payloads, valid Skills, expli
   ];
   for (const input of invalid) assert.throws(() => parseManifest(input));
   const valid = manifest();
-  valid.mcpServers![0]!.secretEnv = { API_KEY: "packageKey" };
-  assert.equal(
-    parseManifest(valid).manifest.mcpServers![0]!.secretEnv!.API_KEY,
-    "packageKey",
-  );
+  const server = valid.mcpServers![0]!;
+  assert.ok(isStdioMcp(server));
+  server.secretEnv = { API_KEY: "packageKey" };
+  const parsed = parseManifest(valid).manifest.mcpServers![0]!;
+  assert.ok(isStdioMcp(parsed));
+  assert.equal(parsed.secretEnv!.API_KEY, "packageKey");
+});
+
+void test("remote MCP declarations need no files but keep credentials in secret slots with env-only defaults", () => {
+  const remote: ToolPackageManifest = {
+    schemaVersion: 1,
+    id: "remote-tools",
+    version: "1.0.0",
+    displayName: "Remote tools",
+    files: [],
+    mcpServers: [
+      {
+        name: "api",
+        type: "http",
+        url: "http://127.0.0.1:8123/mcp",
+        headers: { "X-Tenant": "team-a" },
+        secretHeaders: { Authorization: "API_TOKEN" },
+      },
+    ],
+    defaultSecretBindings: { API_TOKEN: { kind: "env", value: "API_TOKEN" } },
+  };
+  assert.equal(parseManifest(remote).fileCount, 0);
+  const server = remote.mcpServers![0]!;
+  assert.equal(isStdioMcp(server), false);
+  const variants: unknown[] = [
+    { ...remote, mcpServers: [{ ...server, url: "file:///etc/passwd" }] },
+    {
+      ...remote,
+      mcpServers: [{ ...server, url: "http://127.0.0.1:8123/mcp?key=1" }],
+    },
+    {
+      ...remote,
+      mcpServers: [{ ...server, headers: { Authorization: "Bearer abc" } }],
+    },
+    {
+      ...remote,
+      mcpServers: [{ ...server, secretHeaders: { Authorization: "/abs" } }],
+    },
+    {
+      ...remote,
+      defaultSecretBindings: { OTHER: { kind: "env", value: "OTHER" } },
+    },
+    {
+      ...remote,
+      defaultSecretBindings: {
+        API_TOKEN: { kind: "file", value: "/secret/file" },
+      },
+    },
+    { ...remote, skills: [{ path: "SKILL.md" }] },
+  ];
+  for (const input of variants)
+    assert.throws(() => parseManifest(input), JSON.stringify(input));
 });

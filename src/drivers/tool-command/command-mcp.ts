@@ -1,18 +1,16 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
-
-interface CommandTool {
-  name: string;
-  description?: string;
-  command: string;
-  prefixArgs: string[];
-}
+import {
+  MAX_ARG,
+  parseCommandConfiguration,
+  type CommandTool,
+} from "./config.js";
+import { isWindowsBatch, windowsBatchLaunch } from "./windows-batch.js";
 
 const MAX_MESSAGE = 64 * 1024;
 const MAX_BUFFER = 128 * 1024;
 const MAX_OUTPUT = 256 * 1024;
 const MAX_ARGS = 64;
-const MAX_ARG = 4096;
 const TIMEOUT_MS = 30_000;
 const versions = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
@@ -22,52 +20,8 @@ function object(value: unknown): value is Record<string, unknown> {
 function fail(message: string): never {
   throw new Error(message);
 }
-function parseConfig(): { workspace: string; tools: CommandTool[] } {
-  const workspace = process.env.HHCAP_CLI_WORKSPACE;
-  const raw = process.env.HHCAP_CLI_TOOLS_JSON;
-  if (!workspace || !path.isAbsolute(workspace) || !raw)
-    fail("Managed CLI MCP configuration is missing");
-  let value: unknown;
-  try {
-    value = JSON.parse(raw) as unknown;
-  } catch {
-    fail("Managed CLI MCP configuration is invalid JSON");
-  }
-  if (!Array.isArray(value) || value.length === 0 || value.length > 16)
-    fail("Managed CLI MCP must contain 1-16 tools");
-  const tools = value.map((item): CommandTool => {
-    if (!object(item)) fail("Invalid managed CLI tool");
-    const { name, description, command, prefixArgs } = item;
-    if (
-      typeof name !== "string" ||
-      !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,30}$/.test(name) ||
-      typeof command !== "string" ||
-      !path.isAbsolute(command) ||
-      !Array.isArray(prefixArgs) ||
-      prefixArgs.length > 128 ||
-      !prefixArgs.every(
-        (arg) =>
-          typeof arg === "string" && arg.length > 0 && arg.length <= MAX_ARG,
-      ) ||
-      (description !== undefined &&
-        (typeof description !== "string" || description.length > 512))
-    )
-      fail("Invalid managed CLI tool declaration");
-    return {
-      name,
-      command,
-      prefixArgs: [...prefixArgs] as string[],
-      ...(typeof description === "string" ? { description } : {}),
-    };
-  });
-  if (
-    new Set(tools.map((tool) => tool.name.toLowerCase())).size !== tools.length
-  )
-    fail("Managed CLI tool names must be unique");
-  return { workspace, tools };
-}
 
-const config = parseConfig();
+const config = parseCommandConfiguration(process.argv.slice(2), process.env);
 const toolMap = new Map(config.tools.map((tool) => [`cli_${tool.name}`, tool]));
 const toolDefinitions = config.tools.map((tool) => ({
   name: `cli_${tool.name}`,
@@ -126,7 +80,25 @@ function boundedAppend(
   if (selected.length < bytes.length) state.truncated = true;
 }
 
+/** Direct argv for native programs; Windows batch entries go through cmd.exe. */
+function launch(tool: CommandTool, args: string[]) {
+  const argv = [...tool.prefixArgs, ...args];
+  if (process.platform !== "win32")
+    return { file: tool.command, argv, windowsVerbatimArguments: false };
+  if (path.extname(tool.command).toLowerCase() === ".ps1")
+    fail(
+      "PowerShell script entries are not supported; wrap the script in a .cmd file or use a native executable",
+    );
+  if (!isWindowsBatch(tool.command))
+    return { file: tool.command, argv, windowsVerbatimArguments: false };
+  // Node rejects direct .cmd/.bat spawns (CVE-2024-27980). cmd.exe receives
+  // every argument quoted; values it would still reinterpret are rejected.
+  const batch = windowsBatchLaunch(tool.command, argv, process.env);
+  return { file: batch.file, argv: batch.args, windowsVerbatimArguments: true };
+}
+
 async function execute(tool: CommandTool, args: string[]) {
+  const command = launch(tool, args);
   return new Promise<{
     exitCode: number | null;
     signal: NodeJS.Signals | null;
@@ -145,10 +117,11 @@ async function execute(tool: CommandTool, args: string[]) {
       controller.abort();
     }, TIMEOUT_MS);
     timer.unref();
-    const child = spawn(tool.command, [...tool.prefixArgs, ...args], {
+    const child = spawn(command.file, command.argv, {
       cwd: config.workspace,
       shell: false,
       windowsHide: true,
+      windowsVerbatimArguments: command.windowsVerbatimArguments,
       stdio: ["ignore", "pipe", "pipe"],
       signal: controller.signal,
     });

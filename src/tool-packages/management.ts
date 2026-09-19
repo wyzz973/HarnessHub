@@ -1,57 +1,193 @@
 import path from "node:path";
-import type {
-  EngineConfiguration,
-  SecretReference,
-} from "../domain/engine-configuration.js";
+import type { SecretReference } from "../domain/engine-configuration.js";
 import type { EngineRegistration } from "../domain/engines.js";
 import { HubError } from "../domain/errors.js";
 import type { ToolPackageManagement } from "../domain/tool-packages.js";
 import type { EngineProfile } from "../domain/types.js";
 import { bindInstalled } from "./bind.js";
-import { canonicalJson } from "./manifest.js";
-import { installLocal, listInstalled, verifyInstalled } from "./store.js";
+import {
+  capabilities,
+  footprint,
+  isEmpty,
+  ownedEntries,
+  planBinding,
+  withoutEntries,
+  type PackageFootprint,
+} from "./footprint.js";
+import {
+  importKinds,
+  importLocal,
+  type ToolPackImportKind,
+} from "./importer.js";
+import {
+  installLocal,
+  listInstalled,
+  listManifests,
+  readManifest,
+  verifyInstalled,
+} from "./store.js";
+import type { ToolPackageCapabilities, ToolPackageRecord } from "./types.js";
+
+/** Engine view needed for binding; `capabilities` differs between callers and is not used. */
+export type ToolPackageEngine = Omit<EngineProfile, "capabilities">;
 
 export interface ToolPackageManagementOptions {
   root: string;
   nodeExecutable: string;
   commandMcpEntry: string;
+  /** Enabled engine by id; throws ENGINE_UNAVAILABLE otherwise. */
   engineProfile(id: string): EngineProfile;
+  /** Validates (prepareEngine) and publishes a new engine revision. */
   registerEngine(input: unknown): Promise<EngineProfile>;
+  /**
+   * Every registered engine including disabled ones. Required for
+   * `engineIds: "all"`, unbinding from all engines and the per-package
+   * `engines` list; without it those requests fail with 501.
+   */
+  listEngines?(): readonly ToolPackageEngine[];
 }
 
-function object(value: unknown): Record<string, unknown> {
+export type ToolPackTargets = "all" | string[];
+export interface ToolPackEngineResult {
+  engineId: string;
+  status: "applied" | "skipped" | "failed";
+  revision?: string;
+  /** Machine-readable reason for skipped/failed results. */
+  code?: string;
+  /** Human-readable reason for skipped/failed results. */
+  reason?: string;
+  capabilities?: ToolPackageCapabilities;
+  /** Other versions of the package removed by `replace: true`. */
+  replaced?: string[];
+}
+export interface ToolPackApplyResponse {
+  /** True when at least one engine was applied and none failed. */
+  ok: boolean;
+  package: { id: string; version: string };
+  results: ToolPackEngineResult[];
+  warnings: string[];
+  note: string;
+  /** Legacy single-engine fields, present only for `engineId` requests. */
+  engineId?: string;
+  revision?: string;
+  capabilities?: ToolPackageCapabilities;
+}
+export interface ToolPackImportResponse {
+  /** True when the import succeeded and, if requested, the apply result is ok. */
+  ok: boolean;
+  package: { id: string; version: string };
+  displayName: string;
+  digest: string;
+  format: "tool-package" | "generated";
+  counts: { skills: number; mcp: number; cli: number };
+  warnings: string[];
+  apply?: ToolPackApplyResponse;
+}
+export interface ToolPackUnbindResult {
+  engineId: string;
+  status: "unbound" | "skipped" | "failed";
+  revision?: string;
+  code?: string;
+  reason?: string;
+  removed?: { skills: string[]; mcp: string[] };
+}
+export interface ToolPackUnbindResponse {
+  /** True when no engine failed; engines without the binding are skipped. */
+  ok: boolean;
+  package: { id: string; version: string };
+  results: ToolPackUnbindResult[];
+  note: string;
+}
+export interface ToolPackListing extends ToolPackageRecord {
+  displayName?: string;
+  counts?: { skills: number; mcp: number; cli: number };
+  /** Engines whose current configuration contains this version; absent when engines cannot be listed. */
+  engines?: string[];
+  /** Why the stored manifest could not be read; the record is still listed. */
+  problem?: { code: string; message: string };
+}
+/** Gateway-facing Tool Pack service; extends the domain port with import and unbind. */
+export interface ToolPackageManagementService extends ToolPackageManagement {
+  list(): Promise<{ packages: ToolPackListing[] }>;
+  apply(input: unknown): Promise<ToolPackApplyResponse>;
+  import(input: unknown): Promise<ToolPackImportResponse>;
+  unbind(
+    id: string,
+    version: string,
+    input: unknown,
+  ): Promise<ToolPackUnbindResponse>;
+}
+
+const NOTE =
+  "Existing sessions keep their pinned engine revision; new sessions use the new revision.";
+/** prepareEngine rejections meaning the engine cannot take this package at all. */
+const INCOMPATIBLE = new Set([
+  "INVALID_ENGINE_CONFIGURATION",
+  "ENGINE_CONFIGURATION_UNSUPPORTED",
+  "INVALID_CONFIG",
+  "ENGINE_RESERVED",
+]);
+
+function invalid(message: string): HubError {
+  return new HubError("INVALID_REQUEST", message, 400);
+}
+function object(
+  value: unknown,
+  field = "Request body",
+): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new HubError(
-      "INVALID_REQUEST",
-      "Request body must be an object",
-      400,
-    );
+    throw invalid(`${field} must be an object`);
   return value as Record<string, unknown>;
 }
 function text(value: unknown, field: string): string {
   if (typeof value !== "string" || !value.trim())
-    throw new HubError(
-      "INVALID_REQUEST",
-      `${field} must be a non-empty string`,
-      400,
-    );
+    throw invalid(`${field} must be a non-empty string`);
   return value;
 }
-function merge<T>(existing: T[], incoming: T[], key: (item: T) => string): T[] {
-  const result = [...existing];
-  for (const item of incoming) {
-    const previous = result.find((candidate) => key(candidate) === key(item));
-    if (!previous) result.push(item);
-    else if (canonicalJson(previous) !== canonicalJson(item))
-      throw new HubError(
-        "TOOL_PACKAGE_BIND_CONFLICT",
-        "An existing Skill or MCP name has different configuration",
-        409,
-      );
-  }
-  return result;
+function only(body: Record<string, unknown>, allowed: string[]): void {
+  const unknown = Object.keys(body).filter((key) => !allowed.includes(key));
+  if (unknown.length) throw invalid(`Unknown field: ${unknown.join(", ")}`);
 }
-function registration(profile: EngineProfile): EngineRegistration {
+/** `"all"` or 1-64 unique engine ids. */
+export function parseTargets(value: unknown, field: string): ToolPackTargets {
+  if (value === "all") return "all";
+  if (
+    !Array.isArray(value) ||
+    !value.length ||
+    value.length > 64 ||
+    !value.every((id) => typeof id === "string" && id.trim().length > 0)
+  )
+    throw invalid(`${field} must be "all" or a non-empty array of engine ids`);
+  if (new Set(value).size !== value.length)
+    throw invalid(`${field} contains duplicate engine ids`);
+  return [...(value as string[])];
+}
+function bindings(value: unknown): Record<string, SecretReference> | undefined {
+  return value === undefined
+    ? undefined
+    : (object(value, "secretBindings") as Record<string, SecretReference>);
+}
+function flag(value: unknown, field: string): boolean {
+  if (value === undefined) return false;
+  if (typeof value !== "boolean") throw invalid(`${field} must be a boolean`);
+  return value;
+}
+function describe(error: unknown): { code: string; reason: string } {
+  if (error instanceof HubError)
+    return { code: error.code, reason: error.message };
+  const code =
+    error instanceof Error && "code" in error && typeof error.code === "string"
+      ? error.code
+      : "TOOL_PACKAGE_APPLY_FAILED";
+  return {
+    code,
+    reason: (error instanceof Error ? error.message : String(error)).slice(
+      0,
+      500,
+    ),
+  };
+}
+function registration(profile: ToolPackageEngine): EngineRegistration {
   if (profile.driver === "fake" || !profile.command?.length)
     throw new HubError(
       "ENGINE_CONFIGURATION_UNSUPPORTED",
@@ -76,94 +212,406 @@ function registration(profile: EngineProfile): EngineRegistration {
   };
 }
 
+interface ApplyRequest {
+  targets: ToolPackTargets;
+  /** Legacy single-engine request: failures are thrown as before. */
+  legacy?: string;
+  source?: string;
+  package?: { id: string; version: string };
+  secretBindings?: Record<string, SecretReference>;
+  replace: boolean;
+  warnings: string[];
+}
+function parseApply(input: unknown): ApplyRequest {
+  const body = object(input);
+  only(body, [
+    "engineIds",
+    "engineId",
+    "package",
+    "source",
+    "workspace",
+    "secretBindings",
+    "replace",
+  ]);
+  if ((body.engineIds === undefined) === (body.engineId === undefined))
+    throw invalid("Provide exactly one of engineIds or engineId");
+  const warnings: string[] = [];
+  if (body.workspace !== undefined) {
+    const workspace = text(body.workspace, "workspace");
+    if (!path.isAbsolute(workspace))
+      throw invalid("workspace must be an absolute directory");
+    warnings.push(
+      "workspace is ignored: Tool Pack bindings use each Session's own working directory",
+    );
+  }
+  if ((body.source === undefined) === (body.package === undefined))
+    throw invalid("Provide exactly one of source or package");
+  let source: string | undefined;
+  let selected: { id: string; version: string } | undefined;
+  if (body.source !== undefined) {
+    source = text(body.source, "source");
+    if (!path.isAbsolute(source))
+      throw invalid(
+        "source must be an absolute local Tool Pack directory; use POST /v1/tool-packs/import for Skill directories, mcp.json or cli.json",
+      );
+  } else {
+    const value = object(body.package, "package");
+    only(value, ["id", "version"]);
+    selected = {
+      id: text(value.id, "package.id"),
+      version: text(value.version, "package.version"),
+    };
+  }
+  const legacy =
+    body.engineId === undefined ? undefined : text(body.engineId, "engineId");
+  const secretBindings = bindings(body.secretBindings);
+  return {
+    targets: legacy ? [legacy] : parseTargets(body.engineIds, "engineIds"),
+    ...(legacy ? { legacy } : {}),
+    ...(source ? { source } : {}),
+    ...(selected ? { package: selected } : {}),
+    ...(secretBindings ? { secretBindings } : {}),
+    replace: flag(body.replace, "replace"),
+    warnings,
+  };
+}
+
+/**
+ * Tool Pack service behind the Gateway routes. Every mutation runs in one
+ * serialized queue so concurrent requests cannot overwrite each other's engine
+ * revisions. Engines are processed one at a time; each engine's result is
+ * independent and a failure never rolls back engines already applied.
+ */
 export function createToolPackageManagement(
   options: ToolPackageManagementOptions,
-): ToolPackageManagement {
-  return {
-    async list() {
-      return { packages: await listInstalled(options.root) };
-    },
-    async apply(input: unknown) {
-      const body = object(input);
-      const engineId = text(body.engineId, "engineId");
-      const workspace = text(body.workspace, "workspace");
-      if (!path.isAbsolute(workspace))
-        throw new HubError(
-          "INVALID_REQUEST",
-          "workspace must be an absolute directory",
-          400,
-        );
-      const source =
-        body.source === undefined ? undefined : text(body.source, "source");
-      const packageInput =
-        body.package === undefined ? undefined : object(body.package);
-      if ((source ? 1 : 0) + (packageInput ? 1 : 0) !== 1)
-        throw new HubError(
-          "INVALID_REQUEST",
-          "Provide exactly one of source or package",
-          400,
-        );
-      let id: string;
-      let version: string;
-      if (source) {
-        if (!path.isAbsolute(source))
-          throw new HubError(
-            "INVALID_REQUEST",
-            "source must be an absolute local Tool Pack directory",
-            400,
-          );
-        const installed = await installLocal(source, options.root);
-        id = installed.manifest.id;
-        version = installed.manifest.version;
-      } else {
-        id = text(packageInput!.id, "package.id");
-        version = text(packageInput!.version, "package.version");
-      }
-      const installed = await verifyInstalled(options.root, id, version);
-      const cliTools = (installed.manifest.cliTools ?? []).map(
-        (tool) => `cli_${tool.name}`,
+): ToolPackageManagementService {
+  let tail: Promise<unknown> = Promise.resolve();
+  const exclusive = <T>(action: () => Promise<T>): Promise<T> => {
+    const run = tail.then(action, action);
+    tail = run.catch(() => undefined);
+    return run;
+  };
+  const engines = (): readonly ToolPackageEngine[] => {
+    if (!options.listEngines)
+      throw new HubError(
+        "ENGINE_LISTING_UNAVAILABLE",
+        "This Gateway was started without engine listing; name the engines explicitly",
+        501,
       );
-      const secretBindings =
-        body.secretBindings === undefined
-          ? undefined
-          : (object(body.secretBindings) as Record<string, SecretReference>);
-      const fragment = await bindInstalled(options.root, id, version, {
-        nodeExecutable: options.nodeExecutable,
-        commandMcpEntry: options.commandMcpEntry,
-        workspace,
-        ...(secretBindings ? { secretBindings } : {}),
+    return options.listEngines();
+  };
+  /** Resolves targets to current profiles; undefined marks an unknown or unavailable engine. */
+  const resolve = (
+    targets: ToolPackTargets,
+  ): { id: string; profile?: ToolPackageEngine; problem?: HubError }[] => {
+    if (targets === "all")
+      return engines().map((profile) => ({ id: profile.id, profile }));
+    const known = options.listEngines?.();
+    return targets.map((id) => {
+      if (known) {
+        const profile = known.find((engine) => engine.id === id);
+        return profile ? { id, profile } : { id };
+      }
+      try {
+        return { id, profile: options.engineProfile(id) };
+      } catch (error) {
+        if (error instanceof HubError) return { id, problem: error };
+        throw error;
+      }
+    });
+  };
+
+  const applyLocked = async (
+    request: ApplyRequest,
+  ): Promise<ToolPackApplyResponse> => {
+    let id: string;
+    let version: string;
+    if (request.source) {
+      const installed = await installLocal(request.source, options.root);
+      id = installed.manifest.id;
+      version = installed.manifest.version;
+    } else {
+      id = request.package!.id;
+      version = request.package!.version;
+    }
+    const installed = await verifyInstalled(options.root, id, version);
+    const fragment = await bindInstalled(options.root, id, version, {
+      nodeExecutable: options.nodeExecutable,
+      commandMcpEntry: options.commandMcpEntry,
+      ...(request.secretBindings
+        ? { secretBindings: request.secretBindings }
+        : {}),
+    });
+    const target = footprint(installed.record, installed.manifest);
+    const versions = (
+      await listManifests(options.root, { includeRemoved: true, id })
+    ).map((entry) => footprint(entry.record, entry.manifest));
+    const added = capabilities(fragment, installed.manifest);
+    const bind = async (profile: ToolPackageEngine) => {
+      const plan = planBinding(
+        profile.configuration,
+        "generic",
+        target,
+        versions,
+        fragment,
+        request.replace,
+      );
+      const registered = await options.registerEngine({
+        ...registration(profile),
+        configuration: plan.configuration,
       });
-      const base = registration(options.engineProfile(engineId));
-      const configuration: EngineConfiguration = {
-        ...base.configuration,
-        adapter: base.configuration?.adapter ?? "generic",
-        skills: merge(
-          base.configuration?.skills ?? [],
-          fragment.skills,
-          (skill) =>
-            process.platform === "win32"
-              ? skill.path.toLowerCase()
-              : skill.path,
-        ),
-        mcpServers: merge(
-          base.configuration?.mcpServers ?? [],
-          fragment.mcpServers,
-          (mcp) => mcp.name.toLowerCase(),
-        ),
-      };
-      const profile = await options.registerEngine({ ...base, configuration });
+      return { revision: registered.revision, replaced: plan.replaced };
+    };
+    if (request.legacy) {
+      const done = await bind(options.engineProfile(request.legacy));
       return {
         ok: true,
         package: { id, version },
-        engineId: profile.id,
-        revision: profile.revision,
-        capabilities: {
-          skills: fragment.skills.map((skill) => skill.path),
-          mcp: fragment.mcpServers.map((mcp) => mcp.name),
-          cli: cliTools,
-        },
-        note: "Existing sessions keep their pinned engine revision; new sessions use this revision.",
+        results: [
+          {
+            engineId: request.legacy,
+            status: "applied",
+            revision: done.revision,
+            capabilities: added,
+            ...(done.replaced.length ? { replaced: done.replaced } : {}),
+          },
+        ],
+        warnings: request.warnings,
+        note: NOTE,
+        engineId: request.legacy,
+        revision: done.revision,
+        capabilities: added,
       };
+    }
+    const results: ToolPackEngineResult[] = [];
+    for (const { id: engineId, profile, problem } of resolve(request.targets)) {
+      if (!profile) {
+        results.push({
+          engineId,
+          status: "failed",
+          code: problem?.code ?? "ENGINE_UNAVAILABLE",
+          reason: problem?.message ?? "Engine is not registered",
+        });
+        continue;
+      }
+      if (profile.driver === "fake" || !profile.command?.length) {
+        results.push({
+          engineId,
+          status: "skipped",
+          code: "ENGINE_CONFIGURATION_UNSUPPORTED",
+          reason: "Tool packs require a configured real engine",
+        });
+        continue;
+      }
+      if (!profile.enabled) {
+        results.push({
+          engineId,
+          status: "skipped",
+          code: "ENGINE_DISABLED",
+          reason: "Engine is disabled",
+        });
+        continue;
+      }
+      try {
+        const done = await bind(profile);
+        results.push({
+          engineId,
+          status: "applied",
+          revision: done.revision,
+          capabilities: added,
+          ...(done.replaced.length ? { replaced: done.replaced } : {}),
+        });
+      } catch (error) {
+        const { code, reason } = describe(error);
+        results.push({
+          engineId,
+          status: INCOMPATIBLE.has(code) ? "skipped" : "failed",
+          code,
+          reason,
+        });
+      }
+    }
+    return {
+      ok:
+        results.some((result) => result.status === "applied") &&
+        !results.some((result) => result.status === "failed"),
+      package: { id, version },
+      results,
+      warnings: request.warnings,
+      note: NOTE,
+    };
+  };
+
+  return {
+    async list() {
+      const known = options.listEngines?.();
+      const packages: ToolPackListing[] = [];
+      for (const record of await listInstalled(options.root)) {
+        let owner: PackageFootprint;
+        try {
+          owner = footprint(record, await readManifest(options.root, record));
+        } catch (error) {
+          const { code, reason } = describe(error);
+          packages.push({ ...record, problem: { code, message: reason } });
+          continue;
+        }
+        packages.push({
+          ...record,
+          displayName: owner.displayName,
+          counts: owner.counts,
+          ...(known
+            ? {
+                engines: known
+                  .filter(
+                    (engine) =>
+                      !isEmpty(ownedEntries(engine.configuration, owner)),
+                  )
+                  .map((engine) => engine.id),
+              }
+            : {}),
+        });
+      }
+      return { packages };
+    },
+
+    async apply(input: unknown) {
+      const request = parseApply(input);
+      return exclusive(() => applyLocked(request));
+    },
+
+    async import(input: unknown) {
+      const body = object(input);
+      only(body, [
+        "source",
+        "kind",
+        "id",
+        "version",
+        "displayName",
+        "applyTo",
+        "replace",
+        "secretBindings",
+      ]);
+      const source = text(body.source, "source");
+      if (!path.isAbsolute(source))
+        throw invalid("source must be an absolute local directory or file");
+      if (
+        body.kind !== undefined &&
+        !importKinds.includes(body.kind as ToolPackImportKind)
+      )
+        throw invalid("kind must be auto, skills, mcp or cli");
+      const optional = (field: string) =>
+        body[field] === undefined ? undefined : text(body[field], field);
+      const packageId = optional("id");
+      const packageVersion = optional("version");
+      const displayName = optional("displayName");
+      const applyTo =
+        body.applyTo === undefined
+          ? undefined
+          : parseTargets(body.applyTo, "applyTo");
+      const replace = flag(body.replace, "replace");
+      const secretBindings = bindings(body.secretBindings);
+      if (!applyTo && (body.replace !== undefined || secretBindings))
+        throw invalid("replace and secretBindings require applyTo");
+      return exclusive(async () => {
+        const imported = await importLocal(source, options.root, {
+          ...(body.kind !== undefined
+            ? { kind: body.kind as ToolPackImportKind }
+            : {}),
+          ...(packageId ? { id: packageId } : {}),
+          ...(packageVersion ? { version: packageVersion } : {}),
+          ...(displayName ? { displayName } : {}),
+        });
+        const selected = {
+          id: imported.installed.manifest.id,
+          version: imported.installed.manifest.version,
+        };
+        const apply = applyTo
+          ? await applyLocked({
+              targets: applyTo,
+              package: selected,
+              ...(secretBindings ? { secretBindings } : {}),
+              replace,
+              warnings: [],
+            })
+          : undefined;
+        return {
+          ok: apply ? apply.ok : true,
+          package: selected,
+          displayName: imported.installed.manifest.displayName,
+          digest: imported.installed.digest,
+          format: imported.format,
+          counts: imported.counts,
+          warnings: imported.warnings,
+          ...(apply ? { apply } : {}),
+        };
+      });
+    },
+
+    async unbind(id: string, version: string, input: unknown) {
+      const body = input === undefined ? {} : object(input);
+      only(body, ["engineIds"]);
+      if (body.engineIds === undefined)
+        throw invalid('engineIds is required ("all" or a list of engine ids)');
+      const targets = parseTargets(body.engineIds, "engineIds");
+      return exclusive(async () => {
+        const owner = (
+          await listManifests(options.root, { includeRemoved: true, id })
+        )
+          .filter((entry) => entry.record.version === version)
+          .map((entry) => footprint(entry.record, entry.manifest))[0];
+        if (!owner)
+          throw new HubError(
+            "TOOL_PACKAGE_NOT_FOUND",
+            "The requested tool package version is not registered",
+            404,
+          );
+        const results: ToolPackUnbindResult[] = [];
+        for (const { id: engineId, profile, problem } of resolve(targets)) {
+          if (!profile) {
+            results.push({
+              engineId,
+              status: "failed",
+              code: problem?.code ?? "ENGINE_UNAVAILABLE",
+              reason: problem?.message ?? "Engine is not registered",
+            });
+            continue;
+          }
+          const owned = ownedEntries(profile.configuration, owner);
+          if (isEmpty(owned) || !profile.configuration) {
+            results.push({
+              engineId,
+              status: "skipped",
+              code: "TOOL_PACKAGE_NOT_BOUND",
+              reason: "This engine does not use the package version",
+            });
+            continue;
+          }
+          try {
+            const registered = await options.registerEngine({
+              ...registration(profile),
+              configuration: withoutEntries(profile.configuration, owned),
+            });
+            results.push({
+              engineId,
+              status: "unbound",
+              revision: registered.revision,
+              removed: {
+                skills: owned.skills.map((skill) => skill.path),
+                mcp: owned.mcpServers.map((server) => server.name),
+              },
+            });
+          } catch (error) {
+            const { code, reason } = describe(error);
+            results.push({ engineId, status: "failed", code, reason });
+          }
+        }
+        return {
+          ok: !results.some((result) => result.status === "failed"),
+          package: { id, version },
+          results,
+          note: "Existing sessions keep their pinned engine revision; new sessions no longer receive these capabilities.",
+        };
+      });
     },
   };
 }
