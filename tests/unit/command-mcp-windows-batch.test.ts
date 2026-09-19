@@ -11,6 +11,7 @@ import {
   windowsBatchCommandLine,
   windowsBatchLaunch,
 } from "../../src/drivers/tool-command/windows-batch.js";
+import { SESSION_WORKSPACE_PLACEHOLDER as PACKAGE_PLACEHOLDER } from "../../src/tool-packages/index.js";
 
 void test("batch arguments are quoted so cmd.exe metacharacters stay literal and trailing backslashes survive argv parsing", () => {
   assert.equal(quoteBatchArgument("plain"), '"plain"');
@@ -105,6 +106,7 @@ void test("a batch launch uses an absolute cmd.exe with /d /s /v:off /c and one 
 });
 
 void test("command MCP resolves the Session workspace from its argument, keeps legacy env bindings and refuses an unsubstituted placeholder", () => {
+  assert.equal(SESSION_WORKSPACE_PLACEHOLDER, PACKAGE_PLACEHOLDER);
   const workspace = path.resolve("/session/workspace");
   const tools = JSON.stringify([
     {

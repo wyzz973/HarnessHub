@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 import { Ajv } from "ajv";
 import { HubError } from "../domain/errors.js";
 import { isRelativeFilePath } from "../domain/files.js";
-import type { ToolPackageManifest, ToolPackageInspection } from "./types.js";
+import type {
+  ToolPackageInspection,
+  ToolPackageManifest,
+  ToolPackageMcp,
+  ToolPackageStdioMcp,
+} from "./types.js";
 
 export const MANIFEST_NAME = "tool-package.json";
 export const limits = Object.freeze({
@@ -13,6 +18,18 @@ export const limits = Object.freeze({
 });
 const text = { type: "string", minLength: 1, maxLength: 8192 };
 const relative = { type: "string", minLength: 1, maxLength: 1024 };
+/** RFC 9110 token characters; also used for secret slot keys of remote headers. */
+const HEADER_NAME = "^[A-Za-z0-9][A-Za-z0-9!#$%&'*+.^_`|~-]{0,63}$";
+/** Environment names that would override process control or HarnessHub itself. */
+export const FORBIDDEN_ENVIRONMENT =
+  /^(?:PATH|HOME|USERPROFILE|XDG_.*|NODE_OPTIONS|LD_.*|DYLD_.*|PYTHONPATH|PYTHONHOME|HARNESSHUB_.*)$/;
+/** Names whose values must be secret references in manifests and engine configuration. */
+export const SECRET_FIELD_NAME =
+  /KEY|TOKEN|SECRET|PASSWORD|AUTHORIZATION|COOKIE/i;
+/** Values that are recognizably credentials even under an ordinary name. */
+export const SECRET_VALUE = /\b(?:sk-|ghp_|Bearer )[a-zA-Z0-9_-]{12,}/;
+/** Local binding slot names referenced by secretEnv/secretHeaders. */
+export const SLOT_NAME = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
 const strings = {
   type: "object",
   maxProperties: 32,
@@ -47,6 +64,30 @@ const launchable = {
     args: { type: "array", maxItems: 128, items: argument },
   },
 };
+const headers = {
+  type: "object",
+  maxProperties: 32,
+  additionalProperties: text,
+  propertyNames: { pattern: HEADER_NAME },
+};
+const slots = {
+  type: "object",
+  maxProperties: 32,
+  additionalProperties: { type: "string" },
+  propertyNames: { pattern: HEADER_NAME },
+};
+const remote = {
+  type: "object",
+  additionalProperties: false,
+  required: ["name", "type", "url"],
+  properties: {
+    name: launchable.properties.name,
+    type: { enum: ["http", "sse"] },
+    url: text,
+    headers,
+    secretHeaders: slots,
+  },
+};
 const validate = new Ajv({ allErrors: true }).compile<ToolPackageManifest>({
   type: "object",
   additionalProperties: false,
@@ -58,7 +99,6 @@ const validate = new Ajv({ allErrors: true }).compile<ToolPackageManifest>({
     displayName: { type: "string", minLength: 1, maxLength: 128 },
     files: {
       type: "array",
-      minItems: 1,
       maxItems: limits.files,
       items: {
         type: "object",
@@ -86,12 +126,17 @@ const validate = new Ajv({ allErrors: true }).compile<ToolPackageManifest>({
       type: "array",
       maxItems: 16,
       items: {
-        ...launchable,
-        properties: {
-          ...launchable.properties,
-          env: strings,
-          secretEnv: strings,
-        },
+        anyOf: [
+          {
+            ...launchable,
+            properties: {
+              ...launchable.properties,
+              env: strings,
+              secretEnv: strings,
+            },
+          },
+          remote,
+        ],
       },
     },
     cliTools: {
@@ -102,6 +147,19 @@ const validate = new Ajv({ allErrors: true }).compile<ToolPackageManifest>({
         properties: {
           ...launchable.properties,
           description: { type: "string", minLength: 1, maxLength: 512 },
+        },
+      },
+    },
+    defaultSecretBindings: {
+      type: "object",
+      maxProperties: 64,
+      additionalProperties: {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "value"],
+        properties: {
+          kind: { const: "env" },
+          value: { type: "string", pattern: "^[A-Z][A-Z0-9_]{0,127}$" },
         },
       },
     },
@@ -243,8 +301,11 @@ export function parseManifest(input: unknown): ToolPackageInspection {
     cliTools.length
   )
     throw packageError("INVALID_TOOL_PACKAGE", "CLI tool names must be unique");
-  const forbidden =
-    /^(?:PATH|HOME|USERPROFILE|XDG_.*|NODE_OPTIONS|LD_.*|DYLD_.*|PYTHONPATH|PYTHONHOME|HARNESSHUB_.*)$/;
+  if (!manifest.files.length && (skills.length || cliTools.length))
+    throw packageError(
+      "INVALID_TOOL_PACKAGE",
+      "Only packages that declare remote MCP endpoints alone may omit files",
+    );
   const validateLaunchable = (
     item: { launch: "node" | "native"; entry: string; args?: unknown[] },
     kind: "MCP" | "CLI",
@@ -288,28 +349,43 @@ export function parseManifest(input: unknown): ToolPackageInspection {
         );
     }
   };
+  const slotNames = new Set<string>();
   for (const server of servers) {
+    if (!isStdioMcp(server)) {
+      validateRemote(server);
+      for (const slot of Object.values(server.secretHeaders ?? {}))
+        slotNames.add(slot);
+      continue;
+    }
     validateLaunchable(server, "MCP");
     for (const [name, value] of Object.entries(server.env ?? {}))
       if (
-        forbidden.test(name) ||
-        /KEY|TOKEN|SECRET|PASSWORD|AUTHORIZATION|COOKIE/i.test(name) ||
+        FORBIDDEN_ENVIRONMENT.test(name) ||
+        SECRET_FIELD_NAME.test(name) ||
         value.includes("\0") ||
-        /\b(?:sk-|ghp_|Bearer )[a-zA-Z0-9_-]{12,}/.test(value) ||
+        SECRET_VALUE.test(value) ||
         server.secretEnv?.[name]
       )
         throw packageError(
           "INVALID_TOOL_PACKAGE",
           "Ordinary environment fields cannot contain secrets or process-control overrides",
         );
-    for (const [name, slot] of Object.entries(server.secretEnv ?? {}))
-      if (forbidden.test(name) || !/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(slot))
+    for (const [name, slot] of Object.entries(server.secretEnv ?? {})) {
+      if (FORBIDDEN_ENVIRONMENT.test(name) || !SLOT_NAME.test(slot))
         throw packageError(
           "INVALID_TOOL_PACKAGE",
           "Secret environment fields must name explicit local binding slots",
         );
+      slotNames.add(slot);
+    }
   }
   for (const tool of cliTools) validateLaunchable(tool, "CLI");
+  for (const slot of Object.keys(manifest.defaultSecretBindings ?? {}))
+    if (!slotNames.has(slot))
+      throw packageError(
+        "INVALID_TOOL_PACKAGE",
+        "Default secret bindings may only name slots declared by secretEnv or secretHeaders",
+      );
   manifest.files.sort((a, b) =>
     a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
   );
@@ -319,4 +395,55 @@ export function parseManifest(input: unknown): ToolPackageInspection {
     fileCount: manifest.files.length,
     totalBytes,
   };
+}
+
+/** Narrows a manifest MCP declaration to a package-launched stdio server. */
+export function isStdioMcp(
+  server: ToolPackageMcp,
+): server is ToolPackageStdioMcp {
+  return "launch" in server;
+}
+
+/** Mirrors the engine configuration URL rule so invalid endpoints fail at install time. */
+export function remoteUrlProblem(value: string): string | undefined {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return "MCP URL must be an absolute HTTP(S) URL";
+  }
+  if (
+    !["http:", "https:"].includes(parsed.protocol) ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash
+  )
+    return "MCP URL must use HTTP(S), without credentials, query or fragment";
+  return undefined;
+}
+
+function validateRemote(server: Exclude<ToolPackageMcp, ToolPackageStdioMcp>) {
+  const problem = remoteUrlProblem(server.url);
+  if (problem) throw packageError("INVALID_TOOL_PACKAGE", problem);
+  const secret = new Set(
+    Object.keys(server.secretHeaders ?? {}).map((name) => name.toLowerCase()),
+  );
+  for (const [name, value] of Object.entries(server.headers ?? {}))
+    if (
+      SECRET_FIELD_NAME.test(name) ||
+      /[\r\n\0]/.test(value) ||
+      SECRET_VALUE.test(value) ||
+      secret.has(name.toLowerCase())
+    )
+      throw packageError(
+        "INVALID_TOOL_PACKAGE",
+        "Ordinary MCP headers cannot contain credentials; use secretHeaders slots",
+      );
+  for (const slot of Object.values(server.secretHeaders ?? {}))
+    if (!SLOT_NAME.test(slot))
+      throw packageError(
+        "INVALID_TOOL_PACKAGE",
+        "Secret headers must name explicit local binding slots",
+      );
 }
