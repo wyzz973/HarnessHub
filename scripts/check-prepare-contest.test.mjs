@@ -54,6 +54,7 @@ test("contest preparation plan pins npm install flags and calls each existing sc
     [
       "npm",
       "binaries",
+      "kimi-utf8",
       "hermes",
       "hermes-stdin",
       "kiro",
@@ -98,6 +99,20 @@ test("contest preparation plan pins npm install flags and calls each existing sc
     "--runtime",
     path.join(root, "engines/hermes/runtime"),
   ]);
+  const kimiFix = steps.find((step) => step.id === "kimi-utf8");
+  assert.equal(kimiFix.executable, node);
+  assert.deepEqual(kimiFix.args, [
+    path.join(repo, "scripts/prepare-kimi.mjs"),
+    "--executable",
+    path.join(root, "engines/kimi/kimi.exe"),
+  ]);
+  // A preparation without the Kimi binary has nothing to patch.
+  assert.equal(
+    preparationSteps(root, "arm64", pnpm, node, {
+      skipBinaries: ["cursor", "kimi"],
+    }).some((step) => step.id === "kimi-utf8"),
+    false,
+  );
   assert.equal(
     steps.some((step) => step.executable.endsWith(".cmd")),
     false,

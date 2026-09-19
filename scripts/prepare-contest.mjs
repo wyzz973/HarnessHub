@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { parse } from "yaml";
 import { verifyHermesPatch } from "./prepare-hermes.mjs";
+import { KIMI_EXECUTABLE, verifyKimiPatch } from "./prepare-kimi.mjs";
 
 const repo = fileURLToPath(new URL("../", import.meta.url));
 const nodeVersion = "24.20.0";
@@ -246,6 +247,21 @@ export function preparationSteps(
         arch,
       ],
     },
+    // Idempotent fix of the fixed Kimi executable (scripts/prepare-kimi.mjs), also applied
+    // to a reused or re-extracted binary preparation.
+    ...(skipBinaries.includes("kimi")
+      ? []
+      : [
+          {
+            id: "kimi-utf8",
+            executable: node,
+            args: [
+              path.join(repo, "scripts/prepare-kimi.mjs"),
+              "--executable",
+              path.join(root, KIMI_EXECUTABLE),
+            ],
+          },
+        ]),
     ...["hermes", "kiro"].flatMap((engine) => [
       {
         id: engine,
@@ -465,6 +481,8 @@ export async function verifyPreparation(root, arch, skipBinaries = []) {
   );
   await npmInputs(root);
   await binaries(root, arch, skipBinaries);
+  if (!skipBinaries.includes("kimi"))
+    await verifyKimiPatch(path.join(root, KIMI_EXECUTABLE));
   for (const id of ["hermes", "kiro"]) await extra(root, id, arch);
   await verifyHermesPatch(path.join(root, "engines/hermes/runtime"));
   await git(root);

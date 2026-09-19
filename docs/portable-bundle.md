@@ -21,12 +21,11 @@
 
 1. 复制当前固定 Node 和 LICENSE 到 `runtime`；已有文件必须与输入逐字节一致。
 2. 将 [固定 package.json](../distribution/npm/package.json) 与 [pnpm-lock.yaml](../distribution/npm/pnpm-lock.yaml) 复制到 `engines/npm`，执行 pnpm 10.12.3 的 `install --frozen-lockfile --ignore-scripts --ignore-workspace --config.node-linker=hoisted --package-import-method=copy --prod`。安装后再次验证锁文件、顶层精确版本、pnpm版本和hoisted安装图，不能通过重新解析最新版本绕过锁文件。
-3. 调用 [prepare-binaries.mjs](../scripts/prepare-binaries.mjs) 的 `--root --arch`，准备固定二进制引擎。
+3. 调用 [prepare-binaries.mjs](../scripts/prepare-binaries.mjs) 的 `--root --arch`，准备固定二进制引擎。未跳过 Kimi 时紧接 [prepare-kimi.mjs](../scripts/prepare-kimi.mjs) 的 `--executable`（复用或重新解包二进制准备时同样执行，幂等）：固定 `kimi.exe` 1.50.0 是 PyInstaller 单文件程序，其 bootloader 以隔离配置启动 Python，`PYTHONUTF8`、`PYTHONIOENCODING` 等环境变量一律被忽略，管道上的 stdout 按 Windows ANSI 代码页编码；回复含该代码页之外的字符（cp1252 上的中文、cp936 上的 emoji）时 CLI 在任务完成后以 `'charmap' codec can't encode` 退出，其余非 ASCII 回复则以错误编码到达按 UTF-8 解码的 CLI Driver。补丁使用 PyInstaller 自身的开关：在内嵌归档的目录表末尾追加运行期选项 `X utf8=1`（等价于 spec 中的 `EXE(..., [("X utf8=1", None, "OPTION")])`），Python 以 UTF-8 模式运行，stdout/stderr 在任何代码页下都是 UTF-8；程序代码与归档数据不变，只有目录表、归档 cookie 和 PE 校验和变化，按 x64/arm64 修改前后的 SHA-256 校验，`--check` 拒绝未打补丁的 `kimi.exe`。
 4. 分别调用 [prepare-extra-engines.ps1](../scripts/prepare-extra-engines.ps1) 的 `-TargetRoot -Engine hermes/kiro`，使用锁定 wheel 闭包和只读 MSI 解包流程，不在系统注册 Kiro 产品。Hermes 之后紧接 [prepare-hermes.mjs](../scripts/prepare-hermes.mjs) 的 `--runtime`（复用已有 Hermes 准备时同样执行，幂等）：固定 hermes-agent 0.19.0 在 Windows 上探测 Git Bash 时继承自身 stdin，在 ACP 下这是有挂起读取的 JSON-RPC 管道，MSYS 运行时检查该句柄会阻塞到下一条 ACP 消息，首个终端命令因此一直挂起；补丁只给两个探测进程加 `stdin=subprocess.DEVNULL`，按修改前后 SHA-256 校验，`--check` 拒绝未打补丁的准备目录。
 5. 调用 [prepare-git.mjs](../scripts/prepare-git.mjs) 的 `--root --arch`，准备 PortableGit 及来源 receipt。
 6. 调用 [prepare-openclaw.mjs](../scripts/prepare-openclaw.mjs) 的 `--package`，仅完成固定 OpenClaw 的官方 lifecycle；这是明确的开发机步骤，npm总体安装仍禁用自动生命周期脚本。
 7. 将仓库 [工具包示例](tool-packages.md) 的实际文件复制到 `tools`，将 [vendor-notices](../distribution/vendor-notices) 的固定许可证与来源记录复制到各引擎的同名目录，再调用 [prepare-engine-catalog.mjs](../scripts/prepare-engine-catalog.mjs) 的 `--root --arch`，最后生成只含相对模板的 `prepared.json`。
-   Kimi 是 Python 程序：目录给其注册环境加 `PYTHONUTF8=1`、`PYTHONIOENCODING=utf-8`，否则 Windows 上 stdout 管道使用 ANSI 代码页，回复中含该代码页之外的字符（cp1252 上的中文、cp936 上的 emoji）时 CLI 在任务完成后以 `'charmap' codec can't encode` 退出；CLI Driver 按 UTF-8 解码输出。
 
 两个可选参数只改变下载来源，不改变上述顺序：`--skip-binaries cursor,antigravity` 不下载 [binary-sources.json](../distribution/binary-sources.json) 中列出的条目（这两项没有固定 hash，也不进入开源版），对应引擎不会出现在 `prepared.json` 中，`--check` 必须传同样的列表，跳过的条目记入 `preparation-receipt.json`；`--seven-zip <7z.exe 绝对路径>` 用已安装的 7-Zip 解开 PortableGit，不再下载无版本号的 `7-zip.org/a/7zr.exe`，PortableGit 自身仍校验固定 SHA-256。x64 CI 同时使用这两个参数。
 
