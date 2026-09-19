@@ -2,6 +2,8 @@ name: Debug Hermes terminal on Windows x64
 
 # Debug-only workflow for the Hermes terminal-tool hang in the released x64 competition
 # bundle. It needs no model key: Hermes is driven directly or through the scripted mock.
+# Round 2: reproduce the stdin-inheritance hang without HarnessHub, apply
+# scripts/prepare-hermes.mjs to the extracted bundle and prove the fix end to end.
 on:
   push:
     branches:
@@ -40,42 +42,36 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "extract failed" }
           Remove-Item -LiteralPath $zip -Force
           New-Item -ItemType Directory -Force -Path D:\dbg | Out-Null
-          $job = Get-ChildItem D:\hh -Recurse -Filter harnesshub-job.exe | Select-Object -First 1
-          "JOB_HELPER=$($job.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "Bundle $actual; job helper $($job.FullName)" | Write-Host
+          "Bundle $actual" | Write-Host
 
-      - name: Probe Git Bash like Hermes starts it (runner console)
+      - name: Reproduce - bash probe with Hermes' pending-read stdin (no HarnessHub)
         run: |
-          & D:\hh\engines\hermes\runtime\python.exe -I -B "$env:GITHUB_WORKSPACE\.github\scripts\hermes-debug\probe_bash.py" D:\hh D:\dbg\console
+          & D:\hh\engines\hermes\runtime\python.exe -I -B "$env:GITHUB_WORKSPACE\.github\scripts\hermes-debug\stdin_hang.py" D:\hh D:\dbg\stdin raw
 
-      - name: Probe Git Bash under the HarnessHub Job helper (no console, like an engine)
+      - name: Reproduce - Hermes LocalEnvironment with pending-read stdin (unpatched)
         run: |
-          $p = Start-Process -FilePath $env:JOB_HELPER -ArgumentList @("run", "$PID", "hhdbg-probe", "D:\hh\engines\hermes\runtime\python.exe", "-I", "-B", "$env:GITHUB_WORKSPACE\.github\scripts\hermes-debug\probe_bash.py", "D:\hh", "D:\dbg\job") -PassThru -NoNewWindow -RedirectStandardOutput D:\dbg\job-probe.out.txt -RedirectStandardError D:\dbg\job-probe.err.txt
-          if (-not $p.WaitForExit(600000)) { taskkill /PID $p.Id /T /F | Out-Null; "TIMED OUT" | Out-File -Append D:\dbg\job-probe.out.txt }
-          Get-Content D:\dbg\job-probe.out.txt, D:\dbg\job-probe.err.txt -ErrorAction SilentlyContinue
+          & D:\hh\engines\hermes\runtime\python.exe -I -B "$env:GITHUB_WORKSPACE\.github\scripts\hermes-debug\stdin_hang.py" D:\hh D:\dbg\stdin hermes-unpatched
 
-      - name: Drive Hermes LocalEnvironment directly (runner console)
+      - name: Apply the product fix (scripts/prepare-hermes.mjs) to the extracted bundle
         run: |
-          $p = Start-Process -FilePath D:\hh\engines\hermes\runtime\python.exe -ArgumentList @("-I", "-B", "$env:GITHUB_WORKSPACE\.github\scripts\hermes-debug\hermes_env.py", "D:\hh", "D:\dbg", "console") -PassThru -NoNewWindow -RedirectStandardOutput D:\dbg\hermes-env-console.out.txt -RedirectStandardError D:\dbg\hermes-env-console.err.txt
-          & "$env:GITHUB_WORKSPACE\.github\scripts\hermes-debug\watch.ps1" -Bundle D:\hh -Out D:\dbg\watch-console -Seconds 150 -WatchPid $p.Id
-          if (-not $p.HasExited) { taskkill /PID $p.Id /T /F | Out-Null; "TIMED OUT" | Out-File -Append D:\dbg\hermes-env-console.out.txt }
-          Get-Content D:\dbg\hermes-env-console.out.txt, D:\dbg\hermes-env-console.err.txt -ErrorAction SilentlyContinue
+          $ErrorActionPreference = "Stop"
+          & D:\hh\runtime\node.exe scripts/prepare-hermes.mjs --runtime D:\hh\engines\hermes\runtime
+          if ($LASTEXITCODE -ne 0) { throw "prepare-hermes failed" }
+          & D:\hh\runtime\node.exe scripts/prepare-hermes.mjs --runtime D:\hh\engines\hermes\runtime
+          if ($LASTEXITCODE -ne 0) { throw "prepare-hermes is not idempotent" }
+          & D:\hh\engines\hermes\runtime\python.exe -I -B -c "import tools.environments.local as m, inspect; print('stdin probes:', inspect.getsource(m).count('stdin=subprocess.DEVNULL,'))"
 
-      - name: Drive Hermes LocalEnvironment under the Job helper with a private home
+      - name: Verify - Hermes LocalEnvironment with pending-read stdin (patched)
         run: |
-          New-Item -ItemType Directory -Force -Path D:\dbg\watch-job | Out-Null
-          $p = Start-Process -FilePath $env:JOB_HELPER -ArgumentList @("run", "$PID", "hhdbg-env", "D:\hh\engines\hermes\runtime\python.exe", "-I", "-B", "$env:GITHUB_WORKSPACE\.github\scripts\hermes-debug\hermes_env.py", "D:\hh", "D:\dbg", "job", "private") -PassThru -NoNewWindow -RedirectStandardOutput D:\dbg\hermes-env-job.out.txt -RedirectStandardError D:\dbg\hermes-env-job.err.txt
-          & "$env:GITHUB_WORKSPACE\.github\scripts\hermes-debug\watch.ps1" -Bundle D:\hh -Out D:\dbg\watch-job -Seconds 150 -WatchPid $p.Id
-          if (-not $p.HasExited) { taskkill /PID $p.Id /T /F | Out-Null; "TIMED OUT" | Out-File -Append D:\dbg\hermes-env-job.out.txt }
-          Get-Content D:\dbg\hermes-env-job.out.txt, D:\dbg\hermes-env-job.err.txt -ErrorAction SilentlyContinue
+          & D:\hh\engines\hermes\runtime\python.exe -I -B "$env:GITHUB_WORKSPACE\.github\scripts\hermes-debug\stdin_hang.py" D:\hh D:\dbg\stdin hermes-patched
 
-      - name: Hermes through the competition Gateway with the scripted mock model
+      - name: Verify - Hermes through the competition Gateway with the scripted mock (patched)
         run: |
           New-Item -ItemType Directory -Force -Path D:\dbg\watch-gateway | Out-Null
           $p = Start-Process -FilePath D:\hh\runtime\node.exe -ArgumentList @("scripts/competition-matrix.mjs", "--bundle", "D:\hh", "--engines", "hermes", "--out", "D:\dbg\matrix", "--mock", "--engine-timeout-ms", "240000") -PassThru -NoNewWindow -RedirectStandardOutput D:\dbg\matrix.out.txt -RedirectStandardError D:\dbg\matrix.err.txt
           & "$env:GITHUB_WORKSPACE\.github\scripts\hermes-debug\watch.ps1" -Bundle D:\hh -Out D:\dbg\watch-gateway -Seconds 330 -WatchPid $p.Id
           if (-not $p.HasExited) { taskkill /PID $p.Id /T /F | Out-Null }
-          Get-Content D:\dbg\matrix.out.txt -ErrorAction SilentlyContinue | Select-Object -Last 5
+          Get-Content D:\dbg\matrix\summary.md -ErrorAction SilentlyContinue
 
       - name: Collect Hermes and Gateway logs
         if: always()
