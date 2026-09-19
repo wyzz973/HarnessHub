@@ -1,57 +1,261 @@
 name: Publish offline dev release
 
+# Builds the Windows x64 offline development kit from source, proves on a fresh extraction
+# that Setup-Competition-Offline.cmd produces a runnable competition layout without network
+# access, and publishes the kit to a Release as split 7z volumes. No secret is used.
 on:
   push:
     branches:
       - feat/competition-gateway-api
+      - feat/unified-model-gateway
     paths:
       - .github/workflows/publish-offline-dev-release.yml
+      - "src/**"
+      - "web/**"
+      - "scripts/**"
+      - "distribution/**"
+      - "patches/**"
+      - "examples/**"
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - tsconfig.json
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag that receives the split kit volumes (back up its current assets first)
+        required: false
+        default: offline-dev-latest
+      publish:
+        description: Publish the verified kit to the Release
+        type: boolean
+        default: true
+
+concurrency:
+  group: publish-offline-dev-release-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
-  actions: read
   contents: write
 
+env:
+  RELEASE_TAG: ${{ inputs.release_tag || vars.OFFLINE_DEV_RELEASE_TAG || 'offline-dev-latest' }}
+  PUBLISH: ${{ github.event_name != 'workflow_dispatch' || inputs.publish }}
+  KIT_NAME: harnesshub-offline-dev-windows-x64
+
+defaults:
+  run:
+    shell: pwsh
+
 jobs:
-  publish:
+  offline-dev-kit:
+    name: Build, prove offline setup and publish the x64 offline dev kit
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-      - name: Download validated offline dev artifact
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          architecture: x64
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            distribution/npm/pnpm-lock.yaml
+
+      - name: Verify native x64 build runtime
         run: |
           $ErrorActionPreference = "Stop"
-          $work = Join-Path $env:RUNNER_TEMP "offline-dev-release"
-          Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force -Path $work | Out-Null
-          gh run download 34317588132 -n harnesshub-offline-dev-windows-x64 -D $work
-          if ($LASTEXITCODE -ne 0) { throw "Failed to download validated offline dev artifact" }
-          $zip = Join-Path $work "harnesshub-offline-dev-windows-x64.zip"
-          if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) { throw "Validated offline ZIP is missing" }
-          $sha = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
-          if ($sha -ne "14053b9831c8617182e923544cc87fd52239f68b94da38acc38b981aac1a2de4") {
-            throw "Validated offline ZIP SHA256 mismatch: $sha"
-          }
-          "WORK_DIR=$work" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "OFFLINE_ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Split into Release-safe volumes
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $out = Join-Path $env:WORK_DIR "release"
-          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          if ((node -p "process.platform") -ne "win32") { throw "Expected native Windows runner" }
+          if ((node -p "process.arch") -ne "x64") { throw "Expected native x64 Node" }
+          if ((node -p "process.versions.node") -ne "24.20.0") { throw "Expected Node 24.20.0" }
           $sevenZip = Join-Path $env:ProgramFiles "7-Zip\7z.exe"
-          if (-not (Test-Path -LiteralPath $sevenZip -PathType Leaf)) { throw "7-Zip is unavailable" }
-          $base = Join-Path $out "harnesshub-offline-dev-windows-x64.7z"
-          & $sevenZip a -t7z -mx=0 -v1500m $base $env:OFFLINE_ZIP | Out-Host
+          if (-not (Test-Path -LiteralPath $sevenZip -PathType Leaf)) { throw "7-Zip is not available on this runner" }
+          "SEVEN_ZIP=$sevenZip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Get-PSDrive -PSProvider FileSystem | Format-Table -AutoSize | Out-String | Write-Host
+
+      - name: Restore hash-pinned preparation downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            .tmp/contest-downloads
+            .tools/contest-cache
+          key: contest-downloads-win32-x64-${{ hashFiles('distribution/binary-sources.json', 'distribution/extra-engine-sources.json', 'scripts/prepare-git.mjs') }}
+
+      - name: Install and build HarnessHub
+        run: |
+          $ErrorActionPreference = "Stop"
+          pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw "HarnessHub install failed" }
+          pnpm build
+          if ($LASTEXITCODE -ne 0) { throw "HarnessHub build failed" }
+          pnpm build:console
+          if ($LASTEXITCODE -ne 0) { throw "HarnessHub console build failed" }
+          npm install --prefix .tools/pnpm-runner --no-package-lock --ignore-scripts --no-save pnpm@10.12.3
+          if ($LASTEXITCODE -ne 0) { throw "Pinned pnpm runner install failed" }
+
+      - name: Prepare fixed open-source engine runtime payload
+        run: |
+          $ErrorActionPreference = "Stop"
+          $windowsPowerShellModules = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\Modules"
+          $env:PSModulePath = "$windowsPowerShellModules;$env:PSModulePath"
+          $windowsPowerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+          & $windowsPowerShell -NoProfile -NonInteractive -Command "Get-Command Get-FileHash | Out-Null; Get-Command Get-AuthenticodeSignature | Out-Null"
+          if ($LASTEXITCODE -ne 0) { throw "Windows PowerShell preparation cmdlets are unavailable" }
+          $prepared = Join-Path $PWD ".tools\contest-prepared\win32-x64"
+          $pnpmJs = (Resolve-Path ".tools\pnpm-runner\node_modules\pnpm\bin\pnpm.cjs").Path
+          $skip = "cursor,antigravity"
+          node scripts/prepare-contest.mjs --root "$prepared" --arch x64 --pnpm "$pnpmJs" --skip-binaries $skip --seven-zip "$env:SEVEN_ZIP"
+          if ($LASTEXITCODE -ne 0) { throw "x64 contest preparation failed" }
+          node scripts/prepare-contest.mjs --root "$prepared" --arch x64 --pnpm "$pnpmJs" --skip-binaries $skip --check
+          if ($LASTEXITCODE -ne 0) { throw "x64 contest preparation verification failed" }
+          $openSource = Join-Path $PWD ".tools\open-source-prepared\win32-x64"
+          if (Test-Path -LiteralPath $openSource) { throw "Open-source prepared directory already exists: $openSource" }
+          node scripts/prepare-open-source.mjs --prepared "$prepared" --output "$openSource"
+          if ($LASTEXITCODE -ne 0) { throw "Open-source runtime derivation failed" }
+          # The full contest payload is no longer needed; free runner disk for the kit.
+          Remove-Item -LiteralPath $prepared -Recurse -Force
+          "OPEN_SOURCE_PREPARED=$openSource" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Assemble editable offline kit
+        run: |
+          $ErrorActionPreference = "Stop"
+          $kit = Join-Path $env:RUNNER_TEMP "HarnessHub-Offline-Dev-Windows-x64"
+          & .\scripts\build-offline-source-kit.ps1 -Prepared "$env:OPEN_SOURCE_PREPARED" -Output "$kit"
+          foreach ($required in @("Setup-Competition-Offline.cmd", "Start-Competition.cmd", "INSTRUCTION.md", "README-OFFLINE.md", "tools\node\node.exe", "prepared\win32-x64\prepared.json", "HarnessHub\scripts\competition-offline.mjs")) {
+            if (-not (Test-Path -LiteralPath (Join-Path $kit $required) -PathType Leaf)) { throw "Offline kit is missing $required" }
+          }
+          if (Test-Path -LiteralPath (Join-Path $kit "HarnessHub\.tmp")) { throw "Offline kit must not contain the preparation download cache" }
+          Remove-Item -LiteralPath $env:OPEN_SOURCE_PREPARED -Recurse -Force
+          "OFFLINE_KIT=$kit" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Archive the offline kit
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = Join-Path $env:RUNNER_TEMP "offline-dev-release"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $zip = Join-Path $out "$env:KIT_NAME.zip"
+          if (Test-Path -LiteralPath $zip) { throw "ZIP already exists: $zip" }
+          Push-Location $env:OFFLINE_KIT
+          try {
+            & $env:SEVEN_ZIP a -tzip -mx=5 $zip ".\*" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Offline kit archive failed" }
+          } finally {
+            Pop-Location
+          }
+          $sha = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
+          $bytes = (Get-Item -LiteralPath $zip).Length
+          Write-Host "Offline kit ZIP bytes: $bytes"
+          Write-Host "Offline kit ZIP SHA256: $sha"
+          # Only the archive is published; drop the assembled directory to free runner disk.
+          Remove-Item -LiteralPath $env:OFFLINE_KIT -Recurse -Force
+          "OFFLINE_OUT=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "OFFLINE_ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "OFFLINE_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "OFFLINE_BYTES=$bytes" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Prove Setup-Competition-Offline.cmd on a fresh extraction without network
+        run: |
+          $ErrorActionPreference = "Stop"
+          # Same layout as solution\code; the space in the path exercises launcher quoting.
+          $code = Join-Path $env:RUNNER_TEMP "HH offline proof\solution\code"
+          if (Test-Path -LiteralPath $code) { throw "Proof directory already exists: $code" }
+          & $env:SEVEN_ZIP x -y "-o$code" $env:OFFLINE_ZIP | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Failed to extract the offline kit ZIP" }
+          "OFFLINE_CODE=$code" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # Best-effort OS-level block of outbound traffic for the kit's Node (loopback stays usable).
+          $rule = "HarnessHub offline proof $env:GITHUB_RUN_ID"
+          $firewall = "not applied"
+          try {
+            New-NetFirewallRule -DisplayName $rule -Direction Outbound -Action Block -Program (Join-Path $code "tools\node\node.exe") -RemoteAddress Any -ErrorAction Stop | Out-Null
+            $enabled = @(Get-NetFirewallProfile | Where-Object { $_.Enabled }).Count
+            $firewall = if ($enabled -gt 0) { "outbound block active for tools\node\node.exe" } else { "rule added but every firewall profile is disabled" }
+          } catch {
+            $firewall = "not applied: $($_.Exception.Message)"
+          }
+          Write-Host "Firewall: $firewall"
+          # Every package manager path must fail if it tries to download anything.
+          $env:npm_config_registry = "http://127.0.0.1:9/"
+          $env:npm_config_offline = "true"
+          $env:HTTP_PROXY = "http://127.0.0.1:9"
+          $env:HTTPS_PROXY = "http://127.0.0.1:9"
+          $env:ALL_PROXY = "http://127.0.0.1:9"
+          $env:NO_PROXY = "127.0.0.1,localhost,::1"
+          $env:COREPACK_ENABLE_NETWORK = "0"
+          $env:PIP_NO_INDEX = "1"
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem;$env:SystemRoot\System32\WindowsPowerShell\v1.0"
+          try {
+            & (Join-Path $code "Setup-Competition-Offline.cmd") --reinstall
+            $setupExit = $LASTEXITCODE
+          } finally {
+            Remove-NetFirewallRule -DisplayName $rule -ErrorAction SilentlyContinue
+          }
+          if ($setupExit -ne 0) { throw "Setup-Competition-Offline.cmd failed offline (exit $setupExit); see logs in the offline-setup-proof artifact" }
+          $layout = Join-Path $code "competition"
+          foreach ($required in @("gateway.cmd", "bundle.json", "runtime\node.exe", "dist\src\competition-bundle-main.js", "README-COMPETITION.txt")) {
+            if (-not (Test-Path -LiteralPath (Join-Path $layout $required) -PathType Leaf)) { throw "Competition layout is missing $required" }
+          }
+          if (Test-Path -LiteralPath (Join-Path $layout "state")) { throw "Setup must not leave self-test state in the layout" }
+          # Start-Competition.cmd must refuse to guess an engine and list the available ones.
+          Remove-Item Env:AGENT_ENGINE -ErrorAction SilentlyContinue
+          $ErrorActionPreference = "Continue"
+          $listing = & (Join-Path $code "Start-Competition.cmd") 2>&1 | Out-String
+          $startExit = $LASTEXITCODE
+          $ErrorActionPreference = "Stop"
+          Write-Host $listing
+          if ($startExit -ne 2 -or $listing -notmatch "AGENT_ENGINE is not set" -or $listing -notmatch "opencode") {
+            throw "Start-Competition.cmd without AGENT_ENGINE must exit 2 and list engines (exit $startExit)"
+          }
+          # The expected exit 2 was asserted above; the step wrapper would otherwise report it.
+          $global:LASTEXITCODE = 0
+          @(
+            "### Offline setup proof (fresh extraction, no network)",
+            "",
+            "- Setup-Competition-Offline.cmd --reinstall: exit 0 with registry/proxy pointed at 127.0.0.1:9, Corepack network disabled and a PATH without Node, pnpm or Git.",
+            "- Firewall: $firewall.",
+            "- Start-Competition.cmd without AGENT_ENGINE: exit 2 and the engine list."
+          ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+      - name: Informational mock-model acceptance through Start-Competition.cmd
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = "Stop"
+          $results = Join-Path $env:RUNNER_TEMP "offline-proof-acceptance"
+          & (Join-Path $env:OFFLINE_CODE "tools\node\node.exe") (Join-Path $env:OFFLINE_CODE "HarnessHub\scripts\competition-matrix.mjs") --bundle (Join-Path $env:OFFLINE_CODE "competition") --entry (Join-Path $env:OFFLINE_CODE "Start-Competition.cmd") --engines "opencode,hermes" --out $results --mock --mock-quirks --engine-timeout-ms 360000 --summary $env:GITHUB_STEP_SUMMARY
+          if ($LASTEXITCODE -ne 0) { throw "Mock-model acceptance on the Setup-built layout did not pass for every engine (informational)" }
+
+      - name: Upload offline setup evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-setup-proof
+          path: |
+            ${{ runner.temp }}/HH offline proof/solution/code/logs
+            ${{ runner.temp }}/offline-proof-acceptance
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Split the kit into Release-safe volumes
+        run: |
+          $ErrorActionPreference = "Stop"
+          # Freeing disk is best effort: a file still held by a finished engine must not block publishing.
+          Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP "HH offline proof") -Recurse -Force -ErrorAction SilentlyContinue
+          if (Test-Path -LiteralPath (Join-Path $env:RUNNER_TEMP "HH offline proof")) { Write-Warning "Offline proof directory could not be removed completely" }
+          $release = Join-Path $env:OFFLINE_OUT "volumes"
+          New-Item -ItemType Directory -Force -Path $release | Out-Null
+          $base = Join-Path $release "$env:KIT_NAME.7z"
+          & $env:SEVEN_ZIP a -t7z -mx=0 -v1500m $base $env:OFFLINE_ZIP | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "Failed to create split Release volumes" }
-          $parts = @(Get-ChildItem -LiteralPath $out -Filter "harnesshub-offline-dev-windows-x64.7z.*" | Sort-Object Name)
-          if ($parts.Count -lt 2) { throw "Expected multiple Release volumes" }
+          Remove-Item -LiteralPath $env:OFFLINE_ZIP -Force
+          $parts = @(Get-ChildItem -LiteralPath $release -Filter "$env:KIT_NAME.7z.*" | Sort-Object Name)
+          if ($parts.Count -lt 1) { throw "No Release volumes were created" }
           foreach ($part in $parts) {
             if ($part.Length -ge 2147483648) { throw "Release volume is too large: $($part.Name)" }
           }
@@ -59,44 +263,53 @@ jobs:
             $h = (Get-FileHash -Algorithm SHA256 -LiteralPath $part.FullName).Hash.ToLowerInvariant()
             "$h *$($part.Name)"
           }
-          $hashLines | Set-Content -Encoding Ascii (Join-Path $out "parts.sha256")
-          @(
-            "HarnessHub Offline Development Kit - Windows x64",
-            "",
-            "Validated source ZIP SHA256:",
-            "14053b9831c8617182e923544cc87fd52239f68b94da38acc38b981aac1a2de4",
-            "",
-            "Download ALL volume files into the same directory:",
-            "  harnesshub-offline-dev-windows-x64.7z.001",
-            "  harnesshub-offline-dev-windows-x64.7z.002",
-            "",
-            "Then extract the first volume with 7-Zip:",
-            "  7z x harnesshub-offline-dev-windows-x64.7z.001",
-            "",
-            "This produces harnesshub-offline-dev-windows-x64.zip; extract that ZIP normally."
-          ) | Set-Content -Encoding UTF8 (Join-Path $out "DOWNLOAD-README.txt")
-          "RELEASE_DIR=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $hashLines | Set-Content -Encoding Ascii (Join-Path $release "parts.sha256")
+          $lines = [System.Collections.Generic.List[string]]::new()
+          $lines.Add("HarnessHub Offline Development Kit - Windows x64")
+          $lines.Add("")
+          $lines.Add("1. Download ALL of these files into one directory:")
+          foreach ($part in $parts) { $lines.Add("     $($part.Name)") }
+          $lines.Add("   plus parts.sha256 and $env:KIT_NAME.build.json.")
+          $lines.Add("2. Optional: compare Get-FileHash -Algorithm SHA256 of each volume with parts.sha256.")
+          $lines.Add("3. Extract the first volume with 7-Zip:  7z x $env:KIT_NAME.7z.001")
+          $lines.Add("   This produces $env:KIT_NAME.zip (SHA-256 $env:OFFLINE_SHA).")
+          $lines.Add("4. Extract that ZIP to a short path, for example:  tar.exe -xf $env:KIT_NAME.zip -C D:\hh\solution\code")
+          $lines.Add("5. Follow INSTRUCTION.md in the extracted directory: Setup-Competition-Offline.cmd, then Start-Competition.cmd.")
+          $lines | Set-Content -Encoding UTF8 (Join-Path $release "DOWNLOAD-README.txt")
+          [ordered]@{
+            schemaVersion = 1
+            zip = "$env:KIT_NAME.zip"
+            zipBytes = [long]$env:OFFLINE_BYTES
+            zipSha256 = $env:OFFLINE_SHA
+            volumes = @($parts | ForEach-Object { $_.Name })
+            commit = $env:GITHUB_SHA
+            ref = $env:GITHUB_REF_NAME
+            run = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            builtAt = (Get-Date).ToUniversalTime().ToString("o")
+            verified = "Setup-Competition-Offline.cmd --reinstall on a fresh extraction without network, including its no-model startup self-test"
+          } | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 (Join-Path $release "$env:KIT_NAME.build.json")
+          "RELEASE_DIR=$release" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Publish offline-dev-latest Release
-        shell: pwsh
+      - name: Upload volumes as a workflow artifact when not publishing
+        if: env.PUBLISH != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: harnesshub-offline-dev-windows-x64
+          path: ${{ env.RELEASE_DIR }}
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Publish the verified kit to the Release
+        if: env.PUBLISH == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = "Stop"
-          $tag = "offline-dev-latest"
-          gh release view $tag *> $null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --title "HarnessHub Offline Development Kit" --prerelease --target "$env:GITHUB_SHA" --notes "Validated offline editable source workspace. Download all split volumes and extract .001 with 7-Zip."
-            if ($LASTEXITCODE -ne 0) { throw "Failed to create offline-dev-latest Release" }
-          }
-          $assets = @(
-            (Join-Path $env:RELEASE_DIR "harnesshub-offline-dev-windows-x64.7z.001"),
-            (Join-Path $env:RELEASE_DIR "harnesshub-offline-dev-windows-x64.7z.002"),
-            (Join-Path $env:RELEASE_DIR "parts.sha256"),
-            (Join-Path $env:RELEASE_DIR "DOWNLOAD-README.txt")
-          )
-          gh release upload $tag @assets --clobber
-          if ($LASTEXITCODE -ne 0) { throw "Failed to upload split offline dev Release assets" }
-          Write-Host "Part 1: https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/harnesshub-offline-dev-windows-x64.7z.001"
-          Write-Host "Part 2: https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/harnesshub-offline-dev-windows-x64.7z.002"
-          Write-Host "Checksums: https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/parts.sha256"
+          $assets = @(Get-ChildItem -LiteralPath $env:RELEASE_DIR -File | Sort-Object Name | ForEach-Object { $_.FullName })
+          $arguments = @("scripts/publish-release-assets.mjs", "--tag", $env:RELEASE_TAG, "--title", "HarnessHub Offline Development Kit", "--notes-file", (Join-Path $env:RELEASE_DIR "DOWNLOAD-README.txt"), "--target", $env:GITHUB_SHA, "--prune", "^harnesshub-offline-dev-windows-x64\.7z\.\d{3}$")
+          foreach ($asset in $assets) { $arguments += @("--asset", $asset) }
+          node @arguments
+          if ($LASTEXITCODE -ne 0) { throw "Offline dev kit Release publish failed" }
+          "### Offline dev kit published to ``$env:RELEASE_TAG``" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "ZIP SHA-256 ``$env:OFFLINE_SHA`` ($env:OFFLINE_BYTES bytes) in $($assets.Count) assets, commit ``$env:GITHUB_SHA``." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
