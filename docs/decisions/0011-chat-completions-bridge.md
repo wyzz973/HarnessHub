@@ -1,6 +1,7 @@
 # ADR 0011：在 Driver 内适配公司 Chat Completions 网关
 
 - 状态：accepted
+- 扩展：已由 [ADR 0013](0013-unified-model-gateway.md) 扩展为全部引擎共用的统一模型网关，现行行为见 [统一模型网关](../model-gateway.md)。
 - 日期：2026-09-07
 - 场景：公司已有 Gateway 改动不能上传，比赛模型服务只提供 OpenAI Chat Completions。固定 Codex 0.153.4 只使用 Responses；固定 Gemini CLI 0.58.0 使用 Google GenerateContent。
 
