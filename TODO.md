@@ -493,39 +493,39 @@ HH-005 后，HH-006 → HH-007 → HH-008 → HH-010 依次修改 Runtime，默�
 
 ### HH-042 统一模型网关与主流协议转换
 
-- [ ] 进行中；P0；前置：HH-040；负责人：网关子任务；范围：`src/drivers/chat-completions/**`、网关单元测试、`docs/model-gateway.md`。
+- [x] macOS 与自动测试范围已验证；P0；前置：HH-040；负责人：网关子任务；范围：`src/drivers/chat-completions/**`、网关单元测试、`docs/model-gateway.md`。Windows 与公司真实模型未验证。
 - 验收：Chat/Responses/Anthropic/Google 四种入站协议在流式与非流式下转换正确；上游只发流式、只用统一模型；宽松解析各种网关变体；推理内容转发与回填；参数清理与输出上限截断；错误状态码透传与脱敏；Run 作用域与取消。
-- 证据：待补。
+- 证据：网关单元测试 52 项通过（含媒体占位、认证失败记录、严格网关默认值）；[验收记录](docs/verification/2026-09-19-unified-model-gateway.md)中 Codex（Responses）、Claude Code（Anthropic）、Gemini（Google）和 4 个 Chat 引擎经只接受流式的严格网关完成任务，上游只收到 `deepseek-flash`。
 
 ### HH-043 引擎接线、厂商凭据隔离与 Worker 失败语义
 
-- [ ] 进行中；P0；前置：HH-042；负责人：接线子任务；范围：`src/drivers/configuration/**`、`src/worker/**`、`src/engine/configuration.ts`。
+- [ ] 部分验证；P0；前置：HH-042；负责人：接线子任务；范围：`src/drivers/configuration/**`、`src/worker/**`、`src/engine/configuration.ts`。Qwen、Kimi、OpenClaw、DSH 尚无真实引擎证据，Windows 未验证。
 - 验收：全部可路由引擎以原生协议经网关访问统一模型，看到的是模型别名；厂商凭据变量和真实家目录登录态不可用；Codex Full Access 不被改回只读；上游失败或无输出时 Run 判为失败并带脱敏的真实原因；`model.call` 事件提交。
-- 证据：待补。
+- 证据：单元与集成测试通过；[验收记录](docs/verification/2026-09-19-unified-model-gateway.md)中 7 个真实引擎只看到别名 `harnesshub-model` 和本机令牌；上游 400 以 `MODEL_UPSTREAM_ERROR` 带原因失败且会话保留（回归测试 `tests/integration/chat-completions.test.ts`）。
 
 ### HH-044 统一模型配置与强制生效
 
-- [ ] 进行中；P0；前置：HH-042；负责人：统一模型子任务；范围：`src/application/harness-model.ts`、`src/engine/{registry,manager}.ts`、`src/distribution/**`、`src/release-main.ts`、`/v1/harness/model`。
+- [x] macOS 与自动测试范围已验证；P0；前置：HH-042；负责人：统一模型子任务；范围：`src/application/harness-model.ts`、`src/engine/{registry,manager}.ts`、`src/distribution/**`、`src/release-main.ts`、`/v1/harness/model`。发行包 `hub.cmd model` 在 Windows 未验证。
 - 验收：环境变量 > 统一模型文件 > 配置文件的优先级；任何登记路径都被覆盖为统一模型；不可路由的引擎被禁用并说明原因；PUT 后生成新 revision；`hub.cmd model` 命令；OpenCode Full Access 修复。
-- 证据：待补。
+- 证据：`tests/unit/harness-model.test.ts`、`registry-harness-model.test.ts`、`release-model-command.test.ts`、`full-access.test.ts` 与 `tests/integration/harness-model.test.ts` 通过；[验收记录](docs/verification/2026-09-19-unified-model-gateway.md)只用环境变量配置统一模型启动比赛 Gateway。
 
 ### HH-045 比赛接口规范 v1.1 对齐
 
-- [ ] 进行中；P0；前置：无；负责人：比赛接口子任务；范围：`src/gateway/competition/**`、`src/gateway/server.ts`。
+- [x] macOS 与自动测试范围已验证；P0；前置：无；负责人：比赛接口子任务；范围：`src/gateway/competition/**`、`src/gateway/server.ts`。
 - 验收：`prompt_async` 阻塞并返回 204/502；错误统一为 `{code,message}`，空请求体可用；`directory` 自动创建；`session.error`、busy/idle、工具状态与 `tool_calls`/`tool` 消息；`/session` 固定使用启动引擎。
-- 证据：待补。
+- 证据：`tests/integration/competition-gateway.test.ts`、`tests/unit/competition-transcript.test.ts`、`tests/integration/gateway-host.test.ts` 通过；[验收记录](docs/verification/2026-09-19-unified-model-gateway.md)中 14 道题按规范完成判定（204、`finish=stop` 且含 `step-finish`），失败时返回 502 并推送 `session.error`。
 
 ### HH-046 工具包一键安装到全部引擎
 
-- [ ] 进行中；P1；前置：HH-044；负责人：工具包子任务；范围：`src/tool-packages/**`、工具包路由、Command MCP。
+- [ ] 自动测试通过，真实引擎未验证；P1；前置：HH-044；负责人：工具包子任务；范围：`src/tool-packages/**`、工具包路由、Command MCP。
 - 验收：apply 支持 `engineIds: all` 并逐引擎返回结果；可直接导入 Skill 目录、MCP JSON、CLI 清单；工作目录按会话解析；支持解绑和替换。
-- 证据：待补。
+- 证据：`tests/integration/tool-pack-gateway.test.ts`、`tool-pack-apply.test.ts`、`tests/unit/tool-packages-import.test.ts` 通过；尚无真实引擎调用导入的 MCP/CLI 工具的证据，Windows `.cmd` 入口未验证。
 
 ### HH-047 比赛入口集成控制台
 
-- [ ] 进行中；P1；前置：HH-044、HH-046；负责人：控制台子任务；范围：`web/**`、`src/competition-bundle-main.ts`。
+- [ ] 构建与浏览器冒烟通过，Windows 未验证；P1；前置：HH-044、HH-046；负责人：控制台子任务；范围：`web/**`、`src/competition-bundle-main.ts`。
 - 验收：`gateway.cmd` 同时启动控制台，`/` 跳转到控制台；有统一模型页、工具包页、比赛状态条、`model.call` 证据；默认进入直接对话模式；实时刷新。
-- 证据：待补。
+- 证据：控制台 lint、typecheck、build 与 `tests/integration/competition-console.test.ts` 通过；子任务在 macOS 浏览器中验证了跳转、统一模型保存与测试、工具卡片和续聊。Windows 包内的控制台进程管理未验证。
 
 ### HH-048 x64 离线交付、模拟模型验收与 INSTRUCTION.md
 
