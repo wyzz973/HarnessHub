@@ -20,15 +20,16 @@ permissions:
 
 jobs:
   engine:
-    name: ${{ matrix.engine }} (${{ vars.HH_REAL_LAYOUT || 'bundle' }}, real model)
+    name: ${{ matrix.engine }} (${{ matrix.layout }}${{ vars.HH_REAL_OFFLINE == 'true' && ', offline' || '' }}, real model)
     runs-on: windows-latest
     timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
         engine: ${{ fromJSON(vars.HH_REAL_ENGINES_JSON || '["opencode","codex","qwen","hermes","pi","gemini","mimo","dsh","openclaw","kimi"]') }}
+        layout: ${{ fromJSON(vars.HH_REAL_LAYOUTS_JSON || '["bundle"]') }}
     env:
-      LAYOUT: ${{ vars.HH_REAL_LAYOUT || 'bundle' }}
+      LAYOUT: ${{ matrix.layout }}
       BUNDLE_TAG: ${{ vars.HH_REAL_BUNDLE_TAG || 'competition-latest' }}
       KIT_TAG: ${{ vars.HH_REAL_KIT_TAG || 'offline-dev-latest' }}
       HARNESSHUB_MODEL: ${{ vars.HH_REAL_MODEL || 'GLM-V5_1-DX' }}
@@ -85,11 +86,19 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Download of $env:KIT_TAG failed" }
           Get-ChildItem $downloads | Format-Table Name, Length | Out-String | Write-Host
           $sevenZip = Join-Path $env:ProgramFiles "7-Zip\7z.exe"
-          $first = Get-ChildItem $downloads -File | Where-Object { $_.Name -match '\.(zip|7z\.001)$' } | Select-Object -First 1
-          if (-not $first) { throw "No kit archive found in $env:KIT_TAG" }
+          # Same steps as DOWNLOAD-README.txt: the first 7z volume yields the kit ZIP, which is
+          # then extracted to a short path with tar.exe.
+          $first = Get-ChildItem $downloads -File | Where-Object { $_.Name -match '\.7z\.001$' } | Select-Object -First 1
+          if (-not $first) { throw "No kit volume found in $env:KIT_TAG" }
+          & $sevenZip x -y "-o$downloads" $first.FullName | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Failed to join the kit volumes" }
+          $zip = Get-ChildItem $downloads -File -Filter "*.zip" | Select-Object -First 1
+          if (-not $zip) { throw "The kit volumes did not contain the kit ZIP" }
           $root = Join-Path $env:RUNNER_TEMP "hh-real\kit"
-          & $sevenZip x -y "-o$root" $first.FullName | Out-Null
-          if ($LASTEXITCODE -ne 0) { throw "Failed to extract the kit" }
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          & tar.exe -xf $zip.FullName -C $root
+          if ($LASTEXITCODE -ne 0) { throw "Failed to extract the kit ZIP" }
+          Remove-Item -LiteralPath $zip.FullName -Force
           $setup = Get-ChildItem $root -Recurse -Filter "Setup-Competition-Offline.cmd" | Select-Object -First 1
           if (-not $setup) { throw "Setup-Competition-Offline.cmd not found" }
           $code = $setup.DirectoryName
