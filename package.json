@@ -39,7 +39,12 @@
     "test:windows": "pnpm build && node scripts/check-windows.mjs",
     "prepare:contest": "node scripts/prepare-contest.mjs",
     "package:contest": "node scripts/package-bundle.mjs",
-    "tools": "node dist/src/tool-packages-main.js"
+    "tools": "node dist/src/tool-packages-main.js",
+    "acceptance:competition": "node scripts/competition-acceptance.mjs",
+    "acceptance:matrix": "node scripts/competition-matrix.mjs",
+    "selftest:competition": "node scripts/competition-selftest.mjs",
+    "mock:company-model": "node scripts/mock-company-model.mjs",
+    "proxy:strict-chat": "node scripts/strict-chat-proxy.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.4.0",
