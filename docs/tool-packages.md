@@ -107,7 +107,7 @@ id 默认取目录名；源为 JSON 文件时取文件名，`mcp.json` 这类通
 }
 ```
 
-`POST /v1/tool-packs/import` 的 body 为 `{source,kind?,id?,version?,displayName?,applyTo?,replace?,secretBindings?}`，其中 `replace` 与 `secretBindings` 只能与 `applyTo` 一起使用，`applyTo` 与 `engineIds` 取值相同。响应为 `{ok,package,displayName,digest,format,counts,warnings,apply?}`；`format` 为 `tool-package` 或 `generated`；给出 `applyTo` 时 `apply` 是上面的 apply 响应，`ok` 同时反映导入和应用结果。导入失败返回 400，例如 `INVALID_TOOL_PACKAGE_SOURCE`、`TOOL_PACKAGE_IMPORT_UNSUPPORTED`、`TOOL_PACKAGE_TOO_LARGE`，不会登记部分内容。
+`POST /v1/tool-packs/import` 的 body 为 `{source,kind?,id?,version?,displayName?,applyTo?,replace?,secretBindings?}`，或用 `mcp` 代替 `source`：`mcp` 是直接粘贴的 `{"mcpServers":{...}}` 文档（序列化后最多 256 KiB，`kind` 只能省略或为 `mcp`，默认包 id 为 `mcp-<首个服务名>`）。内联文档旁边没有文件，只有远程 URL 服务能通过；本地命令按离线规则以 `TOOL_PACKAGE_IMPORT_UNSUPPORTED` 拒绝，需把服务文件放进目录后用 `source` 导入。其中 `replace` 与 `secretBindings` 只能与 `applyTo` 一起使用，`applyTo` 与 `engineIds` 取值相同。响应为 `{ok,package,displayName,digest,format,counts,warnings,apply?}`；`format` 为 `tool-package` 或 `generated`；给出 `applyTo` 时 `apply` 是上面的 apply 响应，`ok` 同时反映导入和应用结果。导入失败返回 400，例如 `INVALID_TOOL_PACKAGE_SOURCE`、`TOOL_PACKAGE_IMPORT_UNSUPPORTED`、`TOOL_PACKAGE_TOO_LARGE`，不会登记部分内容。
 
 `DELETE /v1/tool-packs/{id}/{version}/bindings` 必须提供 `engineIds`：放在 JSON body 中（`"all"` 或数组），或放在查询串中（`?engineIds=all`、`?engineIds=a,b`），二者只能选一。响应为 `{ok,package,results,note}`，`results[]` 每项为 `{engineId,status,revision?,code?,reason?,removed?:{skills,mcp}}`，`status` 为 `unbound`、`skipped` 或 `failed`；没有 failed 时 `ok` 为 true。未登记的包版本返回 404。
 

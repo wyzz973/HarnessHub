@@ -359,11 +359,11 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     title: "导入工具包",
     group: "tool-packs",
     request:
-      "JSON：source（本机绝对路径：Skill 目录、mcp.json、cli.json、SKILL.md 或完整包目录），可选 kind、id、version、displayName、applyTo（all 或引擎数组）、replace、secretBindings。",
+      'JSON：source（本机绝对路径：Skill 目录、mcp.json、cli.json、SKILL.md 或完整包目录）与 mcp（直接粘贴的 {"mcpServers":{...}} 文档，最多 256 KiB）二选一；可选 kind、id、version、displayName、applyTo（all 或引擎数组）、replace、secretBindings。',
     response:
       "200：ok、package{id,version}、displayName、digest、format、counts、warnings，以及指定 applyTo 时的 apply 结果。",
     implementation:
-      "识别简易格式并生成含 sha256 的清单，校验后安装到工具包存储；运行时下载型命令（npx/uvx 等）拒绝，像密钥的 env 改为同名环境变量引用。",
+      "识别简易格式并生成含 sha256 的清单，校验后安装到工具包存储；运行时下载型命令（npx/uvx 等）拒绝，像密钥的 env 改为同名环境变量引用。内联 mcp 文档先写成临时 mcp.json 再走同一导入器（默认包 id 取自首个服务名），旁边没有文件，因此只有远程 URL 服务能通过，本地命令按离线规则拒绝并提示改用目录导入。",
     effects:
       "写工具包存储；指定 applyTo 时为每个接受的引擎发布新 revision，已有 Session 不变。",
     errors:
