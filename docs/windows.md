@@ -51,7 +51,7 @@ Adapter 位于独立本地目录，不在任务执行阶段下载。再次扫描
 
 | 能力 | Windows 实现 |
 |---|---|
-| 引擎发现和配置 | PATH/PATHEXT、常见用户目录、JSON manifest；原生/批处理/PowerShell 启动；配置环境传递 |
+| 引擎发现和配置 | PATH/PATHEXT、常见用户目录、JSON manifest；原生/批处理/PowerShell 启动；配置环境传递（Worker 系统变量白名单含 `PSModulePath`，见 [运行时说明](runtime-api.md#本地配置)） |
 | 文本、权限、队列、期限、取消 | 同一正式 Gateway/Worker 契约，保留实际事件及终态 |
 | 进程清理和崩溃恢复 | 原生 Job Object，执行前归属、后代终止、身份匹配恢复；旧无证据 lease 隔离 |
 | 文件产物和评测 | 中文/空格路径、DACL、普通文件与 junction 检查、读取锁、不可变字节和 hash |

@@ -1,5 +1,6 @@
 import { open } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
+import { crc32 } from "node:zlib";
 import { HubError } from "../domain/errors.js";
 import {
   SESSION_LOG_CURSOR_PATTERN,
@@ -13,6 +14,8 @@ import type {
 import type { JsonObject } from "../domain/types.js";
 
 const CHUNK_BYTES = 256 * 1024;
+/** Leading bytes that fingerprint a log file generation (part of its first record). */
+const HEAD_BYTES = 64;
 const NEWLINE = 0x0a;
 const cursorPattern = new RegExp(SESSION_LOG_CURSOR_PATTERN);
 
@@ -38,6 +41,11 @@ export interface SessionLogReaderOptions {
 
 interface Generation {
   handle: FileHandle;
+  /**
+   * File identity for cursors: the inode plus a CRC-32 of the file's first bytes. A
+   * rotation renames the file, so both stay; a new file that reuses a freed inode
+   * (common on Linux) starts with a different record and gets a different identity.
+   */
   id: bigint;
   /** End of the last complete line that this read may consume. */
   end: number;
@@ -168,9 +176,11 @@ export function createSessionLogReader(
         try {
           const stats = await handle.stat({ bigint: true });
           const size = Number(stats.size);
+          const head = Buffer.alloc(Math.min(size, HEAD_BYTES));
+          if (head.length) await handle.read(head, 0, head.length, 0);
           opened.push({
             handle,
-            id: stats.ino,
+            id: (stats.ino << 32n) | BigInt(crc32(head)),
             // Only the newest generation can end in a line that is still being written.
             end: opened.length === 0 ? await completeEnd(handle, size) : size,
           });

@@ -424,6 +424,10 @@ export class ProcessWorkerHost implements WorkerHost {
       "USER",
       "USERNAME",
       "LOGNAME",
+      // Without it, Windows PowerShell 5.1 spends ~22 s on every command that
+      // autoloads a module (Write-Output, Out-File, ConvertTo-Json); engine shell
+      // tools start it per command, and Gemini CLI twice (AST parser, command).
+      "PSModulePath",
     ];
     for (const name of [
       ...systemNames,
