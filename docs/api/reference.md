@@ -303,9 +303,9 @@
 
 **POST `/v1/tool-packs/import` — 导入工具包**
 
-- 输入：JSON：source（本机绝对路径：Skill 目录、mcp.json、cli.json、SKILL.md 或完整包目录），可选 kind、id、version、displayName、applyTo（all 或引擎数组）、replace、secretBindings。
+- 输入：JSON：source（本机绝对路径：Skill 目录、mcp.json、cli.json、SKILL.md 或完整包目录）与 mcp（直接粘贴的 {"mcpServers":{...}} 文档，最多 256 KiB）二选一；可选 kind、id、version、displayName、applyTo（all 或引擎数组）、replace、secretBindings。
 - 返回：200：ok、package{id,version}、displayName、digest、format、counts、warnings，以及指定 applyTo 时的 apply 结果。
-- 实现链路：识别简易格式并生成含 sha256 的清单，校验后安装到工具包存储；运行时下载型命令（npx/uvx 等）拒绝，像密钥的 env 改为同名环境变量引用。
+- 实现链路：识别简易格式并生成含 sha256 的清单，校验后安装到工具包存储；运行时下载型命令（npx/uvx 等）拒绝，像密钥的 env 改为同名环境变量引用。内联 mcp 文档先写成临时 mcp.json 再走同一导入器（默认包 id 取自首个服务名），旁边没有文件，因此只有远程 URL 服务能通过，本地命令按离线规则拒绝并提示改用目录导入。
 - 持久化与副作用：写工具包存储；指定 applyTo 时为每个接受的引擎发布新 revision，已有 Session 不变。
 - 失败与边界：INVALID_TOOL_PACKAGE_SOURCE、TOOL_PACKAGE_IMPORT_UNSUPPORTED、TOOL_PACKAGE_TOO_LARGE、TOOL_PACKAGE_VERSION_CONFLICT（400）；TOOL_PACKAGE_BUSY。
 

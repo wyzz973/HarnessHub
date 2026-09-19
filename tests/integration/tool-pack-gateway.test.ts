@@ -479,6 +479,56 @@ void test(
     assert.equal(offlineError.code, "TOOL_PACKAGE_IMPORT_UNSUPPORTED");
     assert.match(offlineError.message, /npx downloads packages .* offline/);
 
+    // A pasted mcp document: a remote server imports and applies like a file import;
+    // a local command has no files next to it and gets the same offline guidance.
+    const pasted = await hub.server.inject({
+      method: "POST",
+      url: "/v1/tool-packs/import",
+      payload: {
+        mcp: {
+          mcpServers: {
+            "Team Wiki": { url: "https://wiki.example.test/mcp" },
+          },
+        },
+        applyTo: ["acp-a"],
+        replace: true,
+      },
+    });
+    assert.equal(pasted.statusCode, 200, pasted.body);
+    const pastedBody = pasted.json<{
+      package: { id: string; version: string };
+      counts: { skills: number; mcp: number; cli: number };
+      apply: ApplyBody;
+    }>();
+    assert.equal(pastedBody.package.id, "mcp-team-wiki");
+    assert.deepEqual(pastedBody.counts, { skills: 0, mcp: 1, cli: 0 });
+    assert.equal(pastedBody.apply.results[0]!.status, "applied");
+    const named = await hub.server.inject({
+      method: "POST",
+      url: "/v1/tool-packs/import",
+      payload: {
+        mcp: { mcpServers: { wiki: { url: "https://wiki.example.test/mcp" } } },
+        id: "team-wiki",
+      },
+    });
+    assert.equal(named.statusCode, 200, named.body);
+    assert.equal(
+      named.json<{ package: { id: string } }>().package.id,
+      "team-wiki",
+    );
+    const pastedLocal = await hub.server.inject({
+      method: "POST",
+      url: "/v1/tool-packs/import",
+      payload: {
+        mcp: { mcpServers: { fs: { command: "npx", args: ["-y", "fs"] } } },
+      },
+    });
+    assert.equal(pastedLocal.statusCode, 400, pastedLocal.body);
+    assert.equal(
+      pastedLocal.json<{ error: { code: string } }>().error.code,
+      "TOOL_PACKAGE_IMPORT_UNSUPPORTED",
+    );
+
     for (const [method, url, payload, status, code] of [
       [
         "POST",
@@ -512,6 +562,33 @@ void test(
         "POST",
         "/v1/tool-packs/import",
         { source: "relative/tools" },
+        400,
+        "INVALID_REQUEST",
+      ],
+      [
+        "POST",
+        "/v1/tool-packs/import",
+        {
+          source,
+          mcp: { mcpServers: { a: { url: "https://a.example.test" } } },
+        },
+        400,
+        "INVALID_REQUEST",
+      ],
+      [
+        "POST",
+        "/v1/tool-packs/import",
+        { mcp: { mcpServers: {} } },
+        400,
+        "INVALID_REQUEST",
+      ],
+      [
+        "POST",
+        "/v1/tool-packs/import",
+        {
+          mcp: { mcpServers: { a: { url: "https://a.example.test" } } },
+          kind: "cli",
+        },
         400,
         "INVALID_REQUEST",
       ],

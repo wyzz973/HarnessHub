@@ -1,3 +1,5 @@
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import type { SecretReference } from "../domain/engine-configuration.js";
 import type { EngineRegistration } from "../domain/engines.js";
@@ -17,6 +19,7 @@ import {
 import {
   importKinds,
   importLocal,
+  slug,
   type ToolPackImportKind,
 } from "./importer.js";
 import {
@@ -143,6 +146,25 @@ function text(value: unknown, field: string): string {
   if (typeof value !== "string" || !value.trim())
     throw invalid(`${field} must be a non-empty string`);
   return value;
+}
+/** Largest inline `mcp` document accepted by import, as serialized JSON. */
+const INLINE_MCP_BYTES = 256 * 1024;
+/**
+ * An `mcp` request field: the usual `{"mcpServers":{...}}` document pasted by a user.
+ * Returns its JSON text and a default package id derived from the first server name.
+ * The importer still validates every server, so local commands fail there with its
+ * offline guidance (an inline document has no files next to it).
+ */
+function inlineMcp(value: unknown): { text: string; id: string | undefined } {
+  const document = object(value, "mcp");
+  const servers = object(document.mcpServers, "mcp.mcpServers");
+  const names = Object.keys(servers);
+  if (!names.length) throw invalid("mcp.mcpServers must declare a server");
+  const serialized = JSON.stringify(document, null, 2);
+  if (Buffer.byteLength(serialized) > INLINE_MCP_BYTES)
+    throw invalid("mcp must be at most 256 KiB of JSON");
+  const id = slug(`mcp-${names[0]}`);
+  return { text: `${serialized}\n`, id: id || undefined };
 }
 function only(body: Record<string, unknown>, allowed: string[]): void {
   const unknown = Object.keys(body).filter((key) => !allowed.includes(key));
@@ -483,6 +505,7 @@ export function createToolPackageManagement(
       const body = object(input);
       only(body, [
         "source",
+        "mcp",
         "kind",
         "id",
         "version",
@@ -491,8 +514,16 @@ export function createToolPackageManagement(
         "replace",
         "secretBindings",
       ]);
-      const source = text(body.source, "source");
-      if (!path.isAbsolute(source))
+      if ((body.source === undefined) === (body.mcp === undefined))
+        throw invalid("Provide exactly one of source or mcp");
+      const inline = body.mcp === undefined ? undefined : inlineMcp(body.mcp);
+      if (inline && body.kind !== undefined && body.kind !== "mcp")
+        throw invalid(
+          "kind must be mcp (or omitted) with an inline mcp document",
+        );
+      const source =
+        body.source === undefined ? undefined : text(body.source, "source");
+      if (source !== undefined && !path.isAbsolute(source))
         throw invalid("source must be an absolute local directory or file");
       if (
         body.kind !== undefined &&
@@ -501,7 +532,7 @@ export function createToolPackageManagement(
         throw invalid("kind must be auto, skills, mcp or cli");
       const optional = (field: string) =>
         body[field] === undefined ? undefined : text(body[field], field);
-      const packageId = optional("id");
+      const packageId = optional("id") ?? inline?.id;
       const packageVersion = optional("version");
       const displayName = optional("displayName");
       const applyTo =
@@ -513,14 +544,35 @@ export function createToolPackageManagement(
       if (!applyTo && (body.replace !== undefined || secretBindings))
         throw invalid("replace and secretBindings require applyTo");
       return exclusive(async () => {
-        const imported = await importLocal(source, options.root, {
-          ...(body.kind !== undefined
-            ? { kind: body.kind as ToolPackImportKind }
-            : {}),
-          ...(packageId ? { id: packageId } : {}),
-          ...(packageVersion ? { version: packageVersion } : {}),
-          ...(displayName ? { displayName } : {}),
-        });
+        // An inline document is staged as an ordinary mcp.json so both forms share one
+        // importer; it has no files next to it, so only remote servers can pass.
+        // The importer refuses linked ancestors; macOS and some Windows profiles reach
+        // the temporary directory through a link, so stage under its real path.
+        const staged = inline
+          ? await mkdtemp(
+              path.join(await realpath(tmpdir()), "harnesshub-mcp-import-"),
+            )
+          : undefined;
+        let imported: Awaited<ReturnType<typeof importLocal>>;
+        try {
+          let file = source;
+          if (staged && inline) {
+            file = path.join(staged, "mcp.json");
+            await writeFile(file, inline.text, { mode: 0o600 });
+          }
+          imported = await importLocal(file!, options.root, {
+            ...(inline
+              ? { kind: "mcp" as const }
+              : body.kind !== undefined
+                ? { kind: body.kind as ToolPackImportKind }
+                : {}),
+            ...(packageId ? { id: packageId } : {}),
+            ...(packageVersion ? { version: packageVersion } : {}),
+            ...(displayName ? { displayName } : {}),
+          });
+        } finally {
+          if (staged) await rm(staged, { recursive: true, force: true });
+        }
         const selected = {
           id: imported.installed.manifest.id,
           version: imported.installed.manifest.version,

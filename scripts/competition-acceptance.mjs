@@ -61,15 +61,27 @@ function isObject(value) {
 /** Prompts and expected evidence for one acceptance run. */
 export function acceptancePrompts(nonce, platform = process.platform) {
   const windows = platform === "win32";
-  const shellExpected = `HH-42-${nonce}`;
+  // Windows: no parenthesized or $() expression. Gemini CLI parses PowerShell commands and
+  // blocks those as command substitution even in YOLO mode, and `$` would be expanded by
+  // engines whose shell is Git Bash. The host name proves the command really ran: the model
+  // cannot know it, and the nonce ties the file to this run.
+  const shellExpected = windows
+    ? [`HH-${nonce}`, os.hostname()]
+    : [`HH-42-${nonce}`];
   const shellCommand = windows
-    ? `powershell -NoProfile -Command "Set-Content -Path shell.txt -Value ('HH-' + (6*7) + '-${nonce}'); Get-Content shell.txt"`
+    ? `powershell -NoProfile -Command "Set-Content -Path shell.txt -Value HH-${nonce}; hostname | Add-Content -Path shell.txt; Get-Content shell.txt"`
     : `sh -c 'echo HH-$((6*7))-${nonce} > shell.txt && cat shell.txt'`;
   const longCommand = windows
     ? `powershell -NoProfile -Command "Start-Sleep -Seconds 600"`
     : "sleep 600";
   return {
     ok: "只回复 OK 两个大写字母，不要输出任何其他内容。Reply with exactly: OK",
+    // Real models sometimes answer a bare "reply OK" with a synonym such as "好的"; a
+    // random code can only come back if the engine returned the model's actual reply.
+    echo: {
+      expected: `HH-ECHO-${nonce}`,
+      text: `请原样回复下面这一行编号，不要输出任何其他内容：\nHH-ECHO-${nonce}`,
+    },
     file: {
       name: "hello.txt",
       expected: `HarnessHub-${nonce}`,
@@ -578,10 +590,20 @@ export async function runAcceptance(input) {
     await runStep(
       "prompt-ok",
       async (detail) => {
-        const { problems, assistant } = await prompt(detail, prompts.ok);
-        if (assistant && !/\bOK\b/.test(replyText(assistant)))
+        // The scripted mock always answers OK; a real model has to echo a random code.
+        const expected = scenario === "mock" ? "OK" : prompts.echo.expected;
+        const { problems, assistant } = await prompt(
+          detail,
+          scenario === "mock" ? prompts.ok : prompts.echo.text,
+        );
+        if (
+          assistant &&
+          !(scenario === "mock"
+            ? /\bOK\b/.test(replyText(assistant))
+            : replyText(assistant).includes(expected))
+        )
           problems.push(
-            `reply does not contain OK: ${JSON.stringify(detail.reply)}`,
+            `reply does not contain ${expected}: ${JSON.stringify(detail.reply)}`,
           );
         fail(problems);
       },
@@ -622,17 +644,26 @@ export async function runAcceptance(input) {
           detail.command = prompts.shell.command;
           detail.fileContent =
             content === undefined ? null : content.slice(0, 200);
+          // Host names are compared without case; everything else must match exactly.
+          const lines = (text) =>
+            text
+              .split(/\r?\n/)
+              .map((line) => line.trim().toLowerCase())
+              .filter(Boolean);
+          const expected = prompts.shell.expected.map((line) =>
+            line.toLowerCase(),
+          );
           if (content === undefined)
             problems.push(`${prompts.shell.name} was not created`);
-          else if (content.trim() !== prompts.shell.expected)
+          else if (lines(content).join("\n") !== expected.join("\n"))
             problems.push(
               `${prompts.shell.name} content mismatch: ${JSON.stringify(content.slice(0, 120))}`,
             );
-          if (
-            assistant &&
-            !replyText(assistant).includes(prompts.shell.expected)
-          )
-            problems.push("reply does not contain the command output");
+          if (assistant) {
+            const reply = replyText(assistant).toLowerCase();
+            if (!expected.every((line) => reply.includes(line)))
+              problems.push("reply does not contain the command output");
+          }
           fail(problems);
         },
         ["session-create", "event-stream"],

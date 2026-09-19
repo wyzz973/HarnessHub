@@ -226,9 +226,15 @@ export function registerToolPackageRoutes(
         body: {
           type: "object",
           additionalProperties: false,
-          required: ["source"],
+          // Exactly one of them; the service reports which rule was broken.
+          anyOf: [{ required: ["source"] }, { required: ["mcp"] }],
           properties: {
             source: localPath,
+            mcp: {
+              type: "object",
+              required: ["mcpServers"],
+              properties: { mcpServers: { type: "object" } },
+            },
             kind: { type: "string", enum: ["auto", "skills", "mcp", "cli"] },
             id: packageId,
             version: packageVersion,
