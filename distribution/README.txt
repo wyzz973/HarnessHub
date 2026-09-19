@@ -31,6 +31,9 @@ Configure DeepSeek V4 Flash with the bundled settings example:
 Competition bundles also contain gateway.cmd: set AGENT_ENGINE (for example opencode) and the
 unified model, then run .\gateway.cmd. It serves the competition API on http://localhost:6217 and
 starts the console on http://127.0.0.1:3330 (see README-COMPETITION.txt).
+Diagnostic logs (JSON Lines, secrets redacted): <data dir>\logs\gateway.log and one
+backends\<sessionId>\diagnostics\engine.log per Session; HARNESSHUB_LOG_LEVEL=debug adds payload
+excerpts. In competition bundles .\Collect-Logs.cmd packs them into logs-<time>.zip.
 
 Install a bundled tool package in PowerShell from the extracted directory:
   .\hub.cmd tools install --source "$PWD\tools\workspace-tools"
