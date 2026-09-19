@@ -10,6 +10,10 @@ Pi、OpenClaw 和 Kimi 使用固定程序自己的工具注册/配置入口接�
 
 三个适配器映射 stdio、Streamable HTTP 和 SSE。配置定义与已有 native 参数冲突时拒绝，不读取或修改个人 MCP 配置。Kimi 使用独立 MCP 文件；Pi/OpenClaw 只修改当前 Session 的 `stateDir/configuration`。Pi/OpenClaw 的 stdio `secretEnv` 已通过固定程序验证，且整份 backend 私有状态没有写入合成秘密的字节。
 
+表中的 managed provider 在 `openai-completions` 上游下由 Worker 的统一模型网关提供：Pi 的 models.json、OpenClaw 的 openclaw.json 与 Kimi 的配置文件指向回环网关和本 Session 令牌，公司密钥不进入引擎环境，详见 [引擎经统一模型网关接入](model-gateway-engines.md)。
+
+stdio 服务 `args` 与 `env` 值中的 `${HARNESSHUB_SESSION_WORKSPACE}` 在写入上述原生文件（以及 Copilot 的 `copilot-mcp.json`）之前替换为 Session 的绝对工作目录；`command`、秘密值和 HTTP/SSE 的 URL、请求头保持原样，已保存的 revision 仍保留占位符。规则见 [会话工作目录](model-gateway-engines.md#mcp-与会话工作目录)。
+
 Kimi 的限制来自固定源码：CLI 直接解析 JSON，交给 FastMCP 3.2.4；其 stdio `env` 与 HTTP `headers` 原样传递，不展开环境引用。Python MCP stdio 客户端也只默认继承基础系统环境。写入 `${KEY}` 不能把环境密钥交给工具，因此配置期和 Worker 准备期均拒绝秘密字段；普通环境参数仍可用。[Kimi CLI 1.50.0 配置入口](https://github.com/MoonshotAI/kimi-cli/blob/1.50.0/src/kimi_cli/cli/__init__.py)、[FastMCP 3.2.4 配置格式](https://github.com/PrefectHQ/fastmcp/blob/v3.2.4/src/fastmcp/mcp_config.py)。
 
 ## Pi 扩展与资源所有权
@@ -41,6 +45,8 @@ $env:HARNESSHUB_TEST_NATIVE_MCP = '1'
 
 测试通过正式 Gateway 创建 Session、提交 Run，由编译后的 Worker 启动原生程序。本地 Chat Completions 服务返回工具调用；独立 stdio MCP 服务记录 `tools/call` 的真实参数，随后确认工具结果回到模型。固定 Skill 内容和附件 `base_directory` 必须出现在原生程序发出的模型请求中；这证明上下文注入，不将其称作附件文件已被工具读取。出现原生权限请求时，仅对 fixture 指定的工具调用通过正式权限 API 执行一次允许。关闭 Session 后核实工具进程及故意保留的子进程不存在，并扫描 backend 文件不含合成 MCP 密钥。另有 Pi 初始化失败及工具执行中取消分支。所有模型请求只到随机 loopback 端口，HTTP 代理拒绝外部 CONNECT，使用合成密钥，未调用外部模型。
 
-2026-09-07 本机 Windows 11 ARM64、Node 24.20.0 已完成十个固定引擎的 Chat + Skill 注入 + stdio MCP 成功链路：Codex、Gemini、Qwen、Pi、MiMo、DSH、OpenClaw、Kimi、OpenCode、Hermes。Codex/Gemini 经过本地 Chat Completions 转换；Hermes 使用固定 x64 Python 仿真。加上 Pi 初始化失败、执行中取消，共十二个分支通过。MiMo 在原生日志等级修复后通过全量秘密扫描。
+2026-09-07 本机 Windows 11 ARM64、Node 24.20.0 已完成十个固定引擎的 Chat + Skill 注入 + stdio MCP 成功链路：Codex、Gemini、Qwen、Pi、MiMo、DSH、OpenClaw、Kimi、OpenCode、Hermes。当时 Codex/Gemini 经过 ADR 0011 的本地 Chat Completions 转换，其余引擎直连本地合成服务；Hermes 使用固定 x64 Python 仿真。加上 Pi 初始化失败、执行中取消，共十二个分支通过。MiMo 在原生日志等级修复后通过全量秘密扫描。
+
+ADR 0013 之后，这十个引擎的 `openai-completions` provider 都经 Worker 的统一模型网关访问本地合成服务：合成服务仍收到公司密钥与真实模型名，引擎只看到网关地址、本地令牌和 alias。上述 2026-09-07 结果早于这次变更，不代表网关接入后的通过；需要在准备包上按本节命令重新执行。
 
 HTTP/SSE 的配置映射已实现，当前固定程序验收用例不覆盖远程服务器的 OAuth、TLS 证书或资源/提示词调用。没有提供这些能力的等价承诺。

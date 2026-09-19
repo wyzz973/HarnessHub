@@ -13,18 +13,25 @@ import type { EngineProfile } from "../domain/types.js";
 const validate = new Ajv({ allErrors: true }).compile<EngineConfiguration>(
   engineConfigurationSchema,
 );
+/**
+ * Upstream protocols each adapter accepts. `openai-completions` is always
+ * served through the Worker-owned model gateway (ADR 0013): the engine speaks
+ * its native protocol to the gateway, which calls the Chat upstream. Other
+ * protocols keep the direct native provider mapping. Adapters with no entry
+ * cannot be routed and reject every provider.
+ */
 export const providerProtocols: Record<
   ConfigurationAdapter,
   readonly string[]
 > = {
   generic: [],
-  codex: ["openai-responses", "openai-completions"],
-  claude: ["anthropic"],
+  codex: ["openai-completions", "openai-responses"],
+  claude: ["openai-completions", "anthropic"],
   opencode: ["openai-completions", "openai-responses", "anthropic"],
   mimo: ["openai-completions", "openai-responses", "anthropic"],
   hermes: ["openai-completions"],
   pi: ["openai-completions", "openai-responses", "anthropic"],
-  gemini: ["google", "openai-completions"],
+  gemini: ["openai-completions", "google"],
   qwen: ["openai-completions"],
   cursor: [],
   copilot: ["openai-completions", "anthropic"],
@@ -35,6 +42,27 @@ export const providerProtocols: Record<
   openclaw: ["openai-completions", "openai-responses", "anthropic"],
   antigravity: [],
 };
+/** Provider fields that only the model gateway (`openai-completions`) applies. */
+const gatewayFields = [
+  "headers",
+  "secretHeaders",
+  "contextWindow",
+  "maxOutputTokens",
+  "modelAlias",
+  "compatibility",
+] as const;
+/** Parameters the gateway needs to address the upstream model and conversation. */
+const essentialParameters = new Set([
+  "model",
+  "messages",
+  "stream",
+  "tools",
+  "tool_choice",
+]);
+/** Headers owned by HTTP or by the gateway's own upstream authentication and body. */
+const reservedHeaders =
+  /^(?:host|content-length|content-type|content-encoding|transfer-encoding|connection|keep-alive|upgrade|te|trailer|proxy-.*|expect)$/i;
+const headerName = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/;
 const forbidden =
   /^(?:PATH|HOME|USERPROFILE|XDG_.*|NODE_OPTIONS|LD_.*|DYLD_.*|PYTHONPATH|PYTHONHOME|HARNESSHUB_.*)$/;
 const secretName = /KEY|TOKEN|SECRET|PASSWORD|AUTHORIZATION|COOKIE/i;
@@ -92,6 +120,57 @@ function environment(
       fail("Process-control environment overrides are not allowed");
   references(refs);
 }
+/** Validate model-gateway provider fields (ADR 0013); none reads a credential. */
+function gatewayProvider(
+  provider: NonNullable<EngineConfiguration["provider"]>,
+): void {
+  if (provider.protocol !== "openai-completions") {
+    if (gatewayFields.some((field) => provider[field] !== undefined))
+      fail(
+        "headers, secretHeaders, contextWindow, maxOutputTokens, modelAlias and compatibility require the openai-completions model gateway",
+      );
+    return;
+  }
+  if (!provider.baseUrl)
+    fail("The model gateway requires an explicit upstream base URL");
+  for (const [name, value] of Object.entries(provider.headers ?? {})) {
+    if (!headerName.test(name) || /[\r\n\0]/.test(value))
+      fail("Provider headers require valid names and single-line values");
+    if (secretName.test(name) || /\b(?:sk-|Bearer\s)/i.test(value))
+      fail("Sensitive provider headers require secretHeaders references");
+  }
+  const headers = [
+    ...Object.keys(provider.headers ?? {}),
+    ...Object.keys(provider.secretHeaders ?? {}),
+  ].map((name) => name.toLowerCase());
+  for (const name of Object.keys(provider.secretHeaders ?? {}))
+    if (!headerName.test(name))
+      fail("Provider secret headers require valid header names");
+  if (headers.some((name) => reservedHeaders.test(name)))
+    fail("Provider headers cannot override HTTP transport headers");
+  if (new Set(headers).size !== headers.length)
+    fail("A provider header name can be configured only once");
+  if (
+    provider.apiKey &&
+    headers.some((name) => name === "authorization" || name === "x-api-key")
+  )
+    fail("Use either apiKey or an explicit authentication header, not both");
+  references(provider.secretHeaders);
+  if (
+    provider.contextWindow !== undefined &&
+    provider.maxOutputTokens !== undefined &&
+    provider.maxOutputTokens >= provider.contextWindow
+  )
+    fail("maxOutputTokens must be smaller than contextWindow");
+  if (
+    provider.compatibility?.dropParameters?.some((name) =>
+      essentialParameters.has(name),
+    )
+  )
+    fail(
+      "compatibility.dropParameters cannot remove model, messages, stream, tools or tool_choice",
+    );
+}
 /** Validate explicit configuration without reading credentials or inspecting the machine. */
 export function parseEngineConfiguration(
   raw: unknown,
@@ -108,13 +187,8 @@ export function parseEngineConfiguration(
       );
     if (!model) fail("An explicit provider requires a model");
     if (config.provider.baseUrl) url(config.provider.baseUrl);
-    if (
-      config.adapter === "gemini" &&
-      config.provider.protocol === "openai-completions" &&
-      !config.provider.baseUrl
-    )
-      fail("A Chat gateway requires an explicit base URL");
     if (config.provider.apiKey) reference(config.provider.apiKey);
+    gatewayProvider(config.provider);
     if (
       [
         "codex",
@@ -137,13 +211,17 @@ export function parseEngineConfiguration(
           "Kimi 1.50.0 ACP requires native OAuth; use a CLI --quiet --prompt {prompt} template for a managed provider",
         );
       const contextSize = config.env?.KIMI_MODEL_MAX_CONTEXT_SIZE;
+      const explicitWindow =
+        config.provider.protocol === "openai-completions" &&
+        config.provider.contextWindow !== undefined;
       if (
-        !contextSize ||
-        !/^[1-9][0-9]*$/.test(contextSize) ||
-        !Number.isSafeInteger(Number(contextSize))
+        contextSize === undefined
+          ? !explicitWindow
+          : !/^[1-9][0-9]*$/.test(contextSize) ||
+            !Number.isSafeInteger(Number(contextSize))
       )
         fail(
-          "Kimi custom providers require env.KIMI_MODEL_MAX_CONTEXT_SIZE to be the model's positive integer context window",
+          "Kimi custom providers require provider.contextWindow or env.KIMI_MODEL_MAX_CONTEXT_SIZE as the model's positive integer context window",
         );
     }
   }

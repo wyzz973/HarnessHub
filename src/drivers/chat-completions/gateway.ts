@@ -706,6 +706,28 @@ export async function createModelGateway(
       return;
     }
     if (!authenticated(request, url)) {
+      // A model request without the Session token means the engine was wired
+      // wrongly; record it so the Run fails with this cause instead of looking
+      // like an engine that never called the model.
+      if (request.method === "POST" && scope) {
+        const record: ModelCallRecord = {
+          id: `mc_${randomUUID().replaceAll("-", "")}`,
+          inbound: protocol,
+          stream: false,
+          upstreamModel: options.model,
+          status: 401,
+          ok: false,
+          durationMs: 0,
+          toolCalls: 0,
+          error: {
+            code: "gateway_unauthorized",
+            message:
+              "Engine request to the HarnessHub model gateway lacked the Session token; the engine's gateway credential wiring is wrong",
+          },
+        };
+        errors.push(record);
+        emit(record);
+      }
       reply(
         response,
         protocol,

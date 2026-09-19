@@ -947,3 +947,32 @@ void test("vision passthrough keeps Chat image parts for a multimodal model", as
     ["text", "image_url"],
   );
 });
+
+void test("a model request without the Session token is recorded as a Run error instead of disappearing", async (t) => {
+  const up = await upstream(t, (_, response) =>
+    stream(response, [delta({ content: "ok" }, "stop")]),
+  );
+  const { gw, calls } = await gateway(t, up.baseUrl);
+  const response = await fetch(`${gw.baseUrl}/v1/chat/completions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: "Bearer {env:HARNESSHUB_PROVIDER_KEY}",
+    },
+    body: JSON.stringify({
+      model: "m",
+      messages: [{ role: "user", content: "hi" }],
+    }),
+  });
+  assert.equal(response.status, 401);
+  await response.text();
+  assert.equal(up.requests.length, 0);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]!.status, 401);
+  assert.equal(calls[0]!.ok, false);
+  assert.equal(calls[0]!.error?.code, "gateway_unauthorized");
+  assert.deepEqual(
+    gw.runErrors().map((call) => call.status),
+    [401],
+  );
+});

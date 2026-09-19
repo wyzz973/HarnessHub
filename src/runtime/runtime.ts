@@ -1,7 +1,7 @@
 import { validateFileOutputs } from "../domain/files.js";
 import type { EngineCatalog } from "../domain/engines.js";
 import path from "node:path";
-import { HubError } from "../domain/errors.js";
+import { HubError, modelRunFailureCodes } from "../domain/errors.js";
 import type {
   ExecutionHandle,
   FileArtifactCollector,
@@ -350,7 +350,11 @@ export class Runtime {
       );
       if (active.stop) await active.handle.cancel();
       const result = await active.handle.result;
-      backendFailed = result.status === "failed";
+      // A model failure seen by the Worker gateway leaves the engine backend
+      // healthy, so the Session keeps its Worker for the next Run (ADR 0013).
+      backendFailed =
+        result.status === "failed" &&
+        !modelRunFailureCodes.has(result.error?.code ?? "");
       // CLI turns are stateless: reclaim the full worker group before another turn.
       // Any failed backend also loses reuse eligibility, even when it returns a result.
       let cleanup: CleanupStatus = "confirmed";
