@@ -1,4 +1,4 @@
-import { configurationSchema } from "./engine-configuration";
+import { configurationSchema, providerSchema } from "./engine-configuration";
 import { z } from "zod";
 
 const object = z.record(z.string(), z.unknown());
@@ -316,6 +316,115 @@ export const overviewSchema = z.object({
   ),
   recentRuns: z.array(observationSchema),
 });
+/** `GET /v1/runtime/info` (ADR 0013): the Gateway's startup mode, never user preference. */
+export const runtimeInfoSchema = z.object({
+  competition: z.boolean(),
+  competitionEngine: z.string().optional(),
+  fullAccess: z.boolean(),
+  consoleUrl: z.string().optional(),
+});
+export const harnessModelEngineStatusSchema = z.object({
+  engineId: z.string(),
+  status: z.enum(["applied", "unsupported", "disabled"]),
+  reason: z.string().optional(),
+});
+/** `HarnessModelView`: secret references only, never secret values. */
+export const harnessModelViewSchema = z.object({
+  configured: z.boolean(),
+  source: z.enum(["environment", "file", "settings"]).optional(),
+  model: z.string().optional(),
+  alias: z.string(),
+  provider: providerSchema.optional(),
+  engines: z.array(harnessModelEngineStatusSchema),
+});
+/** `POST /v1/harness/model/test` calls the model once; `error` is redacted by the Gateway. */
+export const harnessModelTestSchema = z.object({
+  ok: z.boolean(),
+  status: z.number(),
+  durationMs: z.number(),
+  error: z.union([errorSchema, z.string()]).optional(),
+});
+export const toolPackRecordSchema = z.object({
+  id: z.string(),
+  version: z.string(),
+  digest: z.string(),
+  installedAt: z.number().optional(),
+  status: z.string().optional(),
+  displayName: z.string().optional(),
+});
+const packageRefSchema = z.object({ id: z.string(), version: z.string() });
+/** Per-engine outcome of apply/import/unbind; statuses beyond the ADR are shown verbatim. */
+export const toolPackEngineResultSchema = z.object({
+  engineId: z.string(),
+  status: z.string(),
+  revision: z.string().optional(),
+  reason: z.string().optional(),
+  capabilities: z
+    .object({
+      skills: z.array(z.string()).optional(),
+      mcp: z.array(z.string()).optional(),
+      cli: z.array(z.string()).optional(),
+    })
+    .optional(),
+  warnings: z.array(z.string()).optional(),
+});
+/** Accepts both the multi-engine ADR 0013 response and the legacy single-engine fields. */
+export const toolPackApplySchema = z.object({
+  ok: z.boolean().optional(),
+  package: packageRefSchema.optional(),
+  results: z.array(toolPackEngineResultSchema).optional(),
+  engineId: z.string().optional(),
+  revision: z.string().optional(),
+  warnings: z.array(z.string()).optional(),
+});
+export const toolPackImportSchema = z.object({
+  ok: z.boolean().optional(),
+  package: packageRefSchema,
+  counts: z
+    .object({
+      skills: z.number().optional(),
+      mcp: z.number().optional(),
+      cli: z.number().optional(),
+    })
+    .optional(),
+  apply: toolPackApplySchema.optional(),
+  warnings: z.array(z.string()).optional(),
+});
+/** `model.call` event data: one upstream call through the Worker model gateway. */
+export const modelCallSchema = z.object({
+  id: z.string(),
+  inbound: z.enum([
+    "openai-completions",
+    "openai-responses",
+    "anthropic",
+    "google",
+  ]),
+  stream: z.boolean(),
+  requestedModel: z.string().optional(),
+  upstreamModel: z.string(),
+  status: z.number(),
+  ok: z.boolean(),
+  durationMs: z.number(),
+  finishReason: z.string().optional(),
+  usage: z
+    .object({
+      input: z.number().optional(),
+      output: z.number().optional(),
+      total: z.number().optional(),
+      reasoning: z.number().optional(),
+    })
+    .optional(),
+  toolCalls: z.number(),
+  error: errorSchema.optional(),
+});
+export type RuntimeInfo = z.infer<typeof runtimeInfoSchema>;
+export type HarnessModelView = z.infer<typeof harnessModelViewSchema>;
+export type HarnessModelTest = z.infer<typeof harnessModelTestSchema>;
+export type ToolPackRecord = z.infer<typeof toolPackRecordSchema>;
+export type ToolPackEngineResult = z.infer<typeof toolPackEngineResultSchema>;
+export type ToolPackApply = z.infer<typeof toolPackApplySchema>;
+export type ToolPackImport = z.infer<typeof toolPackImportSchema>;
+export type ModelCall = z.infer<typeof modelCallSchema>;
 export type Engine = z.infer<typeof engineSchema>;
 export type Candidate = z.infer<typeof candidateSchema>;
 export type Registration = z.infer<typeof registrationSchema>;

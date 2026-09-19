@@ -19,8 +19,11 @@ import {
 import {
   type Candidate,
   type Engine,
+  type HarnessModelView,
   type Registration,
 } from "@/lib/contracts";
+import { pathExamples, useWindowsPaths } from "@/lib/platform";
+import { cn } from "@/lib/utils";
 const field =
   "mt-1.5 w-full rounded-md border bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#8fa77b]";
 const label = "block text-xs font-medium";
@@ -31,17 +34,25 @@ const protocols: Record<string, string> = {
   google: "Google Gemini",
 };
 type Tab = "连接" | "Skills" | "MCP" | "高级";
-/** Each editor works on a complete revision; unknown/unsupported settings fail through the same Gateway schema. */
+/**
+ * Each editor works on a complete revision; unknown/unsupported settings fail through the same
+ * Gateway schema. With a configured unified model the Gateway overwrites model and provider on
+ * every registration (ADR 0013), so those fields are shown read-only and saved unchanged.
+ */
 export function EngineConfigurationDialog({
   engine,
+  unifiedModel,
   onClose,
   onSaved,
 }: {
   engine: Engine;
+  unifiedModel?: HarnessModelView;
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
   const initial = engine.configuration;
+  const managed = unifiedModel?.configured ? unifiedModel : undefined;
+  const examples = pathExamples(useWindowsPaths());
   const [tab, setTab] = useState<Tab>("连接");
   const [model, setModel] = useState(engine.model ?? "");
   const [adapter, setAdapter] = useState<Configuration["adapter"]>(
@@ -138,8 +149,40 @@ export function EngineConfigurationDialog({
       ...(engine.cli && !launch ? { cli: engine.cli } : {}),
       ...(launch?.cli ? { cli: launch.cli } : {}),
       ...(engine.acp ? { acp: engine.acp } : {}),
-      ...(model.trim() ? { model: model.trim() } : {}),
+      ...(managed
+        ? engine.model
+          ? { model: engine.model }
+          : {}
+        : model.trim()
+          ? { model: model.trim() }
+          : {}),
       configuration: config,
+    };
+  }
+  /** Provider fields this form does not edit (headers, limits, compatibility) survive a same-protocol save. */
+  function providerConfiguration() {
+    if (managed) return initial?.provider ? { provider: initial.provider } : {};
+    if (!provider) return {};
+    const previous = initial?.provider;
+    let preserved: Record<string, unknown> = {};
+    if (previous?.protocol === provider) {
+      const {
+        protocol: _protocol,
+        baseUrl: _baseUrl,
+        apiKey: _apiKey,
+        ...rest
+      } = previous;
+      preserved = rest;
+    }
+    return {
+      provider: {
+        ...preserved,
+        protocol: provider,
+        ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}),
+        ...(secretKind !== "new" && secretValue.trim()
+          ? { apiKey: { kind: secretKind, value: secretValue.trim() } }
+          : {}),
+      },
     };
   }
   async function save() {
@@ -148,17 +191,7 @@ export function EngineConfigurationDialog({
     try {
       const raw: unknown = {
         adapter,
-        ...(provider
-          ? {
-              provider: {
-                protocol: provider,
-                ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}),
-                ...(secretKind !== "new" && secretValue.trim()
-                  ? { apiKey: { kind: secretKind, value: secretValue.trim() } }
-                  : {}),
-              },
-            }
-          : {}),
+        ...providerConfiguration(),
         skills: skills.map(({ sha256: _hash, ...skill }) => skill),
         mcpServers: JSON.parse(mcpText) as unknown,
         env: JSON.parse(envText) as unknown,
@@ -170,7 +203,7 @@ export function EngineConfigurationDialog({
       const inspected = await api.inspectConfiguration(body);
       if (inspected.configuration)
         config = configurationSchema.parse(inspected.configuration);
-      if (provider && secretKind === "new" && newKey) {
+      if (!managed && provider && secretKind === "new" && newKey) {
         const { reference } = await api.createSecret(newKey);
         setSecretKind(reference.kind);
         setSecretValue(reference.value);
@@ -244,9 +277,16 @@ export function EngineConfigurationDialog({
               <label className={label}>
                 模型
                 <input
-                  className={field}
+                  className={cn(
+                    field,
+                    managed && "bg-muted text-muted-foreground",
+                  )}
                   placeholder="留空沿用原生默认模型"
-                  value={model}
+                  value={
+                    managed ? (engine.model ?? managed.model ?? "") : model
+                  }
+                  readOnly={!!managed}
+                  aria-describedby={managed ? "managed-model-note" : undefined}
                   onChange={(e) => {
                     setModel(e.target.value);
                     change();
@@ -254,31 +294,53 @@ export function EngineConfigurationDialog({
                 />
               </label>
             </div>
+            {managed ? (
+              <p
+                id="managed-model-note"
+                className="rounded-lg border border-[#d5e5d2] bg-[#f1f7ee] p-3 text-xs leading-6 text-[#3f6b4a]"
+              >
+                由统一模型管理：模型与 Provider 固定为{" "}
+                {managed.model ?? "未报告"}
+                （引擎看到的名称 {managed.alias}
+                ），每次保存都会被统一模型覆盖。请在“统一模型”页面修改。
+              </p>
+            ) : null}
             <label className={label}>
               Provider
               <select
-                className={field}
-                value={provider}
+                className={cn(
+                  field,
+                  managed && "bg-muted text-muted-foreground",
+                )}
+                value={managed ? (initial?.provider?.protocol ?? "") : provider}
+                disabled={!!managed}
                 onChange={(e) => {
                   setProvider(e.target.value as typeof provider);
                   change();
                 }}
               >
-                <option value="">沿用原生账号与配置</option>
-                {selected?.providerProtocols.map((p) => (
+                <option value="">
+                  {managed ? "由统一模型管理" : "沿用原生账号与配置"}
+                </option>
+                {(managed
+                  ? [initial?.provider?.protocol].filter(
+                      (p): p is NonNullable<typeof p> => !!p,
+                    )
+                  : (selected?.providerProtocols ?? [])
+                ).map((p) => (
                   <option key={p} value={p}>
                     {protocols[p] ?? p}
                   </option>
                 ))}
               </select>
             </label>
-            {selected && !selected.providerProtocols.length ? (
+            {!managed && selected && !selected.providerProtocols.length ? (
               <p className="text-xs leading-6 text-muted-foreground">
                 此引擎的自定义 Provider
                 尚未适配；可保留原生登录，或在高级配置中设置它支持的环境变量与密钥引用。
               </p>
             ) : null}
-            {provider ? (
+            {provider && !managed ? (
               <>
                 <label className={label}>
                   API URL
@@ -338,7 +400,7 @@ export function EngineConfigurationDialog({
                           : secretKind === "env"
                             ? "MY_ENGINE_API_KEY"
                             : secretKind === "file"
-                              ? "/absolute/path/to/key"
+                              ? examples.keyFile
                               : ""
                       }
                     />
@@ -401,7 +463,7 @@ export function EngineConfigurationDialog({
                   <input
                     className={field}
                     value={skill.path}
-                    placeholder="/absolute/path/to/skill/SKILL.md"
+                    placeholder={examples.skill}
                     onChange={(e) => {
                       setSkills(
                         skills.map((s, i) =>
@@ -477,7 +539,7 @@ export function EngineConfigurationDialog({
                           name: "my-tools",
                           type: "stdio",
                           enabled: false,
-                          command: "/absolute/path/to/mcp-server",
+                          command: examples.mcpCommand,
                           args: [],
                           secretEnv: {},
                         },
