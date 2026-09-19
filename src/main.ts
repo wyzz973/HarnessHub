@@ -47,6 +47,61 @@ import { createGateway } from "./gateway/server.js";
 import { registerCompetitionRoutes } from "./gateway/competition/routes.js";
 import { registerToolPackageRoutes } from "./gateway/tool-package-routes.js";
 import { createToolPackageManagement } from "./tool-packages/management.js";
+import {
+  LOG_LEVEL_ENVIRONMENT,
+  parseLogLevel,
+  type LogLevel,
+} from "./domain/logging.js";
+import { harnessModelEnvironment } from "./domain/harness-model.js";
+import { JsonLogFile } from "./logging/json-log-file.js";
+import { observeStore } from "./logging/observed-store.js";
+import { createRedactor } from "./worker/diagnostics.js";
+
+/** Gateway log records not mirrored by `logEcho`; per-request and per-call lines stay in the file. */
+const QUIET_ECHO = new Set([
+  "http",
+  "model.call",
+  "run.status",
+  "session.backend",
+  "permission.applied",
+]);
+
+/**
+ * Open `<dataDir>/logs/gateway.log`. The unified model key (when it comes from the
+ * environment) is redacted as a known value on top of the credential patterns.
+ */
+function openGatewayLog(
+  dataDir: string,
+  level: LogLevel,
+  echo: boolean,
+): JsonLogFile {
+  const file = path.join(dataDir, "logs", "gateway.log");
+  const secrets = new Set<string>();
+  const modelKey = process.env[harnessModelEnvironment.apiKey];
+  if (modelKey) secrets.add(modelKey);
+  return new JsonLogFile({
+    file,
+    level,
+    redact: createRedactor(secrets),
+    ...(echo
+      ? {
+          // stderr: stdout stays reserved for the machine-readable ready line.
+          echo: (line: string, recordLevel: LogLevel, event: string) => {
+            if (recordLevel === "info" && !QUIET_ECHO.has(event))
+              process.stderr.write(`${line}\n`);
+          },
+        }
+      : {}),
+    onError: (error) =>
+      process.stderr.write(
+        `${JSON.stringify({
+          event: "log.error",
+          file,
+          message: error instanceof Error ? error.message : String(error),
+        })}\n`,
+      ),
+  });
+}
 
 /** Composition root: concrete implementations are assembled only here. */
 export async function startHub(options: {
@@ -70,7 +125,15 @@ export async function startHub(options: {
    * `<dataDir>/harness-model.json`. Sources: HARNESSHUB_MODEL* > this file > config `model`.
    */
   harnessModelFile?: string;
+  /**
+   * Mirror info-level lifecycle records of `<dataDir>/logs/gateway.log` to stderr
+   * (entry points only; access and model-call lines stay in the file; stdout keeps
+   * only the entry point's own ready events).
+   */
+  logEcho?: boolean;
 }) {
+  // HARNESSHUB_LOG_LEVEL is validated before anything starts; Workers inherit the value.
+  const logLevel = parseLogLevel(process.env[LOG_LEVEL_ENVIRONMENT]);
   const resolveConfig = async () => {
     const config = await loadConfig({
       demo: options.demo,
@@ -99,17 +162,58 @@ export async function startHub(options: {
   const requestedDataDir = path.resolve(options.dataDir);
   await mkdir(requestedDataDir, { recursive: true, mode: 0o700 });
   const dataDir = await realpath(requestedDataDir);
-  const harnessModel = await HarnessModelService.load({
-    environment: process.env,
-    file: path.resolve(
-      options.harnessModelFile ?? path.join(dataDir, "harness-model.json"),
-    ),
-    ...(baseConfig.model ? { settings: baseConfig.model } : {}),
-    ports: {
-      normalize: normalizeEngine,
-      inferAdapter: builtinConfigurationAdapter,
-    },
+  const gatewayLog = openGatewayLog(
+    dataDir,
+    logLevel,
+    options.logEcho ?? false,
+  );
+  gatewayLog.info("gateway.start", {
+    pid: process.pid,
+    dataDir,
+    competition: options.competition ?? false,
+    engine: options.competitionEngine ?? options.defaultEngine ?? null,
+    logLevel,
+    node: process.version,
+    platform: `${process.platform}/${process.arch}`,
+    engineLogs: path.join(dataDir, "backends", "<sessionId>", "diagnostics"),
   });
+  let harnessModel: HarnessModelService;
+  try {
+    harnessModel = await HarnessModelService.load({
+      environment: process.env,
+      file: path.resolve(
+        options.harnessModelFile ?? path.join(dataDir, "harness-model.json"),
+      ),
+      ...(baseConfig.model ? { settings: baseConfig.model } : {}),
+      ports: {
+        normalize: normalizeEngine,
+        inferAdapter: builtinConfigurationAdapter,
+      },
+    });
+  } catch (error) {
+    gatewayLog.info("gateway.start_failed", {
+      stage: "unified-model",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+  {
+    // `active()` needs no engine catalog; key values are never part of it.
+    const active = harnessModel.active();
+    gatewayLog.info("model.configured", {
+      configured: active !== undefined,
+      source: active?.source ?? null,
+      model: active?.model ?? null,
+      alias: active?.alias ?? null,
+      protocol: active?.provider.protocol ?? null,
+      baseUrl: active?.provider.baseUrl ?? null,
+      contextWindow: active?.provider.contextWindow ?? null,
+      maxOutputTokens: active?.provider.maxOutputTokens ?? null,
+      compatibility: active?.provider.compatibility
+        ? JSON.parse(JSON.stringify(active.provider.compatibility))
+        : null,
+    });
+  }
   const discover = (includeManifests = true) =>
     discoverEngines({
       cwd: options.cwd,
@@ -166,6 +270,9 @@ export async function startHub(options: {
     shutdownGraceMs: config.cancelGraceMs,
     maxWorkers: config.maxWorkers,
     leaseDir: path.join(dataDir, "workers"),
+    log: gatewayLog,
+    // Workers write their Session engine log at the Gateway's validated level.
+    env: { [LOG_LEVEL_ENVIRONMENT]: logLevel },
   });
   let runtime: Runtime | undefined;
   let manager: EngineManager | undefined;
@@ -188,7 +295,11 @@ export async function startHub(options: {
     // Fail startup when the fixed Competition engine cannot run, with the policy reason.
     if (options.competitionEngine) manager.resolve(options.competitionEngine);
     const recoveredWorkers = await host.recover();
-    runtime = new Runtime(store, host, {
+    const observedStore = observeStore(store, gatewayLog, {
+      engineLog: (sessionId) =>
+        path.join(dataDir, "backends", sessionId, "diagnostics", "engine.log"),
+    });
+    runtime = new Runtime(observedStore, host, {
       ...config,
       catalog: manager,
       stateDir: path.join(dataDir, "backends"),
@@ -335,6 +446,7 @@ export async function startHub(options: {
       remoteHosts: !["localhost", "127.0.0.1", "::1", "[::1]"].includes(
         bindHost,
       ),
+      log: gatewayLog,
     });
     const toolPackages = createToolPackageManagement({
       root: options.toolPackageRoot ?? path.join(dataDir, "tool-packages"),
@@ -369,12 +481,32 @@ export async function startHub(options: {
       workflowStore?.close();
       store.close();
     });
+    // Fastify runs onClose hooks last-registered first, so this marks the start of
+    // shutdown; Worker exits recorded by the host afterwards still reach the file.
+    server.addHook("onClose", async () => {
+      gatewayLog.info("gateway.stop", { pid: process.pid });
+    });
     const url = await server.listen({
       host: bindHost,
       port: options.port,
     });
-    return { server, app, url };
+    gatewayLog.info("gateway.listen", {
+      url,
+      host: bindHost,
+      remoteHosts: !["localhost", "127.0.0.1", "::1", "[::1]"].includes(
+        bindHost,
+      ),
+      fullAccess: runtimeInfo.fullAccess,
+      consoleUrl: options.consoleUrl ?? null,
+      maxConcurrency: config.maxConcurrency,
+      defaultTimeoutMs: config.defaultTimeoutMs,
+    });
+    return { server, app, url, logFile: gatewayLog.file };
   } catch (error) {
+    gatewayLog.info("gateway.start_failed", {
+      stage: "startup",
+      message: error instanceof Error ? error.message : String(error),
+    });
     await workflows?.close();
     await manager?.close();
     try {
@@ -442,10 +574,12 @@ if (
         ? { harnessModelFile: values["harness-model-file"] }
         : {}),
       ...(values["console-url"] ? { consoleUrl: values["console-url"] } : {}),
+      logEcho: true,
     });
     console.log(
       JSON.stringify({
         event: "ready",
+        log: hub.logFile,
         url: hub.url,
         demo: values.demo,
         competition: values.competition,

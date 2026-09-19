@@ -5,6 +5,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { ModelCompatibility } from "../../domain/engine-configuration.js";
+import { excerpt } from "../../domain/logging.js";
 import {
   anthropicCountTokens,
   anthropicErrorResponse,
@@ -23,6 +24,7 @@ import {
 import {
   GatewayError,
   estimateTokens,
+  type ChatResult,
   type ChatTranslation,
   type ReasoningField,
 } from "./protocol.js";
@@ -68,6 +70,16 @@ export interface ModelGatewayOptions {
   compatibility?: ModelCompatibility;
   /** Called once per model call, after the engine response ended. Exceptions are ignored. */
   onCall?: (call: ModelCallRecord) => void;
+  /**
+   * Debug-only observer, called just before `onCall` with 2 KiB excerpts of the
+   * upstream request body and of the answer (or failure). Unlike the call record
+   * it contains prompt and completion text: the receiver must redact it and keep
+   * it in private diagnostics. Exceptions are ignored.
+   */
+  onPayload?: (
+    callId: string,
+    payload: { request: string | null; response: string },
+  ) => void;
 }
 
 /**
@@ -95,6 +107,18 @@ export interface ModelCallRecord {
   toolCalls: number;
   /** Sanitized, at most 500 characters. */
   error?: { code: string; message: string };
+  /** Inbound request path without its query (which may carry the Session token). */
+  path?: string;
+  /** Milliseconds from the call start to the first upstream body chunk. */
+  firstByteMs?: number;
+  /**
+   * Assistant tool-call messages in the upstream history: how many got their
+   * reasoning text back from the gateway cache, and how many still had none
+   * (reasoning models such as DeepSeek reject those). Absent when reasoning is stripped.
+   */
+  reasoning?: { restored: number; missing: number };
+  /** Top-level request fields removed (`-name`) or added (`+name`) by normalization. */
+  adjusted?: string[];
 }
 
 /**
@@ -533,7 +557,10 @@ export async function createModelGateway(
       ok: false,
       durationMs: 0,
       toolCalls: 0,
+      path: (request.url ?? "").split("?")[0]!.slice(0, 200),
     };
+    let upstreamBody: Record<string, unknown> | undefined;
+    let answer: ChatResult | undefined;
     const abort = new AbortController();
     const cancel = () => {
       abort.abort();
@@ -567,9 +594,30 @@ export async function createModelGateway(
       if (translation.requestedModel)
         record.requestedModel = translation.requestedModel.slice(0, 256);
       const messages = translation.body.messages;
-      if (passReasoning) restoreReasoning(messages, cache, reasoningField);
-      else stripReasoning(messages);
+      if (passReasoning) {
+        const restored = restoreReasoning(messages, cache, reasoningField);
+        const missing = messages.filter(
+          (message) =>
+            message.role === "assistant" &&
+            Array.isArray(message.tool_calls) &&
+            message.tool_calls.length > 0 &&
+            !(
+              typeof message[reasoningField] === "string" &&
+              message[reasoningField] !== ""
+            ),
+        ).length;
+        record.reasoning = { restored, missing };
+      } else stripReasoning(messages);
+      const before = new Set(Object.keys(translation.body));
       const body = normalizeRequest(translation.body, settings);
+      upstreamBody = body;
+      const adjusted = [
+        ...[...before].filter((key) => !(key in body)).map((key) => `-${key}`),
+        ...Object.keys(body)
+          .filter((key) => !before.has(key))
+          .map((key) => `+${key}`),
+      ];
+      if (adjusted.length) record.adjusted = adjusted;
       sink = createSink(route, writer, translation, {
         model: translation.requestedModel || options.alias,
         reasoning: passReasoning,
@@ -605,8 +653,12 @@ export async function createModelGateway(
       }
       const result = await readCompletion(upstream, sink, makeId, {
         maxBytes: limits.maxResponseBytes,
-        activity: touch,
+        activity: () => {
+          record.firstByteMs ??= Math.round(performance.now() - started);
+          touch();
+        },
       });
+      answer = result;
       clearTimeout(timer);
       await sink.finish(result);
       if (passReasoning && result.reasoning) {
@@ -675,6 +727,28 @@ export async function createModelGateway(
       abort.abort();
       record.durationMs = Math.round(performance.now() - started);
       if (!record.ok && record.error?.code !== "cancelled") errors.push(record);
+      if (options.onPayload)
+        try {
+          options.onPayload(record.id, {
+            request: upstreamBody
+              ? excerpt(JSON.stringify(upstreamBody))
+              : null,
+            response: excerpt(
+              JSON.stringify(
+                answer
+                  ? {
+                      finish: answer.finish,
+                      text: answer.text,
+                      reasoning: excerpt(answer.reasoning, 400),
+                      calls: answer.calls,
+                    }
+                  : { error: record.error ?? null },
+              ),
+            ),
+          });
+        } catch {
+          // Payload excerpts are diagnostics only.
+        }
       emit(record);
     }
   };

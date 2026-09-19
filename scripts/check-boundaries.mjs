@@ -10,7 +10,7 @@ const allowed = {
   gateway: ["gateway", "application", "domain"],
   engine: ["engine", "domain"],
   process: ["process", "domain"],
-  worker: ["worker", "drivers", "domain"],
+  worker: ["worker", "drivers", "domain", "logging"],
   drivers: ["drivers", "domain", "platform"],
   storage: ["storage", "domain"],
   artifacts: ["artifacts", "domain", "platform"],
@@ -18,6 +18,7 @@ const allowed = {
   distribution: ["distribution", "domain", "tool-packages"],
   "tool-packages": ["tool-packages", "domain", "platform"],
   rollout: ["rollout", "application", "domain"],
+  logging: ["logging", "domain"],
   benchmark: ["benchmark", "application", "domain"],
 };
 

@@ -20,6 +20,7 @@ import Fastify, { type FastifyError } from "fastify";
 import swagger from "@fastify/swagger";
 import type { HubApplication } from "../application/service.js";
 import { HubError } from "../domain/errors.js";
+import type { LogSink } from "../domain/logging.js";
 import {
   createSessionSchema,
   decisionSchema,
@@ -66,6 +67,13 @@ export async function createGateway(
      * then drive the engines. Browser cross-origin requests stay rejected.
      */
     remoteHosts?: boolean;
+    /**
+     * Access log: one `http` record per finished response (method, route, path
+     * without query, status, duration, Session/Run id from the route). Bodies,
+     * headers and query strings are never logged. Streaming responses such as
+     * `GET /event` are recorded when they end.
+     */
+    log?: LogSink;
   } = {},
 ) {
   const server = Fastify({
@@ -73,6 +81,25 @@ export async function createGateway(
     bodyLimit: 2 * 1024 * 1024,
     ajv: { customOptions: { removeAdditional: false } },
   });
+  const access = options.log;
+  if (access)
+    server.addHook("onResponse", async (request, reply) => {
+      const params =
+        request.params && typeof request.params === "object"
+          ? (request.params as Record<string, unknown>)
+          : {};
+      const id = (key: string) =>
+        typeof params[key] === "string" ? (params[key] as string) : undefined;
+      access.info("http", {
+        method: request.method,
+        route: request.routeOptions.url ?? null,
+        path: request.url.split("?")[0]!.slice(0, 300),
+        status: reply.statusCode,
+        ms: Math.round(reply.elapsedTime),
+        id: id("id") ?? id("sessionId") ?? id("runId"),
+        remote: request.ip,
+      });
+    });
   // Clients often send `Content-Type: application/json` on bodiless DELETE/POST.
   // A zero-length body is treated as absent; any other body keeps Fastify's
   // default parser, so invalid JSON and prototype poisoning are still rejected.
