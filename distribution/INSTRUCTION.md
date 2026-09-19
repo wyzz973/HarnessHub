@@ -215,6 +215,7 @@ Invoke-RestMethod -Method Delete -Uri "$base/session/$($session.id)"
 - **从其他机器调用返回 403 或连接失败**：默认绑定只接受本机访问，按第 5 节改用 `--host 0.0.0.0` 启动，并检查 Windows 防火墙是否放行 6217 端口。
 - **`AGENT_ENGINE is not set`**：按第 4 节设置后重新启动。**`Engine X is not included in this bundle`**：`AGENT_ENGINE` 取值不在第 4 节列表中。
 - **启动时报统一模型变量错误**：按第 3 节补齐 `HARNESSHUB_MODEL` 与 `HARNESSHUB_MODEL_BASE_URL`，正整数变量不要带单位。
+- **`openclaw` 的第一轮很慢**：OpenClaw 每个会话先启动私有 Gateway，Windows 上冷启动可能需要 1 到 3 分钟（杀毒软件扫描时更慢），最长等待 180 秒；超过后返回 502 `ACP_INITIALIZE_TIMEOUT` 或 `readiness timed out`，新建会话重试即可。
 - **`prompt_async` 返回 502，原因含上游错误**：检查模型地址、密钥与网络连通性；`POST /v1/harness/model/test`（请求体 `{}`）会向模型发一条极短的流式请求用于诊断。
 - **`Setup-Competition-Offline.cmd` 失败**：查看 `<CODE>\logs\` 中最新日志。常见原因：磁盘空间不足；杀毒软件隔离了引擎程序（提示 `Prepared engine files are missing`，需恢复文件或加白名单）；路径过长（改用短路径重新解压）。依赖损坏时可加 `--reinstall` 重试。
 - **文件被 Windows 标记为来自网络**：在 PowerShell 中执行 `Get-ChildItem -Recurse <CODE> | Unblock-File` 后重试。

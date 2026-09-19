@@ -82,7 +82,7 @@ Pi 固定组合为 `@earendil-works/pi-coding-agent@0.85.1` 与 `pi-acp@0.0.33`�
 
 以该输出作为 `scripts/package-bundle.mjs --prepared` 输入，会额外打包完整源码归档、公司 Chat 配置、交接 Skill 和 HarnessHub/控制台开发依赖。入口与内网合并流程见 [公司离线交接](offline-company.md)。固定源码来自 [源码制备工具](../scripts/vendor-engine-sources.mjs)，源码与运行程序的用途分别记录。
 
-引擎注册可通过 `acp.initializeTimeoutMs` 设置 1–60000 ms 的显式初始化预算；OpenClaw 发布模板使用 60000。协议 probe 接收此值，未配置时仍为 10000 ms；实际 Worker 从发送 Run 到收到 `engine.capabilities` 事件持有同一预算，超时报告 `ACP_INITIALIZE_TIMEOUT` 并关闭所属进程树。该预算不替代 Run 总期限，且在初始化完成后不限制 prompt 时长。
+引擎注册可通过 `acp.initializeTimeoutMs` 设置 1–300000 ms 的显式初始化预算；OpenClaw 发布模板使用 180000，其启动器等待私有 Gateway 就绪最多 150 秒（Gateway 进程提前退出时立即失败）。2026-09-19 的 Windows x64 CI 上 OpenClaw 两次冷启动都在约 33 秒后才开始加载配置，45 秒时仍未就绪；同一配置在 macOS 上约 3 秒就绪、ACP 初始化不到 1 秒，因此是 Windows 冷启动慢而不是配置导致挂起。协议 probe 接收此值，未配置时仍为 10000 ms；实际 Worker 从发送 Run 到收到 `engine.capabilities` 事件持有同一预算，超时报告 `ACP_INITIALIZE_TIMEOUT` 并关闭所属进程树。该预算不替代 Run 总期限，且在初始化完成后不限制 prompt 时长。
 
 ## CLI 与控制台配置
 

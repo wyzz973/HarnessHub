@@ -89,7 +89,7 @@ Gateway 在每个引擎登记或替换前应用统一模型。文件配置加载
 
 固定 Provider 的旧 launcher（例如本机独立 OpenCode DeepSeek、定制 Pi）会拒绝被新 Provider 字段隐式覆盖。需要切换时明确勾选“使用本机标准启动模板”，审阅展示的命令后保存；原 revision 和旧会话仍保留。
 
-ACP 注册配置可单独填写 `acp.initializeTimeoutMs`，范围为 1–60,000 毫秒，不要求启用 `sessionMode: resume`。HTTP 注册、更新、列表与控制台编辑均保留此字段；检查连接和实际 Worker 启动使用同一上限。恢复会话也要完成真实重连和 resume 后才能解除初始化计时，不能用旧 checkpoint 的 capabilities 提前解除。此字段只限制初始化，不延长 Run 的总期限；发行包仅对冷启动较慢的指定引擎配置较长上限。
+ACP 注册配置可单独填写 `acp.initializeTimeoutMs`，范围为 1–300,000 毫秒（`ACP_INITIALIZE_TIMEOUT_LIMIT_MS`；OpenClaw 私有 Gateway 在冷启动的 Windows x64 上需要 60 秒以上，原先的 60,000 上限不够），不要求启用 `sessionMode: resume`。HTTP 注册、更新、列表与控制台编辑均保留此字段；检查连接和实际 Worker 启动使用同一上限。恢复会话也要完成真实重连和 resume 后才能解除初始化计时，不能用旧 checkpoint 的 capabilities 提前解除。此字段只限制初始化，不延长 Run 的总期限；发行包仅对冷启动较慢的指定引擎配置较长上限。
 
 ## Provider 适配范围
 

@@ -591,7 +591,7 @@
                                   "initializeTimeoutMs": {
                                     "type": "integer",
                                     "minimum": 1,
-                                    "maximum": 60000
+                                    "maximum": 300000
                                   }
                                 }
                               },
@@ -1199,7 +1199,7 @@
                       "initializeTimeoutMs": {
                         "type": "integer",
                         "minimum": 1,
-                        "maximum": 60000
+                        "maximum": 300000
                       }
                     }
                   },
@@ -1636,7 +1636,7 @@
                         "initializeTimeoutMs": {
                           "type": "integer",
                           "minimum": 1,
-                          "maximum": 60000
+                          "maximum": 300000
                         }
                       }
                     },
@@ -2348,7 +2348,7 @@
                               "initializeTimeoutMs": {
                                 "type": "integer",
                                 "minimum": 1,
-                                "maximum": 60000
+                                "maximum": 300000
                               }
                             }
                           },
@@ -2830,7 +2830,7 @@
                       "initializeTimeoutMs": {
                         "type": "integer",
                         "minimum": 1,
-                        "maximum": 60000
+                        "maximum": 300000
                       }
                     }
                   },
@@ -3267,7 +3267,7 @@
                         "initializeTimeoutMs": {
                           "type": "integer",
                           "minimum": 1,
-                          "maximum": 60000
+                          "maximum": 300000
                         }
                       }
                     },
@@ -3791,7 +3791,7 @@
                                   "initializeTimeoutMs": {
                                     "type": "integer",
                                     "minimum": 1,
-                                    "maximum": 60000
+                                    "maximum": 300000
                                   }
                                 }
                               },
@@ -4386,7 +4386,7 @@
                       "initializeTimeoutMs": {
                         "type": "integer",
                         "minimum": 1,
-                        "maximum": 60000
+                        "maximum": 300000
                       }
                     }
                   },
@@ -4835,7 +4835,7 @@
                         "initializeTimeoutMs": {
                           "type": "integer",
                           "minimum": 1,
-                          "maximum": 60000
+                          "maximum": 300000
                         }
                       }
                     },

@@ -8,6 +8,7 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { parse } from "yaml";
 import { engineConfigurationSchema } from "../domain/engine-configuration.js";
+import { ACP_INITIALIZE_TIMEOUT_LIMIT_MS } from "../domain/engines.js";
 import { HubError } from "../domain/errors.js";
 import type { HarnessModel } from "../domain/harness-model.js";
 import type { EngineProfile, Workspace } from "../domain/types.js";
@@ -210,10 +211,10 @@ export function normalizeEngine(input: unknown): EngineProfile {
     if (a.sessionMode === "resume") acp.sessionMode = "resume";
     if (a.initializeTimeoutMs !== undefined) {
       const timeout = integer(a.initializeTimeoutMs, 10_000);
-      if (timeout > 60_000)
+      if (timeout > ACP_INITIALIZE_TIMEOUT_LIMIT_MS)
         throw new HubError(
           "INVALID_CONFIG",
-          "ACP initializeTimeoutMs must not exceed 60000 ms",
+          `ACP initializeTimeoutMs must not exceed ${ACP_INITIALIZE_TIMEOUT_LIMIT_MS} ms`,
         );
       acp.initializeTimeoutMs = timeout;
     }

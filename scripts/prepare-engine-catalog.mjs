@@ -178,7 +178,8 @@ engines.at(-1).command = [
   npm + "openclaw/openclaw.mjs",
 ];
 engines.at(-1).requiredFiles.push("scripts/launch-openclaw-bundled.mjs");
-engines.at(-1).acp = { initializeTimeoutMs: 60000 };
+// Covers the launcher's private Gateway readiness wait (150 s) plus the ACP bridge.
+engines.at(-1).acp = { initializeTimeoutMs: 180000 };
 for (const receipt of JSON.parse(
   await readFile(path.join(root, "binary-receipts.json"), "utf8"),
 )) {

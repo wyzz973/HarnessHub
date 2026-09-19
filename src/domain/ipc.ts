@@ -7,6 +7,7 @@ import type {
 } from "./ports.js";
 import type { PermissionId } from "./types.js";
 import { runInputSchema } from "./schemas.js";
+import { ACP_INITIALIZE_TIMEOUT_LIMIT_MS } from "./engines.js";
 
 /** IPC has one acknowledged Worker message in flight; oversized messages fail explicitly. */
 export const IPC_MAX_BYTES = 8 * 1024 * 1024;
@@ -78,7 +79,11 @@ const profile = object(
     acp: object(
       {
         sessionMode: { const: "resume" },
-        initializeTimeoutMs: { type: "integer", minimum: 1, maximum: 60_000 },
+        initializeTimeoutMs: {
+          type: "integer",
+          minimum: 1,
+          maximum: ACP_INITIALIZE_TIMEOUT_LIMIT_MS,
+        },
       },
       [],
     ),

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import { ACP_INITIALIZE_TIMEOUT_LIMIT_MS } from "../../src/domain/engines.js";
 import { normalizeEngine } from "../../src/engine/registry.js";
 import { probeConfiguration } from "../../src/drivers/configuration/probe.js";
 import { ProcessWorkerHost } from "../../src/process/worker-host.js";
@@ -162,7 +163,10 @@ void test("HTTP registration, update, listing and restart retain an independent 
     command: [process.execPath],
   };
   for (const method of ["POST", "PUT"] as const) {
-    const timeout = method === "POST" ? 60_000 : 59_999;
+    const timeout =
+      method === "POST"
+        ? ACP_INITIALIZE_TIMEOUT_LIMIT_MS
+        : ACP_INITIALIZE_TIMEOUT_LIMIT_MS - 1;
     const response = await hub.server.inject({
       method,
       url: method === "POST" ? "/v1/engines" : "/v1/engines/bounded-acp",
@@ -177,7 +181,13 @@ void test("HTTP registration, update, listing and restart retain an independent 
       initializeTimeoutMs: timeout,
     });
   }
-  for (const value of [0, 60_001, 1.5, "not-a-number", null]) {
+  for (const value of [
+    0,
+    ACP_INITIALIZE_TIMEOUT_LIMIT_MS + 1,
+    1.5,
+    "not-a-number",
+    null,
+  ]) {
     const invalid = await hub.server.inject({
       method: "PUT",
       url: "/v1/engines/bounded-acp",
@@ -192,7 +202,7 @@ void test("HTTP registration, update, listing and restart retain an independent 
   assert.deepEqual(
     listed.json<{ engines: { acp: unknown }[] }>().engines[0]!.acp,
     {
-      initializeTimeoutMs: 59_999,
+      initializeTimeoutMs: ACP_INITIALIZE_TIMEOUT_LIMIT_MS - 1,
     },
   );
 });
@@ -205,12 +215,22 @@ void test("ACP initialize limit is optional, bounded, and independent of resume 
   };
   const profile = normalizeEngine({
     ...base,
-    acp: { initializeTimeoutMs: 60_000 },
+    acp: { initializeTimeoutMs: ACP_INITIALIZE_TIMEOUT_LIMIT_MS },
   });
-  assert.equal(profile.acp?.initializeTimeoutMs, 60_000);
+  assert.equal(
+    profile.acp?.initializeTimeoutMs,
+    ACP_INITIALIZE_TIMEOUT_LIMIT_MS,
+  );
   assert.equal(profile.capabilities.resume, false);
   assert.equal(normalizeEngine(base).acp, undefined);
-  for (const value of [0, -1, 0.1, 60_001, "60000", null])
+  for (const value of [
+    0,
+    -1,
+    0.1,
+    ACP_INITIALIZE_TIMEOUT_LIMIT_MS + 1,
+    "60000",
+    null,
+  ])
     assert.throws(() =>
       normalizeEngine({ ...base, acp: { initializeTimeoutMs: value } }),
     );
@@ -308,7 +328,7 @@ void test(
         "acp",
         root,
         new AbortController().signal,
-        60_001,
+        ACP_INITIALIZE_TIMEOUT_LIMIT_MS + 1,
       ),
     );
     const handle = await host.start(
