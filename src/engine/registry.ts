@@ -2,11 +2,14 @@ import {
   parseEngineConfiguration,
   pinConfigurationSkills,
 } from "./configuration.js";
+import { Ajv } from "ajv";
 import { createHash } from "node:crypto";
 import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { parse } from "yaml";
+import { engineConfigurationSchema } from "../domain/engine-configuration.js";
 import { HubError } from "../domain/errors.js";
+import type { HarnessModel } from "../domain/harness-model.js";
 import type { EngineProfile, Workspace } from "../domain/types.js";
 
 export interface HubConfig {
@@ -19,7 +22,27 @@ export interface HubConfig {
   maxQueuedRuns: number;
   defaultTimeoutMs: number;
   cancelGraceMs: number;
+  /**
+   * Lowest-priority unified model source (ADR 0013). Shape-checked here; the unified
+   * model service applies the semantic rules at startup. Changing it requires a restart.
+   */
+  model?: HarnessModel;
 }
+const validateHarnessModel = new Ajv({ allErrors: true }).compile<HarnessModel>(
+  {
+    type: "object",
+    additionalProperties: false,
+    required: ["model", "provider"],
+    properties: {
+      model: { type: "string", minLength: 1, maxLength: 256 },
+      alias: {
+        type: "string",
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$",
+      },
+      provider: engineConfigurationSchema.properties.provider,
+    },
+  },
+);
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new HubError("INVALID_CONFIG", "Expected a configuration object");
@@ -256,7 +279,13 @@ export async function loadConfig(options: {
     "maxQueuedRuns",
     "defaultTimeoutMs",
     "cancelGraceMs",
+    "model",
   ]);
+  if (raw.model !== undefined && !validateHarnessModel(raw.model))
+    throw new HubError(
+      "INVALID_CONFIG",
+      `model must be a unified model object: ${new Ajv().errorsText(validateHarnessModel.errors)}`,
+    );
   const entries = raw.engines ?? [];
   const spaces = raw.workspaces ?? [{ id: "default", path: options.cwd }];
   if (!Array.isArray(entries) || !Array.isArray(spaces))
@@ -325,6 +354,9 @@ export async function loadConfig(options: {
     maxQueuedRuns: integer(raw.maxQueuedRuns, 1000),
     defaultTimeoutMs: integer(raw.defaultTimeoutMs, 60_000),
     cancelGraceMs: integer(raw.cancelGraceMs, 500),
+    ...(raw.model !== undefined
+      ? { model: structuredClone(raw.model as HarnessModel) }
+      : {}),
   });
 }
 

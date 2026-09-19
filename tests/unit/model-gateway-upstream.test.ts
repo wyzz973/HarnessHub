@@ -794,58 +794,13 @@ void test("request and response bodies are bounded, and untranslatable input fai
       {
         model: "m",
         max_tokens: 5,
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "image",
-                source: {
-                  type: "base64",
-                  media_type: "image/png",
-                  data: "AA==",
-                },
-              },
-            ],
-          },
-        ],
-      },
-    ],
-    [
-      "/v1/messages",
-      {
-        model: "m",
-        max_tokens: 5,
         messages: [{ role: "user", content: "hi" }],
         tools: [{ type: "web_search_20250305", name: "web_search" }],
       },
     ],
     [
       "/v1/responses",
-      {
-        model: "m",
-        input: [
-          {
-            role: "user",
-            content: [{ type: "input_image", image_url: "data:x" }],
-          },
-        ],
-      },
-    ],
-    [
-      "/v1/responses",
       { model: "m", input: "hi", tools: [{ type: "web_search" }] },
-    ],
-    [
-      "/v1beta/models/g:generateContent",
-      {
-        contents: [
-          {
-            role: "user",
-            parts: [{ inlineData: { mimeType: "image/png", data: "AA==" } }],
-          },
-        ],
-      },
     ],
   ] as const;
   for (const [path, body] of rejected) {
@@ -866,5 +821,129 @@ void test("request and response bodies are bounded, and untranslatable input fai
   assert.equal(
     at(await tooLarge.json(), "error", "code"),
     "response_too_large",
+  );
+});
+
+void test("media in every inbound protocol becomes a text placeholder instead of failing the Session", async (t) => {
+  const up = await upstream(t, (_, response) =>
+    stream(response, [delta({ content: "ok" }, "stop")]),
+  );
+  const { send } = await gateway(t, up.baseUrl);
+  const media = [
+    [
+      "/v1/messages",
+      {
+        model: "m",
+        max_tokens: 5,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: "image/png",
+                  data: "AA==",
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    [
+      "/v1/responses",
+      {
+        model: "m",
+        input: [
+          {
+            role: "user",
+            content: [{ type: "input_image", image_url: "data:x" }],
+          },
+        ],
+      },
+    ],
+    [
+      "/v1beta/models/g:generateContent",
+      {
+        contents: [
+          {
+            role: "user",
+            parts: [{ inlineData: { mimeType: "image/png", data: "AA==" } }],
+          },
+        ],
+      },
+    ],
+  ] as const;
+  for (const [path, body] of media) {
+    const before = up.requests.length;
+    const response = await send(path, body);
+    assert.equal(response.status, 200, path);
+    await response.text();
+    assert.equal(up.requests.length, before + 1, path);
+    assert.match(
+      JSON.stringify(up.requests.at(-1)!.body),
+      /omitted: the HarnessHub model gateway forwards text only/,
+      path,
+    );
+  }
+  const chatImage = {
+    model: "m",
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "look" },
+          {
+            type: "image_url",
+            image_url: { url: "data:image/png;base64,AA==" },
+          },
+        ],
+      },
+    ],
+  };
+  const placeholder = await send("/v1/chat/completions", chatImage);
+  assert.equal(placeholder.status, 200);
+  await placeholder.text();
+  assert.equal(
+    up.requests.at(-1)!.body.messages instanceof Array &&
+      typeof (up.requests.at(-1)!.body.messages as { content: unknown }[])[0]!
+        .content,
+    "string",
+  );
+  assert.match(JSON.stringify(up.requests.at(-1)!.body), /Image omitted/);
+});
+
+void test("vision passthrough keeps Chat image parts for a multimodal model", async (t) => {
+  const up = await upstream(t, (_, response) =>
+    stream(response, [delta({ content: "ok" }, "stop")]),
+  );
+  const { send } = await gateway(t, up.baseUrl, {
+    compatibility: { images: "passthrough" },
+  });
+  const response = await send("/v1/chat/completions", {
+    model: "m",
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "look" },
+          {
+            type: "image_url",
+            image_url: { url: "data:image/png;base64,AA==" },
+          },
+        ],
+      },
+    ],
+  });
+  assert.equal(response.status, 200);
+  await response.text();
+  const content = (
+    up.requests.at(-1)!.body.messages as { content: unknown }[]
+  )[0]!.content as { type: string }[];
+  assert.deepEqual(
+    content.map((part) => part.type),
+    ["text", "image_url"],
   );
 });

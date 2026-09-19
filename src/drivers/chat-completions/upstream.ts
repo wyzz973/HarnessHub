@@ -3,6 +3,7 @@ import {
   array,
   joinText,
   object,
+  omittedMedia,
   parseArguments,
   record,
   type ChatResult,
@@ -18,6 +19,8 @@ export interface UpstreamSettings {
   includeUsage: boolean;
   maxTokensField: "max_tokens" | "max_completion_tokens";
   dropParameters: readonly string[];
+  /** `placeholder` replaces Chat image parts with text; `passthrough` keeps `image_url`. */
+  images: "placeholder" | "passthrough";
 }
 
 /** Parameters that many Chat-compatible gateways reject; always removed. */
@@ -63,7 +66,26 @@ function systemText(content: unknown): string {
     throw new GatewayError("System messages accept text content only");
   return text;
 }
-function normalizeMessages(raw: unknown): Record<string, unknown>[] {
+/** Keep text, keep or replace images by policy, and replace any other media with text. */
+function mediaParts(
+  parts: unknown[],
+  images: UpstreamSettings["images"],
+): unknown[] {
+  return parts.map((raw) => {
+    const part = record(raw);
+    const type = typeof part?.type === "string" ? part.type : "";
+    if (type === "text" || (type === "image_url" && images === "passthrough"))
+      return raw;
+    return {
+      type: "text",
+      text: omittedMedia(type === "image_url" ? "Image" : "Media content"),
+    };
+  });
+}
+function normalizeMessages(
+  raw: unknown,
+  images: UpstreamSettings["images"],
+): Record<string, unknown>[] {
   const system: string[] = [];
   const messages: Record<string, unknown>[] = [];
   for (const value of array(raw)) {
@@ -76,8 +98,9 @@ function normalizeMessages(raw: unknown): Record<string, unknown>[] {
       continue;
     }
     if (Array.isArray(message.content)) {
-      const text = joinText(message.content);
-      if (text !== undefined) message.content = text;
+      const parts = mediaParts(message.content, images);
+      const text = joinText(parts);
+      message.content = text ?? parts;
     }
     messages.push(message);
   }
@@ -112,7 +135,7 @@ export function normalizeRequest(
     delete body.tool_choice;
     delete body.parallel_tool_calls;
   }
-  body.messages = normalizeMessages(body.messages);
+  body.messages = normalizeMessages(body.messages, settings.images);
   body.model = settings.model;
   body.stream = true;
   if (settings.includeUsage) body.stream_options = { include_usage: true };

@@ -18,6 +18,7 @@ const settings = {
   includeUsage: false,
   maxTokensField: "max_tokens" as const,
   dropParameters: [],
+  images: "placeholder" as const,
 };
 
 void test("Responses function, custom and namespace tool history keeps native identities; unsupported semantics reject", () => {
@@ -66,14 +67,6 @@ void test("Responses function, custom and namespace tool history keeps native id
   for (const change of [
     { previous_response_id: "old" },
     { tools: [{ type: "web_search" }] },
-    {
-      input: [
-        {
-          role: "user",
-          content: [{ type: "input_image", image_url: "data:test" }],
-        },
-      ],
-    },
     { unknown: true },
     { temperature: { value: 1 } },
     { parallel_tool_calls: "yes" },
@@ -90,6 +83,23 @@ void test("Responses function, custom and namespace tool history keeps native id
     },
   ])
     assert.doesNotThrow(() => responsesToChat({ ...request, ...change }));
+  // ADR 0013: media no longer fails the whole Session; it becomes a text placeholder.
+  const withImage = responsesToChat({
+    ...request,
+    input: [
+      {
+        role: "user",
+        content: [
+          { type: "input_text", text: "look" },
+          { type: "input_image", image_url: "data:test" },
+        ],
+      },
+    ],
+  });
+  assert.match(
+    JSON.stringify(withImage.body.messages),
+    /input_image omitted: the HarnessHub model gateway forwards text only/,
+  );
 });
 
 void test("Google function identities and result pairing survive Chat conversion; unsupported parts reject", () => {
@@ -146,7 +156,6 @@ void test("Google function identities and result pairing survive Chat conversion
     },
   );
   for (const change of [
-    { contents: [{ role: "user", parts: [{ inlineData: {} }] }] },
     { tools: [{ googleSearch: {} }] },
     { cachedContent: "cached" },
     { unknownField: true },

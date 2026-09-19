@@ -380,6 +380,7 @@ export async function createModelGateway(
     includeUsage: compatibility.includeUsage === true,
     maxTokensField: compatibility.maxTokensField ?? "max_tokens",
     dropParameters: compatibility.dropParameters ?? [],
+    images: compatibility.images ?? "placeholder",
   };
   const passReasoning = compatibility.reasoning !== "strip";
   const token = randomBytes(32).toString("hex");

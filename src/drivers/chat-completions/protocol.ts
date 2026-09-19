@@ -55,6 +55,13 @@ export function boundedNumber(
     throw new GatewayError("Invalid numeric generation setting");
   return value;
 }
+/**
+ * Text that replaces media the gateway does not forward, so one image in a
+ * Session history does not make every later request fail (ADR 0013).
+ */
+export function omittedMedia(what: string): string {
+  return `[${what} omitted: the HarnessHub model gateway forwards text only]`;
+}
 /** Multimodal input cannot be translated to the text-only Chat upstream. */
 export function multimodal(what: string): GatewayError {
   return new GatewayError(

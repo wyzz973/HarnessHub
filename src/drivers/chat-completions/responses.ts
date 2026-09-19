@@ -2,7 +2,7 @@ import {
   GatewayError,
   array,
   boundedNumber,
-  multimodal,
+  omittedMedia,
   nativeTool,
   object,
   record,
@@ -77,7 +77,7 @@ function text(value: unknown, what: string): string {
         case "input_image":
         case "input_file":
         case "input_audio":
-          throw multimodal(`${what} ${part.type}`);
+          return omittedMedia(`${what} ${part.type}`);
         default:
           throw new GatewayError(`Unsupported ${what} content part`);
       }
@@ -105,7 +105,7 @@ function reasoningText(item: Record<string, unknown>): string {
  * Function, custom (freeform) and namespace tools map to Chat functions;
  * reasoning items become `reasoning_content` of the next assistant message.
  * Server state (`previous_response_id`, `conversation`, stored prompts,
- * background), hosted tools and multimodal input fail explicitly.
+ * background) and hosted tools fail explicitly; media input becomes text placeholders.
  */
 export function responsesToChat(raw: unknown): ChatTranslation {
   const request = object(raw);

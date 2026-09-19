@@ -29,7 +29,10 @@ Status: accepted
   3. 发行包 `settings.json` 的顶层 `model`，或源码配置文件的顶层 `model`。
 
   环境变量只在本次进程生效，不写回文件。
-- **强制使用**：Gateway 在每个引擎登记或替换前，都用统一模型覆盖该引擎的 `configuration.provider` 和 `model`，包括文件配置、API、SQLite overlay 和工具包应用，每次都生成新 revision。无法经网关接入的适配器（cursor、antigravity、kiro、qoder、generic）一律禁用，并给出原因，不允许回落到原生账号。未配置统一模型时保持旧行为，以兼容普通开发环境。
+- **强制使用**：Gateway 在每个引擎登记或替换前，都用统一模型覆盖该引擎的 `configuration.provider` 和 `model`，包括文件配置、API、SQLite overlay 和工具包应用，每次都生成新 revision。
+  - 覆盖时同时移除 `credentialEnv` 和引擎级 `configuration.secretEnv`，厂商凭据不再传给引擎；MCP 服务自己的秘密引用保留。
+  - 配置文件和 overlay 保存原始登记，引擎目录与新 Session 使用覆盖后的生效登记，两种 revision 都持久化。
+  - 配置文件顶层 `model` 变化需要重启；`PUT` 立即生效。无法经网关接入的适配器（cursor、antigravity、kiro、qoder、generic）一律禁用，并给出原因，不允许回落到原生账号。未配置统一模型时保持旧行为，以兼容普通开发环境。
 - **模型名**：引擎看到的模型 id 是 `alias`，默认 `harnesshub-model`，上游一律使用真实 `model`。这样避开了引擎按名称做的路由和上限推断。
 
 ### 2. Worker 内的统一模型网关
@@ -72,6 +75,8 @@ Status: accepted
 
 网关在本 Session 内按 tool_call id 和助手消息缓存推理内容。引擎回传历史时，网关把推理内容重新附到对应的助手消息上。`compatibility.reasoning: strip` 时不转发推理内容。
 
+**媒体**：图片、文档、音频等媒体不再使整个 Session 失败，统一替换为文字占位。`compatibility.images: passthrough` 时保留 Chat 请求中的 `image_url`，供支持视觉的上游使用（2026-09-19 决定：公司模型是否支持视觉尚未确认，默认按纯文本处理）。
+
 **错误**：
 
 - 上游 4xx/5xx 保持原状态码，按入站协议的错误格式返回脱敏、截断后的错误信息。
@@ -97,7 +102,7 @@ Status: accepted
 - **控制台**：比赛入口同时启动控制台，Gateway 根路径 `/` 跳转过去。控制台新增统一模型页和工具包页，默认进入直接对话模式。
 - **交付**：
   - 源码变更会触发 x64 完整包和离线开发包的 CI 构建；
-  - CI 在 GitHub `windows-latest`（x64）上用真实固定引擎和 DeepSeek 替身模型做验收；
+  - CI 在 GitHub `windows-latest`（x64）上用真实固定引擎和本地模拟模型做验收（只接受流式、要求回传推理内容；不在 GitHub 保存任何模型密钥），真实模型（DeepSeek 替身）只在本机验收；
   - 离线开发包提供一键离线准备入口，并附带 `INSTRUCTION.md`。
 
 ## 接口约定
@@ -156,12 +161,12 @@ Worker 把 `ModelCallRecord` 原样作为 `type: "model.call"` 的事件 `data` 
 ### 统一模型的配置与接口
 
 - `settings.json` 和源码配置文件都用顶层 `model: HarnessModel`。发行包中各引擎的 `modelProfile` 仍可读取，但会被统一模型覆盖。
-- `harnessModelFile` 的内容是一个 `HarnessModel` JSON 对象（文件权限 0600）。
+- `harnessModelFile` 的内容是一个 `HarnessModel` JSON 对象（POSIX 下文件权限 0600）。发行包为 `state/harness-model.json`，源码入口缺省为 `<数据目录>/harness-model.json`。
 - HTTP 接口：
   - `GET /v1/harness/model` 返回 `HarnessModelView`。
   - `PUT /v1/harness/model`：body 为 `HarnessModel`，其中 apiKey 只接受秘密引用。写入文件，并为全部引擎重新登记新 revision，返回 `HarnessModelView`。
-  - `POST /v1/harness/model/test`：用一条极短的流式请求检查连通性和鉴权，会实际调用模型。返回 `{ ok, status, durationMs, error? }`。
-- `hub.cmd model set --model <id> --base-url <url> --api-key-env <NAME> [--context-window N] [--max-output-tokens N]` 写入统一模型文件；`hub.cmd model show` 查看当前配置。
+  - `POST /v1/harness/model/test`：在默认或指定引擎上创建正式 Session，提交“只回复 OK”，最多等待 90 秒，会实际调用模型。秘密仍只在 Worker 中解析。返回 `{ ok, status, durationMs, runId, error? }`。
+- `hub.cmd model set --model <id> --base-url <url> --api-key-env <NAME> [--context-window N] [--max-output-tokens N] [--header NAME=VALUE]... [--alias NAME]` 写入统一模型文件；`hub.cmd model show` 查看当前配置。
 
 ### 引擎登记字段
 
@@ -199,6 +204,7 @@ Worker 把 `ModelCallRecord` 原样作为 `type: "model.call"` 的事件 `data` 
   - 所有模型调用都可观测，并能证明只用了统一模型；
   - 兼容处理只写一处。
 - **代价**：
+  - 默认模式下图片内容不会到达模型，需要视觉的任务要改为 passthrough 并确认上游支持；
   - 网关会重写请求，引擎的模型专用优化（按模型名开启的特性）会失效；
   - 缓存推理内容会占用 Session 内存，上限跟随现有的 8 MiB 请求限制；
   - 转换覆盖不了各厂商的托管工具和多模态，这类请求会明确失败。
@@ -215,4 +221,4 @@ Worker 把 `ModelCallRecord` 原样作为 `type: "model.call"` 的事件 `data` 
   - 模型报错时 Run 失败，并带真实原因；
   - `model.call` 事件被提交；
   - 比赛接口的错误格式、`session.error`、目录自动创建。
-- **Windows x64 真实引擎验收**：CI 以流式、推理型的 DeepSeek 作为公司模型替身。验收内容为各引擎的文件任务、Shell 任务和比赛 API 全流程。本机结果与 CI 结果都不能替代公司真实模型的验收。
+- **Windows x64 真实引擎验收**：CI 以本地模拟模型（流式、推理型，要求回传推理内容）验证各引擎的启动、协议转换和比赛 API 全流程；本机以 DeepSeek 替身模型经严格代理验证文件任务、Shell 任务和比赛 API。本机结果与 CI 结果都不能替代公司真实模型的验收。
