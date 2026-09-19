@@ -20,6 +20,8 @@ Fastify、@fastify/swagger、Ajv、YAML、acpx、ACP SDK以及Next/React、assis
 
 固定 `acpx@0.13.2`（[OpenClaw Team，MIT](https://github.com/openclaw/acpx)）应用了可复现的 [本地补丁](patches/acpx@0.13.2.patch)：公开传递底层文件/终端能力选项，支持按原始 optionId 精确返回权限决定，并为诊断日志提供只读观察回调（ACP JSON-RPC 消息、引擎进程启动/退出与 stderr）。版本与补丁 hash 均由 pnpm 锁定，未直接修改共享包缓存；发行包包含补丁原文及依赖原许可证。
 
+发行包中的 Hermes Agent 0.19.0（[Nous Research，MIT](https://github.com/NousResearch/hermes-agent)）在构建机由 [prepare-hermes.mjs](scripts/prepare-hermes.mjs) 修改 `tools/environments/local.py` 一处：两个 Windows 探测进程（Git Bash、PowerShell）改用 `stdin=subprocess.DEVNULL`，按修改前后 SHA-256 校验，其余文件不变。
+
 ## 外部引擎与参考项目
 
 Windows 脚本启动使用固定版本 [cross-spawn](https://github.com/moxystudio/node-cross-spawn)（MIT），用于 PATH/PATHEXT 与 Windows 参数转义；代码未复制到仓库，版本由主锁文件管理。

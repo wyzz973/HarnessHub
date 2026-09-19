@@ -10,6 +10,8 @@ The fixed `acpx@0.13.2` runtime from the OpenClaw Team (MIT) includes the reprod
 
 The fixed Codex generic system-instruction baseline comes from [OpenAI Codex rust-v0.153.4, codex-rs/models-manager/prompt.md](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/models-manager/prompt.md), Copyright 2025 OpenAI, licensed under Apache 2.0. The original text is unchanged and is wrapped as a TypeScript string; its SHA-256 is `ac8ae107a0d72fe3476b430afb161ea4e67da2e446d778aefc44828160559807`. The complete fixed-tag LICENSE and NOTICE texts are included as `web/licenses/codex-apache-2.0.txt` and `web/licenses/codex-notice.txt`. Source attribution is retained in the compiled module. DeepSeek model metadata follows DeepSeek's official Codex integration documentation; no account configuration is copied.
 
+The bundled Hermes Agent 0.19.0 (MIT) is modified at build time by `scripts/prepare-hermes.mjs`: in `tools/environments/local.py` the two Windows probes that start Git Bash and PowerShell receive `stdin=subprocess.DEVNULL`, so they no longer inherit the ACP stdin pipe. No other Hermes file is changed.
+
 Codex, Claude Code, Gemini CLI, Qwen Code, Copilot CLI, Qoder CLI, Pi, MiMo, DeepSeek Harness, OpenClaw, Antigravity, Cursor, Kimi, OpenCode, Hermes and Kiro remain independent upstream products. Proprietary account requirements and vendor terms still apply. Microsoft VC runtime components remain subject to Microsoft's runtime redistribution terms.
 
 Local portability checks establish technical behavior only. They do not imply vendor endorsement, a blanket license grant, or compliance with an unspecified competition's rules.

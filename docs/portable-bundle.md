@@ -22,7 +22,7 @@
 1. 复制当前固定 Node 和 LICENSE 到 `runtime`；已有文件必须与输入逐字节一致。
 2. 将 [固定 package.json](../distribution/npm/package.json) 与 [pnpm-lock.yaml](../distribution/npm/pnpm-lock.yaml) 复制到 `engines/npm`，执行 pnpm 10.12.3 的 `install --frozen-lockfile --ignore-scripts --ignore-workspace --config.node-linker=hoisted --package-import-method=copy --prod`。安装后再次验证锁文件、顶层精确版本、pnpm版本和hoisted安装图，不能通过重新解析最新版本绕过锁文件。
 3. 调用 [prepare-binaries.mjs](../scripts/prepare-binaries.mjs) 的 `--root --arch`，准备固定二进制引擎。
-4. 分别调用 [prepare-extra-engines.ps1](../scripts/prepare-extra-engines.ps1) 的 `-TargetRoot -Engine hermes/kiro`，使用锁定 wheel 闭包和只读 MSI 解包流程，不在系统注册 Kiro 产品。
+4. 分别调用 [prepare-extra-engines.ps1](../scripts/prepare-extra-engines.ps1) 的 `-TargetRoot -Engine hermes/kiro`，使用锁定 wheel 闭包和只读 MSI 解包流程，不在系统注册 Kiro 产品。Hermes 之后紧接 [prepare-hermes.mjs](../scripts/prepare-hermes.mjs) 的 `--runtime`（复用已有 Hermes 准备时同样执行，幂等）：固定 hermes-agent 0.19.0 在 Windows 上探测 Git Bash 时继承自身 stdin，在 ACP 下这是有挂起读取的 JSON-RPC 管道，MSYS 运行时检查该句柄会阻塞到下一条 ACP 消息，首个终端命令因此一直挂起；补丁只给两个探测进程加 `stdin=subprocess.DEVNULL`，按修改前后 SHA-256 校验，`--check` 拒绝未打补丁的准备目录。
 5. 调用 [prepare-git.mjs](../scripts/prepare-git.mjs) 的 `--root --arch`，准备 PortableGit 及来源 receipt。
 6. 调用 [prepare-openclaw.mjs](../scripts/prepare-openclaw.mjs) 的 `--package`，仅完成固定 OpenClaw 的官方 lifecycle；这是明确的开发机步骤，npm总体安装仍禁用自动生命周期脚本。
 7. 将仓库 [工具包示例](tool-packages.md) 的实际文件复制到 `tools`，将 [vendor-notices](../distribution/vendor-notices) 的固定许可证与来源记录复制到各引擎的同名目录，再调用 [prepare-engine-catalog.mjs](../scripts/prepare-engine-catalog.mjs) 的 `--root --arch`，最后生成只含相对模板的 `prepared.json`。
