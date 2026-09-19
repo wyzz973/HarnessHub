@@ -326,10 +326,14 @@ export async function startHub(options: {
         }
       },
     });
+    const bindHost = options.host ?? "127.0.0.1";
     const server = await createGateway(app, {
       workflows,
       observations,
       configuration,
+      remoteHosts: !["localhost", "127.0.0.1", "::1", "[::1]"].includes(
+        bindHost,
+      ),
     });
     const toolPackages = createToolPackageManagement({
       root: options.toolPackageRoot ?? path.join(dataDir, "tool-packages"),
@@ -365,7 +369,7 @@ export async function startHub(options: {
       store.close();
     });
     const url = await server.listen({
-      host: options.host ?? "127.0.0.1",
+      host: bindHost,
       port: options.port,
     });
     return { server, app, url };

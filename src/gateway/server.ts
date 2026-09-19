@@ -59,6 +59,13 @@ export async function createGateway(
     workflows?: WorkflowService;
     observations?: ObservationService;
     configuration?: ConfigurationManagement;
+    /**
+     * Accept any Host header. Only set when the operator explicitly bound the
+     * Gateway to a non-loopback address (e.g. `--host 0.0.0.0` for a judge on
+     * another machine); there is no authentication, so the whole network can
+     * then drive the engines. Browser cross-origin requests stay rejected.
+     */
+    remoteHosts?: boolean;
   } = {},
 ) {
   const server = Fastify({
@@ -117,7 +124,10 @@ export async function createGateway(
   });
   server.addHook("onRequest", async (request) => {
     const host = request.headers.host ?? "";
-    if (!/^(localhost|127\.0\.0\.1|\[::1\])(?::[0-9]+)?$/.test(host))
+    if (
+      !options.remoteHosts &&
+      !/^(localhost|127\.0\.0\.1|\[::1\])(?::[0-9]+)?$/.test(host)
+    )
       throw new HubError(
         "LOCAL_ACCESS_REQUIRED",
         "Gateway requires a loopback Host",

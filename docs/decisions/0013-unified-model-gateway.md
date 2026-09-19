@@ -96,6 +96,7 @@ Status: accepted
 - 失败时推送 `session.error`。
 - 所有错误都用 `{code,message}`：接受空 JSON 请求体，Fastify 的解析错误也映射到规范错误码。
 - `directory` 不存在时自动创建。`/session` 固定使用启动引擎（`competitionEngine`）。
+- 显式 `--host` 为非回环地址（如 `0.0.0.0`）时接受任意 `Host`，供评测客户端在另一台机器或容器中调用；这种绑定没有鉴权，只应在隔离的评测网络中使用。默认的 localhost 绑定仍只接受回环 `Host`，浏览器跨源请求在任何绑定下都被拒绝。
 - 消息轨迹中补充 `tool_calls` 和 `tool` 角色消息。工具状态反映真实结果（running、completed、error）。
 
 ### 4. 工具包、控制台与交付
