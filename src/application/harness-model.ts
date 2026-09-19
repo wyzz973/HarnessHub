@@ -816,7 +816,11 @@ export class HarnessModelService implements HarnessModelManagement {
 
   /**
    * Validate, atomically persist the file source, then republish every engine so new
-   * Sessions use new revisions; existing Sessions keep their pinned revisions.
+   * Sessions use new revisions; existing Sessions keep their pinned revisions. Runs in
+   * the catalog's management queue. An invalid body or failed write changes nothing; if
+   * republishing fails after the write, the file and this service keep the new model,
+   * the catalog keeps its previous revisions until the next publication or restart, and
+   * the error is returned.
    *
    * @throws 409 while the environment source is active or no file is configured.
    */
