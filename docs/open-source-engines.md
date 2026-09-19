@@ -25,7 +25,7 @@
 | pi-acp | 0.0.33 | [svkozak/pi-acp](https://github.com/svkozak/pi-acp/tree/1bfcb394088ed879db8fd936b570bb626017f878) | MIT |
 | acpx Runtime | 0.13.2 | [openclaw/acpx](https://github.com/openclaw/acpx/tree/fd173f04aa1b56f9e3f5ca5190c034ddcae28792) | MIT |
 
-Hermes 的标签为 `v2026.7.20`，其 `pyproject.toml` 版本为 `0.19.0`。Pi 的官方 npm 元数据指向迁移后的 `earendil-works/pi`。这里没有升级引擎版本。HarnessHub 对运行依赖的改动仍由 [acpx 补丁](../patches/acpx@0.13.2.patch)等本项目补丁保存；上述快照保留上游源码。发行包中的 Hermes 另有一处构建期修改：[prepare-hermes.mjs](../scripts/prepare-hermes.mjs) 给 `tools/environments/local.py` 的两个 Windows 探测进程加上 `stdin=subprocess.DEVNULL`，原因与校验方式见 [Windows 便携发布包](portable-bundle.md)。
+Hermes 的标签为 `v2026.7.20`，其 `pyproject.toml` 版本为 `0.19.0`。Pi 的官方 npm 元数据指向迁移后的 `earendil-works/pi`。这里没有升级引擎版本。HarnessHub 对运行依赖的改动仍由 [acpx 补丁](../patches/acpx@0.13.2.patch)等本项目补丁保存；上述快照保留上游源码。发行包中的 Hermes 另有一处构建期修改：[prepare-hermes.mjs](../scripts/prepare-hermes.mjs) 给 `tools/environments/local.py` 的两个 Windows 探测进程加上 `stdin=subprocess.DEVNULL`，原因与校验方式见 [Windows 便携发布包](portable-bundle.md)。Kimi 同样有一处构建期修改：[prepare-kimi.mjs](../scripts/prepare-kimi.mjs) 给 `kimi.exe` 内嵌的 PyInstaller 归档追加运行期选项 `X utf8=1`，使其输出在任何 Windows 代码页下都是 UTF-8，说明见同一文档。
 
 ## 没有公开实现源码的引擎
 
