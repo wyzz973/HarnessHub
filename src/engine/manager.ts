@@ -87,12 +87,34 @@ function deployment(config: HubConfig): string {
   return JSON.stringify(fixed);
 }
 
+/**
+ * Composition-root rule turning each declared real-engine registration into the profile
+ * Runtime executes (for example the unified model, ADR 0013). `apply` must be
+ * deterministic for equal inputs and policy state, return a profile with the same id,
+ * and report an incompatible engine by returning it disabled with `unavailableReason`
+ * rather than throwing; a thrown error aborts the whole publication. Demo engines are
+ * never passed to the policy.
+ */
+export interface EngineRegistrationPolicy {
+  apply(declared: EngineProfile): {
+    profile: EngineProfile;
+    unavailableReason?: string;
+  };
+}
+interface Publication {
+  effective: Map<string, EngineProfile>;
+  unavailable: Map<string, string>;
+}
+
 /** Serialized management owns current revisions; every mutation commits before publication.
  * A failed file reload keeps the last valid catalog and exposes its error through status().
+ * With a policy, files and overlays keep the declared registrations while Runtime sees the
+ * policy's effective profiles; both revisions are persisted so pinned Sessions resolve.
  */
 export class EngineManager implements EngineManagement {
   private state: CatalogState;
   private config: HubConfig;
+  private published: Publication;
   private tail: Promise<unknown> = Promise.resolve();
   private closed = false;
   private lastReloadAt: number | null = null;
@@ -110,10 +132,12 @@ export class EngineManager implements EngineManagement {
       discover: () => Promise<EngineCandidate[]>;
       configFile?: string;
       initialDefault?: string;
+      policy?: EngineRegistrationPolicy;
     },
   ) {
     this.config = options.config;
     this.state = loadState(options.persistence.readEngineCatalog());
+    this.published = this.evaluate(this.config, this.state);
     if (options.initialDefault) {
       this.resolve(options.initialDefault);
       this.state.defaultOverride = options.initialDefault;
@@ -126,7 +150,7 @@ export class EngineManager implements EngineManagement {
         this.watchListener,
       );
   }
-  private current(
+  private declaredProfiles(
     config = this.config,
     state = this.state,
   ): Map<string, EngineProfile> {
@@ -137,29 +161,59 @@ export class EngineManager implements EngineManagement {
     }
     return profiles;
   }
+  private evaluate(config: HubConfig, state: CatalogState): Publication {
+    const effective = new Map<string, EngineProfile>();
+    const unavailable = new Map<string, string>();
+    for (const [id, declared] of this.declaredProfiles(config, state)) {
+      if (!this.options.policy || declared.driver === "fake") {
+        effective.set(id, declared);
+        continue;
+      }
+      const result = this.options.policy.apply(declared);
+      if (result.profile.id !== id)
+        throw new HubError(
+          "ENGINE_POLICY_INVALID",
+          "Engine registration policy changed an engine id",
+          500,
+        );
+      effective.set(id, result.profile);
+      if (result.unavailableReason !== undefined)
+        unavailable.set(id, result.unavailableReason);
+    }
+    return { effective, unavailable };
+  }
+  /** Profiles Runtime executes, after the registration policy. */
   list(): EngineProfile[] {
-    return [...this.current().values()];
+    return [...this.published.effective.values()];
+  }
+  /** Registrations as authored by files, API and overlays, before the policy. */
+  declared(): EngineProfile[] {
+    return [...this.declaredProfiles().values()];
   }
   defaultId(): string {
     const id = this.state.defaultOverride ?? this.config.defaultEngine;
-    if (id) return this.current().get(id)?.enabled ? id : "";
+    if (id) return this.published.effective.get(id)?.enabled ? id : "";
     return this.list().find((p) => p.enabled)?.id ?? "";
   }
   resolve(id: string, revision?: string): EngineProfile {
-    const current = this.current().get(id);
+    const current = this.published.effective.get(id);
     const p = revision
       ? current?.revision === revision
         ? current
         : this.state.revisions.get(key(id, revision))
       : current;
-    if (!p || (!revision && !p.enabled))
+    if (!p || (!revision && !p.enabled)) {
+      const reason = revision ? undefined : this.published.unavailable.get(id);
       throw new HubError(
         "ENGINE_UNAVAILABLE",
-        revision
-          ? "Pinned engine revision is unavailable"
-          : "Engine is not registered or enabled; discover/register an engine first",
+        reason !== undefined
+          ? `引擎 ${id} 不可用：${reason}`
+          : revision
+            ? "Pinned engine revision is unavailable"
+            : "Engine is not registered or enabled; discover/register an engine first",
         404,
       );
+    }
     return p;
   }
   private serialize<T>(action: () => Promise<T> | T): Promise<T> {
@@ -183,12 +237,11 @@ export class EngineManager implements EngineManagement {
     };
   }
   private publish(config: HubConfig, state: CatalogState): void {
-    for (const p of this.current(config, state).values())
+    const declared = this.declaredProfiles(config, state);
+    const publication = this.evaluate(config, state);
+    for (const p of [...declared.values(), ...publication.effective.values()])
       if (p.driver !== "fake") state.revisions.set(key(p.id, p.revision), p);
-    if (
-      state.revisions.size > 10_000 ||
-      this.current(config, state).size > 1000
-    )
+    if (state.revisions.size > 10_000 || declared.size > 1000)
       throw new HubError(
         "ENGINE_CATALOG_FULL",
         "Engine catalog capacity reached",
@@ -202,7 +255,12 @@ export class EngineManager implements EngineManagement {
     });
     this.state = state;
     this.config = config;
+    this.published = publication;
   }
+  /**
+   * Register or replace the declared registration and return the effective profile
+   * Runtime will execute for new Sessions.
+   */
   register(input: unknown): Promise<EngineProfile> {
     return this.serialize(async () => {
       const p = await prepareEngine(input);
@@ -215,19 +273,30 @@ export class EngineManager implements EngineManagement {
       const state = this.copy();
       state.overrides.set(p.id, p);
       this.publish(this.config, state);
-      return p;
+      return this.published.effective.get(p.id) ?? p;
+    });
+  }
+  /**
+   * Run `change` in the management queue, then republish every engine with the current
+   * policy state. New Sessions use the resulting revisions; existing Sessions keep theirs.
+   * If `change` fails nothing is published; a failed publication keeps the last catalog.
+   */
+  refresh(change: () => Promise<void> = async () => {}): Promise<void> {
+    return this.serialize(async () => {
+      await change();
+      this.publish(this.config, this.copy());
     });
   }
   remove(id: string): Promise<void> {
     return this.serialize(() => {
       const state = this.copy();
-      if (this.current().get(id)?.driver === "fake")
+      if (this.declaredProfiles().get(id)?.driver === "fake")
         throw new HubError(
           "ENGINE_RESERVED",
           "The demo engine is controlled by --demo",
           409,
         );
-      if (!this.current().has(id))
+      if (!this.declaredProfiles().has(id))
         throw new HubError(
           "ENGINE_UNAVAILABLE",
           "Engine is not registered",

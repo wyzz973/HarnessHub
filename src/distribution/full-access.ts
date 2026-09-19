@@ -51,7 +51,8 @@ function appendEngineOption(
  * Translate the one Competition full-access switch into native harness options.
  * ACP-level permission approval is handled separately by AcpDriver; this function
  * only removes harness-specific read-only/approval modes that would otherwise be
- * stricter than the ACP client.
+ * stricter than the ACP client. It never touches model, Provider or credential
+ * settings, so the unified model registration (ADR 0013) is unaffected.
  */
 export function applyFullAccessToRegistration(
   input: EngineRegistration,
@@ -68,14 +69,9 @@ export function applyFullAccessToRegistration(
         "agent-full-access",
       );
       break;
-    case "opencode":
-      // OpenCode accepts the same JSON value as configuration.permission.
-      setLauncherEnvironment(
-        command,
-        "OPENCODE_PERMISSION",
-        JSON.stringify("allow"),
-      );
-      break;
+    // OpenCode relies on ACP approve-all only. Injecting OPENCODE_PERMISSION="allow"
+    // made fixed OpenCode fail Runs with driver_error (A/B: Safe 204, Full
+    // driver_error, Full without the injection 204).
     case "gemini":
       setLauncherEnvironment(command, "GEMINI_CLI_TRUST_WORKSPACE", "true");
       appendEngineOption(command, "--approval-mode", "yolo");
@@ -89,8 +85,8 @@ export function applyFullAccessToRegistration(
     case "hermes":
       setLauncherEnvironment(command, "HERMES_YOLO_MODE", "1");
       break;
-    // DSH, Pi and OpenClaw receive ACP approve-all. OpenClaw's private exec
-    // policy is additionally widened by launch-openclaw-bundled.mjs.
+    // OpenCode, DSH, Pi and OpenClaw receive ACP approve-all. OpenClaw's private
+    // exec policy is additionally widened by launch-openclaw-bundled.mjs.
     default:
       break;
   }
