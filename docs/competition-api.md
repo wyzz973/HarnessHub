@@ -12,7 +12,7 @@
 node dist/src/main.js --competition --engine opencode --port 6217
 ```
 
-stdout 输出一行 `{"event":"ready","url":...}` 即为就绪。`--engine`（或环境变量 `AGENT_ENGINE`）必填，比赛模式下每个 `POST /session` 都固定使用该引擎；默认监听 `localhost:6217`，`localhost` 同时可用 `127.0.0.1` 与 `[::1]` 访问。Gateway 只接受 loopback `Host`，评测客户端必须与 Gateway 在同一台机器上。Windows 完整包使用 `gateway.cmd --engine <id>`，见 [Capability Pack](capability-packs.md#competition-full-bundle)。本机试用可加 `--demo --engine fake`，它不调用模型。
+stdout 输出一行 `{"event":"ready","url":...}` 即为就绪。`--engine`（或环境变量 `AGENT_ENGINE`）必填，比赛模式下每个 `POST /session` 都固定使用该引擎；默认监听 `localhost:6217`，`localhost` 同时可用 `127.0.0.1` 与 `[::1]` 访问。默认只接受本机回环地址的 `Host`；评测客户端在另一台机器或容器中时，用 `--host 0.0.0.0`（或具体网卡地址）启动，此时接受任意 `Host`。注意这种绑定没有鉴权，同一网络中的任何人都能驱动开着 Full Access 的引擎，只应在隔离的评测网络中使用；浏览器跨源请求仍被拒绝。Windows 完整包使用 `gateway.cmd --engine <id>`，见 [Capability Pack](capability-packs.md#competition-full-bundle)。本机试用可加 `--demo --engine fake`，它不调用模型。
 
 ## 接口映射
 
@@ -149,7 +149,7 @@ curl.exe -N "$base/event"
 - 没有反问能力，`question.asked` 与 `permission.asked` 事件不会发出；权限在 `prompt_async` 等待期间自动批准，经其他入口提交的 Run 需通过 `/permission` 决定。
 - 工具名来自引擎报告的首个非占位标题（ACP 不单独提供工具名），缺失时依次用 `kind` 与 `tool`；步骤边界按事件顺序推断，引擎未报告最终状态的工具保持 `running`，也不产生 `tool` 消息。
 - `DELETE` 是关闭而不是删除数据；ACP 引擎的 Run 失败、取消或超时后 Runtime 也会关闭该 Session，之后提交返回 400，需要新建 Session。
-- 只接受 loopback `Host`；`--host` 改为非本机地址时远程客户端请求会被拒绝。
+- 默认只接受回环 `Host`；显式 `--host` 为非回环地址时接受任意 `Host`，没有鉴权（见上文）。
 - Gateway 关闭过程中新到达的请求由 Fastify 直接返回 503，响应体不是 `{code,message}`。
 - SSE 不支持断线续传；重连只接收新事件，已结束 Run 的结果从 `/message` 读取。
 

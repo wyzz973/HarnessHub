@@ -55,8 +55,8 @@ Status: accepted
 
 - 总是流式 Chat Completions，`model` 固定为统一模型。
 - 非流式入站请求，由网关聚合流式结果后返回完整响应。
-- 默认去掉 `store`、`metadata`、`service_tier`、`prediction`、`modalities`、`audio`、`web_search_options`、`user`；`compatibility.dropParameters` 可追加。
-- 没有 tools 时，同时去掉 `tool_choice` 和 `parallel_tool_calls`。
+- 默认去掉 `store`、`metadata`、`service_tier`、`prediction`、`modalities`、`audio`、`web_search_options`、`user`、`parallel_tool_calls`；`compatibility.dropParameters` 可追加。
+- 没有 tools 时，同时去掉 `tool_choice`；`response_format: json_schema` 降级为 `json_object`。选择保守默认值的理由：公司网关的严格程度未知，保留这些参数一旦被拒绝，Codex 每次主调用都会失败；而去掉后即使公司网关本来支持，损失也很小。
 - `developer` 角色转为 `system`；多条 system 消息合并为开头的一条；全是文本分片的 content 合并成字符串。
 - 输出上限统一写入 `compatibility.maxTokensField`（默认 `max_tokens`），并按 `maxOutputTokens` 截断。
 - `stream_options.include_usage` 仅在 `compatibility.includeUsage` 为 true 时发送。
@@ -96,6 +96,7 @@ Status: accepted
 - 失败时推送 `session.error`。
 - 所有错误都用 `{code,message}`：接受空 JSON 请求体，Fastify 的解析错误也映射到规范错误码。
 - `directory` 不存在时自动创建。`/session` 固定使用启动引擎（`competitionEngine`）。
+- 显式 `--host` 为非回环地址（如 `0.0.0.0`）时接受任意 `Host`，供评测客户端在另一台机器或容器中调用；这种绑定没有鉴权，只应在隔离的评测网络中使用。默认的 localhost 绑定仍只接受回环 `Host`，浏览器跨源请求在任何绑定下都被拒绝。
 - 消息轨迹中补充 `tool_calls` 和 `tool` 角色消息。工具状态反映真实结果（running、completed、error）。
 
 ### 4. 工具包、控制台与交付

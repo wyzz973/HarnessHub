@@ -379,7 +379,9 @@ void test("Responses streams created, reasoning summary, text, function call arg
     { role: "user", content: "读" },
   ]);
   assert.equal(sent.tool_choice, "auto");
-  assert.equal(sent.parallel_tool_calls, true);
+  // Dropped by default (ADR 0013): strict gateways reject it and engines
+  // accept several tool calls in one answer anyway.
+  assert.equal("parallel_tool_calls" in sent, false);
   for (const key of ["include", "reasoning", "prompt_cache_key", "store"])
     assert.equal(key in sent, false, key);
 });

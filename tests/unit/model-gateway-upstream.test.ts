@@ -976,3 +976,26 @@ void test("a model request without the Session token is recorded as a Run error 
     [401],
   );
 });
+
+void test("strict-gateway defaults drop parallel_tool_calls and downgrade json_schema output to JSON mode", async (t) => {
+  const up = await upstream(t, (_, response) =>
+    stream(response, [delta({ content: "{}" }, "stop")]),
+  );
+  const { send } = await gateway(t, up.baseUrl);
+  const response = await send("/v1/chat/completions", {
+    model: "m",
+    messages: [{ role: "user", content: "hi" }],
+    tools: [READ],
+    parallel_tool_calls: false,
+    response_format: {
+      type: "json_schema",
+      json_schema: { name: "x", schema: { type: "object" } },
+    },
+  });
+  assert.equal(response.status, 200);
+  await response.text();
+  const sent = up.requests.at(-1)!.body;
+  assert.equal("parallel_tool_calls" in sent, false);
+  assert.deepEqual(sent.response_format, { type: "json_object" });
+  assert.ok(Array.isArray(sent.tools));
+});
