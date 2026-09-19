@@ -102,6 +102,9 @@ jobs:
           $setup = Get-ChildItem $root -Recurse -Filter "Setup-Competition-Offline.cmd" | Select-Object -First 1
           if (-not $setup) { throw "Setup-Competition-Offline.cmd not found" }
           $code = $setup.DirectoryName
+          # Setup needs no model; the job-level HARNESSHUB_MODEL* values are incomplete here
+          # (the base URL is a secret of the acceptance step), so remove them for this step.
+          Get-ChildItem Env:HARNESSHUB_MODEL* | ForEach-Object { Remove-Item "Env:$($_.Name)" }
           # Same as a judge machine: no Node, pnpm or Git on PATH, registry pointed nowhere.
           $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem;$env:SystemRoot\System32\WindowsPowerShell\v1.0"
           $env:npm_config_registry = "http://127.0.0.1:9/"
