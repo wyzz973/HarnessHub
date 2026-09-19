@@ -210,6 +210,8 @@ Invoke-RestMethod -Method Delete -Uri "$base/session/$($session.id)"
 | 引擎日志（引擎进程与 stderr、每个 ACP 请求/响应、工具与权限、模型调用明细） | `<CODE>\competition\state\competition-data\backends\<sessionId>\diagnostics\engine.log`（`gateway.log` 中 `session.create` 行的 `engineLog`） |
 | 一键打包全部日志（已脱敏） | `.\competition\Collect-Logs.cmd`，生成 `<CODE>\competition\logs-<时间>.zip` |
 
+控制台中打开任务的“执行详情 → 诊断日志 → 查看日志”，可在页面上按会话查看同样的引擎日志与 Gateway 日志（筛选、复制、下载），也可调用 `GET /v1/sessions/{id}/logs?source=engine|gateway`。
+
 日志为每行一个 JSON 对象，密钥与 token 已脱敏，单个文件超过 16 MiB 自动轮转。需要看提示词与模型回答摘录时，在启动前设置 `$env:HARNESSHUB_LOG_LEVEL = "debug"`（取值只能是 `info` 或 `debug`，其他值拒绝启动）。
 
 `state` 目录只保存密钥的环境变量名，不保存密钥本身。需要干净的评测状态时，停止服务后删除 `<CODE>\competition\state`，或重新执行第 2 节。
