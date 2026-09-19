@@ -130,10 +130,24 @@ export class PackageReader {
   async close(): Promise<void> {
     await this.windows?.close();
   }
-  async read(file: string, maximum: number): Promise<Buffer> {
+  /**
+   * Reads one regular file whose identity, size and bytes stay stable during
+   * the read. Payload and registry reads require a single hard link;
+   * `allowHardLinks` is only for copying import sources, whose bytes are
+   * hashed into a new manifest and never referenced in place.
+   */
+  async read(
+    file: string,
+    maximum: number,
+    options: { allowHardLinks?: boolean } = {},
+  ): Promise<Buffer> {
     const chain = await directories(path.dirname(file));
     const before = await lstat(file, { bigint: true });
-    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n)
+    if (
+      !before.isFile() ||
+      before.isSymbolicLink() ||
+      (before.nlink !== 1n && options.allowHardLinks !== true)
+    )
       throw packageError(
         "INVALID_TOOL_PACKAGE_PATH",
         "Package payloads must be regular files with one hard link",

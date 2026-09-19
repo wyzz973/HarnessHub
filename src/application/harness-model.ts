@@ -261,6 +261,7 @@ function compatibility(value: unknown): ModelCompatibility {
     "dropParameters",
     "maxTokensField",
     "reasoning",
+    "images",
   ]);
   const result: ModelCompatibility = {};
   if (raw.includeUsage !== undefined) {
@@ -296,6 +297,13 @@ function compatibility(value: unknown): ModelCompatibility {
     if (raw.reasoning !== "passthrough" && raw.reasoning !== "strip")
       invalid("provider.compatibility.reasoning 必须是 passthrough 或 strip");
     result.reasoning = raw.reasoning;
+  }
+  if (raw.images !== undefined) {
+    if (raw.images !== "placeholder" && raw.images !== "passthrough")
+      invalid(
+        "provider.compatibility.images 必须是 placeholder 或 passthrough",
+      );
+    result.images = raw.images;
   }
   return result;
 }

@@ -31,6 +31,7 @@ import {
   verifyInstalled,
   type ToolPackageBindResult,
   type ToolPackageManifest,
+  SESSION_WORKSPACE_PLACEHOLDER,
 } from "../../src/tool-packages/index.js";
 import { hash } from "../../src/tool-packages/manifest.js";
 
@@ -155,7 +156,11 @@ void test(
       secretBindings: bindings,
     });
     assert.equal(fragment.mcpServers[0]!.command, process.execPath);
-    assert.equal(fragment.mcpServers[0]!.args![1], directory);
+    assert.equal(
+      fragment.mcpServers[0]!.args![1],
+      SESSION_WORKSPACE_PLACEHOLDER,
+      "workspace anchors are resolved per Session by the Worker, not at bind time",
+    );
     assert.ok(fragment.mcpServers[0]!.args![0]!.startsWith(moved + path.sep));
     assert.equal(fragment.skills[0]!.sha256, manifest.files[0]!.sha256);
     const input = path.join(directory, "engine.json");

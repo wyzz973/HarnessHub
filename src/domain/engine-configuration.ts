@@ -37,6 +37,12 @@ export interface ModelCompatibility {
   maxTokensField?: "max_tokens" | "max_completion_tokens";
   /** Whether upstream reasoning text is forwarded to engines. Default `passthrough`. */
   reasoning?: "passthrough" | "strip";
+  /**
+   * Chat `image_url` parts: `placeholder` (default) replaces them with text so a text-only
+   * model keeps working; `passthrough` forwards them to a vision-capable model. Media of
+   * the other inbound protocols is always replaced with text.
+   */
+  images?: "placeholder" | "passthrough";
 }
 export interface ModelProviderConfiguration {
   protocol: "openai-completions" | "openai-responses" | "anthropic" | "google";
@@ -145,6 +151,7 @@ export const engineConfigurationSchema = {
             },
             maxTokensField: { enum: ["max_tokens", "max_completion_tokens"] },
             reasoning: { enum: ["passthrough", "strip"] },
+            images: { enum: ["placeholder", "passthrough"] },
           },
         },
       },

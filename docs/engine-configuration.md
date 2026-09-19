@@ -140,7 +140,7 @@ Skills 为 `{path,enabled,sha256?}` 数组，最多 16 项。每项主指令限 
 
 MCP 最多 16 项，名称唯一：stdio 需要 absolute command，可带 args/env/secretEnv；HTTP/SSE 需要 url，可带 headers/secretHeaders。URL 只允许 HTTP(S)，不允许内嵌身份、query 或 fragment；请用请求头秘密引用。程序按 argv 启动，配置本身不会执行脚本或安装包。enabled:false 不解析其秘密也不下发。Pi 通过本地扩展注册工具，OpenClaw 使用原生 Gateway 的 `mcp.servers`，Kimi CLI 使用独立 MCP 文件，具体要求和验证见 [原生 MCP](native-mcp.md)。其他普通 CLI 明确拒绝统一注入；其他 ACP 引擎下发后的服务建立、工具审批和调用按引擎协议分别验证。
 
-公司只支持 Chat Completions 时，Codex/Gemini 可显式选择 `openai-completions`。协议转换范围、错误/断流/取消及资源责任见 [ADR 0011](decisions/0011-chat-completions-bridge.md)，免安装和公司代码合并见 [公司离线交接](offline-company.md)。原生托管搜索、多模态等未支持请求会明确失败，不提供所有厂商 API 的等价实现。
+公司只支持 Chat Completions 时，所有引擎经 [统一模型网关](model-gateway.md) 访问它，协议转换范围、错误/断流/取消及资源责任见该文档与 [ADR 0013](decisions/0013-unified-model-gateway.md)；免安装和公司代码合并见 [公司离线交接](offline-company.md)。原生托管搜索等无法转换的请求会明确失败；图片等媒体默认替换为文字占位。
 
 Qwen 0.23.0 的 ACP 首次请求会与后台 MCP 发现竞争。选择启用的 MCP 时，配置层设置原生 `QWEN_CODE_LEGACY_MCP_BLOCKING=1`，使初始化等待工具注册后再调用模型；不改变模型选择、工具权限或 Run 总期限。没有启用的 MCP 时不设置该选项。已通过固定 Windows 包与本地合成 API 验证首次请求的工具列表、秘密环境和进程清理；真实模型任务另行记录。
 

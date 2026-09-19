@@ -339,6 +339,7 @@ export async function startHub(options: {
       ),
       engineProfile: (id) => app.engineProfile(id),
       registerEngine: (input) => app.registerEngine(input),
+      listEngines: () => app.engines(),
     });
     registerToolPackageRoutes(server, toolPackages);
     registerHarnessModelRoutes(server, harnessModel, () => runtimeInfo);

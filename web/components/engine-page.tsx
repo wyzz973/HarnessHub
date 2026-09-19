@@ -28,8 +28,11 @@ import {
   registrationSchema,
   type Candidate,
   type Engine,
+  type HarnessModelView,
   type Registration,
+  type RuntimeInfo,
 } from "@/lib/contracts";
+import { engineModelStatusNames } from "@/lib/harness-model";
 
 export function EnginePage({
   engines,
@@ -37,13 +40,27 @@ export function EnginePage({
   refresh,
   report,
   testModel,
+  runtime,
+  unifiedModel,
 }: {
   engines: Engine[];
   defaultEngine: string;
   refresh: () => Promise<void>;
   report: (error: unknown) => void;
   testModel: (engineId: string) => Promise<void>;
+  /** Present when `/v1/runtime/info` is available. */
+  runtime?: RuntimeInfo;
+  unifiedModel?: HarnessModelView;
 }) {
+  const competitionEngine = runtime?.competition
+    ? runtime.competitionEngine
+    : undefined;
+  const modelStatus = new Map(
+    (unifiedModel?.configured ? unifiedModel.engines : []).map((status) => [
+      status.engineId,
+      status,
+    ]),
+  );
   const [discovering, setDiscovering] = useState(true);
   const discoveryRequest = useRef<AbortController | null>(null);
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
@@ -174,6 +191,13 @@ export function EnginePage({
             </Button>
           </div>
         </div>
+        {runtime?.competition ? (
+          <div className="notice info mt-6">
+            比赛模式：比赛接口 /session 固定使用启动引擎{" "}
+            {competitionEngine ?? "（未报告）"}
+            。“设为默认”只影响控制台新建任务，不会改变评测使用的引擎。
+          </div>
+        ) : null}
         <div className="stats-grid mb-8">
           <div className="stat-cell">
             <p className="text-[11px] text-muted-foreground">已注册</p>
@@ -349,6 +373,11 @@ export function EnginePage({
                             默认
                           </span>
                         ) : null}
+                        {engine.id === competitionEngine ? (
+                          <span className="ml-2 rounded bg-[#e8f0f6] px-1.5 py-0.5 text-[9px] text-[#40576b]">
+                            比赛引擎
+                          </span>
+                        ) : null}
                         <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
                           <span
                             className={`size-1.5 rounded-full ${engine.enabled ? "bg-[#7d9c6b]" : "bg-[#b4bcb0]"}`}
@@ -368,6 +397,7 @@ export function EnginePage({
                     <p className="mt-1.5 text-[10px] uppercase text-muted-foreground">
                       {engine.driver}
                     </p>
+                    <UnifiedModelStatus status={modelStatus.get(engine.id)} />
                   </td>
                   <td>
                     <div className="flex max-w-[150px] flex-wrap gap-1">
@@ -440,6 +470,11 @@ export function EnginePage({
                           size="sm"
                           variant="ghost"
                           disabled={!!busy}
+                          title={
+                            runtime?.competition
+                              ? `只影响控制台新建任务；比赛接口仍使用 ${competitionEngine ?? "启动引擎"}`
+                              : "新建会话默认使用该引擎"
+                          }
                           onClick={() =>
                             void action(engine.id, () =>
                               api.setDefault(engine.id),
@@ -483,6 +518,7 @@ export function EnginePage({
         {editing ? (
           <EngineConfigurationDialog
             engine={editing}
+            {...(unifiedModel ? { unifiedModel } : {})}
             onClose={() => setEditing(null)}
             onSaved={() => {
               setCheckResult(null);
@@ -536,5 +572,21 @@ export function EnginePage({
         </Dialog>
       </div>
     </div>
+  );
+}
+function UnifiedModelStatus({
+  status,
+}: {
+  status: HarnessModelView["engines"][number] | undefined;
+}) {
+  if (!status) return null;
+  return (
+    <p
+      className={`mt-1.5 max-w-[220px] text-[10px] leading-4 ${status.status === "applied" ? "text-[#52714a]" : "text-amber-800"}`}
+      title={status.reason}
+    >
+      统一模型：{engineModelStatusNames[status.status]}
+      {status.reason ? `（${status.reason}）` : ""}
+    </p>
   );
 }

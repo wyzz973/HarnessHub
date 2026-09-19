@@ -36,12 +36,6 @@ import {
   SourcesTrigger,
 } from "@/components/ai-elements/sources";
 import {
-  Tool,
-  ToolContent,
-  ToolHeader,
-  ToolInput,
-} from "@/components/ai-elements/tool";
-import {
   Plan,
   PlanContent,
   PlanDescription,
@@ -60,6 +54,7 @@ import type {
 import { isTerminal } from "@/lib/contracts";
 import { projectEvents } from "@/lib/presentation";
 import { Status } from "./status";
+import { ToolCallCard } from "./tool-call-card";
 
 interface ThreadContextValue {
   runs: Run[];
@@ -126,22 +121,13 @@ const AssistantMessage = () => {
           <ReasoningContent>{projected.reasoning}</ReasoningContent>
         </Reasoning>
       ) : null}
-      {projected?.tools.map((tool) => (
-        <Tool
-          key={tool.id}
-          className="mb-3 rounded-lg border-border"
-          defaultOpen={false}
-        >
-          <ToolHeader
-            type="tool-execution"
-            state={tool.state}
-            title={tool.title.slice(0, 100)}
-          />
-          <ToolContent>
-            <ToolInput input={tool.details} />
-          </ToolContent>
-        </Tool>
-      ))}
+      {projected?.tools.length ? (
+        <div className="mb-3 space-y-2">
+          {projected.tools.map((tool) => (
+            <ToolCallCard key={tool.id} tool={tool} />
+          ))}
+        </div>
+      ) : null}
       <MessagePrimitive.Parts components={{ Text: Markdown }} />
       {run && !run.output && !projected?.output && !isTerminal(run.status) ? (
         <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
@@ -232,9 +218,12 @@ export function Messages() {
 export function Welcome({
   suggest,
   enabledCount,
+  competitionEngine,
 }: {
   suggest: (text: string) => void;
   enabledCount: number;
+  /** Set only when the Gateway runs in competition mode. */
+  competitionEngine?: string;
 }) {
   const suggestions = [
     {
@@ -298,6 +287,13 @@ export function Welcome({
         <span className="size-1.5 rounded-full bg-[#799574]" />
         {enabledCount} 个已启用引擎 · 任务与产物保存在本机
       </div>
+      {competitionEngine ? (
+        <p className="mt-3 rounded-lg border border-[#d9e3ec] bg-[#f5f8fb] px-3 py-2 text-[11px]! leading-6 text-[#40576b]!">
+          比赛模式：比赛接口固定使用 {competitionEngine}
+          。评测方创建的会话会带“比赛
+          API”标记出现在左侧最近任务中，控制台只读显示，不会干扰评测。
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -454,6 +450,8 @@ export function Composer({
   onStop,
   outputPaths,
   setOutputPaths,
+  fullAccess = false,
+  sessionCwd,
 }: {
   mode: "auto" | "direct";
   setMode: (mode: "auto" | "direct") => void;
@@ -469,7 +467,14 @@ export function Composer({
   onStop: () => void;
   outputPaths: string;
   setOutputPaths: (paths: string) => void;
+  /** Gateway Full Access mode; planning then auto-approves tool requests and may be rejected. */
+  fullAccess?: boolean;
+  /** Directory of a bound Session whose workspace is not a registered one. */
+  sessionCwd?: string;
 }) {
+  const knownWorkspace = workspaces.some(
+    (workspace) => workspace.id === workspaceId,
+  );
   return (
     <div className="composer-wrap">
       <ComposerPrimitive.Root className="composer-surface">
@@ -501,8 +506,8 @@ export function Composer({
                 setMode(event.target.value === "auto" ? "auto" : "direct")
               }
             >
-              <option value="auto">自动规划</option>
               <option value="direct">直接执行</option>
+              <option value="auto">自动规划</option>
             </select>
           </label>
           <span className="mx-1 h-3 w-px bg-border" />
@@ -563,6 +568,9 @@ export function Composer({
             disabled={sessionBound || running || workflowActive}
             onChange={(event) => setWorkspaceId(event.target.value)}
           >
+            {!knownWorkspace && workspaceId ? (
+              <option value={workspaceId}>{sessionCwd ?? workspaceId}</option>
+            ) : null}
             {workspaces.map((workspace) => (
               <option value={workspace.id} key={workspace.id}>
                 {workspace.id}
@@ -572,11 +580,17 @@ export function Composer({
         </label>
         <span>Enter 发送 · Shift + Enter 换行</span>
       </div>
+      {mode === "auto" && fullAccess && !workflowActive && !sessionBound ? (
+        <p className="mt-2 px-1 text-[10px] leading-5 text-amber-800">
+          Full Access
+          下引擎的工具请求会被自动批准，而规划阶段禁止使用工具，计划可能被拒绝。一般任务建议使用“直接执行”。
+        </p>
+      ) : null}
       {mode === "direct" && !workflowActive ? (
         <details className="mt-2 px-1 text-[10px] text-muted-foreground">
           <summary className="w-fit cursor-pointer">需要保存文件产物？</summary>
           <label className="mt-2 block leading-6">
-            完成后采集的相对路径（每行一个）
+            完成后采集的工作区相对路径（每行一个，Windows 的 \ 会转换为 /）
             <textarea
               aria-label="预期产物路径"
               className="mt-1 block w-full rounded-md border p-2 font-mono text-xs outline-none"
