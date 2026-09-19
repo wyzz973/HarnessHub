@@ -1,6 +1,6 @@
 # HarnessHub 开发任务
 
-更新：2026-09-07。阶段 A（HH-001～HH-012）、HH-013/HH-015 及既有 macOS 引擎证据保留。Windows 11 ARM64 原生环境已可直接开发；已补入发现、脚本启动、Job 监督/恢复、文件 ACL/锁与 DPAPI。Codex 的真实文本、只读工具和流式取消已通过；历史范围见 [Windows 验收](docs/verification/2026-09-06-windows.md)。上一轮 11 个引擎通过 DeepSeek V4 Flash 短任务，最新检查、工具与发行进展见 [便携引擎验收](docs/verification/2026-09-06-portable-engines.md)。其余平台范围见 [Windows 指南](docs/windows.md)，不以单个引擎通过代替全部发行验收。
+更新：2026-09-19（新增决赛升级 HH-042～HH-049）。2026-09-07：阶段 A（HH-001～HH-012）、HH-013/HH-015 及既有 macOS 引擎证据保留。Windows 11 ARM64 原生环境已可直接开发；已补入发现、脚本启动、Job 监督/恢复、文件 ACL/锁与 DPAPI。Codex 的真实文本、只读工具和流式取消已通过；历史范围见 [Windows 验收](docs/verification/2026-09-06-windows.md)。上一轮 11 个引擎通过 DeepSeek V4 Flash 短任务，最新检查、工具与发行进展见 [便携引擎验收](docs/verification/2026-09-06-portable-engines.md)。其余平台范围见 [Windows 指南](docs/windows.md)，不以单个引擎通过代替全部发行验收。
 
 本文件拥有任务依赖、优先级和进度；架构契约由 [DESIGN.md](DESIGN.md)拥有，开发与验收按 [AGENTS.md](AGENTS.md)及 [测试要求](docs/testing.md)执行。任务勾选不改变架构，也不代替证据。
 
@@ -486,5 +486,57 @@ HH-005 后，HH-006 → HH-007 → HH-008 → HH-010 依次修改 Runtime，默�
 - [x] 与 HH-040 同轮；已交付能离线使用的 `harnesshub-company-gateway` Skill、合并基线与源代码/运行包清单；新分支与公开离线 Release 已推送。
 - 公司已修改的网关代码禁止上传；Skill 指导公司 Agent 保留本地网关，按模块合并本分支，不用远端版本覆盖公司实现，不将个人凭证与运行状态放入交付。
 - 证据见 [最终归档与交付](docs/verification/2026-09-07-offline-company.md#最终归档与交付)：实际归档、独立 Python 校验、系统 PowerShell 5.1 恢复和四附件远端 SHA256 均通过；[Release](https://github.com/wyzz973/HarnessHub/releases/tag/offline-win11-arm64-2026-09-07)已公开，无登录下载入口已核验。公司真实网关行为仍按 HH-040 在内网验收。
+
+## 决赛升级（2026-09-19）
+
+比赛机为离线 Windows x64；公司模型是推理模型，只提供流式 OpenAI Chat Completions，支持工具调用。用户要求：所有引擎只使用 HarnessHub 统一配置的模型，不使用任何引擎自身的 API Key、登录或订阅；模型密钥不存入 GitHub，DeepSeek 替身只在本机测试。方案与接口约定见 [ADR 0013](docs/decisions/0013-unified-model-gateway.md)，比赛接口以规范 v1.1 为准。以下任务并行开发，文件所有权按 ADR 0013 与本节划分，由主 Agent 合入。
+
+### HH-042 统一模型网关与主流协议转换
+
+- [ ] 进行中；P0；前置：HH-040；负责人：网关子任务；范围：`src/drivers/chat-completions/**`、网关单元测试、`docs/model-gateway.md`。
+- 验收：Chat/Responses/Anthropic/Google 四种入站协议在流式与非流式下转换正确；上游只发流式、只用统一模型；宽松解析各种网关变体；推理内容转发与回填；参数清理与输出上限截断；错误状态码透传与脱敏；Run 作用域与取消。
+- 证据：待补。
+
+### HH-043 引擎接线、厂商凭据隔离与 Worker 失败语义
+
+- [ ] 进行中；P0；前置：HH-042；负责人：接线子任务；范围：`src/drivers/configuration/**`、`src/worker/**`、`src/engine/configuration.ts`。
+- 验收：全部可路由引擎以原生协议经网关访问统一模型，看到的是模型别名；厂商凭据变量和真实家目录登录态不可用；Codex Full Access 不被改回只读；上游失败或无输出时 Run 判为失败并带脱敏的真实原因；`model.call` 事件提交。
+- 证据：待补。
+
+### HH-044 统一模型配置与强制生效
+
+- [ ] 进行中；P0；前置：HH-042；负责人：统一模型子任务；范围：`src/application/harness-model.ts`、`src/engine/{registry,manager}.ts`、`src/distribution/**`、`src/release-main.ts`、`/v1/harness/model`。
+- 验收：环境变量 > 统一模型文件 > 配置文件的优先级；任何登记路径都被覆盖为统一模型；不可路由的引擎被禁用并说明原因；PUT 后生成新 revision；`hub.cmd model` 命令；OpenCode Full Access 修复。
+- 证据：待补。
+
+### HH-045 比赛接口规范 v1.1 对齐
+
+- [ ] 进行中；P0；前置：无；负责人：比赛接口子任务；范围：`src/gateway/competition/**`、`src/gateway/server.ts`。
+- 验收：`prompt_async` 阻塞并返回 204/502；错误统一为 `{code,message}`，空请求体可用；`directory` 自动创建；`session.error`、busy/idle、工具状态与 `tool_calls`/`tool` 消息；`/session` 固定使用启动引擎。
+- 证据：待补。
+
+### HH-046 工具包一键安装到全部引擎
+
+- [ ] 进行中；P1；前置：HH-044；负责人：工具包子任务；范围：`src/tool-packages/**`、工具包路由、Command MCP。
+- 验收：apply 支持 `engineIds: all` 并逐引擎返回结果；可直接导入 Skill 目录、MCP JSON、CLI 清单；工作目录按会话解析；支持解绑和替换。
+- 证据：待补。
+
+### HH-047 比赛入口集成控制台
+
+- [ ] 进行中；P1；前置：HH-044、HH-046；负责人：控制台子任务；范围：`web/**`、`src/competition-bundle-main.ts`。
+- 验收：`gateway.cmd` 同时启动控制台，`/` 跳转到控制台；有统一模型页、工具包页、比赛状态条、`model.call` 证据；默认进入直接对话模式；实时刷新。
+- 证据：待补。
+
+### HH-048 x64 离线交付、模拟模型验收与 INSTRUCTION.md
+
+- [ ] 进行中；P0；前置：HH-042～HH-047；负责人：交付子任务；范围：`.github/workflows/**`、打包与离线开发包脚本、`distribution/INSTRUCTION.md`、验收脚本。
+- 验收：源码变更触发 x64 完整包和离线开发包构建；Windows x64 runner 用本地模拟模型（只接受流式、要求回传推理内容）逐个引擎验收；`Setup-Competition-Offline.cmd` 在禁网条件下产出可运行的比赛布局；INSTRUCTION.md 与真实命令一致。
+- 证据：待补。
+
+### HH-049 组合验收与发布
+
+- [ ] 待开始；P0；前置：HH-042～HH-048；负责人：主 Agent；范围：合并、API 文档、README/TODO、本机真实模型验收、推送与 Release。
+- 验收：`pnpm check` 通过；本机以 DeepSeek `deepseek-flash` 经严格网关逐个引擎跑通比赛 API 与文件/Shell 任务，并确认上游只收到统一模型；Windows x64 CI 构建和模拟验收通过；旧 Release 已备份，新 Release 可下载。本机与 CI 结果都不代表公司真实模型通过。
+- 证据：待补。
 
 HH-033～036已完成本机控制台、真实模型拆分/审批执行、启发式引擎选择及Run级原生观测；macOS 浏览器已有两步文件任务、Pi用量与取消证据。Windows 11 ARM64 已开展原生及真实 Codex 验收，其他引擎/平台继续按同套契约验证。远端多用户部署、并行DAG、大规模聚合与账单对账尚不属于已验证能力。

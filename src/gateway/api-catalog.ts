@@ -288,6 +288,72 @@ export const apiCatalog: readonly ApiDocumentation[] = [
   },
   {
     method: "GET",
+    path: "/v1/harness/model",
+    title: "查看统一模型",
+    group: "configuration",
+    request: "无参数。",
+    response:
+      "200：HarnessModelView，含 configured、source（environment/file/settings）、真实 model、alias、只含秘密引用的 provider，以及每个引擎的 applied/unsupported/disabled 状态和原因。",
+    implementation:
+      "HarnessModelService.view 读取启动时解析的生效来源，并按当前引擎目录计算每个引擎的登记策略结果。",
+    effects: "只读；不解析秘密、不调用模型。",
+    errors: "未配置时返回 configured=false，不报错。",
+    source: "src/gateway/harness-model-routes.ts",
+    tests: ["tests/integration/harness-model.test.ts"],
+    operationId: "hh_get_v1_harness_model",
+  },
+  {
+    method: "PUT",
+    path: "/v1/harness/model",
+    title: "设置统一模型",
+    group: "configuration",
+    request:
+      "JSON：HarnessModel（model、可选 alias、provider）；provider.protocol 仅接受 openai-completions，apiKey/secretHeaders 只接受秘密引用。",
+    response: "200：更新后的 HarnessModelView。",
+    implementation:
+      "校验后原子写入统一模型文件，再经 EngineManager 登记策略为全部引擎发布新 revision。",
+    effects:
+      "写统一模型文件和引擎目录；新 Session 使用新 revision，已有 Session 保留原 revision。文件只保存秘密引用。",
+    errors:
+      "INVALID_HARNESS_MODEL、HARNESS_MODEL_PROTOCOL_UNSUPPORTED（400）；HARNESS_MODEL_ENVIRONMENT_OVERRIDE（409，环境变量来源生效时）；HARNESS_MODEL_FILE_UNAVAILABLE（409）。",
+    source: "src/gateway/harness-model-routes.ts",
+    tests: ["tests/integration/harness-model.test.ts"],
+    operationId: "hh_put_v1_harness_model",
+  },
+  {
+    method: "POST",
+    path: "/v1/harness/model/test",
+    title: "测试统一模型",
+    group: "configuration",
+    request: "JSON：可选 engineId，缺省使用默认引擎。",
+    response:
+      "200：ok、status、durationMs、runId 和可选 error；只有 Run 正常完成且回复非空时 ok=true。",
+    implementation:
+      "在私有临时目录创建正式 Session，提交“只回复 OK”，最多等待 90 秒后关闭 Session；秘密只在 Worker 内解析。",
+    effects: "会实际调用模型并消耗额度；产生一条正式 Run 记录。",
+    errors:
+      "HARNESS_MODEL_NOT_CONFIGURED、HARNESS_MODEL_TEST_UNSUPPORTED（409）；HARNESS_MODEL_TEST_BUSY（429）；HARNESS_MODEL_CLOSED（503）。",
+    source: "src/gateway/harness-model-routes.ts",
+    tests: ["tests/integration/harness-model.test.ts"],
+    operationId: "hh_post_v1_harness_model_test",
+  },
+  {
+    method: "GET",
+    path: "/v1/runtime/info",
+    title: "运行模式信息",
+    group: "health",
+    request: "无参数。",
+    response:
+      "200：competition、可选 competitionEngine、fullAccess、可选 consoleUrl。",
+    implementation: "返回 Gateway 启动时确定的运行模式，供控制台显示。",
+    effects: "只读。",
+    errors: "无业务错误。",
+    source: "src/gateway/harness-model-routes.ts",
+    tests: ["tests/integration/harness-model.test.ts"],
+    operationId: "hh_get_v1_runtime_info",
+  },
+  {
+    method: "GET",
     path: "/v1/workspaces",
     title: "可用工作区与默认项",
     group: "sessions",

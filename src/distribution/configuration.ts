@@ -17,6 +17,19 @@ const schema = {
   properties: {
     schemaVersion: { const: 1 },
     defaultEngine: { type: "string", minLength: 1 },
+    model: {
+      type: "object",
+      additionalProperties: false,
+      required: ["model", "provider"],
+      properties: {
+        model: { type: "string", minLength: 1, maxLength: 256 },
+        alias: {
+          type: "string",
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$",
+        },
+        provider: engineConfigurationSchema.properties.provider,
+      },
+    },
     modelProfiles: {
       type: "object",
       maxProperties: 32,
@@ -61,12 +74,30 @@ const schema = {
 } as const;
 const validate = new Ajv({ allErrors: true }).compile<BundleSettings>(schema);
 
-/** Settings store model names and existing secret references, never inline API values. */
+/**
+ * Settings store model names and existing secret references, never inline API values.
+ * A top-level unified `model` must use the streaming Chat Completions upstream with an
+ * explicit base URL; the Gateway applies the remaining unified-model rules at startup.
+ */
 export function parseSettings(input: unknown): BundleSettings {
   if (!validate(input))
     throw new Error(
       `Invalid release settings: ${new Ajv().errorsText(validate.errors)}`,
     );
+  if (input.model) {
+    if (input.model.provider.protocol !== "openai-completions")
+      throw new Error(
+        "Unified model upstream protocol must be openai-completions",
+      );
+    if (!input.model.provider.baseUrl)
+      throw new Error("Unified model requires provider.baseUrl");
+    if (
+      input.model.alias !== undefined &&
+      input.model.provider.modelAlias !== undefined &&
+      input.model.alias !== input.model.provider.modelAlias
+    )
+      throw new Error("Unified model alias conflicts with provider.modelAlias");
+  }
   const reference = (ref: SecretReference) => {
     if (ref.kind === "env" && !/^[A-Z][A-Z0-9_]*$/.test(ref.value))
       throw new Error("Secret env reference must name a variable");
@@ -80,6 +111,7 @@ export function parseSettings(input: unknown): BundleSettings {
       throw new Error("Invalid system secret reference");
   };
   const configurations = [
+    ...(input.model ? [{ provider: input.model.provider }] : []),
     ...Object.values(input.modelProfiles ?? {}).map((profile) => ({
       provider: profile.provider,
     })),
@@ -111,6 +143,17 @@ export function parseSettings(input: unknown): BundleSettings {
         );
     }
     if (config.provider?.apiKey) reference(config.provider.apiKey);
+    for (const ref of Object.values(config.provider?.secretHeaders ?? {}))
+      reference(ref);
+    for (const [name, value] of Object.entries(config.provider?.headers ?? {}))
+      if (
+        /authorization|api[-_]?key|token|secret|password|cookie|credential/i.test(
+          name,
+        ) ||
+        /[\r\n\0]/.test(name + value) ||
+        /\b(?:sk-|ghp_|Bearer )[a-zA-Z0-9_-]{12,}/.test(value)
+      )
+        throw new Error("Sensitive provider headers require secretHeaders");
     if ("env" in config) environment(config.env);
     if ("secretEnv" in config)
       for (const ref of Object.values(config.secretEnv ?? {})) reference(ref);

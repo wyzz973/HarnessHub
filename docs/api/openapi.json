@@ -286,6 +286,84 @@
                                             "maxLength": 8192
                                           }
                                         }
+                                      },
+                                      "headers": {
+                                        "type": "object",
+                                        "maxProperties": 32,
+                                        "additionalProperties": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 8192
+                                        }
+                                      },
+                                      "secretHeaders": {
+                                        "type": "object",
+                                        "maxProperties": 32,
+                                        "additionalProperties": {
+                                          "type": "object",
+                                          "additionalProperties": false,
+                                          "required": [
+                                            "kind",
+                                            "value"
+                                          ],
+                                          "properties": {
+                                            "kind": {
+                                              "enum": [
+                                                "env",
+                                                "file",
+                                                "keychain"
+                                              ]
+                                            },
+                                            "value": {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "maxLength": 8192
+                                            }
+                                          }
+                                        }
+                                      },
+                                      "contextWindow": {
+                                        "type": "integer",
+                                        "minimum": 1024,
+                                        "maximum": 16777216
+                                      },
+                                      "maxOutputTokens": {
+                                        "type": "integer",
+                                        "minimum": 16,
+                                        "maximum": 4194304
+                                      },
+                                      "modelAlias": {
+                                        "type": "string",
+                                        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+                                      },
+                                      "compatibility": {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "includeUsage": {
+                                            "type": "boolean"
+                                          },
+                                          "dropParameters": {
+                                            "type": "array",
+                                            "maxItems": 64,
+                                            "items": {
+                                              "type": "string",
+                                              "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                                            }
+                                          },
+                                          "maxTokensField": {
+                                            "enum": [
+                                              "max_tokens",
+                                              "max_completion_tokens"
+                                            ]
+                                          },
+                                          "reasoning": {
+                                            "enum": [
+                                              "passthrough",
+                                              "strip"
+                                            ]
+                                          }
+                                        }
                                       }
                                     }
                                   },
@@ -810,6 +888,84 @@
                                 "maxLength": 8192
                               }
                             }
+                          },
+                          "headers": {
+                            "type": "object",
+                            "maxProperties": 32,
+                            "additionalProperties": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192
+                            }
+                          },
+                          "secretHeaders": {
+                            "type": "object",
+                            "maxProperties": 32,
+                            "additionalProperties": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "kind",
+                                "value"
+                              ],
+                              "properties": {
+                                "kind": {
+                                  "enum": [
+                                    "env",
+                                    "file",
+                                    "keychain"
+                                  ]
+                                },
+                                "value": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 8192
+                                }
+                              }
+                            }
+                          },
+                          "contextWindow": {
+                            "type": "integer",
+                            "minimum": 1024,
+                            "maximum": 16777216
+                          },
+                          "maxOutputTokens": {
+                            "type": "integer",
+                            "minimum": 16,
+                            "maximum": 4194304
+                          },
+                          "modelAlias": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+                          },
+                          "compatibility": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "includeUsage": {
+                                "type": "boolean"
+                              },
+                              "dropParameters": {
+                                "type": "array",
+                                "maxItems": 64,
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                                }
+                              },
+                              "maxTokensField": {
+                                "enum": [
+                                  "max_tokens",
+                                  "max_completion_tokens"
+                                ]
+                              },
+                              "reasoning": {
+                                "enum": [
+                                  "passthrough",
+                                  "strip"
+                                ]
+                              }
+                            }
                           }
                         }
                       },
@@ -1164,6 +1320,84 @@
                                   "type": "string",
                                   "minLength": 1,
                                   "maxLength": 8192
+                                }
+                              }
+                            },
+                            "headers": {
+                              "type": "object",
+                              "maxProperties": 32,
+                              "additionalProperties": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 8192
+                              }
+                            },
+                            "secretHeaders": {
+                              "type": "object",
+                              "maxProperties": 32,
+                              "additionalProperties": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "kind",
+                                  "value"
+                                ],
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "env",
+                                      "file",
+                                      "keychain"
+                                    ]
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 8192
+                                  }
+                                }
+                              }
+                            },
+                            "contextWindow": {
+                              "type": "integer",
+                              "minimum": 1024,
+                              "maximum": 16777216
+                            },
+                            "maxOutputTokens": {
+                              "type": "integer",
+                              "minimum": 16,
+                              "maximum": 4194304
+                            },
+                            "modelAlias": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+                            },
+                            "compatibility": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "includeUsage": {
+                                  "type": "boolean"
+                                },
+                                "dropParameters": {
+                                  "type": "array",
+                                  "maxItems": 64,
+                                  "items": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                                  }
+                                },
+                                "maxTokensField": {
+                                  "enum": [
+                                    "max_tokens",
+                                    "max_completion_tokens"
+                                  ]
+                                },
+                                "reasoning": {
+                                  "enum": [
+                                    "passthrough",
+                                    "strip"
+                                  ]
                                 }
                               }
                             }
@@ -1794,6 +2028,84 @@
                                         "maxLength": 8192
                                       }
                                     }
+                                  },
+                                  "headers": {
+                                    "type": "object",
+                                    "maxProperties": 32,
+                                    "additionalProperties": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 8192
+                                    }
+                                  },
+                                  "secretHeaders": {
+                                    "type": "object",
+                                    "maxProperties": 32,
+                                    "additionalProperties": {
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "required": [
+                                        "kind",
+                                        "value"
+                                      ],
+                                      "properties": {
+                                        "kind": {
+                                          "enum": [
+                                            "env",
+                                            "file",
+                                            "keychain"
+                                          ]
+                                        },
+                                        "value": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 8192
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "contextWindow": {
+                                    "type": "integer",
+                                    "minimum": 1024,
+                                    "maximum": 16777216
+                                  },
+                                  "maxOutputTokens": {
+                                    "type": "integer",
+                                    "minimum": 16,
+                                    "maximum": 4194304
+                                  },
+                                  "modelAlias": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+                                  },
+                                  "compatibility": {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "includeUsage": {
+                                        "type": "boolean"
+                                      },
+                                      "dropParameters": {
+                                        "type": "array",
+                                        "maxItems": 64,
+                                        "items": {
+                                          "type": "string",
+                                          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                                        }
+                                      },
+                                      "maxTokensField": {
+                                        "enum": [
+                                          "max_tokens",
+                                          "max_completion_tokens"
+                                        ]
+                                      },
+                                      "reasoning": {
+                                        "enum": [
+                                          "passthrough",
+                                          "strip"
+                                        ]
+                                      }
+                                    }
                                   }
                                 }
                               },
@@ -2189,6 +2501,84 @@
                                 "maxLength": 8192
                               }
                             }
+                          },
+                          "headers": {
+                            "type": "object",
+                            "maxProperties": 32,
+                            "additionalProperties": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192
+                            }
+                          },
+                          "secretHeaders": {
+                            "type": "object",
+                            "maxProperties": 32,
+                            "additionalProperties": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "kind",
+                                "value"
+                              ],
+                              "properties": {
+                                "kind": {
+                                  "enum": [
+                                    "env",
+                                    "file",
+                                    "keychain"
+                                  ]
+                                },
+                                "value": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 8192
+                                }
+                              }
+                            }
+                          },
+                          "contextWindow": {
+                            "type": "integer",
+                            "minimum": 1024,
+                            "maximum": 16777216
+                          },
+                          "maxOutputTokens": {
+                            "type": "integer",
+                            "minimum": 16,
+                            "maximum": 4194304
+                          },
+                          "modelAlias": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+                          },
+                          "compatibility": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "includeUsage": {
+                                "type": "boolean"
+                              },
+                              "dropParameters": {
+                                "type": "array",
+                                "maxItems": 64,
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                                }
+                              },
+                              "maxTokensField": {
+                                "enum": [
+                                  "max_tokens",
+                                  "max_completion_tokens"
+                                ]
+                              },
+                              "reasoning": {
+                                "enum": [
+                                  "passthrough",
+                                  "strip"
+                                ]
+                              }
+                            }
                           }
                         }
                       },
@@ -2543,6 +2933,84 @@
                                   "type": "string",
                                   "minLength": 1,
                                   "maxLength": 8192
+                                }
+                              }
+                            },
+                            "headers": {
+                              "type": "object",
+                              "maxProperties": 32,
+                              "additionalProperties": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 8192
+                              }
+                            },
+                            "secretHeaders": {
+                              "type": "object",
+                              "maxProperties": 32,
+                              "additionalProperties": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "kind",
+                                  "value"
+                                ],
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "env",
+                                      "file",
+                                      "keychain"
+                                    ]
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 8192
+                                  }
+                                }
+                              }
+                            },
+                            "contextWindow": {
+                              "type": "integer",
+                              "minimum": 1024,
+                              "maximum": 16777216
+                            },
+                            "maxOutputTokens": {
+                              "type": "integer",
+                              "minimum": 16,
+                              "maximum": 4194304
+                            },
+                            "modelAlias": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+                            },
+                            "compatibility": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "includeUsage": {
+                                  "type": "boolean"
+                                },
+                                "dropParameters": {
+                                  "type": "array",
+                                  "maxItems": 64,
+                                  "items": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                                  }
+                                },
+                                "maxTokensField": {
+                                  "enum": [
+                                    "max_tokens",
+                                    "max_completion_tokens"
+                                  ]
+                                },
+                                "reasoning": {
+                                  "enum": [
+                                    "passthrough",
+                                    "strip"
+                                  ]
                                 }
                               }
                             }
@@ -2980,6 +3448,84 @@
                                             "type": "string",
                                             "minLength": 1,
                                             "maxLength": 8192
+                                          }
+                                        }
+                                      },
+                                      "headers": {
+                                        "type": "object",
+                                        "maxProperties": 32,
+                                        "additionalProperties": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 8192
+                                        }
+                                      },
+                                      "secretHeaders": {
+                                        "type": "object",
+                                        "maxProperties": 32,
+                                        "additionalProperties": {
+                                          "type": "object",
+                                          "additionalProperties": false,
+                                          "required": [
+                                            "kind",
+                                            "value"
+                                          ],
+                                          "properties": {
+                                            "kind": {
+                                              "enum": [
+                                                "env",
+                                                "file",
+                                                "keychain"
+                                              ]
+                                            },
+                                            "value": {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "maxLength": 8192
+                                            }
+                                          }
+                                        }
+                                      },
+                                      "contextWindow": {
+                                        "type": "integer",
+                                        "minimum": 1024,
+                                        "maximum": 16777216
+                                      },
+                                      "maxOutputTokens": {
+                                        "type": "integer",
+                                        "minimum": 16,
+                                        "maximum": 4194304
+                                      },
+                                      "modelAlias": {
+                                        "type": "string",
+                                        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+                                      },
+                                      "compatibility": {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "includeUsage": {
+                                            "type": "boolean"
+                                          },
+                                          "dropParameters": {
+                                            "type": "array",
+                                            "maxItems": 64,
+                                            "items": {
+                                              "type": "string",
+                                              "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                                            }
+                                          },
+                                          "maxTokensField": {
+                                            "enum": [
+                                              "max_tokens",
+                                              "max_completion_tokens"
+                                            ]
+                                          },
+                                          "reasoning": {
+                                            "enum": [
+                                              "passthrough",
+                                              "strip"
+                                            ]
                                           }
                                         }
                                       }
@@ -3493,6 +4039,84 @@
                                 "maxLength": 8192
                               }
                             }
+                          },
+                          "headers": {
+                            "type": "object",
+                            "maxProperties": 32,
+                            "additionalProperties": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192
+                            }
+                          },
+                          "secretHeaders": {
+                            "type": "object",
+                            "maxProperties": 32,
+                            "additionalProperties": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "kind",
+                                "value"
+                              ],
+                              "properties": {
+                                "kind": {
+                                  "enum": [
+                                    "env",
+                                    "file",
+                                    "keychain"
+                                  ]
+                                },
+                                "value": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 8192
+                                }
+                              }
+                            }
+                          },
+                          "contextWindow": {
+                            "type": "integer",
+                            "minimum": 1024,
+                            "maximum": 16777216
+                          },
+                          "maxOutputTokens": {
+                            "type": "integer",
+                            "minimum": 16,
+                            "maximum": 4194304
+                          },
+                          "modelAlias": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+                          },
+                          "compatibility": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "includeUsage": {
+                                "type": "boolean"
+                              },
+                              "dropParameters": {
+                                "type": "array",
+                                "maxItems": 64,
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                                }
+                              },
+                              "maxTokensField": {
+                                "enum": [
+                                  "max_tokens",
+                                  "max_completion_tokens"
+                                ]
+                              },
+                              "reasoning": {
+                                "enum": [
+                                  "passthrough",
+                                  "strip"
+                                ]
+                              }
+                            }
                           }
                         }
                       },
@@ -3859,6 +4483,84 @@
                                   "type": "string",
                                   "minLength": 1,
                                   "maxLength": 8192
+                                }
+                              }
+                            },
+                            "headers": {
+                              "type": "object",
+                              "maxProperties": 32,
+                              "additionalProperties": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 8192
+                              }
+                            },
+                            "secretHeaders": {
+                              "type": "object",
+                              "maxProperties": 32,
+                              "additionalProperties": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "kind",
+                                  "value"
+                                ],
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "env",
+                                      "file",
+                                      "keychain"
+                                    ]
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 8192
+                                  }
+                                }
+                              }
+                            },
+                            "contextWindow": {
+                              "type": "integer",
+                              "minimum": 1024,
+                              "maximum": 16777216
+                            },
+                            "maxOutputTokens": {
+                              "type": "integer",
+                              "minimum": 16,
+                              "maximum": 4194304
+                            },
+                            "modelAlias": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+                            },
+                            "compatibility": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "includeUsage": {
+                                  "type": "boolean"
+                                },
+                                "dropParameters": {
+                                  "type": "array",
+                                  "maxItems": 64,
+                                  "items": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                                  }
+                                },
+                                "maxTokensField": {
+                                  "enum": [
+                                    "max_tokens",
+                                    "max_completion_tokens"
+                                  ]
+                                },
+                                "reasoning": {
+                                  "enum": [
+                                    "passthrough",
+                                    "strip"
+                                  ]
                                 }
                               }
                             }
@@ -11483,6 +12185,823 @@
                 "schema": {
                   "type": "object",
                   "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/harness/model": {
+      "get": {
+        "operationId": "hh_get_v1_harness_model",
+        "summary": "查看统一模型",
+        "tags": [
+          "configuration"
+        ],
+        "description": "HarnessModelService.view 读取启动时解析的生效来源，并按当前引擎目录计算每个引擎的登记策略结果。\n\n输入：无参数。\n\n返回：200：HarnessModelView，含 configured、source（environment/file/settings）、真实 model、alias、只含秘密引用的 provider，以及每个引擎的 applied/unsupported/disabled 状态和原因。\n\n副作用：只读；不解析秘密、不调用模型。\n\n失败与边界：未配置时返回 configured=false，不报错。",
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "configured",
+                    "alias",
+                    "engines"
+                  ],
+                  "properties": {
+                    "configured": {
+                      "type": "boolean"
+                    },
+                    "source": {
+                      "enum": [
+                        "environment",
+                        "file",
+                        "settings"
+                      ]
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "alias": {
+                      "type": "string"
+                    },
+                    "provider": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "protocol"
+                      ],
+                      "properties": {
+                        "protocol": {
+                          "enum": [
+                            "openai-completions",
+                            "openai-responses",
+                            "anthropic",
+                            "google"
+                          ]
+                        },
+                        "baseUrl": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 8192
+                        },
+                        "apiKey": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "kind",
+                            "value"
+                          ],
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "env",
+                                "file",
+                                "keychain"
+                              ]
+                            },
+                            "value": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192
+                            }
+                          }
+                        },
+                        "headers": {
+                          "type": "object",
+                          "maxProperties": 32,
+                          "additionalProperties": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 8192
+                          }
+                        },
+                        "secretHeaders": {
+                          "type": "object",
+                          "maxProperties": 32,
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "kind",
+                              "value"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "env",
+                                  "file",
+                                  "keychain"
+                                ]
+                              },
+                              "value": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 8192
+                              }
+                            }
+                          }
+                        },
+                        "contextWindow": {
+                          "type": "integer",
+                          "minimum": 1024,
+                          "maximum": 16777216
+                        },
+                        "maxOutputTokens": {
+                          "type": "integer",
+                          "minimum": 16,
+                          "maximum": 4194304
+                        },
+                        "modelAlias": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+                        },
+                        "compatibility": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "includeUsage": {
+                              "type": "boolean"
+                            },
+                            "dropParameters": {
+                              "type": "array",
+                              "maxItems": 64,
+                              "items": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                              }
+                            },
+                            "maxTokensField": {
+                              "enum": [
+                                "max_tokens",
+                                "max_completion_tokens"
+                              ]
+                            },
+                            "reasoning": {
+                              "enum": [
+                                "passthrough",
+                                "strip"
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "engines": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "engineId",
+                          "status"
+                        ],
+                        "properties": {
+                          "engineId": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "enum": [
+                              "applied",
+                              "unsupported",
+                              "disabled"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": true
+                          }
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "hh_put_v1_harness_model",
+        "summary": "设置统一模型",
+        "tags": [
+          "configuration"
+        ],
+        "description": "校验后原子写入统一模型文件，再经 EngineManager 登记策略为全部引擎发布新 revision。\n\n输入：JSON：HarnessModel（model、可选 alias、provider）；provider.protocol 仅接受 openai-completions，apiKey/secretHeaders 只接受秘密引用。\n\n返回：200：更新后的 HarnessModelView。\n\n副作用：写统一模型文件和引擎目录；新 Session 使用新 revision，已有 Session 保留原 revision。文件只保存秘密引用。\n\n失败与边界：INVALID_HARNESS_MODEL、HARNESS_MODEL_PROTOCOL_UNSUPPORTED（400）；HARNESS_MODEL_ENVIRONMENT_OVERRIDE（409，环境变量来源生效时）；HARNESS_MODEL_FILE_UNAVAILABLE（409）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "model",
+                  "provider"
+                ],
+                "properties": {
+                  "model": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "alias": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+                  },
+                  "provider": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "protocol",
+                      "baseUrl"
+                    ],
+                    "properties": {
+                      "protocol": {
+                        "enum": [
+                          "openai-completions",
+                          "openai-responses",
+                          "anthropic",
+                          "google"
+                        ]
+                      },
+                      "baseUrl": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 8192
+                      },
+                      "apiKey": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "kind",
+                          "value"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "env",
+                              "file",
+                              "keychain"
+                            ]
+                          },
+                          "value": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 8192
+                          }
+                        }
+                      },
+                      "headers": {
+                        "type": "object",
+                        "maxProperties": 32,
+                        "additionalProperties": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 8192
+                        }
+                      },
+                      "secretHeaders": {
+                        "type": "object",
+                        "maxProperties": 32,
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "kind",
+                            "value"
+                          ],
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "env",
+                                "file",
+                                "keychain"
+                              ]
+                            },
+                            "value": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192
+                            }
+                          }
+                        }
+                      },
+                      "contextWindow": {
+                        "type": "integer",
+                        "minimum": 1024,
+                        "maximum": 16777216
+                      },
+                      "maxOutputTokens": {
+                        "type": "integer",
+                        "minimum": 16,
+                        "maximum": 4194304
+                      },
+                      "modelAlias": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+                      },
+                      "compatibility": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "includeUsage": {
+                            "type": "boolean"
+                          },
+                          "dropParameters": {
+                            "type": "array",
+                            "maxItems": 64,
+                            "items": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                            }
+                          },
+                          "maxTokensField": {
+                            "enum": [
+                              "max_tokens",
+                              "max_completion_tokens"
+                            ]
+                          },
+                          "reasoning": {
+                            "enum": [
+                              "passthrough",
+                              "strip"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "configured",
+                    "alias",
+                    "engines"
+                  ],
+                  "properties": {
+                    "configured": {
+                      "type": "boolean"
+                    },
+                    "source": {
+                      "enum": [
+                        "environment",
+                        "file",
+                        "settings"
+                      ]
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "alias": {
+                      "type": "string"
+                    },
+                    "provider": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "protocol"
+                      ],
+                      "properties": {
+                        "protocol": {
+                          "enum": [
+                            "openai-completions",
+                            "openai-responses",
+                            "anthropic",
+                            "google"
+                          ]
+                        },
+                        "baseUrl": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 8192
+                        },
+                        "apiKey": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "kind",
+                            "value"
+                          ],
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "env",
+                                "file",
+                                "keychain"
+                              ]
+                            },
+                            "value": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192
+                            }
+                          }
+                        },
+                        "headers": {
+                          "type": "object",
+                          "maxProperties": 32,
+                          "additionalProperties": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 8192
+                          }
+                        },
+                        "secretHeaders": {
+                          "type": "object",
+                          "maxProperties": 32,
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "kind",
+                              "value"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "env",
+                                  "file",
+                                  "keychain"
+                                ]
+                              },
+                              "value": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 8192
+                              }
+                            }
+                          }
+                        },
+                        "contextWindow": {
+                          "type": "integer",
+                          "minimum": 1024,
+                          "maximum": 16777216
+                        },
+                        "maxOutputTokens": {
+                          "type": "integer",
+                          "minimum": 16,
+                          "maximum": 4194304
+                        },
+                        "modelAlias": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+                        },
+                        "compatibility": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "includeUsage": {
+                              "type": "boolean"
+                            },
+                            "dropParameters": {
+                              "type": "array",
+                              "maxItems": 64,
+                              "items": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                              }
+                            },
+                            "maxTokensField": {
+                              "enum": [
+                                "max_tokens",
+                                "max_completion_tokens"
+                              ]
+                            },
+                            "reasoning": {
+                              "enum": [
+                                "passthrough",
+                                "strip"
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "engines": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "engineId",
+                          "status"
+                        ],
+                        "properties": {
+                          "engineId": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "enum": [
+                              "applied",
+                              "unsupported",
+                              "disabled"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": true
+                          }
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/harness/model/test": {
+      "post": {
+        "operationId": "hh_post_v1_harness_model_test",
+        "summary": "测试统一模型",
+        "tags": [
+          "configuration"
+        ],
+        "description": "在私有临时目录创建正式 Session，提交“只回复 OK”，最多等待 90 秒后关闭 Session；秘密只在 Worker 内解析。\n\n输入：JSON：可选 engineId，缺省使用默认引擎。\n\n返回：200：ok、status、durationMs、runId 和可选 error；只有 Run 正常完成且回复非空时 ok=true。\n\n副作用：会实际调用模型并消耗额度；产生一条正式 Run 记录。\n\n失败与边界：HARNESS_MODEL_NOT_CONFIGURED、HARNESS_MODEL_TEST_UNSUPPORTED（409）；HARNESS_MODEL_TEST_BUSY（429）；HARNESS_MODEL_CLOSED（503）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "engineId": {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,99}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "ok",
+                    "status",
+                    "durationMs",
+                    "runId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "enum": [
+                        "queued",
+                        "starting",
+                        "running",
+                        "waiting_permission",
+                        "cancelling",
+                        "finalizing",
+                        "completed",
+                        "failed",
+                        "cancelled",
+                        "timed_out",
+                        "interrupted"
+                      ]
+                    },
+                    "durationMs": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "runId": {
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": true
+                          }
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/runtime/info": {
+      "get": {
+        "operationId": "hh_get_v1_runtime_info",
+        "summary": "运行模式信息",
+        "tags": [
+          "health"
+        ],
+        "description": "返回 Gateway 启动时确定的运行模式，供控制台显示。\n\n输入：无参数。\n\n返回：200：competition、可选 competitionEngine、fullAccess、可选 consoleUrl。\n\n副作用：只读。\n\n失败与边界：无业务错误。",
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "competition",
+                    "fullAccess"
+                  ],
+                  "properties": {
+                    "competition": {
+                      "type": "boolean"
+                    },
+                    "competitionEngine": {
+                      "type": "string"
+                    },
+                    "fullAccess": {
+                      "type": "boolean"
+                    },
+                    "consoleUrl": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": true
+                          }
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  }
                 }
               }
             }

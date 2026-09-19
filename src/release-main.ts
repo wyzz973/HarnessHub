@@ -10,8 +10,23 @@ import { setTimeout as delay } from "node:timers/promises";
 import { readReleaseOverrides } from "./storage/release-catalog.js";
 import { startHub } from "./main.js";
 import { benchmarkMain } from "./benchmark-main.js";
-import { prepareEngine } from "./engine/registry.js";
+import { normalizeEngine, prepareEngine } from "./engine/registry.js";
 import { providerProtocols } from "./engine/configuration.js";
+import { builtinConfigurationAdapter } from "./engine/builtins.js";
+import {
+  activeHarnessModel,
+  evaluateHarnessModel,
+  harnessModelFromEnvironment,
+  parseHarnessModel,
+  readHarnessModelFile,
+  writeHarnessModelFile,
+} from "./application/harness-model.js";
+import {
+  HARNESS_MODEL_ALIAS,
+  harnessModelEnvironment,
+  type HarnessModel,
+  type HarnessModelView,
+} from "./domain/harness-model.js";
 import {
   bundlePath,
   readBundle,
@@ -38,13 +53,182 @@ const help = `HarnessHub portable competition bundle
   hub.cmd doctor [--full] [--protocol] [--engines codex,opencode]
   hub.cmd engines
   hub.cmd configure --file SETTINGS.json
+  hub.cmd model set --model ID --base-url URL --api-key-env NAME [--context-window N] [--max-output-tokens N] [--header NAME=VALUE]... [--alias NAME]
+  hub.cmd model show
   hub.cmd tools inspect|install|list|verify|remove|bind ...
   hub.cmd tools use PACKAGE_ID VERSION --engine ENGINE_ID
   hub.cmd tools unuse --id PACKAGE_ID --version VERSION --engine ENGINE_ID
   hub.cmd smoke
   hub.cmd benchmark --dataset TASKS.json --engines codex,opencode [--permissions deny|allow-once]
-Runtime dependencies are bundled. Model endpoints and secret references are configured in state/settings.json.
-No model is called by doctor, configure, tools, or smoke. Benchmark and user Runs call the configured model.`;
+Runtime dependencies are bundled. Every engine uses one unified model: HARNESSHUB_MODEL* environment
+variables, else state/harness-model.json (hub.cmd model set), else the settings.json top-level "model".
+No model is called by doctor, configure, model, tools, or smoke. Benchmark and user Runs call the model.`;
+
+/** Engine-layer validation used to predict each engine's unified-model outcome offline. */
+const harnessModelPorts = {
+  normalize: normalizeEngine,
+  inferAdapter: builtinConfigurationAdapter,
+};
+
+/**
+ * Unified model status as the Gateway would compute it for these bundle registrations:
+ * environment > model file > settings. Invalid sources throw, like Gateway startup.
+ */
+export async function harnessModelReport(options: {
+  file: string;
+  settings: BundleSettings;
+  environment: Readonly<NodeJS.ProcessEnv>;
+  registrations: EngineRegistration[];
+}): Promise<
+  HarnessModelView & {
+    file: string;
+    modelCalled: false;
+    sources: { environment: boolean; file: boolean; settings: boolean };
+  }
+> {
+  const environment = harnessModelFromEnvironment(options.environment);
+  const file = await readHarnessModelFile(options.file);
+  const settings = options.settings.model
+    ? parseHarnessModel(options.settings.model)
+    : undefined;
+  const sources = {
+    environment: Boolean(environment),
+    file: Boolean(file),
+    settings: Boolean(settings),
+  };
+  const active = activeHarnessModel({ environment, file, settings });
+  if (!active)
+    return {
+      configured: false,
+      alias: HARNESS_MODEL_ALIAS,
+      engines: [],
+      file: options.file,
+      modelCalled: false,
+      sources,
+    };
+  return {
+    configured: true,
+    source: active.source,
+    model: active.model,
+    alias: active.alias,
+    provider: active.provider,
+    engines: options.registrations.map((registration) => {
+      const evaluation = evaluateHarnessModel(
+        normalizeEngine(registration),
+        active,
+        harnessModelPorts,
+      );
+      return {
+        engineId: registration.id,
+        status: evaluation.status,
+        ...(evaluation.reason !== undefined
+          ? { reason: evaluation.reason }
+          : {}),
+      };
+    }),
+    file: options.file,
+    modelCalled: false,
+    sources,
+  };
+}
+
+/**
+ * `hub.cmd model set|show`. `set` validates and atomically writes the unified model file
+ * (mode 0600) that hub.cmd start and Start-Competition.cmd pass to the Gateway; it takes
+ * effect on the next start. `show` prints {@link harnessModelReport}. Neither command
+ * resolves the key or calls the model.
+ */
+export async function harnessModelCommand(
+  args: string[],
+  options: {
+    file: string;
+    settings: BundleSettings;
+    environment: Readonly<NodeJS.ProcessEnv>;
+    registrations: () => Promise<EngineRegistration[]>;
+  },
+): Promise<unknown> {
+  if (args[0] === "show") {
+    parseArgs({ args: args.slice(1), options: {} });
+    return harnessModelReport({
+      ...options,
+      registrations: await options.registrations(),
+    });
+  }
+  if (args[0] !== "set")
+    throw new Error("Usage: hub.cmd model set ... | hub.cmd model show");
+  const { values } = parseArgs({
+    args: args.slice(1),
+    options: {
+      model: { type: "string" },
+      "base-url": { type: "string" },
+      "api-key-env": { type: "string" },
+      "context-window": { type: "string" },
+      "max-output-tokens": { type: "string" },
+      header: { type: "string", multiple: true },
+      alias: { type: "string" },
+    },
+  });
+  if (!values.model || !values["base-url"] || !values["api-key-env"])
+    throw new Error(
+      "Usage: hub.cmd model set --model ID --base-url URL --api-key-env NAME [--context-window N] [--max-output-tokens N] [--header NAME=VALUE]... [--alias NAME]",
+    );
+  const positive = (name: string, value: string | undefined) => {
+    if (value === undefined) return undefined;
+    if (!/^[1-9][0-9]{0,15}$/.test(value))
+      throw new Error(`--${name} must be a positive integer`);
+    return Number(value);
+  };
+  const contextWindow = positive("context-window", values["context-window"]);
+  const maxOutputTokens = positive(
+    "max-output-tokens",
+    values["max-output-tokens"],
+  );
+  const headers: Record<string, string> = {};
+  for (const header of values.header ?? []) {
+    const at = header.indexOf("=");
+    const name = header.slice(0, at);
+    if (at <= 0) throw new Error("--header must be NAME=VALUE");
+    if (
+      Object.keys(headers).some((n) => n.toLowerCase() === name.toLowerCase())
+    )
+      throw new Error(`Duplicate --header ${name}`);
+    headers[name] = header.slice(at + 1);
+  }
+  const model: HarnessModel = parseHarnessModel({
+    model: values.model,
+    ...(values.alias !== undefined ? { alias: values.alias } : {}),
+    provider: {
+      protocol: "openai-completions",
+      baseUrl: values["base-url"],
+      apiKey: { kind: "env", value: values["api-key-env"] },
+      ...(contextWindow !== undefined ? { contextWindow } : {}),
+      ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+      ...(Object.keys(headers).length ? { headers } : {}),
+    },
+  });
+  await writeHarnessModelFile(options.file, model);
+  const warnings: string[] = [];
+  if (options.environment[harnessModelEnvironment.model]?.trim())
+    warnings.push(
+      `${harnessModelEnvironment.model} is set in this environment and takes priority over the saved file.`,
+    );
+  if (!options.environment[values["api-key-env"]])
+    warnings.push(
+      `${values["api-key-env"]} is not set here; set it before hub.cmd start or Start-Competition.cmd.`,
+    );
+  const saved = activeHarnessModel({ file: model })!;
+  return {
+    saved: true,
+    modelCalled: false,
+    file: options.file,
+    model: saved.model,
+    alias: saved.alias,
+    provider: saved.provider,
+    appliesTo:
+      "New Sessions after the next hub.cmd start or Start-Competition.cmd; a running Gateway can apply it with PUT /v1/harness/model.",
+    warnings,
+  };
+}
 
 /** Never report a file configuration change that an existing console override would hide. */
 async function rejectConsoleConflict(
@@ -110,13 +294,23 @@ async function profiles(
   }
   return result;
 }
+/**
+ * Write the Gateway configuration for these settings. Its top-level `model` is the
+ * settings-level unified model (the lowest-priority source); the Gateway still prefers
+ * HARNESSHUB_MODEL* and the model file passed with --harness-model-file.
+ */
 async function configFile(
   manifest: BundleManifest,
   settings: BundleSettings,
   context: BundleContext,
+  options: { name?: string; model?: HarnessModel } = {},
 ) {
   const engines = await profiles(manifest, settings, context);
-  const target = path.join(context.state, "engines.generated.json");
+  const target = path.join(
+    context.state,
+    options.name ?? "engines.generated.json",
+  );
+  const model = options.model ?? settings.model;
   const enabled = engines.filter((engine) => engine.enabled !== false);
   const defaultEngine =
     settings.defaultEngine ??
@@ -132,6 +326,7 @@ async function configFile(
         workspaces: [{ id: "default", path: context.workspace }],
         defaultWorkspace: "default",
         defaultEngine,
+        ...(model ? { model } : {}),
       },
       null,
       2,
@@ -391,6 +586,22 @@ export async function releaseMain(
     command === "configure"
       ? { schemaVersion: 1 }
       : await readSettings(context.state);
+  const harnessModelFile = path.join(context.state, "harness-model.json");
+  if (command === "model") {
+    console.log(
+      JSON.stringify(
+        await harnessModelCommand(args.slice(1), {
+          file: harnessModelFile,
+          settings,
+          environment: process.env,
+          registrations: () => profiles(manifest, settings, context),
+        }),
+        null,
+        2,
+      ),
+    );
+    return 0;
+  }
   if (command === "engines") {
     console.log(
       JSON.stringify(
@@ -536,7 +747,13 @@ export async function releaseMain(
     settings = parseSettings(
       JSON.parse(await readFile(path.resolve(values.file), "utf8")) as unknown,
     );
-    await profiles(manifest, settings, context);
+    // Validate every unified-model source the Gateway will read before replacing state.
+    const report = await harnessModelReport({
+      file: harnessModelFile,
+      settings,
+      environment: process.env,
+      registrations: await profiles(manifest, settings, context),
+    });
     await writeSettings(context.state, settings);
     await configFile(manifest, settings, context);
     console.log(
@@ -544,6 +761,11 @@ export async function releaseMain(
         configured: true,
         modelCalled: false,
         file: path.join(context.state, "settings.json"),
+        harnessModel: {
+          configured: report.configured,
+          ...(report.source ? { source: report.source } : {}),
+          sources: report.sources,
+        },
       }),
     );
     return 0;
@@ -584,10 +806,28 @@ export async function releaseMain(
       result?: unknown;
       error?: string;
     }[] = [];
-    if (values.protocol) {
+    let harnessModel: unknown;
+    let harnessModelFailed = false;
+    try {
+      harnessModel = await harnessModelReport({
+        file: harnessModelFile,
+        settings,
+        environment: process.env,
+        registrations: await profiles(manifest, settings, context),
+      });
+    } catch (error) {
+      harnessModelFailed = true;
+      harnessModel = {
+        configured: false,
+        error:
+          error instanceof Error ? error.message : "Unified model is invalid",
+      };
+    }
+    if (values.protocol && !harnessModelFailed) {
       const hub = await startHub({
         dataDir: path.join(context.state, "checks", randomUUID()),
         configFile: generated,
+        harnessModelFile,
         demo: false,
         cwd: context.workspace,
         port: 0,
@@ -652,6 +892,7 @@ export async function releaseMain(
           arch: manifest.arch,
           nodeVersion: manifest.nodeVersion,
           integrity,
+          harnessModel,
           protocolChecks,
           authentication:
             "Not verified; configure the competition API before model acceptance.",
@@ -660,16 +901,26 @@ export async function releaseMain(
         2,
       ),
     );
-    return protocolChecks.some((check) => !check.passed) ? 1 : 0;
+    return harnessModelFailed || protocolChecks.some((check) => !check.passed)
+      ? 1
+      : 0;
   }
-  if (command === "benchmark")
+  if (command === "benchmark") {
+    // The in-process Gateway reads HARNESSHUB_MODEL* itself; the saved model file
+    // outranks settings, so it is carried as this configuration's model.
+    const savedModel = await readHarnessModelFile(harnessModelFile);
+    const benchmarkConfig = await configFile(manifest, settings, context, {
+      name: "engines.benchmark.json",
+      ...(savedModel ? { model: savedModel } : {}),
+    });
     return benchmarkMain([
       ...args.slice(1),
       "--config",
-      generated,
+      benchmarkConfig,
       "--data-dir",
       path.join(context.state, "benchmark"),
     ]);
+  }
   if (command === "start") {
     const { values } = parseArgs({
       args: args.slice(1),
