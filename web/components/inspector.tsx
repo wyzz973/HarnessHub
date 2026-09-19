@@ -3,12 +3,15 @@ import {
   Activity,
   ArrowUpRight,
   Box,
+  BrainCircuit,
   ChevronRight,
+  CircleCheck,
   Download,
   File,
   Fingerprint,
   PanelRightClose,
   ShieldCheck,
+  TriangleAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,25 +21,42 @@ import {
   ArtifactTitle,
 } from "@/components/ai-elements/artifact";
 import { api } from "@/lib/api";
-import type { Observation, Run, Selection } from "@/lib/contracts";
+import type {
+  AgentEvent,
+  HarnessModelView,
+  ModelCall,
+  Observation,
+  Run,
+  Selection,
+} from "@/lib/contracts";
 import {
   bytes,
   duration,
+  inboundNames,
+  modelEvidence,
+  projectModelCalls,
   quantity,
   modelLabel,
   observationReason,
 } from "@/lib/presentation";
+import { cn } from "@/lib/utils";
 import { Status } from "./status";
 
 export function Inspector({
   run,
   observation,
   selection,
+  events = [],
+  unifiedModel,
   close,
 }: {
   run?: Run;
   observation?: Observation;
   selection?: Selection;
+  /** Committed events of `run`, used for `model.call` evidence. */
+  events?: AgentEvent[];
+  /** Current unified model; comparisons are only made when it is configured. */
+  unifiedModel?: HarnessModelView;
   close: () => void;
 }) {
   const cost = observation?.cost;
@@ -186,6 +206,11 @@ export function Inspector({
               </p>
             )}
           </section>
+          <ModelCalls
+            events={events}
+            finished={!!run.finishedAt}
+            unifiedModel={unifiedModel}
+          />
           <section className="inspector-section">
             <div className="mb-4 flex items-center justify-between">
               <p className="section-label">任务产物</p>
@@ -281,6 +306,140 @@ export function Inspector({
         </>
       )}
     </aside>
+  );
+}
+/** Evidence built only from committed `model.call` events of this run. */
+function ModelCalls({
+  events,
+  finished,
+  unifiedModel,
+}: {
+  events: AgentEvent[];
+  finished: boolean;
+  unifiedModel?: HarnessModelView;
+}) {
+  const { calls, invalid } = projectModelCalls(events);
+  const configured = unifiedModel?.configured ? unifiedModel.model : undefined;
+  const evidence = modelEvidence(calls, configured);
+  const only = evidence.models[0]?.model;
+  return (
+    <section className="inspector-section">
+      <div className="mb-3 flex items-center justify-between">
+        <p className="section-label flex items-center gap-1.5">
+          <BrainCircuit className="size-3.5" />
+          模型调用
+        </p>
+        <span className="text-[11px] text-muted-foreground">
+          {evidence.total} 次
+        </span>
+      </div>
+      {evidence.verdict === "none" ? (
+        <p className="text-xs leading-6 text-muted-foreground">
+          {finished
+            ? "此任务没有 model.call 记录：Gateway 可能尚不支持统一模型网关，或引擎未调用模型。"
+            : "任务进行中，模型调用会实时出现在这里。"}
+        </p>
+      ) : (
+        <div
+          className={cn(
+            "evidence",
+            evidence.verdict === "unified" || evidence.verdict === "single"
+              ? "good"
+              : "warn",
+          )}
+        >
+          {evidence.verdict === "unified" || evidence.verdict === "single" ? (
+            <CircleCheck className="mt-0.5 size-3.5 shrink-0" />
+          ) : (
+            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+          )}
+          <span>
+            {evidence.verdict === "unified"
+              ? `本次任务只使用统一模型 ${only}：已记录的 ${evidence.total} 次调用全部发往该模型。`
+              : evidence.verdict === "single"
+                ? `已记录的 ${evidence.total} 次调用全部发往 ${only}。`
+                : evidence.verdict === "mismatch"
+                  ? `已记录的调用发往 ${only}，与当前统一模型 ${configured} 不同（统一模型可能在任务开始后被修改）。`
+                  : `已记录的调用发往多个模型：${evidence.models.map((item) => `${item.model} ×${item.count}`).join("、")}。`}
+            {evidence.requested.length ? (
+              <span className="mt-1 block text-[10px] opacity-80">
+                引擎请求的模型名：{evidence.requested.join("、")}
+              </span>
+            ) : null}
+            {evidence.failed ? (
+              <span className="mt-1 block text-[10px]">
+                其中 {evidence.failed} 次失败
+              </span>
+            ) : null}
+          </span>
+        </div>
+      )}
+      {invalid ? (
+        <p className="mt-2 text-[11px] text-amber-800">
+          另有 {invalid} 条模型调用记录格式无法识别，未计入上述结论。
+        </p>
+      ) : null}
+      {calls.length ? (
+        <>
+          <dl className="mt-3">
+            <Metric
+              label="Token（输入 / 输出）"
+              value={`${quantity(evidence.tokens.input)} / ${quantity(evidence.tokens.output)}`}
+            />
+            <Metric
+              label="用量覆盖"
+              value={`${evidence.usageReported} / ${evidence.total} 次调用`}
+            />
+            <Metric label="调用总耗时" value={duration(evidence.durationMs)} />
+          </dl>
+          <ol className="mt-3 space-y-2">
+            {calls.map((call, index) => (
+              <ModelCallRow
+                key={`${call.id}-${index}`}
+                call={call}
+                index={index}
+              />
+            ))}
+          </ol>
+        </>
+      ) : null}
+    </section>
+  );
+}
+function ModelCallRow({ call, index }: { call: ModelCall; index: number }) {
+  return (
+    <li
+      className={cn(
+        "rounded-md border bg-white px-2.5 py-2 text-[11px] leading-5",
+        !call.ok && "border-red-200 bg-red-50/50",
+      )}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium">
+          #{index + 1} {inboundNames[call.inbound]}
+          {call.stream ? " · 流式" : ""}
+        </span>
+        <span className={cn("tabular", !call.ok && "text-destructive")}>
+          {call.status || "无响应"} · {duration(call.durationMs)}
+        </span>
+      </div>
+      <p className="truncate font-mono text-[10px] text-muted-foreground">
+        {call.requestedModel ?? "（未报告）"} → {call.upstreamModel}
+      </p>
+      <p className="text-[10px] text-muted-foreground">
+        输入 {quantity(call.usage?.input)} · 输出 {quantity(call.usage?.output)}
+        {call.usage?.reasoning != null
+          ? ` · 推理 ${quantity(call.usage.reasoning)}`
+          : ""}
+        {call.toolCalls ? ` · 工具调用 ${call.toolCalls}` : ""}
+        {call.finishReason ? ` · ${call.finishReason}` : ""}
+      </p>
+      {call.error ? (
+        <p className="mt-1 break-words text-[10px] text-destructive">
+          {call.error.code}：{call.error.message}
+        </p>
+      ) : null}
+    </li>
   );
 }
 function Metric({ label, value }: { label: string; value: string }) {
