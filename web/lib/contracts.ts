@@ -356,6 +356,20 @@ export const toolPackRecordSchema = z.object({
   installedAt: z.number().optional(),
   status: z.string().optional(),
   displayName: z.string().optional(),
+  /** Skill, MCP server and CLI tool counts read from the stored manifest. */
+  counts: z
+    .object({
+      skills: z.number().optional(),
+      mcp: z.number().optional(),
+      cli: z.number().optional(),
+    })
+    .optional(),
+  /** Engines whose current configuration contains this version, when the Gateway reports it. */
+  engines: z.array(z.string()).optional(),
+  /** Why the stored manifest could not be read. */
+  problem: errorSchema.optional(),
+  /** Shipped with the distribution and installed on first start. */
+  preinstalled: z.boolean().optional(),
 });
 const packageRefSchema = z.object({ id: z.string(), version: z.string() });
 /** Per-engine outcome of apply/import/unbind; statuses beyond the ADR are shown verbatim. */

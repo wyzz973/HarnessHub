@@ -12,6 +12,13 @@ const clientIsWindows = () =>
 export function useWindowsPaths(): boolean {
   return useSyncExternalStore(subscribe, clientIsWindows, () => false);
 }
+const clientIsMac = () =>
+  /Mac|iPhone|iPad/i.test(navigator.platform) ||
+  /Mac OS X/i.test(navigator.userAgent);
+/** Whether shortcuts are shown with ⌘ instead of Ctrl; false during server rendering. */
+export function useIsMac(): boolean {
+  return useSyncExternalStore(subscribe, clientIsMac, () => false);
+}
 /** Placeholder paths only; nothing here is read or validated as a real location. */
 export function pathExamples(windows: boolean) {
   return windows

@@ -2,12 +2,13 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Blocks,
-  FolderInput,
-  Link2,
-  Link2Off,
+  Check,
+  ChevronRight,
+  CircleAlert,
   Loader2,
+  Plus,
   RefreshCw,
-  SlidersHorizontal,
+  TriangleAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,6 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { api, remoteOf, UnsupportedFeatureError, type Remote } from "@/lib/api";
 import type {
   Engine,
@@ -26,7 +28,7 @@ import type {
   ToolPackEngineResult,
   ToolPackRecord,
 } from "@/lib/contracts";
-import { dateLabel } from "@/lib/presentation";
+import { engineName, visibleEngines } from "@/lib/engines";
 import { pathExamples, useWindowsPaths } from "@/lib/platform";
 import {
   applyRows,
@@ -35,6 +37,7 @@ import {
   toolPackStatusNames,
 } from "@/lib/tool-packs";
 import { cn } from "@/lib/utils";
+import { EngineAvatar } from "./engine-avatar";
 
 interface Outcome {
   title: string;
@@ -44,7 +47,16 @@ interface Outcome {
   warnings: string[];
 }
 type ImportKind = (typeof toolPackKinds)[number]["id"];
+type AddTab = "path" | "mcp";
 const absolutePath = /^(?:[A-Za-z]:[\\/]|\\\\|\/)/;
+const mcpExample = `{
+  "mcpServers": {
+    "my-server": {
+      "command": "node",
+      "args": ["server.mjs"]
+    }
+  }
+}`;
 function outcomeOf(title: string, result: ToolPackApply | undefined): Outcome {
   return {
     title,
@@ -53,21 +65,134 @@ function outcomeOf(title: string, result: ToolPackApply | undefined): Outcome {
     warnings: [
       ...(result?.warnings ?? []),
       ...applyRows(result).flatMap((row) =>
-        (row.warnings ?? []).map((warning) => `${row.engineId}：${warning}`),
+        (row.warnings ?? []).map(
+          (warning) => `${engineName(row.engineId)}：${warning}`,
+        ),
       ),
     ],
   };
 }
 function failure(reason: unknown, feature: string) {
-  return reason instanceof UnsupportedFeatureError
-    ? `当前 Gateway 不支持${feature}，请升级到包含 ADR 0013 工具包接口的版本。`
-    : reason instanceof Error
-      ? reason.message
-      : `${feature}失败`;
+  if (reason instanceof UnsupportedFeatureError)
+    return `当前服务版本不支持${feature}，请升级。`;
+  if (!(reason instanceof Error)) return `${feature}失败`;
+  // A Gateway without the pasted-MCP contract still requires `source`.
+  if (/required property 'source'|must have required property/.test(reason.message))
+    return "当前服务版本不支持粘贴配置，请把配置保存为 mcp.json 后用本机路径添加。";
+  return reason.message;
 }
+function packSlug(name: string) {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug.length >= 2 && slug.length <= 64 ? slug : undefined;
+}
+/** Parses pasted MCP JSON; returns the configuration or a message in Chinese. */
+function parseMcp(
+  text: string,
+): { value: { mcpServers: Record<string, unknown> } } | { error: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { error: "不是有效的 JSON，请检查括号、引号和逗号。" };
+  }
+  const servers =
+    typeof parsed === "object" && parsed !== null && "mcpServers" in parsed
+      ? (parsed as { mcpServers: unknown }).mcpServers
+      : undefined;
+  if (typeof servers !== "object" || servers === null || Array.isArray(servers))
+    return { error: '需要包含 "mcpServers" 对象。' };
+  const entries = Object.entries(servers as Record<string, unknown>);
+  if (!entries.length) return { error: "mcpServers 里还没有服务。" };
+  for (const [name, server] of entries) {
+    const item =
+      typeof server === "object" && server !== null
+        ? (server as Record<string, unknown>)
+        : {};
+    if (typeof item.command !== "string" && typeof item.url !== "string")
+      return { error: `服务 ${name} 需要 command 或 url。` };
+  }
+  return { value: { mcpServers: servers as Record<string, unknown> } };
+}
+
+function Counts({
+  counts,
+}: {
+  counts: { skills?: number; mcp?: number; cli?: number } | undefined;
+}) {
+  if (!counts) return null;
+  const items = [
+    { label: "Skill", value: counts.skills ?? 0 },
+    { label: "MCP", value: counts.mcp ?? 0 },
+    { label: "CLI", value: counts.cli ?? 0 },
+  ].filter((item) => item.value > 0);
+  if (!items.length) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {items.map((item) => (
+        <span key={item.label} className="tag">
+          {item.label}
+          <span className="tabular font-medium text-foreground">
+            {item.value}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
+function ResultRows({ outcome }: { outcome: Outcome }) {
+  return (
+    <div>
+      {outcome.counts ? (
+        <div className="mb-3">
+          <Counts counts={outcome.counts} />
+        </div>
+      ) : null}
+      {outcome.rows.length ? (
+        <ul className="max-h-[46vh] divide-y overflow-y-auto rounded-xl border">
+          {outcome.rows.map((row) => (
+            <li key={row.engineId} className="flex items-start gap-3 px-3 py-2.5">
+              <EngineAvatar id={row.engineId} />
+              <div className="min-w-0 flex-1">
+                <p className="text-[13.5px]">{engineName(row.engineId)}</p>
+                {row.reason ? (
+                  <p className="mt-0.5 text-[12px] leading-5 text-subtle">
+                    {row.reason}
+                  </p>
+                ) : null}
+              </div>
+              <span
+                className={cn(
+                  "tag shrink-0",
+                  row.status === "applied" && "good",
+                  row.status === "failed" && "error",
+                  row.status === "skipped" && "warn",
+                )}
+              >
+                {toolPackStatusNames[row.status] ?? row.status}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-[13px] text-muted-foreground">没有引擎受影响。</p>
+      )}
+      {outcome.warnings.length ? (
+        <ul className="callout warn mt-3 block list-disc space-y-1 pl-8">
+          {outcome.warnings.map((warning, index) => (
+            <li key={index}>{warning}</li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 /**
- * Tool and plugin management. Import, apply and unbind go through the Gateway, which verifies
- * files and re-registers engines; new sessions use the result, existing sessions keep their revision.
+ * Tool management. Import, apply and unbind go through the Gateway, which verifies files
+ * and re-registers engines; new sessions use the result, existing sessions keep theirs.
  */
 export function ToolPacksPage({
   engines,
@@ -80,15 +205,20 @@ export function ToolPacksPage({
   const [packages, setPackages] = useState<Remote<ToolPackRecord[]>>({
     state: "loading",
   });
+  const [adding, setAdding] = useState(false);
+  const [addTab, setAddTab] = useState<AddTab>("path");
   const [source, setSource] = useState("");
   const [kind, setKind] = useState<ImportKind>("auto");
   const [packageId, setPackageId] = useState("");
   const [packageVersion, setPackageVersion] = useState("");
+  const [mcpName, setMcpName] = useState("");
+  const [mcpText, setMcpText] = useState("");
   const [applyAll, setApplyAll] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [managing, setManaging] = useState<ToolPackRecord | null>(null);
+  const [removing, setRemoving] = useState<ToolPackRecord | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const load = useCallback(async (signal?: AbortSignal) => {
     const [result] = await Promise.allSettled([
@@ -102,44 +232,65 @@ export function ToolPacksPage({
     return () => controller.abort();
   }, [load]);
   const list = packages.state === "ready" ? packages.value : [];
-  const realEngines = engines.filter((engine) => engine.driver !== "fake");
-  async function run(key: string, work: () => Promise<Outcome>) {
+  const realEngines = visibleEngines(engines);
+  const bound = (pack: ToolPackRecord) =>
+    (pack.engines ?? boundEngineIds(pack, list, engines)).filter(
+      (id) => id !== "fake",
+    );
+  async function run(key: string, feature: string, work: () => Promise<Outcome>) {
     setBusy(key);
     setError(null);
     try {
       setOutcome(await work());
+      return true;
     } catch (reason) {
-      setError(
-        failure(
-          reason,
-          key === "import"
-            ? "导入工具包"
-            : key.startsWith("unbind")
-              ? "解除绑定"
-              : "应用工具包",
-        ),
-      );
+      setError(failure(reason, feature));
+      return false;
     } finally {
       setBusy(null);
       await Promise.allSettled([load(), refreshEngines()]);
     }
   }
-  function importPack() {
-    const path = source.trim();
-    if (!absolutePath.test(path)) {
-      setError(`请填写本机绝对路径，例如 ${examples.toolPack}`);
-      return;
-    }
-    void run("import", async () => {
-      const result = await api.importToolPack({
+  function openAdd() {
+    setError(null);
+    setOutcome(null);
+    setAdding(true);
+  }
+  async function install() {
+    const target = applyAll ? { applyTo: "all" as const, replace: true } : {};
+    let input: Parameters<typeof api.importToolPack>[0];
+    if (addTab === "path") {
+      const path = source.trim();
+      if (!absolutePath.test(path)) {
+        setError(`请填写本机绝对路径，例如 ${examples.toolPack}`);
+        return;
+      }
+      input = {
         source: path,
         kind,
         ...(packageId.trim() ? { id: packageId.trim() } : {}),
         ...(packageVersion.trim() ? { version: packageVersion.trim() } : {}),
-        ...(applyAll ? { applyTo: "all" as const } : {}),
-      });
+        ...target,
+      };
+    } else {
+      const parsed = parseMcp(mcpText);
+      if ("error" in parsed) {
+        setError(parsed.error);
+        return;
+      }
+      const name = mcpName.trim();
+      const id = packSlug(name);
+      input = {
+        mcp: parsed.value,
+        ...(id ? { id } : {}),
+        ...(name ? { displayName: name } : {}),
+        ...target,
+      };
+    }
+    const ok = await run("import", "添加工具", async () => {
+      const result = await api.importToolPack(input);
       const applied = outcomeOf(
-        `已导入 ${result.package.id}@${result.package.version}`,
+        `已添加 ${result.package.id}`,
         result.apply,
       );
       return {
@@ -149,11 +300,16 @@ export function ToolPacksPage({
         warnings: [...(result.warnings ?? []), ...applied.warnings],
       };
     });
+    if (ok) {
+      setSource("");
+      setMcpText("");
+      setMcpName("");
+    }
   }
   function apply(pack: ToolPackRecord, engineIds: "all" | string[]) {
-    void run(`apply:${pack.id}@${pack.version}`, async () =>
+    void run(`apply:${pack.id}@${pack.version}`, "应用工具", async () =>
       outcomeOf(
-        `${pack.id}@${pack.version} 应用到${engineIds === "all" ? "全部引擎" : engineIds.join("、")}`,
+        `${pack.displayName ?? pack.id} 已应用`,
         await api.applyToolPack({
           package: { id: pack.id, version: pack.version },
           engineIds,
@@ -162,403 +318,447 @@ export function ToolPacksPage({
     );
   }
   function unbind(pack: ToolPackRecord, engineIds: "all" | string[]) {
-    if (
-      engineIds === "all" &&
-      !window.confirm(
-        `从全部引擎解除 ${pack.id}@${pack.version}？新会话将不再加载该工具包，已有会话不受影响。`,
-      )
-    )
-      return;
-    void run(`unbind:${pack.id}@${pack.version}`, async () =>
+    void run(`unbind:${pack.id}@${pack.version}`, "解除工具", async () =>
       outcomeOf(
-        `${pack.id}@${pack.version} 已从${engineIds === "all" ? "全部引擎" : engineIds.join("、")}解除`,
+        `${pack.displayName ?? pack.id} 已解除`,
         await api.unbindToolPack(pack.id, pack.version, engineIds),
       ),
     );
   }
   function manage(pack: ToolPackRecord) {
     setManaging(pack);
-    setSelected(boundEngineIds(pack, list, engines));
+    setSelected(bound(pack));
   }
   return (
-    <div className="page-body enter">
-      <div className="mx-auto max-w-[1040px]">
+    <div className="page-body">
+      <div className="page-column">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <div className="mb-3 flex items-center gap-2 text-[11px] tracking-wider text-muted-foreground">
-              <Blocks className="size-3.5" />
-              TOOLS & PLUGINS
-            </div>
-            <h1 className="page-heading">
-              工具与插件，一次导入，所有引擎可用。
-            </h1>
-            <p className="mt-3 max-w-[640px] text-[13px] leading-6 text-muted-foreground">
-              导入本机的 Skills 目录、MCP 配置或 CLI
-              清单，校验文件后应用到引擎。只影响新会话，已有会话保持原版本。
+            <h1 className="page-title">工具</h1>
+            <p className="page-lede">
+              Skill、MCP 服务和命令行工具，添加后所有引擎都能使用。
             </p>
           </div>
-          <Button
-            className="mt-6"
-            size="sm"
-            variant="outline"
-            disabled={!!busy}
-            onClick={() => {
-              setError(null);
-              void Promise.allSettled([load(), refreshEngines()]);
-            }}
-          >
-            <RefreshCw />
-            刷新
-          </Button>
-        </div>
-        <section className="panel mt-8" aria-label="导入工具包">
-          <h2 className="panel-title flex items-center gap-2">
-            <FolderInput className="size-4 text-muted-foreground" />
-            从本机路径导入
-          </h2>
-          <div className="mt-4 grid gap-4 sm:grid-cols-[minmax(0,1fr)_200px]">
-            <label className="form-label">
-              路径（Gateway 所在机器）
-              <input
-                className="form-input font-mono"
-                value={source}
-                placeholder={examples.toolPack}
-                autoComplete="off"
-                onChange={(event) => {
-                  setSource(event.target.value);
-                  setError(null);
-                }}
-              />
-            </label>
-            <label className="form-label">
-              类型
-              <select
-                className="form-input"
-                value={kind}
-                onChange={(event) => setKind(event.target.value as ImportKind)}
-              >
-                {toolPackKinds.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <details className="mt-3 text-xs">
-            <summary className="cursor-pointer text-muted-foreground">
-              指定包 ID 与版本（可选）
-            </summary>
-            <div className="mt-3 grid gap-4 sm:grid-cols-2">
-              <label className="form-label">
-                包 ID
-                <input
-                  className="form-input font-mono"
-                  value={packageId}
-                  placeholder="留空由服务端生成"
-                  onChange={(event) => setPackageId(event.target.value)}
-                />
-              </label>
-              <label className="form-label">
-                版本
-                <input
-                  className="form-input font-mono"
-                  value={packageVersion}
-                  placeholder="留空由服务端生成"
-                  onChange={(event) => setPackageVersion(event.target.value)}
-                />
-              </label>
-            </div>
-          </details>
-          <div className="mt-4 flex flex-wrap items-center gap-4">
-            <label className="flex items-center gap-2 text-xs">
-              <input
-                type="checkbox"
-                checked={applyAll}
-                onChange={(event) => setApplyAll(event.target.checked)}
-              />
-              导入后安装到全部引擎
-            </label>
+          <div className="flex items-center gap-2">
             <Button
-              size="sm"
-              className="ml-auto"
+              size="icon-sm"
+              variant="ghost"
+              aria-label="刷新"
               disabled={!!busy}
-              onClick={importPack}
+              onClick={() => {
+                setError(null);
+                void Promise.allSettled([load(), refreshEngines()]);
+              }}
             >
-              {busy === "import" ? (
-                <Loader2 className="animate-spin" />
-              ) : (
-                <FolderInput />
-              )}
-              导入
+              <RefreshCw />
+            </Button>
+            <Button size="sm" onClick={openAdd}>
+              <Plus />
+              添加工具
             </Button>
           </div>
-          <p className="form-hint mt-3">
-            自动识别：含 SKILL.md 的目录作为 Skills，含 mcpServers 的 JSON 作为
-            MCP，CLI 清单生成白名单命令工具。服务端生成清单与
-            sha256，不下载依赖、不运行安装脚本。
-          </p>
-        </section>
-        {error ? (
-          <div className="notice error mt-4" role="alert">
+        </div>
+        {error && !adding ? (
+          <div className="callout error mt-5" role="alert">
+            <CircleAlert className="mt-0.5 size-4 shrink-0" />
             {error}
           </div>
         ) : null}
-        {outcome ? (
-          <section
-            className="panel mt-4"
-            role="status"
-            aria-label="最近一次操作结果"
-          >
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="panel-title">{outcome.title}</h2>
-              {outcome.ok === false ? (
-                <span className="status-badge error">部分失败</span>
-              ) : outcome.ok ? (
-                <span className="status-badge">完成</span>
-              ) : null}
-              <Button
-                className="ml-auto"
-                size="xs"
-                variant="ghost"
-                onClick={() => setOutcome(null)}
-              >
-                关闭
-              </Button>
-            </div>
-            {outcome.counts ? (
-              <p className="mt-2 text-xs text-muted-foreground">
-                Skills {outcome.counts.skills ?? 0} · MCP{" "}
-                {outcome.counts.mcp ?? 0} · CLI {outcome.counts.cli ?? 0}
-              </p>
-            ) : null}
-            {outcome.rows.length ? (
-              <table className="data-table mt-3">
-                <thead>
-                  <tr>
-                    <th>引擎</th>
-                    <th>结果</th>
-                    <th>说明</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {outcome.rows.map((row) => (
-                    <tr key={row.engineId}>
-                      <td className="font-medium">{row.engineId}</td>
-                      <td>
-                        <span
-                          className={cn(
-                            "status-badge",
-                            row.status === "failed" && "error",
-                            row.status === "skipped" && "warning",
-                          )}
-                        >
-                          {toolPackStatusNames[row.status] ?? row.status}
-                        </span>
-                      </td>
-                      <td className="text-xs leading-6 text-muted-foreground">
-                        {row.reason ?? ""}
-                        {row.capabilities ? (
-                          <span className="block">
-                            Skills {row.capabilities.skills?.length ?? 0} · MCP{" "}
-                            {row.capabilities.mcp?.length ?? 0} · CLI{" "}
-                            {row.capabilities.cli?.length ?? 0}
-                          </span>
-                        ) : null}
-                        {row.revision ? (
-                          <span className="block font-mono text-[10px]">
-                            版本 {row.revision.slice(0, 12)}
-                          </span>
-                        ) : null}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <p className="mt-2 text-xs text-muted-foreground">
-                没有逐引擎结果。
-              </p>
-            )}
-            {outcome.warnings.length ? (
-              <ul className="notice warn mt-3 block list-disc space-y-1 pl-8">
-                {outcome.warnings.map((warning, index) => (
-                  <li key={index}>{warning}</li>
-                ))}
-              </ul>
-            ) : null}
-          </section>
-        ) : null}
-        <div className="mt-9 mb-4 flex items-center justify-between">
-          <h2 className="text-[13px] font-medium">已安装的工具包</h2>
-          <span className="text-[10px] text-muted-foreground">
-            绑定关系来自各引擎当前配置
-          </span>
-        </div>
-        <div className="overflow-x-auto rounded-xl border">
+        <div className="mt-6">
           {packages.state === "loading" ? (
-            <div className="space-y-3 p-6">
-              <Skeleton className="h-3 w-1/2" />
-              <Skeleton className="h-3 w-1/3" />
+            <div className="grid gap-4 md:grid-cols-2">
+              {[0, 1].map((index) => (
+                <div key={index} className="panel space-y-3 p-5">
+                  <Skeleton className="h-4 w-1/2" />
+                  <Skeleton className="h-3.5 w-1/3" />
+                  <Skeleton className="h-8 w-full" />
+                </div>
+              ))}
             </div>
           ) : packages.state === "unsupported" ? (
-            <p className="empty-note">当前 Gateway 不支持工具包接口。</p>
+            <p className="empty-state">当前服务版本不支持工具管理。</p>
           ) : packages.state === "error" ? (
-            <p className="empty-note text-destructive">
+            <p className="empty-state text-danger">
               读取失败：{packages.message}
             </p>
           ) : list.length ? (
-            <table className="data-table min-w-[680px]">
-              <thead>
-                <tr>
-                  <th>工具包</th>
-                  <th>已绑定引擎</th>
-                  <th>安装时间</th>
-                  <th className="text-right">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {list.map((pack) => {
-                  const key = `${pack.id}@${pack.version}`;
-                  const bound = boundEngineIds(pack, list, engines);
-                  return (
-                    <tr key={key}>
-                      <td>
-                        <p className="font-medium">
-                          {pack.displayName ?? pack.id}
-                        </p>
-                        <p className="mt-1 font-mono text-[10px] text-muted-foreground">
-                          {pack.id}@{pack.version} · {pack.digest.slice(0, 12)}
-                        </p>
-                      </td>
-                      <td>
-                        {bound.length ? (
-                          <div className="flex max-w-[260px] flex-wrap gap-1">
-                            {bound.map((id) => (
-                              <span
-                                key={id}
-                                className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground"
-                              >
-                                {id}
-                              </span>
-                            ))}
-                          </div>
-                        ) : (
-                          <span className="text-[11px] text-muted-foreground">
-                            未绑定
-                          </span>
-                        )}
-                      </td>
-                      <td className="text-[11px] text-muted-foreground">
-                        {pack.installedAt
-                          ? dateLabel(pack.installedAt)
-                          : "未提供"}
-                      </td>
-                      <td>
-                        <div className="flex justify-end gap-1">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={!!busy}
-                            onClick={() => apply(pack, "all")}
-                          >
-                            {busy === `apply:${key}` ? (
-                              <Loader2 className="size-3 animate-spin" />
-                            ) : (
-                              <Link2 className="size-3" />
-                            )}
-                            应用到全部
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={!!busy}
-                            onClick={() => manage(pack)}
-                          >
-                            <SlidersHorizontal className="size-3" />
-                            选择引擎
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={!!busy || !bound.length}
-                            onClick={() => unbind(pack, "all")}
-                          >
-                            {busy === `unbind:${key}` ? (
-                              <Loader2 className="size-3 animate-spin" />
-                            ) : (
-                              <Link2Off className="size-3" />
-                            )}
-                            解除绑定
-                          </Button>
+            <div className="grid gap-4 md:grid-cols-2">
+              {list.map((pack) => {
+                const key = `${pack.id}@${pack.version}`;
+                const engineIds = bound(pack);
+                const preinstalled =
+                  pack.preinstalled === true || pack.id === "office-suite";
+                return (
+                  <article key={key} className="panel flex flex-col p-5">
+                    <div className="flex items-start gap-3">
+                      <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-brand-soft text-brand">
+                        <Blocks className="size-5" strokeWidth={1.7} />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <h2 className="truncate text-[15px] font-semibold">
+                            {pack.displayName ?? pack.id}
+                          </h2>
+                          {preinstalled ? (
+                            <span className="tag brand shrink-0">预装</span>
+                          ) : null}
+                          {pack.problem ? (
+                            <span
+                              className="tag warn shrink-0"
+                              title={pack.problem.message}
+                            >
+                              <TriangleAlert className="size-3" />
+                              无法读取
+                            </span>
+                          ) : null}
                         </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        <p
+                          className="mt-0.5 truncate font-mono text-[12px] text-subtle"
+                          title={`${key} · ${pack.digest}`}
+                        >
+                          {key}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-4 flex min-h-[22px] items-center justify-between gap-3">
+                      <Counts counts={pack.counts} />
+                      {engineIds.length ? (
+                        <div
+                          className="ml-auto flex items-center"
+                          title={engineIds.map(engineName).join("、")}
+                        >
+                          {engineIds.slice(0, 6).map((id) => (
+                            <EngineAvatar
+                              key={id}
+                              id={id}
+                              className="-ml-1.5 ring-2 ring-card first:ml-0"
+                            />
+                          ))}
+                          {engineIds.length > 6 ? (
+                            <span className="ml-1.5 text-[12px] text-subtle tabular">
+                              +{engineIds.length - 6}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <span className="ml-auto text-[12.5px] text-subtle">
+                          未应用到引擎
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-4">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!!busy}
+                        onClick={() => apply(pack, "all")}
+                      >
+                        {busy === `apply:${key}` ? (
+                          <Loader2 className="animate-spin" />
+                        ) : null}
+                        应用到全部引擎
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={!!busy}
+                        onClick={() => manage(pack)}
+                      >
+                        选择引擎
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="ml-auto"
+                        disabled={!!busy || !engineIds.length}
+                        onClick={() => setRemoving(pack)}
+                      >
+                        {busy === `unbind:${key}` ? (
+                          <Loader2 className="animate-spin" />
+                        ) : null}
+                        解除
+                      </Button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
           ) : (
-            <p className="empty-note">
-              还没有安装工具包。从上方输入本机路径导入。
-            </p>
+            <div className="panel empty-state py-16">
+              <span className="mb-2 grid size-11 place-items-center rounded-2xl bg-muted text-muted-foreground">
+                <Blocks className="size-5" strokeWidth={1.7} />
+              </span>
+              <p className="text-[14px] font-medium text-foreground">
+                还没有工具
+              </p>
+              <p>添加 Skill 目录、MCP 配置或命令行工具。</p>
+              <Button size="sm" className="mt-3" onClick={openAdd}>
+                <Plus />
+                添加工具
+              </Button>
+            </div>
           )}
         </div>
-        <p className="mt-4 text-[11px] leading-6 text-muted-foreground">
-          工作目录相关的参数在绑定时写为会话工作目录占位符，运行时替换为当前会话目录（比赛中即评测方传入的
-          directory）。工具包代码的网络与文件权限由运行环境决定，本功能不提供沙箱。
-        </p>
+        <Dialog
+          open={adding}
+          onOpenChange={(open) => {
+            if (!open && busy !== "import") {
+              setAdding(false);
+              setOutcome(null);
+              setError(null);
+            }
+          }}
+        >
+          <DialogContent className="sm:max-w-[560px]">
+            <DialogHeader>
+              <DialogTitle>{outcome ? outcome.title : "添加工具"}</DialogTitle>
+              {outcome ? null : (
+                <DialogDescription>
+                  文件留在本机，不会下载或运行安装脚本。
+                </DialogDescription>
+              )}
+            </DialogHeader>
+            {outcome ? (
+              <>
+                <ResultRows outcome={outcome} />
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => setOutcome(null)}
+                  >
+                    继续添加
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      setAdding(false);
+                      setOutcome(null);
+                    }}
+                  >
+                    完成
+                  </Button>
+                </DialogFooter>
+              </>
+            ) : (
+              <>
+                <div className="segmented w-fit" role="tablist" aria-label="添加方式">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={addTab === "path"}
+                    onClick={() => {
+                      setAddTab("path");
+                      setError(null);
+                    }}
+                  >
+                    本机路径
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={addTab === "mcp"}
+                    onClick={() => {
+                      setAddTab("mcp");
+                      setError(null);
+                    }}
+                  >
+                    粘贴 MCP 配置
+                  </button>
+                </div>
+                {addTab === "path" ? (
+                  <div className="space-y-3">
+                    <label className="field-label">
+                      路径
+                      <input
+                        className="field font-mono text-[13px]"
+                        value={source}
+                        placeholder={examples.toolPack}
+                        autoComplete="off"
+                        spellCheck={false}
+                        autoFocus
+                        onChange={(event) => {
+                          setSource(event.target.value);
+                          setError(null);
+                        }}
+                      />
+                      <span className="field-hint block">
+                        Skill 目录、mcp.json、cli.json 或工具包目录。
+                      </span>
+                    </label>
+                    <details className="group text-[13px]">
+                      <summary className="flex w-fit items-center gap-1 text-muted-foreground hover:text-foreground">
+                        <ChevronRight className="size-3.5 transition-transform duration-150 group-open:rotate-90" />
+                        更多选项
+                      </summary>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                        <label className="field-label">
+                          类型
+                          <select
+                            className="field"
+                            value={kind}
+                            onChange={(event) =>
+                              setKind(event.target.value as ImportKind)
+                            }
+                          >
+                            {toolPackKinds.map((item) => (
+                              <option key={item.id} value={item.id}>
+                                {item.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="field-label">
+                          名称 ID
+                          <input
+                            className="field font-mono text-[13px]"
+                            value={packageId}
+                            placeholder="自动生成"
+                            onChange={(event) =>
+                              setPackageId(event.target.value)
+                            }
+                          />
+                        </label>
+                        <label className="field-label">
+                          版本
+                          <input
+                            className="field font-mono text-[13px]"
+                            value={packageVersion}
+                            placeholder="自动生成"
+                            onChange={(event) =>
+                              setPackageVersion(event.target.value)
+                            }
+                          />
+                        </label>
+                      </div>
+                    </details>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <label className="field-label">
+                      名称（可选）
+                      <input
+                        className="field"
+                        value={mcpName}
+                        placeholder="my-mcp"
+                        autoComplete="off"
+                        onChange={(event) => setMcpName(event.target.value)}
+                      />
+                    </label>
+                    <label className="field-label">
+                      MCP 配置
+                      <textarea
+                        className="field font-mono text-[12.5px]"
+                        rows={9}
+                        value={mcpText}
+                        placeholder={mcpExample}
+                        spellCheck={false}
+                        autoFocus
+                        onChange={(event) => {
+                          setMcpText(event.target.value);
+                          setError(null);
+                        }}
+                      />
+                    </label>
+                  </div>
+                )}
+                {error ? (
+                  <p role="alert" className="callout error">
+                    <CircleAlert className="mt-0.5 size-4 shrink-0" />
+                    {error}
+                  </p>
+                ) : null}
+                <DialogFooter className="items-center sm:justify-between">
+                  <label className="flex items-center gap-2.5 text-[13.5px]">
+                    <Switch
+                      checked={applyAll}
+                      onCheckedChange={setApplyAll}
+                      aria-label="安装到全部引擎"
+                    />
+                    安装到全部引擎
+                  </label>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      disabled={busy === "import"}
+                      onClick={() => setAdding(false)}
+                    >
+                      取消
+                    </Button>
+                    <Button
+                      disabled={busy === "import"}
+                      onClick={() => void install()}
+                    >
+                      {busy === "import" ? (
+                        <Loader2 className="animate-spin" />
+                      ) : null}
+                      添加
+                    </Button>
+                  </div>
+                </DialogFooter>
+              </>
+            )}
+          </DialogContent>
+        </Dialog>
+        <Dialog
+          open={!!outcome && !adding}
+          onOpenChange={(open) => {
+            if (!open) setOutcome(null);
+          }}
+        >
+          <DialogContent className="sm:max-w-[520px]">
+            <DialogHeader>
+              <DialogTitle>{outcome?.title}</DialogTitle>
+              <DialogDescription>新任务生效，进行中的任务不受影响。</DialogDescription>
+            </DialogHeader>
+            {outcome ? <ResultRows outcome={outcome} /> : null}
+            <DialogFooter>
+              <Button onClick={() => setOutcome(null)}>
+                <Check />
+                完成
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         <Dialog
           open={!!managing}
           onOpenChange={(open) => {
             if (!open) setManaging(null);
           }}
         >
-          <DialogContent className="sm:max-w-[520px]">
+          <DialogContent className="sm:max-w-[460px]">
             <DialogHeader>
-              <DialogTitle>
-                选择引擎 · {managing?.id}@{managing?.version}
-              </DialogTitle>
+              <DialogTitle>选择引擎</DialogTitle>
               <DialogDescription>
-                勾选引擎后应用或解除。不支持的引擎会被跳过并说明原因。
+                {managing?.displayName ?? managing?.id}
               </DialogDescription>
             </DialogHeader>
-            <div className="max-h-[50vh] space-y-1 overflow-y-auto">
-              {realEngines.map((engine) => {
-                const bound =
-                  managing &&
-                  boundEngineIds(managing, list, [engine]).length > 0;
-                return (
-                  <label
-                    key={engine.id}
-                    className="flex items-center gap-3 rounded-md px-2 py-2 text-sm hover:bg-muted"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selected.includes(engine.id)}
-                      onChange={(event) =>
-                        setSelected((current) =>
-                          event.target.checked
-                            ? [...current, engine.id]
-                            : current.filter((id) => id !== engine.id),
-                        )
-                      }
-                    />
-                    <span className="font-medium">{engine.id}</span>
-                    {!engine.enabled ? (
-                      <span className="text-[10px] text-muted-foreground">
-                        已停用
-                      </span>
-                    ) : null}
-                    {bound ? (
-                      <span className="ml-auto status-badge">已绑定</span>
-                    ) : null}
-                  </label>
-                );
-              })}
+            <div className="max-h-[50vh] space-y-0.5 overflow-y-auto">
+              {realEngines.map((engine) => (
+                <label
+                  key={engine.id}
+                  className="flex h-11 items-center gap-3 rounded-[10px] px-2.5 text-[13.5px] hover:bg-accent"
+                >
+                  <input
+                    type="checkbox"
+                    className="size-4 accent-(--primary)"
+                    checked={selected.includes(engine.id)}
+                    onChange={(event) =>
+                      setSelected((current) =>
+                        event.target.checked
+                          ? [...current, engine.id]
+                          : current.filter((id) => id !== engine.id),
+                      )
+                    }
+                  />
+                  <EngineAvatar id={engine.id} />
+                  <span className="flex-1">{engineName(engine.id)}</span>
+                  {!engine.enabled ? (
+                    <span className="text-[12px] text-subtle">已停用</span>
+                  ) : null}
+                </label>
+              ))}
               {!realEngines.length ? (
-                <p className="py-4 text-xs text-muted-foreground">
-                  没有可配置的真实引擎。
+                <p className="py-4 text-[13px] text-muted-foreground">
+                  还没有引擎
                 </p>
               ) : null}
             </div>
@@ -571,7 +771,6 @@ export function ToolPacksPage({
                   setManaging(null);
                 }}
               >
-                <Link2Off />
                 从所选引擎解除
               </Button>
               <Button
@@ -581,8 +780,38 @@ export function ToolPacksPage({
                   setManaging(null);
                 }}
               >
-                <Link2 />
                 应用到所选引擎
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <Dialog
+          open={!!removing}
+          onOpenChange={(open) => {
+            if (!open) setRemoving(null);
+          }}
+        >
+          <DialogContent className="sm:max-w-[420px]">
+            <DialogHeader>
+              <DialogTitle>
+                解除 {removing?.displayName ?? removing?.id}？
+              </DialogTitle>
+              <DialogDescription>
+                新任务将不再加载这个工具，可以随时重新应用。
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setRemoving(null)}>
+                取消
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  if (removing) unbind(removing, "all");
+                  setRemoving(null);
+                }}
+              >
+                解除
               </Button>
             </DialogFooter>
           </DialogContent>

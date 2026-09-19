@@ -367,13 +367,22 @@ export const api = {
     package: { id: string; version: string };
     engineIds: "all" | string[];
   }) => request("/v1/tool-packs/apply", toolPackApplySchema, post(input)),
-  importToolPack: (input: {
-    source: string;
-    kind: "auto" | "skills" | "mcp" | "cli";
-    id?: string;
-    version?: string;
-    applyTo?: "all";
-  }) => request("/v1/tool-packs/import", toolPackImportSchema, post(input)),
+  /**
+   * Import a local path, or an MCP configuration pasted as JSON (`mcp`); exactly one of the
+   * two. `replace` swaps an older version of the same package on the target engines.
+   */
+  importToolPack: (
+    input: (
+      | { source: string; kind?: "auto" | "skills" | "mcp" | "cli" }
+      | { mcp: { mcpServers: Record<string, unknown> } }
+    ) & {
+      id?: string;
+      version?: string;
+      displayName?: string;
+      applyTo?: "all" | string[];
+      replace?: boolean;
+    },
+  ) => request("/v1/tool-packs/import", toolPackImportSchema, post(input)),
   unbindToolPack: (id: string, version: string, engineIds: "all" | string[]) =>
     request(
       `/v1/tool-packs/${encodeURIComponent(id)}/${encodeURIComponent(version)}/bindings`,

@@ -23,10 +23,10 @@ import {
   type Registration,
 } from "@/lib/contracts";
 import { pathExamples, useWindowsPaths } from "@/lib/platform";
+import { engineName } from "@/lib/engines";
 import { cn } from "@/lib/utils";
-const field =
-  "mt-1.5 w-full rounded-md border bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#8fa77b]";
-const label = "block text-xs font-medium";
+const field = "field";
+const label = "field-label";
 const protocols: Record<string, string> = {
   "openai-completions": "OpenAI 兼容 · Chat Completions",
   "openai-responses": "OpenAI 兼容 · Responses",
@@ -231,24 +231,22 @@ export function EngineConfigurationDialog({
         if (!open && !busy) onClose();
       }}
     >
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[700px]">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[640px]">
         <DialogHeader>
-          <DialogTitle>引擎配置 · {engine.id}</DialogTitle>
-          <DialogDescription>
-            保存为新版本，只影响新会话。密钥不写入引擎配置或任务记录。
-          </DialogDescription>
+          <DialogTitle>{engineName(engine.id)} 配置</DialogTitle>
+          <DialogDescription>保存后对新任务生效。</DialogDescription>
         </DialogHeader>
-        <div className="flex gap-1 border-b pb-3">
+        <div className="segmented w-fit" role="tablist" aria-label="配置分类">
           {(["连接", "Skills", "MCP", "高级"] as const).map((name) => (
-            <Button
+            <button
               key={name}
-              variant={tab === name ? "secondary" : "ghost"}
-              size="sm"
-              aria-pressed={tab === name}
+              type="button"
+              role="tab"
+              aria-selected={tab === name}
               onClick={() => setTab(name)}
             >
               {name}
-            </Button>
+            </button>
           ))}
         </div>
         {tab === "连接" ? (
@@ -295,14 +293,8 @@ export function EngineConfigurationDialog({
               </label>
             </div>
             {managed ? (
-              <p
-                id="managed-model-note"
-                className="rounded-lg border border-[#d5e5d2] bg-[#f1f7ee] p-3 text-xs leading-6 text-[#3f6b4a]"
-              >
-                由统一模型管理：模型与 Provider 固定为{" "}
-                {managed.model ?? "未报告"}
-                （引擎看到的名称 {managed.alias}
-                ），每次保存都会被统一模型覆盖。请在“统一模型”页面修改。
+              <p id="managed-model-note" className="callout good">
+                模型由“模型”页面统一管理：{managed.model ?? "未报告"}
               </p>
             ) : null}
             <label className={label}>
@@ -335,10 +327,7 @@ export function EngineConfigurationDialog({
               </select>
             </label>
             {!managed && selected && !selected.providerProtocols.length ? (
-              <p className="text-xs leading-6 text-muted-foreground">
-                此引擎的自定义 Provider
-                尚未适配；可保留原生登录，或在高级配置中设置它支持的环境变量与密钥引用。
-              </p>
+              <p className="field-hint">此引擎不支持自定义 Provider。</p>
             ) : null}
             {provider && !managed ? (
               <>
@@ -354,7 +343,7 @@ export function EngineConfigurationDialog({
                     }}
                   />
                 </label>
-                <div className="rounded-lg border p-4">
+                <div className="rounded-xl border p-4">
                   <label className={label}>
                     API Key 来源
                     <select
@@ -405,16 +394,16 @@ export function EngineConfigurationDialog({
                       }
                     />
                   </label>
-                  <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
-                    新密钥只在保存时提交，之后仅返回引用。文件引用需为仅当前用户可读的普通文件。
+                  <p className="field-hint">
+                    密钥保存在本机系统安全存储中，配置里只保留引用。
                   </p>
                 </div>
               </>
             ) : null}
-            <label className="flex items-start gap-2 rounded-lg border p-3 text-xs">
+            <label className="flex items-start gap-2.5 rounded-xl border p-3.5 text-[13px]">
               <input
                 type="checkbox"
-                className="mt-0.5"
+                className="mt-0.5 size-4 accent-(--primary)"
                 disabled={!template}
                 checked={useTemplate}
                 onChange={(e) => {
@@ -423,14 +412,11 @@ export function EngineConfigurationDialog({
                 }}
               />
               <span>
-                使用本机标准启动模板{!template ? "（未找到）" : ""}
-                <span className="mt-1 block text-muted-foreground">
-                  替换此版本的启动命令。用于切换掉固定 Provider 的旧自定义脚本。
-                </span>
+                使用本机标准启动命令{!template ? "（未找到）" : ""}
               </span>
             </label>
             {useTemplate ? (
-              <pre className="max-h-32 overflow-auto rounded border bg-muted/30 p-3 text-[10px]">
+              <pre className="max-h-32 overflow-auto rounded-xl bg-code p-3 text-[11.5px]">
                 {JSON.stringify(template?.command, null, 2)}
               </pre>
             ) : null}
@@ -438,16 +424,15 @@ export function EngineConfigurationDialog({
         ) : null}
         {tab === "Skills" ? (
           <div className="space-y-4">
-            <p className="text-xs leading-6 text-muted-foreground">
-              选择本地
-              SKILL.md。启用的指令作为任务上下文发送给此引擎；保存时固定内容指纹，附件继续从原目录引用。再次保存可接受已审阅的新版指令。
+            <p className="field-hint mt-0">
+              本机 SKILL.md 的绝对路径，启用后随任务发送给此引擎。
             </p>
             {skills.map((skill, index) => (
               <div className="flex items-start gap-2" key={index}>
                 <input
                   aria-label={`启用 Skill ${index + 1}`}
                   type="checkbox"
-                  className="mt-4"
+                  className="mt-9 size-4 accent-(--primary)"
                   checked={skill.enabled}
                   onChange={(e) => {
                     setSkills(
@@ -474,7 +459,7 @@ export function EngineConfigurationDialog({
                     }}
                   />
                   {skill.sha256 ? (
-                    <span className="mt-1 block font-mono text-[10px] text-muted-foreground">
+                    <span className="mt-1 block font-mono text-[11.5px] text-subtle">
                       {skill.sha256.slice(0, 16)}
                     </span>
                   ) : null}
@@ -483,7 +468,7 @@ export function EngineConfigurationDialog({
                   aria-label={`删除 Skill ${index + 1}`}
                   variant="ghost"
                   size="icon"
-                  className="mt-5"
+                  className="mt-7"
                   onClick={() => {
                     setSkills(skills.filter((_, i) => i !== index));
                     change();
@@ -508,14 +493,13 @@ export function EngineConfigurationDialog({
         ) : null}
         {tab === "MCP" ? (
           <div className="space-y-3">
-            <p className="text-xs leading-6 text-muted-foreground">
-              ACP 引擎支持 stdio、HTTP 和 SSE。每项用 enabled 控制启停。凭证用
-              secretEnv / secretHeaders 引用；通用 CLI 不接受 MCP 注入。
+            <p className="field-hint mt-0">
+              支持 stdio、HTTP 和 SSE，用 enabled 控制启停。
             </p>
             <label className={label}>
               MCP 服务配置（JSON）
               <Textarea
-                className="mt-2 min-h-[250px] font-mono text-xs"
+                className="mt-2 min-h-[250px] font-mono text-[12.5px]"
                 spellCheck={false}
                 value={mcpText}
                 onChange={(e) => {
@@ -557,10 +541,7 @@ export function EngineConfigurationDialog({
               <Plus />
               插入 stdio 示例
             </Button>
-            <p className="text-[11px] text-muted-foreground">
-              HTTP 示例：
-              {`{"name":"remote","type":"http","enabled":true,"url":"https://example.com/mcp","secretHeaders":{"Authorization":{"kind":"env","value":"MCP_AUTHORIZATION"}}}`}
-            </p>
+
           </div>
         ) : null}
         {tab === "高级" ? (
@@ -568,7 +549,7 @@ export function EngineConfigurationDialog({
             <label className={label}>
               普通环境变量（JSON）
               <Textarea
-                className="mt-2 min-h-24 font-mono text-xs"
+                className="mt-2 min-h-24 font-mono text-[12.5px]"
                 value={envText}
                 onChange={(e) => {
                   setEnvText(e.target.value);
@@ -579,7 +560,7 @@ export function EngineConfigurationDialog({
             <label className={label}>
               环境密钥映射（JSON）
               <Textarea
-                className="mt-2 min-h-32 font-mono text-xs"
+                className="mt-2 min-h-32 font-mono text-[12.5px]"
                 value={secretEnvText}
                 onChange={(e) => {
                   setSecretEnvText(e.target.value);
@@ -587,24 +568,20 @@ export function EngineConfigurationDialog({
                 }}
               />
             </label>
-            <p className="text-[11px] leading-6 text-muted-foreground">
-              示例：{`{"OPENAI_API_KEY":{"kind":"env","value":"ENGINE_A_KEY"}}`}
-              。另一引擎可以把同一个目标变量映射到
-              ENGINE_B_KEY。禁止通过普通变量传密钥或覆盖进程控制变量。
+            <p className="field-hint mt-0">
+              密钥映射示例：
+              {`{"OPENAI_API_KEY":{"kind":"env","value":"ENGINE_A_KEY"}}`}
             </p>
           </div>
         ) : null}
         {error ? (
-          <p
-            role="alert"
-            className="rounded-md bg-destructive/5 p-3 text-xs text-destructive"
-          >
+          <p role="alert" className="callout error">
             {error}
           </p>
         ) : null}
         {saved ? (
-          <p role="status" className="text-xs text-[#52714a]">
-            已保存新配置版本。现有会话继续使用原版本。
+          <p role="status" className="callout good">
+            已保存，新任务生效。
           </p>
         ) : null}
         <DialogFooter>
@@ -612,7 +589,7 @@ export function EngineConfigurationDialog({
             关闭
           </Button>
           <Button disabled={busy} onClick={() => void save()}>
-            {busy ? <Loader2 className="animate-spin" /> : null}保存配置
+            {busy ? <Loader2 className="animate-spin" /> : null}保存
           </Button>
         </DialogFooter>
       </DialogContent>

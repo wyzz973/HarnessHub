@@ -1,5 +1,5 @@
 "use client";
-import { createContext, memo, useContext } from "react";
+import { createContext, memo, useContext, useState } from "react";
 import {
   ComposerPrimitive,
   MessagePrimitive,
@@ -12,18 +12,37 @@ import {
   ArrowUp,
   Check,
   ChevronDown,
-  Code2,
-  FileCode2,
+  CircleAlert,
+  Download,
+  FileSpreadsheet,
+  FileText,
+  FolderClosed,
   FolderOpen,
+  FolderTree,
   GitBranch,
-  Layers2,
-  Loader2,
-  ShieldCheck,
+  Mail,
+  PackagePlus,
+  PanelRight,
+  Presentation,
+  ScrollText,
+  Settings2,
+  ShieldQuestion,
   Square,
-  Workflow as WorkflowIcon,
+  type LucideIcon,
 } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverClose,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   Reasoning,
   ReasoningContent,
@@ -35,15 +54,8 @@ import {
   SourcesContent,
   SourcesTrigger,
 } from "@/components/ai-elements/sources";
-import {
-  Plan,
-  PlanContent,
-  PlanDescription,
-  PlanFooter,
-  PlanHeader,
-  PlanTitle,
-  PlanTrigger,
-} from "@/components/ai-elements/plan";
+import { Shimmer } from "@/components/ai-elements/shimmer";
+import { api } from "@/lib/api";
 import type {
   AgentEvent,
   Engine,
@@ -52,9 +64,12 @@ import type {
   Workspace,
 } from "@/lib/contracts";
 import { isTerminal } from "@/lib/contracts";
-import { projectEvents } from "@/lib/presentation";
+import { engineName, selectableEngines } from "@/lib/engines";
+import { bytes, duration, projectEvents } from "@/lib/presentation";
+import { cn } from "@/lib/utils";
+import { EngineAvatar } from "./engine-avatar";
 import { Status } from "./status";
-import { ToolCallCard } from "./tool-call-card";
+import { ToolSteps } from "./tool-call-card";
 
 interface ThreadContextValue {
   runs: Run[];
@@ -62,6 +77,10 @@ interface ThreadContextValue {
   onDecide: (permissionId: string, optionId: string) => void;
   pendingAction: boolean;
   onInspect: (runId: string) => void;
+  /** Opens the diagnostics log of the run's session. */
+  onOpenLogs: (runId: string) => void;
+  /** Engine that executes a run; undefined while its session is still loading. */
+  engineOf: (run: Run) => string | undefined;
 }
 const ThreadContext = createContext<ThreadContextValue>({
   runs: [],
@@ -69,8 +88,11 @@ const ThreadContext = createContext<ThreadContextValue>({
   onDecide: () => {},
   pendingAction: false,
   onInspect: () => {},
+  onOpenLogs: () => {},
+  engineOf: () => undefined,
 });
 export const RunThreadProvider = ThreadContext.Provider;
+
 const Markdown = memo(function Markdown({ text }: TextMessagePartProps) {
   return (
     <Streamdown className="markdown-content" mode="streaming">
@@ -79,12 +101,23 @@ const Markdown = memo(function Markdown({ text }: TextMessagePartProps) {
   );
 });
 const UserMessage = () => (
-  <MessagePrimitive.Root className="message-row enter">
-    <div className="user-message">
+  <MessagePrimitive.Root className="mb-7 animate-in duration-200 fade-in-0 slide-in-from-bottom-2">
+    <div className="user-bubble">
       <MessagePrimitive.Parts />
     </div>
   </MessagePrimitive.Root>
 );
+
+function permissionLabel(
+  option: { label: string; kind: "allow_once" | "reject_once" },
+  siblings: { kind: string }[],
+) {
+  const base = option.kind === "allow_once" ? "允许一次" : "拒绝";
+  return siblings.filter((item) => item.kind === option.kind).length > 1
+    ? `${base}（${option.label}）`
+    : base;
+}
+
 const AssistantMessage = () => {
   const id = useAuiState((s) => s.message.id);
   const context = useContext(ThreadContext);
@@ -92,55 +125,74 @@ const AssistantMessage = () => {
   const projected = run
     ? projectEvents(run, context.events[run.id] ?? [])
     : undefined;
+  const finished = run ? isTerminal(run.status) : true;
+  const engineId = run ? context.engineOf(run) : undefined;
+  const pending = run?.permissions?.filter(
+    (permission) => permission.status === "pending",
+  );
   return (
-    <MessagePrimitive.Root className="message-row enter">
-      <div className="assistant-label">
-        <span className="grid size-6 place-items-center rounded-md border bg-muted">
-          <Layers2 className="size-3" />
+    <MessagePrimitive.Root className="group/message mb-9 animate-in duration-200 fade-in-0 slide-in-from-bottom-2">
+      <div className="mb-3 flex h-7 items-center gap-2">
+        <EngineAvatar id={engineId ?? "auto"} />
+        <span className="text-[13.5px] font-medium">
+          {engineId ? engineName(engineId) : "Agent"}
         </span>
-        HarnessHub
+        {run && !finished ? <Status status={run.status} /> : null}
         {run ? (
-          <button
-            className="ml-auto text-[11px] font-normal text-muted-foreground hover:text-primary"
-            onClick={() => context.onInspect(run.id)}
-          >
-            执行详情 ↗
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="ml-auto opacity-0 group-hover/message:opacity-100 focus-visible:opacity-100"
+                aria-label="执行详情"
+                onClick={() => context.onInspect(run.id)}
+              >
+                <PanelRight />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>执行详情</TooltipContent>
+          </Tooltip>
         ) : null}
       </div>
       {projected?.reasoning ? (
-        <Reasoning
-          isStreaming={run ? !isTerminal(run.status) : false}
-          defaultOpen={false}
-        >
+        <Reasoning isStreaming={!finished} defaultOpen={false} className="mb-3">
           <ReasoningTrigger
+            className="text-[13px]"
             getThinkingMessage={(streaming) =>
-              streaming ? "正在思考" : "查看思考过程"
+              streaming ? (
+                <Shimmer as="span" duration={1.4}>
+                  正在思考
+                </Shimmer>
+              ) : (
+                <span>思考过程</span>
+              )
             }
           />
-          <ReasoningContent>{projected.reasoning}</ReasoningContent>
+          <ReasoningContent className="mt-2 border-l pl-4 text-[13.5px] leading-7">
+            {projected.reasoning}
+          </ReasoningContent>
         </Reasoning>
       ) : null}
-      {projected?.tools.length ? (
-        <div className="mb-3 space-y-2">
-          {projected.tools.map((tool) => (
-            <ToolCallCard key={tool.id} tool={tool} />
-          ))}
-        </div>
+      {projected ? (
+        <ToolSteps tools={projected.tools} finished={finished} />
       ) : null}
       <MessagePrimitive.Parts components={{ Text: Markdown }} />
-      {run && !run.output && !projected?.output && !isTerminal(run.status) ? (
-        <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
-          <Loader2 className="size-3 animate-spin" />
-          {run.status === "waiting_permission"
-            ? "等待工具授权后继续…"
-            : "引擎正在处理任务…"}
-        </div>
+      {run &&
+      !run.output &&
+      !projected?.output &&
+      !finished &&
+      !pending?.length ? (
+        <p className="py-1 text-[14px]">
+          <Shimmer as="span" duration={1.6}>
+            {run.status === "queued" ? "排队中" : "处理中"}
+          </Shimmer>
+        </p>
       ) : null}
       {projected?.sources.length ? (
-        <Sources className="mt-5">
+        <Sources className="mt-4">
           <SourcesTrigger count={projected.sources.length}>
-            参考来源 <span className="ml-1">{projected.sources.length}</span>
+            来源 <span className="ml-1">{projected.sources.length}</span>
             <ChevronDown className="size-3" />
           </SourcesTrigger>
           <SourcesContent>
@@ -150,59 +202,86 @@ const AssistantMessage = () => {
           </SourcesContent>
         </Sources>
       ) : null}
-      {run?.error && (
+      {pending?.map((permission) => (
         <div
-          role="alert"
-          className="mt-4 rounded-lg border border-red-100 bg-red-50/60 p-3 text-xs leading-6 text-destructive"
+          key={permission.id}
+          className="mt-4 rounded-2xl border border-warning/30 bg-warning-soft/60 p-4"
         >
-          {run.error.message}
-          <span className="mt-1 block font-mono text-[10px]">
-            {run.error.code}
-          </span>
-        </div>
-      )}
-      {run?.permissions
-        ?.filter((permission) => permission.status === "pending")
-        .map((permission) => (
-          <div
-            className="mt-4 rounded-xl border border-amber-200/70 bg-amber-50/40 p-4"
-            key={permission.id}
-          >
-            <p className="flex items-center gap-2 text-xs font-medium">
-              <ShieldCheck className="size-4 text-amber-700" />
-              此操作需要你的授权
-            </p>
-            <p className="my-3 whitespace-pre-wrap break-words text-xs leading-6 text-muted-foreground">
-              {permission.prompt}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {permission.options.map((option) => (
-                <Button
-                  key={option.id}
-                  disabled={context.pendingAction}
-                  variant={option.kind === "allow_once" ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => context.onDecide(permission.id, option.id)}
-                >
-                  {option.kind === "allow_once" ? (
-                    <Check className="size-3" />
-                  ) : null}
-                  {option.label}
-                </Button>
-              ))}
-            </div>
+          <p className="flex items-center gap-2 text-[13.5px] font-medium">
+            <ShieldQuestion className="size-4 text-warning" />
+            需要授权
+          </p>
+          <p className="mt-2 max-h-40 overflow-y-auto font-mono text-[12.5px] leading-6 whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
+            {permission.prompt}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {permission.options.map((option) => (
+              <Button
+                key={option.id}
+                size="sm"
+                disabled={context.pendingAction}
+                variant={option.kind === "allow_once" ? "default" : "outline"}
+                onClick={() => context.onDecide(permission.id, option.id)}
+              >
+                {option.kind === "allow_once" ? <Check /> : null}
+                {permissionLabel(option, permission.options)}
+              </Button>
+            ))}
           </div>
-        ))}
-      {run && isTerminal(run.status) ? (
-        <div className="mt-4 flex items-center gap-3">
-          <Status status={run.status} />
-          {run.artifacts?.length ? (
-            <button
-              className="text-xs text-muted-foreground hover:text-primary"
-              onClick={() => context.onInspect(run.id)}
+        </div>
+      ))}
+      {run?.error ? (
+        <div role="alert" className="callout error mt-4 items-start">
+          <CircleAlert className="mt-0.5 size-4 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <p>{run.error.message}</p>
+            <p className="mt-0.5 font-mono text-[11.5px] opacity-75">
+              {run.error.code}
+            </p>
+          </div>
+          <Button
+            variant="ghost"
+            size="xs"
+            className="shrink-0 text-danger hover:bg-danger/10 hover:text-danger"
+            onClick={() => context.onOpenLogs(run.id)}
+          >
+            <ScrollText />
+            查看日志
+          </Button>
+        </div>
+      ) : null}
+      {run?.artifacts?.length ? (
+        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+          {run.artifacts.map((artifact) => (
+            <a
+              key={artifact.id}
+              href={api.artifactUrl(artifact.id)}
+              download={artifact.name}
+              className="group/file flex items-center gap-3 rounded-xl border px-3 py-2.5 hover:border-border-strong hover:bg-muted"
             >
-              {run.artifacts.length} 个产物可下载
-            </button>
+              <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground group-hover/file:bg-background">
+                <FileText className="size-[18px]" strokeWidth={1.6} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13.5px] font-medium">
+                  {artifact.name}
+                </span>
+                <span className="block text-[12px] text-subtle">
+                  {bytes(artifact.size)}
+                </span>
+              </span>
+              <Download className="size-4 shrink-0 text-subtle opacity-0 group-hover/file:opacity-100" />
+            </a>
+          ))}
+        </div>
+      ) : null}
+      {run && finished ? (
+        <div className="mt-3 flex items-center gap-2 text-[12.5px] text-subtle">
+          {run.status !== "completed" ? <Status status={run.status} /> : null}
+          {run.finishedAt ? (
+            <span className="tabular">
+              {duration(run.finishedAt - (run.startedAt ?? run.createdAt))}
+            </span>
           ) : null}
         </div>
       ) : null}
@@ -215,85 +294,58 @@ export function Messages() {
   );
 }
 
-export function Welcome({
-  suggest,
-  enabledCount,
-  competitionEngine,
-}: {
-  suggest: (text: string) => void;
-  enabledCount: number;
-  /** Set only when the Gateway runs in competition mode. */
-  competitionEngine?: string;
-}) {
-  const suggestions = [
-    {
-      icon: Code2,
-      title: "构建一个功能",
-      description: "从想法到可运行的代码",
-      prompt:
-        "帮我实现一个简洁的待办事项页面，支持新增、完成和筛选任务。先制定实现计划，再分步骤完成。",
-    },
-    {
-      icon: FileCode2,
-      title: "分析项目代码",
-      description: "理解结构，找到改进方向",
-      prompt:
-        "分析当前工作区的项目结构，梳理模块之间的依赖，找出最值得优先改进的三个问题，并生成一份分析报告。",
-    },
-    {
-      icon: WorkflowIcon,
-      title: "让 Agent 协作",
-      description: "拆解复杂任务，逐步交付",
-      prompt:
-        "分析当前工作区，生成项目使用说明和架构说明，最后检查两份文档是否与实际代码一致。将任务拆成有依赖关系的步骤。",
-    },
-  ];
+const suggestions: { icon: LucideIcon; label: string; prompt: string }[] = [
+  {
+    icon: FileText,
+    label: "写周报 Word",
+    prompt:
+      "根据当前目录中的资料整理一份本周工作周报，包含本周完成、问题与下周计划，保存为“周报.docx”。",
+  },
+  {
+    icon: FileSpreadsheet,
+    label: "CSV 转 Excel",
+    prompt:
+      "把当前目录下的 CSV 文件整理成一个 Excel 工作簿：加粗表头、设置合适列宽、添加合计行，保存为 .xlsx。",
+  },
+  {
+    icon: Presentation,
+    label: "做汇报 PPT",
+    prompt:
+      "围绕当前目录中的资料制作一份 5 页左右的工作汇报演示文稿，保存为“工作汇报.pptx”。",
+  },
+  {
+    icon: FolderTree,
+    label: "整理文件",
+    prompt:
+      "按文件类型整理当前目录：创建分类文件夹并移动文件，完成后列出整理结果。",
+  },
+  {
+    icon: Mail,
+    label: "打开 Outlook",
+    prompt: "请打开 Outlook 邮件客户端。",
+  },
+];
+export function Greeting() {
   return (
-    <div className="welcome enter">
-      <div className="welcome-emblem">
-        <Layers2 className="size-6" strokeWidth={1.5} />
-      </div>
-      <div className="mb-2 text-[11px] font-medium tracking-[.15em] text-muted-foreground">
-        YOUR AGENTS, ONE WORKSPACE
-      </div>
-      <h1>把想法，交给你的 Agent。</h1>
-      <p className="mt-3">
-        描述目标，选择引擎，或者让我们为你制定计划。
-        <br />
-        从第一步到最终产物，每一次执行都清晰可见。
-      </p>
-      <div className="suggestion-grid">
-        {suggestions.map((item) => (
-          <button
-            key={item.title}
-            className="suggestion group"
-            onClick={() => suggest(item.prompt)}
-          >
-            <item.icon
-              className="mb-5 size-[18px] text-[#7b8b70]"
-              strokeWidth={1.6}
-            />
-            <div className="flex items-center justify-between text-[12px] font-medium">
-              {item.title}
-              <ArrowUp className="size-3 rotate-45 opacity-0 transition-opacity group-hover:opacity-100" />
-            </div>
-            <p className="suggestion-description mt-1 text-[11px]!">
-              {item.description}
-            </p>
-          </button>
-        ))}
-      </div>
-      <div className="mt-6 flex items-center gap-2 text-[11px] text-muted-foreground">
-        <span className="size-1.5 rounded-full bg-[#799574]" />
-        {enabledCount} 个已启用引擎 · 任务与产物保存在本机
-      </div>
-      {competitionEngine ? (
-        <p className="mt-3 rounded-lg border border-[#d9e3ec] bg-[#f5f8fb] px-3 py-2 text-[11px]! leading-6 text-[#40576b]!">
-          比赛模式：比赛接口固定使用 {competitionEngine}
-          。评测方创建的会话会带“比赛
-          API”标记出现在左侧最近任务中，控制台只读显示，不会干扰评测。
-        </p>
-      ) : null}
+    <h1 className="text-center text-[28px] leading-tight font-semibold tracking-[-0.015em] max-sm:text-[23px]">
+      今天要完成什么任务？
+    </h1>
+  );
+}
+export function Suggestions({ onPick }: { onPick: (prompt: string) => void }) {
+  return (
+    <div className="flex flex-wrap justify-center gap-2">
+      {suggestions.map((item) => (
+        <button
+          key={item.label}
+          type="button"
+          className="suggestion-chip"
+          onClick={() => onPick(item.prompt)}
+        >
+          <item.icon className="size-4 text-subtle" strokeWidth={1.7} />
+          {item.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -315,124 +367,132 @@ export function WorkflowPlan({
     (step) => step.status === "completed",
   ).length;
   return (
-    <Plan
-      defaultOpen
-      className="mb-8 gap-0 overflow-hidden rounded-xl border-[#dfe5d9] bg-[#fcfdf9] py-0"
-    >
-      <PlanHeader className="p-5">
-        <div>
-          <div className="mb-3 flex items-center gap-2">
-            <GitBranch className="size-4 text-[#6a825b]" />
-            <span className="text-[11px] text-muted-foreground">执行计划</span>
-            <Status status={workflow.status} />
-          </div>
-          <PlanTitle className="text-[15px] font-medium">
-            {workflow.title ?? "正在拆解你的任务"}
-          </PlanTitle>
-          <PlanDescription className="mt-2 text-xs leading-6">
-            {workflow.status === "planning"
-              ? "规划引擎正在分析目标与任务依赖。"
-              : `${workflow.steps.length} 个步骤 · ${completed} 个已完成 · ${workflow.workspaceId}`}
-          </PlanDescription>
+    <section className="panel mb-8 overflow-hidden" aria-label="执行计划">
+      <header className="flex items-start gap-3 px-5 pt-4 pb-3">
+        <GitBranch className="mt-1 size-4 shrink-0 text-subtle" />
+        <div className="min-w-0 flex-1">
+          <h2 className="text-[15px] font-semibold">
+            {workflow.title ??
+              (workflow.status === "planning" ? "正在制定计划" : "执行计划")}
+          </h2>
+          {workflow.steps.length ? (
+            <p className="mt-0.5 text-[12.5px] text-subtle">
+              {completed} / {workflow.steps.length} 步完成
+            </p>
+          ) : null}
         </div>
-        <PlanTrigger aria-label="展开或收起计划" />
-      </PlanHeader>
-      <PlanContent className="px-5 pb-1">
-        {workflow.steps.map((step, index) => (
-          <div
-            key={step.id}
-            className="relative flex gap-3 border-t border-[#e8ecdf] py-4"
-          >
-            <span className="grid size-6 shrink-0 place-items-center rounded-full border bg-white text-[10px] text-muted-foreground">
-              {step.status === "completed" ? (
-                <Check className="size-3 text-[#5a7a49]" />
-              ) : (
-                String(index + 1).padStart(2, "0")
-              )}
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-medium">{step.title}</span>
-                {step.runId ? (
-                  <button
-                    className="ml-auto text-[10px] text-muted-foreground hover:text-primary"
-                    onClick={() => inspect(step.runId!)}
-                  >
-                    查看执行 ↗
-                  </button>
-                ) : null}
-              </div>
-              <p className="mt-1.5 text-[11px] leading-6 text-muted-foreground">
-                {step.selection.engineId} ·{" "}
-                {step.selection.mode === "auto" ? "自动选择" : "指定引擎"}
-              </p>
-              <details className="mt-1 text-[11px] text-muted-foreground">
-                <summary className="cursor-pointer">
-                  任务说明
-                  {step.dependsOn.length
-                    ? ` · 依赖 ${step.dependsOn.join("、")}`
-                    : ""}
-                </summary>
-                <p className="mt-2 whitespace-pre-wrap leading-6">
-                  {step.instructions}
-                </p>
-                {step.outputs.length ? (
-                  <p className="mt-2 font-mono">
-                    产物：{step.outputs.map((output) => output.path).join("、")}
+        <Status status={workflow.status} />
+      </header>
+      {workflow.steps.length ? (
+        <ol className="border-t">
+          {workflow.steps.map((step, index) => (
+            <li
+              key={step.id}
+              className="flex gap-3 border-b px-5 py-3 last:border-b-0"
+            >
+              <span
+                className={cn(
+                  "mt-0.5 grid size-5 shrink-0 place-items-center rounded-full border text-[11px] text-subtle tabular",
+                  step.status === "completed" &&
+                    "border-transparent bg-success-soft text-success",
+                )}
+              >
+                {step.status === "completed" ? (
+                  <Check className="size-3" strokeWidth={2.4} />
+                ) : (
+                  index + 1
+                )}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[13.5px] font-medium">
+                    {step.title}
+                  </span>
+                  <span className="text-[12px] text-subtle">
+                    {engineName(step.selection.engineId)}
+                  </span>
+                  {step.status !== "pending" && step.status !== "completed" ? (
+                    <Status status={step.status} />
+                  ) : null}
+                  {step.runId ? (
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      className="ml-auto"
+                      onClick={() => inspect(step.runId!)}
+                    >
+                      详情
+                    </Button>
+                  ) : null}
+                </div>
+                <details className="mt-1 text-[12.5px] text-muted-foreground">
+                  <summary className="w-fit text-subtle hover:text-foreground">
+                    说明
+                    {step.dependsOn.length
+                      ? `（依赖 ${step.dependsOn.join("、")}）`
+                      : ""}
+                  </summary>
+                  <p className="mt-1.5 leading-6 whitespace-pre-wrap">
+                    {step.instructions}
+                  </p>
+                  {step.outputs.length ? (
+                    <p className="mt-1.5 font-mono text-[12px]">
+                      {step.outputs.map((output) => output.path).join("、")}
+                    </p>
+                  ) : null}
+                </details>
+                {step.error ? (
+                  <p className="mt-1.5 text-[12.5px] text-danger">
+                    {step.error.message}
                   </p>
                 ) : null}
-              </details>
-              {step.status !== "pending" ? (
-                <div className="mt-2">
-                  <Status status={step.status} />
-                </div>
-              ) : null}
-              {step.error ? (
-                <p className="mt-2 text-xs text-destructive">
-                  {step.error.message}
-                </p>
-              ) : null}
-            </div>
-          </div>
-        ))}
-      </PlanContent>
-      <PlanFooter className="gap-2 border-t border-[#e8ecdf] px-5 py-4">
-        {workflow.status === "draft" ? (
-          <>
-            <Button size="sm" disabled={pendingAction} onClick={approve}>
-              <Check className="size-3.5" />
-              确认并执行
-            </Button>
+              </div>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      {workflow.status === "draft" || !isTerminal(workflow.status) ? (
+        <footer className="flex items-center gap-2 border-t bg-muted/40 px-5 py-3">
+          {workflow.status === "draft" ? (
+            <>
+              <Button size="sm" disabled={pendingAction} onClick={approve}>
+                <Check />
+                确认并执行
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={pendingAction}
+                onClick={cancel}
+              >
+                取消
+              </Button>
+            </>
+          ) : (
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
               disabled={pendingAction}
               onClick={cancel}
             >
-              取消计划
+              <Square className="size-3 fill-current" />
+              停止
             </Button>
-            <span className="ml-auto hidden text-[10px] text-muted-foreground sm:block">
-              确认后开始分配任务
-            </span>
-          </>
-        ) : !isTerminal(workflow.status) ? (
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={pendingAction}
-            onClick={cancel}
-          >
-            <Square className="size-3" />
-            停止任务
-          </Button>
-        ) : (
-          <p className="text-[11px] text-muted-foreground">
-            {workflow.error?.message ?? "执行记录和产物已保留，可在右侧查看。"}
-          </p>
-        )}
-      </PlanFooter>
-    </Plan>
+          )}
+        </footer>
+      ) : workflow.error ? (
+        <footer className="border-t px-5 py-3 text-[12.5px] text-danger">
+          {workflow.error.message}
+        </footer>
+      ) : null}
+    </section>
   );
+}
+
+function workspaceLabel(workspace: Workspace | undefined, fallback: string) {
+  if (!workspace) return fallback;
+  const tail = workspace.path.split(/[\\/]/).filter(Boolean).at(-1);
+  return workspace.id === "default" && tail ? tail : workspace.id;
 }
 
 export function Composer({
@@ -452,6 +512,8 @@ export function Composer({
   setOutputPaths,
   fullAccess = false,
   sessionCwd,
+  onManageEngines,
+  autoFocus = false,
 }: {
   mode: "auto" | "direct";
   setMode: (mode: "auto" | "direct") => void;
@@ -471,137 +533,250 @@ export function Composer({
   fullAccess?: boolean;
   /** Directory of a bound Session whose workspace is not a registered one. */
   sessionCwd?: string;
+  onManageEngines: () => void;
+  autoFocus?: boolean;
 }) {
-  const knownWorkspace = workspaces.some(
-    (workspace) => workspace.id === workspaceId,
+  const [engineOpen, setEngineOpen] = useState(false);
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const choices = selectableEngines(
+    engines,
+    sessionBound ? engineId : undefined,
   );
+  const locked = sessionBound || running || workflowActive;
+  const workspace = workspaces.find((item) => item.id === workspaceId);
+  const outputCount = outputPaths.split("\n").filter((line) => line.trim())
+    .length;
   return (
-    <div className="composer-wrap">
+    <div>
       <ComposerPrimitive.Root className="composer-surface">
         <ComposerPrimitive.Input
           className="composer-input"
           placeholder={
             workflowActive
-              ? "当前任务完成后，可新建下一项任务"
+              ? "计划任务进行中，可新建任务"
               : mode === "auto"
-                ? "描述你的目标，Agent 会先制定执行计划…"
-                : "向 Agent 发送任务，或继续当前对话…"
+                ? "描述目标，先生成执行计划"
+                : sessionBound
+                  ? "继续对话"
+                  : "描述你要完成的任务"
           }
           aria-label="任务描述"
-          minRows={2}
-          maxRows={7}
+          minRows={1}
+          maxRows={8}
+          autoFocus={autoFocus}
           disabled={workflowActive}
           addAttachmentOnPaste={false}
           unstable_insertNewlineOnTouchEnter
         />
-        <div className="composer-tools">
-          <label className="flex items-center gap-0.5">
-            <GitBranch className="ml-1 size-3.5 text-muted-foreground" />
-            <select
-              className="small-select"
-              aria-label="执行模式"
-              value={mode}
-              disabled={sessionBound || running || workflowActive}
-              onChange={(event) =>
-                setMode(event.target.value === "auto" ? "auto" : "direct")
-              }
-            >
-              <option value="direct">直接执行</option>
-              <option value="auto">自动规划</option>
-            </select>
-          </label>
-          <span className="mx-1 h-3 w-px bg-border" />
-          <select
-            className="small-select"
-            value={engineId}
-            aria-label="选择引擎"
-            disabled={sessionBound || running || workflowActive}
-            onChange={(event) => setEngineId(event.target.value)}
-          >
-            <option value="auto">自动选择引擎</option>
-            {engines
-              .filter(
-                (engine) =>
-                  engine.enabled || (sessionBound && engine.id === engineId),
-              )
-              .map((engine) => (
-                <option value={engine.id} key={engine.id}>
-                  {engine.id}
-                </option>
-              ))}
-          </select>
-          <div className="ml-auto">
-            {running ? (
-              <Button
+        <div className="flex items-center gap-1">
+          <Popover open={engineOpen} onOpenChange={setEngineOpen}>
+            <PopoverTrigger asChild>
+              <button
                 type="button"
-                size="icon-sm"
+                className="pill -ml-1.5"
+                aria-label="选择引擎"
+                disabled={locked}
+              >
+                <EngineAvatar id={engineId} size="xs" />
+                <span className="truncate">
+                  {engineId === "auto" ? "自动选择" : engineName(engineId)}
+                </span>
+                {locked ? null : (
+                  <ChevronDown className="size-3.5 shrink-0 opacity-60" />
+                )}
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-64" side="top">
+              <div
+                role="listbox"
+                aria-label="引擎"
+                className="max-h-[320px] overflow-y-auto"
+              >
+                {[{ id: "auto" }, ...choices].map((engine) => (
+                  <button
+                    key={engine.id}
+                    type="button"
+                    role="option"
+                    aria-selected={engine.id === engineId}
+                    className="flex h-10 w-full items-center gap-2.5 rounded-[10px] px-2.5 text-left text-[13.5px] hover:bg-accent"
+                    onClick={() => {
+                      setEngineId(engine.id);
+                      setEngineOpen(false);
+                    }}
+                  >
+                    <EngineAvatar id={engine.id} />
+                    <span className="min-w-0 flex-1 truncate">
+                      {engine.id === "auto"
+                        ? "自动选择"
+                        : engineName(engine.id)}
+                    </span>
+                    {engine.id === engineId ? (
+                      <Check className="size-4 text-brand" />
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-1 border-t pt-1">
+                <PopoverClose asChild>
+                  <button
+                    type="button"
+                    className="flex h-9 w-full items-center gap-2.5 rounded-[10px] px-2.5 text-left text-[13px] text-muted-foreground hover:bg-accent hover:text-foreground"
+                    onClick={onManageEngines}
+                  >
+                    <Settings2 className="size-4" strokeWidth={1.7} />
+                    管理引擎
+                  </button>
+                </PopoverClose>
+              </div>
+            </PopoverContent>
+          </Popover>
+          <Popover open={workspaceOpen} onOpenChange={setWorkspaceOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="pill"
+                aria-label="工作目录"
+                disabled={locked}
+                title={sessionCwd ?? workspace?.path}
+              >
+                <FolderClosed className="size-[15px] shrink-0" strokeWidth={1.7} />
+                <span className="truncate">
+                  {workspaceLabel(
+                    workspace,
+                    sessionCwd?.split(/[\\/]/).filter(Boolean).at(-1) ??
+                      (workspaceId || "工作目录"),
+                  )}
+                </span>
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-80" side="top">
+              <div role="listbox" aria-label="工作目录">
+                {workspaces.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    role="option"
+                    aria-selected={item.id === workspaceId}
+                    className="flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left hover:bg-accent"
+                    onClick={() => {
+                      setWorkspaceId(item.id);
+                      setWorkspaceOpen(false);
+                    }}
+                  >
+                    <FolderOpen
+                      className="size-4 shrink-0 text-subtle"
+                      strokeWidth={1.7}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13.5px]">
+                        {item.id}
+                      </span>
+                      <span
+                        className="block truncate font-mono text-[11.5px] text-subtle"
+                        title={item.path}
+                      >
+                        {item.path}
+                      </span>
+                    </span>
+                    {item.id === workspaceId ? (
+                      <Check className="size-4 shrink-0 text-brand" />
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
+          {mode === "direct" && !workflowActive ? (
+            <Popover>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      className="pill"
+                      aria-label="完成后保存的文件"
+                      disabled={running}
+                    >
+                      <PackagePlus
+                        className="size-[15px] shrink-0"
+                        strokeWidth={1.7}
+                      />
+                      {outputCount ? (
+                        <span className="tabular">{outputCount}</span>
+                      ) : null}
+                    </button>
+                  </PopoverTrigger>
+                </TooltipTrigger>
+                <TooltipContent>完成后保存的文件</TooltipContent>
+              </Tooltip>
+              <PopoverContent className="w-80 p-4" side="top">
+                <label className="field-label" htmlFor="output-paths">
+                  完成后保存的文件
+                </label>
+                <textarea
+                  id="output-paths"
+                  aria-label="预期产物路径"
+                  className="field font-mono text-[12.5px]"
+                  rows={3}
+                  value={outputPaths}
+                  placeholder={"report.docx\noutput/data.xlsx"}
+                  onChange={(event) => setOutputPaths(event.target.value)}
+                />
+                <p className="field-hint">
+                  每行一个相对工作目录的路径，任务完成后可在结果中下载。
+                </p>
+              </PopoverContent>
+            </Popover>
+          ) : null}
+          <div className="ml-auto flex items-center gap-2">
+            {sessionBound || workflowActive ? null : (
+              <div className="segmented max-sm:hidden" role="group" aria-label="执行模式">
+                <button
+                  type="button"
+                  aria-pressed={mode === "direct"}
+                  disabled={running}
+                  onClick={() => setMode("direct")}
+                >
+                  直接执行
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={mode === "auto"}
+                  disabled={running}
+                  onClick={() => setMode("auto")}
+                >
+                  先做计划
+                </button>
+              </div>
+            )}
+            {running ? (
+              <button
+                type="button"
+                className="send-button"
                 aria-label="停止执行"
                 onClick={onStop}
-                className="rounded-full"
               >
-                <Square className="size-3 fill-current" />
-              </Button>
+                <Square className="size-3.5 fill-current" />
+              </button>
             ) : (
               <ComposerPrimitive.Send asChild>
-                <Button
-                  size="icon-sm"
+                <button
+                  type="submit"
+                  className="send-button"
                   aria-label={mode === "auto" ? "生成计划" : "发送任务"}
-                  className="rounded-full"
-                  disabled={
-                    workflowActive || !engines.some((engine) => engine.enabled)
-                  }
+                  disabled={workflowActive || !choices.length}
                 >
-                  <ArrowUp className="size-4" />
-                </Button>
+                  <ArrowUp className="size-[18px]" strokeWidth={2.2} />
+                </button>
               </ComposerPrimitive.Send>
             )}
           </div>
         </div>
       </ComposerPrimitive.Root>
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-y-1 px-1 text-[10px] text-muted-foreground">
-        <label className="flex min-w-0 items-center gap-1.5">
-          <FolderOpen className="size-3" />
-          <select
-            className="max-w-[240px] bg-transparent text-[10px] outline-none"
-            value={workspaceId}
-            aria-label="工作区"
-            disabled={sessionBound || running || workflowActive}
-            onChange={(event) => setWorkspaceId(event.target.value)}
-          >
-            {!knownWorkspace && workspaceId ? (
-              <option value={workspaceId}>{sessionCwd ?? workspaceId}</option>
-            ) : null}
-            {workspaces.map((workspace) => (
-              <option value={workspace.id} key={workspace.id}>
-                {workspace.id}
-              </option>
-            ))}
-          </select>
-        </label>
-        <span>Enter 发送 · Shift + Enter 换行</span>
-      </div>
       {mode === "auto" && fullAccess && !workflowActive && !sessionBound ? (
-        <p className="mt-2 px-1 text-[10px] leading-5 text-amber-800">
-          Full Access
-          下引擎的工具请求会被自动批准，而规划阶段禁止使用工具，计划可能被拒绝。一般任务建议使用“直接执行”。
+        <p className="mt-2 px-4 text-[12.5px] text-warning">
+          完全访问模式下计划可能被拒绝，建议直接执行。
         </p>
-      ) : null}
-      {mode === "direct" && !workflowActive ? (
-        <details className="mt-2 px-1 text-[10px] text-muted-foreground">
-          <summary className="w-fit cursor-pointer">需要保存文件产物？</summary>
-          <label className="mt-2 block leading-6">
-            完成后采集的工作区相对路径（每行一个，Windows 的 \ 会转换为 /）
-            <textarea
-              aria-label="预期产物路径"
-              className="mt-1 block w-full rounded-md border p-2 font-mono text-xs outline-none"
-              rows={2}
-              value={outputPaths}
-              onChange={(event) => setOutputPaths(event.target.value)}
-              placeholder="report.md"
-              disabled={running}
-            />
-          </label>
-        </details>
       ) : null}
     </div>
   );
@@ -612,10 +787,10 @@ export function ScrollToBottom() {
       <Button
         variant="outline"
         size="icon-sm"
-        className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-white shadow-sm"
-        aria-label="滚动至最新消息"
+        className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full shadow-float disabled:invisible"
+        aria-label="滚动到底部"
       >
-        <ArrowDown className="size-3.5" />
+        <ArrowDown />
       </Button>
     </ThreadPrimitive.ScrollToBottom>
   );

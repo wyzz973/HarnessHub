@@ -1,5 +1,13 @@
 "use client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   AssistantRuntimeProvider,
   ThreadPrimitive,
@@ -8,40 +16,23 @@ import {
   type ThreadMessageLike,
 } from "@assistant-ui/react";
 import {
-  Activity,
-  Blocks,
-  BrainCircuit,
-  ChevronRight,
-  CircleHelp,
-  Clock3,
-  Command,
-  Layers2,
+  CircleAlert,
   Menu,
-  MessageSquare,
   PanelRight,
-  Plus,
-  Plug,
   RefreshCw,
-  Search,
+  ShieldAlert,
+  SquarePen,
   Trophy,
-  Workflow as WorkflowIcon,
   X,
 } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Skeleton } from "@/components/ui/skeleton";
 import { api, readEvents } from "@/lib/api";
 import {
   type AgentEvent,
@@ -57,37 +48,56 @@ import {
   isTerminal,
   selectionSchema,
 } from "@/lib/contracts";
+import { engineName } from "@/lib/engines";
 import { useGatewayStatus } from "@/lib/gateway-status";
 import { cn } from "@/lib/utils";
 import {
   competitionOrigin,
-  dateLabel,
   parseOutputPaths,
   projectEvents,
 } from "@/lib/presentation";
 import {
   Composer,
+  Greeting,
   Messages,
   RunThreadProvider,
   ScrollToBottom,
-  Welcome,
+  Suggestions,
   WorkflowPlan,
 } from "./thread";
-import { Inspector } from "./inspector";
+import { ConnectModel } from "./onboarding";
+import { Inspector, type RunPanelTab } from "./inspector";
 import { EnginePage } from "./engine-page";
+import { LogPanel } from "./log-panel";
 import { ObservabilityPage } from "./observability-page";
 import { ModelPage } from "./model-page";
+import { Sidebar, type HistoryItem, type Page } from "./sidebar";
 import { ToolPacksPage } from "./tool-packs-page";
-import { StatusBar } from "./status-bar";
 
 type ActiveSelection = { type: "session" | "workflow"; id: string } | null;
-type Page = "tasks" | "model" | "tools" | "engines" | "observability";
-const pageTitles: Record<Exclude<Page, "tasks">, string> = {
-  model: "统一模型",
-  tools: "工具与插件",
-  engines: "引擎管理",
-  observability: "运行观测",
-};
+const ENGINE_KEY = "harnesshub.engine";
+const SIDEBAR_KEY = "harnesshub.sidebar";
+const panelTransition = { duration: 0.24, ease: [0.22, 0.8, 0.24, 1] } as const;
+const overlayQuery = "(max-width: 1100px)";
+function subscribeOverlay(listener: () => void) {
+  const media = window.matchMedia(overlayQuery);
+  media.addEventListener("change", listener);
+  return () => media.removeEventListener("change", listener);
+}
+function stored(key: string) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function store(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* Storage is optional; the choice then lasts for this page only. */
+  }
+}
 /** History refresh period; also picks up sessions created through the Competition API. */
 const HISTORY_POLL_MS = 3000;
 const convertMessage = (message: ThreadMessageLike): ThreadMessageLike =>
@@ -115,9 +125,17 @@ export function Console() {
   const unifiedModel =
     gateway.model.state === "ready" ? gateway.model.value : undefined;
   const [page, setPage] = useState<Page>("tasks");
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileNav, setMobileNav] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
-  const [helpOpen, setHelpOpen] = useState(false);
+  const [panelTab, setPanelTab] = useState<RunPanelTab>("overview");
+  const [logsRunId, setLogsRunId] = useState<string | null>(null);
+  const [onboardingSkipped, setOnboardingSkipped] = useState(false);
+  const overlayPanel = useSyncExternalStore(
+    subscribeOverlay,
+    () => window.matchMedia(overlayQuery).matches,
+    () => false,
+  );
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -153,6 +171,23 @@ export function Console() {
   const setEngineId = useCallback((id: string) => {
     engineChosen.current = true;
     setEngineIdState(id);
+    store(ENGINE_KEY, id);
+  }, []);
+  const toggleSidebar = useCallback(() => {
+    setMobileNav(false);
+    setSidebarCollapsed((value) => {
+      store(SIDEBAR_KEY, value ? "open" : "collapsed");
+      return !value;
+    });
+  }, []);
+  // Remembered choices are applied after hydration so server and client markup agree.
+  useEffect(() => {
+    setSidebarCollapsed(stored(SIDEBAR_KEY) === "collapsed");
+    const remembered = stored(ENGINE_KEY);
+    if (remembered) {
+      engineChosen.current = true;
+      setEngineIdState(remembered);
+    }
   }, []);
   const [workspaceId, setWorkspaceId] = useState("");
   const [outputPaths, setOutputPaths] = useState("");
@@ -281,7 +316,7 @@ export function Console() {
     setError(null);
     setStreamError(false);
     setPage("tasks");
-    setSidebarOpen(false);
+    setMobileNav(false);
     window.history.replaceState(
       null,
       "",
@@ -645,6 +680,14 @@ export function Console() {
     setFocusedRunId(runId);
     setInspectorOpen(true);
   }, []);
+  const sessionEngines = useMemo(
+    () => new Map(sessions.map((session) => [session.id, session.engineId])),
+    [sessions],
+  );
+  const engineOf = useCallback(
+    (run: Run) => sessionEngines.get(run.sessionId),
+    [sessionEngines],
+  );
   const decide = useCallback(
     (id: string, optionId: string) =>
       void perform(() => api.decide(id, optionId)),
@@ -657,8 +700,10 @@ export function Console() {
       onDecide: decide,
       pendingAction,
       onInspect: inspect,
+      onOpenLogs: setLogsRunId,
+      engineOf,
     }),
-    [currentRuns, events, decide, pendingAction, inspect],
+    [currentRuns, events, decide, pendingAction, inspect, engineOf],
   );
   const messages = useMemo<ThreadMessageLike[]>(() => {
     const output: ThreadMessageLike[] = [];
@@ -724,7 +769,7 @@ export function Console() {
       `会话 ${session.id.slice(0, 8)}`
     );
   };
-  const history = [
+  const history: HistoryItem[] = [
     ...workflows.map((item) => ({
       type: "workflow" as const,
       id: item.id,
@@ -759,12 +804,13 @@ export function Console() {
   ]
     .sort((a, b) => b.time - a.time)
     .filter((item) => item.title.toLowerCase().includes(search.toLowerCase()));
+  // Pages carry their own heading; the top bar names only the open task.
   const title =
     page !== "tasks"
-      ? pageTitles[page]
+      ? ""
       : (workflow?.title ??
         (boundSession ? sessionTitle(boundSession) : undefined) ??
-        "新任务");
+        "");
   const storedSelection = selectionSchema.safeParse(
     boundSession?.configSnapshot?.routing,
   );
@@ -783,17 +829,14 @@ export function Console() {
         event.preventDefault();
         newTask();
       }
-      if (event.key === "Escape") {
-        setSidebarOpen(false);
-        setInspectorOpen(false);
-      }
+      if (event.key === "Escape") setMobileNav(false);
     };
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
   }, [newTask]);
   const openPage = (next: Page) => {
     setPage(next);
-    setSidebarOpen(false);
+    setMobileNav(false);
     // Engine revisions change after unified-model and tool-pack updates from any client.
     if (next === "engines" || next === "tools") void refresh().catch(report);
   };
@@ -812,6 +855,7 @@ export function Console() {
         .then((run) => {
           choose({ type: "session", id: run.sessionId });
           setFocusedRunId(runId);
+          setPanelTab("model");
           setInspectorOpen(true);
         })
         .catch(report);
@@ -819,240 +863,152 @@ export function Console() {
     [choose, report],
   );
   const health = gateway.health;
+  const logsRun = logsRunId
+    ? (currentRuns.find((run) => run.id === logsRunId) ??
+      allRuns.find((run) => run.id === logsRunId))
+    : undefined;
+  const modelState = gateway.model;
+  const needsModel =
+    modelState.state === "ready" && !modelState.value.configured;
+  const showOnboarding = needsModel && !onboardingSkipped;
+  const emptyThread = !messages.length && !workflow && !active;
+  const competitionEngine = runtimeInfo?.competition
+    ? runtimeInfo.competitionEngine
+    : undefined;
+  const panel = (
+    <Inspector
+      run={focusedRun}
+      observation={focusedRun ? observations[focusedRun.id] : undefined}
+      selection={currentSelection}
+      events={focusedRun ? (events[focusedRun.id] ?? []) : []}
+      {...(unifiedModel ? { unifiedModel } : {})}
+      tab={panelTab}
+      onTabChange={setPanelTab}
+      close={() => setInspectorOpen(false)}
+    />
+  );
 
   return (
-    <TooltipProvider delayDuration={250}>
+    <TooltipProvider delayDuration={300}>
       <AssistantRuntimeProvider runtime={runtime}>
-        <div className="console-shell">
+        <div className="app-shell">
           <a
             href="#main-content"
-            className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded focus:bg-white focus:p-3"
+            className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[100] focus:rounded-lg focus:bg-popover focus:px-3 focus:py-2 focus:shadow-float"
           >
-            跳转到主要内容
+            跳到主要内容
           </a>
-          {sidebarOpen ? (
+          {mobileNav ? (
             <button
-              className="sidebar-overlay"
-              aria-label="关闭导航菜单"
-              onClick={() => setSidebarOpen(false)}
+              className="scrim min-[821px]:hidden"
+              aria-label="关闭导航"
+              onClick={() => setMobileNav(false)}
             />
           ) : null}
-          <aside
-            className={cn("sidebar", sidebarOpen && "mobile-open")}
-            aria-label="主导航"
-          >
-            <div className="flex h-[76px] items-center gap-2.5 px-5">
-              <span className="brand-mark">
-                <Layers2 className="size-[17px]" strokeWidth={1.7} />
-              </span>
-              <span className="text-[17px] font-semibold tracking-[-.045em]">
-                HarnessHub
-              </span>
-              <span className="ml-auto rounded border bg-white/70 px-1.5 py-0.5 font-mono text-[9px] text-muted-foreground">
-                {runtimeInfo?.competition ? "CONTEST" : "LOCAL"}
-              </span>
-            </div>
-            <div className="px-3">
-              <button
-                className="mb-5 flex h-10 w-full items-center gap-2 rounded-lg border border-[#dce4d4] bg-white px-3 text-[12px] font-medium text-[#4b6541] shadow-xs hover:border-[#acbda1]"
-                onClick={newTask}
-              >
-                <Plus className="size-4" />
-                新建任务
-                <kbd className="ml-auto flex items-center gap-0.5 rounded border px-1 text-[9px] font-normal text-muted-foreground">
-                  <Command className="size-2.5" />K
-                </kbd>
-              </button>
-              <nav className="space-y-1">
-                <button
-                  className={cn("nav-item", page === "tasks" && "active")}
-                  onClick={() => openPage("tasks")}
-                >
-                  <MessageSquare className="size-[16px]" strokeWidth={1.65} />
-                  任务工作台
-                </button>
-                <button
-                  className={cn("nav-item", page === "model" && "active")}
-                  onClick={() => openPage("model")}
-                >
-                  <BrainCircuit className="size-[16px]" strokeWidth={1.65} />
-                  统一模型
-                  {unifiedModel && !unifiedModel.configured ? (
-                    <span className="ml-auto size-1.5 rounded-full bg-amber-500" />
-                  ) : null}
-                </button>
-                <button
-                  className={cn("nav-item", page === "tools" && "active")}
-                  onClick={() => openPage("tools")}
-                >
-                  <Blocks className="size-[16px]" strokeWidth={1.65} />
-                  工具与插件
-                </button>
-                <button
-                  className={cn("nav-item", page === "engines" && "active")}
-                  onClick={() => openPage("engines")}
-                >
-                  <Plug className="size-[16px]" strokeWidth={1.65} />
-                  引擎管理
-                  <span className="ml-auto text-[10px] tabular">
-                    {engines.length}
-                  </span>
-                </button>
-                <button
-                  className={cn(
-                    "nav-item",
-                    page === "observability" && "active",
-                  )}
-                  onClick={() => openPage("observability")}
-                >
-                  <Activity className="size-[16px]" strokeWidth={1.65} />
-                  运行观测
-                </button>
-              </nav>
-            </div>
-            <div className="mt-8 flex items-center justify-between px-6">
-              <span className="section-label">最近任务</span>
-              <Clock3 className="size-3 text-muted-foreground" />
-            </div>
-            <label className="mx-4 mt-3 flex items-center gap-2 rounded-md border border-transparent px-2 focus-within:border-border focus-within:bg-white">
-              <Search className="size-3 text-muted-foreground" />
-              <input
-                aria-label="搜索历史任务"
-                className="h-8 w-full min-w-0 bg-transparent text-[11px] outline-none placeholder:text-muted-foreground"
-                placeholder="搜索任务"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-              />
-            </label>
-            <div className="mt-2 min-h-0 flex-1 overflow-y-auto px-3 pb-5">
-              {loading ? (
-                <div className="space-y-4 p-2">
-                  <Skeleton className="h-3 w-4/5" />
-                  <Skeleton className="h-3 w-3/5" />
-                  <Skeleton className="h-3 w-4/5" />
-                </div>
-              ) : history.length ? (
-                history.map((item) => (
-                  <button
-                    key={item.id}
-                    className={cn(
-                      "history-item",
-                      active?.id === item.id && page === "tasks" && "active",
-                    )}
-                    onClick={() => choose({ type: item.type, id: item.id })}
-                  >
-                    <span className="mt-1.5 shrink-0">
-                      {item.type === "workflow" ? (
-                        <WorkflowIcon className="size-3 text-[#8b977f]" />
-                      ) : (
-                        <span
-                          className={`block size-1.5 rounded-full ${item.busy ? "bg-[#73955f]" : "bg-[#b7c0ae]"}`}
-                        />
-                      )}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block truncate text-[11px] leading-5 text-[#687660]">
-                        {item.title}
-                      </span>
-                      <span className="mt-0.5 flex items-center gap-1.5 text-[9px] text-muted-foreground">
-                        {dateLabel(item.time)}
-                        {item.competition ? (
-                          <span className="source-tag">
-                            <Trophy className="size-2.5" aria-hidden />
-                            比赛 API
-                          </span>
-                        ) : null}
-                        {item.busy ? (
-                          <span className="text-[#5a7a49]">执行中</span>
-                        ) : null}
-                      </span>
-                    </span>
-                  </button>
-                ))
-              ) : (
-                <p className="px-3 py-4 text-[11px] leading-6 text-muted-foreground">
-                  {search
-                    ? "没有匹配的任务"
-                    : "开始第一项任务，\n执行记录会保存在这里。"}
-                </p>
-              )}
-            </div>
-            <div className="mx-4 border-t py-4">
-              <div className="flex items-center gap-2 px-2">
-                <span
-                  className={cn(
-                    "size-1.5 shrink-0 rounded-full",
-                    health === "ready"
-                      ? "bg-[#75976a]"
-                      : health === "checking"
-                        ? "bg-[#b7c0ae]"
-                        : health === "not-ready"
-                          ? "bg-amber-500"
-                          : "bg-red-500",
-                  )}
-                />
-                <span
-                  className="min-w-0 truncate text-[10px] text-muted-foreground"
-                  title={syncError ?? undefined}
-                >
-                  {health === "ready"
-                    ? syncError
-                      ? "Gateway 已连接 · 历史同步失败"
-                      : "Gateway 已连接 · 每 3 秒同步"
-                    : health === "checking"
-                      ? "正在连接 Gateway"
-                      : health === "not-ready"
-                        ? "Gateway 未就绪"
-                        : "无法连接 Gateway"}
-                </span>
-                <Button
-                  className="ml-auto size-6"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="工作台帮助"
-                  onClick={() => setHelpOpen(true)}
-                >
-                  <CircleHelp className="size-3.5" />
-                </Button>
-              </div>
-            </div>
-          </aside>
+          <Sidebar
+            page={page}
+            collapsed={sidebarCollapsed}
+            mobileOpen={mobileNav}
+            onToggle={toggleSidebar}
+            onNewTask={newTask}
+            onOpenPage={openPage}
+            history={history}
+            loading={loading}
+            activeId={active?.id}
+            onChoose={(item) => choose({ type: item.type, id: item.id })}
+            search={search}
+            onSearch={setSearch}
+            health={health}
+            syncError={syncError}
+            modelMissing={needsModel}
+          />
           <main id="main-content" className="main-shell">
             <header className="topbar">
-              <div className="flex min-w-0 items-center gap-3">
+              <div className="flex min-w-0 items-center gap-1.5">
                 <Button
-                  className="min-[761px]:hidden"
+                  className="min-[821px]:hidden"
                   size="icon-sm"
                   variant="ghost"
-                  aria-label="打开导航菜单"
-                  onClick={() => setSidebarOpen(true)}
+                  aria-label="打开导航"
+                  onClick={() => setMobileNav(true)}
                 >
                   <Menu />
                 </Button>
-                <span className="hidden text-[11px] text-muted-foreground sm:block">
-                  工作台
-                </span>
-                <ChevronRight className="hidden size-3 text-[#a3ab9b] sm:block" />
-                <span
-                  className="topbar-title max-w-[400px] truncate text-[12px] font-medium"
+                <h1
+                  className="min-w-0 truncate text-[14.5px] font-medium"
                   title={title}
                 >
                   {title}
-                </span>
+                </h1>
                 {page === "tasks" && boundOrigin ? (
-                  <span className="source-tag hidden sm:inline-flex">
-                    <Trophy className="size-2.5" aria-hidden />
-                    比赛 API
+                  <span className="tag info shrink-0">
+                    <Trophy className="size-3" aria-hidden />
+                    比赛接口
                   </span>
                 ) : null}
               </div>
-              <div className="flex shrink-0 items-center gap-3">
+              <div className="flex shrink-0 items-center gap-1.5">
+                {competitionEngine ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="status-chip max-lg:hidden">
+                        <Trophy className="size-3.5 text-info" aria-hidden />
+                        比赛模式 · {engineName(competitionEngine)}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      比赛接口固定使用 {engineName(competitionEngine)}
+                    </TooltipContent>
+                  </Tooltip>
+                ) : null}
+                {runtimeInfo?.fullAccess ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="status-chip max-lg:hidden">
+                        <ShieldAlert
+                          className="size-3.5 text-warning"
+                          aria-hidden
+                        />
+                        完全访问
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>工具与权限请求自动批准</TooltipContent>
+                  </Tooltip>
+                ) : null}
+                {modelState.state === "ready" ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className="status-chip max-sm:hidden"
+                        onClick={() => openPage("model")}
+                      >
+                        <span
+                          className={cn(
+                            "dot",
+                            modelState.value.configured ? "good" : "warn",
+                          )}
+                        />
+                        <span className="truncate">
+                          {modelState.value.configured
+                            ? (modelState.value.model ?? "模型")
+                            : "未连接模型"}
+                        </span>
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {modelState.value.configured
+                        ? "所有引擎共用的模型"
+                        : "连接模型后才能执行任务"}
+                    </TooltipContent>
+                  </Tooltip>
+                ) : null}
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
                       size="icon-sm"
                       variant="ghost"
-                      aria-label="刷新任务数据"
+                      aria-label="刷新"
                       onClick={() => {
                         setError(null);
                         setStreamError(false);
@@ -1061,23 +1017,27 @@ export function Console() {
                         void gateway.reload();
                       }}
                     >
-                      <RefreshCw className="size-3.5" />
+                      <RefreshCw />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>刷新任务数据</TooltipContent>
+                  <TooltipContent>刷新</TooltipContent>
                 </Tooltip>
                 {page === "tasks" ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
                         size="icon-sm"
-                        variant={inspectorOpen ? "secondary" : "ghost"}
+                        variant="ghost"
+                        className={cn(
+                          inspectorOpen && "bg-accent text-foreground",
+                        )}
                         aria-label={
-                          inspectorOpen ? "收起执行详情" : "打开执行详情"
+                          inspectorOpen ? "关闭执行详情" : "打开执行详情"
                         }
+                        aria-pressed={inspectorOpen}
                         onClick={() => setInspectorOpen((value) => !value)}
                       >
-                        <PanelRight className="size-4" />
+                        <PanelRight />
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>执行详情</TooltipContent>
@@ -1085,27 +1045,26 @@ export function Console() {
                 ) : null}
               </div>
             </header>
-            <StatusBar status={gateway} onOpenModel={() => openPage("model")} />
             {error ? (
-              <div
-                role="alert"
-                className="flex items-start gap-3 border-b border-amber-100 bg-amber-50/60 px-6 py-3 text-xs leading-6 text-amber-900"
-              >
-                <span className="flex-1">{error}</span>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="关闭提示"
-                  onClick={() => setError(null)}
-                >
-                  <X />
-                </Button>
+              <div className="thread-column shrink-0 pb-2">
+                <div role="alert" className="callout error items-center">
+                  <CircleAlert className="size-4 shrink-0" />
+                  <span className="min-w-0 flex-1">{error}</span>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    className="text-danger hover:bg-danger/10 hover:text-danger"
+                    aria-label="关闭提示"
+                    onClick={() => setError(null)}
+                  >
+                    <X />
+                  </Button>
+                </div>
               </div>
             ) : null}
             {page === "model" ? (
               <ModelPage
                 model={gateway.model}
-                runtime={gateway.runtime}
                 reload={gateway.reload}
                 onSaved={saveModel}
                 openRun={openRun}
@@ -1143,6 +1102,7 @@ export function Console() {
                 inspect={(sessionId, runId) => {
                   choose({ type: "session", id: sessionId });
                   setFocusedRunId(runId);
+                  setPanelTab("overview");
                   setInspectorOpen(true);
                 }}
               />
@@ -1150,205 +1110,204 @@ export function Console() {
               <div className="work-area">
                 <RunThreadProvider value={threadValue}>
                   <ThreadPrimitive.Root className="conversation">
-                    <div className="relative flex min-h-0 flex-1 flex-col">
-                      <ThreadPrimitive.Viewport
-                        className="thread-viewport flex flex-col"
-                        autoScroll
-                      >
-                        <>
-                          {!messages.length && !workflow ? (
-                            active?.type === "session" ? (
-                              <div className="thread-content text-xs text-muted-foreground">
-                                {boundSession
-                                  ? "此会话还没有执行记录。"
-                                  : "正在读取会话…"}
-                              </div>
-                            ) : (
-                              <Welcome
-                                enabledCount={
-                                  engines.filter((engine) => engine.enabled)
-                                    .length
-                                }
-                                {...(runtimeInfo?.competition
-                                  ? {
-                                      competitionEngine:
-                                        runtimeInfo.competitionEngine ??
-                                        "（未报告）",
-                                    }
-                                  : {})}
-                                suggest={(text) =>
+                    {emptyThread ? (
+                      <div className="min-h-6 flex-1" />
+                    ) : (
+                      <div className="relative flex min-h-0 flex-1 flex-col">
+                        <ThreadPrimitive.Viewport
+                          className="thread-viewport"
+                          autoScroll
+                        >
+                          <div className="thread-column thread-content">
+                            {!messages.length && !workflow ? (
+                              <p className="text-[13.5px] text-muted-foreground">
+                                {boundSession ? "还没有执行记录" : "正在读取"}
+                              </p>
+                            ) : null}
+                            {workflow ? (
+                              <>
+                                <div className="user-bubble mb-7">
+                                  {workflow.goal}
+                                </div>
+                                <WorkflowPlan
+                                  workflow={workflow}
+                                  approve={() =>
+                                    void perform(() => api.approve(workflow.id))
+                                  }
+                                  cancel={() =>
+                                    void perform(() =>
+                                      api.cancelWorkflow(workflow.id),
+                                    )
+                                  }
+                                  pendingAction={pendingAction}
+                                  inspect={inspect}
+                                />
+                              </>
+                            ) : null}
+                            {!workflow || currentRuns.length ? (
+                              <Messages />
+                            ) : null}
+                          </div>
+                        </ThreadPrimitive.Viewport>
+                        <ScrollToBottom />
+                      </div>
+                    )}
+                    <AnimatePresence mode="popLayout" initial={false}>
+                      {emptyThread && showOnboarding ? (
+                        <motion.div
+                          key="onboarding"
+                          className="thread-column flex justify-center"
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, scale: 0.98 }}
+                          transition={{ duration: 0.2, ease: "easeOut" }}
+                        >
+                          <ConnectModel
+                            onSaved={saveModel}
+                            onDone={() => setOnboardingSkipped(true)}
+                            onSkip={() => setOnboardingSkipped(true)}
+                            openRun={openRun}
+                          />
+                        </motion.div>
+                      ) : (
+                        <motion.div
+                          key="composer"
+                          layout="position"
+                          className="thread-column shrink-0 pb-5"
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{
+                            layout: {
+                              type: "spring",
+                              stiffness: 420,
+                              damping: 40,
+                            },
+                            duration: 0.2,
+                          }}
+                        >
+                          {emptyThread ? (
+                            <div className="mb-7">
+                              <Greeting />
+                            </div>
+                          ) : null}
+                          {streamError ? (
+                            <p className="mb-2 px-4 text-[12.5px] text-warning">
+                              实时连接已断开，正在通过记录同步。
+                              <button
+                                className="ml-1 underline"
+                                onClick={() => {
+                                  setStreamError(false);
+                                  setRefreshEpoch((n) => n + 1);
+                                }}
+                              >
+                                重新连接
+                              </button>
+                            </p>
+                          ) : null}
+                          {boundOrigin || boundSession?.status === "closed" ? (
+                            <div className="flex items-center gap-3 rounded-2xl border bg-muted/50 py-3 pr-3 pl-4">
+                              <p className="min-w-0 flex-1 text-[13.5px] text-muted-foreground">
+                                {boundOrigin
+                                  ? "比赛接口创建的会话，仅供查看"
+                                  : "会话已结束"}
+                              </p>
+                              <Button size="sm" onClick={newTask}>
+                                <SquarePen />
+                                新建任务
+                              </Button>
+                            </div>
+                          ) : (
+                            <Composer
+                              mode={mode}
+                              setMode={setMode}
+                              engineId={boundSession?.engineId ?? engineId}
+                              setEngineId={setEngineId}
+                              workspaceId={
+                                boundSession?.workspaceId ?? workspaceId
+                              }
+                              setWorkspaceId={setWorkspaceId}
+                              engines={engines}
+                              workspaces={workspaces}
+                              running={running}
+                              workflowActive={!!workflow}
+                              sessionBound={active?.type === "session"}
+                              onStop={stop}
+                              outputPaths={outputPaths}
+                              setOutputPaths={setOutputPaths}
+                              fullAccess={runtimeInfo?.fullAccess ?? false}
+                              onManageEngines={() => openPage("engines")}
+                              autoFocus
+                              {...(boundSession
+                                ? { sessionCwd: boundSession.cwd }
+                                : {})}
+                            />
+                          )}
+                          {emptyThread ? (
+                            <div className="mt-6">
+                              <Suggestions
+                                onPick={(text) =>
                                   runtime.thread.composer.setText(text)
                                 }
                               />
-                            )
-                          ) : (
-                            <div className="thread-content">
-                              {workflow ? (
-                                <>
-                                  <div className="user-message mb-8">
-                                    {workflow.goal}
-                                  </div>
-                                  <WorkflowPlan
-                                    workflow={workflow}
-                                    approve={() =>
-                                      void perform(() =>
-                                        api.approve(workflow.id),
-                                      )
-                                    }
-                                    cancel={() =>
-                                      void perform(() =>
-                                        api.cancelWorkflow(workflow.id),
-                                      )
-                                    }
-                                    pendingAction={pendingAction}
-                                    inspect={inspect}
-                                  />
-                                </>
-                              ) : null}
-                              {!workflow || currentRuns.length ? (
-                                <Messages />
-                              ) : null}
                             </div>
-                          )}
-                        </>
-                      </ThreadPrimitive.Viewport>
-                      <ScrollToBottom />
-                    </div>
-                    {streamError ? (
-                      <div className="mx-auto flex w-full max-w-[716px] items-center gap-2 px-5 text-[11px] text-amber-800">
-                        实时连接已断开，正在通过持久记录同步状态。
-                        <button
-                          className="underline"
-                          onClick={() => {
-                            setStreamError(false);
-                            setRefreshEpoch((n) => n + 1);
-                          }}
-                        >
-                          重新连接
-                        </button>
-                      </div>
-                    ) : null}
-                    {boundOrigin ? (
-                      <div className="composer-wrap">
-                        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#d9e3ec] bg-[#f5f8fb] p-4">
-                          <p className="min-w-0 flex-1 text-xs leading-6 text-[#40576b]">
-                            此会话由比赛 API 创建
-                            {boundOrigin.title
-                              ? `（${boundOrigin.title}）`
-                              : ""}
-                            。为避免影响评测，控制台只读显示执行过程与结果，不发送消息也不停止任务。
-                          </p>
-                          <Button size="sm" onClick={newTask}>
-                            <Plus />
-                            新建任务
-                          </Button>
-                        </div>
-                      </div>
-                    ) : boundSession?.status === "closed" ? (
-                      <div className="composer-wrap">
-                        <div className="flex items-center justify-between rounded-xl border bg-muted p-4">
-                          <p className="text-xs text-muted-foreground">
-                            此会话已关闭，历史记录与产物仍可查看。
-                          </p>
-                          <Button size="sm" onClick={newTask}>
-                            <Plus />
-                            新建任务
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      <Composer
-                        mode={mode}
-                        setMode={setMode}
-                        engineId={boundSession?.engineId ?? engineId}
-                        setEngineId={setEngineId}
-                        workspaceId={boundSession?.workspaceId ?? workspaceId}
-                        setWorkspaceId={setWorkspaceId}
-                        engines={engines}
-                        workspaces={workspaces}
-                        running={running}
-                        workflowActive={!!workflow}
-                        sessionBound={active?.type === "session"}
-                        onStop={stop}
-                        outputPaths={outputPaths}
-                        setOutputPaths={setOutputPaths}
-                        fullAccess={runtimeInfo?.fullAccess ?? false}
-                        {...(boundSession
-                          ? { sessionCwd: boundSession.cwd }
-                          : {})}
-                      />
-                    )}
+                          ) : null}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                    {emptyThread ? <div className="flex-[1.35]" /> : null}
                   </ThreadPrimitive.Root>
                 </RunThreadProvider>
-                {inspectorOpen ? (
-                  <>
-                    <button
-                      className="inspector-overlay"
-                      aria-label="关闭执行详情"
-                      onClick={() => setInspectorOpen(false)}
-                    />
-                    <Inspector
-                      run={focusedRun}
-                      observation={
-                        focusedRun ? observations[focusedRun.id] : undefined
-                      }
-                      selection={currentSelection}
-                      events={focusedRun ? (events[focusedRun.id] ?? []) : []}
-                      {...(unifiedModel ? { unifiedModel } : {})}
-                      close={() => setInspectorOpen(false)}
-                    />
-                  </>
-                ) : null}
+                <AnimatePresence initial={false}>
+                  {inspectorOpen ? (
+                    overlayPanel ? (
+                      <Fragment key="overlay">
+                        <motion.button
+                          className="scrim absolute z-10"
+                          aria-label="关闭执行详情"
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          transition={{ duration: 0.18 }}
+                          onClick={() => setInspectorOpen(false)}
+                        />
+                        <motion.div
+                          className="absolute inset-y-0 right-0 z-20 flex w-[min(400px,100%)] shadow-(--shadow-panel)"
+                          initial={{ x: "100%" }}
+                          animate={{ x: 0 }}
+                          exit={{ x: "100%" }}
+                          transition={panelTransition}
+                        >
+                          {panel}
+                        </motion.div>
+                      </Fragment>
+                    ) : (
+                      <motion.div
+                        key="docked"
+                        className="flex shrink-0 justify-end overflow-hidden"
+                        initial={{ width: 0, opacity: 0 }}
+                        animate={{ width: 400, opacity: 1 }}
+                        exit={{ width: 0, opacity: 0 }}
+                        transition={panelTransition}
+                      >
+                        {panel}
+                      </motion.div>
+                    )
+                  ) : null}
+                </AnimatePresence>
               </div>
             )}
           </main>
-          <Dialog open={helpOpen} onOpenChange={setHelpOpen}>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>一个工作台，连接你的 Agent。</DialogTitle>
-                <DialogDescription>
-                  HarnessHub 在本机编排引擎，执行记录与任务产物持久保留。
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-5 py-3 text-xs leading-7 text-muted-foreground">
-                <p>
-                  <strong className="font-medium text-foreground">
-                    直接执行（默认）
-                  </strong>
-                  <br />
-                  发送任务或多轮对话。会话固定使用所选引擎和工作区；比赛模式下默认选择比赛引擎。
-                </p>
-                <p>
-                  <strong className="font-medium text-foreground">
-                    自动规划
-                  </strong>
-                  <br />
-                  描述目标后先生成分步计划，查看引擎选择依据，确认后执行。需要已登记的真实引擎；Full
-                  Access 下规划阶段的工具请求会被自动批准，计划可能被拒绝。
-                </p>
-                <p>
-                  <strong className="font-medium text-foreground">
-                    统一模型与工具
-                  </strong>
-                  <br />
-                  “统一模型”设置所有引擎共用的唯一模型；“工具与插件”导入
-                  Skills、MCP 与 CLI
-                  工具并应用到引擎。执行详情的“模型调用”列出每次调用的证据。
-                </p>
-                <p>
-                  <strong className="font-medium text-foreground">
-                    比赛 API 会话
-                  </strong>
-                  <br />
-                  评测方通过比赛接口创建的会话每 3 秒同步到最近任务，带“比赛
-                  API”标记，只读显示。
-                </p>
-                <p className="rounded-lg bg-muted px-3 py-2">
-                  关闭页面不会停止任务。需要停止时请使用“停止执行”。
-                </p>
-              </div>
-            </DialogContent>
-          </Dialog>
+          {logsRun ? (
+            <LogPanel
+              key={logsRun.sessionId}
+              sessionId={logsRun.sessionId}
+              active={!logsRun.finishedAt}
+              open
+              onOpenChange={(open) => {
+                if (!open) setLogsRunId(null);
+              }}
+            />
+          ) : null}
         </div>
       </AssistantRuntimeProvider>
     </TooltipProvider>

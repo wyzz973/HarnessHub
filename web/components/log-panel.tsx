@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, Copy, Download, RefreshCw } from "lucide-react";
+import { Check, Copy, Download, Maximize2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -29,8 +29,8 @@ const FIRST_PAGE = 500;
 const KEEP = 5000;
 const POLL_MS = 2000;
 const sources: { id: Source; label: string }[] = [
-  { id: "engine", label: "引擎日志" },
-  { id: "gateway", label: "Gateway 日志" },
+  { id: "engine", label: "引擎" },
+  { id: "gateway", label: "网关" },
 ];
 const empty = (): SourceState => ({
   records: [],
@@ -61,30 +61,33 @@ function summary(record: LogRecord) {
 
 function failed(record: LogRecord) {
   return (
-    /error|fail|fatal|exit/i.test(record.event) ||
+    /error|fail|fatal/i.test(record.event) ||
     record.ok === false ||
     (typeof record.status === "number" && record.status >= 400)
   );
 }
 
 /**
- * Diagnostics of one Session: its engine log (engine process, ACP traffic, tool
- * calls, model calls) and its lines of the Gateway log, read through
- * `GET /v1/sessions/{id}/logs`. While `active`, new records are fetched every 2 s
- * with the previous page's cursor; filters, copy and download act on the visible
- * records only. Mount it with `key={sessionId}` so another Session starts empty.
+ * Diagnostics of one Session: its engine log (engine process, ACP traffic, tool calls,
+ * model calls) and its lines of the Gateway log, read through `GET /v1/sessions/{id}/logs`.
+ * While `active`, new records are fetched every 2 s with the previous page's cursor;
+ * filters, copy and download act on the visible records only. `enabled` pauses loading
+ * while the view is hidden. Mount with `key={sessionId}` so another Session starts empty.
  */
-export function LogPanel({
+export function LogView({
   sessionId,
   active,
-  open,
-  onOpenChange,
+  enabled = true,
+  compact = false,
+  onExpand,
 }: {
   sessionId: string;
   /** Poll for new records (the focused Run is still running). */
   active: boolean;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  enabled?: boolean;
+  /** Narrow layout for the run panel. */
+  compact?: boolean;
+  onExpand?: () => void;
 }) {
   const [source, setSource] = useState<Source>("engine");
   const [state, setState] = useState<Record<Source, SourceState>>({
@@ -100,9 +103,10 @@ export function LogPanel({
     engine: null,
     gateway: null,
   });
-  const loading = useRef<Record<Source, boolean>>({
-    engine: false,
-    gateway: false,
+  /** Token of the request in flight per source; null when idle. */
+  const loading = useRef<Record<Source, symbol | null>>({
+    engine: null,
+    gateway: null,
   });
   const list = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
@@ -110,7 +114,8 @@ export function LogPanel({
   const load = useCallback(
     async (which: Source, signal?: AbortSignal) => {
       if (loading.current[which]) return;
-      loading.current[which] = true;
+      const token = Symbol(which);
+      loading.current[which] = token;
       try {
         const after = cursors.current[which];
         const page = await api.sessionLogs(
@@ -119,6 +124,8 @@ export function LogPanel({
           after ? { after } : { limit: FIRST_PAGE },
           signal,
         );
+        // A request superseded by a remount must not apply its page a second time.
+        if (signal?.aborted || loading.current[which] !== token) return;
         cursors.current[which] = page.cursor;
         setState((previous) => ({
           ...previous,
@@ -136,14 +143,14 @@ export function LogPanel({
         if (reason instanceof UnsupportedFeatureError) setUnsupported(true);
         else setError(reason instanceof Error ? reason.message : "读取失败");
       } finally {
-        loading.current[which] = false;
+        if (loading.current[which] === token) loading.current[which] = null;
       }
     },
     [sessionId],
   );
 
   useEffect(() => {
-    if (!open) return;
+    if (!enabled) return;
     const abort = new AbortController();
     void load(source, abort.signal);
     const timer = active
@@ -151,9 +158,11 @@ export function LogPanel({
       : undefined;
     return () => {
       abort.abort();
+      // The aborted request settles later; a remount must not wait for it.
+      loading.current[source] = null;
       if (timer !== undefined) window.clearInterval(timer);
     };
-  }, [open, active, source, load]);
+  }, [enabled, active, source, load]);
 
   const current = state[source];
   const visible = useMemo(() => {
@@ -178,7 +187,7 @@ export function LogPanel({
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
     } catch {
-      setError("浏览器不允许写入剪贴板，请改用下载");
+      setError("无法写入剪贴板，请改用下载");
     }
   };
   const download = () => {
@@ -192,166 +201,191 @@ export function LogPanel({
     URL.revokeObjectURL(url);
   };
 
+  if (unsupported)
+    return (
+      <p className="p-4 text-[13px] text-muted-foreground">
+        当前服务版本不支持在线查看日志，可用 Collect-Logs.cmd 打包。
+      </p>
+    );
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="segmented" role="tablist" aria-label="日志来源">
+          {sources.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={source === item.id}
+              onClick={() => setSource(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+        {compact ? null : (
+          <select
+            className="field mt-0 h-8 w-auto rounded-full pr-7 text-[12.5px]"
+            value={level}
+            aria-label="日志级别"
+            onChange={(event) => setLevel(event.target.value as Level)}
+          >
+            <option value="all">全部级别</option>
+            <option value="info">info</option>
+            <option value="debug">debug</option>
+          </select>
+        )}
+        <input
+          className={cn(
+            "field mt-0 h-8 rounded-full text-[12.5px]",
+            compact ? "min-w-0 flex-1" : "w-60",
+          )}
+          placeholder="筛选，如 model.call"
+          aria-label="筛选日志"
+          value={filter}
+          onChange={(event) => setFilter(event.target.value)}
+        />
+        <span className={cn("flex items-center", !compact && "ml-auto")}>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="刷新日志"
+            onClick={() => void load(source)}
+          >
+            <RefreshCw />
+          </Button>
+          {compact ? null : (
+            <>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="复制显示的日志"
+                disabled={!visible.length}
+                onClick={() => void copy()}
+              >
+                {copied ? <Check /> : <Copy />}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="下载显示的日志"
+                disabled={!visible.length}
+                onClick={download}
+              >
+                <Download />
+              </Button>
+            </>
+          )}
+          {onExpand ? (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="在大窗口中查看日志"
+              onClick={onExpand}
+            >
+              <Maximize2 />
+            </Button>
+          ) : null}
+        </span>
+      </div>
+      {error ? <p className="text-[12.5px] text-danger">{error}</p> : null}
+      <div
+        ref={list}
+        className="min-h-[200px] flex-1 overflow-y-auto rounded-xl border bg-code font-mono text-[11.5px] leading-5"
+        onScroll={(event) => {
+          const element = event.currentTarget;
+          pinned.current =
+            element.scrollHeight - element.scrollTop - element.clientHeight <
+            24;
+        }}
+      >
+        {current.exists === false ? (
+          <p className="p-4 font-sans text-[13px] text-muted-foreground">
+            还没有日志，第一次执行后生成。
+          </p>
+        ) : !visible.length ? (
+          <p className="p-4 font-sans text-[13px] text-muted-foreground">
+            {current.records.length ? "没有匹配的记录" : "读取中"}
+          </p>
+        ) : (
+          visible.map((record, index) => (
+            <details
+              key={`${record.time}-${index}`}
+              className={cn(
+                "border-b border-border/70 px-3 py-1 last:border-b-0",
+                failed(record) && "bg-danger-soft/70",
+              )}
+            >
+              <summary
+                className={cn(
+                  "flex gap-x-3",
+                  compact && "flex-wrap gap-x-2 gap-y-0",
+                )}
+              >
+                <span className="shrink-0 text-subtle tabular-nums">
+                  {clock(record.time)}
+                </span>
+                <span
+                  className={cn(
+                    "shrink-0 font-medium",
+                    record.level === "debug" && "text-muted-foreground",
+                    failed(record) && "text-danger",
+                  )}
+                >
+                  {record.event}
+                </span>
+                <span
+                  className={cn(
+                    "truncate text-muted-foreground",
+                    compact && "w-full",
+                  )}
+                >
+                  {summary(record)}
+                </span>
+              </summary>
+              <pre className="mt-1 overflow-x-auto text-[11px] break-all whitespace-pre-wrap">
+                {JSON.stringify(record, null, 2)}
+              </pre>
+            </details>
+          ))
+        )}
+      </div>
+      <p
+        className="truncate text-[12px] text-subtle"
+        title={current.file ?? undefined}
+      >
+        {visible.length} / {current.records.length} 条
+        {current.truncated ? "，较早的记录未显示" : ""}
+        {current.skipped ? `，${current.skipped} 行无法解析` : ""}
+        {current.file && !compact ? ` · ${current.file}` : ""}
+      </p>
+    </div>
+  );
+}
+
+/** Full-size diagnostics dialog for one Session. */
+export function LogPanel({
+  sessionId,
+  active,
+  open,
+  onOpenChange,
+}: {
+  sessionId: string;
+  active: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[88vh] flex-col gap-3 sm:max-w-[980px]">
+      <DialogContent className="flex h-[min(760px,88vh)] flex-col gap-4 sm:max-w-[1040px]">
         <DialogHeader>
           <DialogTitle>诊断日志</DialogTitle>
           <DialogDescription>
-            会话 {sessionId.slice(0, 8)} 的引擎进程、ACP
-            协议、工具调用与模型调用记录，已脱敏。
-            {active ? "任务进行中，每 2 秒自动刷新。" : ""}
+            会话 {sessionId.slice(0, 8)}
+            {active ? "，执行中自动刷新" : ""}
           </DialogDescription>
         </DialogHeader>
-        {unsupported ? (
-          <p className="text-xs leading-6 text-muted-foreground">
-            当前 Gateway 不支持在控制台读取诊断日志，请使用 Collect-Logs.cmd
-            打包日志。
-          </p>
-        ) : (
-          <>
-            <div className="flex flex-wrap items-center gap-2">
-              <div
-                className="flex rounded-md border p-0.5"
-                role="tablist"
-                aria-label="日志来源"
-              >
-                {sources.map((item) => (
-                  <button
-                    key={item.id}
-                    role="tab"
-                    aria-selected={source === item.id}
-                    className={cn(
-                      "rounded px-3 py-1 text-xs",
-                      source === item.id
-                        ? "bg-primary text-primary-foreground"
-                        : "text-muted-foreground hover:bg-muted",
-                    )}
-                    onClick={() => setSource(item.id)}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-              <select
-                className="form-input mt-0 w-auto py-1 text-xs"
-                value={level}
-                aria-label="日志级别"
-                onChange={(event) => setLevel(event.target.value as Level)}
-              >
-                <option value="all">全部级别</option>
-                <option value="info">info</option>
-                <option value="debug">debug</option>
-              </select>
-              <input
-                className="form-input mt-0 w-56 py-1 text-xs"
-                placeholder="筛选事件或内容，如 model.call"
-                aria-label="筛选日志"
-                value={filter}
-                onChange={(event) => setFilter(event.target.value)}
-              />
-              <span className="ml-auto flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="刷新日志"
-                  onClick={() => void load(source)}
-                >
-                  <RefreshCw />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="复制显示的日志"
-                  disabled={!visible.length}
-                  onClick={() => void copy()}
-                >
-                  {copied ? <Check /> : <Copy />}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="下载显示的日志"
-                  disabled={!visible.length}
-                  onClick={download}
-                >
-                  <Download />
-                </Button>
-              </span>
-            </div>
-            {current.file ? (
-              <p
-                className="truncate font-mono text-[10px] text-muted-foreground"
-                title={current.file}
-              >
-                {current.file}
-              </p>
-            ) : null}
-            {error ? <p className="text-xs text-destructive">{error}</p> : null}
-            <div
-              ref={list}
-              className="min-h-[240px] flex-1 overflow-y-auto rounded-md border bg-white font-mono text-[11px] leading-5"
-              onScroll={(event) => {
-                const element = event.currentTarget;
-                pinned.current =
-                  element.scrollHeight -
-                    element.scrollTop -
-                    element.clientHeight <
-                  24;
-              }}
-            >
-              {current.exists === false ? (
-                <p className="p-4 font-sans text-xs text-muted-foreground">
-                  尚无日志：引擎日志在会话第一次执行时创建。
-                </p>
-              ) : !visible.length ? (
-                <p className="p-4 font-sans text-xs text-muted-foreground">
-                  {current.records.length
-                    ? "没有符合筛选条件的记录。"
-                    : "读取中…"}
-                </p>
-              ) : (
-                visible.map((record, index) => (
-                  <details
-                    key={`${record.time}-${index}`}
-                    className={cn(
-                      "border-b border-[#f0f2ec] px-3 py-1",
-                      failed(record) && "bg-red-50/60",
-                    )}
-                  >
-                    <summary className="flex cursor-pointer list-none gap-3">
-                      <span className="shrink-0 text-muted-foreground tabular-nums">
-                        {clock(record.time)}
-                      </span>
-                      <span
-                        className={cn(
-                          "shrink-0 font-medium",
-                          record.level === "debug" && "text-muted-foreground",
-                          failed(record) && "text-destructive",
-                        )}
-                      >
-                        {record.event}
-                      </span>
-                      <span className="truncate text-muted-foreground">
-                        {summary(record)}
-                      </span>
-                    </summary>
-                    <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-all text-[10px]">
-                      {JSON.stringify(record, null, 2)}
-                    </pre>
-                  </details>
-                ))
-              )}
-            </div>
-            <p className="text-[11px] leading-5 text-muted-foreground">
-              显示 {visible.length} / {current.records.length} 条
-              {current.truncated
-                ? "；较早的记录因数量、大小或轮转限制未显示，完整日志请用 Collect-Logs.cmd 打包"
-                : ""}
-              {current.skipped ? `；${current.skipped} 行无法解析已跳过` : ""}。
-            </p>
-          </>
-        )}
+        <LogView sessionId={sessionId} active={active} enabled={open} />
       </DialogContent>
     </Dialog>
   );

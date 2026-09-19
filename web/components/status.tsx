@@ -1,36 +1,42 @@
 import { Check, Circle, CircleAlert, Loader2, Pause } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { statusNames } from "@/lib/presentation";
-export function Status({ status }: { status: string }) {
-  const moving = [
-    "running",
-    "planning",
-    "starting",
-    "cancelling",
-    "finalizing",
-  ].includes(status);
-  const failed = ["failed", "interrupted", "timed_out"].includes(status);
-  const waiting = ["waiting_permission", "draft"].includes(status);
-  const Icon = moving
+
+const moving = ["running", "planning", "starting", "cancelling", "finalizing"];
+const failed = ["failed", "interrupted", "timed_out"];
+const waiting = ["waiting_permission", "draft"];
+/** Run, workflow and step status as one compact tag. */
+export function Status({
+  status,
+  className,
+}: {
+  status: string;
+  className?: string;
+}) {
+  const Icon = moving.includes(status)
     ? Loader2
-    : failed
+    : failed.includes(status)
       ? CircleAlert
       : status === "completed"
         ? Check
-        : waiting
+        : waiting.includes(status)
           ? Pause
           : Circle;
   return (
     <span
       className={cn(
-        "status-badge",
-        failed && "error",
-        waiting && "warning",
-        ["cancelled", "pending", "blocked", "queued"].includes(status) &&
-          "neutral",
+        "tag",
+        status === "completed" && "good",
+        moving.includes(status) && "info",
+        failed.includes(status) && "error",
+        waiting.includes(status) && "warn",
+        className,
       )}
     >
-      <Icon className={cn("size-3", moving && "animate-spin")} />
+      <Icon
+        className={cn("size-3", moving.includes(status) && "animate-spin")}
+        strokeWidth={2}
+      />
       {statusNames[status] ?? status}
     </span>
   );
