@@ -1,0 +1,122 @@
+name: Fresh machine proof x64
+
+# Debug workflow (branch ci/x64-fresh-machine only). GitHub's Windows runners have Visual C++
+# runtimes, Node, Git, Python, .NET SDKs and PowerShell 7 preinstalled, so they cannot show
+# whether the released bundle depends on something a brand-new PC lacks. This job runs the
+# released ZIP inside a clean Windows Server Core container without any network, using only
+# what the ZIP ships, against the scripted mock model (no secret, no real model).
+on:
+  push:
+    branches:
+      - ci/x64-fresh-machine
+
+concurrency:
+  group: fresh-machine-x64-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  container:
+    name: Released bundle in a clean offline Server Core container
+    runs-on: windows-2022
+    timeout-minutes: 170
+    env:
+      RELEASE_TAG: competition-latest
+      ZIP_NAME: harnesshub-competition-full-windows-x64.zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Host and Docker facts
+        run: |
+          $ErrorActionPreference = "Continue"
+          $current = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+          "Host: $($current.ProductName) build $($current.CurrentBuild).$($current.UBR)" | Write-Host
+          Get-PSDrive -PSProvider FileSystem | Format-Table Name, @{n="FreeGB";e={[int]($_.Free/1GB)}}, @{n="UsedGB";e={[int]($_.Used/1GB)}} | Out-String | Write-Host
+          docker version
+          docker info
+          docker images
+          docker network ls
+          $global:LASTEXITCODE = 0
+
+      - name: Download and verify the released bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $in = Join-Path $env:RUNNER_TEMP "fm-in"
+          New-Item -ItemType Directory -Force -Path $in | Out-Null
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --pattern "$env:ZIP_NAME*" --pattern "*.build.json" --dir $in
+          if ($LASTEXITCODE -ne 0) { throw "Download of $env:RELEASE_TAG failed" }
+          $zip = Join-Path $in $env:ZIP_NAME
+          $expected = ((Get-Content -Raw -LiteralPath "$zip.sha256").Trim() -split '\s+')[0].ToLowerInvariant()
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "ZIP SHA-256 mismatch: $actual" }
+          Get-Content -Raw (Get-ChildItem $in -Filter *.build.json | Select-Object -First 1).FullName | Write-Host
+          # DLL names of this full Windows Server: separates "Windows component that Server
+          # Core lacks" from "exists nowhere" in the static scan.
+          Get-ChildItem -LiteralPath (Join-Path $env:SystemRoot "System32") -Filter *.dll -Name | Set-Content -Encoding ASCII (Join-Path $in "host-system32-dlls.txt")
+          "FM_IN=$in" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "FM_SHA=$actual" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Pull the clean Server Core image that matches the host
+        run: |
+          $ErrorActionPreference = "Stop"
+          $build = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion").CurrentBuild
+          $tag = switch ($build) { "20348" { "ltsc2022" } "26100" { "ltsc2025" } "17763" { "ltsc2019" } default { throw "No Server Core tag known for build $build" } }
+          $image = "mcr.microsoft.com/windows/servercore:$tag"
+          docker pull $image
+          if ($LASTEXITCODE -ne 0) { throw "docker pull $image failed" }
+          "FM_IMAGE=$image" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Run the released bundle inside the clean offline container
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = Join-Path $env:RUNNER_TEMP "fm-out"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $scripts = Join-Path $env:GITHUB_WORKSPACE "scripts"
+          # No network at all: the mock model, the Gateway, the console and the engines all
+          # live inside the container. The ZIP is extracted inside the container with the
+          # system's own tar.exe, so nothing from this runner's toolset is involved.
+          docker run --name hh-fresh --network none --isolation process --storage-opt "size=40GB" `
+            -v "${env:FM_IN}:C:\mnt\in" -v "${scripts}:C:\mnt\scripts" -v "${out}:C:\mnt\out" `
+            $env:FM_IMAGE powershell -NoProfile -ExecutionPolicy Bypass -File C:\mnt\scripts\fresh-machine\container-check.ps1 `
+            -ZipFile "C:\mnt\in\$env:ZIP_NAME" -ScriptsSource C:\mnt\scripts -OutMount C:\mnt\out `
+            -ReferenceList C:\mnt\in\host-system32-dlls.txt
+          $code = $LASTEXITCODE
+          "FM_EXIT=$code" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          if ($code -ne 0) { throw "The clean container run failed (exit $code); see the summary and the fresh-machine-evidence artifact" }
+
+      - name: Summary
+        if: always()
+        run: |
+          $ErrorActionPreference = "Continue"
+          $out = Join-Path $env:RUNNER_TEMP "fm-out"
+          $lines = @("## Released x64 bundle in a clean offline Server Core container", "", "Image: ``$env:FM_IMAGE`` - ZIP SHA-256 ``$env:FM_SHA`` - network: none - container exit: $env:FM_EXIT", "")
+          $environment = Join-Path $out "environment.json"
+          if (Test-Path $environment) { $lines += @("### What the clean machine lacks", "", '```json') + (Get-Content $environment) + @('```', "") }
+          $result = Join-Path $out "result.json"
+          if (Test-Path $result) {
+            $data = Get-Content -Raw $result | ConvertFrom-Json
+            $lines += @("### Checks: **$($data.status)** (tar.exe extraction $($data.extractSeconds) s)", "", "| Round | Check | Result | Exit | Seconds |", "|---|---|---|---|---|")
+            foreach ($check in $data.checks) { $lines += "| $($check.round) | $($check.check) | $($check.status) | $($check.exitCode) | $($check.seconds) |" }
+            $lines += ""
+          } else { $lines += @("No result.json was produced.", "") }
+          foreach ($round in @("plain", "unicode")) {
+            foreach ($name in @("native-deps.md", "matrix-summary.md")) {
+              $file = Join-Path (Join-Path $out $round) $name
+              if (Test-Path $file) { $lines += @("#### $round / $name", "") + (Get-Content $file) + "" }
+            }
+          }
+          $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          $global:LASTEXITCODE = 0
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fresh-machine-evidence
+          path: ${{ runner.temp }}/fm-out
+          if-no-files-found: warn
+          retention-days: 14
