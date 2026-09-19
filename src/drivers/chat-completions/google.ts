@@ -3,6 +3,7 @@ import {
   array,
   boundedNumber,
   multimodal,
+  omittedMedia,
   nativeTool,
   object,
   record,
@@ -70,7 +71,8 @@ function toolContent(response: Record<string, unknown>): string {
  * Translate a Gemini GenerateContent request to Chat: text, thought parts
  * and our thought signatures (as reasoning), functionCall/functionResponse,
  * function declarations, tool config and generation settings. Hosted Google
- * tools, cached content and multimodal parts fail explicitly; Google-only
+ * tools and cached content fail explicitly; media parts become text
+ * placeholders; Google-only
  * hints (safety settings, topK, labels) are ignored.
  */
 export function googleToChat(
@@ -135,8 +137,10 @@ export function googleToChat(
       } else if (part.functionResponse) {
         const answer = object(part.functionResponse),
           name = string(answer.name);
-        if (Array.isArray(answer.parts) && answer.parts.length)
-          throw multimodal("Google functionResponse parts");
+        const omitted =
+          Array.isArray(answer.parts) && answer.parts.length
+            ? `\n${omittedMedia("Function response media")}`
+            : "";
         const wanted = upstreamId(answer.id, name);
         const index = pending.findIndex(
           (call) =>
@@ -150,14 +154,15 @@ export function googleToChat(
         results.push({
           role: "tool",
           tool_call_id: call!.id,
-          content: toolContent(
-            answer.response === undefined || answer.response === null
-              ? {}
-              : object(answer.response),
-          ),
+          content:
+            toolContent(
+              answer.response === undefined || answer.response === null
+                ? {}
+                : object(answer.response),
+            ) + omitted,
         });
       } else if (part.inlineData || part.fileData)
-        throw multimodal("Google inline or file data");
+        texts.push(omittedMedia("Google inline or file data"));
       else if (part.thought === true || part.thoughtSignature !== undefined)
         continue;
       else

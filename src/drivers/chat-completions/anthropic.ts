@@ -3,8 +3,8 @@ import {
   array,
   boundedNumber,
   estimateTokens,
-  multimodal,
   nativeTool,
+  omittedMedia,
   object,
   record,
   string,
@@ -44,7 +44,7 @@ function resultText(value: unknown): string {
     .map((block) => {
       if (block.type === "text") return string(block.text);
       if (block.type === "image" || block.type === "document")
-        throw multimodal(`Anthropic tool_result ${block.type}`);
+        return omittedMedia(`Tool result ${block.type}`);
       throw new GatewayError("Unsupported Anthropic tool_result content");
     })
     .join("\n");
@@ -54,8 +54,9 @@ function resultText(value: unknown): string {
  * Translate an Anthropic Messages request (Claude Code) to Chat: system text,
  * text/tool_use/tool_result/thinking blocks, client tools, tool_choice,
  * max_tokens, stop_sequences and sampling. Thinking text becomes
- * `reasoning_content`. Images, documents, server tools, `container` and
- * `mcp_servers` fail explicitly; unknown top-level hint fields are ignored.
+ * `reasoning_content`. Images and documents become text placeholders; server
+ * tools, `container` and `mcp_servers` fail explicitly; unknown top-level hint
+ * fields are ignored.
  */
 export function anthropicToChat(raw: unknown): ChatTranslation {
   const request = object(raw);
@@ -157,7 +158,8 @@ export function anthropicToChat(raw: unknown): ChatTranslation {
           break;
         case "image":
         case "document":
-          throw multimodal(`Anthropic ${block.type} content`);
+          texts.push(omittedMedia(`Anthropic ${block.type}`));
+          break;
         default:
           throw new GatewayError(
             `Unsupported Anthropic content block: ${typeof block.type === "string" ? block.type.slice(0, 64) : "unknown"}`,

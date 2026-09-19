@@ -46,6 +46,7 @@ OpenAI 与 Anthropic 路径的 `/v1` 前缀可省略；Google 路径也接受 `/
 | `dropParameters` | 空 | 追加去掉的顶层参数 |
 | `maxTokensField` | `max_tokens` | 输出上限写入的字段，另一值为 `max_completion_tokens` |
 | `reasoning` | `passthrough` | `strip` 时推理内容既不转发给引擎，也不回填给上游 |
+| `images` | `placeholder` | Chat 消息中的 `image_url` 替换为文字占位；`passthrough` 时原样转发给支持视觉的上游 |
 
 `contextWindow` 目前只用于模型列表元数据，网关不会据此截断请求。
 
@@ -112,14 +113,18 @@ OpenAI 与 Anthropic 路径的 `/v1` 前缀可省略；Google 路径也接受 `/
 
 排队中的调用在引擎断开或 Run 取消时离开队列。限制值在 [gateway.ts](../src/drivers/chat-completions/gateway.ts) 的 `DEFAULT_GATEWAY_LIMITS` 中集中定义。
 
+## 媒体内容
+
+公司模型可能不支持图片。会话历史里一旦出现图片（例如 Claude Code 读取截图、Codex `view_image`），如果直接拒绝，同一 Session 之后的每次请求都会失败。因此网关把各协议中的图片、文档、音频、文件统一替换为 `[... omitted: the HarnessHub model gateway forwards text only]` 文字占位，任务可以继续。上游模型支持视觉时，可以设置 `compatibility.images: passthrough`，保留 Chat 请求中的 `image_url`；其他三种入站协议的媒体目前仍替换为占位文字（2026-09-19 决定，见 [ADR 0013](decisions/0013-unified-model-gateway.md)）。
+
 ## 转换范围与明确限制
 
 | 协议 | 转换 | 忽略 | 明确拒绝（400） |
 |---|---|---|---|
-| Chat | 原样转发，经上面的规范化 | 引擎的 `stream_options` | `n` 大于 1 |
-| Responses | instructions、字符串或数组 input、message、function/custom/namespace 工具及其调用与输出、`additional_tools` 项、reasoning 项、`tool_choice`、`parallel_tool_calls`、temperature、top_p、`max_output_tokens`、`text.format` 的 JSON 输出 | `reasoning`、`include`、`store`、`stream_options`、`service_tier`、`prompt_cache_key`、`client_metadata`、`metadata`、`user`、`truncation`、`top_logprobs`、`max_tool_calls` 等提示字段 | 未知顶层字段、`previous_response_id`、`conversation`、存储的 `prompt`、`background`、托管工具（含 web_search、tool_search）、图片/文件/音频输入、其他 input 项类型 |
-| Anthropic | 字符串或文本块 system、`messages` 中的 system 角色文本消息（Claude Code 2.1.2xx 以此发送环境信息）、text/tool_use/tool_result/thinking 块、客户端工具（`input_schema`→`parameters`）、`tool_choice`（auto/any/tool/none，`disable_parallel_tool_use`）、`max_tokens`、`stop_sequences`、temperature、top_p、`output_format` 的 JSON Schema | `thinking` 参数、`metadata`、`top_k`、`service_tier`、`cache_control`、`redacted_thinking`，以及 `context_management` 等其他顶层字段 | image、document 和其他块类型，服务端工具，`container`、`mcp_servers` |
-| Google | systemInstruction、text、thought、functionCall、functionResponse（只含 `output` 字符串时直接作为工具结果）、functionDeclarations（`parameters` 类型转小写或 `parametersJsonSchema`）、toolConfig 与 `allowedFunctionNames`、temperature、topP、maxOutputTokens、stopSequences、presence/frequency penalty、seed、JSON 输出 | `safetySettings`、`labels`、`topK`、`thinkingConfig`（`includeThoughts: false` 除外）、其他生成提示 | 未知顶层字段、`cachedContent`、托管工具、inlineData/fileData、functionResponse 的 parts、非 TEXT 输出模态、`candidateCount` 大于 1 |
+| Chat | 原样转发，经上面的规范化；`image_url` 按 `images` 选项处理，音频、文件等其他媒体分片替换为文字占位 | 引擎的 `stream_options` | `n` 大于 1 |
+| Responses | instructions、字符串或数组 input、message、function/custom/namespace 工具及其调用与输出、`additional_tools` 项、reasoning 项、`tool_choice`、`parallel_tool_calls`、temperature、top_p、`max_output_tokens`、`text.format` 的 JSON 输出 | `reasoning`、`include`、`store`、`stream_options`、`service_tier`、`prompt_cache_key`、`client_metadata`、`metadata`、`user`、`truncation`、`top_logprobs`、`max_tool_calls` 等提示字段 | 未知顶层字段、`previous_response_id`、`conversation`、存储的 `prompt`、`background`、托管工具（含 web_search、tool_search）、其他 input 项类型；图片/文件/音频输入替换为文字占位，不再拒绝 |
+| Anthropic | 字符串或文本块 system、`messages` 中的 system 角色文本消息（Claude Code 2.1.2xx 以此发送环境信息）、text/tool_use/tool_result/thinking 块、客户端工具（`input_schema`→`parameters`）、`tool_choice`（auto/any/tool/none，`disable_parallel_tool_use`）、`max_tokens`、`stop_sequences`、temperature、top_p、`output_format` 的 JSON Schema | `thinking` 参数、`metadata`、`top_k`、`service_tier`、`cache_control`、`redacted_thinking`，以及 `context_management` 等其他顶层字段 | 其他块类型，服务端工具，`container`、`mcp_servers`；image、document 块（含工具结果中的）替换为文字占位，不再拒绝 |
+| Google | systemInstruction、text、thought、functionCall、functionResponse（只含 `output` 字符串时直接作为工具结果）、functionDeclarations（`parameters` 类型转小写或 `parametersJsonSchema`）、toolConfig 与 `allowedFunctionNames`、temperature、topP、maxOutputTokens、stopSequences、presence/frequency penalty、seed、JSON 输出 | `safetySettings`、`labels`、`topK`、`thinkingConfig`（`includeThoughts: false` 除外）、其他生成提示 | 未知顶层字段、`cachedContent`、托管工具、非 TEXT 输出模态、`candidateCount` 大于 1；inlineData/fileData 与 functionResponse 的 parts 替换为文字占位，不再拒绝 |
 
 Responses 和 Google 按固定客户端（Codex 0.153.4 的请求结构、@google/genai 的请求构造）的完整字段集检查顶层字段，因此未知字段会失败。Claude Code 为闭源且频繁增加 beta 字段，Anthropic 未知顶层字段被忽略，已知无法转换的语义仍明确失败。上游选择了请求中不存在的工具时，工具名原样返回，由引擎报告未知工具。Anthropic 非流式与 Google 输出需要工具参数为 JSON 对象，否则返回 502。Anthropic 流式输出要求上游顺序发送各工具参数，交错发送时在流内报错。
 
