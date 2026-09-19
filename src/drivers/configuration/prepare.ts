@@ -986,7 +986,10 @@ async function openCodeGateway(wiring: GatewayWiring): Promise<void> {
             limit: { context: contextWindow, output: maxOutputTokens },
           },
         },
-        options: { baseURL: v1, apiKey: "{env:HARNESSHUB_PROVIDER_KEY}" },
+        // The Session-local gateway token itself, not an `{env:...}` reference:
+        // OpenCode 1.1.21 sent the reference text verbatim and every request
+        // failed gateway authentication. The token is loopback-only and random.
+        options: { baseURL: v1, apiKey: wiring.gateway.token },
       },
     },
   });

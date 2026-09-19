@@ -298,7 +298,8 @@ for (const adapter of ["opencode", "mimo"] as const)
     const route = content.provider.harnesshub;
     assert.equal(route.npm, "@ai-sdk/openai-compatible");
     assert.equal(route.options.baseURL, `${prepared.modelBridge!.baseUrl}/v1`);
-    assert.equal(route.options.apiKey, "{env:HARNESSHUB_PROVIDER_KEY}");
+    // The literal Session token: OpenCode 1.1.21 did not expand `{env:...}`.
+    assert.equal(route.options.apiKey, prepared.modelBridge!.token);
     assert.deepEqual(route.models["harnesshub-model"]!.limit, {
       context: 65536,
       output: 8192,
