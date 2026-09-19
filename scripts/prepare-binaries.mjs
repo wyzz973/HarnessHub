@@ -9,10 +9,16 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 const repo = fileURLToPath(new URL("../", import.meta.url));
-const { values } = parseArgs({ options: { arch: { type: "string", default: process.arch }, root: { type: "string" } } });
+// --skip lists binary source ids that this preparation deliberately omits (for example the
+// unhashed proprietary Cursor/Antigravity archives that the open-source edition never ships).
+const { values } = parseArgs({ options: { arch: { type: "string", default: process.arch }, root: { type: "string" }, skip: { type: "string" } } });
 if (process.platform !== "win32" || !["arm64", "x64"].includes(values.arch)) throw new Error("Native Windows arm64/x64 preparation required");
 const target = path.resolve(values.root ?? path.join(repo, ".tools", "contest-prepared", `win32-${values.arch}`));
-const sources = JSON.parse(await readFile(path.join(repo, "distribution/binary-sources.json"), "utf8"));
+const allSources = JSON.parse(await readFile(path.join(repo, "distribution/binary-sources.json"), "utf8"));
+const skipped = values.skip ? values.skip.split(",").map((id) => id.trim()).filter(Boolean) : [];
+for (const id of skipped) if (!allSources.some((source) => source.id === id)) throw new Error(`Unknown binary source to skip: ${id}`);
+const sources = allSources.filter((source) => !skipped.includes(source.id));
+if (skipped.length) console.log(`Skipping binary sources by request: ${skipped.join(", ")}`);
 const cache = path.join(repo, ".tmp", "contest-downloads");
 await mkdir(cache, { recursive: true });
 const receipts = [];

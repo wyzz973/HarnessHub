@@ -138,8 +138,16 @@ function execute(command, args, options = {}) {
   });
 }
 
-/** Build only a new directory; all application inputs are explicit production allowlists. */
-export async function packageBundle(preparedDirectory, outputDirectory) {
+/**
+ * Build only a new directory; all application inputs are explicit production allowlists.
+ * `options.runtimeOnly` omits the open-source edition's development dependencies, source
+ * archives, handover Skill and Dev.cmd; runtime files and verification are unchanged.
+ */
+export async function packageBundle(
+  preparedDirectory,
+  outputDirectory,
+  options = {},
+) {
   const prepared = await realpath(preparedDirectory);
   const output = path.resolve(outputDirectory);
   if (within(prepared, output))
@@ -247,7 +255,10 @@ export async function packageBundle(preparedDirectory, outputDirectory) {
     { arch: metadata.arch },
   );
   const developmentComponents = [];
-  if (metadata.edition === "open-source-chat-completions") {
+  if (
+    metadata.edition === "open-source-chat-completions" &&
+    options.runtimeOnly !== true
+  ) {
     for (const [label, directory] of [
       ["root", repository],
       ["web", path.join(repository, "web")],
@@ -465,15 +476,23 @@ if (
 ) {
   try {
     const { values } = parseArgs({
-      options: { prepared: { type: "string" }, output: { type: "string" } },
+      options: {
+        prepared: { type: "string" },
+        output: { type: "string" },
+        "runtime-only": { type: "boolean", default: false },
+      },
       allowPositionals: false,
     });
     if (!values.prepared || !values.output)
       throw new Error(
-        "Usage: node scripts/package-bundle.mjs --prepared DIRECTORY --output NEW_DIRECTORY",
+        "Usage: node scripts/package-bundle.mjs --prepared DIRECTORY --output NEW_DIRECTORY [--runtime-only]",
       );
     console.log(
-      JSON.stringify(await packageBundle(values.prepared, values.output)),
+      JSON.stringify(
+        await packageBundle(values.prepared, values.output, {
+          runtimeOnly: values["runtime-only"],
+        }),
+      ),
     );
   } catch (error) {
     console.error(error.message);

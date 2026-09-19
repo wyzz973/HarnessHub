@@ -7,7 +7,19 @@ HarnessHub Windows portable bundle
    hub.cmd smoke
    hub.cmd engines
 
-Configure DeepSeek V4 Flash:
+Unified model: every engine uses only the one model configured in HarnessHub; engine-specific API
+keys, logins and subscriptions are not used. Sources, highest priority first:
+  1. Environment of the starting window (not written to disk):
+       $env:HARNESSHUB_MODEL = "<upstream model id>"
+       $env:HARNESSHUB_MODEL_BASE_URL = "https://<model gateway>/v1"   (required with HARNESSHUB_MODEL)
+       $env:HARNESSHUB_MODEL_API_KEY = "<key value>"
+     Optional: HARNESSHUB_MODEL_PROTOCOL (openai-completions), HARNESSHUB_MODEL_CONTEXT_WINDOW,
+     HARNESSHUB_MODEL_MAX_OUTPUT_TOKENS.
+  2. hub.cmd model set --model ID --base-url URL --api-key-env NAME   (hub.cmd model show to check)
+  3. The top-level "model" of a settings file applied with hub.cmd configure (example below).
+The upstream must be a streaming OpenAI Chat Completions endpoint.
+
+Configure DeepSeek V4 Flash with the bundled settings example:
   In PowerShell, read a key without storing it in your command history:
     $secret = Read-Host 'DeepSeek API key' -AsSecureString
     $env:DEEPSEEK_API_KEY = [Net.NetworkCredential]::new('', $secret).Password
@@ -15,6 +27,10 @@ Configure DeepSeek V4 Flash:
     .\hub.cmd start
   Keep this terminal open. End with Ctrl+C. Never distribute state/ after entering credentials or running tasks.
   You can also create a Windows encrypted credential through the console and configure its reference.
+
+Competition bundles also contain gateway.cmd: set AGENT_ENGINE (for example opencode) and the
+unified model, then run .\gateway.cmd. It serves the competition API on http://localhost:6217 and
+starts the console on http://127.0.0.1:3330 (see README-COMPETITION.txt).
 
 Install a bundled tool package in PowerShell from the extracted directory:
   .\hub.cmd tools install --source "$PWD\tools\workspace-tools"
@@ -28,7 +44,8 @@ Install a bundled tool package in PowerShell from the extracted directory:
 
 Pi/OpenClaw use native extensions/skills instead of session MCP; unsupported bindings fail explicitly.
 Kimi uses the official noninteractive CLI because its ACP mode requires vendor OAuth.
-Cursor/Kiro/Antigravity/Qoder can require vendor credentials. Gemini requires a Google-compatible API.
+With a unified model, Cursor/Kiro/Antigravity/Qoder are disabled because they cannot be routed
+through it; without one they can require vendor credentials.
 These account/protocol limits cannot be removed by packaging executable files.
 
 This bundle includes fixed Node, engine programs, Python/VC components as needed, PortableGit and the web UI.

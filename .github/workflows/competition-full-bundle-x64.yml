@@ -1,26 +1,67 @@
 name: Competition full bundle x64
 
+# Builds the Windows x64 Competition Full Bundle from source, starts the extracted ZIP for a
+# no-model self-test, publishes it, then runs every engine against a scripted mock company
+# model (scripts/mock-company-model.mjs). No model key or other secret is used anywhere.
 on:
   push:
     branches:
       - feat/competition-gateway-api
+      - feat/unified-model-gateway
     paths:
       - .github/workflows/competition-full-bundle-x64.yml
-      - src/competition-bundle-main.ts
-      - scripts/build-competition-full-bundle.mjs
-      - scripts/prepare-contest.mjs
-      - scripts/prepare-open-source.mjs
-      - scripts/package-bundle.mjs
-      - distribution/**
+      - "src/**"
+      - "web/**"
+      - "scripts/**"
+      - "distribution/**"
+      - "patches/**"
+      - "examples/**"
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - tsconfig.json
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag that receives the x64 ZIP (back up its current assets first)
+        required: false
+        default: competition-latest
+      publish:
+        description: Publish the verified ZIP to the Release
+        type: boolean
+        default: true
+      engines:
+        description: Engines for the Windows x64 mock-model acceptance matrix
+        required: false
+        default: opencode,codex,qwen,hermes,pi,gemini,mimo,dsh,openclaw,kimi
+      mock_quirks:
+        description: Mock upstream omits tool-call indexes, repeats finish_reason and drops total_tokens
+        type: boolean
+        default: true
+
+concurrency:
+  group: competition-full-bundle-x64-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
 
+env:
+  RELEASE_TAG: ${{ inputs.release_tag || vars.COMPETITION_RELEASE_TAG || 'competition-latest' }}
+  PUBLISH: ${{ github.event_name != 'workflow_dispatch' || inputs.publish }}
+  ACCEPTANCE_ENGINES: ${{ inputs.engines || 'opencode,codex,qwen,hermes,pi,gemini,mimo,dsh,openclaw,kimi' }}
+  MOCK_QUIRKS: ${{ github.event_name != 'workflow_dispatch' || inputs.mock_quirks }}
+  ZIP_NAME: harnesshub-competition-full-windows-x64.zip
+
+defaults:
+  run:
+    shell: pwsh
+
 jobs:
-  windows-x64-full-bundle:
+  bundle:
+    name: Build, self-test and publish the x64 bundle
     runs-on: windows-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
 
@@ -33,83 +74,82 @@ jobs:
           node-version-file: .node-version
           architecture: x64
           cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            distribution/npm/pnpm-lock.yaml
 
       - name: Verify native x64 build runtime
-        shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          if ((node -p "process.platform") -ne "win32") {
-            throw "Expected native Windows runner"
-          }
-          if ((node -p "process.arch") -ne "x64") {
-            throw "Expected native x64 Node"
-          }
-          if ((node -p "process.versions.node") -ne "24.20.0") {
-            throw "Expected Node 24.20.0"
-          }
+          if ((node -p "process.platform") -ne "win32") { throw "Expected native Windows runner" }
+          if ((node -p "process.arch") -ne "x64") { throw "Expected native x64 Node" }
+          if ((node -p "process.versions.node") -ne "24.20.0") { throw "Expected Node 24.20.0" }
+          $sevenZip = Join-Path $env:ProgramFiles "7-Zip\7z.exe"
+          if (-not (Test-Path -LiteralPath $sevenZip -PathType Leaf)) { throw "7-Zip is not available on this runner" }
+          "SEVEN_ZIP=$sevenZip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Get-PSDrive -PSProvider FileSystem | Format-Table -AutoSize | Out-String | Write-Host
+
+      - name: Restore hash-pinned preparation downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            .tmp/contest-downloads
+            .tools/contest-cache
+          key: contest-downloads-win32-x64-${{ hashFiles('distribution/binary-sources.json', 'distribution/extra-engine-sources.json', 'scripts/prepare-git.mjs') }}
 
       - name: Install and build current Gateway and console
-        shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw "pnpm install failed" }
           pnpm build
+          if ($LASTEXITCODE -ne 0) { throw "pnpm build failed" }
           pnpm build:console
+          if ($LASTEXITCODE -ne 0) { throw "Console build failed" }
           npm install --prefix .tools/pnpm-runner --no-package-lock --ignore-scripts --no-save pnpm@10.12.3
+          if ($LASTEXITCODE -ne 0) { throw "Pinned pnpm runner install failed" }
 
       - name: Prepare fixed x64 engine payload
-        shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $windowsPowerShellModules = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\Modules"
           $env:PSModulePath = "$windowsPowerShellModules;$env:PSModulePath"
           $windowsPowerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
           & $windowsPowerShell -NoProfile -NonInteractive -Command "Get-Command Get-FileHash | Out-Null; Get-Command Get-AuthenticodeSignature | Out-Null"
-          if ($LASTEXITCODE -ne 0) {
-            throw "Windows PowerShell preparation cmdlets are unavailable"
-          }
+          if ($LASTEXITCODE -ne 0) { throw "Windows PowerShell preparation cmdlets are unavailable" }
           $prepared = Join-Path $PWD ".tools\contest-prepared\win32-x64"
           $pnpmJs = (Resolve-Path ".tools\pnpm-runner\node_modules\pnpm\bin\pnpm.cjs").Path
-          node scripts/prepare-contest.mjs --root "$prepared" --arch x64 --pnpm "$pnpmJs"
-          if ($LASTEXITCODE -ne 0) {
-            throw "x64 contest preparation failed"
-          }
-          node scripts/prepare-contest.mjs --root "$prepared" --arch x64 --pnpm "$pnpmJs" --check
-          if ($LASTEXITCODE -ne 0) {
-            throw "x64 contest preparation verification failed"
-          }
+          # Cursor and Antigravity have no pinned hash and are not part of the open-source
+          # edition, so they are not downloaded. PortableGit is extracted with the runner's
+          # 7-Zip instead of the unversioned 7-zip.org/a/7zr.exe.
+          $skip = "cursor,antigravity"
+          node scripts/prepare-contest.mjs --root "$prepared" --arch x64 --pnpm "$pnpmJs" --skip-binaries $skip --seven-zip "$env:SEVEN_ZIP"
+          if ($LASTEXITCODE -ne 0) { throw "x64 contest preparation failed" }
+          node scripts/prepare-contest.mjs --root "$prepared" --arch x64 --pnpm "$pnpmJs" --skip-binaries $skip --check
+          if ($LASTEXITCODE -ne 0) { throw "x64 contest preparation verification failed" }
           "PREPARED_X64=$prepared" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Derive open-source x64 engine edition
-        shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $openSource = Join-Path $PWD ".tools\open-source-prepared\win32-x64"
-          Remove-Item -Recurse -Force $openSource -ErrorAction SilentlyContinue
+          if (Test-Path -LiteralPath $openSource) { throw "Open-source prepared directory already exists: $openSource" }
           node scripts/prepare-open-source.mjs --prepared "$env:PREPARED_X64" --output "$openSource"
-          if ($LASTEXITCODE -ne 0) {
-            throw "Open-source x64 preparation failed"
-          }
+          if ($LASTEXITCODE -ne 0) { throw "Open-source x64 preparation failed" }
           "OPEN_SOURCE_X64=$openSource" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Package x64 Competition Full Bundle
-        shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $root = Join-Path $env:RUNNER_TEMP "HarnessHub-Competition-Windows-x64"
-          Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
+          if (Test-Path -LiteralPath $root) { throw "Bundle output already exists: $root" }
           node scripts/package-bundle.mjs --prepared "$env:OPEN_SOURCE_X64" --output "$root"
-          if ($LASTEXITCODE -ne 0) {
-            throw "x64 portable package construction failed"
-          }
+          if ($LASTEXITCODE -ne 0) { throw "x64 portable package construction failed" }
           node scripts/build-competition-full-bundle.mjs --bundle "$root"
-          if ($LASTEXITCODE -ne 0) {
-            throw "x64 Competition Gateway overlay failed"
-          }
+          if ($LASTEXITCODE -ne 0) { throw "x64 Competition Gateway overlay failed" }
           "FULL_BUNDLE_X64=$root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Verify x64 full bundle hashes and launchers
-        shell: pwsh
+      - name: Verify x64 bundle hashes, engines and launchers
         run: |
           $ErrorActionPreference = "Stop"
           $root = $env:FULL_BUNDLE_X64
@@ -130,18 +170,7 @@ jobs:
             throw new Error("Bundle metadata is not win32/x64");
           if (manifest.nodeVersion !== "24.20.0")
             throw new Error("Unexpected bundled Node version");
-          const expected = [
-            "codex",
-            "gemini",
-            "qwen",
-            "pi",
-            "mimo",
-            "dsh",
-            "openclaw",
-            "kimi",
-            "opencode",
-            "hermes",
-          ];
+          const expected = ["codex", "gemini", "qwen", "pi", "mimo", "dsh", "openclaw", "kimi", "opencode", "hermes"];
           const ids = new Set(manifest.engines.map((engine) => engine.id));
           for (const id of expected)
             if (!ids.has(id)) throw new Error(`Missing bundled engine: ${id}`);
@@ -149,71 +178,161 @@ jobs:
           console.log(JSON.stringify({ ...result, engines: expected }));
           '@ | Set-Content -Encoding UTF8 $verify
           & (Join-Path $root "runtime\node.exe") $verify $root
-          if ($LASTEXITCODE -ne 0) {
-            throw "Full x64 bundle hash verification failed"
-          }
-          & (Join-Path $root "gateway.cmd") --help
-          if ($LASTEXITCODE -ne 0) {
-            throw "gateway.cmd x64 help smoke failed"
-          }
-          foreach ($required in @(
-            "bundle.json",
-            "runtime\node.exe",
-            "hub.cmd",
-            "gateway.cmd",
-            "Start-Competition.cmd",
-            "README-COMPETITION.txt"
-          )) {
+          if ($LASTEXITCODE -ne 0) { throw "Full x64 bundle hash verification failed" }
+          foreach ($required in @("bundle.json", "runtime\node.exe", "hub.cmd", "gateway.cmd", "gateway-safe.cmd", "Start-Competition.cmd", "Install-Tool-Pack.cmd", "README-COMPETITION.txt")) {
             if (-not (Test-Path -LiteralPath (Join-Path $root $required) -PathType Leaf)) {
               throw "x64 full bundle missing required file: $required"
             }
           }
 
-      - name: Archive x64 bundle and create checksum
-        shell: pwsh
+      - name: Archive x64 bundle and enforce the 2 GiB Release asset limit
         run: |
           $ErrorActionPreference = "Stop"
-          $output = Join-Path $PWD ".artifact-x64"
-          Remove-Item -Recurse -Force $output -ErrorAction SilentlyContinue
+          $output = Join-Path $env:RUNNER_TEMP "x64-release"
           New-Item -ItemType Directory -Force -Path $output | Out-Null
-          $zip = Join-Path $output "harnesshub-competition-full-windows-x64.zip"
-          $sevenZip = Join-Path $env:ProgramFiles "7-Zip\7z.exe"
-          if (-not (Test-Path -LiteralPath $sevenZip -PathType Leaf)) {
-            throw "7-Zip is not available on this runner"
-          }
+          $zip = Join-Path $output $env:ZIP_NAME
+          if (Test-Path -LiteralPath $zip) { throw "ZIP already exists: $zip" }
           Push-Location $env:FULL_BUNDLE_X64
           try {
-            & $sevenZip a -tzip -mx=1 $zip ".\*" | Out-Host
-            if ($LASTEXITCODE -ne 0) {
-              throw "Failed to archive x64 Full Bundle"
-            }
+            & $env:SEVEN_ZIP a -tzip -mx=1 $zip ".\*" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Failed to archive x64 Full Bundle" }
           } finally {
             Pop-Location
           }
+          $bytes = (Get-Item -LiteralPath $zip).Length
+          if ($bytes -ge 2147483648) { throw "x64 ZIP is $bytes bytes; GitHub Release assets must be smaller than 2 GiB" }
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
-          "$hash *harnesshub-competition-full-windows-x64.zip" | Set-Content -Encoding Ascii "$zip.sha256"
+          "$hash *$env:ZIP_NAME" | Set-Content -Encoding Ascii "$zip.sha256"
           "X64_RELEASE_ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "X64_RELEASE_SHA=$hash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "x64 ZIP bytes: $((Get-Item -LiteralPath $zip).Length)"
+          "X64_RELEASE_BYTES=$bytes" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "x64 ZIP bytes: $bytes"
           Write-Host "x64 SHA256: $hash"
 
-      - name: Publish x64 asset to competition-latest Release
-        shell: pwsh
+      - name: Start the extracted ZIP and self-test the competition Gateway (no model)
+        run: |
+          $ErrorActionPreference = "Stop"
+          # A path with a space proves quoting in gateway.cmd and the launch chain.
+          $extract = Join-Path $env:RUNNER_TEMP "hh x64 selftest"
+          if (Test-Path -LiteralPath $extract) { throw "Self-test directory already exists: $extract" }
+          & $env:SEVEN_ZIP x -y "-o$extract" $env:X64_RELEASE_ZIP | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Failed to extract the x64 ZIP" }
+          $evidence = Join-Path $env:RUNNER_TEMP "x64-selftest-evidence"
+          New-Item -ItemType Directory -Force -Path $evidence | Out-Null
+          & (Join-Path $extract "runtime\node.exe") scripts/competition-selftest.mjs --bundle "$extract" --engine opencode --out (Join-Path $evidence "selftest.json") --log (Join-Path $evidence "gateway.log")
+          if ($LASTEXITCODE -ne 0) { throw "Competition Gateway startup self-test failed; see the x64-selftest-evidence artifact" }
+          $manifest = Get-Content -Raw -LiteralPath (Join-Path $extract "bundle.json") | ConvertFrom-Json
+          $build = [ordered]@{
+            schemaVersion = 1
+            asset = $env:ZIP_NAME
+            bytes = [long]$env:X64_RELEASE_BYTES
+            sha256 = $env:X64_RELEASE_SHA
+            commit = $env:GITHUB_SHA
+            ref = $env:GITHUB_REF_NAME
+            run = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            builtAt = (Get-Date).ToUniversalTime().ToString("o")
+            engines = @($manifest.engines | ForEach-Object { $_.id })
+            verified = "bundle hashes and a no-model startup self-test of the extracted ZIP; engine acceptance uses a scripted mock model and is reported in the workflow summary"
+          }
+          $buildFile = Join-Path (Split-Path $env:X64_RELEASE_ZIP) "harnesshub-competition-full-windows-x64.build.json"
+          $build | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 $buildFile
+          "X64_BUILD_JSON=$buildFile" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # Freeing disk is best effort; it must not block publishing a verified ZIP.
+          Remove-Item -LiteralPath $extract -Recurse -Force -ErrorAction SilentlyContinue
+          if (Test-Path -LiteralPath $extract) { Write-Warning "Self-test directory could not be removed completely" }
+
+      - name: Upload self-test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: x64-selftest-evidence
+          path: ${{ runner.temp }}/x64-selftest-evidence
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload x64 ZIP for the acceptance job
+        uses: actions/upload-artifact@v4
+        with:
+          name: harnesshub-competition-full-windows-x64
+          path: |
+            ${{ env.X64_RELEASE_ZIP }}
+            ${{ env.X64_RELEASE_ZIP }}.sha256
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Publish the verified ZIP to the Release
+        if: env.PUBLISH == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = "Stop"
-          $tag = "competition-latest"
-          $zip = $env:X64_RELEASE_ZIP
-          $sha = "$zip.sha256"
-          gh release view $tag *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag $zip $sha --clobber
-          } else {
-            gh release create $tag $zip $sha --title "HarnessHub Competition Full Bundle" --prerelease --target "$env:GITHUB_SHA"
-          }
-          if ($LASTEXITCODE -ne 0) {
-            throw "x64 Competition Release publish failed"
-          }
-          Write-Host "Direct: https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/harnesshub-competition-full-windows-x64.zip"
-          Write-Host "SHA-256: $env:X64_RELEASE_SHA"
+          $notes = Join-Path $env:RUNNER_TEMP "x64-release-notes.md"
+          @(
+            "HarnessHub Competition Full Bundle for Windows x64 (offline).",
+            "",
+            "Start in PowerShell: set HARNESSHUB_MODEL, HARNESSHUB_MODEL_BASE_URL, HARNESSHUB_MODEL_API_KEY and AGENT_ENGINE, then run gateway.cmd (see README-COMPETITION.txt).",
+            "The .build.json asset records the commit, workflow run and SHA-256 of the current ZIP.",
+            "CI evidence: bundle hashes and a no-model startup self-test. Engine acceptance uses a scripted mock model and is not a real-model pass."
+          ) | Set-Content -Encoding UTF8 $notes
+          node scripts/publish-release-assets.mjs --tag "$env:RELEASE_TAG" --asset "$env:X64_RELEASE_ZIP" --asset "$env:X64_RELEASE_ZIP.sha256" --asset "$env:X64_BUILD_JSON" --title "HarnessHub Competition Full Bundle" --notes-file $notes --target "$env:GITHUB_SHA"
+          if ($LASTEXITCODE -ne 0) { throw "Release publish failed" }
+          "### x64 bundle published to ``$env:RELEASE_TAG``" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "SHA-256 ``$env:X64_RELEASE_SHA``, $env:X64_RELEASE_BYTES bytes, commit ``$env:GITHUB_SHA``." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+  acceptance:
+    name: Windows x64 engine acceptance (mock company model)
+    needs: bundle
+    runs-on: windows-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: harnesshub-competition-full-windows-x64
+          path: ${{ runner.temp }}/x64-bundle-zip
+
+      - name: Verify and extract the x64 ZIP
+        run: |
+          $ErrorActionPreference = "Stop"
+          $zip = Join-Path $env:RUNNER_TEMP "x64-bundle-zip\$env:ZIP_NAME"
+          $expected = ((Get-Content -Raw -LiteralPath "$zip.sha256").Trim() -split '\s+')[0]
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "ZIP SHA-256 mismatch: $actual" }
+          $bundle = Join-Path $env:RUNNER_TEMP "hh-acceptance\bundle"
+          $sevenZip = Join-Path $env:ProgramFiles "7-Zip\7z.exe"
+          & $sevenZip x -y "-o$bundle" $zip | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Failed to extract the x64 ZIP" }
+          Remove-Item -LiteralPath $zip -Force
+          "ACCEPTANCE_BUNDLE=$bundle" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Run every engine against the scripted mock company model
+        run: |
+          $ErrorActionPreference = "Stop"
+          # The mock accepts only streaming requests, rejects vendor-only fields, requires the
+          # unified model name and a random throw-away key, and returns 400 when a tool-call
+          # follow-up does not pass reasoning_content back. Vendor credential variables are
+          # removed from every Gateway; engines are selected only through AGENT_ENGINE.
+          $out = Join-Path $env:RUNNER_TEMP "hh-acceptance\results"
+          $arguments = @(
+            "scripts/competition-matrix.mjs",
+            "--bundle", $env:ACCEPTANCE_BUNDLE,
+            "--engines", $env:ACCEPTANCE_ENGINES,
+            "--out", $out,
+            "--mock",
+            "--engine-timeout-ms", "360000",
+            "--summary", $env:GITHUB_STEP_SUMMARY
+          )
+          if ($env:MOCK_QUIRKS -eq "true") { $arguments += "--mock-quirks" }
+          & (Join-Path $env:ACCEPTANCE_BUNDLE "runtime\node.exe") @arguments
+          if ($LASTEXITCODE -ne 0) { throw "At least one engine did not pass the mock-model acceptance; see the job summary and the competition-acceptance-windows-x64 artifact" }
+
+      - name: Upload acceptance results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: competition-acceptance-windows-x64
+          path: ${{ runner.temp }}/hh-acceptance/results
+          if-no-files-found: warn
+          retention-days: 14
