@@ -264,6 +264,15 @@ void test(
 
     const untitled = await createSession(base, path.join(root, "second"));
     assert.ok(untitled.title.length > 0);
+    // model is required but ignored for execution, so empty identifiers are accepted.
+    const anyModel = await call(base, `/session/${untitled.id}/prompt_async`, {
+      method: "POST",
+      body: {
+        parts: [{ type: "text", text: "unified model" }],
+        model: { providerID: "", modelID: "" },
+      },
+    });
+    assert.equal(anyModel.status, 204);
 
     const done = await prompt(
       base,

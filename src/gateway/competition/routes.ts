@@ -94,9 +94,9 @@ function competitionError(error: unknown): {
     } else if (Object.hasOwn(fastifyMessages, fastifyCode)) {
       code = "VALIDATION_ERROR";
       message = fastifyMessages[fastifyCode] ?? message;
-    } else if (typeof status === "number" && status >= 400 && status < 500) {
+    } else if (typeof status === "number" && status >= 400 && status < 600) {
       code = codeForStatus(status);
-      message = "Request could not be accepted";
+      if (status < 500) message = "Request could not be accepted";
     }
   }
   return { status: errorStatus[code], body: { code, message } };
@@ -190,9 +190,14 @@ function promptInput(body: unknown): { text: string } {
   if (!text.trim()) throw invalid("parts must contain non-empty text");
   if (text.length > PROMPT_TEXT_LIMIT)
     throw invalid(`prompt text exceeds ${PROMPT_TEXT_LIMIT} characters`);
-  if (!isRecord(input.model)) throw invalid("model is required");
-  requiredString(input.model.providerID, "model.providerID");
-  requiredString(input.model.modelID, "model.modelID");
+  if (
+    !isRecord(input.model) ||
+    typeof input.model.providerID !== "string" ||
+    typeof input.model.modelID !== "string"
+  )
+    throw invalid(
+      "model is required with string providerID and modelID fields",
+    );
   if (input.agent !== undefined && typeof input.agent !== "string")
     throw invalid("agent must be a string");
   // model/agent are validated only: Runs use the HarnessHub unified model (ADR 0013).
