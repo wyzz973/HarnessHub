@@ -181,10 +181,16 @@ export async function runSelfTest(options) {
           problems.push(
             "consoleUrl is missing although the console was requested",
           );
-        else if (new URL(consoleUrl).port !== String(consolePort))
-          problems.push(
-            `consoleUrl ${consoleUrl} does not use --console-port ${consolePort}`,
-          );
+        else {
+          // A busy --console-port falls back to a free port (console.port-fallback event);
+          // the reported URL is authoritative for the checks below.
+          detail.consolePortFallback =
+            new URL(consoleUrl).port !== String(consolePort);
+          if (readyEvent?.consoleUrl && readyEvent.consoleUrl !== consoleUrl)
+            problems.push(
+              `competition.ready consoleUrl ${readyEvent.consoleUrl} differs from runtime info ${consoleUrl}`,
+            );
+        }
         if (problems.length) throw new Error(problems.join("; "));
       });
       await check("console", async (detail) => {
@@ -268,7 +274,9 @@ export async function runSelfTest(options) {
   } finally {
     await processHandle.stop();
     await check("shutdown", async (detail) => {
-      const open = await waitForPortsClosed([port, consolePort], {
+      const ports = [port, consolePort];
+      if (consoleUrl) ports.push(Number(new URL(consoleUrl).port));
+      const open = await waitForPortsClosed([...new Set(ports)], {
         timeoutMs: 20_000,
       });
       detail.openPorts = open;
