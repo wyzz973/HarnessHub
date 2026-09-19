@@ -46,6 +46,14 @@ function catalog(entry: CatalogEntry) {
           ? {}
           : { supports_reasoning_summary_parameter: false }),
         model_messages: { instructions_template: codexDefaultInstructions },
+        // Codex 0.144 requires these three fields; the pinned 0.153.4 moved the
+        // prompt to `model_messages` and ignores unknown fields (its ModelInfo
+        // has no deny_unknown_fields), so one catalog serves both versions.
+        // Parallel tool calls stay off so strict gateways never receive
+        // `parallel_tool_calls`; multiple calls in one answer still work.
+        base_instructions: codexDefaultInstructions,
+        supports_reasoning_summaries: entry.reasoning,
+        supports_parallel_tool_calls: false,
       },
     ],
   };

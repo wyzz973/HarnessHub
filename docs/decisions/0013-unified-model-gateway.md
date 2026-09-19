@@ -55,8 +55,8 @@ Status: accepted
 
 - 总是流式 Chat Completions，`model` 固定为统一模型。
 - 非流式入站请求，由网关聚合流式结果后返回完整响应。
-- 默认去掉 `store`、`metadata`、`service_tier`、`prediction`、`modalities`、`audio`、`web_search_options`、`user`；`compatibility.dropParameters` 可追加。
-- 没有 tools 时，同时去掉 `tool_choice` 和 `parallel_tool_calls`。
+- 默认去掉 `store`、`metadata`、`service_tier`、`prediction`、`modalities`、`audio`、`web_search_options`、`user`、`parallel_tool_calls`；`compatibility.dropParameters` 可追加。
+- 没有 tools 时，同时去掉 `tool_choice`；`response_format: json_schema` 降级为 `json_object`。选择保守默认值的理由：公司网关的严格程度未知，保留这些参数一旦被拒绝，Codex 每次主调用都会失败；而去掉后即使公司网关本来支持，损失也很小。
 - `developer` 角色转为 `system`；多条 system 消息合并为开头的一条；全是文本分片的 content 合并成字符串。
 - 输出上限统一写入 `compatibility.maxTokensField`（默认 `max_tokens`），并按 `maxOutputTokens` 截断。
 - `stream_options.include_usage` 仅在 `compatibility.includeUsage` 为 true 时发送。

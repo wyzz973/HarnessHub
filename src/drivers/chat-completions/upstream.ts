@@ -33,6 +33,8 @@ export const DEFAULT_DROPPED_PARAMETERS = [
   "audio",
   "web_search_options",
   "user",
+  // Engines handle several calls in one answer; strict gateways reject it.
+  "parallel_tool_calls",
 ] as const;
 const PROTECTED = new Set(["model", "messages", "stream"]);
 
@@ -133,8 +135,11 @@ export function normalizeRequest(
   if (!Array.isArray(body.tools) || body.tools.length === 0) {
     delete body.tools;
     delete body.tool_choice;
-    delete body.parallel_tool_calls;
   }
+  // JSON Schema output is widely unsupported; JSON mode keeps the answer
+  // machine-readable while the engine still validates the structure.
+  if (record(body.response_format)?.type === "json_schema")
+    body.response_format = { type: "json_object" };
   body.messages = normalizeMessages(body.messages, settings.images);
   body.model = settings.model;
   body.stream = true;

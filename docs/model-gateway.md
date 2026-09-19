@@ -34,8 +34,10 @@ OpenAI 与 Anthropic 路径的 `/v1` 前缀可省略；Google 路径也接受 `/
 
 请求体规范化规则：
 
-- 默认去掉 `store`、`metadata`、`service_tier`、`prediction`、`modalities`、`audio`、`web_search_options`、`user`，以及引擎的 `stream_options`；最后去掉 `compatibility.dropParameters`（`model`、`messages`、`stream` 不可被去掉）。
-- 没有 tools 或 tools 为空时，同时去掉 `tool_choice` 和 `parallel_tool_calls`。
+- 默认去掉 `store`、`metadata`、`service_tier`、`prediction`、`modalities`、`audio`、`web_search_options`、`user`、`parallel_tool_calls`，以及引擎的 `stream_options`；最后去掉 `compatibility.dropParameters`（`model`、`messages`、`stream` 不可被去掉）。
+- 没有 tools 或 tools 为空时，同时去掉 `tool_choice`。
+- `response_format` 为 `json_schema` 时降级为 `{"type":"json_object"}`：很多兼容网关不支持 JSON Schema 输出，JSON 模式仍保证输出可解析，结构由引擎自行校验。
+- 以上默认值面向严格的企业网关：2026-09-19 用只接受流式、拒绝 OpenAI 专有字段的模拟网关验证，Codex 在去掉 `parallel_tool_calls` 并降级 `json_schema` 后才全部通过。引擎在同一回答中收到多个工具调用时仍能正确处理。
 - `developer` 转为 `system`；所有 system 消息按原顺序以空行连接，合并为开头的一条。全是文本分片的 content 以换行连接为字符串；含非文本分片的 Chat content 原样转发，由上游决定是否接受。
 - 输出上限取 `max_completion_tokens`，否则取 `max_tokens`，只写入 `compatibility.maxTokensField` 指定的字段并删除另一个；配置了 `maxOutputTokens` 时取两者较小值。引擎没有给上限时不添加。
 - 只有 `compatibility.includeUsage` 为 true 时才发送 `stream_options: {include_usage: true}`。
