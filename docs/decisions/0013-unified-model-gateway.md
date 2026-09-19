@@ -63,7 +63,7 @@ Status: accepted
 - 按宽松规则解析：缺失或为 null 的 `index`、`delta`、`id` 视为缺省；重复的 `finish_reason` 以最后一次为准；缺少 `[DONE]` 时，以连接正常结束为准；usage 宽松解析；无参工具的空参数串视为 `{}`。
 - `finish_reason` 规范化：只要有工具调用就返回 `tool_calls`，流正常结束但没有给出原因时返回 `stop`。
 
-**推理内容**：上游的 `reasoning_content` 或 `reasoning` 会原样转给支持的入站协议：
+**推理内容**：2026-09-19 实测，DeepSeek 推理模式下，工具调用的后续请求如果没带回 `reasoning_content`，会返回 400（"must be passed back"）。因此默认必须回填推理内容。上游的 `reasoning_content` 或 `reasoning` 会原样转给支持的入站协议：
 
 - Chat：原字段；
 - Responses：reasoning item；
@@ -162,6 +162,19 @@ Worker 把 `ModelCallRecord` 原样作为 `type: "model.call"` 的事件 `data` 
   - `PUT /v1/harness/model`：body 为 `HarnessModel`，其中 apiKey 只接受秘密引用。写入文件，并为全部引擎重新登记新 revision，返回 `HarnessModelView`。
   - `POST /v1/harness/model/test`：用一条极短的流式请求检查连通性和鉴权，会实际调用模型。返回 `{ ok, status, durationMs, error? }`。
 - `hub.cmd model set --model <id> --base-url <url> --api-key-env <NAME> [--context-window N] [--max-output-tokens N]` 写入统一模型文件；`hub.cmd model show` 查看当前配置。
+
+### 引擎登记字段
+
+- 统一模型写入每个引擎登记：`model` 为上游真实模型；`configuration.provider` 为统一模型的 provider；`provider.modelAlias` 为引擎看到的模型名（缺省 `harnesshub-model`）。
+- Worker 按适配器选择入站协议，引擎只拿到网关地址和本地令牌。
+
+### 运行信息
+
+`GET /v1/runtime/info` 返回 `{ competition: boolean, competitionEngine?: string, fullAccess: boolean, consoleUrl?: string }`，供控制台显示当前运行模式。
+
+### 会话工作目录占位符
+
+工具包绑定时，工作目录相关的参数、环境变量和 CLI 工作目录都写成 `${HARNESSHUB_SESSION_WORKSPACE}`，不再写死绝对路径。Worker 准备 MCP 时，把它替换为当前 Session 的实际目录（比赛中即评测方传入的 `directory`）。
 
 ### 工具包接口
 

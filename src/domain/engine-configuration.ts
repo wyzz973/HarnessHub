@@ -50,6 +50,8 @@ export interface ModelProviderConfiguration {
   contextWindow?: number;
   /** Maximum output tokens accepted by the model; larger engine requests are clamped. */
   maxOutputTokens?: number;
+  /** Model id shown to engines by the gateway; the registration `model` stays the upstream id. */
+  modelAlias?: string;
   compatibility?: ModelCompatibility;
 }
 /** Portable skill instructions; registration pins SKILL.md bytes, execution verifies them. */
@@ -127,6 +129,10 @@ export const engineConfigurationSchema = {
         secretHeaders: secrets,
         contextWindow: { type: "integer", minimum: 1024, maximum: 16777216 },
         maxOutputTokens: { type: "integer", minimum: 16, maximum: 4194304 },
+        modelAlias: {
+          type: "string",
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$",
+        },
         compatibility: {
           type: "object",
           additionalProperties: false,
