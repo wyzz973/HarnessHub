@@ -3,18 +3,34 @@ param(
   [Parameter(Mandatory = $true)][string]$Output
 )
 
+# Assemble the Windows x64 offline development kit (network is used here, on the build
+# machine only): editable HarnessHub source with node_modules, the offline pnpm store,
+# Node/pnpm, the prepared engine payload, upstream source snapshots and the offline
+# competition entry points (Setup-Competition-Offline.cmd, Start-Competition.cmd,
+# INSTRUCTION.md). The kit itself never downloads; see scripts/competition-offline.mjs.
+
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version 3.0
 
 $Repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Prepared = (Resolve-Path $Prepared).Path
 $Kit = [System.IO.Path]::GetFullPath($Output)
-Remove-Item -Recurse -Force $Kit -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force -Path $Kit | Out-Null
+if (Test-Path -LiteralPath $Kit) { throw "Output already exists; choose a new directory: $Kit" }
+New-Item -ItemType Directory -Path $Kit | Out-Null
 
 function Copy-Tree([string]$Source, [string]$Target) {
   robocopy $Source $Target /E /R:2 /W:1 *> $null
   if ($LASTEXITCODE -gt 7) { throw "robocopy failed: $Source -> $Target ($LASTEXITCODE)" }
+}
+
+function Write-CrlfFile([string]$Path, [string[]]$Lines) {
+  # cmd.exe parses labels reliably only with CRLF; keep launchers ASCII for every code page.
+  $Text = ($Lines -join "`r`n") + "`r`n"
+  [System.IO.File]::WriteAllText($Path, $Text, [System.Text.Encoding]::ASCII)
+}
+
+function Write-Utf8File([string]$Path, [string]$Text) {
+  [System.IO.File]::WriteAllText($Path, $Text, (New-Object System.Text.UTF8Encoding($false)))
 }
 
 function Normalize-Repo([string]$Repository) {
@@ -73,9 +89,13 @@ function Try-GitDefaultSnapshot([string]$Destination, [string]$Repository) {
   return $true
 }
 
+# Editable source. Root-level runtime data (.tmp holds preparation downloads, including
+# proprietary archives that are never redistributed) is excluded by full path so that
+# same-named source folders such as src/gateway/competition are kept.
 $HarnessHub = Join-Path $Kit "HarnessHub"
 New-Item -ItemType Directory -Force -Path $HarnessHub | Out-Null
-robocopy $Repo $HarnessHub /E /R:2 /W:1 /XD .git .tools .artifact-x64 .artifact-offline-source node_modules dist .next /XF *.zip *.7z *> $null
+$RootExclusions = @(".git", ".tools", ".tmp", ".cache", "data", "output", "coverage", "runtime-data", ".playwright-mcp", ".artifact-x64", ".artifact-offline-source") | ForEach-Object { Join-Path $Repo $_ }
+robocopy $Repo $HarnessHub /E /R:2 /W:1 /XD @RootExclusions node_modules dist .next /XF *.zip *.7z *> $null
 if ($LASTEXITCODE -gt 7) { throw "Failed to copy HarnessHub source" }
 
 $Tools = Join-Path $Kit "tools"
@@ -95,7 +115,10 @@ try {
 } finally {
   Pop-Location
 }
-Copy-Tree $StorePath (Join-Path $Kit "pnpm-store")
+# The store path ends in its layout version (for pnpm 10 typically `v10`); --store-dir takes
+# the parent and appends that version itself, so keep the version directory in the kit.
+$StoreVersion = Split-Path $StorePath -Leaf
+Copy-Tree $StorePath (Join-Path $Kit "pnpm-store\$StoreVersion")
 Copy-Tree $Prepared (Join-Path $Kit "prepared\win32-x64")
 
 $SourceRoot = Join-Path $Kit "engine-sources"
@@ -174,28 +197,57 @@ Add-NpmSnapshot "mimo" "@mimo-ai/cli@0.1.14" "engines\npm\node_modules\@mimo-ai\
 Add-NpmSnapshot "dsh" "@deepseek-ai/dsh@0.1.2-rc.1" "engines\npm\node_modules\@deepseek-ai\dsh"
 Add-NpmSnapshot "openclaw" "openclaw@2026.9.2" "engines\npm\node_modules\openclaw"
 
-function Add-GitTagSnapshot([string]$Id,[string]$Repository,[string[]]$Refs,[string]$PreparedRelative) {
+function Add-NativeSourceSnapshot(
+  [string]$Id,
+  [string]$Repository,
+  [string]$Version,
+  [string[]]$Refs,
+  [string]$PreparedRelative
+) {
+  Write-Host "Source snapshot: $Id <- $Repository ($Version)"
   $Destination = Join-Path $SourceRoot $Id
-  $Used = $null
+  $Snapshot = $null
   foreach ($Ref in $Refs) {
-    if (Try-GitSnapshot $Destination $Repository $Ref) { $Used = $Ref; break }
+    $IsCommit = $Ref -match '^[0-9a-fA-F]{40}$'
+    $Ok = if ($IsCommit) {
+      Try-GitSnapshot $Destination $Repository $Ref -Commit
+    } else {
+      Try-GitSnapshot $Destination $Repository $Ref
+    }
+    if ($Ok) {
+      $Snapshot = if ($IsCommit) { "commit:$Ref" } else { "tag:$Ref" }
+      break
+    }
   }
-  if (-not $Used) { throw "Unable to snapshot $Id from $Repository" }
+  if (-not $Snapshot) {
+    if (Try-GitDefaultSnapshot $Destination $Repository) {
+      $Snapshot = "repository-default; exact runtime remains under prepared/win32-x64"
+    } else {
+      throw "Unable to snapshot $Id from $Repository"
+    }
+  }
   $Installed = Join-Path $Prepared $PreparedRelative
   if (-not (Test-Path $Installed)) { throw "Prepared native engine missing: $Id" }
   $Manifest.Add([pscustomobject]@{
     id = $Id
     package = $null
-    version = ($Refs[0] -replace '^v','')
+    version = $Version
     repository = $Repository
-    gitHead = $null
-    snapshot = "tag:$Used"
+    gitHead = $(if ($Snapshot.StartsWith("commit:")) { $Snapshot.Substring(7) } else { $null })
+    snapshot = $Snapshot
     exactRuntimePath = "prepared/win32-x64/$($PreparedRelative -replace '\\','/')"
   })
 }
 
-Add-GitTagSnapshot "kimi" "https://github.com/MoonshotAI/kimi-cli.git" @("1.50.0","v1.50.0") "engines\kimi"
-Add-GitTagSnapshot "opencode" "https://github.com/anomalyco/opencode.git" @("v1.18.29","1.18.29") "engines\opencode"
+Add-NativeSourceSnapshot "kimi" "https://github.com/MoonshotAI/kimi-cli.git" "1.50.0" @(
+  "86f136422a0aae6b217ea49e7ea1d2e8a1defcd2",
+  "1.50.0",
+  "v1.50.0"
+) "engines\kimi"
+Add-NativeSourceSnapshot "opencode" "https://github.com/anomalyco/opencode.git" "1.18.29" @(
+  "v1.18.29",
+  "1.18.29"
+) "engines\opencode"
 
 Write-Host "Source snapshot: hermes-agent==0.19.0"
 $HermesMeta = Invoke-RestMethod "https://pypi.org/pypi/hermes-agent/0.19.0/json"
@@ -222,8 +274,21 @@ if ($HermesRepo) {
 }
 $HermesPublished = Join-Path $PublishedRoot "hermes"
 New-Item -ItemType Directory -Force -Path $HermesPublished | Out-Null
-py -3 -m pip download --no-deps --no-binary=:all: "hermes-agent==0.19.0" --dest $HermesPublished
-if ($LASTEXITCODE -ne 0) { throw "Failed to download exact Hermes source distribution" }
+# `pip download` would evaluate Requires-Python against the runner's Python; download the
+# exact sdist named by the PyPI metadata instead and verify its published SHA-256.
+$HermesUrls = @(Get-OptionalProperty $HermesMeta "urls")
+$HermesSdist = $HermesUrls | Where-Object { $_.packagetype -eq "sdist" } | Select-Object -First 1
+if (-not $HermesSdist) { throw "PyPI metadata has no Hermes 0.19.0 source distribution" }
+$HermesSdistPath = Join-Path $HermesPublished ([string]$HermesSdist.filename)
+Invoke-WebRequest -Uri ([string]$HermesSdist.url) -OutFile $HermesSdistPath
+$HermesDigests = Get-OptionalProperty $HermesSdist "digests"
+$HermesExpectedSha = if ($HermesDigests) { [string](Get-OptionalProperty $HermesDigests "sha256") } else { "" }
+if ($HermesExpectedSha) {
+  $HermesActualSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $HermesSdistPath).Hash.ToLowerInvariant()
+  if ($HermesActualSha -ne $HermesExpectedSha.ToLowerInvariant()) {
+    throw "Hermes 0.19.0 source distribution hash mismatch"
+  }
+}
 $Manifest.Add([pscustomobject]@{
   id = "hermes"
   package = "hermes-agent==0.19.0"
@@ -237,72 +302,121 @@ $Manifest.Add([pscustomobject]@{
 $Manifest | ConvertTo-Json -Depth 10 | Set-Content -Encoding UTF8 (Join-Path $Kit "engine-source-manifest.json")
 git -C $Repo rev-parse HEAD | Set-Content -Encoding Ascii (Join-Path $Kit "HARNESSHUB_COMMIT.txt")
 
-@'
-@echo off
-setlocal
-set ROOT=%~dp0
-set NODE=%ROOT%tools\node\node.exe
-set PNPM=%ROOT%tools\pnpm-runner\node_modules\pnpm\bin\pnpm.cjs
-cd /d "%ROOT%HarnessHub"
-"%NODE%" "%PNPM%" build
-exit /b %ERRORLEVEL%
-'@ | Set-Content -Encoding Ascii (Join-Path $Kit "Build-HarnessHub.cmd")
+# Developer loop. PATH puts the bundled Node first so package scripts never need a system Node.
+Write-CrlfFile (Join-Path $Kit "Build-HarnessHub.cmd") @(
+  '@echo off',
+  'setlocal',
+  'set "ROOT=%~dp0"',
+  'set "PATH=%ROOT%tools\node;%PATH%"',
+  'cd /d "%ROOT%HarnessHub"',
+  '"%ROOT%tools\node\node.exe" "%ROOT%tools\pnpm-runner\node_modules\pnpm\bin\pnpm.cjs" build',
+  'exit /b %ERRORLEVEL%'
+)
+Write-CrlfFile (Join-Path $Kit "Test-HarnessHub.cmd") @(
+  '@echo off',
+  'setlocal',
+  'set "ROOT=%~dp0"',
+  'set "PATH=%ROOT%tools\node;%PATH%"',
+  'cd /d "%ROOT%HarnessHub"',
+  '"%ROOT%tools\node\node.exe" "%ROOT%tools\pnpm-runner\node_modules\pnpm\bin\pnpm.cjs" test',
+  'exit /b %ERRORLEVEL%'
+)
+Write-CrlfFile (Join-Path $Kit "Reinstall-Offline.cmd") @(
+  '@echo off',
+  'setlocal',
+  'set "ROOT=%~dp0"',
+  'set "PATH=%ROOT%tools\node;%PATH%"',
+  'set "npm_config_offline=true"',
+  'cd /d "%ROOT%HarnessHub"',
+  'if exist node_modules rmdir /s /q node_modules',
+  '"%ROOT%tools\node\node.exe" "%ROOT%tools\pnpm-runner\node_modules\pnpm\bin\pnpm.cjs" install --offline --frozen-lockfile --store-dir "%ROOT%pnpm-store" --config.node-linker=hoisted --package-import-method=copy',
+  'exit /b %ERRORLEVEL%'
+)
 
-@'
-@echo off
-setlocal
-set ROOT=%~dp0
-set NODE=%ROOT%tools\node\node.exe
-set PNPM=%ROOT%tools\pnpm-runner\node_modules\pnpm\bin\pnpm.cjs
-cd /d "%ROOT%HarnessHub"
-"%NODE%" "%PNPM%" test
-exit /b %ERRORLEVEL%
-'@ | Set-Content -Encoding Ascii (Join-Path $Kit "Test-HarnessHub.cmd")
+# Competition entry points (see INSTRUCTION.md). Setup is fully offline; Start refuses to
+# guess an engine: AGENT_ENGINE selects it, as the competition requires.
+Write-CrlfFile (Join-Path $Kit "Setup-Competition-Offline.cmd") @(
+  '@echo off',
+  'setlocal',
+  'set "KIT=%~dp0"',
+  'set "NODE=%KIT%tools\node\node.exe"',
+  'if not exist "%NODE%" goto missing_node',
+  '"%NODE%" "%KIT%HarnessHub\scripts\competition-offline.mjs" setup %*',
+  'exit /b %ERRORLEVEL%',
+  ':missing_node',
+  'echo [HarnessHub] Bundled Node was not found: "%NODE%" 1>&2',
+  'echo [HarnessHub] Run this file from the root of the extracted offline kit. 1>&2',
+  'exit /b 2'
+)
+Write-CrlfFile (Join-Path $Kit "Start-Competition.cmd") @(
+  '@echo off',
+  'setlocal',
+  'set "KIT=%~dp0"',
+  'set "BUNDLE=%KIT%competition"',
+  'if not exist "%BUNDLE%\gateway.cmd" goto missing_layout',
+  'if not defined AGENT_ENGINE goto missing_engine',
+  'call "%BUNDLE%\gateway.cmd" %*',
+  'exit /b %ERRORLEVEL%',
+  ':missing_layout',
+  'echo [HarnessHub] Competition layout not found: "%BUNDLE%" 1>&2',
+  'echo [HarnessHub] Run Setup-Competition-Offline.cmd first. 1>&2',
+  'exit /b 2',
+  ':missing_engine',
+  'echo [HarnessHub] AGENT_ENGINE is not set. PowerShell example: $env:AGENT_ENGINE = "opencode" 1>&2',
+  '"%BUNDLE%\runtime\node.exe" "%KIT%HarnessHub\scripts\competition-offline.mjs" engines --bundle "%BUNDLE%" 1>&2',
+  'exit /b 2'
+)
 
-@'
-@echo off
-setlocal
-set ROOT=%~dp0
-set NODE=%ROOT%tools\node\node.exe
-set PNPM=%ROOT%tools\pnpm-runner\node_modules\pnpm\bin\pnpm.cjs
-cd /d "%ROOT%HarnessHub"
-if exist node_modules rmdir /s /q node_modules
-"%NODE%" "%PNPM%" install --offline --frozen-lockfile --store-dir "%ROOT%pnpm-store" --config.node-linker=hoisted --package-import-method=copy
-exit /b %ERRORLEVEL%
-'@ | Set-Content -Encoding Ascii (Join-Path $Kit "Reinstall-Offline.cmd")
+Copy-Item -LiteralPath (Join-Path $Repo "distribution\INSTRUCTION.md") -Destination (Join-Path $Kit "INSTRUCTION.md")
 
-@'
+Write-Utf8File (Join-Path $Kit "README-OFFLINE.md") @'
 # HarnessHub Offline Development Kit (Windows x64)
 
-This is an editable source workspace, not a prebuilt Competition Bundle.
+Editable HarnessHub source plus everything needed to rebuild it and produce the runnable
+competition layout **without network access**. The judge-facing procedure is in
+`INSTRUCTION.md` (same file as `HarnessHub/distribution/INSTRUCTION.md`).
 
 ## Included
-- `HarnessHub/`: editable HarnessHub source plus self-contained Windows x64 `node_modules` materialized from the included offline store.
-- `prepared/win32-x64/`: exact fixed engine runtime payload used by the Competition edition, kept separate from HarnessHub source.
-- `engine-sources/`: upstream repository snapshots. Exact package commit/tag is preferred; if upstream package metadata does not expose one, a shallow repository snapshot is included and the manifest marks it as such.
-- `published-engine-packages/`: exact package/source fallback only when an upstream source snapshot cannot be resolved; Hermes always includes its exact 0.19.0 source distribution.
-- `pnpm-store/`: offline store for reinstalling HarnessHub dependencies.
-- `tools/node/`: Node 24.20.0 x64.
-- `tools/pnpm-runner/`: pnpm 10.12.3.
+- `HarnessHub/`: editable source with self-contained Windows x64 `node_modules` (pnpm hoisted, copied files).
+- `tools/node/`: Node 24.20.0 x64. `tools/pnpm-runner/`: pnpm 10.12.3.
+- `pnpm-store/`: offline pnpm store used when `node_modules` must be restored.
+- `prepared/win32-x64/`: fixed engine runtime payload (open-source edition) used by the competition layout.
+- `engine-sources/`, `published-engine-packages/`, `engine-source-manifest.json`: upstream source snapshots and traceability.
+- `Setup-Competition-Offline.cmd`: offline restore (only when needed) + build + package + no-model startup self-test; writes `competition\`.
+- `Start-Competition.cmd`: starts `competition\gateway.cmd`; requires `AGENT_ENGINE`; passes `--port` / `--host` through.
+- `Build-HarnessHub.cmd`, `Test-HarnessHub.cmd`, `Reinstall-Offline.cmd`: developer loop.
+
+## Competition quick start (PowerShell, in this directory)
+1. `.\Setup-Competition-Offline.cmd` (5-15 minutes; exit code 0 and a `competition.setup.completed` line mean success; log under `logs\`).
+2. Set the unified model: `$env:HARNESSHUB_MODEL`, `$env:HARNESSHUB_MODEL_BASE_URL`, `$env:HARNESSHUB_MODEL_API_KEY`.
+3. `$env:AGENT_ENGINE = "opencode"` then `.\Start-Competition.cmd` and keep the window open.
+
+Setup never downloads: npm/pnpm run offline against an unreachable registry and proxy, so a
+missing dependency fails with an error instead of reaching the network. Re-running Setup
+keeps the previous layout as `competition.previous-<time>`.
+
+## Packaging solution.zip
+```
+solution\INSTRUCTION.md   <- copy of INSTRUCTION.md from this directory
+solution\code\            <- the complete contents of this directory
+```
+Create it from a clean extraction (no `competition\`, `logs\` or `competition.*` folders), in
+the directory that contains the extracted kit folder `KIT`, for example:
+```
+robocopy KIT solution\code /E /R:1 /W:1
+Copy-Item solution\code\INSTRUCTION.md solution\INSTRUCTION.md
+tar.exe -a -c -f solution.zip solution
+```
+robocopy exit codes 0-7 mean success.
 
 ## Offline edit/build cycle
 1. Edit `HarnessHub/src` (or tests/scripts).
-2. Run `Build-HarnessHub.cmd`.
-3. Run `Test-HarnessHub.cmd` when needed.
-4. If `node_modules` is removed, run `Reinstall-Offline.cmd`; it uses the included pnpm store with `--offline`.
+2. `Build-HarnessHub.cmd`; `Test-HarnessHub.cmd` when needed.
+3. `Setup-Competition-Offline.cmd` again to rebuild the competition layout from the edited source.
+4. If `node_modules` is removed, `Reinstall-Offline.cmd` restores it from `pnpm-store` with `--offline`.
 
-## Engine source/version traceability
-See `engine-source-manifest.json`. Each entry tells you whether its source is an exact `gitHead`, exact tag, repository snapshot, or exact published-package fallback, and points to the exact runtime under `prepared/win32-x64`.
-
-The authoritative Competition engine list remains `HarnessHub/distribution/open-source-edition.json`; exact package/binary versions remain pinned by `distribution/npm/package.json`, `binary-sources.json`, and `extra-engine-sources.json`.
-
-`engine-sources/` is for reading/editing/reference. `prepared/win32-x64/` is the known fixed runtime payload so normal HarnessHub source edits do not require rebuilding all upstream engines.
-
-## Optional local packaging
-This kit intentionally does not prebuild a Competition Bundle. After editing HarnessHub, you can choose to run the existing repository packaging scripts against `prepared/win32-x64`; the engine payload is already local.
-
-## Known OpenCode Full Access investigation
-The current source revision still contains the Competition `OPENCODE_PERMISSION` launcher injection. Local A/B testing showed: Safe=204, Full=driver_error; removing that injection made Full=204. Treat that as a known source fix to apply while editing Full Access behavior.
-'@ | Set-Content -Encoding UTF8 (Join-Path $Kit "README-OFFLINE.md")
+The authoritative engine list is `HarnessHub/distribution/open-source-edition.json`; exact versions are pinned by
+`distribution/npm/package.json`, `binary-sources.json` and `extra-engine-sources.json`.
+'@
 
 Write-Host "Offline source kit assembled: $Kit"
