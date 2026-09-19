@@ -1,7 +1,10 @@
 name: Debug Gemini shell on Windows x64
 
-# Debug-only workflow for the Gemini shell-tool hang in the released x64 competition bundle.
+# Debug-only workflow for the Gemini shell-tool stall in the released x64 competition bundle.
 # No model key: Gemini runs through the competition Gateway against the scripted mock model.
+# Round 2: every Windows PowerShell start takes ~20-25 s inside the engine environment, so
+# time PowerShell under environment variants, then retry Gemini with the Worker passing the
+# standard Windows system variables.
 on:
   push:
     branches:
@@ -35,57 +38,38 @@ jobs:
           Remove-Item -LiteralPath $zip -Force
           New-Item -ItemType Directory -Force -Path D:\dbg | Out-Null
 
-      - name: Inventory - node-pty packages, PowerShell and the Gemini launch recipe
+      - name: Time Windows PowerShell under engine-like environment variants
         run: |
-          Get-ChildItem D:\hh\engines\npm\node_modules\@lydell -Recurse -Depth 1 -ErrorAction SilentlyContinue | Select-Object FullName, Length | Format-Table -AutoSize | Out-String -Width 300
-          "node-pty dir: $(Test-Path D:\hh\engines\npm\node_modules\node-pty)"
-          Get-ChildItem D:\hh\engines\npm\node_modules\node-pty -Recurse -Filter *.node -ErrorAction SilentlyContinue | Select-Object FullName
-          Get-Command pwsh, powershell -ErrorAction SilentlyContinue | Select-Object Source, Version | Format-Table -AutoSize | Out-String -Width 300
-          "ComSpec=$env:ComSpec"
-          $catalog = Get-ChildItem D:\hh -Filter *.json -Depth 1 | Where-Object { (Get-Content -Raw $_.FullName) -match 'gemini-cli' } | Select-Object -First 3
-          foreach ($file in $catalog) { "=== $($file.FullName)"; (Get-Content -Raw $file.FullName) -split "`n" | Select-String -Pattern 'gemini' -Context 0,3 | Select-Object -First 12 }
+          & D:\hh\runtime\node.exe .github\scripts\gemini-debug\env_probe.mjs D:\hh D:\dbg\env
 
-      - name: Probe - Gemini's shell paths in a plain process
-        run: |
-          & D:\hh\runtime\node.exe .github\scripts\gemini-debug\pty_probe.mjs D:\hh D:\dbg\probe console
-
-      - name: Probe - Gemini's shell paths from a process reading a stdin pipe (ACP-like)
-        run: |
-          & D:\hh\runtime\node.exe .github\scripts\gemini-debug\pty_probe.mjs D:\hh D:\dbg\probe console-pending
-
-      - name: Reproduce - Gemini through the competition Gateway with the scripted mock (released bundle)
-        run: |
-          $p = Start-Process -FilePath D:\hh\runtime\node.exe -ArgumentList @("scripts/competition-matrix.mjs", "--bundle", "D:\hh", "--engines", "gemini", "--out", "D:\dbg\matrix-released", "--mock", "--engine-timeout-ms", "420000") -PassThru -NoNewWindow -RedirectStandardOutput D:\dbg\matrix-released.out.txt -RedirectStandardError D:\dbg\matrix-released.err.txt
-          & .github\scripts\gemini-debug\watch_gemini.ps1 -WatchPid $p.Id -Out D:\dbg\watch-released -MockLog D:\dbg\matrix-released\mock-requests.jsonl -Node D:\hh\runtime\node.exe -Dump .github\scripts\gemini-debug\node_dump.mjs -Seconds 240
-          if (-not $p.HasExited) { taskkill /PID $p.Id /T /F | Out-Null; "matrix killed after 240 s" }
-          Get-Content D:\dbg\matrix-released\summary.md -ErrorAction SilentlyContinue
-          Get-Content D:\dbg\matrix-released\mock-requests.jsonl -ErrorAction SilentlyContinue
-          Get-Content D:\dbg\watch-released\dump.log -ErrorAction SilentlyContinue
-          Get-ChildItem D:\dbg\watch-released -Filter gemini-dump-*.json | ForEach-Object { "=== $($_.Name)"; Get-Content -Raw $_.FullName | Select-Object -First 1 }
-
-      - name: Candidate fix - Gemini system settings disable the PTY shell (compiled prepare.js)
+      - name: Candidate fix - Worker passes the standard Windows system variables (compiled worker-host.js)
         run: |
           $ErrorActionPreference = "Stop"
-          $file = "D:\hh\dist\src\drivers\configuration\prepare.js"
+          $file = "D:\hh\dist\src\process\worker-host.js"
           $text = [IO.File]::ReadAllText($file)
-          $anchor = "disableLLMCorrection: true,"
+          $anchor = '"LOGNAME",'
           if (([regex]::Matches($text, [regex]::Escape($anchor))).Count -ne 1) { throw "anchor count differs" }
-          $text = $text.Replace($anchor, "$anchor shell: { enableInteractiveShell: false },")
+          $names = '"PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432", "COMMONPROGRAMFILES", "COMMONPROGRAMFILES(X86)", "COMMONPROGRAMW6432", "PROGRAMDATA", "ALLUSERSPROFILE", "PUBLIC", "COMPUTERNAME", "USERDOMAIN", "PSMODULEPATH",'
+          $text = $text.Replace($anchor, "$anchor $names")
           [IO.File]::WriteAllText($file, $text)
-          Select-String -Path $file -Pattern "enableInteractiveShell"
+          Select-String -Path $file -Pattern "PROGRAMDATA"
 
       - name: Verify - Gemini through the competition Gateway with the scripted mock (candidate fix)
         run: |
-          $p = Start-Process -FilePath D:\hh\runtime\node.exe -ArgumentList @("scripts/competition-matrix.mjs", "--bundle", "D:\hh", "--engines", "gemini", "--out", "D:\dbg\matrix-fixed", "--mock", "--engine-timeout-ms", "420000") -PassThru -NoNewWindow -RedirectStandardOutput D:\dbg\matrix-fixed.out.txt -RedirectStandardError D:\dbg\matrix-fixed.err.txt
-          & .github\scripts\gemini-debug\watch_gemini.ps1 -WatchPid $p.Id -Out D:\dbg\watch-fixed -MockLog D:\dbg\matrix-fixed\mock-requests.jsonl -Node D:\hh\runtime\node.exe -Dump .github\scripts\gemini-debug\node_dump.mjs -Seconds 480
-          if (-not $p.HasExited) { taskkill /PID $p.Id /T /F | Out-Null; "matrix killed after 480 s" }
-          Get-Content D:\dbg\matrix-fixed\summary.md -ErrorAction SilentlyContinue
-          Get-Content D:\dbg\matrix-fixed\mock-requests.jsonl -ErrorAction SilentlyContinue
+          $p = Start-Process -FilePath D:\hh\runtime\node.exe -ArgumentList @("scripts/competition-matrix.mjs", "--bundle", "D:\hh", "--engines", "gemini", "--out", "D:\dbg\matrix-system", "--mock", "--engine-timeout-ms", "420000") -PassThru -NoNewWindow -RedirectStandardOutput D:\dbg\matrix-system.out.txt -RedirectStandardError D:\dbg\matrix-system.err.txt
+          & .github\scripts\gemini-debug\watch_gemini.ps1 -WatchPid $p.Id -Out D:\dbg\watch-system -MockLog D:\dbg\matrix-system\mock-requests.jsonl -Node D:\hh\runtime\node.exe -Dump .github\scripts\gemini-debug\node_dump.mjs -Seconds 420
+          if (-not $p.HasExited) { taskkill /PID $p.Id /T /F | Out-Null; "matrix killed after 420 s" }
+          Get-Content D:\dbg\matrix-system\summary.md -ErrorAction SilentlyContinue
+          Get-Content D:\dbg\matrix-system\mock-requests.jsonl -ErrorAction SilentlyContinue
 
       - name: Upload debug evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gemini-debug-x64
-          path: D:\dbg
+          name: gemini-debug-x64-round2
+          path: |
+            D:\dbg\env\*.jsonl
+            D:\dbg\matrix-system
+            D:\dbg\watch-system
+            D:\dbg\*.txt
           retention-days: 7
