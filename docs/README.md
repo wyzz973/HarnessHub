@@ -73,5 +73,6 @@
 | [Windows 与 Codex](verification/2026-09-06-windows.md) | 原生开发、文件/密钥、真实 Codex、控制台与启动器 |
 | [Windows 便携引擎](verification/2026-09-06-portable-engines.md) | 固定引擎准备、DeepSeek 短任务、MCP/文件与发行验收范围 |
 | [公司离线引擎](verification/2026-09-07-offline-company.md) | 固定开源源码、Chat 桥、十引擎 MCP、开发包与 GitHub 交付 |
+| [统一模型网关](verification/2026-09-19-unified-model-gateway.md) | macOS 7 个真实引擎经严格流式网关跑通比赛接口，只用统一模型 |
 
 研究输入：[原始架构提案](<../HarnessHub 多 Agent 引擎可替换架构设计.md>)、[固定源码阅读记录](<../HarnessHub 源码阅读与技术选型讨论稿.md>)。它们保留历史推演，若与现行DESIGN或API实现冲突，以当前规范与实现为准。
