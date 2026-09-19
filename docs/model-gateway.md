@@ -118,7 +118,7 @@ OpenAI 与 Anthropic 路径的 `/v1` 前缀可省略；Google 路径也接受 `/
 |---|---|---|---|
 | Chat | 原样转发，经上面的规范化 | 引擎的 `stream_options` | `n` 大于 1 |
 | Responses | instructions、字符串或数组 input、message、function/custom/namespace 工具及其调用与输出、`additional_tools` 项、reasoning 项、`tool_choice`、`parallel_tool_calls`、temperature、top_p、`max_output_tokens`、`text.format` 的 JSON 输出 | `reasoning`、`include`、`store`、`stream_options`、`service_tier`、`prompt_cache_key`、`client_metadata`、`metadata`、`user`、`truncation`、`top_logprobs`、`max_tool_calls` 等提示字段 | 未知顶层字段、`previous_response_id`、`conversation`、存储的 `prompt`、`background`、托管工具（含 web_search、tool_search）、图片/文件/音频输入、其他 input 项类型 |
-| Anthropic | 字符串或文本块 system、text/tool_use/tool_result/thinking 块、客户端工具（`input_schema`→`parameters`）、`tool_choice`（auto/any/tool/none，`disable_parallel_tool_use`）、`max_tokens`、`stop_sequences`、temperature、top_p、`output_format` 的 JSON Schema | `thinking` 参数、`metadata`、`top_k`、`service_tier`、`cache_control`、`redacted_thinking`，以及 `context_management` 等其他顶层字段 | image、document 和其他块类型，服务端工具，`container`、`mcp_servers` |
+| Anthropic | 字符串或文本块 system、`messages` 中的 system 角色文本消息（Claude Code 2.1.2xx 以此发送环境信息）、text/tool_use/tool_result/thinking 块、客户端工具（`input_schema`→`parameters`）、`tool_choice`（auto/any/tool/none，`disable_parallel_tool_use`）、`max_tokens`、`stop_sequences`、temperature、top_p、`output_format` 的 JSON Schema | `thinking` 参数、`metadata`、`top_k`、`service_tier`、`cache_control`、`redacted_thinking`，以及 `context_management` 等其他顶层字段 | image、document 和其他块类型，服务端工具，`container`、`mcp_servers` |
 | Google | systemInstruction、text、thought、functionCall、functionResponse（只含 `output` 字符串时直接作为工具结果）、functionDeclarations（`parameters` 类型转小写或 `parametersJsonSchema`）、toolConfig 与 `allowedFunctionNames`、temperature、topP、maxOutputTokens、stopSequences、presence/frequency penalty、seed、JSON 输出 | `safetySettings`、`labels`、`topK`、`thinkingConfig`（`includeThoughts: false` 除外）、其他生成提示 | 未知顶层字段、`cachedContent`、托管工具、inlineData/fileData、functionResponse 的 parts、非 TEXT 输出模态、`candidateCount` 大于 1 |
 
 Responses 和 Google 按固定客户端（Codex 0.153.4 的请求结构、@google/genai 的请求构造）的完整字段集检查顶层字段，因此未知字段会失败。Claude Code 为闭源且频繁增加 beta 字段，Anthropic 未知顶层字段被忽略，已知无法转换的语义仍明确失败。上游选择了请求中不存在的工具时，工具名原样返回，由引擎报告未知工具。Anthropic 非流式与 Google 输出需要工具参数为 JSON 对象，否则返回 502。Anthropic 流式输出要求上游顺序发送各工具参数，交错发送时在流内报错。
@@ -137,4 +137,6 @@ pnpm build
 node --test dist/tests/unit/model-gateway.test.js dist/tests/unit/model-gateway-upstream.test.js dist/tests/unit/model-gateway-runs.test.js dist/tests/unit/chat-completions.test.js
 ```
 
-未验证：真实 Codex、Claude Code、Gemini 与 Chat 类引擎经网关运行；Windows；真实公司模型与真实 DeepSeek（回填行为只用假上游复现了实测错误）。这些须在引擎接入后按 ADR 0013 的集成与 Windows 验收另行记录。
+2026-09-19 在 macOS 上做过一次性冒烟：本机已安装的 Codex 0.144.5、Gemini CLI 0.38.2、Claude Code 2.1.278（均非固定版本）以隔离的配置目录连接网关与本地假上游，各完成一次推理、Shell 工具调用与后续回合，后续请求都带回了推理内容。该冒烟发现并修正了 Claude Code 在 `messages` 中发送 system 角色消息的问题；脚本未入库，不代替固定版本引擎的验收。
+
+未验证：固定版本引擎（Codex 0.153.4、Gemini CLI 0.58.0、Claude Code 2.1.263）与 Chat 类引擎经网关运行；Windows；真实公司模型与真实 DeepSeek（回填行为只用假上游复现了实测错误）。这些须在引擎接入后按 ADR 0013 的集成与 Windows 验收另行记录。

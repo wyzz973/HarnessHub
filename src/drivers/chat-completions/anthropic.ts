@@ -106,6 +106,13 @@ export function anthropicToChat(raw: unknown): ChatTranslation {
   for (const rawMessage of array(request.messages)) {
     const message = object(rawMessage);
     const role = message.role;
+    // Claude Code 2.1.2xx sends its environment section as a system message
+    // inside `messages`; upstream normalization merges it into the leading one.
+    if (role === "system") {
+      const text = systemText(message.content);
+      if (text) messages.push({ role: "system", content: text });
+      continue;
+    }
     if (role !== "user" && role !== "assistant")
       throw new GatewayError("Unsupported Anthropic message role");
     const texts: string[] = [],

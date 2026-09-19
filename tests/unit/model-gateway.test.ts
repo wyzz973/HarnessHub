@@ -525,10 +525,30 @@ void test("Anthropic non-streaming returns thinking, text and tool_use content; 
     await send("/v1/messages", {
       model: "claude-haiku",
       max_tokens: 64,
-      messages: [{ role: "user", content: "读" }],
+      system: "规则",
+      // Claude Code 2.1.2xx sends its environment as a system-role message.
+      messages: [
+        { role: "user", content: "读" },
+        {
+          role: "system",
+          content: [
+            {
+              type: "text",
+              text: "环境",
+              cache_control: { type: "ephemeral" },
+            },
+          ],
+        },
+      ],
+      thinking: { type: "adaptive", display: "omitted" },
+      output_config: { effort: "high" },
       tools: [{ name: "read", input_schema: SCHEMA }],
     })
   ).json()) as unknown;
+  assert.deepEqual(up.requests[0]!.body.messages, [
+    { role: "system", content: "规则\n\n环境" },
+    { role: "user", content: "读" },
+  ]);
   assert.equal(at(body, "type"), "message");
   assert.deepEqual(
     (at(body, "content") as unknown[]).map((block) => at(block, "type")),
