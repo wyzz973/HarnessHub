@@ -11,11 +11,12 @@ import {
   limits,
   MANIFEST_NAME,
   packageError,
+  parseManifest,
   remoteUrlProblem,
   SECRET_VALUE,
   SLOT_NAME,
 } from "./manifest.js";
-import { installGenerated, installLocal } from "./store.js";
+import { inspectLocal, installGenerated, installLocal } from "./store.js";
 import {
   SESSION_WORKSPACE_PLACEHOLDER,
   type InstalledToolPackage,
@@ -49,6 +50,16 @@ export interface ToolPackImportResult {
   format: "tool-package" | "generated";
   counts: { skills: number; mcp: number; cli: number };
   /** Non-fatal adjustments the caller must see, e.g. secret values converted to references. */
+  warnings: string[];
+}
+
+/** What {@link importLocal} would register for a source; see {@link inspectImport}. */
+export interface ToolPackImportInspection {
+  manifest: ToolPackageManifest;
+  /** Digest the store would record: SHA-256 of the canonical manifest, which lists every payload hash. */
+  digest: string;
+  format: "tool-package" | "generated";
+  counts: { skills: number; mcp: number; cli: number };
   warnings: string[];
 }
 
@@ -896,28 +907,21 @@ function cliTools(
   return result;
 }
 
-/**
- * Imports an explicit local source into the package store without executing
- * anything or contacting the network.
- *
- * - A directory holding `tool-package.json` is installed unchanged (kind auto).
- * - Otherwise the manifest is generated: every `SKILL.md` directory with its
- *   resources (links, version control and node_modules skipped), MCP JSON in
- *   Claude Desktop/Cursor (`mcpServers`) or VS Code (`servers`) form and
- *   `cli.json` (`cliTools`), with sizes, SHA-256 and executable flags.
- * - Configuration files and `.env` files are never copied; secret-looking env
- *   or header values become environment references reported as warnings.
- * - Runtime downloaders (npx, uvx, pipx, bunx, ...), PATH commands and files
- *   outside the source are rejected, all problems in one error.
- *
- * Sources are read twice (hash, then copy); a change in between fails with
- * TOOL_PACKAGE_CHANGED and registers nothing.
- */
-export async function importLocal(
+interface ResolvedSource {
+  kind: ToolPackImportKind;
+  /** Canonical source directory (the file's directory for a single file). */
+  directory: string;
+  /** Set when the source is one file. */
+  file?: string;
+  /** The directory holds `tool-package.json` and is used unchanged. */
+  declared: boolean;
+}
+
+/** Shared input validation of {@link importLocal} and {@link inspectImport}. */
+async function resolveSource(
   source: string,
-  root: string,
-  options: ToolPackImportOptions = {},
-): Promise<ToolPackImportResult> {
+  options: ToolPackImportOptions,
+): Promise<ResolvedSource> {
   const kind = options.kind ?? "auto";
   if (!importKinds.includes(kind))
     throw sourceError("kind must be auto, skills, mcp or cli");
@@ -954,6 +958,7 @@ export async function importLocal(
   const directory = await canonicalDirectory(
     file ? path.dirname(path.resolve(source)) : source,
   );
+  let declared = false;
   if ((!file || file === MANIFEST_NAME) && kind === "auto") {
     const manifest = await lstat(path.join(directory, MANIFEST_NAME)).catch(
       (error: unknown) => {
@@ -966,35 +971,143 @@ export async function importLocal(
         throw sourceError(
           "id, version and displayName come from the directory's tool-package.json",
         );
-      const installed = await installLocal(directory, root);
-      return {
-        installed,
-        format: "tool-package",
-        counts: {
-          skills: installed.manifest.skills?.length ?? 0,
-          mcp: installed.manifest.mcpServers?.length ?? 0,
-          cli: installed.manifest.cliTools?.length ?? 0,
-        },
-        warnings: [],
-      };
+      declared = true;
     }
+  }
+  return { kind, directory, ...(file ? { file } : {}), declared };
+}
+
+function declaredCounts(manifest: ToolPackageManifest) {
+  return {
+    skills: manifest.skills?.length ?? 0,
+    mcp: manifest.mcpServers?.length ?? 0,
+    cli: manifest.cliTools?.length ?? 0,
+  };
+}
+
+/**
+ * Imports an explicit local source into the package store without executing
+ * anything or contacting the network.
+ *
+ * - A directory holding `tool-package.json` is installed unchanged (kind auto).
+ * - Otherwise the manifest is generated: every `SKILL.md` directory with its
+ *   resources (links, version control and node_modules skipped), MCP JSON in
+ *   Claude Desktop/Cursor (`mcpServers`) or VS Code (`servers`) form and
+ *   `cli.json` (`cliTools`), with sizes, SHA-256 and executable flags.
+ * - Configuration files and `.env` files are never copied; secret-looking env
+ *   or header values become environment references reported as warnings.
+ * - Runtime downloaders (npx, uvx, pipx, bunx, ...), PATH commands and files
+ *   outside the source are rejected, all problems in one error.
+ *
+ * Sources are read twice (hash, then copy); a change in between fails with
+ * TOOL_PACKAGE_CHANGED and registers nothing.
+ */
+export async function importLocal(
+  source: string,
+  root: string,
+  options: ToolPackImportOptions = {},
+): Promise<ToolPackImportResult> {
+  const resolved = await resolveSource(source, options);
+  if (resolved.declared) {
+    const installed = await installLocal(resolved.directory, root);
+    return {
+      installed,
+      format: "tool-package",
+      counts: declaredCounts(installed.manifest),
+      warnings: [],
+    };
   }
   const reader = await PackageReader.create();
   try {
-    return await generate(directory, file, kind, root, options, reader);
+    const planned = await generate(
+      resolved.directory,
+      resolved.file,
+      resolved.kind,
+      options,
+      reader,
+    );
+    const installed = await installGenerated(
+      planned.manifest,
+      (declared) =>
+        reader.read(
+          planned.files.get(declared.path)!.absolute,
+          limits.fileBytes,
+          { allowHardLinks: true },
+        ),
+      root,
+    );
+    return {
+      installed,
+      format: "generated",
+      counts: planned.counts,
+      warnings: planned.warnings,
+    };
   } finally {
     await reader.close();
   }
 }
 
+/**
+ * Computes what {@link importLocal} would register for `source` — identity,
+ * digest, counts and warnings — with the same validation and errors, but
+ * without creating, locking or changing any package store. Payload files are
+ * read and hashed once; nothing is executed. Two calls return the same digest
+ * exactly when `importLocal` would register the same content, so callers can
+ * detect a changed source before deciding to import it.
+ */
+export async function inspectImport(
+  source: string,
+  options: ToolPackImportOptions = {},
+): Promise<ToolPackImportInspection> {
+  const resolved = await resolveSource(source, options);
+  if (resolved.declared) {
+    const inspection = await inspectLocal(resolved.directory);
+    return {
+      manifest: inspection.manifest,
+      digest: inspection.digest,
+      format: "tool-package",
+      counts: declaredCounts(inspection.manifest),
+      warnings: [],
+    };
+  }
+  const reader = await PackageReader.create();
+  try {
+    const planned = await generate(
+      resolved.directory,
+      resolved.file,
+      resolved.kind,
+      options,
+      reader,
+    );
+    const inspection = parseManifest(planned.manifest);
+    return {
+      manifest: inspection.manifest,
+      digest: inspection.digest,
+      format: "generated",
+      counts: planned.counts,
+      warnings: planned.warnings,
+    };
+  } finally {
+    await reader.close();
+  }
+}
+
+interface GeneratedImport {
+  manifest: ToolPackageManifest;
+  /** Payload files by package-relative path. */
+  files: Map<string, { absolute: string }>;
+  counts: { skills: number; mcp: number; cli: number };
+  warnings: string[];
+}
+
+/** Builds the manifest of a simple-format source; registers nothing. */
 async function generate(
   directory: string,
   file: string | undefined,
   kind: ToolPackImportKind,
-  root: string,
   options: ToolPackImportOptions,
   reader: PackageReader,
-): Promise<ToolPackImportResult> {
+): Promise<GeneratedImport> {
   const exclude = new Set<string>([MANIFEST_NAME]);
   const configs = new Map<string, unknown>();
   const mcpFiles: string[] = [];
@@ -1206,21 +1319,9 @@ async function generate(
       options.version ??
       `auto-${hash(canonicalJson(declaration)).slice(0, 12)}`,
   };
-  const installed = await installGenerated(
-    manifest,
-    (declared) =>
-      reader.read(
-        payload.files.get(declared.path)!.absolute,
-        limits.fileBytes,
-        {
-          allowHardLinks: true,
-        },
-      ),
-    root,
-  );
   return {
-    installed,
-    format: "generated",
+    manifest,
+    files: payload.files,
     counts: { skills: skills.length, mcp: servers.length, cli: tools.length },
     warnings: [...payload.warnings, ...context.warnings],
   };
