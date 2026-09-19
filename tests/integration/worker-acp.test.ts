@@ -44,6 +44,7 @@ if (process.argv.includes("--acp-peer")) {
                 type: "text",
                 text: JSON.stringify({
                   ambient: process.env.HH_TEST_AMBIENT_SECRET ?? null,
+                  psModulePath: process.env.PSModulePath ?? null,
                   declared: process.env.HH_TEST_DECLARED_SECRET ?? null,
                   explicit: process.env.HH_TEST_EXPLICIT_VALUE ?? null,
                   home: process.env.HOME,
@@ -226,6 +227,8 @@ if (process.argv.includes("--acp-peer")) {
             ...process.env,
             HH_TEST_AMBIENT_SECRET: "must-not-leak",
             HH_TEST_DECLARED_SECRET: "declared-fixture",
+            // Windows PowerShell needs it to autoload modules quickly.
+            PSModulePath: "fixture-module-path",
           },
           stdio: ["ignore", "ignore", "ignore", "ipc"],
           execArgv: [],
@@ -253,6 +256,7 @@ if (process.argv.includes("--acp-peer")) {
       const temporary = join(directory, "backend", "tmp");
       assert.deepEqual(actual, {
         ambient: null,
+        psModulePath: "fixture-module-path",
         declared: "declared-fixture",
         explicit: "explicit-fixture",
         home,
