@@ -31,6 +31,8 @@ stdout 输出一行 `{"event":"ready","url":...}` 即为就绪。`--engine`（�
 
 所有带 `Content-Type: application/json` 但没有请求体的请求（包括 `/v1` 路由）按无请求体处理；非空但不是合法 JSON 的请求体仍被拒绝。
 
+`prompt_async` 提交的每一轮期限为 60 分钟（普通 `/v1` 入口的默认期限仍为 60 秒），与 INSTRUCTION.md 建议的客户端超时一致；超过期限的 Run 以 `RUN_TIMED_OUT` 结束并返回 502。
+
 `prompt_async` 的 `parts` 至少一项且只接受 `type:"text"`，多项文本以换行连接，总长不超过 1,048,576 个字符；`model` 必须是含字符串 `providerID`、`modelID` 的对象（可为空串），`agent` 可选。实际执行一律使用 HarnessHub 统一模型（ADR 0013），这两个字段目前只做校验，尚未写入 Run 记录。
 
 ## 错误
@@ -92,9 +94,9 @@ stdout 输出一行 `{"event":"ready","url":...}` 即为就绪。`--engine`（�
 `GET /event` 返回 `text/event-stream; charset=utf-8`，每帧为 `data: {"type":...,"properties":{...}}`：
 
 - 连接后先发 `server.connected`，之后每 15 秒发 `server.heartbeat`。
-- 事件只由已提交的 Run 事件驱动。每个 Run 先发 `session.status busy`，再发 `message.part.updated`（text 为该 part 的完整当前内容，tool 为当前状态，`step-finish` 在该步骤结束时发送）。Run 结束时，`failed`、`timed_out`、`interrupted` 先发 `session.error`（`error.message` 与 `error.data.code`、`error.data.runId`），随后若该 Session 没有其他未结束 Run，发 `session.status idle` 与 `session.idle`。即使 Run 在两次轮询之间开始并结束，也按这个顺序输出。
+- 事件只由已提交的 Run 事件驱动。每个 Run 先发 `session.status busy`，再发 `message.part.updated`（text 为该 part 的完整当前内容，tool 为当前状态，`step-finish` 在该步骤结束时发送）。Run 结束时，`failed`、`timed_out`、`interrupted` 先发 `session.error`（`error.message` 与 `error.data.code`、`error.data.runId`），随后若该 Run 结束时 Session 没有其他未结束 Run，发 `session.status idle` 与 `session.idle`。是否空闲按 Run 结束的时刻判断，而不是按事件被读取的时刻：即使 Run 在两次轮询之间开始并结束，或客户端在 `prompt_async` 返回后立即提交下一轮，每轮也都按 `busy`→`idle`→`session.idle` 的顺序输出。
 - 连接时不回放历史：正在运行的 Run 从当前位置继续，其 Session 先收到一次 `busy`；之后接收的 Run 从第一条事件开始推送。取消不产生 `session.error`。
-- 同一 Session 内上一个 Run 结束前已接收下一个 Run 时，两者之间不发 `idle`，避免在 Session 实际忙碌时发出空闲信号。
+- 同一 Session 内上一个 Run 结束前已接收（排队）下一个 Run 时，两者之间不发 `idle`，避免在 Session 实际忙碌时发出空闲信号。
 - 只轮询未结束或尚未推送完的 Run；经 `prompt_async` 提交的 Run 立即被跟踪，其他入口提交的 Run 最迟约 1 秒后被发现。Gateway 关闭时会结束所有事件流。
 
 ## 评测数据映射

@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import type { TestContext } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { COMPETITION_RUN_TIMEOUT_MS } from "../../src/gateway/competition/routes.js";
 import { startHub } from "../../src/main.js";
 
 type Hub = Awaited<ReturnType<typeof startHub>>;
@@ -790,11 +791,20 @@ void test(
     assert.equal(listed.at(-1)?.info?.finish, "stop");
     const runId = listed[0]?.id.split(":")[0];
     const run = await call<{
+      input: { timeoutMs: number };
+      createdAt: number;
+      deadlineAt: number;
       permissions: { decision?: string; status: string }[];
     }>(base, `/v1/runs/${runId}`);
     assert.deepEqual(
       run.value.permissions.map((permission) => permission.decision),
       ["fake-allow-once"],
+    );
+    // prompt_async Runs are not ended by the ordinary 60-second Gateway default.
+    assert.equal(run.value.input.timeoutMs, COMPETITION_RUN_TIMEOUT_MS);
+    assert.equal(
+      run.value.deadlineAt - run.value.createdAt,
+      COMPETITION_RUN_TIMEOUT_MS,
     );
 
     // A disconnected prompt_async client does not cancel its Run.

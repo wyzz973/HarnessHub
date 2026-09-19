@@ -127,7 +127,7 @@ for ($i = 0; $i -lt 180; $i++) {
    {"parts": [{"type": "text", "text": "请自动打开 Outlook 邮件客户端"}], "model": {"providerID": "provider_xxx", "modelID": "gpt-4"}, "agent": "assistant"}
    ```
 
-   该请求**阻塞到本轮结束**：成功或被中止返回 204（无响应体）；失败返回 502 `{"code":"BAD_GATEWAY","message":"<真实原因>"}`。`model` 可填任意值（只校验格式），实际一律使用第 3 节的统一模型。客户端超时要足够长（建议 ≥ 3600 秒）。
+   该请求**阻塞到本轮结束**：成功或被中止返回 204（无响应体）；失败返回 502 `{"code":"BAD_GATEWAY","message":"<真实原因>"}`。`model` 可填任意值（只校验格式），实际一律使用第 3 节的统一模型。客户端超时要足够长（建议 ≥ 3600 秒）：每一轮最长运行 60 分钟，超过后以 `RUN_TIMED_OUT` 结束并返回 502。
 
 4. **读取结果** `GET /session/{id}/message`，返回消息数组，最后一条为 assistant：
 
