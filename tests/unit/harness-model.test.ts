@@ -587,3 +587,32 @@ void test("the service exempts demo engines, rejects saving while the environmen
   );
   assert.equal(fromNowhere.active(), undefined);
 });
+
+void test("environment compatibility escape hatches reach the provider and are validated", () => {
+  const model = harnessModelFromEnvironment({
+    HARNESSHUB_MODEL: "GLM-V5_1-DX",
+    HARNESSHUB_MODEL_BASE_URL: "http://aigateway.example/v1",
+    HARNESSHUB_MODEL_DROP_PARAMETERS: " tool_choice, temperature ,",
+    HARNESSHUB_MODEL_REASONING: "strip",
+    HARNESSHUB_MODEL_IMAGES: "passthrough",
+  });
+  assert.deepEqual(model?.provider.compatibility, {
+    dropParameters: ["tool_choice", "temperature"],
+    reasoning: "strip",
+    images: "passthrough",
+  });
+  assert.throws(
+    () =>
+      harnessModelFromEnvironment({
+        HARNESSHUB_MODEL: "m",
+        HARNESSHUB_MODEL_BASE_URL: "https://x.example/v1",
+        HARNESSHUB_MODEL_REASONING: "drop",
+      }),
+    code("INVALID_HARNESS_MODEL"),
+  );
+  assert.throws(
+    () =>
+      harnessModelFromEnvironment({ HARNESSHUB_MODEL_DROP_PARAMETERS: "user" }),
+    code("INVALID_HARNESS_MODEL"),
+  );
+});

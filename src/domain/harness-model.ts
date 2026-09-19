@@ -25,6 +25,12 @@ export const harnessModelEnvironment = {
   protocol: "HARNESSHUB_MODEL_PROTOCOL",
   contextWindow: "HARNESSHUB_MODEL_CONTEXT_WINDOW",
   maxOutputTokens: "HARNESSHUB_MODEL_MAX_OUTPUT_TOKENS",
+  /** Comma-separated extra upstream parameters to remove (`compatibility.dropParameters`). */
+  dropParameters: "HARNESSHUB_MODEL_DROP_PARAMETERS",
+  /** `passthrough` or `strip` (`compatibility.reasoning`). */
+  reasoning: "HARNESSHUB_MODEL_REASONING",
+  /** `placeholder` or `passthrough` (`compatibility.images`). */
+  images: "HARNESSHUB_MODEL_IMAGES",
 } as const;
 
 export interface HarnessModelEngineStatus {

@@ -46,6 +46,9 @@ cd <CODE>
 | `HARNESSHUB_MODEL_PROTOCOL` | 否 | 默认 `openai-completions` |
 | `HARNESSHUB_MODEL_CONTEXT_WINDOW` | 否 | 上下文窗口，正整数 |
 | `HARNESSHUB_MODEL_MAX_OUTPUT_TOKENS` | 否 | 单次输出上限，正整数 |
+| `HARNESSHUB_MODEL_DROP_PARAMETERS` | 否 | 逗号分隔的额外去除参数；上游网关报"不支持某参数"时使用 |
+| `HARNESSHUB_MODEL_REASONING` | 否 | `passthrough`（默认）或 `strip`；上游拒绝回传推理内容时设为 `strip` |
+| `HARNESSHUB_MODEL_IMAGES` | 否 | `placeholder`（默认，图片换成文字说明）或 `passthrough`（上游支持视觉时） |
 
 ```powershell
 $env:HARNESSHUB_MODEL = "<模型ID>"

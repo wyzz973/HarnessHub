@@ -433,6 +433,9 @@ export function harnessModelFromEnvironment(
       names.protocol,
       names.contextWindow,
       names.maxOutputTokens,
+      names.dropParameters,
+      names.reasoning,
+      names.images,
     ].filter((name) => read(name) !== undefined);
     if (partial.length)
       invalid(`设置 ${partial.join("、")} 时必须同时设置 ${names.model}`);
@@ -448,6 +451,19 @@ export function harnessModelFromEnvironment(
   };
   const contextWindow = number(names.contextWindow);
   const maxOutputTokens = number(names.maxOutputTokens);
+  // Escape hatches for an unknown company gateway; values are validated by the
+  // same compatibility rules as a file or PUT source.
+  const dropParameters = read(names.dropParameters)
+    ?.split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+  const reasoning = read(names.reasoning);
+  const images = read(names.images);
+  const compatibility = {
+    ...(dropParameters?.length ? { dropParameters } : {}),
+    ...(reasoning !== undefined ? { reasoning } : {}),
+    ...(images !== undefined ? { images } : {}),
+  };
   return parseHarnessModel({
     model,
     provider: {
@@ -458,6 +474,7 @@ export function harnessModelFromEnvironment(
         : {}),
       ...(contextWindow !== undefined ? { contextWindow } : {}),
       ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+      ...(Object.keys(compatibility).length ? { compatibility } : {}),
     },
   });
 }

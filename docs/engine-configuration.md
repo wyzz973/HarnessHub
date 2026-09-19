@@ -24,6 +24,9 @@
 | `HARNESSHUB_MODEL_PROTOCOL` | 上游协议；缺省为 `openai-completions`，目前也只允许这个值 |
 | `HARNESSHUB_MODEL_CONTEXT_WINDOW` | 模型上下文窗口，正整数 token |
 | `HARNESSHUB_MODEL_MAX_OUTPUT_TOKENS` | 模型最大输出，正整数 token |
+| `HARNESSHUB_MODEL_DROP_PARAMETERS` | 逗号分隔的额外去除参数，对应 `compatibility.dropParameters`；上游网关拒绝某个参数时使用 |
+| `HARNESSHUB_MODEL_REASONING` | `passthrough`（默认）或 `strip`，对应 `compatibility.reasoning`；上游拒绝回传的 `reasoning_content` 时设为 `strip` |
+| `HARNESSHUB_MODEL_IMAGES` | `placeholder`（默认）或 `passthrough`，对应 `compatibility.images`；上游支持视觉时设为 `passthrough` |
 
 文件内容、settings 顶层 `model` 和 `PUT` 请求体都是同一个 `HarnessModel` 对象。以下为格式示意，尖括号内容需替换：
 
