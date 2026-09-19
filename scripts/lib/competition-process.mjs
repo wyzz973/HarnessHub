@@ -127,6 +127,12 @@ export function launcherCommand(entry, args, platform = process.platform) {
 /**
  * Start a process whose stdout/stderr are redacted into `logFile` and a bounded tail.
  *
+ * Stopping: on Windows `taskkill /T /F` ends the whole tree (the Gateway's Job helper then
+ * empties its Job). Elsewhere the child gets SIGTERM, which lets a Gateway close its Workers
+ * itself, then SIGKILL after the timeout. The child deliberately stays in the caller's
+ * process group: a Gateway started as its own session leader (setsid) was observed to be
+ * stopped mid-run on macOS, closing its listener after the first prompt.
+ *
  * @param {{entry: string, args?: string[], cwd?: string, env?: NodeJS.ProcessEnv,
  *   logFile?: string, redact?: (text: string) => string, onLine?: (line: string) => void}} options
  * @returns {{child: import("node:child_process").ChildProcess, exited: Promise<{code: number|null, signal: string|null}>,
@@ -141,7 +147,6 @@ export function startLoggedProcess(options) {
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
     windowsVerbatimArguments: launch.windowsVerbatimArguments === true,
-    detached: process.platform !== "win32",
   });
   const log = options.logFile
     ? createWriteStream(options.logFile, { flags: "a" })
@@ -195,22 +200,11 @@ export function startLoggedProcess(options) {
               () => resolve(),
             ),
           );
-        } else {
-          try {
-            process.kill(-child.pid, "SIGTERM");
-          } catch {
-            child.kill("SIGTERM");
-          }
-        }
+        } else child.kill("SIGTERM");
       }
       const outcome = await raceTimeout(exited, timeoutMs);
       if (outcome.timedOut && running()) {
-        try {
-          if (process.platform === "win32") child.kill("SIGKILL");
-          else process.kill(-child.pid, "SIGKILL");
-        } catch {
-          child.kill("SIGKILL");
-        }
+        child.kill("SIGKILL");
         await raceTimeout(exited, 5000);
       }
       if (log) await new Promise((resolve) => log.end(resolve));
