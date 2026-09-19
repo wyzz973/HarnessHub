@@ -31,7 +31,16 @@ function get(
 
 void test("loopback binding rejects a remote Host; an explicit non-loopback binding accepts it but still rejects cross-origin browsers", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "hh-host-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  // One hook in dependency order: Windows cannot delete the SQLite files of a
+  // Gateway that is still open, and after-hooks run in registration order.
+  const hubs: { server: { close(): Promise<unknown> } }[] = [];
+  t.after(async () => {
+    try {
+      for (const hub of hubs.reverse()) await hub.server.close();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
   const local = await startHub({
     dataDir: path.join(root, "local"),
@@ -40,7 +49,7 @@ void test("loopback binding rejects a remote Host; an explicit non-loopback bind
     port: 0,
     host: "127.0.0.1",
   });
-  t.after(() => local.server.close());
+  hubs.push(local);
   const localPort = Number(new URL(local.url).port);
   const refused = await get(localPort, "/health/live", {
     host: `10.1.2.3:${localPort}`,
@@ -55,7 +64,7 @@ void test("loopback binding rejects a remote Host; an explicit non-loopback bind
     port: 0,
     host: "0.0.0.0",
   });
-  t.after(() => shared.server.close());
+  hubs.push(shared);
   const sharedPort = Number(new URL(shared.url).port);
   const accepted = await get(sharedPort, "/health/live", {
     host: `10.1.2.3:${sharedPort}`,
