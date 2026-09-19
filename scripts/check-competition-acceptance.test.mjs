@@ -625,6 +625,12 @@ test("self-test proves startup, console, session directory creation and clean sh
     entry,
     engine: "opencode",
     timeoutMs: 30_000,
+    // A half-configured model environment must not fail a test that calls no model.
+    env: {
+      ...process.env,
+      HARNESSHUB_MODEL: "only-the-id",
+      harnesshub_model_api_key: "x",
+    },
   });
   assert.equal(passed.status, "PASS", JSON.stringify(passed.checks, null, 2));
   assert.deepEqual(

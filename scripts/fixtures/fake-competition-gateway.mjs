@@ -39,6 +39,13 @@ if (engine === "broken") {
 }
 const model = process.env.HARNESSHUB_MODEL;
 const upstreamBase = process.env.HARNESSHUB_MODEL_BASE_URL;
+// Like the real entry: a model id without its base URL refuses to start.
+if (model && !upstreamBase) {
+  console.error(
+    "设置 HARNESSHUB_MODEL 时必须同时设置 HARNESSHUB_MODEL_BASE_URL",
+  );
+  process.exit(1);
+}
 const apiKey = process.env.HARNESSHUB_MODEL_API_KEY;
 if (process.env.FAKE_PRINT_ENV === "1") {
   const vendorKeys = Object.keys(process.env).filter(

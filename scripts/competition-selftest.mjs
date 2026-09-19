@@ -97,6 +97,10 @@ export async function runSelfTest(options) {
   const remaining = () => Math.max(1000, deadline - Date.now());
   let readyEvent;
   const env = withoutVendorCredentials(options.env ?? process.env);
+  // The self-test never calls a model, so the operator's model variables must not decide
+  // its outcome: a partial set (model id exported before the base URL) stops the Gateway.
+  for (const name of Object.keys(env))
+    if (/^HARNESSHUB_MODEL(?:_|$)/i.test(name)) delete env[name];
   env.AGENT_ENGINE = engine;
   const processHandle = startLoggedProcess({
     entry,
