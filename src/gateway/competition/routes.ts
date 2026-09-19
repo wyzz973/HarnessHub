@@ -1,570 +1,520 @@
-import { once } from "node:events";
+import { mkdir } from "node:fs/promises";
+import type { ServerResponse } from "node:http";
+import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import type { FastifyInstance, FastifyReply } from "fastify";
+import type { FastifyInstance } from "fastify";
 import type { HubApplication } from "../../application/service.js";
 import { HubError } from "../../domain/errors.js";
 import { isTerminal } from "../../domain/types.js";
 import type {
-  AgentEvent,
   JsonObject,
   PermissionId,
+  PermissionRecord,
   RunId,
   RunRecord,
   SessionId,
   SessionRecord,
+  TerminalStatus,
 } from "../../domain/types.js";
+import { CompetitionRunFeed, streamCompetitionEvents } from "./events.js";
+import { RunTranscript, failureOf } from "./transcript.js";
+import type { CompetitionMessage } from "./transcript.js";
 
-type CompetitionErrorCode =
-  | "VALIDATION_ERROR"
-  | "NOT_FOUND"
-  | "INTERNAL_ERROR"
-  | "BAD_GATEWAY"
-  | "SERVICE_UNAVAILABLE";
+/** Error codes of Competition specification v1.1 section 7, with their HTTP status. */
+const errorStatus = {
+  VALIDATION_ERROR: 400,
+  NOT_FOUND: 404,
+  INTERNAL_ERROR: 500,
+  BAD_GATEWAY: 502,
+  SERVICE_UNAVAILABLE: 503,
+} as const;
+type CompetitionErrorCode = keyof typeof errorStatus;
 
-interface PromptBody {
-  parts: { type: "text"; text: string }[];
-  model: { providerID: string; modelID: string };
-  agent?: string;
-}
+const PROMPT_POLL_MS = 25;
+const PROMPT_TEXT_LIMIT = 1_048_576;
+const EVENT_PAGE = 1_000;
+const FLUSH_GRACE_MS = 1_000;
 
-function errorCode(error: unknown): {
-  status: number;
-  code: CompetitionErrorCode;
-  message: string;
-} {
-  if (error instanceof HubError) {
-    if (error.statusCode === 404)
-      return { status: 404, code: "NOT_FOUND", message: error.message };
-    if (error.statusCode >= 500)
-      return {
-        status: error.statusCode === 503 ? 503 : 502,
-        code: error.statusCode === 503 ? "SERVICE_UNAVAILABLE" : "BAD_GATEWAY",
-        message: error.message,
-      };
-    return { status: 400, code: "VALIDATION_ERROR", message: error.message };
+/** A failure whose code and message are returned verbatim as `{ code, message }`. */
+class CompetitionError extends Error {
+  constructor(
+    readonly code: CompetitionErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "CompetitionError";
   }
-  return {
-    status: 500,
-    code: "INTERNAL_ERROR",
-    message: error instanceof Error ? error.message : "Request failed",
-  };
 }
 
-function sendError(reply: FastifyReply, error: unknown) {
-  const mapped = errorCode(error);
-  return reply.code(mapped.status).send({
-    code: mapped.code,
-    message: mapped.message,
-  });
+function invalid(message: string): CompetitionError {
+  return new CompetitionError("VALIDATION_ERROR", message);
 }
 
-function requireObject(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new HubError(
-      "INVALID_REQUEST",
-      "Request body must be an object",
-      400,
-    );
-  return value as Record<string, unknown>;
+function codeForStatus(status: number): CompetitionErrorCode {
+  if (status === 404) return "NOT_FOUND";
+  if (status === 429 || status === 503) return "SERVICE_UNAVAILABLE";
+  if (status === 502 || status === 504) return "BAD_GATEWAY";
+  if (status >= 500) return "INTERNAL_ERROR";
+  return "VALIDATION_ERROR";
 }
 
-function stringField(
-  value: unknown,
-  name: string,
-  required = true,
-): string | undefined {
-  if (value === undefined && !required) return undefined;
-  if (typeof value !== "string" || !value.trim())
-    throw new HubError(
-      "INVALID_REQUEST",
-      `${name} must be a non-empty string`,
-      400,
-    );
+const fastifyMessages: Readonly<Record<string, string>> = {
+  FST_ERR_CTP_INVALID_JSON_BODY: "Request body is not valid JSON",
+  FST_ERR_CTP_EMPTY_JSON_BODY: "Request body is empty",
+  FST_ERR_CTP_BODY_TOO_LARGE: "Request body is too large",
+  FST_ERR_CTP_INVALID_MEDIA_TYPE:
+    "Unsupported Content-Type; send application/json",
+  FST_ERR_CTP_INVALID_CONTENT_LENGTH:
+    "Content-Length does not match the request body",
+};
+
+/**
+ * Maps any failure to the specification error body. HubError messages are public by
+ * contract; Fastify request errors get fixed messages; anything else is an internal
+ * error without detail.
+ */
+function competitionError(error: unknown): {
+  status: number;
+  body: { code: CompetitionErrorCode; message: string };
+} {
+  let code: CompetitionErrorCode = "INTERNAL_ERROR";
+  let message = "Request failed";
+  if (error instanceof CompetitionError) {
+    code = error.code;
+    message = error.message;
+  } else if (error instanceof HubError) {
+    code = codeForStatus(error.statusCode);
+    message = error.message;
+  } else if (isRecord(error)) {
+    const status = error.statusCode;
+    const fastifyCode = typeof error.code === "string" ? error.code : "";
+    if (error.validation !== undefined && typeof error.message === "string") {
+      code = "VALIDATION_ERROR";
+      message = error.message;
+    } else if (Object.hasOwn(fastifyMessages, fastifyCode)) {
+      code = "VALIDATION_ERROR";
+      message = fastifyMessages[fastifyCode] ?? message;
+    } else if (typeof status === "number" && status >= 400 && status < 500) {
+      code = codeForStatus(status);
+      message = "Request could not be accepted";
+    }
+  }
+  return { status: errorStatus[code], body: { code, message } };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function bodyObject(value: unknown): Record<string, unknown> {
+  if (value === undefined || value === null) return {};
+  if (!isRecord(value)) throw invalid("Request body must be a JSON object");
   return value;
 }
 
-function sessionBusy(app: HubApplication, id: SessionId): boolean {
-  return app.runs(id).some((run) => !isTerminal(run.status));
+function requiredString(value: unknown, name: string): string {
+  if (typeof value !== "string" || !value.trim())
+    throw invalid(`${name} is required and must be a non-empty string`);
+  return value;
+}
+
+function requireSession(app: HubApplication, id: string): SessionRecord {
+  try {
+    return app.getSession(id as SessionId);
+  } catch (error) {
+    if (error instanceof HubError && error.statusCode === 404)
+      throw new CompetitionError("NOT_FOUND", "Session not found");
+    throw error;
+  }
 }
 
 function titleOf(session: SessionRecord): string {
   const routing = session.configSnapshot?.routing;
-  if (routing && typeof routing === "object" && !Array.isArray(routing)) {
-    const competition = (routing as JsonObject).competition;
-    if (
-      competition &&
-      typeof competition === "object" &&
-      !Array.isArray(competition) &&
-      typeof (competition as JsonObject).title === "string"
-    )
-      return (competition as JsonObject).title as string;
-  }
-  return `Session ${String(session.id).slice(0, 8)}`;
+  const competition =
+    isRecord(routing) && isRecord(routing.competition)
+      ? routing.competition
+      : undefined;
+  return typeof competition?.title === "string"
+    ? competition.title
+    : `Session ${String(session.id).slice(0, 8)}`;
 }
 
-function sessionResponse(app: HubApplication, session: SessionRecord) {
+function sessionView(session: SessionRecord, busy: boolean) {
   return {
     id: session.id,
     title: titleOf(session),
     created_at: new Date(session.createdAt).toISOString(),
-    status: sessionBusy(app, session.id) ? "busy" : "idle",
+    status: busy ? "busy" : "idle",
+    directory: session.cwd,
   };
 }
 
-function textFromPrompt(body: unknown): PromptBody {
-  const input = requireObject(body);
+function hasUnfinished(runs: RunRecord[]): boolean {
+  return runs.some((run) => !isTerminal(run.status));
+}
+
+/** Messages of all Runs; each Run record is read before its events. */
+function sessionMessages(
+  app: HubApplication,
+  runs: RunRecord[],
+): CompetitionMessage[] {
+  const messages: CompetitionMessage[] = [];
+  for (const run of [...runs].sort((a, b) => a.generation - b.generation)) {
+    const transcript = new RunTranscript(run.id);
+    let cursor = 0;
+    for (;;) {
+      const page = app.events(run.id, cursor, EVENT_PAGE);
+      for (const event of page) {
+        transcript.apply(event);
+        cursor = event.seq;
+      }
+      if (page.length < EVENT_PAGE) break;
+    }
+    messages.push(...transcript.messages(run));
+  }
+  return messages;
+}
+
+function promptInput(body: unknown): { text: string } {
+  const input = bodyObject(body);
   if (!Array.isArray(input.parts) || input.parts.length === 0)
-    throw new HubError(
-      "INVALID_REQUEST",
-      "parts must be a non-empty array",
-      400,
-    );
-  const parts = input.parts.map((raw, index) => {
-    const part = requireObject(raw);
-    if (part.type !== "text")
-      throw new HubError(
-        "INVALID_REQUEST",
-        `parts[${index}].type must be text`,
-        400,
-      );
-    return {
-      type: "text" as const,
-      text: stringField(part.text, `parts[${index}].text`)!,
-    };
+    throw invalid("parts is required and must be a non-empty array");
+  const texts = input.parts.map((raw: unknown, index) => {
+    if (!isRecord(raw) || raw.type !== "text")
+      throw invalid(`parts[${index}].type must be text`);
+    if (typeof raw.text !== "string")
+      throw invalid(`parts[${index}].text must be a string`);
+    return raw.text;
   });
-  const modelInput = requireObject(input.model);
-  const model = {
-    providerID: stringField(modelInput.providerID, "model.providerID")!,
-    modelID: stringField(modelInput.modelID, "model.modelID")!,
+  const text = texts.join("\n");
+  if (!text.trim()) throw invalid("parts must contain non-empty text");
+  if (text.length > PROMPT_TEXT_LIMIT)
+    throw invalid(`prompt text exceeds ${PROMPT_TEXT_LIMIT} characters`);
+  if (!isRecord(input.model)) throw invalid("model is required");
+  requiredString(input.model.providerID, "model.providerID");
+  requiredString(input.model.modelID, "model.modelID");
+  if (input.agent !== undefined && typeof input.agent !== "string")
+    throw invalid("agent must be a string");
+  // model/agent are validated only: Runs use the HarnessHub unified model (ADR 0013).
+  return { text };
+}
+
+function describeFsError(error: unknown): string {
+  const code =
+    isRecord(error) && typeof error.code === "string" ? error.code : "";
+  const reasons: Record<string, string> = {
+    EACCES: "permission denied",
+    EPERM: "operation not permitted",
+    EEXIST: "a file with that name already exists",
+    ENOTDIR: "a parent path is not a directory",
+    ENOENT: "the drive or a parent path does not exist",
+    ENAMETOOLONG: "the path is too long",
+    EROFS: "the file system is read-only",
+    ENOSPC: "no space left on the device",
+    EINVAL: "the path is invalid",
+    ERR_INVALID_ARG_VALUE: "the path contains invalid characters",
   };
-  const agent = stringField(input.agent, "agent", false);
-  return { parts, model, ...(agent ? { agent } : {}) };
+  const reason = reasons[code] ?? "the file system rejected the path";
+  return code ? `${reason} (${code})` : reason;
 }
 
-function toolParts(events: AgentEvent[]) {
-  return events
-    .filter((event) => event.type === "tool.update")
-    .map((event) => {
-      const details = event.data.details;
-      const detailObject =
-        details && typeof details === "object" && !Array.isArray(details)
-          ? (details as JsonObject)
-          : undefined;
-      const tool =
-        (typeof detailObject?.toolName === "string" && detailObject.toolName) ||
-        (typeof detailObject?.title === "string" && detailObject.title) ||
-        "tool";
-      return {
-        type: "tool",
-        tool,
-        state: {
-          status: "completed",
-          title:
-            typeof event.data.text === "string"
-              ? event.data.text
-              : `${tool} completed`,
-        },
-      };
-    });
-}
-
-function messagesForRun(app: HubApplication, run: RunRecord) {
-  const events = app.events(run.id, 0, 1000);
-  const assistantParts: unknown[] = [];
-  if (run.output) assistantParts.push({ type: "text", content: run.output });
-  assistantParts.push(...toolParts(events));
-  if (isTerminal(run.status)) assistantParts.push({ type: "step-finish" });
-  const finish =
-    run.status === "completed"
-      ? "stop"
-      : isTerminal(run.status)
-        ? "stop"
-        : "tool-calls";
-  return [
-    {
-      id: `${run.id}:user`,
-      role: "user",
-      content: run.input.text,
-      created_at: new Date(run.createdAt).toISOString(),
-    },
-    {
-      id: `${run.id}:assistant`,
-      role: "assistant",
-      content: run.output ?? "",
-      created_at: new Date(run.finishedAt ?? run.createdAt).toISOString(),
-      info: { role: "assistant", finish },
-      parts: assistantParts,
-    },
-  ];
-}
-
-async function approvePendingPermissions(app: HubApplication, runId: RunId) {
-  const run = app.getRun(runId);
-  for (const permission of run.permissions) {
+/** Approves pending permissions of one Run with its allow-once option. */
+async function approvePending(
+  app: HubApplication,
+  permissions: PermissionRecord[],
+): Promise<void> {
+  for (const permission of permissions) {
     if (permission.status !== "pending") continue;
     const allow = permission.options.find(
       (option) => option.kind === "allow_once",
     );
-    if (allow) await app.decide(permission.id, allow.id);
+    if (!allow) continue;
+    try {
+      await app.decide(permission.id, allow.id);
+    } catch (error) {
+      // A permission can expire or be decided elsewhere between read and decision;
+      // the Run outcome, polled next, remains the result of this request.
+      if (
+        !(error instanceof HubError) ||
+        !["PERMISSION_EXPIRED", "PERMISSION_CONFLICT"].includes(error.code)
+      )
+        throw error;
+    }
   }
 }
 
-async function writeSse(reply: FastifyReply, payload: unknown) {
-  const writable = reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
-  if (!writable) await once(reply.raw, "drain");
+/** Polls one Run to a terminal record, approving permissions on the way. */
+async function settle(
+  app: HubApplication,
+  id: RunId,
+): Promise<RunRecord & { status: TerminalStatus }> {
+  for (;;) {
+    const run = app.getRun(id);
+    const status = run.status;
+    if (isTerminal(status)) return { ...run, status };
+    await approvePending(app, run.permissions);
+    await delay(PROMPT_POLL_MS);
+  }
 }
 
-function competitionEvent(
-  event: AgentEvent,
-  text: Map<string, string>,
-): unknown | undefined {
-  if (event.type === "message.delta") {
-    if (event.data.stream === "thought") return undefined;
-    const messageId =
-      typeof event.data.messageId === "string"
-        ? event.data.messageId
-        : `${event.runId}:assistant`;
-    const delta = typeof event.data.text === "string" ? event.data.text : "";
-    const content = `${text.get(messageId) ?? ""}${delta}`;
-    text.set(messageId, content);
-    return {
-      type: "message.part.updated",
-      properties: {
-        sessionID: event.sessionId,
-        messageID: messageId,
-        part: { type: "text", content },
-      },
+/**
+ * Ends a hijacked stream response and waits until it is flushed, so a closing server
+ * finds the keep-alive connection idle; a client that does not drain within
+ * `FLUSH_GRACE_MS` has its connection destroyed.
+ */
+async function finishResponse(response: ServerResponse): Promise<void> {
+  if (response.destroyed || response.writableFinished) return;
+  const settled = new Promise<void>((resolve) => {
+    const done = () => {
+      response.off("finish", done);
+      response.off("close", done);
+      resolve();
     };
+    response.on("finish", done);
+    response.on("close", done);
+  });
+  if (!response.writableEnded) response.end();
+  const timer = setTimeout(() => response.destroy(), FLUSH_GRACE_MS);
+  try {
+    await settled;
+  } finally {
+    clearTimeout(timer);
   }
-  if (event.type === "tool.update") {
-    const details = event.data.details;
-    const detailObject =
-      details && typeof details === "object" && !Array.isArray(details)
-        ? (details as JsonObject)
-        : undefined;
-    const tool =
-      (typeof detailObject?.toolName === "string" && detailObject.toolName) ||
-      (typeof detailObject?.title === "string" && detailObject.title) ||
-      "tool";
-    return {
-      type: "message.part.updated",
-      properties: {
-        sessionID: event.sessionId,
-        messageID: `${event.runId}:assistant`,
-        part: {
-          type: "tool",
-          tool,
-          state: {
-            status: "running",
-            title:
-              typeof event.data.text === "string"
-                ? event.data.text
-                : `${tool} running`,
-          },
-        },
-      },
-    };
-  }
-  if (event.type === "engine.error")
-    return {
-      type: "session.error",
-      properties: {
-        sessionID: event.sessionId,
-        error: {
-          message:
-            typeof event.data.message === "string"
-              ? event.data.message
-              : "Agent engine error",
-          data: event.data,
-        },
-      },
-    };
-  return undefined;
 }
 
-/** Competition v1.1 compatibility API. It projects HarnessHub Session/Run/Event state
- * without changing the native /v1 contract or the engine Driver interfaces. */
+function pendingPermissions(app: HubApplication): PermissionRecord[] {
+  return app
+    .runs()
+    .filter((run) => !isTerminal(run.status))
+    .flatMap((run) =>
+      app
+        .getRun(run.id)
+        .permissions.filter((permission) => permission.status === "pending"),
+    );
+}
+
+/**
+ * Registers the Competition v1.1 API in its own Fastify context. It projects
+ * HarnessHub Session/Run/Event state without changing the native `/v1` contract or
+ * Driver interfaces: every error, including body parsing, is `{ code, message }`;
+ * `/session` always uses `options.engineId` when given. Open `/event` streams are
+ * ended and awaited by the server's `preClose` hook, after the root hook has
+ * cancelled Runs so blocked `prompt_async` calls answer first.
+ */
 export function registerCompetitionRoutes(
   server: FastifyInstance,
   app: HubApplication,
   options: { engineId?: string } = {},
-) {
-  server.post("/session", async (request, reply) => {
-    try {
-      const body = requireObject(request.body);
-      const title = stringField(body.title, "title", false);
-      const directory = stringField(body.directory, "directory")!;
-      const session = await app.createSessionAtDirectory({
-        directory,
-        ...(options.engineId ? { engineId: options.engineId } : {}),
-        routing: {
-          competition: {
-            title: title ?? `Session ${new Date().toISOString()}`,
-          },
-        },
-      });
-      return reply.code(200).send(sessionResponse(app, session));
-    } catch (error) {
-      return sendError(reply, error);
-    }
-  });
+): void {
+  const feed = new CompetitionRunFeed();
+  const streams = new Map<AbortController, Promise<void>>();
+  void server.register(async (instance) => {
+    instance.setErrorHandler((error: unknown, _request, reply) => {
+      const mapped = competitionError(error);
+      return reply.code(mapped.status).send(mapped.body);
+    });
+    instance.addHook("preClose", async () => {
+      for (const controller of streams.keys()) controller.abort();
+      await Promise.allSettled([...streams.values()]);
+    });
 
-  server.get("/session/status", async (_request, reply) => {
-    try {
+    instance.post("/session", async (request, reply) => {
+      const body = bodyObject(request.body);
+      if (
+        body.title !== undefined &&
+        body.title !== null &&
+        typeof body.title !== "string"
+      )
+        throw invalid("title must be a string");
+      const title =
+        typeof body.title === "string" && body.title.trim()
+          ? body.title
+          : `Session ${new Date().toISOString()}`;
+      const directory = path.resolve(
+        requiredString(body.directory, "directory"),
+      );
+      try {
+        await mkdir(directory, { recursive: true });
+      } catch (error) {
+        throw invalid(
+          `directory ${JSON.stringify(directory)} could not be created: ${describeFsError(error)}`,
+        );
+      }
+      let session: SessionRecord;
+      try {
+        session = await app.createSessionAtDirectory({
+          directory,
+          ...(options.engineId ? { engineId: options.engineId } : {}),
+          routing: { competition: { title } } satisfies JsonObject,
+        });
+      } catch (error) {
+        if (error instanceof HubError && error.code === "ENGINE_UNAVAILABLE")
+          throw new CompetitionError("SERVICE_UNAVAILABLE", error.message);
+        throw error;
+      }
+      return reply.code(200).send(sessionView(session, false));
+    });
+
+    instance.get("/session/status", async () => {
+      const unfinished = new Set(
+        app
+          .runs()
+          .filter((run) => !isTerminal(run.status))
+          .map((run) => run.sessionId),
+      );
       const status: Record<string, { type: "idle" | "busy" }> = {};
       for (const session of app.sessions())
-        if (session.status === "open")
-          status[session.id] = {
-            type: sessionBusy(app, session.id) ? "busy" : "idle",
-          };
-      return reply.send(status);
-    } catch (error) {
-      return sendError(reply, error);
-    }
-  });
+        status[session.id] = {
+          type: unfinished.has(session.id) ? "busy" : "idle",
+        };
+      return status;
+    });
 
-  server.get<{ Params: { id: string } }>(
-    "/session/:id",
-    async (request, reply) => {
-      try {
-        const session = app.getSession(request.params.id as SessionId);
-        return reply.send({
-          ...sessionResponse(app, session),
-          message_count: app.runs(session.id).length * 2,
-        });
-      } catch (error) {
-        return sendError(reply, error);
-      }
-    },
-  );
+    instance.get<{ Params: { id: string } }>(
+      "/session/:id",
+      async (request) => {
+        const session = requireSession(app, request.params.id);
+        const runs = app.runs(session.id);
+        return {
+          ...sessionView(session, hasUnfinished(runs)),
+          message_count: sessionMessages(app, runs).length,
+        };
+      },
+    );
 
-  server.delete<{ Params: { id: string } }>(
-    "/session/:id",
-    async (request, reply) => {
-      try {
-        await app.closeSession(request.params.id as SessionId);
-        return reply.send({ ok: true });
-      } catch (error) {
-        return sendError(reply, error);
-      }
-    },
-  );
+    instance.delete<{ Params: { id: string } }>(
+      "/session/:id",
+      async (request) => {
+        const session = requireSession(app, request.params.id);
+        await app.closeSession(session.id);
+        return { ok: true };
+      },
+    );
 
-  server.post<{ Params: { id: string } }>(
-    "/session/:id/prompt_async",
-    async (request, reply) => {
-      try {
-        const sessionId = request.params.id as SessionId;
-        app.getSession(sessionId);
-        const body = textFromPrompt(request.body);
-        const text = body.parts.map((part) => part.text).join("\n");
-        const { run } = app.submit(sessionId, { text });
-        for (;;) {
-          await approvePendingPermissions(app, run.id);
-          const current = app.getRun(run.id);
-          if (isTerminal(current.status)) {
-            if (
-              current.status === "completed" ||
-              current.status === "cancelled"
-            )
-              return reply.code(204).send();
-            const message =
-              current.error?.message ??
-              current.stopReason ??
-              "Agent run failed";
-            return reply.code(502).send({ code: "BAD_GATEWAY", message });
-          }
-          await delay(25);
-        }
-      } catch (error) {
-        return sendError(reply, error);
-      }
-    },
-  );
+    instance.post<{ Params: { id: string } }>(
+      "/session/:id/prompt_async",
+      async (request, reply) => {
+        const session = requireSession(app, request.params.id);
+        const input = promptInput(request.body);
+        if (session.status !== "open")
+          throw invalid("Session is closed; create a new session");
+        const { run } = app.submit(session.id, input);
+        feed.publish(run.id);
+        // Blocks until the Run ends (specification 4.1); a client disconnect does
+        // not cancel the Run and permissions keep being approved until it ends.
+        const ended = await settle(app, run.id);
+        const failure = failureOf(ended.status, ended.error, ended.stopReason);
+        if (failure) throw new CompetitionError("BAD_GATEWAY", failure.message);
+        return reply.code(204).send();
+      },
+    );
 
-  server.get<{ Params: { id: string } }>(
-    "/session/:id/message",
-    async (request, reply) => {
-      try {
-        const sessionId = request.params.id as SessionId;
-        app.getSession(sessionId);
-        return reply.send(
-          app
-            .runs(sessionId)
-            .sort((a, b) => a.generation - b.generation)
-            .flatMap((run) => messagesForRun(app, run)),
-        );
-      } catch (error) {
-        return sendError(reply, error);
-      }
-    },
-  );
+    instance.get<{ Params: { id: string } }>(
+      "/session/:id/message",
+      async (request) => {
+        const session = requireSession(app, request.params.id);
+        return sessionMessages(app, app.runs(session.id));
+      },
+    );
 
-  const abortHandler = async (
-    request: { params: { id: string } },
-    reply: FastifyReply,
-  ) => {
-    try {
-      const sessionId = request.params.id as SessionId;
-      app.getSession(sessionId);
-      const active = app
-        .runs(sessionId)
-        .filter((run) => !isTerminal(run.status))
-        .sort((a, b) => b.generation - a.generation)[0];
-      if (active) await app.cancel(active.id);
-      return reply.send({ ok: true });
-    } catch (error) {
-      return sendError(reply, error);
-    }
-  };
-  server.post<{ Params: { id: string } }>("/session/:id/abort", abortHandler);
-  server.post<{ Params: { id: string } }>("/session/:id/stop", abortHandler);
+    const abort = async (request: { params: { id: string } }) => {
+      const session = requireSession(app, request.params.id);
+      for (const run of app.runs(session.id))
+        if (!isTerminal(run.status)) await app.cancel(run.id);
+      return { ok: true };
+    };
+    instance.post<{ Params: { id: string } }>("/session/:id/abort", abort);
+    instance.post<{ Params: { id: string } }>("/session/:id/stop", abort);
 
-  server.get("/question", async () => []);
-  server.post<{ Params: { id: string } }>(
-    "/question/:id/reply",
-    async (_request, reply) => reply.send({ ok: true }),
-  );
+    // Engines never ask questions through HarnessHub, so none can be pending.
+    instance.get("/question", async () => []);
+    instance.post<{ Params: { id: string } }>(
+      "/question/:id/reply",
+      async (request) => {
+        const body = bodyObject(request.body);
+        if (
+          !Array.isArray(body.answers) ||
+          !body.answers.every(
+            (answer: unknown) =>
+              Array.isArray(answer) &&
+              answer.every((item: unknown) => typeof item === "string"),
+          )
+        )
+          throw invalid("answers must be an array of string arrays");
+        throw new CompetitionError("NOT_FOUND", "Question not found");
+      },
+    );
 
-  server.get("/permission", async () => {
-    const pending = [];
-    for (const run of app.runs()) {
-      if (isTerminal(run.status)) continue;
-      for (const permission of app.getRun(run.id).permissions) {
-        if (permission.status !== "pending") continue;
-        pending.push({
-          id: permission.id,
-          sessionID: permission.sessionId,
-          permission: permission.prompt,
-          patterns: [],
-          created_at: new Date(permission.createdAt).toISOString(),
-        });
-      }
-    }
-    return pending;
-  });
+    instance.get("/permission", async () =>
+      pendingPermissions(app).map((permission) => ({
+        id: permission.id,
+        sessionID: permission.sessionId,
+        permission: permission.prompt,
+        patterns: [],
+        created_at: new Date(permission.createdAt).toISOString(),
+      })),
+    );
 
-  server.post<{ Params: { id: string } }>(
-    "/permission/:id/reply",
-    async (request, reply) => {
-      try {
-        const body = requireObject(request.body);
-        const requested = stringField(body.reply, "reply")!;
-        if (!["once", "always", "reject"].includes(requested))
-          throw new HubError(
-            "INVALID_REQUEST",
-            "reply must be once, always, or reject",
-            400,
-          );
+    instance.post<{ Params: { id: string } }>(
+      "/permission/:id/reply",
+      async (request) => {
+        const body = bodyObject(request.body);
+        const reply = body.reply;
+        if (reply !== "once" && reply !== "always" && reply !== "reject")
+          throw invalid("reply must be once, always, or reject");
+        if (body.message !== undefined && typeof body.message !== "string")
+          throw invalid("message must be a string");
         const permissionId = request.params.id as PermissionId;
-        let found:
-          | ReturnType<HubApplication["getRun"]>["permissions"][number]
-          | undefined;
-        for (const run of app.runs()) {
-          found = app
-            .getRun(run.id)
-            .permissions.find((permission) => permission.id === permissionId);
-          if (found) break;
-        }
-        if (!found)
-          throw new HubError(
-            "PERMISSION_NOT_FOUND",
-            "Permission not found",
-            404,
-          );
-        const kind = requested === "reject" ? "reject_once" : "allow_once";
-        const option = found.options.find(
+        const permission = pendingPermissions(app).find(
+          (candidate) => candidate.id === permissionId,
+        );
+        if (!permission)
+          throw new CompetitionError("NOT_FOUND", "Permission not found");
+        // HarnessHub decisions are single-use; "always" is applied as allow-once.
+        const kind = reply === "reject" ? "reject_once" : "allow_once";
+        const option = permission.options.find(
           (candidate) => candidate.kind === kind,
         );
         if (!option)
-          throw new HubError(
-            "PERMISSION_OPTION_UNAVAILABLE",
-            "Requested permission decision is not available",
-            400,
-          );
-        await app.decide(permissionId, option.id);
-        return reply.send({ ok: true });
-      } catch (error) {
-        return sendError(reply, error);
-      }
-    },
-  );
+          throw invalid("Requested permission decision is not available");
+        await app.decide(permission.id, option.id);
+        return { ok: true };
+      },
+    );
 
-  server.get("/event", async (request, reply) => {
-    reply.hijack();
-    reply.raw.writeHead(200, {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    });
-    const abort = new AbortController();
-    const onClose = () => abort.abort();
-    reply.raw.on("close", onClose);
-    const cursors = new Map<string, number>();
-    const states = new Map<string, "idle" | "busy">();
-    const text = new Map<string, string>();
-    let heartbeatAt = Date.now();
-    try {
-      await writeSse(reply, { type: "server.connected", properties: {} });
-      for (const run of app.runs()) cursors.set(run.id, run.lastSeq);
-      while (!abort.signal.aborted) {
-        const sessions = app
-          .sessions()
-          .filter((session) => session.status === "open");
-        for (const session of sessions) {
-          const state = sessionBusy(app, session.id) ? "busy" : "idle";
-          const previous = states.get(session.id);
-          if (previous !== state) {
-            states.set(session.id, state);
-            await writeSse(reply, {
-              type: "session.status",
-              properties: { sessionID: session.id, status: { type: state } },
-            });
-            if (state === "idle" && previous === "busy") {
-              await writeSse(reply, {
-                type: "session.idle",
-                properties: { sessionID: session.id },
-              });
-              const last = app
-                .runs(session.id)
-                .sort((a, b) => b.generation - a.generation)[0];
-              if (last)
-                await writeSse(reply, {
-                  type: "message.part.updated",
-                  properties: {
-                    sessionID: session.id,
-                    messageID: `${last.id}:assistant`,
-                    part: { type: "step-finish" },
-                  },
-                });
-            }
-          }
+    instance.get("/event", async (_request, reply) => {
+      reply.hijack();
+      const response = reply.raw;
+      response.writeHead(200, {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      });
+      const controller = new AbortController();
+      const close = () => controller.abort();
+      response.on("close", close);
+      const lifecycle = (async () => {
+        try {
+          await streamCompetitionEvents(app, feed, response, controller.signal);
+        } catch (error) {
+          if (!controller.signal.aborted)
+            response.destroy(
+              error instanceof Error
+                ? error
+                : new Error("Competition event stream failed"),
+            );
+        } finally {
+          response.off("close", close);
+          await finishResponse(response);
         }
-        for (const run of app.runs()) {
-          const cursor = cursors.get(run.id) ?? 0;
-          const events = app.events(run.id, cursor, 100);
-          for (const event of events) {
-            const projected = competitionEvent(event, text);
-            if (projected) await writeSse(reply, projected);
-            cursors.set(run.id, event.seq);
-          }
-        }
-        if (Date.now() - heartbeatAt >= 15_000) {
-          heartbeatAt = Date.now();
-          await writeSse(reply, { type: "server.heartbeat", properties: {} });
-        }
-        await delay(25, undefined, { signal: abort.signal });
+      })();
+      streams.set(controller, lifecycle);
+      try {
+        await lifecycle;
+      } finally {
+        streams.delete(controller);
       }
-    } catch (error) {
-      if (!abort.signal.aborted)
-        reply.raw.destroy(
-          error instanceof Error
-            ? error
-            : new Error("Competition event stream failed"),
-        );
-    } finally {
-      reply.raw.off("close", onClose);
-    }
+    });
   });
 }

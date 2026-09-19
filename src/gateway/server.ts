@@ -66,6 +66,30 @@ export async function createGateway(
     bodyLimit: 2 * 1024 * 1024,
     ajv: { customOptions: { removeAdditional: false } },
   });
+  // Clients often send `Content-Type: application/json` on bodiless DELETE/POST.
+  // A zero-length body is treated as absent; any other body keeps Fastify's
+  // default parser, so invalid JSON and prototype poisoning are still rejected.
+  const parseJson = server.getDefaultJsonParser(
+    server.initialConfig.onProtoPoisoning ?? "error",
+    server.initialConfig.onConstructorPoisoning ?? "error",
+  );
+  server.addContentTypeParser<string>(
+    "application/json",
+    { parseAs: "string" },
+    (request, body, done) => {
+      if (body.length === 0) return done(null, undefined);
+      const parsed = parseJson(request, body, done);
+      // The default parser is callback-style; its declared type also admits a promise.
+      if (parsed instanceof Promise)
+        parsed.then(
+          (value: unknown) => done(null, value),
+          (error: unknown) =>
+            done(
+              error instanceof Error ? error : new Error("Invalid JSON body"),
+            ),
+        );
+    },
+  );
   server.addHook("onRoute", (route) => {
     const method = Array.isArray(route.method) ? route.method[0] : route.method;
     const apiPath = route.url.replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, "{$1}");
