@@ -1,5 +1,5 @@
 diff --git a/dist/live-checkpoint-Gw2oGjhe.js b/dist/live-checkpoint-Gw2oGjhe.js
-index 1a7748c185233a94929b6bc8c8021098e33f0650..0974edc6ac5f084800502b77d1ab52e941c2078b 100644
+index 1a7748c185233a94929b6bc8c8021098e33f0650..273b2e422e8a4f91ea83474def5f22b210b6b480 100644
 --- a/dist/live-checkpoint-Gw2oGjhe.js
 +++ b/dist/live-checkpoint-Gw2oGjhe.js
 @@ -2446,6 +2446,11 @@ const DECISION_FALLBACK_ORDER = {
@@ -14,11 +14,72 @@ index 1a7748c185233a94929b6bc8c8021098e33f0650..0974edc6ac5f084800502b77d1ab52e9
  	const matched = pickOption(params.options ?? [], DECISION_FALLBACK_ORDER[decision.outcome]);
  	return matched ? selected(matched.optionId) : cancelled();
  }
+@@ -4163,10 +4168,18 @@ var AcpClient = class {
+ 		return Boolean(this.initResult?.agentCapabilities?.sessionCapabilities?.list);
+ 	}
+ 	setEventHandlers(handlers) {
+-		this.eventHandlers = { ...handlers };
++		this.eventHandlers = {
++			onAcpMessage: this.options.onAcpMessage,
++			...handlers
++		};
+ 	}
+ 	clearEventHandlers() {
+-		this.eventHandlers = {};
++		this.eventHandlers = { onAcpMessage: this.options.onAcpMessage };
++	}
++	observeAgentProcess(event) {
++		try {
++			this.options.onAgentProcess?.(event);
++		} catch {}
+ 	}
+ 	updateRuntimeOptions(options) {
+ 		const shouldRefreshPermissionPolicy = options.permissionMode !== void 0 || options.nonInteractivePermissions !== void 0;
+@@ -4211,6 +4224,13 @@ var AcpClient = class {
+ 		this.logAgentLaunch(launch);
+ 		await this.ensureLaunchSupport(launch);
+ 		const child = await this.spawnAgentProcess(launch);
++		this.observeAgentProcess({
++			type: "spawn",
++			pid: child.pid,
++			command: launch.spawnCommand,
++			args: [...launch.args],
++			cwd: this.options.cwd
++		});
+ 		this.closing = false;
+ 		this.agentStartedAt = isoNow$1();
+ 		this.lastAgentExit = void 0;
+@@ -4218,6 +4238,11 @@ var AcpClient = class {
+ 		this.attachAgentLifecycleObservers(child);
+ 		const startupStderr = [];
+ 		child.stderr.on("data", (chunk) => {
++			this.observeAgentProcess({
++				type: "stderr",
++				pid: child.pid,
++				data: chunk
++			});
+ 			this.captureStartupStderr(startupStderr, chunk);
+ 			if (!this.options.verbose) return;
+ 			process.stderr.write(chunk);
+@@ -5045,6 +5070,13 @@ var AcpClient = class {
+ 			reason,
+ 			unexpectedDuringPrompt: !this.closing && Boolean(this.activePrompt)
+ 		};
++		this.observeAgentProcess({
++			type: "exit",
++			pid: this.lastKnownPid,
++			reason,
++			code: exitCode,
++			signal
++		});
+ 		this.rejectPendingConnectionRequests(new AgentDisconnectedError(reason, exitCode, signal, { outputAlreadyEmitted: Boolean(this.activePrompt) }));
+ 	}
+ 	notePromptPermissionFailure(sessionId, error) {
 diff --git a/dist/runtime.d.ts b/dist/runtime.d.ts
-index 0a6b870fe71e430a6f174ebcb3b84e0e67b91a31..604be9eecf93eb8146c4eb06f4ea7e86accf7959 100644
+index 0a6b870fe71e430a6f174ebcb3b84e0e67b91a31..b543ff029b887df0bb73267c276691aeca92072d 100644
 --- a/dist/runtime.d.ts
 +++ b/dist/runtime.d.ts
-@@ -303,6 +303,10 @@ type AcpRuntimeOptions = {
+@@ -303,6 +303,33 @@ type AcpRuntimeOptions = {
    agentRegistry: AcpAgentRegistry;
    mcpServers?: McpServer$1[];
    permissionMode: PermissionMode;
@@ -26,24 +87,53 @@ index 0a6b870fe71e430a6f174ebcb3b84e0e67b91a31..604be9eecf93eb8146c4eb06f4ea7e86
 +  fs?: boolean;
 +  /** Advertise client terminal operations. Omission preserves the client default. */
 +  terminal?: boolean;
++  /**
++   * Observes every JSON-RPC message between this runtime's clients and the agent
++   * ("inbound" = from the agent). Called synchronously on the stream; must not throw.
++   */
++  onAcpMessage?: (direction: "inbound" | "outbound", message: unknown) => void;
++  /** Observes agent process spawn, raw stderr chunks and the first exit. Observer errors are ignored. */
++  onAgentProcess?: (event: {
++    type: "spawn";
++    pid?: number;
++    command: string;
++    args: string[];
++    cwd: string;
++  } | {
++    type: "stderr";
++    pid?: number;
++    data: Buffer | string;
++  } | {
++    type: "exit";
++    pid?: number;
++    reason: string;
++    code: number | null;
++    signal: string | null;
++  }) => void;
    nonInteractivePermissions?: NonInteractivePermissionPolicy;
    permissionPolicy?: PermissionPolicy;
    timeoutMs?: number;
 diff --git a/dist/runtime.js b/dist/runtime.js
-index a81099ac96b219c8035c75427c7ebf839fb677ee..0e0722fef5d49089ff34e6dbf5292339b143e247 100644
+index a81099ac96b219c8035c75427c7ebf839fb677ee..56670f0a3f5ca41db3fb10ee5c7f9f51ae0b9571 100644
 --- a/dist/runtime.js
 +++ b/dist/runtime.js
-@@ -788,7 +788,8 @@ var AcpRuntimeManager = class {
+@@ -788,7 +788,14 @@ var AcpRuntimeManager = class {
  		this.deps = deps;
  	}
  	createClient(options) {
 -		return this.deps.clientFactory?.(options) ?? new AcpClient(options);
-+		const clientOptions = { ...options, fs: this.options.fs, terminal: this.options.terminal };
++		const clientOptions = {
++			...options,
++			fs: this.options.fs,
++			terminal: this.options.terminal,
++			onAcpMessage: this.options.onAcpMessage,
++			onAgentProcess: this.options.onAgentProcess
++		};
 +		return this.deps.clientFactory?.(clientOptions) ?? new AcpClient(clientOptions);
  	}
  	createSessionOwner(input) {
  		const owner = {
-@@ -1897,6 +1898,8 @@ function createProbeClient(options, agentCommand, deps) {
+@@ -1897,9 +1904,13 @@ function createProbeClient(options, agentCommand, deps) {
  		cwd: options.cwd,
  		mcpServers: [...options.mcpServers ?? []],
  		permissionMode: options.permissionMode,
@@ -51,9 +141,15 @@ index a81099ac96b219c8035c75427c7ebf839fb677ee..0e0722fef5d49089ff34e6dbf5292339
 +		terminal: options.terminal,
  		nonInteractivePermissions: options.nonInteractivePermissions,
  		permissionPolicy: options.permissionPolicy,
- 		verbose: options.verbose
+-		verbose: options.verbose
++		verbose: options.verbose,
++		onAcpMessage: options.onAcpMessage,
++		onAgentProcess: options.onAgentProcess
+ 	};
+ 	return deps.clientFactory?.(clientOptions) ?? new AcpClient(clientOptions);
+ }
 diff --git a/dist/session-options-DwRDODlr.d.ts b/dist/session-options-DwRDODlr.d.ts
-index c3da1645235bbea22de3f8484149051cd7dca56b..b5c43ec78ceb446ec9429c90f1113665ca2a766a 100644
+index c3da1645235bbea22de3f8484149051cd7dca56b..68637ef95d7976f5ab1c461c61607f7e60797927 100644
 --- a/dist/session-options-DwRDODlr.d.ts
 +++ b/dist/session-options-DwRDODlr.d.ts
 @@ -9,6 +9,10 @@ type AcpPermissionRequest = {
