@@ -26,6 +26,7 @@
 5. 调用 [prepare-git.mjs](../scripts/prepare-git.mjs) 的 `--root --arch`，准备 PortableGit 及来源 receipt。
 6. 调用 [prepare-openclaw.mjs](../scripts/prepare-openclaw.mjs) 的 `--package`，仅完成固定 OpenClaw 的官方 lifecycle；这是明确的开发机步骤，npm总体安装仍禁用自动生命周期脚本。
 7. 将仓库 [工具包示例](tool-packages.md) 的实际文件复制到 `tools`，将 [vendor-notices](../distribution/vendor-notices) 的固定许可证与来源记录复制到各引擎的同名目录，再调用 [prepare-engine-catalog.mjs](../scripts/prepare-engine-catalog.mjs) 的 `--root --arch`，最后生成只含相对模板的 `prepared.json`。
+   Kimi 是 Python 程序：目录给其注册环境加 `PYTHONUTF8=1`、`PYTHONIOENCODING=utf-8`，否则 Windows 上 stdout 管道使用 ANSI 代码页，回复中含该代码页之外的字符（cp1252 上的中文、cp936 上的 emoji）时 CLI 在任务完成后以 `'charmap' codec can't encode` 退出；CLI Driver 按 UTF-8 解码输出。
 
 两个可选参数只改变下载来源，不改变上述顺序：`--skip-binaries cursor,antigravity` 不下载 [binary-sources.json](../distribution/binary-sources.json) 中列出的条目（这两项没有固定 hash，也不进入开源版），对应引擎不会出现在 `prepared.json` 中，`--check` 必须传同样的列表，跳过的条目记入 `preparation-receipt.json`；`--seven-zip <7z.exe 绝对路径>` 用已安装的 7-Zip 解开 PortableGit，不再下载无版本号的 `7-zip.org/a/7zr.exe`，PortableGit 自身仍校验固定 SHA-256。x64 CI 同时使用这两个参数。
 
