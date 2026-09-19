@@ -28,7 +28,7 @@ Release 附件的完整校验、分片重组及系统 PowerShell 解压流程见
 
 `hub.cmd doctor --full` 检查清单和文件，并显示统一模型状态；`hub.cmd smoke` 只检查程序和协议能否启动。这两个命令都不调用模型，不能证明模型有效或任务正确。修改 settings 或 `hub.cmd model set` 后，需要重启发行服务并创建新 Session；控制台的统一模型页（`PUT /v1/harness/model`）对运行中的服务立即生效，已有 Session 保留原 revision。已保存的控制台 overlay 和历史不会被配置文件偷偷覆盖，但配置统一模型后，overlay 中引擎的模型和 Provider 同样会被统一模型覆盖。
 
-Codex/Gemini 的本地 Driver bridge 将支持的文本/函数工具协议转为 Chat Completions，限制见 [ADR 0011](decisions/0011-chat-completions-bridge.md)。统一模型下各引擎如何经 Worker 模型网关接入，见 [ADR 0013](decisions/0013-unified-model-gateway.md)。公司网关的其他差异在公司现有实现上合并；公司真实模型测试须按公司授权额度另行执行。`POST /v1/harness/model/test` 会实际调用模型。
+所有引擎都经 Worker 内的 [统一模型网关](model-gateway.md) 访问公司模型：Codex 的 Responses、Claude Code 的 Anthropic Messages、Gemini 的 Google 协议和其他引擎的 Chat Completions 都转换为公司的流式 Chat Completions，决定见 [ADR 0013](decisions/0013-unified-model-gateway.md)。公司网关的其他差异在公司现有实现上合并；公司真实模型测试须按公司授权额度另行执行。`POST /v1/harness/model/test` 会实际调用模型。
 
 ## 工具与后续开发
 
