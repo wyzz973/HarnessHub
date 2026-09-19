@@ -1,0 +1,150 @@
+name: Competition real-model acceptance x64
+
+# Runs a released Windows x64 competition layout on GitHub-hosted Windows x64 machines against
+# a real model. The model is reached through a temporary strict endpoint owned by the developer
+# (stream-only Chat Completions, one fixed model id); its upstream key never enters GitHub.
+# HH_REAL_BASE_URL and HH_REAL_TOKEN are a throw-away URL and bearer token that are deleted
+# after the session. One job per engine; each job selects its engine only through AGENT_ENGINE.
+on:
+  push:
+    branches:
+      - ci/x64-real-model
+  workflow_dispatch:
+
+concurrency:
+  group: competition-real-model-x64-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  engine:
+    name: ${{ matrix.engine }} (${{ vars.HH_REAL_LAYOUT || 'bundle' }}, real model)
+    runs-on: windows-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: ${{ fromJSON(vars.HH_REAL_ENGINES_JSON || '["opencode","codex","qwen","hermes","pi","gemini","mimo","dsh","openclaw","kimi"]') }}
+    env:
+      LAYOUT: ${{ vars.HH_REAL_LAYOUT || 'bundle' }}
+      BUNDLE_TAG: ${{ vars.HH_REAL_BUNDLE_TAG || 'competition-latest' }}
+      KIT_TAG: ${{ vars.HH_REAL_KIT_TAG || 'offline-dev-latest' }}
+      HARNESSHUB_MODEL: ${{ vars.HH_REAL_MODEL || 'GLM-V5_1-DX' }}
+      HARNESSHUB_MODEL_CONTEXT_WINDOW: ${{ vars.HH_REAL_CONTEXT_WINDOW || '131072' }}
+      HARNESSHUB_MODEL_MAX_OUTPUT_TOKENS: ${{ vars.HH_REAL_MAX_OUTPUT_TOKENS || '8192' }}
+      OFFLINE: ${{ vars.HH_REAL_OFFLINE || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Probe the temporary model endpoint (streaming request)
+        env:
+          HH_REAL_BASE_URL: ${{ secrets.HH_REAL_BASE_URL }}
+          HH_REAL_TOKEN: ${{ secrets.HH_REAL_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not $env:HH_REAL_BASE_URL -or -not $env:HH_REAL_TOKEN) { throw "Secrets HH_REAL_BASE_URL and HH_REAL_TOKEN are required" }
+          $body = @{ model = $env:HARNESSHUB_MODEL; stream = $true; messages = @(@{ role = "user"; content = "Reply with exactly: OK" }) } | ConvertTo-Json -Depth 5 -Compress
+          $bodyFile = Join-Path $env:RUNNER_TEMP "probe.json"
+          [IO.File]::WriteAllText($bodyFile, $body)
+          $text = & curl.exe -sS -N --max-time 90 -X POST "$env:HH_REAL_BASE_URL/chat/completions" -H "authorization: Bearer $env:HH_REAL_TOKEN" -H "content-type: application/json" --data-binary "@$bodyFile" | Out-String
+          if ($LASTEXITCODE -ne 0 -or $text -notmatch '"finish_reason":"stop"') { throw "The model endpoint did not stream a finished answer" }
+          "Model endpoint streams a finished answer for $env:HARNESSHUB_MODEL" | Write-Host
+
+      - name: Download and verify the released x64 competition bundle
+        if: env.LAYOUT == 'bundle'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $zipName = "harnesshub-competition-full-windows-x64.zip"
+          $downloads = Join-Path $env:RUNNER_TEMP "downloads"
+          gh release download $env:BUNDLE_TAG --repo $env:GITHUB_REPOSITORY --pattern "$zipName*" --dir $downloads
+          if ($LASTEXITCODE -ne 0) { throw "Download of $env:BUNDLE_TAG failed" }
+          $zip = Join-Path $downloads $zipName
+          $expected = ((Get-Content -Raw -LiteralPath "$zip.sha256").Trim() -split '\s+')[0]
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "ZIP SHA-256 mismatch: $actual" }
+          $layout = Join-Path $env:RUNNER_TEMP "hh-real\bundle"
+          & (Join-Path $env:ProgramFiles "7-Zip\7z.exe") x -y "-o$layout" $zip | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Failed to extract the x64 ZIP" }
+          Remove-Item -LiteralPath $zip -Force
+          "REAL_LAYOUT=$layout" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "REAL_ENTRY=$(Join-Path $layout 'gateway.cmd')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "Bundle $env:BUNDLE_TAG ($actual) extracted" | Write-Host
+
+      - name: Download the offline dev kit and run its offline setup
+        if: env.LAYOUT == 'kit'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $downloads = Join-Path $env:RUNNER_TEMP "downloads"
+          gh release download $env:KIT_TAG --repo $env:GITHUB_REPOSITORY --dir $downloads
+          if ($LASTEXITCODE -ne 0) { throw "Download of $env:KIT_TAG failed" }
+          Get-ChildItem $downloads | Format-Table Name, Length | Out-String | Write-Host
+          $sevenZip = Join-Path $env:ProgramFiles "7-Zip\7z.exe"
+          $first = Get-ChildItem $downloads -File | Where-Object { $_.Name -match '\.(zip|7z\.001)$' } | Select-Object -First 1
+          if (-not $first) { throw "No kit archive found in $env:KIT_TAG" }
+          $root = Join-Path $env:RUNNER_TEMP "hh-real\kit"
+          & $sevenZip x -y "-o$root" $first.FullName | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Failed to extract the kit" }
+          $setup = Get-ChildItem $root -Recurse -Filter "Setup-Competition-Offline.cmd" | Select-Object -First 1
+          if (-not $setup) { throw "Setup-Competition-Offline.cmd not found" }
+          $code = $setup.DirectoryName
+          # Same as a judge machine: no Node, pnpm or Git on PATH, registry pointed nowhere.
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem;$env:SystemRoot\System32\WindowsPowerShell\v1.0"
+          $env:npm_config_registry = "http://127.0.0.1:9/"
+          $env:COREPACK_ENABLE_NETWORK = "0"
+          & cmd.exe /d /c "`"$($setup.FullName)`""
+          if ($LASTEXITCODE -ne 0) { throw "Setup-Competition-Offline.cmd failed with exit $LASTEXITCODE" }
+          $layout = Join-Path $code "competition"
+          "REAL_LAYOUT=$layout" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "REAL_ENTRY=$(Join-Path $code 'Start-Competition.cmd')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Block direct internet access for the layout programs (model endpoint only)
+        if: env.OFFLINE == 'true'
+        env:
+          HH_REAL_BASE_URL: ${{ secrets.HH_REAL_BASE_URL }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          # Windows Firewall block rules win over allow rules, so each program is blocked for
+          # every remote IPv4 range except the model endpoint addresses, and for all IPv6.
+          $modelHost = ([Uri]$env:HH_REAL_BASE_URL).Host
+          $allowed = [Net.Dns]::GetHostAddresses($modelHost) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | ForEach-Object { $_.ToString() } | Sort-Object -Unique
+          if (-not $allowed) { throw "Could not resolve the model endpoint host" }
+          function ToInt([string]$ip) { $b = ([Net.IPAddress]::Parse($ip)).GetAddressBytes(); [Array]::Reverse($b); [BitConverter]::ToUInt32($b, 0) }
+          function ToIp([uint32]$n) { $b = [BitConverter]::GetBytes($n); [Array]::Reverse($b); ([Net.IPAddress]::new($b)).ToString() }
+          $ranges = @(); $start = [uint32]0
+          foreach ($n in ($allowed | ForEach-Object { ToInt $_ } | Sort-Object)) {
+            if ($n -gt $start) { $ranges += "$(ToIp $start)-$(ToIp ([uint32]($n - 1)))" }
+            $start = [uint32]([uint64]$n + 1)
+          }
+          $ranges += "$(ToIp $start)-255.255.255.255"
+          $programs = Get-ChildItem -LiteralPath $env:REAL_LAYOUT -Recurse -File -Include *.exe | Select-Object -ExpandProperty FullName
+          foreach ($program in $programs) {
+            New-NetFirewallRule -DisplayName "hh-offline-v4" -Direction Outbound -Action Block -Program $program -RemoteAddress $ranges | Out-Null
+            New-NetFirewallRule -DisplayName "hh-offline-v6" -Direction Outbound -Action Block -Program $program -RemoteAddress "::/0" | Out-Null
+          }
+          "Blocked $($programs.Count) layout programs except $($allowed -join ', ')" | Write-Host
+
+      - name: Run the competition acceptance against the real model
+        env:
+          HARNESSHUB_MODEL_BASE_URL: ${{ secrets.HH_REAL_BASE_URL }}
+          HARNESSHUB_MODEL_API_KEY: ${{ secrets.HH_REAL_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = Join-Path $env:RUNNER_TEMP "hh-real\results"
+          $node = Join-Path $env:REAL_LAYOUT "runtime\node.exe"
+          & $node scripts/competition-matrix.mjs --bundle $env:REAL_LAYOUT --entry $env:REAL_ENTRY --engines "${{ matrix.engine }}" --out $out --scenario full --with-console --engine-timeout-ms 2400000 --summary $env:GITHUB_STEP_SUMMARY
+          if ($LASTEXITCODE -ne 0) { throw "${{ matrix.engine }} did not pass the real-model acceptance; see the job summary and artifact" }
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-x64-${{ env.LAYOUT }}-${{ matrix.engine }}
+          path: ${{ runner.temp }}/hh-real/results
+          if-no-files-found: warn
+          retention-days: 7
