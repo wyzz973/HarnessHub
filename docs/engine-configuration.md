@@ -1,6 +1,79 @@
 # 引擎独立配置
 
-控制台“引擎管理”中，每个已注册引擎有“配置”和“检查连接”入口。配置弹窗支持模型、Provider / URL / API Key、Skills、MCP 和环境变量；保存后生成新 revision，已有 Session 不切换配置。接口字段由 [配置类型与 schema](../src/domain/engine-configuration.ts)定义，决定见 [ADR 0006](decisions/0006-engine-configuration.md)。
+## 统一模型
+
+配置统一模型后，所有引擎只使用 HarnessHub 配置的同一个模型，不能再使用引擎自带的 API Key、登录态、订阅或各自的 Provider。类型见 [统一模型定义](../src/domain/harness-model.ts)，决定见 [ADR 0013](decisions/0013-unified-model-gateway.md)，实现见 [统一模型服务](../src/application/harness-model.ts)。未配置统一模型时，本页后续的逐引擎配置保持原有行为。
+
+### 三种配置方式
+
+三种来源任选其一；同时存在时按下表优先级取用，低优先级来源被忽略。启动时会校验所有已提供的来源，任何一个无效都会导致启动失败；模型文件不存在视为未配置。
+
+| 优先级 | 来源 | 写入方式 | 生效范围 |
+|---|---|---|---|
+| 1 | 环境变量 `HARNESSHUB_MODEL*` | 启动前由评测系统或启动脚本设置 | 仅本次进程，不写回文件；此时 `PUT /v1/harness/model` 返回 409 `HARNESS_MODEL_ENVIRONMENT_OVERRIDE` |
+| 2 | 统一模型文件 | `PUT /v1/harness/model`、控制台统一模型页、`hub.cmd model set` | 发行包为 `state/harness-model.json`；源码入口默认 `<数据目录>/harness-model.json`，可用 `--harness-model-file` 指定；PUT 立即生效，`hub.cmd model set` 在下次启动生效 |
+| 3 | 配置文件顶层 `model` | 发行包 `state/settings.json`（经 `hub.cmd configure`），或源码入口 `--config` 指定的 YAML/JSON | 修改后需要重启；热加载会返回 `CONFIG_RESTART_REQUIRED`，不部分生效 |
+
+环境变量如下。只要设置了 `HARNESSHUB_MODEL`，环境变量来源就生效。以下情况会启动失败：设置了 `HARNESSHUB_MODEL` 但缺少 `HARNESSHUB_MODEL_BASE_URL`；设置了基址、协议、上下文窗口或输出上限变量，却没有设置 `HARNESSHUB_MODEL`。只设置 `HARNESSHUB_MODEL_API_KEY` 不会启用环境变量来源，文件或 settings 可以引用这个变量。
+
+| 变量 | 含义 |
+|---|---|
+| `HARNESSHUB_MODEL` | 上游真实模型 ID |
+| `HARNESSHUB_MODEL_BASE_URL` | 上游 Chat Completions 基址，通常是网关的 `/v1` 根路径，不要填到 `/chat/completions` |
+| `HARNESSHUB_MODEL_API_KEY` | 密钥值本身；配置中只记录引用 `{"kind":"env","value":"HARNESSHUB_MODEL_API_KEY"}`，未设置时上游请求不带密钥 |
+| `HARNESSHUB_MODEL_PROTOCOL` | 上游协议；缺省为 `openai-completions`，目前也只允许这个值 |
+| `HARNESSHUB_MODEL_CONTEXT_WINDOW` | 模型上下文窗口，正整数 token |
+| `HARNESSHUB_MODEL_MAX_OUTPUT_TOKENS` | 模型最大输出，正整数 token |
+
+文件内容、settings 顶层 `model` 和 `PUT` 请求体都是同一个 `HarnessModel` 对象。以下为格式示意，尖括号内容需替换：
+
+```json
+{
+  "model": "<上游模型 ID>",
+  "alias": "harnesshub-model",
+  "provider": {
+    "protocol": "openai-completions",
+    "baseUrl": "https://<模型网关>/v1",
+    "apiKey": { "kind": "env", "value": "COMPANY_MODEL_API_KEY" },
+    "headers": { "X-Tenant": "<非秘密值>" },
+    "secretHeaders": { "X-Gateway-Token": { "kind": "env", "value": "GATEWAY_TOKEN" } },
+    "contextWindow": 131072,
+    "maxOutputTokens": 16384
+  }
+}
+```
+
+- `provider.protocol` 表示上游协议，只接受 `openai-completions`，即流式 Chat Completions；其他协议返回 `HARNESS_MODEL_PROTOCOL_UNSUPPORTED`。
+- `provider.baseUrl` 必填，只允许 HTTP(S)，不能包含账号、查询参数或片段。
+- `apiKey` 和 `secretHeaders` 只接受秘密引用，规则同下文“密钥与环境”，不能直接填写密钥。普通 `headers` 不能包含 Authorization、Cookie 或名称含 token、key、secret、password、credential 的请求头，也不能包含看似凭据的值；同名请求头不能同时出现在 `headers` 和 `secretHeaders` 中。
+- `alias` 是引擎看到的模型名，缺省 `harnesshub-model`，用于避开引擎按模型名做的路由和上限推断。上游请求始终使用真实 `model`。`alias` 与 `provider.modelAlias` 同时填写时必须一致。
+- `contextWindow` 取值 1024–16777216，`maxOutputTokens` 取值 16–4194304，且输出上限不能大于上下文窗口。
+- 兼容选项 `provider.compatibility` 可省略，由 Worker 内的模型网关执行，行为见 ADR 0013：`includeUsage` 控制是否发送 `stream_options.include_usage`，默认 false；`dropParameters` 追加要删除的上游请求参数；`maxTokensField` 选择输出上限字段，默认 `max_tokens`，也可为 `max_completion_tokens`；`reasoning` 为 `passthrough`（默认）或 `strip`。
+
+### 强制生效
+
+Gateway 在每个引擎登记或替换前应用统一模型。文件配置加载与热加载、`POST/PUT /v1/engines`、SQLite overlay 恢复和工具包 apply 都经过同一个登记策略，效果如下：
+
+- 登记的 `model` 改为上游真实模型；`configuration.provider` 改为统一 Provider，并写入 `modelAlias`。登记中原有的模型和 Provider 被覆盖。
+- 移除 `credentialEnv` 和引擎级 `configuration.secretEnv`，厂商凭据不再传给引擎进程。引擎的 `adapter`、普通 `env`、Skills、MCP 服务及其自身的秘密引用保持不变。
+- 以下引擎会被停用：适配器为 cursor、antigravity、kiro、qoder 或 generic 的引擎；没有声明适配器、且 ID 也不是内置引擎的引擎；应用统一模型后被引擎层校验拒绝的登记，例如固定 Provider 的自定义启动脚本、ACP 方式的 Kimi。内置引擎 ID（codex、claude、opencode、openclaw、hermes、mimo、gemini、copilot、kimi、qwen、pi、dsh 等）在未声明适配器时按同名适配器处理。
+- 覆盖和停用的原因会出现在 `GET /v1/harness/model` 的引擎状态中；为停用引擎创建 Session 时，`ENGINE_UNAVAILABLE` 也会带上原因。
+- 演示引擎 `fake` 不调用模型，不受统一模型影响。
+- 配置文件和 overlay 保存原始登记。`GET /v1/engines`、登记接口的响应和新 Session 使用应用统一模型后的 revision，两种 revision 都会持久化。统一模型变化时（PUT，或重启后来源变化），全部引擎生成新 revision；已有 Session 继续使用创建时的 revision。去掉统一模型并重启后，会恢复原始登记。
+- 比赛模式下，启动引擎（`--engine` 或 `AGENT_ENGINE`）不可用时，Gateway 启动失败并给出原因。源码入口若只设置了 `AGENT_ENGINE` 和 `HARNESSHUB_MODEL*`，而配置中没有该引擎，Gateway 会按内置发现配方登记本机安装的同名引擎；发现不到则启动失败。
+
+### 接口与命令
+
+- `GET /v1/harness/model` 返回 `HarnessModelView`：`configured`、`source`、`model`、`alias`、只含秘密引用的 `provider`，以及每个引擎的 `{engineId,status,reason?}`。`status` 取值：`applied` 已使用统一模型；`unsupported` 无法接入并已停用；`disabled` 登记本身为停用。
+- `PUT /v1/harness/model` 的请求体为 `HarnessModel`。校验通过后原子写入模型文件（权限 0600），为全部引擎发布新 revision，返回 `HarnessModelView`。
+- `POST /v1/harness/model/test` 的请求体为 `{"engineId"?}`。Gateway 在默认引擎或指定引擎上，用私有临时目录创建 Session，提交“只回复 OK”，最多等待 90 秒，结束后关闭 Session。返回 `{ok,status,durationMs,runId,error?}`，只有 Run 正常完成且回复非空时 `ok` 为 true。该接口会实际调用模型并消耗额度，密钥只在 Worker 中解析。以下情况返回错误：未配置统一模型（409）；演示引擎或未应用统一模型的引擎（409）；已有测试在运行（429）。
+- `GET /v1/runtime/info` 返回 `{competition, competitionEngine?, fullAccess, consoleUrl?}`，其值在 Gateway 启动时确定。
+- 发行包中，`hub.cmd model set --model <id> --base-url <url> --api-key-env <NAME> [--context-window N] [--max-output-tokens N] [--header NAME=VALUE]... [--alias NAME]` 校验后写入 `state/harness-model.json`；如果当前环境设置了 `HARNESSHUB_MODEL` 或缺少密钥变量，命令会给出提示。`hub.cmd model show` 和 `hub.cmd doctor` 显示生效来源和各引擎状态。这三个命令都不调用模型。
+- `settings.json` 顶层 `model` 可以与旧的 `modelProfiles` 和逐引擎 `modelProfile` 共存，此时统一模型优先。随包示例（`examples/deepseek.json`、`examples/company-chat.json`）只使用统一模型。
+
+## 逐引擎配置
+
+控制台“引擎管理”中，每个已注册引擎有“配置”和“检查连接”入口。配置弹窗支持模型、Provider / URL / API Key、Skills、MCP 和环境变量；保存后生成新 revision，已有 Session 不切换配置。配置了统一模型时，保存的模型和 Provider 仍会被统一模型覆盖。接口字段由 [配置类型与 schema](../src/domain/engine-configuration.ts)定义，决定见 [ADR 0006](decisions/0006-engine-configuration.md)。
 
 ## 操作顺序
 
@@ -32,6 +105,8 @@ ACP 注册配置可单独填写 `acp.initializeTimeoutMs`，范围为 1–60,000
 | Kimi CLI | OpenAI Chat Completions、Responses、Anthropic、Google；仅 `driver: cli` 的 `--quiet` / `--print` 模板，私有无密钥 JSON，密钥经 SDK 环境变量；ACP 自定义 Provider 明确拒绝 |
 | DSH | OpenAI Chat Completions、Responses、Anthropic；私有 profile overlay 配置 `llm-pi-ai`，密钥只经 `apiKeyEnv` 引用；ACP 使用包含 provider/model 的原生模型选择值 |
 | Kiro、Qoder、generic | 保留原生 Provider 配置；可配置该引擎明确支持的普通环境与秘密映射，不能把不支持的统一 Provider 字段保存后忽略 |
+
+上表是逐引擎配置时各适配器接受的协议。配置统一模型时，登记中的上游协议固定为 `openai-completions`，各适配器由 Worker 如何接入统一模型见 ADR 0013；如果某适配器的登记校验不接受该协议，引擎会按[统一模型](#统一模型)一节被停用，并给出原因。
 
 实际能力随安装版本、原生账户、原生配置合并和后端协议而变化。配置适配不等于所有厂商版本均已完成真实任务验收；本轮版本与证据见 [验收记录](verification/2026-09-05-engine-configuration.md)。不自动改变模型预算或安装依赖。工作区原生指令、原生 MCP、插件和工具仍由对应引擎管理；本页的显式 MCP/Skills 不宣称禁用了所有原生工具。
 
