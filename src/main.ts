@@ -1,5 +1,16 @@
 import { EngineConfigurationService } from "./application/engine-configuration.js";
-import { prepareEngine } from "./engine/registry.js";
+import {
+  HarnessModelService,
+  type RuntimeInfo,
+} from "./application/harness-model.js";
+import { builtinConfigurationAdapter } from "./engine/builtins.js";
+import {
+  normalizeEngine,
+  prepareEngine,
+  type HubConfig,
+} from "./engine/registry.js";
+import { fullAccessEnabled } from "./distribution/full-access.js";
+import { registerHarnessModelRoutes } from "./gateway/harness-model-routes.js";
 import { providerProtocols } from "./engine/configuration.js";
 import { configurationAdapters } from "./domain/engine-configuration.js";
 import { createSecret } from "./drivers/configuration/secrets.js";
@@ -54,7 +65,10 @@ export async function startHub(options: {
   consoleUrl?: string;
   /** Installed Tool Package root; defaults to `<dataDir>/tool-packages`. */
   toolPackageRoot?: string;
-  /** Persistent unified-model file shared by bundle entry points (ADR 0013). */
+  /**
+   * Persistent unified-model file shared by bundle entry points (ADR 0013); defaults to
+   * `<dataDir>/harness-model.json`. Sources: HARNESSHUB_MODEL* > this file > config `model`.
+   */
   harnessModelFile?: string;
 }) {
   const resolveConfig = async () => {
@@ -80,10 +94,65 @@ export async function startHub(options: {
     );
     return { ...config, workspaces, defaultWorkspace: workspaces[0]!.id };
   };
-  const config = await resolveConfig();
+  const baseConfig = await resolveConfig();
   const requestedDataDir = path.resolve(options.dataDir);
   await mkdir(requestedDataDir, { recursive: true, mode: 0o700 });
   const dataDir = await realpath(requestedDataDir);
+  const harnessModel = await HarnessModelService.load({
+    environment: process.env,
+    file: path.resolve(
+      options.harnessModelFile ?? path.join(dataDir, "harness-model.json"),
+    ),
+    ...(baseConfig.model ? { settings: baseConfig.model } : {}),
+    ports: {
+      normalize: normalizeEngine,
+      inferAdapter: builtinConfigurationAdapter,
+    },
+  });
+  const discover = (includeManifests = true) =>
+    discoverEngines({
+      cwd: options.cwd,
+      home: homedir(),
+      pathEnv: process.env.PATH ?? "",
+      nodeExecutable: process.execPath,
+      ...(process.env.PATHEXT ? { pathExt: process.env.PATHEXT } : {}),
+      ...(process.env.APPDATA ? { appData: process.env.APPDATA } : {}),
+      ...(process.env.LOCALAPPDATA
+        ? { localAppData: process.env.LOCALAPPDATA }
+        : {}),
+      ...(includeManifests ? {} : { includeManifests: false }),
+    });
+  /**
+   * Source-mode Competition with a unified model may start from AGENT_ENGINE alone: an
+   * unconfigured competition engine is added from its reviewed discovery recipe as a
+   * base (file-level) entry, so the unified model policy applies to it like any other.
+   */
+  const withCompetitionEngine = async (
+    loaded: HubConfig,
+  ): Promise<HubConfig> => {
+    const id = options.competitionEngine;
+    if (
+      !id ||
+      !harnessModel.active() ||
+      loaded.engines.some((engine) => engine.id === id)
+    )
+      return loaded;
+    const candidate = (await discover()).find((item) => item.id === id);
+    if (candidate?.status !== "ready" || !candidate.registration) return loaded;
+    return {
+      ...loaded,
+      engines: [...loaded.engines, await prepareEngine(candidate.registration)],
+    };
+  };
+  const config = await withCompetitionEngine(baseConfig);
+  const runtimeInfo: RuntimeInfo = {
+    competition: options.competition ?? false,
+    ...(options.competitionEngine
+      ? { competitionEngine: options.competitionEngine }
+      : {}),
+    fullAccess: fullAccessEnabled(process.env),
+    ...(options.consoleUrl ? { consoleUrl: options.consoleUrl } : {}),
+  };
   const artifactRoot = path.join(dataDir, "artifacts");
   const store = new SqliteStore(path.join(dataDir, "harnesshub.sqlite"));
   try {
@@ -105,26 +174,18 @@ export async function startHub(options: {
     manager = new EngineManager({
       config,
       persistence: store,
-      load: resolveConfig,
+      load: async () => withCompetitionEngine(await resolveConfig()),
+      policy: harnessModel.policy(),
       ...(options.defaultEngine
         ? { initialDefault: options.defaultEngine }
         : {}),
       ...(options.configFile
         ? { configFile: path.resolve(options.configFile) }
         : {}),
-      discover: () =>
-        discoverEngines({
-          cwd: options.cwd,
-          home: homedir(),
-          pathEnv: process.env.PATH ?? "",
-          nodeExecutable: process.execPath,
-          ...(process.env.PATHEXT ? { pathExt: process.env.PATHEXT } : {}),
-          ...(process.env.APPDATA ? { appData: process.env.APPDATA } : {}),
-          ...(process.env.LOCALAPPDATA
-            ? { localAppData: process.env.LOCALAPPDATA }
-            : {}),
-        }),
+      discover: () => discover(),
     });
+    // Fail startup when the fixed Competition engine cannot run, with the policy reason.
+    if (options.competitionEngine) manager.resolve(options.competitionEngine);
     const recoveredWorkers = await host.recover();
     runtime = new Runtime(store, host, {
       ...config,
@@ -145,6 +206,11 @@ export async function startHub(options: {
       async (artifact) => readArtifact(artifactRoot, artifact),
       manager,
     );
+    harnessModel.bind({
+      catalog: manager,
+      sessions: app,
+      scratchDirectory: dataDir,
+    });
     workflowStore = new SqliteWorkflowStore(
       path.join(dataDir, "harnesshub.sqlite"),
     );
@@ -156,19 +222,7 @@ export async function startHub(options: {
     const activeProbes = new Set<AbortController>();
     const probeTasks = new Set<Promise<unknown>>();
     const configuration = new EngineConfigurationService({
-      templates: () =>
-        discoverEngines({
-          cwd: options.cwd,
-          home: homedir(),
-          pathEnv: process.env.PATH ?? "",
-          nodeExecutable: process.execPath,
-          ...(process.env.PATHEXT ? { pathExt: process.env.PATHEXT } : {}),
-          ...(process.env.APPDATA ? { appData: process.env.APPDATA } : {}),
-          ...(process.env.LOCALAPPDATA
-            ? { localAppData: process.env.LOCALAPPDATA }
-            : {}),
-          includeManifests: false,
-        }),
+      templates: () => discover(false),
       inspect: prepareEngine,
       createSecret,
       adapters: () =>
@@ -287,6 +341,10 @@ export async function startHub(options: {
       registerEngine: (input) => app.registerEngine(input),
     });
     registerToolPackageRoutes(server, toolPackages);
+    registerHarnessModelRoutes(server, harnessModel, () => runtimeInfo);
+    // Registered after createGateway's hook, so the application has already cancelled
+    // Runs; this only stops a pending model test and waits for its Session cleanup.
+    server.addHook("preClose", async () => harnessModel.close());
     if (options.competition)
       registerCompetitionRoutes(server, app, {
         ...(options.competitionEngine
