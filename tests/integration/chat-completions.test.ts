@@ -301,6 +301,16 @@ void test(
       assert.equal(failedCall?.data.ok, false);
       assert.equal(failedCall?.data.status, 400);
       runIds.push(rejected.id);
+      // A model failure leaves the engine backend healthy: the same Session
+      // stays open and its next Run completes normally (ADR 0013).
+      assert.equal(
+        (await json<SessionRecord>(`/v1/sessions/${rejectedSession.id}`))
+          .status,
+        "open",
+      );
+      const retried = await run(rejectedSession.id, "retry after rejection");
+      assert.equal(retried.status, "completed", JSON.stringify(retried.error));
+      runIds.push(retried.id);
       await json(`/v1/sessions/${rejectedSession.id}/close`, {});
 
       const silentSession = await json<SessionRecord>("/v1/sessions", {

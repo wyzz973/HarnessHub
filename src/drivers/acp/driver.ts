@@ -35,6 +35,18 @@ import type {
 const fullAccess = () => process.env.HARNESSHUB_FULL_ACCESS === "1";
 
 /** ACP types terminate here. Credentials are inherited only through the Worker environment. */
+/**
+ * Engine-reported failure text for public results and events. Engines reach the
+ * model only through the Session gateway (ADR 0013), so their messages carry at
+ * most the local gateway token, never the company credential; the text is still
+ * bounded so a verbose engine cannot flood the event log.
+ */
+function engineMessage(value: unknown, fallback: string): string {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text) return fallback;
+  return text.length > 500 ? `${text.slice(0, 500)}…` : text;
+}
+
 export class AcpDriver implements Driver {
   private runtime: AcpRuntime | undefined;
   private mcpServers: RuntimeMcpServer[] = [];
@@ -258,7 +270,10 @@ export class AcpDriver implements Driver {
               status: "failed",
               error: {
                 code: "ACP_TURN_FAILED",
-                message: "ACP engine reported execution failure",
+                message: engineMessage(
+                  result.error.message,
+                  "ACP engine reported execution failure",
+                ),
               },
               output: output.join(""),
             };
@@ -416,8 +431,8 @@ function mapEvent(
       return {
         type: "engine.error",
         data: {
-          code: "ACP_EVENT_ERROR",
-          message: "ACP engine emitted an error",
+          code: event.code ?? "ACP_EVENT_ERROR",
+          message: engineMessage(event.message, "ACP engine emitted an error"),
         },
       };
   }

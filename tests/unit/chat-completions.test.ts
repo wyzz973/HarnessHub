@@ -341,6 +341,8 @@ for (const adapter of ["codex", "gemini"] as const)
           protocol: "openai-completions",
           baseUrl: "http://127.0.0.1:1/v1",
           apiKey: { kind: "env", value: "FIXTURE_KEY" },
+          // ADR 0013: engines see the configured alias, not the upstream id.
+          modelAlias: "fixture",
         },
       },
     });

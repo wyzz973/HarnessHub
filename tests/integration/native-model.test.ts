@@ -85,6 +85,7 @@ void test(
           protocol: "openai-completions",
           baseUrl,
           apiKey: { kind: "file", value: keyFile },
+          modelAlias: model,
         },
       },
     });
@@ -105,15 +106,23 @@ void test(
         offline: string;
         keyHash: string;
       };
+      // ADR 0013: Copilot reaches the company model only through the Session
+      // gateway, so it sees the loopback gateway, a local token and the alias.
+      assert.match(output.baseUrl, /^http:\/\/127\.0\.0\.1:\d+\/v1$/);
+      assert.notEqual(output.baseUrl, baseUrl);
+      assert.notEqual(
+        output.keyHash,
+        createHash("sha256").update(key).digest("hex"),
+      );
       assert.deepEqual(output, {
         pid: previousPid ?? output.pid,
         sessions: 1,
         prompts,
         model,
         provider: "openai",
-        baseUrl,
+        baseUrl: output.baseUrl,
         offline: "true",
-        keyHash: createHash("sha256").update(key).digest("hex"),
+        keyHash: output.keyHash,
       });
       assert.equal(JSON.stringify(result).includes(key), false);
       previousPid = output.pid;
