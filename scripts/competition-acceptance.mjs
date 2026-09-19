@@ -85,7 +85,8 @@ export function acceptancePrompts(nonce, platform = process.platform) {
       command: longCommand,
       text: `请使用你的命令行/终端工具执行下面这条命令，并等待它自然结束后再回复 DONE：\n${longCommand}`,
     },
-    tool: `${mockDirectives.tool} 请调用你的 shell 工具执行一次命令，在当前目录创建 ${MOCK_MARKER_FILE}，然后只回复 DONE。`,
+    // The nonce keeps each acceptance conversation distinct for the shared mock.
+    tool: `${mockDirectives.tool} ${nonce} 请调用你的 shell 工具执行一次命令，在当前目录创建 ${MOCK_MARKER_FILE}，然后只回复 DONE。`,
     slow: `${mockDirectives.slow} 这是一个很长的任务，请持续工作直到被中止。`,
   };
 }

@@ -23,11 +23,12 @@ import {
 } from "./lib/competition-process.mjs";
 import { httpRequest, waitUntil } from "./lib/competition-client.mjs";
 import {
+  conversationTurnKey,
   markerArguments,
   selectShellTool,
   startMockCompanyModel,
 } from "./mock-company-model.mjs";
-import { runAcceptance } from "./competition-acceptance.mjs";
+import { acceptancePrompts, runAcceptance } from "./competition-acceptance.mjs";
 import { runSelfTest } from "./competition-selftest.mjs";
 import { runMatrix } from "./competition-matrix.mjs";
 import { startStrictChatProxy } from "./strict-chat-proxy.mjs";
@@ -408,6 +409,81 @@ test("mock upstream streams reasoning, drives one tool round and enforces creden
   assert.ok(mock.records().some((entry) => entry.reasoningEcho === true));
 });
 
+test("mock tool-loop protection is per conversation, so engines sharing a prompt each get a tool call", async (t) => {
+  const key = "mock-loop-key-123456";
+  const mock = await startMockCompanyModel({ apiKey: key, platform: "linux" });
+  t.after(() => mock.close());
+  const url = `${mock.url}/chat/completions`;
+  const tools = [tool("bash", { command: { type: "string" } }, ["command"])];
+  const user = { role: "user", content: "HH_MOCK_TOOL please" };
+  const ask = async (system) =>
+    parseChatStream(
+      (
+        await post(
+          url,
+          {
+            model: "company-sim",
+            stream: true,
+            tools,
+            messages: [{ role: "system", content: system }, user],
+          },
+          key,
+        )
+      ).text,
+    );
+  // One conversation that never answers its tool call is stopped after three calls.
+  for (let attempt = 1; attempt <= 3; attempt++)
+    assert.equal((await ask("engine A")).toolCalls.length, 1, `${attempt}`);
+  const stopped = await ask("engine A");
+  assert.equal(stopped.toolCalls.length, 0);
+  assert.equal(stopped.content, "DONE");
+  // Other conversations with the same user prompt keep their own count.
+  for (const system of ["engine B", "engine C", "engine D"])
+    assert.equal((await ask(system)).toolCalls.length, 1, system);
+  assert.deepEqual(
+    mock.records().map((entry) => entry.turn),
+    [
+      "tool-call",
+      "tool-call",
+      "tool-call",
+      "tool-loop-stopped",
+      "tool-call",
+      "tool-call",
+      "tool-call",
+    ],
+  );
+  // The key ignores tool-call rounds inside the turn but not earlier conversation.
+  const call = {
+    role: "assistant",
+    content: null,
+    tool_calls: [
+      {
+        id: "call_1",
+        type: "function",
+        function: { name: "bash", arguments: "{}" },
+      },
+    ],
+  };
+  const base = [{ role: "system", content: "engine A" }, user];
+  assert.equal(
+    conversationTurnKey(base),
+    conversationTurnKey([
+      ...base,
+      call,
+      { role: "tool", tool_call_id: "call_1", content: "" },
+    ]),
+  );
+  assert.notEqual(
+    conversationTurnKey(base),
+    conversationTurnKey([{ role: "system", content: "engine B" }, user]),
+  );
+  // Acceptance runs use a per-run nonce, so identical engines never share a count.
+  const first = acceptancePrompts("aaaa1111", "linux").tool;
+  const second = acceptancePrompts("bbbb2222", "linux").tool;
+  assert.match(first, /^HH_MOCK_TOOL aaaa1111 /);
+  assert.notEqual(first, second);
+});
+
 test("strict proxy rejects locally and forwards accepted requests with the caller's authorization", async (t) => {
   const key = "proxy-upstream-key-42";
   const upstream = await startMockCompanyModel({ apiKey: key });
@@ -620,6 +696,31 @@ test("matrix selects engines only through AGENT_ENGINE, scrubs vendor keys, reda
     assert.doesNotMatch(text, /hh-mock-[0-9a-f]{20}/, name);
     assert.doesNotMatch(text, /sk-vendor-should-never-leak/, name);
   }
+});
+
+test("engines with identical conversations sharing one mock each complete the tool round", async (t) => {
+  const { bundle, entry } = await fakeBundle(t);
+  const out = await temporary(t, "hh-matrix-shared-");
+  const engines = ["alpha", "beta", "gamma", "delta"];
+  const result = await runMatrix({
+    bundle,
+    entry,
+    engines,
+    out,
+    mock: true,
+    engineTimeoutMs: 90_000,
+    env: { ...process.env },
+  });
+  assert.deepEqual(
+    result.engines.map((engine) => [engine.engine, engine.status]),
+    engines.map((engine) => [engine, "PASS"]),
+  );
+  const turns = (await readFile(path.join(out, "mock-requests.jsonl"), "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line).turn);
+  assert.equal(turns.filter((turn) => turn === "tool-call").length, 4);
+  assert.equal(turns.includes("tool-loop-stopped"), false);
 });
 
 test("process helpers scrub vendor credentials, redact secrets, decode Windows text and quote batch launchers", () => {

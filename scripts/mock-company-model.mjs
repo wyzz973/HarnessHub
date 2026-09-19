@@ -15,7 +15,9 @@
  *   engine's working directory. The follow-up request must send the tool result and must
  *   pass back the assistant `reasoning_content` of that tool call, otherwise HTTP 400 is
  *   returned exactly like a reasoning model would. After a valid follow-up it answers `DONE`.
- *   Without a shell-like tool it answers `NO_SHELL_TOOL`.
+ *   Without a shell-like tool it answers `NO_SHELL_TOOL`. A conversation that re-sends the
+ *   same turn more than three times without the tool result gets `DONE` instead of a new
+ *   call (`tool-loop-stopped`); the count is kept per conversation, not per prompt text.
  * - `HH_MOCK_SLOW` streams slowly until `--slow-ms` elapses or the client disconnects.
  * - Anything else is answered with `OK`.
  *
@@ -181,25 +183,49 @@ export function markerArguments(selection, platform = process.platform) {
   return result;
 }
 
-/** Text of the user messages that belong to the turn being answered. */
-export function currentTurnText(messages) {
-  let start = 0;
+/** Index of the first message of the turn being answered (after the last plain reply). */
+function currentTurnStart(messages) {
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index];
     if (
       isObject(message) &&
       message.role === "assistant" &&
       !(Array.isArray(message.tool_calls) && message.tool_calls.length > 0)
-    ) {
-      start = index + 1;
-      break;
-    }
+    )
+      return index + 1;
   }
+  return 0;
+}
+
+/** Text of the user messages that belong to the turn being answered. */
+export function currentTurnText(messages) {
   return messages
-    .slice(start)
+    .slice(currentTurnStart(messages))
     .filter((message) => isObject(message) && message.role === "user")
     .map((message) => contentText(message.content))
     .join("\n");
+}
+
+/**
+ * Identity of the turn being answered within its conversation: every earlier message
+ * plus the system, developer and user messages of the current turn. Tool-call rounds of
+ * the current turn are left out, so re-sending the same turn keeps the key, while another
+ * engine or conversation with the same prompt differs in its system prompt or history.
+ * Identical conversations cannot be told apart; callers that repeat one add a nonce.
+ */
+export function conversationTurnKey(messages) {
+  const start = currentTurnStart(messages);
+  const hash = createHash("sha256");
+  messages.forEach((message, index) => {
+    if (!isObject(message)) return;
+    if (
+      index >= start &&
+      !["system", "developer", "user"].includes(message.role)
+    )
+      return;
+    hash.update(JSON.stringify([message.role, contentText(message.content)]));
+  });
+  return hash.digest("hex");
 }
 
 function canonicalArguments(value) {
@@ -550,7 +576,9 @@ export async function startMockCompanyModel(options = {}) {
           chunkDelayMs,
         );
       }
-      const turnKey = createHash("sha256").update(turn).digest("hex");
+      // Loop protection is per conversation, so engines sharing one mock and one
+      // prompt each get their own tool call.
+      const turnKey = conversationTurnKey(messages);
       const attempts = (issuesPerTurn.get(turnKey) ?? 0) + 1;
       issuesPerTurn.set(turnKey, attempts);
       if (attempts > 3) {
