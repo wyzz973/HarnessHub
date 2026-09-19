@@ -4,8 +4,9 @@
  * public download names are replaced as late as possible:
  *
  * 1. every asset must be a regular file smaller than 2 GiB (GitHub's asset limit);
- * 2. the release is created as a prerelease when missing (notes/title/target apply only then,
- *    unless --notes-file is given, which also updates an existing release);
+ * 2. the release is created as a prerelease when missing; --title/--notes-file/--target apply
+ *    only then, so the notes of an existing release (for example backup instructions) stay
+ *    untouched unless --update-notes is given;
  * 3. all files are uploaded under `<name>.staging-<run>` names first;
  * 4. only then each old `<name>` asset is deleted and the staged one renamed to `<name>`;
  * 5. leftover `*.staging-*` assets and assets matching --prune (for example split volumes
@@ -14,8 +15,8 @@
  * inside the short swap in step 4; the next run removes its staged leftovers.
  *
  * Usage: node scripts/publish-release-assets.mjs --tag TAG --asset FILE [--asset FILE ...]
- *   [--repo OWNER/NAME] [--title TEXT] [--notes-file FILE] [--target SHA] [--prune REGEX]
- *   [--run-id ID]
+ *   [--repo OWNER/NAME] [--title TEXT] [--notes-file FILE] [--update-notes] [--target SHA]
+ *   [--prune REGEX] [--run-id ID]
  */
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -178,7 +179,7 @@ export async function publishReleaseAssets(options) {
       ]);
       deleted.push(asset.name);
     }
-    if (options.notesFile && !created)
+    if (options.notesFile && options.updateNotes === true && !created)
       await gh([
         "release",
         "edit",
@@ -207,6 +208,7 @@ if (
         repo: { type: "string" },
         title: { type: "string" },
         "notes-file": { type: "string" },
+        "update-notes": { type: "boolean", default: false },
         target: { type: "string" },
         prune: { type: "string" },
         "run-id": { type: "string" },
@@ -220,6 +222,7 @@ if (
       assets: values.asset ?? [],
       ...(values.title ? { title: values.title } : {}),
       ...(values["notes-file"] ? { notesFile: values["notes-file"] } : {}),
+      updateNotes: values["update-notes"],
       ...(values.target ? { target: values.target } : {}),
       ...(values.prune ? { prune: values.prune } : {}),
       runId:

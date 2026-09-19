@@ -81,15 +81,27 @@ test("publisher uploads staged names, swaps them in and prunes stale volumes and
     "kit.7z.001.staging-oldrun",
     "unrelated-notes.txt",
   ]);
-  const assets = await files(t, ["kit.7z.001", "kit.7z.002", "parts.sha256"]);
+  const assets = await files(t, [
+    "kit.7z.001",
+    "kit.7z.002",
+    "parts.sha256",
+    "notes.md",
+  ]);
+  const notes = assets.pop();
   const result = await publishReleaseAssets({
     gh: fake.gh,
     tag: "offline-dev-latest",
     repo: "owner/repo",
     assets,
+    notesFile: notes,
     prune: "^kit\\.7z\\.\\d{3}$",
     runId: "42",
   });
+  assert.equal(
+    fake.calls.some((args) => args[0] === "release" && args[1] === "edit"),
+    false,
+    "notes of an existing release are kept unless --update-notes is given",
+  );
   assert.deepEqual(fake.names(), [
     "kit.7z.001",
     "kit.7z.002",
