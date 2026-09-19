@@ -124,7 +124,11 @@ void test("configuration schema rejects credentials in plain fields, unsafe URLs
 });
 void test("native provider mappings resolve distinct keys without writing key values into profile or native files", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "hh-native-config-"));
-  t.after(async () => rm(directory, { recursive: true, force: true }));
+  const gateways: { close(): Promise<void> }[] = [];
+  t.after(async () => {
+    for (const gateway of gateways) await gateway.close();
+    await rm(directory, { recursive: true, force: true });
+  });
   const key = "synthetic-key-fixture";
   const pairs: [ConfigurationAdapter, string][] = [
     ["codex", "openai-responses"],
@@ -155,18 +159,36 @@ void test("native provider mappings resolve distinct keys without writing key va
     const prepared = await prepareConfiguration(spec(profile, root), {
       ENGINE_A_KEY: key,
     });
-    assert.equal(prepared.env.HARNESSHUB_PROVIDER_KEY, key);
+    const gateway = prepared.modelBridge;
+    if (gateway) gateways.push(gateway);
+    // Chat providers are served by the Session gateway: the engine receives
+    // its loopback URL, local token and the alias; others keep direct keys.
+    const routed = protocol === "openai-completions";
+    assert.equal(Boolean(gateway), routed);
+    const model = routed ? "harnesshub-model" : "alpha";
+    const baseUrl = routed
+      ? `${gateway!.baseUrl}/v1`
+      : "http://127.0.0.1:1234/v1";
+    assert.equal(
+      prepared.env.HARNESSHUB_PROVIDER_KEY,
+      routed ? gateway!.token : key,
+    );
+    assert.equal(
+      JSON.stringify(prepared.env).includes(key),
+      !routed,
+      `${adapter}/${protocol}`,
+    );
     if (adapter === "copilot") {
       assert.equal(
         prepared.env.COPILOT_PROVIDER_TYPE,
         protocol === "anthropic" ? "anthropic" : "openai",
       );
-      assert.equal(prepared.env.COPILOT_PROVIDER_API_KEY, key);
       assert.equal(
-        prepared.env.COPILOT_PROVIDER_BASE_URL,
-        "http://127.0.0.1:1234/v1",
+        prepared.env.COPILOT_PROVIDER_API_KEY,
+        routed ? gateway!.token : key,
       );
-      assert.equal(prepared.env.COPILOT_MODEL, "alpha");
+      assert.equal(prepared.env.COPILOT_PROVIDER_BASE_URL, baseUrl);
+      assert.equal(prepared.env.COPILOT_MODEL, model);
       assert.equal(prepared.env.COPILOT_OFFLINE, "true");
       assert.equal(
         prepared.command.some((arg) => arg.includes(key)),
@@ -174,7 +196,7 @@ void test("native provider mappings resolve distinct keys without writing key va
       );
       assert.equal(prepared.model, "alpha");
     }
-    if (adapter === "hermes") assert.equal(prepared.model, "custom:alpha");
+    if (adapter === "hermes") assert.equal(prepared.model, `custom:${model}`);
     assert.equal(JSON.stringify(profile).includes(key), false);
     if (adapter === "codex")
       assert.equal(
@@ -187,31 +209,29 @@ void test("native provider mappings resolve distinct keys without writing key va
         false,
       );
     if (adapter === "pi") {
-      const models: unknown = JSON.parse(
-        await readFile(
-          path.join(prepared.env.PI_CODING_AGENT_DIR!, "models.json"),
-          "utf8",
-        ),
+      const bytes = await readFile(
+        path.join(prepared.env.PI_CODING_AGENT_DIR!, "models.json"),
+        "utf8",
       );
-      assert.deepEqual(models, {
+      const models = JSON.parse(bytes) as {
         providers: {
           harnesshub: {
-            baseUrl: "http://127.0.0.1:1234/v1",
-            api: "openai-completions",
-            apiKey: "$HARNESSHUB_PROVIDER_KEY",
-            models: [{ id: "alpha" }],
-          },
-        },
-      });
-      assert.equal(
-        (
-          await readFile(
-            path.join(prepared.env.PI_CODING_AGENT_DIR!, "models.json"),
-            "utf8",
-          )
-        ).includes(key),
-        false,
+            baseUrl: string;
+            api: string;
+            apiKey: string;
+            models: { id: string }[];
+          };
+        };
+      };
+      const route = models.providers.harnesshub;
+      assert.equal(route.baseUrl, baseUrl);
+      assert.equal(route.api, "openai-completions");
+      assert.equal(route.apiKey, "$HARNESSHUB_PROVIDER_KEY");
+      assert.deepEqual(
+        route.models.map((entry) => entry.id),
+        [model],
       );
+      assert.equal(bytes.includes(key), false);
     }
     if (adapter === "opencode" || adapter === "mimo") {
       const content =
@@ -219,7 +239,7 @@ void test("native provider mappings resolve distinct keys without writing key va
           `${adapter === "mimo" ? "MIMOCODE" : "OPENCODE"}_CONFIG_CONTENT`
         ]!;
       assert.equal(content.includes(key), false);
-      assert.equal(prepared.model, "harnesshub/alpha");
+      assert.equal(prepared.model, `harnesshub/${model}`);
     }
   }
 });
@@ -428,7 +448,11 @@ void test("Pi and OpenClaw reject enabled ACP MCP injection instead of silently 
 });
 void test("Kimi print CLI maps four protocols without persisting credentials or splitting prompt arguments", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "hh-kimi-config-"));
-  t.after(async () => rm(directory, { recursive: true, force: true }));
+  const gateways: { close(): Promise<void> }[] = [];
+  t.after(async () => {
+    for (const gateway of gateways) await gateway.close();
+    await rm(directory, { recursive: true, force: true });
+  });
   const pairs = [
     ["openai-completions", "openai_legacy", "OPENAI_API_KEY"],
     ["openai-responses", "openai_responses", "OPENAI_API_KEY"],
@@ -460,7 +484,15 @@ void test("Kimi print CLI maps four protocols without persisting credentials or 
       spec(profile, path.join(directory, protocol!)),
       { KIMI_FIXTURE_KEY: "synthetic-kimi-secret" },
     );
-    assert.equal(prepared.env[keyName!], "synthetic-kimi-secret");
+    const gateway = prepared.modelBridge;
+    if (gateway) gateways.push(gateway);
+    // Chat reaches the upstream through the gateway under the alias.
+    const routed = protocol === "openai-completions";
+    const model = routed ? "harnesshub-model" : "alpha";
+    assert.equal(
+      prepared.env[keyName!],
+      routed ? gateway!.token : "synthetic-kimi-secret",
+    );
     assert.equal(prepared.env.KIMI_DISABLE_TELEMETRY, "1");
     assert.equal(
       prepared.command[prepared.command.indexOf("--prompt") + 1],
@@ -468,7 +500,7 @@ void test("Kimi print CLI maps four protocols without persisting credentials or 
     );
     assert.equal(
       prepared.command[prepared.command.indexOf("--model") + 1],
-      "alpha",
+      model,
     );
     assert.equal(
       JSON.stringify(prepared.command).includes("synthetic-kimi-secret"),
@@ -479,24 +511,40 @@ void test("Kimi print CLI maps four protocols without persisting credentials or 
       "utf8",
     );
     assert.equal(bytes.includes("synthetic-kimi-secret"), false);
-    assert.deepEqual(JSON.parse(bytes), {
-      default_model: "alpha",
-      telemetry: false,
-      providers: {
-        harnesshub: {
-          type: nativeType,
-          base_url: "http://127.0.0.1:1234",
-          api_key: "",
-        },
-      },
-      models: {
-        alpha: {
-          provider: "harnesshub",
-          model: "alpha",
-          max_context_size: 131072,
-        },
-      },
-    });
+    const models = {
+      [model]: { provider: "harnesshub", model, max_context_size: 131072 },
+    };
+    assert.deepEqual(
+      JSON.parse(bytes),
+      routed
+        ? {
+            default_model: model,
+            default_thinking: false,
+            telemetry: false,
+            merge_all_available_skills: false,
+            providers: {
+              harnesshub: {
+                type: nativeType,
+                base_url: `${gateway!.baseUrl}/v1`,
+                api_key: "",
+              },
+            },
+            models,
+            loop_control: { reserved_context_size: 16384 },
+          }
+        : {
+            default_model: model,
+            telemetry: false,
+            providers: {
+              harnesshub: {
+                type: nativeType,
+                base_url: "http://127.0.0.1:1234",
+                api_key: "",
+              },
+            },
+            models,
+          },
+    );
   }
 });
 void test("Kimi rejects managed ACP, invalid context windows and conflicting native configuration", async (t) => {

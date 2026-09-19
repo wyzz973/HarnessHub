@@ -9,7 +9,11 @@ import type { RunId, SessionId } from "../../src/domain/types.js";
 
 void test("DSH private overlay configures native routes and ACP model selectors without persisting credentials", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "hh-dsh-provider-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  const gateways: { close(): Promise<void> }[] = [];
+  t.after(async () => {
+    for (const gateway of gateways) await gateway.close();
+    await rm(root, { recursive: true, force: true });
+  });
   for (const protocol of [
     "openai-completions",
     "openai-responses",
@@ -43,10 +47,18 @@ void test("DSH private overlay configures native routes and ACP model selectors 
       },
       { CONTEST_KEY: secret },
     );
+    if (result.modelBridge) gateways.push(result.modelBridge);
+    // Chat providers reach the upstream only through the Session gateway,
+    // under the engine-visible alias and with explicit model limits.
+    const routed = protocol === "openai-completions";
+    const model = routed ? "harnesshub-model" : "contest/model";
     assert.equal(result.env.DSH_HOME, join(stateDir, "configuration"));
     assert.equal(result.env.DSH_TELEMETRY_DISABLED, "1");
-    assert.equal(result.env.HARNESSHUB_PROVIDER_KEY, secret);
-    assert.equal(result.model, JSON.stringify(["harnesshub", "contest/model"]));
+    assert.equal(
+      result.env.HARNESSHUB_PROVIDER_KEY,
+      routed ? result.modelBridge!.token : secret,
+    );
+    assert.equal(result.model, JSON.stringify(["harnesshub", model]));
     const filename = join(stateDir, "configuration", "dsh.patch.json"),
       text = await readFile(filename, "utf8");
     assert.deepEqual(result.command.slice(-2), ["--patch", filename]);
@@ -55,20 +67,46 @@ void test("DSH private overlay configures native routes and ACP model selectors 
         id: "llm-pi-ai",
         config: {
           providers: {
-            harnesshub: {
-              api: protocol === "anthropic" ? "anthropic-messages" : protocol,
-              baseURL: "https://api.example.invalid/v1",
-              apiKeyEnv: "HARNESSHUB_PROVIDER_KEY",
-              models: [{ id: "contest/model", name: "contest/model" }],
-            },
+            harnesshub: routed
+              ? {
+                  api: "openai-completions",
+                  baseURL: `${result.modelBridge!.baseUrl}/v1`,
+                  apiKeyEnv: "HARNESSHUB_PROVIDER_KEY",
+                  defaultContextWindow: 131072,
+                  defaultMaxTokens: 16384,
+                  models: [
+                    {
+                      id: model,
+                      name: model,
+                      contextWindow: 131072,
+                      maxTokens: 16384,
+                      input: ["text"],
+                      reasoningEfforts: false,
+                      compat: {
+                        supportsStore: false,
+                        supportsDeveloperRole: false,
+                        supportsReasoningEffort: false,
+                        supportsStrictMode: false,
+                        maxTokensField: "max_tokens",
+                      },
+                    },
+                  ],
+                }
+              : {
+                  api:
+                    protocol === "anthropic" ? "anthropic-messages" : protocol,
+                  baseURL: "https://api.example.invalid/v1",
+                  apiKeyEnv: "HARNESSHUB_PROVIDER_KEY",
+                  models: [{ id: model, name: model }],
+                },
           },
         },
       },
       {
         id: "agent-default-model",
-        config: { provider: "harnesshub", model: "contest/model" },
+        config: { provider: "harnesshub", model },
       },
-      { id: "acp", config: { provider: "harnesshub", model: "contest/model" } },
+      { id: "acp", config: { provider: "harnesshub", model } },
     ]);
     assert.equal(text.includes(secret), false);
     assert.equal(JSON.stringify(profile).includes(secret), false);
