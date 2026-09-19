@@ -18,6 +18,8 @@ export const forbiddenChatFields = Object.freeze([
   "audio",
   "web_search_options",
   "user",
+  "parallel_tool_calls",
+  "reasoning_effort",
   "max_completion_tokens",
 ]);
 
@@ -81,10 +83,8 @@ export function strictChatViolations(body, options = {}) {
       )
         violations.push(`tools[${index}] must be a function tool`);
     });
-  if (!hasTools)
-    for (const field of ["tool_choice", "parallel_tool_calls"])
-      if (Object.hasOwn(body, field))
-        violations.push(`${field} is only accepted together with tools`);
+  if (!hasTools && Object.hasOwn(body, "tool_choice"))
+    violations.push("tool_choice is only accepted together with tools");
   return violations;
 }
 

@@ -142,6 +142,8 @@ test("strict company rules accept a clean streaming request and reject every ven
     [{ ...valid, store: false }, /store/],
     [{ ...valid, metadata: {} }, /metadata/],
     [{ ...valid, max_completion_tokens: 10 }, /max_completion_tokens/],
+    [{ ...valid, parallel_tool_calls: false }, /parallel_tool_calls/],
+    [{ ...valid, reasoning_effort: "high" }, /reasoning_effort/],
     [
       {
         ...valid,
