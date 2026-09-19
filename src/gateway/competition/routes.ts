@@ -287,6 +287,7 @@ function competitionEvent(
 export function registerCompetitionRoutes(
   server: FastifyInstance,
   app: HubApplication,
+  options: { engineId?: string } = {},
 ) {
   server.post("/session", async (request, reply) => {
     try {
@@ -295,6 +296,7 @@ export function registerCompetitionRoutes(
       const directory = stringField(body.directory, "directory")!;
       const session = await app.createSessionAtDirectory({
         directory,
+        ...(options.engineId ? { engineId: options.engineId } : {}),
         routing: {
           competition: {
             title: title ?? `Session ${new Date().toISOString()}`,

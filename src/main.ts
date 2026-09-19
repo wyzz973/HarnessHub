@@ -48,6 +48,14 @@ export async function startHub(options: {
   defaultEngine?: string;
   workspaces?: Workspace[];
   competition?: boolean;
+  /** Engine used by every Competition `/session`, independent of later default changes. */
+  competitionEngine?: string;
+  /** Console page opened from the Gateway root `/`. */
+  consoleUrl?: string;
+  /** Installed Tool Package root; defaults to `<dataDir>/tool-packages`. */
+  toolPackageRoot?: string;
+  /** Persistent unified-model file shared by bundle entry points (ADR 0013). */
+  harnessModelFile?: string;
 }) {
   const resolveConfig = async () => {
     const config = await loadConfig({
@@ -270,7 +278,7 @@ export async function startHub(options: {
       configuration,
     });
     const toolPackages = createToolPackageManagement({
-      root: path.join(dataDir, "tool-packages"),
+      root: options.toolPackageRoot ?? path.join(dataDir, "tool-packages"),
       nodeExecutable: process.execPath,
       commandMcpEntry: fileURLToPath(
         new URL("./drivers/tool-command/command-mcp.js", import.meta.url),
@@ -279,7 +287,16 @@ export async function startHub(options: {
       registerEngine: (input) => app.registerEngine(input),
     });
     registerToolPackageRoutes(server, toolPackages);
-    if (options.competition) registerCompetitionRoutes(server, app);
+    if (options.competition)
+      registerCompetitionRoutes(server, app, {
+        ...(options.competitionEngine
+          ? { engineId: options.competitionEngine }
+          : {}),
+      });
+    if (options.consoleUrl) {
+      const consoleUrl = options.consoleUrl;
+      server.get("/", async (_request, reply) => reply.redirect(consoleUrl));
+    }
     server.addHook("onClose", async () => {
       for (const abort of activeProbes) abort.abort();
       await Promise.allSettled([...probeTasks]);
@@ -325,12 +342,15 @@ if (
       host: { type: "string", default: "localhost" },
       port: { type: "string" },
       "data-dir": { type: "string", default: "./data" },
+      "tool-package-root": { type: "string" },
+      "harness-model-file": { type: "string" },
+      "console-url": { type: "string" },
       help: { type: "boolean" },
     },
   });
   if (values.help)
     console.log(
-      "HarnessHub: node dist/src/main.js [--competition] [--engine opencode] [--host localhost] [--port 6217] [--config engines/local.yaml] [--data-dir ./data]",
+      "HarnessHub: node dist/src/main.js [--competition] [--engine opencode] [--host localhost] [--port 6217] [--config engines/local.yaml] [--data-dir ./data] [--tool-package-root DIR] [--harness-model-file FILE] [--console-url URL]",
     );
   else {
     const selectedEngine = values.engine ?? process.env.AGENT_ENGINE;
@@ -348,6 +368,16 @@ if (
       cwd: process.cwd(),
       ...(values.config ? { configFile: values.config } : {}),
       ...(selectedEngine ? { defaultEngine: selectedEngine } : {}),
+      ...(values.competition && selectedEngine
+        ? { competitionEngine: selectedEngine }
+        : {}),
+      ...(values["tool-package-root"]
+        ? { toolPackageRoot: values["tool-package-root"] }
+        : {}),
+      ...(values["harness-model-file"]
+        ? { harnessModelFile: values["harness-model-file"] }
+        : {}),
+      ...(values["console-url"] ? { consoleUrl: values["console-url"] } : {}),
     });
     console.log(
       JSON.stringify({
