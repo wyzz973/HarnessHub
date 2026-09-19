@@ -20,7 +20,11 @@ import Fastify, { type FastifyError } from "fastify";
 import swagger from "@fastify/swagger";
 import type { HubApplication } from "../application/service.js";
 import { HubError } from "../domain/errors.js";
-import type { LogSink } from "../domain/logging.js";
+import type {
+  LogSink,
+  SessionLogReader,
+  SessionLogSource,
+} from "../domain/logging.js";
 import {
   createSessionSchema,
   decisionSchema,
@@ -34,6 +38,8 @@ import {
   engineResponseSchema,
   discoveryResponseSchema,
   registryStatusSchema,
+  sessionLogsQuerySchema,
+  sessionLogsResponseSchema,
 } from "../domain/schemas.js";
 import { isTerminal } from "../domain/types.js";
 import type {
@@ -74,6 +80,11 @@ export async function createGateway(
      * `GET /event` are recorded when they end.
      */
     log?: LogSink;
+    /**
+     * Reads a Session's engine log and its Gateway log lines for
+     * `GET /v1/sessions/{id}/logs`. Without it that route answers 503.
+     */
+    sessionLogs?: SessionLogReader;
   } = {},
 ) {
   const server = Fastify({
@@ -415,6 +426,39 @@ export async function createGateway(
     async (request) => {
       app.getSession(request.params.id as SessionId);
       return { runs: app.runs(request.params.id as SessionId).slice(-200) };
+    },
+  );
+  server.get<{
+    Params: { id: string };
+    Querystring: { source: SessionLogSource; limit: number; after?: string };
+  }>(
+    "/v1/sessions/:id/logs",
+    {
+      schema: {
+        params: idParams,
+        querystring: sessionLogsQuerySchema,
+        response: responses(sessionLogsResponseSchema),
+      },
+    },
+    async (request) => {
+      const reader = options.sessionLogs;
+      if (!reader)
+        throw new HubError(
+          "LOGS_UNAVAILABLE",
+          "Diagnostic logs are not configured for this Gateway",
+          503,
+        );
+      // Unknown Sessions fail here; file paths are built from the stored id.
+      const session = app.getSession(request.params.id as SessionId);
+      return reader.read({
+        sessionId: session.id,
+        runIds: app.runs(session.id).map((run) => run.id),
+        source: request.query.source,
+        limit: request.query.limit,
+        ...(request.query.after === undefined
+          ? {}
+          : { after: request.query.after }),
+      });
     },
   );
   server.get<{

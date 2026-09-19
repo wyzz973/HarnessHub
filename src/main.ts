@@ -55,6 +55,7 @@ import {
 import { harnessModelEnvironment } from "./domain/harness-model.js";
 import { JsonLogFile } from "./logging/json-log-file.js";
 import { observeStore } from "./logging/observed-store.js";
+import { createSessionLogReader } from "./logging/session-log-reader.js";
 import { createRedactor } from "./worker/diagnostics.js";
 
 /** Gateway log records not mirrored by `logEcho`; per-request and per-call lines stay in the file. */
@@ -66,6 +67,14 @@ const QUIET_ECHO = new Set([
   "permission.applied",
 ]);
 
+/** Known secret values the Gateway redacts in its log: the environment's unified model key. */
+function gatewayLogSecrets(): Set<string> {
+  const secrets = new Set<string>();
+  const modelKey = process.env[harnessModelEnvironment.apiKey];
+  if (modelKey) secrets.add(modelKey);
+  return secrets;
+}
+
 /**
  * Open `<dataDir>/logs/gateway.log`. The unified model key (when it comes from the
  * environment) is redacted as a known value on top of the credential patterns.
@@ -76,13 +85,10 @@ function openGatewayLog(
   echo: boolean,
 ): JsonLogFile {
   const file = path.join(dataDir, "logs", "gateway.log");
-  const secrets = new Set<string>();
-  const modelKey = process.env[harnessModelEnvironment.apiKey];
-  if (modelKey) secrets.add(modelKey);
   return new JsonLogFile({
     file,
     level,
-    redact: createRedactor(secrets),
+    redact: createRedactor(gatewayLogSecrets()),
     ...(echo
       ? {
           // stderr: stdout stays reserved for the machine-readable ready line.
@@ -162,6 +168,9 @@ export async function startHub(options: {
   const requestedDataDir = path.resolve(options.dataDir);
   await mkdir(requestedDataDir, { recursive: true, mode: 0o700 });
   const dataDir = await realpath(requestedDataDir);
+  /** A Session's engine log, written by its Worker under the Session state directory. */
+  const engineLogPath = (sessionId: string) =>
+    path.join(dataDir, "backends", sessionId, "diagnostics", "engine.log");
   const gatewayLog = openGatewayLog(
     dataDir,
     logLevel,
@@ -296,8 +305,7 @@ export async function startHub(options: {
     if (options.competitionEngine) manager.resolve(options.competitionEngine);
     const recoveredWorkers = await host.recover();
     const observedStore = observeStore(store, gatewayLog, {
-      engineLog: (sessionId) =>
-        path.join(dataDir, "backends", sessionId, "diagnostics", "engine.log"),
+      engineLog: engineLogPath,
     });
     runtime = new Runtime(observedStore, host, {
       ...config,
@@ -447,6 +455,12 @@ export async function startHub(options: {
         bindHost,
       ),
       log: gatewayLog,
+      sessionLogs: createSessionLogReader({
+        gatewayLog: gatewayLog.file,
+        engineLog: engineLogPath,
+        redact: createRedactor(gatewayLogSecrets()),
+        ownRoute: "/v1/sessions/:id/logs",
+      }),
     });
     const toolPackages = createToolPackageManagement({
       root: options.toolPackageRoot ?? path.join(dataDir, "tool-packages"),

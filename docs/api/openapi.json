@@ -6747,6 +6747,152 @@
         }
       }
     },
+    "/v1/sessions/{id}/logs": {
+      "get": {
+        "operationId": "hh_get_v1_sessions_id_logs",
+        "summary": "会话诊断日志",
+        "tags": [
+          "sessions"
+        ],
+        "description": "先确认Session存在；SessionLogReader只读当前文件及.1～.3轮转文件：无after时倒序读取最新limit条，有after时按文件身份与字节偏移顺序读取新行；每行再次脱敏后解析。\n\n输入：路径Session id；source=engine（默认，引擎日志）或gateway（Gateway日志中属于该Session及其Run的行）；limit默认200，范围1～2000；after为上一页返回的cursor。\n\n返回：200：source、file、exists、records（JSON Lines记录，旧到新）、cursor、truncated、skipped。\n\n副作用：只读文件，不启动或联系Worker；单次最多扫描32 MiB、返回2 MiB；本接口自身的访问行不出现在gateway页中。\n\n失败与边界：Session不存在404；非法source/limit/after为400 INVALID_REQUEST；未配置日志503 LOGS_UNAVAILABLE；读文件失败500 LOG_READ_FAILED。文件尚不存在时exists=false、records为空。truncated表示有记录因数量、大小、扫描预算或轮转被跳过。",
+        "parameters": [
+          {
+            "schema": {
+              "enum": [
+                "engine",
+                "gateway"
+              ],
+              "default": "engine"
+            },
+            "in": "query",
+            "name": "source",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2000,
+              "default": 200
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]{1,40}:[0-9]{1,16}$"
+            },
+            "in": "query",
+            "name": "after",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "source",
+                    "file",
+                    "exists",
+                    "records",
+                    "cursor",
+                    "truncated",
+                    "skipped"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "source": {
+                      "enum": [
+                        "engine",
+                        "gateway"
+                      ]
+                    },
+                    "file": {
+                      "type": "string"
+                    },
+                    "exists": {
+                      "type": "boolean"
+                    },
+                    "records": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                      }
+                    },
+                    "cursor": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "skipped": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": true
+                          }
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/runs/{id}/event-log": {
       "get": {
         "operationId": "hh_get_v1_runs_id_event_log",

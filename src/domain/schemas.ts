@@ -1,5 +1,10 @@
 import { engineConfigurationSchema } from "./engine-configuration.js";
 import { ACP_INITIALIZE_TIMEOUT_LIMIT_MS } from "./engines.js";
+import {
+  SESSION_LOG_CURSOR_PATTERN,
+  SESSION_LOG_DEFAULT_LIMIT,
+  SESSION_LOG_MAX_LIMIT,
+} from "./logging.js";
 /** Schemas for untrusted HTTP inputs. Defaults are resolved by application configuration. */
 export const fileOutputSchema = {
   type: "object",
@@ -153,6 +158,43 @@ export const artifactResponseSchema = {
     size: timestamp,
     sha256: text,
     createdAt: timestamp,
+  },
+} as const;
+/** Query of `GET /v1/sessions/{id}/logs`; defaults are resolved here for the route. */
+export const sessionLogsQuerySchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    source: { enum: ["engine", "gateway"], default: "engine" },
+    limit: {
+      type: "integer",
+      minimum: 1,
+      maximum: SESSION_LOG_MAX_LIMIT,
+      default: SESSION_LOG_DEFAULT_LIMIT,
+    },
+    after: { type: "string", pattern: SESSION_LOG_CURSOR_PATTERN },
+  },
+} as const;
+export const sessionLogsResponseSchema = {
+  type: "object",
+  required: [
+    "source",
+    "file",
+    "exists",
+    "records",
+    "cursor",
+    "truncated",
+    "skipped",
+  ],
+  additionalProperties: false,
+  properties: {
+    source: { enum: ["engine", "gateway"] },
+    file: text,
+    exists: { type: "boolean" },
+    records: { type: "array", items: jsonObject },
+    cursor: { type: ["string", "null"] },
+    truncated: { type: "boolean" },
+    skipped: { type: "integer", minimum: 0 },
   },
 } as const;
 export const runResponseSchema = {
