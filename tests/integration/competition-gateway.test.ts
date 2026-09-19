@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import type { TestContext } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import { COMPETITION_RUN_TIMEOUT_MS } from "../../src/gateway/competition/routes.js";
+import { COMPETITION_RUN_TIMEOUT_MS } from "../../src/engine/registry.js";
 import { startHub } from "../../src/main.js";
 
 type Hub = Awaited<ReturnType<typeof startHub>>;

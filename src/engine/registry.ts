@@ -20,6 +20,11 @@ export interface HubConfig {
   maxConcurrency: number;
   maxWorkers: number;
   maxQueuedRuns: number;
+  /**
+   * Deadline of a Run submitted without its own `timeoutMs`. Resolution order:
+   * {@link RUN_TIMEOUT_ENVIRONMENT} > configuration file > mode default (60 s, or
+   * {@link COMPETITION_RUN_TIMEOUT_MS} in Competition mode).
+   */
   defaultTimeoutMs: number;
   cancelGraceMs: number;
   /**
@@ -259,12 +264,41 @@ export function normalizeEngine(input: unknown): EngineProfile {
       .digest("hex"),
   });
 }
-/** Resolve all deployment defaults once; no environment access occurs in run execution. */
+/**
+ * Default Run deadline in Competition mode. Specification v1.1 has no Run limit and
+ * `prompt_async` blocks until the round ends, so the ordinary 60 seconds would end real
+ * tasks early; one hour matches the client timeout INSTRUCTION.md asks evaluators to use.
+ */
+export const COMPETITION_RUN_TIMEOUT_MS = 3_600_000;
+/** Overrides the default Run deadline in any mode: whole milliseconds, 1 to 86,400,000. */
+export const RUN_TIMEOUT_ENVIRONMENT = "HARNESSHUB_RUN_TIMEOUT_MS";
+
+function runTimeoutFromEnvironment(
+  environment: Readonly<NodeJS.ProcessEnv>,
+): number | undefined {
+  const value = environment[RUN_TIMEOUT_ENVIRONMENT]?.trim();
+  if (!value) return undefined;
+  if (!/^[1-9][0-9]{0,7}$/.test(value) || Number(value) > 86_400_000)
+    throw new HubError(
+      "INVALID_CONFIG",
+      `${RUN_TIMEOUT_ENVIRONMENT} must be whole milliseconds from 1 to 86400000`,
+    );
+  return Number(value);
+}
+
+/**
+ * Resolve all deployment defaults once; no environment access occurs in run execution.
+ * `environment` (default `process.env`) is read only for {@link RUN_TIMEOUT_ENVIRONMENT};
+ * an invalid value fails with `INVALID_CONFIG`.
+ */
 export async function loadConfig(options: {
   file?: string;
   demo: boolean;
   cwd: string;
   defaultEngine?: string;
+  /** Competition mode: Runs default to {@link COMPETITION_RUN_TIMEOUT_MS}. */
+  competition?: boolean;
+  environment?: Readonly<NodeJS.ProcessEnv>;
 }): Promise<HubConfig> {
   const raw: Record<string, unknown> = options.file
     ? object(parse(await readFile(options.file, "utf8")) as unknown)
@@ -352,7 +386,12 @@ export async function loadConfig(options: {
     maxConcurrency: integer(raw.maxConcurrency, 4),
     maxWorkers: integer(raw.maxWorkers, 16),
     maxQueuedRuns: integer(raw.maxQueuedRuns, 1000),
-    defaultTimeoutMs: integer(raw.defaultTimeoutMs, 60_000),
+    defaultTimeoutMs:
+      runTimeoutFromEnvironment(options.environment ?? process.env) ??
+      integer(
+        raw.defaultTimeoutMs,
+        options.competition ? COMPETITION_RUN_TIMEOUT_MS : 60_000,
+      ),
     cancelGraceMs: integer(raw.cancelGraceMs, 500),
     ...(raw.model !== undefined
       ? { model: structuredClone(raw.model as HarnessModel) }

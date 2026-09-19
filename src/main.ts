@@ -75,6 +75,7 @@ export async function startHub(options: {
     const config = await loadConfig({
       demo: options.demo,
       cwd: options.cwd,
+      ...(options.competition ? { competition: true } : {}),
       ...(options.configFile ? { file: options.configFile } : {}),
     });
     if (!options.workspaces) return config;

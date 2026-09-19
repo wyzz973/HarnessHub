@@ -32,13 +32,6 @@ type CompetitionErrorCode = keyof typeof errorStatus;
 
 const PROMPT_POLL_MS = 25;
 const PROMPT_TEXT_LIMIT = 1_048_576;
-/**
- * Deadline of every `prompt_async` Run. The specification has no Run limit and
- * `prompt_async` blocks until the round ends, so the ordinary 60-second Gateway default
- * would end real tasks early. One hour matches the client timeout INSTRUCTION.md asks
- * the evaluator to use; the Run then ends with `RUN_TIMED_OUT` (502).
- */
-export const COMPETITION_RUN_TIMEOUT_MS = 3_600_000;
 const EVENT_PAGE = 1_000;
 const FLUSH_GRACE_MS = 1_000;
 
@@ -410,10 +403,8 @@ export function registerCompetitionRoutes(
         const input = promptInput(request.body);
         if (session.status !== "open")
           throw invalid("Session is closed; create a new session");
-        const { run } = app.submit(session.id, {
-          ...input,
-          timeoutMs: COMPETITION_RUN_TIMEOUT_MS,
-        });
+        // The deadline is the Competition default resolved by loadConfig.
+        const { run } = app.submit(session.id, input);
         feed.publish(run.id);
         // Blocks until the Run ends (specification 4.1); a client disconnect does
         // not cancel the Run and permissions keep being approved until it ends.

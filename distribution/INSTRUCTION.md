@@ -82,6 +82,7 @@ cd <CODE>
 - **进程需保持运行**：不要关闭该窗口；评测结束后按 Ctrl+C 停止。
 - 未设置 `AGENT_ENGINE` 时命令以退出码 2 结束，并列出可用引擎；尚未执行第 2 节时会提示先运行 `Setup-Competition-Offline.cmd`。
 - 默认开启 Full Access：引擎的工具与权限请求自动批准（见第 9 节）。
+- 每一轮任务（一次 `prompt_async`）默认最长运行 60 分钟，超过后以 `RUN_TIMED_OUT` 结束并返回 502。需要其他期限时，在启动前的同一窗口设置 `$env:HARNESSHUB_RUN_TIMEOUT_MS = "<毫秒>"`（1 至 86400000 的整数，例如 `7200000` 为 2 小时）；非法值会拒绝启动。
 
 ## 6. Ready 判定
 
@@ -127,7 +128,7 @@ for ($i = 0; $i -lt 180; $i++) {
    {"parts": [{"type": "text", "text": "请自动打开 Outlook 邮件客户端"}], "model": {"providerID": "provider_xxx", "modelID": "gpt-4"}, "agent": "assistant"}
    ```
 
-   该请求**阻塞到本轮结束**：成功或被中止返回 204（无响应体）；失败返回 502 `{"code":"BAD_GATEWAY","message":"<真实原因>"}`。`model` 可填任意值（只校验格式），实际一律使用第 3 节的统一模型。客户端超时要足够长（建议 ≥ 3600 秒）：每一轮最长运行 60 分钟，超过后以 `RUN_TIMED_OUT` 结束并返回 502。
+   该请求**阻塞到本轮结束**：成功或被中止返回 204（无响应体）；失败返回 502 `{"code":"BAD_GATEWAY","message":"<真实原因>"}`。`model` 可填任意值（只校验格式），实际一律使用第 3 节的统一模型。客户端超时要足够长（建议 ≥ 3600 秒）：每一轮默认最长运行 60 分钟，超过后以 `RUN_TIMED_OUT` 结束并返回 502（期限可用 `HARNESSHUB_RUN_TIMEOUT_MS` 调整，见第 5 节）。
 
 4. **读取结果** `GET /session/{id}/message`，返回消息数组，最后一条为 assistant：
 

@@ -31,7 +31,7 @@ stdout 输出一行 `{"event":"ready","url":...}` 即为就绪。`--engine`（�
 
 所有带 `Content-Type: application/json` 但没有请求体的请求（包括 `/v1` 路由）按无请求体处理；非空但不是合法 JSON 的请求体仍被拒绝。
 
-`prompt_async` 提交的每一轮期限为 60 分钟（普通 `/v1` 入口的默认期限仍为 60 秒），与 INSTRUCTION.md 建议的客户端超时一致；超过期限的 Run 以 `RUN_TIMED_OUT` 结束并返回 502。
+比赛模式下 Run 的默认期限为 60 分钟（非比赛模式仍为 60 秒），与 INSTRUCTION.md 建议的客户端超时一致；超过期限的 Run 以 `RUN_TIMED_OUT` 结束，`prompt_async` 返回 502。默认值在 `loadConfig` 中解析，优先级为环境变量 `HARNESSHUB_RUN_TIMEOUT_MS`（1 至 86,400,000 的整数毫秒，非法值拒绝启动）> 配置文件 `defaultTimeoutMs` > 模式默认值。规范本身没有 Run 期限，`prompt_async` 阻塞到本轮结束，因此比赛模式不能沿用 60 秒。
 
 `prompt_async` 的 `parts` 至少一项且只接受 `type:"text"`，多项文本以换行连接，总长不超过 1,048,576 个字符；`model` 必须是含字符串 `providerID`、`modelID` 的对象（可为空串），`agent` 可选。实际执行一律使用 HarnessHub 统一模型（ADR 0013），这两个字段目前只做校验，尚未写入 Run 记录。
 
