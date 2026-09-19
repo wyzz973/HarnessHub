@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 /**
  * Test fixture only: a contract-level stand-in for dist/src/competition-bundle-main.js used
- * by scripts/check-competition-acceptance.test.mjs. It implements the competition API v1.1
- * routes the acceptance tooling calls and a tiny "engine" that talks streaming Chat
- * Completions to HARNESSHUB_MODEL_BASE_URL (the mock upstream), executes the returned shell
- * tool call in the session directory and records one model.call event per upstream call.
+ * by scripts/check-competition-acceptance.test.mjs. It follows docs/competition-api.md
+ * (v1.1) for the routes the acceptance tooling calls, and a tiny "engine" that talks
+ * streaming Chat Completions to HARNESSHUB_MODEL_BASE_URL (the mock upstream), executes the
+ * returned shell tool call in the session directory and records one model.call event per
+ * upstream call.
  *
  * Faults for negative tests (environment): FAKE_DROP_REASONING=1 omits reasoning_content
  * pass-back; FAKE_UPSTREAM_MODEL reports another upstream model; FAKE_FINISH overrides
- * info.finish; AGENT_ENGINE=broken exits before listening.
+ * info.finish; FAKE_PRINT_ENV=1 prints vendor key names and the unified key;
+ * AGENT_ENGINE=broken exits before listening.
  */
 import { exec } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -39,7 +41,6 @@ const model = process.env.HARNESSHUB_MODEL;
 const upstreamBase = process.env.HARNESSHUB_MODEL_BASE_URL;
 const apiKey = process.env.HARNESSHUB_MODEL_API_KEY;
 if (process.env.FAKE_PRINT_ENV === "1") {
-  // Lets tests prove vendor keys were scrubbed and that the unified key is redacted in logs.
   const vendorKeys = Object.keys(process.env).filter(
     (name) =>
       /(_API_KEY|_AUTH_TOKEN)$/i.test(name) && !name.startsWith("HARNESSHUB_"),
@@ -49,6 +50,7 @@ if (process.env.FAKE_PRINT_ENV === "1") {
 }
 const sessions = new Map();
 const runs = new Map();
+const feed = [];
 const tools = [
   {
     type: "function",
@@ -68,9 +70,8 @@ const tools = [
 ];
 
 function json(response, status, value) {
-  const body = JSON.stringify(value);
   response.writeHead(status, { "Content-Type": "application/json" });
-  response.end(body);
+  response.end(JSON.stringify(value));
 }
 function readJson(request) {
   return new Promise((resolve, reject) => {
@@ -90,6 +91,7 @@ const busy = (session) =>
   [...runs.values()].some(
     (run) => run.sessionId === session.id && !run.finished,
   );
+const publish = (payload) => feed.push(payload);
 
 async function upstreamCall(run, messages) {
   const started = Date.now();
@@ -121,8 +123,8 @@ async function upstreamCall(run, messages) {
       signal: run.abort.signal,
     });
     record.status = response.status;
-    const text = await response.text();
     if (!response.ok) {
+      const text = await response.text();
       record.error = {
         code: "MODEL_UPSTREAM_ERROR",
         message: text.slice(0, 200),
@@ -130,33 +132,54 @@ async function upstreamCall(run, messages) {
       return { error: text };
     }
     const result = { content: "", reasoning: "", calls: [] };
-    for (const frame of text.split("\n\n")) {
-      const data = frame.replace(/^data: /, "").trim();
-      if (!data || data === "[DONE]") continue;
-      const chunk = JSON.parse(data);
-      for (const choice of chunk.choices ?? []) {
-        const delta = choice.delta ?? {};
-        if (delta.reasoning_content)
-          result.reasoning += delta.reasoning_content;
-        if (delta.content) result.content += delta.content;
-        for (const call of delta.tool_calls ?? []) {
-          const target = (result.calls[call.index ?? 0] ??= {
-            id: "",
-            name: "",
-            arguments: "",
-          });
-          if (call.id) target.id = call.id;
-          if (call.function?.name) target.name += call.function.name;
-          if (call.function?.arguments)
-            target.arguments += call.function.arguments;
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for await (const bytes of response.body) {
+      buffer += decoder.decode(bytes, { stream: true });
+      for (;;) {
+        const end = buffer.indexOf("\n\n");
+        if (end < 0) break;
+        const data = buffer
+          .slice(0, end)
+          .replace(/^data: /, "")
+          .trim();
+        buffer = buffer.slice(end + 2);
+        if (!data || data === "[DONE]") continue;
+        const chunk = JSON.parse(data);
+        for (const choice of chunk.choices ?? []) {
+          const delta = choice.delta ?? {};
+          if (delta.reasoning_content)
+            result.reasoning += delta.reasoning_content;
+          if (delta.content) {
+            result.content += delta.content;
+            publish({
+              type: "message.part.updated",
+              properties: {
+                sessionID: run.sessionId,
+                messageID: `${run.id}:assistant:1`,
+                part: { type: "text", content: result.content },
+              },
+            });
+          }
+          for (const call of delta.tool_calls ?? []) {
+            const target = (result.calls[call.index ?? 0] ??= {
+              id: "",
+              name: "",
+              arguments: "",
+            });
+            if (call.id) target.id = call.id;
+            if (call.function?.name) target.name += call.function.name;
+            if (call.function?.arguments)
+              target.arguments += call.function.arguments;
+          }
+          if (choice.finish_reason) record.finishReason = choice.finish_reason;
         }
-        if (choice.finish_reason) record.finishReason = choice.finish_reason;
+        if (chunk.usage)
+          record.usage = {
+            input: chunk.usage.prompt_tokens,
+            output: chunk.usage.completion_tokens,
+          };
       }
-      if (chunk.usage)
-        record.usage = {
-          input: chunk.usage.prompt_tokens,
-          output: chunk.usage.completion_tokens,
-        };
     }
     record.ok = true;
     record.toolCalls = result.calls.length;
@@ -226,6 +249,16 @@ async function execute(run, session, text) {
   return { status: "failed", error: "too many rounds" };
 }
 
+function finishOf(run) {
+  if (process.env.FAKE_FINISH) return process.env.FAKE_FINISH;
+  if (!run.finished) return "running";
+  return run.status === "completed"
+    ? "stop"
+    : run.status === "cancelled"
+      ? "cancelled"
+      : "error";
+}
+
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, "http://127.0.0.1");
   const parts = url.pathname.split("/").filter(Boolean);
@@ -246,10 +279,9 @@ const server = createServer(async (request, response) => {
     if (url.pathname === "/v1/harness/model")
       return json(response, 200, {
         configured: Boolean(model),
-        source: "environment",
-        model,
+        ...(model ? { source: "environment", model } : {}),
         alias: "harnesshub-model",
-        engines: [],
+        engines: [{ engineId: engine, status: model ? "applied" : "disabled" }],
       });
     if (url.pathname === "/session" && request.method === "POST") {
       const body = await readJson(request);
@@ -267,13 +299,13 @@ const server = createServer(async (request, response) => {
         title: session.title,
         created_at: new Date().toISOString(),
         status: "idle",
+        directory: session.directory,
       });
     }
     if (url.pathname === "/session/status") {
       const status = {};
       for (const session of sessions.values())
-        if (session.open)
-          status[session.id] = { type: busy(session) ? "busy" : "idle" };
+        status[session.id] = { type: busy(session) ? "busy" : "idle" };
       return json(response, 200, status);
     }
     if (url.pathname === "/event") {
@@ -281,22 +313,10 @@ const server = createServer(async (request, response) => {
       response.write(
         `data: ${JSON.stringify({ type: "server.connected", properties: {} })}\n\n`,
       );
-      const states = new Map();
+      let cursor = feed.length;
       const timer = setInterval(() => {
-        for (const session of sessions.values()) {
-          if (!session.open) continue;
-          const state = busy(session) ? "busy" : "idle";
-          const previous = states.get(session.id);
-          if (previous === state) continue;
-          states.set(session.id, state);
-          response.write(
-            `data: ${JSON.stringify({ type: "session.status", properties: { sessionID: session.id, status: { type: state } } })}\n\n`,
-          );
-          if (state === "idle" && previous === "busy")
-            response.write(
-              `data: ${JSON.stringify({ type: "session.idle", properties: { sessionID: session.id } })}\n\n`,
-            );
-        }
+        while (cursor < feed.length)
+          response.write(`data: ${JSON.stringify(feed[cursor++])}\n\n`);
       }, 20);
       request.once("close", () => clearInterval(timer));
       return undefined;
@@ -310,6 +330,11 @@ const server = createServer(async (request, response) => {
         });
       if (parts[2] === "prompt_async" && request.method === "POST") {
         const body = await readJson(request);
+        if (!session.open)
+          return json(response, 400, {
+            code: "VALIDATION_ERROR",
+            message: "Session is closed",
+          });
         const run = {
           id: `run_${randomUUID()}`,
           sessionId: session.id,
@@ -319,9 +344,30 @@ const server = createServer(async (request, response) => {
           finished: false,
         };
         runs.set(run.id, run);
+        publish({
+          type: "session.status",
+          properties: { sessionID: session.id, status: { type: "busy" } },
+        });
         await new Promise((resolve) => setTimeout(resolve, 60));
         const outcome = await execute(run, session, run.text);
         Object.assign(run, outcome, { finished: true });
+        if (run.status === "failed")
+          publish({
+            type: "session.error",
+            properties: {
+              sessionID: session.id,
+              error: { message: run.error, data: { runId: run.id } },
+            },
+          });
+        if (run.status !== "completed") session.open = false;
+        publish({
+          type: "session.status",
+          properties: { sessionID: session.id, status: { type: "idle" } },
+        });
+        publish({
+          type: "session.idle",
+          properties: { sessionID: session.id },
+        });
         if (run.status === "completed" || run.status === "cancelled") {
           response.writeHead(204);
           return response.end();
@@ -334,14 +380,16 @@ const server = createServer(async (request, response) => {
           .flatMap((run) => [
             { id: `${run.id}:user`, role: "user", content: run.text },
             {
-              id: `${run.id}:assistant`,
+              id: `${run.id}:assistant:1`,
               role: "assistant",
               content: run.output ?? "",
+              tool_calls: [],
               info: {
                 role: "assistant",
-                finish:
-                  process.env.FAKE_FINISH ??
-                  (run.finished ? "stop" : "tool-calls"),
+                finish: finishOf(run),
+                ...(run.status === "failed"
+                  ? { error: { code: "ENGINE_FAILED", message: run.error } }
+                  : {}),
               },
               parts: [
                 { type: "text", content: run.output ?? "" },

@@ -1,21 +1,26 @@
 #!/usr/bin/env node
 /**
- * Competition API v1.1 acceptance for one running HarnessHub competition Gateway.
+ * Competition API v1.1 acceptance for one running HarnessHub competition Gateway
+ * (docs/competition-api.md).
  *
  * Scenarios (`--scenario`):
- * - `full` (real model, default): POST /session with a directory that does not exist yet
- *   (must be created) -> "reply OK" -> file task (hello.txt with a nonce) -> shell task
- *   (a command writes shell.txt and prints it) -> abort a long task -> model.call
- *   statistics -> DELETE /session.
- * - `mock` (scripts/mock-company-model.mjs upstream): "reply OK" -> HH_MOCK_TOOL round
- *   (tool call + reasoning pass-back + mock-ok.txt marker; SKIP when the engine exposes no
- *   shell-like tool) -> abort an HH_MOCK_SLOW stream -> model.call statistics -> DELETE.
- *   Mock results prove the protocol chain only; they are not a real-model pass.
+ * - `full` (real model, default): session A with a directory that does not exist yet (must be
+ *   created) -> "reply OK" -> file task (hello.txt with a nonce) -> shell task (a command
+ *   writes shell.txt and prints it).
+ * - `mock` (scripts/mock-company-model.mjs upstream): session A -> "reply OK" ->
+ *   HH_MOCK_TOOL round (tool call, reasoning pass-back and the mock-ok.txt marker; SKIP
+ *   when the engine exposes no shell-like tool). Mock results prove the protocol chain only;
+ *   they are not a real-model pass.
+ * Both then abort a long task in a separate session B (a cancelled ACP run closes its
+ * session, so it must not share session A), collect model.call statistics for every run,
+ * and DELETE both sessions (DELETE must be idempotent and a closed session must refuse
+ * prompts with 400).
  *
  * Every prompt must return 204, the last assistant message must have info.finish=stop and
  * a step-finish part, and GET /event must report busy then idle for the session. Every
- * completed prompt run must have model.call events (GET /v1/runs/{id}/event-log) and all
- * of them must name the unified upstream model (`--expect-model`, else GET /v1/harness/model).
+ * completed run must have model.call events (GET /v1/runs/{id}/event-log) naming only the
+ * unified upstream model (`--expect-model`, else GET /v1/harness/model), and the unified
+ * model must be configured and applied to the engine under test.
  *
  * The script reads no credential files or variables. It writes
  * <out>/acceptance-<engine>.json and <out>/acceptance-<engine>.log.
@@ -48,13 +53,6 @@ import {
 } from "./mock-company-model.mjs";
 
 export const ACCEPTANCE_SCHEMA_VERSION = 1;
-const terminalStatuses = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "timed_out",
-  "interrupted",
-]);
 
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -138,6 +136,10 @@ function tally(values) {
   return result;
 }
 
+function count(target, key) {
+  target[key] = (target[key] ?? 0) + 1;
+}
+
 function safeName(value) {
   return (
     String(value)
@@ -151,7 +153,8 @@ function safeName(value) {
  *
  * @param {{base: string, engine: string, out: string, scenario?: "full"|"mock",
  *   expectModel?: string, workRoot?: string, promptTimeoutMs?: number, timeoutMs?: number,
- *   providerId?: string, platform?: NodeJS.Platform, abortSettleMs?: number}} input
+ *   providerId?: string, platform?: NodeJS.Platform, abortSettleMs?: number,
+ *   abortOutputTimeoutMs?: number}} input
  * @returns {Promise<object>} The JSON document also written to <out>/acceptance-<engine>.json.
  */
 export async function runAcceptance(input) {
@@ -172,6 +175,7 @@ export async function runAcceptance(input) {
     logLines.push(`${new Date().toISOString()} ${message}`);
   const steps = [];
   const sseEvents = [];
+  const sessions = [];
   const result = {
     schemaVersion: ACCEPTANCE_SCHEMA_VERSION,
     engine,
@@ -188,14 +192,22 @@ export async function runAcceptance(input) {
     skipped: [],
     steps,
     session: { id: null, directory: null, files: [] },
+    sessions,
     runtimeInfo: null,
     harnessModel: null,
     modelCalls: null,
     sse: null,
   };
+  let expectedModel = input.expectModel;
   let sessionId;
   let directory;
   let stream;
+  const caseRoot = path.join(
+    path.resolve(
+      input.workRoot ?? path.join(os.tmpdir(), "harnesshub-acceptance"),
+    ),
+    `${safeName(engine)}-${Date.now()}-${nonce}`,
+  );
 
   const remaining = (limit) =>
     Math.max(1000, Math.min(limit, deadline - Date.now()));
@@ -209,7 +221,7 @@ export async function runAcceptance(input) {
       });
       if (!options.quiet || response.status >= 400)
         note(
-          `${method} ${pathname} -> ${response.status} (${Date.now() - t0} ms)`,
+          `${method} ${pathname} -> ${response.status} (${Date.now() - t0} ms)${response.status >= 400 ? ` ${summarizeBody(response)}` : ""}`,
         );
       return response;
     } catch (error) {
@@ -230,7 +242,9 @@ export async function runAcceptance(input) {
     steps.push(entry);
     const blocker = requires.find(
       (dependency) =>
-        steps.find((step) => step.id === dependency)?.status !== "PASS",
+        !["PASS", "SKIP"].includes(
+          steps.find((step) => step.id === dependency)?.status,
+        ),
     );
     if (blocker) {
       entry.status = "BLOCKED";
@@ -262,16 +276,15 @@ export async function runAcceptance(input) {
     return entry;
   };
 
-  const statusEvents = (from) =>
-    sseEvents
-      .slice(from)
-      .filter(
-        (event) =>
-          event.sessionID === sessionId &&
-          (event.type === "session.status" || event.type === "session.idle"),
-      );
-  const sawBusyThenIdle = (from) => {
-    const events = statusEvents(from);
+  const eventsFor = (id, from) =>
+    sseEvents.slice(from).filter((event) => event.sessionID === id);
+  const statusEvents = (id, from) =>
+    eventsFor(id, from).filter(
+      (event) =>
+        event.type === "session.status" || event.type === "session.idle",
+    );
+  const sawBusyThenIdle = (id, from) => {
+    const events = statusEvents(id, from);
     const busy = events.findIndex((event) => event.status === "busy");
     return (
       busy >= 0 &&
@@ -282,18 +295,22 @@ export async function runAcceptance(input) {
         )
     );
   };
-  const sessionStatus = async () => {
+  const sessionErrors = (id, from) =>
+    eventsFor(id, from)
+      .filter((event) => event.type === "session.error")
+      .map((event) => event.error ?? "session.error");
+  const sessionStatus = async (id) => {
     const response = await call("GET", "/session/status", { quiet: true });
     if (response.status !== 200 || !isObject(response.json)) return "unknown";
-    const entry = response.json[sessionId];
+    const entry = response.json[id];
     return isObject(entry) && typeof entry.type === "string"
       ? entry.type
       : "absent";
   };
-  const listRuns = async () => {
+  const listRuns = async (id) => {
     const response = await call(
       "GET",
-      `/v1/sessions/${encodeURIComponent(sessionId)}/runs`,
+      `/v1/sessions/${encodeURIComponent(id)}/runs`,
     );
     if (response.status !== 200 || !Array.isArray(response.json?.runs))
       throw new Error(
@@ -325,13 +342,28 @@ export async function runAcceptance(input) {
     parts: [{ type: "text", text }],
     model: {
       providerID: input.providerId ?? "harnesshub",
-      modelID: input.expectModel ?? "harnesshub-model",
+      modelID: expectedModel ?? "harnesshub-model",
     },
   });
-  const inspectLastAssistant = async (detail, problems) => {
+  const createSession = async (title, target) => {
+    const response = await call("POST", "/session", {
+      body: { title, directory: target },
+    });
+    if (response.status !== 200 || typeof response.json?.id !== "string")
+      throw new Error(
+        `POST /session returned ${response.status} ${summarizeBody(response)}`,
+      );
+    sessions.push({
+      id: response.json.id,
+      title: response.json.title ?? title,
+      directory: target,
+    });
+    return response.json;
+  };
+  const inspectLastAssistant = async (id, detail, problems) => {
     const response = await call(
       "GET",
-      `/session/${encodeURIComponent(sessionId)}/message`,
+      `/session/${encodeURIComponent(id)}/message`,
     );
     if (response.status !== 200 || !Array.isArray(response.json)) {
       problems.push(
@@ -353,19 +385,18 @@ export async function runAcceptance(input) {
     }
     const parts = Array.isArray(assistant.parts) ? assistant.parts : [];
     detail.finish = assistant.info?.finish ?? null;
+    if (isObject(assistant.info?.error)) detail.runError = assistant.info.error;
     detail.stepFinish = parts.some(
       (part) => isObject(part) && part.type === "step-finish",
     );
-    detail.toolParts = parts.filter(
-      (part) => isObject(part) && part.type === "tool",
-    ).length;
+    detail.toolParts = response.json
+      .flatMap((message) =>
+        isObject(message) && Array.isArray(message.parts) ? message.parts : [],
+      )
+      .filter((part) => isObject(part) && part.type === "tool")
+      .map((part) => `${part.tool}:${part.state?.status ?? "?"}`)
+      .slice(-10);
     detail.reply = replyText(assistant).slice(0, 400);
-    if (detail.finish !== "stop")
-      problems.push(
-        `last assistant info.finish is ${JSON.stringify(detail.finish)}`,
-      );
-    if (!detail.stepFinish)
-      problems.push("last assistant message has no step-finish part");
     return assistant;
   };
   const prompt = async (detail, text) => {
@@ -374,29 +405,39 @@ export async function runAcceptance(input) {
     const response = await call(
       "POST",
       `/session/${encodeURIComponent(sessionId)}/prompt_async`,
-      {
-        body: promptBody(text),
-        timeoutMs: promptTimeoutMs,
-      },
+      { body: promptBody(text), timeoutMs: promptTimeoutMs },
     );
     detail.httpStatus = response.status;
-    if (response.status !== 204) {
+    if (response.status !== 204)
       problems.push(
         `prompt_async returned ${response.status} ${summarizeBody(response)}`,
       );
-      return { problems, assistant: undefined };
+    const assistant = await inspectLastAssistant(sessionId, detail, problems);
+    if (response.status === 204 && assistant) {
+      if (detail.finish !== "stop")
+        problems.push(
+          `last assistant info.finish is ${JSON.stringify(detail.finish)}`,
+        );
+      if (!detail.stepFinish)
+        problems.push("last assistant message has no step-finish part");
     }
-    const assistant = await inspectLastAssistant(detail, problems);
-    const observed = await waitUntil(() => sawBusyThenIdle(mark), {
+    const observed = await waitUntil(() => sawBusyThenIdle(sessionId, mark), {
       timeoutMs: 10_000,
       intervalMs: 50,
     });
     detail.sse = observed
       ? "busy->idle"
-      : statusEvents(mark).map((event) => event.status ?? event.type);
+      : statusEvents(sessionId, mark).map(
+          (event) => event.status ?? event.type,
+        );
+    const errors = sessionErrors(sessionId, mark);
+    if (errors.length) detail.sessionErrors = errors.slice(0, 3);
     if (!observed)
       problems.push("GET /event did not report busy then idle for this turn");
-    return { problems, assistant };
+    return {
+      problems,
+      assistant: response.status === 204 ? assistant : undefined,
+    };
   };
 
   try {
@@ -437,6 +478,47 @@ export async function runAcceptance(input) {
     );
 
     await runStep(
+      "unified-model",
+      async (detail) => {
+        const response = await call("GET", "/v1/harness/model");
+        if (response.status !== 200 || !isObject(response.json))
+          throw new Error(
+            `/v1/harness/model returned ${response.status} ${summarizeBody(response)}`,
+          );
+        const view = response.json;
+        const engines = Array.isArray(view.engines) ? view.engines : [];
+        const own = engines.find(
+          (entry) => isObject(entry) && entry.engineId === engine,
+        );
+        result.harnessModel = {
+          configured: view.configured ?? null,
+          source: view.source ?? null,
+          model: view.model ?? null,
+          alias: view.alias ?? null,
+          engine: own ?? null,
+        };
+        if (expectedModel === undefined && typeof view.model === "string")
+          expectedModel = view.model;
+        detail.expectedModel = expectedModel ?? null;
+        const problems = [];
+        if (view.configured !== true)
+          problems.push(
+            "the unified model is not configured (set HARNESSHUB_MODEL and HARNESSHUB_MODEL_BASE_URL)",
+          );
+        if (input.expectModel !== undefined && view.model !== input.expectModel)
+          problems.push(
+            `unified model is ${JSON.stringify(view.model)}; expected ${input.expectModel}`,
+          );
+        if (own && own.status !== "applied")
+          problems.push(
+            `engine ${engine} is ${own.status} for the unified model${own.reason ? `: ${own.reason}` : ""}`,
+          );
+        fail(problems);
+      },
+      ["health"],
+    );
+
+    await runStep(
       "event-stream",
       async () => {
         stream = subscribeEvents(`${base}/event`, (event, at) => {
@@ -449,6 +531,11 @@ export async function runAcceptance(input) {
             status: isObject(properties.status)
               ? properties.status.type
               : undefined,
+            ...(event.type === "session.error"
+              ? {
+                  error: String(properties.error?.message ?? "").slice(0, 300),
+                }
+              : {}),
           });
         });
         await stream.ready;
@@ -465,31 +552,22 @@ export async function runAcceptance(input) {
     await runStep(
       "session-create",
       async (detail) => {
-        const root = path.resolve(
-          input.workRoot ?? path.join(os.tmpdir(), "harnesshub-acceptance"),
-        );
-        await mkdir(root, { recursive: true });
-        directory = path.join(
-          root,
-          `${safeName(engine)}-${Date.now()}-${nonce}`,
-          "workspace",
-        );
+        await mkdir(path.dirname(caseRoot), { recursive: true });
+        directory = path.join(caseRoot, "workspace");
         detail.directory = directory;
         result.session.directory = directory;
-        if (await isDirectory(directory))
-          throw new Error("session directory unexpectedly exists");
-        const response = await call("POST", "/session", {
-          body: { title: `hh-acceptance-${engine}-${nonce}`, directory },
-        });
-        if (response.status !== 200 || typeof response.json?.id !== "string")
-          throw new Error(
-            `POST /session returned ${response.status} ${summarizeBody(response)}`,
-          );
-        sessionId = response.json.id;
+        if (await isDirectory(caseRoot))
+          throw new Error("session directory parent unexpectedly exists");
+        const created = await createSession(
+          `hh-acceptance-${engine}-${nonce}`,
+          directory,
+        );
+        sessionId = created.id;
         result.session.id = sessionId;
         detail.sessionId = sessionId;
-        detail.title = response.json.title;
-        detail.initialStatus = response.json.status;
+        detail.initialStatus = created.status;
+        if (created.status !== "idle")
+          throw new Error(`new session status is ${created.status}`);
         if (!(await isDirectory(directory)))
           throw new Error("POST /session did not create the missing directory");
       },
@@ -597,11 +675,17 @@ export async function runAcceptance(input) {
       "abort",
       async (detail) => {
         const problems = [];
+        const created = await createSession(
+          `hh-acceptance-${engine}-${nonce}-abort`,
+          path.join(caseRoot, "abort-workspace"),
+        );
+        const abortId = created.id;
+        detail.sessionId = abortId;
         const mark = sseEvents.length;
         let settled = false;
         const pending = call(
           "POST",
-          `/session/${encodeURIComponent(sessionId)}/prompt_async`,
+          `/session/${encodeURIComponent(abortId)}/prompt_async`,
           {
             body: promptBody(
               scenario === "mock" ? prompts.slow : prompts.long.text,
@@ -617,25 +701,39 @@ export async function runAcceptance(input) {
         });
         const busy = await waitUntil(
           async () =>
-            statusEvents(mark).some((event) => event.status === "busy") ||
-            (await sessionStatus()) === "busy",
+            settled ||
+            statusEvents(abortId, mark).some(
+              (event) => event.status === "busy",
+            ) ||
+            (await sessionStatus(abortId)) === "busy",
           { timeoutMs: 60_000, intervalMs: 200 },
         );
         if (!busy)
           throw new Error("the session never became busy for the long task");
-        await delay(
-          input.abortSettleMs ?? (scenario === "mock" ? 3000 : 10_000),
+        await waitUntil(
+          () =>
+            settled ||
+            eventsFor(abortId, mark).some(
+              (event) => event.type === "message.part.updated",
+            ),
+          { timeoutMs: input.abortOutputTimeoutMs ?? 90_000, intervalMs: 100 },
         );
+        detail.abortPhase = eventsFor(abortId, mark).some(
+          (event) => event.type === "message.part.updated",
+        )
+          ? "after-output"
+          : "before-output";
+        await delay(input.abortSettleMs ?? (scenario === "mock" ? 1000 : 5000));
         if (settled) {
           const outcome = await pending;
           throw new Error(
-            `the long task finished before abort was sent (prompt_async ${outcome.response?.status ?? outcome.error?.message})`,
+            `the long task finished before abort was sent (prompt_async ${outcome.response?.status ?? outcome.error?.message}${outcome.response ? ` ${summarizeBody(outcome.response)}` : ""})`,
           );
         }
         const abortMark = sseEvents.length;
         const aborted = await call(
           "POST",
-          `/session/${encodeURIComponent(sessionId)}/abort`,
+          `/session/${encodeURIComponent(abortId)}/abort`,
         );
         detail.abortHttpStatus = aborted.status;
         if (aborted.status !== 200)
@@ -651,14 +749,15 @@ export async function runAcceptance(input) {
             : `error: ${outcome.error?.message}`);
         if (outcome.timeout)
           problems.push("prompt_async did not return within 120 s after abort");
+        else if (outcome.response?.status !== 204)
+          problems.push(
+            `prompt_async returned ${detail.promptHttpStatus} after abort; expected 204`,
+          );
         const idle = await waitUntil(
-          async () => (await sessionStatus()) === "idle",
-          {
-            timeoutMs: 60_000,
-            intervalMs: 250,
-          },
+          async () => (await sessionStatus(abortId)) === "idle",
+          { timeoutMs: 60_000, intervalMs: 250 },
         );
-        detail.statusAfterAbort = idle ? "idle" : await sessionStatus();
+        detail.statusAfterAbort = idle ? "idle" : await sessionStatus(abortId);
         if (!idle)
           problems.push(
             `session status after abort is ${detail.statusAfterAbort}`,
@@ -666,45 +765,35 @@ export async function runAcceptance(input) {
         detail.sseIdleAfterAbort = Boolean(
           await waitUntil(
             () =>
-              statusEvents(abortMark).some(
+              statusEvents(abortId, abortMark).some(
                 (event) =>
                   event.status === "idle" || event.type === "session.idle",
               ),
             { timeoutMs: 10_000, intervalMs: 50 },
           ),
         );
-        detail.sseAfterAbort = statusEvents(abortMark).map(
+        detail.sseAfterAbort = statusEvents(abortId, abortMark).map(
           (event) => event.status ?? event.type,
         );
         if (!detail.sseIdleAfterAbort)
           problems.push("GET /event did not report idle after abort");
-        const last = (await listRuns()).at(-1);
+        const last = (await listRuns(abortId)).at(-1);
         detail.runStatus = last?.status ?? null;
-        if (!terminalStatuses.has(last?.status))
-          problems.push(`aborted run status is ${detail.runStatus}`);
+        if (last?.status !== "cancelled")
+          problems.push(
+            `aborted run status is ${detail.runStatus}; expected cancelled`,
+          );
         fail(problems);
       },
-      ["session-create", "event-stream"],
+      ["health", "event-stream"],
     );
 
     await runStep(
       "model-calls",
       async (detail) => {
-        let expected = input.expectModel;
-        const view = await call("GET", "/v1/harness/model");
-        if (view.status === 200 && isObject(view.json)) {
-          result.harnessModel = {
-            configured: view.json.configured ?? null,
-            source: view.json.source ?? null,
-            model: view.json.model ?? null,
-            alias: view.json.alias ?? null,
-          };
-          if (expected === undefined && typeof view.json.model === "string")
-            expected = view.json.model;
-        }
-        detail.expectedModel = expected ?? null;
+        detail.expectedModel = expectedModel ?? null;
         const stats = {
-          expectedModel: expected ?? null,
+          expectedModel: expectedModel ?? null,
           unified: false,
           total: 0,
           ok: 0,
@@ -718,52 +807,54 @@ export async function runAcceptance(input) {
           errors: [],
           runs: [],
         };
-        for (const run of await listRuns()) {
-          const calls = (await eventLog(run.id))
-            .filter((event) => isObject(event) && event.type === "model.call")
-            .map((event) => (isObject(event.data) ? event.data : {}));
-          stats.runs.push({
-            runId: run.id,
-            status: run.status,
-            modelCalls: calls.length,
-          });
-          for (const record of calls) {
-            stats.total++;
-            if (record.ok === true) stats.ok++;
-            else stats.failed++;
-            const upstream = String(record.upstreamModel ?? "(missing)");
-            stats.upstreamModels[upstream] =
-              (stats.upstreamModels[upstream] ?? 0) + 1;
-            const requested = String(record.requestedModel ?? "(none)");
-            stats.requestedModels[requested] =
-              (stats.requestedModels[requested] ?? 0) + 1;
-            const inbound = String(record.inbound ?? "(unknown)");
-            stats.inbound[inbound] = (stats.inbound[inbound] ?? 0) + 1;
-            const status = String(record.status ?? "(unknown)");
-            stats.statuses[status] = (stats.statuses[status] ?? 0) + 1;
-            if (typeof record.toolCalls === "number")
-              stats.toolCalls += record.toolCalls;
-            for (const key of ["input", "output", "total"])
-              if (typeof record.usage?.[key] === "number")
-                stats.usage[key] += record.usage[key];
-            if (record.error && stats.errors.length < 5)
-              stats.errors.push(
-                `${record.error.code ?? "error"}: ${String(record.error.message ?? "").slice(0, 200)}`,
+        for (const session of sessions)
+          for (const run of await listRuns(session.id)) {
+            const calls = (await eventLog(run.id))
+              .filter((event) => isObject(event) && event.type === "model.call")
+              .map((event) => (isObject(event.data) ? event.data : {}));
+            stats.runs.push({
+              sessionId: session.id,
+              runId: run.id,
+              status: run.status,
+              modelCalls: calls.length,
+            });
+            for (const record of calls) {
+              stats.total++;
+              if (record.ok === true) stats.ok++;
+              else stats.failed++;
+              count(
+                stats.upstreamModels,
+                String(record.upstreamModel ?? "(missing)"),
               );
+              count(
+                stats.requestedModels,
+                String(record.requestedModel ?? "(none)"),
+              );
+              count(stats.inbound, String(record.inbound ?? "(unknown)"));
+              count(stats.statuses, String(record.status ?? "(unknown)"));
+              if (typeof record.toolCalls === "number")
+                stats.toolCalls += record.toolCalls;
+              for (const key of ["input", "output", "total"])
+                if (typeof record.usage?.[key] === "number")
+                  stats.usage[key] += record.usage[key];
+              if (record.error && stats.errors.length < 5)
+                stats.errors.push(
+                  `${record.error.code ?? "error"}: ${String(record.error.message ?? "").slice(0, 200)}`,
+                );
+            }
           }
-        }
         result.modelCalls = stats;
         const problems = [];
-        if (expected === undefined)
+        if (expectedModel === undefined)
           problems.push(
             "unified model is unknown: pass --expect-model or configure HARNESSHUB_MODEL",
           );
         if (stats.total === 0)
           problems.push("no model.call events were committed");
         const foreign = Object.keys(stats.upstreamModels).filter(
-          (model) => model !== expected,
+          (model) => model !== expectedModel,
         );
-        if (expected !== undefined && foreign.length)
+        if (expectedModel !== undefined && foreign.length)
           problems.push(
             `model.call named non-unified upstream models: ${foreign.join(", ")}`,
           );
@@ -783,26 +874,40 @@ export async function runAcceptance(input) {
     await runStep(
       "session-delete",
       async (detail) => {
-        const response = await call(
+        const problems = [];
+        for (const session of sessions) {
+          const response = await call(
+            "DELETE",
+            `/session/${encodeURIComponent(session.id)}`,
+          );
+          if (response.status !== 200 || response.json?.ok !== true)
+            problems.push(
+              `DELETE ${session.id} returned ${response.status} ${summarizeBody(response)}`,
+            );
+        }
+        const again = await call(
           "DELETE",
           `/session/${encodeURIComponent(sessionId)}`,
         );
-        detail.httpStatus = response.status;
-        if (response.status !== 200)
-          throw new Error(
-            `DELETE /session/{id} returned ${response.status} ${summarizeBody(response)}`,
+        detail.repeatDeleteStatus = again.status;
+        if (again.status !== 200)
+          problems.push(
+            `repeated DELETE returned ${again.status}; expected 200`,
           );
-        const gone = await waitUntil(
-          async () => (await sessionStatus()) === "absent",
-          {
-            timeoutMs: 15_000,
-            intervalMs: 250,
-          },
+        const refused = await call(
+          "POST",
+          `/session/${encodeURIComponent(sessionId)}/prompt_async`,
+          { body: promptBody(prompts.ok) },
         );
-        if (!gone)
-          throw new Error(
-            "session is still listed by GET /session/status after DELETE",
+        detail.promptAfterDelete = refused.status;
+        if (refused.status !== 400 || refused.json?.code !== "VALIDATION_ERROR")
+          problems.push(
+            `prompt after DELETE returned ${refused.status} ${summarizeBody(refused)}; expected 400 VALIDATION_ERROR`,
           );
+        const status = await sessionStatus(sessionId);
+        detail.statusAfterDelete = status;
+        if (status === "busy") problems.push("closed session is still busy");
+        fail(problems);
       },
       ["session-create"],
     );

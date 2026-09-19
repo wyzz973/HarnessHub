@@ -479,6 +479,7 @@ test("mock acceptance passes against a contract-conforming gateway and records u
     [
       ["health", "PASS"],
       ["runtime-info", "PASS"],
+      ["unified-model", "PASS"],
       ["event-stream", "PASS"],
       ["session-create", "PASS"],
       ["prompt-ok", "PASS"],
