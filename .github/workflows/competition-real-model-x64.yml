@@ -103,35 +103,41 @@ jobs:
           "REAL_LAYOUT=$layout" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "REAL_ENTRY=$(Join-Path $code 'Start-Competition.cmd')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Block direct internet access for the layout programs (model endpoint only)
-        if: env.OFFLINE == 'true'
+      - name: Start the model relay (retries only tunnel transport failures)
         env:
           HH_REAL_BASE_URL: ${{ secrets.HH_REAL_BASE_URL }}
+          HH_REAL_BASE_URL_2: ${{ secrets.HH_REAL_BASE_URL_2 }}
         run: |
           $ErrorActionPreference = "Stop"
-          # Windows Firewall block rules win over allow rules, so each program is blocked for
-          # every remote IPv4 range except the model endpoint addresses, and for all IPv6.
-          $modelHost = ([Uri]$env:HH_REAL_BASE_URL).Host
-          $allowed = [Net.Dns]::GetHostAddresses($modelHost) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | ForEach-Object { $_.ToString() } | Sort-Object -Unique
-          if (-not $allowed) { throw "Could not resolve the model endpoint host" }
-          function ToInt([string]$ip) { $b = ([Net.IPAddress]::Parse($ip)).GetAddressBytes(); [Array]::Reverse($b); [BitConverter]::ToUInt32($b, 0) }
-          function ToIp([uint32]$n) { $b = [BitConverter]::GetBytes($n); [Array]::Reverse($b); ([Net.IPAddress]::new($b)).ToString() }
-          $ranges = @(); $start = [uint32]0
-          foreach ($n in ($allowed | ForEach-Object { ToInt $_ } | Sort-Object)) {
-            if ($n -gt $start) { $ranges += "$(ToIp $start)-$(ToIp ([uint32]($n - 1)))" }
-            $start = [uint32]([uint64]$n + 1)
+          $results = Join-Path $env:RUNNER_TEMP "hh-real\results"
+          New-Item -ItemType Directory -Force -Path $results | Out-Null
+          $env:RELAY_UPSTREAMS = (@($env:HH_REAL_BASE_URL, $env:HH_REAL_BASE_URL_2) | Where-Object { $_ }) -join ","
+          $env:RELAY_LOG = Join-Path $results "model-relay.jsonl"
+          $env:RELAY_PORT = "18181"
+          # The runner's own Node runs the relay, so layout programs never need the internet.
+          Start-Process -FilePath (Get-Command node).Source -ArgumentList ".github/scripts/model-relay.mjs" -WindowStyle Hidden -RedirectStandardOutput (Join-Path $env:RUNNER_TEMP "relay.out") -RedirectStandardError (Join-Path $env:RUNNER_TEMP "relay.err")
+          $listening = $false
+          for ($i = 0; $i -lt 60 -and -not $listening; $i++) {
+            try { ([Net.Sockets.TcpClient]::new("127.0.0.1", 18181)).Close(); $listening = $true } catch { Start-Sleep -Milliseconds 250 }
           }
-          $ranges += "$(ToIp $start)-255.255.255.255"
+          if (-not $listening) { throw "The model relay did not start: $(Get-Content -Raw (Join-Path $env:RUNNER_TEMP 'relay.err'))" }
+          "HARNESSHUB_MODEL_BASE_URL=http://127.0.0.1:18181/v1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Block all internet access for the layout programs (company network emulation)
+        if: env.OFFLINE == 'true'
+        run: |
+          $ErrorActionPreference = "Stop"
+          # Engines reach the model only through the Gateway's loopback model gateway, and the
+          # Gateway reaches the model through the loopback relay, so every program shipped in
+          # the layout is blocked from all non-loopback IPv4/IPv6 destinations.
           $programs = Get-ChildItem -LiteralPath $env:REAL_LAYOUT -Recurse -File -Include *.exe | Select-Object -ExpandProperty FullName
           foreach ($program in $programs) {
-            New-NetFirewallRule -DisplayName "hh-offline-v4" -Direction Outbound -Action Block -Program $program -RemoteAddress $ranges | Out-Null
-            New-NetFirewallRule -DisplayName "hh-offline-v6" -Direction Outbound -Action Block -Program $program -RemoteAddress "::/0" | Out-Null
+            New-NetFirewallRule -DisplayName "hh-offline" -Direction Outbound -Action Block -Program $program -RemoteAddress "0.0.0.0-126.255.255.255", "128.0.0.0-255.255.255.255", "::/0" | Out-Null
           }
-          "Blocked $($programs.Count) layout programs except $($allowed -join ', ')" | Write-Host
+          "Blocked $($programs.Count) layout programs from the internet" | Write-Host
 
       - name: Run the competition acceptance against the real model
         env:
-          HARNESSHUB_MODEL_BASE_URL: ${{ secrets.HH_REAL_BASE_URL }}
           HARNESSHUB_MODEL_API_KEY: ${{ secrets.HH_REAL_TOKEN }}
         run: |
           $ErrorActionPreference = "Stop"
@@ -139,6 +145,17 @@ jobs:
           $node = Join-Path $env:REAL_LAYOUT "runtime\node.exe"
           & $node scripts/competition-matrix.mjs --bundle $env:REAL_LAYOUT --entry $env:REAL_ENTRY --engines "${{ matrix.engine }}" --out $out --scenario full --with-console --engine-timeout-ms 2400000 --summary $env:GITHUB_STEP_SUMMARY
           if ($LASTEXITCODE -ne 0) { throw "${{ matrix.engine }} did not pass the real-model acceptance; see the job summary and artifact" }
+
+      - name: Install the example Tool Pack to all engines and use its MCP and CLI tools
+        if: always() && env.REAL_LAYOUT != ''
+        env:
+          HARNESSHUB_MODEL_API_KEY: ${{ secrets.HH_REAL_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = Join-Path $env:RUNNER_TEMP "hh-real\results"
+          $node = Join-Path $env:REAL_LAYOUT "runtime\node.exe"
+          & $node scripts/competition-toolpack-acceptance.mjs --layout $env:REAL_LAYOUT --entry $env:REAL_ENTRY --engine "${{ matrix.engine }}" --out $out --timeout-ms 900000 --summary $env:GITHUB_STEP_SUMMARY
+          if ($LASTEXITCODE -ne 0) { throw "${{ matrix.engine }} did not pass the Tool Pack acceptance" }
 
       - name: Upload results
         if: always()
