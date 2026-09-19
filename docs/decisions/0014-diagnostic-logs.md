@@ -24,6 +24,10 @@
 
 模块上新增 `logging`（只依赖 domain 与 Node 文件库），组合根和 Worker 可使用；Gateway、Runtime、Driver 只依赖 domain 中的 `LogSink` 接口，由组合根或 Worker 注入。
 
+### 补充：读取接口与控制台（2026-09-19）
+
+评委和操作者需要在控制台直接看到这些记录。Gateway 提供只读的 `GET /v1/sessions/{id}/logs`：由组合根注入 `SessionLogReader`（`logging` 模块），Gateway 只确认 Session 存在并传入其 Run id，不联系 Worker。游标采用“文件身份（inode/文件索引）+ 字节偏移”，因为轮转是改名、身份不变，游标跨轮转仍有效；时间戳游标在同一毫秒多行时无法精确续读，因此未采用。读取有界：单次扫描 32 MiB、返回 2 MiB、最多 2000 条，超出以 `truncated` 明示；每行再次脱敏。Gateway 日志页按 Session/Run id 过滤，并排除读取本接口自己的访问行，避免控制台轮询淹没真实记录。控制台“诊断日志”对话框在任务运行时每 2 秒按游标增量读取，本地筛选、复制和下载只作用于当前显示的记录。
+
 ## 考虑过的替代方案
 
 - 直接在 Runtime 各状态转换处调用日志：侵入执行核心、容易漏记或在提交前记录。Store 装饰器只看成功提交的结果，与“先提交再发布”一致。

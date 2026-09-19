@@ -19,6 +19,7 @@ import {
   selectionSchema,
   sessionSchema,
   toolPackApplySchema,
+  sessionLogsSchema,
   toolPackImportSchema,
   toolPackRecordSchema,
   workflowSchema,
@@ -321,6 +322,22 @@ export const api = {
   artifactUrl: (id: string) => `${base}/v1/artifacts/${encodeURIComponent(id)}`,
   rolloutUrl: (id: string) =>
     `${base}/v1/runs/${encodeURIComponent(id)}/rollout`,
+  /** One page of a Session's diagnostics; `after` is the cursor of the previous page. */
+  sessionLogs: (
+    id: string,
+    source: "engine" | "gateway",
+    page: { limit?: number; after?: string | null } = {},
+    signal?: AbortSignal,
+  ) => {
+    const query = new URLSearchParams({ source });
+    if (page.limit !== undefined) query.set("limit", String(page.limit));
+    if (page.after) query.set("after", page.after);
+    return request(
+      `/v1/sessions/${encodeURIComponent(id)}/logs?${query}`,
+      sessionLogsSchema,
+      { signal },
+    );
+  },
   runtimeInfo: (signal?: AbortSignal) =>
     request("/v1/runtime/info", runtimeInfoSchema, { signal }),
   harnessModel: (signal?: AbortSignal) =>
