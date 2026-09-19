@@ -1,0 +1,94 @@
+name: Debug Hermes terminal on Windows x64
+
+# Debug-only workflow for the Hermes terminal-tool hang in the released x64 competition
+# bundle. It needs no model key: Hermes is driven directly or through the scripted mock.
+on:
+  push:
+    branches:
+      - ci/x64-debug-hermes
+
+permissions:
+  contents: read
+
+jobs:
+  hermes:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install py-spy
+        run: python -m pip install --disable-pip-version-check py-spy
+
+      - name: Download and extract the released x64 competition bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $zipName = "harnesshub-competition-full-windows-x64.zip"
+          gh release download competition-latest --repo $env:GITHUB_REPOSITORY --pattern "$zipName*" --dir D:\dl
+          if ($LASTEXITCODE -ne 0) { throw "download failed" }
+          $zip = "D:\dl\$zipName"
+          $expected = ((Get-Content -Raw -LiteralPath "$zip.sha256").Trim() -split '\s+')[0]
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "ZIP SHA-256 mismatch: $actual" }
+          & (Join-Path $env:ProgramFiles "7-Zip\7z.exe") x -y "-oD:\hh" $zip | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "extract failed" }
+          Remove-Item -LiteralPath $zip -Force
+          New-Item -ItemType Directory -Force -Path D:\dbg | Out-Null
+          $job = Get-ChildItem D:\hh -Recurse -Filter harnesshub-job.exe | Select-Object -First 1
+          "JOB_HELPER=$($job.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "Bundle $actual; job helper $($job.FullName)" | Write-Host
+
+      - name: Probe Git Bash like Hermes starts it (runner console)
+        run: |
+          & D:\hh\engines\hermes\runtime\python.exe -I -B "$env:GITHUB_WORKSPACE\.github\scripts\hermes-debug\probe_bash.py" D:\hh D:\dbg\console
+
+      - name: Probe Git Bash under the HarnessHub Job helper (no console, like an engine)
+        run: |
+          $p = Start-Process -FilePath $env:JOB_HELPER -ArgumentList @("run", "$PID", "hhdbg-probe", "D:\hh\engines\hermes\runtime\python.exe", "-I", "-B", "$env:GITHUB_WORKSPACE\.github\scripts\hermes-debug\probe_bash.py", "D:\hh", "D:\dbg\job") -PassThru -NoNewWindow -RedirectStandardOutput D:\dbg\job-probe.out.txt -RedirectStandardError D:\dbg\job-probe.err.txt
+          if (-not $p.WaitForExit(600000)) { taskkill /PID $p.Id /T /F | Out-Null; "TIMED OUT" | Out-File -Append D:\dbg\job-probe.out.txt }
+          Get-Content D:\dbg\job-probe.out.txt, D:\dbg\job-probe.err.txt -ErrorAction SilentlyContinue
+
+      - name: Drive Hermes LocalEnvironment directly (runner console)
+        run: |
+          $p = Start-Process -FilePath D:\hh\engines\hermes\runtime\python.exe -ArgumentList @("-I", "-B", "$env:GITHUB_WORKSPACE\.github\scripts\hermes-debug\hermes_env.py", "D:\hh", "D:\dbg", "console") -PassThru -NoNewWindow -RedirectStandardOutput D:\dbg\hermes-env-console.out.txt -RedirectStandardError D:\dbg\hermes-env-console.err.txt
+          & "$env:GITHUB_WORKSPACE\.github\scripts\hermes-debug\watch.ps1" -Bundle D:\hh -Out D:\dbg\watch-console -Seconds 150 -WatchPid $p.Id
+          if (-not $p.HasExited) { taskkill /PID $p.Id /T /F | Out-Null; "TIMED OUT" | Out-File -Append D:\dbg\hermes-env-console.out.txt }
+          Get-Content D:\dbg\hermes-env-console.out.txt, D:\dbg\hermes-env-console.err.txt -ErrorAction SilentlyContinue
+
+      - name: Drive Hermes LocalEnvironment under the Job helper with a private home
+        run: |
+          New-Item -ItemType Directory -Force -Path D:\dbg\watch-job | Out-Null
+          $p = Start-Process -FilePath $env:JOB_HELPER -ArgumentList @("run", "$PID", "hhdbg-env", "D:\hh\engines\hermes\runtime\python.exe", "-I", "-B", "$env:GITHUB_WORKSPACE\.github\scripts\hermes-debug\hermes_env.py", "D:\hh", "D:\dbg", "job", "private") -PassThru -NoNewWindow -RedirectStandardOutput D:\dbg\hermes-env-job.out.txt -RedirectStandardError D:\dbg\hermes-env-job.err.txt
+          & "$env:GITHUB_WORKSPACE\.github\scripts\hermes-debug\watch.ps1" -Bundle D:\hh -Out D:\dbg\watch-job -Seconds 150 -WatchPid $p.Id
+          if (-not $p.HasExited) { taskkill /PID $p.Id /T /F | Out-Null; "TIMED OUT" | Out-File -Append D:\dbg\hermes-env-job.out.txt }
+          Get-Content D:\dbg\hermes-env-job.out.txt, D:\dbg\hermes-env-job.err.txt -ErrorAction SilentlyContinue
+
+      - name: Hermes through the competition Gateway with the scripted mock model
+        run: |
+          New-Item -ItemType Directory -Force -Path D:\dbg\watch-gateway | Out-Null
+          $p = Start-Process -FilePath D:\hh\runtime\node.exe -ArgumentList @("scripts/competition-matrix.mjs", "--bundle", "D:\hh", "--engines", "hermes", "--out", "D:\dbg\matrix", "--mock", "--engine-timeout-ms", "240000") -PassThru -NoNewWindow -RedirectStandardOutput D:\dbg\matrix.out.txt -RedirectStandardError D:\dbg\matrix.err.txt
+          & "$env:GITHUB_WORKSPACE\.github\scripts\hermes-debug\watch.ps1" -Bundle D:\hh -Out D:\dbg\watch-gateway -Seconds 330 -WatchPid $p.Id
+          if (-not $p.HasExited) { taskkill /PID $p.Id /T /F | Out-Null }
+          Get-Content D:\dbg\matrix.out.txt -ErrorAction SilentlyContinue | Select-Object -Last 5
+
+      - name: Collect Hermes and Gateway logs
+        if: always()
+        run: |
+          New-Item -ItemType Directory -Force -Path D:\dbg\state-logs | Out-Null
+          Get-ChildItem D:\hh\state -Recurse -File -Include *.log -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination (Join-Path D:\dbg\state-logs (($_.FullName.Substring(6)) -replace '[\\:]', '__'))
+          }
+
+      - name: Upload debug evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-debug-x64
+          path: D:\dbg
+          retention-days: 7
