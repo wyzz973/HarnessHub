@@ -277,11 +277,34 @@ void test(
         ).length,
         2,
       );
-      assert.deepEqual(
-        gateway.filter((record) => record.level === "debug"),
-        [],
-        "the Gateway writes no debug records at either level yet",
+      // Successful GET/HEAD access lines (polling) are debug records; everything else
+      // the Gateway writes is info.
+      const successfulReads = access.filter(
+        (record) =>
+          (record.method === "GET" || record.method === "HEAD") &&
+          Number(record.status) < 400 &&
+          record.route !== "/event",
       );
+      assert.deepEqual(
+        gateway.filter(
+          (record) => record.level === "debug" && record.event !== "http",
+        ),
+        [],
+        "only polling access lines are Gateway debug records",
+      );
+      assert.ok(
+        successfulReads.every((record) => record.level === "debug"),
+        "successful reads are logged at debug level",
+      );
+      if (level === "info")
+        assert.deepEqual(successfulReads, [], "info omits successful reads");
+      else
+        assert.ok(
+          successfulReads.some(
+            (record) => record.route === "/v1/runs/:id" && record.id === run.id,
+          ),
+          "debug keeps the polling reads",
+        );
 
       // Engine log: Worker, process, ACP traffic, tool and permission, model calls.
       for (const event of [

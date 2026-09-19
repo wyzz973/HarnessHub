@@ -13,7 +13,7 @@
 
 两类 JSON Lines 文件，统一格式 `{"time","level","event",...}`：
 
-- **Gateway 日志** `<dataDir>/logs/gateway.log`：由组合根打开。访问日志来自 Fastify `onResponse`（方法、路由、不含查询的路径、状态、耗时、路由中的 Session/Run/权限 ID，不含请求体与头）；生命周期来自 Store 装饰器，只在委托方法成功返回后记录已提交的变化（Session 创建含引擎日志路径、状态、后端绑定；Run 接收、状态、结束含耗时与公开错误；权限请求、决定、应用；每个 `model.call` 摘要及引擎错误、安装、清理事件）；Worker 启动、就绪、退出、失败由 ProcessWorkerHost 记录。入口进程把 info 级生命周期行同时打印到 stderr（stdout 仍只有入口自己的 ready 事件，按首行解析的调用方不受影响），访问与模型调用行只写文件。
+- **Gateway 日志** `<dataDir>/logs/gateway.log`：由组合根打开。访问日志来自 Fastify `onResponse`（方法、路由、不含查询的路径、状态、耗时、路由中的 Session/Run/权限 ID，不含请求体与头；成功的 GET/HEAD 多为轮询，除 `GET /event` 外只在 debug 级记录，否则每 2～3 秒的控制台轮询会淹没排障所需的记录）；生命周期来自 Store 装饰器，只在委托方法成功返回后记录已提交的变化（Session 创建含引擎日志路径、状态、后端绑定；Run 接收、状态、结束含耗时与公开错误；权限请求、决定、应用；每个 `model.call` 摘要及引擎错误、安装、清理事件）；Worker 启动、就绪、退出、失败由 ProcessWorkerHost 记录。入口进程把 info 级生命周期行同时打印到 stderr（stdout 仍只有入口自己的 ready 事件，按首行解析的调用方不受影响），访问与模型调用行只写文件。
 - **Session 引擎日志** `<dataDir>/backends/<sessionId>/diagnostics/engine.log`：由该 Session 的 Worker 写。内容为 Run 开始、准备结果（实际命令、MCP 服务名、模型网关地址）与结束；ACP Driver 通过 [acpx 补丁](../../patches/acpx@0.13.2.patch)新增的只读回调记录每个 JSON-RPC 请求/响应/通知（方向、方法、ID、耗时、错误；initialize 的引擎名称版本与能力；session/new 的模型），`session/update` 按轮汇总块数与字节，工具调用只在状态变化时记一行，权限记自动批准或转交结果；引擎进程启动、退出与 stderr 逐行（每进程 256 KiB，超出计数）；CLI Driver 同样记录进程、stderr 与输出大小；每次模型网关调用一行，复用 `ModelCallRecord` 并补充入站路径、首字节时间、推理回填（恢复数与仍缺失数）和规范化增删的参数，不另建第二份记录来源。
 
 `HARNESSHUB_LOG_LEVEL=info|debug`（默认 info）在 `startHub` 启动时解析，非法值拒绝启动；Worker 通过显式环境继承同一值。debug 另外写入 2 KiB 的 ACP 参数/结果、非文本会话更新、Run 输入和模型请求/回答摘录（含提示词与回答正文，只进私有日志，模型网关以独立的 `onPayload` 观察者提供，`ModelCallRecord` 仍不含正文）。

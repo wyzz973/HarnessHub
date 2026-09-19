@@ -76,8 +76,10 @@ export async function createGateway(
     /**
      * Access log: one `http` record per finished response (method, route, path
      * without query, status, duration, Session/Run id from the route). Bodies,
-     * headers and query strings are never logged. Streaming responses such as
-     * `GET /event` are recorded when they end.
+     * headers and query strings are never logged. Successful GET/HEAD responses
+     * other than `GET /event` are polling and are written at debug level only;
+     * everything else is info. Streaming responses such as `GET /event` are
+     * recorded when they end.
      */
     log?: LogSink;
     /**
@@ -101,15 +103,25 @@ export async function createGateway(
           : {};
       const id = (key: string) =>
         typeof params[key] === "string" ? (params[key] as string) : undefined;
-      access.info("http", {
+      const route = request.routeOptions.url ?? null;
+      const record = {
         method: request.method,
-        route: request.routeOptions.url ?? null,
+        route,
         path: request.url.split("?")[0]!.slice(0, 300),
         status: reply.statusCode,
         ms: Math.round(reply.elapsedTime),
         id: id("id") ?? id("sessionId") ?? id("runId"),
         remote: request.ip,
-      });
+      };
+      // Successful reads are mostly console and evaluator polling; at info level they
+      // would bury the records that explain a failure. The competition event stream is
+      // kept because its start and end show when the evaluator was listening.
+      const polling =
+        (request.method === "GET" || request.method === "HEAD") &&
+        reply.statusCode < 400 &&
+        route !== "/event";
+      if (polling) access.debug("http", record);
+      else access.info("http", record);
     });
   // Clients often send `Content-Type: application/json` on bodiless DELETE/POST.
   // A zero-length body is treated as absent; any other body keeps Fastify's
