@@ -65,7 +65,7 @@ Gateway 在每个引擎登记或替换前应用统一模型。文件配置加载
 ### 接口与命令
 
 - `GET /v1/harness/model` 返回 `HarnessModelView`：`configured`、`source`、`model`、`alias`、只含秘密引用的 `provider`，以及每个引擎的 `{engineId,status,reason?}`。`status` 取值：`applied` 已使用统一模型；`unsupported` 无法接入并已停用；`disabled` 登记本身为停用。
-- `PUT /v1/harness/model` 的请求体为 `HarnessModel`。校验通过后原子写入模型文件（权限 0600），为全部引擎发布新 revision，返回 `HarnessModelView`。
+- `PUT /v1/harness/model` 的请求体为 `HarnessModel`。校验通过后原子写入模型文件，为全部引擎发布新 revision，返回 `HarnessModelView`。POSIX 下文件权限为 0600；Windows 下不额外设置 ACL，依赖所在 state 目录的权限。文件只保存秘密引用，不保存密钥。
 - `POST /v1/harness/model/test` 的请求体为 `{"engineId"?}`。Gateway 在默认引擎或指定引擎上，用私有临时目录创建 Session，提交“只回复 OK”，最多等待 90 秒，结束后关闭 Session。返回 `{ok,status,durationMs,runId,error?}`，只有 Run 正常完成且回复非空时 `ok` 为 true。该接口会实际调用模型并消耗额度，密钥只在 Worker 中解析。以下情况返回错误：未配置统一模型（409）；演示引擎或未应用统一模型的引擎（409）；已有测试在运行（429）。
 - `GET /v1/runtime/info` 返回 `{competition, competitionEngine?, fullAccess, consoleUrl?}`，其值在 Gateway 启动时确定。
 - 发行包中，`hub.cmd model set --model <id> --base-url <url> --api-key-env <NAME> [--context-window N] [--max-output-tokens N] [--header NAME=VALUE]... [--alias NAME]` 校验后写入 `state/harness-model.json`；如果当前环境设置了 `HARNESSHUB_MODEL` 或缺少密钥变量，命令会给出提示。`hub.cmd model show` 和 `hub.cmd doctor` 显示生效来源和各引擎状态。这三个命令都不调用模型。
