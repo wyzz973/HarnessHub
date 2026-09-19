@@ -1,0 +1,108 @@
+name: Debug Kimi output encoding on Windows x64
+
+# Debug-only workflow for Kimi's "'charmap' codec can't encode" crash in the released x64
+# competition bundle. No model key: Kimi talks to a local stub or the scripted mock model.
+on:
+  push:
+    branches:
+      - ci/x64-debug-kimi
+
+permissions:
+  contents: read
+
+jobs:
+  kimi:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download and extract the released x64 competition bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $zipName = "harnesshub-competition-full-windows-x64.zip"
+          gh release download competition-latest --repo $env:GITHUB_REPOSITORY --pattern "harnesshub-competition-full-windows-x64*" --dir D:\dl
+          if ($LASTEXITCODE -ne 0) { throw "download failed" }
+          Get-Content D:\dl\harnesshub-competition-full-windows-x64.build.json
+          $zip = "D:\dl\$zipName"
+          $expected = ((Get-Content -Raw -LiteralPath "$zip.sha256").Trim() -split '\s+')[0]
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "ZIP SHA-256 mismatch: $actual" }
+          & (Join-Path $env:ProgramFiles "7-Zip\7z.exe") x -y "-oD:\hh" $zip | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "extract failed" }
+          Remove-Item -LiteralPath $zip -Force
+          New-Item -ItemType Directory -Force -Path D:\dbg | Out-Null
+
+      - name: Inventory - code pages and the Kimi registration
+        run: |
+          Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Nls\CodePage" | Select-Object ACP, OEMCP | Format-List
+          "kimi.exe sha256: $((Get-FileHash -Algorithm SHA256 D:\hh\engines\kimi\kimi.exe).Hash.ToLowerInvariant())"
+          $catalog = Get-ChildItem D:\hh -Filter *.json -Depth 1 | Where-Object { (Get-Content -Raw $_.FullName) -match 'PYTHONUTF8' } | Select-Object -First 2
+          foreach ($file in $catalog) { "=== $($file.FullName)"; (Get-Content -Raw $file.FullName) -split "`n" | Select-String -Pattern 'PYTHONUTF8|PYTHONIOENCODING' | Select-Object -First 4 }
+
+      - name: Patch a copy with scripts/prepare-kimi.mjs and read it back with PyInstaller's own archive viewer
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path D:\dbg\patched | Out-Null
+          Copy-Item D:\hh\engines\kimi\kimi.exe D:\dbg\patched\kimi.exe
+          & D:\hh\runtime\node.exe scripts/prepare-kimi.mjs --executable D:\dbg\patched\kimi.exe
+          if ($LASTEXITCODE -ne 0) { throw "prepare-kimi failed" }
+          & D:\hh\runtime\node.exe scripts/prepare-kimi.mjs --executable D:\dbg\patched\kimi.exe
+          if ($LASTEXITCODE -ne 0) { throw "prepare-kimi is not idempotent" }
+          "patched sha256: $((Get-FileHash -Algorithm SHA256 D:\dbg\patched\kimi.exe).Hash.ToLowerInvariant())"
+          python -m pip install --disable-pip-version-check --quiet pyinstaller
+          $ErrorActionPreference = "Continue"
+          "--- original (options and entry count)"
+          $before = pyi-archive_viewer -l D:\hh\engines\kimi\kimi.exe
+          $before | Select-String -Pattern ", 'o', " | ForEach-Object { $_.Line }
+          "entries: $(($before | Measure-Object -Line).Lines)"
+          "--- patched (options and entry count)"
+          $after = pyi-archive_viewer -l D:\dbg\patched\kimi.exe
+          $after | Select-String -Pattern ", 'o', " | ForEach-Object { $_.Line }
+          "entries: $(($after | Measure-Object -Line).Lines)"
+          & D:\dbg\patched\kimi.exe --version
+          "patched --version exit: $LASTEXITCODE"
+          $global:LASTEXITCODE = 0
+
+      - name: Direct probe - stdout bytes of kimi.exe for ASCII, Latin-1 and Chinese/emoji replies
+        run: |
+          & D:\hh\runtime\node.exe .github\scripts\kimi-debug\kimi_probe.mjs D:\hh\engines\kimi\kimi.exe D:\dbg\patched\kimi.exe D:\dbg\probe
+
+      - name: Baseline - Kimi through gateway.cmd with the scripted mock (released bundle, PYTHONUTF8 set)
+        run: |
+          & D:\hh\runtime\node.exe scripts/competition-matrix.mjs --bundle D:\hh --engines kimi --out D:\dbg\matrix-released --mock --engine-timeout-ms 420000
+          "matrix exit: $LASTEXITCODE (a failure of unicode-reply is expected here)"
+          & D:\hh\runtime\node.exe .github\scripts\kimi-debug\show_reply.mjs D:\dbg\matrix-released
+          Get-ChildItem D:\dbg\matrix-released\logs -Recurse -Filter *engine.log -ErrorAction SilentlyContinue | ForEach-Object { Select-String -Path $_.FullName -Pattern "charmap|engine.exit" | Select-Object -Last 4 | ForEach-Object { $_.Line.Substring(0, [Math]::Min(300, $_.Line.Length)) } }
+          $global:LASTEXITCODE = 0
+
+      - name: Apply the product fix (scripts/prepare-kimi.mjs) to the extracted bundle
+        run: |
+          $ErrorActionPreference = "Stop"
+          & D:\hh\runtime\node.exe scripts/prepare-kimi.mjs --executable D:\hh\engines\kimi\kimi.exe
+          if ($LASTEXITCODE -ne 0) { throw "prepare-kimi failed" }
+
+      - name: Verify - every engine through gateway.cmd with the scripted mock (Kimi patched)
+        run: |
+          & D:\hh\runtime\node.exe scripts/competition-matrix.mjs --bundle D:\hh --engines kimi,opencode,codex,qwen,pi,gemini,mimo,dsh,hermes,openclaw --out D:\dbg\matrix-fixed --mock --engine-timeout-ms 420000 --summary $env:GITHUB_STEP_SUMMARY
+          "matrix exit: $LASTEXITCODE"
+          Get-Content D:\dbg\matrix-fixed\summary.md
+          & D:\hh\runtime\node.exe .github\scripts\kimi-debug\show_reply.mjs D:\dbg\matrix-fixed --require kimi
+          if ($LASTEXITCODE -ne 0) { throw "Kimi failed, or an engine lost the non-ASCII reply, with the fix applied" }
+
+      - name: Upload debug evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kimi-debug-x64
+          path: |
+            D:\dbg\probe\*.jsonl
+            D:\dbg\matrix-released
+            D:\dbg\matrix-fixed
+          retention-days: 7
