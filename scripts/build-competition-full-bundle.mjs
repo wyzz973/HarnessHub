@@ -41,9 +41,13 @@ export async function buildCompetitionFullBundle(bundleDirectory) {
   // one-click installer can be exercised without downloading any dependency.
   const toolPacks = path.join(root, "tool-packs");
   await rm(toolPacks, { recursive: true, force: true });
-  await copyTree(path.join(repository, "examples", "tool-packages"), toolPacks, {
-    allowedRoots: [repository],
-  });
+  await copyTree(
+    path.join(repository, "examples", "tool-packages"),
+    toolPacks,
+    {
+      allowedRoots: [repository],
+    },
+  );
 
   const fullAccessLauncher =
     '@echo off\r\nsetlocal\r\nset "HARNESSHUB_FULL_ACCESS=1"\r\ncd /d "%~dp0"\r\n"%~dp0runtime\\node.exe" "%~dp0dist\\src\\competition-bundle-main.js" %*\r\nexit /b %ERRORLEVEL%\r\n';
@@ -60,32 +64,47 @@ export async function buildCompetitionFullBundle(bundleDirectory) {
     [
       "HarnessHub Competition Full Bundle",
       "",
-      "This directory contains the portable HarnessHub runtime plus bundled Agent engines.",
-      "No Node, pnpm, npm, pip or engine installation is required on the target machine.",
+      "Portable HarnessHub runtime plus bundled Agent engines. No Node, pnpm, npm, pip, Git",
+      "or engine installation is needed and nothing is downloaded at runtime.",
       "",
-      "1. Configure the bundled model/provider once:",
-      "   hub.cmd configure --file <absolute-settings-json>",
+      "1. Unified model (PowerShell). Every engine uses only this model through HarnessHub;",
+      "   engine-specific API keys, logins and subscriptions are not used:",
+      '   $env:HARNESSHUB_MODEL = "<upstream model id>"',
+      '   $env:HARNESSHUB_MODEL_BASE_URL = "https://<model gateway>/v1"   (required with HARNESSHUB_MODEL)',
+      '   $env:HARNESSHUB_MODEL_API_KEY = "<key value>"',
+      "   Optional: HARNESSHUB_MODEL_PROTOCOL (default openai-completions),",
+      "   HARNESSHUB_MODEL_CONTEXT_WINDOW, HARNESSHUB_MODEL_MAX_OUTPUT_TOKENS (positive integers).",
+      "   Persistent alternative: hub.cmd model set --model ID --base-url URL --api-key-env NAME",
       "",
-      "2. Optional: install one Capability Pack (Skill + MCP + CLI) across engines:",
-      "   Install-Tool-Pack.cmd --source <tool-pack-directory> --engines all --workspace <project-directory>",
-      "   Add --bindings <json-file> when the pack declares secret binding slots.",
-      "   Built-in examples are under .\\tool-packs\\",
+      "2. Select the engine with AGENT_ENGINE and start. Keep this window open; Ctrl+C stops it:",
+      '   $env:AGENT_ENGINE = "opencode"',
+      "   .\\gateway.cmd",
+      "   Engines: codex, gemini, qwen, pi, mimo, dsh, openclaw, kimi, opencode, hermes.",
+      "   Options: --port 6217 --host localhost --console-port 3330 --no-console --open",
+      "   (--engine <id> overrides AGENT_ENGINE).",
+      "   gateway.cmd and Start-Competition.cmd enable Full Access (HARNESSHUB_FULL_ACCESS=1:",
+      "   tool/permission requests are approved automatically); gateway-safe.cmd keeps normal",
+      "   permission prompts and denials.",
       "",
-      "3. Start the competition Gateway. gateway.cmd and Start-Competition.cmd enable Full Access:",
-      "   gateway.cmd --engine opencode",
-      "   gateway.cmd --engine codex",
-      "   gateway.cmd --engine qwen",
+      '3. Ready: stdout prints {"event":"competition.ready",...} and',
+      '   GET http://127.0.0.1:6217/health/ready returns 200 {"ready":true}.',
+      "   The console starts on http://127.0.0.1:3330 (a busy port falls back to a free one;",
+      "   see consoleUrl in the ready line or GET /v1/runtime/info). http://localhost:6217/",
+      "   redirects to it. The competition API only needs port 6217; the console never blocks",
+      "   or stops the Gateway.",
       "",
-      "   Full Access sets HARNESSHUB_FULL_ACCESS=1, auto-approves ACP writes/shell requests,",
-      "   and maps supported harnesses to their native YOLO/full-access mode.",
-      "   Use gateway-safe.cmd --engine <id> to retain normal permission prompts/denials.",
+      "4. Competition API v1.1: POST /session, POST /session/{id}/prompt_async (blocks until the",
+      "   turn ends: 204, or 502 with {code,message}), GET /session/{id}/message, GET /event,",
+      "   POST /session/{id}/abort, DELETE /session/{id}.",
       "",
-      "Optional Gateway arguments: --port 6217 --host localhost",
+      "5. Optional Tool Pack for every engine (restart the Gateway afterwards):",
+      "   .\\Install-Tool-Pack.cmd --source <directory, mcp.json or cli.json> --engines all",
+      '   While running: POST /v1/tool-packs/import {"source":"<path>","applyTo":"all"}',
+      "   Examples are under .\\tool-packs\\. MCP servers and CLI tools run in each Session's",
+      "   own directory.",
       "",
-      "The competition HTTP API is exposed by the same HarnessHub Runtime/Worker/EngineConfiguration chain.",
-      "Capability Pack installation verifies file hashes and preflights every selected Engine independently;",
-      "incompatible Engines are reported as skipped without preventing compatible Engines from being configured.",
-      "New Sessions use the saved Skill/MCP/CLI configuration; existing Sessions keep their pinned revision.",
+      "Runs, settings and evidence live under state\\ (state\\competition-data\\harnesshub.sqlite).",
+      "Use a fresh extraction for a clean evaluation.",
       "",
     ].join("\r\n"),
   );
@@ -102,7 +121,10 @@ export async function buildCompetitionFullBundle(bundleDirectory) {
   };
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
   try {
     const { values } = parseArgs({
       options: { bundle: { type: "string" } },
@@ -111,7 +133,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       throw new Error(
         "Usage: node scripts/build-competition-full-bundle.mjs --bundle DIRECTORY",
       );
-    console.log(JSON.stringify(await buildCompetitionFullBundle(values.bundle)));
+    console.log(
+      JSON.stringify(await buildCompetitionFullBundle(values.bundle)),
+    );
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
