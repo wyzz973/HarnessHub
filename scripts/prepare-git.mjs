@@ -21,10 +21,15 @@ const { values } = parseArgs({
   options: {
     arch: { type: "string", default: process.arch },
     root: { type: "string" },
+    // Absolute path of an installed 7-Zip (7z.exe). The pinned PortableGit archive hash is
+    // still verified; this only avoids downloading the unversioned 7-zip.org/a/7zr.exe.
+    "seven-zip": { type: "string" },
   },
 });
 if (process.platform !== "win32" || !["arm64", "x64"].includes(values.arch))
   throw new Error("Windows ARM64/x64 required");
+if (values["seven-zip"] !== undefined && !path.isAbsolute(values["seven-zip"]))
+  throw new Error("--seven-zip must be an absolute path to 7z.exe");
 const root = path.resolve(
   values.root ??
     path.join(repo, ".tools/contest-prepared", `win32-${values.arch}`),
@@ -72,11 +77,17 @@ const sha256 =
     ? "49d1dd3158017fa9805d07268433dbab7021b2ec1c1cc3fbabaf8b8255764dd0"
     : "5aa8a20f6e9abb2c755f0e73c91c687701a46b309ad84a0ca6509380fa4ae290";
 const archive = await download(source, name, sha256);
-const extractor = await download(
-  "https://www.7-zip.org/a/7zr.exe",
-  "7zr.exe",
-  "ad4c82fadcbdf93c03b4fc440f300509c7d60c5c2f4d183e35d9d70d6957037d",
-);
+let extractor;
+if (values["seven-zip"]) {
+  if (!(await lstat(values["seven-zip"])).isFile())
+    throw new Error("--seven-zip does not name a file");
+  extractor = values["seven-zip"];
+} else
+  extractor = await download(
+    "https://www.7-zip.org/a/7zr.exe",
+    "7zr.exe",
+    "ad4c82fadcbdf93c03b4fc440f300509c7d60c5c2f4d183e35d9d70d6957037d",
+  );
 const tar = path.join(
   process.env.SystemRoot ?? "C:\\Windows",
   "System32/tar.exe",

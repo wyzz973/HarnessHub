@@ -23,7 +23,7 @@ const repo = fileURLToPath(new URL("../", import.meta.url));
 const nodeVersion = "24.20.0";
 const pnpmVersion = "10.12.3";
 const help =
-  "Developer only: node scripts/prepare-contest.mjs [--root CHECKOUT/.tools/PREPARED] [--arch arm64|x64] [--pnpm ABSOLUTE_PNPM_JS] [--check]\n--check validates existing prepared inputs without downloads, installs or catalog writes.";
+  "Developer only: node scripts/prepare-contest.mjs [--root CHECKOUT/.tools/PREPARED] [--arch arm64|x64] [--pnpm ABSOLUTE_PNPM_JS] [--skip-binaries cursor,antigravity] [--seven-zip ABSOLUTE_7Z_EXE] [--check]\n--check validates existing prepared inputs without downloads, installs or catalog writes; pass the same --skip-binaries as the preparation.\n--skip-binaries omits the listed distribution/binary-sources.json entries (their engines are absent from the catalog).\n--seven-zip extracts PortableGit with an installed 7-Zip instead of downloading 7zr.exe.";
 const missing = (error) => error?.code === "ENOENT";
 
 export function preparationOptions(
@@ -43,11 +43,31 @@ export function preparationOptions(
       root: { type: "string" },
       arch: { type: "string", default: host.arch },
       pnpm: { type: "string" },
+      "skip-binaries": { type: "string" },
+      "seven-zip": { type: "string" },
       check: { type: "boolean", default: false },
       help: { type: "boolean", default: false },
     },
   });
   if (values.help) return { help: true };
+  const skipBinaries = (values["skip-binaries"] ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+  if (
+    skipBinaries.some((id) => !/^[a-z][a-z0-9-]*$/.test(id)) ||
+    new Set(skipBinaries).size !== skipBinaries.length
+  )
+    throw new Error("--skip-binaries must list unique binary source ids");
+  // Preparation only runs on Windows (checked below), so validate Windows path syntax.
+  if (
+    values["seven-zip"] !== undefined &&
+    (!path.win32.isAbsolute(values["seven-zip"]) ||
+      !/^7z[ar]?\.exe$/i.test(path.win32.basename(values["seven-zip"])))
+  )
+    throw new Error(
+      "--seven-zip must name an absolute 7z.exe, 7za.exe or 7zr.exe",
+    );
   const architecture = {
     arm64: "arm64",
     aarch64: "arm64",
@@ -89,6 +109,8 @@ export function preparationOptions(
     root,
     arch: values.arch,
     check: values.check,
+    skipBinaries,
+    ...(values["seven-zip"] ? { sevenZip: values["seven-zip"] } : {}),
     pnpm:
       values.pnpm ??
       path.join(
@@ -187,7 +209,9 @@ export function preparationSteps(
   arch,
   pnpmEntry,
   node = process.execPath,
+  extras = {},
 ) {
+  const skipBinaries = extras.skipBinaries ?? [];
   const npm = path.join(root, "engines/npm");
   const powershell = path.join(
     process.env.SystemRoot ?? "C:\\Windows",
@@ -214,6 +238,7 @@ export function preparationSteps(
       executable: node,
       args: [
         path.join(repo, "scripts/prepare-binaries.mjs"),
+        ...(skipBinaries.length ? ["--skip", skipBinaries.join(",")] : []),
         "--root",
         root,
         "--arch",
@@ -241,6 +266,7 @@ export function preparationSteps(
       executable: node,
       args: [
         path.join(repo, "scripts/prepare-git.mjs"),
+        ...(extras.sevenZip ? ["--seven-zip", extras.sevenZip] : []),
         "--root",
         root,
         "--arch",
@@ -328,11 +354,17 @@ async function extra(root, id, arch) {
       "Kiro receipt does not confirm extraction without installation",
     );
 }
-async function binaries(root, arch) {
+/** Binary source entries this preparation must cover after removing explicit skips. */
+export async function selectedBinarySources(skip = []) {
+  const all = await json(path.join(repo, "distribution/binary-sources.json"));
+  for (const id of skip)
+    if (!all.some((source) => source.id === id))
+      throw new Error(`Unknown binary source in --skip-binaries: ${id}`);
+  return all.filter((source) => !skip.includes(source.id));
+}
+async function binaries(root, arch, skip = []) {
   const receipts = await json(path.join(root, "binary-receipts.json"));
-  const sources = await json(
-    path.join(repo, "distribution/binary-sources.json"),
-  );
+  const sources = await selectedBinarySources(skip);
   if (!Array.isArray(receipts) || receipts.length !== sources.length)
     throw new Error("Binary receipts do not cover the fixed source set");
   for (const source of sources) {
@@ -406,7 +438,7 @@ async function vendorNotices(root, copy = false) {
     );
   }
 }
-export async function verifyPreparation(root, arch) {
+export async function verifyPreparation(root, arch, skipBinaries = []) {
   await directory(root);
   await equalFile(process.execPath, path.join(root, "runtime/node.exe"));
   await equalFile(
@@ -414,7 +446,7 @@ export async function verifyPreparation(root, arch) {
     path.join(root, "runtime/LICENSE"),
   );
   await npmInputs(root);
-  await binaries(root, arch);
+  await binaries(root, arch, skipBinaries);
   for (const id of ["hermes", "kiro"]) await extra(root, id, arch);
   await git(root);
   const openclaw = path.join(root, "engines/npm/node_modules/openclaw");
@@ -478,10 +510,18 @@ export async function prepareContest(args) {
   });
   if (manager !== pnpmVersion)
     throw new Error(`Expected pnpm ${pnpmVersion}; found ${manager}`);
+  await selectedBinarySources(options.skipBinaries);
   if (options.check) {
     console.log(
       JSON.stringify(
-        await verifyPreparation(options.root, options.arch),
+        {
+          ...(await verifyPreparation(
+            options.root,
+            options.arch,
+            options.skipBinaries,
+          )),
+          skippedBinaries: options.skipBinaries,
+        },
         null,
         2,
       ),
@@ -548,6 +588,11 @@ export async function prepareContest(args) {
       options.root,
       options.arch,
       options.pnpm,
+      process.execPath,
+      {
+        skipBinaries: options.skipBinaries,
+        ...(options.sevenZip ? { sevenZip: options.sevenZip } : {}),
+      },
     )) {
       if (step.id === "catalog") {
         await toolTree(
@@ -560,7 +605,7 @@ export async function prepareContest(args) {
       let reused = false;
       const validate =
         step.id === "binaries"
-          ? () => binaries(options.root, options.arch)
+          ? () => binaries(options.root, options.arch, options.skipBinaries)
           : ["hermes", "kiro"].includes(step.id)
             ? () => extra(options.root, step.id, options.arch)
             : step.id === "git"
@@ -585,7 +630,14 @@ export async function prepareContest(args) {
       }
       if (step.id === "npm") await npmInputs(options.root);
     }
-    const result = await verifyPreparation(options.root, options.arch);
+    const result = {
+      ...(await verifyPreparation(
+        options.root,
+        options.arch,
+        options.skipBinaries,
+      )),
+      skippedBinaries: options.skipBinaries,
+    };
     await writeFile(
       path.join(options.root, "preparation-receipt.json"),
       JSON.stringify(
