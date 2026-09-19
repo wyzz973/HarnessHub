@@ -9,8 +9,10 @@
  *
  * Faults for negative tests (environment): FAKE_DROP_REASONING=1 omits reasoning_content
  * pass-back; FAKE_UPSTREAM_MODEL reports another upstream model; FAKE_FINISH overrides
- * info.finish; FAKE_PRINT_ENV=1 prints vendor key names and the unified key;
- * AGENT_ENGINE=broken exits before listening.
+ * info.finish; FAKE_ANSI_OUTPUT=1 returns replies the way a CLI writing a cp1252 stdout pipe
+ * would reach a UTF-8 reader (characters outside Latin-1 lost, the rest mangled);
+ * FAKE_PRINT_ENV=1 prints vendor key names and the unified key; AGENT_ENGINE=broken exits
+ * before listening.
  */
 import { exec } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -215,7 +217,18 @@ async function execute(run, session, text) {
         { role: "user", content: text },
         { role: "assistant", content: result.content },
       );
-      return { status: "completed", output: result.content };
+      return {
+        status: "completed",
+        output:
+          process.env.FAKE_ANSI_OUTPUT === "1"
+            ? Buffer.from(
+                Array.from(result.content, (character) =>
+                  character.codePointAt(0) < 256 ? character : "?",
+                ).join(""),
+                "latin1",
+              ).toString("utf8")
+            : result.content,
+      };
     }
     messages.push({
       role: "assistant",

@@ -295,6 +295,25 @@ test("mock upstream streams reasoning, drives one tool round and enforces creden
   assert.ok(ok.reasoning.length > 0);
   assert.equal(ok.done, true);
   assert.ok(ok.usage);
+  const unicode = await post(
+    url,
+    {
+      model: "company-sim",
+      stream: true,
+      messages: [{ role: "user", content: "HH_MOCK_UNICODE 请回复" }],
+    },
+    key,
+  );
+  // Chinese, a Latin-1 letter, a BMP symbol and an astral emoji, split over two deltas.
+  assert.equal(
+    parseChatStream(unicode.text).content,
+    "中文回复：完成 ✅ café 🎉",
+  );
+  assert.equal(
+    unicode.text.split("\n").filter((line) => /"content":"[^"]/.test(line))
+      .length,
+    2,
+  );
   const tools = [
     tool(
       "bash",
@@ -562,6 +581,7 @@ test("mock acceptance passes against a contract-conforming gateway and records u
       ["session-create", "PASS"],
       ["prompt-ok", "PASS"],
       ["tool-marker", "PASS"],
+      ["unicode-reply", "PASS"],
       ["abort", "PASS"],
       ["model-calls", "PASS"],
       ["session-delete", "PASS"],
@@ -597,6 +617,11 @@ test("mock acceptance fails for missing reasoning pass-back, foreign upstream mo
       /non-unified upstream models: vendor-default/,
     ],
     [{ FAKE_FINISH: "length" }, "prompt-ok", /info.finish is "length"/],
+    [
+      { FAKE_ANSI_OUTPUT: "1" },
+      "unicode-reply",
+      /reply does not contain the non-ASCII line/,
+    ],
   ];
   for (const [env, stepId, pattern] of cases) {
     const base = await startFakeGateway(t, mock, key, env);
