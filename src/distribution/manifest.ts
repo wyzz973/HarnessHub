@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
+import { ACP_INITIALIZE_TIMEOUT_LIMIT_MS } from "../domain/engines.js";
 import { isRelativeFilePath } from "../domain/files.js";
 import { Ajv } from "ajv";
 import {
@@ -135,7 +136,7 @@ function engine(value: unknown): BundledEngine {
       if (
         !Number.isInteger(acp.initializeTimeoutMs) ||
         Number(acp.initializeTimeoutMs) < 1 ||
-        Number(acp.initializeTimeoutMs) > 60000
+        Number(acp.initializeTimeoutMs) > ACP_INITIALIZE_TIMEOUT_LIMIT_MS
       )
         throw new Error("Invalid ACP initialization timeout");
       result.acp.initializeTimeoutMs = Number(acp.initializeTimeoutMs);

@@ -46,6 +46,9 @@ cd <CODE>
 | `HARNESSHUB_MODEL_PROTOCOL` | 否 | 默认 `openai-completions` |
 | `HARNESSHUB_MODEL_CONTEXT_WINDOW` | 否 | 上下文窗口，正整数 |
 | `HARNESSHUB_MODEL_MAX_OUTPUT_TOKENS` | 否 | 单次输出上限，正整数 |
+| `HARNESSHUB_MODEL_DROP_PARAMETERS` | 否 | 逗号分隔的额外去除参数；上游网关报"不支持某参数"时使用 |
+| `HARNESSHUB_MODEL_REASONING` | 否 | `passthrough`（默认）或 `strip`；上游拒绝回传推理内容时设为 `strip` |
+| `HARNESSHUB_MODEL_IMAGES` | 否 | `placeholder`（默认，图片换成文字说明）或 `passthrough`（上游支持视觉时） |
 
 ```powershell
 $env:HARNESSHUB_MODEL = "<模型ID>"
@@ -79,6 +82,7 @@ cd <CODE>
 - **进程需保持运行**：不要关闭该窗口；评测结束后按 Ctrl+C 停止。
 - 未设置 `AGENT_ENGINE` 时命令以退出码 2 结束，并列出可用引擎；尚未执行第 2 节时会提示先运行 `Setup-Competition-Offline.cmd`。
 - 默认开启 Full Access：引擎的工具与权限请求自动批准（见第 9 节）。
+- 每一轮任务（一次 `prompt_async`）默认最长运行 60 分钟，超过后以 `RUN_TIMED_OUT` 结束并返回 502。需要其他期限时，在启动前的同一窗口设置 `$env:HARNESSHUB_RUN_TIMEOUT_MS = "<毫秒>"`（1 至 86400000 的整数，例如 `7200000` 为 2 小时）；非法值会拒绝启动。
 
 ## 6. Ready 判定
 
@@ -124,7 +128,7 @@ for ($i = 0; $i -lt 180; $i++) {
    {"parts": [{"type": "text", "text": "请自动打开 Outlook 邮件客户端"}], "model": {"providerID": "provider_xxx", "modelID": "gpt-4"}, "agent": "assistant"}
    ```
 
-   该请求**阻塞到本轮结束**：成功或被中止返回 204（无响应体）；失败返回 502 `{"code":"BAD_GATEWAY","message":"<真实原因>"}`。`model` 可填任意值（只校验格式），实际一律使用第 3 节的统一模型。客户端超时要足够长（建议 ≥ 3600 秒）。
+   该请求**阻塞到本轮结束**：成功或被中止返回 204（无响应体）；失败返回 502 `{"code":"BAD_GATEWAY","message":"<真实原因>"}`。`model` 可填任意值（只校验格式），实际一律使用第 3 节的统一模型。客户端超时要足够长（建议 ≥ 3600 秒）：每一轮默认最长运行 60 分钟，超过后以 `RUN_TIMED_OUT` 结束并返回 502（期限可用 `HARNESSHUB_RUN_TIMEOUT_MS` 调整，见第 5 节）。
 
 4. **读取结果** `GET /session/{id}/message`，返回消息数组，最后一条为 assistant：
 
@@ -211,6 +215,7 @@ Invoke-RestMethod -Method Delete -Uri "$base/session/$($session.id)"
 - **从其他机器调用返回 403 或连接失败**：默认绑定只接受本机访问，按第 5 节改用 `--host 0.0.0.0` 启动，并检查 Windows 防火墙是否放行 6217 端口。
 - **`AGENT_ENGINE is not set`**：按第 4 节设置后重新启动。**`Engine X is not included in this bundle`**：`AGENT_ENGINE` 取值不在第 4 节列表中。
 - **启动时报统一模型变量错误**：按第 3 节补齐 `HARNESSHUB_MODEL` 与 `HARNESSHUB_MODEL_BASE_URL`，正整数变量不要带单位。
+- **`openclaw` 的第一轮很慢**：OpenClaw 每个会话先启动私有 Gateway，Windows 上冷启动可能需要 1 到 3 分钟（杀毒软件扫描时更慢），最长等待 180 秒；超过后返回 502 `ACP_INITIALIZE_TIMEOUT` 或 `readiness timed out`，新建会话重试即可。
 - **`prompt_async` 返回 502，原因含上游错误**：检查模型地址、密钥与网络连通性；`POST /v1/harness/model/test`（请求体 `{}`）会向模型发一条极短的流式请求用于诊断。
 - **`Setup-Competition-Offline.cmd` 失败**：查看 `<CODE>\logs\` 中最新日志。常见原因：磁盘空间不足；杀毒软件隔离了引擎程序（提示 `Prepared engine files are missing`，需恢复文件或加白名单）；路径过长（改用短路径重新解压）。依赖损坏时可加 `--reinstall` 重试。
 - **文件被 Windows 标记为来自网络**：在 PowerShell 中执行 `Get-ChildItem -Recurse <CODE> | Unblock-File` 后重试。

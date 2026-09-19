@@ -79,14 +79,13 @@ export function applyFullAccessToRegistration(
     case "qwen":
       appendEngineOption(command, "--approval-mode", "yolo");
       break;
-    case "mimo":
-      appendEngineOption(command, "--yolo");
-      break;
+    // MiMo is not changed: `mimo acp` (fixed 0.1.14) rejects `--yolo` and exits
+    // before ACP initialize, so it relies on ACP approve-all like OpenCode.
     case "hermes":
       setLauncherEnvironment(command, "HERMES_YOLO_MODE", "1");
       break;
-    // OpenCode, DSH, Pi and OpenClaw receive ACP approve-all. OpenClaw's private
-    // exec policy is additionally widened by launch-openclaw-bundled.mjs.
+    // OpenCode, MiMo, DSH, Pi and OpenClaw receive ACP approve-all. OpenClaw's
+    // private exec policy is additionally widened by launch-openclaw-bundled.mjs.
     default:
       break;
   }

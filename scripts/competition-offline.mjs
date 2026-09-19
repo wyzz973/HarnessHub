@@ -9,6 +9,10 @@
  *   pnpm-store/               offline pnpm store for HarnessHub dependencies
  *   prepared/win32-x64/       fixed engine payload (open-source edition, prepared.json)
  *
+ * The judge machine has no Node, pnpm or Git on PATH, so setup writes tools/shims/pnpm.cmd
+ * and puts it first on every child PATH: a nested `pnpm` inside a package script (for
+ * example `build:console`) runs the kit's pnpm with the kit's Node.
+ *
  * `setup` never downloads. Every child process gets npm/pnpm offline mode, an unreachable
  * registry and proxy (127.0.0.1:9) and Corepack network disabled, so an accidental
  * download fails instead of silently succeeding. Steps: verify the kit -> restore
@@ -28,6 +32,7 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import {
+  chmod,
   lstat,
   mkdir,
   readFile,
@@ -65,6 +70,7 @@ export function kitLayout(kit) {
       "bin",
       "pnpm.cjs",
     ),
+    shims: path.join(root, "tools", "shims"),
     store: path.join(root, "pnpm-store"),
     prepared: path.join(root, "prepared", "win32-x64"),
     competition: path.join(root, "competition"),
@@ -81,7 +87,8 @@ function setVariable(env, name, value) {
 
 /**
  * Child environment for offline setup: package managers cannot reach a registry, the
- * kit's Node comes first on PATH and personal npm/pnpm configuration is ignored.
+ * kit's pnpm shim and Node come first on PATH and personal npm/pnpm configuration is
+ * ignored. The shim itself is written by {@link writeToolShims}.
  */
 export function offlineEnvironment(base, layout, platform = process.platform) {
   const env = { ...base };
@@ -114,15 +121,44 @@ export function offlineEnvironment(base, layout, platform = process.platform) {
     "PATH",
     platform === "win32"
       ? [
+          layout.shims,
           path.dirname(layout.node),
           path.join(windows, "System32"),
           windows,
           path.join(windows, "System32", "Wbem"),
           path.join(windows, "System32", "WindowsPowerShell", "v1.0"),
         ].join(";")
-      : [path.dirname(layout.node), "/usr/bin", "/bin"].join(":"),
+      : [layout.shims, path.dirname(layout.node), "/usr/bin", "/bin"].join(":"),
   );
   return env;
+}
+
+/**
+ * Write the `pnpm` command shim that package scripts resolve through PATH. It runs the
+ * kit's pnpm with the kit's Node, uses paths relative to itself (a moved kit keeps
+ * working) and passes the exit code through. Existing shims are replaced.
+ *
+ * @returns {Promise<string>} The shim directory, which {@link offlineEnvironment} puts first on PATH.
+ */
+export async function writeToolShims(layout, platform = process.platform) {
+  await mkdir(layout.shims, { recursive: true });
+  const node = path.relative(layout.shims, layout.node);
+  const pnpm = path.relative(layout.shims, layout.pnpm);
+  if (platform === "win32") {
+    const windows = (value) => value.replaceAll("/", "\\");
+    await writeFile(
+      path.join(layout.shims, "pnpm.cmd"),
+      `@echo off\r\n"%~dp0${windows(node)}" "%~dp0${windows(pnpm)}" %*\r\nexit /b %ERRORLEVEL%\r\n`,
+    );
+  } else {
+    const file = path.join(layout.shims, "pnpm");
+    await writeFile(
+      file,
+      `#!/bin/sh\nshims=$(dirname "$0")\nexec "$shims/${node}" "$shims/${pnpm}" "$@"\n`,
+    );
+    await chmod(file, 0o755);
+  }
+  return layout.shims;
 }
 
 /** Ordered child commands of `setup` (dependency restore is included only when needed). */
@@ -321,7 +357,11 @@ async function acquireLock(lock) {
   };
 }
 
-function runStep(step, env, log) {
+/**
+ * Run one setup step with `env`, mirroring its output to stdout and `log`. Rejects with
+ * the step id and the last output lines when the command cannot start or exits non-zero.
+ */
+export function runStep(step, env, log) {
   return new Promise((resolve, reject) => {
     log.write(
       `\n=== ${step.id}: ${path.basename(step.command)} ${step.args.map((arg) => path.basename(arg)).join(" ")}\n`,
@@ -393,6 +433,7 @@ export async function runSetup(options = {}) {
   const log = createWriteStream(logFile, { flags: "wx" });
   const env = offlineEnvironment(process.env, layout);
   await writeFile(env.npm_config_userconfig, "offline=true\n");
+  await writeToolShims(layout);
   const release = await acquireLock(layout.lock);
   const staging = path.join(
     layout.root,

@@ -403,6 +403,7 @@ export function registerCompetitionRoutes(
         const input = promptInput(request.body);
         if (session.status !== "open")
           throw invalid("Session is closed; create a new session");
+        // The deadline is the Competition default resolved by loadConfig.
         const { run } = app.submit(session.id, input);
         feed.publish(run.id);
         // Blocks until the Run ends (specification 4.1); a client disconnect does

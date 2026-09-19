@@ -21,6 +21,13 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execute = promisify(execFile);
+/**
+ * Private Gateway readiness wait. A cold Windows start is slow but makes progress: the
+ * x64 CI runner first logged "loading configuration" after ~33 s and was not ready at
+ * 45 s, while macOS is ready in ~3 s with the same configuration. A Gateway that exits
+ * still fails at once; only a live but unready Gateway waits this long.
+ */
+const READINESS_TIMEOUT_MS = 150_000;
 const helper = fileURLToPath(
   new URL("../dist/native/harnesshub-job.exe", import.meta.url),
 );
@@ -204,7 +211,7 @@ export async function runBundledOpenClaw(executable) {
     );
     gateway.child.stdin.end();
     logs(gateway.child.stdout);
-    const deadline = AbortSignal.timeout(45_000),
+    const deadline = AbortSignal.timeout(READINESS_TIMEOUT_MS),
       signal = AbortSignal.any([aborted.signal, deadline]);
     let ready = false;
     while (!signal.aborted) {
@@ -229,7 +236,9 @@ export async function runBundledOpenClaw(executable) {
     }
     if (!ready) {
       if (deadline.aborted)
-        throw new Error("Private OpenClaw Gateway readiness timed out");
+        throw new Error(
+          `Private OpenClaw Gateway readiness timed out after ${READINESS_TIMEOUT_MS / 1000} s`,
+        );
       if (process.stdin.readableEnded) return 0;
       throw new Error("Private OpenClaw Gateway exited before ready");
     }

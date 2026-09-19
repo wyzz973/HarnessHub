@@ -52,7 +52,8 @@ test("console engine list and edit schemas preserve bounded ACP initialization w
     id: "openclaw",
     driver: "acp",
     command: ["node.exe", "launch-openclaw-bundled.mjs"],
-    acp: { initializeTimeoutMs: 60000 },
+    // The bundled OpenClaw budget, above the former 60 s bound.
+    acp: { initializeTimeoutMs: 180000 },
   };
   assert.deepEqual(
     registrationSchema.parse(registration).acp,
@@ -84,7 +85,7 @@ test("console engine list and edit schemas preserve bounded ACP initialization w
   );
   for (const acp of [
     { initializeTimeoutMs: 0 },
-    { initializeTimeoutMs: 60001 },
+    { initializeTimeoutMs: 300001 },
     { initializeTimeoutMs: 1.5 },
     { initializeTimeoutMs: "60000" },
     { sessionMode: "invalid" },

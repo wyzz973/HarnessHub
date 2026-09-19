@@ -7,6 +7,7 @@ import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import type { PreparedConfiguration } from "./prepare.js";
 import type { ConfigurationCheck } from "../../domain/engine-configuration.js";
+import { ACP_INITIALIZE_TIMEOUT_LIMIT_MS } from "../../domain/engines.js";
 /** Read-only ACP initialize probe. Owns a process group, bounded output/time and awaited cleanup; never prompts. */
 export async function probeConfiguration(
   prepared: PreparedConfiguration,
@@ -18,10 +19,10 @@ export async function probeConfiguration(
   if (
     !Number.isSafeInteger(initializeTimeoutMs) ||
     initializeTimeoutMs < 1 ||
-    initializeTimeoutMs > 60_000
+    initializeTimeoutMs > ACP_INITIALIZE_TIMEOUT_LIMIT_MS
   )
     throw new Error(
-      "ACP initialize timeout must be an integer between 1 and 60000 ms",
+      `ACP initialize timeout must be an integer between 1 and ${ACP_INITIALIZE_TIMEOUT_LIMIT_MS} ms`,
     );
   const executable = prepared.command[0];
   if (!executable)

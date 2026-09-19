@@ -487,6 +487,7 @@ void test("upstream requests are normalized: model, stream, dropped parameters, 
     stream: false,
     stream_options: { include_usage: true },
     parallel_tool_calls: true,
+    reasoning_effort: "high",
     tool_choice: "auto",
     tools: [],
     max_tokens: 100000,
@@ -977,7 +978,7 @@ void test("a model request without the Session token is recorded as a Run error 
   );
 });
 
-void test("strict-gateway defaults drop parallel_tool_calls and downgrade json_schema output to JSON mode", async (t) => {
+void test("strict-gateway defaults drop parallel_tool_calls and reasoning_effort and downgrade json_schema output to JSON mode", async (t) => {
   const up = await upstream(t, (_, response) =>
     stream(response, [delta({ content: "{}" }, "stop")]),
   );
@@ -987,6 +988,7 @@ void test("strict-gateway defaults drop parallel_tool_calls and downgrade json_s
     messages: [{ role: "user", content: "hi" }],
     tools: [READ],
     parallel_tool_calls: false,
+    reasoning_effort: "medium",
     response_format: {
       type: "json_schema",
       json_schema: { name: "x", schema: { type: "object" } },
@@ -996,6 +998,7 @@ void test("strict-gateway defaults drop parallel_tool_calls and downgrade json_s
   await response.text();
   const sent = up.requests.at(-1)!.body;
   assert.equal("parallel_tool_calls" in sent, false);
+  assert.equal("reasoning_effort" in sent, false);
   assert.deepEqual(sent.response_format, { type: "json_object" });
   assert.ok(Array.isArray(sent.tools));
 });

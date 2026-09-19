@@ -38,6 +38,13 @@ void test("OpenCode full access relies on ACP approve-all and injects no OPENCOD
   );
 });
 
+void test("MiMo full access relies on ACP approve-all because mimo acp rejects --yolo", () => {
+  const input = bundled("mimo");
+  const output = applyFullAccessToRegistration(input, enabled);
+  assert.deepEqual(output.command, input.command);
+  assert.equal(output.command.includes("--yolo"), false);
+});
+
 void test("full access only changes native approval switches and never model, provider or credentials", () => {
   const provider = {
     protocol: "openai-completions" as const,
@@ -49,7 +56,6 @@ void test("full access only changes native approval switches and never model, pr
     codex: ["INITIAL_AGENT_MODE=agent-full-access"],
     gemini: ["GEMINI_CLI_TRUST_WORKSPACE=true", "--approval-mode", "yolo"],
     qwen: ["--approval-mode", "yolo"],
-    mimo: ["--yolo"],
     hermes: ["HERMES_YOLO_MODE=1"],
   };
   for (const adapter of [

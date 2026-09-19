@@ -35,6 +35,9 @@ export const DEFAULT_DROPPED_PARAMETERS = [
   "user",
   // Engines handle several calls in one answer; strict gateways reject it.
   "parallel_tool_calls",
+  // OpenAI reasoning control (Kimi sends it); company reasoning models reject it and
+  // reason by their own configuration.
+  "reasoning_effort",
 ] as const;
 const PROTECTED = new Set(["model", "messages", "stream"]);
 

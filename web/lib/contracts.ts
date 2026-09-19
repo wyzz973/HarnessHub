@@ -83,7 +83,8 @@ export const eventSchema = z.object({
 const acpSchema = z
   .object({
     sessionMode: z.literal("resume").optional(),
-    initializeTimeoutMs: z.number().int().min(1).max(60_000).optional(),
+    // Same bound as ACP_INITIALIZE_TIMEOUT_LIMIT_MS in src/domain/engines.ts.
+    initializeTimeoutMs: z.number().int().min(1).max(300_000).optional(),
   })
   .strict();
 export const engineSchema = z.object({

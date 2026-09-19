@@ -98,6 +98,8 @@ export async function buildCompetitionFullBundle(bundleDirectory) {
       "4. Competition API v1.1: POST /session, POST /session/{id}/prompt_async (blocks until the",
       "   turn ends: 204, or 502 with {code,message}), GET /session/{id}/message, GET /event,",
       "   POST /session/{id}/abort, DELETE /session/{id}.",
+      "   Each turn may run up to 1 hour, then ends with RUN_TIMED_OUT (502). To change it, set",
+      '   $env:HARNESSHUB_RUN_TIMEOUT_MS = "<milliseconds, 1-86400000>" before starting.',
       "",
       "5. Optional Tool Pack for every engine (restart the Gateway afterwards):",
       "   .\\Install-Tool-Pack.cmd --source <directory, mcp.json or cli.json> --engines all",

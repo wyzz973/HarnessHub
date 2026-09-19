@@ -48,9 +48,10 @@ interface Followed {
  * Streams Competition v1.1 SSE frames until `signal` aborts or writing fails.
  *
  * Only committed Run events drive the output, so every followed Run yields
- * `session.status busy` before its parts and, once no other Run of the Session is
- * unfinished, `session.status idle` plus `session.idle` after its terminal event,
- * even when it starts and ends between two polls. Failed, timed-out and interrupted
+ * `session.status busy` before its parts and, when no other Run of the Session was
+ * unfinished at the moment it ended, `session.status idle` plus `session.idle` after
+ * its terminal event, even when it starts and ends between two polls or the next Run
+ * is accepted before the terminal event is read. Failed, timed-out and interrupted
  * Runs emit `session.error` first. A new stream follows unfinished Runs from their
  * current position (announcing their Sessions as busy) and every later Run from its
  * first event; finished history is never replayed. Runs are found through `feed` and
@@ -123,9 +124,18 @@ export async function streamCompetitionEvents(
           data: { code: failure.code, runId: event.runId },
         },
       });
+    // Decide idleness at the moment this Run ended, not when the event is read: a
+    // prompt_async sent right after the previous one returned must not merge both
+    // Runs into one busy period. A Run accepted in the same millisecond counts as later.
+    const endedAt = event.observedAt;
     const pending = app
       .runs(sessionId)
-      .some((run) => run.id !== event.runId && !isTerminal(run.status));
+      .some(
+        (run) =>
+          run.id !== event.runId &&
+          run.createdAt < endedAt &&
+          (!isTerminal(run.status) || (run.finishedAt ?? endedAt) > endedAt),
+      );
     if (!pending) {
       announced.set(sessionId, "idle");
       frame("session.status", {

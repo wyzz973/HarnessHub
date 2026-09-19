@@ -1,15 +1,27 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  link,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   kitLayout,
   listEngines,
   offlineEnvironment,
+  runStep,
   setupPlan,
   verifyKit,
+  writeToolShims,
 } from "./competition-offline.mjs";
 import { preparationOptions, preparationSteps } from "./prepare-contest.mjs";
 
@@ -61,7 +73,10 @@ test("offline setup plan uses only kit-local inputs and blocks registry access",
   assert.equal(env.npm_config_offline, "true");
   assert.equal(env.NPM_CONFIG_PROXY, undefined);
   assert.equal(env.Path, undefined);
-  assert.equal(env.PATH.split(";")[0], path.dirname(layout.node));
+  assert.deepEqual(env.PATH.split(";").slice(0, 2), [
+    layout.shims,
+    path.dirname(layout.node),
+  ]);
   assert.equal(env.COREPACK_ENABLE_NETWORK, "0");
   for (const host of [
     { platform: "linux", arch: "x64", versions: { node: "24.20.0" } },
@@ -94,6 +109,86 @@ test("offline setup plan uses only kit-local inputs and blocks registry access",
   );
   await writeFile(path.join(bundle, "bundle.json"), "{}");
   await assert.rejects(listEngines(bundle), /no engine list/);
+});
+
+// Stand-in for pnpm.cjs: `pnpm <script>` runs the package script through the platform
+// shell like pnpm does; `pnpm --filter ...` records how the nested call arrived.
+const fakePnpm = `const { spawnSync } = require("node:child_process");
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args[0] === "--filter") {
+  fs.writeFileSync("nested-pnpm.json", JSON.stringify(args));
+  process.exit(0);
+}
+const script = JSON.parse(fs.readFileSync("package.json", "utf8")).scripts[args[0]];
+if (typeof script !== "string") process.exit(3);
+process.exit(spawnSync(script, { shell: true, stdio: "inherit" }).status ?? 1);
+`;
+
+test("a nested pnpm in package scripts runs the kit's pnpm when PATH has no pnpm", async (t) => {
+  const kit = await mkdtemp(path.join(os.tmpdir(), "HH shim kit "));
+  t.after(() => rm(kit, { recursive: true, force: true }));
+  const layout = kitLayout(kit);
+  await mkdir(path.dirname(layout.node), { recursive: true });
+  if (process.platform === "win32")
+    await link(process.execPath, layout.node).catch(() =>
+      copyFile(process.execPath, layout.node),
+    );
+  else await symlink(process.execPath, layout.node);
+  await mkdir(path.dirname(layout.pnpm), { recursive: true });
+  await writeFile(layout.pnpm, fakePnpm);
+  await mkdir(layout.repository, { recursive: true });
+  // The real build:console script, which nests `pnpm --filter`.
+  const { scripts } = JSON.parse(
+    await readFile(path.join(repo, "package.json"), "utf8"),
+  );
+  await writeFile(
+    path.join(layout.repository, "package.json"),
+    JSON.stringify({ scripts: { "build:console": scripts["build:console"] } }),
+  );
+  const step = setupPlan(layout, path.join(kit, "staging"), {
+    install: false,
+  }).find((candidate) => candidate.id === "build-console");
+  const env = offlineEnvironment(process.env, layout);
+  const log = new PassThrough();
+  log.resume();
+
+  // Without the shim directory the nested pnpm cannot be found (the CI failure).
+  const separator = process.platform === "win32" ? ";" : ":";
+  const unshimmed = {
+    ...env,
+    PATH: env.PATH.split(separator)
+      .filter((entry) => entry !== layout.shims)
+      .join(separator),
+  };
+  await assert.rejects(runStep(step, unshimmed, log), /build-console failed/);
+
+  assert.equal(await writeToolShims(layout), layout.shims);
+  await runStep(step, env, log);
+  assert.deepEqual(
+    JSON.parse(
+      await readFile(path.join(layout.repository, "nested-pnpm.json"), "utf8"),
+    ),
+    ["--filter", "@harnesshub/console", "build"],
+  );
+  // Exit codes pass through the shim.
+  await writeFile(
+    path.join(layout.repository, "package.json"),
+    JSON.stringify({ scripts: { "build:console": "pnpm missing-script" } }),
+  );
+  await assert.rejects(runStep(step, env, log), /exit code 3/);
+});
+
+test("the Windows pnpm shim is relative to itself and passes the exit code", async (t) => {
+  const kit = await mkdtemp(path.join(os.tmpdir(), "hh-shim-text-"));
+  t.after(() => rm(kit, { recursive: true, force: true }));
+  const layout = kitLayout(kit);
+  await writeToolShims(layout, "win32");
+  const text = await readFile(path.join(layout.shims, "pnpm.cmd"), "utf8");
+  assert.equal(
+    text,
+    '@echo off\r\n"%~dp0..\\node\\node.exe" "%~dp0..\\pnpm-runner\\node_modules\\pnpm\\bin\\pnpm.cjs" %*\r\nexit /b %ERRORLEVEL%\r\n',
+  );
 });
 
 test("contest preparation can skip unhashed binaries and use an installed 7-Zip without changing the default plan", () => {

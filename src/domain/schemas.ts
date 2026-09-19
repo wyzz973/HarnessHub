@@ -1,4 +1,5 @@
 import { engineConfigurationSchema } from "./engine-configuration.js";
+import { ACP_INITIALIZE_TIMEOUT_LIMIT_MS } from "./engines.js";
 /** Schemas for untrusted HTTP inputs. Defaults are resolved by application configuration. */
 export const fileOutputSchema = {
   type: "object",
@@ -208,7 +209,11 @@ const acpConfigurationSchema = {
   additionalProperties: false,
   properties: {
     sessionMode: { const: "resume" },
-    initializeTimeoutMs: { type: "integer", minimum: 1, maximum: 60_000 },
+    initializeTimeoutMs: {
+      type: "integer",
+      minimum: 1,
+      maximum: ACP_INITIALIZE_TIMEOUT_LIMIT_MS,
+    },
   },
 } as const;
 export const enginesResponseSchema = {
