@@ -47,6 +47,11 @@ import type {
 import type { EngineRegistration } from "./domain/engines.js";
 import type { EngineProfile } from "./domain/types.js";
 import { bindInstalled, runToolPackageCli } from "./tool-packages/index.js";
+import { preinstallEnabled } from "./distribution/preinstalled.js";
+import {
+  preinstallToolPacks,
+  type PreinstallReport,
+} from "./preinstalled-tool-packs.js";
 
 const help = `HarnessHub portable competition bundle
   hub.cmd start [--gateway-only] [--demo] [--port 3180] [--console-port 3330]
@@ -62,6 +67,8 @@ const help = `HarnessHub portable competition bundle
   hub.cmd benchmark --dataset TASKS.json --engines codex,opencode [--permissions deny|allow-once]
 Runtime dependencies are bundled. Every engine uses one unified model: HARNESSHUB_MODEL* environment
 variables, else state/harness-model.json (hub.cmd model set), else the settings.json top-level "model".
+start applies the Tool Packs listed in tool-packs\\preinstalled.json to every compatible engine once per
+pack content (HARNESSHUB_PREINSTALL_TOOL_PACKS=0 disables this; packs you unbind later stay unbound).
 No model is called by doctor, configure, model, tools, or smoke. Benchmark and user Runs call the model.`;
 
 /** Engine-layer validation used to predict each engine's unified-model outcome offline. */
@@ -335,6 +342,33 @@ async function configFile(
   );
   return target;
 }
+/**
+ * What `hub.cmd start` does under `state/` before launching the Gateway: preinstalled
+ * Tool Packs are written to `state/settings.json` first, then the Gateway configuration
+ * is generated from the settings as they are afterwards. Preinstall problems are
+ * reported, never thrown; invalid settings throw as for every other command.
+ */
+export async function prepareStartConfiguration(
+  context: BundleContext,
+  manifest: BundleManifest,
+  options: {
+    /** Result of {@link preinstallEnabled}; false leaves Tool Packs untouched. */
+    preinstall: boolean;
+    /** Defaults to the bundle's compiled command MCP entry. */
+    commandMcpEntry?: string;
+    report?: (line: string) => void;
+  },
+): Promise<{ config: string; preinstall: PreinstallReport }> {
+  const preinstall = await preinstallToolPacks(context, manifest, {
+    enabled: options.preinstall,
+    commandMcpEntry:
+      options.commandMcpEntry ??
+      bundlePath(context.root, "dist/src/drivers/tool-command/command-mcp.js"),
+    ...(options.report ? { report: options.report } : {}),
+  });
+  const settings = await readSettings(context.state);
+  return { config: await configFile(manifest, settings, context), preinstall };
+}
 function privateEnvironment(context: BundleContext): NodeJS.ProcessEnv {
   const windows = process.env.SystemRoot ?? "C:\\Windows";
   const env = { ...process.env };
@@ -390,6 +424,8 @@ async function startServices(
     consolePort: number;
     gatewayOnly: boolean;
     demo: boolean;
+    /** Marker of preinstalled Tool Packs for the Gateway; absent when disabled. */
+    preinstalledToolPacks?: string;
   },
 ): Promise<number> {
   await freePort(options.port);
@@ -476,6 +512,9 @@ async function startServices(
         path.join(context.state, "tool-packages"),
         "--harness-model-file",
         path.join(context.state, "harness-model.json"),
+        ...(options.preinstalledToolPacks
+          ? ["--preinstalled-tool-packs", options.preinstalledToolPacks]
+          : []),
         ...(options.demo ? ["--demo"] : []),
       ],
       context.workspace,
@@ -774,6 +813,40 @@ export async function releaseMain(
     console.log(JSON.stringify(await smoke(context), null, 2));
     return 0;
   }
+  if (command === "start") {
+    const { values } = parseArgs({
+      args: args.slice(1),
+      options: {
+        "gateway-only": { type: "boolean", default: false },
+        demo: { type: "boolean", default: false },
+        port: { type: "string", default: "3180" },
+        "console-port": { type: "string", default: "3330" },
+      },
+    });
+    const port = Number(values.port);
+    const consolePort = Number(values["console-port"]);
+    if (
+      ![port, consolePort].every(
+        (value) => Number.isInteger(value) && value > 0 && value < 65536,
+      ) ||
+      port === consolePort
+    )
+      throw new Error("Distinct valid loopback ports required");
+    // A mistyped switch fails before anything under state/ changes.
+    const prepared = await prepareStartConfiguration(context, manifest, {
+      preinstall: preinstallEnabled(process.env),
+      report: (line) => console.error(line),
+    });
+    return startServices(manifest, context, prepared.config, {
+      port,
+      consolePort,
+      gatewayOnly: values["gateway-only"],
+      demo: values.demo,
+      ...(prepared.preinstall.enabled
+        ? { preinstalledToolPacks: prepared.preinstall.markerFile }
+        : {}),
+    });
+  }
   const generated = await configFile(manifest, settings, context);
   if (command === "doctor") {
     const { values } = parseArgs({
@@ -920,32 +993,6 @@ export async function releaseMain(
       "--data-dir",
       path.join(context.state, "benchmark"),
     ]);
-  }
-  if (command === "start") {
-    const { values } = parseArgs({
-      args: args.slice(1),
-      options: {
-        "gateway-only": { type: "boolean", default: false },
-        demo: { type: "boolean", default: false },
-        port: { type: "string", default: "3180" },
-        "console-port": { type: "string", default: "3330" },
-      },
-    });
-    const port = Number(values.port);
-    const consolePort = Number(values["console-port"]);
-    if (
-      ![port, consolePort].every(
-        (value) => Number.isInteger(value) && value > 0 && value < 65536,
-      ) ||
-      port === consolePort
-    )
-      throw new Error("Distinct valid loopback ports required");
-    return startServices(manifest, context, generated, {
-      port,
-      consolePort,
-      gatewayOnly: values["gateway-only"],
-      demo: values.demo,
-    });
   }
   throw new Error(`Unknown command ${command}; run hub.cmd help`);
 }

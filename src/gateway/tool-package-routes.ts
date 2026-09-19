@@ -112,6 +112,7 @@ const listResponse = {
           displayName: { type: "string" },
           counts,
           engines: strings,
+          preinstalled: { type: "boolean" },
           problem: {
             type: "object",
             required: ["code", "message"],

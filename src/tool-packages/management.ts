@@ -48,6 +48,12 @@ export interface ToolPackageManagementOptions {
    * `engines` list; without it those requests fail with 501.
    */
   listEngines?(): readonly ToolPackageEngine[];
+  /**
+   * Package versions the release preinstalled (see distribution/preinstalled.ts);
+   * listings mark them with `preinstalled: true`. A rejected promise only drops
+   * the marks, it never fails a listing.
+   */
+  preinstalled?(): Promise<readonly { id: string; version: string }[]>;
 }
 
 export type ToolPackTargets = "all" | string[];
@@ -106,6 +112,8 @@ export interface ToolPackListing extends ToolPackageRecord {
   counts?: { skills: number; mcp: number; cli: number };
   /** Engines whose current configuration contains this version; absent when engines cannot be listed. */
   engines?: string[];
+  /** Present and true when the release preinstalled exactly this version. */
+  preinstalled?: true;
   /** Why the stored manifest could not be read; the record is still listed. */
   problem?: { code: string; message: string };
 }
@@ -119,6 +127,17 @@ export interface ToolPackageManagementService extends ToolPackageManagement {
     version: string,
     input: unknown,
   ): Promise<ToolPackUnbindResponse>;
+  /**
+   * Bind an installed version (replacing other versions of the package) only on
+   * the named engines whose current configuration does not already contain it.
+   * Engines that already have it, are disabled, unknown or incompatible are
+   * `skipped` and keep their revision, so no engine override is created for
+   * them. Used for preinstalled packs hidden by an existing engine override.
+   */
+  ensure(
+    selected: { id: string; version: string },
+    engineIds: readonly string[],
+  ): Promise<ToolPackApplyResponse>;
 }
 
 const NOTE =
@@ -243,6 +262,8 @@ interface ApplyRequest {
   secretBindings?: Record<string, SecretReference>;
   replace: boolean;
   warnings: string[];
+  /** Skip engines that already contain this version or are not registered. */
+  onlyMissing?: boolean;
 }
 function parseApply(input: unknown): ApplyRequest {
   const body = object(input);
@@ -410,9 +431,21 @@ export function createToolPackageManagement(
       if (!profile) {
         results.push({
           engineId,
-          status: "failed",
+          status: request.onlyMissing ? "skipped" : "failed",
           code: problem?.code ?? "ENGINE_UNAVAILABLE",
           reason: problem?.message ?? "Engine is not registered",
+        });
+        continue;
+      }
+      if (
+        request.onlyMissing &&
+        !isEmpty(ownedEntries(profile.configuration, target))
+      ) {
+        results.push({
+          engineId,
+          status: "skipped",
+          code: "TOOL_PACKAGE_ALREADY_BOUND",
+          reason: "This engine already uses the package version",
         });
         continue;
       }
@@ -454,8 +487,10 @@ export function createToolPackageManagement(
       }
     }
     return {
+      // An ensure request succeeds when nothing failed, even if nothing was missing.
       ok:
-        results.some((result) => result.status === "applied") &&
+        (request.onlyMissing === true ||
+          results.some((result) => result.status === "applied")) &&
         !results.some((result) => result.status === "failed"),
       package: { id, version },
       results,
@@ -467,6 +502,11 @@ export function createToolPackageManagement(
   return {
     async list() {
       const known = options.listEngines?.();
+      const preinstalled = new Set(
+        ((await options.preinstalled?.().catch(() => undefined)) ?? []).map(
+          (item) => `${item.id}\n${item.version}`,
+        ),
+      );
       const packages: ToolPackListing[] = [];
       for (const record of await listInstalled(options.root)) {
         let owner: PackageFootprint;
@@ -481,6 +521,9 @@ export function createToolPackageManagement(
           ...record,
           displayName: owner.displayName,
           counts: owner.counts,
+          ...(preinstalled.has(`${record.id}\n${record.version}`)
+            ? { preinstalled: true as const }
+            : {}),
           ...(known
             ? {
                 engines: known
@@ -499,6 +542,27 @@ export function createToolPackageManagement(
     async apply(input: unknown) {
       const request = parseApply(input);
       return exclusive(() => applyLocked(request));
+    },
+
+    async ensure(selected, engineIds) {
+      const targets = [...new Set(engineIds)];
+      if (!targets.length)
+        return {
+          ok: true,
+          package: { id: selected.id, version: selected.version },
+          results: [],
+          warnings: [],
+          note: NOTE,
+        };
+      return exclusive(() =>
+        applyLocked({
+          targets,
+          package: { id: selected.id, version: selected.version },
+          replace: true,
+          warnings: [],
+          onlyMissing: true,
+        }),
+      );
     },
 
     async import(input: unknown) {

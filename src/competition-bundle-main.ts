@@ -27,6 +27,11 @@ import type {
 import type { EngineRegistration } from "./domain/engines.js";
 import type { EngineProfile } from "./domain/types.js";
 import { bindInstalled } from "./tool-packages/index.js";
+import { preinstallEnabled } from "./distribution/preinstalled.js";
+import {
+  preinstallToolPacks,
+  type PreinstallReport,
+} from "./preinstalled-tool-packs.js";
 
 const help = [
   "gateway.cmd (or Start-Competition.cmd) --engine <id> [options]",
@@ -39,6 +44,8 @@ const help = [
   "  --full-access          Auto-approve engine tool requests (gateway.cmd default)",
   "  --safe-permissions     Keep normal permission prompts and denials",
   "Opening the Gateway root / redirects to the console. The console never blocks or stops the Gateway.",
+  "Tool Packs listed in tool-packs\\preinstalled.json are applied to every compatible engine once per",
+  "pack content before the Gateway starts; HARNESSHUB_PREINSTALL_TOOL_PACKS=0 disables this.",
 ].join("\n");
 
 /** Default loopback port of the bundled console, shared with `hub.cmd start`. */
@@ -488,6 +495,45 @@ async function generatedConfig(
   return { file: target, engines };
 }
 
+/**
+ * Everything the competition entry does under `state/` before the Gateway starts:
+ * private directories, preinstalled Tool Packs (written to `state/settings.json`, so
+ * they must precede reading it) and the generated Gateway configuration. Preinstall
+ * problems are reported, never thrown; an unusable bundle or settings file throws.
+ */
+export async function prepareCompetitionState(
+  context: BundleContext,
+  manifest: BundleManifest,
+  options: {
+    /** Result of {@link preinstallEnabled}; false leaves Tool Packs untouched. */
+    preinstall: boolean;
+    /** Defaults to the bundle's compiled command MCP entry. */
+    commandMcpEntry?: string;
+    report?: (line: string) => void;
+  },
+): Promise<{
+  generated: { file: string; engines: EngineRegistration[] };
+  preinstall: PreinstallReport;
+}> {
+  await prepareDirectories(context, manifest);
+  await mkdir(path.join(context.state, "gateway-home"), {
+    recursive: true,
+    mode: 0o700,
+  });
+  const preinstall = await preinstallToolPacks(context, manifest, {
+    enabled: options.preinstall,
+    commandMcpEntry:
+      options.commandMcpEntry ??
+      bundlePath(context.root, "dist/src/drivers/tool-command/command-mcp.js"),
+    ...(options.report ? { report: options.report } : {}),
+  });
+  const settings = await readSettings(context.state);
+  return {
+    generated: await generatedConfig(manifest, settings, context),
+    preinstall,
+  };
+}
+
 function applyPrivateEnvironment(context: BundleContext): void {
   const windows = process.env.SystemRoot ?? "C:\\Windows";
   for (const name of Object.keys(process.env))
@@ -559,6 +605,8 @@ export async function competitionBundleMain(
     throw new Error("Console port must be between 1 and 65535");
   if (values["full-access"]) process.env.HARNESSHUB_FULL_ACCESS = "1";
   if (values["safe-permissions"]) delete process.env.HARNESSHUB_FULL_ACCESS;
+  // A mistyped switch fails startup before anything under state/ changes.
+  const preinstall = preinstallEnabled(process.env);
 
   const engineId = values.engine ?? process.env.AGENT_ENGINE;
   if (!engineId)
@@ -583,13 +631,11 @@ export async function competitionBundleMain(
     workspace: path.join(root, "state", "workspace"),
     node: bundlePath(root, "runtime/node.exe"),
   };
-  await prepareDirectories(context, manifest);
-  await mkdir(path.join(context.state, "gateway-home"), {
-    recursive: true,
-    mode: 0o700,
+  const prepared = await prepareCompetitionState(context, manifest, {
+    preinstall,
+    report: (line) => process.stderr.write(`${line}\n`),
   });
-  const settings = await readSettings(context.state);
-  const generated = await generatedConfig(manifest, settings, context);
+  const generated = prepared.generated;
   const selected = generated.engines.find((engine) => engine.id === engineId);
   if (!selected)
     throw new Error(`Engine ${engineId} is not included in this bundle`);
@@ -611,6 +657,9 @@ export async function competitionBundleMain(
     competitionEngine: engineId,
     toolPackageRoot: path.join(context.state, "tool-packages"),
     harnessModelFile: path.join(context.state, "harness-model.json"),
+    ...(prepared.preinstall.enabled
+      ? { preinstalledToolPacks: prepared.preinstall.markerFile }
+      : {}),
     cwd: context.workspace,
     port,
     host: values.host,
