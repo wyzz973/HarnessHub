@@ -206,6 +206,10 @@ for (const receipt of JSON.parse(
     const item = engines.at(-1);
     item.driver = "cli";
     item.command = [receipt.command[0], "--quiet", "--prompt", "{prompt}"];
+    // Kimi is a Python program: on Windows its stdout pipe otherwise uses the ANSI code page
+    // and a reply with characters outside it (Chinese on cp1252, emoji on cp936) crashed the
+    // CLI with "'charmap' codec can't encode" after the task had already run.
+    item.env = { PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" };
     item.cli = { inputMode: "argv", maxOutputBytes: 1048576 };
     item.configuration.env = { KIMI_MODEL_MAX_CONTEXT_SIZE: "1048576" };
     item.notes = [

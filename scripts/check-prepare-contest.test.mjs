@@ -51,7 +51,16 @@ test("contest preparation plan pins npm install flags and calls each existing sc
   const steps = preparationSteps(root, "arm64", pnpm, node);
   assert.deepEqual(
     steps.map((step) => step.id),
-    ["npm", "binaries", "hermes", "kiro", "git", "openclaw", "catalog"],
+    [
+      "npm",
+      "binaries",
+      "hermes",
+      "hermes-stdin",
+      "kiro",
+      "git",
+      "openclaw",
+      "catalog",
+    ],
   );
   assert.equal(steps[0].executable, node);
   assert.equal(steps[0].cwd, path.join(root, "engines/npm"));
@@ -82,6 +91,13 @@ test("contest preparation plan pins npm install flags and calls each existing sc
     steps.find((step) => step.id === "openclaw").args.slice(-2),
     ["--package", path.join(root, "engines/npm/node_modules/openclaw")],
   );
+  const hermesFix = steps.find((step) => step.id === "hermes-stdin");
+  assert.equal(hermesFix.executable, node);
+  assert.deepEqual(hermesFix.args, [
+    path.join(repo, "scripts/prepare-hermes.mjs"),
+    "--runtime",
+    path.join(root, "engines/hermes/runtime"),
+  ]);
   assert.equal(
     steps.some((step) => step.executable.endsWith(".cmd")),
     false,

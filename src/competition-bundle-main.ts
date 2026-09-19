@@ -615,6 +615,7 @@ export async function competitionBundleMain(
     port,
     host: values.host,
     ...(plan ? { consoleUrl: plan.url } : {}),
+    logEcho: true,
   });
   // Started after the Gateway listens, so the console proxy has an upstream from its first request.
   let bundledConsole: SupervisedConsole | undefined;
@@ -648,6 +649,7 @@ export async function competitionBundleMain(
     fullAccess: fullAccessEnabled(),
     bundle: root,
     pid: process.pid,
+    log: hub.logFile,
     ...(bundledConsole ? { consoleUrl: bundledConsole.url } : {}),
   });
   if (bundledConsole) {

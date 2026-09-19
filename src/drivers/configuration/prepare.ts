@@ -19,6 +19,7 @@ import {
   startModelGateway,
   type ModelCallRecord,
   type ModelGateway,
+  type ModelGatewayOptions,
 } from "../chat-completions/gateway.js";
 export type RuntimeMcpServer =
   | {
@@ -63,6 +64,11 @@ export interface PreparationHooks {
    * before the call's request task settles; must not throw.
    */
   onModelCall?: (call: ModelCallRecord) => void;
+  /**
+   * Debug-level payload excerpts of each gateway call (prompt and answer text).
+   * Only for private, redacted diagnostics; see `ModelGatewayOptions.onPayload`.
+   */
+  onModelPayload?: ModelGatewayOptions["onPayload"];
   /** Collects every secret value resolved for the Session, for redaction only. */
   secrets?: Set<string>;
 }
@@ -550,6 +556,7 @@ async function prepareGateway(context: GatewayPreparation): Promise<void> {
       ? { compatibility: provider.compatibility }
       : {}),
     ...(hooks.onModelCall ? { onCall: hooks.onModelCall } : {}),
+    ...(hooks.onModelPayload ? { onPayload: hooks.onModelPayload } : {}),
   });
   result.modelBridge = gateway;
   hooks.secrets?.add(gateway.token);

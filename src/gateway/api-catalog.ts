@@ -571,6 +571,28 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     operationId: "hh_get_v1_sessions_id_runs",
   },
   {
+    method: "GET",
+    path: "/v1/sessions/{id}/logs",
+    title: "会话诊断日志",
+    group: "sessions",
+    request:
+      "路径Session id；source=engine（默认，引擎日志）或gateway（Gateway日志中属于该Session及其Run的行）；limit默认200，范围1～2000；after为上一页返回的cursor。",
+    response:
+      "200：source、file、exists、records（JSON Lines记录，旧到新）、cursor、truncated、skipped。",
+    implementation:
+      "先确认Session存在；SessionLogReader只读当前文件及.1～.3轮转文件：无after时倒序读取最新limit条，有after时按文件身份与字节偏移顺序读取新行；每行再次脱敏后解析。",
+    effects:
+      "只读文件，不启动或联系Worker；单次最多扫描32 MiB、返回2 MiB；本接口自身的访问行不出现在gateway页中。",
+    errors:
+      "Session不存在404；非法source/limit/after为400 INVALID_REQUEST；未配置日志503 LOGS_UNAVAILABLE；读文件失败500 LOG_READ_FAILED。文件尚不存在时exists=false、records为空。truncated表示有记录因数量、大小、扫描预算或轮转被跳过。",
+    source: "src/gateway/server.ts",
+    tests: [
+      "tests/integration/session-logs.test.ts",
+      "tests/unit/session-log-reader.test.ts",
+    ],
+    operationId: "hh_get_v1_sessions_id_logs",
+  },
+  {
     method: "POST",
     path: "/v1/sessions/{id}/runs",
     title: "提交一次执行",

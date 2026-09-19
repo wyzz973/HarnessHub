@@ -539,4 +539,10 @@ HH-005 后，HH-006 → HH-007 → HH-008 → HH-010 依次修改 Runtime，默�
 - 验收：`pnpm check` 通过；本机以 DeepSeek `deepseek-flash` 经严格网关逐个引擎跑通比赛 API 与文件/Shell 任务，并确认上游只收到统一模型；Windows x64 CI 构建和模拟验收通过；旧 Release 已备份，新 Release 可下载。本机与 CI 结果都不代表公司真实模型通过。
 - 证据：待补。
 
+### HH-050 Gateway 与引擎之间的诊断日志
+
+- [ ] 自动测试通过，真实引擎与 Windows 未验证；P0；前置：HH-044、HH-045；负责人：日志子任务；范围：`src/logging/**`、`src/domain/logging.ts`、ACP/CLI Driver、Worker、ProcessWorkerHost、Gateway 访问钩子、组合根、`patches/acpx@0.13.2.patch`、`Collect-Logs.cmd`。
+- 验收：`<dataDir>/logs/gateway.log` 记录访问、Session/Run/Worker/权限生命周期与模型调用摘要；每个 Session 的 `diagnostics/engine.log` 记录引擎进程与 stderr、全部 ACP 请求/响应、工具状态、权限和模型调用明细；`HARNESSHUB_LOG_LEVEL=debug` 增加 2 KiB 摘录，非法值拒绝启动；密钥与 Session token 不落盘；16 MiB 轮转；日志失败只报告一次且不影响 Run；`Collect-Logs.cmd` 生成脱敏 ZIP；`GET /v1/sessions/{id}/logs` 与控制台“诊断日志”按页、按游标增量读取单个 Session 的引擎日志和 Gateway 行。
+- 证据：`tests/unit/diagnostic-log.test.ts`、`tests/unit/collect-logs.test.ts`、`tests/integration/diagnostic-logs.test.ts`（info 与 debug 两轮，经正式 Gateway/Worker、ACP fixture 与本地上游）通过；`unzip -t` 校验收集器生成的 ZIP；读取接口由 `tests/unit/session-log-reader.test.ts`、`tests/integration/session-logs.test.ts` 与控制台契约测试验证，demo Gateway 经控制台代理 `/api/gateway/v1/sessions/{id}/logs` 实测返回两类记录；决定见 [ADR 0014](docs/decisions/0014-diagnostic-logs.md)。真实引擎的 stderr/ACP 内容与 Windows 上的日志路径、轮转和 `Collect-Logs.cmd` 需在 x64 验收中确认。
+
 HH-033～036已完成本机控制台、真实模型拆分/审批执行、启发式引擎选择及Run级原生观测；macOS 浏览器已有两步文件任务、Pi用量与取消证据。Windows 11 ARM64 已开展原生及真实 Codex 验收，其他引擎/平台继续按同套契约验证。远端多用户部署、并行DAG、大规模聚合与账单对账尚不属于已验证能力。

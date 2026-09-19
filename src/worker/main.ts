@@ -30,6 +30,14 @@ import {
   RunObservation,
   settleGatewayResult,
 } from "./outcome.js";
+import path from "node:path";
+import {
+  excerpt,
+  LOG_LEVEL_ENVIRONMENT,
+  parseLogLevel,
+  type LogLevel,
+} from "../domain/logging.js";
+import { JsonLogFile } from "../logging/json-log-file.js";
 
 interface PermissionWaiter {
   options: PermissionOption[];
@@ -63,6 +71,91 @@ let shuttingDown: Promise<void> | undefined;
 /** Secret values resolved for this Session; never serialized. */
 const secrets = new Set<string>();
 const redact = createRedactor(secrets);
+
+/**
+ * The Gateway validated the level before passing it to this Worker; a value it
+ * could not have sent falls back to `info` and is recorded in the engine log.
+ */
+let levelProblem: string | undefined;
+const logLevel: LogLevel = (() => {
+  try {
+    return parseLogLevel(process.env[LOG_LEVEL_ENVIRONMENT]);
+  } catch (error) {
+    levelProblem = error instanceof Error ? error.message : String(error);
+    return "info";
+  }
+})();
+/** Session engine log (`<stateDir>/diagnostics/engine.log`), opened by the first Run. */
+let engineLog: JsonLogFile | undefined;
+/** First engine log failure, reported once as a Run event. */
+let logFailure:
+  { file: string; message: string; reported: boolean } | undefined;
+
+function openEngineLog(spec: ExecutionSpec): JsonLogFile {
+  if (engineLog) return engineLog;
+  const file = path.join(spec.stateDir, "diagnostics", "engine.log");
+  engineLog = new JsonLogFile({
+    file,
+    level: logLevel,
+    redact,
+    onError: (error) => {
+      logFailure = {
+        file,
+        message: redact(error instanceof Error ? error.message : String(error)),
+        reported: false,
+      };
+    },
+  });
+  engineLog.info("worker.start", {
+    pid: process.pid,
+    sessionId: spec.sessionId,
+    engine: spec.profile.id,
+    revision: spec.profile.revision,
+    driver: spec.profile.driver,
+    logLevel,
+    node: process.version,
+    platform: `${process.platform}/${process.arch}`,
+  });
+  if (levelProblem)
+    engineLog.info("log.level_invalid", { message: levelProblem });
+  return engineLog;
+}
+
+/** Surface a failed engine log once through the Run's public event log. */
+async function reportLogFailure(owned: Active): Promise<void> {
+  if (!logFailure || logFailure.reported) return;
+  logFailure.reported = true;
+  await emit(owned, {
+    type: "event",
+    event: {
+      type: "diagnostics.log_failed",
+      data: { file: logFailure.file, message: logFailure.message },
+    },
+  });
+}
+
+/** Engine log fields of one gateway call: the `model.call` record plus Run attribution. */
+function modelCallLogFields(call: ModelCallRecord, runId: string | null) {
+  return {
+    id: call.id,
+    runId,
+    path: call.path,
+    inbound: call.inbound,
+    stream: call.stream,
+    requestedModel: call.requestedModel,
+    upstreamModel: call.upstreamModel,
+    status: call.status,
+    ok: call.ok,
+    ms: call.durationMs,
+    firstByteMs: call.firstByteMs,
+    finishReason: call.finishReason,
+    usage: call.usage ? { ...call.usage } : undefined,
+    toolCalls: call.toolCalls,
+    reasoning: call.reasoning ? { ...call.reasoning } : undefined,
+    adjusted: call.adjusted ? [...call.adjusted] : undefined,
+    error: call.error ? { ...call.error } : undefined,
+  };
+}
 
 function send(value: unknown): Promise<void> {
   assertMessageSize(value);
@@ -150,6 +243,10 @@ function createChannel(owned: Active): DriverChannel {
  */
 function recordModelCall(call: ModelCallRecord): void {
   const owned = active;
+  engineLog?.info(
+    "model.call",
+    modelCallLogFields(call, owned && !owned.sealed ? owned.spec.runId : null),
+  );
   if (!owned || owned.sealed) return;
   owned.observation.recordCall(call);
   const delivered = emit(owned, {
@@ -181,6 +278,13 @@ async function failedResult(
   error: unknown,
 ): Promise<DriverResult> {
   const cancelled = owned.abort.signal.aborted;
+  engineLog?.info("run.error", {
+    runId: owned.spec.runId,
+    cancelled,
+    code: error instanceof HubError ? error.code : "DRIVER_ERROR",
+    message: publicErrorMessage(error, redact),
+    stackIn: error instanceof HubError ? null : "worker-errors.log",
+  });
   if (!(error instanceof HubError))
     try {
       await appendDiagnostic(
@@ -238,14 +342,44 @@ async function settleRun(
 }
 
 async function execute(owned: Active, selected: Driver): Promise<void> {
+  const started = performance.now();
+  const log = openEngineLog(owned.spec);
+  log.info("run.start", {
+    runId: owned.spec.runId,
+    generation: owned.spec.generation,
+    cwd: owned.spec.cwd,
+    timeoutMs: owned.spec.input.timeoutMs,
+    inputChars: owned.spec.input.text.length,
+    resumeBackendSession: owned.spec.backendSessionId ?? null,
+  });
+  log.debug("run.input", {
+    runId: owned.spec.runId,
+    text: excerpt(owned.spec.input.text),
+  });
   try {
     let result: DriverResult;
     try {
       await emit(owned, { type: "started" });
+      await reportLogFailure(owned);
+      const firstPreparation = !preparation;
       preparation ??= await prepareConfiguration(owned.spec, process.env, {
         onModelCall: recordModelCall,
+        ...(logLevel === "debug"
+          ? {
+              onModelPayload: (id, payload) =>
+                engineLog?.debug("model.payload", { id, ...payload }),
+            }
+          : {}),
         secrets,
       });
+      if (firstPreparation)
+        log.info("run.prepared", {
+          command: preparation.command,
+          model: preparation.model ?? null,
+          mcpServers: preparation.mcpServers.map((server) => server.name),
+          modelGateway: preparation.modelBridge?.baseUrl ?? null,
+          instructionPrefixChars: preparation.instructionPrefix.length,
+        });
       preparation.modelBridge?.beginRun(owned.abort.signal);
       applyEnvironment(preparation);
       if (selected instanceof AcpDriver) {
@@ -279,6 +413,15 @@ async function execute(owned: Active, selected: Driver): Promise<void> {
       result = await failedResult(owned, error);
     }
     const settled = await settleRun(owned, result);
+    log.info("run.finish", {
+      runId: owned.spec.runId,
+      status: settled.status,
+      stopReason: settled.stopReason ?? null,
+      error: settled.error ? { ...settled.error } : null,
+      outputChars: settled.output?.length ?? 0,
+      ms: Math.round(performance.now() - started),
+    });
+    await reportLogFailure(owned);
     await emit(owned, { type: "result", result: settled });
   } finally {
     for (const waiter of owned.permissions.values())
@@ -288,8 +431,12 @@ async function execute(owned: Active, selected: Driver): Promise<void> {
   }
 }
 
-function shutdown(): Promise<void> {
+function shutdown(reason = "shutdown"): Promise<void> {
   if (shuttingDown) return shuttingDown;
+  engineLog?.info("worker.stop", {
+    reason,
+    activeRunId: active?.spec.runId ?? null,
+  });
   shuttingDown = (async () => {
     const owned = active;
     if (owned) {
@@ -301,17 +448,26 @@ function shutdown(): Promise<void> {
     try {
       await driver?.close();
     } finally {
-      await preparation?.modelBridge?.close();
+      try {
+        await preparation?.modelBridge?.close();
+      } finally {
+        engineLog?.info("worker.stopped", { reason });
+        engineLog?.close();
+      }
     }
   })();
   return shuttingDown;
 }
 function fatal(): void {
+  engineLog?.info("worker.fatal", {
+    activeRunId: active?.spec.runId ?? null,
+    message: "Worker protocol or execution ownership failed; exiting with 70",
+  });
   if (active) {
     active.abort.abort();
     active.ack?.reject(new Error("Worker protocol failed"));
   }
-  void shutdown().then(
+  void shutdown("fatal").then(
     () => process.exit(70),
     () => process.exit(70),
   );
@@ -344,10 +500,10 @@ process.on("message", (raw: unknown) => {
             driver = new FakeDriver();
             break;
           case "acp":
-            driver = new AcpDriver();
+            driver = new AcpDriver(openEngineLog(command.spec));
             break;
           case "cli":
-            driver = new CliDriver();
+            driver = new CliDriver(openEngineLog(command.spec));
             break;
         }
       }
@@ -400,7 +556,7 @@ process.on("message", (raw: unknown) => {
 });
 
 process.once("disconnect", () => {
-  void shutdown().then(
+  void shutdown("parent-disconnected").then(
     () => process.exit(0),
     () => process.exit(71),
   );

@@ -1,4 +1,5 @@
 "use client";
+import { useState } from "react";
 import {
   Activity,
   ArrowUpRight,
@@ -10,6 +11,7 @@ import {
   File,
   Fingerprint,
   PanelRightClose,
+  ScrollText,
   ShieldCheck,
   TriangleAlert,
 } from "lucide-react";
@@ -40,6 +42,7 @@ import {
   observationReason,
 } from "@/lib/presentation";
 import { cn } from "@/lib/utils";
+import { LogPanel } from "./log-panel";
 import { Status } from "./status";
 
 export function Inspector({
@@ -60,6 +63,7 @@ export function Inspector({
   close: () => void;
 }) {
   const cost = observation?.cost;
+  const [logsOpen, setLogsOpen] = useState(false);
   return (
     <aside className="inspector enter" aria-label="执行详情">
       <div className="flex h-16 items-center justify-between border-b px-5">
@@ -258,6 +262,32 @@ export function Inspector({
                 ))}
               </div>
             )}
+          </section>
+          <section className="inspector-section">
+            <p className="section-label mb-3 flex items-center gap-1.5">
+              <ScrollText className="size-3.5" />
+              诊断日志
+            </p>
+            <p className="text-xs leading-6 text-muted-foreground">
+              引擎进程、ACP
+              协议、工具调用、权限与每次模型调用的逐条记录，排查失败原因时查看。
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={() => setLogsOpen(true)}
+            >
+              <ScrollText />
+              查看日志
+            </Button>
+            <LogPanel
+              key={run.sessionId}
+              sessionId={run.sessionId}
+              active={!run.finishedAt}
+              open={logsOpen}
+              onOpenChange={setLogsOpen}
+            />
           </section>
           <section className="inspector-section">
             <p className="section-label mb-3">可追溯记录</p>

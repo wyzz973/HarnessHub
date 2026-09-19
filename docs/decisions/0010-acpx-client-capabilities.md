@@ -21,6 +21,8 @@ acpx 0.13.2 的公开 runtime 默认声明客户端文件读写和终端能力�
 
 权限回调增加 `{outcome: "selected", optionId: string}`。只有本次请求恰好有一个同 ID 选项时才原样返回给 ACP SDK；未知、空或重复 ID 返回 cancelled，不按 kind 回退。旧的 kind 返回值继续兼容。Driver 展示所有真实的一次性允许/拒绝选项，同 kind 的多个 ID 保留原顺序和标签，使用用户选择的 ID；重复 ID 明确拒绝。永久授权仍未引入公共契约。晚到的决定在取消信号生效后拒绝。
 
+同一补丁后来为诊断日志增加只读的 `onAcpMessage` 与 `onAgentProcess` 回调，取舍见 [ADR 0014](0014-diagnostic-logs.md)。
+
 ## 考虑过的替代方案
 
 全局 approve-all 会绕过未处理权限，未采用。底层 AcpClient 已有 fs/terminal，但公开 runtime 没有入口；调用未导出的 manager、测试工厂或私有字段会绑定内部结构。按 Qwen 分支修改协议消息只修复单一引擎，仍保留其他客户端的错误能力声明，因此采用统一公开接口补丁。

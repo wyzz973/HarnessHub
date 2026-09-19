@@ -20,6 +20,11 @@ import Fastify, { type FastifyError } from "fastify";
 import swagger from "@fastify/swagger";
 import type { HubApplication } from "../application/service.js";
 import { HubError } from "../domain/errors.js";
+import type {
+  LogSink,
+  SessionLogReader,
+  SessionLogSource,
+} from "../domain/logging.js";
 import {
   createSessionSchema,
   decisionSchema,
@@ -33,6 +38,8 @@ import {
   engineResponseSchema,
   discoveryResponseSchema,
   registryStatusSchema,
+  sessionLogsQuerySchema,
+  sessionLogsResponseSchema,
 } from "../domain/schemas.js";
 import { isTerminal } from "../domain/types.js";
 import type {
@@ -66,6 +73,20 @@ export async function createGateway(
      * then drive the engines. Browser cross-origin requests stay rejected.
      */
     remoteHosts?: boolean;
+    /**
+     * Access log: one `http` record per finished response (method, route, path
+     * without query, status, duration, Session/Run id from the route). Bodies,
+     * headers and query strings are never logged. Successful GET/HEAD responses
+     * other than `GET /event` are polling and are written at debug level only;
+     * everything else is info. Streaming responses such as `GET /event` are
+     * recorded when they end.
+     */
+    log?: LogSink;
+    /**
+     * Reads a Session's engine log and its Gateway log lines for
+     * `GET /v1/sessions/{id}/logs`. Without it that route answers 503.
+     */
+    sessionLogs?: SessionLogReader;
   } = {},
 ) {
   const server = Fastify({
@@ -73,6 +94,35 @@ export async function createGateway(
     bodyLimit: 2 * 1024 * 1024,
     ajv: { customOptions: { removeAdditional: false } },
   });
+  const access = options.log;
+  if (access)
+    server.addHook("onResponse", async (request, reply) => {
+      const params =
+        request.params && typeof request.params === "object"
+          ? (request.params as Record<string, unknown>)
+          : {};
+      const id = (key: string) =>
+        typeof params[key] === "string" ? (params[key] as string) : undefined;
+      const route = request.routeOptions.url ?? null;
+      const record = {
+        method: request.method,
+        route,
+        path: request.url.split("?")[0]!.slice(0, 300),
+        status: reply.statusCode,
+        ms: Math.round(reply.elapsedTime),
+        id: id("id") ?? id("sessionId") ?? id("runId"),
+        remote: request.ip,
+      };
+      // Successful reads are mostly console and evaluator polling; at info level they
+      // would bury the records that explain a failure. The competition event stream is
+      // kept because its start and end show when the evaluator was listening.
+      const polling =
+        (request.method === "GET" || request.method === "HEAD") &&
+        reply.statusCode < 400 &&
+        route !== "/event";
+      if (polling) access.debug("http", record);
+      else access.info("http", record);
+    });
   // Clients often send `Content-Type: application/json` on bodiless DELETE/POST.
   // A zero-length body is treated as absent; any other body keeps Fastify's
   // default parser, so invalid JSON and prototype poisoning are still rejected.
@@ -388,6 +438,39 @@ export async function createGateway(
     async (request) => {
       app.getSession(request.params.id as SessionId);
       return { runs: app.runs(request.params.id as SessionId).slice(-200) };
+    },
+  );
+  server.get<{
+    Params: { id: string };
+    Querystring: { source: SessionLogSource; limit: number; after?: string };
+  }>(
+    "/v1/sessions/:id/logs",
+    {
+      schema: {
+        params: idParams,
+        querystring: sessionLogsQuerySchema,
+        response: responses(sessionLogsResponseSchema),
+      },
+    },
+    async (request) => {
+      const reader = options.sessionLogs;
+      if (!reader)
+        throw new HubError(
+          "LOGS_UNAVAILABLE",
+          "Diagnostic logs are not configured for this Gateway",
+          503,
+        );
+      // Unknown Sessions fail here; file paths are built from the stored id.
+      const session = app.getSession(request.params.id as SessionId);
+      return reader.read({
+        sessionId: session.id,
+        runIds: app.runs(session.id).map((run) => run.id),
+        source: request.query.source,
+        limit: request.query.limit,
+        ...(request.query.after === undefined
+          ? {}
+          : { after: request.query.after }),
+      });
     },
   );
   server.get<{

@@ -155,6 +155,10 @@ curl.exe -N "$base/event"
 - Gateway 关闭过程中新到达的请求由 Fastify 直接返回 503，响应体不是 `{code,message}`。
 - SSE 不支持断线续传；重连只接收新事件，已结束 Run 的结果从 `/message` 读取。
 
+## 日志
+
+比赛 Gateway 写 `<data-dir>/logs/gateway.log`（完整包为 `state\competition-data\logs\gateway.log`）：每个请求一行 `http`（含 `prompt_async` 阻塞时长），以及 Session、Run、Worker、权限的生命周期和每次模型调用摘要；生命周期行同时打印在启动窗口，`ready`/`competition.ready` 行的 `log` 字段给出路径。每个 Session 的引擎进程、stderr、ACP 请求与响应和模型调用明细写在 `session.create` 行的 `engineLog` 路径。`HARNESSHUB_LOG_LEVEL=debug` 追加提示词与回答摘录；`Collect-Logs.cmd` 打包全部日志。运行中也可在控制台“执行详情 → 诊断日志”查看，或调用 `GET /v1/sessions/{id}/logs?source=engine|gateway`（比赛 Session id 即 `/session` 返回的 id）。格式、字段与脱敏规则见 [诊断日志](observability.md#诊断日志)。
+
 ## 验证
 
 - [集成测试](../tests/integration/competition-gateway.test.ts) 从编译后的 Gateway 与 Worker 验证：目录自动创建、阻塞 204、stop/abort 取消后 204、失败 502 与 `session.error` 顺序、连续快速 Run 的 busy→idle、工具 part 状态、`tool_calls` 与 `tool` 消息、截断、`message_count`、权限自动批准、客户端断开不取消、未知会话 404、带 JSON 头的空请求体、`/v1` 错误格式不变，以及关闭 Gateway 时事件流结束。

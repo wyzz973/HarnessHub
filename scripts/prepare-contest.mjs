@@ -18,6 +18,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { parse } from "yaml";
+import { verifyHermesPatch } from "./prepare-hermes.mjs";
 
 const repo = fileURLToPath(new URL("../", import.meta.url));
 const nodeVersion = "24.20.0";
@@ -245,22 +246,39 @@ export function preparationSteps(
         arch,
       ],
     },
-    ...["hermes", "kiro"].map((engine) => ({
-      id: engine,
-      executable: powershell,
-      args: [
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        path.join(repo, "scripts/prepare-extra-engines.ps1"),
-        "-TargetRoot",
-        root,
-        "-Engine",
-        engine,
-      ],
-    })),
+    ...["hermes", "kiro"].flatMap((engine) => [
+      {
+        id: engine,
+        executable: powershell,
+        args: [
+          "-NoProfile",
+          "-NonInteractive",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          path.join(repo, "scripts/prepare-extra-engines.ps1"),
+          "-TargetRoot",
+          root,
+          "-Engine",
+          engine,
+        ],
+      },
+      // Idempotent fix of the fixed Hermes package (scripts/prepare-hermes.mjs), also
+      // applied to a reused Hermes preparation.
+      ...(engine === "hermes"
+        ? [
+            {
+              id: "hermes-stdin",
+              executable: node,
+              args: [
+                path.join(repo, "scripts/prepare-hermes.mjs"),
+                "--runtime",
+                path.join(root, "engines/hermes/runtime"),
+              ],
+            },
+          ]
+        : []),
+    ]),
     {
       id: "git",
       executable: node,
@@ -448,6 +466,7 @@ export async function verifyPreparation(root, arch, skipBinaries = []) {
   await npmInputs(root);
   await binaries(root, arch, skipBinaries);
   for (const id of ["hermes", "kiro"]) await extra(root, id, arch);
+  await verifyHermesPatch(path.join(root, "engines/hermes/runtime"));
   await git(root);
   const openclaw = path.join(root, "engines/npm/node_modules/openclaw");
   for (const marker of [

@@ -23,6 +23,7 @@ import type {
   SessionId,
 } from "../domain/types.js";
 import { HubError } from "../domain/errors.js";
+import { NO_LOG, type LogSink } from "../domain/logging.js";
 import {
   assertMessageSize,
   matchesIdentity,
@@ -58,6 +59,8 @@ interface SessionWorker {
   workerPath: string;
   lease?: WorkerLease;
   windowsJob?: WindowsJob;
+  sessionId: SessionId;
+  spawnedAt: number;
 }
 
 /** Owns POSIX process groups or Windows kill-on-close Jobs, with awaited descendant cleanup. */
@@ -70,6 +73,7 @@ export class ProcessWorkerHost implements WorkerHost {
   private readonly parentEnv: Readonly<NodeJS.ProcessEnv>;
   private readonly explicitEnv: Readonly<Record<string, string>>;
   private readonly leases: WorkerLeaseStore | undefined;
+  private readonly log: LogSink;
   private closing = false;
 
   constructor(
@@ -79,8 +83,11 @@ export class ProcessWorkerHost implements WorkerHost {
       maxWorkers?: number;
       env?: Record<string, string>;
       leaseDir?: string;
+      /** Receives Worker spawn, ready, exit and failure records. */
+      log?: LogSink;
     } = {},
   ) {
+    this.log = options.log ?? NO_LOG;
     this.handshakeTimeoutMs = options.handshakeTimeoutMs ?? 10_000;
     this.shutdownGraceMs = options.shutdownGraceMs ?? 1_500;
     this.maxWorkers = options.maxWorkers ?? 16;
@@ -253,7 +260,18 @@ export class ProcessWorkerHost implements WorkerHost {
       anchor,
       ownerToken,
       workerPath,
+      sessionId: spec.sessionId,
+      spawnedAt: performance.now(),
     };
+    this.log.info("worker.spawn", {
+      sessionId: spec.sessionId,
+      runId: spec.runId,
+      pid: child.pid ?? null,
+      engine: spec.profile.id,
+      revision: spec.profile.revision,
+      driver: spec.profile.driver,
+      cwd: spec.cwd,
+    });
     if (process.platform === "win32") {
       worker.windowsJob = superviseWindowsWorker(child, ownerToken);
       void worker.windowsJob.ready.catch((error: unknown) =>
@@ -287,6 +305,11 @@ export class ProcessWorkerHost implements WorkerHost {
             throw new Error("Invalid Worker ready identity");
           worker.readySeen = true;
           worker.ready.resolve();
+          this.log.info("worker.ready", {
+            sessionId: worker.sessionId,
+            pid: child.pid ?? null,
+            ms: Math.round(performance.now() - worker.spawnedAt),
+          });
           return;
         }
         const active = worker.active;
@@ -335,7 +358,16 @@ export class ProcessWorkerHost implements WorkerHost {
         worker.exited.resolve();
       }
     });
-    child.once("exit", () => {
+    child.once("exit", (code, signal) => {
+      this.log.info("worker.exit", {
+        sessionId: worker.sessionId,
+        pid: child.pid ?? null,
+        code,
+        signal,
+        expected: worker.closing !== undefined,
+        activeRunId: worker.active?.spec.runId ?? null,
+        ms: Math.round(performance.now() - worker.spawnedAt),
+      });
       clearTimeout(worker.active?.initializeTimer);
       worker.hasExited = true;
       worker.exited.resolve();
@@ -441,6 +473,14 @@ export class ProcessWorkerHost implements WorkerHost {
     clearTimeout(worker.active?.initializeTimer);
     if (worker.failed) return;
     worker.failed = true;
+    this.log.info("worker.fail", {
+      sessionId: worker.sessionId,
+      pid: worker.child.pid ?? null,
+      code: error instanceof HubError ? error.code : "WORKER_FAILURE",
+      message:
+        error instanceof Error ? error.message.slice(0, 500) : String(error),
+      activeRunId: worker.active?.spec.runId ?? null,
+    });
     worker.ready.reject(error);
     worker.active?.result.reject(error);
     const entry = [...this.sessions.entries()].find(

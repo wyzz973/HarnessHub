@@ -13,6 +13,9 @@ import {
 // the real engine would, and behaves like OpenCode/Pi on upstream errors: the
 // turn ends normally without text.
 const adapter = process.argv[2] ?? "";
+// Diagnostics fixture mode: stderr lines (one carrying the Session token as plain
+// text, one multibyte) and ACP tool_call status updates for the engine log tests.
+const logCanary = process.argv[3] === "log-canary";
 interface Endpoint {
   url: string;
   token: string;
@@ -124,6 +127,10 @@ new AgentSideConnection(
         );
       mcpCount = request.mcpServers.length;
       const target = await endpoint();
+      if (logCanary)
+        process.stderr.write(
+          `fixture diagnostics: gateway credential in use ${target.token}\n诊断 stderr 多字节行\n`,
+        );
       await writeFile(
         join(process.cwd(), `gateway-peer-${adapter}-${process.pid}.json`),
         JSON.stringify({
@@ -207,6 +214,17 @@ new AgentSideConnection(
         let result = await completion(response);
         const call = result.calls[0];
         if (call) {
+          if (logCanary)
+            await connection.sessionUpdate({
+              sessionId: request.sessionId,
+              update: {
+                sessionUpdate: "tool_call",
+                toolCallId: call.id,
+                title: "Write fixture artifact",
+                kind: "edit",
+                status: "pending",
+              },
+            });
           const decision = await connection.requestPermission({
             sessionId: request.sessionId,
             toolCall: { toolCallId: call.id, title: "Write fixture artifact" },
@@ -225,6 +243,15 @@ new AgentSideConnection(
             join(process.cwd(), `${adapter}-proof.txt`),
             args.text,
           );
+          if (logCanary)
+            await connection.sessionUpdate({
+              sessionId: request.sessionId,
+              update: {
+                sessionUpdate: "tool_call_update",
+                toolCallId: call.id,
+                status: "completed",
+              },
+            });
           messages.push(
             {
               role: "assistant",

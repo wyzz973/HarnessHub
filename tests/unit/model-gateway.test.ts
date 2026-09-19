@@ -263,7 +263,15 @@ void test("Chat Completions streams reasoning, text, tool call deltas, finish an
     finishReason: "tool_calls",
     usage: { input: 10, output: 20, total: 30, reasoning: 5 },
     toolCalls: 1,
+    // Diagnostic fields for the engine log: route, first upstream byte,
+    // reasoning pass-back of earlier tool calls and normalization changes.
+    path: "/v1/chat/completions",
+    firstByteMs: calls[0]!.firstByteMs,
+    reasoning: { restored: 0, missing: 0 },
+    adjusted: ["-stream_options"],
   });
+  assert.equal(typeof calls[0]!.firstByteMs, "number");
+  assert.ok(calls[0]!.firstByteMs! <= calls[0]!.durationMs);
   assert.doesNotMatch(JSON.stringify(calls), /读|sk-test|思考/);
 });
 
