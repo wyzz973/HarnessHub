@@ -59,11 +59,15 @@ ACP 0.13.2 的 reducer 会把最新 breakdown 直接赋给名称为 `cumulative_
 
 所有字符串字段最多 8 KiB；每行写入前按已知密钥值（Session 解析出的密钥、模型网关 token、环境中的统一模型密钥）和 Bearer、`sk-`、`token=`/`api_key:` 等形式脱敏。文件权限 0600，超过 16 MiB 轮转为 `.1`～`.3`。日志写失败不影响执行：Gateway 向 stderr 输出一次 `log.error`，Worker 在当前 Run 发出一次 `diagnostics.log_failed` 事件。`node dist/src/main.js` 与比赛入口把 info 级生命周期行同时写到 stderr（即启动窗口），stdout 仍只输出 ready 事件；访问和模型调用行只进文件。
 
+运行中不必打开文件：`GET /v1/sessions/{id}/logs` 按页读取一个 Session 的诊断记录。`source=engine`（默认）返回该 Session 的引擎日志；`source=gateway` 返回 Gateway 日志中含该 Session id 或其 Run id 的行，不含读取本接口自身的访问行。不带 `after` 时返回最新 `limit` 条（默认 200，最多 2000，按写入顺序）；带上一页的 `cursor`（文件身份与字节偏移，轮转后仍有效）时只返回之后写入的完整行。单次最多扫描 32 MiB（含 `.1`～`.3`）、返回 2 MiB；`truncated=true` 表示有记录因数量、大小、扫描预算或游标所在文件已轮转出去而被跳过。每行读出时再次脱敏，无法解析的行计入 `skipped`。接口只读文件、不联系 Worker，未知 Session 返回 404。控制台“执行详情”中的“诊断日志”使用该接口，可切换引擎/Gateway 日志、按级别和关键字筛选，任务运行时每 2 秒增量刷新，并能复制或下载当前显示的记录（JSON Lines）。
+
 `Collect-Logs.cmd`（比赛完整包和离线包 `competition\` 目录；仓库中为 `pnpm logs:collect -- --root ./data`）把上述日志及轮转文件完整打包，引擎自带的其他 `*.log` 各取末尾 2 MiB（最多 300 个），再次脱敏后生成 `logs-<时间>.zip` 与 `manifest.json`，不跟随符号链接。比赛验收矩阵已把运行期间新写的 `*.log`（含这两类文件）复制到结果目录。
 
 ## 验证
 
 [单元测试](../tests/unit/observability.test.ts)覆盖 ACP 请求归属、累计快照不重复计量、Pi 消息差分、会话不匹配/链接拒绝、字符/工具去重、时间和缺失值。[HTTP 集成测试](../tests/integration/observability.test.ts)通过正式 Gateway、Worker、ACP 本地确定协议端和 SQLite 验证两次运行各自 usage、OpenAPI、范围限制、重启重建一致。
+
+读取接口由 [读取器单元测试](../tests/unit/session-log-reader.test.ts)（尾部、游标、未写完的行、轮转后续读、游标失效、Gateway 过滤、再次脱敏、限额与预算）和 [接口集成测试](../tests/integration/session-logs.test.ts)（两个 Session 经正式 Gateway/Worker 与 ACP fixture 运行后分页读取、非法参数 400、未知 Session 404、不含公司密钥与 Session token）验证；控制台契约见 [控制台契约测试](../scripts/check-console-contracts.test.mjs)。
 
 诊断日志由 [日志单元测试](../tests/unit/diagnostic-log.test.ts)、[收集器测试](../tests/unit/collect-logs.test.ts) 与 [集成测试](../tests/integration/diagnostic-logs.test.ts) 验证：后者经正式 Gateway/Worker、ACP fixture 和本地上游，以 info 与 debug 各运行一次含工具调用、权限和 stderr 的任务，检查两份日志的必备记录、推理回填计数与 debug 摘录，并确认公司密钥与 Session token 都未写入。
 

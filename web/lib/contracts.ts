@@ -422,6 +422,22 @@ export const modelCallSchema = z.object({
   toolCalls: z.number(),
   error: errorSchema.optional(),
 });
+/** One diagnostic JSON Lines record; every other field depends on `event`. */
+export const logRecordSchema = z
+  .object({ time: z.string(), level: z.string(), event: z.string() })
+  .catchall(z.unknown());
+/** `GET /v1/sessions/{id}/logs`: one page of a Session's engine or Gateway log. */
+export const sessionLogsSchema = z.object({
+  source: z.enum(["engine", "gateway"]),
+  file: z.string(),
+  exists: z.boolean(),
+  records: z.array(logRecordSchema),
+  cursor: z.string().nullable(),
+  truncated: z.boolean(),
+  skipped: z.number().int().nonnegative(),
+});
+export type LogRecord = z.infer<typeof logRecordSchema>;
+export type SessionLogs = z.infer<typeof sessionLogsSchema>;
 export type RuntimeInfo = z.infer<typeof runtimeInfoSchema>;
 export type HarnessModelView = z.infer<typeof harnessModelViewSchema>;
 export type HarnessModelTest = z.infer<typeof harnessModelTestSchema>;
