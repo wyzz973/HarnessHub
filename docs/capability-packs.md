@@ -181,34 +181,11 @@ ACP / native MCP adapter
 }
 ```
 
-## 不需要本地 pnpm 安装
+## 比赛离线交付
 
-`Competition gateway bundle` GitHub Actions workflow 在 GitHub runner 上执行锁定版本的 `pnpm install --frozen-lockfile` 和 `pnpm build`，然后生成 Windows 运行 ZIP。ZIP 包含 Gateway 的 `dist`、npm 运行依赖和固定 Node 可执行程序，并在上传前解压后执行 `--help` 自检。
+比赛机是离线 Windows x64，不在目标机器上联网安装任何依赖。两种交付物都由 GitHub Actions 构建并发布到 Release，流程与验收见 [Windows 便携发布包](portable-bundle.md) 和 [离线归档与恢复](offline-artifacts.md)：
 
-下载 Actions Artifact 中的 `harnesshub-competition-windows.zip` 后解压即可：
+- **x64 完整运行包**（`competition-latest`）：解压即可运行，内含 10 个固定版本引擎、Node/Python/Git、Gateway 与控制台。设置 `AGENT_ENGINE` 和统一模型环境变量后运行 `gateway.cmd`。
+- **离线开发包**（`offline-dev-latest`，可作为提交物 `solution/code`）：包含源码、离线依赖和固定引擎。先运行 `Setup-Competition-Offline.cmd`，在不联网的前提下编译并生成比赛运行布局，再用 `Start-Competition.cmd` 启动。评测执行方按 [INSTRUCTION.md](../distribution/INSTRUCTION.md) 操作。
 
-```bat
-Start-Competition.cmd --engine opencode --port 6217 --host localhost --config C:\path\to\engines\local.yaml
-```
-
-目标机器不需要安装 Node 或 pnpm。Agent 引擎程序仍由 `engines/local.yaml` 指向现有安装位置，或者直接使用 HarnessHub 已有的离线引擎发行包。
-
-## Competition Full Bundle
-
-最终比赛交付可以使用 `Competition full bundle` workflow。它以固定 SHA-256 的 Windows ARM64 OpenSource Engine Bundle 为基底，保留 Codex、Gemini、Qwen、Pi、MiMo、DSH、OpenClaw、Kimi、OpenCode、Hermes 及包内 Node/Python/Git，然后覆盖当前比赛 Gateway，并重新生成 `bundle.json` 全文件哈希清单。
-
-目标机器不需要 Node、pnpm 或 Harness 安装。先按包内 `examples/company-chat.json` 准备私有模型配置并执行：
-
-```bat
-hub.cmd configure --file C:\private\competition-settings.json
-```
-
-随后按比赛规范启动：
-
-```bat
-gateway.cmd --engine opencode
-gateway.cmd --engine codex
-gateway.cmd --engine qwen
-```
-
-默认监听 `localhost:6217`，也可显式传入 `--port`、`--host`。`Start-Competition.cmd` 与 `gateway.cmd` 等价。引擎在启动时选择，不在请求处理中动态切换；模型、Skill、MCP、CLI Tool Pack 仍通过统一配置与 revision 机制下发。
+两种方式下，所有引擎都只使用 `HARNESSHUB_MODEL*` 配置的统一模型，Tool Pack 按上文用 `Install-Tool-Pack.cmd --engines all` 或 HTTP 接口安装到全部引擎。比赛 API 默认监听 `localhost:6217`，引擎在启动时选择，不在请求中动态切换；控制台随比赛入口一并启动。

@@ -2,18 +2,27 @@
 
 **一个本地运行的多引擎 Agent 执行网关。** 用同一套 HTTP API 和 Web 控制台发现、配置与运行不同 Harness，保留会话、执行事件、工具权限、文件产物和模型用量证据。
 
-HarnessHub 管理任务的生命周期与公共状态，具体推理和工具执行交给所选引擎。当前提供 ACP Driver 和文本 CLI Driver，不要求每个引擎使用相同模型服务。
+HarnessHub 管理任务的生命周期与公共状态，具体推理和工具执行交给所选引擎。当前提供 ACP Driver 和文本 CLI Driver。配置了统一模型后，**所有引擎只使用 HarnessHub 配置的同一个模型**：各引擎的原生协议由 Worker 内的统一模型网关转换为上游的流式 OpenAI Chat Completions，不使用任何引擎自带的 API Key、登录或订阅。
 
 ## 当前能力
 
+- **统一模型网关**：Codex 的 Responses、Claude Code 的 Anthropic Messages、Gemini 的 Google 协议与其他引擎的 Chat Completions，统一转换为只接受流式的上游 Chat Completions；强制使用统一模型，回填推理模型的 `reasoning_content`，按严格企业网关清理参数，上游错误原样透出。见 [统一模型网关](docs/model-gateway.md)。
+- **比赛接口**：实现 Agent 网关接口规范 v1.1（`/session`、阻塞的 `prompt_async`、`/event` SSE、消息轨迹、abort、权限与反问），`AGENT_ENGINE` 或 `--engine` 选择引擎。见 [比赛接口](docs/competition-api.md)。
+- **一键工具包**：直接导入 Skill 目录、`mcp.json`、`cli.json`，一次安装到全部引擎，工具在每个会话自己的目录中运行。见 [Capability Pack](docs/capability-packs.md)。
 - **引擎发现与管理**：16 种已知 Harness 启动配方、PATH/常见目录扫描、自定义 manifest；运行中登记、替换、停用和切换默认引擎。
 - **独立配置**：按适配能力设置模型、Provider、API URL、Keychain/环境/文件密钥引用、便携 Skills 和 ACP/原生 MCP。已有 Session 固定原配置版本。
 - **执行控制**：独立 Worker、同 Session 串行、跨 Session 有界并发、期限、取消、权限决定与进程清理状态。
 - **可追溯结果**：SQLite 提交日志、SSE 重放、JSONL 导出、不可变文件产物、配置与实际模型/用量的分别记录。
 - **工作流与评测**：模型生成计划、人工确认、有界 DAG 串行执行；文本/JSON/文件评判器与离线成绩汇总。
-- **本地控制台**：Next.js/React 工作台、引擎配置、连接检查、模型测试、执行详情与观测页。
+- **本地控制台**：Next.js/React 工作台、统一模型页、工具与插件页、引擎配置、执行详情（含每次模型调用证据）与观测页；比赛入口启动时一并打开，`http://localhost:6217/` 跳转到控制台。
 
 **验证范围**：macOS 和 Windows 11 ARM64 上已取得指定场景的执行证据；自动测试使用真实 Gateway/SQLite/IPC/Worker 和确定的外部引擎替身。Windows 已接入原生 Job 监督、路径/文件权限、脚本启动与 DPAPI 密钥存储，Codex 真实只读文本、文件读取与流式取消已验证。本轮另有 11 个引擎通过 DeepSeek V4 Flash 短任务，工具与发行目录单独验收，见 [便携引擎记录](docs/verification/2026-09-06-portable-engines.md)。Windows 10/x64、未列出的实际任务及 OS 沙箱仍未验证。安装发现、协议握手、模型可用和任务正确性分别验证。详见 [Windows 指南](docs/windows.md)、[能力范围](docs/engine-discovery.md)、[配置支持表](docs/engine-configuration.md)和 [验收记录](docs/README.md#验收与历史资料)。
+
+## 参加比赛（Windows x64 离线）
+
+评测环境按 [INSTRUCTION.md](distribution/INSTRUCTION.md) 执行：离线开发包中运行 `Setup-Competition-Offline.cmd` 完成依赖恢复、编译和比赛布局生成；只用环境变量配置模型（`HARNESSHUB_MODEL`、`HARNESSHUB_MODEL_BASE_URL`、`HARNESSHUB_MODEL_API_KEY`）和引擎（`AGENT_ENGINE`）；`Start-Competition.cmd` 是唯一启动入口。运行文件在 GitHub Release 中下载：`offline-dev-latest`（离线开发包，可作为提交物 `solution/code`）与 `competition-latest`（免编译的 x64 完整运行包）。
+
+2026-09-19 在 macOS 上用 7 个真实引擎经只接受流式的严格网关验收通过，见 [验收记录](docs/verification/2026-09-19-unified-model-gateway.md)；Windows x64 由 CI 用模拟模型验收，公司真实模型需在内网另行验证。
 
 ## 快速开始：不需要 API Key
 
@@ -47,7 +56,7 @@ pnpm start --demo --port 3180 --data-dir ./data/demo
 HARNESSHUB_GATEWAY_URL=http://127.0.0.1:3180 pnpm start:console
 ```
 
-打开 **[http://127.0.0.1:3330](http://127.0.0.1:3330)**，将“执行模式”从“自动规划”切换为“直接执行”，选择 `fake` 引擎并发送文本。demo 只回显/模拟协议，不代表真实 AI 推理；默认的自动规划会排除 `fake`，需要另外接入真实引擎。
+打开 **[http://127.0.0.1:3330](http://127.0.0.1:3330)**，在默认的“直接执行”模式下选择 `fake` 引擎并发送文本。demo 只回显/模拟协议，不代表真实 AI 推理；“自动规划”模式会排除 `fake`，需要另外接入真实引擎。
 
 验证 HTTP、事件、幂等、产物和关闭流程：
 
@@ -83,8 +92,9 @@ pnpm start --config engines/local.yaml --port 3180 --data-dir ./data/local
 |---|---|
 | 从零启动、数据目录、常见问题 | [使用指南](docs/getting-started.md) |
 | 模块边界、调用链、状态和存储 | [架构与实现导览](docs/architecture.md) · [设计基线](DESIGN.md) |
-| 40 个 HTTP 操作的参数、实现和副作用 | [API 入口](docs/api/README.md) · [逐接口实现](docs/api/reference.md) · [OpenAPI](docs/api/openapi.json) |
-| 模型、密钥、Skills、MCP | [引擎独立配置](docs/engine-configuration.md) |
+| 全部 HTTP 操作的参数、实现和副作用 | [API 入口](docs/api/README.md) · [逐接口实现](docs/api/reference.md) · [OpenAPI](docs/api/openapi.json) |
+| 统一模型、密钥、Skills、MCP | [引擎独立配置](docs/engine-configuration.md) · [统一模型网关](docs/model-gateway.md) |
+| 比赛接口与评测调用 | [比赛接口](docs/competition-api.md) · [INSTRUCTION.md](distribution/INSTRUCTION.md) |
 | 动态登记、版本、发现与原生连接 | [引擎管理](docs/engine-management.md) · [发现](docs/engine-discovery.md) |
 | 计划确认、选路与失败恢复 | [工作流](docs/workflows.md) |
 | 文件、用量、Benchmark | [产物](docs/file-artifacts.md) · [观测](docs/observability.md) · [评测](docs/benchmark.md) |
