@@ -193,6 +193,122 @@ void test(
 );
 
 void test(
+  "release CLI configures and saves the unified model, reports it in doctor and the Gateway applies it to every engine",
+  { skip: process.platform !== "win32", timeout: 60000 },
+  async (t) => {
+    const root = await realpath(
+      await mkdtemp(path.join(os.tmpdir(), "hh-release-unified-")),
+    );
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const { entry } = await fixture(root);
+    const input = path.join(root, "candidate.json");
+    await writeFile(
+      input,
+      JSON.stringify({
+        schemaVersion: 1,
+        defaultEngine: "fixture",
+        model: {
+          model: "settings-model",
+          provider: {
+            protocol: "openai-completions",
+            baseUrl: "https://settings.example/v1",
+            apiKey: { kind: "env", value: "SETTINGS_MODEL_KEY" },
+          },
+        },
+        engines: { fixture: { model: "vendor-model" } },
+      }),
+    );
+    const configured = await cli(entry, ["configure", "--file", input]);
+    assert.equal(configured.code, 0, configured.stderr);
+    const configuredReport = JSON.parse(configured.stdout) as {
+      harnessModel: { source: string };
+    };
+    assert.equal(configuredReport.harnessModel.source, "settings");
+    const generatedFile = path.join(root, "state/engines.generated.json");
+    const generated = JSON.parse(await readFile(generatedFile, "utf8")) as {
+      model: { model: string };
+    };
+    assert.equal(generated.model.model, "settings-model");
+
+    const saved = await cli(entry, [
+      "model",
+      "set",
+      "--model",
+      "GLM-V5_1-DX",
+      "--base-url",
+      "http://aigateway.example/v1",
+      "--api-key-env",
+      "COMPANY_MODEL_API_KEY",
+      "--context-window",
+      "131072",
+    ]);
+    assert.equal(saved.code, 0, saved.stderr);
+    const shown = await cli(entry, ["model", "show"]);
+    assert.equal(shown.code, 0, shown.stderr);
+    const view = JSON.parse(shown.stdout) as {
+      source: string;
+      model: string;
+      engines: { engineId: string; status: string }[];
+    };
+    assert.equal(view.source, "file");
+    assert.equal(view.model, "GLM-V5_1-DX");
+    assert.deepEqual(
+      view.engines.map((engine) => [engine.engineId, engine.status]),
+      [["fixture", "applied"]],
+    );
+    const doctor = await cli(entry, ["doctor"]);
+    assert.equal(doctor.code, 0, doctor.stderr);
+    const diagnosis = JSON.parse(doctor.stdout) as {
+      modelCalled: boolean;
+      harnessModel: { source: string };
+    };
+    assert.equal(diagnosis.modelCalled, false);
+    assert.equal(diagnosis.harnessModel.source, "file");
+
+    const hub = await startHub({
+      dataDir: path.join(root, "state/gateway-check"),
+      configFile: generatedFile,
+      harnessModelFile: path.join(root, "state/harness-model.json"),
+      cwd: path.join(root, "state/workspace"),
+      demo: false,
+      port: 0,
+    });
+    try {
+      const model = await hub.server.inject({
+        method: "GET",
+        url: "/v1/harness/model",
+      });
+      assert.equal(model.statusCode, 200, model.body);
+      assert.equal(model.json<{ source: string }>().source, "file");
+      const engines = await hub.server.inject({
+        method: "GET",
+        url: "/v1/engines",
+      });
+      assert.ok(engines.body.includes("GLM-V5_1-DX"));
+      assert.equal(engines.body.includes("vendor-model"), false);
+    } finally {
+      await hub.server.close();
+    }
+    const rejected = await cli(entry, [
+      "model",
+      "set",
+      "--model",
+      "m",
+      "--base-url",
+      "https://x.example/v1?key=inline",
+      "--api-key-env",
+      "COMPANY_MODEL_API_KEY",
+    ]);
+    assert.equal(rejected.code, 1);
+    const unchanged = await cli(entry, ["model", "show"]);
+    assert.equal(
+      (JSON.parse(unchanged.stdout) as { model: string }).model,
+      "GLM-V5_1-DX",
+    );
+  },
+);
+
+void test(
   "release CLI repairs corrupt settings and requires unuse before removing an installed selected Skill package",
   { skip: process.platform !== "win32", timeout: 60000 },
   async (t) => {

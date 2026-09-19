@@ -384,3 +384,125 @@ void test("settings storage does not replace valid bytes on parsing failure or s
   await writeFile(path.join(root, "settings.json"), "{invalid");
   await assert.rejects(readSettings(root));
 });
+
+const unifiedModel = {
+  model: "GLM-V5_1-DX",
+  provider: {
+    protocol: "openai-completions" as const,
+    baseUrl: "http://aigateway.example/v1",
+    apiKey: { kind: "env" as const, value: "COMPANY_MODEL_API_KEY" },
+  },
+};
+
+void test("settings accept a top-level unified model alone or next to legacy model profiles", () => {
+  const modern = parseSettings({
+    schemaVersion: 1,
+    defaultEngine: "fixture",
+    model: {
+      ...unifiedModel,
+      alias: "contest-model",
+      provider: {
+        ...unifiedModel.provider,
+        headers: { "X-Tenant": "contest" },
+        secretHeaders: {
+          "X-Gateway-Token": { kind: "env", value: "GATEWAY_TOKEN" },
+        },
+        contextWindow: 131072,
+        maxOutputTokens: 16384,
+        compatibility: { maxTokensField: "max_tokens" },
+      },
+    },
+  });
+  assert.equal(modern.model?.model, "GLM-V5_1-DX");
+  const root = context(path.resolve("fixture"));
+  const [engine] = materializeEngines(manifest(), modern, root);
+  assert.equal(engine!.model, undefined);
+  assert.equal(engine!.configuration?.provider, undefined);
+
+  // Legacy per-engine profiles still parse and materialize; the Gateway policy
+  // replaces their model and Provider with the unified model at registration.
+  const mixed = parseSettings({
+    schemaVersion: 1,
+    model: unifiedModel,
+    modelProfiles: {
+      vendor: {
+        model: "vendor-model",
+        provider: { protocol: "anthropic", baseUrl: "https://vendor.example" },
+      },
+    },
+    engines: { fixture: { modelProfile: "vendor" } },
+  });
+  assert.equal(
+    materializeEngines(manifest(), mixed, root)[0]!.model,
+    "vendor-model",
+  );
+
+  for (const model of [
+    {
+      ...unifiedModel,
+      provider: { ...unifiedModel.provider, protocol: "anthropic" },
+    },
+    { ...unifiedModel, provider: { protocol: "openai-completions" } },
+    {
+      ...unifiedModel,
+      provider: { ...unifiedModel.provider, apiKey: "sk-inline" },
+    },
+    {
+      ...unifiedModel,
+      provider: {
+        ...unifiedModel.provider,
+        baseUrl: "https://x.example/v1?key=1",
+      },
+    },
+    {
+      ...unifiedModel,
+      provider: {
+        ...unifiedModel.provider,
+        headers: { Authorization: "Bearer x" },
+      },
+    },
+    {
+      ...unifiedModel,
+      provider: {
+        ...unifiedModel.provider,
+        secretHeaders: { "X-Token": { kind: "env", value: "lower" } },
+      },
+    },
+    {
+      ...unifiedModel,
+      alias: "a",
+      provider: { ...unifiedModel.provider, modelAlias: "b" },
+    },
+    { ...unifiedModel, surprise: true },
+    { provider: unifiedModel.provider },
+  ])
+    assert.throws(
+      () => parseSettings({ schemaVersion: 1, model }),
+      JSON.stringify(model),
+    );
+});
+
+void test("shipped settings examples use only the unified model and no per-engine vendor path", async () => {
+  for (const name of [
+    "deepseek.json",
+    "deepseek-open-source.json",
+    "company-chat.json",
+  ]) {
+    const settings = parseSettings(
+      JSON.parse(
+        await readFile(
+          new URL(`../../../distribution/${name}`, import.meta.url),
+          "utf8",
+        ),
+      ) as unknown,
+    );
+    assert.equal(settings.model?.provider.protocol, "openai-completions", name);
+    assert.equal(settings.modelProfiles, undefined, name);
+    for (const [id, engine] of Object.entries(settings.engines ?? {})) {
+      assert.equal(engine.modelProfile, undefined, `${name} ${id}`);
+      assert.equal(engine.model, undefined, `${name} ${id}`);
+      assert.equal(engine.configuration?.provider, undefined, `${name} ${id}`);
+      assert.equal(engine.configuration?.secretEnv, undefined, `${name} ${id}`);
+    }
+  }
+});
