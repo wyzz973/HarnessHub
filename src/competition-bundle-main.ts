@@ -476,6 +476,9 @@ async function generatedConfig(
         workspaces: [{ id: "default", path: context.workspace }],
         defaultWorkspace: "default",
         defaultEngine,
+        // The settings unified model is the lowest-priority source (ADR 0013); without it
+        // here the competition entry would silently ignore state/settings.json `model`.
+        ...(settings.model ? { model: settings.model } : {}),
       },
       null,
       2,

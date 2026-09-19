@@ -77,9 +77,13 @@ export function formFromView(view: HarnessModelView | undefined) {
   };
   return form;
 }
+// Mirrors the Gateway unified-model rules (src/application/harness-model.ts) so mistakes are
+// explained before any secret is stored; the Gateway remains the authority.
 const headerName = /^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,128}$/;
-const credentialLike =
-  /authorization|api[-_]?key|token|secret|cookie|password/i;
+const sensitiveHeader =
+  /authorization|api[-_]?key|token|secret|password|cookie|credential/i;
+const inlineCredential = /\b(?:sk-|ghp_|Bearer )[A-Za-z0-9_-]{12,}/;
+const environmentName = /^[A-Z][A-Z0-9_]{0,127}$/;
 function integer(text: string, min: number, max: number, label: string) {
   if (!text.trim()) return { value: undefined };
   const value = Number(text.trim());
@@ -114,6 +118,7 @@ export function validateForm(form: HarnessModelForm): string | null {
     return "上游地址需使用 http 或 https";
   if (url.username || url.password)
     return "不要把凭证写在上游地址中，请使用 API Key 或敏感请求头";
+  if (url.search || url.hash) return "上游地址不能包含查询参数（?）或片段（#）";
   if (form.keyMode === "new") {
     const key = form.newKey.trim();
     if (!key) return "请输入新的 API Key，或选择其他来源";
@@ -122,11 +127,8 @@ export function validateForm(form: HarnessModelForm): string | null {
   }
   if (form.keyMode === "keep" && !form.keyReference)
     return "没有可保留的 API Key 引用，请重新选择来源";
-  if (
-    form.keyMode === "env" &&
-    !/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(form.envName.trim())
-  )
-    return "请填写环境变量名称（如 COMPANY_MODEL_KEY），不要填写 Key 本身";
+  if (form.keyMode === "env" && !environmentName.test(form.envName.trim()))
+    return "请填写大写的环境变量名称（如 COMPANY_MODEL_KEY），不要填写 Key 本身";
   const context = integer(form.contextWindow, 1024, 16777216, "上下文窗口");
   if (context.error) return context.error;
   const output = integer(form.maxOutputTokens, 16, 4194304, "输出上限");
@@ -143,13 +145,14 @@ export function validateForm(form: HarnessModelForm): string | null {
     if (!headerName.test(name)) return `请求头名称无效：${name || "（空）"}`;
     if (names.has(name.toLowerCase())) return `请求头重复：${name}`;
     names.add(name.toLowerCase());
-    if (/[\r\n\0]/.test(row.value) || row.value.length > 8192)
-      return `请求头 ${name} 的值需为单行文本`;
+    const value = row.value.trim();
+    if (/[\u0000-\u001f\u007f]/.test(value) || value.length > 8192)
+      return `请求头 ${name} 的值需为单行文本，最长 8192 字符`;
     if (row.secret) {
-      if (!row.value && !row.reference) return `请填写敏感请求头 ${name} 的值`;
+      if (!value && !row.reference) return `请填写敏感请求头 ${name} 的值`;
     } else {
-      if (!row.value) return `请填写请求头 ${name} 的值`;
-      if (credentialLike.test(name))
+      if (!value) return `请填写请求头 ${name} 的值`;
+      if (sensitiveHeader.test(name) || inlineCredential.test(value))
         return `请求头 ${name} 看起来包含凭证，请勾选“敏感”，值会保存到系统安全存储`;
     }
   }
@@ -171,7 +174,7 @@ export function harnessModelBody(
   const headers = Object.fromEntries(
     form.headers
       .filter((row) => !row.secret && row.name.trim())
-      .map((row) => [row.name.trim(), row.value]),
+      .map((row) => [row.name.trim(), row.value.trim()]),
   );
   const drops = dropParameterList(form.dropParameters);
   const context = form.contextWindow.trim();

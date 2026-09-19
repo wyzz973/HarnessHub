@@ -337,12 +337,16 @@ export const harnessModelViewSchema = z.object({
   provider: providerSchema.optional(),
   engines: z.array(harnessModelEngineStatusSchema),
 });
-/** `POST /v1/harness/model/test` calls the model once; `error` is redacted by the Gateway. */
+/**
+ * `POST /v1/harness/model/test`: one short real Run on the chosen engine. `ok` means the Run
+ * completed with a non-empty reply; `status` is that Run's status and `error` is redacted.
+ */
 export const harnessModelTestSchema = z.object({
   ok: z.boolean(),
-  status: z.number(),
+  status: runStatusSchema,
   durationMs: z.number(),
-  error: z.union([errorSchema, z.string()]).optional(),
+  runId: z.string(),
+  error: errorSchema.optional(),
 });
 export const toolPackRecordSchema = z.object({
   id: z.string(),

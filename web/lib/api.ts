@@ -330,9 +330,16 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(model),
     }),
-  /** Sends one short streaming request with the saved configuration; this calls the real model. */
-  testHarnessModel: () =>
-    request("/v1/harness/model/test", harnessModelTestSchema, post()),
+  /**
+   * Runs one short real task (at most about 90 s) on `engineId`, or on the default engine,
+   * with the saved unified model. This calls the real model and records a normal Run.
+   */
+  testHarnessModel: (engineId?: string) =>
+    request(
+      "/v1/harness/model/test",
+      harnessModelTestSchema,
+      post(engineId ? { engineId } : {}),
+    ),
   toolPacks: (signal?: AbortSignal) =>
     request(
       "/v1/tool-packs",

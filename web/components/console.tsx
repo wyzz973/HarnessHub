@@ -805,6 +805,19 @@ export function Console() {
     },
     [setModel, refresh],
   );
+  const openRun = useCallback(
+    (runId: string) => {
+      void api
+        .run(runId)
+        .then((run) => {
+          choose({ type: "session", id: run.sessionId });
+          setFocusedRunId(runId);
+          setInspectorOpen(true);
+        })
+        .catch(report);
+    },
+    [choose, report],
+  );
   const health = gateway.health;
 
   return (
@@ -1095,6 +1108,7 @@ export function Console() {
                 runtime={gateway.runtime}
                 reload={gateway.reload}
                 onSaved={saveModel}
+                openRun={openRun}
               />
             ) : page === "tools" ? (
               <ToolPacksPage engines={engines} refreshEngines={refresh} />

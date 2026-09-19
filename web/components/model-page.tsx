@@ -31,7 +31,7 @@ import {
   type HarnessModelForm,
   type HeaderRow,
 } from "@/lib/harness-model";
-import { duration } from "@/lib/presentation";
+import { duration, statusNames } from "@/lib/presentation";
 
 function referenceLabel(reference: SecretReference) {
   return reference.kind === "keychain"
@@ -49,11 +49,14 @@ export function ModelPage({
   runtime,
   reload,
   onSaved,
+  openRun,
 }: {
   model: Remote<HarnessModelView>;
   runtime: Remote<RuntimeInfo>;
   reload: () => Promise<void>;
   onSaved: (view: HarnessModelView) => Promise<void>;
+  /** Show a Run (the connection test task) in the workbench with its execution details. */
+  openRun: (runId: string) => void;
 }) {
   const view = model.state === "ready" ? model.value : undefined;
   const [form, setForm] = useState<HarnessModelForm>(() => formFromView(view));
@@ -61,8 +64,9 @@ export function ModelPage({
   const [busy, setBusy] = useState<"save" | "test" | "reload" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
+  const [testEngine, setTestEngine] = useState("");
   const [tested, setTested] = useState<
-    (HarnessModelTest & { at: number }) | null
+    (HarnessModelTest & { engine: string }) | null
   >(null);
   useEffect(() => {
     void reload();
@@ -111,8 +115,8 @@ export function ModelPage({
       const rows: HeaderRow[] = [];
       for (const row of next.headers) {
         const name = row.name.trim();
-        if (row.secret && name && row.value) {
-          const { reference } = await api.createSecret(row.value);
+        if (row.secret && name && row.value.trim()) {
+          const { reference } = await api.createSecret(row.value.trim());
           secretHeaders[name] = reference;
           rows.push({ ...row, value: "", reference });
         } else {
@@ -144,7 +148,8 @@ export function ModelPage({
     setError(null);
     setTested(null);
     try {
-      setTested({ ...(await api.testHarnessModel()), at: Date.now() });
+      const result = await api.testHarnessModel(testEngine || undefined);
+      setTested({ ...result, engine: testEngine || "默认引擎" });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "测试请求失败");
     } finally {
@@ -162,12 +167,15 @@ export function ModelPage({
     }
   }
   const unsupported = model.state === "unsupported";
+  // The Gateway refuses to save while HARNESSHUB_MODEL* provides the model (HTTP 409).
+  const environmentLocked = view?.source === "environment";
   const competition =
     runtime.state === "ready" && runtime.value.competition
       ? runtime.value
       : undefined;
-  const testError =
-    typeof tested?.error === "string" ? tested.error : tested?.error?.message;
+  const testable = (view?.engines ?? []).filter(
+    (engine) => engine.status === "applied",
+  );
   return (
     <div className="page-body enter">
       <div className="mx-auto max-w-[1040px]">
@@ -221,10 +229,10 @@ export function ModelPage({
                 ? `当前生效：${view.model ?? "未报告"}（引擎看到的名称 ${view.alias}），来源：${view.source ? modelSourceNames[view.source] : "未报告"}。`
                 : "尚未配置统一模型：各引擎使用自身的模型配置。保存后所有引擎只使用这里的模型。"}
             </div>
-            {view.source === "environment" ? (
+            {environmentLocked ? (
               <div className="notice warn">
-                当前配置来自环境变量，环境变量优先于统一模型文件。在此保存的内容写入文件，只有在未设置
-                HARNESSHUB_MODEL* 环境变量时才会生效。
+                当前统一模型由 HARNESSHUB_MODEL*
+                环境变量提供，优先级最高，控制台不能修改。请修改环境变量并重启服务。
               </div>
             ) : null}
             {competition ? (
@@ -529,7 +537,12 @@ export function ModelPage({
               ) : null}
               <div className="flex flex-wrap items-center gap-2 border-t pt-4">
                 <Button
-                  disabled={!!busy || unsupported}
+                  disabled={!!busy || unsupported || environmentLocked}
+                  title={
+                    environmentLocked
+                      ? "环境变量提供的统一模型不能在控制台修改"
+                      : undefined
+                  }
                   onClick={() => void save()}
                 >
                   {busy === "save" ? (
@@ -550,15 +563,32 @@ export function ModelPage({
               <section className="panel" aria-label="测试连接">
                 <h2 className="panel-title">测试连接</h2>
                 <p className="mt-2 text-xs leading-6 text-muted-foreground">
-                  用已保存的配置向上游发送一条极短的流式请求，检查地址与鉴权。会实际调用模型并消耗少量额度。
+                  用已保存的配置，在所选引擎上运行一个极短的真实任务（最长约 90
+                  秒），确认该引擎经统一模型网关拿到回复。会实际调用模型并消耗少量额度。
                 </p>
                 {dirty ? (
                   <p className="mt-2 text-[11px] text-amber-800">
                     当前修改尚未保存，测试的是已保存的配置。
                   </p>
                 ) : null}
+                <label className="form-label mt-4">
+                  测试引擎
+                  <select
+                    className="form-input"
+                    value={testEngine}
+                    disabled={!!busy}
+                    onChange={(event) => setTestEngine(event.target.value)}
+                  >
+                    <option value="">默认引擎</option>
+                    {testable.map((engine) => (
+                      <option key={engine.engineId} value={engine.engineId}>
+                        {engine.engineId}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <Button
-                  className="mt-4"
+                  className="mt-3"
                   size="sm"
                   variant="outline"
                   disabled={!!busy || !view.configured}
@@ -569,7 +599,7 @@ export function ModelPage({
                   ) : (
                     <FlaskConical />
                   )}
-                  测试连接
+                  {busy === "test" ? "测试任务运行中…" : "测试连接"}
                 </Button>
                 {tested ? (
                   <div
@@ -581,15 +611,22 @@ export function ModelPage({
                     ) : (
                       <CircleX className="mt-0.5 size-4 shrink-0" />
                     )}
-                    <span>
-                      {tested.ok ? "连接正常" : "连接失败"} · HTTP{" "}
-                      {tested.status || "无响应"} ·{" "}
+                    <span className="min-w-0">
+                      {tested.ok ? "测试通过" : "测试未通过"} · {tested.engine}{" "}
+                      · {statusNames[tested.status] ?? tested.status} ·{" "}
                       {duration(tested.durationMs)}
-                      {testError ? (
+                      {tested.error ? (
                         <span className="mt-1 block break-words">
-                          {testError}
+                          {tested.error.code}：{tested.error.message}
                         </span>
                       ) : null}
+                      <button
+                        type="button"
+                        className="mt-1 block underline underline-offset-2"
+                        onClick={() => openRun(tested.runId)}
+                      >
+                        查看测试任务与模型调用
+                      </button>
                     </span>
                   </div>
                 ) : null}
