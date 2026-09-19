@@ -2,9 +2,8 @@ name: Debug Gemini shell on Windows x64
 
 # Debug-only workflow for the Gemini shell-tool stall in the released x64 competition bundle.
 # No model key: Gemini runs through the competition Gateway against the scripted mock model.
-# Round 2: every Windows PowerShell start takes ~20-25 s inside the engine environment, so
-# time PowerShell under environment variants, then retry Gemini with the Worker passing the
-# standard Windows system variables.
+# Round 3: prove the product fix (the Worker passes PSModulePath) with the exact change applied
+# to the extracted bundle, for Gemini and the other PowerShell-based engines.
 on:
   push:
     branches:
@@ -38,38 +37,38 @@ jobs:
           Remove-Item -LiteralPath $zip -Force
           New-Item -ItemType Directory -Force -Path D:\dbg | Out-Null
 
-      - name: Time Windows PowerShell under engine-like environment variants
+      - name: Time the real-model shell-task command as Gemini runs it (without and with PSModulePath)
         run: |
-          & D:\hh\runtime\node.exe .github\scripts\gemini-debug\env_probe.mjs D:\hh D:\dbg\env
+          & D:\hh\runtime\node.exe .github\scripts\gemini-debug\nested_probe.mjs D:\hh D:\dbg\nested
 
-      - name: Candidate fix - Worker passes the standard Windows system variables (compiled worker-host.js)
+      - name: Baseline - Gemini, Codex and Qwen through the Gateway with the scripted mock (released bundle)
+        run: |
+          & D:\hh\runtime\node.exe scripts/competition-matrix.mjs --bundle D:\hh --engines gemini,codex,qwen --out D:\dbg\matrix-released --mock --engine-timeout-ms 360000
+          Get-Content D:\dbg\matrix-released\summary.md -ErrorAction SilentlyContinue
+
+      - name: Apply the product fix - the Worker passes PSModulePath (compiled worker-host.js)
         run: |
           $ErrorActionPreference = "Stop"
           $file = "D:\hh\dist\src\process\worker-host.js"
           $text = [IO.File]::ReadAllText($file)
           $anchor = '"LOGNAME",'
           if (([regex]::Matches($text, [regex]::Escape($anchor))).Count -ne 1) { throw "anchor count differs" }
-          $names = '"PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432", "COMMONPROGRAMFILES", "COMMONPROGRAMFILES(X86)", "COMMONPROGRAMW6432", "PROGRAMDATA", "ALLUSERSPROFILE", "PUBLIC", "COMPUTERNAME", "USERDOMAIN", "PSMODULEPATH",'
-          $text = $text.Replace($anchor, "$anchor $names")
-          [IO.File]::WriteAllText($file, $text)
-          Select-String -Path $file -Pattern "PROGRAMDATA"
+          [IO.File]::WriteAllText($file, $text.Replace($anchor, "$anchor `"PSModulePath`","))
+          Select-String -Path $file -Pattern '"PSModulePath"'
 
-      - name: Verify - Gemini through the competition Gateway with the scripted mock (candidate fix)
+      - name: Verify - Gemini, Codex and Qwen through the Gateway with the scripted mock (fixed)
         run: |
-          $p = Start-Process -FilePath D:\hh\runtime\node.exe -ArgumentList @("scripts/competition-matrix.mjs", "--bundle", "D:\hh", "--engines", "gemini", "--out", "D:\dbg\matrix-system", "--mock", "--engine-timeout-ms", "420000") -PassThru -NoNewWindow -RedirectStandardOutput D:\dbg\matrix-system.out.txt -RedirectStandardError D:\dbg\matrix-system.err.txt
-          & .github\scripts\gemini-debug\watch_gemini.ps1 -WatchPid $p.Id -Out D:\dbg\watch-system -MockLog D:\dbg\matrix-system\mock-requests.jsonl -Node D:\hh\runtime\node.exe -Dump .github\scripts\gemini-debug\node_dump.mjs -Seconds 420
-          if (-not $p.HasExited) { taskkill /PID $p.Id /T /F | Out-Null; "matrix killed after 420 s" }
-          Get-Content D:\dbg\matrix-system\summary.md -ErrorAction SilentlyContinue
-          Get-Content D:\dbg\matrix-system\mock-requests.jsonl -ErrorAction SilentlyContinue
+          & D:\hh\runtime\node.exe scripts/competition-matrix.mjs --bundle D:\hh --engines gemini,codex,qwen --out D:\dbg\matrix-fixed --mock --engine-timeout-ms 360000
+          Get-Content D:\dbg\matrix-fixed\summary.md -ErrorAction SilentlyContinue
+          if ($LASTEXITCODE -ne 0) { throw "an engine failed with the fix applied" }
 
       - name: Upload debug evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gemini-debug-x64-round2
+          name: gemini-debug-x64-round3
           path: |
-            D:\dbg\env\*.jsonl
-            D:\dbg\matrix-system
-            D:\dbg\watch-system
-            D:\dbg\*.txt
+            D:\dbg\nested\*.jsonl
+            D:\dbg\matrix-released
+            D:\dbg\matrix-fixed
           retention-days: 7
