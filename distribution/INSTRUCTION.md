@@ -73,7 +73,8 @@ cd <CODE>
 .\Start-Competition.cmd
 ```
 
-- 比赛 API 默认监听 `http://localhost:6217`（`http://127.0.0.1:6217` 同样可用）。可选参数原样透传：`--port 6217`、`--host localhost`。
+- 比赛 API 默认监听 `http://localhost:6217`（`http://127.0.0.1:6217` 同样可用），默认只接受本机访问。可选参数原样透传：`--port 6217`、`--host localhost`。
+- 评测客户端在另一台机器或容器中时，改用 `.\Start-Competition.cmd --host 0.0.0.0`（或指定网卡地址），再用本机 IP 访问 6217 端口。这种绑定**没有鉴权**，同一网络中的任何人都能驱动已开启 Full Access 的引擎，只能在隔离的评测网络中使用；Windows 防火墙可能需要放行 `<CODE>\competition\runtime\node.exe` 的入站连接或 6217 端口。
 - 同时会启动 Web 控制台（默认 `http://127.0.0.1:3330`，端口被占用时自动换成空闲端口），浏览器打开 `http://localhost:6217/` 会跳转到控制台。评测只需要 6217 端口的比赛 API，控制台不影响也不会阻塞 Gateway；不需要时加 `--no-console`，`--console-port <端口>` 指定端口，`--open` 就绪后自动打开浏览器。
 - **进程需保持运行**：不要关闭该窗口；评测结束后按 Ctrl+C 停止。
 - 未设置 `AGENT_ENGINE` 时命令以退出码 2 结束，并列出可用引擎；尚未执行第 2 节时会提示先运行 `Setup-Competition-Offline.cmd`。
@@ -99,7 +100,7 @@ for ($i = 0; $i -lt 180; $i++) {
 
 ## 7. 调用方式（Agent 网关规范 v1.1）
 
-基地址 `http://127.0.0.1:6217`，请求与响应均为 UTF-8 JSON。服务只接受本机回环地址访问，评测客户端须与服务在同一台机器上。
+基地址 `http://127.0.0.1:6217`，请求与响应均为 UTF-8 JSON。默认只接受本机访问；评测客户端在其他机器或容器中时按第 5 节以 `--host 0.0.0.0` 启动，并把基地址换成本机 IP。
 
 1. **创建会话** `POST /session`
 
@@ -180,7 +181,7 @@ Invoke-RestMethod -Method Delete -Uri "$base/session/$($session.id)"
 | 失败、超时、中断 | `error` | `info.error` 为 `{code,message}`；`prompt_async` 返回 502，SSE 先发 `session.error` |
 | 被中止 | `cancelled` | `prompt_async` 返回 204 |
 
-`stop` 只表示执行正常结束，任务是否达标由评测方判断。ACP 引擎的某轮失败、超时或被中止后，该会话会被关闭（再提交返回 400），因此建议每个任务新建会话。
+`stop` 只表示执行正常结束，任务是否达标由评测方判断。因模型上游错误（`MODEL_UPSTREAM_ERROR`）或引擎没有输出（`ENGINE_NO_OUTPUT`）失败的一轮会保留会话，可在同一会话中重试；ACP 引擎的其他失败、超时或被中止会关闭该会话（再提交返回 400 `VALIDATION_ERROR`），此时需新建会话。建议每个任务使用新会话。
 
 ## 9. 权限与反问
 
@@ -207,6 +208,7 @@ Invoke-RestMethod -Method Delete -Uri "$base/session/$($session.id)"
 ## 11. 常见问题
 
 - **端口 6217 被占用**：`netstat -ano | findstr :6217` 查找占用进程，或改用 `.\Start-Competition.cmd --port 6218` 并相应修改评测地址。控制台端口被占用会自动换端口，不影响比赛 API。
+- **从其他机器调用返回 403 或连接失败**：默认绑定只接受本机访问，按第 5 节改用 `--host 0.0.0.0` 启动，并检查 Windows 防火墙是否放行 6217 端口。
 - **`AGENT_ENGINE is not set`**：按第 4 节设置后重新启动。**`Engine X is not included in this bundle`**：`AGENT_ENGINE` 取值不在第 4 节列表中。
 - **启动时报统一模型变量错误**：按第 3 节补齐 `HARNESSHUB_MODEL` 与 `HARNESSHUB_MODEL_BASE_URL`，正整数变量不要带单位。
 - **`prompt_async` 返回 502，原因含上游错误**：检查模型地址、密钥与网络连通性；`POST /v1/harness/model/test`（请求体 `{}`）会向模型发一条极短的流式请求用于诊断。
