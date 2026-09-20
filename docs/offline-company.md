@@ -1,6 +1,10 @@
-# 公司 Windows ARM64 离线交接
+# 公司 Windows 离线交接
 
-目标是 Windows 11 ARM64，模型 URL 只提供 Chat Completions。公司现有网关改动保留在内网；公共基线是 `1989d224b93f0344cae744444d656ad7519e8398`，适配分支是 `feat/offline-chat-completions`。
+模型 URL 只提供 Chat Completions，公司现有网关改动保留在内网。
+
+本文记录的是 2026-09-07 那一轮 **Windows 11 ARM64** 的交接内容（公共基线 `1989d224b93f0344cae744444d656ad7519e8398`，适配分支 `feat/offline-chat-completions`），保留作为历史依据。
+
+**当前交付走 x64**：运行包从 Release `competition-latest`、源码开发包从 `offline-dev-latest` 获取，统一模型只用环境变量配置，入口与排障见 [交接说明](handoff.md)与 [INSTRUCTION.md](../distribution/INSTRUCTION.md)；给公司本地 Agent 的上手材料是 [交接 Skill](../skills/harnesshub-company-gateway/SKILL.md)。下表的 ARM64 包与 `feat/offline-chat-completions` 分支不要与当前 x64 交付混用。
 
 ## 交付内容
 

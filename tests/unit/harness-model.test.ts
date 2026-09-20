@@ -9,6 +9,8 @@ import {
   evaluateHarnessModel,
   harnessModelFromEnvironment,
   HarnessModelService,
+  MODEL_NOT_CONFIGURED_CODE,
+  MODEL_NOT_CONFIGURED_MESSAGE,
   parseHarnessModel,
   readHarnessModelFile,
   writeHarnessModelFile,
@@ -615,4 +617,50 @@ void test("environment compatibility escape hatches reach the provider and are v
       harnessModelFromEnvironment({ HARNESSHUB_MODEL_DROP_PARAMETERS: "user" }),
     code("INVALID_HARNESS_MODEL"),
   );
+});
+
+void test("a deployment that requires the unified model refuses work until a source is configured", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "hh-require-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = path.join(directory, "harness-model.json");
+
+  const unconfigured = await HarnessModelService.load({
+    environment: {},
+    file,
+    ports,
+  });
+  assert.equal(unconfigured.active(), undefined);
+  assert.throws(
+    () => unconfigured.assertConfigured(),
+    (error: unknown) =>
+      error instanceof HubError &&
+      error.code === MODEL_NOT_CONFIGURED_CODE &&
+      error.statusCode === 503 &&
+      error.message === MODEL_NOT_CONFIGURED_MESSAGE,
+  );
+
+  // Every source satisfies the requirement; the message names both surfaces.
+  assert.match(MODEL_NOT_CONFIGURED_MESSAGE, /统一模型/);
+  assert.match(MODEL_NOT_CONFIGURED_MESSAGE, /HARNESSHUB_MODEL/);
+  await writeHarnessModelFile(file, unified);
+  const fromFile = await HarnessModelService.load({
+    environment: {},
+    file,
+    ports,
+  });
+  assert.doesNotThrow(() => fromFile.assertConfigured());
+  const fromEnvironment = await HarnessModelService.load({
+    environment: {
+      HARNESSHUB_MODEL: "env-model",
+      HARNESSHUB_MODEL_BASE_URL: "https://env.example/v1",
+    },
+    ports,
+  });
+  assert.doesNotThrow(() => fromEnvironment.assertConfigured());
+  const fromSettings = await HarnessModelService.load({
+    environment: {},
+    settings: unified,
+    ports,
+  });
+  assert.doesNotThrow(() => fromSettings.assertConfigured());
 });

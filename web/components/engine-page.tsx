@@ -1,16 +1,22 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ArrowRight,
   Check,
-  CirclePlus,
+  ChevronRight,
+  CircleCheck,
+  CircleX,
   Cpu,
-  FolderSearch,
+  Ellipsis,
+  FlaskConical,
   Loader2,
-  Plug,
+  Plus,
   RefreshCw,
+  Settings2,
+  Star,
+  Stethoscope,
   Terminal,
-  Zap,
+  Trophy,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,8 +27,21 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Popover,
+  PopoverClose,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { EngineConfigurationDialog } from "./engine-configuration-dialog";
+import { EngineAvatar } from "./engine-avatar";
 import { api } from "@/lib/api";
 import {
   registrationSchema,
@@ -32,7 +51,22 @@ import {
   type Registration,
   type RuntimeInfo,
 } from "@/lib/contracts";
-import { engineModelStatusNames } from "@/lib/harness-model";
+import { engineName, visibleEngines } from "@/lib/engines";
+import { cn } from "@/lib/utils";
+
+type ModelStatus = HarnessModelView["engines"][number];
+interface CheckResult {
+  engineId: string;
+  checks: { name: string; status: string; message: string }[];
+}
+
+function availability(engine: Engine, status: ModelStatus | undefined) {
+  if (status?.status === "unsupported")
+    return { label: "不支持统一模型", tone: "warn", reason: status.reason };
+  if (!engine.enabled)
+    return { label: "已停用", tone: "", reason: status?.reason };
+  return { label: "可用", tone: "good", reason: undefined };
+}
 
 export function EnginePage({
   engines,
@@ -61,14 +95,13 @@ export function EnginePage({
       status,
     ]),
   );
-  const [discovering, setDiscovering] = useState(true);
+  const shown = visibleEngines(engines);
+  const [discovering, setDiscovering] = useState(false);
   const discoveryRequest = useRef<AbortController | null>(null);
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [editing, setEditing] = useState<Engine | null>(null);
-  const [checkResult, setCheckResult] = useState<{
-    engineId: string;
-    checks: { name: string; status: string; message: string }[];
-  } | null>(null);
+  const [checkResult, setCheckResult] = useState<CheckResult | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [registration, setRegistration] = useState(
@@ -103,35 +136,27 @@ export function EnginePage({
       }
     }
   }, [report]);
+  // Discovery scans the machine; it only runs while the advanced section is open.
   useEffect(() => {
+    if (!advancedOpen) return;
     void discover();
-    const scanWhenVisible = () => {
-      if (document.visibilityState === "visible" && !discoveryRequest.current)
-        void discover();
-    };
-    const interval = window.setInterval(scanWhenVisible, 60_000);
-    document.addEventListener("visibilitychange", scanWhenVisible);
     return () => {
-      window.clearInterval(interval);
-      document.removeEventListener("visibilitychange", scanWhenVisible);
       discoveryRequest.current?.abort();
       discoveryRequest.current = null;
     };
-  }, [discover]);
+  }, [advancedOpen, discover]);
   async function submit() {
     setLocalError(null);
     let input: unknown;
     try {
       input = JSON.parse(registration);
     } catch {
-      setLocalError("请输入有效的 JSON 配置。");
+      setLocalError("不是有效的 JSON。");
       return;
     }
     const parsed = registrationSchema.safeParse(input);
     if (!parsed.success) {
-      setLocalError(
-        "配置需要有效的 id、driver（acp / cli）和 command 参数数组。",
-      );
+      setLocalError("需要 id、driver（acp 或 cli）和 command 数组。");
       return;
     }
     setBusy("register");
@@ -140,7 +165,7 @@ export function EnginePage({
       await refresh();
       setDialogOpen(false);
     } catch (error) {
-      setLocalError(error instanceof Error ? error.message : "注册失败");
+      setLocalError(error instanceof Error ? error.message : "添加失败");
     } finally {
       setBusy(null);
     }
@@ -161,127 +186,269 @@ export function EnginePage({
       ...(engine.acp ? { acp: engine.acp } : {}),
     };
   }
+  const unregistered = (candidates ?? []).filter(
+    (candidate) => !engines.some((engine) => engine.id === candidate.id),
+  );
   return (
-    <div className="page-body enter">
-      <div className="mx-auto max-w-[1040px]">
+    <div className="page-body">
+      <div className="page-column">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <div className="mb-3 flex items-center gap-2 text-[11px] tracking-wider text-muted-foreground">
-              <Plug className="size-3.5" />
-              ENGINE REGISTRY
-            </div>
-            <h1 className="page-heading">你的引擎，各司其职。</h1>
-            <p className="mt-3 text-[13px] leading-6 text-muted-foreground">
-              连接本机 Agent，为每项任务选择合适的执行方式。
-            </p>
-          </div>
-          <div className="flex gap-2 pt-6">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => void discover()}
-              disabled={discovering}
-            >
-              <FolderSearch className={discovering ? "animate-pulse" : ""} />
-              {discovering ? "扫描中" : "重新扫描"}
-            </Button>
-            <Button size="sm" onClick={() => setDialogOpen(true)}>
-              <CirclePlus />
-              添加引擎
-            </Button>
-          </div>
-        </div>
-        {runtime?.competition ? (
-          <div className="notice info mt-6">
-            比赛模式：比赛接口 /session 固定使用启动引擎{" "}
-            {competitionEngine ?? "（未报告）"}
-            。“设为默认”只影响控制台新建任务，不会改变评测使用的引擎。
-          </div>
-        ) : null}
-        <div className="stats-grid mb-8">
-          <div className="stat-cell">
-            <p className="text-[11px] text-muted-foreground">已注册</p>
-            <p className="mt-2 text-2xl font-medium tabular">
-              {engines.length}
-              <span className="ml-2 text-xs font-normal text-muted-foreground">
-                个引擎
-              </span>
-            </p>
-          </div>
-          <div className="stat-cell">
-            <p className="text-[11px] text-muted-foreground">已启用</p>
-            <p className="mt-2 text-2xl font-medium tabular text-[#52714a]">
-              {engines.filter((e) => e.enabled).length}
-            </p>
-          </div>
-          <div className="stat-cell">
-            <p className="text-[11px] text-muted-foreground">默认引擎</p>
-            <p
-              className="mt-3 truncate text-base font-medium"
-              title={defaultEngine}
-            >
-              {defaultEngine || "未设置"}
-            </p>
-          </div>
-          <div className="stat-cell">
-            <p className="text-[11px] text-muted-foreground">配置更新</p>
-            <p className="mt-3 flex items-center gap-2 text-sm">
-              <span className="size-1.5 rounded-full bg-[#709663]" />
-              运行中生效
+            <h1 className="page-title">引擎</h1>
+            <p className="page-lede">
+              {shown.filter((engine) => engine.enabled).length} 个可用，共{" "}
+              {shown.length} 个。
             </p>
           </div>
         </div>
-        {candidates ? (
-          <section className="mb-8 rounded-xl border bg-[#fafcf6] p-5">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-sm font-medium">
-                本机发现{" "}
-                <span className="ml-2 text-xs text-muted-foreground">
-                  {candidates.length}
-                </span>
-              </h2>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setCandidates(null)}
-              >
-                收起
-              </Button>
-            </div>
-            <p className="mb-4 text-xs leading-6 text-muted-foreground">
-              自动检测本机安装，每分钟刷新。检测到安装不代表已经登录或模型可用；登记后可在任务中选择。
-            </p>
-            <div className="space-y-2">
-              {candidates.map((candidate) => {
-                const exists = engines.some(
-                  (engine) => engine.id === candidate.id,
-                );
-                return (
-                  <div
-                    key={`${candidate.id}-${candidate.executable}`}
-                    className="flex items-center gap-3 rounded-lg border bg-white px-4 py-3"
+        <ul className="panel mt-6 divide-y overflow-hidden">
+          {shown.map((engine) => {
+            const state = availability(engine, modelStatus.get(engine.id));
+            const isDefault = engine.id === defaultEngine;
+            const checked =
+              checkResult?.engineId === engine.id ? checkResult : undefined;
+            return (
+              <li key={engine.id} className="px-5 py-4">
+                <div className="flex items-center gap-3.5">
+                  <EngineAvatar
+                    id={engine.id}
+                    size="md"
+                    className={cn(!engine.enabled && "opacity-50")}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="text-[14.5px] font-semibold">
+                        {engineName(engine.id)}
+                      </span>
+                      {isDefault ? (
+                        <span className="tag brand">默认</span>
+                      ) : null}
+                      {engine.id === competitionEngine ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="tag info">
+                              <Trophy className="size-3" />
+                              比赛
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>比赛接口固定使用此引擎</TooltipContent>
+                        </Tooltip>
+                      ) : null}
+                    </div>
+                    <p className="mt-0.5 truncate text-[12.5px] text-subtle">
+                      {engine.driver.toUpperCase()}
+                      {engine.model ? ` · ${engine.model}` : ""}
+                      <span className="font-mono">
+                        {" "}
+                        · {engine.revision.slice(0, 8)}
+                      </span>
+                    </p>
+                  </div>
+                  <span className={cn("tag shrink-0 max-sm:hidden", state.tone)}>
+                    {state.label}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="max-md:hidden"
+                    disabled={!!busy || !engine.enabled}
+                    onClick={() =>
+                      void action(`test:${engine.id}`, () =>
+                        testModel(engine.id),
+                      )
+                    }
                   >
-                    <Terminal className="size-4 shrink-0 text-muted-foreground" />
+                    {busy === `test:${engine.id}` ? (
+                      <Loader2 className="animate-spin" />
+                    ) : (
+                      <FlaskConical />
+                    )}
+                    测试
+                  </Button>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        size="icon-sm"
+                        variant="ghost"
+                        aria-label={`${engineName(engine.id)} 的更多操作`}
+                        disabled={!!busy}
+                      >
+                        <Ellipsis />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" className="w-48">
+                      <MenuItem
+                        icon={Star}
+                        label="设为默认"
+                        disabled={!engine.enabled || isDefault}
+                        onSelect={() =>
+                          void action(engine.id, () =>
+                            api.setDefault(engine.id),
+                          )
+                        }
+                      />
+                      <MenuItem
+                        icon={Stethoscope}
+                        label="检查连接"
+                        onSelect={() =>
+                          void action(`check:${engine.id}`, async () =>
+                            setCheckResult(
+                              await api.testEngineConfiguration(engine.id),
+                            ),
+                          )
+                        }
+                      />
+                      <MenuItem
+                        icon={FlaskConical}
+                        label="测试模型"
+                        disabled={!engine.enabled}
+                        onSelect={() =>
+                          void action(`test:${engine.id}`, () =>
+                            testModel(engine.id),
+                          )
+                        }
+                      />
+                      <MenuItem
+                        icon={Settings2}
+                        label="配置"
+                        onSelect={() => setEditing(engine)}
+                      />
+                    </PopoverContent>
+                  </Popover>
+                  <Switch
+                    checked={engine.enabled}
+                    disabled={!!busy}
+                    aria-label={`${engine.enabled ? "停用" : "启用"} ${engineName(engine.id)}`}
+                    onCheckedChange={(enabled) =>
+                      void action(engine.id, () =>
+                        api.replace(configured(engine, enabled)),
+                      )
+                    }
+                  />
+                </div>
+                {state.reason ? (
+                  <p className="mt-2 pl-[50px] text-[12.5px] leading-5 text-muted-foreground">
+                    {state.reason}
+                  </p>
+                ) : null}
+                {busy === `check:${engine.id}` ? (
+                  <p className="mt-2 flex items-center gap-2 pl-[50px] text-[12.5px] text-muted-foreground">
+                    <Loader2 className="size-3.5 animate-spin" />
+                    正在检查
+                  </p>
+                ) : null}
+                {checked ? (
+                  <div
+                    role="status"
+                    className="mt-3 ml-[50px] rounded-xl bg-muted px-3.5 py-3 text-[12.5px]"
+                  >
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <span className="font-medium">连接检查</span>
+                      <button
+                        type="button"
+                        className="text-subtle hover:text-foreground"
+                        aria-label="关闭检查结果"
+                        onClick={() => setCheckResult(null)}
+                      >
+                        <X className="size-3.5" />
+                      </button>
+                    </div>
+                    <ul className="space-y-1">
+                      {checked.checks.map((check, index) => (
+                        <li key={index} className="flex gap-2">
+                          {check.status === "passed" ? (
+                            <CircleCheck className="mt-0.5 size-3.5 shrink-0 text-success" />
+                          ) : (
+                            <CircleX className="mt-0.5 size-3.5 shrink-0 text-danger" />
+                          )}
+                          <span
+                            className={cn(
+                              "min-w-0 [overflow-wrap:anywhere]",
+                              check.status !== "passed" && "text-danger",
+                            )}
+                          >
+                            {check.message}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </li>
+            );
+          })}
+          {!shown.length ? (
+            <li className="empty-state py-14">
+              <span className="mb-2 grid size-11 place-items-center rounded-2xl bg-muted text-muted-foreground">
+                <Cpu className="size-5" strokeWidth={1.7} />
+              </span>
+              <p className="text-[14px] font-medium text-foreground">
+                还没有引擎
+              </p>
+              <p>在“高级”中登记本机已安装的引擎。</p>
+            </li>
+          ) : null}
+        </ul>
+        <details
+          className="group mt-6"
+          open={advancedOpen}
+          onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}
+        >
+          <summary className="flex w-fit items-center gap-1.5 text-[13.5px] text-muted-foreground hover:text-foreground">
+            <ChevronRight className="size-4 transition-transform duration-150 group-open:rotate-90" />
+            高级
+          </summary>
+          <div className="mt-4 space-y-4">
+            <section className="panel overflow-hidden" aria-label="本机发现">
+              <header className="flex items-center justify-between gap-3 px-5 py-3.5">
+                <h2 className="section-title">本机发现</h2>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => void discover()}
+                    disabled={discovering}
+                  >
+                    <RefreshCw className={discovering ? "animate-spin" : ""} />
+                    重新扫描
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={busy === "reload"}
+                    onClick={() => void action("reload", api.reload)}
+                  >
+                    重载配置文件
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setDialogOpen(true)}
+                  >
+                    <Plus />
+                    手动添加
+                  </Button>
+                </div>
+              </header>
+              <ul className="divide-y border-t">
+                {unregistered.map((candidate) => (
+                  <li
+                    key={`${candidate.id}-${candidate.executable}`}
+                    className="flex items-center gap-3 px-5 py-3"
+                  >
+                    <Terminal className="size-4 shrink-0 text-subtle" />
                     <div className="min-w-0 flex-1">
-                      <p className="text-xs font-medium">{candidate.name}</p>
+                      <p className="text-[13.5px] font-medium">
+                        {candidate.name}
+                      </p>
                       <p
-                        className="mt-1 truncate font-mono text-[10px] text-muted-foreground"
+                        className="truncate font-mono text-[12px] text-subtle"
                         title={candidate.executable}
                       >
                         {candidate.executable}
                       </p>
-                      {candidate.notes.length ? (
-                        <p className="mt-1 text-[10px] text-muted-foreground">
-                          {candidate.notes.join(" · ")}
-                        </p>
-                      ) : null}
                     </div>
-                    {exists ? (
-                      <span className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
-                        <Check className="size-3" />
-                        已注册
-                      </span>
-                    ) : candidate.registration ? (
+                    {candidate.registration ? (
                       <Button
                         size="sm"
                         variant="outline"
@@ -295,226 +462,34 @@ export function EnginePage({
                         {busy === candidate.id ? (
                           <Loader2 className="animate-spin" />
                         ) : (
-                          <ArrowRight />
+                          <Check />
                         )}
                         登记
                       </Button>
                     ) : (
-                      <span className="status-badge warning">需要适配器</span>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="tag warn">需要适配器</span>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-72">
+                          {candidate.notes.join(" ") ||
+                            "需要先安装对应的 ACP 适配器"}
+                        </TooltipContent>
+                      </Tooltip>
                     )}
-                  </div>
-                );
-              })}
-              {!candidates.length ? (
-                <p className="empty-note">
-                  未发现引擎。你可以通过配置手动添加。
-                </p>
-              ) : null}
-            </div>
-          </section>
-        ) : null}
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-[13px] font-medium">引擎目录</h2>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={busy === "reload"}
-            onClick={() => void action("reload", api.reload)}
-          >
-            <RefreshCw className="size-3.5" />
-            重载配置
-          </Button>
-        </div>
-        {checkResult ? (
-          <div role="status" className="mb-4 rounded-lg border p-4 text-xs">
-            <p className="mb-2 font-medium">
-              {checkResult.engineId} · 配置与协议检查
-            </p>
-            {checkResult.checks.map((check, index) => (
-              <p
-                key={index}
-                className={
-                  check.status === "passed"
-                    ? "text-[#52714a]"
-                    : "text-destructive"
-                }
-              >
-                {check.status === "passed" ? "通过" : "未通过"}：{check.message}
-              </p>
-            ))}
-            <p className="mt-2 text-muted-foreground">
-              此检查不调用模型，不代表 API Key 或模型权限已验证。
-            </p>
+                  </li>
+                ))}
+                {!unregistered.length ? (
+                  <li className="px-5 py-6 text-center text-[13px] text-muted-foreground">
+                    {discovering || candidates === null
+                      ? "正在扫描"
+                      : "没有发现未登记的引擎"}
+                  </li>
+                ) : null}
+              </ul>
+            </section>
           </div>
-        ) : null}
-        <div className="overflow-x-auto rounded-xl border">
-          <table className="data-table min-w-[630px]">
-            <thead>
-              <tr>
-                <th>引擎</th>
-                <th>模型 / 协议</th>
-                <th>能力声明</th>
-                <th>并发</th>
-                <th className="text-right">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {engines.map((engine) => (
-                <tr key={engine.id}>
-                  <td>
-                    <div className="flex items-start gap-3">
-                      <span className="grid size-8 shrink-0 place-items-center rounded-lg border bg-[#f7f9f3]">
-                        <Cpu className="size-4 text-[#728164]" />
-                      </span>
-                      <div>
-                        <span className="font-medium">{engine.id}</span>
-                        {engine.id === defaultEngine ? (
-                          <span className="ml-2 rounded bg-[#eef3e8] px-1.5 py-0.5 text-[9px] text-[#738365]">
-                            默认
-                          </span>
-                        ) : null}
-                        {engine.id === competitionEngine ? (
-                          <span className="ml-2 rounded bg-[#e8f0f6] px-1.5 py-0.5 text-[9px] text-[#40576b]">
-                            比赛引擎
-                          </span>
-                        ) : null}
-                        <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                          <span
-                            className={`size-1.5 rounded-full ${engine.enabled ? "bg-[#7d9c6b]" : "bg-[#b4bcb0]"}`}
-                          />
-                          {engine.enabled ? "已启用" : "已停用"}{" "}
-                          <span className="font-mono">
-                            · {engine.revision.slice(0, 8)}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </td>
-                  <td>
-                    <p className="max-w-[200px] truncate" title={engine.model}>
-                      {engine.model ?? "引擎默认模型"}
-                    </p>
-                    <p className="mt-1.5 text-[10px] uppercase text-muted-foreground">
-                      {engine.driver}
-                    </p>
-                    <UnifiedModelStatus status={modelStatus.get(engine.id)} />
-                  </td>
-                  <td>
-                    <div className="flex max-w-[150px] flex-wrap gap-1">
-                      {engine.capabilities.configured.permissions ? (
-                        <span className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                          权限
-                        </span>
-                      ) : null}
-                      {engine.capabilities.configured.resume ? (
-                        <span className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                          恢复
-                        </span>
-                      ) : null}
-                      {engine.capabilities.configured.images ? (
-                        <span className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                          图片
-                        </span>
-                      ) : null}
-                      {!Object.values(engine.capabilities.configured).some(
-                        Boolean,
-                      ) ? (
-                        <span className="text-[10px] text-muted-foreground">
-                          基础执行
-                        </span>
-                      ) : null}
-                    </div>
-                  </td>
-                  <td className="tabular">{engine.maxConcurrency}</td>
-                  <td>
-                    <div className="flex justify-end gap-1">
-                      {engine.driver !== "fake" ? (
-                        <>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={!!busy}
-                            onClick={() => setEditing(engine)}
-                          >
-                            配置
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={!!busy}
-                            onClick={() =>
-                              void action(engine.id, async () =>
-                                setCheckResult(
-                                  await api.testEngineConfiguration(engine.id),
-                                ),
-                              )
-                            }
-                          >
-                            检查连接
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={!!busy || !engine.enabled}
-                            title="会使用当前引擎配置发送简短模型请求，并打开正式任务记录"
-                            onClick={() =>
-                              void action(engine.id, () => testModel(engine.id))
-                            }
-                          >
-                            测试模型
-                          </Button>
-                        </>
-                      ) : null}
-                      {engine.enabled && engine.id !== defaultEngine ? (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={!!busy}
-                          title={
-                            runtime?.competition
-                              ? `只影响控制台新建任务；比赛接口仍使用 ${competitionEngine ?? "启动引擎"}`
-                              : "新建会话默认使用该引擎"
-                          }
-                          onClick={() =>
-                            void action(engine.id, () =>
-                              api.setDefault(engine.id),
-                            )
-                          }
-                        >
-                          <Zap className="size-3" />
-                          设为默认
-                        </Button>
-                      ) : null}
-                      {engine.driver !== "fake" ? (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={!!busy}
-                          onClick={() =>
-                            void action(engine.id, () =>
-                              api.replace(configured(engine, !engine.enabled)),
-                            )
-                          }
-                        >
-                          {busy === engine.id ? (
-                            <Loader2 className="size-3 animate-spin" />
-                          ) : null}
-                          {engine.enabled ? "停用" : "启用"}
-                        </Button>
-                      ) : null}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {!engines.length ? (
-            <p className="empty-note">尚未连接引擎。从发现本机引擎开始。</p>
-          ) : null}
-        </div>
-        <p className="mt-4 text-[11px] leading-6 text-muted-foreground">
-          配置变更只影响新会话。正在执行的任务继续使用已固定的引擎版本。
-        </p>
+        </details>
         {editing ? (
           <EngineConfigurationDialog
             engine={editing}
@@ -529,26 +504,20 @@ export function EnginePage({
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent className="sm:max-w-[540px]">
             <DialogHeader>
-              <DialogTitle>添加引擎</DialogTitle>
+              <DialogTitle>手动添加引擎</DialogTitle>
               <DialogDescription>
-                使用 ACP 或通用 CLI 配置。凭证请引用环境变量或现有登录状态。
+                ACP 或命令行引擎的启动配置。
               </DialogDescription>
             </DialogHeader>
-            <label
-              className="text-xs font-medium"
-              htmlFor="engine-registration"
-            >
-              引擎配置（JSON）
-            </label>
             <Textarea
-              id="engine-registration"
+              aria-label="引擎配置（JSON）"
               value={registration}
               onChange={(event) => setRegistration(event.target.value)}
-              className="min-h-[260px] font-mono text-xs leading-6"
+              className="min-h-[240px] font-mono text-[12.5px] leading-6"
               spellCheck={false}
             />
             {localError ? (
-              <p role="alert" className="text-xs text-destructive">
+              <p role="alert" className="callout error">
                 {localError}
               </p>
             ) : null}
@@ -562,10 +531,8 @@ export function EnginePage({
               >
                 {busy === "register" ? (
                   <Loader2 className="animate-spin" />
-                ) : (
-                  <CirclePlus />
-                )}
-                注册引擎
+                ) : null}
+                添加
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -574,19 +541,28 @@ export function EnginePage({
     </div>
   );
 }
-function UnifiedModelStatus({
-  status,
+function MenuItem({
+  icon: Icon,
+  label,
+  disabled,
+  onSelect,
 }: {
-  status: HarnessModelView["engines"][number] | undefined;
+  icon: typeof Star;
+  label: string;
+  disabled?: boolean;
+  onSelect: () => void;
 }) {
-  if (!status) return null;
   return (
-    <p
-      className={`mt-1.5 max-w-[220px] text-[10px] leading-4 ${status.status === "applied" ? "text-[#52714a]" : "text-amber-800"}`}
-      title={status.reason}
-    >
-      统一模型：{engineModelStatusNames[status.status]}
-      {status.reason ? `（${status.reason}）` : ""}
-    </p>
+    <PopoverClose asChild>
+      <button
+        type="button"
+        className="flex h-9 w-full items-center gap-2.5 rounded-[10px] px-2.5 text-left text-[13.5px] hover:bg-accent disabled:pointer-events-none disabled:opacity-45"
+        disabled={disabled}
+        onClick={onSelect}
+      >
+        <Icon className="size-4 text-muted-foreground" strokeWidth={1.7} />
+        {label}
+      </button>
+    </PopoverClose>
   );
 }

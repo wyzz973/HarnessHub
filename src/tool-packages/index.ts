@@ -11,6 +11,7 @@ export {
 export { bindInstalled } from "./bind.js";
 export {
   importLocal,
+  inspectImport,
   importKinds,
   MCP_CONFIG_FILES,
   CLI_CONFIG_FILE,
@@ -18,6 +19,7 @@ export {
 export type {
   ToolPackImportKind,
   ToolPackImportOptions,
+  ToolPackImportInspection,
   ToolPackImportResult,
 } from "./importer.js";
 export {

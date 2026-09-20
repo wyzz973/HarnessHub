@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
+import Script from "next/script";
+import { themeBootScript } from "@/lib/theme-script";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "HarnessHub · Agent 工作台",
-  description: "一个工作台，连接你的 Agent。规划、执行、观察每一项任务。",
+  title: "HarnessHub",
+  description: "HarnessHub 控制台",
   robots: { index: false, follow: false },
 };
 
@@ -11,8 +13,13 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="zh-CN">
-      <body>{children}</body>
+    <html lang="zh-CN" suppressHydrationWarning>
+      <body>
+        {children}
+        <Script id="theme-boot" strategy="beforeInteractive">
+          {themeBootScript}
+        </Script>
+      </body>
     </html>
   );
 }

@@ -20,6 +20,9 @@
           "app_paths": ["OUTLOOK.EXE"],
           "commands": ["outlook.exe", "olk.exe"],
           "appx": ["Microsoft.OutlookForWindows"]
+        },
+        {
+          "kind": "desktop_session"
         }
       ],
       "env_reply": {
@@ -35,7 +38,33 @@
           "not installed",
           "not found",
           "cannot find",
-          "could not find"
+          "could not find",
+          "isn't installed",
+          "is not installed",
+          "no outlook",
+          "not available",
+          "unavailable",
+          "无法打开",
+          "没有可用",
+          "没有桌面",
+          "无桌面",
+          "不可见",
+          "没有交互式桌面",
+          "no desktop",
+          "not interactive",
+          "no interactive desktop",
+          "headless",
+          "service session",
+          "cannot display",
+          "无法显示",
+          "看不到",
+          "没有图形界面",
+          "no graphical",
+          "did not launch",
+          "did not open",
+          "未启动",
+          "没有启动",
+          "不会启动"
         ]
       },
       "cleanup": [
@@ -88,6 +117,43 @@
             "command_line_contains": "notes.txt"
           }
         ]
+      },
+      "requires": [
+        {
+          "kind": "desktop_session"
+        }
+      ],
+      "env_reply": {
+        "any": [
+          "isn't installed",
+          "is not installed",
+          "no outlook",
+          "not available",
+          "unavailable",
+          "没有安装",
+          "未安装",
+          "无法打开",
+          "没有可用",
+          "没有桌面",
+          "无桌面",
+          "不可见",
+          "没有交互式桌面",
+          "no desktop",
+          "not interactive",
+          "no interactive desktop",
+          "headless",
+          "service session",
+          "cannot display",
+          "无法显示",
+          "看不到",
+          "没有图形界面",
+          "no graphical",
+          "did not launch",
+          "did not open",
+          "未启动",
+          "没有启动",
+          "不会启动"
+        ]
       }
     },
     {
@@ -110,6 +176,43 @@
       "verify": {
         "kind": "process_running",
         "names": ["CalculatorApp", "Calculator", "win32calc", "calc"]
+      },
+      "requires": [
+        {
+          "kind": "desktop_session"
+        }
+      ],
+      "env_reply": {
+        "any": [
+          "isn't installed",
+          "is not installed",
+          "no outlook",
+          "not available",
+          "unavailable",
+          "没有安装",
+          "未安装",
+          "无法打开",
+          "没有可用",
+          "没有桌面",
+          "无桌面",
+          "不可见",
+          "没有交互式桌面",
+          "no desktop",
+          "not interactive",
+          "no interactive desktop",
+          "headless",
+          "service session",
+          "cannot display",
+          "无法显示",
+          "看不到",
+          "没有图形界面",
+          "no graphical",
+          "did not launch",
+          "did not open",
+          "未启动",
+          "没有启动",
+          "不会启动"
+        ]
       }
     },
     {
@@ -148,6 +251,43 @@
             "command_line_contains": "reports"
           }
         ]
+      },
+      "requires": [
+        {
+          "kind": "desktop_session"
+        }
+      ],
+      "env_reply": {
+        "any": [
+          "isn't installed",
+          "is not installed",
+          "no outlook",
+          "not available",
+          "unavailable",
+          "没有安装",
+          "未安装",
+          "无法打开",
+          "没有可用",
+          "没有桌面",
+          "无桌面",
+          "不可见",
+          "没有交互式桌面",
+          "no desktop",
+          "not interactive",
+          "no interactive desktop",
+          "headless",
+          "service session",
+          "cannot display",
+          "无法显示",
+          "看不到",
+          "没有图形界面",
+          "no graphical",
+          "did not launch",
+          "did not open",
+          "未启动",
+          "没有启动",
+          "不会启动"
+        ]
       }
     },
     {
@@ -176,6 +316,9 @@
             "%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe",
             "%ProgramFiles%\\Microsoft\\Edge\\Application\\msedge.exe"
           ]
+        },
+        {
+          "kind": "desktop_session"
         }
       ],
       "env_reply": {
@@ -191,7 +334,33 @@
           "not installed",
           "not found",
           "cannot find",
-          "could not find"
+          "could not find",
+          "isn't installed",
+          "is not installed",
+          "no outlook",
+          "not available",
+          "unavailable",
+          "无法打开",
+          "没有可用",
+          "没有桌面",
+          "无桌面",
+          "不可见",
+          "没有交互式桌面",
+          "no desktop",
+          "not interactive",
+          "no interactive desktop",
+          "headless",
+          "service session",
+          "cannot display",
+          "无法显示",
+          "看不到",
+          "没有图形界面",
+          "no graphical",
+          "did not launch",
+          "did not open",
+          "未启动",
+          "没有启动",
+          "不会启动"
         ]
       },
       "cleanup": [

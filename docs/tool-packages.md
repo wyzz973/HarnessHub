@@ -83,7 +83,7 @@ id 默认取目录名；源为 JSON 文件时取文件名，`mcp.json` 这类通
 
 四个路由都受 Gateway 的 loopback Host/Origin 检查，请求与响应 schema 定义在 [tool-package-routes.ts](../src/gateway/tool-package-routes.ts)，实现为 [management.ts](../src/tool-packages/management.ts)。所有变更请求在同一进程内串行执行；多个引擎逐个处理，单个引擎失败不回滚、也不影响其他引擎。
 
-`GET /v1/tool-packs` 返回 `{packages:[...]}`。每项是登记记录 `schemaVersion/id/version/digest/installedAt/status`，加上 `displayName`、`counts:{skills,mcp,cli}` 和 `engines`（当前配置包含该版本的引擎 id）。清单无法读取的包仍会列出，并附 `problem:{code,message}`。
+`GET /v1/tool-packs` 返回 `{packages:[...]}`。每项是登记记录 `schemaVersion/id/version/digest/installedAt/status`，加上 `displayName`、`counts:{skills,mcp,cli}` 和 `engines`（当前配置包含该版本的引擎 id）；发行包 [预装](capability-packs.md#预装工具包) 的那个版本另带 `preinstalled:true`，其余不含该字段。清单无法读取的包仍会列出，并附 `problem:{code,message}`。
 
 `POST /v1/tool-packs/apply` 的 body 字段：
 
@@ -184,13 +184,14 @@ node examples/tool-packages/workspace-tools/workspace-tools.mjs --root C:\Projec
 | `installLocal(source, root)` | 真实拷贝及原子登记，返回 inspection 加 `record` |
 | `installGenerated(manifest, read, root)` | 安装调用方生成的清单，文件字节由 `read` 提供并逐个核对大小和 hash；登记规则同 installLocal |
 | `importLocal(source, root, options?)` | 按 [简易格式导入](#简易格式导入) 生成或原样安装，返回 `{installed,format,counts,warnings}` |
+| `inspectImport(source, options?)` | 与 importLocal 相同的校验和错误，返回它将登记的 `{manifest,digest,format,counts,warnings}`，但不创建、锁定或改动任何存储；相同字节得到相同 digest，用于在导入前判断来源是否变化（预装工具包） |
 | `listInstalled(root, {includeRemoved?})` | 默认仅已安装登记；不存在的存储返回空数组；不全量读内容 |
 | `readManifest(root, record)`、`listManifests(root, options?)` | 只读取并核对已登记对象的清单，不重算文件 hash；用于列表和绑定归属判断 |
 | `verifyInstalled(root, id, version)` | 全量验证已安装对象并返回 inspection 加 `record`；removed 不可验证为可用安装 |
 | `removeInstalled(root, id, version)` | 软注销，返回 removed 记录，保留内容对象 |
 | `bindInstalled(root, id, version, options)` | options 为 `{nodeExecutable,commandMcpEntry?,secretBindings?}`，旧字段 `workspace` 被忽略；全量验证并返回 `{skills,mcpServers}`；调用者仍须通过 prepareEngine 检查最终引擎配置 |
 | `planBinding(configuration, adapter, target, versions, fragment, replace)` | 纯函数，按上文规则计算绑定后的引擎配置及被替换的版本 |
-| `createToolPackageManagement(options)` | HTTP 服务实现；options 为 `{root,nodeExecutable,commandMcpEntry,engineProfile,registerEngine,listEngines?}` |
+| `createToolPackageManagement(options)` | HTTP 服务实现；options 为 `{root,nodeExecutable,commandMcpEntry,engineProfile,registerEngine,listEngines?,preinstalled?}`。除路由使用的 list/apply/import/unbind 外还有 `ensure({id,version}, engineIds)`：只给当前配置中没有该版本的引擎绑定（替换旧版本），已带有、已停用、未登记或不兼容的引擎记为 `skipped` 且不产生新的引擎 revision；供预装工具包补齐被 overlay 遮住的引擎 |
 | `runToolPackageCli(argv, context)` | argv 从命令开始；context 为 `{root,nodeExecutable,commandMcpEntry?,prepareEngine}`；prepareEngine 由组合根注入；返回上述命令 JSON，不自行打印或持久化用户引擎配置 |
 
 主要错误包括 `INVALID_TOOL_PACKAGE`、`INVALID_TOOL_PACKAGE_PATH`、`INVALID_TOOL_PACKAGE_SOURCE`、`TOOL_PACKAGE_IMPORT_UNSUPPORTED`、`TOOL_PACKAGE_CONTENT_MISMATCH`、`TOOL_PACKAGE_TOO_LARGE`、`TOOL_PACKAGE_INTEGRITY`、`TOOL_PACKAGE_CHANGED`、`TOOL_PACKAGE_VERSION_CONFLICT`、`TOOL_PACKAGE_REGISTRY_CORRUPT`、`TOOL_PACKAGE_NOT_FOUND`、`TOOL_PACKAGE_BUSY`、`INVALID_TOOL_PACKAGE_BINDING`、`TOOL_PACKAGE_BIND_CONFLICT`、`TOOL_PACKAGE_ENGINE_CAPACITY`、`ENGINE_LISTING_UNAVAILABLE`、`INVALID_TOOL_PACKAGE_ARGUMENT`；批量结果中另有 `ENGINE_DISABLED` 与 `TOOL_PACKAGE_NOT_BOUND`。系统 I/O、权限和既有引擎校验错误保持失败，不转为空结果或尝试联网补齐。

@@ -14,6 +14,9 @@ import {
   type ToolPackageConfiguration,
 } from "./types.js";
 
+/** Longest managed command MCP configuration, matching the engine configuration text limit. */
+const CLI_CONFIGURATION_LIMIT = 8192;
+
 function secretReference(value: unknown): SecretReference {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw packageError(
@@ -229,10 +232,12 @@ export async function bindInstalled(
         "INVALID_TOOL_PACKAGE_BINDING",
         `CLI tool declarations must use {"anchor":"workspace"} instead of ${SESSION_WORKSPACE_PLACEHOLDER}`,
       );
-    if (encoded.length > 8192)
+    if (encoded.length > CLI_CONFIGURATION_LIMIT)
       throw packageError(
         "INVALID_TOOL_PACKAGE_BINDING",
-        "CLI tool declarations exceed the managed command MCP configuration limit",
+        // Every tool repeats the resolved Node and entry paths, so the same pack can fit
+        // under a short installation root and not under a long one.
+        `CLI tool declarations exceed the managed command MCP configuration limit (${encoded.length} of ${CLI_CONFIGURATION_LIMIT} characters for ${cliTools.length} tools; shorten the descriptions, install fewer tools in one package, or use a shorter installation path)`,
       );
     mcpServers.push({
       name: `${id}-cli`,

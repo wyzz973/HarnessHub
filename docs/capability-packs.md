@@ -84,6 +84,30 @@ Install-Tool-Pack.cmd --source D:\tool-packs\my-tools --engines all --replace
 
 只需要把包导入存储、不绑定引擎时，可以用 `hub.cmd tools import --source <路径>`；开发仓库中的等价命令见 [可脚本化 CLI](tool-packages.md#可脚本化-cli)。
 
+## 预装工具包
+
+发行包可以自带工具包，解压后第一次启动就对所有兼容引擎生效，不需要执行任何安装命令。仓库 `packs/` 下的每个目录（目录名即包 id，小写字母、数字和连字符）由 [build-competition-full-bundle.mjs](../scripts/build-competition-full-bundle.mjs) 复制为发行包的 `tool-packs\<目录>\`，并写入清单 `tool-packs\preinstalled.json`：
+
+```json
+{ "schemaVersion": 1, "packs": [{ "directory": "office-suite" }] }
+```
+
+构建时用编译后的导入器检查每个目录，不能安装的包会让构建失败。离线开发包的 `competition\` 布局由同一脚本生成，因此同样带有预装清单。
+
+启动分两个阶段，都发生在 Gateway 开始监听之前，所以第一个 Session 已经带有预装包：
+
+1. **入口阶段**（`gateway.cmd`/`Start-Competition.cmd` 与 `hub.cmd start`，读取 `state\settings.json` 之前）：对清单中的每个目录用 `inspectImport` 计算内容摘要，不触碰包存储。摘要与 `state\preinstalled-tool-packs.json` 中的记录相同则什么都不做；不同（首次启动或包内容变了）则按 `Install-Tool-Pack.cmd --engines all --replace` 的同一条路径导入并绑定：不兼容或已停用的引擎记为 `skipped`，旧版本被替换，结果原子写入 `state\settings.json`。没有引擎失败时才把新摘要写入标记文件，有引擎因非兼容性原因失败时下次启动重试。
+2. **Gateway 阶段**（组合根，引擎目录建立之后）：通过控制台保存过配置的引擎在 Gateway 数据库中有 overlay，会遮住 settings 中的绑定。对标记文件中记为 `applied`、但当前登记里没有该版本的引擎，Gateway 经工具包服务补上绑定；已经带有该版本的引擎被跳过，不会产生 overlay，settings 仍是它们的配置来源。每个数据目录（`state\competition-data`、`state\data`）对每个摘要只协调一次，记录在 `<数据目录>\preinstalled-tool-packs.ensured.json`。
+
+由此得到的行为：
+
+- 预装只按“包内容”执行一次。之后在控制台或用 `DELETE /v1/tool-packs/{id}/{version}/bindings` 解除绑定，重启后仍保持解除；换用内容不同的新发行包（或修改 `tool-packs\<目录>` 下的文件）后会再次应用到全部引擎。
+- 任何失败都不会阻止 Gateway 启动：包损坏、清单或标记文件不可读、个别引擎绑定失败，都只在启动窗口输出一行说明，并以 `toolpack.preinstall` 记录写入 [Gateway 日志](observability.md#诊断日志)（`phase` 为 `settings` 或 `overrides`，含每个引擎的结果）。标记文件不可读时不做任何猜测，也不改动 settings；修复或删除 `state\preinstalled-tool-packs.json` 后重新应用。
+- `GET /v1/tool-packs` 中预装的那个版本带 `preinstalled: true`，控制台据此显示“预装”标记。
+- 环境变量 `HARNESSHUB_PREINSTALL_TOOL_PACKS=0` 关闭预装（不读清单、不写标记、不改 settings）；未设置或 `1` 为开启，其他取值拒绝启动。
+
+取舍见 [ADR 0015](decisions/0015-preinstalled-tool-packs.md)。预装包与手动安装的包使用同一个存储 `state\tool-packages` 和同一套绑定规则，可以照常用 `hub.cmd tools`、`Install-Tool-Pack.cmd` 或 HTTP 接口查看、替换和解除。
+
 ## 简易格式示例
 
 仓库中的 [simple-toolkit](../examples/tool-packages/simple-toolkit/mcp.json) 是一个不需要 `tool-package.json` 的目录，发行包中位于 `tool-packs\simple-toolkit`：
@@ -188,4 +212,4 @@ ACP / native MCP adapter
 - **x64 完整运行包**（`competition-latest`）：解压即可运行，内含 10 个固定版本引擎、Node/Python/Git、Gateway 与控制台。设置 `AGENT_ENGINE` 和统一模型环境变量后运行 `gateway.cmd`。
 - **离线开发包**（`offline-dev-latest`，可作为提交物 `solution/code`）：包含源码、离线依赖和固定引擎。先运行 `Setup-Competition-Offline.cmd`，在不联网的前提下编译并生成比赛运行布局，再用 `Start-Competition.cmd` 启动。评测执行方按 [INSTRUCTION.md](../distribution/INSTRUCTION.md) 操作。
 
-两种方式下，所有引擎都只使用 `HARNESSHUB_MODEL*` 配置的统一模型，Tool Pack 按上文用 `Install-Tool-Pack.cmd --engines all` 或 HTTP 接口安装到全部引擎。比赛 API 默认监听 `localhost:6217`，引擎在启动时选择，不在请求中动态切换；控制台随比赛入口一并启动。
+两种方式下，所有引擎都只使用 `HARNESSHUB_MODEL*` 配置的统一模型；发行包自带的 [预装工具包](#预装工具包) 在第一次启动时自动应用到全部兼容引擎，其他 Tool Pack 按上文用 `Install-Tool-Pack.cmd --engines all` 或 HTTP 接口安装。比赛 API 默认监听 `localhost:6217`，引擎在启动时选择，不在请求中动态切换；控制台随比赛入口一并启动。

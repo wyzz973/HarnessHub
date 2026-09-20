@@ -22,14 +22,21 @@ flowchart LR
   Worker --> Prepare[配置与秘密解析]
   Prepare --> ACP[ACP Driver]
   Prepare --> CLI[CLI Driver]
+  Worker --> ModelGateway[Session 私有模型网关]
   ACP --> Harness[已安装 Harness]
   CLI --> Harness
+  Harness --> ModelGateway
+  ModelGateway --> Upstream[(上游流式 Chat Completions)]
   Store --> Events[SSE / JSONL / 观测投影]
+  Gateway --> GatewayLog[(gateway.log)]
+  Worker --> EngineLog[(engine.log)]
 ```
 
 Gateway是本地控制面与公共业务状态的唯一逻辑写入者。Worker负责后端连接与规范化事件，不直接写公共数据库。Workflow和Benchmark复用同一个Application/Runtime执行入口，不另建任务执行循环。
 
 Console不是引擎执行器：它调用Next的 `/api/gateway/...` 代理，再由Gateway拥有任务。assistant-ui只负责消息适配与呈现，关闭浏览器不会停止后端Run。
+
+模型网关属于Worker而不是Gateway：每个Session在环回地址上有一个只服务自己的模型端点，把引擎的原生协议转换为上游的流式Chat Completions，引擎只看到别名模型（[统一模型网关](model-gateway.md)）。诊断日志同样分两层：Gateway写 `logs/gateway.log`，每个Session的Worker写自己的 `diagnostics/engine.log`（[观测](observability.md)）。
 
 ## 源码地图
 
@@ -46,9 +53,14 @@ Console不是引擎执行器：它调用Next的 `/api/gateway/...` 代理，再�
 | [ACP Driver](../src/drivers/acp/driver.ts) | acpx/runtime边界、ACP会话/模型/MCP、权限与事件适配 |
 | [CLI Driver](../src/drivers/cli/driver.ts) | argv/stdin、stdout文本、退出/输出限额/取消；每Run独立 |
 | [配置准备](../src/drivers/configuration/prepare.ts) | 进程级原生配置、秘密引用、便携Skill上下文和MCP参数 |
+| [模型网关](../src/drivers/chat-completions/gateway.ts) | Session私有端点：Responses/Anthropic/Google/Chat入站转换、参数清理、推理回填、`model.call` 记录 |
+| [工具包](../src/tool-packages/management.ts) | 导入与校验、按引擎绑定与解绑、一键应用到全部引擎、预装清单 |
+| [预装工具包](../src/preinstalled-tool-packs.ts) | 发行包内工具包的首次应用与标记，失败不影响启动 |
+| [诊断日志](../src/logging/json-log-file.ts) | JSON Lines写入、脱敏、轮转；Store装饰器与Session日志读取 |
 | [storage](../src/storage/sqlite-store.ts) | 事务、幂等、记录校验、事件序号、公共终态唯一性 |
 | [artifacts](../src/artifacts/collector.ts) | 声明式outputs采集、不可变文件、hash与安全读取 |
 | [benchmark](../src/benchmark-main.ts) | 隔离attempt、调用Application、Evaluator与报告 |
+| [比赛入口](../src/competition-bundle-main.ts) | 发行包比赛模式：固定引擎、Full Access、控制台与预装工具包 |
 | [web](../web/README.md) | 控制台、代理、UI响应校验、SSE重放与任务选择 |
 
 依赖由 [边界检查脚本](../scripts/check-boundaries.mjs)校验。第三方ACP类型止于Driver，不流入公共Session/Run类型。

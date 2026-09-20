@@ -27,10 +27,19 @@ import type {
 import type { EngineRegistration } from "./domain/engines.js";
 import type { EngineProfile } from "./domain/types.js";
 import { bindInstalled } from "./tool-packages/index.js";
+import { assertCompleteExtraction } from "./distribution/extraction.js";
+import { preinstallEnabled } from "./distribution/preinstalled.js";
+import {
+  preinstallToolPacks,
+  type PreinstallReport,
+} from "./preinstalled-tool-packs.js";
 
 const help = [
   "gateway.cmd (or Start-Competition.cmd) --engine <id> [options]",
+  "Start.cmd adds --workbench --open: the engine is chosen per task in the console.",
   "  --engine <id>          Engine used by every Competition /session (or AGENT_ENGINE)",
+  "  --workbench            Make the engine optional; unpinned, every enabled engine stays",
+  "                         selectable and /session uses the configured default engine",
   "  --port <6217>          Competition API port",
   "  --host <localhost>     Competition API host",
   "  --console-port <3330>  Bundled console on 127.0.0.1; a busy port falls back to a free one",
@@ -39,6 +48,8 @@ const help = [
   "  --full-access          Auto-approve engine tool requests (gateway.cmd default)",
   "  --safe-permissions     Keep normal permission prompts and denials",
   "Opening the Gateway root / redirects to the console. The console never blocks or stops the Gateway.",
+  "Tool Packs listed in tool-packs\\preinstalled.json are applied to every compatible engine once per",
+  "pack content before the Gateway starts; HARNESSHUB_PREINSTALL_TOOL_PACKS=0 disables this.",
 ].join("\n");
 
 /** Default loopback port of the bundled console, shared with `hub.cmd start`. */
@@ -488,6 +499,45 @@ async function generatedConfig(
   return { file: target, engines };
 }
 
+/**
+ * Everything the competition entry does under `state/` before the Gateway starts:
+ * private directories, preinstalled Tool Packs (written to `state/settings.json`, so
+ * they must precede reading it) and the generated Gateway configuration. Preinstall
+ * problems are reported, never thrown; an unusable bundle or settings file throws.
+ */
+export async function prepareCompetitionState(
+  context: BundleContext,
+  manifest: BundleManifest,
+  options: {
+    /** Result of {@link preinstallEnabled}; false leaves Tool Packs untouched. */
+    preinstall: boolean;
+    /** Defaults to the bundle's compiled command MCP entry. */
+    commandMcpEntry?: string;
+    report?: (line: string) => void;
+  },
+): Promise<{
+  generated: { file: string; engines: EngineRegistration[] };
+  preinstall: PreinstallReport;
+}> {
+  await prepareDirectories(context, manifest);
+  await mkdir(path.join(context.state, "gateway-home"), {
+    recursive: true,
+    mode: 0o700,
+  });
+  const preinstall = await preinstallToolPacks(context, manifest, {
+    enabled: options.preinstall,
+    commandMcpEntry:
+      options.commandMcpEntry ??
+      bundlePath(context.root, "dist/src/drivers/tool-command/command-mcp.js"),
+    ...(options.report ? { report: options.report } : {}),
+  });
+  const settings = await readSettings(context.state);
+  return {
+    generated: await generatedConfig(manifest, settings, context),
+    preinstall,
+  };
+}
+
 function applyPrivateEnvironment(context: BundleContext): void {
   const windows = process.env.SystemRoot ?? "C:\\Windows";
   for (const name of Object.keys(process.env))
@@ -533,6 +583,7 @@ export async function competitionBundleMain(
     args,
     options: {
       engine: { type: "string" },
+      workbench: { type: "boolean", default: false },
       port: { type: "string", default: "6217" },
       host: { type: "string", default: "localhost" },
       "console-port": { type: "string" },
@@ -559,9 +610,13 @@ export async function competitionBundleMain(
     throw new Error("Console port must be between 1 and 65535");
   if (values["full-access"]) process.env.HARNESSHUB_FULL_ACCESS = "1";
   if (values["safe-permissions"]) delete process.env.HARNESSHUB_FULL_ACCESS;
+  // A mistyped switch fails startup before anything under state/ changes.
+  const preinstall = preinstallEnabled(process.env);
 
+  // Workbench (Start.cmd) leaves the engine to the console; the evaluation entries keep
+  // pinning one engine for every /session, as INSTRUCTION.md promises.
   const engineId = values.engine ?? process.env.AGENT_ENGINE;
-  if (!engineId)
+  if (!engineId && !values.workbench)
     throw new Error("Competition bundle requires --engine or AGENT_ENGINE");
   const port = Number(values.port);
   if (!Number.isInteger(port) || port <= 0 || port > 65535)
@@ -577,26 +632,30 @@ export async function competitionBundleMain(
     throw new Error(
       `This bundle requires ${manifest.platform}/${manifest.arch} Node ${manifest.nodeVersion}; use Start-Competition.cmd from the bundle`,
     );
+  // A ZIP extracted by Explorer into a deep folder silently loses its longest paths.
+  await assertCompleteExtraction(root, manifest, {
+    warn: (message) => process.stderr.write(`${message}\n`),
+  });
   const context: BundleContext = {
     root,
     state: path.join(root, "state"),
     workspace: path.join(root, "state", "workspace"),
     node: bundlePath(root, "runtime/node.exe"),
   };
-  await prepareDirectories(context, manifest);
-  await mkdir(path.join(context.state, "gateway-home"), {
-    recursive: true,
-    mode: 0o700,
+  const prepared = await prepareCompetitionState(context, manifest, {
+    preinstall,
+    report: (line) => process.stderr.write(`${line}\n`),
   });
-  const settings = await readSettings(context.state);
-  const generated = await generatedConfig(manifest, settings, context);
-  const selected = generated.engines.find((engine) => engine.id === engineId);
-  if (!selected)
-    throw new Error(`Engine ${engineId} is not included in this bundle`);
-  if (selected.enabled === false)
-    throw new Error(
-      `Engine ${engineId} is disabled in state/settings.json; configure it before starting the competition gateway`,
-    );
+  const generated = prepared.generated;
+  if (engineId) {
+    const selected = generated.engines.find((engine) => engine.id === engineId);
+    if (!selected)
+      throw new Error(`Engine ${engineId} is not included in this bundle`);
+    if (selected.enabled === false)
+      throw new Error(
+        `Engine ${engineId} is disabled in state/settings.json; configure it before starting the competition gateway`,
+      );
+  }
 
   applyPrivateEnvironment(context);
   const plan = consoleEnabled
@@ -607,10 +666,19 @@ export async function competitionBundleMain(
     configFile: generated.file,
     demo: false,
     competition: true,
-    defaultEngine: engineId,
-    competitionEngine: engineId,
+    // Unpinned: the generated configuration's defaultEngine (settings.defaultEngine,
+    // else opencode, codex or the first enabled engine) serves /session.
+    ...(engineId
+      ? { defaultEngine: engineId, competitionEngine: engineId }
+      : {}),
     toolPackageRoot: path.join(context.state, "tool-packages"),
     harnessModelFile: path.join(context.state, "harness-model.json"),
+    // Bundled engines carry no vendor account: a Run without the unified model
+    // configured is refused instead of failing inside the engine.
+    requireHarnessModel: true,
+    ...(prepared.preinstall.enabled
+      ? { preinstalledToolPacks: prepared.preinstall.markerFile }
+      : {}),
     cwd: context.workspace,
     port,
     host: values.host,
@@ -643,7 +711,8 @@ export async function competitionBundleMain(
   printEvent({
     event: "competition.ready",
     url: hub.url,
-    engine: engineId,
+    engine: engineId ?? null,
+    ...(values.workbench ? { workbench: true } : {}),
     port,
     host: values.host,
     fullAccess: fullAccessEnabled(),

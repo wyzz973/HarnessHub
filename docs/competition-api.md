@@ -2,7 +2,7 @@
 
 本页说明 `--competition` 模式下的 HTTP 接口如何实现评测方《Agent 网关接口规范 v1.1》。取舍依据见 [ADR 0013 第 3 节](decisions/0013-unified-model-gateway.md)；实现位于 [路由](../src/gateway/competition/routes.ts)、[事件流](../src/gateway/competition/events.ts) 与 [轨迹投影](../src/gateway/competition/transcript.ts)，JSON 解析规则位于 [Gateway](../src/gateway/server.ts)。这些路由只投影 HarnessHub 的 Session/Run/Event，不改变 `/v1` 原生接口与 Driver 接口。
 
-状态：已用 demo `fake` 引擎在 macOS 上经编译后的 Gateway 与 Worker 验证（见 [验证](#验证)）；真实引擎、Windows 与评测方客户端均未验证。
+状态：macOS 上 7 个真实引擎经严格流式网关通过（[记录](verification/2026-09-19-unified-model-gateway.md)）；Windows x64 上 10 个引擎在模拟模型下通过、8/10 在真实模型替身下通过（[记录](verification/2026-09-20-windows-x64.md)）。公司真实模型与评测方客户端未验证。每轮任务默认期限为 1 小时，可用 `HARNESSHUB_RUN_TIMEOUT_MS` 覆盖。
 
 ## 启动
 
@@ -33,6 +33,8 @@ stdout 输出一行 `{"event":"ready","url":...}` 即为就绪。`--engine`（�
 
 比赛模式下 Run 的默认期限为 60 分钟（非比赛模式仍为 60 秒），与 INSTRUCTION.md 建议的客户端超时一致；超过期限的 Run 以 `RUN_TIMED_OUT` 结束，`prompt_async` 返回 502。默认值在 `loadConfig` 中解析，优先级为环境变量 `HARNESSHUB_RUN_TIMEOUT_MS`（1 至 86,400,000 的整数毫秒，非法值拒绝启动）> 配置文件 `defaultTimeoutMs` > 模式默认值。规范本身没有 Run 期限，`prompt_async` 阻塞到本轮结束，因此比赛模式不能沿用 60 秒。
 
+便携发行包（`gateway.cmd`、`Start-Competition.cmd`、`Start.cmd`）中的引擎不带任何厂商账号，因此在配置统一模型之前，`prompt_async` 与 `POST /v1/sessions/{id}/runs` 在提交前即被拒绝（503，管理接口的错误码为 `MODEL_NOT_CONFIGURED`），不会启动 Worker，也不会让引擎回落到自带登录；按第 3 节配置 `HARNESSHUB_MODEL*` 或在控制台"模型"页保存后立即恢复，已创建的 Session 无需重建。源码模式的 Gateway 默认不启用该限制，各引擎可继续使用各自的 Provider 配置。
+
 `prompt_async` 的 `parts` 至少一项且只接受 `type:"text"`，多项文本以换行连接，总长不超过 1,048,576 个字符；`model` 必须是含字符串 `providerID`、`modelID` 的对象（可为空串），`agent` 可选。实际执行一律使用 HarnessHub 统一模型（ADR 0013），这两个字段目前只做校验，尚未写入 Run 记录。
 
 ## 错误
@@ -47,6 +49,7 @@ stdout 输出一行 `{"event":"ready","url":...}` 即为就绪。`--engine`（�
 | 未知 Session（`Session not found`）、未知问题或权限 | 404 | `NOT_FOUND` |
 | Run 失败、超时或中断 | 502 | `BAD_GATEWAY` |
 | 队列已满、Runtime 正在停止、启动引擎不可用 | 503 | `SERVICE_UNAVAILABLE` |
+| 便携发行包尚未配置统一模型（`message` 为"未配置统一模型：…"，提交前拒绝，不创建 Run） | 503 | `SERVICE_UNAVAILABLE` |
 | 其他未预期错误（不透出内部细节） | 500 | `INTERNAL_ERROR` |
 
 ## 完成判定

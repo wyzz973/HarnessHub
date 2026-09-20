@@ -163,9 +163,12 @@ export function validateTasks(document) {
     }
     checkProblems(task.verify, `${where}.verify`, problems);
     for (const [position, requirement] of list(task.requires).entries())
-      if (!isObject(requirement) || requirement.kind !== "app_installed")
+      if (
+        !isObject(requirement) ||
+        !["app_installed", "desktop_session"].includes(requirement.kind)
+      )
         problems.push(
-          `${where}.requires[${position}]: kind must be app_installed`,
+          `${where}.requires[${position}]: kind must be app_installed or desktop_session`,
         );
     if (task.requires !== undefined && !isObject(task.env_reply))
       problems.push(

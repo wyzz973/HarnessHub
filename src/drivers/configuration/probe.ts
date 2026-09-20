@@ -81,12 +81,12 @@ export async function probeConfiguration(
       try {
         process.kill(-child.pid, "SIGTERM");
       } catch (error) {
-        if (!(
-          error instanceof Error &&
-          "code" in error &&
-          error.code === "ESRCH"
-        ))
-          throw error;
+        const code =
+          error instanceof Error && "code" in error ? error.code : undefined;
+        // macOS answers EPERM for a group whose only member has exited but is not
+        // reaped yet; signalling the child itself is then a harmless no-op.
+        if (code === "EPERM") child.kill("SIGTERM");
+        else if (code !== "ESRCH") throw error;
       }
     }
     settled.resolve();

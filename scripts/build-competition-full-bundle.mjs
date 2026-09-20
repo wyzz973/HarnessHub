@@ -1,14 +1,86 @@
 #!/usr/bin/env node
 
-import { rm, readFile, writeFile, lstat } from "node:fs/promises";
+import { rm, readFile, readdir, writeFile, lstat } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { copyTree, inventory } from "./lib/bundle-copy.mjs";
+import { copyTree, distributableFile, inventory } from "./lib/bundle-copy.mjs";
 
 const repository = fileURLToPath(new URL("../", import.meta.url));
 
-export async function buildCompetitionFullBundle(bundleDirectory) {
+/**
+ * Copy every directory of `packsRoot` (the repository's `packs/`) to
+ * `<layout>/tool-packs/<directory>/` and write `tool-packs/preinstalled.json`, the list
+ * both bundle entry points apply to all engines on first start
+ * (src/preinstalled-tool-packs.ts). A missing `packsRoot` is an empty list. Each copied
+ * pack is inspected with the compiled importer, so a pack that could not be installed
+ * fails the build instead of the judge's first start.
+ *
+ * @returns {Promise<string[]>} Sorted preinstalled directory names.
+ */
+async function copyPreinstalledPacks(packsRoot, toolPacks) {
+  let entries;
+  try {
+    entries = await readdir(packsRoot, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    entries = [];
+  }
+  const directories = entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  if (directories.length > 16)
+    throw new Error("packs/ holds more than 16 preinstalled Tool Packs");
+  const { inspectImport } = await import(
+    pathToFileURL(
+      path.join(repository, "dist", "src", "tool-packages", "index.js"),
+    ).href
+  );
+  for (const directory of directories) {
+    if (!/^[a-z][a-z0-9-]{0,31}$/.test(directory))
+      throw new Error(
+        `Preinstalled Tool Pack directory must be a lower-case package id: packs/${directory}`,
+      );
+    const target = path.join(toolPacks, directory);
+    if (await lstat(target).catch(() => undefined))
+      throw new Error(
+        `packs/${directory} collides with an example under examples/tool-packages`,
+      );
+    await copyTree(path.join(packsRoot, directory), target, {
+      filter: (relative, name) => distributableFile(relative, name),
+    });
+    try {
+      await inspectImport(target);
+    } catch (error) {
+      throw new Error(
+        `packs/${directory} cannot be installed: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+  }
+  await writeFile(
+    path.join(toolPacks, "preinstalled.json"),
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        packs: directories.map((directory) => ({ directory })),
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return directories;
+}
+
+/**
+ * @param {string} bundleDirectory Prepared portable bundle to turn into the competition layout.
+ * @param {{packs?: string}} [options] `packs` overrides the repository's `packs/` directory.
+ */
+export async function buildCompetitionFullBundle(
+  bundleDirectory,
+  options = {},
+) {
   const root = path.resolve(bundleDirectory);
   const bundleFile = path.join(root, "bundle.json");
   const manifest = JSON.parse(await readFile(bundleFile, "utf8"));
@@ -47,6 +119,10 @@ export async function buildCompetitionFullBundle(bundleDirectory) {
     {
       allowedRoots: [repository],
     },
+  );
+  const preinstalled = await copyPreinstalledPacks(
+    path.resolve(options.packs ?? path.join(repository, "packs")),
+    toolPacks,
   );
 
   const fullAccessLauncher =
@@ -104,7 +180,12 @@ export async function buildCompetitionFullBundle(bundleDirectory) {
       "   Each turn may run up to 1 hour, then ends with RUN_TIMED_OUT (502). To change it, set",
       '   $env:HARNESSHUB_RUN_TIMEOUT_MS = "<milliseconds, 1-86400000>" before starting.',
       "",
-      "5. Optional Tool Pack for every engine (restart the Gateway afterwards):",
+      "5. Tool Packs. Preinstalled: the packs listed in .\\tool-packs\\preinstalled.json",
+      `   (${preinstalled.length ? preinstalled.join(", ") : "none in this build"}) are applied to every compatible engine`,
+      "   automatically before the first start finishes; nothing has to be installed. A pack",
+      "   is applied once per content: packs you unbind later stay unbound, a changed pack is",
+      '   applied again. $env:HARNESSHUB_PREINSTALL_TOOL_PACKS = "0" disables this.',
+      "   Your own pack for every engine (restart the Gateway afterwards):",
       "   .\\Install-Tool-Pack.cmd --source <directory, mcp.json or cli.json> --engines all",
       '   While running: POST /v1/tool-packs/import {"source":"<path>","applyTo":"all"}',
       "   Examples are under .\\tool-packs\\. MCP servers and CLI tools run in each Session's",
@@ -132,6 +213,7 @@ export async function buildCompetitionFullBundle(bundleDirectory) {
     platform: manifest.platform,
     arch: manifest.arch,
     engines: manifest.engines?.map((engine) => engine.id) ?? [],
+    preinstalledToolPacks: preinstalled,
     files: files.length,
   };
 }

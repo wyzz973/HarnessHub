@@ -1566,3 +1566,50 @@ test("command line: usage errors exit 2, a failing task exits 1, a clean run exi
   ]);
   assert.equal(clean.code, 0, clean.stderr);
 });
+
+test("a desktop-only task on a session without a shell is ENV, not FAIL", async () => {
+  const withShell = await checkRequirement(
+    { kind: "desktop_session" },
+    {
+      platform: "win32",
+      run: async () => ({
+        code: 0,
+        stdout: Buffer.from(
+          '"explorer.exe","4242","Console","1","50,000 K"\r\n',
+        ),
+        stderr: Buffer.alloc(0),
+      }),
+    },
+  );
+  assert.equal(withShell.satisfied, true);
+  const serviceSession = await checkRequirement(
+    { kind: "desktop_session" },
+    {
+      platform: "win32",
+      run: async () => ({
+        code: 0,
+        stdout: Buffer.from('"svchost.exe","900","Services","0","5,000 K"\r\n'),
+        stderr: Buffer.alloc(0),
+      }),
+    },
+  );
+  assert.equal(serviceSession.satisfied, false);
+  assert.deepEqual(
+    decideOutcome({
+      httpStatus: 204,
+      verifyOk: false,
+      requirements: [serviceSession],
+      honest: true,
+    }).outcome,
+    "ENV",
+  );
+  assert.deepEqual(
+    decideOutcome({
+      httpStatus: 204,
+      verifyOk: false,
+      requirements: [serviceSession],
+      honest: false,
+    }).outcome,
+    "FAIL",
+  );
+});

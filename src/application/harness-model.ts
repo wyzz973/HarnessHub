@@ -51,6 +51,12 @@ export const unroutableAdapters: readonly ConfigurationAdapter[] = [
 
 export type HarnessModelSource = NonNullable<HarnessModelView["source"]>;
 
+/** Public error code of a Run refused because no unified model is configured. */
+export const MODEL_NOT_CONFIGURED_CODE = "MODEL_NOT_CONFIGURED";
+/** Bilingual because it reaches both the console and an evaluator's client. */
+export const MODEL_NOT_CONFIGURED_MESSAGE =
+  '未配置统一模型：请先在控制台"模型"页或用 HARNESSHUB_MODEL* 配置 / Unified model is not configured';
+
 /** The unified model selected by source priority; `provider.modelAlias` is always set. */
 export interface ActiveHarnessModel {
   source: HarnessModelSource;
@@ -770,6 +776,22 @@ export class HarnessModelService implements HarnessModelManagement {
     this.catalog = options.catalog;
     this.sessions = options.sessions;
     this.scratch = options.scratchDirectory;
+  }
+
+  /**
+   * Refuse work while a deployment that may only use the unified model has none
+   * configured. Without it every engine would fall back to its own account or
+   * Provider, which the Competition and portable bundles forbid (ADR 0013).
+   *
+   * @throws 503 {@link MODEL_NOT_CONFIGURED_CODE} until a source is configured.
+   */
+  assertConfigured(): void {
+    if (!this.active())
+      throw new HubError(
+        MODEL_NOT_CONFIGURED_CODE,
+        MODEL_NOT_CONFIGURED_MESSAGE,
+        503,
+      );
   }
 
   active(): ActiveHarnessModel | undefined {

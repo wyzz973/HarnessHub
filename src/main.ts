@@ -48,6 +48,10 @@ import { registerCompetitionRoutes } from "./gateway/competition/routes.js";
 import { registerToolPackageRoutes } from "./gateway/tool-package-routes.js";
 import { createToolPackageManagement } from "./tool-packages/management.js";
 import {
+  ensurePreinstalledToolPacks,
+  preinstalledPackages,
+} from "./preinstalled-tool-packs.js";
+import {
   LOG_LEVEL_ENVIRONMENT,
   parseLogLevel,
   type LogLevel,
@@ -131,6 +135,19 @@ export async function startHub(options: {
    * `<dataDir>/harness-model.json`. Sources: HARNESSHUB_MODEL* > this file > config `model`.
    */
   harnessModelFile?: string;
+  /**
+   * Refuse every Run with a public `MODEL_NOT_CONFIGURED` error (503) until a unified
+   * model source exists. Set by the portable bundle entry points, where engines must
+   * never fall back to their own account or Provider (ADR 0013). A source-mode Gateway
+   * leaves it off so independently configured engines keep working.
+   */
+  requireHarnessModel?: boolean;
+  /**
+   * Marker written by a bundle entry point (`state/preinstalled-tool-packs.json`). Before
+   * listening, packs it lists are bound on engines whose override hides the settings
+   * binding, and `GET /v1/tool-packs` marks them `preinstalled`. Failures are only logged.
+   */
+  preinstalledToolPacks?: string;
   /**
    * Mirror info-level lifecycle records of `<dataDir>/logs/gateway.log` to stderr
    * (entry points only; access and model-call lines stay in the file; stdout keeps
@@ -325,6 +342,9 @@ export async function startHub(options: {
       runtime,
       async (artifact) => readArtifact(artifactRoot, artifact),
       manager,
+      ...(options.requireHarnessModel
+        ? [() => harnessModel.assertConfigured()]
+        : []),
     );
     harnessModel.bind({
       catalog: manager,
@@ -471,8 +491,24 @@ export async function startHub(options: {
       engineProfile: (id) => app.engineProfile(id),
       registerEngine: (input) => app.registerEngine(input),
       listEngines: () => app.engines(),
+      ...(options.preinstalledToolPacks
+        ? {
+            preinstalled: () =>
+              preinstalledPackages(
+                path.resolve(options.preinstalledToolPacks!),
+              ),
+          }
+        : {}),
     });
     registerToolPackageRoutes(server, toolPackages);
+    // Before the listener opens, so the first Session already sees preinstalled packs.
+    if (options.preinstalledToolPacks)
+      await ensurePreinstalledToolPacks({
+        markerFile: path.resolve(options.preinstalledToolPacks),
+        dataDir,
+        toolPackages,
+        log: gatewayLog,
+      });
     registerHarnessModelRoutes(server, harnessModel, () => runtimeInfo);
     // Registered after createGateway's hook, so the application has already cancelled
     // Runs; this only stops a pending model test and waits for its Session cleanup.
@@ -554,13 +590,15 @@ if (
       "data-dir": { type: "string", default: "./data" },
       "tool-package-root": { type: "string" },
       "harness-model-file": { type: "string" },
+      "preinstalled-tool-packs": { type: "string" },
+      "require-harness-model": { type: "boolean", default: false },
       "console-url": { type: "string" },
       help: { type: "boolean" },
     },
   });
   if (values.help)
     console.log(
-      "HarnessHub: node dist/src/main.js [--competition] [--engine opencode] [--host localhost] [--port 6217] [--config engines/local.yaml] [--data-dir ./data] [--tool-package-root DIR] [--harness-model-file FILE] [--console-url URL]",
+      "HarnessHub: node dist/src/main.js [--competition] [--engine opencode] [--host localhost] [--port 6217] [--config engines/local.yaml] [--data-dir ./data] [--tool-package-root DIR] [--harness-model-file FILE] [--preinstalled-tool-packs MARKER_FILE] [--require-harness-model] [--console-url URL]",
     );
   else {
     const selectedEngine = values.engine ?? process.env.AGENT_ENGINE;
@@ -587,6 +625,10 @@ if (
       ...(values["harness-model-file"]
         ? { harnessModelFile: values["harness-model-file"] }
         : {}),
+      ...(values["preinstalled-tool-packs"]
+        ? { preinstalledToolPacks: values["preinstalled-tool-packs"] }
+        : {}),
+      ...(values["require-harness-model"] ? { requireHarnessModel: true } : {}),
       ...(values["console-url"] ? { consoleUrl: values["console-url"] } : {}),
       logEcho: true,
     });
