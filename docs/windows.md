@@ -1,6 +1,6 @@
 # Windows 安装、启动与能力范围
 
-项目支持 Windows 原生 Node，使用同一 Gateway、SQLite、Worker、ACP/CLI Driver 和 Web 控制台。当前本机验收为 Windows 11 ARM64；Windows x64 由 CI 在 GitHub windows-latest 上以模拟模型验收（见下文“验证”），Windows 10 与真实模型在 x64 上的验收须分别取得证据。
+项目支持 Windows 原生 Node，使用同一 Gateway、SQLite、Worker、ACP/CLI Driver 和 Web 控制台。当前本机验收为 Windows 11 ARM64；Windows x64 由 CI 在 GitHub windows-latest 上验收：模拟模型下 10 个引擎全部通过，真实模型（替身）下 8/10 通过且其余两个的根因已修复复测，另在无任何运行时、无网络的干净容器中通过完整性校验与十引擎矩阵，证据与未验证项见 [Windows x64 验收](verification/2026-09-20-windows-x64.md)。Windows 10、公司真实模型与真实桌面办公操作仍须分别取得证据。
 
 以下安装步骤用于开发机。裁判机免安装运行使用 [Windows 便携发布包](portable-bundle.md)；比赛交付的离线 Windows x64 评测机使用 [离线开发包](offline-artifacts.md#windows-x64-离线开发包与-solutionzip)：执行 `Setup-Competition-Offline.cmd` 离线生成比赛布局，设置 `HARNESSHUB_MODEL`、`HARNESSHUB_MODEL_BASE_URL`、`HARNESSHUB_MODEL_API_KEY` 与 `AGENT_ENGINE` 后运行 `Start-Competition.cmd`，步骤见 [INSTRUCTION.md](../distribution/INSTRUCTION.md)。配置统一模型后，所有引擎只经 HarnessHub 使用该模型，不使用各自的 API Key、登录或订阅。
 

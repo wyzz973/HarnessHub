@@ -2,7 +2,7 @@
 
 本页说明 `--competition` 模式下的 HTTP 接口如何实现评测方《Agent 网关接口规范 v1.1》。取舍依据见 [ADR 0013 第 3 节](decisions/0013-unified-model-gateway.md)；实现位于 [路由](../src/gateway/competition/routes.ts)、[事件流](../src/gateway/competition/events.ts) 与 [轨迹投影](../src/gateway/competition/transcript.ts)，JSON 解析规则位于 [Gateway](../src/gateway/server.ts)。这些路由只投影 HarnessHub 的 Session/Run/Event，不改变 `/v1` 原生接口与 Driver 接口。
 
-状态：已用 demo `fake` 引擎在 macOS 上经编译后的 Gateway 与 Worker 验证（见 [验证](#验证)）；真实引擎、Windows 与评测方客户端均未验证。
+状态：macOS 上 7 个真实引擎经严格流式网关通过（[记录](verification/2026-09-19-unified-model-gateway.md)）；Windows x64 上 10 个引擎在模拟模型下通过、8/10 在真实模型替身下通过（[记录](verification/2026-09-20-windows-x64.md)）。公司真实模型与评测方客户端未验证。每轮任务默认期限为 1 小时，可用 `HARNESSHUB_RUN_TIMEOUT_MS` 覆盖。
 
 ## 启动
 
