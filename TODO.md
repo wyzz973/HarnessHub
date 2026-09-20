@@ -1,6 +1,6 @@
 # HarnessHub 开发任务
 
-更新：2026-09-19（新增决赛升级 HH-042～HH-049）。2026-09-07：阶段 A（HH-001～HH-012）、HH-013/HH-015 及既有 macOS 引擎证据保留。Windows 11 ARM64 原生环境已可直接开发；已补入发现、脚本启动、Job 监督/恢复、文件 ACL/锁与 DPAPI。Codex 的真实文本、只读工具和流式取消已通过；历史范围见 [Windows 验收](docs/verification/2026-09-06-windows.md)。上一轮 11 个引擎通过 DeepSeek V4 Flash 短任务，最新检查、工具与发行进展见 [便携引擎验收](docs/verification/2026-09-06-portable-engines.md)。其余平台范围见 [Windows 指南](docs/windows.md)，不以单个引擎通过代替全部发行验收。
+更新：2026-09-20（HH-048/HH-050 完成，新增 HH-051 预装办公工具包、HH-052 比赛任务测试；本轮 Windows x64 证据见 [验收记录](docs/verification/2026-09-20-windows-x64.md)）。2026-09-19：新增决赛升级 HH-042～HH-049。2026-09-07：阶段 A（HH-001～HH-012）、HH-013/HH-015 及既有 macOS 引擎证据保留。Windows 11 ARM64 原生环境已可直接开发；已补入发现、脚本启动、Job 监督/恢复、文件 ACL/锁与 DPAPI。Codex 的真实文本、只读工具和流式取消已通过；历史范围见 [Windows 验收](docs/verification/2026-09-06-windows.md)。上一轮 11 个引擎通过 DeepSeek V4 Flash 短任务，最新检查、工具与发行进展见 [便携引擎验收](docs/verification/2026-09-06-portable-engines.md)。其余平台范围见 [Windows 指南](docs/windows.md)，不以单个引擎通过代替全部发行验收。
 
 本文件拥有任务依赖、优先级和进度；架构契约由 [DESIGN.md](DESIGN.md)拥有，开发与验收按 [AGENTS.md](AGENTS.md)及 [测试要求](docs/testing.md)执行。任务勾选不改变架构，也不代替证据。
 
@@ -529,20 +529,32 @@ HH-005 后，HH-006 → HH-007 → HH-008 → HH-010 依次修改 Runtime，默�
 
 ### HH-048 x64 离线交付、模拟模型验收与 INSTRUCTION.md
 
-- [ ] 进行中；P0；前置：HH-042～HH-047；负责人：交付子任务；范围：`.github/workflows/**`、打包与离线开发包脚本、`distribution/INSTRUCTION.md`、验收脚本。
+- [x] 完成；P0；前置：HH-042～HH-047；负责人：交付子任务；范围：`.github/workflows/**`、打包与离线开发包脚本、`distribution/INSTRUCTION.md`、验收脚本。
 - 验收：源码变更触发 x64 完整包和离线开发包构建；Windows x64 runner 用本地模拟模型（只接受流式、要求回传推理内容）逐个引擎验收；`Setup-Competition-Offline.cmd` 在禁网条件下产出可运行的比赛布局；INSTRUCTION.md 与真实命令一致。
-- 证据：待补。
+- 证据：x64 完整包构建、自检并发布到 Release `competition-latest`，随后的模拟模型矩阵 10/10 引擎通过（运行 `35447214522`）；离线开发包发布到 `offline-dev-latest`，断网执行 `Setup-Competition-Offline.cmd` 后由 `Start-Competition.cmd` 启动并通过真实模型验收（运行 `35456707800`，opencode/codex/hermes）。汇总见 [Windows x64 验收](docs/verification/2026-09-20-windows-x64.md)。
 
 ### HH-049 组合验收与发布
 
-- [ ] 待开始；P0；前置：HH-042～HH-048；负责人：主 Agent；范围：合并、API 文档、README/TODO、本机真实模型验收、推送与 Release。
+- [ ] 进行中；P0；前置：HH-042～HH-048；负责人：主 Agent；范围：合并、API 文档、README/TODO、本机真实模型验收、推送与 Release。
 - 验收：`pnpm check` 通过；本机以 DeepSeek `deepseek-flash` 经严格网关逐个引擎跑通比赛 API 与文件/Shell 任务，并确认上游只收到统一模型；Windows x64 CI 构建和模拟验收通过；旧 Release 已备份，新 Release 可下载。本机与 CI 结果都不代表公司真实模型通过。
-- 证据：待补。
+- 证据：macOS 上 7 个真实引擎通过（[记录](docs/verification/2026-09-19-unified-model-gateway.md)）；Windows x64 真实模型矩阵 8/10 通过，Kimi 与 DSH 的根因修复后分别复测通过（运行 `35455580614`、`35477680178`、`35456497627`）；Ubuntu 与 Windows 的 `pnpm check` 通过（运行 `35447214519`）；文档与变更记录见 [CHANGELOG](CHANGELOG.md)。合并全部修复后的整包复测与公司真实模型仍未完成。
 
 ### HH-050 Gateway 与引擎之间的诊断日志
 
-- [ ] 自动测试通过，真实引擎与 Windows 未验证；P0；前置：HH-044、HH-045；负责人：日志子任务；范围：`src/logging/**`、`src/domain/logging.ts`、ACP/CLI Driver、Worker、ProcessWorkerHost、Gateway 访问钩子、组合根、`patches/acpx@0.13.2.patch`、`Collect-Logs.cmd`。
+- [x] 完成；真实引擎与 Windows 已确认；P0；前置：HH-044、HH-045；负责人：日志子任务；范围：`src/logging/**`、`src/domain/logging.ts`、ACP/CLI Driver、Worker、ProcessWorkerHost、Gateway 访问钩子、组合根、`patches/acpx@0.13.2.patch`、`Collect-Logs.cmd`。
 - 验收：`<dataDir>/logs/gateway.log` 记录访问、Session/Run/Worker/权限生命周期与模型调用摘要；每个 Session 的 `diagnostics/engine.log` 记录引擎进程与 stderr、全部 ACP 请求/响应、工具状态、权限和模型调用明细；`HARNESSHUB_LOG_LEVEL=debug` 增加 2 KiB 摘录，非法值拒绝启动；密钥与 Session token 不落盘；16 MiB 轮转；日志失败只报告一次且不影响 Run；`Collect-Logs.cmd` 生成脱敏 ZIP；`GET /v1/sessions/{id}/logs` 与控制台“诊断日志”按页、按游标增量读取单个 Session 的引擎日志和 Gateway 行。
-- 证据：`tests/unit/diagnostic-log.test.ts`、`tests/unit/collect-logs.test.ts`、`tests/integration/diagnostic-logs.test.ts`（info 与 debug 两轮，经正式 Gateway/Worker、ACP fixture 与本地上游）通过；`unzip -t` 校验收集器生成的 ZIP；读取接口由 `tests/unit/session-log-reader.test.ts`、`tests/integration/session-logs.test.ts` 与控制台契约测试验证，demo Gateway 经控制台代理 `/api/gateway/v1/sessions/{id}/logs` 实测返回两类记录；决定见 [ADR 0014](docs/decisions/0014-diagnostic-logs.md)。真实引擎的 stderr/ACP 内容与 Windows 上的日志路径、轮转和 `Collect-Logs.cmd` 需在 x64 验收中确认。
+- 证据：`tests/unit/diagnostic-log.test.ts`、`tests/unit/collect-logs.test.ts`、`tests/integration/diagnostic-logs.test.ts`（info 与 debug 两轮，经正式 Gateway/Worker、ACP fixture 与本地上游）通过；`unzip -t` 校验收集器生成的 ZIP；读取接口由 `tests/unit/session-log-reader.test.ts`、`tests/integration/session-logs.test.ts` 与控制台契约测试验证，demo Gateway 经控制台代理 `/api/gateway/v1/sessions/{id}/logs` 实测返回两类记录；决定见 [ADR 0014](docs/decisions/0014-diagnostic-logs.md)。Windows x64 真实模型验收中确认了日志路径与内容：`engine.log` 记录了各引擎的 stderr（如 Kimi 的 `charmap` 崩溃、OpenClaw 私有 Gateway 的启动行）、`acp.tool` 状态与 `model.call` 明细，并据此定位了本轮全部 Windows 根因，见 [Windows x64 验收](docs/verification/2026-09-20-windows-x64.md)。`Collect-Logs.cmd` 在 Windows 上的实际打包未单独验收。
+
+### HH-051 预装办公工具包
+
+- [x] 工具与 Skill 完成，Windows 真实办公操作未验证；P0；前置：HH-046、HH-050；负责人：办公工具子任务；范围：`packs/office-suite/**`、`scripts/office-suite/**`、`scripts/build-office-suite.mjs`、`docs/office-suite.md`。
+- 验收：发行包内带 `office-suite` 工具包（1 个常驻 Skill + 14 个离线 CLI 工具），首次启动自动应用到全部引擎；工具不依赖是否安装 Office、不联网、不安装任何东西；Skill 写明 Windows 上打开应用、脚本化执行与核实的硬性规则。
+- 证据：`packs/office-suite/cli.json` 14 个工具经导入器校验为 `skills:1 / cli:14`；`docx_create`、`xlsx_create`（含合计公式）、`office_read` 在本机实测生成并读回中文内容；生成产物与 `bin/BUILD.json` 记录的 SHA-256 一致。**未验证**：真实 Office/Outlook 的 COM 配方、Windows 桌面会话下“应用在会话结束后仍打开”、办公任务集在 Windows 上的通过率。
+
+### HH-052 比赛任务测试
+
+- [x] 工具与题库完成，Windows 结果未验证；P0；前置：HH-045；负责人：任务子任务；范围：`scripts/competition-tasks.mjs`、`scripts/lib/tasks-*.mjs`、`examples/competition-tasks/office-tasks.json`、`docs/competition-tasks.md`。
+- 验收：按评委数据格式把 `query` 原样发给比赛接口，按最终文件与机器状态判分；PASS/FAIL/ENV/SKIP 四种结果；桌面类题目在删除会话后复判 `survivesSessionClose`；只依赖 Node 与 `scripts/`，可用发行包内 `runtime\node.exe` 离线运行。
+- 证据：`scripts/check-competition-tasks.test.mjs` 14 项通过（22 种检查、压缩包读取、结果口径与假网关端到端）；题库 20 道，含与评委样例完全一致的 `office_002`。**未验证**：在 Windows x64 上对真实引擎的实际通过率。
 
 HH-033～036已完成本机控制台、真实模型拆分/审批执行、启发式引擎选择及Run级原生观测；macOS 浏览器已有两步文件任务、Pi用量与取消证据。Windows 11 ARM64 已开展原生及真实 Codex 验收，其他引擎/平台继续按同套契约验证。远端多用户部署、并行DAG、大规模聚合与账单对账尚不属于已验证能力。
