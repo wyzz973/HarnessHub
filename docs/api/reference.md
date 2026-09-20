@@ -483,7 +483,7 @@
 - 返回：202：RunRecord+replayed；Location指向/v1/runs/{runId}。
 - 实现链路：schema → Runtime.submit → Store幂等接收/原子事件 → 排队调度 → 安装快照 → ProcessHost/Worker/Driver。
 - 持久化与副作用：先持久接收再异步执行；相同Session串行、跨Session受并发限制；截止时间从接收起算。
-- 失败与边界：幂等key相同且输入不同冲突；会话关闭、队列满、能力/outputs非法会拒绝。202不是任务完成。
+- 失败与边界：幂等key相同且输入不同冲突；会话关闭、队列满、能力/outputs非法会拒绝；便携发行包在未配置统一模型时以 503 MODEL_NOT_CONFIGURED 拒绝且不创建Run。202不是任务完成。
 - Schema 参数索引：path: id（必需）；header: idempotency-key。
 
 实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)、[tests/integration/gateway-files.test.ts](../../tests/integration/gateway-files.test.ts)。

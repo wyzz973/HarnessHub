@@ -47,6 +47,7 @@ import type {
 import type { EngineRegistration } from "./domain/engines.js";
 import type { EngineProfile } from "./domain/types.js";
 import { bindInstalled, runToolPackageCli } from "./tool-packages/index.js";
+import { assertCompleteExtraction } from "./distribution/extraction.js";
 import { preinstallEnabled } from "./distribution/preinstalled.js";
 import {
   preinstallToolPacks,
@@ -54,7 +55,7 @@ import {
 } from "./preinstalled-tool-packs.js";
 
 const help = `HarnessHub portable competition bundle
-  hub.cmd start [--gateway-only] [--demo] [--port 3180] [--console-port 3330]
+  hub.cmd start [--gateway-only] [--port 3180] [--console-port 3330]
   hub.cmd doctor [--full] [--protocol] [--engines codex,opencode]
   hub.cmd engines
   hub.cmd configure --file SETTINGS.json
@@ -515,7 +516,8 @@ async function startServices(
         ...(options.preinstalledToolPacks
           ? ["--preinstalled-tool-packs", options.preinstalledToolPacks]
           : []),
-        ...(options.demo ? ["--demo"] : []),
+        // A demo Gateway serves the fake engine, which calls no model.
+        ...(options.demo ? ["--demo"] : ["--require-harness-model"]),
       ],
       context.workspace,
     );
@@ -610,6 +612,10 @@ export async function releaseMain(
     throw new Error(
       `This bundle requires ${manifest.platform}/${manifest.arch} Node ${manifest.nodeVersion}; run hub.cmd with its bundled runtime`,
     );
+  // A ZIP extracted by Explorer into a deep folder silently loses its longest paths.
+  await assertCompleteExtraction(root, manifest, {
+    warn: (message) => process.stderr.write(`${message}\n`),
+  });
   const context: BundleContext = {
     root,
     state: path.join(root, "state"),

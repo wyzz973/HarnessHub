@@ -608,7 +608,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     effects:
       "先持久接收再异步执行；相同Session串行、跨Session受并发限制；截止时间从接收起算。",
     errors:
-      "幂等key相同且输入不同冲突；会话关闭、队列满、能力/outputs非法会拒绝。202不是任务完成。",
+      "幂等key相同且输入不同冲突；会话关闭、队列满、能力/outputs非法会拒绝；便携发行包在未配置统一模型时以 503 MODEL_NOT_CONFIGURED 拒绝且不创建Run。202不是任务完成。",
     source: "src/gateway/server.ts",
     tests: [
       "tests/integration/gateway.test.ts",
