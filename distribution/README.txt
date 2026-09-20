@@ -35,6 +35,13 @@ Diagnostic logs (JSON Lines, secrets redacted): <data dir>\logs\gateway.log and 
 backends\<sessionId>\diagnostics\engine.log per Session; HARNESSHUB_LOG_LEVEL=debug adds payload
 excerpts. In competition bundles .\Collect-Logs.cmd packs them into logs-<time>.zip.
 
+Preinstalled Tool Packs (competition bundles): the packs listed in tool-packs\preinstalled.json are
+applied to every compatible engine by Start.cmd / hub.cmd start and gateway.cmd before the first
+start finishes; nothing has to be installed. A pack is applied once per content: packs you unbind
+later stay unbound, a changed pack is applied again. HARNESSHUB_PREINSTALL_TOOL_PACKS=0 disables it
+(any value other than 0 or 1 is rejected). Problems never stop the Gateway; they are printed once
+and logged as toolpack.preinstall in the Gateway log. GET /v1/tool-packs marks them preinstalled.
+
 Install a bundled tool package in PowerShell from the extracted directory:
   .\hub.cmd tools install --source "$PWD\tools\workspace-tools"
   .\hub.cmd tools use workspace-tools 1.0.0 --engine opencode

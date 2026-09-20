@@ -214,6 +214,8 @@ Invoke-RestMethod -Method Delete -Uri "$base/session/$($session.id)"
 
 日志为每行一个 JSON 对象，密钥与 token 已脱敏，单个文件超过 16 MiB 自动轮转。需要看提示词与模型回答摘录时，在启动前设置 `$env:HARNESSHUB_LOG_LEVEL = "debug"`（取值只能是 `info` 或 `debug`，其他值拒绝启动）。
 
+**预装工具包**：`<CODE>\competition\tool-packs\preinstalled.json` 列出的工具包（Skill、MCP、CLI）由 `Start-Competition.cmd` 在第一次启动、开始监听之前自动应用到所有兼容引擎，不需要任何安装命令，也不联网；不兼容的引擎被跳过，不影响启动。同一份包内容只应用一次（记录在 `state\preinstalled-tool-packs.json`）：之后手动解除的绑定在重启后保持解除，包内容变化后会重新应用。启动前设置 `$env:HARNESSHUB_PREINSTALL_TOOL_PACKS = "0"` 可关闭预装（只接受 `0` 或 `1`，其他值拒绝启动）。
+
 `state` 目录只保存密钥的环境变量名，不保存密钥本身。需要干净的评测状态时，停止服务后删除 `<CODE>\competition\state`，或重新执行第 2 节。
 
 ## 11. 常见问题
@@ -227,4 +229,5 @@ Invoke-RestMethod -Method Delete -Uri "$base/session/$($session.id)"
 - **`Setup-Competition-Offline.cmd` 失败**：查看 `<CODE>\logs\` 中最新日志。常见原因：磁盘空间不足；杀毒软件隔离了引擎程序（提示 `Prepared engine files are missing`，需恢复文件或加白名单）；路径过长（改用短路径重新解压）。依赖损坏时可加 `--reinstall` 重试。
 - **文件被 Windows 标记为来自网络**：在 PowerShell 中执行 `Get-ChildItem -Recurse <CODE> | Unblock-File` 后重试。
 - **引擎启动失败、卡住或返回异常**：先看 `gateway.log` 中该 Run 的 `run.finish` 与 `worker.exit`，再按 `session.create` 行的 `engineLog` 打开引擎日志：`engine.stderr` 是引擎自己的报错，`acp.response` 带 `ok:false` 的行是协议错误，`model.call` 的 `status`/`error` 是模型网关与上游的结果（`reasoning.missing` 大于 0 表示推理内容未回填）。需要交给他人分析时运行 `.\competition\Collect-Logs.cmd`，发送生成的 zip。
+- **确认预装工具包已生效**：`GET /v1/tool-packs` 中该包带 `"preinstalled": true`，其 `engines` 含当前引擎；启动窗口的 `Preinstalled Tool Pack ...` 行和 `gateway.log` 中的 `toolpack.preinstall` 记录给出每个引擎的 `applied`/`skipped`/`failed` 及原因。包损坏或某个引擎绑定失败只会被记录，服务照常启动。
 - **需要确认只使用了统一模型**：`GET /v1/runs/{runId}/event-log` 中每条 `model.call` 事件的 `upstreamModel` 均为 `HARNESSHUB_MODEL` 的值。
