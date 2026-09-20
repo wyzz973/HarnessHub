@@ -74,7 +74,7 @@ export const toolPackStatusNames: Record<string, string> = {
 };
 export const toolPackKinds = [
   { id: "auto", label: "自动识别" },
-  { id: "skills", label: "Skills 目录" },
-  { id: "mcp", label: "MCP JSON（mcpServers）" },
-  { id: "cli", label: "CLI 清单" },
+  { id: "skills", label: "Skill" },
+  { id: "mcp", label: "MCP" },
+  { id: "cli", label: "CLI" },
 ] as const;
