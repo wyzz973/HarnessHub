@@ -292,12 +292,12 @@
 **GET `/v1/tool-packs` — 已安装工具包**
 
 - 输入：无参数。
-- 返回：200：packages 数组，每项含登记记录、displayName、Skill/MCP/CLI 数量、正在使用该包的引擎；单个包清单无法读取时以 problem 标出。
-- 实现链路：读取工具包存储的登记表与各包清单，并按引擎目录计算绑定关系。
+- 返回：200：packages 数组，每项含登记记录、displayName、Skill/MCP/CLI 数量、正在使用该包的引擎；发行包预装的版本带 preinstalled:true（其余不含该字段）；单个包清单无法读取时以 problem 标出。
+- 实现链路：读取工具包存储的登记表与各包清单，并按引擎目录计算绑定关系；预装标记取自发行入口写入的 state/preinstalled-tool-packs.json，标记文件不可读时只是不带标记。
 - 持久化与副作用：只读；不执行包内程序。
 - 失败与边界：TOOL_PACKAGE_REGISTRY_CORRUPT。
 
-实现入口：[src/gateway/tool-package-routes.ts](../../src/gateway/tool-package-routes.ts)。验证依据：[tests/integration/tool-pack-gateway.test.ts](../../tests/integration/tool-pack-gateway.test.ts)。
+实现入口：[src/gateway/tool-package-routes.ts](../../src/gateway/tool-package-routes.ts)。验证依据：[tests/integration/tool-pack-gateway.test.ts](../../tests/integration/tool-pack-gateway.test.ts)、[tests/integration/tool-pack-preinstall.test.ts](../../tests/integration/tool-pack-preinstall.test.ts)。
 
 ## hh_post_v1_tool_packs_import
 

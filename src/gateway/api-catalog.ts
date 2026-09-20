@@ -344,13 +344,16 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     group: "tool-packs",
     request: "无参数。",
     response:
-      "200：packages 数组，每项含登记记录、displayName、Skill/MCP/CLI 数量、正在使用该包的引擎；单个包清单无法读取时以 problem 标出。",
+      "200：packages 数组，每项含登记记录、displayName、Skill/MCP/CLI 数量、正在使用该包的引擎；发行包预装的版本带 preinstalled:true（其余不含该字段）；单个包清单无法读取时以 problem 标出。",
     implementation:
-      "读取工具包存储的登记表与各包清单，并按引擎目录计算绑定关系。",
+      "读取工具包存储的登记表与各包清单，并按引擎目录计算绑定关系；预装标记取自发行入口写入的 state/preinstalled-tool-packs.json，标记文件不可读时只是不带标记。",
     effects: "只读；不执行包内程序。",
     errors: "TOOL_PACKAGE_REGISTRY_CORRUPT。",
     source: "src/gateway/tool-package-routes.ts",
-    tests: ["tests/integration/tool-pack-gateway.test.ts"],
+    tests: [
+      "tests/integration/tool-pack-gateway.test.ts",
+      "tests/integration/tool-pack-preinstall.test.ts",
+    ],
     operationId: "hh_get_v1_tool_packs",
   },
   {
