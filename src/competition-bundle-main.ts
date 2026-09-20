@@ -35,7 +35,10 @@ import {
 
 const help = [
   "gateway.cmd (or Start-Competition.cmd) --engine <id> [options]",
+  "Start.cmd adds --workbench --open: the engine is chosen per task in the console.",
   "  --engine <id>          Engine used by every Competition /session (or AGENT_ENGINE)",
+  "  --workbench            Make the engine optional; unpinned, every enabled engine stays",
+  "                         selectable and /session uses the configured default engine",
   "  --port <6217>          Competition API port",
   "  --host <localhost>     Competition API host",
   "  --console-port <3330>  Bundled console on 127.0.0.1; a busy port falls back to a free one",
@@ -579,6 +582,7 @@ export async function competitionBundleMain(
     args,
     options: {
       engine: { type: "string" },
+      workbench: { type: "boolean", default: false },
       port: { type: "string", default: "6217" },
       host: { type: "string", default: "localhost" },
       "console-port": { type: "string" },
@@ -608,8 +612,10 @@ export async function competitionBundleMain(
   // A mistyped switch fails startup before anything under state/ changes.
   const preinstall = preinstallEnabled(process.env);
 
+  // Workbench (Start.cmd) leaves the engine to the console; the evaluation entries keep
+  // pinning one engine for every /session, as INSTRUCTION.md promises.
   const engineId = values.engine ?? process.env.AGENT_ENGINE;
-  if (!engineId)
+  if (!engineId && !values.workbench)
     throw new Error("Competition bundle requires --engine or AGENT_ENGINE");
   const port = Number(values.port);
   if (!Number.isInteger(port) || port <= 0 || port > 65535)
@@ -636,13 +642,15 @@ export async function competitionBundleMain(
     report: (line) => process.stderr.write(`${line}\n`),
   });
   const generated = prepared.generated;
-  const selected = generated.engines.find((engine) => engine.id === engineId);
-  if (!selected)
-    throw new Error(`Engine ${engineId} is not included in this bundle`);
-  if (selected.enabled === false)
-    throw new Error(
-      `Engine ${engineId} is disabled in state/settings.json; configure it before starting the competition gateway`,
-    );
+  if (engineId) {
+    const selected = generated.engines.find((engine) => engine.id === engineId);
+    if (!selected)
+      throw new Error(`Engine ${engineId} is not included in this bundle`);
+    if (selected.enabled === false)
+      throw new Error(
+        `Engine ${engineId} is disabled in state/settings.json; configure it before starting the competition gateway`,
+      );
+  }
 
   applyPrivateEnvironment(context);
   const plan = consoleEnabled
@@ -653,8 +661,11 @@ export async function competitionBundleMain(
     configFile: generated.file,
     demo: false,
     competition: true,
-    defaultEngine: engineId,
-    competitionEngine: engineId,
+    // Unpinned: the generated configuration's defaultEngine (settings.defaultEngine,
+    // else opencode, codex or the first enabled engine) serves /session.
+    ...(engineId
+      ? { defaultEngine: engineId, competitionEngine: engineId }
+      : {}),
     toolPackageRoot: path.join(context.state, "tool-packages"),
     harnessModelFile: path.join(context.state, "harness-model.json"),
     // Bundled engines carry no vendor account: a Run without the unified model
@@ -695,7 +706,8 @@ export async function competitionBundleMain(
   printEvent({
     event: "competition.ready",
     url: hub.url,
-    engine: engineId,
+    engine: engineId ?? null,
+    ...(values.workbench ? { workbench: true } : {}),
     port,
     host: values.host,
     fullAccess: fullAccessEnabled(),

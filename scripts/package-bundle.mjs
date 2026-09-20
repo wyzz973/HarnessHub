@@ -417,9 +417,22 @@ export async function packageBundle(
     path.join(repository, "patches"),
     path.join(output, "patches"),
   );
+  // Double-clicked by a first-time user: the workbench Gateway needs no environment
+  // variable, opens the console, and keeps the window open when it fails so the reason
+  // is readable. Evaluation keeps using gateway.cmd / Start-Competition.cmd.
   await writeFile(
     path.join(output, "Start.cmd"),
-    '@echo off\r\ncall "%~dp0hub.cmd" start %*\r\nexit /b %errorlevel%\r\n',
+    [
+      "@echo off",
+      "setlocal",
+      'set "HARNESSHUB_FULL_ACCESS=1"',
+      'cd /d "%~dp0"',
+      '"%~dp0runtime\\node.exe" "%~dp0dist\\src\\competition-bundle-main.js" --workbench --open %*',
+      'set "HH_EXIT=%ERRORLEVEL%"',
+      'if not "%HH_EXIT%"=="0" pause',
+      "exit /b %HH_EXIT%",
+      "",
+    ].join("\r\n"),
     { flag: "wx" },
   );
   // The import resolves exclusively from the relocated package; no source, pnpm,

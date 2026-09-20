@@ -54,7 +54,7 @@ import {
 } from "./preinstalled-tool-packs.js";
 
 const help = `HarnessHub portable competition bundle
-  hub.cmd start [--gateway-only] [--demo] [--port 3180] [--console-port 3330]
+  hub.cmd start [--gateway-only] [--port 3180] [--console-port 3330]
   hub.cmd doctor [--full] [--protocol] [--engines codex,opencode]
   hub.cmd engines
   hub.cmd configure --file SETTINGS.json
