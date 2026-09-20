@@ -52,7 +52,8 @@ test("console engine list and edit schemas preserve bounded ACP initialization w
     id: "openclaw",
     driver: "acp",
     command: ["node.exe", "launch-openclaw-bundled.mjs"],
-    acp: { initializeTimeoutMs: 60000 },
+    // The bundled OpenClaw budget, above the former 60 s bound.
+    acp: { initializeTimeoutMs: 180000 },
   };
   assert.deepEqual(
     registrationSchema.parse(registration).acp,
@@ -84,7 +85,7 @@ test("console engine list and edit schemas preserve bounded ACP initialization w
   );
   for (const acp of [
     { initializeTimeoutMs: 0 },
-    { initializeTimeoutMs: 60001 },
+    { initializeTimeoutMs: 300001 },
     { initializeTimeoutMs: 1.5 },
     { initializeTimeoutMs: "60000" },
     { sessionMode: "invalid" },
@@ -103,4 +104,58 @@ test("console engine list and edit schemas preserve bounded ACP initialization w
     }).acp,
     { sessionMode: "resume", initializeTimeoutMs: 60000 },
   );
+});
+
+test("console reads Session diagnostics pages with free-form records and rejects malformed pages", async () => {
+  const { sessionLogsSchema } = await consoleContracts();
+  const page = {
+    source: "gateway",
+    file: "C:\\hh\\state\\competition-data\\logs\\gateway.log",
+    exists: true,
+    records: [
+      {
+        time: "2026-09-19T12:00:00.000Z",
+        level: "info",
+        event: "model.call",
+        runId: "r1",
+        usage: { input: 3 },
+      },
+      {
+        time: "2026-09-19T12:00:01.000Z",
+        level: "debug",
+        event: "acp.update",
+        params: "{}",
+      },
+    ],
+    cursor: "123456789:4096",
+    truncated: false,
+    skipped: 0,
+  };
+  const parsed = sessionLogsSchema.parse(page);
+  assert.equal(
+    parsed.records[0].usage.input,
+    3,
+    "event-specific fields are kept",
+  );
+  assert.equal(
+    sessionLogsSchema.parse({
+      ...page,
+      exists: false,
+      records: [],
+      cursor: null,
+    }).cursor,
+    null,
+  );
+  for (const invalid of [
+    { ...page, source: "worker" },
+    { ...page, cursor: undefined },
+    { ...page, skipped: -1 },
+    { ...page, records: [{ level: "info", event: "no-time" }] },
+    { ...page, records: [{ time: "2026-09-19T12:00:00.000Z", level: "info" }] },
+  ])
+    assert.equal(
+      sessionLogsSchema.safeParse(invalid).success,
+      false,
+      JSON.stringify(invalid),
+    );
 });

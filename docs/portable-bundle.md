@@ -2,7 +2,7 @@
 
 本页的构建流程在开发机执行。裁判机使用包内运行时和已准备的程序文件，不执行依赖安装、源码编译或运行时下载。模型凭证和目标引擎的实际可用性由运行配置与验收结果分别说明。
 
-发布清单包含 16 个引擎模板，不表示 16 个引擎都支持同一种比赛 API。统一 Provider 的协议范围见 [引擎配置矩阵](engine-configuration.md)：Gemini 需要 Google 协议；Cursor、Antigravity、Kiro、Qoder 保留原生认证与 Provider 配置；Kimi 自定义 Provider 使用 CLI 模板。未配置且未验证的引擎不能仅凭打包成功作为比赛可用引擎。
+发布清单最多包含 16 个引擎模板（x64 CI 不下载 Cursor 与 Antigravity，比赛完整包只含开源版 10 个引擎），不表示它们都支持同一种比赛 API。配置 [统一模型](engine-configuration.md#统一模型) 后，可路由的引擎都经 Worker 内的模型网关使用同一个模型，Cursor、Antigravity、Kiro、Qoder 等无法接入的引擎被停用；比赛机只用 `HARNESSHUB_MODEL*` 环境变量注入模型。未配置且未验证的引擎不能仅凭打包成功作为比赛可用引擎。
 
 ## 构建
 
@@ -21,11 +21,13 @@
 
 1. 复制当前固定 Node 和 LICENSE 到 `runtime`；已有文件必须与输入逐字节一致。
 2. 将 [固定 package.json](../distribution/npm/package.json) 与 [pnpm-lock.yaml](../distribution/npm/pnpm-lock.yaml) 复制到 `engines/npm`，执行 pnpm 10.12.3 的 `install --frozen-lockfile --ignore-scripts --ignore-workspace --config.node-linker=hoisted --package-import-method=copy --prod`。安装后再次验证锁文件、顶层精确版本、pnpm版本和hoisted安装图，不能通过重新解析最新版本绕过锁文件。
-3. 调用 [prepare-binaries.mjs](../scripts/prepare-binaries.mjs) 的 `--root --arch`，准备固定二进制引擎。
-4. 分别调用 [prepare-extra-engines.ps1](../scripts/prepare-extra-engines.ps1) 的 `-TargetRoot -Engine hermes/kiro`，使用锁定 wheel 闭包和只读 MSI 解包流程，不在系统注册 Kiro 产品。
+3. 调用 [prepare-binaries.mjs](../scripts/prepare-binaries.mjs) 的 `--root --arch`，准备固定二进制引擎。未跳过 Kimi 时紧接 [prepare-kimi.mjs](../scripts/prepare-kimi.mjs) 的 `--executable`（复用或重新解包二进制准备时同样执行，幂等）：固定 `kimi.exe` 1.50.0 是 PyInstaller 单文件程序，其 bootloader 以隔离配置启动 Python，`PYTHONUTF8`、`PYTHONIOENCODING` 等环境变量一律被忽略，管道上的 stdout 按 Windows ANSI 代码页编码；回复含该代码页之外的字符（cp1252 上的中文、cp936 上的 emoji）时 CLI 在任务完成后以 `'charmap' codec can't encode` 退出，其余非 ASCII 回复则以错误编码到达按 UTF-8 解码的 CLI Driver。补丁使用 PyInstaller 自身的开关：在内嵌归档的目录表末尾追加运行期选项 `X utf8=1`（等价于 spec 中的 `EXE(..., [("X utf8=1", None, "OPTION")])`），Python 以 UTF-8 模式运行，stdout/stderr 在任何代码页下都是 UTF-8；程序代码与归档数据不变，只有目录表、归档 cookie 和 PE 校验和变化，按 x64/arm64 修改前后的 SHA-256 校验，`--check` 拒绝未打补丁的 `kimi.exe`。
+4. 分别调用 [prepare-extra-engines.ps1](../scripts/prepare-extra-engines.ps1) 的 `-TargetRoot -Engine hermes/kiro`，使用锁定 wheel 闭包和只读 MSI 解包流程，不在系统注册 Kiro 产品。Hermes 之后紧接 [prepare-hermes.mjs](../scripts/prepare-hermes.mjs) 的 `--runtime`（复用已有 Hermes 准备时同样执行，幂等）：固定 hermes-agent 0.19.0 在 Windows 上探测 Git Bash 时继承自身 stdin，在 ACP 下这是有挂起读取的 JSON-RPC 管道，MSYS 运行时检查该句柄会阻塞到下一条 ACP 消息，首个终端命令因此一直挂起；补丁只给两个探测进程加 `stdin=subprocess.DEVNULL`，按修改前后 SHA-256 校验，`--check` 拒绝未打补丁的准备目录。
 5. 调用 [prepare-git.mjs](../scripts/prepare-git.mjs) 的 `--root --arch`，准备 PortableGit 及来源 receipt。
 6. 调用 [prepare-openclaw.mjs](../scripts/prepare-openclaw.mjs) 的 `--package`，仅完成固定 OpenClaw 的官方 lifecycle；这是明确的开发机步骤，npm总体安装仍禁用自动生命周期脚本。
 7. 将仓库 [工具包示例](tool-packages.md) 的实际文件复制到 `tools`，将 [vendor-notices](../distribution/vendor-notices) 的固定许可证与来源记录复制到各引擎的同名目录，再调用 [prepare-engine-catalog.mjs](../scripts/prepare-engine-catalog.mjs) 的 `--root --arch`，最后生成只含相对模板的 `prepared.json`。
+
+两个可选参数只改变下载来源，不改变上述顺序：`--skip-binaries cursor,antigravity` 不下载 [binary-sources.json](../distribution/binary-sources.json) 中列出的条目（这两项没有固定 hash，也不进入开源版），对应引擎不会出现在 `prepared.json` 中，`--check` 必须传同样的列表，跳过的条目记入 `preparation-receipt.json`；`--seven-zip <7z.exe 绝对路径>` 用已安装的 7-Zip 解开 PortableGit，不再下载无版本号的 `7-zip.org/a/7zr.exe`，PortableGit 自身仍校验固定 SHA-256。x64 CI 同时使用这两个参数。
 
 同一 root 的并发制备会被 `.prepare-contest-lock` 拒绝。已完成的 binary、Hermes/Kiro 和 Git准备可根据固定来源 receipt、版本、架构及必要文件检查复用；不会仅凭目录存在就视为成功。部分目录、过期 receipt、不同 runtime 或残留多余工具文件明确失败，需检查后选新 root。原 `prepared.json` 会先保存为带 UUID 的 `prepared.previous.*.json`；失败时本轮生成的 catalog 转为 `prepared.failed.*.json`，不给失败目录保留可打包的正式 catalog。正常流程等待各子命令结束后释放锁；崩溃残留锁需要先确认 owner 已退出，再显式清理。不要在制备进行时运行打包命令。
 
@@ -37,7 +39,7 @@
 & '.tools/node-v24.20.0-win-arm64/node.exe' scripts/package-bundle.mjs --prepared '.tools/contest-prepared/win32-arm64' --output 'C:\build\HarnessHub-new'
 ```
 
-`--output` 必须不存在，父目录必须已存在；构建器不覆盖现有发行目录。失败会保留带 `.incomplete` 标记或缺少有效 `bundle.json` 的结果供诊断，不应分发。成功输出包含根 `dist/src`、`dist/native`、所需 `scripts`、生产依赖、console standalone 及准备目录白名单内容。
+`--output` 必须不存在，父目录必须已存在；构建器不覆盖现有发行目录。开源版默认还会带上开发依赖、源码归档、交接 Skill 与 `Dev.cmd`；加 `--runtime-only` 时只生成运行所需内容，离线开发包的 `Setup-Competition-Offline.cmd` 使用这一方式。失败会保留带 `.incomplete` 标记或缺少有效 `bundle.json` 的结果供诊断，不应分发。成功输出包含根 `dist/src`、`dist/native`、所需 `scripts`、生产依赖、console standalone 及准备目录白名单内容。
 
 Gateway 和控制台的生产依赖均依据当前固定安装图物化，不重新向 registry 解析版本。具有版本冲突的依赖保留在 Node 的嵌套依赖作用域，已安装但未被生产依赖图引用的开发包不会复制。Windows 下 Next standalone 的 pnpm 链接不直接复制，构建器保留应用产物并重新物化控制台生产依赖。内部链接只可指向已知输入根，输出是普通文件；越界链接、循环链接使构建失败。打包按目标架构保留各依赖 `prebuilds/win32-arm64` 或 `prebuilds/win32-x64` 分支，并移除 pnpm 安装元数据和 Python 字节码缓存；普通 SDK 的 `sessions`、`logs` 源码目录与许可证仍保留。留下的每个 native addon 都校验实际 PE 架构，目录标签错误仍使打包失败。不能用复制本机 `.bin` 绝对路径 shim 代替这个过程。
 
@@ -55,6 +57,18 @@ Pi 固定组合为 `@earendil-works/pi-coding-agent@0.85.1` 与 `pi-acp@0.0.33`�
 
 检查包含移除源依赖后从新目录加载相互冲突的生产依赖、workspace pnpm 链接的依赖作用域、内部链接物化、链接越界/循环拒绝、已有文件不覆盖、错误 native addon 架构拒绝和 Next 目录字段搬迁。每次真实构建还会使用输出目录中的 Node，从其他 cwd 且不含开发者 PATH/NODE_PATH 的子进程导入打包后的 Gateway，并由包内 Job helper 启动控制台，检查页面与静态 JS 的 HTTP 200 后等待进程清理。完整发行入口、UI 交互、引擎初始化、文件任务、取消和搬迁后的运行恢复须由发布验收另行证明。
 
+比赛布局另有不调用模型的启动自检 [competition-selftest.mjs](../scripts/competition-selftest.mjs)：以 `AGENT_ENGINE=<id>` 经 `gateway.cmd`（非 Windows 开发机为编译入口）在随机端口启动，要求出现 `competition.ready` 且 `GET /health/ready` 为 200，`GET /v1/runtime/info` 报告比赛模式与该引擎，控制台地址返回 200，`GET /` 跳转控制台，`POST /session` 自动创建不存在的目录，`GET /session/status` 为 idle，`DELETE /session/{id}` 成功，停止后两个端口都关闭。`gateway.cmd --help` 在加载发行包前就返回，不能作为可用性证据。
+
+## 比赛完整包（Windows x64）
+
+[x64 workflow](../.github/workflows/competition-full-bundle-x64.yml) 在 `feat/competition-gateway-api` 或 `feat/unified-model-gateway` 的 `src/`、`web/`、`scripts/`、`distribution/`、`patches/`、`examples/`、`package.json`、`pnpm-lock.yaml`、`pnpm-workspace.yaml`、`tsconfig.json` 或该 workflow 变化时运行，也可手动触发；同一分支的新运行会取消旧运行。步骤为：构建 Gateway 与控制台 → 按上文制备 x64 引擎（跳过 Cursor/Antigravity、使用 runner 的 7-Zip，按来源清单 hash 缓存固定下载）→ 派生开源版 → `package-bundle.mjs` 与 [build-competition-full-bundle.mjs](../scripts/build-competition-full-bundle.mjs) → 全文件 hash 核对 → 打 ZIP 并要求小于 2 GiB → 解压到含空格的新目录做上述启动自检 → 发布。
+
+- **预装工具包**：[build-competition-full-bundle.mjs](../scripts/build-competition-full-bundle.mjs) 把仓库 `packs/` 下的每个目录复制为 `tool-packs\<目录>\`（与 `examples/tool-packages` 的示例并列，同名即构建失败；`.env`、`.DS_Store`、日志等不复制），用编译后的导入器逐个检查，不能安装的包使构建失败，再写出 `tool-packs\preinstalled.json`；没有 `packs/` 时清单为空。两个入口在首次启动时据此把包应用到所有兼容引擎，规则见 [预装工具包](capability-packs.md#预装工具包)。新增文件计入 `bundle.json`，`hub.cmd doctor --full` 会核对其 hash；[check-competition-bundle.test.mjs](../scripts/check-competition-bundle.test.mjs) 覆盖复制、清单、运行时读取、库存核对以及坏目录名、与示例重名和坏包的拒绝。离线开发包整体拷贝仓库源码但排除任意层级名为 `node_modules`、`dist`、`.next` 的目录，预装包不能依赖这些目录名。
+- **发布目标**：手动触发的 `release_tag`，否则仓库变量 `COMPETITION_RELEASE_TAG`，否则 `competition-latest`；手动触发可关闭 `publish`。发布前请先备份目标 Release 的旧资产。[publish-release-assets.mjs](../scripts/publish-release-assets.mjs) 先以 `<名称>.staging-<run>` 上传全部文件，再删除旧资产并改名，已存在 Release 的说明文字不被改写；另附 `.build.json` 记录 commit、workflow run 与 SHA-256。
+- **模拟模型验收**：后续 job 在另一台 windows-latest 上解压同一 ZIP，由 [competition-matrix.mjs](../scripts/competition-matrix.mjs) 对 opencode、codex、qwen、hermes、pi、gemini、mimo、dsh、openclaw、kimi 逐个以 `AGENT_ENGINE` 启动 `gateway.cmd --no-console`，每个引擎限时 6 分钟，单个失败不影响其余引擎。上游是本地 [模拟公司模型](../scripts/mock-company-model.mjs)：只接受流式请求，拒绝 `stream_options`、`store`、`metadata`、`max_completion_tokens`、`developer` 角色等（规则见 [strict-chat.mjs](../scripts/lib/strict-chat.mjs)），要求统一模型名与随机一次性密钥；推理内容先于正文返回，工具调用的后续请求未回传 `reasoning_content` 时返回 400；默认还模拟缺失的工具调用 index、重复的 `finish_reason` 和缺字段的 usage。厂商凭据变量在每个 Gateway 环境中被清除。
+- **验收内容**：[competition-acceptance.mjs](../scripts/competition-acceptance.mjs) 的 mock 场景依次检查统一模型已应用、目录自动创建、“只回复 OK”、shell 工具调用写出 `mock-ok.txt` 且推理内容被回传（引擎不提供 shell 类工具时记 SKIP）、另一会话中止长任务后回到 idle、每个 Run 的 `model.call` 只使用统一模型、`DELETE` 幂等且关闭后拒绝提交。结果矩阵写入 job summary，JSON 与脱敏日志上传为 `competition-acceptance-windows-x64` artifact。这是模拟模型下的协议链路证据，不代表真实模型或公司网关通过。
+- **本机真实模型验收**：GitHub 不保存任何模型密钥。开发者在本机设置 `HARNESSHUB_MODEL`、`HARNESSHUB_MODEL_BASE_URL`、`HARNESSHUB_MODEL_API_KEY` 后运行 `node scripts/competition-matrix.mjs --bundle <比赛布局> --engines opencode,hermes --out <目录> --scenario full --strict-proxy https://api.deepseek.com/v1`；`--strict-proxy` 在真实上游前加上同一套严格规则，只转发调用方的 Authorization，不读取或记录密钥。单个已启动的 Gateway 也可直接运行 `node scripts/competition-acceptance.mjs --base http://127.0.0.1:6217 --engine opencode --out <目录>`，full 场景额外检查文件任务与 PowerShell 命令任务。
+
 ## OpenClaw 准备与运行边界
 
 固定 `openclaw@2026.9.2` 在 `--ignore-scripts` 安装后，必须在构建机执行 `node scripts/prepare-openclaw.mjs --package <OpenClaw包目录>`。此入口调用该版本包内的官方 lifecycle 完成函数并确认 pending 标记消失；裁判机启动器遇到未完成标记会明确失败，不在首次运行时安装。
@@ -69,7 +83,7 @@ Pi 固定组合为 `@earendil-works/pi-coding-agent@0.85.1` 与 `pi-acp@0.0.33`�
 
 以该输出作为 `scripts/package-bundle.mjs --prepared` 输入，会额外打包完整源码归档、公司 Chat 配置、交接 Skill 和 HarnessHub/控制台开发依赖。入口与内网合并流程见 [公司离线交接](offline-company.md)。固定源码来自 [源码制备工具](../scripts/vendor-engine-sources.mjs)，源码与运行程序的用途分别记录。
 
-引擎注册可通过 `acp.initializeTimeoutMs` 设置 1–60000 ms 的显式初始化预算；OpenClaw 发布模板使用 60000。协议 probe 接收此值，未配置时仍为 10000 ms；实际 Worker 从发送 Run 到收到 `engine.capabilities` 事件持有同一预算，超时报告 `ACP_INITIALIZE_TIMEOUT` 并关闭所属进程树。该预算不替代 Run 总期限，且在初始化完成后不限制 prompt 时长。
+引擎注册可通过 `acp.initializeTimeoutMs` 设置 1–300000 ms 的显式初始化预算；OpenClaw 发布模板使用 180000，其启动器等待私有 Gateway 就绪最多 150 秒（Gateway 进程提前退出时立即失败）。2026-09-19 的 Windows x64 CI 上 OpenClaw 两次冷启动都在约 33 秒后才开始加载配置，45 秒时仍未就绪；同一配置在 macOS 上约 3 秒就绪、ACP 初始化不到 1 秒，因此是 Windows 冷启动慢而不是配置导致挂起。协议 probe 接收此值，未配置时仍为 10000 ms；实际 Worker 从发送 Run 到收到 `engine.capabilities` 事件持有同一预算，超时报告 `ACP_INITIALIZE_TIMEOUT` 并关闭所属进程树。该预算不替代 Run 总期限，且在初始化完成后不限制 prompt 时长。
 
 ## CLI 与控制台配置
 

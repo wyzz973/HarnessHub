@@ -43,7 +43,7 @@ engines:
 
 ## 输出和结束
 
-标准输出作为 UTF-8 文本流转成 `message.delta`，按 Worker 的持久化确认施加背压，完成后保存拼接文本。UTF-8 多字节字符跨数据块时不会被拆坏。ANSI 控制符、JSON、进度条等都保持原始文本语义；Driver 不猜测原生输出协议。
+标准输出作为 UTF-8 文本流转成 `message.delta`，按 Worker 的持久化确认施加背压，完成后保存拼接文本。UTF-8 多字节字符跨数据块时不会被拆坏。ANSI 控制符、JSON、进度条等都保持原始文本语义；Driver 不猜测原生输出协议，也不猜测编码：命令必须向管道输出 UTF-8。Windows 上不少运行时（未开启 UTF-8 模式的 Python、.NET Framework 控制台程序等）对管道默认使用系统 ANSI 代码页，这类命令的非 ASCII 输出会在 Driver 中变成替换字符，需要由命令自身或其包装程序改为 UTF-8。发行包内的 Kimi 由 [prepare-kimi.mjs](../scripts/prepare-kimi.mjs) 在构建期开启 Python UTF-8 模式来满足这一点，见 [Windows 便携发布包](portable-bundle.md)。
 
 `maxOutputBytes` 限制 stdout 原始 UTF-8 字节数，默认 4 MiB。超出上限会停止进程并返回 `CLI_OUTPUT_LIMIT`；此前已经提交的片段仍在轨迹中，Run 不会以截断内容假装成功。stderr 不公开、不保存到规范化事件，避免泄露引擎的认证与配置输出。
 

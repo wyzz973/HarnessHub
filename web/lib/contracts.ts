@@ -1,4 +1,4 @@
-import { configurationSchema } from "./engine-configuration";
+import { configurationSchema, providerSchema } from "./engine-configuration";
 import { z } from "zod";
 
 const object = z.record(z.string(), z.unknown());
@@ -83,7 +83,8 @@ export const eventSchema = z.object({
 const acpSchema = z
   .object({
     sessionMode: z.literal("resume").optional(),
-    initializeTimeoutMs: z.number().int().min(1).max(60_000).optional(),
+    // Same bound as ACP_INITIALIZE_TIMEOUT_LIMIT_MS in src/domain/engines.ts.
+    initializeTimeoutMs: z.number().int().min(1).max(300_000).optional(),
   })
   .strict();
 export const engineSchema = z.object({
@@ -316,6 +317,150 @@ export const overviewSchema = z.object({
   ),
   recentRuns: z.array(observationSchema),
 });
+/** `GET /v1/runtime/info` (ADR 0013): the Gateway's startup mode, never user preference. */
+export const runtimeInfoSchema = z.object({
+  competition: z.boolean(),
+  competitionEngine: z.string().optional(),
+  fullAccess: z.boolean(),
+  consoleUrl: z.string().optional(),
+});
+export const harnessModelEngineStatusSchema = z.object({
+  engineId: z.string(),
+  status: z.enum(["applied", "unsupported", "disabled"]),
+  reason: z.string().optional(),
+});
+/** `HarnessModelView`: secret references only, never secret values. */
+export const harnessModelViewSchema = z.object({
+  configured: z.boolean(),
+  source: z.enum(["environment", "file", "settings"]).optional(),
+  model: z.string().optional(),
+  alias: z.string(),
+  provider: providerSchema.optional(),
+  engines: z.array(harnessModelEngineStatusSchema),
+});
+/**
+ * `POST /v1/harness/model/test`: one short real Run on the chosen engine. `ok` means the Run
+ * completed with a non-empty reply; `status` is that Run's status and `error` is redacted.
+ */
+export const harnessModelTestSchema = z.object({
+  ok: z.boolean(),
+  status: runStatusSchema,
+  durationMs: z.number(),
+  runId: z.string(),
+  error: errorSchema.optional(),
+});
+export const toolPackRecordSchema = z.object({
+  id: z.string(),
+  version: z.string(),
+  digest: z.string(),
+  installedAt: z.number().optional(),
+  status: z.string().optional(),
+  displayName: z.string().optional(),
+  /** Skill, MCP server and CLI tool counts read from the stored manifest. */
+  counts: z
+    .object({
+      skills: z.number().optional(),
+      mcp: z.number().optional(),
+      cli: z.number().optional(),
+    })
+    .optional(),
+  /** Engines whose current configuration contains this version, when the Gateway reports it. */
+  engines: z.array(z.string()).optional(),
+  /** Why the stored manifest could not be read. */
+  problem: errorSchema.optional(),
+  /** Shipped with the distribution and installed on first start. */
+  preinstalled: z.boolean().optional(),
+});
+const packageRefSchema = z.object({ id: z.string(), version: z.string() });
+/** Per-engine outcome of apply/import/unbind; statuses beyond the ADR are shown verbatim. */
+export const toolPackEngineResultSchema = z.object({
+  engineId: z.string(),
+  status: z.string(),
+  revision: z.string().optional(),
+  reason: z.string().optional(),
+  capabilities: z
+    .object({
+      skills: z.array(z.string()).optional(),
+      mcp: z.array(z.string()).optional(),
+      cli: z.array(z.string()).optional(),
+    })
+    .optional(),
+  warnings: z.array(z.string()).optional(),
+});
+/** Accepts both the multi-engine ADR 0013 response and the legacy single-engine fields. */
+export const toolPackApplySchema = z.object({
+  ok: z.boolean().optional(),
+  package: packageRefSchema.optional(),
+  results: z.array(toolPackEngineResultSchema).optional(),
+  engineId: z.string().optional(),
+  revision: z.string().optional(),
+  warnings: z.array(z.string()).optional(),
+});
+export const toolPackImportSchema = z.object({
+  ok: z.boolean().optional(),
+  package: packageRefSchema,
+  displayName: z.string().optional(),
+  counts: z
+    .object({
+      skills: z.number().optional(),
+      mcp: z.number().optional(),
+      cli: z.number().optional(),
+    })
+    .optional(),
+  apply: toolPackApplySchema.optional(),
+  warnings: z.array(z.string()).optional(),
+});
+/** `model.call` event data: one upstream call through the Worker model gateway. */
+export const modelCallSchema = z.object({
+  id: z.string(),
+  inbound: z.enum([
+    "openai-completions",
+    "openai-responses",
+    "anthropic",
+    "google",
+  ]),
+  stream: z.boolean(),
+  requestedModel: z.string().optional(),
+  upstreamModel: z.string(),
+  status: z.number(),
+  ok: z.boolean(),
+  durationMs: z.number(),
+  finishReason: z.string().optional(),
+  usage: z
+    .object({
+      input: z.number().optional(),
+      output: z.number().optional(),
+      total: z.number().optional(),
+      reasoning: z.number().optional(),
+    })
+    .optional(),
+  toolCalls: z.number(),
+  error: errorSchema.optional(),
+});
+/** One diagnostic JSON Lines record; every other field depends on `event`. */
+export const logRecordSchema = z
+  .object({ time: z.string(), level: z.string(), event: z.string() })
+  .catchall(z.unknown());
+/** `GET /v1/sessions/{id}/logs`: one page of a Session's engine or Gateway log. */
+export const sessionLogsSchema = z.object({
+  source: z.enum(["engine", "gateway"]),
+  file: z.string(),
+  exists: z.boolean(),
+  records: z.array(logRecordSchema),
+  cursor: z.string().nullable(),
+  truncated: z.boolean(),
+  skipped: z.number().int().nonnegative(),
+});
+export type LogRecord = z.infer<typeof logRecordSchema>;
+export type SessionLogs = z.infer<typeof sessionLogsSchema>;
+export type RuntimeInfo = z.infer<typeof runtimeInfoSchema>;
+export type HarnessModelView = z.infer<typeof harnessModelViewSchema>;
+export type HarnessModelTest = z.infer<typeof harnessModelTestSchema>;
+export type ToolPackRecord = z.infer<typeof toolPackRecordSchema>;
+export type ToolPackEngineResult = z.infer<typeof toolPackEngineResultSchema>;
+export type ToolPackApply = z.infer<typeof toolPackApplySchema>;
+export type ToolPackImport = z.infer<typeof toolPackImportSchema>;
+export type ModelCall = z.infer<typeof modelCallSchema>;
 export type Engine = z.infer<typeof engineSchema>;
 export type Candidate = z.infer<typeof candidateSchema>;
 export type Registration = z.infer<typeof registrationSchema>;

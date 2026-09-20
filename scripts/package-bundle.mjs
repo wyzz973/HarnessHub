@@ -138,8 +138,16 @@ function execute(command, args, options = {}) {
   });
 }
 
-/** Build only a new directory; all application inputs are explicit production allowlists. */
-export async function packageBundle(preparedDirectory, outputDirectory) {
+/**
+ * Build only a new directory; all application inputs are explicit production allowlists.
+ * `options.runtimeOnly` omits the open-source edition's development dependencies, source
+ * archives, handover Skill and Dev.cmd; runtime files and verification are unchanged.
+ */
+export async function packageBundle(
+  preparedDirectory,
+  outputDirectory,
+  options = {},
+) {
   const prepared = await realpath(preparedDirectory);
   const output = path.resolve(outputDirectory);
   if (within(prepared, output))
@@ -247,7 +255,10 @@ export async function packageBundle(preparedDirectory, outputDirectory) {
     { arch: metadata.arch },
   );
   const developmentComponents = [];
-  if (metadata.edition === "open-source-chat-completions") {
+  if (
+    metadata.edition === "open-source-chat-completions" &&
+    options.runtimeOnly !== true
+  ) {
     for (const [label, directory] of [
       ["root", repository],
       ["web", path.join(repository, "web")],
@@ -406,9 +417,22 @@ export async function packageBundle(preparedDirectory, outputDirectory) {
     path.join(repository, "patches"),
     path.join(output, "patches"),
   );
+  // Double-clicked by a first-time user: the workbench Gateway needs no environment
+  // variable, opens the console, and keeps the window open when it fails so the reason
+  // is readable. Evaluation keeps using gateway.cmd / Start-Competition.cmd.
   await writeFile(
     path.join(output, "Start.cmd"),
-    '@echo off\r\ncall "%~dp0hub.cmd" start %*\r\nexit /b %errorlevel%\r\n',
+    [
+      "@echo off",
+      "setlocal",
+      'set "HARNESSHUB_FULL_ACCESS=1"',
+      'cd /d "%~dp0"',
+      '"%~dp0runtime\\node.exe" "%~dp0dist\\src\\competition-bundle-main.js" --workbench --open %*',
+      'set "HH_EXIT=%ERRORLEVEL%"',
+      'if not "%HH_EXIT%"=="0" pause',
+      "exit /b %HH_EXIT%",
+      "",
+    ].join("\r\n"),
     { flag: "wx" },
   );
   // The import resolves exclusively from the relocated package; no source, pnpm,
@@ -465,15 +489,23 @@ if (
 ) {
   try {
     const { values } = parseArgs({
-      options: { prepared: { type: "string" }, output: { type: "string" } },
+      options: {
+        prepared: { type: "string" },
+        output: { type: "string" },
+        "runtime-only": { type: "boolean", default: false },
+      },
       allowPositionals: false,
     });
     if (!values.prepared || !values.output)
       throw new Error(
-        "Usage: node scripts/package-bundle.mjs --prepared DIRECTORY --output NEW_DIRECTORY",
+        "Usage: node scripts/package-bundle.mjs --prepared DIRECTORY --output NEW_DIRECTORY [--runtime-only]",
       );
     console.log(
-      JSON.stringify(await packageBundle(values.prepared, values.output)),
+      JSON.stringify(
+        await packageBundle(values.prepared, values.output, {
+          runtimeOnly: values["runtime-only"],
+        }),
+      ),
     );
   } catch (error) {
     console.error(error.message);

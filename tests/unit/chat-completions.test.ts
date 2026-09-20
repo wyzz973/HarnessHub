@@ -9,14 +9,19 @@ import { normalizeEngine } from "../../src/engine/registry.js";
 import { prepareConfiguration } from "../../src/drivers/configuration/prepare.js";
 import type { RunId, SessionId } from "../../src/domain/types.js";
 import { startModelBridge } from "../../src/drivers/chat-completions/bridge.js";
-import {
-  responsesToChat,
-  googleToChat,
-  responseOutput,
-  googleOutput,
-} from "../../src/drivers/chat-completions/protocol.js";
+import { responsesToChat } from "../../src/drivers/chat-completions/responses.js";
+import { googleToChat } from "../../src/drivers/chat-completions/google.js";
+import { normalizeRequest } from "../../src/drivers/chat-completions/upstream.js";
 
-void test("Responses function, custom and namespace tool history is reversible; unsupported semantics reject", () => {
+const settings = {
+  model: "fixture",
+  includeUsage: false,
+  maxTokensField: "max_tokens" as const,
+  dropParameters: [],
+  images: "placeholder" as const,
+};
+
+void test("Responses function, custom and namespace tool history keeps native identities; unsupported semantics reject", () => {
   const request = {
     model: "fixture",
     instructions: "system",
@@ -43,54 +48,58 @@ void test("Responses function, custom and namespace tool history is reversible; 
     stream: true,
     store: false,
   };
-  const translated = responsesToChat(request, "fixture");
-  const messages = translated.body.messages as Record<string, unknown>[];
-  assert.deepEqual(messages.slice(0, 2), [
-    { role: "system", content: "system" },
-    { role: "system", content: "skill" },
-  ]);
+  const translated = responsesToChat(request);
+  const upstream = normalizeRequest(translated.body, settings);
+  const messages = upstream.messages as Record<string, unknown>[];
+  assert.deepEqual(messages[0], { role: "system", content: "system\n\nskill" });
   assert.deepEqual(messages.at(-1), {
     role: "tool",
     tool_call_id: "c",
     content: "done",
   });
-  const names = [...translated.tools.keys()];
-  const output = responseOutput(
-    {
-      text: "",
-      finish: "tool_calls",
-      calls: [
-        { id: "c1", name: names[0]!, arguments: '{"input":"raw patch"}' },
-        { id: "c2", name: names[1]!, arguments: '{"path":"a"}' },
-      ],
-    },
-    translated.tools,
-    "fixture",
+  assert.deepEqual(
+    [...translated.tools.values()],
+    [
+      { name: "apply_patch", custom: true },
+      { name: "read", custom: false, namespace: "mcp" },
+    ],
   );
-  assert.equal(output[0]!.input, "raw patch");
-  assert.equal(output[0]!.type, "custom_tool_call");
-  assert.equal(output[1]!.namespace, "mcp");
-  assert.equal(output[1]!.name, "read");
   for (const change of [
     { previous_response_id: "old" },
     { tools: [{ type: "web_search" }] },
-    { input: [{ type: "reasoning", encrypted_content: "cipher" }] },
-    {
-      input: [
-        {
-          role: "user",
-          content: [{ type: "input_image", image_url: "data:test" }],
-        },
-      ],
-    },
-    { reasoning: { effort: "high" } },
-    { model: "other" },
     { unknown: true },
     { temperature: { value: 1 } },
     { parallel_tool_calls: "yes" },
     { stream: "true" },
   ])
-    assert.throws(() => responsesToChat({ ...request, ...change }, "fixture"));
+    assert.throws(() => responsesToChat({ ...request, ...change }));
+  // ADR 0013: the gateway ignores requested model names, accepts any reasoning
+  // effort and ignores reasoning items it did not encode itself.
+  for (const change of [
+    { model: "other" },
+    { reasoning: { effort: "high" } },
+    {
+      input: [{ type: "reasoning", encrypted_content: "cipher", summary: [] }],
+    },
+  ])
+    assert.doesNotThrow(() => responsesToChat({ ...request, ...change }));
+  // ADR 0013: media no longer fails the whole Session; it becomes a text placeholder.
+  const withImage = responsesToChat({
+    ...request,
+    input: [
+      {
+        role: "user",
+        content: [
+          { type: "input_text", text: "look" },
+          { type: "input_image", image_url: "data:test" },
+        ],
+      },
+    ],
+  });
+  assert.match(
+    JSON.stringify(withImage.body.messages),
+    /input_image omitted: the HarnessHub model gateway forwards text only/,
+  );
 });
 
 void test("Google function identities and result pairing survive Chat conversion; unsupported parts reject", () => {
@@ -133,29 +142,31 @@ void test("Google function identities and result pairing survive Chat conversion
     ],
   };
   const translated = googleToChat(request, "fixture", true),
-    messages = translated.body.messages as Record<string, unknown>[];
+    messages = translated.body.messages;
   assert.deepEqual(messages.at(-1), {
     role: "tool",
     tool_call_id: "gcall_0",
-    content: '{"output":"value"}',
+    content: "value",
   });
-  const output = googleOutput(
+  assert.deepEqual(
+    (translated.body.tools as { function: unknown }[])[0]!.function,
     {
-      text: "",
-      calls: [
-        { id: "call_1", name: "workspace_read", arguments: '{"path":"文档"}' },
-      ],
-      finish: "tool_calls",
+      name: "workspace_read",
+      parameters: { type: "object", properties: { path: { type: "string" } } },
     },
-    translated.tools,
   );
-  assert.match(JSON.stringify(output), /workspace_read/);
-  assert.match(JSON.stringify(output), /文档/);
   for (const change of [
-    { contents: [{ role: "user", parts: [{ inlineData: {} }] }] },
     { tools: [{ googleSearch: {} }] },
-    { generationConfig: { topK: 5 } },
     { cachedContent: "cached" },
+    { unknownField: true },
+  ])
+    assert.throws(() =>
+      googleToChat({ ...request, ...change }, "fixture", true),
+    );
+  // ADR 0013: Google-only hints are ignored and foreign thought signatures
+  // carry no translatable content, so they no longer fail the request.
+  for (const change of [
+    { generationConfig: { topK: 5 } },
     {
       contents: [
         {
@@ -183,7 +194,7 @@ void test("Google function identities and result pairing survive Chat conversion
       ],
     },
   ])
-    assert.throws(() =>
+    assert.doesNotThrow(() =>
       googleToChat({ ...request, ...change }, "fixture", true),
     );
 });
@@ -304,7 +315,7 @@ void test(
     const response = await request(body),
       text = await response.text();
     assert.equal(response.status, 200);
-    assert.match(text, /response.completed/);
+    assert.match(text, /response\.completed/);
     assert.match(text, /你好/);
     assert.match(text, /文档/);
     assert.match(text, /"input_tokens":3/);
@@ -330,6 +341,8 @@ for (const adapter of ["codex", "gemini"] as const)
           protocol: "openai-completions",
           baseUrl: "http://127.0.0.1:1/v1",
           apiKey: { kind: "env", value: "FIXTURE_KEY" },
+          // ADR 0013: engines see the configured alias, not the upstream id.
+          modelAlias: "fixture",
         },
       },
     });
@@ -394,7 +407,7 @@ for (const adapter of ["codex", "gemini"] as const)
   });
 
 void test(
-  "upstream cancellation is observed before Run reuse and incomplete streams never complete",
+  "upstream cancellation is observed before Run reuse; only a truncated connection fails a stream",
   { timeout: 10000 },
   async (t) => {
     const received = Promise.withResolvers<void>(),
@@ -405,11 +418,15 @@ void test(
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.write(
         'data: {"choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":null}]}\n\n',
+        () => {
+          if (responseCount === 2)
+            setTimeout(() => response.destroy(), 50).unref();
+        },
       );
       if (responseCount === 1) {
         response.once("close", () => aborted.resolve());
         received.resolve();
-      } else response.end();
+      } else if (responseCount === 3) response.end();
     });
     const controller = new AbortController();
     bridge.beginRun(controller.signal);
@@ -425,14 +442,19 @@ void test(
     await aborted.promise;
     await reading;
     bridge.beginRun(new AbortController().signal);
-    const second = await request({
-      model: "fixture",
-      input: "short",
-      stream: true,
-    });
-    const text = await second.text();
-    assert.match(text, /response.failed/);
-    assert.doesNotMatch(text, /response.completed/);
+    // A connection closed before the HTTP body completed is not a completion.
+    const truncated = await (
+      await request({ model: "fixture", input: "short", stream: true })
+    ).text();
+    assert.match(truncated, /response\.failed/);
+    assert.doesNotMatch(truncated, /response\.completed/);
+    // ADR 0013: a body that ends normally without finish_reason or [DONE]
+    // completes with finish "stop" instead of failing as it did before.
+    const ended = await (
+      await request({ model: "fixture", input: "short", stream: true })
+    ).text();
+    assert.match(ended, /response\.completed/);
+    assert.match(ended, /partial/);
     await bridge.endRun();
   },
 );

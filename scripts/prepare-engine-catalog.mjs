@@ -178,7 +178,8 @@ engines.at(-1).command = [
   npm + "openclaw/openclaw.mjs",
 ];
 engines.at(-1).requiredFiles.push("scripts/launch-openclaw-bundled.mjs");
-engines.at(-1).acp = { initializeTimeoutMs: 60000 };
+// Covers the launcher's private Gateway readiness wait (150 s) plus the ACP bridge.
+engines.at(-1).acp = { initializeTimeoutMs: 180000 };
 for (const receipt of JSON.parse(
   await readFile(path.join(root, "binary-receipts.json"), "utf8"),
 )) {
@@ -205,6 +206,8 @@ for (const receipt of JSON.parse(
     const item = engines.at(-1);
     item.driver = "cli";
     item.command = [receipt.command[0], "--quiet", "--prompt", "{prompt}"];
+    // UTF-8 output comes from scripts/prepare-kimi.mjs: the frozen kimi.exe ignores
+    // PYTHONUTF8/PYTHONIOENCODING, so no Python variable is set here.
     item.cli = { inputMode: "argv", maxOutputBytes: 1048576 };
     item.configuration.env = { KIMI_MODEL_MAX_CONTEXT_SIZE: "1048576" };
     item.notes = [

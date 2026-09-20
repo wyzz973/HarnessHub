@@ -20,6 +20,11 @@ import Fastify, { type FastifyError } from "fastify";
 import swagger from "@fastify/swagger";
 import type { HubApplication } from "../application/service.js";
 import { HubError } from "../domain/errors.js";
+import type {
+  LogSink,
+  SessionLogReader,
+  SessionLogSource,
+} from "../domain/logging.js";
 import {
   createSessionSchema,
   decisionSchema,
@@ -33,6 +38,8 @@ import {
   engineResponseSchema,
   discoveryResponseSchema,
   registryStatusSchema,
+  sessionLogsQuerySchema,
+  sessionLogsResponseSchema,
 } from "../domain/schemas.js";
 import { isTerminal } from "../domain/types.js";
 import type {
@@ -59,6 +66,27 @@ export async function createGateway(
     workflows?: WorkflowService;
     observations?: ObservationService;
     configuration?: ConfigurationManagement;
+    /**
+     * Accept any Host header. Only set when the operator explicitly bound the
+     * Gateway to a non-loopback address (e.g. `--host 0.0.0.0` for a judge on
+     * another machine); there is no authentication, so the whole network can
+     * then drive the engines. Browser cross-origin requests stay rejected.
+     */
+    remoteHosts?: boolean;
+    /**
+     * Access log: one `http` record per finished response (method, route, path
+     * without query, status, duration, Session/Run id from the route). Bodies,
+     * headers and query strings are never logged. Successful GET/HEAD responses
+     * other than `GET /event` are polling and are written at debug level only;
+     * everything else is info. Streaming responses such as `GET /event` are
+     * recorded when they end.
+     */
+    log?: LogSink;
+    /**
+     * Reads a Session's engine log and its Gateway log lines for
+     * `GET /v1/sessions/{id}/logs`. Without it that route answers 503.
+     */
+    sessionLogs?: SessionLogReader;
   } = {},
 ) {
   const server = Fastify({
@@ -66,6 +94,59 @@ export async function createGateway(
     bodyLimit: 2 * 1024 * 1024,
     ajv: { customOptions: { removeAdditional: false } },
   });
+  const access = options.log;
+  if (access)
+    server.addHook("onResponse", async (request, reply) => {
+      const params =
+        request.params && typeof request.params === "object"
+          ? (request.params as Record<string, unknown>)
+          : {};
+      const id = (key: string) =>
+        typeof params[key] === "string" ? (params[key] as string) : undefined;
+      const route = request.routeOptions.url ?? null;
+      const record = {
+        method: request.method,
+        route,
+        path: request.url.split("?")[0]!.slice(0, 300),
+        status: reply.statusCode,
+        ms: Math.round(reply.elapsedTime),
+        id: id("id") ?? id("sessionId") ?? id("runId"),
+        remote: request.ip,
+      };
+      // Successful reads are mostly console and evaluator polling; at info level they
+      // would bury the records that explain a failure. The competition event stream is
+      // kept because its start and end show when the evaluator was listening.
+      const polling =
+        (request.method === "GET" || request.method === "HEAD") &&
+        reply.statusCode < 400 &&
+        route !== "/event";
+      if (polling) access.debug("http", record);
+      else access.info("http", record);
+    });
+  // Clients often send `Content-Type: application/json` on bodiless DELETE/POST.
+  // A zero-length body is treated as absent; any other body keeps Fastify's
+  // default parser, so invalid JSON and prototype poisoning are still rejected.
+  const parseJson = server.getDefaultJsonParser(
+    server.initialConfig.onProtoPoisoning ?? "error",
+    server.initialConfig.onConstructorPoisoning ?? "error",
+  );
+  server.addContentTypeParser<string>(
+    "application/json",
+    { parseAs: "string" },
+    (request, body, done) => {
+      if (body.length === 0) return done(null, undefined);
+      const parsed = parseJson(request, body, done);
+      // The default parser is callback-style; its declared type also admits a promise.
+      if (parsed instanceof Promise)
+        parsed.then(
+          (value: unknown) => done(null, value),
+          (error: unknown) =>
+            done(
+              error instanceof Error ? error : new Error("Invalid JSON body"),
+            ),
+        );
+    },
+  );
   server.addHook("onRoute", (route) => {
     const method = Array.isArray(route.method) ? route.method[0] : route.method;
     const apiPath = route.url.replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, "{$1}");
@@ -93,7 +174,10 @@ export async function createGateway(
   });
   server.addHook("onRequest", async (request) => {
     const host = request.headers.host ?? "";
-    if (!/^(localhost|127\.0\.0\.1|\[::1\])(?::[0-9]+)?$/.test(host))
+    if (
+      !options.remoteHosts &&
+      !/^(localhost|127\.0\.0\.1|\[::1\])(?::[0-9]+)?$/.test(host)
+    )
       throw new HubError(
         "LOCAL_ACCESS_REQUIRED",
         "Gateway requires a loopback Host",
@@ -354,6 +438,39 @@ export async function createGateway(
     async (request) => {
       app.getSession(request.params.id as SessionId);
       return { runs: app.runs(request.params.id as SessionId).slice(-200) };
+    },
+  );
+  server.get<{
+    Params: { id: string };
+    Querystring: { source: SessionLogSource; limit: number; after?: string };
+  }>(
+    "/v1/sessions/:id/logs",
+    {
+      schema: {
+        params: idParams,
+        querystring: sessionLogsQuerySchema,
+        response: responses(sessionLogsResponseSchema),
+      },
+    },
+    async (request) => {
+      const reader = options.sessionLogs;
+      if (!reader)
+        throw new HubError(
+          "LOGS_UNAVAILABLE",
+          "Diagnostic logs are not configured for this Gateway",
+          503,
+        );
+      // Unknown Sessions fail here; file paths are built from the stored id.
+      const session = app.getSession(request.params.id as SessionId);
+      return reader.read({
+        sessionId: session.id,
+        runIds: app.runs(session.id).map((run) => run.id),
+        source: request.query.source,
+        limit: request.query.limit,
+        ...(request.query.after === undefined
+          ? {}
+          : { after: request.query.after }),
+      });
     },
   );
   server.get<{

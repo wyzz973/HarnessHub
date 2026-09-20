@@ -1,5 +1,7 @@
 # 离线发行文件与分片恢复
 
+本页包括两类离线资产：下文的归档工具生成的发行包分片，以及 [Windows x64 离线开发包](#windows-x64-离线开发包与-solutionzip)（比赛 `solution.zip` 的来源）。
+
 [归档工具](../scripts/archive-offline.py)把已准备完成的 Windows 发行目录转换成可上传的离线资产。它使用 Python 标准库，不下载或安装依赖，不启动模型。发行目录必须带有与实际文件完全一致的 `bundle.json`，并已停止服务、移出运行状态。Windows 端用 [Restore-Offline.ps1](../distribution/Restore-Offline.ps1)校验和恢复，不需要安装 Python。
 
 ## 在开发机创建归档
@@ -82,3 +84,15 @@ python -I -B scripts/check-archive-offline.py
 ```
 
 这些测试只证明归档和恢复工具的行为。实际发行包仍需独立执行 `create`、`verify` 和引擎验收；合成通过不能记作某个最终发行包已压缩、上传或通过运行测试。
+
+## Windows x64 离线开发包与 solution.zip
+
+离线开发包由 [kit 构建脚本](../scripts/build-offline-source-kit.ps1) 在联网的构建机上生成，内容为：可编辑源码 `HarnessHub/`（含 hoisted、复制方式物化的 `node_modules`）、Node 24.20.0 x64 与 pnpm 10.12.3（`tools/`）、离线 `pnpm-store/`、开源版固定引擎 `prepared/win32-x64/`、上游源码快照与清单、`INSTRUCTION.md`、`README-OFFLINE.md`，以及 `Setup-Competition-Offline.cmd`、`Start-Competition.cmd` 和开发用 `Build-HarnessHub.cmd`、`Test-HarnessHub.cmd`、`Reinstall-Offline.cmd`。仓库根目录的 `.tmp`、`.tools`、`data` 等运行数据不复制，因此准备阶段下载的厂商归档不会进入开发包。
+
+- **Setup-Competition-Offline.cmd** 用包内 Node 运行 [competition-offline.mjs](../scripts/competition-offline.mjs) `setup`：检查 Windows x64、Node/pnpm 版本、离线包完整性与引擎必需文件和 4 GiB 可用空间；`node_modules` 缺失（或传 `--reinstall`）时从 `pnpm-store` 离线恢复；清理后重新编译 Gateway 与控制台；以 `package-bundle.mjs --runtime-only` 和本地 prepared 目录打包，再叠加比赛入口；运行不调用模型的启动自检并删除自检产生的 state；最后发布为 `competition\`，旧布局改名为 `competition.previous-<时间>`。所有子进程使用离线模式，npm/pnpm 的 registry 与代理指向 `127.0.0.1:9`，Corepack 禁止联网，任何下载尝试都会失败。评测机 PATH 中没有 Node 和 pnpm，setup 先生成 `tools\shims\pnpm.cmd` 并把它放在子进程 PATH 最前面，包脚本里嵌套的 `pnpm`（如 `build:console`）因此使用包内 pnpm 与 Node。日志在 `logs\`。
+- **Start-Competition.cmd** 要求 `AGENT_ENGINE`，未设置时以退出码 2 结束并列出可用引擎；其余参数（`--port`、`--host`、`--console-port`、`--no-console`、`--open`）原样传给 `competition\gateway.cmd`。
+- **INSTRUCTION.md** 即 [distribution/INSTRUCTION.md](../distribution/INSTRUCTION.md)，是评测方执行说明。`solution.zip` 的结构为 `solution/INSTRUCTION.md` 加 `solution/code/`，`code` 为一份干净解压的开发包全部内容（不含 `competition\`、`logs\`）。在开发包所在目录执行 `robocopy <开发包目录> solution\code /E`，复制 `solution\code\INSTRUCTION.md` 到 `solution\`，再用 `tar.exe -a -c -f solution.zip solution` 打包。
+
+[发布 workflow](../.github/workflows/publish-offline-dev-release.yml) 与 x64 完整包使用相同的触发路径和并发取消规则，发布目标依次取手动输入、仓库变量 `OFFLINE_DEV_RELEASE_TAG` 与 `offline-dev-latest`。它从源码生成开发包并压缩为 ZIP，解压到含空格的新目录 `HH offline proof\solution\code`，在 registry/代理指向不可达地址、Corepack 禁网、PATH 不含 Node/pnpm/Git，并尽力为包内 Node 添加出站防火墙阻断的条件下执行 `Setup-Competition-Offline.cmd --reinstall`；随后检查运行布局、确认未设置 `AGENT_ENGINE` 时 `Start-Competition.cmd` 退出码为 2 并列出引擎，并以 `Start-Competition.cmd` 为入口对 opencode、hermes 跑一次模拟模型验收（仅供参考，不阻断发布）。通过后把 ZIP 用 7-Zip 分为 1500 MB 的 `.7z.001`、`.7z.002` 等分卷，连同 `parts.sha256`、`DOWNLOAD-README.txt` 和 `.build.json` 以暂存名上传后替换，并删除旧版本多出的分卷。
+
+使用者下载全部分卷到同一目录，可按 `parts.sha256` 核对，用 7-Zip 解开 `.7z.001` 得到 ZIP，再解压到较短路径（如 `tar.exe -xf harnesshub-offline-dev-windows-x64.zip -C D:\hh\solution\code`）后按 INSTRUCTION.md 执行。CI 中的离线证明只说明开发包在 GitHub windows-latest 上可离线生成比赛布局；评测机的真实模型、杀毒软件与路径条件仍需现场确认。

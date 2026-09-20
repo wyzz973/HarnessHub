@@ -33,15 +33,19 @@ curl -s -X POST http://127.0.0.1:3180/v1/sessions \
 
 注册字段为 `id`、`driver`、`command`，以及可选的 `enabled`、`model`、`credentialEnv`、`maxConcurrency`、`cli`、`acp`、`configuration`。独立模型/Provider、密钥引用、Skills、MCP 及校验见 [引擎配置](engine-configuration.md)。全部字段由 [公共 schema](../src/domain/schemas.ts)约束并进入生成的 OpenAPI。未知字段包括嵌套拼写错误直接失败，不会被删除后偷偷使用默认值。禁用使用完整注册配置并设置 `enabled:false`。`fake/default/discover/registry/reload` 是保留 ID。
 
+配置了 [统一模型](engine-configuration.md#统一模型) 时，登记接口仍保存提交的原始配置，但 `model`、Provider、`credentialEnv` 和引擎级 `secretEnv` 会按统一模型覆盖或移除；无法经模型网关接入的引擎会被停用。`POST/PUT` 的响应和 `GET /v1/engines` 返回生效后的配置，原因见 `GET /v1/harness/model`。
+
 ## 配置更新与持久化
 
 文件中的 YAML/JSON 引擎配置作为基础目录，API 登记是持久 overlay，同 ID 时 API 配置优先。DELETE 保存移除标记，因此文件 reload 或服务重启不会让已移除引擎重新出现；再次 POST/PUT 可以重新启用。文件更新只改变未被 API 覆盖的条目。要替换 API 管理的条目，继续使用 PUT，不靠修改其基础文件副本。
 
 每次写入先在 Gateway 所有的 SQLite 提交 `runtime_metadata.engine_catalog` 的 version 2 数据（兼容读取并升级 version 1），再发布内存目录；包含 overlay、默认选择和完整历史执行 revision。Session/Run 继续只保存安全配置快照与命令 hash。既有数据库在首次新版启动时增加该 metadata key，不修改已有记录或 `user_version`；未知 catalog 版本或内容 hash 不匹配明确拒绝启动。
 
-启动时显式 `AGENT_ENGINE` 在合并持久目录后校验，并保存为新的默认选择；之后 API 可以更新它。没有显式启动选择时，先用已保存默认，再用配置默认；均未选择时取首个启用引擎。已选择的默认引擎被移除或禁用后，无 `engineId` 的新 Session 返回 `ENGINE_UNAVAILABLE`，需要显式选定可用引擎，避免自动改派。
+配置统一模型时，文件和 overlay 中保存的仍是原始登记，Runtime 使用的是应用统一模型后的 revision。发布时，原始 revision 和生效 revision 都写入历史，因此已固定的 Session 在重启后仍能解析。文件加载、热加载、API 登记、工具包 apply、overlay 恢复和 `PUT /v1/harness/model` 都会重新计算生效 revision；已有 Session 不迁移。未配置统一模型时，生效 revision 就是原始 revision，与旧行为相同。
 
-使用 `--config` 时每 500 ms 检查文件变化，支持编辑器的原子替换保存。完整解析和校验成功才应用；失败保留最后有效配置，错误码可从 registry 状态查询。Workspace、并发总额、Worker 数、期限默认等部署设置仍在启动时固定；修改这些字段的 reload 返回 `CONFIG_RESTART_REQUIRED`，该次引擎修改也不部分生效。仅更新引擎及其默认选择可热加载。
+启动时显式 `AGENT_ENGINE` 在合并持久目录后校验，并保存为新的默认选择；之后 API 可以更新它。没有显式启动选择时，先用已保存默认，再用配置默认；均未选择时取首个启用引擎。已选择的默认引擎被移除或禁用后，无 `engineId` 的新 Session 返回 `ENGINE_UNAVAILABLE`，需要显式选定可用引擎，避免自动改派。比赛模式下，启动引擎不可用（包括被统一模型停用）时 Gateway 直接启动失败并给出原因。源码入口配置了统一模型、但配置中没有启动引擎时，Gateway 会按内置发现配方把本机安装的同名引擎登记为基础条目。
+
+使用 `--config` 时每 500 ms 检查文件变化，支持编辑器的原子替换保存。完整解析和校验成功才应用；失败保留最后有效配置，错误码可从 registry 状态查询。Workspace、并发总额、Worker 数、期限默认和配置文件顶层统一模型 `model` 等部署设置仍在启动时固定；修改这些字段的 reload 返回 `CONFIG_RESTART_REQUIRED`，该次引擎修改也不部分生效。仅更新引擎及其默认选择可热加载。
 
 在活进程内更新、禁用或移除引擎不会迁移旧 Session，活动及排队 Run 继续解析原 `engineId + profileRevision`。旧 revision 中的命令、模型选择及限制保持不变。恢复仍按 Driver 自身契约：未显式启用恢复的 ACP Profile 在重启时关闭 Session；启用后的条件和 DSH 实证见 [严格恢复](session-recovery.md)；CLI 每轮无上下文，历史命令 revision 可继续使用。这不等于跨引擎迁移或 ACP 上下文恢复。
 

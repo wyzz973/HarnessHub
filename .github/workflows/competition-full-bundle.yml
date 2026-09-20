@@ -1,0 +1,127 @@
+name: Competition full bundle
+
+on:
+  push:
+    branches:
+      - feat/competition-gateway-api
+    paths:
+      - src/competition-bundle-main.ts
+      - scripts/build-competition-full-bundle.mjs
+      - .github/workflows/competition-full-bundle.yml
+  workflow_dispatch:
+
+jobs:
+  windows-arm64-full-bundle:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: Install and build current Gateway
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Download verified ARM64 engine bundle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $asset = "https://github.com/wyzz973/HarnessHub/releases/download/offline-win11-arm64-2026-09-07/HarnessHub-OpenSource-Windows-ARM64.zip"
+          $zip = Join-Path $env:RUNNER_TEMP "HarnessHub-OpenSource-Windows-ARM64.zip"
+          curl.exe -L --fail --retry 3 --retry-delay 3 --output $zip $asset
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to download the pinned ARM64 engine bundle"
+          }
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
+          $expected = "0033376482a02b3395e427f0cd6fbf0a52f72a263c1d13d27b1344fddf13d78a"
+          if ($actual -ne $expected) {
+            throw "Pinned engine bundle SHA256 mismatch: $actual"
+          }
+          "BASE_BUNDLE_ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Extract base bundle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $extract = Join-Path $env:RUNNER_TEMP "competition-full-base"
+          Remove-Item -Recurse -Force $extract -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $extract | Out-Null
+          $sevenZip = Join-Path $env:ProgramFiles "7-Zip\7z.exe"
+          if (-not (Test-Path -LiteralPath $sevenZip -PathType Leaf)) {
+            throw "7-Zip is not available on this runner"
+          }
+          & $sevenZip x -y "-o$extract" $env:BASE_BUNDLE_ZIP | Out-Host
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to extract pinned engine bundle with 7-Zip"
+          }
+          $matches = @(Get-ChildItem -LiteralPath $extract -Recurse -File -Filter bundle.json)
+          if ($matches.Count -ne 1) {
+            throw "Expected exactly one portable bundle.json, found $($matches.Count)"
+          }
+          $root = $matches[0].Directory.FullName
+          "FULL_BUNDLE_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Overlay competition Gateway and refresh integrity manifest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          node scripts/build-competition-full-bundle.mjs --bundle "$env:FULL_BUNDLE_ROOT"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Competition bundle overlay failed"
+          }
+
+      - name: Validate final bundle structure
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = $env:FULL_BUNDLE_ROOT
+          foreach ($required in @(
+            "bundle.json",
+            "runtime\node.exe",
+            "hub.cmd",
+            "Start.cmd",
+            "Start-Competition.cmd",
+            "gateway.cmd",
+            "dist\src\main.js",
+            "dist\src\competition-bundle-main.js",
+            "README-COMPETITION.txt"
+          )) {
+            if (-not (Test-Path -LiteralPath (Join-Path $root $required) -PathType Leaf)) {
+              throw "Full bundle missing required file: $required"
+            }
+          }
+          $manifest = Get-Content -Raw -LiteralPath (Join-Path $root "bundle.json") | ConvertFrom-Json
+          if ($manifest.platform -ne "win32" -or $manifest.arch -ne "arm64" -or $manifest.nodeVersion -ne "24.20.0") {
+            throw "Unexpected full bundle runtime metadata"
+          }
+          $ids = @($manifest.engines | ForEach-Object { $_.id })
+          foreach ($id in @("codex", "gemini", "qwen", "pi", "mimo", "dsh", "openclaw", "kimi", "opencode", "hermes")) {
+            if ($ids -notcontains $id) {
+              throw "Full bundle is missing engine: $id"
+            }
+          }
+          $inventory = @($manifest.files | ForEach-Object { $_.path })
+          foreach ($entry in @("Start-Competition.cmd", "gateway.cmd", "README-COMPETITION.txt", "dist/src/competition-bundle-main.js")) {
+            if ($inventory -notcontains $entry) {
+              throw "Integrity manifest is missing: $entry"
+            }
+          }
+          Write-Host "Competition Full Bundle static validation passed with $($manifest.files.Count) files and $($ids.Count) engine templates."
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: harnesshub-competition-full-windows-arm64
+          path: ${{ env.FULL_BUNDLE_ROOT }}
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 1

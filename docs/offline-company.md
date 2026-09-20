@@ -1,6 +1,10 @@
-# 公司 Windows ARM64 离线交接
+# 公司 Windows 离线交接
 
-目标是 Windows 11 ARM64，模型 URL 只提供 Chat Completions。公司现有网关改动保留在内网；公共基线是 `1989d224b93f0344cae744444d656ad7519e8398`，适配分支是 `feat/offline-chat-completions`。
+模型 URL 只提供 Chat Completions，公司现有网关改动保留在内网。
+
+本文记录的是 2026-09-07 那一轮 **Windows 11 ARM64** 的交接内容（公共基线 `1989d224b93f0344cae744444d656ad7519e8398`，适配分支 `feat/offline-chat-completions`），保留作为历史依据。
+
+**当前交付走 x64**：运行包从 Release `competition-latest`、源码开发包从 `offline-dev-latest` 获取，统一模型只用环境变量配置，入口与排障见 [交接说明](handoff.md)与 [INSTRUCTION.md](../distribution/INSTRUCTION.md)；给公司本地 Agent 的上手材料是 [交接 Skill](../skills/harnesshub-company-gateway/SKILL.md)。下表的 ARM64 包与 `feat/offline-chat-completions` 分支不要与当前 x64 交付混用。
 
 ## 交付内容
 
@@ -18,11 +22,17 @@ Release 附件的完整校验、分片重组及系统 PowerShell 解压流程见
 
 ## 内网启动
 
-将完整包带入内网，按随包 README 启动。先复制 `examples/company-chat.json` 到公司私有配置位置，填写实际模型、base URL 和 Kimi 上下文窗口。密钥使用 `COMPANY_MODEL_API_KEY` 环境引用或 Windows 加密引用，不放入公共 JSON。执行 `hub.cmd configure --file <私有配置绝对路径>`，再执行 `Start.cmd`。
+将完整包带入内网，按随包 README 启动。所有引擎只使用 HarnessHub 统一模型，不使用引擎自带的账号、订阅或各自的 Provider。以下三种方式任选其一，优先级和字段规则见 [统一模型](engine-configuration.md#统一模型)：
 
-`hub.cmd doctor --full` 检查清单和文件，`hub.cmd smoke` 只检查程序/协议可启动，不证明模型有效或任务正确。配置变化后重启发行服务并创建新 Session；已保存的控制台 overlay 和历史不会被配置文件偷偷覆盖。
+1. 执行 `hub.cmd model set --model <公司模型 ID> --base-url <公司网关 /v1 地址> --api-key-env COMPANY_MODEL_API_KEY`，可追加 `--context-window N`、`--max-output-tokens N`、`--header NAME=VALUE`。命令写入 `state/harness-model.json`。
+2. 复制 `examples/company-chat.json` 到公司私有配置位置，填写顶层 `model` 的模型 ID、`baseUrl`，以及 Kimi 的上下文窗口，再执行 `hub.cmd configure --file <私有配置绝对路径>`。
+3. 由评测系统设置 `HARNESSHUB_MODEL`、`HARNESSHUB_MODEL_BASE_URL` 和 `HARNESSHUB_MODEL_API_KEY`。这种方式只对本次进程生效，并且优先于前两种。
 
-Codex/Gemini 的本地 Driver bridge 将支持的文本/函数工具协议转为 Chat Completions，限制见 [ADR 0011](decisions/0011-chat-completions-bridge.md)。公司自有的鉴权、模型名、附加 header 和网关差异在公司现有实现上合并；公司真实模型测试须按公司授权额度另行执行。
+密钥只放在 `COMPANY_MODEL_API_KEY` 等环境变量或 Windows 加密引用中，不写入公共 JSON。公司网关要求的附加请求头：非秘密值写入 `provider.headers`，秘密值写入 `provider.secretHeaders` 引用。启动前执行 `hub.cmd model show`，确认生效来源和各引擎状态；包内如果含有 Cursor、Antigravity、Kiro、Qoder，它们会显示为停用。确认后执行 `Start.cmd`。
+
+`hub.cmd doctor --full` 检查清单和文件，并显示统一模型状态；`hub.cmd smoke` 只检查程序和协议能否启动。这两个命令都不调用模型，不能证明模型有效或任务正确。修改 settings 或 `hub.cmd model set` 后，需要重启发行服务并创建新 Session；控制台的统一模型页（`PUT /v1/harness/model`）对运行中的服务立即生效，已有 Session 保留原 revision。已保存的控制台 overlay 和历史不会被配置文件偷偷覆盖，但配置统一模型后，overlay 中引擎的模型和 Provider 同样会被统一模型覆盖。
+
+所有引擎都经 Worker 内的 [统一模型网关](model-gateway.md) 访问公司模型：Codex 的 Responses、Claude Code 的 Anthropic Messages、Gemini 的 Google 协议和其他引擎的 Chat Completions 都转换为公司的流式 Chat Completions，决定见 [ADR 0013](decisions/0013-unified-model-gateway.md)。公司网关的其他差异在公司现有实现上合并；公司真实模型测试须按公司授权额度另行执行。`POST /v1/harness/model/test` 会实际调用模型。
 
 ## 工具与后续开发
 

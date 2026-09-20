@@ -30,19 +30,24 @@ HARNESSHUB_GATEWAY_URL=http://127.0.0.1:3180 pnpm start:console
 
 页面位于 `http://127.0.0.1:3330`。开发页面使用 `HARNESSHUB_GATEWAY_URL=http://127.0.0.1:3180 pnpm dev:console`。未设置环境变量时代理保留历史兼容默认 `http://127.0.0.1:3182`，新环境应显式指定。真实引擎的自有配置按 [配置说明](../docs/engine-management.md)准备。
 
-demo需将“执行模式”切为“直接执行”，选择fake后发送文本；页面默认“自动规划”，该模式会排除fake，需要另行登记真实引擎。
+demo 默认“直接执行”，选择 fake 后发送文本即可；“自动规划”会排除 fake，需要另行登记真实引擎。
 
 历史验收服务使用3184与忽略的`engines/console.local.yaml`，它不随仓库提供，不是首次运行前提。macOS的Keychain helper需要Xcode Command Line Tools；通用前置条件见 [快速开始](../README.md#快速开始不需要-api-key)。前后端均绑定loopback。
 
+Windows 完整包的比赛入口 `gateway.cmd` 会同时启动本控制台，参数与故障隔离见 [比赛入口自带控制台](../docs/getting-started.md#比赛入口自带控制台)。
+
 ## 页面与状态
 
-- 任务工作台：自动规划/直接执行、引擎和工作区选择、任务历史、流式正文、思考展开、工具详情和实际权限请求。
+- 状态条：每 5 秒探测 `/health/ready`，显示运行模式、比赛引擎、Full Access 与统一模型（来自 `/v1/runtime/info`、`/v1/harness/model`）。接口不存在（Fastify 路由 404）时显示“当前 Gateway 不支持”，业务 404 仍按错误显示。
+- 任务工作台：默认直接执行，另有自动规划；比赛模式默认选中比赛引擎。会话与历史每 3 秒同步（页面可见时），比赛接口创建的会话带“比赛 API”标记且只读；继续对话时即使会话不在最近 200 条内也沿用原会话。工具调用显示为可读卡片，原始 JSON 折叠；还有流式正文、思考展开和实际权限请求。
 - 自动计划：先展示步骤、依赖、产物与选择依据，确认后执行；失败或取消不偷偷重试。
-- 执行详情：模型、阶段耗时、token、费用来源、安装版本、覆盖缺口、产物下载和轨迹导出。
-- 引擎管理：进入页面主动发现，可见期间每分钟及重新可见时刷新；注册、启停、默认选择和热加载。识别清单与各引擎接入方式见 [本机发现](../docs/engine-discovery.md)，安装证据不等于模型可用。每行支持 [独立配置与检查](../docs/engine-configuration.md)，可编辑模型、Provider、Keychain/环境/文件密钥引用、Skills 和 MCP。
+- 执行详情：模型、阶段耗时、token、费用来源、安装版本、覆盖缺口、产物下载和轨迹导出；`model.call` 记录列表及“已记录的调用发往哪个上游模型”的汇总，只依据已提交事件，不推断未经网关的调用。
+- 统一模型：编辑 `HarnessModel` 并 `PUT /v1/harness/model`；API Key 与敏感请求头先经 `POST /v1/secrets` 写入系统安全存储，只提交引用；“测试连接”调用 `POST /v1/harness/model/test`，在所选引擎上跑一个真实短任务并可跳到该 Run。字段规则见 [统一模型](../docs/engine-configuration.md#统一模型)。
+- 工具与插件：`GET /v1/tool-packs` 列出安装包，绑定关系由各引擎当前配置中的包内容 digest 推导；导入、应用到全部/所选引擎和解除绑定分别调用 `POST /v1/tool-packs/import`、`POST /v1/tool-packs/apply`（`engineIds`）和 `DELETE /v1/tool-packs/{id}/{version}/bindings`，展示逐引擎结果与 warnings。
+- 引擎管理：进入页面主动发现，可见期间每分钟及重新可见时刷新；注册、启停、默认选择和热加载。识别清单与各引擎接入方式见 [本机发现](../docs/engine-discovery.md)，安装证据不等于模型可用。每行支持 [独立配置与检查](../docs/engine-configuration.md)，可编辑模型、Provider、Keychain/环境/文件密钥引用、Skills 和 MCP；配置统一模型后模型与 Provider 只读并原样保存。
 - 运行观测：真实状态计数、负载、p50/p95、已知 token 与样本覆盖、按 Run 追溯。
 
-当前任务 ID 保存在 URL 中，刷新从持久数据恢复。SSE 使用真实命名事件与序号，40ms 合并显示更新；网络断开时以事件游标和持久查询追赶。关闭页面不取消任务，停止按钮才发出取消请求。没有生成静态伪任务、伪曲线或用零代替未知用量。
+当前任务 ID 保存在 URL 中，刷新从持久数据恢复。SSE 使用真实命名事件与序号，40ms 合并显示更新；流结束（Gateway 已提交终态）时立即刷新该会话，网络断开时以事件游标和持久查询追赶；较早发出的刷新结果不会覆盖较新的视图。关闭页面不取消任务，停止按钮才发出取消请求。没有生成静态伪任务、伪曲线或用零代替未知用量。
 
 界面使用浅色主题、清晰焦点、中文标签和克制过渡，尊重 `prefers-reduced-motion`，窄屏改用导航菜单与抽屉。控制台是本机应用，尚未加入远端多用户认证、完整账单对账或全平台桌面发行。
 

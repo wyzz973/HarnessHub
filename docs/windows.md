@@ -1,8 +1,8 @@
 # Windows 安装、启动与能力范围
 
-项目支持 Windows 原生 Node，使用同一 Gateway、SQLite、Worker、ACP/CLI Driver 和 Web 控制台。当前本机验收为 Windows 11 ARM64；Windows 10、Windows x64 和其他引擎的真实模型验收须分别取得证据。
+项目支持 Windows 原生 Node，使用同一 Gateway、SQLite、Worker、ACP/CLI Driver 和 Web 控制台。当前本机验收为 Windows 11 ARM64；Windows x64 由 CI 在 GitHub windows-latest 上验收：模拟模型下 10 个引擎全部通过，真实模型（替身）下 8/10 通过且其余两个的根因已修复复测，另在无任何运行时、无网络的干净容器中通过完整性校验与十引擎矩阵，证据与未验证项见 [Windows x64 验收](verification/2026-09-20-windows-x64.md)。Windows 10、公司真实模型与真实桌面办公操作仍须分别取得证据。
 
-以下安装步骤用于开发机。裁判机免安装运行使用 [Windows 便携发布包](portable-bundle.md)；引擎程序预先随包准备，模型 API 与原生账号要求仍按各引擎能力配置。
+以下安装步骤用于开发机。裁判机免安装运行使用 [Windows 便携发布包](portable-bundle.md)；比赛交付的离线 Windows x64 评测机使用 [离线开发包](offline-artifacts.md#windows-x64-离线开发包与-solutionzip)：执行 `Setup-Competition-Offline.cmd` 离线生成比赛布局，设置 `HARNESSHUB_MODEL`、`HARNESSHUB_MODEL_BASE_URL`、`HARNESSHUB_MODEL_API_KEY` 与 `AGENT_ENGINE` 后运行 `Start-Competition.cmd`，步骤见 [INSTRUCTION.md](../distribution/INSTRUCTION.md)。配置统一模型后，所有引擎只经 HarnessHub 使用该模型，不使用各自的 API Key、登录或订阅。
 
 ## 安装与启动
 
@@ -51,7 +51,7 @@ Adapter 位于独立本地目录，不在任务执行阶段下载。再次扫描
 
 | 能力 | Windows 实现 |
 |---|---|
-| 引擎发现和配置 | PATH/PATHEXT、常见用户目录、JSON manifest；原生/批处理/PowerShell 启动；配置环境传递 |
+| 引擎发现和配置 | PATH/PATHEXT、常见用户目录、JSON manifest；原生/批处理/PowerShell 启动；配置环境传递（Worker 系统变量白名单含 `PSModulePath`，见 [运行时说明](runtime-api.md#本地配置)） |
 | 文本、权限、队列、期限、取消 | 同一正式 Gateway/Worker 契约，保留实际事件及终态 |
 | 进程清理和崩溃恢复 | 原生 Job Object，执行前归属、后代终止、身份匹配恢复；旧无证据 lease 隔离 |
 | 文件产物和评测 | 中文/空格路径、DACL、普通文件与 junction 检查、读取锁、不可变字节和 hash |
@@ -65,6 +65,8 @@ WMI、系统服务、计划任务或外部 broker 启动的进程不属于普通
 ## 验证
 
 `pnpm check` 包含固定运行时、lint/格式/边界、工具/单元/集成/smoke、API 文档与前端构建。`pnpm test:windows` 运行编译后的 Windows 专用组，在非 Windows 主机明确失败，不能把跨平台跳过当作 Windows 验收。GitHub CI 配置了 Ubuntu 和 Windows matrix，远端执行结果须另行核实。
+
+Windows x64 比赛交付另有两个 workflow，均不使用任何模型密钥：[x64 完整包](portable-bundle.md#比赛完整包windows-x64) 对解压后的 ZIP 做不调用模型的启动自检，并对 10 个引擎逐个以 `AGENT_ENGINE` 启动、接本地模拟公司模型（只收流式请求、要求回传推理内容）跑比赛接口验收；[离线开发包](offline-artifacts.md#windows-x64-离线开发包与-solutionzip) 在禁网条件下执行 `Setup-Competition-Offline.cmd` 并启动生成的布局。模拟模型结果只证明引擎启动、协议转换、流式、工具往返与完成判定，不等于真实模型或公司网关通过；真实模型须在本机用 `scripts/competition-matrix.mjs --scenario full` 另行验收。截至本次提交，这两个 workflow 尚未在 GitHub 上运行。
 
 创建文件 symlink 需要 Windows 授权或开发者模式；本次标准用户无此权限，相关专用测试会明确跳过。目录 junction、硬链接和其他文件边界仍实际执行。没有修改系统策略来绕过此限制。
 

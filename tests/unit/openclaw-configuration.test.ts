@@ -9,7 +9,11 @@ import type { RunId, SessionId } from "../../src/domain/types.js";
 
 void test("OpenClaw provider uses per-session state, native wire protocols, and env SecretRefs without persisting keys", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "hh-openclaw-provider-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  const gateways: { close(): Promise<void> }[] = [];
+  t.after(async () => {
+    for (const gateway of gateways) await gateway.close();
+    await rm(root, { recursive: true, force: true });
+  });
   for (const protocol of [
     "openai-completions",
     "openai-responses",
@@ -43,12 +47,17 @@ void test("OpenClaw provider uses per-session state, native wire protocols, and 
       },
       { CONTEST_KEY: secret },
     );
+    if (result.modelBridge) gateways.push(result.modelBridge);
+    // Chat providers reach the upstream only through the Session gateway.
+    const routed = protocol === "openai-completions";
+    assert.equal(Boolean(result.modelBridge), routed);
     const text = await readFile(result.env.OPENCLAW_CONFIG_PATH!, "utf8"),
       config = JSON.parse(text) as {
         models: {
           providers: {
             harnesshub: {
               api: string;
+              baseUrl: string;
               apiKey: unknown;
               models: { id: string }[];
             };
@@ -60,8 +69,20 @@ void test("OpenClaw provider uses per-session state, native wire protocols, and 
       result.env.OPENCLAW_STATE_DIR,
       join(stateDir, "configuration"),
     );
-    assert.equal(result.env.HARNESSHUB_PROVIDER_KEY, secret);
-    assert.equal(result.model, "harnesshub/contest-model");
+    assert.equal(
+      result.env.HARNESSHUB_PROVIDER_KEY,
+      routed ? result.modelBridge!.token : secret,
+    );
+    assert.equal(
+      result.model,
+      routed ? "harnesshub/harnesshub-model" : "harnesshub/contest-model",
+    );
+    assert.equal(
+      config.models.providers.harnesshub.baseUrl,
+      routed
+        ? `${result.modelBridge!.baseUrl}/v1`
+        : "https://api.example.invalid/v1",
+    );
     assert.equal(
       config.models.providers.harnesshub.api,
       protocol === "anthropic" ? "anthropic-messages" : protocol,

@@ -2,9 +2,14 @@ import {
   prepareConfiguration,
   type PreparedConfiguration,
 } from "../drivers/configuration/prepare.js";
+import type { ModelCallRecord } from "../drivers/chat-completions/gateway.js";
 import { HubError } from "../domain/errors.js";
 import type { ExecutionSpec } from "../domain/ports.js";
-import type { PermissionId, PermissionOption } from "../domain/types.js";
+import type {
+  DriverResult,
+  PermissionId,
+  PermissionOption,
+} from "../domain/types.js";
 import type { Driver, DriverChannel } from "../drivers/driver.js";
 import { FakeDriver } from "../drivers/fake/driver.js";
 import { AcpDriver } from "../drivers/acp/driver.js";
@@ -15,6 +20,24 @@ import {
   parseHostCommand,
   type WorkerPayload,
 } from "../domain/ipc.js";
+import {
+  appendDiagnostic,
+  createRedactor,
+  publicErrorMessage,
+} from "./diagnostics.js";
+import {
+  modelCallEventData,
+  RunObservation,
+  settleGatewayResult,
+} from "./outcome.js";
+import path from "node:path";
+import {
+  excerpt,
+  LOG_LEVEL_ENVIRONMENT,
+  parseLogLevel,
+  type LogLevel,
+} from "../domain/logging.js";
+import { JsonLogFile } from "../logging/json-log-file.js";
 
 interface PermissionWaiter {
   options: PermissionOption[];
@@ -34,12 +57,105 @@ interface Active {
   delivery: Promise<void>;
   permissions: Map<PermissionId, PermissionWaiter>;
   completion: Promise<void>;
+  observation: RunObservation;
+  /** `model.call` deliveries, awaited before the terminal result. */
+  modelEvents: Promise<void>[];
+  /** Set when the gateway Run scope ended; later call records are not attributable. */
+  sealed: boolean;
 }
 let active: Active | undefined;
 let driver: Driver | undefined;
 let preparation: PreparedConfiguration | undefined;
 let anchor: string | undefined;
 let shuttingDown: Promise<void> | undefined;
+/** Secret values resolved for this Session; never serialized. */
+const secrets = new Set<string>();
+const redact = createRedactor(secrets);
+
+/**
+ * The Gateway validated the level before passing it to this Worker; a value it
+ * could not have sent falls back to `info` and is recorded in the engine log.
+ */
+let levelProblem: string | undefined;
+const logLevel: LogLevel = (() => {
+  try {
+    return parseLogLevel(process.env[LOG_LEVEL_ENVIRONMENT]);
+  } catch (error) {
+    levelProblem = error instanceof Error ? error.message : String(error);
+    return "info";
+  }
+})();
+/** Session engine log (`<stateDir>/diagnostics/engine.log`), opened by the first Run. */
+let engineLog: JsonLogFile | undefined;
+/** First engine log failure, reported once as a Run event. */
+let logFailure:
+  { file: string; message: string; reported: boolean } | undefined;
+
+function openEngineLog(spec: ExecutionSpec): JsonLogFile {
+  if (engineLog) return engineLog;
+  const file = path.join(spec.stateDir, "diagnostics", "engine.log");
+  engineLog = new JsonLogFile({
+    file,
+    level: logLevel,
+    redact,
+    onError: (error) => {
+      logFailure = {
+        file,
+        message: redact(error instanceof Error ? error.message : String(error)),
+        reported: false,
+      };
+    },
+  });
+  engineLog.info("worker.start", {
+    pid: process.pid,
+    sessionId: spec.sessionId,
+    engine: spec.profile.id,
+    revision: spec.profile.revision,
+    driver: spec.profile.driver,
+    logLevel,
+    node: process.version,
+    platform: `${process.platform}/${process.arch}`,
+  });
+  if (levelProblem)
+    engineLog.info("log.level_invalid", { message: levelProblem });
+  return engineLog;
+}
+
+/** Surface a failed engine log once through the Run's public event log. */
+async function reportLogFailure(owned: Active): Promise<void> {
+  if (!logFailure || logFailure.reported) return;
+  logFailure.reported = true;
+  await emit(owned, {
+    type: "event",
+    event: {
+      type: "diagnostics.log_failed",
+      data: { file: logFailure.file, message: logFailure.message },
+    },
+  });
+}
+
+/** Engine log fields of one gateway call: the `model.call` record plus Run attribution. */
+function modelCallLogFields(call: ModelCallRecord, runId: string | null) {
+  return {
+    id: call.id,
+    runId,
+    path: call.path,
+    inbound: call.inbound,
+    stream: call.stream,
+    requestedModel: call.requestedModel,
+    upstreamModel: call.upstreamModel,
+    status: call.status,
+    ok: call.ok,
+    ms: call.durationMs,
+    firstByteMs: call.firstByteMs,
+    finishReason: call.finishReason,
+    usage: call.usage ? { ...call.usage } : undefined,
+    toolCalls: call.toolCalls,
+    reasoning: call.reasoning ? { ...call.reasoning } : undefined,
+    adjusted: call.adjusted ? [...call.adjusted] : undefined,
+    error: call.error ? { ...call.error } : undefined,
+  };
+}
 
 function send(value: unknown): Promise<void> {
   assertMessageSize(value);
@@ -56,6 +172,7 @@ function send(value: unknown): Promise<void> {
 }
 
 function emit(owned: Active, payload: WorkerPayload): Promise<void> {
+  owned.observation.observe(payload);
   const delivered = owned.delivery.then(async () => {
     if (active !== owned) throw new Error("Execution ownership changed");
     const seq = ++owned.seq;
@@ -118,56 +235,194 @@ function createChannel(owned: Active): DriverChannel {
   };
 }
 
-async function execute(owned: Active, selected: Driver): Promise<void> {
-  try {
-    await emit(owned, { type: "started" });
-    preparation ??= await prepareConfiguration(owned.spec, process.env);
-    preparation.modelBridge?.beginRun(owned.abort.signal);
-    // This process belongs to one Session; no Gateway or other Worker's environment is changed.
-    Object.assign(process.env, preparation.env);
-    if (selected instanceof AcpDriver) {
-      selected.configureMcp(preparation.mcpServers);
-      selected.configureNativeModelSelection(
-        preparation.nativeModelSelection ?? false,
-      );
-    }
-    const executionSpec = {
-      ...owned.spec,
-      profile: {
-        ...owned.spec.profile,
-        command: preparation.command,
-        ...(preparation.model ? { model: preparation.model } : {}),
-      },
-      input: {
-        ...owned.spec.input,
-        text: preparation.instructionPrefix + owned.spec.input.text,
-      },
-    };
-    const result = await selected.execute(
-      executionSpec,
-      createChannel(owned),
-      owned.abort.signal,
-    );
-    await preparation.modelBridge?.endRun();
-    await emit(owned, { type: "result", result });
-  } catch (error) {
-    await preparation?.modelBridge?.endRun();
-    if (!process.connected) throw error;
-    // Public errors intentionally exclude backend stderr, credentials, and raw configuration.
-    await emit(owned, {
-      type: "result",
-      result: {
-        status: owned.abort.signal.aborted ? "cancelled" : "failed",
-        stopReason: owned.abort.signal.aborted ? "cancelled" : "driver_error",
-        error: {
-          code: error instanceof HubError ? error.code : "DRIVER_ERROR",
-          message:
-            error instanceof HubError
-              ? error.message
-              : "Engine execution failed; inspect the local engine configuration",
+/**
+ * Gateway `onCall` observer. Attributes a call to the active, unsealed Run and
+ * delivers it as a `model.call` event in IPC order; calls outside a Run cannot
+ * carry a Run identity and are not reported. Delivery failures reject the
+ * Run's delivery chain and are rethrown before the result is published.
+ */
+function recordModelCall(call: ModelCallRecord): void {
+  const owned = active;
+  engineLog?.info(
+    "model.call",
+    modelCallLogFields(call, owned && !owned.sealed ? owned.spec.runId : null),
+  );
+  if (!owned || owned.sealed) return;
+  owned.observation.recordCall(call);
+  const delivered = emit(owned, {
+    type: "event",
+    event: { type: "model.call", data: modelCallEventData(call, redact) },
+  });
+  void delivered.catch(() => undefined);
+  owned.modelEvents.push(delivered);
+}
+
+/** Remove inherited vendor credentials, then apply the prepared engine environment. */
+function applyEnvironment(prepared: PreparedConfiguration): void {
+  // This process belongs to one Session; no Gateway or other Worker's environment is changed.
+  const removed = new Set(
+    (prepared.unsetEnv ?? []).map((name) => name.toUpperCase()),
+  );
+  for (const name of Object.keys(process.env))
+    if (removed.has(name.toUpperCase())) delete process.env[name];
+  Object.assign(process.env, prepared.env);
+}
+
+/**
+ * Public result for an execution exception. HubError messages are public by
+ * construction; other errors publish their redacted real cause (at most 500
+ * characters) and append the full stack to the Session diagnostic log.
+ */
+async function failedResult(
+  owned: Active,
+  error: unknown,
+): Promise<DriverResult> {
+  const cancelled = owned.abort.signal.aborted;
+  engineLog?.info("run.error", {
+    runId: owned.spec.runId,
+    cancelled,
+    code: error instanceof HubError ? error.code : "DRIVER_ERROR",
+    message: publicErrorMessage(error, redact),
+    stackIn: error instanceof HubError ? null : "worker-errors.log",
+  });
+  if (!(error instanceof HubError))
+    try {
+      await appendDiagnostic(
+        owned.spec.stateDir,
+        {
+          runId: owned.spec.runId,
+          generation: owned.spec.generation,
+          error,
         },
-      },
+        redact,
+      );
+    } catch {
+      // The diagnostic copy is best-effort; its filesystem failure must not
+      // replace the execution error that is published below.
+    }
+  return {
+    status: cancelled ? "cancelled" : "failed",
+    stopReason: cancelled ? "cancelled" : "driver_error",
+    error: {
+      code: error instanceof HubError ? error.code : "DRIVER_ERROR",
+      message:
+        error instanceof HubError
+          ? error.message
+          : publicErrorMessage(error, redact),
+    },
+  };
+}
+
+/**
+ * End the gateway Run scope, then apply ADR 0013 result semantics. Upstream
+ * errors are read before the scope ends; every `model.call` delivery is
+ * awaited before the caller publishes the result.
+ */
+async function settleRun(
+  owned: Active,
+  result: DriverResult,
+): Promise<DriverResult> {
+  const gateway = preparation?.modelBridge;
+  let upstreamErrors: ModelCallRecord[] = [];
+  try {
+    if (gateway) upstreamErrors = gateway.runErrors();
+  } finally {
+    await gateway?.endRun();
+    owned.sealed = true;
+  }
+  await Promise.all(owned.modelEvents);
+  return gateway
+    ? settleGatewayResult(result, {
+        observation: owned.observation,
+        upstreamErrors,
+        cancelled: owned.abort.signal.aborted,
+        redact,
+      })
+    : result;
+}
+
+async function execute(owned: Active, selected: Driver): Promise<void> {
+  const started = performance.now();
+  const log = openEngineLog(owned.spec);
+  log.info("run.start", {
+    runId: owned.spec.runId,
+    generation: owned.spec.generation,
+    cwd: owned.spec.cwd,
+    timeoutMs: owned.spec.input.timeoutMs,
+    inputChars: owned.spec.input.text.length,
+    resumeBackendSession: owned.spec.backendSessionId ?? null,
+  });
+  log.debug("run.input", {
+    runId: owned.spec.runId,
+    text: excerpt(owned.spec.input.text),
+  });
+  try {
+    let result: DriverResult;
+    try {
+      await emit(owned, { type: "started" });
+      await reportLogFailure(owned);
+      const firstPreparation = !preparation;
+      preparation ??= await prepareConfiguration(owned.spec, process.env, {
+        onModelCall: recordModelCall,
+        ...(logLevel === "debug"
+          ? {
+              onModelPayload: (id, payload) =>
+                engineLog?.debug("model.payload", { id, ...payload }),
+            }
+          : {}),
+        secrets,
+      });
+      if (firstPreparation)
+        log.info("run.prepared", {
+          command: preparation.command,
+          model: preparation.model ?? null,
+          mcpServers: preparation.mcpServers.map((server) => server.name),
+          modelGateway: preparation.modelBridge?.baseUrl ?? null,
+          instructionPrefixChars: preparation.instructionPrefix.length,
+        });
+      preparation.modelBridge?.beginRun(owned.abort.signal);
+      applyEnvironment(preparation);
+      if (selected instanceof AcpDriver) {
+        selected.configureMcp(preparation.mcpServers);
+        selected.configureNativeModelSelection(
+          preparation.nativeModelSelection ?? false,
+        );
+      }
+      const executionSpec = {
+        ...owned.spec,
+        profile: {
+          ...owned.spec.profile,
+          command: preparation.command,
+          ...(preparation.model ? { model: preparation.model } : {}),
+        },
+        input: {
+          ...owned.spec.input,
+          text: preparation.instructionPrefix + owned.spec.input.text,
+        },
+      };
+      result = await selected.execute(
+        executionSpec,
+        createChannel(owned),
+        owned.abort.signal,
+      );
+    } catch (error) {
+      if (!process.connected) {
+        await preparation?.modelBridge?.endRun();
+        throw error;
+      }
+      result = await failedResult(owned, error);
+    }
+    const settled = await settleRun(owned, result);
+    log.info("run.finish", {
+      runId: owned.spec.runId,
+      status: settled.status,
+      stopReason: settled.stopReason ?? null,
+      error: settled.error ? { ...settled.error } : null,
+      outputChars: settled.output?.length ?? 0,
+      ms: Math.round(performance.now() - started),
     });
+    await reportLogFailure(owned);
+    await emit(owned, { type: "result", result: settled });
   } finally {
     for (const waiter of owned.permissions.values())
       waiter.reject(new Error("Execution ended"));
@@ -176,8 +431,12 @@ async function execute(owned: Active, selected: Driver): Promise<void> {
   }
 }
 
-function shutdown(): Promise<void> {
+function shutdown(reason = "shutdown"): Promise<void> {
   if (shuttingDown) return shuttingDown;
+  engineLog?.info("worker.stop", {
+    reason,
+    activeRunId: active?.spec.runId ?? null,
+  });
   shuttingDown = (async () => {
     const owned = active;
     if (owned) {
@@ -189,17 +448,26 @@ function shutdown(): Promise<void> {
     try {
       await driver?.close();
     } finally {
-      await preparation?.modelBridge?.close();
+      try {
+        await preparation?.modelBridge?.close();
+      } finally {
+        engineLog?.info("worker.stopped", { reason });
+        engineLog?.close();
+      }
     }
   })();
   return shuttingDown;
 }
 function fatal(): void {
+  engineLog?.info("worker.fatal", {
+    activeRunId: active?.spec.runId ?? null,
+    message: "Worker protocol or execution ownership failed; exiting with 70",
+  });
   if (active) {
     active.abort.abort();
     active.ack?.reject(new Error("Worker protocol failed"));
   }
-  void shutdown().then(
+  void shutdown("fatal").then(
     () => process.exit(70),
     () => process.exit(70),
   );
@@ -232,10 +500,10 @@ process.on("message", (raw: unknown) => {
             driver = new FakeDriver();
             break;
           case "acp":
-            driver = new AcpDriver();
+            driver = new AcpDriver(openEngineLog(command.spec));
             break;
           case "cli":
-            driver = new CliDriver();
+            driver = new CliDriver(openEngineLog(command.spec));
             break;
         }
       }
@@ -246,6 +514,9 @@ process.on("message", (raw: unknown) => {
         delivery: Promise.resolve(),
         permissions: new Map(),
         completion: Promise.resolve(),
+        observation: new RunObservation(),
+        modelEvents: [],
+        sealed: false,
       };
       active = owned;
       owned.completion = execute(owned, driver);
@@ -285,7 +556,7 @@ process.on("message", (raw: unknown) => {
 });
 
 process.once("disconnect", () => {
-  void shutdown().then(
+  void shutdown("parent-disconnected").then(
     () => process.exit(0),
     () => process.exit(71),
   );

@@ -1,15 +1,19 @@
 # 文档索引
 
-第一次使用从 [项目README](../README.md)和[使用指南](getting-started.md)开始；理解实现先读[架构导览](architecture.md)。架构约束以 [DESIGN.md](../DESIGN.md)为准，任务进度由 [TODO.md](../TODO.md)维护。
+第一次使用从 [项目README](../README.md)开始；接手运行或排障看 [交接说明](handoff.md)，本次发布的变化看 [变更记录](../CHANGELOG.md)；从源码开发看 [使用指南](getting-started.md)，理解实现先读[架构导览](architecture.md)。参加比赛先读 [比赛接口](competition-api.md)、[统一模型](engine-configuration.md#统一模型) 和 [统一模型网关](model-gateway.md)。架构约束以 [DESIGN.md](../DESIGN.md)为准，任务进度由 [TODO.md](../TODO.md)维护。
 
 ## 使用与实现
 
 | 文档 | 内容 |
 |---|---|
-| [使用指南](getting-started.md) | 新克隆、demo、端口、数据目录、真实引擎与排障 |
+| [使用指南](getting-started.md) | 新克隆、端口、数据目录、真实引擎与排障 |
+| [交接说明](handoff.md) | 状态、环境变量全集、日志位置、排障对照表、CI 与发布 |
+| [变更记录](../CHANGELOG.md) | 每次发布的新增、修复、变更与验证范围 |
 | [架构与实现导览](architecture.md) | 模块地图、Run处理链、配置与秘密、持久化与恢复 |
 | [API入口](api/README.md) | 共同约定、对象、幂等、流式与维护方法 |
-| [逐接口实现参考](api/reference.md) | 40个HTTP操作的输入/输出、调用链、副作用、错误与测试 |
+| [逐接口实现参考](api/reference.md) | 全部 HTTP 操作的输入/输出、调用链、副作用、错误与测试 |
+| [比赛接口](competition-api.md) | Agent 网关接口规范 v1.1 到实现的逐项映射、完成判定与调用示例 |
+| [比赛任务测试](competition-tasks.md) | 按评委数据格式跑办公任务、按最终状态判分与结果口径 |
 | [OpenAPI](api/openapi.json) | 从正式路由生成的可机读API契约 |
 | [控制台](../web/README.md) | 启动、页面状态、组件来源 |
 | [运行契约](runtime-api.md) | Gateway配置、Run/Session与执行边界 |
@@ -25,7 +29,8 @@
 |---|---|
 | [动态管理](engine-management.md) | 登记、文件+overlay、默认项与历史revision |
 | [发现](engine-discovery.md) | 16个已知Harness、标准模板、manifest与安装证据 |
-| [独立配置](engine-configuration.md) | Provider/模型/URL、秘密引用、Skills、MCP、配置检查 |
+| [独立配置](engine-configuration.md) | 统一模型（所有引擎只用一个模型）、Provider/模型/URL、秘密引用、Skills、MCP、配置检查 |
+| [统一模型网关](model-gateway.md) | Chat/Responses/Anthropic/Google 协议转换、上游规范化、推理回填、媒体与错误 |
 | [CLI Driver](cli-driver.md) | stdin/argv、文本输出、退出、取消与进程清理 |
 | [安装快照](engine-installation.md) | 文件hash与版本元数据的只读采集 |
 | [Pi](pi-engine.md) | 固定Adapter、已验证本机配置与限制 |
@@ -34,7 +39,9 @@
 | [macOS本机引擎](macos-engines.md) | 开发机的历史接入方式，不是新克隆配置文件 |
 | [Windows 使用](windows.md) | 原生安装、运行、Codex、密钥与能力边界 |
 | [Windows 便携发布包](portable-bundle.md) | 固定运行时、开发机制备、免安装发行与清单 |
-| [本地工具包](tool-packages.md) | 离线安装、SHA-256、Skill/MCP 绑定和注销 |
+| [本地工具包](tool-packages.md) | 离线安装、简易格式导入、SHA-256、Skill/MCP/CLI 绑定到全部引擎和注销 |
+| [Capability Pack](capability-packs.md) | 应用层一键安装并应用 Skill、MCP、CLI 与新 Engine revision |
+| [办公工具包](office-suite.md) | 随发行包预装的办公 Skill 与 14 个离线 CLI 工具 |
 | [公司离线交接](offline-company.md) | Windows ARM64 开源引擎、Chat Completions、公司代码合并与开发包 |
 | [离线归档与恢复](offline-artifacts.md) | Release ZIP、分片 SHA256 与 Windows 无安装恢复 |
 | [开源引擎源码](open-source-engines.md) | 14 个固定仓库、源码归档、许可证和 SHA-256 |
@@ -70,5 +77,7 @@
 | [Windows 与 Codex](verification/2026-09-06-windows.md) | 原生开发、文件/密钥、真实 Codex、控制台与启动器 |
 | [Windows 便携引擎](verification/2026-09-06-portable-engines.md) | 固定引擎准备、DeepSeek 短任务、MCP/文件与发行验收范围 |
 | [公司离线引擎](verification/2026-09-07-offline-company.md) | 固定开源源码、Chat 桥、十引擎 MCP、开发包与 GitHub 交付 |
+| [统一模型网关](verification/2026-09-19-unified-model-gateway.md) | macOS 7 个真实引擎经严格流式网关跑通比赛接口，只用统一模型 |
+| [Windows x64 十引擎](verification/2026-09-20-windows-x64.md) | 模拟与真实模型矩阵、工具包、离线开发包与干净离线容器 |
 
 研究输入：[原始架构提案](<../HarnessHub 多 Agent 引擎可替换架构设计.md>)、[固定源码阅读记录](<../HarnessHub 源码阅读与技术选型讨论稿.md>)。它们保留历史推演，若与现行DESIGN或API实现冲突，以当前规范与实现为准。

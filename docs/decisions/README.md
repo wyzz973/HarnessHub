@@ -20,5 +20,8 @@ ADR 记录重要且未来可能重新讨论的决定。适用范围见 [文档�
 - [0010：ACP 客户端能力与精确权限选择](0010-acpx-client-capabilities.md)
 - [0011：公司 Chat Completions 网关适配](0011-chat-completions-bridge.md)
 - [0012：开源引擎与公司离线开发包](0012-offline-company-edition.md)
+- [0013：统一模型网关与比赛交付升级](0013-unified-model-gateway.md)
+- [0014：Gateway 与引擎之间的诊断日志](0014-diagnostic-logs.md)
+- [0015：发行包预装工具包](0015-preinstalled-tool-packs.md)
 
 Worker、SQLite 和首批引擎三项已采纳决定及依据直接由 [DESIGN.md](../../DESIGN.md#1-已确认的三个决定)和 [源码调研](<../../HarnessHub 源码阅读与技术选型讨论稿.md>)拥有，暂不重复创建同内容 ADR。以后改变其中决定时在这里记录新的取舍。

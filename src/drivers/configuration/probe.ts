@@ -7,6 +7,7 @@ import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import type { PreparedConfiguration } from "./prepare.js";
 import type { ConfigurationCheck } from "../../domain/engine-configuration.js";
+import { ACP_INITIALIZE_TIMEOUT_LIMIT_MS } from "../../domain/engines.js";
 /** Read-only ACP initialize probe. Owns a process group, bounded output/time and awaited cleanup; never prompts. */
 export async function probeConfiguration(
   prepared: PreparedConfiguration,
@@ -18,10 +19,10 @@ export async function probeConfiguration(
   if (
     !Number.isSafeInteger(initializeTimeoutMs) ||
     initializeTimeoutMs < 1 ||
-    initializeTimeoutMs > 60_000
+    initializeTimeoutMs > ACP_INITIALIZE_TIMEOUT_LIMIT_MS
   )
     throw new Error(
-      "ACP initialize timeout must be an integer between 1 and 60000 ms",
+      `ACP initialize timeout must be an integer between 1 and ${ACP_INITIALIZE_TIMEOUT_LIMIT_MS} ms`,
     );
   const executable = prepared.command[0];
   if (!executable)
@@ -80,12 +81,12 @@ export async function probeConfiguration(
       try {
         process.kill(-child.pid, "SIGTERM");
       } catch (error) {
-        if (!(
-          error instanceof Error &&
-          "code" in error &&
-          error.code === "ESRCH"
-        ))
-          throw error;
+        const code =
+          error instanceof Error && "code" in error ? error.code : undefined;
+        // macOS answers EPERM for a group whose only member has exited but is not
+        // reaped yet; signalling the child itself is then a harmless no-op.
+        if (code === "EPERM") child.kill("SIGTERM");
+        else if (code !== "ESRCH") throw error;
       }
     }
     settled.resolve();

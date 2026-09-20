@@ -4,6 +4,10 @@ import { lstat, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import type { SecretReference } from "../../domain/engine-configuration.js";
 import { HubError } from "../../domain/errors.js";
+
+/** Longest wait for the platform secret helper (cold .NET start on Windows). */
+const HELPER_TIMEOUT_MS = 20_000;
+
 function failure(): HubError {
   return new HubError(
     "SECRET_UNAVAILABLE",
@@ -37,10 +41,13 @@ async function keychain(
   let output = "";
   let timedOut = false;
   child.stdout.setEncoding("utf8");
+  // The Windows helper is a .NET Framework program: its first start on a cold machine
+  // (JIT plus antivirus scanning) took over 5 s on CI runners, which failed saving the
+  // model key from the console. The operation itself takes a few milliseconds.
   const timeout = setTimeout(() => {
     timedOut = true;
     child.kill("SIGKILL");
-  }, 5000);
+  }, HELPER_TIMEOUT_MS);
   try {
     const completion = new Promise<number | null>((resolve, reject) => {
       child.once("error", () => reject(failure()));

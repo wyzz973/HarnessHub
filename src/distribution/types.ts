@@ -1,5 +1,6 @@
 import type { EngineConfiguration } from "../domain/engine-configuration.js";
 import type { EngineRegistration } from "../domain/engines.js";
+import type { HarnessModel } from "../domain/harness-model.js";
 
 /** Build-time templates contain only bundle/state anchors, never developer paths or credentials. */
 export interface BundledEngine {
@@ -29,12 +30,14 @@ export interface BundleManifest {
   files: { path: string; size: number; sha256: string }[];
 }
 
+/** Legacy per-engine Provider profile; a top-level unified `model` overrides it. */
 export interface BundleModelProfile {
   model: string;
   provider: NonNullable<EngineConfiguration["provider"]>;
 }
 export interface BundleEngineSettings {
   enabled?: boolean;
+  /** Legacy; ignored for model/Provider selection while a unified model is configured. */
   modelProfile?: string;
   model?: string;
   configuration?: EngineConfiguration;
@@ -43,6 +46,12 @@ export interface BundleEngineSettings {
 export interface BundleSettings {
   schemaVersion: 1;
   defaultEngine?: string;
+  /**
+   * Unified model for every engine (ADR 0013), the lowest-priority source after
+   * HARNESSHUB_MODEL* and `state/harness-model.json`. The generated Gateway configuration
+   * carries it as its top-level `model`.
+   */
+  model?: HarnessModel;
   modelProfiles?: Record<string, BundleModelProfile>;
   engines?: Record<string, BundleEngineSettings>;
 }

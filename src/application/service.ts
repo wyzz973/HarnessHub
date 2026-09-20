@@ -21,6 +21,12 @@ export class HubApplication {
       artifact: ArtifactRecord,
     ) => Promise<Buffer>,
     private readonly engineManagement?: EngineManagement,
+    /**
+     * Checked before every Run in deployments that may only use the unified
+     * model; it throws a public error while none is configured. Omitted where
+     * engines keep their own Provider configuration (ADR 0013).
+     */
+    private readonly requireHarnessModel?: () => void,
   ) {}
   isReady() {
     return this.runtime.isReady();
@@ -49,6 +55,18 @@ export class HubApplication {
         validated: null,
       },
     }));
+  }
+  engineProfile(id: string) {
+    const profile = this.runtime
+      .listEngines()
+      .find((engine) => engine.id === id && engine.enabled);
+    if (!profile)
+      throw new HubError(
+        "ENGINE_UNAVAILABLE",
+        `Engine ${id} is not enabled`,
+        404,
+      );
+    return profile;
   }
   private management(): EngineManagement {
     if (!this.engineManagement)
@@ -103,15 +121,7 @@ export class HubApplication {
       );
     }
     const engineId = input.engineId ?? this.runtime.defaultEngine();
-    const profile = this.runtime
-      .listEngines()
-      .find((engine) => engine.id === engineId && engine.enabled);
-    if (!profile)
-      throw new HubError(
-        "ENGINE_UNAVAILABLE",
-        `Engine ${engineId} is not enabled`,
-        404,
-      );
+    const profile = this.engineProfile(engineId);
     const workspaceId = `directory-${createHash("sha256")
       .update(directory)
       .digest("hex")
@@ -125,11 +135,17 @@ export class HubApplication {
   getSession(id: SessionId) {
     return this.runtime.store.getSession(id);
   }
+  /**
+   * Accept a Run. Refused before any Worker starts while a deployment that may
+   * only use the unified model has none configured, so an engine can never fall
+   * back to its own account.
+   */
   submit(
     id: SessionId,
     input: Omit<RunInput, "timeoutMs"> & { timeoutMs?: number },
     key?: string,
   ) {
+    this.requireHarnessModel?.();
     return this.runtime.submit(id, input, key);
   }
   getRun(id: RunId) {

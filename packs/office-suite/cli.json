@@ -1,0 +1,130 @@
+{
+  "cliTools": [
+    {
+      "name": "docx_create",
+      "description": "生成 Word 文档。先把内容写成 Markdown 文件再调用：[\"--input\",\"a.md\",\"--output\",\"a.docx\"]；短内容可用 --content。支持标题/列表/表格/图片。--help 看全部选项。",
+      "entry": "bin/office.cjs",
+      "launch": "node",
+      "args": [
+        "docx_create"
+      ]
+    },
+    {
+      "name": "xlsx_create",
+      "description": "生成 Excel。输入 CSV/TSV/JSON/Markdown 表格：[\"--input\",\"d.csv\",\"--output\",\"d.xlsx\"]；--sum auto 加合计行，--formula \"金额=数量*单价\" 加公式列。--help 看全部选项。",
+      "entry": "bin/office.cjs",
+      "launch": "node",
+      "args": [
+        "xlsx_create"
+      ]
+    },
+    {
+      "name": "xlsx_update",
+      "description": "修改已有 Excel：[\"--file\",\"d.xlsx\",\"--set\",\"B2=42\"]；--append-row/--append-csv/--add-sheet；值以 = 开头即公式。不保留图表与宏。--help 看全部选项。",
+      "entry": "bin/office.cjs",
+      "launch": "node",
+      "args": [
+        "xlsx_update"
+      ]
+    },
+    {
+      "name": "pptx_create",
+      "description": "生成 PowerPoint。先写 Markdown 大纲（# 封面，## 每页，列表=要点，可含表格与 chart 代码块）再调用：[\"--input\",\"o.md\",\"--output\",\"p.pptx\"]。--help 看全部选项。",
+      "entry": "bin/office.cjs",
+      "launch": "node",
+      "args": [
+        "pptx_create"
+      ]
+    },
+    {
+      "name": "office_read",
+      "description": "读取文件为文本：[\"文件路径\"]。支持 docx/xlsx/pptx/pdf 和 txt/md/csv/json/ics/eml（自动识别编码）。--format json、--sheet、--max-chars。--help 看全部选项。",
+      "entry": "bin/office.cjs",
+      "launch": "node",
+      "args": [
+        "office_read"
+      ]
+    },
+    {
+      "name": "pdf_create",
+      "description": "生成 PDF：[\"--input\",\"a.md\",\"--output\",\"a.pdf\"]。md/txt/html 用系统 Edge 打印；docx/xlsx/pptx 用已装 Office 导出，未装时只输出文字版。--help 看全部选项。",
+      "entry": "bin/office.cjs",
+      "launch": "node",
+      "args": [
+        "pdf_create"
+      ]
+    },
+    {
+      "name": "ics_create",
+      "description": "生成日历文件(.ics)：[\"--output\",\"会议.ics\",\"--title\",\"周会\",\"--start\",\"2026-09-21 14:00\",\"--duration\",\"60\"]。可加 --location/--attendee/--reminder/--rrule。--help 看全部选项。",
+      "entry": "bin/office.cjs",
+      "launch": "node",
+      "args": [
+        "ics_create"
+      ]
+    },
+    {
+      "name": "eml_create",
+      "description": "生成邮件草稿(.eml)：[\"--output\",\"m.eml\",\"--to\",\"a@b.com\",\"--subject\",\"主题\",\"--body-file\",\"正文.md\"]。可加 --cc/--attach。用 app_open 打开即为待发草稿。--help 看全部选项。",
+      "entry": "bin/office.cjs",
+      "launch": "node",
+      "args": [
+        "eml_create"
+      ]
+    },
+    {
+      "name": "app_open",
+      "description": "【打开应用/文件/网址只能用它】[\"outlook\"]、[\"报告.docx\"]、[\"https://…\"]。经桌面外壳启动，任务结束后仍保持打开；返回 JSON 含 running 与窗口。可加 --with word、--args。--help 看应用名列表。",
+      "entry": "bin/office.cjs",
+      "launch": "node",
+      "args": [
+        "app_open"
+      ]
+    },
+    {
+      "name": "app_close",
+      "description": "关闭应用：[\"notepad\"]；未退出加 --force（会丢未保存内容）。返回 JSON 含 closed/running。",
+      "entry": "bin/office.cjs",
+      "launch": "node",
+      "args": [
+        "app_close"
+      ]
+    },
+    {
+      "name": "app_list",
+      "description": "查看应用：[] 列出已装/在运行的办公应用；[\"关键字\"] 搜开始菜单；[\"--windows\"] 列出所有打开的窗口，用于核实。",
+      "entry": "bin/office.cjs",
+      "launch": "node",
+      "args": [
+        "app_list"
+      ]
+    },
+    {
+      "name": "outlook_mail",
+      "description": "用本机经典 Outlook 发信(COM)：[\"--to\",\"a@b.com\",\"--subject\",\"主题\",\"--body-file\",\"正文.md\"]；--mode send|draft|display，--attach。返回 OUTLOOK_UNAVAILABLE 时改用 eml_create。",
+      "entry": "bin/office.cjs",
+      "launch": "node",
+      "args": [
+        "outlook_mail"
+      ]
+    },
+    {
+      "name": "outlook_event",
+      "description": "用本机经典 Outlook 建日程(COM)：[\"--subject\",\"周会\",\"--start\",\"2026-09-21 14:00\",\"--duration\",\"60\"]；--attendee 即会议，--mode save|send|display。不可用时改用 ics_create。",
+      "entry": "bin/office.cjs",
+      "launch": "node",
+      "args": [
+        "outlook_event"
+      ]
+    },
+    {
+      "name": "outlook_read",
+      "description": "读取本机经典 Outlook 数据(COM)为 JSON：[\"--folder\",\"inbox\",\"--top\",\"10\"]；--folder inbox|sent|drafts|calendar|contacts，--unread、--search、--since/--days。",
+      "entry": "bin/office.cjs",
+      "launch": "node",
+      "args": [
+        "outlook_read"
+      ]
+    }
+  ]
+}

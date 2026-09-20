@@ -1,0 +1,960 @@
+{
+  "schemaVersion": 1,
+  "suite": "office-tasks",
+  "description": "HarnessHub 自拟的办公任务集：字段与评测方任务数据一致（task_id、title、description、query、category、secondary_category、difficulty、difficulty_label），另加 platform、setup、verify、verify_wait_ms、requires、env_reply、cleanup 供 scripts/competition-tasks.mjs 使用。office_002 为评测方样例原文，其余为自拟。",
+  "tasks": [
+    {
+      "task_id": "office_002",
+      "title": "打开Outlook客户端",
+      "description": "自动打开Outlook邮件客户端",
+      "query": "请自动打开 Outlook 邮件客户端",
+      "category": "办公协作、沟通与日程管理类",
+      "secondary_category": "软件交互",
+      "difficulty": 1,
+      "difficulty_label": "极易",
+      "platform": ["win32"],
+      "verify_wait_ms": 30000,
+      "requires": [
+        {
+          "kind": "app_installed",
+          "app_paths": ["OUTLOOK.EXE"],
+          "commands": ["outlook.exe", "olk.exe"],
+          "appx": ["Microsoft.OutlookForWindows"]
+        },
+        {
+          "kind": "desktop_session"
+        }
+      ],
+      "env_reply": {
+        "any": [
+          "未安装",
+          "没有安装",
+          "尚未安装",
+          "未找到",
+          "找不到",
+          "无法找到",
+          "不存在",
+          "没有找到",
+          "not installed",
+          "not found",
+          "cannot find",
+          "could not find",
+          "isn't installed",
+          "is not installed",
+          "no outlook",
+          "not available",
+          "unavailable",
+          "无法打开",
+          "没有可用",
+          "没有桌面",
+          "无桌面",
+          "不可见",
+          "没有交互式桌面",
+          "no desktop",
+          "not interactive",
+          "no interactive desktop",
+          "headless",
+          "service session",
+          "cannot display",
+          "无法显示",
+          "看不到",
+          "没有图形界面",
+          "no graphical",
+          "did not launch",
+          "did not open",
+          "未启动",
+          "没有启动",
+          "不会启动"
+        ]
+      },
+      "cleanup": [
+        {
+          "kind": "close_process",
+          "names": ["OUTLOOK", "olk"]
+        }
+      ],
+      "verify": {
+        "kind": "process_running",
+        "names": ["OUTLOOK", "olk"]
+      }
+    },
+    {
+      "task_id": "office_s01",
+      "title": "用记事本打开文件",
+      "description": "用记事本打开工作目录中的文本文件",
+      "query": "请用记事本打开当前目录下的 notes.txt。",
+      "category": "办公协作、沟通与日程管理类",
+      "secondary_category": "软件交互",
+      "difficulty": 1,
+      "difficulty_label": "极易",
+      "platform": ["win32"],
+      "verify_wait_ms": 30000,
+      "setup": [
+        {
+          "path": "notes.txt",
+          "text": "周一例会要点：\n1. 确认发布日期\n2. 分配测试任务\n",
+          "encoding": "utf8-bom",
+          "eol": "crlf"
+        }
+      ],
+      "cleanup": [
+        {
+          "kind": "close_process",
+          "names": ["notepad"]
+        }
+      ],
+      "verify": {
+        "kind": "any_of",
+        "checks": [
+          {
+            "kind": "window_title",
+            "names": ["notepad"],
+            "contains": ["notes"]
+          },
+          {
+            "kind": "process_running",
+            "names": ["notepad"],
+            "command_line_contains": "notes.txt"
+          }
+        ]
+      },
+      "requires": [
+        {
+          "kind": "desktop_session"
+        }
+      ],
+      "env_reply": {
+        "any": [
+          "isn't installed",
+          "is not installed",
+          "no outlook",
+          "not available",
+          "unavailable",
+          "没有安装",
+          "未安装",
+          "无法打开",
+          "没有可用",
+          "没有桌面",
+          "无桌面",
+          "不可见",
+          "没有交互式桌面",
+          "no desktop",
+          "not interactive",
+          "no interactive desktop",
+          "headless",
+          "service session",
+          "cannot display",
+          "无法显示",
+          "看不到",
+          "没有图形界面",
+          "no graphical",
+          "did not launch",
+          "did not open",
+          "未启动",
+          "没有启动",
+          "不会启动"
+        ]
+      }
+    },
+    {
+      "task_id": "office_s02",
+      "title": "打开计算器",
+      "description": "打开系统自带的计算器",
+      "query": "请打开计算器。",
+      "category": "办公协作、沟通与日程管理类",
+      "secondary_category": "软件交互",
+      "difficulty": 1,
+      "difficulty_label": "极易",
+      "platform": ["win32"],
+      "verify_wait_ms": 30000,
+      "cleanup": [
+        {
+          "kind": "close_process",
+          "names": ["CalculatorApp", "Calculator", "win32calc", "calc"]
+        }
+      ],
+      "verify": {
+        "kind": "process_running",
+        "names": ["CalculatorApp", "Calculator", "win32calc", "calc"]
+      },
+      "requires": [
+        {
+          "kind": "desktop_session"
+        }
+      ],
+      "env_reply": {
+        "any": [
+          "isn't installed",
+          "is not installed",
+          "no outlook",
+          "not available",
+          "unavailable",
+          "没有安装",
+          "未安装",
+          "无法打开",
+          "没有可用",
+          "没有桌面",
+          "无桌面",
+          "不可见",
+          "没有交互式桌面",
+          "no desktop",
+          "not interactive",
+          "no interactive desktop",
+          "headless",
+          "service session",
+          "cannot display",
+          "无法显示",
+          "看不到",
+          "没有图形界面",
+          "no graphical",
+          "did not launch",
+          "did not open",
+          "未启动",
+          "没有启动",
+          "不会启动"
+        ]
+      }
+    },
+    {
+      "task_id": "office_s03",
+      "title": "在资源管理器中打开文件夹",
+      "description": "用资源管理器打开工作目录下的指定文件夹",
+      "query": "请在资源管理器中打开当前工作目录下的 reports 文件夹。",
+      "category": "办公协作、沟通与日程管理类",
+      "secondary_category": "软件交互",
+      "difficulty": 2,
+      "difficulty_label": "容易",
+      "platform": ["win32"],
+      "verify_wait_ms": 30000,
+      "setup": [
+        {
+          "path": "reports/q3-summary.txt",
+          "text": "第三季度总结\n"
+        }
+      ],
+      "cleanup": [
+        {
+          "kind": "close_process",
+          "names": ["explorer"]
+        }
+      ],
+      "verify": {
+        "kind": "any_of",
+        "checks": [
+          {
+            "kind": "shell_window",
+            "path_ends_with": "reports"
+          },
+          {
+            "kind": "process_running",
+            "names": ["explorer"],
+            "command_line_contains": "reports"
+          }
+        ]
+      },
+      "requires": [
+        {
+          "kind": "desktop_session"
+        }
+      ],
+      "env_reply": {
+        "any": [
+          "isn't installed",
+          "is not installed",
+          "no outlook",
+          "not available",
+          "unavailable",
+          "没有安装",
+          "未安装",
+          "无法打开",
+          "没有可用",
+          "没有桌面",
+          "无桌面",
+          "不可见",
+          "没有交互式桌面",
+          "no desktop",
+          "not interactive",
+          "no interactive desktop",
+          "headless",
+          "service session",
+          "cannot display",
+          "无法显示",
+          "看不到",
+          "没有图形界面",
+          "no graphical",
+          "did not launch",
+          "did not open",
+          "未启动",
+          "没有启动",
+          "不会启动"
+        ]
+      }
+    },
+    {
+      "task_id": "office_s04",
+      "title": "用Edge打开本地网页",
+      "description": "用 Edge 浏览器打开工作目录中的网页文件",
+      "query": "请用 Edge 浏览器打开当前目录下的 page.html。",
+      "category": "办公协作、沟通与日程管理类",
+      "secondary_category": "软件交互",
+      "difficulty": 2,
+      "difficulty_label": "容易",
+      "platform": ["win32"],
+      "verify_wait_ms": 30000,
+      "setup": [
+        {
+          "path": "page.html",
+          "text": "<!doctype html>\n<html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><title>HarnessHub 测试页</title></head><body><h1>HarnessHub 测试页</h1></body></html>\n"
+        }
+      ],
+      "requires": [
+        {
+          "kind": "app_installed",
+          "app_paths": ["msedge.exe"],
+          "commands": ["msedge.exe"],
+          "files": [
+            "%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe",
+            "%ProgramFiles%\\Microsoft\\Edge\\Application\\msedge.exe"
+          ]
+        },
+        {
+          "kind": "desktop_session"
+        }
+      ],
+      "env_reply": {
+        "any": [
+          "未安装",
+          "没有安装",
+          "尚未安装",
+          "未找到",
+          "找不到",
+          "无法找到",
+          "不存在",
+          "没有找到",
+          "not installed",
+          "not found",
+          "cannot find",
+          "could not find",
+          "isn't installed",
+          "is not installed",
+          "no outlook",
+          "not available",
+          "unavailable",
+          "无法打开",
+          "没有可用",
+          "没有桌面",
+          "无桌面",
+          "不可见",
+          "没有交互式桌面",
+          "no desktop",
+          "not interactive",
+          "no interactive desktop",
+          "headless",
+          "service session",
+          "cannot display",
+          "无法显示",
+          "看不到",
+          "没有图形界面",
+          "no graphical",
+          "did not launch",
+          "did not open",
+          "未启动",
+          "没有启动",
+          "不会启动"
+        ]
+      },
+      "cleanup": [
+        {
+          "kind": "close_process",
+          "names": ["msedge"]
+        }
+      ],
+      "verify": {
+        "kind": "any_of",
+        "checks": [
+          {
+            "kind": "window_title",
+            "contains": ["HarnessHub 测试页"]
+          },
+          {
+            "kind": "process_running",
+            "names": ["msedge"],
+            "command_line_contains": "page.html"
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "office_d01",
+      "title": "撰写工作周报",
+      "description": "生成包含表格的 Word 周报",
+      "query": "请写一份本周工作周报，保存为 weekly-report.docx。标题为“第38周工作周报”，包含“本周完成”和“下周计划”两个小节，并用表格列出三项任务及其进度。",
+      "category": "文档处理与内容创作类",
+      "secondary_category": "文档处理",
+      "difficulty": 3,
+      "difficulty_label": "中等",
+      "verify": {
+        "kind": "office_text_contains",
+        "path": "weekly-report.docx",
+        "contains": ["第38周工作周报", "本周完成", "下周计划"],
+        "min_tables": 1
+      }
+    },
+    {
+      "task_id": "office_d02",
+      "title": "总结Word会议纪要",
+      "description": "阅读 Word 文档并输出摘要",
+      "query": "请阅读 meeting-notes.docx，把会议结论整理成不超过 200 字的摘要，保存为 summary.txt。",
+      "category": "文档处理与内容创作类",
+      "secondary_category": "文档处理",
+      "difficulty": 3,
+      "difficulty_label": "中等",
+      "setup": [
+        {
+          "path": "meeting-notes.docx",
+          "docx": {
+            "paragraphs": [
+              {
+                "text": "青松项目周例会纪要",
+                "heading": 1
+              },
+              "时间：2026年9月18日  参会人：王敏、赵磊、陈静",
+              "一、进度：移动端改版已完成 80%，剩余支付页与个人中心。",
+              "二、风险：第三方支付接口联调延期，预计影响 3 个工作日。",
+              "三、结论：上线日期定为10月15日；由王敏负责整体发布，赵磊负责支付接口联调，陈静负责回归测试。",
+              "四、待办：9月25日前完成联调；10月10日前完成回归测试。"
+            ]
+          }
+        }
+      ],
+      "verify": {
+        "kind": "all_of",
+        "checks": [
+          {
+            "kind": "file_text_contains",
+            "path": "summary.txt",
+            "contains": ["王敏"],
+            "any": ["10月15日", "10/15", "10-15", "十月十五"],
+            "min_chars": 20,
+            "max_chars": 320
+          },
+          {
+            "kind": "not_modified",
+            "path": "meeting-notes.docx"
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "office_d03",
+      "title": "Markdown转Word",
+      "description": "把 Markdown 方案转换为 Word 文档",
+      "query": "请把 proposal.md 转换成 Word 文档 proposal.docx，保留标题层级和列表内容。",
+      "category": "文档处理与内容创作类",
+      "secondary_category": "文档处理",
+      "difficulty": 3,
+      "difficulty_label": "中等",
+      "setup": [
+        {
+          "path": "proposal.md",
+          "text": "# 智能客服升级方案\n\n## 背景\n当前客服系统平均响应时间为 45 秒，客户满意度 82%。\n\n## 目标\n- 平均响应时间降至 15 秒以内\n- 客户满意度提升到 90%\n- 夜间咨询自动应答率达到 70%\n\n## 计划\n1. 十月完成知识库整理\n2. 十一月上线智能应答\n3. 十二月完成效果评估\n"
+        }
+      ],
+      "verify": {
+        "kind": "all_of",
+        "checks": [
+          {
+            "kind": "office_text_contains",
+            "path": "proposal.docx",
+            "contains": [
+              "智能客服升级方案",
+              "背景",
+              "目标",
+              "平均响应时间降至 15 秒以内",
+              "十一月上线智能应答"
+            ]
+          },
+          {
+            "kind": "not",
+            "check": {
+              "kind": "office_text_contains",
+              "path": "proposal.docx",
+              "contains": ["##"]
+            }
+          },
+          {
+            "kind": "not_modified",
+            "path": "proposal.md"
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "office_x01",
+      "title": "CSV转Excel并合计",
+      "description": "把 CSV 转成 Excel 并增加合计行",
+      "query": "请把 sales.csv 转成 Excel 文件 sales.xlsx，并在数据下方增加一行“合计”，计算销售额的总和。",
+      "category": "数据处理与分析类",
+      "secondary_category": "表格与数据",
+      "difficulty": 3,
+      "difficulty_label": "中等",
+      "setup": [
+        {
+          "path": "sales.csv",
+          "csv": [
+            ["产品", "数量", "销售额"],
+            ["笔记本电脑", 12, 71988],
+            ["显示器", 30, 38970],
+            ["机械键盘", 45, 13455],
+            ["无线鼠标", 80, 7920],
+            ["扩展坞", 25, 12475]
+          ]
+        }
+      ],
+      "verify": {
+        "kind": "all_of",
+        "checks": [
+          {
+            "kind": "office_text_contains",
+            "path": "sales.xlsx",
+            "contains": ["合计", "笔记本电脑", "扩展坞"]
+          },
+          {
+            "kind": "any_of",
+            "checks": [
+              {
+                "kind": "xlsx_find",
+                "path": "sales.xlsx",
+                "formula_contains": "SUM"
+              },
+              {
+                "kind": "xlsx_find",
+                "path": "sales.xlsx",
+                "number": 144808
+              }
+            ]
+          },
+          {
+            "kind": "not_modified",
+            "path": "sales.csv"
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "office_x02",
+      "title": "按地区统计销售额",
+      "description": "统计 CSV 数据并输出 JSON",
+      "query": "请统计 orders.csv 中每个地区的销售总额，保存为 region-totals.json，格式为 {\"地区名\": 总额}。",
+      "category": "数据处理与分析类",
+      "secondary_category": "表格与数据",
+      "difficulty": 2,
+      "difficulty_label": "容易",
+      "setup": [
+        {
+          "path": "orders.csv",
+          "bom": true,
+          "csv": [
+            ["订单号", "地区", "销售额"],
+            ["A1001", "华东", 1200],
+            ["A1002", "华北", 800],
+            ["A1003", "华东", 2300],
+            ["A1004", "华南", 1500],
+            ["A1005", "华北", 950.5],
+            ["A1006", "华南", 700],
+            ["A1007", "西南", 1100]
+          ]
+        }
+      ],
+      "verify": {
+        "kind": "json_valid",
+        "path": "region-totals.json",
+        "subset": {
+          "华东": 3500,
+          "华北": 1750.5,
+          "华南": 2200,
+          "西南": 1100
+        }
+      }
+    },
+    {
+      "task_id": "office_x03",
+      "title": "合并客户名单并去重",
+      "description": "合并两个 CSV 并按邮箱去重",
+      "query": "请把 customers-a.csv 和 customers-b.csv 合并为 customers-all.csv，按邮箱去重，保留表头。",
+      "category": "数据处理与分析类",
+      "secondary_category": "表格与数据",
+      "difficulty": 3,
+      "difficulty_label": "中等",
+      "setup": [
+        {
+          "path": "customers-a.csv",
+          "csv": [
+            ["姓名", "邮箱", "城市"],
+            ["张伟", "zhangwei@example.com", "北京"],
+            ["李娜", "lina@example.com", "上海"],
+            ["王芳", "wangfang@example.com", "广州"],
+            ["刘洋", "liuyang@example.com", "深圳"]
+          ]
+        },
+        {
+          "path": "customers-b.csv",
+          "csv": [
+            ["姓名", "邮箱", "城市"],
+            ["李娜", "lina@example.com", "上海"],
+            ["陈静", "chenjing@example.com", "杭州"],
+            ["刘洋", "liuyang@example.com", "深圳"],
+            ["赵磊", "zhaolei@example.com", "成都"]
+          ]
+        }
+      ],
+      "verify": {
+        "kind": "csv_rows",
+        "path": "customers-all.csv",
+        "header": ["姓名", "邮箱", "城市"],
+        "row_count": 6,
+        "unique_by": "邮箱",
+        "contains_rows": [
+          ["陈静", "chenjing@example.com", "杭州"],
+          ["张伟", "zhangwei@example.com", "北京"],
+          ["赵磊", "zhaolei@example.com", "成都"]
+        ]
+      }
+    },
+    {
+      "task_id": "office_p01",
+      "title": "根据大纲制作演示文稿",
+      "description": "按 Markdown 大纲生成 PPT",
+      "query": "请根据 outline.md 的大纲制作一份演示文稿，保存为 product-intro.pptx，至少 3 页，每个二级标题一页。",
+      "category": "文档处理与内容创作类",
+      "secondary_category": "演示文稿",
+      "difficulty": 4,
+      "difficulty_label": "困难",
+      "setup": [
+        {
+          "path": "outline.md",
+          "text": "# 新品发布会：HarnessHub 桌面助手\n\n## 产品概述\n让每个人都能用自然语言完成办公任务。\n\n## 核心功能\n- 文档自动生成\n- 表格数据分析\n- 日程与邮件助手\n\n## 上线计划\n- 10 月内测\n- 11 月公测\n- 12 月正式发布\n"
+        }
+      ],
+      "verify": {
+        "kind": "office_text_contains",
+        "path": "product-intro.pptx",
+        "contains": ["产品概述", "核心功能", "上线计划", "文档自动生成"],
+        "min_slides": 3
+      }
+    },
+    {
+      "task_id": "office_c01",
+      "title": "创建会议日程",
+      "description": "生成会议邀请日历文件",
+      "query": "请创建一个会议日程文件 kickoff.ics：主题“项目启动会”，时间为 2026年9月25日 14:00 到 15:30，地点“3号楼201会议室”，并邀请 wang.min@example.com 参加。",
+      "category": "办公协作、沟通与日程管理类",
+      "secondary_category": "沟通与日程",
+      "difficulty": 2,
+      "difficulty_label": "容易",
+      "verify": {
+        "kind": "ics_valid",
+        "path": "kickoff.ics",
+        "summary_contains": "项目启动会",
+        "dtstart": ["20260925T1400", "20260925T0600"],
+        "dtend": ["20260925T1530", "20260925T0730"],
+        "location_contains": "201",
+        "attendee_contains": ["wang.min@example.com"]
+      }
+    },
+    {
+      "task_id": "office_c02",
+      "title": "起草带附件的邮件",
+      "description": "生成带附件的邮件草稿文件",
+      "query": "请起草一封邮件并保存为 draft.eml：收件人 li.lei@example.com，主题“9月销售数据”，正文说明附件是 9 月销售数据、请对方在周五前反馈，并把当前目录的 sales-sept.csv 作为附件。",
+      "category": "办公协作、沟通与日程管理类",
+      "secondary_category": "沟通与日程",
+      "difficulty": 4,
+      "difficulty_label": "困难",
+      "setup": [
+        {
+          "path": "sales-sept.csv",
+          "csv": [
+            ["日期", "销售额"],
+            ["2026-09-01", 12800],
+            ["2026-09-02", 13450],
+            ["2026-09-03", 11980]
+          ]
+        }
+      ],
+      "verify": {
+        "kind": "eml_headers",
+        "path": "draft.eml",
+        "headers": {
+          "To": "li.lei@example.com",
+          "Subject": "9月销售数据"
+        },
+        "body_contains": ["周五"],
+        "attachment_names": ["sales-sept.csv"]
+      }
+    },
+    {
+      "task_id": "office_c03",
+      "title": "整理待办清单",
+      "description": "把事项整理成 Markdown 待办清单",
+      "query": "请把下面三件事整理成待办清单，保存为 todo.md，每项一行并使用 Markdown 复选框：提交报销单、预订周四会议室、回复客户邮件。",
+      "category": "办公协作、沟通与日程管理类",
+      "secondary_category": "沟通与日程",
+      "difficulty": 1,
+      "difficulty_label": "极易",
+      "verify": {
+        "kind": "all_of",
+        "checks": [
+          {
+            "kind": "file_text_matches",
+            "path": "todo.md",
+            "pattern": "^\\s*[-*] \\[ \\] \\S",
+            "min_matches": 3
+          },
+          {
+            "kind": "file_text_contains",
+            "path": "todo.md",
+            "contains": ["提交报销单", "预订周四会议室", "回复客户邮件"]
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "office_f01",
+      "title": "按扩展名整理文件",
+      "description": "把文件按扩展名归类到子文件夹",
+      "query": "请把当前目录下的文件整理到以扩展名命名的子文件夹中（txt、pdf、jpg、png）。",
+      "category": "文件与系统管理类",
+      "secondary_category": "文件管理",
+      "difficulty": 2,
+      "difficulty_label": "容易",
+      "setup": [
+        {
+          "path": "meeting.txt",
+          "text": "会议记录\n"
+        },
+        {
+          "path": "notes.txt",
+          "text": "随手记\n"
+        },
+        {
+          "path": "contract.pdf",
+          "text": "%PDF-1.4\n% placeholder\n"
+        },
+        {
+          "path": "invoice.pdf",
+          "text": "%PDF-1.4\n% placeholder\n"
+        },
+        {
+          "path": "photo.jpg",
+          "base64": "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA="
+        },
+        {
+          "path": "logo.png",
+          "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        }
+      ],
+      "verify": {
+        "kind": "all_of",
+        "checks": [
+          {
+            "kind": "file_exists",
+            "path": "txt/meeting.txt"
+          },
+          {
+            "kind": "file_exists",
+            "path": "txt/notes.txt"
+          },
+          {
+            "kind": "file_exists",
+            "path": "pdf/contract.pdf"
+          },
+          {
+            "kind": "file_exists",
+            "path": "pdf/invoice.pdf"
+          },
+          {
+            "kind": "file_exists",
+            "path": "jpg/photo.jpg"
+          },
+          {
+            "kind": "file_exists",
+            "path": "png/logo.png"
+          },
+          {
+            "kind": "file_absent",
+            "path": "meeting.txt"
+          },
+          {
+            "kind": "file_absent",
+            "path": "contract.pdf"
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "office_f02",
+      "title": "批量重命名文件",
+      "description": "按顺序批量重命名文本文件",
+      "query": "请把当前目录下的所有 .txt 文件按文件名字母顺序依次重命名为 report-01.txt、report-02.txt、report-03.txt。",
+      "category": "文件与系统管理类",
+      "secondary_category": "文件管理",
+      "difficulty": 2,
+      "difficulty_label": "容易",
+      "setup": [
+        {
+          "path": "alpha.txt",
+          "text": "A\n"
+        },
+        {
+          "path": "beta.txt",
+          "text": "B\n"
+        },
+        {
+          "path": "gamma.txt",
+          "text": "C\n"
+        },
+        {
+          "path": "keep.md",
+          "text": "# 不要改动\n"
+        }
+      ],
+      "verify": {
+        "kind": "all_of",
+        "checks": [
+          {
+            "kind": "file_text_equals",
+            "path": "report-01.txt",
+            "equals": "A"
+          },
+          {
+            "kind": "file_text_equals",
+            "path": "report-02.txt",
+            "equals": "B"
+          },
+          {
+            "kind": "file_text_equals",
+            "path": "report-03.txt",
+            "equals": "C"
+          },
+          {
+            "kind": "file_absent",
+            "path": "alpha.txt"
+          },
+          {
+            "kind": "file_absent",
+            "path": "gamma.txt"
+          },
+          {
+            "kind": "file_exists",
+            "path": "keep.md"
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "office_f03",
+      "title": "压缩文件夹",
+      "description": "把文件夹打包为 zip",
+      "query": "请把 docs 文件夹压缩成 docs-backup.zip。",
+      "category": "文件与系统管理类",
+      "secondary_category": "文件管理",
+      "difficulty": 2,
+      "difficulty_label": "容易",
+      "setup": [
+        {
+          "path": "docs/readme.txt",
+          "text": "项目说明\n"
+        },
+        {
+          "path": "docs/plan.md",
+          "text": "# 计划\n- 第一阶段\n"
+        },
+        {
+          "path": "docs/data.csv",
+          "csv": [
+            ["月份", "数量"],
+            ["9月", 120]
+          ]
+        }
+      ],
+      "verify": {
+        "kind": "all_of",
+        "checks": [
+          {
+            "kind": "zip_contains",
+            "path": "docs-backup.zip",
+            "entries": ["readme.txt", "plan.md", "data.csv"]
+          },
+          {
+            "kind": "file_exists",
+            "path": "docs/readme.txt"
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "office_f04",
+      "title": "查找最大的文件",
+      "description": "找出目录中最大的文件并记录",
+      "query": "请找出当前目录（含子目录）中最大的文件，把它的相对路径和大小（字节）写入 largest.txt。",
+      "category": "文件与系统管理类",
+      "secondary_category": "文件管理",
+      "difficulty": 2,
+      "difficulty_label": "容易",
+      "setup": [
+        {
+          "path": "notes.md",
+          "repeat": {
+            "text": "n",
+            "count": 800
+          }
+        },
+        {
+          "path": "reports/q1.txt",
+          "repeat": {
+            "text": "1",
+            "count": 1200
+          }
+        },
+        {
+          "path": "reports/q2.txt",
+          "repeat": {
+            "text": "2",
+            "count": 3400
+          }
+        },
+        {
+          "path": "archive/big-data.bin",
+          "repeat": {
+            "text": "0123456789",
+            "count": 5200
+          }
+        }
+      ],
+      "verify": {
+        "kind": "file_text_contains",
+        "path": "largest.txt",
+        "contains": ["big-data.bin"],
+        "any": ["52000", "52,000"]
+      }
+    },
+    {
+      "task_id": "office_i01",
+      "title": "导出本机信息",
+      "description": "把系统信息写入文本文件",
+      "query": "请把本机的计算机名、操作系统版本和当前登录用户名写入 system-info.txt。",
+      "category": "文件与系统管理类",
+      "secondary_category": "系统信息",
+      "difficulty": 2,
+      "difficulty_label": "容易",
+      "verify": {
+        "kind": "file_text_contains",
+        "path": "system-info.txt",
+        "contains": ["${username}"],
+        "any": ["${hostname}", "${hostname_short}", "${computer_name}"],
+        "min_chars": 10
+      }
+    }
+  ]
+}

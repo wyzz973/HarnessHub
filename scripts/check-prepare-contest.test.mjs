@@ -51,7 +51,17 @@ test("contest preparation plan pins npm install flags and calls each existing sc
   const steps = preparationSteps(root, "arm64", pnpm, node);
   assert.deepEqual(
     steps.map((step) => step.id),
-    ["npm", "binaries", "hermes", "kiro", "git", "openclaw", "catalog"],
+    [
+      "npm",
+      "binaries",
+      "kimi-utf8",
+      "hermes",
+      "hermes-stdin",
+      "kiro",
+      "git",
+      "openclaw",
+      "catalog",
+    ],
   );
   assert.equal(steps[0].executable, node);
   assert.equal(steps[0].cwd, path.join(root, "engines/npm"));
@@ -81,6 +91,27 @@ test("contest preparation plan pins npm install flags and calls each existing sc
   assert.deepEqual(
     steps.find((step) => step.id === "openclaw").args.slice(-2),
     ["--package", path.join(root, "engines/npm/node_modules/openclaw")],
+  );
+  const hermesFix = steps.find((step) => step.id === "hermes-stdin");
+  assert.equal(hermesFix.executable, node);
+  assert.deepEqual(hermesFix.args, [
+    path.join(repo, "scripts/prepare-hermes.mjs"),
+    "--runtime",
+    path.join(root, "engines/hermes/runtime"),
+  ]);
+  const kimiFix = steps.find((step) => step.id === "kimi-utf8");
+  assert.equal(kimiFix.executable, node);
+  assert.deepEqual(kimiFix.args, [
+    path.join(repo, "scripts/prepare-kimi.mjs"),
+    "--executable",
+    path.join(root, "engines/kimi/kimi.exe"),
+  ]);
+  // A preparation without the Kimi binary has nothing to patch.
+  assert.equal(
+    preparationSteps(root, "arm64", pnpm, node, {
+      skipBinaries: ["cursor", "kimi"],
+    }).some((step) => step.id === "kimi-utf8"),
+    false,
   );
   assert.equal(
     steps.some((step) => step.executable.endsWith(".cmd")),

@@ -288,6 +288,152 @@ export const apiCatalog: readonly ApiDocumentation[] = [
   },
   {
     method: "GET",
+    path: "/v1/harness/model",
+    title: "查看统一模型",
+    group: "configuration",
+    request: "无参数。",
+    response:
+      "200：HarnessModelView，含 configured、source（environment/file/settings）、真实 model、alias、只含秘密引用的 provider，以及每个引擎的 applied/unsupported/disabled 状态和原因。",
+    implementation:
+      "HarnessModelService.view 读取启动时解析的生效来源，并按当前引擎目录计算每个引擎的登记策略结果。",
+    effects: "只读；不解析秘密、不调用模型。",
+    errors: "未配置时返回 configured=false，不报错。",
+    source: "src/gateway/harness-model-routes.ts",
+    tests: ["tests/integration/harness-model.test.ts"],
+    operationId: "hh_get_v1_harness_model",
+  },
+  {
+    method: "PUT",
+    path: "/v1/harness/model",
+    title: "设置统一模型",
+    group: "configuration",
+    request:
+      "JSON：HarnessModel（model、可选 alias、provider）；provider.protocol 仅接受 openai-completions，apiKey/secretHeaders 只接受秘密引用。",
+    response: "200：更新后的 HarnessModelView。",
+    implementation:
+      "校验后原子写入统一模型文件，再经 EngineManager 登记策略为全部引擎发布新 revision。",
+    effects:
+      "写统一模型文件和引擎目录；新 Session 使用新 revision，已有 Session 保留原 revision。文件只保存秘密引用。",
+    errors:
+      "INVALID_HARNESS_MODEL、HARNESS_MODEL_PROTOCOL_UNSUPPORTED（400）；HARNESS_MODEL_ENVIRONMENT_OVERRIDE（409，环境变量来源生效时）；HARNESS_MODEL_FILE_UNAVAILABLE（409）。",
+    source: "src/gateway/harness-model-routes.ts",
+    tests: ["tests/integration/harness-model.test.ts"],
+    operationId: "hh_put_v1_harness_model",
+  },
+  {
+    method: "POST",
+    path: "/v1/harness/model/test",
+    title: "测试统一模型",
+    group: "configuration",
+    request: "JSON：可选 engineId，缺省使用默认引擎。",
+    response:
+      "200：ok、status、durationMs、runId 和可选 error；只有 Run 正常完成且回复非空时 ok=true。",
+    implementation:
+      "在私有临时目录创建正式 Session，提交“只回复 OK”，最多等待 90 秒后关闭 Session；秘密只在 Worker 内解析。",
+    effects: "会实际调用模型并消耗额度；产生一条正式 Run 记录。",
+    errors:
+      "HARNESS_MODEL_NOT_CONFIGURED、HARNESS_MODEL_TEST_UNSUPPORTED（409）；HARNESS_MODEL_TEST_BUSY（429）；HARNESS_MODEL_CLOSED（503）。",
+    source: "src/gateway/harness-model-routes.ts",
+    tests: ["tests/integration/harness-model.test.ts"],
+    operationId: "hh_post_v1_harness_model_test",
+  },
+  {
+    method: "GET",
+    path: "/v1/tool-packs",
+    title: "已安装工具包",
+    group: "tool-packs",
+    request: "无参数。",
+    response:
+      "200：packages 数组，每项含登记记录、displayName、Skill/MCP/CLI 数量、正在使用该包的引擎；发行包预装的版本带 preinstalled:true（其余不含该字段）；单个包清单无法读取时以 problem 标出。",
+    implementation:
+      "读取工具包存储的登记表与各包清单，并按引擎目录计算绑定关系；预装标记取自发行入口写入的 state/preinstalled-tool-packs.json，标记文件不可读时只是不带标记。",
+    effects: "只读；不执行包内程序。",
+    errors: "TOOL_PACKAGE_REGISTRY_CORRUPT。",
+    source: "src/gateway/tool-package-routes.ts",
+    tests: [
+      "tests/integration/tool-pack-gateway.test.ts",
+      "tests/integration/tool-pack-preinstall.test.ts",
+    ],
+    operationId: "hh_get_v1_tool_packs",
+  },
+  {
+    method: "POST",
+    path: "/v1/tool-packs/import",
+    title: "导入工具包",
+    group: "tool-packs",
+    request:
+      'JSON：source（本机绝对路径：Skill 目录、mcp.json、cli.json、SKILL.md 或完整包目录）与 mcp（直接粘贴的 {"mcpServers":{...}} 文档，最多 256 KiB）二选一；可选 kind、id、version、displayName、applyTo（all 或引擎数组）、replace、secretBindings。',
+    response:
+      "200：ok、package{id,version}、displayName、digest、format、counts、warnings，以及指定 applyTo 时的 apply 结果。",
+    implementation:
+      "识别简易格式并生成含 sha256 的清单，校验后安装到工具包存储；运行时下载型命令（npx/uvx 等）拒绝，像密钥的 env 改为同名环境变量引用。内联 mcp 文档先写成临时 mcp.json 再走同一导入器（默认包 id 取自首个服务名），旁边没有文件，因此只有远程 URL 服务能通过，本地命令按离线规则拒绝并提示改用目录导入。",
+    effects:
+      "写工具包存储；指定 applyTo 时为每个接受的引擎发布新 revision，已有 Session 不变。",
+    errors:
+      "INVALID_TOOL_PACKAGE_SOURCE、TOOL_PACKAGE_IMPORT_UNSUPPORTED、TOOL_PACKAGE_TOO_LARGE、TOOL_PACKAGE_VERSION_CONFLICT（400）；TOOL_PACKAGE_BUSY。",
+    source: "src/gateway/tool-package-routes.ts",
+    tests: [
+      "tests/integration/tool-pack-gateway.test.ts",
+      "tests/unit/tool-packages-import.test.ts",
+    ],
+    operationId: "hh_post_v1_tool_packs_import",
+  },
+  {
+    method: "POST",
+    path: "/v1/tool-packs/apply",
+    title: "应用工具包到引擎",
+    group: "tool-packs",
+    request:
+      "JSON：engineIds（all 或数组）或旧字段 engineId；package{id,version} 与 source 二选一；可选 replace、secretBindings。",
+    response:
+      "200：ok、package、results[{engineId,status:applied/skipped/failed,revision?,code?,reason?,capabilities?,replaced?}]、warnings、note；单引擎请求另带顶层 engineId/revision/capabilities。",
+    implementation:
+      "逐个引擎预检并绑定，每个引擎独立发布新 revision；replace 先移除同一包的旧版本绑定。",
+    effects: "写引擎 overlay；只影响新 Session。单个引擎失败不影响其他引擎。",
+    errors:
+      "INVALID_REQUEST、INVALID_TOOL_PACKAGE_BINDING（400）；TOOL_PACKAGE_NOT_FOUND、ENGINE_UNAVAILABLE（404）；单引擎模式的绑定冲突（409）；ENGINE_LISTING_UNAVAILABLE（501）。",
+    source: "src/gateway/tool-package-routes.ts",
+    tests: [
+      "tests/integration/tool-pack-gateway.test.ts",
+      "tests/integration/tool-pack-apply.test.ts",
+    ],
+    operationId: "hh_post_v1_tool_packs_apply",
+  },
+  {
+    method: "DELETE",
+    path: "/v1/tool-packs/{id}/{version}/bindings",
+    title: "解除工具包绑定",
+    group: "tool-packs",
+    request:
+      "engineIds 必填：JSON body 或查询参数（all，或逗号分隔的引擎 id），二者选一。",
+    response:
+      "200：ok、package、results[{engineId,status:unbound/skipped/failed,revision?,code?,reason?,removed?}]、note。",
+    implementation:
+      "从选定引擎移除该包带来的 Skill 与 MCP 条目，并为每个变化的引擎发布新 revision。",
+    effects: "写引擎 overlay；已有 Session 不变，工具包文件保留。",
+    errors:
+      "400；TOOL_PACKAGE_NOT_FOUND（404）；ENGINE_LISTING_UNAVAILABLE（501）。",
+    source: "src/gateway/tool-package-routes.ts",
+    tests: ["tests/integration/tool-pack-gateway.test.ts"],
+    operationId: "hh_delete_v1_tool_packs_id_version_bindings",
+  },
+  {
+    method: "GET",
+    path: "/v1/runtime/info",
+    title: "运行模式信息",
+    group: "health",
+    request: "无参数。",
+    response:
+      "200：competition、可选 competitionEngine、fullAccess、可选 consoleUrl。",
+    implementation: "返回 Gateway 启动时确定的运行模式，供控制台显示。",
+    effects: "只读。",
+    errors: "无业务错误。",
+    source: "src/gateway/harness-model-routes.ts",
+    tests: ["tests/integration/harness-model.test.ts"],
+    operationId: "hh_get_v1_runtime_info",
+  },
+  {
+    method: "GET",
     path: "/v1/workspaces",
     title: "可用工作区与默认项",
     group: "sessions",
@@ -428,6 +574,28 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     operationId: "hh_get_v1_sessions_id_runs",
   },
   {
+    method: "GET",
+    path: "/v1/sessions/{id}/logs",
+    title: "会话诊断日志",
+    group: "sessions",
+    request:
+      "路径Session id；source=engine（默认，引擎日志）或gateway（Gateway日志中属于该Session及其Run的行）；limit默认200，范围1～2000；after为上一页返回的cursor。",
+    response:
+      "200：source、file、exists、records（JSON Lines记录，旧到新）、cursor、truncated、skipped。",
+    implementation:
+      "先确认Session存在；SessionLogReader只读当前文件及.1～.3轮转文件：无after时倒序读取最新limit条，有after时按文件身份与字节偏移顺序读取新行；每行再次脱敏后解析。",
+    effects:
+      "只读文件，不启动或联系Worker；单次最多扫描32 MiB、返回2 MiB；本接口自身的访问行不出现在gateway页中。",
+    errors:
+      "Session不存在404；非法source/limit/after为400 INVALID_REQUEST；未配置日志503 LOGS_UNAVAILABLE；读文件失败500 LOG_READ_FAILED。文件尚不存在时exists=false、records为空。truncated表示有记录因数量、大小、扫描预算或轮转被跳过。",
+    source: "src/gateway/server.ts",
+    tests: [
+      "tests/integration/session-logs.test.ts",
+      "tests/unit/session-log-reader.test.ts",
+    ],
+    operationId: "hh_get_v1_sessions_id_logs",
+  },
+  {
     method: "POST",
     path: "/v1/sessions/{id}/runs",
     title: "提交一次执行",
@@ -440,7 +608,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     effects:
       "先持久接收再异步执行；相同Session串行、跨Session受并发限制；截止时间从接收起算。",
     errors:
-      "幂等key相同且输入不同冲突；会话关闭、队列满、能力/outputs非法会拒绝。202不是任务完成。",
+      "幂等key相同且输入不同冲突；会话关闭、队列满、能力/outputs非法会拒绝；便携发行包在未配置统一模型时以 503 MODEL_NOT_CONFIGURED 拒绝且不创建Run。202不是任务完成。",
     source: "src/gateway/server.ts",
     tests: [
       "tests/integration/gateway.test.ts",

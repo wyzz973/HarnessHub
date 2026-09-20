@@ -1,5 +1,16 @@
 import { EngineConfigurationService } from "./application/engine-configuration.js";
-import { prepareEngine } from "./engine/registry.js";
+import {
+  HarnessModelService,
+  type RuntimeInfo,
+} from "./application/harness-model.js";
+import { builtinConfigurationAdapter } from "./engine/builtins.js";
+import {
+  normalizeEngine,
+  prepareEngine,
+  type HubConfig,
+} from "./engine/registry.js";
+import { fullAccessEnabled } from "./distribution/full-access.js";
+import { registerHarnessModelRoutes } from "./gateway/harness-model-routes.js";
 import { providerProtocols } from "./engine/configuration.js";
 import { configurationAdapters } from "./domain/engine-configuration.js";
 import { createSecret } from "./drivers/configuration/secrets.js";
@@ -34,6 +45,73 @@ import { Runtime } from "./runtime/runtime.js";
 import { HubApplication } from "./application/service.js";
 import { createGateway } from "./gateway/server.js";
 import { registerCompetitionRoutes } from "./gateway/competition/routes.js";
+import { registerToolPackageRoutes } from "./gateway/tool-package-routes.js";
+import { createToolPackageManagement } from "./tool-packages/management.js";
+import {
+  ensurePreinstalledToolPacks,
+  preinstalledPackages,
+} from "./preinstalled-tool-packs.js";
+import {
+  LOG_LEVEL_ENVIRONMENT,
+  parseLogLevel,
+  type LogLevel,
+} from "./domain/logging.js";
+import { harnessModelEnvironment } from "./domain/harness-model.js";
+import { JsonLogFile } from "./logging/json-log-file.js";
+import { observeStore } from "./logging/observed-store.js";
+import { createSessionLogReader } from "./logging/session-log-reader.js";
+import { createRedactor } from "./worker/diagnostics.js";
+
+/** Gateway log records not mirrored by `logEcho`; per-request and per-call lines stay in the file. */
+const QUIET_ECHO = new Set([
+  "http",
+  "model.call",
+  "run.status",
+  "session.backend",
+  "permission.applied",
+]);
+
+/** Known secret values the Gateway redacts in its log: the environment's unified model key. */
+function gatewayLogSecrets(): Set<string> {
+  const secrets = new Set<string>();
+  const modelKey = process.env[harnessModelEnvironment.apiKey];
+  if (modelKey) secrets.add(modelKey);
+  return secrets;
+}
+
+/**
+ * Open `<dataDir>/logs/gateway.log`. The unified model key (when it comes from the
+ * environment) is redacted as a known value on top of the credential patterns.
+ */
+function openGatewayLog(
+  dataDir: string,
+  level: LogLevel,
+  echo: boolean,
+): JsonLogFile {
+  const file = path.join(dataDir, "logs", "gateway.log");
+  return new JsonLogFile({
+    file,
+    level,
+    redact: createRedactor(gatewayLogSecrets()),
+    ...(echo
+      ? {
+          // stderr: stdout stays reserved for the machine-readable ready line.
+          echo: (line: string, recordLevel: LogLevel, event: string) => {
+            if (recordLevel === "info" && !QUIET_ECHO.has(event))
+              process.stderr.write(`${line}\n`);
+          },
+        }
+      : {}),
+    onError: (error) =>
+      process.stderr.write(
+        `${JSON.stringify({
+          event: "log.error",
+          file,
+          message: error instanceof Error ? error.message : String(error),
+        })}\n`,
+      ),
+  });
+}
 
 /** Composition root: concrete implementations are assembled only here. */
 export async function startHub(options: {
@@ -46,11 +124,44 @@ export async function startHub(options: {
   defaultEngine?: string;
   workspaces?: Workspace[];
   competition?: boolean;
+  /** Engine used by every Competition `/session`, independent of later default changes. */
+  competitionEngine?: string;
+  /** Console page opened from the Gateway root `/`. */
+  consoleUrl?: string;
+  /** Installed Tool Package root; defaults to `<dataDir>/tool-packages`. */
+  toolPackageRoot?: string;
+  /**
+   * Persistent unified-model file shared by bundle entry points (ADR 0013); defaults to
+   * `<dataDir>/harness-model.json`. Sources: HARNESSHUB_MODEL* > this file > config `model`.
+   */
+  harnessModelFile?: string;
+  /**
+   * Refuse every Run with a public `MODEL_NOT_CONFIGURED` error (503) until a unified
+   * model source exists. Set by the portable bundle entry points, where engines must
+   * never fall back to their own account or Provider (ADR 0013). A source-mode Gateway
+   * leaves it off so independently configured engines keep working.
+   */
+  requireHarnessModel?: boolean;
+  /**
+   * Marker written by a bundle entry point (`state/preinstalled-tool-packs.json`). Before
+   * listening, packs it lists are bound on engines whose override hides the settings
+   * binding, and `GET /v1/tool-packs` marks them `preinstalled`. Failures are only logged.
+   */
+  preinstalledToolPacks?: string;
+  /**
+   * Mirror info-level lifecycle records of `<dataDir>/logs/gateway.log` to stderr
+   * (entry points only; access and model-call lines stay in the file; stdout keeps
+   * only the entry point's own ready events).
+   */
+  logEcho?: boolean;
 }) {
+  // HARNESSHUB_LOG_LEVEL is validated before anything starts; Workers inherit the value.
+  const logLevel = parseLogLevel(process.env[LOG_LEVEL_ENVIRONMENT]);
   const resolveConfig = async () => {
     const config = await loadConfig({
       demo: options.demo,
       cwd: options.cwd,
+      ...(options.competition ? { competition: true } : {}),
       ...(options.configFile ? { file: options.configFile } : {}),
     });
     if (!options.workspaces) return config;
@@ -70,10 +181,109 @@ export async function startHub(options: {
     );
     return { ...config, workspaces, defaultWorkspace: workspaces[0]!.id };
   };
-  const config = await resolveConfig();
+  const baseConfig = await resolveConfig();
   const requestedDataDir = path.resolve(options.dataDir);
   await mkdir(requestedDataDir, { recursive: true, mode: 0o700 });
   const dataDir = await realpath(requestedDataDir);
+  /** A Session's engine log, written by its Worker under the Session state directory. */
+  const engineLogPath = (sessionId: string) =>
+    path.join(dataDir, "backends", sessionId, "diagnostics", "engine.log");
+  const gatewayLog = openGatewayLog(
+    dataDir,
+    logLevel,
+    options.logEcho ?? false,
+  );
+  gatewayLog.info("gateway.start", {
+    pid: process.pid,
+    dataDir,
+    competition: options.competition ?? false,
+    engine: options.competitionEngine ?? options.defaultEngine ?? null,
+    logLevel,
+    node: process.version,
+    platform: `${process.platform}/${process.arch}`,
+    engineLogs: path.join(dataDir, "backends", "<sessionId>", "diagnostics"),
+  });
+  let harnessModel: HarnessModelService;
+  try {
+    harnessModel = await HarnessModelService.load({
+      environment: process.env,
+      file: path.resolve(
+        options.harnessModelFile ?? path.join(dataDir, "harness-model.json"),
+      ),
+      ...(baseConfig.model ? { settings: baseConfig.model } : {}),
+      ports: {
+        normalize: normalizeEngine,
+        inferAdapter: builtinConfigurationAdapter,
+      },
+    });
+  } catch (error) {
+    gatewayLog.info("gateway.start_failed", {
+      stage: "unified-model",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+  {
+    // `active()` needs no engine catalog; key values are never part of it.
+    const active = harnessModel.active();
+    gatewayLog.info("model.configured", {
+      configured: active !== undefined,
+      source: active?.source ?? null,
+      model: active?.model ?? null,
+      alias: active?.alias ?? null,
+      protocol: active?.provider.protocol ?? null,
+      baseUrl: active?.provider.baseUrl ?? null,
+      contextWindow: active?.provider.contextWindow ?? null,
+      maxOutputTokens: active?.provider.maxOutputTokens ?? null,
+      compatibility: active?.provider.compatibility
+        ? JSON.parse(JSON.stringify(active.provider.compatibility))
+        : null,
+    });
+  }
+  const discover = (includeManifests = true) =>
+    discoverEngines({
+      cwd: options.cwd,
+      home: homedir(),
+      pathEnv: process.env.PATH ?? "",
+      nodeExecutable: process.execPath,
+      ...(process.env.PATHEXT ? { pathExt: process.env.PATHEXT } : {}),
+      ...(process.env.APPDATA ? { appData: process.env.APPDATA } : {}),
+      ...(process.env.LOCALAPPDATA
+        ? { localAppData: process.env.LOCALAPPDATA }
+        : {}),
+      ...(includeManifests ? {} : { includeManifests: false }),
+    });
+  /**
+   * Source-mode Competition with a unified model may start from AGENT_ENGINE alone: an
+   * unconfigured competition engine is added from its reviewed discovery recipe as a
+   * base (file-level) entry, so the unified model policy applies to it like any other.
+   */
+  const withCompetitionEngine = async (
+    loaded: HubConfig,
+  ): Promise<HubConfig> => {
+    const id = options.competitionEngine;
+    if (
+      !id ||
+      !harnessModel.active() ||
+      loaded.engines.some((engine) => engine.id === id)
+    )
+      return loaded;
+    const candidate = (await discover()).find((item) => item.id === id);
+    if (candidate?.status !== "ready" || !candidate.registration) return loaded;
+    return {
+      ...loaded,
+      engines: [...loaded.engines, await prepareEngine(candidate.registration)],
+    };
+  };
+  const config = await withCompetitionEngine(baseConfig);
+  const runtimeInfo: RuntimeInfo = {
+    competition: options.competition ?? false,
+    ...(options.competitionEngine
+      ? { competitionEngine: options.competitionEngine }
+      : {}),
+    fullAccess: fullAccessEnabled(process.env),
+    ...(options.consoleUrl ? { consoleUrl: options.consoleUrl } : {}),
+  };
   const artifactRoot = path.join(dataDir, "artifacts");
   const store = new SqliteStore(path.join(dataDir, "harnesshub.sqlite"));
   try {
@@ -86,6 +296,9 @@ export async function startHub(options: {
     shutdownGraceMs: config.cancelGraceMs,
     maxWorkers: config.maxWorkers,
     leaseDir: path.join(dataDir, "workers"),
+    log: gatewayLog,
+    // Workers write their Session engine log at the Gateway's validated level.
+    env: { [LOG_LEVEL_ENVIRONMENT]: logLevel },
   });
   let runtime: Runtime | undefined;
   let manager: EngineManager | undefined;
@@ -95,28 +308,23 @@ export async function startHub(options: {
     manager = new EngineManager({
       config,
       persistence: store,
-      load: resolveConfig,
+      load: async () => withCompetitionEngine(await resolveConfig()),
+      policy: harnessModel.policy(),
       ...(options.defaultEngine
         ? { initialDefault: options.defaultEngine }
         : {}),
       ...(options.configFile
         ? { configFile: path.resolve(options.configFile) }
         : {}),
-      discover: () =>
-        discoverEngines({
-          cwd: options.cwd,
-          home: homedir(),
-          pathEnv: process.env.PATH ?? "",
-          nodeExecutable: process.execPath,
-          ...(process.env.PATHEXT ? { pathExt: process.env.PATHEXT } : {}),
-          ...(process.env.APPDATA ? { appData: process.env.APPDATA } : {}),
-          ...(process.env.LOCALAPPDATA
-            ? { localAppData: process.env.LOCALAPPDATA }
-            : {}),
-        }),
+      discover: () => discover(),
     });
+    // Fail startup when the fixed Competition engine cannot run, with the policy reason.
+    if (options.competitionEngine) manager.resolve(options.competitionEngine);
     const recoveredWorkers = await host.recover();
-    runtime = new Runtime(store, host, {
+    const observedStore = observeStore(store, gatewayLog, {
+      engineLog: engineLogPath,
+    });
+    runtime = new Runtime(observedStore, host, {
       ...config,
       catalog: manager,
       stateDir: path.join(dataDir, "backends"),
@@ -134,7 +342,15 @@ export async function startHub(options: {
       runtime,
       async (artifact) => readArtifact(artifactRoot, artifact),
       manager,
+      ...(options.requireHarnessModel
+        ? [() => harnessModel.assertConfigured()]
+        : []),
     );
+    harnessModel.bind({
+      catalog: manager,
+      sessions: app,
+      scratchDirectory: dataDir,
+    });
     workflowStore = new SqliteWorkflowStore(
       path.join(dataDir, "harnesshub.sqlite"),
     );
@@ -146,19 +362,7 @@ export async function startHub(options: {
     const activeProbes = new Set<AbortController>();
     const probeTasks = new Set<Promise<unknown>>();
     const configuration = new EngineConfigurationService({
-      templates: () =>
-        discoverEngines({
-          cwd: options.cwd,
-          home: homedir(),
-          pathEnv: process.env.PATH ?? "",
-          nodeExecutable: process.execPath,
-          ...(process.env.PATHEXT ? { pathExt: process.env.PATHEXT } : {}),
-          ...(process.env.APPDATA ? { appData: process.env.APPDATA } : {}),
-          ...(process.env.LOCALAPPDATA
-            ? { localAppData: process.env.LOCALAPPDATA }
-            : {}),
-          includeManifests: false,
-        }),
+      templates: () => discover(false),
       inspect: prepareEngine,
       createSecret,
       adapters: () =>
@@ -262,12 +466,63 @@ export async function startHub(options: {
         }
       },
     });
+    const bindHost = options.host ?? "127.0.0.1";
     const server = await createGateway(app, {
       workflows,
       observations,
       configuration,
+      remoteHosts: !["localhost", "127.0.0.1", "::1", "[::1]"].includes(
+        bindHost,
+      ),
+      log: gatewayLog,
+      sessionLogs: createSessionLogReader({
+        gatewayLog: gatewayLog.file,
+        engineLog: engineLogPath,
+        redact: createRedactor(gatewayLogSecrets()),
+        ownRoute: "/v1/sessions/:id/logs",
+      }),
     });
-    if (options.competition) registerCompetitionRoutes(server, app);
+    const toolPackages = createToolPackageManagement({
+      root: options.toolPackageRoot ?? path.join(dataDir, "tool-packages"),
+      nodeExecutable: process.execPath,
+      commandMcpEntry: fileURLToPath(
+        new URL("./drivers/tool-command/command-mcp.js", import.meta.url),
+      ),
+      engineProfile: (id) => app.engineProfile(id),
+      registerEngine: (input) => app.registerEngine(input),
+      listEngines: () => app.engines(),
+      ...(options.preinstalledToolPacks
+        ? {
+            preinstalled: () =>
+              preinstalledPackages(
+                path.resolve(options.preinstalledToolPacks!),
+              ),
+          }
+        : {}),
+    });
+    registerToolPackageRoutes(server, toolPackages);
+    // Before the listener opens, so the first Session already sees preinstalled packs.
+    if (options.preinstalledToolPacks)
+      await ensurePreinstalledToolPacks({
+        markerFile: path.resolve(options.preinstalledToolPacks),
+        dataDir,
+        toolPackages,
+        log: gatewayLog,
+      });
+    registerHarnessModelRoutes(server, harnessModel, () => runtimeInfo);
+    // Registered after createGateway's hook, so the application has already cancelled
+    // Runs; this only stops a pending model test and waits for its Session cleanup.
+    server.addHook("preClose", async () => harnessModel.close());
+    if (options.competition)
+      registerCompetitionRoutes(server, app, {
+        ...(options.competitionEngine
+          ? { engineId: options.competitionEngine }
+          : {}),
+      });
+    if (options.consoleUrl) {
+      const consoleUrl = options.consoleUrl;
+      server.get("/", async (_request, reply) => reply.redirect(consoleUrl));
+    }
     server.addHook("onClose", async () => {
       for (const abort of activeProbes) abort.abort();
       await Promise.allSettled([...probeTasks]);
@@ -276,12 +531,32 @@ export async function startHub(options: {
       workflowStore?.close();
       store.close();
     });
+    // Fastify runs onClose hooks last-registered first, so this marks the start of
+    // shutdown; Worker exits recorded by the host afterwards still reach the file.
+    server.addHook("onClose", async () => {
+      gatewayLog.info("gateway.stop", { pid: process.pid });
+    });
     const url = await server.listen({
-      host: options.host ?? "127.0.0.1",
+      host: bindHost,
       port: options.port,
     });
-    return { server, app, url };
+    gatewayLog.info("gateway.listen", {
+      url,
+      host: bindHost,
+      remoteHosts: !["localhost", "127.0.0.1", "::1", "[::1]"].includes(
+        bindHost,
+      ),
+      fullAccess: runtimeInfo.fullAccess,
+      consoleUrl: options.consoleUrl ?? null,
+      maxConcurrency: config.maxConcurrency,
+      defaultTimeoutMs: config.defaultTimeoutMs,
+    });
+    return { server, app, url, logFile: gatewayLog.file };
   } catch (error) {
+    gatewayLog.info("gateway.start_failed", {
+      stage: "startup",
+      message: error instanceof Error ? error.message : String(error),
+    });
     await workflows?.close();
     await manager?.close();
     try {
@@ -313,12 +588,17 @@ if (
       host: { type: "string", default: "localhost" },
       port: { type: "string" },
       "data-dir": { type: "string", default: "./data" },
+      "tool-package-root": { type: "string" },
+      "harness-model-file": { type: "string" },
+      "preinstalled-tool-packs": { type: "string" },
+      "require-harness-model": { type: "boolean", default: false },
+      "console-url": { type: "string" },
       help: { type: "boolean" },
     },
   });
   if (values.help)
     console.log(
-      "HarnessHub: node dist/src/main.js [--competition] [--engine opencode] [--host localhost] [--port 6217] [--config engines/local.yaml] [--data-dir ./data]",
+      "HarnessHub: node dist/src/main.js [--competition] [--engine opencode] [--host localhost] [--port 6217] [--config engines/local.yaml] [--data-dir ./data] [--tool-package-root DIR] [--harness-model-file FILE] [--preinstalled-tool-packs MARKER_FILE] [--require-harness-model] [--console-url URL]",
     );
   else {
     const selectedEngine = values.engine ?? process.env.AGENT_ENGINE;
@@ -336,10 +616,26 @@ if (
       cwd: process.cwd(),
       ...(values.config ? { configFile: values.config } : {}),
       ...(selectedEngine ? { defaultEngine: selectedEngine } : {}),
+      ...(values.competition && selectedEngine
+        ? { competitionEngine: selectedEngine }
+        : {}),
+      ...(values["tool-package-root"]
+        ? { toolPackageRoot: values["tool-package-root"] }
+        : {}),
+      ...(values["harness-model-file"]
+        ? { harnessModelFile: values["harness-model-file"] }
+        : {}),
+      ...(values["preinstalled-tool-packs"]
+        ? { preinstalledToolPacks: values["preinstalled-tool-packs"] }
+        : {}),
+      ...(values["require-harness-model"] ? { requireHarnessModel: true } : {}),
+      ...(values["console-url"] ? { consoleUrl: values["console-url"] } : {}),
+      logEcho: true,
     });
     console.log(
       JSON.stringify({
         event: "ready",
+        log: hub.logFile,
         url: hub.url,
         demo: values.demo,
         competition: values.competition,
