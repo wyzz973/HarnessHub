@@ -2,101 +2,129 @@
   "cliTools": [
     {
       "name": "docx_create",
-      "description": "生成 Word 文档(.docx)。先把内容写成 Markdown 文件(UTF-8)，再调用: args=[\"--input\",\"report.md\",\"--output\",\"报告.docx\"]。可选 --title 标题 --author 作者 --header 页眉 --page-numbers --toc --landscape --font 字体 --font-size 11。支持标题、段落、粗体/斜体、有序/无序/任务列表、表格、引用、代码块、本地图片、单独一行 \\pagebreak 分页。短内容可用 --content \"# 标题\\n正文\" 代替 --input。输出一行 JSON，ok=true 即成功。",
+      "description": "生成 Word 文档。先把内容写成 Markdown 文件再调用：[\"--input\",\"a.md\",\"--output\",\"a.docx\"]；短内容可用 --content。支持标题/列表/表格/图片。--help 看全部选项。",
       "entry": "bin/office.cjs",
       "launch": "node",
-      "args": ["docx_create"]
+      "args": [
+        "docx_create"
+      ]
     },
     {
       "name": "xlsx_create",
-      "description": "生成 Excel 工作簿(.xlsx)。输入 CSV/TSV/JSON/含表格的 Markdown 文件: args=[\"--input\",\"data.csv\",\"--output\",\"数据.xlsx\"]。可多个 --input(每个一张表)。--sheet 表名；--sum \"数量,金额\" 或 --sum auto 追加合计行(SUM 公式)；--average \"列\"；--formula \"金额=数量*单价\" 新增公式列；--number-format \"金额=#,##0.00\"。自动识别数字/日期/百分比/=公式，首行加粗冻结并带筛选。JSON 可写 {\"sheets\":[{\"name\",\"header\",\"rows\",\"formulas\",\"sum\",\"cells\",\"merge\"}]}。",
+      "description": "生成 Excel。输入 CSV/TSV/JSON/Markdown 表格：[\"--input\",\"d.csv\",\"--output\",\"d.xlsx\"]；--sum auto 加合计行，--formula \"金额=数量*单价\" 加公式列。--help 看全部选项。",
       "entry": "bin/office.cjs",
       "launch": "node",
-      "args": ["xlsx_create"]
+      "args": [
+        "xlsx_create"
+      ]
     },
     {
       "name": "xlsx_update",
-      "description": "修改已有 Excel 文件: args=[\"--file\",\"数据.xlsx\",\"--set\",\"B2=42\",\"--set\",\"C2==SUM(A2:B2)\"]。--sheet 表名或序号；--set \"表名!A1=值\"(值以 = 开头即公式)；--append-row '[\"张三\",3,\"=B5*2\"]'；--append-csv more.csv [--skip-header]；--add-sheet/--rename-sheet \"旧=新\"/--delete-sheet；--output 另存。不保留原文件中的图表、透视表和宏(这类文件请用 Excel COM)。",
+      "description": "修改已有 Excel：[\"--file\",\"d.xlsx\",\"--set\",\"B2=42\"]；--append-row/--append-csv/--add-sheet；值以 = 开头即公式。不保留图表与宏。--help 看全部选项。",
       "entry": "bin/office.cjs",
       "launch": "node",
-      "args": ["xlsx_update"]
+      "args": [
+        "xlsx_update"
+      ]
     },
     {
       "name": "pptx_create",
-      "description": "生成 PowerPoint 演示文稿(.pptx)。先写 Markdown 大纲文件再调用: args=[\"--input\",\"outline.md\",\"--output\",\"汇报.pptx\"]。大纲规则: \"# 标题\"=封面(其后段落为副标题)或章节页；\"## 标题\"=新的一页；列表=要点(可嵌套)；段落=正文；| 表格 |；![图](本地图片.png)；\"> 文字\"=演讲者备注；```chart 代码块(type: column|bar|line|pie / title: / labels: A,B / series 名称: 1,2)=图表。可选 --theme blue|light|dark|green --ratio 16:9|4:3 --footer 页脚 --author 作者。",
+      "description": "生成 PowerPoint。先写 Markdown 大纲（# 封面，## 每页，列表=要点，可含表格与 chart 代码块）再调用：[\"--input\",\"o.md\",\"--output\",\"p.pptx\"]。--help 看全部选项。",
       "entry": "bin/office.cjs",
       "launch": "node",
-      "args": ["pptx_create"]
+      "args": [
+        "pptx_create"
+      ]
     },
     {
       "name": "office_read",
-      "description": "读取文件内容为文本: args=[\"文件路径\"]。支持 .docx(标题/列表/表格转 Markdown)、.xlsx(每张表转 CSV；加 --format json 同时返回公式；--sheet 指定表；--max-rows)、.pptx(每页标题/要点/表格/备注)、.pdf(逐页文字) 以及 txt/md/csv/json/ics/eml 等文本(自动识别 UTF-8/UTF-16/GBK)。--max-chars 限制长度。旧格式 .doc/.xls/.ppt 需先用 Office 另存为新格式。",
+      "description": "读取文件为文本：[\"文件路径\"]。支持 docx/xlsx/pptx/pdf 和 txt/md/csv/json/ics/eml（自动识别编码）。--format json、--sheet、--max-chars。--help 看全部选项。",
       "entry": "bin/office.cjs",
       "launch": "node",
-      "args": ["office_read"]
+      "args": [
+        "office_read"
+      ]
     },
     {
       "name": "pdf_create",
-      "description": "生成 PDF: args=[\"--input\",\"report.md\",\"--output\",\"报告.pdf\"]。.md/.txt/.html 由系统自带的 Edge/Chrome 无界面打印；.docx/.xlsx/.pptx 由已安装的 Word/Excel/PowerPoint 导出(未装 Office 时只输出文字版并在结果中注明 fidelity=text-only)。可选 --title --landscape。",
+      "description": "生成 PDF：[\"--input\",\"a.md\",\"--output\",\"a.pdf\"]。md/txt/html 用系统 Edge 打印；docx/xlsx/pptx 用已装 Office 导出，未装时只输出文字版。--help 看全部选项。",
       "entry": "bin/office.cjs",
       "launch": "node",
-      "args": ["pdf_create"]
+      "args": [
+        "pdf_create"
+      ]
     },
     {
       "name": "ics_create",
-      "description": "生成日历/会议文件(.ics，可被 Outlook、手机日历导入): args=[\"--output\",\"会议.ics\",\"--title\",\"项目周会\",\"--start\",\"2026-09-21 14:00\",\"--duration\",\"60\"]。可选 --end、--all-day、--location 地点、--description 说明、--attendee \"张三 <a@b.com>\"(可多次)、--organizer、--reminder 15(提前分钟)、--rrule \"FREQ=WEEKLY;COUNT=10\"、--tz Asia/Shanghai；或 --input events.json 批量。时间按本机(或 --tz)时区填写。",
+      "description": "生成日历文件(.ics)：[\"--output\",\"会议.ics\",\"--title\",\"周会\",\"--start\",\"2026-09-21 14:00\",\"--duration\",\"60\"]。可加 --location/--attendee/--reminder/--rrule。--help 看全部选项。",
       "entry": "bin/office.cjs",
       "launch": "node",
-      "args": ["ics_create"]
+      "args": [
+        "ics_create"
+      ]
     },
     {
       "name": "eml_create",
-      "description": "生成邮件文件(.eml)。用于没有可自动化的 Outlook 时起草邮件: args=[\"--output\",\"邮件.eml\",\"--to\",\"张三 <a@b.com>\",\"--subject\",\"主题\",\"--body-file\",\"body.md\"]。可选 --cc/--bcc/--from、--body \"短正文\"、--attach 文件(可多次)。.md 正文会转成 HTML。文件带 X-Unsent 标记，用 app_open 打开即为 Outlook 中可编辑的待发草稿；加 --sent 则作为已发送邮件保存。",
+      "description": "生成邮件草稿(.eml)：[\"--output\",\"m.eml\",\"--to\",\"a@b.com\",\"--subject\",\"主题\",\"--body-file\",\"正文.md\"]。可加 --cc/--attach。用 app_open 打开即为待发草稿。--help 看全部选项。",
       "entry": "bin/office.cjs",
       "launch": "node",
-      "args": ["eml_create"]
+      "args": [
+        "eml_create"
+      ]
     },
     {
       "name": "app_open",
-      "description": "【打开应用/文件/网址必须用它】在 Windows 上打开并核实: args=[\"outlook\"] 或 [\"报告.docx\"] 或 [\"https://…\"]。应用名: outlook word excel powerpoint onenote teams wps notepad(记事本) calculator(计算器) paint explorer(资源管理器) edge chrome cmd powershell terminal taskmgr control settings snipping wordpad calendar mail wechat wxwork dingtalk feishu welink qq zoom vscode，或开始菜单名称/.exe 路径。--with word 指定用哪个应用打开文件；--args \"参数\"。通过桌面外壳启动，任务结束后应用仍保持打开；返回 JSON 含 running、processes[{name,pid,title}]。",
+      "description": "【打开应用/文件/网址只能用它】[\"outlook\"]、[\"报告.docx\"]、[\"https://…\"]。经桌面外壳启动，任务结束后仍保持打开；返回 JSON 含 running 与窗口。可加 --with word、--args。--help 看应用名列表。",
       "entry": "bin/office.cjs",
       "launch": "node",
-      "args": ["app_open"]
+      "args": [
+        "app_open"
+      ]
     },
     {
       "name": "app_close",
-      "description": "关闭 Windows 应用: args=[\"notepad\"]。向该应用的所有窗口发送关闭请求并等待退出；有未保存内容可能弹出保存提示而未退出，此时加 --force 强制结束(未保存内容会丢失)。返回 JSON: closed、running、剩余进程。",
+      "description": "关闭应用：[\"notepad\"]；未退出加 --force（会丢未保存内容）。返回 JSON 含 closed/running。",
       "entry": "bin/office.cjs",
       "launch": "node",
-      "args": ["app_close"]
+      "args": [
+        "app_close"
+      ]
     },
     {
       "name": "app_list",
-      "description": "查看 Windows 上的应用: args=[] 列出已知办公应用中已安装或正在运行的(含路径)；args=[\"关键字\"] 在开始菜单中搜索；args=[\"--windows\"] 列出当前所有打开的窗口(进程名、pid、窗口标题)，用于核实应用或文件是否已打开。",
+      "description": "查看应用：[] 列出已装/在运行的办公应用；[\"关键字\"] 搜开始菜单；[\"--windows\"] 列出所有打开的窗口，用于核实。",
       "entry": "bin/office.cjs",
       "launch": "node",
-      "args": ["app_list"]
+      "args": [
+        "app_list"
+      ]
     },
     {
       "name": "outlook_mail",
-      "description": "用本机经典 Outlook 发送/起草邮件(COM): args=[\"--to\",\"a@b.com\",\"--subject\",\"主题\",\"--body-file\",\"body.md\",\"--attach\",\"报告.docx\"]。--mode send(默认,直接发送)|draft(存草稿)|display(打开撰写窗口给用户)；--cc/--bcc；多个收件人可用 ; 分隔；--body \"短正文\"。需要已配置邮箱的经典 Outlook；返回 OUTLOOK_UNAVAILABLE 时改用 eml_create + app_open。",
+      "description": "用本机经典 Outlook 发信(COM)：[\"--to\",\"a@b.com\",\"--subject\",\"主题\",\"--body-file\",\"正文.md\"]；--mode send|draft|display，--attach。返回 OUTLOOK_UNAVAILABLE 时改用 eml_create。",
       "entry": "bin/office.cjs",
       "launch": "node",
-      "args": ["outlook_mail"]
+      "args": [
+        "outlook_mail"
+      ]
     },
     {
       "name": "outlook_event",
-      "description": "在本机经典 Outlook 日历中创建日程/会议(COM): args=[\"--subject\",\"项目周会\",\"--start\",\"2026-09-21 14:00\",\"--duration\",\"60\",\"--location\",\"3号会议室\"]。可选 --end、--all-day、--body/--body-file、--attendee a@b.com(可多次,有参会人即为会议)、--reminder 15、--mode save(默认)|send(发送会议邀请)|display。返回 OUTLOOK_UNAVAILABLE 时改用 ics_create + app_open。",
+      "description": "用本机经典 Outlook 建日程(COM)：[\"--subject\",\"周会\",\"--start\",\"2026-09-21 14:00\",\"--duration\",\"60\"]；--attendee 即会议，--mode save|send|display。不可用时改用 ics_create。",
       "entry": "bin/office.cjs",
       "launch": "node",
-      "args": ["outlook_event"]
+      "args": [
+        "outlook_event"
+      ]
     },
     {
       "name": "outlook_read",
-      "description": "读取本机经典 Outlook 数据(COM)为 JSON: args=[\"--folder\",\"inbox\",\"--top\",\"10\"]。--folder inbox|sent|drafts|outbox|calendar|contacts|tasks；--unread 只看未读；--search 关键字(主题/联系人姓名)；--with-body 带正文摘要；日历用 --since 2026-09-20 --days 7。",
+      "description": "读取本机经典 Outlook 数据(COM)为 JSON：[\"--folder\",\"inbox\",\"--top\",\"10\"]；--folder inbox|sent|drafts|calendar|contacts，--unread、--search、--since/--days。",
       "entry": "bin/office.cjs",
       "launch": "node",
-      "args": ["outlook_read"]
+      "args": [
+        "outlook_read"
+      ]
     }
   ]
 }
