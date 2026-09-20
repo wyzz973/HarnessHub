@@ -106,6 +106,8 @@ async function printHtml(html, output, baseDirectory) {
   try {
     await writeFile(page, html, "utf8");
     await rm(output, { force: true });
+    // Headless Chromium sometimes keeps running after the PDF is complete (seen on macOS
+    // and with a busy profile lock on Windows): wait for a stable file, then end it.
     const code = await new Promise((resolve, reject) => {
       const child = spawn(
         browser,
@@ -117,24 +119,40 @@ async function printHtml(html, output, baseDirectory) {
           "--disable-extensions",
           `--user-data-dir=${work}`,
           "--no-pdf-header-footer",
-          "--print-to-pdf-no-header",
           `--print-to-pdf=${output}`,
           pathToFileURL(page).href,
         ],
         { stdio: "ignore", windowsHide: true },
       );
+      let settled = false;
+      let lastSize = -1;
+      let stable = 0;
+      const done = (action, value) => {
+        if (settled) return;
+        settled = true;
+        clearInterval(poll);
+        clearTimeout(timer);
+        action(value);
+      };
+      const poll = setInterval(() => {
+        stat(output).then(
+          (info) => {
+            stable = info.size > 0 && info.size === lastSize ? stable + 1 : 0;
+            lastSize = info.size;
+            if (stable >= 3) {
+              child.kill();
+              done(resolve, 0);
+            }
+          },
+          () => undefined,
+        );
+      }, 400);
       const timer = setTimeout(() => {
         child.kill();
-        reject(new ToolError("TIMEOUT", "The browser did not finish printing within 25 s"));
+        done(reject, new ToolError("TIMEOUT", "The browser did not finish printing within 25 s"));
       }, 25000);
-      child.once("error", (error) => {
-        clearTimeout(timer);
-        reject(new ToolError("BROWSER_FAILED", error.message));
-      });
-      child.once("close", (exit) => {
-        clearTimeout(timer);
-        resolve(exit);
-      });
+      child.once("error", (error) => done(reject, new ToolError("BROWSER_FAILED", error.message)));
+      child.once("close", (exit) => done(resolve, exit));
     });
     const info = await stat(output).catch(() => undefined);
     if (!info?.size) throw new ToolError("BROWSER_FAILED", `${path.basename(browser)} exited with code ${code} without writing the PDF`);
@@ -187,7 +205,10 @@ export async function pdfCreate(argv) {
     const printed = await printHtml(document(marked.parse(markdown, { gfm: true }), title, values.landscape), output, path.dirname(source));
     return finish({ output, ...printed, method: "browser-print", fidelity: "text-only", note: "Microsoft Office is not installed: the PDF contains the document text, not its original layout." });
   }
-  const text = await readText(source);
+  const text = (await readText(source)).replace(
+    /^[ \t]*(\\pagebreak|\\newpage|\[\[pagebreak\]\]|<!--\s*pagebreak\s*-->)[ \t]*$/gim,
+    '<div style="page-break-after: always"></div>',
+  );
   const html = /\.html?$/i.test(source)
     ? text
     : document(/\.(md|markdown)$/i.test(source) ? marked.parse(text, { gfm: true }) : `<pre style="background:none;padding:0;font-family:inherit;font-size:inherit">${escapeHtml(text)}</pre>`, title, values.landscape);

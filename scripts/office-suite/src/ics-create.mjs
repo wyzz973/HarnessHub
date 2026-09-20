@@ -1,7 +1,7 @@
 // ics_create: calendar events (RFC 5545) that Outlook, WPS and phone calendars import.
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
-import { finish, inputFile, outputFile, parse, readText, ToolError } from "./common.mjs";
+import { finish, inputFile, outputFile, parse, parseAddress, readText, ToolError } from "./common.mjs";
 
 const usage = `
 ics_create --output <file.ics> --title 标题 --start "2026-09-21 14:00" [--end "2026-09-21 15:00" | --duration 60]
@@ -78,11 +78,7 @@ function fold(line) {
   output.push(current);
   return output.map((part, index) => (index ? ` ${part}` : part)).join("\r\n");
 }
-function person(value) {
-  const match = /^\s*(?:"?([^"<]*?)"?\s*)?<?([^\s<>]+@[^\s<>]+)>?\s*$/.exec(String(value));
-  if (!match) throw new ToolError("BAD_ADDRESS", `Cannot read address "${value}"; use "姓名 <mail@example.com>"`);
-  return { name: match[1]?.trim(), email: match[2] };
-}
+const person = (value) => parseAddress(value, "attendee/organizer");
 
 function eventLines(event, zone, stamp) {
   if (!event.title) throw new ToolError("USAGE", "Every event needs a title", usage.trim());

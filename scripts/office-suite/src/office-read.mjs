@@ -220,6 +220,9 @@ async function readPresentation(file) {
           ),
         ),
       );
+    // Writers without layout placeholders (pptxgenjs): the first text box is the title.
+    if (title === undefined && body.length) title = body.shift().text;
+    while (body.length && /^\d{1,3}$/.test(body.at(-1).text)) body.pop();
     const rels = await text(name.replace(/slides\/(slide\d+\.xml)$/, "slides/_rels/$1.rels"));
     const noteTarget = /Target="([^"]*notesSlide\d+\.xml)"/.exec(rels)?.[1];
     const notes = noteTarget

@@ -3,7 +3,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { marked } from "marked";
-import { finish, inputFile, outputFile, parse, readText, ToolError } from "./common.mjs";
+import { finish, inputFile, outputFile, parse, parseAddress, readText, ToolError } from "./common.mjs";
 
 const usage = `
 eml_create --output <file.eml> --to "张三 <zhangsan@example.com>" [--to ...] --subject 主题
@@ -44,11 +44,8 @@ function addresses(values, label) {
   const result = [];
   for (const item of (values ?? []).flatMap((value) => value.split(/[;；,，]\s*(?=[^<>]*(?:<|$))/))) {
     if (!item.trim()) continue;
-    const match = /^\s*(?:"?([^"<]*?)"?\s*)?<?([^\s<>]+@[^\s<>]+)>?\s*$/.exec(item);
-    if (!match)
-      throw new ToolError("BAD_ADDRESS", `${label}: cannot read address "${item.trim()}"; use "姓名 <mail@example.com>"`);
-    const name = match[1]?.trim();
-    result.push(name ? `${ascii(name) ? `"${name.replaceAll('"', "")}"` : encodedWord(name)} <${match[2]}>` : match[2]);
+    const { name, email } = parseAddress(item, label);
+    result.push(name ? `${ascii(name) ? `"${name.replaceAll('"', "")}"` : encodedWord(name)} <${email}>` : email);
   }
   return result;
 }

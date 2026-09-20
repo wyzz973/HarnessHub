@@ -170,6 +170,21 @@ export function typedValue(raw) {
   return raw;
 }
 
+/** "姓名 <mail@example.com>" or a bare address -> {name?, email}. */
+export function parseAddress(value, label = "address") {
+  const text = String(value ?? "").trim();
+  const angle = /^(.*)<\s*([^\s<>]+@[^\s<>]+)\s*>$/.exec(text);
+  if (angle) {
+    const name = angle[1].trim().replace(/^"|"$/g, "").trim();
+    return { ...(name ? { name } : {}), email: angle[2] };
+  }
+  if (/^[^\s<>]+@[^\s<>]+$/.test(text)) return { email: text };
+  throw new ToolError(
+    "BAD_ADDRESS",
+    `${label}: cannot read address "${text}"; use "姓名 <mail@example.com>" or mail@example.com`,
+  );
+}
+
 /** Print the single JSON result line every tool ends with. */
 export function finish(result) {
   process.stdout.write(`${JSON.stringify({ ok: true, ...result })}\n`);
