@@ -47,6 +47,7 @@ import type {
 import type { EngineRegistration } from "./domain/engines.js";
 import type { EngineProfile } from "./domain/types.js";
 import { bindInstalled, runToolPackageCli } from "./tool-packages/index.js";
+import { assertCompleteExtraction } from "./distribution/extraction.js";
 import { preinstallEnabled } from "./distribution/preinstalled.js";
 import {
   preinstallToolPacks,
@@ -611,6 +612,10 @@ export async function releaseMain(
     throw new Error(
       `This bundle requires ${manifest.platform}/${manifest.arch} Node ${manifest.nodeVersion}; run hub.cmd with its bundled runtime`,
     );
+  // A ZIP extracted by Explorer into a deep folder silently loses its longest paths.
+  await assertCompleteExtraction(root, manifest, {
+    warn: (message) => process.stderr.write(`${message}\n`),
+  });
   const context: BundleContext = {
     root,
     state: path.join(root, "state"),
