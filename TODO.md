@@ -549,7 +549,7 @@ HH-005 后，HH-006 → HH-007 → HH-008 → HH-010 依次修改 Runtime，默�
 
 - [x] 工具与 Skill 完成，Windows 真实办公操作未验证；P0；前置：HH-046、HH-050；负责人：办公工具子任务；范围：`packs/office-suite/**`、`scripts/office-suite/**`、`scripts/build-office-suite.mjs`、`docs/office-suite.md`。
 - 验收：发行包内带 `office-suite` 工具包（1 个常驻 Skill + 14 个离线 CLI 工具），首次启动自动应用到全部引擎；工具不依赖是否安装 Office、不联网、不安装任何东西；Skill 写明 Windows 上打开应用、脚本化执行与核实的硬性规则。
-- 证据：`packs/office-suite/cli.json` 14 个工具经导入器校验为 `skills:1 / cli:14`；`docx_create`、`xlsx_create`（含合计公式）、`office_read` 在本机实测生成并读回中文内容；生成产物与 `bin/BUILD.json` 记录的 SHA-256 一致。**未验证**：真实 Office/Outlook 的 COM 配方、Windows 桌面会话下“应用在会话结束后仍打开”、办公任务集在 Windows 上的通过率。
+- 证据：`packs/office-suite/cli.json` 14 个工具经导入器校验为 `skills:1 / cli:14`，`applyTo:"all"` 对 OpenCode 与 Codex 均为 `applied`；macOS 真实引擎 + 真实模型（DeepSeek `deepseek-flash` 经严格流式代理呈现为 `GLM-V5_1-DX`）跑评委格式办公题：OpenCode 13/13 通过、Codex 6/6 通过，引擎实际调用了 `cli_docx_create`/`cli_xlsx_create`/`cli_xlsx_update`/`cli_pptx_create`/`cli_ics_create`/`cli_eml_create`/`cli_office_read`；同题不装本包时 OpenCode 虽也通过，但引擎日志出现 10 次 `python-docx`/`python-pptx`/`openpyxl` 且有一题现场 `.venv` + 安装 python-docx（离线机上不可行），装包后为 0 次。生成物独立复核：ZIP 完整性与必需部件通过，`weekly-report.docx` 经 macOS `textutil` 读出标题与表格，`sales.xlsx` 含真实公式 `SUM(C2:C6)`；`scripts/check-office-suite.test.mjs` 3 项通过（产物 SHA-256、长安装路径下命令 MCP 配置余量、docx/xlsx 往返）。**未验证**：真实 Office/Outlook 的 COM 配方、Windows 桌面会话下“应用在会话结束后仍打开”、办公任务集在 Windows 上的通过率。详见 [办公工具包](docs/office-suite.md#验证2026-09-20macos-真实引擎--真实模型)。
 
 ### HH-052 比赛任务测试
 

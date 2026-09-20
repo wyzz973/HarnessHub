@@ -36,6 +36,21 @@
 2. **稍复杂的命令先写成 `.ps1` 再执行**。各引擎的默认 shell 不同（PowerShell、cmd、Git Bash），含 `$()`、反引号或括号表达式的单行命令会被改坏；Gemini CLI 即使在完全访问模式也会把这类命令判为命令注入并拦截。脚本文件不受影响。
 3. **做完必须核实**：应用看返回的进程与窗口标题，文件用 `cli_office_read` 读回。没核实不报告完成。
 
+## 验证（2026-09-20，macOS 真实引擎 + 真实模型）
+
+模型为 DeepSeek `deepseek-flash`，经只接受流式请求的严格代理对外呈现为 `GLM-V5_1-DX`（公司真实模型未验证）。每个引擎在全新数据目录启动源码比赛 Gateway，导入本工具包后用 [比赛任务测试](competition-tasks.md)跑评委格式的办公题，按最终文件状态判定：
+
+| 引擎 | 题目 | 结果 | 引擎实际调用的本包工具 |
+|---|---|---|---|
+| OpenCode 1.1.21 | 13 道跨平台题（文档、表格、演示、日程、邮件、文件整理） | 13 通过 | `cli_docx_create`、`cli_xlsx_create`、`cli_pptx_create`、`cli_ics_create`、`cli_eml_create`、`cli_office_read` |
+| Codex 0.144.5 | 6 道 Office 格式题 | 6 通过 | 同上（含 `cli_xlsx_update`） |
+
+**工具包解决的是离线可用性，不是通过率。** 同一台机器、同样 13 道题，不装本工具包时 OpenCode 也全部通过，但它是靠 Python 生态完成的：引擎日志中出现 10 次 `python-docx`/`python-pptx`/`openpyxl`，其中 `office_d03` 的回复明确写着"环境无 pandoc 与 python-docx，故在本地建了 `.venv` 并安装 python-docx 完成转换"——这条路在**离线的比赛机上走不通**。装上本工具包后，两个引擎的日志中这些库名出现 **0 次**，全部改用包内工具。
+
+生成物用独立方式复核：ZIP 完整性与必需部件（`[Content_Types].xml`、`word/document.xml` 等）全部通过；`weekly-report.docx` 用 macOS `textutil` 打开可读出标题与表格；`sales.xlsx` 的单元格中是真实公式 `SUM(C2:C6)` 而非固化数值。
+
+**未验证**：Windows 上的真实 Office/Outlook COM 配方（需要装有 Office 的机器）、`cli_app_open` 经资源管理器代启动后应用在会话结束后仍保持打开（CI 无桌面会话）、本工具包在 Windows x64 上的办公题通过率。
+
 ## 扩展或重新生成
 
 工具的源码在 `scripts/office-suite/src/`，由 `scripts/build-office-suite.mjs` 用 esbuild 打成单文件 `packs/office-suite/bin/office.cjs`（含 104 个固定版本的 MIT 类库，许可证原文在 `packs/office-suite/THIRD_PARTY_LICENSES.txt`）。生成产物**已提交**，所以源码下载、离线开发包与发行包都不需要 npm 访问。
