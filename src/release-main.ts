@@ -515,7 +515,8 @@ async function startServices(
         ...(options.preinstalledToolPacks
           ? ["--preinstalled-tool-packs", options.preinstalledToolPacks]
           : []),
-        ...(options.demo ? ["--demo"] : []),
+        // A demo Gateway serves the fake engine, which calls no model.
+        ...(options.demo ? ["--demo"] : ["--require-harness-model"]),
       ],
       context.workspace,
     );

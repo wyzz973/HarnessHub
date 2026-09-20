@@ -6288,7 +6288,7 @@
         "tags": [
           "runs"
         ],
-        "description": "schema → Runtime.submit → Store幂等接收/原子事件 → 排队调度 → 安装快照 → ProcessHost/Worker/Driver。\n\n输入：text必填；timeoutMs、outputs可选。fixture仅demo/fake使用。Idempotency-Key可选。\n\n返回：202：RunRecord+replayed；Location指向/v1/runs/{runId}。\n\n副作用：先持久接收再异步执行；相同Session串行、跨Session受并发限制；截止时间从接收起算。\n\n失败与边界：幂等key相同且输入不同冲突；会话关闭、队列满、能力/outputs非法会拒绝。202不是任务完成。",
+        "description": "schema → Runtime.submit → Store幂等接收/原子事件 → 排队调度 → 安装快照 → ProcessHost/Worker/Driver。\n\n输入：text必填；timeoutMs、outputs可选。fixture仅demo/fake使用。Idempotency-Key可选。\n\n返回：202：RunRecord+replayed；Location指向/v1/runs/{runId}。\n\n副作用：先持久接收再异步执行；相同Session串行、跨Session受并发限制；截止时间从接收起算。\n\n失败与边界：幂等key相同且输入不同冲突；会话关闭、队列满、能力/outputs非法会拒绝；便携发行包在未配置统一模型时以 503 MODEL_NOT_CONFIGURED 拒绝且不创建Run。202不是任务完成。",
         "requestBody": {
           "required": true,
           "content": {

@@ -657,6 +657,9 @@ export async function competitionBundleMain(
     competitionEngine: engineId,
     toolPackageRoot: path.join(context.state, "tool-packages"),
     harnessModelFile: path.join(context.state, "harness-model.json"),
+    // Bundled engines carry no vendor account: a Run without the unified model
+    // configured is refused instead of failing inside the engine.
+    requireHarnessModel: true,
     ...(prepared.preinstall.enabled
       ? { preinstalledToolPacks: prepared.preinstall.markerFile }
       : {}),
