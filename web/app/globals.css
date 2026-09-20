@@ -636,7 +636,9 @@
     border-color: var(--ring);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 22%, transparent);
   }
-  .field:read-only,
+  input.field:read-only,
+  textarea.field:read-only,
+  p.field,
   .field:disabled {
     background: var(--muted);
     color: var(--muted-foreground);

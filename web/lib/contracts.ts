@@ -399,6 +399,7 @@ export const toolPackApplySchema = z.object({
 export const toolPackImportSchema = z.object({
   ok: z.boolean().optional(),
   package: packageRefSchema,
+  displayName: z.string().optional(),
   counts: z
     .object({
       skills: z.number().optional(),

@@ -57,6 +57,10 @@ const mcpExample = `{
     }
   }
 }`;
+/** Frequent Gateway reasons in the console's language; anything else is shown verbatim. */
+const reasonNames: Record<string, string> = {
+  "Engine is disabled": "引擎已停用",
+};
 function outcomeOf(title: string, result: ToolPackApply | undefined): Outcome {
   return {
     title,
@@ -159,7 +163,7 @@ function ResultRows({ outcome }: { outcome: Outcome }) {
                 <p className="text-[13.5px]">{engineName(row.engineId)}</p>
                 {row.reason ? (
                   <p className="mt-0.5 text-[12px] leading-5 text-subtle">
-                    {row.reason}
+                    {reasonNames[row.reason] ?? row.reason}
                   </p>
                 ) : null}
               </div>
@@ -290,7 +294,7 @@ export function ToolPacksPage({
     const ok = await run("import", "添加工具", async () => {
       const result = await api.importToolPack(input);
       const applied = outcomeOf(
-        `已添加 ${result.package.id}`,
+        `已添加 ${result.displayName ?? result.package.id}`,
         result.apply,
       );
       return {

@@ -124,13 +124,19 @@ export function Console() {
     gateway.runtime.state === "ready" ? gateway.runtime.value : undefined;
   const unifiedModel =
     gateway.model.state === "ready" ? gateway.model.value : undefined;
+  const modelMissing =
+    gateway.model.state === "ready" && !gateway.model.value.configured;
   const [page, setPage] = useState<Page>("tasks");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [panelTab, setPanelTab] = useState<RunPanelTab>("overview");
   const [logsRunId, setLogsRunId] = useState<string | null>(null);
-  const [onboardingSkipped, setOnboardingSkipped] = useState(false);
+  // The card stays open from the moment a missing model is seen until the person finishes
+  // or skips; saving alone must not close it because the connection check is still running.
+  const [onboarding, setOnboarding] = useState<"idle" | "open" | "closed">(
+    "idle",
+  );
   const overlayPanel = useSyncExternalStore(
     subscribeOverlay,
     () => window.matchMedia(overlayQuery).matches,
@@ -173,6 +179,10 @@ export function Console() {
     setEngineIdState(id);
     store(ENGINE_KEY, id);
   }, []);
+  useEffect(() => {
+    if (modelMissing)
+      setOnboarding((current) => (current === "idle" ? "open" : current));
+  }, [modelMissing]);
   const toggleSidebar = useCallback(() => {
     setMobileNav(false);
     setSidebarCollapsed((value) => {
@@ -870,7 +880,10 @@ export function Console() {
   const modelState = gateway.model;
   const needsModel =
     modelState.state === "ready" && !modelState.value.configured;
-  const showOnboarding = needsModel && !onboardingSkipped;
+  const showOnboarding = onboarding === "open";
+  // Until the model state is known the slot stays empty, so the composer never flashes
+  // before the connection card on a first run.
+  const modelKnown = modelState.state !== "loading";
   const emptyThread = !messages.length && !workflow && !active;
   const competitionEngine = runtimeInfo?.competition
     ? runtimeInfo.competitionEngine
@@ -1153,7 +1166,8 @@ export function Console() {
                       </div>
                     )}
                     <AnimatePresence mode="popLayout" initial={false}>
-                      {emptyThread && showOnboarding ? (
+                      {emptyThread && !modelKnown ? null : emptyThread &&
+                        showOnboarding ? (
                         <motion.div
                           key="onboarding"
                           className="thread-column flex justify-center"
@@ -1164,8 +1178,8 @@ export function Console() {
                         >
                           <ConnectModel
                             onSaved={saveModel}
-                            onDone={() => setOnboardingSkipped(true)}
-                            onSkip={() => setOnboardingSkipped(true)}
+                            onDone={() => setOnboarding("closed")}
+                            onSkip={() => setOnboarding("closed")}
                             openRun={openRun}
                           />
                         </motion.div>

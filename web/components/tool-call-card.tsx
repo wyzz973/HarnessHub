@@ -52,9 +52,15 @@ function ToolStep({ tool }: { tool: ToolCallView }) {
   const pathTitle =
     kindName !== undefined && /^[^\s]*[\\/][^\s]*$/.test(tool.title);
   const title = pathTitle ? kindName : tool.title;
-  const preview = pathTitle
+  const fullPreview = pathTitle
     ? tool.title
     : (tool.input[0]?.value ?? tool.inputText ?? tool.locations[0] ?? "");
+  // A long absolute path says least at its start; keep the last segments.
+  const segments = fullPreview.split(/[\\/]/).filter(Boolean);
+  const preview =
+    /^[^\s]*[\\/][^\s]*$/.test(fullPreview) && segments.length > 3
+      ? `…/${segments.slice(-2).join("/")}`
+      : fullPreview;
   return (
     <Collapsible data-status={tool.status}>
       <CollapsibleTrigger className="step-row group">
@@ -82,7 +88,7 @@ function ToolStep({ tool }: { tool: ToolCallView }) {
         </span>
         <span
           className="min-w-0 flex-1 truncate font-mono text-[12px] text-subtle"
-          title={preview}
+          title={fullPreview}
         >
           {preview}
         </span>

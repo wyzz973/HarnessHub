@@ -166,7 +166,7 @@ export function ConnectModel({
             />
             <button
               type="button"
-              className="absolute top-[7px] right-1 grid size-9 place-items-center rounded-lg text-subtle hover:text-foreground"
+              className="absolute top-px right-1 grid size-9 place-items-center rounded-lg text-subtle hover:text-foreground"
               aria-label={showKey ? "隐藏密钥" : "显示密钥"}
               onClick={() => setShowKey((value) => !value)}
             >

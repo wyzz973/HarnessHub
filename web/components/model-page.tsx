@@ -292,7 +292,11 @@ export function ModelPage({
                     ) : null}
                   </div>
                   <p className="field-hint">
-                    密钥保存在本机系统安全存储中，配置里只保留引用。
+                    {form.keyMode === "env"
+                      ? "填写环境变量的名称，服务启动时从该变量读取密钥。"
+                      : form.keyMode === "none"
+                        ? "请求不带 Authorization。"
+                        : "密钥保存在本机系统安全存储中，配置里只保留引用。"}
                   </p>
                 </div>
                 <details

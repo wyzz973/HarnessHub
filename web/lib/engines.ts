@@ -23,7 +23,27 @@ export function engineName(id: string): string {
   return names[id] ?? id;
 }
 /** One or two characters for the monogram avatar. */
+const monograms: Record<string, string> = {
+  opencode: "OC",
+  openclaw: "Cw",
+  codex: "Cx",
+  claude: "Cc",
+  gemini: "Ge",
+  qwen: "Qw",
+  hermes: "He",
+  pi: "Pi",
+  mimo: "Mi",
+  dsh: "DS",
+  kimi: "Ki",
+  copilot: "Cp",
+  cursor: "Cu",
+  kiro: "Kr",
+  qoder: "Qd",
+  antigravity: "Ag",
+};
 export function engineMonogram(id: string): string {
+  const known = monograms[id];
+  if (known) return known;
   const name = engineName(id);
   const capitals = name.replace(/[^A-Z]/g, "");
   if (capitals.length >= 2) return capitals.slice(0, 2);
