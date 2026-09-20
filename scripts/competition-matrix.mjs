@@ -149,8 +149,10 @@ export function matrixSummary(result) {
       ? `${engine.upstream.requests}${engine.upstream.violations.length ? ` ⚠ ${engine.upstream.violations.length} rejected` : ""}`
       : "–";
     const notes = engine.notes.join("; ").replaceAll("|", "\\|").slice(0, 300);
+    // Mock scenario only: the fixed Chinese/emoji line must survive the engine's output path.
+    const reply = `${cell(steps["prompt-ok"])}${steps["unicode-reply"] ? ` · non-ASCII ${cell(steps["unicode-reply"])}` : ""}`;
     lines.push(
-      `| ${engine.engine} | **${engine.status}** | ${cell(steps["prompt-ok"])} | ${tool} | ${cell(steps.abort)} | ${modelCell} | ${upstream} | ${Math.round(engine.durationMs / 1000)} s | ${notes} |`,
+      `| ${engine.engine} | **${engine.status}** | ${reply} | ${tool} | ${cell(steps.abort)} | ${modelCell} | ${upstream} | ${Math.round(engine.durationMs / 1000)} s | ${notes} |`,
     );
   }
   const passed = result.engines.filter(

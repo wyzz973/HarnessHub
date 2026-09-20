@@ -22,6 +22,8 @@ Fastify、@fastify/swagger、Ajv、YAML、acpx、ACP SDK以及Next/React、assis
 
 发行包中的 Hermes Agent 0.19.0（[Nous Research，MIT](https://github.com/NousResearch/hermes-agent)）在构建机由 [prepare-hermes.mjs](scripts/prepare-hermes.mjs) 修改 `tools/environments/local.py` 一处：两个 Windows 探测进程（Git Bash、PowerShell）改用 `stdin=subprocess.DEVNULL`，按修改前后 SHA-256 校验，其余文件不变。
 
+发行包中的 Kimi CLI 1.50.0（[Moonshot AI，Apache-2.0](https://github.com/MoonshotAI/kimi-cli)）的 `kimi.exe` 在构建机由 [prepare-kimi.mjs](scripts/prepare-kimi.mjs) 修改：在其内嵌 PyInstaller 归档的目录表末尾追加运行期选项 `X utf8=1`，使 Python 以 UTF-8 模式运行，stdout/stderr 在任何 Windows 代码页下都输出 UTF-8。程序代码与归档数据不变，只有目录表、归档 cookie 和 PE 校验和与官方文件不同，按 x64/arm64 修改前后的 SHA-256 校验。
+
 ## 外部引擎与参考项目
 
 Windows 脚本启动使用固定版本 [cross-spawn](https://github.com/moxystudio/node-cross-spawn)（MIT），用于 PATH/PATHEXT 与 Windows 参数转义；代码未复制到仓库，版本由主锁文件管理。

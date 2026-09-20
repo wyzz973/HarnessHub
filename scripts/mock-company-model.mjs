@@ -19,6 +19,9 @@
  *   same turn more than three times without the tool result gets `DONE` instead of a new
  *   call (`tool-loop-stopped`); the count is kept per conversation, not per prompt text.
  * - `HH_MOCK_SLOW` streams slowly until `--slow-ms` elapses or the client disconnects.
+ * - `HH_MOCK_UNICODE` is answered with a fixed non-ASCII text in two content chunks: Chinese,
+ *   a Latin-1 letter, a BMP symbol and an emoji outside the BMP. An engine whose output is
+ *   not UTF-8 end to end loses or mangles it (or crashes, like a Python CLI on cp1252).
  * - Anything else is answered with `OK`.
  *
  * Observability (not part of the emulated contract): `GET /__mock/requests?after=<seq>`
@@ -49,11 +52,13 @@ import {
 export const mockDirectives = Object.freeze({
   tool: "HH_MOCK_TOOL",
   slow: "HH_MOCK_SLOW",
+  unicode: "HH_MOCK_UNICODE",
 });
 export const mockReplies = Object.freeze({
   ok: "OK",
   done: "DONE",
   noShellTool: "NO_SHELL_TOOL",
+  unicode: "中文回复：完成 ✅ café 🎉",
 });
 export const MOCK_MARKER_FILE = "mock-ok.txt";
 export const MOCK_MARKER_TEXT = "mock-ok";
@@ -364,6 +369,15 @@ export async function startMockCompanyModel(options = {}) {
   function textFrames(text, reasoning, promptChars) {
     const chunk = chunkFactory();
     const half = Math.ceil(reasoning.length / 2);
+    // Longer answers arrive in two content chunks, split between code points.
+    const points = Array.from(text);
+    const parts =
+      points.length > 8
+        ? [
+            points.slice(0, Math.ceil(points.length / 2)).join(""),
+            points.slice(Math.ceil(points.length / 2)).join(""),
+          ]
+        : [text];
     const frames = [
       chunk({
         role: "assistant",
@@ -371,7 +385,7 @@ export async function startMockCompanyModel(options = {}) {
         reasoning_content: reasoning.slice(0, half),
       }),
       chunk({ reasoning_content: reasoning.slice(half) }),
-      chunk({ content: text }),
+      ...parts.map((content) => chunk({ content })),
     ];
     const finalUsage = usage(promptChars, reasoning + text);
     if (quirks) frames.push(chunk({}, "stop"));
@@ -514,6 +528,19 @@ export async function startMockCompanyModel(options = {}) {
       entry.turn = "slow";
       entry.status = 200;
       return slowStream(response, promptChars, entry);
+    }
+    if (turn.includes(mockDirectives.unicode)) {
+      entry.turn = "unicode";
+      entry.status = 200;
+      return writeStream(
+        response,
+        textFrames(
+          mockReplies.unicode,
+          "The instruction asks for the fixed non-ASCII line.",
+          promptChars,
+        ),
+        chunkDelayMs,
+      );
     }
     if (turn.includes(mockDirectives.tool)) {
       const previous = findIssuedCall(messages, issued);

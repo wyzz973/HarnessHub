@@ -12,6 +12,8 @@ The fixed Codex generic system-instruction baseline comes from [OpenAI Codex rus
 
 The bundled Hermes Agent 0.19.0 (MIT) is modified at build time by `scripts/prepare-hermes.mjs`: in `tools/environments/local.py` the two Windows probes that start Git Bash and PowerShell receive `stdin=subprocess.DEVNULL`, so they no longer inherit the ACP stdin pipe. No other Hermes file is changed.
 
+The bundled Kimi CLI 1.50.0 (Apache-2.0) executable is modified at build time by `scripts/prepare-kimi.mjs`: the PyInstaller run-time option `X utf8=1` is appended to the table of contents of the archive embedded in `kimi.exe`, so its Python runs in UTF-8 mode and writes UTF-8 to stdout and stderr on every Windows code page. Program code and archived data are unchanged; only the table of contents, the archive cookie and the PE checksum differ from the official file.
+
 Codex, Claude Code, Gemini CLI, Qwen Code, Copilot CLI, Qoder CLI, Pi, MiMo, DeepSeek Harness, OpenClaw, Antigravity, Cursor, Kimi, OpenCode, Hermes and Kiro remain independent upstream products. Proprietary account requirements and vendor terms still apply. Microsoft VC runtime components remain subject to Microsoft's runtime redistribution terms.
 
 Local portability checks establish technical behavior only. They do not imply vendor endorsement, a blanket license grant, or compliance with an unspecified competition's rules.

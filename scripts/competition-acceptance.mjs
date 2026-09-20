@@ -9,8 +9,9 @@
  *   writes shell.txt and prints it).
  * - `mock` (scripts/mock-company-model.mjs upstream): session A -> "reply OK" ->
  *   HH_MOCK_TOOL round (tool call, reasoning pass-back and the mock-ok.txt marker; SKIP
- *   when the engine exposes no shell-like tool). Mock results prove the protocol chain only;
- *   they are not a real-model pass.
+ *   when the engine exposes no shell-like tool) -> HH_MOCK_UNICODE (the fixed Chinese/emoji
+ *   line must arrive intact in GET /session/{id}/message). Mock results prove the protocol
+ *   chain only; they are not a real-model pass.
  * Both then abort a long task in a separate session B (a cancelled ACP run closes its
  * session, so it must not share session A), collect model.call statistics for every run,
  * and DELETE both sessions (DELETE must be idempotent and a closed session must refuse
@@ -100,6 +101,7 @@ export function acceptancePrompts(nonce, platform = process.platform) {
     // The nonce keeps each acceptance conversation distinct for the shared mock.
     tool: `${mockDirectives.tool} ${nonce} 请调用你的 shell 工具执行一次命令，在当前目录创建 ${MOCK_MARKER_FILE}，然后只回复 DONE。`,
     slow: `${mockDirectives.slow} 这是一个很长的任务，请持续工作直到被中止。`,
+    unicode: `${mockDirectives.unicode} 请原样回复那一行包含中文和表情符号的固定文本。`,
   };
 }
 
@@ -696,6 +698,20 @@ export async function runAcceptance(input) {
           if (assistant && !reply.includes(mockReplies.done))
             problems.push(
               `final reply is not DONE: ${JSON.stringify(reply.slice(0, 120))}`,
+            );
+          fail(problems);
+        },
+        ["session-create", "event-stream"],
+      );
+      await runStep(
+        "unicode-reply",
+        async (detail) => {
+          // Engines on Windows must deliver UTF-8 end to end: a CLI that encodes stdout with
+          // the ANSI code page crashes on this line (cp1252) or returns mojibake (cp936).
+          const { problems, assistant } = await prompt(detail, prompts.unicode);
+          if (assistant && !replyText(assistant).includes(mockReplies.unicode))
+            problems.push(
+              `reply does not contain the non-ASCII line ${JSON.stringify(mockReplies.unicode)}: ${JSON.stringify(detail.reply)}`,
             );
           fail(problems);
         },
