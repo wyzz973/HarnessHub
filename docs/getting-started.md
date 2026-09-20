@@ -1,12 +1,11 @@
 # 从新克隆启动 HarnessHub
 
-本指南只依赖仓库提交的文件；首次安装与构建命令见 [README 快速开始](../README.md#快速开始不需要-api-key)。历史的本机路径与数据库记录不是必备文件。
+本指南面向从源码运行的开发者；首次安装与构建命令见 [README 从源码开发](../README.md#从源码开发)。只想把发行包跑起来的读者看 [README 下载即用](../README.md#下载即用windows-x64离线全新电脑)。历史的本机路径与数据库记录不是必备文件。
 
 ## 运行模式与端口
 
 | 项目 | 行为 |
 |---|---|
-| `pnpm start --demo` | 明确添加 fake 引擎，外部推理替身；适合体验 HTTP/控制台与自动测试 |
 | `pnpm start` | 可从空引擎目录启动，在运行中发现并登记真实引擎 |
 | `pnpm start --config <file>` | 读取 YAML/JSON 文件；运行中只热更新引擎目录和默认项 |
 | `--port` | Gateway 默认3180；0由系统分配，ready日志中返回实际URL |
@@ -17,7 +16,7 @@
 
 服务绑定loopback，拒绝跨Origin/跨站浏览器访问。当前没有远程多用户认证和租户隔离，不应直接当公网服务部署。
 
-demo控制台默认“直接执行”，选择fake后直接发送文本即可；“自动规划”只选择真实引擎，不能用fake生成计划。
+`--demo` 会额外登记一个名为 `fake` 的引擎。它是自动测试用的协议替身，不做真实推理，也不出现在发行包中；除运行仓库自带的测试与示例脚本外不要使用它。
 
 ## 比赛入口自带控制台
 
@@ -33,7 +32,7 @@ demo控制台默认“直接执行”，选择fake后直接发送文本即可；
 
 控制台异常退出只输出 `console.exited` 事件（`"gateway":"running"`），比赛 Gateway 继续服务，评测不受影响；需要时可重新运行入口或改用 `--no-console`。Ctrl+C 或 Gateway 进程退出时，Job 会连同子进程一起结束控制台。以上 Job 行为依赖 Windows，macOS/Linux 的自动测试只覆盖端口选择、环境隔离和故障隔离，Windows 行为需在 Windows 上验证。
 
-源码环境可用 `pnpm start --demo --competition --engine fake --console-url http://127.0.0.1:3330` 加 `HARNESSHUB_GATEWAY_URL=http://127.0.0.1:6217 pnpm start:console` 得到同样的页面。
+源码环境可用 `pnpm start --competition --engine <本机已登记的引擎> --console-url http://127.0.0.1:3330` 加 `HARNESSHUB_GATEWAY_URL=http://127.0.0.1:6217 pnpm start:console` 得到同样的页面。
 
 ## 控制台页面
 
@@ -50,15 +49,15 @@ demo控制台默认“直接执行”，选择fake后直接发送文本即可；
 
 统一模型和工具包的修改只影响新会话，已有会话保持创建时的引擎版本。
 
-## HTTP 演示
+## HTTP 接口自测（开发用）
 
-在已有 demo Gateway 下运行 [可执行示例](../examples/http-lifecycle.mjs)：
+[可执行示例](../examples/http-lifecycle.mjs)走完一遍 HTTP 生命周期，用于验证接口而非体验产品。它需要一个带测试替身引擎的 Gateway（`pnpm start --demo --port 3180 --data-dir ./data/demo`），不调用真实模型：
 
 ```sh
 node examples/http-lifecycle.mjs http://127.0.0.1:3180
 ```
 
-脚本依次读取引擎、创建Session、提交带幂等key的artifact场景、重复提交验证同一Run、查询终态、重放SSE、读取JSON事件页与JSONL、下载产物核对hash，最后关闭该Session。它使用Node内置fetch，不依赖jq或真实模型；如果目标未启用fake，会在创建任务前拒绝。
+脚本依次读取引擎、创建Session、提交带幂等key的artifact场景、重复提交验证同一Run、查询终态、重放SSE、读取JSON事件页与JSONL、下载产物核对hash，最后关闭该Session。它使用Node内置fetch，不依赖jq或真实模型；目标未启用测试替身时会在创建任务前拒绝。
 
 最小curl请求为：
 
@@ -92,10 +91,9 @@ curl -s -X POST http://127.0.0.1:3180/v1/sessions \
 | 现象 | 核查 |
 |---|---|
 | Console连接不上 | Gateway ready日志实际URL；前端启动环境变量；是否把3180和历史3182混用 |
-| demo提示没有可选引擎 | 确认执行模式为“直接执行”（默认）并选择fake；自动规划不支持fake |
 | 打开 `localhost:6217` 只有 404 | 比赛入口启动时带了 `--no-console`，或使用的是旧版入口；查看 stdout 的 `competition.ready` 是否含 `consoleUrl` |
 | 控制台显示“当前 Gateway 不支持” | Gateway 版本缺少对应接口（如统一模型、工具包导入）；页面其余功能不受影响，升级 Gateway 后刷新 |
-| 报缺少console.local.yaml | 这是忽略的本机配置；按README用demo或从example准备自己的配置 |
+| 报缺少console.local.yaml | 这是忽略的本机配置；按 [example](../engines/example.yaml) 准备自己的配置 |
 | macOS找不到swiftc | 安装Xcode Command Line Tools；Keychain helper是本机构建依赖 |
 | 找到引擎但没有模型响应 | 区分安装、Adapter、ACP握手、原生登录/Key、模型权限和额度；查看正式Run错误 |
 | 配置保存失败 | 不支持的协议、重复MCP名称、非绝对路径、秘密写在普通字段、Skill变化都可能被拒绝 |

@@ -1,36 +1,63 @@
 # HarnessHub
 
-**一个本地运行的多引擎 Agent 执行网关。** 用同一套 HTTP API 和 Web 控制台发现、配置与运行不同 Harness，保留会话、执行事件、工具权限、文件产物和模型用量证据。
+**一个本地运行的多引擎 Agent 执行网关。** 同一套 HTTP API 和 Web 控制台可以驱动 10 个不同的 Agent 引擎（OpenCode、Codex、Qwen、Gemini、Pi、MiMo、DSH、OpenClaw、Kimi、Hermes），换引擎只改一个环境变量。
 
-HarnessHub 管理任务的生命周期与公共状态，具体推理和工具执行交给所选引擎。当前提供 ACP Driver 和文本 CLI Driver。配置了统一模型后，**所有引擎只使用 HarnessHub 配置的同一个模型**：各引擎的原生协议由 Worker 内的统一模型网关转换为上游的流式 OpenAI Chat Completions，不使用任何引擎自带的 API Key、登录或订阅。
+**所有引擎只使用你配置的那一个模型。** 各引擎的原生协议（Responses、Anthropic Messages、Google、Chat Completions）由 Worker 内的统一模型网关转换为上游的流式 OpenAI Chat Completions；引擎自带的 API Key、登录和订阅都不会被使用。
 
-## 当前能力
+**会话、执行事件、工具调用、权限、文件产物、每次模型调用和引擎诊断日志都落盘可查。**
 
-- **统一模型网关**：Codex 的 Responses、Claude Code 的 Anthropic Messages、Gemini 的 Google 协议与其他引擎的 Chat Completions，统一转换为只接受流式的上游 Chat Completions；强制使用统一模型，回填推理模型的 `reasoning_content`，按严格企业网关清理参数，上游错误原样透出。见 [统一模型网关](docs/model-gateway.md)。
-- **比赛接口**：实现 Agent 网关接口规范 v1.1（`/session`、阻塞的 `prompt_async`、`/event` SSE、消息轨迹、abort、权限与反问），`AGENT_ENGINE` 或 `--engine` 选择引擎。见 [比赛接口](docs/competition-api.md)。
-- **一键工具包**：直接导入 Skill 目录、`mcp.json`、`cli.json`，一次安装到全部引擎，工具在每个会话自己的目录中运行。见 [Capability Pack](docs/capability-packs.md)。
-- **引擎发现与管理**：16 种已知 Harness 启动配方、PATH/常见目录扫描、自定义 manifest；运行中登记、替换、停用和切换默认引擎。
-- **独立配置**：按适配能力设置模型、Provider、API URL、Keychain/环境/文件密钥引用、便携 Skills 和 ACP/原生 MCP。已有 Session 固定原配置版本。
-- **执行控制**：独立 Worker、同 Session 串行、跨 Session 有界并发、期限、取消、权限决定与进程清理状态。
-- **可追溯结果**：SQLite 提交日志、SSE 重放、JSONL 导出、不可变文件产物、配置与实际模型/用量的分别记录。
-- **工作流与评测**：模型生成计划、人工确认、有界 DAG 串行执行；文本/JSON/文件评判器与离线成绩汇总。
-- **本地控制台**：Next.js/React 工作台、统一模型页、工具与插件页、引擎配置、执行详情（含每次模型调用证据）与观测页；比赛入口启动时一并打开，`http://localhost:6217/` 跳转到控制台。
+## 下载即用（Windows x64，离线，全新电脑）
 
-**验证范围**：macOS 和 Windows 11 ARM64 上已取得指定场景的执行证据；自动测试使用真实 Gateway/SQLite/IPC/Worker 和确定的外部引擎替身。Windows 已接入原生 Job 监督、路径/文件权限、脚本启动与 DPAPI 密钥存储，Codex 真实只读文本、文件读取与流式取消已验证。本轮另有 11 个引擎通过 DeepSeek V4 Flash 短任务，工具与发行目录单独验收，见 [便携引擎记录](docs/verification/2026-09-06-portable-engines.md)。Windows 10/x64、未列出的实际任务及 OS 沙箱仍未验证。安装发现、协议握手、模型可用和任务正确性分别验证。详见 [Windows 指南](docs/windows.md)、[能力范围](docs/engine-discovery.md)、[配置支持表](docs/engine-configuration.md)和 [验收记录](docs/README.md#验收与历史资料)。
+裁判机或全新电脑不需要 Node、pnpm、Python、Git，也不需要联网安装任何东西。
 
-## 参加比赛（Windows x64 离线）
+1. 从 Release [`competition-latest`](https://github.com/wyzz973/HarnessHub/releases/tag/competition-latest) 下载 `harnesshub-competition-full-windows-x64.zip`（约 1.8 GB）与同名 `.sha256`。
+2. **解压到较短的路径**，例如 `D:\hh`：
 
-评测环境按 [INSTRUCTION.md](distribution/INSTRUCTION.md) 执行：离线开发包中运行 `Setup-Competition-Offline.cmd` 完成依赖恢复、编译和比赛布局生成；只用环境变量配置模型（`HARNESSHUB_MODEL`、`HARNESSHUB_MODEL_BASE_URL`、`HARNESSHUB_MODEL_API_KEY`）和引擎（`AGENT_ENGINE`）；`Start-Competition.cmd` 是唯一启动入口。运行文件在 GitHub Release 中下载：`offline-dev-latest`（离线开发包，可作为提交物 `solution/code`）与 `competition-latest`（免编译的 x64 完整运行包）。
+   ```powershell
+   tar.exe -xf harnesshub-competition-full-windows-x64.zip -C D:\hh
+   ```
 
-2026-09-19 在 macOS 上用 7 个真实引擎经只接受流式的严格网关验收通过，见 [验收记录](docs/verification/2026-09-19-unified-model-gateway.md)；Windows x64 由 CI 用模拟模型验收，公司真实模型需在内网另行验证。
+   包内最长的相对路径有 196 个字符。Windows 资源管理器的“全部解压缩”默认解到 `下载\harnesshub-competition-full-windows-x64\`，加上这个长度会超过 260 字符上限并**静默丢文件**；用 7-Zip 或上面的 `tar.exe` 解到短路径可以避免。
+3. 双击 `Start.cmd`，浏览器打开 **http://127.0.0.1:3330**。
+4. 在控制台里填写模型的**接口地址**（形如 `http://<网关地址>/v1`）、**模型 ID** 和 **API Key**，保存。上游必须是支持**流式**的 OpenAI Chat Completions 接口。
+5. 选择一个引擎，输入任务，开始执行。
 
-## 快速开始：不需要 API Key
+办公用的 Skill 与工具（Word/Excel/PowerPoint/PDF 生成与读取、.ics 日程、.eml 邮件、打开并核实 Windows 应用）**随包预装**，首次启动自动应用到全部引擎，见 [办公工具包](docs/office-suite.md)。要加自己的工具，在控制台“工具”页导入 Skill 目录、`mcp.json`、`cli.json`，或粘贴 `{"mcpServers":{…}}` 配置；命令行等价物是 `Install-Tool-Pack.cmd --source <路径> --engines all`，见 [Capability Pack](docs/capability-packs.md)。
 
-用于裁判机的免安装包由开发机提前构建，运行时与引擎一起交付，模型 API Key 单独配置。入口是 `Start.cmd` / `hub.cmd`；制备步骤见 [Windows 便携发布包](docs/portable-bundle.md)，离线扩展见 [本地工具包](docs/tool-packages.md)。源码克隆本身不包含大体积第三方引擎二进制。
+出问题时先看日志：`state\competition-data\logs\gateway.log`（接口调用、Session/Run 生命周期、每次模型调用）和每个会话的 `…\backends\<sessionId>\diagnostics\engine.log`（引擎进程、stderr、逐条 ACP 请求与响应、工具调用）。控制台“执行详情 → 诊断日志”可直接查看，`Collect-Logs.cmd` 把全部日志打成一个已脱敏的 ZIP。排障路径见 [交接说明](docs/handoff.md)。
 
-本分支提供 [公司离线交接](docs/offline-company.md)：10 个开源引擎、14 个固定仓库源码归档、Chat Completions 适配，以及 Windows 11 ARM64 的免安装运行包和 HarnessHub 开发依赖。公司 Agent 使用 [交接 Skill](skills/harnesshub-company-gateway/SKILL.md) 保留并合并公司现有网关代码。完整运行文件从 [Windows ARM64 离线 Release](https://github.com/wyzz973/HarnessHub/releases/tag/offline-win11-arm64-2026-09-07) 获取：下载运行 ZIP、`.offline.json`、`Restore-Offline.ps1` 和 Git bundle 四个附件，按 [恢复步骤](docs/offline-artifacts.md#windows-内网校验与恢复)带入内网。GitHub 自动生成的源码 ZIP 不能代替运行包。
+## 比赛评测（Agent 网关接口规范 v1.1）
 
-前置条件：Git、**Node.js 24.20.0**、**pnpm 10.12.3**。macOS 构建另需 Xcode Command Line Tools（`swiftc` 用于 Keychain helper）；缺少时先运行 `xcode-select --install`。Linux 不构建此 macOS helper，可使用 env/file 秘密引用。
+评测方按 [INSTRUCTION.md](distribution/INSTRUCTION.md) 执行，与上面的双击启动互不影响：
+
+```powershell
+$env:HARNESSHUB_MODEL      = "<模型 ID>"
+$env:HARNESSHUB_MODEL_BASE_URL = "http://<模型网关>/v1"
+$env:HARNESSHUB_MODEL_API_KEY  = "<密钥>"
+$env:AGENT_ENGINE          = "opencode"   # 换引擎只改这一行
+.\Start-Competition.cmd
+```
+
+比赛 API 监听 `http://localhost:6217`：`POST /session`（必须传 `directory`）、阻塞到本轮结束的 `POST /session/{id}/prompt_async`、`GET /session/{id}/message`、`GET /event`（SSE）、`abort`、权限与反问。逐项映射与完成判定见 [比赛接口](docs/competition-api.md)；按评委数据格式跑办公任务并按最终状态判分的工具见 [比赛任务测试](docs/competition-tasks.md)。
+
+提交物形态（源码 + 离线依赖 + 固定引擎）从 Release [`offline-dev-latest`](https://github.com/wyzz973/HarnessHub/releases/tag/offline-dev-latest) 下载，在断网机器上执行 `Setup-Competition-Offline.cmd` 完成依赖恢复、编译与比赛布局生成，再用 `Start-Competition.cmd` 启动。
+
+## 验证范围
+
+| 场景 | 环境 | 结果 |
+|---|---|---|
+| 10 个引擎的比赛接口、工具调用、中断与统一模型核对 | Windows x64 CI，脚本化模拟模型 | 10/10 通过 |
+| 同上，真实模型（DeepSeek `deepseek-flash` 经只接受流式的严格网关，对外呈现为 `GLM-V5_1-DX`） | Windows x64 CI | 8/10 通过；Kimi、DSH 的根因已修复并分别复测通过 |
+| 一键工具包（Skill + MCP + CLI）安装到全部引擎并被真实调用 | Windows x64 CI，真实模型 | 9/10 通过（Kimi 待复测） |
+| 离线开发包：断网 `Setup-Competition-Offline.cmd` → `Start-Competition.cmd` | Windows x64 CI | opencode、codex、hermes 通过 |
+| 干净离线 Windows Server Core 容器（无任何运行时、无网络） | Windows x64 CI | 完整性校验、无模型自检、10 引擎模拟模型全部通过 |
+| 7 个真实引擎经严格流式网关跑通比赛接口 | macOS | 通过 |
+
+证据、运行编号与**未验证项**（公司自有 GLM 网关、真实 Office/Outlook COM 操作、桌面会话、Windows 10、ARM64）见 [Windows x64 验收记录](docs/verification/2026-09-20-windows-x64.md)与 [统一模型网关验收](docs/verification/2026-09-19-unified-model-gateway.md)。安装发现、协议握手、模型可用和任务正确性分别验证，通过一项不代表其余成立。
+
+## 从源码开发
+
+前置条件：Git、**Node.js 24.20.0**、**pnpm 10.12.3**。macOS 另需 Xcode Command Line Tools（`swiftc` 用于 Keychain helper），Windows 使用系统 .NET Framework 编译原生 helper。
 
 ```sh
 git clone https://github.com/wyzz973/HarnessHub.git
@@ -40,79 +67,43 @@ pnpm build
 pnpm build:console
 ```
 
-公开仓库可直接克隆。新克隆不包含任何 API Key、本机引擎安装、用户配置或历史数据库。
-
-Windows 构建另使用系统 .NET Framework 编译原生 helper。完成构建后，可运行 `pnpm start:local --demo` 同时启动 Gateway 与控制台；固定 Node 的安装、PowerShell 环境变量和 Codex 接入见 [Windows 指南](docs/windows.md)。
-
-终端一，启动显式 demo Gateway：
-
-```sh
-pnpm start --demo --port 3180 --data-dir ./data/demo
-```
-
-终端二，在同一仓库启动控制台：
-
-```sh
-HARNESSHUB_GATEWAY_URL=http://127.0.0.1:3180 pnpm start:console
-```
-
-打开 **[http://127.0.0.1:3330](http://127.0.0.1:3330)**，在默认的“直接执行”模式下选择 `fake` 引擎并发送文本。demo 只回显/模拟协议，不代表真实 AI 推理；“自动规划”模式会排除 `fake`，需要另外接入真实引擎。
-
-验证 HTTP、事件、幂等、产物和关闭流程：
-
-```sh
-node examples/http-lifecycle.mjs http://127.0.0.1:3180
-```
-
-脚本仅接受含 `fake` 引擎的 demo 服务，成功输出 `status: completed`、Run ID、事件数和产物 hash，最后关闭自己创建的 Session。停止服务使用终端 Ctrl+C；同一数据目录不能由两个 Gateway 同时写入。
-
-## 接入真实引擎
-
-先在本机安装所需引擎及固定版本 Adapter，再启动空目录 Gateway：
+公开仓库可直接克隆；新克隆不包含任何 API Key、引擎二进制、用户配置或历史数据库。启动一个空数据目录的 Gateway 并在控制台中登记本机已安装的引擎：
 
 ```sh
 pnpm start --port 3180 --data-dir ./data/local
 ```
 
-在控制台“引擎管理”中发现、登记并配置。**发现不会自动安装或注册程序**；保存配置只影响新会话。“检查连接”解析配置并检查 ACP 握手，不调用模型；“测试模型”会创建正式任务并实际使用所配置模型。
-
-也可从 [engines/example.yaml](engines/example.yaml) 准备自己的 `engines/local.yaml`：
-
 ```sh
-cp engines/example.yaml engines/local.yaml
-# 按说明编辑成本机真实存在的命令与工作区，移除未安装的示例引擎
-pnpm start --config engines/local.yaml --port 3180 --data-dir ./data/local
+HARNESSHUB_GATEWAY_URL=http://127.0.0.1:3180 pnpm start:console
 ```
 
-密钥只使用 [秘密引用](docs/engine-configuration.md#密钥与环境)，不要写入提交内容或 command。Skills 当前采用显式任务上下文模式；MCP 通过 ACP 或已验证的原生配置下发，具体支持与限制见 [原生 MCP](docs/native-mcp.md)。任意 Provider URL 并非所有引擎都支持。
+打开 **[http://127.0.0.1:3330](http://127.0.0.1:3330)**，在“模型”页配置统一模型，在“引擎”页发现并登记引擎。**发现不会自动安装或注册程序**；保存配置只影响新会话。也可以从 [engines/example.yaml](engines/example.yaml) 准备自己的 `engines/local.yaml` 后用 `--config` 启动。密钥只使用 [秘密引用](docs/engine-configuration.md#密钥与环境)，不要写进提交内容或 command。
+
+```sh
+pnpm check          # 当前平台完整检查：构建、测试、API 文档同步与前端构建
+pnpm docs:api       # 从正式路由与实现说明重新生成 API 文档
+pnpm check:api      # 检查生成文档是否过期；需先 build
+```
+
+项目默认 Gateway 为 `3180`、Console 为 `3330`；新环境**总是显式设置** `HARNESSHUB_GATEWAY_URL`。`fake` 引擎只是自动测试用的替身，不出现在发行包中，也不用于演示。
 
 ## 文档导航
 
 | 想了解什么 | 文档 |
 |---|---|
 | 从零启动、数据目录、常见问题 | [使用指南](docs/getting-started.md) |
+| 交接、环境变量全集、排障路径、发布流程 | [交接说明](docs/handoff.md) |
+| 本次发布的全部变更 | [变更记录](CHANGELOG.md) |
 | 模块边界、调用链、状态和存储 | [架构与实现导览](docs/architecture.md) · [设计基线](DESIGN.md) |
 | 全部 HTTP 操作的参数、实现和副作用 | [API 入口](docs/api/README.md) · [逐接口实现](docs/api/reference.md) · [OpenAPI](docs/api/openapi.json) |
 | 统一模型、密钥、Skills、MCP | [引擎独立配置](docs/engine-configuration.md) · [统一模型网关](docs/model-gateway.md) |
-| 比赛接口与评测调用 | [比赛接口](docs/competition-api.md) · [INSTRUCTION.md](distribution/INSTRUCTION.md) |
+| 比赛接口、评测调用与办公任务测试 | [比赛接口](docs/competition-api.md) · [比赛任务测试](docs/competition-tasks.md) · [INSTRUCTION.md](distribution/INSTRUCTION.md) |
+| 预装办公 Skill 与工具 | [办公工具包](docs/office-suite.md) · [Capability Pack](docs/capability-packs.md) |
+| 诊断日志、模型用量与证据 | [观测](docs/observability.md) |
 | 动态登记、版本、发现与原生连接 | [引擎管理](docs/engine-management.md) · [发现](docs/engine-discovery.md) |
-| 计划确认、选路与失败恢复 | [工作流](docs/workflows.md) |
-| 文件、用量、Benchmark | [产物](docs/file-artifacts.md) · [观测](docs/observability.md) · [评测](docs/benchmark.md) |
+| 发行包制备与 Windows 能力边界 | [Windows 便携发布包](docs/portable-bundle.md) · [Windows 指南](docs/windows.md) |
 | 开发、测试、贡献与发布 | [开发规范](docs/development.md) · [测试](docs/testing.md) · [贡献](CONTRIBUTING.md) |
 | 全部文档和历史验收 | [文档索引](docs/README.md) |
-
-## 开发与检查
-
-```sh
-pnpm check          # 当前平台完整检查，包含构建、测试、API 文档同步与前端构建
-pnpm docs:api       # 从正式路由和实现说明重新生成 API 文档
-pnpm check:api      # 检查生成文档是否过期；需先 build
-pnpm dev:console   # 前端开发模式；同样需设置 HARNESSHUB_GATEWAY_URL
-```
-
-项目默认 Gateway 为 `3180`，Console 为 `3330`。Console 未显式设置后端时的兼容默认仍是 `3182`，因此新环境**总是显式设置** `HARNESSHUB_GATEWAY_URL`。历史验收中的 `3181/3182/3184` 和 `.tmp/.tools` 是本机记录，不是新克隆前置条件。
-
-目录结构和具体脚本见 [架构导览](docs/architecture.md#源码地图)；开发任务与未验证项见 [TODO.md](TODO.md)。
 
 ## 许可与来源
 
