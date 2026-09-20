@@ -22,7 +22,7 @@ jobs:
   engine:
     name: ${{ matrix.engine }} (${{ matrix.layout }}${{ vars.HH_REAL_OFFLINE == 'true' && ', offline' || '' }}, real model)
     runs-on: windows-latest
-    timeout-minutes: 75
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -36,6 +36,7 @@ jobs:
       HARNESSHUB_MODEL_CONTEXT_WINDOW: ${{ vars.HH_REAL_CONTEXT_WINDOW || '131072' }}
       HARNESSHUB_MODEL_MAX_OUTPUT_TOKENS: ${{ vars.HH_REAL_MAX_OUTPUT_TOKENS || '8192' }}
       OFFLINE: ${{ vars.HH_REAL_OFFLINE || 'false' }}
+      RUN_TASKS: ${{ vars.HH_REAL_TASKS || 'true' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -155,8 +156,24 @@ jobs:
           $full = $LASTEXITCODE
           & $node scripts/competition-toolpack-acceptance.mjs --layout $env:REAL_LAYOUT --entry $env:REAL_ENTRY --engine "${{ matrix.engine }}" --out $out --timeout-ms 900000 --summary $env:GITHUB_STEP_SUMMARY
           $pack = $LASTEXITCODE
+          # Office task suite (plays the judge): its own Gateway on a fixed port, then stop it.
+          $tasks = 0
+          if ($env:RUN_TASKS -ne "false") {
+            $env:AGENT_ENGINE = "${{ matrix.engine }}"
+            $gatewayLog = Join-Path $out "tasks-gateway-${{ matrix.engine }}.log"
+            $gateway = Start-Process -FilePath $env:ComSpec -ArgumentList "/d", "/c", "`"$env:REAL_ENTRY`" --port 6217 --no-console" -WorkingDirectory (Split-Path $env:REAL_ENTRY) -WindowStyle Hidden -PassThru -RedirectStandardOutput $gatewayLog -RedirectStandardError "$gatewayLog.err"
+            $ready = $false
+            for ($i = 0; $i -lt 240 -and -not $ready; $i++) {
+              try { $ready = (Invoke-RestMethod -Uri "http://127.0.0.1:6217/health/ready" -TimeoutSec 3).ready } catch { Start-Sleep -Seconds 1 }
+            }
+            if ($ready) {
+              & $node scripts/competition-tasks.mjs --base http://127.0.0.1:6217 --out $out --engine "${{ matrix.engine }}" --work-root (Join-Path $out "task-work") --task-timeout-ms 600000 --summary $env:GITHUB_STEP_SUMMARY
+              $tasks = $LASTEXITCODE
+            } else { $tasks = 2; "Task Gateway did not become ready" | Write-Host }
+            & taskkill.exe /PID $gateway.Id /T /F | Out-Null
+          }
           if ($relay.HasExited) { "Relay exited early with $($relay.ExitCode)" | Write-Host } else { Stop-Process -Id $relay.Id -Force }
-          if ($full -ne 0 -or $pack -ne 0) { throw "${{ matrix.engine }}: competition acceptance exit $full, Tool Pack acceptance exit $pack; see the job summary and artifact" }
+          if ($full -ne 0 -or $pack -ne 0 -or $tasks -ne 0) { throw "${{ matrix.engine }}: competition acceptance exit $full, Tool Pack acceptance exit $pack, office tasks exit $tasks; see the job summary and artifact" }
 
       - name: Upload results
         if: always()
