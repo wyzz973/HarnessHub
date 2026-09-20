@@ -227,3 +227,23 @@ Phase B 就包含 Windows、取消、超时、清理和轨迹验收。单个引�
 第一阶段具体交付是：启动本地 Gateway，创建 Session 和 Run，从 SSE 观察假引擎执行，取消运行，重启后仍可查询结果与导出 Rollout。随后以真实 OpenCode 替换假引擎，复用相同业务路径。
 
 Benchmark 每次记录 task/dataset/evaluator 版本、Engine/Adapter/Runtime、实际模型、预算、权限、环境及 attempt ID。执行成功与评分独立记录。best-of-engines 是事后评分的组合覆盖指标，能否作为比赛分数仍待规则核实。
+
+## 10. 统一模型与入站协议转换
+
+配置统一模型后，**所有引擎只使用这一个模型**：引擎自带的 API Key、登录与订阅不参与，凡是无法经统一模型驱动的适配器一律停用而不是降级。来源优先级为环境变量 `HARNESSHUB_MODEL*` > `state/harness-model.json` > 配置文件顶层 `model`，在每次引擎登记时强制生效。决定与取舍见 [ADR 0013](docs/decisions/0013-unified-model-gateway.md)，行为与限制见 [统一模型网关](docs/model-gateway.md)。
+
+模型网关属于 Worker，不属于 Gateway：每个 Session 的 Worker 在环回地址上启动一个只服务本 Session 的模型端点，用一次性 token 鉴权，把引擎发来的 Responses、Anthropic Messages、Google 与 Chat Completions 请求统一转换为上游的**流式** OpenAI Chat Completions。引擎看到的模型名是别名 `harnesshub-model`，上游收到真实模型 ID，因此引擎不能按模型名改走自己的路由或限额策略。非流式入站请求在网关内聚合后返回。
+
+上游按"严格企业网关"对待：默认去除上游常拒绝的厂商参数（含 `reasoning_effort`、`parallel_tool_calls` 等），`json_schema` 输出降级为 `json_object`，`developer` 角色并入 system，媒体内容转为文字占位；推理模型的 `reasoning_content` 被缓存并在后续工具调用中回传。上游错误按原状态码与脱敏后的文本透出，不伪装成引擎错误。现场适配用 `HARNESSHUB_MODEL_DROP_PARAMETERS`、`HARNESSHUB_MODEL_REASONING`、`HARNESSHUB_MODEL_IMAGES` 三个环境开关，不需要改代码。
+
+每次调用产生一条 `model.call` 事件：入站协议、请求模型与上游模型、状态、耗时、首字节时间、用量与脱敏错误。它同时是"引擎确实只用了统一模型"的证据来源。因上游错误（`MODEL_UPSTREAM_ERROR`）或引擎无输出（`ENGINE_NO_OUTPUT`）失败的一轮保留会话，可在同一会话重试。
+
+## 11. 比赛入口、诊断日志与预装工具包
+
+比赛入口实现 Agent 网关接口规范 v1.1（见 [比赛接口](docs/competition-api.md)）：`prompt_async` 阻塞到本轮结束，引擎由 `AGENT_ENGINE` 或 `--engine` 在启动时固定，完成判定以最后一条 assistant 消息的 `info.finish` 与 `step-finish` 为准。比赛模式下每轮任务的默认期限是 1 小时（`HARNESSHUB_RUN_TIMEOUT_MS` 覆盖），因为规范没有轮次上限而推理模型的真实任务经常超过通用默认值。
+
+诊断日志分两层，决定见 [ADR 0014](docs/decisions/0014-diagnostic-logs.md)：Gateway 进程写 `<dataDir>/logs/gateway.log`（接口访问、Session/Run/Worker/权限生命周期、每次模型调用摘要），每个 Session 的 Worker 写 `backends/<sessionId>/diagnostics/engine.log`（引擎进程与 stderr、逐条 ACP 请求/响应、工具调用状态、模型调用明细）。二者都是 JSON Lines、写前脱敏、按大小轮转，写失败只报告一次且不影响 Run。`GET /v1/sessions/{id}/logs` 按游标增量读取，供控制台面板与离线排障使用。
+
+发行包可携带工具包并在首次启动时按内容摘要应用到全部引擎（[ADR 0015](docs/decisions/0015-preinstalled-tool-packs.md)）：settings 仍是唯一事实来源，用户之后解除的绑定不会被重新装回，`HARNESSHUB_PREINSTALL_TOOL_PACKS=0` 关闭该行为。办公工具包按此机制随包交付，见 [办公工具包](docs/office-suite.md)。
+
+**实现中**：面向普通用户的 `Start.cmd` 工作台模式——不固定引擎、控制台中可选择全部已启用引擎、未配置统一模型时任务被明确拒绝而不是交给引擎失败、解压不完整时启动即报错。以合入提交为准，不以本节描述为已完成证据。
