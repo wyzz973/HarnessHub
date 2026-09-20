@@ -267,15 +267,33 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = "Stop"
+          # The tag is reused, so GitHub keeps showing the first publication date. Put the
+          # build identity in the title and the first line of the notes instead.
+          $build = Get-Content -Raw -LiteralPath $env:X64_BUILD_JSON | ConvertFrom-Json
+          $short = $build.commit.Substring(0, 7)
+          $builtAt = ([datetime]$build.builtAt).ToUniversalTime().ToString("yyyy-MM-dd HH:mm 'UTC'")
+          $title = "HarnessHub Competition Full Bundle - $short - $builtAt"
           $notes = Join-Path $env:RUNNER_TEMP "x64-release-notes.md"
           @(
+            "**$($build.asset) - commit ``$short`` - built $builtAt**",
+            "",
+            "SHA-256 ``$($build.sha256)`` - $([math]::Round($build.bytes / 1GB, 2)) GB.",
+            "This tag is reused for every build, so the date shown next to the tag is the",
+            "first publication, not this build. Check .build.json or the SHA-256 above.",
+            "",
             "HarnessHub Competition Full Bundle for Windows x64 (offline).",
             "",
-            "Start in PowerShell: set HARNESSHUB_MODEL, HARNESSHUB_MODEL_BASE_URL, HARNESSHUB_MODEL_API_KEY and AGENT_ENGINE, then run gateway.cmd (see README-COMPETITION.txt).",
-            "The .build.json asset records the commit, workflow run and SHA-256 of the current ZIP.",
+            "Extract with 7-Zip or ``tar.exe -xf <zip> -C D:\hh`` to a SHORT path: the longest",
+            "path inside is about 200 characters and Explorer's default target exceeds the",
+            "260-character limit, which silently drops files.",
+            "",
+            "Double-click Start.cmd for the workbench console, or set HARNESSHUB_MODEL,",
+            "HARNESSHUB_MODEL_BASE_URL, HARNESSHUB_MODEL_API_KEY and AGENT_ENGINE and run",
+            "Start-Competition.cmd for evaluation (see README-COMPETITION.txt).",
+            "",
             "CI evidence: bundle hashes and a no-model startup self-test. Engine acceptance uses a scripted mock model and is not a real-model pass."
           ) | Set-Content -Encoding UTF8 $notes
-          node scripts/publish-release-assets.mjs --tag "$env:RELEASE_TAG" --asset "$env:X64_RELEASE_ZIP" --asset "$env:X64_RELEASE_ZIP.sha256" --asset "$env:X64_BUILD_JSON" --title "HarnessHub Competition Full Bundle" --notes-file $notes --target "$env:GITHUB_SHA"
+          node scripts/publish-release-assets.mjs --tag "$env:RELEASE_TAG" --asset "$env:X64_RELEASE_ZIP" --asset "$env:X64_RELEASE_ZIP.sha256" --asset "$env:X64_BUILD_JSON" --title $title --notes-file $notes --update-notes --target "$env:GITHUB_SHA"
           if ($LASTEXITCODE -ne 0) { throw "Release publish failed" }
           "### x64 bundle published to ``$env:RELEASE_TAG``" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
           "SHA-256 ``$env:X64_RELEASE_SHA``, $env:X64_RELEASE_BYTES bytes, commit ``$env:GITHUB_SHA``." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
