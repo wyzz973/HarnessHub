@@ -390,8 +390,8 @@ export function ToolPacksPage({
               {list.map((pack) => {
                 const key = `${pack.id}@${pack.version}`;
                 const engineIds = bound(pack);
-                const preinstalled =
-                  pack.preinstalled === true || pack.id === "office-suite";
+                // Only the Gateway knows which version the release actually installed.
+                const preinstalled = pack.preinstalled === true;
                 return (
                   <article key={key} className="panel flex flex-col p-5">
                     <div className="flex items-start gap-3">
