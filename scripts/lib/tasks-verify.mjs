@@ -431,13 +431,32 @@ export async function listProcesses(options = {}) {
 }
 
 /**
- * Whether the machine has what a task needs. `requirement.kind === "app_installed"`
- * looks up App Paths registry keys (`app_paths`), commands on PATH (`commands`), Store
- * packages (`appx`) and files (`files`, %VAR% expanded); any hit satisfies it.
+ * Whether the machine has what a task needs.
+ *
+ * `app_installed` looks up App Paths registry keys (`app_paths`), commands on PATH
+ * (`commands`), Store packages (`appx`) and files (`files`, %VAR% expanded); any hit
+ * satisfies it. `desktop_session` asks whether a visible desktop shell exists at all:
+ * a running `explorer.exe` is the practical signal, because a Windows service session
+ * (a CI runner, a headless container) can start a GUI program but nobody can see or
+ * use its window, and the Explorer broker that survives Session cleanup is missing.
  */
 export async function checkRequirement(requirement, options = {}) {
   const platform = options.platform ?? process.platform;
-  if (!isObject(requirement) || requirement.kind !== "app_installed")
+  if (!isObject(requirement)) throw new Error("Requirement must be an object");
+  if (requirement.kind === "desktop_session") {
+    if (platform !== "win32")
+      return { satisfied: true, evidence: ["not windows"] };
+    const shells = (await listProcesses(options)).filter(
+      (item) => item.name === "explorer",
+    );
+    return shells.length
+      ? {
+          satisfied: true,
+          evidence: shells.map((item) => `shell:explorer:${item.pid}`),
+        }
+      : { satisfied: false, evidence: ["no explorer.exe desktop shell"] };
+  }
+  if (requirement.kind !== "app_installed")
     throw new Error(`Unknown requirement kind: ${requirement?.kind}`);
   if (platform === "win32") {
     const spec = JSON.stringify({
