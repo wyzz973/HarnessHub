@@ -1,69 +1,82 @@
-HarnessHub Windows portable bundle
+﻿HarnessHub 便携发行包（Windows）
 
-1. Extract the entire ZIP to a writable directory. Use the bundle matching your Windows CPU architecture.
-2. Double-click Start.cmd to open the Gateway and web console (http://127.0.0.1:3330).
-3. Model credentials are required for real tasks. No models are called by the commands below:
-   hub.cmd doctor --full
-   hub.cmd smoke
-   hub.cmd engines
+一、开始使用（全新电脑，不需要联网安装任何东西）
 
-Unified model: every engine uses only the one model configured in HarnessHub; engine-specific API
-keys, logins and subscriptions are not used. Sources, highest priority first:
-  1. Environment of the starting window (not written to disk):
-       $env:HARNESSHUB_MODEL = "<upstream model id>"
-       $env:HARNESSHUB_MODEL_BASE_URL = "https://<model gateway>/v1"   (required with HARNESSHUB_MODEL)
-       $env:HARNESSHUB_MODEL_API_KEY = "<key value>"
-     Optional: HARNESSHUB_MODEL_PROTOCOL (openai-completions), HARNESSHUB_MODEL_CONTEXT_WINDOW,
-     HARNESSHUB_MODEL_MAX_OUTPUT_TOKENS.
-  2. hub.cmd model set --model ID --base-url URL --api-key-env NAME   (hub.cmd model show to check)
-  3. The top-level "model" of a settings file applied with hub.cmd configure (example below).
-The upstream must be a streaming OpenAI Chat Completions endpoint.
+1. 解压到较短的路径，例如 D:\hh。
+   包内最长的文件路径接近 200 个字符，用资源管理器的"全部解压缩"解压到"下载"
+   这类深目录会超过 Windows 的 260 字符限制并悄悄丢文件。请用 7-Zip，或在
+   PowerShell 里执行：  tar.exe -xf harnesshub-*.zip -C D:\hh
+   解压不完整时程序会直接报错并说明原因。
 
-Configure DeepSeek V4 Flash with the bundled settings example:
-  In PowerShell, read a key without storing it in your command history:
-    $secret = Read-Host 'DeepSeek API key' -AsSecureString
-    $env:DEEPSEEK_API_KEY = [Net.NetworkCredential]::new('', $secret).Password
-    .\hub.cmd configure --file .\examples\deepseek.json
-    .\hub.cmd start
-  Keep this terminal open. End with Ctrl+C. Never distribute state/ after entering credentials or running tasks.
-  You can also create a Windows encrypted credential through the console and configure its reference.
+2. 双击 Start.cmd。浏览器会自动打开控制台（默认 http://127.0.0.1:3330，
+   端口被占用时自动换一个）。窗口保持打开；按 Ctrl+C 结束。
 
-Competition bundles also contain gateway.cmd: set AGENT_ENGINE (for example opencode) and the
-unified model, then run .\gateway.cmd. It serves the competition API on http://localhost:6217 and
-starts the console on http://127.0.0.1:3330 (see README-COMPETITION.txt).
-Diagnostic logs (JSON Lines, secrets redacted): <data dir>\logs\gateway.log and one
-backends\<sessionId>\diagnostics\engine.log per Session; HARNESSHUB_LOG_LEVEL=debug adds payload
-excerpts. In competition bundles .\Collect-Logs.cmd packs them into logs-<time>.zip.
+3. 在控制台里填写模型：接口地址（通常以 /v1 结尾）、模型 ID、API Key，保存。
+   所有引擎只使用这一个模型，不会用引擎自带的账号、登录或订阅。
+   配置完成前提交任务会被直接拒绝（不会启动引擎），提示"未配置统一模型"。
 
-Preinstalled Tool Packs (competition bundles): the packs listed in tool-packs\preinstalled.json are
-applied to every compatible engine by Start.cmd / hub.cmd start and gateway.cmd before the first
-start finishes; nothing has to be installed. A pack is applied once per content: packs you unbind
-later stay unbound, a changed pack is applied again. HARNESSHUB_PREINSTALL_TOOL_PACKS=0 disables it
-(any value other than 0 or 1 is rejected). Problems never stop the Gateway; they are printed once
-and logged as toolpack.preinstall in the Gateway log. GET /v1/tool-packs marks them preinstalled.
+4. 选择引擎，描述任务，开始。任务的文件产物保存在会话的工作目录中。
 
-Install a bundled tool package in PowerShell from the extracted directory:
-  .\hub.cmd tools install --source "$PWD\tools\workspace-tools"
-  .\hub.cmd tools use workspace-tools 1.0.0 --engine opencode
-  .\hub.cmd tools verify --id workspace-tools --version 1.0.0
-  .\hub.cmd tools unuse --id workspace-tools --version 1.0.0 --engine opencode
-  .\hub.cmd tools remove --id workspace-tools --version 1.0.0
-  Restart the service after changing release settings. New sessions use the new configuration.
-  If the console has an overriding engine configuration, CLI changes fail explicitly.
-  Edit that engine in the console or use a fresh extraction; existing history is preserved.
+二、预装的办公工具包
 
-Pi/OpenClaw use native extensions/skills instead of session MCP; unsupported bindings fail explicitly.
-Kimi uses the official noninteractive CLI because its ACP mode requires vendor OAuth.
-With a unified model, Cursor/Kiro/Antigravity/Qoder are disabled because they cannot be routed
-through it; without one they can require vendor credentials.
-These account/protocol limits cannot be removed by packaging executable files.
+包内 tool-packs\ 下的工具包在首次启动时自动安装到所有兼容引擎，无需操作：
+生成和读取 Word / Excel / PowerPoint / PDF、创建会议日程与邮件草稿、打开和
+关闭 Windows 应用。在控制台"工具"页可以看到，也可以解除绑定。
+设置 HARNESSHUB_PREINSTALL_TOOL_PACKS=0 可关闭自动预装。
 
-This bundle includes fixed Node, engine programs, Python/VC components as needed, PortableGit and the web UI.
-No npm/pip/git installation, source compilation or engine download is required on the judge machine.
-External model APIs still require network access. Optional browsers/voice/cloud services are not bundled.
-ARM64 bundles include x64 Hermes/Kiro components and require Windows 11 x64 emulation.
-See THIRD_PARTY_NOTICES.md and each vendor's LICENSE/terms before redistributing vendor components.
+三、添加自己的 Skill / MCP / CLI
 
-All runs, settings, installed tool packages and evaluation evidence live under state/.
-Use a fresh extraction for a clean evaluation. Competition-specific requirements and x64 acceptance
-must be checked on the actual judge OS; this package alone does not establish competition compliance.
+控制台"工具"页 → 添加工具：选择本机目录（Skill 目录、mcp.json、cli.json），
+或直接粘贴 {"mcpServers":{...}} 配置，一次应用到全部引擎。
+命令行等价方式：
+  .\Install-Tool-Pack.cmd --source "<目录或 JSON 文件>" --engines all
+改动在新建的会话中生效。
+
+四、日志与排查
+
+  state\competition-data\logs\gateway.log                请求、会话与任务生命周期、每次模型调用
+  state\competition-data\backends\<会话>\diagnostics\engine.log   引擎进程、协议往来、工具调用
+  .\Collect-Logs.cmd                                    一键打包全部日志（已脱敏）为 zip
+控制台的"执行详情 → 诊断日志"可以直接在页面上查看同样的记录。
+需要提示词与回答摘录时，启动前设置 HARNESSHUB_LOG_LEVEL=debug。
+
+五、常见问题
+
+  端口被占用        控制台端口会自动更换；Gateway 端口可用 Start.cmd --port 6218 指定。
+  解压不完整        见第一节，改用 7-Zip 或 tar.exe 解压到短路径。
+  杀毒软件拦截      把解压目录加入白名单后重新运行；报告"引擎文件缺失"即属此类。
+  文件被标记来自网络  PowerShell 执行：Get-ChildItem -Recurse <目录> | Unblock-File
+  从其他机器访问     Start.cmd --host 0.0.0.0（该绑定没有鉴权，只能用于隔离网络）。
+
+六、比赛评测入口
+
+评测请按 INSTRUCTION.md 使用 Start-Competition.cmd / gateway.cmd：用环境变量
+AGENT_ENGINE 固定引擎，用 HARNESSHUB_MODEL、HARNESSHUB_MODEL_BASE_URL、
+HARNESSHUB_MODEL_API_KEY 配置模型，比赛接口在 http://localhost:6217。
+详见 README-COMPETITION.txt。
+
+模型 API Key 只存在于进程环境或本机凭据库中；state\ 目录只保存变量名。
+运行数据、设置与产物都在 state\ 下；需要干净环境时重新解压一份。
+重新分发第三方组件前请阅读 THIRD_PARTY_NOTICES.md 与各厂商条款。
+
+--------------------------------------------------------------------------
+
+HarnessHub portable bundle (Windows) - English summary
+
+1. Extract to a SHORT path such as D:\hh with 7-Zip or `tar.exe -xf`.
+   Explorer's "Extract All" into a deep folder exceeds the Windows 260
+   character path limit and silently drops files; the bundle then refuses to
+   start and tells you so.
+2. Double-click Start.cmd. The console opens in your browser
+   (http://127.0.0.1:3330 by default, or a free port).
+3. Enter the model endpoint (usually ending in /v1), model id and API key in
+   the console. Every engine uses only this model - never its own account,
+   login or subscription. Until it is configured, Runs are refused up front.
+4. Pick an engine and describe the task. Office Tool Packs under tool-packs\
+   are installed on first start; add your own on the console's Tools page or
+   with Install-Tool-Pack.cmd --source <dir or JSON> --engines all.
+
+Logs: state\competition-data\logs\gateway.log and the per-session
+diagnostics\engine.log; .\Collect-Logs.cmd packs both, redacted, into a ZIP.
+Evaluation uses Start-Competition.cmd with AGENT_ENGINE and HARNESSHUB_MODEL*
+as described in INSTRUCTION.md and README-COMPETITION.txt.
