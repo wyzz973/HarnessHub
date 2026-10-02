@@ -16,7 +16,7 @@ import {
 } from "@harnesshub/core/benchmark";
 import type { RunId, SessionId } from "@harnesshub/core/types";
 import { startHub } from "../../src/main.js";
-import { SqliteBenchmarkStore } from "../../src/storage/benchmark-store.js";
+import { SqliteBenchmarkStore } from "@harnesshub/store/storage/benchmark-store";
 
 function attempt(
   id: string,

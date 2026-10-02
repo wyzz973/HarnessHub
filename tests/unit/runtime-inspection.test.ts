@@ -9,7 +9,7 @@ import type { WorkerHost } from "@harnesshub/core/ports";
 import { isTerminal } from "@harnesshub/core/types";
 import type { EngineProfile, JsonObject, RunId } from "@harnesshub/core/types";
 import { Runtime } from "../../src/runtime/runtime.js";
-import { SqliteStore } from "../../src/storage/sqlite-store.js";
+import { SqliteStore } from "@harnesshub/store/storage/sqlite-store";
 
 async function settled(store: SqliteStore, id: RunId) {
   const until = Date.now() + 1500;

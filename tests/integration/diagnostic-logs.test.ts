@@ -11,7 +11,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { startHub } from "../../src/main.js";
 import type { RunRecord, SessionRecord } from "@harnesshub/core/types";
 import type { HubApplication } from "../../src/application/service.js";
-import { ensurePrivateDirectory } from "../../src/platform/windows-acl.js";
+import { ensurePrivateDirectory } from "@harnesshub/store/platform/windows-acl";
 
 type Hub = Awaited<ReturnType<typeof startHub>>;
 type RunView = ReturnType<HubApplication["getRun"]>;

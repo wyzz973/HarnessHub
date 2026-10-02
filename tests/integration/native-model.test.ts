@@ -20,7 +20,7 @@ import {
   type RunRecord,
   type SessionRecord,
 } from "@harnesshub/core/types";
-import { ensurePrivateDirectory } from "../../src/platform/windows-acl.js";
+import { ensurePrivateDirectory } from "@harnesshub/store/platform/windows-acl";
 import { writePrivateSecretFile } from "../fixtures/private-secret-file.js";
 
 void test(

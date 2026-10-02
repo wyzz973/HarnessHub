@@ -129,3 +129,11 @@ daemon 内只有 `src/worker/**` 可以导入 drivers。
 - ESLint 用 `projectService` 经 solution `tsconfig.json` 找到每个文件所属项目，并经源码条件直接读取依赖包的源码，lint 前不需要构建。lint 范围是 `src tests packages`；`apps` 在第 11 步建立后加入，因为 ESLint 对不存在的路径报错。
 - 边界检查的命令行参数改为仓库根目录。包内不属于任何旧模块的新代码只受依赖图与第三方位置规则约束；包内测试只受依赖图与“不离开所在包”约束，与不扫描 `tests/` 的做法一致。
 - 带期限的 `child_process` 允许表在第 3 步 platform 迁入 store 时加入，此前沿用旧模块规则；`new URL` 的 scripts 资源允许表在第 7 步（V8）加入，目前包内没有越界的 URL。
+
+第 3 步（store）：
+
+- `src/storage` 与 `src/platform` 原样迁入 `packages/store/src/` 的同名子目录；ACL 辅助程序源码与构建脚本迁入 `packages/store/native/`，脚本按自身位置计算路径，在 Windows 上输出到 `packages/store/dist/native/harnesshub-acl.exe`。`src/platform` 原来的 `new URL("../../native/harnesshub-acl.exe", import.meta.url)` 因此不变地指向包内产物；两处调用改为同一个 `aclHelperPath()`，仍在每次调用时计算，以便 SEA 改写 `import.meta.url` 后照常解析。
+- 第一个包内测试 `packages/store/test/native-helper.test.ts`：所有平台检查路径落在 `packages/store/dist/native/harnesshub-acl.exe`；文件存在只在 Windows 上检查，其他平台跳过并写明原因（辅助程序只在 Windows 上构建）。单元组的匹配因此加入 `packages/*/dist/test/*.test.js`。
+- 三个集成测试需要把编译后的 Store 模块地址交给子进程或 Worker 线程，改用 `import.meta.resolve("@harnesshub/store/storage/...")`，按包导出解析到编译产物。
+- 边界检查：别名表的值可以是该包保存的旧模块列表（store 为 storage 与 platform），导入的第一段子路径必须是其中之一，并按该模块的规则检查；`node:sqlite` 只允许在 store 的 storage 中；包内的 `node:child_process` 只允许 `CHILD_PROCESS_EXCEPTIONS` 中的条目，每项写明所有者与到期任务，检查读取 `TODO.md`，该任务勾选后、或缺少 `TODO.md` 而无法判断时，导入即失败。
+- SEA 构建把每个包的 `dist/native` 与根 `dist/native` 一样按仓库相对路径嵌入并解包。

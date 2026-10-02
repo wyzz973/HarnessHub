@@ -4,7 +4,7 @@ import { mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { withWindowsReadLock } from "../../src/platform/windows-file-lock.js";
+import { withWindowsReadLock } from "@harnesshub/store/platform/windows-file-lock";
 
 void test(
   "Windows read lease rejects existing writers, blocks new writers, and closes on abort",

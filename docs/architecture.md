@@ -56,7 +56,7 @@ Console不是引擎执行器：它调用Next的 `/api/gateway/...` 代理，再�
 | [模型网关](../src/drivers/chat-completions/gateway.ts) | Session私有端点：Responses/Anthropic/Google/Chat入站转换、参数清理、推理回填、`model.call` 记录 |
 | [工具包](../src/tool-packages/management.ts) | 导入与校验、按引擎绑定与解绑、一键应用到全部引擎 |
 | [诊断日志](../src/logging/json-log-file.ts) | JSON Lines写入、脱敏、轮转；Store装饰器与Session日志读取 |
-| [storage](../src/storage/sqlite-store.ts) | 事务、幂等、记录校验、事件序号、公共终态唯一性 |
+| [storage](../packages/store/src/storage/sqlite-store.ts) | 事务、幂等、记录校验、事件序号、公共终态唯一性 |
 | [artifacts](../src/artifacts/collector.ts) | 声明式outputs采集、不可变文件、hash与安全读取 |
 | [benchmark](../src/benchmark-main.ts) | 隔离attempt、调用Application、Evaluator与报告 |
 | [web](../web/README.md) | 控制台、代理、UI响应校验、SSE重放与任务选择 |

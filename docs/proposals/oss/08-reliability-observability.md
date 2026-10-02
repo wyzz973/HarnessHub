@@ -2,7 +2,7 @@
 
 状态：提案（草案），2026-10-02。术语、进程与部署形态以 [02 系统架构](02-architecture.md) 为准，顶层性能与可靠性目标来自 [01 成功指标](01-product.md#7-成功指标)，重试与故障转移规则以 [ADR-P05](adr-drafts.md#adr-p05-路由重试与故障转移) 为准。数据目录、迁移备份与秘密见 [07 数据与安全](07-data-security.md)。文中的命令名、API 路径与配置键表示所需的能力，最终命名以 [06 接口与交互面](06-interfaces.md) 为准。
 
-依据：现有实现（[运行观测与诊断日志](../../observability.md)、[ADR 0014](../../decisions/0014-diagnostic-logs.md)、[ADR 0007](../../decisions/0007-windows-process-supervision.md)、[`json-log-file.ts`](../../../src/logging/json-log-file.ts)、[`diagnostics.ts`](../../../src/worker/diagnostics.ts)、[`sqlite-store.ts`](../../../src/storage/sqlite-store.ts)）；`yetone/magpie@d874adb` 的 `internal/redact` 与 README 中的 OTLP 导出说明；2026-10-02 的对比核验（调研材料，未入库，以问题编号引用）；[OpenTelemetry GenAI 语义约定](https://github.com/open-telemetry/semantic-conventions-genai)（Development 状态）。
+依据：现有实现（[运行观测与诊断日志](../../observability.md)、[ADR 0014](../../decisions/0014-diagnostic-logs.md)、[ADR 0007](../../decisions/0007-windows-process-supervision.md)、[`json-log-file.ts`](../../../src/logging/json-log-file.ts)、[`diagnostics.ts`](../../../src/worker/diagnostics.ts)、[`sqlite-store.ts`](../../../packages/store/src/storage/sqlite-store.ts)）；`yetone/magpie@d874adb` 的 `internal/redact` 与 README 中的 OTLP 导出说明；2026-10-02 的对比核验（调研材料，未入库，以问题编号引用）；[OpenTelemetry GenAI 语义约定](https://github.com/open-telemetry/semantic-conventions-genai)（Development 状态）。
 
 ## 1. SLI 与 SLO
 
@@ -88,7 +88,7 @@
 ### 4.1 单实例锁
 
 - `<数据根>/hh.lock` 是只用于加锁的 SQLite 文件。守护进程用专用连接执行 `PRAGMA locking_mode=EXCLUSIVE` 与 `BEGIN EXCLUSIVE`，保持到进程退出。SQLite 在 POSIX 上使用 fcntl 记录锁，在 Windows 上使用 LockFileEx，进程退出时都由内核释放。
-- 现状以 `runtime_metadata` 中的 PID 是否存活判断所有权（[`sqlite-store.ts`](../../../src/storage/sqlite-store.ts) 第 108、227–245 行），异常退出后 PID 一旦被复用，启动会一直被拒绝（核验 V13-N2）。核验中在 macOS 上实测 SIGKILL 后 SQLite 独占锁可立即重新取得；Windows 的 TerminateProcess 与关闭控制台窗口两种退出方式需要在 Windows 上单独验证。
+- 现状以 `runtime_metadata` 中的 PID 是否存活判断所有权（[`sqlite-store.ts`](../../../packages/store/src/storage/sqlite-store.ts) 第 108、227–245 行），异常退出后 PID 一旦被复用，启动会一直被拒绝（核验 V13-N2）。核验中在 macOS 上实测 SIGKILL 后 SQLite 独占锁可立即重新取得；Windows 的 TerminateProcess 与关闭控制台窗口两种退出方式需要在 Windows 上单独验证。
 - POSIX fcntl 锁的陷阱：同一进程关闭指向该文件的任何描述符都会释放锁。因此 `hh.lock` 只被这一条连接打开，其他代码（包括 `hh doctor`）只读 `owner.json`。
 - 启动顺序：解析根目录 → 校验权限（07 第 1 节）→ 取锁 → 写 `owner.json` → 打开日志 → 打开 Store → 迁移 → 恢复 → 监听 → 就绪。取锁之前不写任何文件，这修复了“第二次启动在取得所有权之前改写运行中实例的配置”的问题。
 - 取锁失败时以退出码 5（冲突，见 [06 第 5 节](06-interfaces.md#5-cli)）结束，消息包含 `owner.json` 中的 pid、启动时间、版本与地址，不尝试终止对方。`hh` CLI 自动拉起前先用管理令牌访问该地址，对方无响应时报告“实例无响应”并建议运行 `hh doctor`。

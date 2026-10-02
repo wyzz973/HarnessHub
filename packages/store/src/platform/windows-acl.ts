@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 import { execFile } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { HubError } from "@harnesshub/core/errors";
+import { aclHelperPath } from "./native-helper.js";
 
 const execute = promisify(execFile);
 
@@ -14,13 +14,11 @@ async function privatePaths(
   if (process.platform !== "win32")
     throw new HubError("UNSUPPORTED_PLATFORM", "Windows ACLs require Windows");
   try {
-    const operation = execute(
-      fileURLToPath(
-        new URL("../../native/harnesshub-acl.exe", import.meta.url),
-      ),
-      [],
-      { windowsHide: true, timeout: 10_000, maxBuffer: 16 * 1024 },
-    );
+    const operation = execute(aclHelperPath(), [], {
+      windowsHide: true,
+      timeout: 10_000,
+      maxBuffer: 16 * 1024,
+    });
     // The helper reads bounded path metadata from stdin and never runs a shell.
     // A pipe failure terminates the child; execute then observes its failed exit.
     operation.child.stdin?.on("error", () => operation.child.kill());

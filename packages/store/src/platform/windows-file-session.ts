@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { HubError } from "@harnesshub/core/errors";
+import { aclHelperPath } from "./native-helper.js";
 
 /** One bounded collection owns this native helper and must await close in finally. */
 export class WindowsFileSession {
@@ -21,13 +21,10 @@ export class WindowsFileSession {
   };
 
   private constructor(private readonly signal: AbortSignal) {
-    this.child = spawn(
-      fileURLToPath(
-        new URL("../../native/harnesshub-acl.exe", import.meta.url),
-      ),
-      ["--session"],
-      { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] },
-    );
+    this.child = spawn(aclHelperPath(), ["--session"], {
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     let output = "";
     this.child.stdout.on("data", (bytes: Buffer) => {
       output += bytes.toString("ascii");

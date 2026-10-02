@@ -12,7 +12,7 @@ import {
   deleteSecret,
   resolveSecret,
 } from "../../src/drivers/configuration/secrets.js";
-import { ensurePrivateDirectory } from "../../src/platform/windows-acl.js";
+import { ensurePrivateDirectory } from "@harnesshub/store/platform/windows-acl";
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import { HubError } from "@harnesshub/core/errors";
 import { writePrivateSecretFile } from "../fixtures/private-secret-file.js";

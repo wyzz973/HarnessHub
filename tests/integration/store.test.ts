@@ -19,7 +19,7 @@ import type {
   RunRecord,
   SessionId,
 } from "@harnesshub/core/types";
-import { SqliteStore } from "../../src/storage/sqlite-store.js";
+import { SqliteStore } from "@harnesshub/store/storage/sqlite-store";
 
 const engine: EngineProfile = {
   id: "fake",
@@ -224,8 +224,7 @@ void test("concurrent database connections commit one immutable terminal outcome
       {
         eval: true,
         workerData: {
-          module: new URL("../../src/storage/sqlite-store.js", import.meta.url)
-            .href,
+          module: import.meta.resolve("@harnesshub/store/storage/sqlite-store"),
           path,
           id: run.id,
           gate,

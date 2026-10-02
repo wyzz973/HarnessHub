@@ -22,6 +22,9 @@ importers:
       '@harnesshub/core':
         specifier: workspace:*
         version: link:packages/core
+      '@harnesshub/store':
+        specifier: workspace:*
+        version: link:packages/store
       acpx:
         specifier: 0.13.2
         version: 0.13.2(patch_hash=2fc8dc1222d3663c1c357409b341ce293d920dbab00f71b069b42a732d6dba7f)
@@ -72,6 +75,12 @@ importers:
   packages/plugin-host: {}
 
   packages/sdk: {}
+
+  packages/store:
+    dependencies:
+      '@harnesshub/core':
+        specifier: workspace:*
+        version: link:../core
 
   web:
     dependencies:

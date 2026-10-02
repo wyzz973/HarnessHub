@@ -427,3 +427,124 @@ test("CLI scans packages and applications and does not follow their node_modules
   assert.equal(valid.status, 0, valid.stderr);
   assert.match(valid.stdout, /verified for 1 source files/);
 });
+
+test("src imports @harnesshub/store only through its legacy modules, under their rules", () => {
+  assert.deepEqual(
+    check(
+      "main.ts",
+      'import { SqliteStore } from "@harnesshub/store/storage/sqlite-store";',
+    ),
+    [],
+  );
+  assert.deepEqual(
+    check(
+      "artifacts/publisher.ts",
+      'import { verifyPrivateFile } from "@harnesshub/store/platform/windows-acl";',
+    ),
+    [],
+  );
+  assert.match(
+    check(
+      "gateway/http.ts",
+      'import type { SqliteStore } from "@harnesshub/store/storage/sqlite-store";',
+    ).join("\n"),
+    /gateway cannot depend on storage/,
+  );
+  assert.match(
+    check(
+      "runtime/run.ts",
+      'import { verifyPrivateFile } from "@harnesshub/store/platform/windows-acl";',
+    ).join("\n"),
+    /runtime cannot depend on platform/,
+  );
+  assert.match(
+    check(
+      "main.ts",
+      'import { cache } from "@harnesshub/store/cache/lru";',
+    ).join("\n"),
+    /@harnesshub\/store holds no legacy module cache/,
+  );
+});
+
+test("SQLite belongs in the storage module of @harnesshub/store", () => {
+  assert.deepEqual(
+    checkAt(
+      "packages/store/src/storage/sqlite-store.ts",
+      'import { DatabaseSync } from "node:sqlite";',
+    ),
+    [],
+  );
+  assert.match(
+    checkAt(
+      "packages/store/src/platform/windows-acl.ts",
+      'import { DatabaseSync } from "node:sqlite";',
+    ).join("\n"),
+    /SQLite belongs in storage of @harnesshub\/store/,
+  );
+  assert.match(
+    checkAt(
+      "packages/runtime/src/storage/cache.ts",
+      'import { DatabaseSync } from "node:sqlite";',
+    ).join("\n"),
+    /SQLite belongs in storage of @harnesshub\/store/,
+  );
+});
+
+test("child_process inside a package needs an unexpired exception", () => {
+  const platform = join(root, "packages/store/src/platform/windows-acl.ts");
+  const source = 'import { execFile } from "node:child_process";';
+  assert.deepEqual(
+    checkSource(platform, source, root, {
+      completedTasks: new Set(["OSS-012"]),
+    }),
+    [],
+  );
+  assert.match(
+    checkSource(
+      join(root, "packages/store/src/storage/sqlite-store.ts"),
+      source,
+      root,
+      { completedTasks: new Set() },
+    ).join("\n"),
+    /packages\/store has no child_process exception/,
+  );
+  assert.match(
+    checkSource(platform, source, root, {
+      completedTasks: new Set(["OSS-013"]),
+    }).join("\n"),
+    /exception for store\/platform\/ \(owner OSS-010 F08\) expired with OSS-013/,
+  );
+  assert.match(
+    checkSource(platform, source, root).join("\n"),
+    /ends with OSS-013; TODO\.md is needed to check it/,
+  );
+});
+
+test("CLI ends a child_process exception when its TODO.md task is ticked", (context) => {
+  const directory = mkdtempSync(join(tmpdir(), "harnesshub-boundaries-todo-"));
+  context.after(() => rmSync(directory, { recursive: true, force: true }));
+  const platform = join(directory, "packages", "store", "src", "platform");
+  mkdirSync(platform, { recursive: true });
+  writeFileSync(
+    join(platform, "acl.ts"),
+    'import { execFile } from "node:child_process";',
+  );
+  const run = () =>
+    spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL("./check-boundaries.mjs", import.meta.url)),
+        directory,
+      ],
+      { encoding: "utf8" },
+    );
+  const missing = run();
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /TODO\.md is needed to check it/);
+  writeFileSync(join(directory, "TODO.md"), "- [ ] **OSS-013 M0 组合验收**\n");
+  assert.equal(run().status, 0);
+  writeFileSync(join(directory, "TODO.md"), "- [x] **OSS-013 M0 组合验收**\n");
+  const expired = run();
+  assert.equal(expired.status, 1);
+  assert.match(expired.stderr, /expired with OSS-013/);
+});

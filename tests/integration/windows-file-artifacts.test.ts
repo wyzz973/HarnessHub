@@ -15,7 +15,7 @@ import type {
 import {
   verifyPrivateDirectory,
   verifyPrivateFile,
-} from "../../src/platform/windows-acl.js";
+} from "@harnesshub/store/platform/windows-acl";
 import { temporaryDirectory } from "../support/temporary.js";
 
 type RunView = RunRecord & { artifacts: ArtifactRecord[] };
