@@ -16,6 +16,7 @@ import {
   type ModelCallEntry,
   type ProviderConfig,
   type RouteGroup,
+  type WireProtocol,
   type WiringRecord,
 } from "@harnesshub/core/model-plane";
 
@@ -50,7 +51,8 @@ const list =
     Array.isArray(value) && value.length <= max && value.every(check);
 const sha256: Check = (value) =>
   typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
-const protocol = member(wireProtocols);
+const protocol = (value: unknown): value is WireProtocol =>
+  member(wireProtocols)(value);
 
 const TIMESTAMP =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
@@ -90,12 +92,81 @@ const apiKeyHeader: Check = (value) =>
   (typeof value === "string" &&
     /^custom:[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/.test(value));
 
+/** Loopback names and addresses, and RFC 1918 private IPv4 addresses. */
+function localHost(hostname: string): boolean {
+  if (
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname === "[::1]"
+  )
+    return true;
+  const octets = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(hostname);
+  if (!octets) return false;
+  const first = Number(octets[1]);
+  const second = Number(octets[2]);
+  return (
+    first === 127 ||
+    first === 10 ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168)
+  );
+}
+
+const operationPaths = [
+  "/chat/completions",
+  "/responses",
+  "/messages",
+  ":generateContent",
+  ":streamGenerateContent",
+];
+
+/** Version segments the gateway appends itself, so a base must not end with them. */
+const appendedVersions: Partial<Record<WireProtocol, RegExp>> = {
+  anthropic: /\/v1$/,
+  gemini: /\/v1(?:beta|alpha)?$/,
+};
+
+/**
+ * Why `url` cannot be the base URL of a `protocol` endpoint, or `undefined`
+ * when it can (03-model-plane section 4). A base is what the vendor's official
+ * SDK uses: chat and responses bases include the version (`.../v1`), the
+ * gateway appends `/chat/completions` or `/responses`; anthropic bases exclude
+ * it (the gateway appends `/v1/messages`); gemini bases exclude it (the
+ * gateway appends `/{v1beta|v1|v1alpha}/models/...`). A base uses HTTPS (plain
+ * HTTP only for loopback and RFC 1918 hosts) and has no credentials, query,
+ * fragment or operation path.
+ */
+export function endpointProblem(
+  protocol: WireProtocol,
+  url: string,
+): string | undefined {
+  if (!URL.canParse(url)) return "is not a URL";
+  const parsed = new URL(url);
+  if (parsed.protocol === "http:") {
+    if (!localHost(parsed.hostname))
+      return "must use HTTPS unless the host is loopback or a private address";
+  } else if (parsed.protocol !== "https:") return "must use HTTPS";
+  if (parsed.username || parsed.password) return "must not contain credentials";
+  if (url.includes("?") || url.includes("#"))
+    return "must not contain a query or fragment";
+  const path = parsed.pathname.replace(/\/+$/, "");
+  const operation = operationPaths.find((suffix) => path.endsWith(suffix));
+  if (operation)
+    return `must be the base URL, without the operation path ${operation}`;
+  if (appendedVersions[protocol]?.test(path))
+    return `must not end with the API version, which the gateway appends for ${protocol}`;
+  return undefined;
+}
+
 const endpoints: Check = (value) =>
   object(value) &&
   Object.keys(value).length > 0 &&
   Object.entries(value).every(
     ([name, url]) =>
-      protocol(name) && typeof url === "string" && URL.canParse(url),
+      protocol(name) &&
+      typeof url === "string" &&
+      url.length <= 2048 &&
+      endpointProblem(name, url) === undefined,
   );
 
 const credential: Check = (value) =>

@@ -226,6 +226,12 @@ void test("providers are stored, replaced, listed and deleted; invalid ones are 
     { ...base, schemaVersion: 2 },
     { ...base, endpoints: {} },
     { ...base, endpoints: { chat: "not a url" } },
+    {
+      ...base,
+      endpoints: { chat: "https://api.example.test/v1/chat/completions" },
+    },
+    { ...base, endpoints: { chat: "http://api.example.test/v1" } },
+    { ...base, endpoints: { anthropic: "https://api.example.test/v1" } },
     { ...base, endpoints: { sse: "https://api.example.test" } },
     { ...base, auth: { apiKeyHeader: "custom:bad header" } },
     { ...base, credentials: [...base.credentials, ...base.credentials] },
