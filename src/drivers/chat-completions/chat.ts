@@ -84,7 +84,12 @@ function chatUsage(result: ChatResult): Record<string, unknown> | undefined {
   return usage;
 }
 
-/** Chat Completions output: `chat.completion.chunk` SSE ending in `[DONE]`, or one `chat.completion`. */
+/**
+ * Chat Completions output: `chat.completion.chunk` SSE ending in `[DONE]`, or
+ * one `chat.completion`. The stream keepalive is an empty-delta chunk of the
+ * same completion, never an SSE comment: openai-node drops comments, so only
+ * chunks reset SDK-level stream watchdogs (Qwen Code: 240 s).
+ */
 export class ChatSink implements OutputSink {
   #indexes = new Map<number, number>();
   constructor(
@@ -187,6 +192,9 @@ export class ChatSink implements OutputSink {
       ],
       ...(usage ? { usage } : {}),
     });
+  }
+  async keepalive(): Promise<void> {
+    if (this.translation.stream) await this.writer.write(this.#chunk({}));
   }
   async fail(failure: Failure): Promise<void> {
     await this.writer.write(sse({ error: openAiError(failure) }));

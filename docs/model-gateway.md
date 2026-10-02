@@ -73,7 +73,24 @@ OpenAI 与 Anthropic 路径的 `/v1` 前缀可省略；Google 路径也接受 `/
 
 非流式入站请求同样以流式访问上游，读完后按该协议返回一个完整响应。Anthropic 的 `message_start` 需要输入 token 数，此时使用本地估算；`message_delta` 在上游报告 usage 时改用实际值，并把缓存命中换算为 `cache_read_input_tokens`。Google 请求显式设置 `thinkingConfig.includeThoughts: false` 时不发送 thought part。
 
-流式响应在收到第一个有效上游数据块时才发送 HTTP 头，因此上游的 HTTP 错误和首块即出错都能以正确状态码返回；此后的失败只能在流内报告。
+## 响应头、保活与空闲超时
+
+- **响应头**：流式响应在收到第一个有效上游数据块时提交 200 响应头，并立即 flush 给引擎，不等第一个正文字节。此前上游的 HTTP 错误和首块即出错都以正确状态码返回；提交之后的失败只能在响应体内报告。Gemini 的回答在只有工具调用（参数扣留到最后一块）或推理被隐藏时可能长时间没有正文，flush 之前响应头要等到结束才发出，而 Gemini 客户端 60 秒拿不到响应头就放弃并重发。
+- **Gemini 响应头提交期限**：`headerCommitMs`（45 秒）自引擎请求起计，但不早于上游以 2xx 应答；到期时还没有提交的 Gemini 回答即提交 200 头，之后按下面的规则保活。Gemini 客户端的 60 秒响应头超时从它发出请求时开始，所以在 Session 队列中等待空位和等待上游响应头的时间都计入期限；上游在期限之后才应答时，随应答立即提交。上游一直不应答（没有响应头）时不提交，仍按空闲超时返回 504。
+- **Gemini 非流式** `generateContent` 不在首个上游块时提交，只在同一期限到期且上游已 2xx 应答时提交 200 与 `application/json` 头，此后以 JSON 允许的前导空白保活，最后写出完整响应。期限之前的失败保留真实状态码：`@google/genai` 只在 HTTP 状态非 OK 时抛错，提前提交会把可重试的 429、5xx 变成空回答。
+- **保活**按入站协议决定，从不使用 SSE 注释（openai-node 丢弃注释，`@google/genai` 遇注释会卡住，Codex 只按事件计空闲）：
+
+| 入站协议 | 保活 |
+|---|---|
+| OpenAI Chat | 同一 completion 的空 delta `chat.completion.chunk`：`choices: [{index: 0, delta: {}, finish_reason: null}]` |
+| OpenAI Responses | 重发 `response.in_progress`，`sequence_number` 继续连续递增；尚未发出 `response.created` 时先发它。快照中的 `output` 总是 `[]`：openai-node 与 Codex（实测）忽略 `in_progress`，按它重建快照的客户端会丢掉已收到的输出项 |
+| Anthropic | `event: ping`，数据为 `{"type":"ping"}`，与 Anthropic API 自己发送的相同。`@anthropic-ai/sdk` 的流迭代会跳过 `ping`，因此它只重置按字节计的超时；对 Claude Code 看门狗的效果未实测 |
+| Gemini SSE | `{"candidates":[{"content":{"role":"model","parts":[]},"index":0}]}` |
+| Gemini 流式 JSON 数组与非流式 | 换行符（JSON 允许的空白）。只有 Gemini SSE 的形态实测过（Gemini CLI 0.38.2）；数组形式未实测，按 `,\r\n` 切分元素的简单解析器可能不接受元素之间的空白 |
+
+- **保活条件**：响应头已提交；自引擎上次收到字节以来上游仍有活动，包括被丢弃的推理、上游的空 delta、扣留中的工具参数，以及只有注释或空行的字节；引擎已静默不少于 `keepaliveGapMs`（默认 10 秒）；距上一个上游数据事件（或上游响应头）不超过 `maxNoDataMs`（默认 300 秒）。上游只发注释时，保活在 `maxNoDataMs` 后停止，由空闲超时结束调用；上游完全静默时不发保活。保活不是内容：引擎组装出的回答、usage 与调用记录（含 `firstByteMs`）与没有保活时相同。Chat、Responses 与 Anthropic 的非流式请求在结束前不提交响应头，因此没有保活。
+- **空闲超时** `idleTimeoutMs`（300 秒）只被上游响应头与上游数据事件重置：SSE 的 `data` 行，或 JSON 响应中的非空白文本；注释与空行不重置。超时发生在响应头提交之前时返回 504 `upstream_timeout`，之后在响应体内报告。行为变化：负载高时在上游队列中只发 `: keep-alive` 注释的上游（例如 DeepSeek），这类调用现在 300 秒后以 504 结束，不再一直等待。
+- 每次调用的空闲、响应头提交与保活计时器都属于该调用，在完成、失败、Run 取消或引擎断开时清除；最后的保活写入结束后才发出调用记录。
 
 ## 推理内容与回填
 
@@ -93,14 +110,15 @@ OpenAI 与 Anthropic 路径的 `/v1` 前缀可省略；Google 路径也接受 `/
 - 所有公开消息都经过脱敏与截断：删除 apiKey、网关令牌和 `upstream.headers` 的值，`Bearer`/`Basic` 凭据、`sk-` 前缀串、`api_key=…`/`token: …` 类键值，以及 40 个字符以上的不透明串；折叠空白后截断到 500 个字符。
 - 上下文超长（错误码 `context_length_exceeded`，或消息包含 context length、context window、maximum context、too many tokens、prompt is too long、input token count 等）统一返回 400：Chat/Responses 的 `code` 为 `context_length_exceeded`；Anthropic 为 `invalid_request_error`，消息以 `prompt is too long` 开头，能识别数值时写成 `prompt is too long: <实际> tokens > <上限> maximum`；Google 为 `INVALID_ARGUMENT`。Codex 0.153.4 只从流内 `response.failed` 识别上下文超限，所以流式 Responses 请求改为返回 200 SSE，内含 `response.failed`，`code` 为 `context_length_exceeded`。
 - vLLM 形式的报错中若提示词本身未超长、只是输出上限过大（`(N in the messages, M in the completion)` 且 N 小于上限），不视为上下文超长，避免引擎反复压缩。
-- 其他情况：网络失败或拒绝重定向为 502 `upstream_unreachable`；等待上游响应头或两次数据之间超过 300 秒为 504 `upstream_timeout`；上游响应超过 8 MiB 为 502 `response_too_large`；上游格式错误为 502；入站请求超过 8 MiB 为 413，非 UTF-8 或非 JSON 为 400，带压缩编码为 415；排队已满为 429 `busy`；无法转换的输入为 400。
-- 流已开始后的失败在流内报告：Chat 为 `data: {"error":...}` 且不发 `[DONE]`；Responses 为 `response.failed`（上下文 `context_length_exceeded`、429 为 `rate_limit_exceeded`、5xx 为 `server_error`、其他 `invalid_prompt`）；Anthropic 为 `event: error`；Google 为带 `error` 对象的数据块。
+- 其他情况：网络失败或拒绝重定向为 502 `upstream_unreachable`；等待上游响应头或两次上游数据事件之间超过 300 秒为 504 `upstream_timeout`（SSE 注释与空行不算数据）；上游响应超过 8 MiB 为 502 `response_too_large`；上游格式错误为 502；入站请求超过 8 MiB 为 413，非 UTF-8 或非 JSON 为 400，带压缩编码为 415；排队已满为 429 `busy`；无法转换的输入为 400。
+- 流已开始后的失败在流内报告：Chat 为 `data: {"error":...}` 且不发 `[DONE]`；Responses 为 `response.failed`（上下文 `context_length_exceeded`、429 为 `rate_limit_exceeded`、5xx 为 `server_error`、其他 `invalid_prompt`）；Anthropic 为 `event: error`；Google 为带 `error` 对象的数据块（流式 JSON 数组中为最后一个元素）。
+- Gemini 非流式请求在提交期限到期、200 头已提交之后失败时，状态码已无法更改：响应体是 `{"error":{"code","message","status"}}`（前面可能有保活空白），HTTP 状态仍为 200。调用记录与流内失败相同，记录该失败本应对应的状态与错误码，并计入 `runErrors()`。
 
 ## 调用记录
 
 每次进入 Run 的模型调用在引擎响应结束后调用一次 `onCall`，记录 `ModelCallRecord`：协议、是否流式、引擎请求的模型名（最多 256 字符）、上游模型、状态、耗时、规范化的结束原因、usage（输入、输出、总计、推理，只含上游报告的值）、工具调用数和脱敏后的错误。记录不含提示词、输出文本或秘密。`onCall` 抛出的异常被忽略。
 
-`status` 是返回给引擎的 HTTP 状态；流开始后才失败时，记录该失败本应对应的状态；上下文超长记为 400。引擎断开或 Run 取消的调用记为 499、错误码 `cancelled`。`runErrors()` 返回当前 Run 中 `ok` 为 false 且不是 `cancelled` 的记录副本，按完成先后排列；`endRun()` 之后仍可读取，下一次 `beginRun()` 清空。
+`status` 是返回给引擎的 HTTP 状态；响应头提交后才失败时（流式，或已提交的 Gemini 非流式），记录该失败本应对应的状态；上下文超长记为 400。引擎断开或 Run 取消的调用记为 499、错误码 `cancelled`。`runErrors()` 返回当前 Run 中 `ok` 为 false 且不是 `cancelled` 的记录副本，按完成先后排列；`endRun()` 之后仍可读取，下一次 `beginRun()` 清空。
 
 ## 资源限制
 
@@ -108,12 +126,15 @@ OpenAI 与 Anthropic 路径的 `/v1` 前缀可省略；Google 路径也接受 `/
 |---|---|
 | 入站请求体 | 8 MiB |
 | 上游响应体 | 8 MiB |
-| 上游空闲超时（等待响应头或两次数据之间） | 300 秒 |
+| 上游空闲超时（等待响应头，或两次上游数据事件之间；注释与空行不算） | 300 秒 |
+| 保活间隔 `keepaliveGapMs`（引擎静默多久后发送保活） | 10 秒，可设 1–30 秒 |
+| 停止保活 `maxNoDataMs`（距上一个上游数据事件） | 300 秒 |
+| Gemini 响应头提交期限 `headerCommitMs`（自引擎请求起计，不早于上游 2xx 应答） | 45 秒，不超过 55 秒（Gemini 客户端 60 秒无响应头即放弃） |
 | 每个网关（Session）同时进行的上游请求 | 4 个；其余按到达顺序等待，最多 32 个，再多返回 429 |
 | 入站请求头 / 请求体接收时限 | 10 秒 / 60 秒 |
 | 推理缓存 | 256 条、4 MiB |
 
-排队中的调用在引擎断开或 Run 取消时离开队列。限制值在 [gateway.ts](../src/drivers/chat-completions/gateway.ts) 的 `DEFAULT_GATEWAY_LIMITS` 中集中定义。
+排队中的调用在引擎断开或 Run 取消时离开队列。限制值在 [gateway.ts](../src/drivers/chat-completions/gateway.ts) 的 `DEFAULT_GATEWAY_LIMITS` 中集中定义；`startModelGateway` 总是使用这些默认值，目前没有用户配置入口。`createModelGateway` 接受显式限制，在监听前校验每一项为范围内的整数，否则抛出 `RangeError`；除保活间隔外，时间限制只要求为正数，测试据此缩短它们。
 
 ## 媒体内容
 
@@ -135,13 +156,14 @@ Responses 和 Google 按固定客户端（Codex 0.153.4 的请求结构、@googl
 单元测试从 HTTP 入口运行，使用本地假上游，不访问真实模型：
 
 - [协议转换](../tests/unit/model-gateway.test.ts)：四种入站协议的流式与非流式输出、模型列表、`count_tokens`、四种鉴权方式与拒绝。
-- [上游行为](../tests/unit/model-gateway-upstream.test.ts)：宽松解析各变体、结束原因、usage、工具分片、请求规范化与截断、错误状态透传与脱敏、上下文超长映射、502/504/重定向、大小限制与不支持输入。
+- [上游行为](../tests/unit/model-gateway-upstream.test.ts)：宽松解析各变体、结束原因、usage、工具分片、请求规范化与截断、错误状态透传与脱敏、上下文超长映射、502/504/重定向（上游完全不应答时 Gemini 同样为 504，已应答但无数据时按提交期限提交后在流内超时）、大小限制与不支持输入。
+- [响应头与保活](../tests/unit/model-gateway-keepalive.test.ts)：Gemini SSE（含只有工具调用的回合）在首个上游块即收到响应头；Gemini 在请求后 `headerCommitMs` 收到响应头，上游扣留响应头或调用在队列中等待时也一样，上游在期限之后应答时随应答提交；四种流式协议在上游活动而无可转发内容时收到各自的保活，Responses 序号保持连续，去掉保活后输出、usage 与调用记录与无保活时相同；只发注释的上游在 `maxNoDataMs` 后不再获得保活并超时（已提交为流内错误，未提交为 504）；提交后完全静默的上游在超时前得不到保活；Gemini 非流式只在期限提交、期限前的失败保留状态码、之后为 200 错误体；socket 已销毁时写入立即失败；写入因引擎不读而阻塞时不发保活；限制的范围校验。
 - [推理与 Run](../tests/unit/model-gateway-runs.test.ts)：四种协议的推理回填（假上游在缺少 `reasoning_content` 时按 DeepSeek 实测返回 400）、strip 模式、缓存上限、Run 作用域、取消与断开、并发上限、调用记录与 `runErrors`。
 - [兼容入口](../tests/unit/chat-completions.test.ts)：`startModelBridge`、Responses/Google 转换与配置准备。
 
 ```sh
 pnpm build
-node --test dist/tests/unit/model-gateway.test.js dist/tests/unit/model-gateway-upstream.test.js dist/tests/unit/model-gateway-runs.test.js dist/tests/unit/chat-completions.test.js
+node scripts/run-tests.mjs unit dist/tests/unit/model-gateway*.test.js dist/tests/unit/chat-completions.test.js
 ```
 
 2026-09-19 在 macOS 上做过一次性冒烟：本机已安装的 Codex 0.144.5、Gemini CLI 0.38.2、Claude Code 2.1.278（均非固定版本）以隔离的配置目录连接网关与本地假上游，各完成一次推理、Shell 工具调用与后续回合，后续请求都带回了推理内容。该冒烟发现并修正了 Claude Code 在 `messages` 中发送 system 角色消息的问题；脚本未入库，不代替固定版本引擎的验收。

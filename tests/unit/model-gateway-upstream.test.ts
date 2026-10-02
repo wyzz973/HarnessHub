@@ -708,7 +708,7 @@ void test("context overflow maps to each protocol's context error; an oversized 
   );
 });
 
-void test("unreachable upstreams return 502, silent upstreams 504, and redirects are refused", async (t) => {
+void test("unreachable upstreams return 502, silent upstreams 504 (also for Gemini), and redirects are refused", async (t) => {
   const closed = createServer();
   closed.listen(0, "127.0.0.1");
   await once(closed, "listening");
@@ -735,13 +735,18 @@ void test("unreachable upstreams return 502, silent upstreams 504, and redirects
     else if (text.includes("silent-stream")) {
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.write(`data: ${JSON.stringify(delta({ content: "a" }))}\n\n`);
-    } else response.writeHead(200, { "content-type": "text/event-stream" });
+    } else if (text.includes("silent-headers")) {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.flushHeaders();
+    }
+    // Headers are only written with the first body byte: a fully silent upstream.
+    else response.writeHead(200, { "content-type": "text/event-stream" });
   });
   const { send, calls } = await gateway(
     t,
     up.baseUrl,
     {},
-    { idleTimeoutMs: 150 },
+    { idleTimeoutMs: 150, headerCommitMs: 50 },
   );
   const redirect = await send("/v1/chat/completions", {
     model: "m",
@@ -763,10 +768,30 @@ void test("unreachable upstreams return 502, silent upstreams 504, and redirects
   });
   assert.equal(partial.status, 200);
   assert.match(await partial.text(), /"code":"upstream_timeout"/);
+  // The Gemini header commit deadline starts only with a 2xx upstream answer:
+  // an upstream that never answers still gets 504.
+  const gemini = (text: string) =>
+    send("/v1beta/models/g:streamGenerateContent?alt=sse", {
+      contents: [{ role: "user", parts: [{ text }] }],
+    });
+  const silentGemini = await gemini("silent");
+  assert.equal(silentGemini.status, 504);
+  assert.equal(
+    at(await silentGemini.json(), "error", "status"),
+    "DEADLINE_EXCEEDED",
+  );
+  const answeredGemini = await gemini("silent-headers");
+  assert.equal(answeredGemini.status, 200);
+  assert.match(
+    await answeredGemini.text(),
+    /^data: \{"error":\{"code":504,.*"status":"DEADLINE_EXCEEDED"\}\}\n\n$/,
+  );
   assert.deepEqual(
     calls.map((call) => [call.status, call.error?.code]),
     [
       [502, "upstream_unreachable"],
+      [504, "upstream_timeout"],
+      [504, "upstream_timeout"],
       [504, "upstream_timeout"],
       [504, "upstream_timeout"],
     ],
