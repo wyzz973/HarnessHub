@@ -28,7 +28,7 @@
 
 `artifacts`、`drivers` 与 `tool-packages` 可使用 `platform` 的具体文件访问实现；其他模块不直接引用。`logging` 只由组合根和 Worker 使用，其余模块接收注入的 `LogSink`；详见 [诊断日志](observability.md#诊断日志)。Windows 进程树监督仍由 ProcessHost 与所属 Driver 负责。边界检查为该限制提供接受及拒绝样例。
 
-OSS-004 期间代码按 [多包迁移计划](proposals/oss/13-package-migration.md) 从 `src/` 逐步移入 pnpm workspace 包，上表规则在包内按原模块继续适用。`domain` 已移为 `packages/core`，其他代码以 `@harnesshub/core/<文件>` 导入（不带扩展名）。包之间只能按 [02 第 8 节](proposals/oss/02-architecture.md#8-模块与依赖规则) 的依赖图导入；包内的相对导入与 `new URL(..., import.meta.url)` 不得离开所在包；`src/` 只能导入边界检查别名表中已迁出的包，并按其原模块的规则检查。这些规则由同一个边界检查执行，每条规则有拒绝样例。
+OSS-004 期间代码按 [多包迁移计划](proposals/oss/13-package-migration.md) 从 `src/` 逐步移入 pnpm workspace 包，上表规则在包内按原模块继续适用。`domain` 已移为 `packages/core`，其他代码以 `@harnesshub/core/<文件>` 导入（不带扩展名）；`storage` 与 `platform` 已移入 `packages/store` 的同名子目录，以 `@harnesshub/store/storage/<文件>`、`@harnesshub/store/platform/<文件>` 导入。`node:sqlite` 只能在 store 的 `storage` 中使用；包内的 `node:child_process` 只允许边界检查中登记的临时例外，每项写明所有者，并在 `TODO.md` 中对应任务勾选后失效（目前只有 store 的 `platform`，所有者 OSS-010 F08，随 OSS-013 到期）。包之间只能按 [02 第 8 节](proposals/oss/02-architecture.md#8-模块与依赖规则) 的依赖图导入；包内的相对导入与 `new URL(..., import.meta.url)` 不得离开所在包；`src/` 只能导入边界检查别名表中已迁出的包，并按其原模块的规则检查。这些规则由同一个边界检查执行，每条规则有拒绝样例。
 
 具体实现由启动组合根注入。公共端口由其调用方所需语义定义，不能为了方便第三方 SDK 直接透出原始类型。类型导入、动态 import 和 re-export 也受模块边界约束。
 
