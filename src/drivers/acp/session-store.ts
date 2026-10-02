@@ -3,7 +3,7 @@ import { lstat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createFileSessionStore } from "acpx/runtime";
 import type { AcpSessionRecord, AcpSessionStore } from "acpx/runtime";
-import type { ExecutionSpec } from "../../domain/ports.js";
+import type { ExecutionSpec } from "@harnesshub/core/ports";
 
 /** Safe failure details; backend checkpoints and credentials never enter public errors. */
 export class AcpSessionRecoveryError extends Error {

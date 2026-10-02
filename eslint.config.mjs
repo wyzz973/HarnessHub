@@ -12,11 +12,19 @@ const rules = {
 };
 export default tseslint.config(
   {
-    files: ["src/**/*.ts", "tests/**/*.ts"],
+    // The project service finds each file's project through the solution
+    // tsconfig.json and reads workspace packages from source (the
+    // @harnesshub/source condition), so linting needs no prior build.
+    files: [
+      "src/**/*.ts",
+      "tests/**/*.ts",
+      "packages/*/src/**/*.ts",
+      "packages/*/test/**/*.ts",
+    ],
     languageOptions: {
       parser: tseslint.parser,
       parserOptions: {
-        project: "./tsconfig.json",
+        projectService: true,
         tsconfigRootDir: import.meta.dirname,
       },
     },

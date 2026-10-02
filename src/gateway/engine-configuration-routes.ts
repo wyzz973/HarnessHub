@@ -2,15 +2,15 @@
 import {
   configurationAdapters,
   secretReferenceSchema,
-} from "../domain/engine-configuration.js";
+} from "@harnesshub/core/engine-configuration";
 import type { FastifyInstance } from "fastify";
-import type { ConfigurationManagement } from "../domain/engine-configuration.js";
+import type { ConfigurationManagement } from "@harnesshub/core/engine-configuration";
 import {
   engineRegistrationSchema,
   engineResponseSchema,
   discoveryResponseSchema,
   errorResponseSchema,
-} from "../domain/schemas.js";
+} from "@harnesshub/core/schemas";
 const adaptersResponse = {
   type: "object",
   required: ["adapters"],

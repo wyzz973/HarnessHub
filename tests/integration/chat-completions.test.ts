@@ -21,7 +21,7 @@ import type {
   AgentEvent,
   RunRecord,
   SessionRecord,
-} from "../../src/domain/types.js";
+} from "@harnesshub/core/types";
 import type { HubApplication } from "../../src/application/service.js";
 import { ensurePrivateDirectory } from "../../src/platform/windows-acl.js";
 import { startModelGateway } from "../../src/drivers/chat-completions/gateway.js";

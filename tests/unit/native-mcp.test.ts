@@ -4,8 +4,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import type { ExecutionSpec } from "../../src/domain/ports.js";
-import type { RunId, SessionId } from "../../src/domain/types.js";
+import type { ExecutionSpec } from "@harnesshub/core/ports";
+import type { RunId, SessionId } from "@harnesshub/core/types";
 import type { PreparedConfiguration } from "../../src/drivers/configuration/prepare.js";
 import { prepareNativeMcp } from "../../src/drivers/configuration/native-mcp.js";
 

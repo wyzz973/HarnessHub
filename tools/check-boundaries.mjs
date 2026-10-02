@@ -1,6 +1,36 @@
 // SPDX-License-Identifier: MIT
+/**
+ * Check module and package boundaries without executing project code.
+ * Usage: node tools/check-boundaries.mjs [repository root]
+ *
+ * Scans the legacy tree `src/`, and `src/` and `test/` of every workspace
+ * package under `packages/` and `apps/`, while OSS-004 moves code into
+ * packages (docs/proposals/oss/13-package-migration.md):
+ *
+ * - Legacy modules (`allowed`) keep their rules, in src/ and inside packages.
+ *   A package's src/ is either one flattened legacy module (FLAT_MODULES) or
+ *   holds legacy modules as subdirectories; its other files are new package
+ *   code, bound by the package graph and the third-party placement rules.
+ *   Package and application tests are bound by the graph only.
+ * - `@harnesshub/<package>` imports follow the dependency graph of
+ *   docs/proposals/oss/02-architecture.md section 8 (PACKAGE_GRAPH, APP_GRAPH).
+ * - src/ may import a package only through LEGACY_ALIASES, which names the
+ *   legacy module whose rules apply to it.
+ * - Relative imports and `new URL(..., import.meta.url)` inside a package or
+ *   application must stay inside it.
+ *
+ * Exits non-zero for any violation and when no source file is found.
+ */
 import { readdirSync, readFileSync } from "node:fs";
-import { dirname, extname, relative, resolve, sep } from "node:path";
+import {
+  dirname,
+  extname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
@@ -23,16 +53,97 @@ const allowed = {
   benchmark: ["benchmark", "application", "domain"],
 };
 
+/** Internal dependencies of each workspace package (02 section 8). */
+export const PACKAGE_GRAPH = {
+  core: [],
+  store: ["core"],
+  secrets: ["core"],
+  gateway: ["core", "store", "secrets"],
+  agents: ["core", "store", "secrets"],
+  runtime: ["core", "store", "agents"],
+  drivers: ["core"],
+  "plugin-host": ["core"],
+  daemon: [
+    "core",
+    "store",
+    "secrets",
+    "gateway",
+    "agents",
+    "runtime",
+    "drivers",
+    "plugin-host",
+  ],
+  cli: ["core", "sdk"],
+  sdk: ["core"],
+  console: ["sdk"],
+};
+
+/** Applications only dispatch to the packages that own the commands. */
+export const APP_GRAPH = { hh: ["cli", "daemon"] };
+
+/** Packages whose src/ is one flattened legacy module. */
+export const FLAT_MODULES = { core: "domain" };
+
+/** Packages that src/ may import during the migration, and the legacy module whose rules apply. */
+export const LEGACY_ALIASES = { core: "domain" };
+
 const domainPackages = new Set(["node:crypto", "node:buffer", "ajv"]);
 
 function location(file, node) {
   return file.getLineAndCharacterOfPosition(node.getStart()).line + 1;
 }
 
-function localModule(path, sourceRoot) {
-  const parts = relative(sourceRoot, path).split(sep);
-  if (parts[0] === ".." || parts[0] === "") return "outside-src";
-  return parts.length === 1 ? "composition" : parts[0];
+const segments = (from, to) => relative(from, to).split(sep);
+
+/** Whether path is strictly inside directory. */
+function inside(directory, path) {
+  const rest = relative(directory, path);
+  return rest !== "" && !isAbsolute(rest) && rest.split(sep)[0] !== "..";
+}
+
+/**
+ * Where a file lives: the legacy tree, a package or an application, the
+ * directory its relative references must stay in, and its legacy module path
+ * (null for package and application tests, which have no module rules).
+ */
+export function classify(path, root) {
+  const [top, name, area, ...rest] = segments(root, path);
+  if (top === "src")
+    return {
+      kind: "legacy",
+      container: join(root, "src"),
+      legacyPath: segments(join(root, "src"), path).join("/"),
+    };
+  if ((top === "packages" || top === "apps") && name && rest.length) {
+    const graph = top === "packages" ? PACKAGE_GRAPH : APP_GRAPH;
+    const flat = top === "packages" ? FLAT_MODULES[name] : undefined;
+    return {
+      kind: top === "packages" ? "package" : "app",
+      name,
+      known: Object.hasOwn(graph, name),
+      container: join(root, top, name),
+      legacyPath:
+        area === "src" ? [...(flat ? [flat] : []), ...rest].join("/") : null,
+    };
+  }
+  return { kind: "outside", container: root, legacyPath: null };
+}
+
+/** Package code that belongs to no legacy module. */
+const NEW_CODE = "(new package code)";
+
+/**
+ * Legacy module of a classified file: a top-level file of src/ is a
+ * composition root; package files outside a legacy module are NEW_CODE;
+ * tests have none (null).
+ */
+function moduleOf(where) {
+  if (where.legacyPath === null) return null;
+  const path = where.legacyPath.split("/");
+  if (where.kind === "legacy") return path.length > 1 ? path[0] : "composition";
+  return path.length > 1 && Object.hasOwn(allowed, path[0])
+    ? path[0]
+    : NEW_CODE;
 }
 
 function packageName(specifier) {
@@ -42,28 +153,98 @@ function packageName(specifier) {
 
 /**
  * Inspect import syntax without executing project code. Includes re-exports,
- * type-only imports, import types, dynamic imports and CommonJS require calls.
+ * type-only imports, import types, dynamic imports, CommonJS require calls and,
+ * inside packages and applications, `new URL(..., import.meta.url)`.
  * Nonliteral imports fail because their dependency cannot be checked statically.
+ *
+ * @param {string} filePath Absolute path of the file.
+ * @param {string} contents Its source text.
+ * @param {string} root Repository root.
+ * @returns {string[]} One message per violation, prefixed with the file and line.
  */
-export function checkSource(filePath, contents, sourceRoot) {
+export function checkSource(filePath, contents, root) {
   const file = ts.createSourceFile(
     filePath,
     contents,
     ts.ScriptTarget.Latest,
     true,
   );
-  const owner = localModule(filePath, sourceRoot);
+  const where = classify(filePath, root);
+  const owner = moduleOf(where);
+  const display = relative(root, filePath).split(sep).join("/");
   const failures = [];
   const report = (node, message) => {
-    failures.push(
-      `${relative(sourceRoot, filePath)}:${location(file, node)} ${message}`,
-    );
+    failures.push(`${display}:${location(file, node)} ${message}`);
   };
-  if (owner !== "composition" && !Object.hasOwn(allowed, owner)) {
+  if (where.kind === "outside")
+    return [`${display}:1 file is outside src/, packages/ and apps/`];
+  if (where.kind !== "legacy" && !where.known)
     failures.push(
-      `${relative(sourceRoot, filePath)}:1 unknown module ${owner}; define its boundary before use`,
+      `${display}:1 unknown ${where.kind} ${where.name}; add it to the dependency graph before use`,
     );
-  }
+  if (
+    owner !== null &&
+    owner !== "composition" &&
+    owner !== NEW_CODE &&
+    !Object.hasOwn(allowed, owner)
+  )
+    failures.push(
+      `${display}:1 unknown module ${owner}; define its boundary before use`,
+    );
+  const container =
+    where.kind === "legacy"
+      ? "src"
+      : `${where.kind === "app" ? "apps" : "packages"}/${where.name}`;
+  const moduleAllows = (target) =>
+    owner === null ||
+    owner === "composition" ||
+    owner === NEW_CODE ||
+    allowed[owner]?.includes(target);
+
+  const inspectRelative = (node, specifier) => {
+    const targetPath = resolve(dirname(filePath), specifier);
+    if (!inside(where.container, targetPath)) {
+      report(
+        node,
+        where.kind === "legacy"
+          ? `${owner} cannot depend on outside-src: ${specifier}`
+          : `relative import leaves ${container}: ${specifier}`,
+      );
+      return;
+    }
+    const target = moduleOf(classify(targetPath, root));
+    if (target !== null && !moduleAllows(target))
+      report(node, `${owner} cannot depend on ${target}: ${specifier}`);
+  };
+
+  const inspectWorkspace = (node, specifier) => {
+    const [, name, ...subpath] = specifier.split("/");
+    if (!Object.hasOwn(PACKAGE_GRAPH, name)) {
+      report(node, `unknown workspace package: ${specifier}`);
+      return;
+    }
+    if (where.kind === "legacy") {
+      if (!Object.hasOwn(LEGACY_ALIASES, name)) {
+        report(
+          node,
+          `src cannot import @harnesshub/${name} before it has a legacy alias: ${specifier}`,
+        );
+        return;
+      }
+      const target = LEGACY_ALIASES[name];
+      if (!moduleAllows(target))
+        report(node, `${owner} cannot depend on ${target}: ${specifier}`);
+      return;
+    }
+    const graph = where.kind === "app" ? APP_GRAPH : PACKAGE_GRAPH;
+    if (!graph[where.name]?.includes(name)) {
+      report(node, `${container} cannot depend on @harnesshub/${name}`);
+      return;
+    }
+    const target = FLAT_MODULES[name] ?? subpath[0];
+    if (Object.hasOwn(allowed, target) && !moduleAllows(target))
+      report(node, `${owner} cannot depend on ${target}: ${specifier}`);
+  };
 
   const inspect = (node, argument) => {
     if (!argument || !ts.isStringLiteralLike(argument)) {
@@ -72,16 +253,11 @@ export function checkSource(filePath, contents, sourceRoot) {
     }
     const specifier = argument.text;
     if (specifier.startsWith(".")) {
-      const target = localModule(
-        resolve(dirname(filePath), specifier),
-        sourceRoot,
-      );
-      if (
-        target === "outside-src" ||
-        (owner !== "composition" && !allowed[owner]?.includes(target))
-      ) {
-        report(node, `${owner} cannot depend on ${target}: ${specifier}`);
-      }
+      inspectRelative(node, specifier);
+      return;
+    }
+    if (specifier.startsWith("@harnesshub/")) {
+      inspectWorkspace(node, specifier);
       return;
     }
     if (
@@ -93,12 +269,12 @@ export function checkSource(filePath, contents, sourceRoot) {
       report(node, `unmapped import cannot be checked: ${specifier}`);
       return;
     }
+    if (owner === null) return;
     const dependency = packageName(specifier);
     const sdk =
       dependency === "acpx" || dependency === "@agentclientprotocol/sdk";
     const withinAcp =
-      relative(sourceRoot, filePath).split(sep).slice(0, 2).join("/") ===
-      "drivers/acp";
+      where.legacyPath.split("/").slice(0, 2).join("/") === "drivers/acp";
     if (sdk && !withinAcp)
       report(
         node,
@@ -143,6 +319,27 @@ export function checkSource(filePath, contents, sourceRoot) {
     }
   };
 
+  /** `new URL(x, import.meta.url)` in a package or application must name its own file. */
+  const inspectUrl = (node) => {
+    const [first, base] = node.arguments ?? [];
+    const fromModule =
+      base &&
+      ts.isPropertyAccessExpression(base) &&
+      ts.isMetaProperty(base.expression) &&
+      base.expression.keywordToken === ts.SyntaxKind.ImportKeyword &&
+      base.name.text === "url";
+    if (!fromModule) return;
+    if (!first || !ts.isStringLiteralLike(first)) {
+      report(
+        node,
+        "nonliteral new URL(..., import.meta.url) cannot be checked",
+      );
+      return;
+    }
+    if (!inside(where.container, resolve(dirname(filePath), first.text)))
+      report(node, `new URL leaves ${container}: ${first.text}`);
+  };
+
   const visit = (node) => {
     if (
       (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
@@ -166,6 +363,13 @@ export function checkSource(filePath, contents, sourceRoot) {
           node.expression.text === "require"))
     ) {
       inspect(node, node.arguments[0]);
+    } else if (
+      where.kind !== "legacy" &&
+      ts.isNewExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "URL"
+    ) {
+      inspectUrl(node);
     }
     ts.forEachChild(node, visit);
   };
@@ -174,7 +378,14 @@ export function checkSource(filePath, contents, sourceRoot) {
 }
 
 function sourceFiles(directory) {
-  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+  let entries;
+  try {
+    entries = readdirSync(directory, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
+  return entries.flatMap((entry) => {
     const path = resolve(directory, entry.name);
     if (entry.isSymbolicLink())
       throw new Error(`Symbolic links are not source modules: ${path}`);
@@ -185,9 +396,30 @@ function sourceFiles(directory) {
   });
 }
 
-/** Check a source tree; empty/missing trees and violations are failures. */
-export function checkBoundaries(sourceRoot) {
-  const files = sourceFiles(sourceRoot);
+/** The scanned trees: src/, and src/ and test/ of each package and application. */
+function sourceTrees(root) {
+  const trees = [join(root, "src")];
+  for (const top of ["packages", "apps"]) {
+    let entries;
+    try {
+      entries = readdirSync(join(root, top), { withFileTypes: true });
+    } catch (error) {
+      if (error.code === "ENOENT") continue;
+      throw error;
+    }
+    for (const entry of entries)
+      if (entry.isDirectory())
+        trees.push(
+          join(root, top, entry.name, "src"),
+          join(root, top, entry.name, "test"),
+        );
+  }
+  return trees;
+}
+
+/** Check a repository; a repository without source files and any violation are failures. */
+export function checkBoundaries(root) {
+  const files = sourceTrees(root).flatMap(sourceFiles);
   if (!files.length)
     throw new Error(
       "No source files found; module boundaries were not verified.",
@@ -195,7 +427,7 @@ export function checkBoundaries(sourceRoot) {
   return {
     count: files.length,
     failures: files.flatMap((file) =>
-      checkSource(file, readFileSync(file, "utf8"), sourceRoot),
+      checkSource(file, readFileSync(file, "utf8"), root),
     ),
   };
 }
@@ -205,10 +437,10 @@ if (
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   try {
-    const sourceRoot = resolve(
-      process.argv[2] ?? fileURLToPath(new URL("../src", import.meta.url)),
+    const root = resolve(
+      process.argv[2] ?? fileURLToPath(new URL("../", import.meta.url)),
     );
-    const result = checkBoundaries(sourceRoot);
+    const result = checkBoundaries(root);
     if (result.failures.length) {
       console.error(result.failures.join("\n"));
       process.exitCode = 1;

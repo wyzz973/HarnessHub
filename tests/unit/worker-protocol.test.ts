@@ -6,8 +6,8 @@ import {
   matchesIdentity,
   parseHostCommand,
   parseWorkerMessage,
-} from "../../src/domain/ipc.js";
-import type { RunId, SessionId } from "../../src/domain/types.js";
+} from "@harnesshub/core/ipc";
+import type { RunId, SessionId } from "@harnesshub/core/types";
 
 void test("IPC rejects unsupported protocol, unknown fields, identities, and oversized UTF-8", () => {
   assert.deepEqual(parseWorkerMessage({ version: 1, type: "ready", pid: 42 }), {

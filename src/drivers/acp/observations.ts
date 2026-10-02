@@ -4,13 +4,13 @@ import { lstat, open, opendir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { zstdDecompressSync } from "node:zlib";
 import type { AcpRuntimeSessionUsage } from "acpx/runtime";
-import type { ExecutionSpec } from "../../domain/ports.js";
+import type { ExecutionSpec } from "@harnesshub/core/ports";
 import type {
   ObservedCost,
   ObservedTokens,
   UsageObservation,
-} from "../../domain/observability.js";
-import { unknownCost, unknownTokens } from "../../domain/observability.js";
+} from "@harnesshub/core/observability";
+import { unknownCost, unknownTokens } from "@harnesshub/core/observability";
 
 const MAX_FILE = 16 * 1024 * 1024;
 const MAX_TOTAL = 32 * 1024 * 1024;

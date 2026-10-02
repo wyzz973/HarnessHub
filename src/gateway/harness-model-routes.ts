@@ -4,8 +4,8 @@ import type {
   HarnessModelManagement,
   RuntimeInfo,
 } from "../application/harness-model.js";
-import { engineConfigurationSchema } from "../domain/engine-configuration.js";
-import { errorResponseSchema } from "../domain/schemas.js";
+import { engineConfigurationSchema } from "@harnesshub/core/engine-configuration";
+import { errorResponseSchema } from "@harnesshub/core/schemas";
 
 const providerSchema = engineConfigurationSchema.properties.provider;
 const aliasSchema = {

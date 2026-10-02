@@ -14,7 +14,7 @@ import {
 } from "../../src/benchmark/runner.js";
 import { SqliteBenchmarkStore } from "../../src/storage/benchmark-store.js";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
-import type { BenchmarkTask } from "../../src/domain/benchmark.js";
+import type { BenchmarkTask } from "@harnesshub/core/benchmark";
 
 const task = (
   id: string,

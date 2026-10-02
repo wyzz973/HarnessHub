@@ -10,18 +10,18 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HubError } from "../../src/domain/errors.js";
+import { HubError } from "@harnesshub/core/errors";
 import {
   excerpt,
   parseLogLevel,
   type LogFields,
   type LogSink,
-} from "../../src/domain/logging.js";
+} from "@harnesshub/core/logging";
 import { JsonLogFile } from "../../src/logging/json-log-file.js";
 import { AcpTrafficLog } from "../../src/drivers/acp/traffic-log.js";
 import { observeStore } from "../../src/logging/observed-store.js";
 import { createRedactor } from "../../src/worker/diagnostics.js";
-import type { Store } from "../../src/domain/ports.js";
+import type { Store } from "@harnesshub/core/ports";
 
 function directory(t: test.TestContext): string {
   const root = mkdtempSync(join(tmpdir(), "hh-log-unit-"));

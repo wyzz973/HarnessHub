@@ -19,7 +19,7 @@ import {
   isTerminal,
   type RunRecord,
   type SessionRecord,
-} from "../../src/domain/types.js";
+} from "@harnesshub/core/types";
 import { ensurePrivateDirectory } from "../../src/platform/windows-acl.js";
 import { writePrivateSecretFile } from "../fixtures/private-secret-file.js";
 

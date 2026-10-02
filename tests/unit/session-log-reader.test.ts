@@ -10,8 +10,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HubError } from "../../src/domain/errors.js";
-import type { SessionLogQuery } from "../../src/domain/logging.js";
+import { HubError } from "@harnesshub/core/errors";
+import type { SessionLogQuery } from "@harnesshub/core/logging";
 import { JsonLogFile } from "../../src/logging/json-log-file.js";
 import { createSessionLogReader } from "../../src/logging/session-log-reader.js";
 import { createRedactor } from "../../src/worker/diagnostics.js";

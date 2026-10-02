@@ -15,7 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import type { EngineMcpServer } from "../../src/domain/engine-configuration.js";
+import type { EngineMcpServer } from "@harnesshub/core/engine-configuration";
 import { createGateway } from "../../src/gateway/server.js";
 import { registerToolPackageRoutes } from "../../src/gateway/tool-package-routes.js";
 import { startHub } from "../../src/main.js";

@@ -34,9 +34,9 @@
  * such a process cleanup can report `confirmed` while it keeps running.
  */
 import { setTimeout as delay } from "node:timers/promises";
-import { WORKER_TREE_ENVIRONMENT } from "../domain/environment.js";
-import { NO_LOG, type LogFields, type LogSink } from "../domain/logging.js";
-import type { CleanupStatus } from "../domain/types.js";
+import { WORKER_TREE_ENVIRONMENT } from "@harnesshub/core/environment";
+import { NO_LOG, type LogFields, type LogSink } from "@harnesshub/core/logging";
+import type { CleanupStatus } from "@harnesshub/core/types";
 import {
   ProcessTableError,
   readMarkerSnapshot,

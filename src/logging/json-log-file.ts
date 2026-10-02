@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
 import path from "node:path";
-import { excerpt } from "../domain/logging.js";
-import type { LogFields, LogLevel, LogSink } from "../domain/logging.js";
+import { excerpt } from "@harnesshub/core/logging";
+import type { LogFields, LogLevel, LogSink } from "@harnesshub/core/logging";
 
 /** Longest string value inside one written record, in characters. */
 const MAX_FIELD_CHARS = 8192;

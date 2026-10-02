@@ -7,7 +7,7 @@ import test from "node:test";
 import { HarnessModelService } from "../../src/application/harness-model.js";
 import { builtinConfigurationAdapter } from "../../src/engine/builtins.js";
 import { loadConfig, normalizeEngine } from "../../src/engine/registry.js";
-import { HubError } from "../../src/domain/errors.js";
+import { HubError } from "@harnesshub/core/errors";
 
 const model = {
   model: "GLM-V5_1-DX",

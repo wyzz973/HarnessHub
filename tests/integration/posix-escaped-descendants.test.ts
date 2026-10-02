@@ -12,14 +12,14 @@ import test, { type TestContext } from "node:test";
 import { startHub } from "../../src/main.js";
 import { ProcessWorkerHost } from "../../src/process/worker-host.js";
 import { readProcessTable } from "../../src/process/process-table.js";
-import type { LogFields, LogSink } from "../../src/domain/logging.js";
-import type { ExecutionSpec, WorkerMessage } from "../../src/domain/ports.js";
+import type { LogFields, LogSink } from "@harnesshub/core/logging";
+import type { ExecutionSpec, WorkerMessage } from "@harnesshub/core/ports";
 import type {
   RunId,
   RunRecord,
   SessionId,
   SessionRecord,
-} from "../../src/domain/types.js";
+} from "@harnesshub/core/types";
 import { temporaryDirectory } from "../support/temporary.js";
 
 // Descendants that start their own session (setsid) leave the Worker's process

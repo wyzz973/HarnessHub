@@ -9,8 +9,8 @@ import { fork } from "node:child_process";
 import { once } from "node:events";
 import { ProcessWorkerHost } from "../../src/process/worker-host.js";
 import { settleWorkerCleanup } from "../../src/process/cleanup-settlement.js";
-import type { ExecutionSpec, WorkerMessage } from "../../src/domain/ports.js";
-import type { RunId, SessionId } from "../../src/domain/types.js";
+import type { ExecutionSpec, WorkerMessage } from "@harnesshub/core/ports";
+import type { RunId, SessionId } from "@harnesshub/core/types";
 
 function spec(directory: string): ExecutionSpec {
   return {

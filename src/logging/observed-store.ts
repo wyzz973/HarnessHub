@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-import { excerpt } from "../domain/logging.js";
-import type { LogFields, LogSink } from "../domain/logging.js";
-import type { Store } from "../domain/ports.js";
+import { excerpt } from "@harnesshub/core/logging";
+import type { LogFields, LogSink } from "@harnesshub/core/logging";
+import type { Store } from "@harnesshub/core/ports";
 import type {
   AgentEvent,
   JsonObject,
@@ -9,7 +9,7 @@ import type {
   PermissionRecord,
   RunRecord,
   SessionRecord,
-} from "../domain/types.js";
+} from "@harnesshub/core/types";
 
 export interface StoreLogOptions {
   /** Path of a Session's engine log, written into its `session.create` record. */

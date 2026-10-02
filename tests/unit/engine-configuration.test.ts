@@ -12,12 +12,8 @@ import {
   deleteSecret,
   resolveSecret,
 } from "../../src/drivers/configuration/secrets.js";
-import type {
-  EngineProfile,
-  RunId,
-  SessionId,
-} from "../../src/domain/types.js";
-import type { ConfigurationAdapter } from "../../src/domain/engine-configuration.js";
+import type { EngineProfile, RunId, SessionId } from "@harnesshub/core/types";
+import type { ConfigurationAdapter } from "@harnesshub/core/engine-configuration";
 const base = {
   id: "configured",
   driver: "acp",

@@ -5,7 +5,7 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ModelCallRecord } from "../../src/drivers/chat-completions/gateway.js";
-import type { DriverResult } from "../../src/domain/types.js";
+import type { DriverResult } from "@harnesshub/core/types";
 import {
   appendDiagnostic,
   createRedactor,

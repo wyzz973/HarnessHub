@@ -23,7 +23,7 @@ Status: accepted
 
 ### 1. 单一统一模型
 
-- **定义**：`HarnessModel`（[src/domain/harness-model.ts](../../src/domain/harness-model.ts)）是唯一的模型定义。`provider.protocol` 表示上游协议，当前交付为 `openai-completions`。
+- **定义**：`HarnessModel`（[packages/core/src/harness-model.ts](../../packages/core/src/harness-model.ts)）是唯一的模型定义。`provider.protocol` 表示上游协议，当前交付为 `openai-completions`。
 - **来源与优先级**：
   1. 环境变量 `HARNESSHUB_MODEL*`，便于无人值守部署时注入；
   2. `harnessModelFile`，由 API 或控制台写入；
@@ -130,7 +130,7 @@ export interface ModelGatewayOptions {
   alias: string; // 引擎看到的模型 id
   contextWindow?: number;
   maxOutputTokens?: number;
-  compatibility?: ModelCompatibility; // src/domain/engine-configuration.ts
+  compatibility?: ModelCompatibility; // packages/core/src/engine-configuration.ts
   onCall?: (call: ModelCallRecord) => void;
 }
 export interface ModelCallRecord {

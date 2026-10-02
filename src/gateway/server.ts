@@ -2,7 +2,7 @@
 import { normalizeOpenApiDocument } from "./openapi.js";
 import { apiCatalog } from "./api-catalog.js";
 import { registerEngineConfigurationRoutes } from "./engine-configuration-routes.js";
-import type { ConfigurationManagement } from "../domain/engine-configuration.js";
+import type { ConfigurationManagement } from "@harnesshub/core/engine-configuration";
 import { registerWorkflowRoutes } from "./workflow-routes.js";
 import { registerObservationRoutes } from "./observation-routes.js";
 import {
@@ -13,19 +13,19 @@ import type { ObservationService } from "../application/observability.js";
 import {
   engineSelectionSchema,
   type WorkflowCapability,
-} from "../domain/workflows.js";
+} from "@harnesshub/core/workflows";
 import { once } from "node:events";
 import { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import Fastify, { type FastifyError } from "fastify";
 import swagger from "@fastify/swagger";
 import type { HubApplication } from "../application/service.js";
-import { HubError } from "../domain/errors.js";
+import { HubError } from "@harnesshub/core/errors";
 import type {
   LogSink,
   SessionLogReader,
   SessionLogSource,
-} from "../domain/logging.js";
+} from "@harnesshub/core/logging";
 import {
   createSessionSchema,
   decisionSchema,
@@ -41,15 +41,15 @@ import {
   registryStatusSchema,
   sessionLogsQuerySchema,
   sessionLogsResponseSchema,
-} from "../domain/schemas.js";
-import { isTerminal } from "../domain/types.js";
+} from "@harnesshub/core/schemas";
+import { isTerminal } from "@harnesshub/core/types";
 import type {
   ArtifactId,
   PermissionId,
   RunId,
   RunInput,
   SessionId,
-} from "../domain/types.js";
+} from "@harnesshub/core/types";
 
 const idParams = {
   type: "object",

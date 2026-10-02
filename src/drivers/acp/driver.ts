@@ -24,8 +24,8 @@ import {
   captureNativeUsage,
   nativeUsageObservation,
 } from "./observations.js";
-import type { ExecutionSpec } from "../../domain/ports.js";
-import { NO_LOG, type LogSink } from "../../domain/logging.js";
+import type { ExecutionSpec } from "@harnesshub/core/ports";
+import { NO_LOG, type LogSink } from "@harnesshub/core/logging";
 import { AcpTrafficLog } from "./traffic-log.js";
 import type {
   DriverResult,
@@ -33,7 +33,7 @@ import type {
   JsonValue,
   PermissionId,
   PermissionOption,
-} from "../../domain/types.js";
+} from "@harnesshub/core/types";
 
 const fullAccess = () => process.env.HARNESSHUB_FULL_ACCESS === "1";
 

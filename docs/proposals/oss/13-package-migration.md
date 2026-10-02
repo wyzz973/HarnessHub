@@ -118,3 +118,14 @@ daemon 内只有 `src/worker/**` 可以导入 drivers。
 10. 现在就建 apps/hh 骨架，分派到各包导出的入口函数。
 11. `erasableSyntaxOnly` 在第 11 步之后单独提交。
 12. 每个包为其原生辅助程序路径各加一个存在性测试；legacy 项目设为 composite，避免重复输出（TS6307）；用例清单按平台逐一比较。
+
+## 7. 实施中确定的细节
+
+第 2 步（workspace 骨架与 core）：
+
+- 根包改名为 `harnesshub-workspace`，以 `workspace:*` 依赖 `@harnesshub/core`，`src/` 与 `tests/` 的编译产物经根 `node_modules` 解析它。各包都设 `private: true`，到 M1 发布 `core` 与 `sdk` 时再放开。
+- core 声明 `ajv`；根包同时保留 `ajv`，直到 `src/` 中最后一个导入方（engine、process、tool-packages 与单元测试）迁出。plugin-host 与 sdk 暂不声明任何依赖，出现第一个导入时再加。
+- legacy 项目的 `.tsbuildinfo` 在 `dist/.tsbuildinfo`，包的在各自 `dist/.tsbuildinfo`。`tsc -b` 只凭 `.tsbuildinfo` 判断项目是否最新：产物被删而它还在时，会不写出任何文件，因此 `clean-build` 每次同时删除产物与 `.tsbuildinfo`，并有测试固定这一点。`typecheck` 改为 `tsc -b`，会写出产物。
+- ESLint 用 `projectService` 经 solution `tsconfig.json` 找到每个文件所属项目，并经源码条件直接读取依赖包的源码，lint 前不需要构建。lint 范围是 `src tests packages`；`apps` 在第 11 步建立后加入，因为 ESLint 对不存在的路径报错。
+- 边界检查的命令行参数改为仓库根目录。包内不属于任何旧模块的新代码只受依赖图与第三方位置规则约束；包内测试只受依赖图与“不离开所在包”约束，与不扫描 `tests/` 的做法一致。
+- 带期限的 `child_process` 允许表在第 3 步 platform 迁入 store 时加入，此前沿用旧模块规则；`new URL` 的 scripts 资源允许表在第 7 步（V8）加入，目前包内没有越界的 URL。

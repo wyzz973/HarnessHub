@@ -2,9 +2,9 @@
 import { constants, type BigIntStats } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import path from "node:path";
-import { HubError } from "../domain/errors.js";
-import { validateFileOutputs } from "../domain/files.js";
-import type { ArtifactRecord, FileOutput, RunId } from "../domain/types.js";
+import { HubError } from "@harnesshub/core/errors";
+import { validateFileOutputs } from "@harnesshub/core/files";
+import type { ArtifactRecord, FileOutput, RunId } from "@harnesshub/core/types";
 import { WindowsFileSession } from "../platform/windows-file-session.js";
 import { discardArtifacts, publishArtifactBytes } from "./publisher.js";
 

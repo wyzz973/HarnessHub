@@ -3,10 +3,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { HubError } from "../domain/errors.js";
+import { HubError } from "@harnesshub/core/errors";
 import { acquireInstanceLock, type InstanceLock } from "./instance-lock.js";
-import type { Store } from "../domain/ports.js";
-import { isTerminal } from "../domain/types.js";
+import type { Store } from "@harnesshub/core/ports";
+import { isTerminal } from "@harnesshub/core/types";
 import type {
   AgentEvent,
   ArtifactId,
@@ -25,7 +25,7 @@ import type {
   SessionRecord,
   TerminalStatus,
   Workspace,
-} from "../domain/types.js";
+} from "@harnesshub/core/types";
 import {
   artifactRecord,
   decodeRecord,

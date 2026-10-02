@@ -13,8 +13,8 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test, type TestContext } from "node:test";
-import { HubError } from "../../src/domain/errors.js";
-import type { EngineProfile, JsonObject } from "../../src/domain/types.js";
+import { HubError } from "@harnesshub/core/errors";
+import type { EngineProfile, JsonObject } from "@harnesshub/core/types";
 import { inspectEngineInstallation } from "../../src/engine/installation.js";
 import { portableLauncher } from "../../src/drivers/configuration/launch.js";
 

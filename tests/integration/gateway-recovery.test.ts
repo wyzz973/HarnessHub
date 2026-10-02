@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { startHub } from "../../src/main.js";
-import { isTerminal, type RunRecord } from "../../src/domain/types.js";
+import { isTerminal, type RunRecord } from "@harnesshub/core/types";
 import { temporaryDirectory } from "../support/temporary.js";
 
 void test(

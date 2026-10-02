@@ -4,7 +4,7 @@ import path from "node:path";
 import type {
   EngineMcpServer,
   SecretReference,
-} from "../domain/engine-configuration.js";
+} from "@harnesshub/core/engine-configuration";
 import { canonicalDirectory, directories } from "./files.js";
 import { isStdioMcp, packageError } from "./manifest.js";
 import { verifyInstalled } from "./store.js";

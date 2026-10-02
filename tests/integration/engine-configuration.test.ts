@@ -13,7 +13,7 @@ import {
   type EngineProfile,
   type RunRecord,
   type SessionRecord,
-} from "../../src/domain/types.js";
+} from "@harnesshub/core/types";
 import { writePrivateSecretFile } from "../fixtures/private-secret-file.js";
 const digest = (value: string) =>
   createHash("sha256").update(value).digest("hex");

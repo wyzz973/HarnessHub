@@ -10,7 +10,7 @@ import {
   parseDataset,
   prepareAttempts,
 } from "./benchmark/runner.js";
-import type { AttemptId } from "./domain/benchmark.js";
+import type { AttemptId } from "@harnesshub/core/benchmark";
 import { buildBenchmarkReport } from "./benchmark/report.js";
 
 /** Plain-Node benchmark composition. SIGINT/SIGTERM cancel through the same Runtime and stop further attempts. */

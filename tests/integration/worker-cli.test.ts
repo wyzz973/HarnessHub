@@ -9,13 +9,13 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { ProcessWorkerHost } from "../../src/process/worker-host.js";
 import { startHub } from "../../src/main.js";
-import type { ExecutionSpec, WorkerMessage } from "../../src/domain/ports.js";
+import type { ExecutionSpec, WorkerMessage } from "@harnesshub/core/ports";
 import type {
   RunId,
   RunRecord,
   SessionId,
   SessionRecord,
-} from "../../src/domain/types.js";
+} from "@harnesshub/core/types";
 import { temporaryDirectory } from "../support/temporary.js";
 
 const peer = fileURLToPath(new URL("../fixtures/cli-peer.js", import.meta.url));

@@ -15,9 +15,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
-import type { EngineCandidate } from "../../src/domain/engines.js";
-import type { RunRecord, SessionRecord } from "../../src/domain/types.js";
-import { isTerminal } from "../../src/domain/types.js";
+import type { EngineCandidate } from "@harnesshub/core/engines";
+import type { RunRecord, SessionRecord } from "@harnesshub/core/types";
+import { isTerminal } from "@harnesshub/core/types";
 
 void test(
   "compiled Gateway discovers recipes and runs them through real registration, SQLite and ACP/CLI Workers",

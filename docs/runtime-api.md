@@ -2,7 +2,7 @@
 
 完整40项接口的参数、返回码、处理链路和副作用见 [API入口](api/README.md)、[生成参考](api/reference.md)与 [OpenAPI快照](api/openapi.json)。本页保留执行配置与运行契约说明。
 
-本页描述已实现的本地执行服务。架构以 [DESIGN.md](../DESIGN.md)为准；接口声明见 [领域类型](../src/domain/types.ts)、[HTTP schema](../src/domain/schemas.ts)和 [IPC schema](../src/domain/ipc.ts)。
+本页描述已实现的本地执行服务。架构以 [DESIGN.md](../DESIGN.md)为准；接口声明见 [领域类型](../packages/core/src/types.ts)、[HTTP schema](../packages/core/src/schemas.ts)和 [IPC schema](../packages/core/src/ipc.ts)。
 
 ## 启动
 

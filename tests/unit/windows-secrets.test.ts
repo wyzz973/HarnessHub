@@ -13,8 +13,8 @@ import {
   resolveSecret,
 } from "../../src/drivers/configuration/secrets.js";
 import { ensurePrivateDirectory } from "../../src/platform/windows-acl.js";
-import type { SecretReference } from "../../src/domain/engine-configuration.js";
-import { HubError } from "../../src/domain/errors.js";
+import type { SecretReference } from "@harnesshub/core/engine-configuration";
+import { HubError } from "@harnesshub/core/errors";
 import { writePrivateSecretFile } from "../fixtures/private-secret-file.js";
 
 const execute = promisify(execFile);

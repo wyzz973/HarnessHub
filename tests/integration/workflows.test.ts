@@ -18,8 +18,8 @@ import {
   isWorkflowTerminal,
   type Workflow,
   type WorkflowPlan,
-} from "../../src/domain/workflows.js";
-import { isTerminal } from "../../src/domain/types.js";
+} from "@harnesshub/core/workflows";
+import { isTerminal } from "@harnesshub/core/types";
 import { selectWorkflowEngine } from "../../src/application/workflows.js";
 import { temporaryDirectory } from "../support/temporary.js";
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { open, unlink } from "node:fs/promises";
 import path from "node:path";
-import type { RunId } from "../domain/types.js";
+import type { RunId } from "@harnesshub/core/types";
 
 /**
  * Copies the Gateway's committed NDJSON stream without starting execution or

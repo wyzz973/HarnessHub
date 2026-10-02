@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 import type { FastifyInstance } from "fastify";
 import type { ObservationService } from "../application/observability.js";
-import type { RunId } from "../domain/types.js";
-import { errorResponseSchema } from "../domain/schemas.js";
+import type { RunId } from "@harnesshub/core/types";
+import { errorResponseSchema } from "@harnesshub/core/schemas";
 
 const nullableNumber = { type: ["number", "null"], minimum: 0 };
 const nullableString = { type: ["string", "null"] };

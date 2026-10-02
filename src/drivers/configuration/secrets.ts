@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { lstat, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import type { SecretReference } from "../../domain/engine-configuration.js";
-import { HubError } from "../../domain/errors.js";
+import type { SecretReference } from "@harnesshub/core/engine-configuration";
+import { HubError } from "@harnesshub/core/errors";
 
 /** Longest wait for the platform secret helper (cold .NET start on Windows). */
 const HELPER_TIMEOUT_MS = 20_000;

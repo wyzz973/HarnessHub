@@ -13,8 +13,8 @@ import {
   type BenchmarkAttempt,
   type BenchmarkEvaluation,
   type EvaluationId,
-} from "../../src/domain/benchmark.js";
-import type { RunId, SessionId } from "../../src/domain/types.js";
+} from "@harnesshub/core/benchmark";
+import type { RunId, SessionId } from "@harnesshub/core/types";
 import { startHub } from "../../src/main.js";
 import { SqliteBenchmarkStore } from "../../src/storage/benchmark-store.js";
 

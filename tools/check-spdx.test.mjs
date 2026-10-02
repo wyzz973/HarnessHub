@@ -21,6 +21,9 @@ test("accepts MIT headers, shebang files and listed third-party licenses", async
     "src/a.ts": "// SPDX-License-Identifier: MIT\nexport {};\n",
     "scripts/run.mjs": "#!/usr/bin/env node\n// SPDX-License-Identifier: MIT\n",
     "tools/check.mjs": "#!/usr/bin/env node\n// SPDX-License-Identifier: MIT\n",
+    "packages/core/src/types.ts": "// SPDX-License-Identifier: MIT\nexport {};\n",
+    "packages/core/node_modules/ajv/index.js": "dependency without a header\n",
+    "packages/core/dist/src/types.js": "compiled output\n",
     "web/components/ai-elements/x.tsx": "// SPDX-License-Identifier: Apache-2.0\n\"use client\";\n",
     "src/drivers/configuration/codex-default-instructions.ts": "// SPDX-License-Identifier: Apache-2.0\n",
     "src/node_modules/ignored.ts": "no header\n",
@@ -28,7 +31,7 @@ test("accepts MIT headers, shebang files and listed third-party licenses", async
   });
   const result = await checkSpdx(root);
   assert.deepEqual(result.diagnostics, []);
-  assert.equal(result.checkedFiles, 5);
+  assert.equal(result.checkedFiles, 6);
 });
 
 test("rejects missing headers, wrong identifiers and an empty inventory", async (t) => {
@@ -37,14 +40,16 @@ test("rejects missing headers, wrong identifiers and an empty inventory", async 
     "src/late.ts": "export {};\n// SPDX-License-Identifier: MIT\n",
     "tests/apache.ts": "// SPDX-License-Identifier: Apache-2.0\n",
     "tools/lib/missing.mjs": "export {};\n",
+    "apps/hh/src/main.ts": "export {};\n",
     "web/components/ai-elements/mit.tsx": "// SPDX-License-Identifier: MIT\n",
   });
   const { diagnostics } = await checkSpdx(root);
-  assert.equal(diagnostics.length, 5);
+  assert.equal(diagnostics.length, 6);
   assert.match(diagnostics.join("\n"), /src\/missing\.ts: missing/);
   assert.match(diagnostics.join("\n"), /src\/late\.ts: missing/);
   assert.match(diagnostics.join("\n"), /tests\/apache\.ts: expected MIT, found Apache-2\.0/);
   assert.match(diagnostics.join("\n"), /tools\/lib\/missing\.mjs: missing/);
+  assert.match(diagnostics.join("\n"), /apps\/hh\/src\/main\.ts: missing/);
   assert.match(diagnostics.join("\n"), /ai-elements\/mit\.tsx: expected Apache-2\.0, found MIT/);
 
   const empty = await project(t, { "README.md": "# x\n" });

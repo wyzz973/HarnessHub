@@ -8,10 +8,10 @@ import { HarnessModelService } from "../../src/application/harness-model.js";
 import { builtinConfigurationAdapter } from "../../src/engine/builtins.js";
 import { EngineManager } from "../../src/engine/manager.js";
 import { normalizeEngine, type HubConfig } from "../../src/engine/registry.js";
-import type { EngineRegistration } from "../../src/domain/engines.js";
-import { HubError } from "../../src/domain/errors.js";
-import type { HarnessModel } from "../../src/domain/harness-model.js";
-import type { EngineProfile } from "../../src/domain/types.js";
+import type { EngineRegistration } from "@harnesshub/core/engines";
+import { HubError } from "@harnesshub/core/errors";
+import type { HarnessModel } from "@harnesshub/core/harness-model";
+import type { EngineProfile } from "@harnesshub/core/types";
 
 const ports = {
   normalize: normalizeEngine,

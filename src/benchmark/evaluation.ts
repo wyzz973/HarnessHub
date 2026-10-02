@@ -4,7 +4,7 @@ import {
   benchmarkHash,
   type BenchmarkAttempt,
   type BenchmarkEvaluation,
-} from "../domain/benchmark.js";
+} from "@harnesshub/core/benchmark";
 
 /** Grades committed captured bytes; malformed task output is a failed answer, corrupted evidence is a grading error. */
 export function gradeEvidence(

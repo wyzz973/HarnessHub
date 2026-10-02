@@ -15,7 +15,7 @@
  */
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { WORKER_TREE_ENVIRONMENT } from "../domain/environment.js";
+import { WORKER_TREE_ENVIRONMENT } from "@harnesshub/core/environment";
 import type { ProcessRow } from "./proc-scan.js";
 
 export type { ProcessRow } from "./proc-scan.js";

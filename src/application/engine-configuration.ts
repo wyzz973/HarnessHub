@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import type { ConfigurationManagement } from "../domain/engine-configuration.js";
+import type { ConfigurationManagement } from "@harnesshub/core/engine-configuration";
 /** Configuration operations use injected platform/adapter functions, separate from business execution. */
 export class EngineConfigurationService implements ConfigurationManagement {
   constructor(private readonly operations: ConfigurationManagement) {}

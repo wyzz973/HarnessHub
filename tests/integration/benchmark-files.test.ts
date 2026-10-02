@@ -18,10 +18,7 @@ import {
   parseDataset,
   prepareAttempts,
 } from "../../src/benchmark/runner.js";
-import {
-  benchmarkHash,
-  type BenchmarkTask,
-} from "../../src/domain/benchmark.js";
+import { benchmarkHash, type BenchmarkTask } from "@harnesshub/core/benchmark";
 import { SqliteBenchmarkStore } from "../../src/storage/benchmark-store.js";
 
 const fixtureTask: BenchmarkTask = {

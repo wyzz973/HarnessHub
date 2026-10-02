@@ -15,8 +15,8 @@ import { startHub } from "../../src/main.js";
 import type {
   ObservabilityOverview,
   RunObservations,
-} from "../../src/domain/observability.js";
-import type { RunRecord, SessionRecord } from "../../src/domain/types.js";
+} from "@harnesshub/core/observability";
+import type { RunRecord, SessionRecord } from "@harnesshub/core/types";
 import { temporaryDirectory } from "../support/temporary.js";
 
 if (process.argv.includes("--observation-peer")) {

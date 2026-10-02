@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 import { lstat, readdir } from "node:fs/promises";
 import path from "node:path";
-import { HubError } from "../domain/errors.js";
-import { isRelativeFilePath } from "../domain/files.js";
+import { HubError } from "@harnesshub/core/errors";
+import { isRelativeFilePath } from "@harnesshub/core/files";
 import { canonicalDirectory, missing, PackageReader } from "./files.js";
 import {
   canonicalJson,

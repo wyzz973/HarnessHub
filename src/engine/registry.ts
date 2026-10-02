@@ -8,11 +8,11 @@ import { createHash } from "node:crypto";
 import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { parse } from "yaml";
-import { engineConfigurationSchema } from "../domain/engine-configuration.js";
-import { ACP_INITIALIZE_TIMEOUT_LIMIT_MS } from "../domain/engines.js";
-import { HubError } from "../domain/errors.js";
-import type { HarnessModel } from "../domain/harness-model.js";
-import type { EngineProfile, Workspace } from "../domain/types.js";
+import { engineConfigurationSchema } from "@harnesshub/core/engine-configuration";
+import { ACP_INITIALIZE_TIMEOUT_LIMIT_MS } from "@harnesshub/core/engines";
+import { HubError } from "@harnesshub/core/errors";
+import type { HarnessModel } from "@harnesshub/core/harness-model";
+import type { EngineProfile, Workspace } from "@harnesshub/core/types";
 
 export interface HubConfig {
   engines: EngineProfile[];

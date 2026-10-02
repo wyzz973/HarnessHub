@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import { normalizeEngine } from "../../src/engine/registry.js";
 import { prepareConfiguration } from "../../src/drivers/configuration/prepare.js";
-import type { RunId, SessionId } from "../../src/domain/types.js";
+import type { RunId, SessionId } from "@harnesshub/core/types";
 import { temporaryDirectory } from "../support/temporary.js";
 
 void test("Hermes selects the gateway alias natively through a named custom provider key_env without persisting keys", async (t) => {

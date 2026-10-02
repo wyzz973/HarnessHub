@@ -2,7 +2,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import type { RunId } from "./domain/types.js";
+import type { RunId } from "@harnesshub/core/types";
 import { exportRollout } from "./rollout/export.js";
 
 const usage =

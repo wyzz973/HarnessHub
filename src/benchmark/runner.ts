@@ -4,14 +4,14 @@ import { mkdir, mkdtemp, realpath } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { HubApplication } from "../application/service.js";
-import { HubError } from "../domain/errors.js";
+import { HubError } from "@harnesshub/core/errors";
 import {
   isTerminal,
   type JsonObject,
   type SessionRecord,
   type RunId,
   type PermissionId,
-} from "../domain/types.js";
+} from "@harnesshub/core/types";
 import {
   checkWorkspace,
   initializeFixtures,
@@ -29,7 +29,7 @@ import {
   type BenchmarkStore,
   type EvaluationId,
   type BenchmarkPermissionPolicy,
-} from "../domain/benchmark.js";
+} from "@harnesshub/core/benchmark";
 
 /** Rejects malformed/ambiguous tasks before any model execution. */
 export function parseDataset(value: unknown): BenchmarkDataset {

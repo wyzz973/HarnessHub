@@ -39,7 +39,8 @@ MiMo 0.1.14 的原生 INFO 日志会序列化 ACP Session 的 `mcpServers`，包
 
 ```powershell
 $env:HARNESSHUB_TEST_NATIVE_MCP = '1'
-& '.tools/node-v24.20.0-win-arm64/node.exe' node_modules/typescript/bin/tsc -p tsconfig.json
+& '.tools/node-v24.20.0-win-arm64/node.exe' tools/clean-build.mjs
+& '.tools/node-v24.20.0-win-arm64/node.exe' node_modules/typescript/bin/tsc -b
 & '.tools/node-v24.20.0-win-arm64/node.exe' --test dist/tests/integration/native-mcp-engines.test.js
 ```
 

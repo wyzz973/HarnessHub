@@ -8,13 +8,13 @@ import type {
   ExecutionSpec,
   WorkerHost,
   WorkerMessage,
-} from "../../src/domain/ports.js";
+} from "@harnesshub/core/ports";
 import type {
   CleanupStatus,
   DriverResult,
   RunId,
   SessionId,
-} from "../../src/domain/types.js";
+} from "@harnesshub/core/types";
 import { Runtime } from "../../src/runtime/runtime.js";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
 import { loadConfig } from "../../src/engine/registry.js";

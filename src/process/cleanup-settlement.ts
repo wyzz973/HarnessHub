@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-import { HubError } from "../domain/errors.js";
-import type { CleanupStatus } from "../domain/types.js";
+import { HubError } from "@harnesshub/core/errors";
+import type { CleanupStatus } from "@harnesshub/core/types";
 
 interface CleanupTarget {
   failed: boolean;

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import type { EngineProfile } from "../../src/domain/types.js";
+import type { EngineProfile } from "@harnesshub/core/types";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
 
 void test("config snapshots preserve session configuration without credentials or raw commands", (t) => {

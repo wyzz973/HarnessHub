@@ -2,11 +2,11 @@
 import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { SecretReference } from "../domain/engine-configuration.js";
-import type { EngineRegistration } from "../domain/engines.js";
-import { HubError } from "../domain/errors.js";
-import type { ToolPackageManagement } from "../domain/tool-packages.js";
-import type { EngineProfile } from "../domain/types.js";
+import type { SecretReference } from "@harnesshub/core/engine-configuration";
+import type { EngineRegistration } from "@harnesshub/core/engines";
+import { HubError } from "@harnesshub/core/errors";
+import type { ToolPackageManagement } from "@harnesshub/core/tool-packages";
+import type { EngineProfile } from "@harnesshub/core/types";
 import { bindInstalled } from "./bind.js";
 import {
   capabilities,

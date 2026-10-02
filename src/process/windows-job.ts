@@ -2,7 +2,7 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import type { CleanupStatus } from "../domain/types.js";
+import type { CleanupStatus } from "@harnesshub/core/types";
 
 const execute = promisify(execFile);
 const helper = fileURLToPath(

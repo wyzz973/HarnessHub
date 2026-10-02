@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 import type { FastifyInstance } from "fastify";
 import type { WorkflowService } from "../application/workflows.js";
-import { errorResponseSchema } from "../domain/schemas.js";
+import { errorResponseSchema } from "@harnesshub/core/schemas";
 import {
   workflowRequestSchema,
   workflowResponseSchema,
   type WorkflowId,
-} from "../domain/workflows.js";
+} from "@harnesshub/core/workflows";
 
 const params = {
   type: "object",

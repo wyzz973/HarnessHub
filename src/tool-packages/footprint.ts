@@ -4,8 +4,8 @@ import type {
   EngineConfiguration,
   EngineMcpServer,
   EngineSkill,
-} from "../domain/engine-configuration.js";
-import { HubError } from "../domain/errors.js";
+} from "@harnesshub/core/engine-configuration";
+import { HubError } from "@harnesshub/core/errors";
 import { canonicalJson, isStdioMcp } from "./manifest.js";
 import type {
   ToolPackageCapabilities,

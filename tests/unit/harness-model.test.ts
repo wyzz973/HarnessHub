@@ -16,12 +16,12 @@ import {
 } from "../../src/application/harness-model.js";
 import { builtinConfigurationAdapter } from "../../src/engine/builtins.js";
 import { normalizeEngine } from "../../src/engine/registry.js";
-import type { EngineRegistration } from "../../src/domain/engines.js";
-import { HubError } from "../../src/domain/errors.js";
+import type { EngineRegistration } from "@harnesshub/core/engines";
+import { HubError } from "@harnesshub/core/errors";
 import {
   HARNESS_MODEL_ALIAS,
   type HarnessModel,
-} from "../../src/domain/harness-model.js";
+} from "@harnesshub/core/harness-model";
 
 const ports = {
   normalize: normalizeEngine,

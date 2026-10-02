@@ -10,7 +10,7 @@ import {
   isTerminal,
   type RunRecord,
   type SessionRecord,
-} from "../../src/domain/types.js";
+} from "@harnesshub/core/types";
 import { temporaryDirectory } from "../support/temporary.js";
 
 void test(

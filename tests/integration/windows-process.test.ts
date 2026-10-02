@@ -25,13 +25,13 @@ import {
   recoverWorkerLease,
   WorkerLeaseStore,
 } from "../../src/process/leases.js";
-import type { ExecutionSpec } from "../../src/domain/ports.js";
+import type { ExecutionSpec } from "@harnesshub/core/ports";
 import type {
   RunId,
   RunRecord,
   SessionId,
   SessionRecord,
-} from "../../src/domain/types.js";
+} from "@harnesshub/core/types";
 import { temporaryDirectory } from "../support/temporary.js";
 
 const native = fileURLToPath(
