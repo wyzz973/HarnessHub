@@ -18,8 +18,8 @@ async function project(t, files) {
 
 test("accepts MIT headers, shebang files and listed third-party licenses", async (t) => {
   const root = await project(t, {
-    "src/a.ts": "// SPDX-License-Identifier: MIT\nexport {};\n",
-    "scripts/run.mjs": "#!/usr/bin/env node\n// SPDX-License-Identifier: MIT\n",
+    "tests/a.ts": "// SPDX-License-Identifier: MIT\nexport {};\n",
+    "apps/hh/bin/hh.mjs": "#!/usr/bin/env node\n// SPDX-License-Identifier: MIT\n",
     "tools/check.mjs": "#!/usr/bin/env node\n// SPDX-License-Identifier: MIT\n",
     "packages/core/src/types.ts": "// SPDX-License-Identifier: MIT\nexport {};\n",
     "packages/core/node_modules/ajv/index.js": "dependency without a header\n",
@@ -27,7 +27,7 @@ test("accepts MIT headers, shebang files and listed third-party licenses", async
     "packages/console/components/ai-elements/x.tsx": "// SPDX-License-Identifier: Apache-2.0\n\"use client\";\n",
     "packages/console/next-env.d.ts": '/// <reference types="next" />\n',
     "packages/agents/src/configuration/codex-default-instructions.ts": "// SPDX-License-Identifier: Apache-2.0\n",
-    "src/node_modules/ignored.ts": "no header\n",
+    "tests/node_modules/ignored.ts": "no header\n",
     "examples/tool-packages/demo/cli/run.mjs": "pinned payload bytes\n",
   });
   const result = await checkSpdx(root);
@@ -37,8 +37,8 @@ test("accepts MIT headers, shebang files and listed third-party licenses", async
 
 test("rejects missing headers, wrong identifiers and an empty inventory", async (t) => {
   const root = await project(t, {
-    "src/missing.ts": "export {};\n",
-    "src/late.ts": "export {};\n// SPDX-License-Identifier: MIT\n",
+    "packages/core/src/missing.ts": "export {};\n",
+    "packages/core/src/late.ts": "export {};\n// SPDX-License-Identifier: MIT\n",
     "tests/apache.ts": "// SPDX-License-Identifier: Apache-2.0\n",
     "tools/lib/missing.mjs": "export {};\n",
     "apps/hh/src/main.ts": "export {};\n",
