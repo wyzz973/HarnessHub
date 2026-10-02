@@ -17,6 +17,8 @@
     "@harnesshub/store": "workspace:*",
     "ajv": "8.20.0",
     "cross-spawn": "7.0.6",
+    "jsonc-parser": "3.3.1",
+    "smol-toml": "1.9.0",
     "yaml": "2.9.0"
   }
 }

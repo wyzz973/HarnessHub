@@ -109,6 +109,12 @@ importers:
       cross-spawn:
         specifier: 7.0.6
         version: 7.0.6
+      jsonc-parser:
+        specifier: 3.3.1
+        version: 3.3.1
+      smol-toml:
+        specifier: 1.9.0
+        version: 1.9.0
       yaml:
         specifier: 2.9.0
         version: 2.9.0
@@ -2265,6 +2271,9 @@ packages:
   json-stable-stringify-without-jsonify@1.0.1:
     resolution: {integrity: sha512-Bdboy+l7tA3OGW6FjyFHWkP5LuByj1Tk33Ljyq0axyzdk9//JSi2u3fP1QSmd1KNwq6VOKYGlAu87CisVir6Pw==}
 
+  jsonc-parser@3.3.1:
+    resolution: {integrity: sha512-HUgH65KyejrUFPvHFPbqOY0rsFip3Bo5wb4ngvdi1EpCYWUQDC5V+Y7mZws+DLkr4M//zQJoanu1SP+87Dv1oQ==}
+
   keyv@5.6.0:
     resolution: {integrity: sha512-CYDD3SOtsHtyXeEORYRx2qBtpDJFjRTGXUtmNEMGyzYOKj1TE3tycdlho7kA1Ufx9OYWZzg52QFBGALTirzDSw==}
 
@@ -2819,6 +2828,10 @@ packages:
     resolution: {integrity: sha512-47lfgUr6xzgljtTD5XfJrS+6muNb9R44OEr+o31Nco2R65W1xOA8Pi6QSbLa90tDYE6TqW5Hrh3N1egserGrhQ==}
     engines: {node: '>=18'}
     hasBin: true
+
+  smol-toml@1.9.0:
+    resolution: {integrity: sha512-hpd+HLON7HdZXqYchMM/+LaTTbdK0AU3NngIJ4KVyWbY9bfQqdL9cD+4yf6dUoU2Ap4VsU0JkQi6FxAI1B2mXQ==}
+    engines: {node: '>= 18'}
 
   sonic-boom@4.2.1:
     resolution: {integrity: sha512-w6AxtubXa2wTXAUsZMMWERrsIRAdrK0Sc+FUytWvYAhBJLyuI4llrMIC1DtlNSdI99EI86KZum2MMq3EAZlF9Q==}
@@ -5065,6 +5078,8 @@ snapshots:
 
   json-stable-stringify-without-jsonify@1.0.1: {}
 
+  jsonc-parser@3.3.1: {}
+
   keyv@5.6.0:
     dependencies:
       '@keyv/serialize': 1.1.1
@@ -5903,6 +5918,8 @@ snapshots:
       - bare-abort-controller
       - bare-buffer
       - react-native-b4a
+
+  smol-toml@1.9.0: {}
 
   sonic-boom@4.2.1:
     dependencies:
