@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
+import { WORKER_ENTRY } from "../support/entries.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ProcessWorkerHost } from "../../src/process/worker-host.js";
+import { ProcessWorkerHost } from "@harnesshub/runtime/process/worker-host";
 import type { ExecutionSpec, WorkerMessage } from "@harnesshub/core/ports";
 import type { RunId, SessionId } from "@harnesshub/core/types";
 
@@ -35,7 +36,10 @@ function specFor(directory: string): ExecutionSpec {
 }
 
 async function executeInNewWorker(spec: ExecutionSpec) {
-  const host = new ProcessWorkerHost({ shutdownGraceMs: 500 });
+  const host = new ProcessWorkerHost({
+    workerEntry: WORKER_ENTRY,
+    shutdownGraceMs: 500,
+  });
   const messages: WorkerMessage[] = [];
   try {
     const handle = await host.start(spec, async (message) => {

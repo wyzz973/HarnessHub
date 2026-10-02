@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { WORKER_ENTRY } from "../support/entries.js";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -10,8 +11,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import test, { type TestContext } from "node:test";
 import { startHub } from "../../src/main.js";
-import { ProcessWorkerHost } from "../../src/process/worker-host.js";
-import { readProcessTable } from "../../src/process/process-table.js";
+import { ProcessWorkerHost } from "@harnesshub/runtime/process/worker-host";
+import { readProcessTable } from "@harnesshub/runtime/process/process-table";
 import type { LogFields, LogSink } from "@harnesshub/core/logging";
 import type { ExecutionSpec, WorkerMessage } from "@harnesshub/core/ports";
 import type {
@@ -191,7 +192,11 @@ void test(
   async (t) => {
     const { directory } = await temporaryDirectory(t, "harnesshub-escape-");
     const leaseDir = join(directory, "leases");
-    const host = new ProcessWorkerHost({ leaseDir, shutdownGraceMs: 400 });
+    const host = new ProcessWorkerHost({
+      workerEntry: WORKER_ENTRY,
+      leaseDir,
+      shutdownGraceMs: 400,
+    });
     t.after(() => host.close());
     const fixtures = await processes(t);
     // A launch recipe naming the marker must not detach the engine's tree.
@@ -352,8 +357,17 @@ void test(
       info: (event, fields) => void records.push({ event, fields }),
       debug: () => undefined,
     };
-    const host = new ProcessWorkerHost({ leaseDir, shutdownGraceMs: 200, log });
-    const recovery = new ProcessWorkerHost({ leaseDir, shutdownGraceMs: 400 });
+    const host = new ProcessWorkerHost({
+      workerEntry: WORKER_ENTRY,
+      leaseDir,
+      shutdownGraceMs: 200,
+      log,
+    });
+    const recovery = new ProcessWorkerHost({
+      workerEntry: WORKER_ENTRY,
+      leaseDir,
+      shutdownGraceMs: 400,
+    });
     let quarantined = false;
     t.after(async () => {
       if (quarantined)
@@ -433,8 +447,16 @@ void test(
       "harnesshub-escape-recovery-",
     );
     const leaseDir = join(directory, "leases");
-    const oldHost = new ProcessWorkerHost({ leaseDir, shutdownGraceMs: 400 });
-    const nextHost = new ProcessWorkerHost({ leaseDir, shutdownGraceMs: 400 });
+    const oldHost = new ProcessWorkerHost({
+      workerEntry: WORKER_ENTRY,
+      leaseDir,
+      shutdownGraceMs: 400,
+    });
+    const nextHost = new ProcessWorkerHost({
+      workerEntry: WORKER_ENTRY,
+      leaseDir,
+      shutdownGraceMs: 400,
+    });
     t.after(async () => {
       await oldHost.close();
       await nextHost.close();
@@ -506,7 +528,11 @@ void test(
       "harnesshub-escape-crash-",
     );
     const leaseDir = join(directory, "leases");
-    const host = new ProcessWorkerHost({ leaseDir, shutdownGraceMs: 400 });
+    const host = new ProcessWorkerHost({
+      workerEntry: WORKER_ENTRY,
+      leaseDir,
+      shutdownGraceMs: 400,
+    });
     t.after(() => host.close());
     const fixtures = await processes(t);
     const input = cliSpec(directory, "escape-crash", [

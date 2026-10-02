@@ -10,7 +10,7 @@ import {
   scanProc,
   type ProcFs,
   type ProcessRow,
-} from "../../src/process/proc-scan.js";
+} from "@harnesshub/runtime/process/proc-scan";
 import {
   environmentCarries,
   parseProcScanOutput,
@@ -19,7 +19,7 @@ import {
   readMarkerSnapshot,
   readProcessTable,
   runBounded,
-} from "../../src/process/process-table.js";
+} from "@harnesshub/runtime/process/process-table";
 import {
   groupShieldsSelf,
   killableGroups,
@@ -28,7 +28,7 @@ import {
   walkOwnership,
   workerTree,
   type Survivors,
-} from "../../src/process/posix-tree.js";
+} from "@harnesshub/runtime/process/posix-tree";
 
 const UID = 501;
 const SELF = 100;

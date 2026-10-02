@@ -25,6 +25,9 @@
     },
     {
       "path": "./packages/agents"
+    },
+    {
+      "path": "./packages/runtime"
     }
   ]
 }

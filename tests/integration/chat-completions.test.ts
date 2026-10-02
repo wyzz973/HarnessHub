@@ -22,7 +22,7 @@ import type {
   RunRecord,
   SessionRecord,
 } from "@harnesshub/core/types";
-import type { HubApplication } from "../../src/application/service.js";
+import type { HubApplication } from "@harnesshub/runtime/application/service";
 import { ensurePrivateDirectory } from "@harnesshub/store/platform/windows-acl";
 import { startModelGateway } from "@harnesshub/gateway/gateway";
 import { writePrivateSecretFile } from "../fixtures/private-secret-file.js";

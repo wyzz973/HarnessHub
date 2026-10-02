@@ -219,8 +219,9 @@ async function probeWindowsConfiguration(
   initializeTimeoutMs: number,
 ): Promise<ConfigurationCheck> {
   signal.throwIfAborted();
+  // The package's Job helper, as process/windows-job.ts locates it.
   const helper = fileURLToPath(
-    new URL("../../../native/harnesshub-job.exe", import.meta.url),
+    new URL("../../native/harnesshub-job.exe", import.meta.url),
   );
   const token = randomUUID();
   const systemNames = new Set(

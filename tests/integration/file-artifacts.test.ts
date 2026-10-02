@@ -19,12 +19,12 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
-import { createFileArtifactCollector } from "../../src/artifacts/collector.js";
+import { createFileArtifactCollector } from "@harnesshub/runtime/artifacts/collector";
 import {
   createArtifactPublisher,
   discardArtifacts,
   readArtifact,
-} from "../../src/artifacts/publisher.js";
+} from "@harnesshub/runtime/artifacts/publisher";
 import { HubError } from "@harnesshub/core/errors";
 import type { EngineProfile, FileOutput } from "@harnesshub/core/types";
 import { SqliteStore } from "@harnesshub/store/storage/sqlite-store";

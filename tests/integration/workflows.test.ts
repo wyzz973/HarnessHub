@@ -20,7 +20,7 @@ import {
   type WorkflowPlan,
 } from "@harnesshub/core/workflows";
 import { isTerminal } from "@harnesshub/core/types";
-import { selectWorkflowEngine } from "../../src/application/workflows.js";
+import { selectWorkflowEngine } from "@harnesshub/runtime/application/workflows";
 import { temporaryDirectory } from "../support/temporary.js";
 
 if (process.argv.includes("--workflow-acp-peer")) {

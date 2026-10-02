@@ -5,9 +5,21 @@ import { promisify } from "node:util";
 import type { CleanupStatus } from "@harnesshub/core/types";
 
 const execute = promisify(execFile);
-const helper = fileURLToPath(
-  new URL("../../native/harnesshub-job.exe", import.meta.url),
-);
+
+/**
+ * Absolute path of the Windows Job Object helper `harnesshub-job.exe` in this
+ * package's `dist/native`, where `native/build-windows-job.mjs` writes it during
+ * `pnpm build` on Windows only. Computed from this module's location, so a
+ * single-executable build that relocates the module resolves it under its
+ * extraction root. This module imports nothing else of the package: a Windows
+ * test loads a lone copy of it to check the missing-helper path.
+ */
+export function jobHelperPath(): string {
+  return fileURLToPath(
+    new URL("../../native/harnesshub-job.exe", import.meta.url),
+  );
+}
+const helper = jobHelperPath();
 const cleanupTimeoutMs = 5_000;
 
 /** The Job owns descendants before any Run is sent; helper death closes its sole kill-on-close handle. */

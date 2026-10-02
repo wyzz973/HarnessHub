@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { startHub } from "../../src/main.js";
 import type { RunRecord, SessionRecord } from "@harnesshub/core/types";
-import type { HubApplication } from "../../src/application/service.js";
+import type { HubApplication } from "@harnesshub/runtime/application/service";
 import { ensurePrivateDirectory } from "@harnesshub/store/platform/windows-acl";
 
 type Hub = Awaited<ReturnType<typeof startHub>>;

@@ -18,7 +18,7 @@ async function tree(t, files) {
 
 test("the single executable embeds only the listed native helpers", async (t) => {
   const root = await tree(t, [
-    "dist/native/harnesshub-job.exe",
+    "packages/runtime/dist/native/harnesshub-job.exe",
     "packages/store/dist/native/harnesshub-acl.exe",
     "packages/secrets/dist/native/harnesshub-keychain",
     "packages/core/dist/src/types.js",
@@ -26,7 +26,7 @@ test("the single executable embeds only the listed native helpers", async (t) =>
   assert.deepEqual(
     nativeAssets(root).map((helper) => helper.path),
     [
-      "dist/native/harnesshub-job.exe",
+      "packages/runtime/dist/native/harnesshub-job.exe",
       "packages/secrets/dist/native/harnesshub-keychain",
       "packages/store/dist/native/harnesshub-acl.exe",
     ],
@@ -35,14 +35,14 @@ test("the single executable embeds only the listed native helpers", async (t) =>
 });
 
 test("a stale or unknown file in a native helper directory fails the build", async (t) => {
-  // The keychain helper lived in dist/native before it moved to the secrets package.
+  // The job helper lived in dist/native before it moved to the runtime package.
   const stale = await tree(t, [
+    "packages/runtime/dist/native/harnesshub-job.exe",
     "dist/native/harnesshub-job.exe",
-    "dist/native/harnesshub-keychain",
   ]);
   assert.throws(
     () => nativeAssets(stale),
-    /files NATIVE_HELPERS does not list: dist\/native\/harnesshub-keychain\./,
+    /files NATIVE_HELPERS does not list: dist\/native\/harnesshub-job\.exe\./,
   );
   const unlisted = await tree(t, ["packages/agents/dist/native/launcher.exe"]);
   assert.throws(

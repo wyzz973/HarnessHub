@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { WORKER_ENTRY } from "../support/entries.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
@@ -9,8 +10,8 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { ACP_INITIALIZE_TIMEOUT_LIMIT_MS } from "@harnesshub/core/engines";
 import { normalizeEngine } from "@harnesshub/agents/engine/registry";
-import { probeConfiguration } from "../../src/drivers/configuration/probe.js";
-import { ProcessWorkerHost } from "../../src/process/worker-host.js";
+import { probeConfiguration } from "@harnesshub/runtime/process/probe";
+import { ProcessWorkerHost } from "@harnesshub/runtime/process/worker-host";
 import { startHub } from "../../src/main.js";
 import type { RunId, SessionId } from "@harnesshub/core/types";
 import type { ExecutionSpec, WorkerMessage } from "@harnesshub/core/ports";
@@ -21,7 +22,7 @@ void test(
   { timeout: 20_000 },
   async (t) => {
     const root = await mkdtemp(join(tmpdir(), "hh-acp-hang-reconnect-"));
-    const host = new ProcessWorkerHost();
+    const host = new ProcessWorkerHost({ workerEntry: WORKER_ENTRY });
     const realDelay = delay;
     let mocked = false;
     t.after(async () => {
@@ -250,7 +251,7 @@ void test(
   { timeout: 15_000 },
   async (t) => {
     const root = await mkdtemp(join(tmpdir(), "hh-acp-init-success-")),
-      host = new ProcessWorkerHost(),
+      host = new ProcessWorkerHost({ workerEntry: WORKER_ENTRY }),
       ready = Promise.withResolvers<void>();
     t.after(async () => {
       await host.close();
@@ -306,7 +307,7 @@ void test(
   { timeout: 15_000 },
   async (t) => {
     const root = await mkdtemp(join(tmpdir(), "hh-acp-init-"));
-    const host = new ProcessWorkerHost();
+    const host = new ProcessWorkerHost({ workerEntry: WORKER_ENTRY });
     t.after(async () => {
       await host.close();
       await rm(root, { recursive: true, force: true });

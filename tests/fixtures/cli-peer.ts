@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { WORKER_ENTRY } from "../support/entries.js";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { writeFileSync } from "node:fs";
@@ -181,8 +182,9 @@ switch (mode?.startsWith("--harnesshub-owner=") ? "fake-worker" : mode) {
   }
   case "recover-leases": {
     const { ProcessWorkerHost } =
-      await import("../../src/process/worker-host.js");
+      await import("@harnesshub/runtime/process/worker-host");
     const host = new ProcessWorkerHost({
+      workerEntry: WORKER_ENTRY,
       leaseDir: process.argv[3]!,
       shutdownGraceMs: 300,
     });

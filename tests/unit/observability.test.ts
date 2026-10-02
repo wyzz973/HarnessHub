@@ -21,7 +21,7 @@ import {
 import {
   percentile,
   projectRunObservations,
-} from "../../src/application/observability.js";
+} from "@harnesshub/runtime/application/observability";
 import type {
   AgentEvent,
   RunId,

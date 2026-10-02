@@ -15,7 +15,7 @@ import type {
   RunId,
   SessionId,
 } from "@harnesshub/core/types";
-import { Runtime } from "../../src/runtime/runtime.js";
+import { Runtime } from "@harnesshub/runtime/runtime/runtime";
 import { SqliteStore } from "@harnesshub/store/storage/sqlite-store";
 import { loadConfig } from "@harnesshub/agents/engine/registry";
 import { temporaryDirectory } from "../support/temporary.js";

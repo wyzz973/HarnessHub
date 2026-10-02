@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { WORKER_ENTRY } from "../support/entries.js";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -18,13 +19,13 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import { startHub } from "../../src/main.js";
-import { probeConfiguration } from "../../src/drivers/configuration/probe.js";
-import { ProcessWorkerHost } from "../../src/process/worker-host.js";
-import type * as WindowsJobModule from "../../src/process/windows-job.js";
+import { probeConfiguration } from "@harnesshub/runtime/process/probe";
+import { ProcessWorkerHost } from "@harnesshub/runtime/process/worker-host";
+import type * as WindowsJobModule from "@harnesshub/runtime/process/windows-job";
 import {
   recoverWorkerLease,
   WorkerLeaseStore,
-} from "../../src/process/leases.js";
+} from "@harnesshub/runtime/process/leases";
 import type { ExecutionSpec } from "@harnesshub/core/ports";
 import type {
   RunId,
@@ -89,7 +90,7 @@ void test(
     );
     await copyFile(
       fileURLToPath(
-        new URL("../../src/process/windows-job.js", import.meta.url),
+        import.meta.resolve("@harnesshub/runtime/process/windows-job"),
       ),
       modulePath,
     );
@@ -241,6 +242,7 @@ void test(
   async (t) => {
     const directory = await mkdtemp(join(tmpdir(), "hh-startup-cancel-"));
     const host = new ProcessWorkerHost({
+      workerEntry: WORKER_ENTRY,
       leaseDir: join(directory, "leases"),
       shutdownGraceMs: 100,
     });

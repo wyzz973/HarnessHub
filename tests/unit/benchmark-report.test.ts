@@ -6,7 +6,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { buildBenchmarkReport } from "../../src/benchmark/report.js";
+import { buildBenchmarkReport } from "@harnesshub/runtime/benchmark/report";
 import {
   benchmarkHash,
   type AttemptId,

@@ -1,6 +1,6 @@
 # 运行观测与覆盖范围
 
-观测由 [ObservationService](../src/application/observability.ts)读取已提交的 Run、Session、事件、权限和产物生成，不维护第二份运行状态。前端刷新和 Gateway 重启后可从 SQLite 重建同一结果。执行完成和任务达标继续分别记录。
+观测由 [ObservationService](../packages/runtime/src/application/observability.ts)读取已提交的 Run、Session、事件、权限和产物生成，不维护第二份运行状态。前端刷新和 Gateway 重启后可从 SQLite 重建同一结果。执行完成和任务达标继续分别记录。
 
 ## API 与统计范围
 
