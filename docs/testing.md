@@ -37,6 +37,8 @@
 - HOME、USERPROFILE、APPDATA、LOCALAPPDATA、XDG 目录与临时目录指向本次运行私有的沙箱。涉及账户级系统服务的测试从 `HARNESSHUB_TEST_SYSTEM_HOME` 取得真实 HOME：macOS 钥匙串测试临时切换 HOME 并在结束时恢复，Windows DPAPI 测试据此定位按令牌用户配置目录保存的密文。
 - 每个用例默认有超时，整组有总期限；超过总期限时结束整个进程树并判为失败，这通常说明某个文件留下了未关闭的句柄。
 - 运行结束后沙箱临时目录中仍有内容即判为资源泄漏并失败；沙箱在任何情况下都会删除。拒绝样例见 `scripts/check-run-tests.test.mjs`。
+- `--inventory FILE` 另外写出本组的用例清单：[自定义 reporter](../scripts/test-inventory-reporter.mjs) 经 `--test-reporter` 写入沙箱，启动器补上组名后写成 JSON Lines（组名、测试文件名、从最外层到该用例的名称路径、状态 pass/fail/skip/todo），spec 输出照常写到 stdout。未给该参数而 `HARNESSHUB_TEST_INVENTORY_DIR` 非空时写到 `<目录>/<组名>.jsonl`；这个变量只供启动器使用，不传给测试。失败的运行同样写出清单，清单只含 runner 实际报告的用例。
+- [`scripts/compare-inventory.mjs`](../scripts/compare-inventory.mjs) 比较两份清单（文件或目录）：按组名、名称路径和状态计数匹配，忽略测试文件位置，逐条列出缺少与新增的用例；有差异退出 1，输入无效或没有条目退出 2。`--allow FILE` 列出预期新增的条目，未出现的预期新增同样算差异。拒绝样例见 `scripts/check-compare-inventory.test.mjs`。多包迁移用它逐平台核对用例清单不变，见 [多包迁移计划](proposals/oss/13-package-migration.md#5-步骤与对账)。
 
 就绪等待使用带期限的握手、查询或状态事件；固定 sleep 不作就绪证据。重试仅用于明确瞬时故障，记录触发原因及次数；不能通过更长 timeout、整套串行或反复重跑掩盖竞态。
 
@@ -60,7 +62,7 @@ Windows 用原生环境验证中文/空格路径、env 大小写、cmd/PowerShel
 
 当前实际可运行入口在 [README](../README.md#当前可运行检查)。文档检查是局部检查，不等于完整构建或质量检查。
 
-下表按所属模块与实施阶段逐步实现。当前类型、lint/格式、边界、SPDX 文件头、标签定义、单元、DB/IPC/HTTP 集成、构建入口 smoke 和文档检查已在 [package.json](../package.json)接入。[CI 配置](../.github/workflows/ci.yml)在 Ubuntu、macOS 与 Windows 上运行完整 `pnpm check`，由 `ci-ok` 汇总为单一必需状态；另有 [DCO 签名](../.github/workflows/dco.yml)（`scripts/check-dco.mjs`）、[CodeQL](../.github/workflows/codeql.yml)、[依赖审查](../.github/workflows/dependency-review.yml)、[OpenSSF Scorecard](../.github/workflows/scorecard.yml) 与[标签同步](../.github/workflows/labels.yml)。第三方 Action 按提交 SHA 固定，工作流默认只读权限。Windows 专用 `test:windows` 已接入，要求本机 Windows 并从正式编译产物执行测试；同组测试也包含在 `pnpm check` 的常规单元/集成组。远端 CI 结果与本机证据分别报告。真实引擎 `test:engine` 尚未接入；真实模型必须另有配置、预算和执行证据。
+下表按所属模块与实施阶段逐步实现。当前类型、lint/格式、边界、SPDX 文件头、标签定义、单元、DB/IPC/HTTP 集成、构建入口 smoke 和文档检查已在 [package.json](../package.json)接入。[CI 配置](../.github/workflows/ci.yml)在 Ubuntu、macOS 与 Windows 上运行完整 `pnpm check`，由 `ci-ok` 汇总为单一必需状态；另有 [DCO 签名](../.github/workflows/dco.yml)（`scripts/check-dco.mjs`）、[CodeQL](../.github/workflows/codeql.yml)、[依赖审查](../.github/workflows/dependency-review.yml)、[OpenSSF Scorecard](../.github/workflows/scorecard.yml) 与[标签同步](../.github/workflows/labels.yml)。第三方 Action 按提交 SHA 固定，工作流默认只读权限。CI 运行 `pnpm check` 时设置 `HARNESSHUB_TEST_INVENTORY_DIR`，检查通过后把各组用例清单按平台上传为 `test-inventory-<os>` 构件。Windows 专用 `test:windows` 已接入，要求本机 Windows 并从正式编译产物执行测试；同组测试也包含在 `pnpm check` 的常规单元/集成组。远端 CI 结果与本机证据分别报告。真实引擎 `test:engine` 尚未接入；真实模型必须另有配置、预算和执行证据。
 
 | 目标检查名 | 职责与接入点 |
 |---|---|

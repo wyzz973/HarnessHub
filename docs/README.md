@@ -8,6 +8,7 @@
 |---|---|
 | [开源版设计](proposals/oss/README.md) | 对标 Magpie 的产品定义、系统架构、模型/Agent/执行三个平面、接口、数据与安全、可靠性、扩展、工程体系、治理、路线图与 ADR |
 | [路线图](../ROADMAP.md) | 里程碑 M0–M5 的主题与验收入口 |
+| [多包迁移计划](proposals/oss/13-package-migration.md) | OSS-004：现状依赖、包映射、违例修复、构建方式、迁移步骤与用例清单对账 |
 
 ## 使用与实现
 
