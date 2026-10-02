@@ -290,7 +290,7 @@ retry: {perCandidate: 2, totalAttempts: 4, baseBackoffMs: 500, maxBackoffMs: 800
 | 统一模型与 alias `harnesshub-model` | Model Ref、路由组、白名单 | `hh migrate` 把 `harness-model.json` 与 `HARNESSHUB_MODEL*` 转为一个 custom provider 和 `group/default`，秘密引用原样保留 |
 | `compatibility` 五个开关，默认剔除一组参数 | provider 补丁与能力标志，默认不剔除 | 迁移时把 `dropParameters` 转为 `drop-fields` 补丁，`maxTokensField` 转为 `max-tokens-field`，`includeUsage` 转为 `include-usage`，`reasoning: strip` 与 `images` 转为能力元数据 |
 | 默认把 `json_schema` 降级为 `json_object` | 显式补丁 | 由迁移为旧配置自动启用，新 provider 默认不启用 |
-| 零重试，并关闭 Codex 自身重试（[prepare.ts](../../../src/drivers/configuration/prepare.ts) 第 745–746 行） | 第 5 节的有界重试与熔断 | Codex 隔离接线恢复 `request_max_retries = 1`，`stream_max_retries` 保持 0 |
+| 零重试，并关闭 Codex 自身重试（[prepare.ts](../../../packages/agents/src/configuration/prepare.ts) 第 768–769 行） | 第 5 节的有界重试与熔断 | Codex 隔离接线恢复 `request_max_retries = 1`，`stream_max_retries` 保持 0 |
 | Gemini SSE 不 flush 响应头，无协议内保活（[output.ts](../../../packages/gateway/src/output.ts)） | 第 6 节 | 在现有代码上先修，作为开源前的先行修复 |
 | 8 MiB 入站与原始 SSE 字节上限 | 第 6 节的上限表 | `DEFAULT_GATEWAY_LIMITS` 改为 `gateway.limits` 配置解析器 |
 | 上下文超长按消息匹配，429 会被误判 | 状态码加消息判定 | 修正 [upstream.ts](../../../packages/gateway/src/upstream.ts) 的 `isContextOverflow` 并补反例测试 |

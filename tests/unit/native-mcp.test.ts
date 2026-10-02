@@ -6,8 +6,8 @@ import path from "node:path";
 import test from "node:test";
 import type { ExecutionSpec } from "@harnesshub/core/ports";
 import type { RunId, SessionId } from "@harnesshub/core/types";
-import type { PreparedConfiguration } from "../../src/drivers/configuration/prepare.js";
-import { prepareNativeMcp } from "../../src/drivers/configuration/native-mcp.js";
+import type { PreparedConfiguration } from "@harnesshub/agents/configuration/prepare";
+import { prepareNativeMcp } from "@harnesshub/agents/configuration/native-mcp";
 
 function fixture(directory: string, adapter: "pi" | "openclaw" | "kimi") {
   const spec: ExecutionSpec = {

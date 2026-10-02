@@ -43,6 +43,7 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "1.4.0",
     "@fastify/swagger": "9.8.1",
+    "@harnesshub/agents": "workspace:*",
     "@harnesshub/core": "workspace:*",
     "@harnesshub/drivers": "workspace:*",
     "@harnesshub/gateway": "workspace:*",
@@ -50,8 +51,7 @@
     "@harnesshub/store": "workspace:*",
     "ajv": "8.20.0",
     "cross-spawn": "7.0.6",
-    "fastify": "5.12.5",
-    "yaml": "2.9.0"
+    "fastify": "5.12.5"
   },
   "devDependencies": {
     "@types/cross-spawn": "6.0.6",
@@ -62,7 +62,8 @@
     "postject": "1.0.0-alpha.6",
     "prettier": "3.9.6",
     "typescript": "5.9.3",
-    "typescript-eslint": "8.56.1"
+    "typescript-eslint": "8.56.1",
+    "yaml": "2.9.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

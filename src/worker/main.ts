@@ -2,7 +2,7 @@
 import {
   prepareConfiguration,
   type PreparedConfiguration,
-} from "../drivers/configuration/prepare.js";
+} from "@harnesshub/agents/configuration/prepare";
 import { startModelGateway } from "@harnesshub/gateway/gateway";
 import type { ModelCallRecord } from "@harnesshub/core/model-bridge";
 import { HubError } from "@harnesshub/core/errors";

@@ -6,7 +6,7 @@ Agent 平面负责四件事：发现本机的 Agent；把 Agent 接到网关（�
 
 ## 1. Adapter 清单
 
-Adapter 是声明式 YAML 清单加可选的插件代码钩子。清单放在 `agents` 包的 `adapters/<id>/adapter.yaml`（目录约定见 [10 工程体系](10-engineering.md#1-仓库结构)），由 JSON Schema 校验；复杂逻辑（例如 Codex 模型清单文件的生成）通过 `hooks` 引用核心或插件中的具名函数，不在清单里写脚本。HH 现状把 16 个引擎的识别写在代码中（[builtins.ts](../../../src/engine/builtins.ts)），配置准备集中在约 1,670 行的 [prepare.ts](../../../src/drivers/configuration/prepare.ts)；Magpie 把每个 Agent 写成一个 Go 函数（`internal/agent/agents.go`）。两者都要求改核心代码才能增加 Agent，开源版改为数据驱动。
+Adapter 是声明式 YAML 清单加可选的插件代码钩子。清单放在 `agents` 包的 `adapters/<id>/adapter.yaml`（目录约定见 [10 工程体系](10-engineering.md#1-仓库结构)），由 JSON Schema 校验；复杂逻辑（例如 Codex 模型清单文件的生成）通过 `hooks` 引用核心或插件中的具名函数，不在清单里写脚本。HH 现状把 16 个引擎的识别写在代码中（[builtins.ts](../../../packages/agents/src/engine/builtins.ts)），配置准备集中在约 1,670 行的 [prepare.ts](../../../packages/agents/src/configuration/prepare.ts)；Magpie 把每个 Agent 写成一个 Go 函数（`internal/agent/agents.go`）。两者都要求改核心代码才能增加 Agent，开源版改为数据驱动。
 
 | 字段 | 类型 | 必填 | 含义 |
 |---|---|---|---|
@@ -117,7 +117,7 @@ quirks:
 
 发现沿用现状的原则：**不执行任何被发现的程序**，包括不运行 `--version`、不启动登录 shell、不读取认证文件、不自动安装 Adapter（[本机引擎发现](../../engine-discovery.md)）。Magpie 同样不执行 Agent，但其检测把“配置目录存在”也算作已安装（`internal/agent/agent.go` 的 `Detected`），开源版把两者分成 `installed` 与 `configured-only` 两种状态。
 
-**静态版本读取**。版本只取安装器写下的元数据文件，从不从目录名推断（沿用 [installation.ts](../../../src/engine/installation.ts) 第 281 行的规则）：
+**静态版本读取**。版本只取安装器写下的元数据文件，从不从目录名推断（沿用 [installation.ts](../../../packages/agents/src/engine/installation.ts) 第 280 行的规则）：
 
 | 安装方式 | 读取位置 | 适用 |
 |---|---|---|
@@ -185,7 +185,7 @@ flowchart TD
 
 ## 6. 隔离接线
 
-隔离接线只为执行平面的 Session 生成私有配置，不触碰用户文件，沿用现状的做法：Worker 在 Session 目录下建立私有 HOME 与 Agent 配置目录，设置 `HOME`、`USERPROFILE`、`APPDATA`、`LOCALAPPDATA`、`XDG_*` 以及 Agent 专属变量（`CODEX_HOME`、`CLAUDE_CONFIG_DIR` 等），按 Adapter 的 `wiring.isolated` 写入配置，Session Key 只经环境变量或私有文件传入（[prepare.ts](../../../src/drivers/configuration/prepare.ts) 的 `prepareConfiguration`）。Windows 的环境白名单必须保留 `ProgramFiles`、`ProgramFiles(x86)`、`ProgramW6432`、`ProgramData`、`ALLUSERSPROFILE`、`PUBLIC`、`COMPUTERNAME`，否则依赖它们的工具在任何 Windows 机器上都会失败（上一轮核验 P0-2）。
+隔离接线只为执行平面的 Session 生成私有配置，不触碰用户文件，沿用现状的做法：Worker 在 Session 目录下建立私有 HOME 与 Agent 配置目录，设置 `HOME`、`USERPROFILE`、`APPDATA`、`LOCALAPPDATA`、`XDG_*` 以及 Agent 专属变量（`CODEX_HOME`、`CLAUDE_CONFIG_DIR` 等），按 Adapter 的 `wiring.isolated` 写入配置，Session Key 只经环境变量或私有文件传入（[prepare.ts](../../../packages/agents/src/configuration/prepare.ts) 的 `prepareConfiguration`）。Windows 的环境白名单必须保留 `ProgramFiles`、`ProgramFiles(x86)`、`ProgramW6432`、`ProgramData`、`ALLUSERSPROFILE`、`PUBLIC`、`COMPUTERNAME`，否则依赖它们的工具在任何 Windows 机器上都会失败（上一轮核验 P0-2）。
 
 私有 HOME 只隔离按用户目录查找的配置。上一轮核验确认了以下例外，每一项在 Adapter 清单中登记为 `quirks[]`，并有对应的一致性测试：
 
@@ -214,7 +214,7 @@ Profile 是一组接线与 Library 选择的命名快照（02 第 2 节）：`{n
 
 ## 8. Library
 
-Library 保存一份 Skills、MCP 服务与指令集，按各 Agent 的原生格式同步（02 第 4.2 节）。存储沿用现有工具包的内容寻址对象、跨进程锁与严格路径校验（[store.ts](../../../src/tool-packages/store.ts)、[本地便携工具包](../../tool-packages.md)），同步记录每个 Agent 中由 HH 写入的条目，移除时只删除自己的条目（Magpie `internal/library/library.go` 的 `Applied` 采用同样原则）。与用户已有条目同名时拒绝并报告冲突，不覆盖。
+Library 保存一份 Skills、MCP 服务与指令集，按各 Agent 的原生格式同步（02 第 4.2 节）。存储沿用现有工具包的内容寻址对象、跨进程锁与严格路径校验（[store.ts](../../../packages/agents/src/tool-packages/store.ts)、[本地便携工具包](../../tool-packages.md)），同步记录每个 Agent 中由 HH 写入的条目，移除时只删除自己的条目（Magpie `internal/library/library.go` 的 `Applied` 采用同样原则）。与用户已有条目同名时拒绝并报告冲突，不覆盖。
 
 **指令集**：以 [AGENTS.md](https://agents.md) 为基础格式，可以保存多套并切换。写入各 Agent 的用户级指令文件（Claude Code 的 `CLAUDE.md`、Codex 的 `AGENTS.md`、Gemini 的 `GEMINI.md` 等，位置见各 Adapter 的 `library.instructions`）时，只写入带标记的区块 `<!-- harnesshub:begin id=<set> sha=<hash> -->` 与 `<!-- harnesshub:end -->`，区块外的内容不动；存在会遮蔽该文件的覆盖文件（Codex 的 `AGENTS.override.md`）时给出警告。
 
@@ -269,10 +269,10 @@ Library 保存一份 Skills、MCP 服务与指令集，按各 Agent 的原生格
 
 | 现状（`324c9e8`） | 开源版 | 迁移动作 |
 |---|---|---|
-| 16 个引擎的识别写在 [builtins.ts](../../../src/engine/builtins.ts)；自定义引擎用 `engines/manifests/*.json`（只有 `name` 与 `registration`） | 声明式 Adapter 清单加具名钩子 | 内置配方逐个改写为 `adapters/<id>/adapter.yaml`；旧 manifest 的 `registration` 转为 `run` 段，`hh migrate` 自动转换 |
-| 只有隔离接线，配置准备集中在 [prepare.ts](../../../src/drivers/configuration/prepare.ts) 中按引擎分支 | 全局接线与隔离接线并存，逐引擎逻辑归各 Adapter | 把 prepare.ts 中各引擎的分支拆成 Adapter 的 `wiring.isolated` 与 `planIsolated` 钩子；现有 Worker 测试保留为第 9 节第 11、14 项的基础 |
+| 16 个引擎的识别写在 [builtins.ts](../../../packages/agents/src/engine/builtins.ts)；自定义引擎用 `engines/manifests/*.json`（只有 `name` 与 `registration`） | 声明式 Adapter 清单加具名钩子 | 内置配方逐个改写为 `adapters/<id>/adapter.yaml`；旧 manifest 的 `registration` 转为 `run` 段，`hh migrate` 自动转换 |
+| 只有隔离接线，配置准备集中在 [prepare.ts](../../../packages/agents/src/configuration/prepare.ts) 中按引擎分支 | 全局接线与隔离接线并存，逐引擎逻辑归各 Adapter | 把 prepare.ts 中各引擎的分支拆成 Adapter 的 `wiring.isolated` 与 `planIsolated` 钩子；现有 Worker 测试保留为第 9 节第 11、14 项的基础 |
 | 统一模型强制覆盖全部引擎，无法接入者停用（[引擎独立配置](../../engine-configuration.md#统一模型)） | 每个 Agent 独立选择 Model Ref；不能接网关的 Agent 在 1.x 以原生账号运行（05 第 2 节的 `modelTraffic: native`），并标注“无调用证据” | 迁移时按旧统一模型为每个已登记引擎生成同一 Model Ref 的 Profile |
-| 发现不执行程序，版本只从 `package.json` 读取 | 保留原则；增加 dist-info、Homebrew 收据、Go build info、身份校验、Windows shim 解析与诊断输出 | 扩展 [discovery.ts](../../../src/engine/discovery.ts) 与 [installation.ts](../../../src/engine/installation.ts)，测试沿用“无子进程”断言 |
+| 发现不执行程序，版本只从 `package.json` 读取 | 保留原则；增加 dist-info、Homebrew 收据、Go build info、身份校验、Windows shim 解析与诊断输出 | 扩展 [discovery.ts](../../../packages/agents/src/engine/discovery.ts) 与 [installation.ts](../../../packages/agents/src/engine/installation.ts)，测试沿用“无子进程”断言 |
 | 工具包绑定到引擎 revision，经 SQLite overlay 或 `settings.json` 生效 | Library 条目按 Profile 或 Session 选择，同步到用户配置或 Session 私有配置 | 已安装的工具包对象原样作为 Library 内容对象；绑定关系转为 Profile 中的 Library 选择 |
 | MCP 秘密可以引用 `HARNESSHUB_*` 变量 | 第 8 节的禁止规则 | 迁移时检测并列出违规引用，要求用户改为独立凭据，不自动迁移 |
 | 办公工具包与 Capability Pack 预装在发行包 | 移出核心，作为 Library 示例包单独发布 | 见 12 路线图与迁移 |

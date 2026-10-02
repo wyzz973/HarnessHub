@@ -158,3 +158,12 @@ daemon 内只有 `src/worker/**` 可以导入 drivers。
 - V2：`RuntimeMcpServer` 原样移到 `packages/core/src/runtime-mcp.ts`，`prepare.ts` 再导出它，ACP 驱动从 core 导入。
 - `acpx` 成为 drivers 的依赖；根包只有一个集成测试直接导入 `acpx/runtime`，因此改为根包的开发依赖。根 `package.json` 的 `patchedDependencies` 对整个 workspace 生效，drivers 与根解析到同一个已打补丁的实例，补丁哈希不变。
 - 边界检查：CLI 驱动是第三个 `child_process` 例外（所有者 OSS-010 F08，随 OSS-013 到期）；守护进程中只有 `worker/` 可以导入 drivers，对将迁入守护进程的 `src/` 文件和将来的 `packages/daemon` 同样检查。
+
+第 7 步（agents 与 V8、V9）：
+
+- `engine/`、`tool-packages/`、`drivers/tool-command/`、`drivers/configuration/` 的 prepare、launch、native-mcp、codex-models、codex-default-instructions，以及 `application/` 的 engine-configuration 与 harness-model 迁入 `packages/agents/src/` 的 `engine/`、`tool-packages/`、`tool-command/`、`configuration/`、`application/`；包依赖 core、store、secrets、ajv 与 yaml。根包的 `yaml` 只剩测试使用，改为开发依赖；`ajv` 仍有 `src/process` 使用。`probe.ts` 留在 `src/drivers/configuration`，第 8 步迁入 runtime。
+- 边界检查用 `PACKAGE_ORIGINS` 取代原来的平铺表与别名表：每个包的文件按其来源映射回原路径（agents 的 `configuration/`、`tool-command/` 映射到 `drivers/...`），原模块规则与 `src/` 的导入规则都按映射后的路径执行；包内不属于原模块的文件是包级代码，本包各模块都可以使用。
+- V8：`repositoryScript(name)` 放在包级的 `repository.ts`，因为 engine 的发现与安装快照也要定位启动器，而 engine 不能依赖原 drivers 模块；它是唯一越出包的 URL，登记为 `URL_EXCEPTIONS`（所有者 OSS-004，随 OSS-013 到期，与 `child_process` 例外一样读取 `TODO.md` 判断到期）。
+- V9：`tool-command/entry.ts` 导出 `COMMAND_MCP_ENTRY`，`main.ts`、`tool-packages-main.ts` 与两个集成测试使用它。同一文件的 `LEGACY_COMMAND_MCP_ENTRY` 是迁移前的编译位置；准备 MCP 服务器时，等于它的参数改为当前入口（Windows 上不区分大小写），SQLite 中的记录不改写。集成测试在真实 Gateway 中登记与旧绑定相同的记录，重启后读回，确认记录未变、准备后的参数是新入口，并经它启动 command MCP 列出工具；去掉映射时该测试失败。该映射在 M1 删除。
+- command MCP 服务器用 `node:child_process` 执行工具，是第四个 `child_process` 例外；`configuration/launch.ts` 不启动进程，不需要例外。
+- SEA：command MCP 角色改为 `packages/agents/dist/src/tool-command/command-mcp.js`，`entry.mjs`、`build.mjs` 与 `measure.mjs` 同步。

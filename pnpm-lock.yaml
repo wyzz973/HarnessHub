@@ -19,6 +19,9 @@ importers:
       '@fastify/swagger':
         specifier: 9.8.1
         version: 9.8.1
+      '@harnesshub/agents':
+        specifier: workspace:*
+        version: link:packages/agents
       '@harnesshub/core':
         specifier: workspace:*
         version: link:packages/core
@@ -43,9 +46,6 @@ importers:
       fastify:
         specifier: 5.12.5
         version: 5.12.5
-      yaml:
-        specifier: 2.9.0
-        version: 2.9.0
     devDependencies:
       '@types/cross-spawn':
         specifier: 6.0.6
@@ -74,6 +74,27 @@ importers:
       typescript-eslint:
         specifier: 8.56.1
         version: 8.56.1(eslint@10.10.0(jiti@2.7.0))(typescript@5.9.3)
+      yaml:
+        specifier: 2.9.0
+        version: 2.9.0
+
+  packages/agents:
+    dependencies:
+      '@harnesshub/core':
+        specifier: workspace:*
+        version: link:../core
+      '@harnesshub/secrets':
+        specifier: workspace:*
+        version: link:../secrets
+      '@harnesshub/store':
+        specifier: workspace:*
+        version: link:../store
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
+      yaml:
+        specifier: 2.9.0
+        version: 2.9.0
 
   packages/core:
     dependencies:

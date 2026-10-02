@@ -1,19 +1,20 @@
 // SPDX-License-Identifier: MIT
+import { COMMAND_MCP_ENTRY } from "@harnesshub/agents/tool-command/entry";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
-import { bindInstalled, importLocal } from "../../src/tool-packages/index.js";
+import {
+  bindInstalled,
+  importLocal,
+} from "@harnesshub/agents/tool-packages/index";
 import {
   startMcp,
   substituteSessionWorkspace,
 } from "../fixtures/tool-pack-mcp-client.js";
 
-const commandMcpEntry = fileURLToPath(
-  new URL("../../src/drivers/tool-command/command-mcp.js", import.meta.url),
-);
+const commandMcpEntry = COMMAND_MCP_ENTRY;
 
 void test(
   "Windows .cmd CLI entries run through cmd.exe with every argument intact and unsafe arguments rejected",

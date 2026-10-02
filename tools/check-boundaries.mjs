@@ -7,18 +7,20 @@
  * package under `packages/` and `apps/`, while OSS-004 moves code into
  * packages (docs/proposals/oss/13-package-migration.md):
  *
- * - Legacy modules (`allowed`) keep their rules, in src/ and inside packages.
- *   A package's src/ is either one flattened legacy module (FLAT_MODULES) or
- *   holds legacy modules as subdirectories; its other files are new package
- *   code, bound by the package graph and the third-party placement rules.
- *   Package and application tests are bound by the graph only.
+ * - Legacy modules (`allowed`) keep their rules, in src/ and inside packages:
+ *   PACKAGE_ORIGINS maps each package file back to its legacy path. Package
+ *   files outside any legacy module are package-level code, which the
+ *   package's modules may use and which is bound by the package graph and the
+ *   third-party placement rules. Package and application tests are bound by
+ *   the graph only.
  * - `@harnesshub/<package>` imports follow the dependency graph of
  *   docs/proposals/oss/02-architecture.md section 8 (PACKAGE_GRAPH, APP_GRAPH).
- * - src/ may import a package only through LEGACY_ALIASES, which names the
- *   legacy module whose rules apply to it, and only when the package that
+ * - src/ may import only packages with PACKAGE_ORIGINS, under the rules of the
+ *   legacy module the imported file came from, and only when the package that
  *   the importing file moves to (LEGACY_DESTINATIONS) may depend on it.
  * - Relative imports and `new URL(..., import.meta.url)` inside a package or
- *   application must stay inside it.
+ *   application must stay inside it, except for an unexpired URL_EXCEPTIONS
+ *   entry.
  * - Inside the daemon (and the src/ files that move to it), only worker/ may
  *   import @harnesshub/drivers.
  * - node:sqlite belongs in the storage module of @harnesshub/store. Inside
@@ -87,28 +89,39 @@ export const PACKAGE_GRAPH = {
 /** Applications only dispatch to the packages that own the commands. */
 export const APP_GRAPH = { hh: ["cli", "daemon"] };
 
-/** Packages whose src/ is one flattened legacy module. */
-export const FLAT_MODULES = {
+/**
+ * Where the src/ of each package that came from the legacy tree came from: a
+ * string when its whole src/ was one legacy directory, or the legacy directory
+ * of each renamed first-level subdirectory (the others kept their names, such
+ * as store's storage/ and platform/). Packages without an entry hold only new
+ * code, and src/ cannot import them.
+ */
+export const PACKAGE_ORIGINS = {
   core: "domain",
-  // drivers/src holds driver.ts, acp/, cli/ and fake/ of the drivers module.
+  store: {},
+  secrets: "drivers/configuration",
+  gateway: "drivers/chat-completions",
   drivers: "drivers",
+  agents: {
+    configuration: "drivers/configuration",
+    "tool-command": "drivers/tool-command",
+  },
 };
 
 /**
- * Packages that src/ may import during the migration, and the legacy module
- * whose rules apply: a string for a flattened package, or the legacy modules a
- * package holds as subdirectories, of which the import's first subpath segment
- * must be one.
+ * The legacy path of a file in a package's src/, or undefined for a package
+ * without legacy origin.
+ *
+ * @param {string} name Package directory name.
+ * @param {string} sourcePath Slash-separated path below the package's src/.
  */
-export const LEGACY_ALIASES = {
-  core: "domain",
-  store: ["storage", "platform"],
-  // secrets.ts came from drivers/configuration; src/ keeps the drivers rules for it.
-  secrets: "drivers",
-  // The model gateway came from drivers/chat-completions.
-  gateway: "drivers",
-  drivers: "drivers",
-};
+export function legacyPathOf(name, sourcePath) {
+  const origin = PACKAGE_ORIGINS[name];
+  if (origin === undefined) return undefined;
+  if (typeof origin === "string") return `${origin}/${sourcePath}`;
+  const [first, ...rest] = sourcePath.split("/");
+  return [origin[first] ?? first, ...rest].join("/");
+}
 
 /**
  * The package each legacy path moves to (13-package-migration section 2),
@@ -171,6 +184,28 @@ export const CHILD_PROCESS_EXCEPTIONS = [
     owner: "OSS-010 F08",
     expiresWith: "OSS-013",
   },
+  {
+    package: "agents",
+    path: "tool-command/command-mcp.ts",
+    owner: "OSS-010 F08",
+    expiresWith: "OSS-013",
+  },
+];
+
+/**
+ * Temporary exceptions to "new URL(..., import.meta.url) stays inside its
+ * package": the one file allowed to resolve a path outside its package, which
+ * may be nonliteral, its owner and the TODO.md task whose completion ends it.
+ * agents' repository.ts locates the runtime assets that stay in scripts/ during
+ * OSS-004 (ADR 0017 decision 6, V8).
+ */
+export const URL_EXCEPTIONS = [
+  {
+    package: "agents",
+    path: "repository.ts",
+    owner: "OSS-004",
+    expiresWith: "OSS-013",
+  },
 ];
 
 /** Inside the daemon, only the Worker loads drivers (02 section 8, 13 section 3). */
@@ -205,15 +240,18 @@ export function classify(path, root) {
     };
   if ((top === "packages" || top === "apps") && name && rest.length) {
     const graph = top === "packages" ? PACKAGE_GRAPH : APP_GRAPH;
-    const flat = top === "packages" ? FLAT_MODULES[name] : undefined;
+    const source = rest.join("/");
     return {
       kind: top === "packages" ? "package" : "app",
       name,
       known: Object.hasOwn(graph, name),
       container: join(root, top, name),
-      sourcePath: area === "src" ? rest.join("/") : null,
+      sourcePath: area === "src" ? source : null,
       legacyPath:
-        area === "src" ? [...(flat ? [flat] : []), ...rest].join("/") : null,
+        area !== "src"
+          ? null
+          : ((top === "packages" ? legacyPathOf(name, source) : undefined) ??
+            source),
     };
   }
   return { kind: "outside", container: root, legacyPath: null };
@@ -311,7 +349,8 @@ export function checkSource(
       return;
     }
     const target = moduleOf(classify(targetPath, root));
-    if (target !== null && !moduleAllows(target))
+    // Package-level code is shared by the package's own modules.
+    if (target !== null && target !== NEW_CODE && !moduleAllows(target))
       report(node, `${owner} cannot depend on ${target}: ${specifier}`);
   };
 
@@ -322,16 +361,15 @@ export function checkSource(
       return;
     }
     if (where.kind === "legacy") {
-      if (!Object.hasOwn(LEGACY_ALIASES, name)) {
+      if (!Object.hasOwn(PACKAGE_ORIGINS, name)) {
         report(
           node,
           `src cannot import @harnesshub/${name} before it has a legacy alias: ${specifier}`,
         );
         return;
       }
-      const alias = LEGACY_ALIASES[name];
-      const target = typeof alias === "string" ? alias : subpath[0];
-      if (Array.isArray(alias) && !alias.includes(target)) {
+      const target = legacyPathOf(name, subpath.join("/")).split("/")[0];
+      if (!Object.hasOwn(allowed, target)) {
         report(
           node,
           `@harnesshub/${name} holds no legacy module ${target}: ${specifier}`,
@@ -380,8 +418,12 @@ export function checkSource(
       );
       return;
     }
-    const target = FLAT_MODULES[name] ?? subpath[0];
-    if (Object.hasOwn(allowed, target) && !moduleAllows(target))
+    const target = legacyPathOf(name, subpath.join("/"))?.split("/")[0];
+    if (
+      target !== undefined &&
+      Object.hasOwn(allowed, target) &&
+      !moduleAllows(target)
+    )
       report(node, `${owner} cannot depend on ${target}: ${specifier}`);
   };
 
@@ -462,30 +504,40 @@ export function checkSource(
     }
   };
 
-  /** Inside packages only an unexpired CHILD_PROCESS_EXCEPTIONS entry allows node:child_process. */
-  const inspectChildProcess = (node, specifier) => {
-    const exception = CHILD_PROCESS_EXCEPTIONS.find(
+  /** The exception table entry covering this file, if any. */
+  const exceptionFor = (table) =>
+    table.find(
       (entry) =>
         where.kind === "package" &&
         entry.package === where.name &&
         where.sourcePath?.startsWith(entry.path),
     );
-    const scope = exception && `${exception.package}/${exception.path}`;
+  /** Report why an exception does not apply now; returns whether it applies. */
+  const exceptionHolds = (node, kind, exception, specifier) => {
+    const scope = `${exception.package}/${exception.path}`;
+    if (completedTasks === null)
+      report(
+        node,
+        `the ${kind} exception for ${scope} ends with ${exception.expiresWith}; TODO.md is needed to check it: ${specifier}`,
+      );
+    else if (completedTasks.has(exception.expiresWith))
+      report(
+        node,
+        `the ${kind} exception for ${scope} (owner ${exception.owner}) expired with ${exception.expiresWith}: ${specifier}`,
+      );
+    else return true;
+    return false;
+  };
+
+  /** Inside packages only an unexpired CHILD_PROCESS_EXCEPTIONS entry allows node:child_process. */
+  const inspectChildProcess = (node, specifier) => {
+    const exception = exceptionFor(CHILD_PROCESS_EXCEPTIONS);
     if (!exception)
       report(
         node,
         `process creation belongs in ProcessHost or Driver; ${container} has no child_process exception: ${specifier}`,
       );
-    else if (completedTasks === null)
-      report(
-        node,
-        `the child_process exception for ${scope} ends with ${exception.expiresWith}; TODO.md is needed to check it: ${specifier}`,
-      );
-    else if (completedTasks.has(exception.expiresWith))
-      report(
-        node,
-        `the child_process exception for ${scope} (owner ${exception.owner}) expired with ${exception.expiresWith}: ${specifier}`,
-      );
+    else exceptionHolds(node, "child_process", exception, specifier);
   };
 
   /** `new URL(x, import.meta.url)` in a package or application must name its own file. */
@@ -498,15 +550,23 @@ export function checkSource(
       base.expression.keywordToken === ts.SyntaxKind.ImportKeyword &&
       base.name.text === "url";
     if (!fromModule) return;
-    if (!first || !ts.isStringLiteralLike(first)) {
+    const literal = first !== undefined && ts.isStringLiteralLike(first);
+    if (
+      literal &&
+      inside(where.container, resolve(dirname(filePath), first.text))
+    )
+      return;
+    const exception = exceptionFor(URL_EXCEPTIONS);
+    if (exception) {
+      exceptionHolds(node, "new URL", exception, first?.getText() ?? "");
+      return;
+    }
+    if (!literal)
       report(
         node,
         "nonliteral new URL(..., import.meta.url) cannot be checked",
       );
-      return;
-    }
-    if (!inside(where.container, resolve(dirname(filePath), first.text)))
-      report(node, `new URL leaves ${container}: ${first.text}`);
+    else report(node, `new URL leaves ${container}: ${first.text}`);
   };
 
   const visit = (node) => {

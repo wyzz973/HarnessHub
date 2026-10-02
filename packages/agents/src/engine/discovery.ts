@@ -10,7 +10,7 @@ import { HubError } from "@harnesshub/core/errors";
 import { normalizeEngine } from "./registry.js";
 import { builtinEngines, type BuiltinEngine } from "./builtins.js";
 import { availableExecutable, locateExecutable } from "./executables.js";
-import { fileURLToPath } from "node:url";
+import { repositoryScript } from "../repository.js";
 
 interface DiscoveryOptions {
   cwd: string;
@@ -67,9 +67,7 @@ async function locate(
   );
 }
 
-const portableLauncher = fileURLToPath(
-  new URL("../../../scripts/launch-engine.mjs", import.meta.url),
-);
+const portableLauncher = repositoryScript("launch-engine.mjs");
 
 function envCommand(
   options: DiscoveryOptions,

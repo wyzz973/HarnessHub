@@ -16,13 +16,13 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { prepareEngine } from "../../src/engine/registry.js";
+import { prepareEngine } from "@harnesshub/agents/engine/registry";
 import {
   bindInstalled,
   importLocal,
   listInstalled,
   SESSION_WORKSPACE_PLACEHOLDER,
-} from "../../src/tool-packages/index.js";
+} from "@harnesshub/agents/tool-packages/index";
 
 const SECRET = "ghp_abcdefghijklmnopqrstuvwxyz0123";
 

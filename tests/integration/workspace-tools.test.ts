@@ -16,7 +16,10 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { bindInstalled, installLocal } from "../../src/tool-packages/index.js";
+import {
+  bindInstalled,
+  installLocal,
+} from "@harnesshub/agents/tool-packages/index";
 
 const source = fileURLToPath(
   new URL("../../../examples/tool-packages/workspace-tools", import.meta.url),

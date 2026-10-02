@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import type test from "node:test";
 import type { EngineMcpServer } from "@harnesshub/core/engine-configuration";
-import { SESSION_WORKSPACE_PLACEHOLDER } from "../../src/tool-packages/index.js";
+import { SESSION_WORKSPACE_PLACEHOLDER } from "@harnesshub/agents/tool-packages/index";
 
 export interface McpResponse {
   jsonrpc: string;

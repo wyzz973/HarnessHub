@@ -5,8 +5,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { normalizeEngine } from "../../src/engine/registry.js";
-import { prepareConfiguration } from "../../src/drivers/configuration/prepare.js";
+import { normalizeEngine } from "@harnesshub/agents/engine/registry";
+import { prepareConfiguration } from "@harnesshub/agents/configuration/prepare";
 import type { RunId, SessionId } from "@harnesshub/core/types";
 import { temporaryDirectory } from "../support/temporary.js";
 

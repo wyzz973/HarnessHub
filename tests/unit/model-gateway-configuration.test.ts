@@ -6,12 +6,12 @@ import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { parse } from "yaml";
-import { normalizeEngine } from "../../src/engine/registry.js";
+import { normalizeEngine } from "@harnesshub/agents/engine/registry";
 import {
   prepareConfiguration,
   VENDOR_CREDENTIAL_ENVIRONMENT,
   type PreparedConfiguration,
-} from "../../src/drivers/configuration/prepare.js";
+} from "@harnesshub/agents/configuration/prepare";
 import type { EngineProfile, RunId, SessionId } from "@harnesshub/core/types";
 import type { ConfigurationAdapter } from "@harnesshub/core/engine-configuration";
 import { temporaryDirectory } from "../support/temporary.js";

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { COMMAND_MCP_ENTRY } from "@harnesshub/agents/tool-command/entry";
 import assert from "node:assert/strict";
 import {
   appendFile,
@@ -19,8 +20,8 @@ import type { EngineMcpServer } from "@harnesshub/core/engine-configuration";
 import { createGateway } from "../../src/gateway/server.js";
 import { registerToolPackageRoutes } from "../../src/gateway/tool-package-routes.js";
 import { startHub } from "../../src/main.js";
-import { SESSION_WORKSPACE_PLACEHOLDER } from "../../src/tool-packages/index.js";
-import { createToolPackageManagement } from "../../src/tool-packages/management.js";
+import { SESSION_WORKSPACE_PLACEHOLDER } from "@harnesshub/agents/tool-packages/index";
+import { createToolPackageManagement } from "@harnesshub/agents/tool-packages/management";
 import {
   startMcp,
   substituteSessionWorkspace,
@@ -30,9 +31,7 @@ import { temporaryDirectory } from "../support/temporary.js";
 const example = fileURLToPath(
   new URL("../../../examples/tool-packages/simple-toolkit", import.meta.url),
 );
-const commandMcpEntry = fileURLToPath(
-  new URL("../../src/drivers/tool-command/command-mcp.js", import.meta.url),
-);
+const commandMcpEntry = COMMAND_MCP_ENTRY;
 const SECRET = "ghp_abcdefghijklmnopqrstuvwxyz0123";
 
 interface EngineResult {

@@ -20,7 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { prepareEngine } from "../../src/engine/registry.js";
+import { prepareEngine } from "@harnesshub/agents/engine/registry";
 import { startHub } from "../../src/main.js";
 import {
   bindInstalled,
@@ -33,8 +33,8 @@ import {
   type ToolPackageBindResult,
   type ToolPackageManifest,
   SESSION_WORKSPACE_PLACEHOLDER,
-} from "../../src/tool-packages/index.js";
-import { hash } from "../../src/tool-packages/manifest.js";
+} from "@harnesshub/agents/tool-packages/index";
+import { hash } from "@harnesshub/agents/tool-packages/manifest";
 
 async function fixture(
   directory: string,

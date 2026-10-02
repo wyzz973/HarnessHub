@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
-import type { PreparedConfiguration } from "./prepare.js";
+import type { PreparedConfiguration } from "@harnesshub/agents/configuration/prepare";
 import type { ConfigurationCheck } from "@harnesshub/core/engine-configuration";
 import { ACP_INITIALIZE_TIMEOUT_LIMIT_MS } from "@harnesshub/core/engines";
 /** Read-only ACP initialize probe. Owns a process group, bounded output/time and awaited cleanup; never prompts. */

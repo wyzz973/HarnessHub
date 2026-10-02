@@ -8,7 +8,7 @@ HarnessHub's own code is licensed under the [MIT License](LICENSE). The third-pa
 |---|---|
 | `web/components/ui` | Based on the shadcn/ui registry; [MIT](web/licenses/shadcn-ui.txt) |
 | `web/components/ai-elements` | Based on Vercel AI Elements; [original notice](web/licenses/ai-elements.txt), [Apache-2.0](web/licenses/apache-2.0.txt) |
-| `src/drivers/configuration/codex-default-instructions.ts` | OpenAI Codex `rust-v0.153.4` [models-manager/prompt.md](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/models-manager/prompt.md); [Apache-2.0](web/licenses/codex-apache-2.0.txt) and [upstream NOTICE](web/licenses/codex-notice.txt), Copyright 2025 OpenAI |
+| `packages/agents/src/configuration/codex-default-instructions.ts` | OpenAI Codex `rust-v0.153.4` [models-manager/prompt.md](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/models-manager/prompt.md); [Apache-2.0](web/licenses/codex-apache-2.0.txt) and [upstream NOTICE](web/licenses/codex-notice.txt), Copyright 2025 OpenAI |
 | `patches/acpx@0.13.2.patch` | Patch to [acpx](https://github.com/openclaw/acpx) 0.13.2 (MIT, OpenClaw Team): exposes the client file and terminal capability options, returns permission decisions by their original optionId, and adds read-only observation callbacks for diagnostic logs |
 
 The UI components were adapted to this project's import paths, state and interface language. The Codex default instructions keep the original bytes, wrapped as a TypeScript string; the SHA-256 of the original file is `ac8ae107a0d72fe3476b430afb161ea4e67da2e446d778aefc44828160559807`.

@@ -17,7 +17,7 @@ import type {
 } from "@harnesshub/core/types";
 import { Runtime } from "../../src/runtime/runtime.js";
 import { SqliteStore } from "@harnesshub/store/storage/sqlite-store";
-import { loadConfig } from "../../src/engine/registry.js";
+import { loadConfig } from "@harnesshub/agents/engine/registry";
 import { temporaryDirectory } from "../support/temporary.js";
 
 /** A handshake barrier for actor unit tests; real IPC is covered by Worker integration tests. */

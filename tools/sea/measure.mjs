@@ -408,9 +408,10 @@ async function endToEnd(binary, build) {
         [
           path.join(
             root,
+            "packages",
+            "agents",
             "dist",
             "src",
-            "drivers",
             "tool-command",
             "command-mcp.js",
           ),

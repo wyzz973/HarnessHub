@@ -23,7 +23,7 @@
 1. **判定位置**：现状由 Worker 内的 `settleGatewayResult`（`src/worker/outcome.ts:126-165`）改判结果。开源版网关在守护进程内，`model.call` 由守护进程直接提交；Worker 只上报 Driver 结果与输出观测，Runtime 在守护进程内按第 4 节的规则表判定，规则只读已提交的证据。
 2. **调用归属**：Session 作用域的 Gateway Key 取代现状每个 Worker 的私有网关与令牌。Session 的 Run 串行，所以带该 Key 的调用归属当时活动 Run 的 `runId` 与 generation；没有活动 Run 时返回 409 `no_active_run`，并按 [03 第 2 节](03-model-plane.md#2-gateway-key-与作用域) 留下拒绝记录。
 3. **事件信封 v2**：增加 `generation` 与全库递增的 `gseq`（控制台全局事件流用它续传）；事件类型统一为小写点分，如 `run.accepted`、`run.status`、`run.finished`、`permission.requested`，旧名称映射见第 11 节。
-4. **默认期限**：现状默认 60 秒（`src/engine/registry.ts` 的 `defaultTimeoutMs`），对编码任务过短；开源版默认 30 分钟、上限 24 小时，由配置解析器集中解析。
+4. **默认期限**：现状默认 60 秒（`packages/agents/src/engine/registry.ts` 的 `defaultTimeoutMs`），对编码任务过短；开源版默认 30 分钟、上限 24 小时，由配置解析器集中解析。
 5. **状态枚举保持封闭**：不新增 Run 状态。新增内容只出现在 stopReason、错误码与结算字段，这三者是开放枚举，客户端必须容忍未知值（见 [06 第 2 节](06-interfaces.md#2-rest-api-规范)）。
 
 ## 2. Session 与 Run 模型
