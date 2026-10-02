@@ -34,6 +34,14 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+        env:
+          # run-tests.mjs also writes each suite's test inventory to <dir>/<suite>.jsonl.
+          HARNESSHUB_TEST_INVENTORY_DIR: ${{ runner.temp }}/test-inventory
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-inventory-${{ matrix.os }}
+          path: ${{ runner.temp }}/test-inventory/
+          if-no-files-found: error
 
   # Single required status for branch protection and the merge queue.
   ci-ok:
