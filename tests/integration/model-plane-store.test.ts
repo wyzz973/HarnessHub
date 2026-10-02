@@ -9,6 +9,7 @@ import type { TestContext } from "node:test";
 import { HubError } from "@harnesshub/core/errors";
 import {
   issueGatewayKey,
+  parseGatewayKey,
   type CredentialId,
   type GatewayKeyId,
   type GatewayKeyRecord,
@@ -325,8 +326,9 @@ void test("Gateway Keys keep only the secret hash and support revoke and touch",
     .all()
     .map((row) => String(row.record))
     .join("\n");
-  const secret = agent.issued.text.split("_").at(-1) ?? "";
-  assert.ok(secret.length > 40);
+  // The secret part is base64url and may itself contain "_".
+  const secret = parseGatewayKey(agent.issued.text)?.secret ?? "";
+  assert.equal(secret.length, 43);
   assert.equal(persisted.includes(secret), false);
   assert.equal(persisted.includes(agent.issued.text), false);
   assert.ok(persisted.includes(agent.record.secretHash));
