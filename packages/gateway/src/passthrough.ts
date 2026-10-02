@@ -270,6 +270,8 @@ export function upstreamHeaders(
   for (const [name, value] of Object.entries(provider.headers ?? {}))
     headers.set(name, value);
   const scheme = provider.auth.apiKeyHeader;
+  // A keyless provider (no credential) gets no authentication.
+  if (!secret) return { headers, patches };
   switch (scheme) {
     case "authorization-bearer":
       headers.set("authorization", `Bearer ${secret}`);

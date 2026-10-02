@@ -80,6 +80,7 @@ import {
   type Breakers,
   type Candidate,
   type Router,
+  KEYLESS_CREDENTIAL,
 } from "./routing.js";
 import {
   chatCompletionsUrl,
@@ -932,9 +933,10 @@ async function send(
     };
   }
   const release = () => slots.release();
-  let secret: string;
+  let secret = "";
   try {
-    secret = await services.resolveSecret(candidate.credential.ref);
+    if (candidate.credential !== KEYLESS_CREDENTIAL)
+      secret = await services.resolveSecret(candidate.credential.ref);
   } catch {
     services.log.info("gateway.credential.unresolved", {
       provider: candidate.provider.id,
@@ -950,7 +952,10 @@ async function send(
       release,
     };
   }
-  const secrets = [secret, ...Object.values(candidate.provider.headers ?? {})];
+  const secrets = [
+    ...(secret ? [secret] : []),
+    ...Object.values(candidate.provider.headers ?? {}),
+  ];
   const { url, headers, body } = request(secret);
   let headerTimeout = false;
   const timer = timers.set(() => {

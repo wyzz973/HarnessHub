@@ -52,6 +52,17 @@ function validFor(credential: ProviderCredential, protocol: WireProtocol) {
   );
 }
 
+/**
+ * The candidate of a provider without credentials (a local server such as
+ * Ollama): requests go out without an authentication header.
+ */
+export const KEYLESS_CREDENTIAL: ProviderCredential = Object.freeze({
+  id: "keyless" as ProviderCredential["id"],
+  name: "keyless",
+  ref: Object.freeze({ kind: "env", value: "" }),
+  enabled: true,
+}) as ProviderCredential;
+
 /** Upstream protocols tried, in order, when neither passthrough nor Chat is possible. */
 const TRANSLATION_TARGETS = ["anthropic", "responses", "gemini"] as const;
 
@@ -62,7 +73,8 @@ const TRANSLATION_TARGETS = ["anthropic", "responses", "gemini"] as const;
  * is not `translateOnly` and the credential is valid for it; otherwise it is
  * translated to the provider's Chat endpoint, else to its Anthropic,
  * Responses or Gemini endpoint in that order. Credentials valid for none of
- * the provider's endpoints are reported in `skipped`.
+ * the provider's endpoints are reported in `skipped`. A provider without
+ * credentials has one keyless candidate.
  */
 export function modelCandidates(
   provider: ProviderConfig,
@@ -74,7 +86,10 @@ export function modelCandidates(
   const wireModel = wireName(provider, modelId);
   const candidates: Candidate[] = [];
   const skipped: string[] = [];
-  for (const credential of provider.credentials) {
+  const credentials = provider.credentials.length
+    ? provider.credentials
+    : [KEYLESS_CREDENTIAL];
+  for (const credential of credentials) {
     if (!credential.enabled) continue;
     const native = provider.endpoints[inbound];
     const chat = provider.endpoints.chat;

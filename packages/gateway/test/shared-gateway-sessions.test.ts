@@ -230,3 +230,23 @@ void test("awaitSessionIdle waits for in-flight calls and their commits, or canc
   await second;
   await handler.awaitSessionIdle("other" as SessionId);
 });
+
+void test("a provider without credentials is reached without authentication", async (t) => {
+  const up = await upstream(t, CHAT_REPLY);
+  const store = new MemoryStore();
+  await store.putProvider(
+    provider("local", { chat: `${up.base}/v1` }, { secrets: [] }),
+  );
+  const key = await addKey(store, ["local/*"]);
+  const { port } = await mountSessions(t, store);
+  const answer = await send(port, "/v1/chat/completions", {
+    headers: { authorization: `Bearer ${key.text}` },
+    body: {
+      model: "local/model-a",
+      messages: [{ role: "user", content: "hi" }],
+    },
+  });
+  assert.equal(answer.status, 200);
+  assert.equal(up.seen[0]!.headers.authorization, undefined);
+  assert.equal(store.entries[0]!.credentialId, "keyless");
+});
