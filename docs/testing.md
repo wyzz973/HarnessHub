@@ -31,6 +31,8 @@
 
 每个测试独立拥有临时目录、数据库、端口、进程与环境；随机临时路径和 `listen(0)` 避免并发冲突。资源获取后立即登记 teardown，失败和断言抛错也要释放。临时目录用 [`tests/support/temporary.ts`](../tests/support/temporary.ts) 的 `temporaryDirectory(t, prefix)` 创建：删除在创建时登记，之后启动的 Gateway、Worker 或模型桥用 `defer` 登记关闭，启动失败也不会泄漏目录。
 
+需要模型上游的测试使用 [假 provider](../tools/fake-provider/README.md)（TypeScript 测试经 [`tests/support/fake-provider.ts`](../tests/support/fake-provider.ts) 加载）：它只在回环地址监听，按协议检查字段并记录违规，记录中只有 Key 的标识与指纹；测试中的 Key 一律是合成的金丝雀值，断言零违规与预期的 Key 标识，而不只是回答能解码。
+
 `pnpm test:*` 与 `test:windows` 都经 [`tools/run-tests.mjs`](../tools/run-tests.mjs) 运行，它负责测试环境的隔离与期限：
 
 - 测试进程只继承白名单中的系统变量与 `HARNESSHUB_TEST_*` 显式开关；开发者 shell 中的 `HARNESSHUB_MODEL*`、`AGENT_ENGINE`、各家 API Key 与令牌一律不可见，测试需要时自行设置。

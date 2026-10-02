@@ -40,7 +40,11 @@ const INVENTORY_REPORTER = new URL("./test-inventory-reporter.mjs", import.meta.
 
 /** Default file patterns, per-test timeout and suite deadline. */
 export const SUITES = {
-  tooling: { files: ["tools/check-*.test.mjs"], testTimeoutMs: 60_000, deadlineMs: 5 * 60_000 },
+  tooling: {
+    files: ["tools/check-*.test.mjs", "tools/fake-provider/*.test.mjs"],
+    testTimeoutMs: 60_000,
+    deadlineMs: 5 * 60_000,
+  },
   unit: {
     files: ["dist/tests/unit/*.test.js", "packages/*/dist/test/*.test.js"],
     testTimeoutMs: 60_000,

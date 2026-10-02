@@ -56,6 +56,7 @@
 - [开发规范](development.md)：类型、模块边界、错误、资源、兼容和 Git。
 - [测试要求](testing.md)：变更矩阵、实际入口与完成定义。
 - [文档规范](documentation.md)：归属、示例、链接与生成文档检查。
+- [假 provider](../tools/fake-provider/README.md)：测试与本机开发用的严格模拟上游：四协议、字段检查、脚本、怪癖与请求记录。
 - [贡献指南](../CONTRIBUTING.md)、[治理](../GOVERNANCE.md)、[安全策略](../SECURITY.md)、[行为准则](../CODE_OF_CONDUCT.md)。
 - [第三方来源与许可](../THIRD_PARTY_NOTICES.md)：并入仓库的第三方代码与许可。
 - [决策记录](decisions/README.md)：架构选择及其理由。
