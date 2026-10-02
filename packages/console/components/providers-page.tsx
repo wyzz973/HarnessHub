@@ -73,6 +73,7 @@ function ProviderDialog({
   const [form, setForm] = useState<ProviderForm>(() =>
     provider ? providerFormOf(provider) : emptyProviderForm(),
   );
+  const [tab, setTab] = useState<"preset" | "manual">("preset");
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
   const set = (patch: Partial<ProviderForm>) =>
@@ -114,164 +115,418 @@ function ProviderDialog({
             {provider ? `编辑 ${provider.name}` : "添加 provider"}
           </DialogTitle>
           <DialogDescription>
-            端点填写厂商官方 SDK 使用的基址；凭据在保存后单独添加。
+            {!provider && tab === "preset"
+              ? "从内置预设创建：端点已按厂商文档填好，填写 API Key 即可使用。"
+              : "端点填写厂商官方 SDK 使用的基址；凭据在保存后单独添加。"}
           </DialogDescription>
         </DialogHeader>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="field-label">
-            ID
-            <input
-              className="field font-mono text-[13px]"
-              value={form.id}
-              placeholder="deepseek"
-              readOnly={!!provider}
-              autoFocus={!provider}
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(event) => set({ id: event.target.value })}
-            />
-            <span className="field-hint block">
-              小写字母、数字与连字符；Model Ref 为 ID/模型。
-            </span>
-            <FieldError failure={failure} pointer="/id" />
-          </label>
-          <label className="field-label">
-            名称
-            <input
-              className="field"
-              value={form.name}
-              placeholder="与 ID 相同"
-              autoComplete="off"
-              onChange={(event) => set({ name: event.target.value })}
-            />
-            <FieldError failure={failure} pointer="/name" />
-          </label>
-          <label className="field-label">
-            类型
-            <select
-              className="field"
-              value={form.kind}
-              onChange={(event) =>
-                set({ kind: event.target.value as ProviderForm["kind"] })
-              }
+        {provider ? null : (
+          <div className="segmented w-fit" role="tablist" aria-label="添加方式">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "preset"}
+              onClick={() => setTab("preset")}
             >
-              {providerKinds.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field-label">
-            Key 的发送方式
-            <select
-              className="field font-mono text-[13px]"
-              value={form.apiKeyHeader}
-              onChange={(event) => set({ apiKeyHeader: event.target.value })}
+              从预设
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "manual"}
+              onClick={() => setTab("manual")}
             >
-              {[
-                ...apiKeyHeaders,
-                ...(apiKeyHeaders.includes(
-                  form.apiKeyHeader as (typeof apiKeyHeaders)[number],
-                )
-                  ? []
-                  : [form.apiKeyHeader]),
-              ].map((header) => (
-                <option key={header} value={header}>
-                  {header}
-                </option>
+              手动填写
+            </button>
+          </div>
+        )}
+        {!provider && tab === "preset" ? (
+          <PresetPane onSaved={onSaved} onCancel={onClose} onBusy={setBusy} />
+        ) : (
+          <>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="field-label">
+                ID
+                <input
+                  className="field font-mono text-[13px]"
+                  value={form.id}
+                  placeholder="deepseek"
+                  readOnly={!!provider}
+                  autoFocus={!provider}
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(event) => set({ id: event.target.value })}
+                />
+                <span className="field-hint block">
+                  小写字母、数字与连字符；Model Ref 为 ID/模型。
+                </span>
+                <FieldError failure={failure} pointer="/id" />
+              </label>
+              <label className="field-label">
+                名称
+                <input
+                  className="field"
+                  value={form.name}
+                  placeholder="与 ID 相同"
+                  autoComplete="off"
+                  onChange={(event) => set({ name: event.target.value })}
+                />
+                <FieldError failure={failure} pointer="/name" />
+              </label>
+              <label className="field-label">
+                类型
+                <select
+                  className="field"
+                  value={form.kind}
+                  onChange={(event) =>
+                    set({ kind: event.target.value as ProviderForm["kind"] })
+                  }
+                >
+                  {providerKinds.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field-label">
+                Key 的发送方式
+                <select
+                  className="field font-mono text-[13px]"
+                  value={form.apiKeyHeader}
+                  onChange={(event) =>
+                    set({ apiKeyHeader: event.target.value })
+                  }
+                >
+                  {[
+                    ...apiKeyHeaders,
+                    ...(apiKeyHeaders.includes(
+                      form.apiKeyHeader as (typeof apiKeyHeaders)[number],
+                    )
+                      ? []
+                      : [form.apiKeyHeader]),
+                  ].map((header) => (
+                    <option key={header} value={header}>
+                      {header}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <fieldset className="space-y-3">
+              <legend className="section-title mb-2">端点（至少一个）</legend>
+              <FieldError failure={failure} pointer="/endpoints" />
+              {protocols.map((protocol) => (
+                <label key={protocol} className="field-label">
+                  {protocolNames[protocol]}
+                  <input
+                    className="field font-mono text-[13px]"
+                    value={form.endpoints[protocol]}
+                    aria-invalid={!!failure?.fields[`/endpoints/${protocol}`]}
+                    placeholder="https://"
+                    autoComplete="off"
+                    spellCheck={false}
+                    onChange={(event) =>
+                      set({
+                        endpoints: {
+                          ...form.endpoints,
+                          [protocol]: event.target.value,
+                        },
+                      })
+                    }
+                  />
+                  <span className="field-hint block">
+                    {endpointHints[protocol]}
+                  </span>
+                  <FieldError
+                    failure={failure}
+                    pointer={`/endpoints/${protocol}`}
+                  />
+                </label>
               ))}
-            </select>
-          </label>
-        </div>
-        <fieldset className="space-y-3">
-          <legend className="section-title mb-2">端点（至少一个）</legend>
-          <FieldError failure={failure} pointer="/endpoints" />
-          {protocols.map((protocol) => (
-            <label key={protocol} className="field-label">
-              {protocolNames[protocol]}
-              <input
-                className="field font-mono text-[13px]"
-                value={form.endpoints[protocol]}
-                aria-invalid={!!failure?.fields[`/endpoints/${protocol}`]}
-                placeholder="https://"
-                autoComplete="off"
+            </fieldset>
+            <label className="field-label">
+              模型
+              <textarea
+                className="field font-mono text-[12.5px]"
+                rows={4}
+                value={form.models}
+                placeholder={"每行一个模型 ID，例如\ndeepseek-chat"}
                 spellCheck={false}
-                onChange={(event) =>
-                  set({
-                    endpoints: {
-                      ...form.endpoints,
-                      [protocol]: event.target.value,
-                    },
-                  })
-                }
-              />
-              <span className="field-hint block">
-                {endpointHints[protocol]}
-              </span>
-              <FieldError
-                failure={failure}
-                pointer={`/endpoints/${protocol}`}
+                onChange={(event) => set({ models: event.target.value })}
               />
             </label>
-          ))}
-        </fieldset>
-        <label className="field-label">
-          模型
-          <textarea
-            className="field font-mono text-[12.5px]"
-            rows={4}
-            value={form.models}
-            placeholder={"每行一个模型 ID，例如\ndeepseek-chat"}
-            spellCheck={false}
-            onChange={(event) => set({ models: event.target.value })}
-          />
-        </label>
-        {models.length ? (
-          <div>
-            <Checkbox
-              checked={form.expose === "all"}
-              onChange={(all) => set({ expose: all ? "all" : [...models] })}
-            >
-              全部模型出现在 /v1/models 与 Agent 的模型选择中
-            </Checkbox>
-            {form.expose !== "all" ? (
-              <div className="mt-1 grid gap-0.5 pl-6 sm:grid-cols-2">
-                {models.map((id) => {
-                  const exposed = form.expose as string[];
-                  return (
-                    <Checkbox
-                      key={id}
-                      checked={exposed.includes(id)}
-                      onChange={(checked) =>
-                        set({
-                          expose: checked
-                            ? [...exposed, id]
-                            : exposed.filter((item) => item !== id),
-                        })
-                      }
-                    >
-                      <span className="font-mono text-[12.5px]">{id}</span>
-                    </Checkbox>
-                  );
-                })}
+            {models.length ? (
+              <div>
+                <Checkbox
+                  checked={form.expose === "all"}
+                  onChange={(all) => set({ expose: all ? "all" : [...models] })}
+                >
+                  全部模型出现在 /v1/models 与 Agent 的模型选择中
+                </Checkbox>
+                {form.expose !== "all" ? (
+                  <div className="mt-1 grid gap-0.5 pl-6 sm:grid-cols-2">
+                    {models.map((id) => {
+                      const exposed = form.expose as string[];
+                      return (
+                        <Checkbox
+                          key={id}
+                          checked={exposed.includes(id)}
+                          onChange={(checked) =>
+                            set({
+                              expose: checked
+                                ? [...exposed, id]
+                                : exposed.filter((item) => item !== id),
+                            })
+                          }
+                        >
+                          <span className="font-mono text-[12.5px]">{id}</span>
+                        </Checkbox>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
             ) : null}
-          </div>
-        ) : null}
-        <ErrorCallout failure={failure} />
-        <OtherFieldErrors failure={failure} shown={shown} />
-        <DialogFooter>
-          <Button variant="outline" disabled={busy} onClick={onClose}>
-            取消
-          </Button>
-          <Button disabled={busy} onClick={() => void save()}>
-            {busy ? <Loader2 className="animate-spin" /> : null}
-            保存
-          </Button>
-        </DialogFooter>
+            <ErrorCallout failure={failure} />
+            <OtherFieldErrors failure={failure} shown={shown} />
+            <DialogFooter>
+              <Button variant="outline" disabled={busy} onClick={onClose}>
+                取消
+              </Button>
+              <Button disabled={busy} onClick={() => void save()}>
+                {busy ? <Loader2 className="animate-spin" /> : null}
+                保存
+              </Button>
+            </DialogFooter>
+          </>
+        )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Create a provider from a shipped preset, optionally with its first key. */
+function PresetPane({
+  onSaved,
+  onCancel,
+  onBusy,
+}: {
+  onSaved: (saved: ProviderConfig) => void;
+  onCancel: () => void;
+  onBusy: (busy: boolean) => void;
+}) {
+  const load = useCallback(
+    async () => (await modelPlane().presets.list()).items,
+    [],
+  );
+  const [presets] = useLoaded(load);
+  const [chosen, setChosen] = useState("");
+  const [id, setId] = useState("");
+  const [name, setName] = useState("");
+  const [endpoints, setEndpoints] = useState<Record<string, string>>({});
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<Failure | null>(null);
+  const list = presets.state === "ready" ? presets.value : [];
+  const preset = list.find((item) => item.id === chosen);
+  function choose(next: string) {
+    const found = list.find((item) => item.id === next);
+    setChosen(next);
+    setId("");
+    setName("");
+    setKey("");
+    setFailure(null);
+    setEndpoints({ ...(found?.endpoints ?? {}) });
+  }
+  async function save() {
+    if (!preset) return;
+    setBusy(true);
+    onBusy(true);
+    setFailure(null);
+    // Only edited endpoints are sent; the rest come from the preset.
+    const changed = Object.fromEntries(
+      Object.entries(endpoints)
+        .map(([protocol, url]) => [protocol, url.trim()] as const)
+        .filter(
+          ([protocol, url]) =>
+            url &&
+            url !== preset.endpoints[protocol as keyof typeof preset.endpoints],
+        ),
+    );
+    try {
+      const created = await modelPlane().providers.create({
+        preset: preset.id,
+        ...(id.trim() ? { id: id.trim() } : {}),
+        ...(name.trim() ? { name: name.trim() } : {}),
+        ...(Object.keys(changed).length ? { endpoints: changed } : {}),
+        ...(key ? { credential: { value: key } } : {}),
+      });
+      setKey("");
+      onSaved(created);
+    } catch (reason) {
+      setFailure(failureOf(reason));
+    } finally {
+      setBusy(false);
+      onBusy(false);
+    }
+  }
+  const kinds = providerKinds.filter((kind) =>
+    list.some((item) => item.kind === kind.id),
+  );
+  return (
+    <>
+      <label className="field-label">
+        预设
+        <select
+          className="field"
+          value={chosen}
+          disabled={presets.state !== "ready"}
+          onChange={(event) => choose(event.target.value)}
+        >
+          <option value="">
+            {presets.state === "loading"
+              ? "正在读取…"
+              : presets.state === "error"
+                ? `读取失败：${presets.message}`
+                : "选择一个预设"}
+          </option>
+          {kinds.map((kind) => (
+            <optgroup key={kind.id} label={kind.label}>
+              {list
+                .filter((item) => item.kind === kind.id)
+                .map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}（{item.id}）
+                  </option>
+                ))}
+            </optgroup>
+          ))}
+        </select>
+        <FieldError failure={failure} pointer="/preset" />
+      </label>
+      {preset ? (
+        <>
+          <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
+            {preset.verified === "unverified" ? (
+              <span className="tag warn">端点未核对</span>
+            ) : (
+              <span className="tag good">已按文档核对 {preset.verified}</span>
+            )}
+            {preset.website ? (
+              <a
+                className="text-brand hover:underline"
+                href={preset.website}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                官网
+              </a>
+            ) : null}
+            {preset.keysUrl ? (
+              <a
+                className="text-brand hover:underline"
+                href={preset.keysUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                获取 API Key
+              </a>
+            ) : null}
+            <span className="text-subtle">
+              模型列表：
+              {preset.models.source === "live" ? "从上游刷新" : "内置"}
+            </span>
+          </div>
+          {preset.notes ? (
+            <p className="callout neutral">{preset.notes}</p>
+          ) : null}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="field-label">
+              ID
+              <input
+                className="field font-mono text-[13px]"
+                value={id}
+                placeholder={preset.id}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => setId(event.target.value)}
+              />
+              <FieldError failure={failure} pointer="/id" />
+            </label>
+            <label className="field-label">
+              名称
+              <input
+                className="field"
+                value={name}
+                placeholder={preset.name}
+                autoComplete="off"
+                onChange={(event) => setName(event.target.value)}
+              />
+            </label>
+          </div>
+          {protocols
+            .filter((protocol) => preset.endpoints[protocol] !== undefined)
+            .map((protocol) => (
+              <label key={protocol} className="field-label">
+                {protocolNames[protocol]}
+                <input
+                  className="field font-mono text-[13px]"
+                  value={endpoints[protocol] ?? ""}
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(event) =>
+                    setEndpoints((current) => ({
+                      ...current,
+                      [protocol]: event.target.value,
+                    }))
+                  }
+                />
+                <FieldError
+                  failure={failure}
+                  pointer={`/endpoints/${protocol}`}
+                />
+              </label>
+            ))}
+          {preset.auth.methods.includes("api-key") ? (
+            <label className="field-label">
+              API Key
+              <input
+                className="field font-mono text-[13px]"
+                type="password"
+                value={key}
+                autoComplete="new-password"
+                spellCheck={false}
+                onChange={(event) => setKey(event.target.value)}
+              />
+              <span className="field-hint block">
+                只发送一次，保存在守护进程的秘密存储中；也可以稍后在凭据中添加。
+              </span>
+              <FieldError failure={failure} pointer="/credential/value" />
+            </label>
+          ) : null}
+        </>
+      ) : null}
+      <ErrorCallout failure={failure} />
+      <OtherFieldErrors
+        failure={failure}
+        shown={[
+          "/preset",
+          "/id",
+          "/credential/value",
+          ...protocols.map((protocol) => `/endpoints/${protocol}`),
+        ]}
+      />
+      <DialogFooter>
+        <Button variant="outline" disabled={busy} onClick={onCancel}>
+          取消
+        </Button>
+        <Button disabled={busy || !preset} onClick={() => void save()}>
+          {busy ? <Loader2 className="animate-spin" /> : null}
+          创建
+        </Button>
+      </DialogFooter>
+    </>
   );
 }
 
@@ -438,6 +693,8 @@ function ProviderDetail({
     rotating: ProviderCredential | undefined;
   } | null>(null);
   const [deleting, setDeleting] = useState<ProviderCredential | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshFailure, setRefreshFailure] = useState<Failure | null>(null);
   const exposed = (id: string) =>
     provider.models.expose === "all" || provider.models.expose.includes(id);
   return (
@@ -560,7 +817,45 @@ function ProviderDetail({
           </p>
         ) : null}
       </div>
-      <h2 className="section-title mt-7 mb-3">模型</h2>
+      <div className="mt-7 mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="section-title">模型</h2>
+          <span className="text-[12.5px] text-subtle">
+            {provider.models.source === "live" ? "来自上游" : "手动或内置"}
+            {provider.models.refreshedAt
+              ? `，${new Date(provider.models.refreshedAt).toLocaleString()} 刷新`
+              : ""}
+          </span>
+          {provider.models.stale ? (
+            <span className="tag warn" title="上次刷新失败，显示的是之前的列表">
+              未更新
+            </span>
+          ) : null}
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={refreshing}
+          onClick={() => {
+            setRefreshing(true);
+            setRefreshFailure(null);
+            modelPlane()
+              .providers.refreshModels(provider.id)
+              .then(
+                () => undefined,
+                (reason: unknown) => setRefreshFailure(failureOf(reason)),
+              )
+              .finally(() => {
+                setRefreshing(false);
+                reload();
+              });
+          }}
+        >
+          {refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+          刷新模型
+        </Button>
+      </div>
+      <ErrorCallout failure={refreshFailure} className="mb-3" />
       <div className="panel overflow-x-auto">
         <table className="data-table min-w-[520px]">
           <thead>
