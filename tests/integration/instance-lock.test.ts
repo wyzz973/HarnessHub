@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import path from "node:path";
 import test from "node:test";
 import { Worker } from "node:worker_threads";
@@ -19,7 +20,8 @@ const { parentPort, workerData } = require("node:worker_threads");
   } catch (error) {
     parentPort.postMessage(error.code ?? String(error));
   }
-  // Hold the lock until every contender has reported.
+  // Hold the lock until every contender has reported, then release it and
+  // exit on our own: terminating a thread would leave its lock connection open.
   parentPort.once("message", () => {
     lock?.release();
     parentPort.close();
@@ -59,8 +61,9 @@ async function round(file: string, contenders: number): Promise<unknown[]> {
     Atomics.notify(new Int32Array(gate), 0);
     return await Promise.all(messages.map((message) => message.result));
   } finally {
+    const exited = workers.map((worker) => once(worker, "exit"));
     for (const worker of workers) worker.postMessage("done");
-    await Promise.all(workers.map((worker) => worker.terminate()));
+    await Promise.all(exited);
   }
 }
 

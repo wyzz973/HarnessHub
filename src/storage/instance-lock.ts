@@ -11,11 +11,10 @@ export interface InstanceLock {
 const SQLITE_BUSY = 5;
 const SQLITE_LOCKED = 6;
 /**
- * How long a contender waits for the lock. Simultaneous starters both hold a
- * SHARED lock before escalating; SQLite returns BUSY at once to the one that
- * would deadlock, it closes its connection, and the other one's wait then
- * succeeds. With no wait at all, both could fail. Against a running Gateway
- * the wait expires and the start fails with RUNTIME_ALREADY_RUNNING.
+ * How long a contender keeps retrying. Simultaneous starters resolve within a
+ * few milliseconds: the losers back off and the winner's lock request then
+ * succeeds. Against a running Gateway the wait expires and the start fails
+ * with RUNTIME_ALREADY_RUNNING.
  */
 const LOCK_WAIT_MS = 1_000;
 
@@ -32,10 +31,14 @@ function isBusy(error: unknown): boolean {
  * Take the exclusive lock on `file`, creating it if needed.
  *
  * The lock is SQLite's own file lock (POSIX advisory locks, `LockFileEx` on
- * Windows) held in `locking_mode=EXCLUSIVE` by a dedicated connection. It is
- * tied to the open connection, not to a process ID: the operating system drops
- * it when the process dies, and a reused PID can never keep it. Connections in
- * the same process, including other worker threads, contend for it too.
+ * Windows), held by a dedicated connection that keeps a `BEGIN EXCLUSIVE`
+ * transaction open and writes nothing. It is tied to the open connection,
+ * not to a process ID: the operating system drops it when the process dies,
+ * and a reused PID can never keep it. Connections in the same process,
+ * including other worker threads, contend for it too. (`locking_mode =
+ * EXCLUSIVE` is deliberately not used: it keeps the SHARED lock of a failed
+ * attempt, and simultaneous contenders then wait on each other until all of
+ * them time out.)
  *
  * @throws HubError `RUNTIME_ALREADY_RUNNING` (409) when another connection
  *   holds the lock; other SQLite or file system errors propagate unchanged.
@@ -43,17 +46,9 @@ function isBusy(error: unknown): boolean {
 export function acquireInstanceLock(file: string): InstanceLock {
   const db = new DatabaseSync(file, { timeout: LOCK_WAIT_MS });
   try {
-    db.exec(
-      "PRAGMA locking_mode = EXCLUSIVE; PRAGMA journal_mode = MEMORY; BEGIN EXCLUSIVE; CREATE TABLE IF NOT EXISTS holder (pid INTEGER NOT NULL); DELETE FROM holder;",
-    );
-    db.prepare("INSERT INTO holder (pid) VALUES (?)").run(process.pid);
-    db.exec("COMMIT");
+    db.exec("BEGIN EXCLUSIVE");
   } catch (error) {
-    try {
-      if (db.isTransaction) db.exec("ROLLBACK");
-    } finally {
-      db.close();
-    }
+    db.close();
     if (isBusy(error))
       throw new HubError(
         "RUNTIME_ALREADY_RUNNING",
@@ -67,7 +62,11 @@ export function acquireInstanceLock(file: string): InstanceLock {
     release() {
       if (released) return;
       released = true;
-      db.close();
+      try {
+        db.exec("ROLLBACK");
+      } finally {
+        db.close();
+      }
     },
   };
 }
