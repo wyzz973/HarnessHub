@@ -13,7 +13,7 @@ import type {
 import { HARNESS_MODEL_ALIAS } from "@harnesshub/core/harness-model";
 import { HubError } from "@harnesshub/core/errors";
 import { WORKER_TREE_ENVIRONMENT } from "@harnesshub/core/environment";
-import { resolveSecret } from "./secrets.js";
+import { resolveSecret } from "@harnesshub/secrets/secrets";
 import { portableCommand, unwrapEnvironment } from "./launch.js";
 import { codexGatewayCatalog, codexModelCatalog } from "./codex-models.js";
 import { prepareNativeMcp } from "./native-mcp.js";

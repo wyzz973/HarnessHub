@@ -11,7 +11,7 @@ import {
   createSecret,
   deleteSecret,
   resolveSecret,
-} from "../../src/drivers/configuration/secrets.js";
+} from "@harnesshub/secrets/secrets";
 import { ensurePrivateDirectory } from "@harnesshub/store/platform/windows-acl";
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import { HubError } from "@harnesshub/core/errors";
@@ -220,10 +220,7 @@ void test(
     t.after(async () => {
       if (!deleted) await deleteSecret(reference);
     });
-    const module = new URL(
-      "../../src/drivers/configuration/secrets.js",
-      import.meta.url,
-    ).href;
+    const module = import.meta.resolve("@harnesshub/secrets/secrets");
     const script = `import { resolveSecret, deleteSecret } from ${JSON.stringify(module)};
 import { createHash } from 'node:crypto';
 let input=''; for await (const bytes of process.stdin) input+=bytes;

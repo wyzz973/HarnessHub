@@ -14,7 +14,7 @@ import { fullAccessEnabled } from "./engine/full-access.js";
 import { registerHarnessModelRoutes } from "./gateway/harness-model-routes.js";
 import { providerProtocols } from "./engine/configuration.js";
 import { configurationAdapters } from "@harnesshub/core/engine-configuration";
-import { createSecret } from "./drivers/configuration/secrets.js";
+import { createSecret } from "@harnesshub/secrets/secrets";
 import { prepareConfiguration } from "./drivers/configuration/prepare.js";
 import { probeConfiguration } from "./drivers/configuration/probe.js";
 import { HubError } from "@harnesshub/core/errors";

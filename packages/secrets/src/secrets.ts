@@ -2,9 +2,9 @@
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { lstat, readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import { HubError } from "@harnesshub/core/errors";
+import { secretHelperPath } from "./native-helper.js";
 
 /** Longest wait for the platform secret helper (cold .NET start on Windows). */
 const HELPER_TIMEOUT_MS = 20_000;
@@ -27,14 +27,7 @@ async function keychain(
       "Use an environment or file reference on this platform",
       400,
     );
-  const executable = fileURLToPath(
-    new URL(
-      process.platform === "win32"
-        ? "../../../native/harnesshub-secrets.exe"
-        : "../../../native/harnesshub-keychain",
-      import.meta.url,
-    ),
-  );
+  const executable = secretHelperPath(process.platform);
   const child = spawn(executable, [], {
     stdio: ["pipe", "pipe", "ignore"],
     windowsHide: true,
