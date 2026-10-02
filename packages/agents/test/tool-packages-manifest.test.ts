@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import test from "node:test";
-import { limits, parseManifest } from "@harnesshub/agents/tool-packages/index";
-import { hash, isStdioMcp } from "@harnesshub/agents/tool-packages/manifest";
-import type { ToolPackageManifest } from "@harnesshub/agents/tool-packages/types";
+import { limits, parseManifest } from "../src/tool-packages/index.js";
+import { hash, isStdioMcp } from "../src/tool-packages/manifest.js";
+import type { ToolPackageManifest } from "../src/tool-packages/types.js";
 
 function manifest(): ToolPackageManifest {
   return {

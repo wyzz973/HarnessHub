@@ -9,9 +9,9 @@ import {
   portableCommand,
   portableLauncher,
   unwrapEnvironment,
-} from "@harnesshub/agents/configuration/launch";
-import { prepareConfiguration } from "@harnesshub/agents/configuration/prepare";
-import { normalizeEngine } from "@harnesshub/agents/engine/registry";
+} from "../src/configuration/launch.js";
+import { prepareConfiguration } from "../src/configuration/prepare.js";
+import { normalizeEngine } from "../src/engine/registry.js";
 import type { RunId, SessionId } from "@harnesshub/core/types";
 
 async function fixture(t: TestContext) {

@@ -647,6 +647,11 @@ test("drivers keep their module rules, and only the Worker loads them inside the
     checkAt("packages/daemon/src/main.ts", acp).join("\n"),
     /only worker\/ of packages\/daemon may import @harnesshub\/drivers/,
   );
+  // A daemon test may combine drivers with daemon code.
+  assert.deepEqual(
+    checkAt("packages/daemon/test/diagnostic-log.test.ts", acp),
+    [],
+  );
   assert.deepEqual(
     checkAt(
       "packages/drivers/src/acp/driver.ts",

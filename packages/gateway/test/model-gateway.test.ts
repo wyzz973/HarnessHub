@@ -7,12 +7,12 @@ import {
   type ServerResponse,
 } from "node:http";
 import { once } from "node:events";
-import { startModelGateway } from "@harnesshub/gateway/gateway";
+import { startModelGateway } from "../src/gateway.js";
 import type {
   ModelCallRecord,
   ModelGatewayOptions,
 } from "@harnesshub/core/model-bridge";
-import { decodeReasoning } from "@harnesshub/gateway/reasoning";
+import { decodeReasoning } from "../src/reasoning.js";
 
 type Body = Record<string, unknown>;
 interface Upstream {

@@ -89,7 +89,10 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     errors:
       "INVALID_ENGINE_MANIFEST：目录/内容/命令非法或多个 manifest 同 ID。",
     source: "packages/daemon/src/http/server.ts",
-    tests: ["tests/unit/discovery.test.ts", "tests/smoke/discovery.test.ts"],
+    tests: [
+      "packages/agents/test/discovery.test.ts",
+      "tests/smoke/discovery.test.ts",
+    ],
     operationId: "hh_get_v1_engines_discover",
   },
   {
@@ -211,7 +214,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     effects: "只读安装证据，故意忽略 manifest 覆盖，供用户明确替换固定脚本。",
     errors: "模板缺失/adapter-required 不等于自动安装；文件访问错误单独失败。",
     source: "packages/daemon/src/http/engine-configuration-routes.ts",
-    tests: ["tests/unit/discovery.test.ts"],
+    tests: ["packages/agents/test/discovery.test.ts"],
     operationId: "hh_get_v1_engine_configuration_templates",
   },
   {
@@ -588,7 +591,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     source: "packages/daemon/src/http/server.ts",
     tests: [
       "tests/integration/session-logs.test.ts",
-      "tests/unit/session-log-reader.test.ts",
+      "packages/daemon/test/session-log-reader.test.ts",
     ],
     operationId: "hh_get_v1_sessions_id_logs",
   },

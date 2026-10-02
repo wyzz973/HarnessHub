@@ -114,7 +114,7 @@
 - 持久化与副作用：读取安装和 manifest；不执行程序、不安装包、不调用模型或注册。
 - 失败与边界：INVALID_ENGINE_MANIFEST：目录/内容/命令非法或多个 manifest 同 ID。
 
-实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/unit/discovery.test.ts](../../tests/unit/discovery.test.ts)、[tests/smoke/discovery.test.ts](../../tests/smoke/discovery.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[packages/agents/test/discovery.test.ts](../../packages/agents/test/discovery.test.ts)、[tests/smoke/discovery.test.ts](../../tests/smoke/discovery.test.ts)。
 
 ## hh_get_v1_engines_registry
 
@@ -200,7 +200,7 @@
 - 持久化与副作用：只读安装证据，故意忽略 manifest 覆盖，供用户明确替换固定脚本。
 - 失败与边界：模板缺失/adapter-required 不等于自动安装；文件访问错误单独失败。
 
-实现入口：[packages/daemon/src/http/engine-configuration-routes.ts](../../packages/daemon/src/http/engine-configuration-routes.ts)。验证依据：[tests/unit/discovery.test.ts](../../tests/unit/discovery.test.ts)。
+实现入口：[packages/daemon/src/http/engine-configuration-routes.ts](../../packages/daemon/src/http/engine-configuration-routes.ts)。验证依据：[packages/agents/test/discovery.test.ts](../../packages/agents/test/discovery.test.ts)。
 
 ## hh_get_v1_engine_configuration_adapters
 
@@ -473,7 +473,7 @@
 - 失败与边界：Session不存在404；非法source/limit/after为400 INVALID_REQUEST；未配置日志503 LOGS_UNAVAILABLE；读文件失败500 LOG_READ_FAILED。文件尚不存在时exists=false、records为空。truncated表示有记录因数量、大小、扫描预算或轮转被跳过。
 - Schema 参数索引：query: source；query: limit；query: after；path: id（必需）。
 
-实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/session-logs.test.ts](../../tests/integration/session-logs.test.ts)、[tests/unit/session-log-reader.test.ts](../../tests/unit/session-log-reader.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/session-logs.test.ts](../../tests/integration/session-logs.test.ts)、[packages/daemon/test/session-log-reader.test.ts](../../packages/daemon/test/session-log-reader.test.ts)。
 
 ## hh_post_v1_sessions_id_runs
 

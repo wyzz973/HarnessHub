@@ -5,14 +5,14 @@ import test from "node:test";
 import {
   parseCommandConfiguration,
   SESSION_WORKSPACE_PLACEHOLDER,
-} from "@harnesshub/agents/tool-command/config";
+} from "../src/tool-command/config.js";
 import {
   isWindowsBatch,
   quoteBatchArgument,
   windowsBatchCommandLine,
   windowsBatchLaunch,
-} from "@harnesshub/agents/tool-command/windows-batch";
-import { SESSION_WORKSPACE_PLACEHOLDER as PACKAGE_PLACEHOLDER } from "@harnesshub/agents/tool-packages/index";
+} from "../src/tool-command/windows-batch.js";
+import { SESSION_WORKSPACE_PLACEHOLDER as PACKAGE_PLACEHOLDER } from "../src/tool-packages/index.js";
 
 void test("batch arguments are quoted so cmd.exe metacharacters stay literal and trailing backslashes survive argv parsing", () => {
   assert.equal(quoteBatchArgument("plain"), '"plain"');

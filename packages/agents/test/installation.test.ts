@@ -15,8 +15,8 @@ import { dirname, join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { HubError } from "@harnesshub/core/errors";
 import type { EngineProfile, JsonObject } from "@harnesshub/core/types";
-import { inspectEngineInstallation } from "@harnesshub/agents/engine/installation";
-import { portableLauncher } from "@harnesshub/agents/configuration/launch";
+import { inspectEngineInstallation } from "../src/engine/installation.js";
+import { portableLauncher } from "../src/configuration/launch.js";
 
 function profile(command: string[]): EngineProfile {
   return {

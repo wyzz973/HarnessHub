@@ -4,12 +4,9 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { HarnessModelService } from "@harnesshub/agents/application/harness-model";
-import { builtinConfigurationAdapter } from "@harnesshub/agents/engine/builtins";
-import {
-  loadConfig,
-  normalizeEngine,
-} from "@harnesshub/agents/engine/registry";
+import { HarnessModelService } from "../src/application/harness-model.js";
+import { builtinConfigurationAdapter } from "../src/engine/builtins.js";
+import { loadConfig, normalizeEngine } from "../src/engine/registry.js";
 import { HubError } from "@harnesshub/core/errors";
 
 const model = {

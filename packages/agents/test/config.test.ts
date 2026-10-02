@@ -4,10 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import {
-  RUN_TIMEOUT_ENVIRONMENT,
-  loadConfig,
-} from "@harnesshub/agents/engine/registry";
+import { RUN_TIMEOUT_ENVIRONMENT, loadConfig } from "../src/engine/registry.js";
 
 void test("profile resolution rejects invalid fields and allows an empty registry for dynamic registration", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "harnesshub-config-"));

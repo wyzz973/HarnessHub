@@ -11,7 +11,7 @@ import {
   DEFAULT_GATEWAY_LIMITS,
   createModelGateway,
   type GatewayLimits,
-} from "@harnesshub/gateway/gateway";
+} from "../src/gateway.js";
 import type {
   ModelCallRecord,
   ModelGatewayOptions,

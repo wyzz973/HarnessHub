@@ -13,7 +13,7 @@ import {
   createModelGateway,
   startModelGateway,
   type GatewayLimits,
-} from "@harnesshub/gateway/gateway";
+} from "../src/gateway.js";
 import type {
   ModelCallRecord,
   ModelGateway,
@@ -24,7 +24,7 @@ import {
   callKeys,
   encodeReasoning,
   restoreReasoning,
-} from "@harnesshub/gateway/reasoning";
+} from "../src/reasoning.js";
 
 type Body = Record<string, unknown>;
 interface Upstream {

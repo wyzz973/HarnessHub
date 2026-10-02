@@ -13,8 +13,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import type { TestContext } from "node:test";
-import { discoverEngines } from "@harnesshub/agents/engine/discovery";
-import { normalizeEngine } from "@harnesshub/agents/engine/registry";
+import { discoverEngines } from "../src/engine/discovery.js";
+import { normalizeEngine } from "../src/engine/registry.js";
 
 async function fixture(t: TestContext) {
   const directory = await mkdtemp(

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 import { fileURLToPath } from "node:url";
-import { BENCHMARK_ENTRY } from "../support/entries.js";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -17,7 +16,7 @@ import {
   type EvaluationId,
 } from "@harnesshub/core/benchmark";
 import type { RunId, SessionId } from "@harnesshub/core/types";
-import { startHub } from "@harnesshub/daemon/main";
+import { startHub } from "../src/main.js";
 import { SqliteBenchmarkStore } from "@harnesshub/store/storage/benchmark-store";
 
 function attempt(
@@ -211,7 +210,7 @@ void test(
     const child = spawn(
       process.execPath,
       [
-        fileURLToPath(BENCHMARK_ENTRY),
+        fileURLToPath(new URL("../src/benchmark-main.js", import.meta.url)),
         "--report",
         "--demo",
         "--batch",

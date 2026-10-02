@@ -4,8 +4,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { normalizeEngine } from "@harnesshub/agents/engine/registry";
-import { prepareConfiguration } from "@harnesshub/agents/configuration/prepare";
+import { normalizeEngine } from "../src/engine/registry.js";
+import { prepareConfiguration } from "../src/configuration/prepare.js";
 import type { RunId, SessionId } from "@harnesshub/core/types";
 
 void test("Qwen selected MCP servers finish discovery before prompting, including without a managed provider", async (t) => {

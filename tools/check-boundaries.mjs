@@ -436,7 +436,9 @@ export function checkSource(
       name === "drivers" &&
       where.kind === "package" &&
       where.name === "daemon" &&
-      !where.sourcePath?.startsWith(DRIVER_LOADER)
+      // Tests are bound by the graph only, as everywhere else.
+      where.sourcePath !== null &&
+      !where.sourcePath.startsWith(DRIVER_LOADER)
     ) {
       report(
         node,

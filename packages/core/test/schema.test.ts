@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Ajv } from "ajv";
-import { createSessionSchema, runInputSchema } from "@harnesshub/core/schemas";
+import { createSessionSchema, runInputSchema } from "../src/schemas.js";
 
 void test("HTTP schemas reject invalid controls and accept explicit demo inputs", () => {
   const ajv = new Ajv();

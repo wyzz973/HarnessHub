@@ -12,4 +12,4 @@ package 信息最多从文件所在目录向上查 3 层，遇到 `node_modules`
 
 主要错误为 `ENGINE_INSTALLATION_MISSING`、`ENGINE_INSTALLATION_CHANGED`、`ENGINE_INSTALLATION_TOO_LARGE`、`ENGINE_INSTALLATION_INVALID`。Fake Driver 没有外部入口，返回空文件列表及明确说明。
 
-[聚焦测试](../tests/unit/installation.test.ts)使用真实临时文件验证 Node 文件与包版本、配置/环境引用排除、hash 可重现与内容变化、缺失文件、数量/大小上限、3 层包查找和软链接拒绝。2026-09-05 在 macOS、Node 24.20.0 上执行 `pnpm build`、`node --test dist/tests/unit/installation.test.js`，6/6 通过。尚无 Windows 的 PATH/PATHEXT 原生验收；Windows 配置优先使用显式绝对 executable 路径，并在后续 VMware 验收确认行为。
+[聚焦测试](../packages/agents/test/installation.test.ts)使用真实临时文件验证 Node 文件与包版本、配置/环境引用排除、hash 可重现与内容变化、缺失文件、数量/大小上限、3 层包查找和软链接拒绝。2026-09-05 在 macOS、Node 24.20.0 上执行 `pnpm build`、`node --test dist/tests/unit/installation.test.js`，6/6 通过。尚无 Windows 的 PATH/PATHEXT 原生验收；Windows 配置优先使用显式绝对 executable 路径，并在后续 VMware 验收确认行为。

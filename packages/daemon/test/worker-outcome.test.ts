@@ -12,12 +12,12 @@ import {
   describeError,
   publicErrorMessage,
   truncatePublic,
-} from "@harnesshub/daemon/worker/diagnostics";
+} from "../src/worker/diagnostics.js";
 import {
   modelCallEventData,
   RunObservation,
   settleGatewayResult,
-} from "@harnesshub/daemon/worker/outcome";
+} from "../src/worker/outcome.js";
 
 const secret = "synthetic-upstream-secret-value";
 const redact = createRedactor(new Set([secret]));

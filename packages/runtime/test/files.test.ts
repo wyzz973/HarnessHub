@@ -5,7 +5,7 @@ import {
   isRelativeFilePath,
   validateFileOutputs,
 } from "@harnesshub/core/files";
-import { validateFixtures } from "@harnesshub/runtime/benchmark/workspace";
+import { validateFixtures } from "../src/benchmark/workspace.js";
 
 void test("portable output and fixture paths reject Windows aliases and accept Chinese/spaces", () => {
   for (const path of [
