@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import type { FastifyInstance } from "fastify";
 import type { WorkflowService } from "../application/workflows.js";
 import { errorResponseSchema } from "../domain/schemas.js";

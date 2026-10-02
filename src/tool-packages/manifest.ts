@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { createHash } from "node:crypto";
 import { Ajv } from "ajv";
 import { HubError } from "../domain/errors.js";

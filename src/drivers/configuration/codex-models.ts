@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { codexDefaultInstructions } from "./codex-default-instructions.js";
 
 interface CatalogEntry {

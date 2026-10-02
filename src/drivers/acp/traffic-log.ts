@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { StringDecoder } from "node:string_decoder";
 import { excerpt } from "../../domain/logging.js";
 import type { LogFields, LogSink } from "../../domain/logging.js";

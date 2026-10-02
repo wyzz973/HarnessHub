@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import type { WorkerPayload } from "../domain/ipc.js";
 import type { DriverResult, JsonObject } from "../domain/types.js";
 import type { ModelCallRecord } from "../drivers/chat-completions/gateway.js";

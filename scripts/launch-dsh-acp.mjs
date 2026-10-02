@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /** Launch a fixed DSH CLI argv with a private DSH_HOME; credentials remain file references in its patch. */
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';

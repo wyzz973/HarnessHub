@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { access } from "node:fs/promises";
 import path from "node:path";
 const methods = new Set([

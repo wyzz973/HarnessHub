@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { WindowsFileSession } from "./windows-file-session.js";
 
 /** Holds a native read lease, rejects existing writers, and awaits release on abort. */

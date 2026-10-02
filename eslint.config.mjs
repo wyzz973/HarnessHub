@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import tseslint from "typescript-eslint";
 
 // Type-aware checks focus on lost asynchronous work and unsafe public contracts.

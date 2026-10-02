@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { readdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";

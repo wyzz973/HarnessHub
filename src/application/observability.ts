@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import type { Store } from "../domain/ports.js";
 import type {
   AgentEvent,

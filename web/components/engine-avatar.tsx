@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { Sparkles } from "lucide-react";
 import { engineHue, engineMonogram } from "@/lib/engines";
 import { cn } from "@/lib/utils";

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Codex rust-v0.153.4 models-manager/prompt.md, Apache-2.0.
 // https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/models-manager/prompt.md
 // SHA-256: ac8ae107a0d72fe3476b430afb161ea4e67da2e446d778aefc44828160559807

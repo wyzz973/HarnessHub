@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { open } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { crc32 } from "node:zlib";

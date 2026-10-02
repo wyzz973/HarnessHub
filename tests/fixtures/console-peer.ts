@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { createServer } from "node:http";
 
 // Stand-in for the bundled Next console: listens on PORT/HOSTNAME, proxies /api/gateway/*

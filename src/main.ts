@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { EngineConfigurationService } from "./application/engine-configuration.js";
 import {
   HarnessModelService,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import path from "node:path";
 
 /**

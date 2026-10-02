@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { lstat, readdir } from "node:fs/promises";
 import path from "node:path";
 import { HubError } from "../domain/errors.js";

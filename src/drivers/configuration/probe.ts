@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { setTimeout as delay } from "node:timers/promises";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import type { EngineConfiguration } from "./engine-configuration.js";
 /** Public runtime records. These types carry no third-party SDK or storage implementation. */
 export type Brand<T, Name extends string> = T & { readonly __brand: Name };

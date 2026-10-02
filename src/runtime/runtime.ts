@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { validateFileOutputs } from "../domain/files.js";
 import type { EngineCatalog } from "../domain/engines.js";
 import path from "node:path";

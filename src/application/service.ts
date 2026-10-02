@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { createHash } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
 import type { EngineManagement } from "../domain/engines.js";

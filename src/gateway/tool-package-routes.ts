@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import type { FastifyInstance } from "fastify";
 import { secretReferenceSchema } from "../domain/engine-configuration.js";
 import { HubError } from "../domain/errors.js";

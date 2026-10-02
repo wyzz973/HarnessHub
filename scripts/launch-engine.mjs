@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /** Portable env/argv launcher. ProcessHost owns its complete process tree. Never logs argv, configuration, or stderr. */
 import { spawnEngine } from "./spawn-engine.mjs";
 

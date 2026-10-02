@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import { get, type ClientRequest } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";

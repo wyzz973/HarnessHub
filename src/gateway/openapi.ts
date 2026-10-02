@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /** Normalize a cloned JSON Schema projection to OpenAPI 3.0 and actual stream media types.
  * Never mutate shared domain/route schemas: they remain the Ajv validation authority.
  */

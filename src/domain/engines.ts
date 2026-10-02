@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import type { EngineConfiguration } from "./engine-configuration.js";
 import type { EngineProfile } from "./types.js";
 

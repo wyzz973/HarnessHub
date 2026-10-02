@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { watchFile, unwatchFile } from "node:fs";
 import type {
   EngineCandidate,

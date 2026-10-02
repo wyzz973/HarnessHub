@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { lstat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createFileSessionStore } from "acpx/runtime";

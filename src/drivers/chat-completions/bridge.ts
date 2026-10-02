@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { startModelGateway } from "./gateway.js";
 
 /** A Session owns this authenticated loopback listener; each Run owns its upstream requests. */

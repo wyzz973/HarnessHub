@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { HubError } from "../domain/errors.js";
 import type { CleanupStatus } from "../domain/types.js";
 

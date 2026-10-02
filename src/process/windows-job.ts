@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";

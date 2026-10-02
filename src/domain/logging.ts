@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { HubError } from "./errors.js";
 import type { JsonObject, JsonValue } from "./types.js";
 

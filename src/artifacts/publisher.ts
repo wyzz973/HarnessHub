@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { createHash, randomUUID } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
 import { lstat, mkdir, open, realpath, unlink } from "node:fs/promises";

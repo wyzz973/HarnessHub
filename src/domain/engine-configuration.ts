@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import type { EngineCandidate } from "./engines.js";
 /** Secret locations only. Values never belong to a profile, IPC message or public response. */
 export interface SecretReference {

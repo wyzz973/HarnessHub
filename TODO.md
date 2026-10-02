@@ -22,7 +22,7 @@
 
 - [x] **OSS-001 干净快照**：在孤立分支 `oss-main` 移除比赛接口、便携包与发行配置、预装工具包、第三方源码归档、办公包、比赛与离线脚本、比赛工作流及对应测试；代码与测试中的比赛与公司表述改为中性的“上游”。证据：本分支初始提交；`pnpm build`、单元（158 通过、10 跳过）、集成（106 通过、23 跳过、0 失败）、smoke（3/3）、工具（35/35）、lint、格式与边界检查，均在 macOS arm64、Node 24.20.0 上执行。
 - [x] **OSS-002 许可证与治理文件**：MIT `LICENSE`、`CODE_OF_CONDUCT.md`（Contributor Covenant 2.1）、`SECURITY.md`、`GOVERNANCE.md`、`MAINTAINERS.md`、`SUPPORT.md`、`TRADEMARKS.md`、`ROADMAP.md`、PR 与 issue 模板、`CODEOWNERS`、标签定义、RFC 流程；英文 README 与中文 README；`CONTRIBUTING.md` 与 `THIRD_PARTY_NOTICES.md` 重写。证据：本分支初始提交；`node scripts/check-docs.mjs` 通过。未验证：issue 表单与 PR 模板在 GitHub 上的渲染。
-- [ ] **OSS-003 SPDX 文件头**：所有源文件加 `SPDX-License-Identifier: MIT`，并以带拒绝样例的检查脚本接入 `pnpm check`。
+- [x] **OSS-003 SPDX 文件头**：274 个源文件带 SPDX 标识（自有代码 MIT；Codex 提示词与 AI Elements 组件保留 Apache-2.0；示例工具包载荷的字节由包清单固定，不加头）；`scripts/check-spdx.mjs` 接入 `pnpm check`，拒绝样例见 `scripts/check-spdx.test.mjs`。证据：`pnpm check` 在 macOS arm64 通过。
 - [ ] **OSS-004 多包结构**：按 [02 第 8 节](docs/proposals/oss/02-architecture.md#8-模块与依赖规则) 迁入 12 个 pnpm workspace 包，行为不变；迁移前后的用例数逐项对账。
 - [ ] **OSS-005 包级边界检查**：依赖方向由检查脚本强制，每条规则附拒绝样例。
 - [ ] **OSS-006 测试启动器与环境沙箱**（F01、F02）：清洗 `HARNESSHUB_*` 等产品变量，私有 HOME/USERPROFILE/APPDATA，启动失败时也清理临时目录，默认用例超时。

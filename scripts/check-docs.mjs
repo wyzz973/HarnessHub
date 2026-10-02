@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: MIT
 /**
  * Small offline check for this repository's Markdown, not a CommonMark parser.
  * Usage: node scripts/check-docs.mjs [--root <directory>]

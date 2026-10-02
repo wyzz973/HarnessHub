@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { HubError } from "../domain/errors.js";

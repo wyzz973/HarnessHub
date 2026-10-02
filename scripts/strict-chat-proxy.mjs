@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: MIT
 /**
  * Streaming-only strict proxy that makes a real OpenAI-compatible upstream (for example
  * DeepSeek) behave like the upstream model gateway (ADR 0013). Requests that the upstream

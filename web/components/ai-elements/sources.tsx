@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Copyright 2023 Vercel, Inc. SPDX-License-Identifier: Apache-2.0
 // Adapted for HarnessHub: local component imports, typed bindings, and localized presentation.
 "use client";

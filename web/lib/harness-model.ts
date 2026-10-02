@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import type { HarnessModelInput } from "./api";
 import type { HarnessModelView } from "./contracts";
 import type { SecretReference } from "./engine-configuration";

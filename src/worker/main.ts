@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import {
   prepareConfiguration,
   type PreparedConfiguration,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import path from "node:path";

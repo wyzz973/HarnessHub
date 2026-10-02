@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { randomUUID } from "node:crypto";
 import { setTimeout } from "node:timers/promises";
 import type { Driver, DriverChannel } from "../driver.js";

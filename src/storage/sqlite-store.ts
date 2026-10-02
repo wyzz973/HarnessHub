@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";

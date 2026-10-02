@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { HubError } from "../domain/errors.js";

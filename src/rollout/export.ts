@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { open, unlink } from "node:fs/promises";
 import path from "node:path";
 import type { RunId } from "../domain/types.js";

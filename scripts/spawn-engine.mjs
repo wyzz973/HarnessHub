@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /** Windows command transport shared by repository launchers; process-tree ownership stays with their caller. */
 import spawn from "cross-spawn";
 import { statSync } from "node:fs";

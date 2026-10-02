@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { constants, type BigIntStats } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import path from "node:path";

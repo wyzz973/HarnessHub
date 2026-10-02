@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { engineConfigurationSchema } from "./engine-configuration.js";
 import { ACP_INITIALIZE_TIMEOUT_LIMIT_MS } from "./engines.js";
 import {

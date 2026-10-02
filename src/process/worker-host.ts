@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { configurationEnvironmentNames } from "../domain/engine-configuration.js";
 import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";

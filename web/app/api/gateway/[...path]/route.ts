@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /** Same-origin, loopback-only transport. The Gateway remains the execution/state owner. */
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

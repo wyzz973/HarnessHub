@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";

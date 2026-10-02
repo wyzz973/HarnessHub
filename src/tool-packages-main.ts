@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { HubError } from "./domain/errors.js";

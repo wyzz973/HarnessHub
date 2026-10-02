@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Upstream model gateway emulation shared by scripts/strict-chat-proxy.mjs and
  * scripts/mock-chat-provider.mjs (ADR 0013). The upstream gateway accepts only

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { Ajv } from "ajv";
 import { HubError } from "./errors.js";
 import { validateFileOutputs } from "./files.js";

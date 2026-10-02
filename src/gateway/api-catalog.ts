@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /** Reviewed HTTP behavior and implementation pointers. Consumed by OpenAPI and the documentation generator; schemas remain the validation authority. */
 export interface ApiDocumentation {
   method: string;

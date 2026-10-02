@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import type { ModelProviderConfiguration } from "./engine-configuration.js";
 
 /**

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { parseArgs } from "node:util";
 import { readFile } from "node:fs/promises";
 import path from "node:path";

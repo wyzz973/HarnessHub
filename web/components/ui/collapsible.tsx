@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 "use client";
 
 import { Collapsible as CollapsiblePrimitive } from "radix-ui";

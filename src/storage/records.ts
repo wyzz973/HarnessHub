@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { isRelativeFilePath } from "../domain/files.js";
 import { HubError } from "../domain/errors.js";
 import type {

@@ -25,6 +25,7 @@ Choose checks by change with the [verification matrix](docs/testing.md#按变更
 ## Rules that reviews enforce
 
 - Strict TypeScript and ESM; module boundaries are checked by `pnpm check:boundaries` ([development rules](docs/development.md)).
+- Every source file starts with `// SPDX-License-Identifier: MIT` (third-party files keep their own identifier); `pnpm check:spdx` enforces it.
 - Every behavior change comes with a test that fails without the change, or an explanation of why such a test cannot be written.
 - Do not hide failures: no deleting failing tests, loosening assertions, swallowing errors, unexplained retries or skipped required checks.
 - Never commit secrets, real run data, machine-local configuration or traces with sensitive content. Secrets are referenced, never stored as values.

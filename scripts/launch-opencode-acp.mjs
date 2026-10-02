@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /** Launch installed OpenCode with a private HOME and an existing DSH DeepSeek credential reference. */
 import { spawnEngine as spawn } from "./spawn-engine.mjs";
 import { cp, mkdir, readFile, writeFile } from "node:fs/promises";

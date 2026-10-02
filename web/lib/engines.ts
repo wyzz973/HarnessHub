@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import type { Engine } from "./contracts";
 
 /** Product names of the known engine ids; unknown ids are shown as registered. */

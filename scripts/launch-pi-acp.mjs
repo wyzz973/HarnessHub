@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /** Launch pinned Pi/ACP binaries with credentials read from an existing DSH reference file. */
 import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { normalizeOpenApiDocument } from "./openapi.js";
 import { apiCatalog } from "./api-catalog.js";
 import { registerEngineConfigurationRoutes } from "./engine-configuration-routes.js";

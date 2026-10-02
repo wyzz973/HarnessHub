@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { configurationSchema, providerSchema } from "./engine-configuration";
 import { z } from "zod";
 

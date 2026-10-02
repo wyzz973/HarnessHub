@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";

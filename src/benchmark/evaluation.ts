@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { isDeepStrictEqual } from "node:util";
 import {
   benchmarkHash,

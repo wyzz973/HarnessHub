@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { lstat, readFile } from "node:fs/promises";

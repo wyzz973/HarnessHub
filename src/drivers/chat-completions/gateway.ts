@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   createServer,

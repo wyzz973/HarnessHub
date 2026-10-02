@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Break-glass switch for unattended Runs. When `HARNESSHUB_FULL_ACCESS=1`, ACP
  * permission requests are approved by the client instead of waiting for a person.

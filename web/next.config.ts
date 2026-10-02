@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import type { NextConfig } from "next";
 import { fileURLToPath } from "node:url";
 

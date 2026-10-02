@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
 import path from "node:path";
 import { excerpt } from "../domain/logging.js";

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { createHash } from "node:crypto";
 import { mkdir, lstat, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";

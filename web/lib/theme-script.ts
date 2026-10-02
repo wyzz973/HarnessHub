@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 export const THEME_STORAGE_KEY = "harnesshub.theme";
 /**
  * Runs before first paint (see app/layout.tsx) so a stored dark choice never flashes light.

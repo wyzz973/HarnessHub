@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { DatabaseSync } from "node:sqlite";
 
 /** Read only override identities for release/console conflict checks; never create or migrate a database. */

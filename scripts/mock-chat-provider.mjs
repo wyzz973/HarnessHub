@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: MIT
 /**
  * Scripted stand-in for the upstream model gateway (ADR 0013 Windows x64 CI acceptance).
  * It never calls a real model and needs no dependencies.

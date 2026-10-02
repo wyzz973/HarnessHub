@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /** A safe public error whose detail can cross the HTTP boundary. */
 export class HubError extends Error {
   constructor(

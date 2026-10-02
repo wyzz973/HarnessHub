@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 let mode = "";

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { existsSync } from "node:fs";
 import { rename, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";

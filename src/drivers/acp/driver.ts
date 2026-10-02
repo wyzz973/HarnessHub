@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import type { RuntimeMcpServer } from "../configuration/prepare.js";
 import { randomUUID } from "node:crypto";
 import {

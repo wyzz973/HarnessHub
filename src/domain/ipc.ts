@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { engineConfigurationSchema } from "./engine-configuration.js";
 import { Ajv } from "ajv";
 import type {

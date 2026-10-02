@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Launches one OpenClaw bridge on an isolated native Gateway session. In OpenClaw
  * 2026.3.23-2 the bridge's default acp:<uuid> key collides with the Gateway's

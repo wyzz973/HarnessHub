@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { Ajv } from "ajv";
 import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";

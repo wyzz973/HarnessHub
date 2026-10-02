@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import type { FastifyInstance } from "fastify";
 import type { ObservationService } from "../application/observability.js";
 import type { RunId } from "../domain/types.js";

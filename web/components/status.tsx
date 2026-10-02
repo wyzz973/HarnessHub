@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { Check, Circle, CircleAlert, Loader2, Pause } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { statusNames } from "@/lib/presentation";

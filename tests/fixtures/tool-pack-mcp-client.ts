@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import type test from "node:test";

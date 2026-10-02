@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { excerpt } from "../domain/logging.js";
 import type { LogFields, LogSink } from "../domain/logging.js";
 import type { Store } from "../domain/ports.js";

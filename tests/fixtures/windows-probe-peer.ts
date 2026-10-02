@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { createInterface } from "node:readline";

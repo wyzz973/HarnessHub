@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import path from "node:path";
 import { parseArgs } from "node:util";
 import type { SecretReference } from "../domain/engine-configuration.js";
