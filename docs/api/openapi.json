@@ -15149,7 +15149,7 @@
         "tags": [
           "providers"
         ],
-        "description": "默认 name=id、kind=custom、auth=authorization-bearer、models={manual,[],all}；端点按官方 SDK 基址约定校验（chat/responses 含 /v1，anthropic、gemini 不含版本段）。\n\n输入：id（slug）、endpoints（至少一个）必填；name、kind、preset、auth、headers、models、wire、patches、capabilities、translateOnly 可选；未知字段 400。\n\n返回：201：ProviderConfig，credentials 为空。\n\n副作用：写入 providers 表。\n\n失败与边界：400 PROVIDER_INVALID（errors[] 指向 /endpoints/<协议>：操作路径、版本段、内嵌凭据、查询串、片段、非 HTTPS 的公网地址）；409 PROVIDER_EXISTS；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "description": "预设由 @harnesshub/gateway 的 presets 加载并经 providerFromPreset 展开；手动时默认 name=id、kind=custom、auth=authorization-bearer、models={manual,[],all}；端点按官方 SDK 基址约定校验（chat/responses 含 /v1，anthropic、gemini 不含版本段）。credential 的值先写入秘密存储，provider 写入失败时删除。\n\n输入：preset（内置预设 ID）或 id（slug）与 endpoints（至少一个）；与 preset 同给的字段覆盖预设（endpoints 按协议覆盖，id 默认为预设 ID）；name、kind、auth、headers、models、wire、patches、capabilities、translateOnly 可选；credential（value 或 env/file ref，name 默认 default）添加第一个凭据；未知字段 400。\n\n返回：201：ProviderConfig；带 credential 时含该凭据的引用。\n\n副作用：写入 providers 表；有 credential.value 时写一个托管秘密。\n\n失败与边界：400 PRESET_NOT_FOUND（/preset）、PROVIDER_INVALID（errors[] 指向 /id、/endpoints 或 /endpoints/<协议>：操作路径、版本段、内嵌凭据、查询串、片段、非 HTTPS 的公网地址）、CREDENTIAL_INVALID、INVALID_SECRET；409 PROVIDER_EXISTS；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
         "requestBody": {
           "required": true,
           "content": {
@@ -15157,11 +15157,68 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": [
-                  "id",
-                  "endpoints"
-                ],
                 "properties": {
+                  "preset": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+                  },
+                  "credential": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "value": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 8192
+                      },
+                      "ref": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "kind",
+                          "value"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "env",
+                              "file"
+                            ]
+                          },
+                          "value": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 8192
+                          }
+                        }
+                      },
+                      "protocols": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "enum": [
+                            "chat",
+                            "responses",
+                            "anthropic",
+                            "gemini"
+                          ]
+                        }
+                      },
+                      "enabled": {
+                        "type": "boolean"
+                      }
+                    }
+                  },
                   "id": {
                     "type": "string",
                     "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
@@ -15178,11 +15235,6 @@
                       "local",
                       "custom"
                     ]
-                  },
-                  "preset": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 200
                   },
                   "endpoints": {
                     "type": "object",
@@ -16178,6 +16230,528 @@
         }
       }
     },
+    "/api/v1/presets": {
+      "get": {
+        "operationId": "hh_api_v1_list_presets",
+        "summary": "provider 预设",
+        "tags": [
+          "providers"
+        ],
+        "description": "组合根注入 @harnesshub/gateway 的 listPresets：读取并校验包内 presets/*.json（JSON Schema、文件名、基址约定）。\n\n输入：无参数。\n\n返回：200：items（ProviderPreset：id、name、kind、website、keysUrl、catalog、verified、auth.methods 与 apiKeyHeader、endpoints、models、capabilities、patches、notes）、nextCursor=null。\n\n副作用：只读。verified 为对照厂商文档核对的日期或 unverified。\n\n失败与边界：需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "items",
+                    "nextCursor"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "schemaVersion",
+                          "id",
+                          "name",
+                          "kind",
+                          "verified",
+                          "auth",
+                          "endpoints",
+                          "models"
+                        ],
+                        "properties": {
+                          "schemaVersion": {
+                            "type": "integer",
+                            "enum": [
+                              1
+                            ]
+                          },
+                          "id": {
+                            "type": "string",
+                            "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+                          },
+                          "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          "kind": {
+                            "enum": [
+                              "vendor",
+                              "relay",
+                              "local",
+                              "custom"
+                            ]
+                          },
+                          "website": {
+                            "type": "string"
+                          },
+                          "keysUrl": {
+                            "type": "string"
+                          },
+                          "catalog": {
+                            "type": "string"
+                          },
+                          "verified": {
+                            "type": "string",
+                            "description": "YYYY-MM-DD the endpoints were checked, or unverified"
+                          },
+                          "auth": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "methods",
+                              "apiKeyHeader"
+                            ],
+                            "properties": {
+                              "methods": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "api-key",
+                                    "none"
+                                  ]
+                                }
+                              },
+                              "apiKeyHeader": {
+                                "type": "string",
+                                "pattern": "^(authorization-bearer|x-api-key|api-key|x-goog-api-key|query-key|custom:[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128})$"
+                              }
+                            }
+                          },
+                          "endpoints": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "minProperties": 1,
+                            "properties": {
+                              "chat": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 2048
+                              },
+                              "responses": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 2048
+                              },
+                              "anthropic": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 2048
+                              },
+                              "gemini": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 2048
+                              }
+                            }
+                          },
+                          "models": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "source"
+                            ],
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "enum": [
+                                  "live",
+                                  "static",
+                                  "catalog"
+                                ]
+                              },
+                              "listPath": {
+                                "type": "string"
+                              },
+                              "list": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "id"
+                                  ],
+                                  "properties": {
+                                    "id": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 512
+                                    },
+                                    "wire": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 512
+                                    },
+                                    "contextWindow": {
+                                      "type": "integer",
+                                      "minimum": 1
+                                    },
+                                    "maxOutputTokens": {
+                                      "type": "integer",
+                                      "minimum": 1
+                                    },
+                                    "reasoning": {
+                                      "type": "boolean"
+                                    },
+                                    "inputModalities": {
+                                      "type": "array",
+                                      "items": {
+                                        "enum": [
+                                          "text",
+                                          "image",
+                                          "pdf",
+                                          "audio",
+                                          "video"
+                                        ]
+                                      }
+                                    },
+                                    "price": {
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "input": {
+                                          "type": "number",
+                                          "minimum": 0
+                                        },
+                                        "output": {
+                                          "type": "number",
+                                          "minimum": 0
+                                        },
+                                        "cacheRead": {
+                                          "type": "number",
+                                          "minimum": 0
+                                        },
+                                        "cacheWrite": {
+                                          "type": "number",
+                                          "minimum": 0
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "capabilities": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "requiresReasoningReplay": {
+                                "type": "boolean"
+                              }
+                            }
+                          },
+                          "patches": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "chat": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "patches"
+                                ],
+                                "properties": {
+                                  "patches": {
+                                    "type": "array",
+                                    "items": {
+                                      "enum": [
+                                        "developer-to-system",
+                                        "max-tokens-field",
+                                        "drop-fields",
+                                        "include-usage",
+                                        "json-schema-to-json-object",
+                                        "anthropic-beta-allow",
+                                        "thinking-off-unless-asked",
+                                        "lift-additional-tools"
+                                      ]
+                                    }
+                                  },
+                                  "dropFields": {
+                                    "type": "array",
+                                    "items": {
+                                      "enum": [
+                                        "store",
+                                        "metadata",
+                                        "service_tier",
+                                        "user",
+                                        "prompt_cache_key",
+                                        "prompt_cache_retention",
+                                        "safety_identifier",
+                                        "stream_options",
+                                        "parallel_tool_calls",
+                                        "verbosity"
+                                      ]
+                                    }
+                                  },
+                                  "anthropicBetaAllow": {
+                                    "type": "array",
+                                    "maxItems": 100,
+                                    "items": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    }
+                                  }
+                                }
+                              },
+                              "responses": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "patches"
+                                ],
+                                "properties": {
+                                  "patches": {
+                                    "type": "array",
+                                    "items": {
+                                      "enum": [
+                                        "developer-to-system",
+                                        "max-tokens-field",
+                                        "drop-fields",
+                                        "include-usage",
+                                        "json-schema-to-json-object",
+                                        "anthropic-beta-allow",
+                                        "thinking-off-unless-asked",
+                                        "lift-additional-tools"
+                                      ]
+                                    }
+                                  },
+                                  "dropFields": {
+                                    "type": "array",
+                                    "items": {
+                                      "enum": [
+                                        "store",
+                                        "metadata",
+                                        "service_tier",
+                                        "user",
+                                        "prompt_cache_key",
+                                        "prompt_cache_retention",
+                                        "safety_identifier",
+                                        "stream_options",
+                                        "parallel_tool_calls",
+                                        "verbosity"
+                                      ]
+                                    }
+                                  },
+                                  "anthropicBetaAllow": {
+                                    "type": "array",
+                                    "maxItems": 100,
+                                    "items": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    }
+                                  }
+                                }
+                              },
+                              "anthropic": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "patches"
+                                ],
+                                "properties": {
+                                  "patches": {
+                                    "type": "array",
+                                    "items": {
+                                      "enum": [
+                                        "developer-to-system",
+                                        "max-tokens-field",
+                                        "drop-fields",
+                                        "include-usage",
+                                        "json-schema-to-json-object",
+                                        "anthropic-beta-allow",
+                                        "thinking-off-unless-asked",
+                                        "lift-additional-tools"
+                                      ]
+                                    }
+                                  },
+                                  "dropFields": {
+                                    "type": "array",
+                                    "items": {
+                                      "enum": [
+                                        "store",
+                                        "metadata",
+                                        "service_tier",
+                                        "user",
+                                        "prompt_cache_key",
+                                        "prompt_cache_retention",
+                                        "safety_identifier",
+                                        "stream_options",
+                                        "parallel_tool_calls",
+                                        "verbosity"
+                                      ]
+                                    }
+                                  },
+                                  "anthropicBetaAllow": {
+                                    "type": "array",
+                                    "maxItems": 100,
+                                    "items": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    }
+                                  }
+                                }
+                              },
+                              "gemini": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "patches"
+                                ],
+                                "properties": {
+                                  "patches": {
+                                    "type": "array",
+                                    "items": {
+                                      "enum": [
+                                        "developer-to-system",
+                                        "max-tokens-field",
+                                        "drop-fields",
+                                        "include-usage",
+                                        "json-schema-to-json-object",
+                                        "anthropic-beta-allow",
+                                        "thinking-off-unless-asked",
+                                        "lift-additional-tools"
+                                      ]
+                                    }
+                                  },
+                                  "dropFields": {
+                                    "type": "array",
+                                    "items": {
+                                      "enum": [
+                                        "store",
+                                        "metadata",
+                                        "service_tier",
+                                        "user",
+                                        "prompt_cache_key",
+                                        "prompt_cache_retention",
+                                        "safety_identifier",
+                                        "stream_options",
+                                        "parallel_tool_calls",
+                                        "verbosity"
+                                      ]
+                                    }
+                                  },
+                                  "anthropicBetaAllow": {
+                                    "type": "array",
+                                    "maxItems": 100,
+                                    "items": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 200
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "notes": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "nextCursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/providers/{id}": {
       "get": {
         "operationId": "hh_api_v1_get_provider",
@@ -16824,10 +17398,7 @@
                     ]
                   },
                   "preset": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 200,
-                    "nullable": true
+                    "type": "null"
                   },
                   "endpoints": {
                     "type": "object",
@@ -17866,6 +18437,635 @@
         "responses": {
           "204": {
             "description": "No content"
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers/{id}/models/refresh": {
+      "post": {
+        "operationId": "hh_api_v1_refresh_provider_models",
+        "summary": "刷新模型列表",
+        "tags": [
+          "providers"
+        ],
+        "description": "用第一个可用于所选端点的启用凭据（经 SecretStore 解析；没有凭据时不带 Key）请求上游：chat/responses 基址 + listPath（默认 /models）、anthropic 基址 + /v1/models（anthropic-version 头，按 after_id 翻页）或 gemini 基址 + /v1beta/models（只取支持 generateContent 的模型，按 pageToken 翻页）；15 秒超时，至多 20 页。上游请求在写入队列之外执行。\n\n输入：路径参数 id；请求体为空对象。\n\n返回：200：更新后的 ProviderConfig，models.source=live、refreshedAt，已有模型的元数据（价格、窗口）保留。\n\n副作用：成功时替换模型列表；失败时保留原列表并标记 models.stale=true。\n\n失败与边界：502 MODELS_REFRESH_FAILED（detail 只含主机与 HTTP 状态，不含 Key、查询串或响应体）；409 CREDENTIAL_UNAVAILABLE（凭据无法读取）；404 PROVIDER_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {}
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "schemaVersion",
+                    "id",
+                    "name",
+                    "kind",
+                    "endpoints",
+                    "auth",
+                    "credentials",
+                    "models",
+                    "createdAt",
+                    "updatedAt"
+                  ],
+                  "properties": {
+                    "schemaVersion": {
+                      "type": "integer",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "kind": {
+                      "enum": [
+                        "vendor",
+                        "relay",
+                        "local",
+                        "custom"
+                      ]
+                    },
+                    "preset": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "endpoints": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "minProperties": 1,
+                      "properties": {
+                        "chat": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2048
+                        },
+                        "responses": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2048
+                        },
+                        "anthropic": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2048
+                        },
+                        "gemini": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2048
+                        }
+                      }
+                    },
+                    "auth": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "apiKeyHeader"
+                      ],
+                      "properties": {
+                        "apiKeyHeader": {
+                          "type": "string",
+                          "pattern": "^(authorization-bearer|x-api-key|api-key|x-goog-api-key|query-key|custom:[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128})$"
+                        }
+                      }
+                    },
+                    "headers": {
+                      "type": "object",
+                      "maxProperties": 64,
+                      "additionalProperties": {
+                        "type": "string",
+                        "maxLength": 8192
+                      }
+                    },
+                    "credentials": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "id",
+                          "name",
+                          "ref",
+                          "enabled"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          "ref": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "kind",
+                              "value"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "env",
+                                  "file",
+                                  "keychain",
+                                  "store"
+                                ]
+                              },
+                              "value": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 8192
+                              }
+                            }
+                          },
+                          "protocols": {
+                            "type": "array",
+                            "items": {
+                              "enum": [
+                                "chat",
+                                "responses",
+                                "anthropic",
+                                "gemini"
+                              ]
+                            }
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "models": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "source",
+                        "list",
+                        "expose"
+                      ],
+                      "properties": {
+                        "source": {
+                          "enum": [
+                            "live",
+                            "catalog",
+                            "static",
+                            "manual"
+                          ]
+                        },
+                        "list": {
+                          "type": "array",
+                          "maxItems": 10000,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "id"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 512
+                              },
+                              "wire": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 512
+                              },
+                              "contextWindow": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "maxOutputTokens": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "reasoning": {
+                                "type": "boolean"
+                              },
+                              "inputModalities": {
+                                "type": "array",
+                                "items": {
+                                  "enum": [
+                                    "text",
+                                    "image",
+                                    "pdf",
+                                    "audio",
+                                    "video"
+                                  ]
+                                }
+                              },
+                              "price": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "input": {
+                                    "type": "number",
+                                    "minimum": 0
+                                  },
+                                  "output": {
+                                    "type": "number",
+                                    "minimum": 0
+                                  },
+                                  "cacheRead": {
+                                    "type": "number",
+                                    "minimum": 0
+                                  },
+                                  "cacheWrite": {
+                                    "type": "number",
+                                    "minimum": 0
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "expose": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "all"
+                              ]
+                            },
+                            {
+                              "type": "array",
+                              "maxItems": 10000,
+                              "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 512
+                              }
+                            }
+                          ]
+                        },
+                        "refreshedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "stale": {
+                          "type": "boolean"
+                        },
+                        "listPath": {
+                          "type": "string",
+                          "pattern": "^/\\S{0,511}$"
+                        }
+                      }
+                    },
+                    "wire": {
+                      "type": "object",
+                      "maxProperties": 10000,
+                      "additionalProperties": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512
+                      }
+                    },
+                    "patches": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "chat": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "patches"
+                          ],
+                          "properties": {
+                            "patches": {
+                              "type": "array",
+                              "items": {
+                                "enum": [
+                                  "developer-to-system",
+                                  "max-tokens-field",
+                                  "drop-fields",
+                                  "include-usage",
+                                  "json-schema-to-json-object",
+                                  "anthropic-beta-allow",
+                                  "thinking-off-unless-asked",
+                                  "lift-additional-tools"
+                                ]
+                              }
+                            },
+                            "dropFields": {
+                              "type": "array",
+                              "items": {
+                                "enum": [
+                                  "store",
+                                  "metadata",
+                                  "service_tier",
+                                  "user",
+                                  "prompt_cache_key",
+                                  "prompt_cache_retention",
+                                  "safety_identifier",
+                                  "stream_options",
+                                  "parallel_tool_calls",
+                                  "verbosity"
+                                ]
+                              }
+                            },
+                            "anthropicBetaAllow": {
+                              "type": "array",
+                              "maxItems": 100,
+                              "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              }
+                            }
+                          }
+                        },
+                        "responses": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "patches"
+                          ],
+                          "properties": {
+                            "patches": {
+                              "type": "array",
+                              "items": {
+                                "enum": [
+                                  "developer-to-system",
+                                  "max-tokens-field",
+                                  "drop-fields",
+                                  "include-usage",
+                                  "json-schema-to-json-object",
+                                  "anthropic-beta-allow",
+                                  "thinking-off-unless-asked",
+                                  "lift-additional-tools"
+                                ]
+                              }
+                            },
+                            "dropFields": {
+                              "type": "array",
+                              "items": {
+                                "enum": [
+                                  "store",
+                                  "metadata",
+                                  "service_tier",
+                                  "user",
+                                  "prompt_cache_key",
+                                  "prompt_cache_retention",
+                                  "safety_identifier",
+                                  "stream_options",
+                                  "parallel_tool_calls",
+                                  "verbosity"
+                                ]
+                              }
+                            },
+                            "anthropicBetaAllow": {
+                              "type": "array",
+                              "maxItems": 100,
+                              "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              }
+                            }
+                          }
+                        },
+                        "anthropic": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "patches"
+                          ],
+                          "properties": {
+                            "patches": {
+                              "type": "array",
+                              "items": {
+                                "enum": [
+                                  "developer-to-system",
+                                  "max-tokens-field",
+                                  "drop-fields",
+                                  "include-usage",
+                                  "json-schema-to-json-object",
+                                  "anthropic-beta-allow",
+                                  "thinking-off-unless-asked",
+                                  "lift-additional-tools"
+                                ]
+                              }
+                            },
+                            "dropFields": {
+                              "type": "array",
+                              "items": {
+                                "enum": [
+                                  "store",
+                                  "metadata",
+                                  "service_tier",
+                                  "user",
+                                  "prompt_cache_key",
+                                  "prompt_cache_retention",
+                                  "safety_identifier",
+                                  "stream_options",
+                                  "parallel_tool_calls",
+                                  "verbosity"
+                                ]
+                              }
+                            },
+                            "anthropicBetaAllow": {
+                              "type": "array",
+                              "maxItems": 100,
+                              "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              }
+                            }
+                          }
+                        },
+                        "gemini": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "patches"
+                          ],
+                          "properties": {
+                            "patches": {
+                              "type": "array",
+                              "items": {
+                                "enum": [
+                                  "developer-to-system",
+                                  "max-tokens-field",
+                                  "drop-fields",
+                                  "include-usage",
+                                  "json-schema-to-json-object",
+                                  "anthropic-beta-allow",
+                                  "thinking-off-unless-asked",
+                                  "lift-additional-tools"
+                                ]
+                              }
+                            },
+                            "dropFields": {
+                              "type": "array",
+                              "items": {
+                                "enum": [
+                                  "store",
+                                  "metadata",
+                                  "service_tier",
+                                  "user",
+                                  "prompt_cache_key",
+                                  "prompt_cache_retention",
+                                  "safety_identifier",
+                                  "stream_options",
+                                  "parallel_tool_calls",
+                                  "verbosity"
+                                ]
+                              }
+                            },
+                            "anthropicBetaAllow": {
+                              "type": "array",
+                              "maxItems": 100,
+                              "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "capabilities": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "requiresReasoningReplay": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "translateOnly": {
+                      "type": "boolean"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
           },
           "default": {
             "description": "Default Response",

@@ -11,6 +11,7 @@ import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import { HubError } from "@harnesshub/core/errors";
 import type { LogSink } from "@harnesshub/core/logging";
 import type { ModelPlaneStore } from "@harnesshub/core/model-plane";
+import type { ProviderPreset } from "@harnesshub/core/provider-presets";
 import { responses, systemInfoSchema } from "./api-v1-schemas.js";
 import { registerModelPlaneRoutes } from "./model-plane-routes.js";
 
@@ -50,6 +51,17 @@ export interface ManagedSecrets {
   rotate(ref: SecretReference, value: string): Promise<void>;
   /** Deletes the value; false when it did not exist. */
   delete(ref: SecretReference): Promise<boolean>;
+  /** Reads any reference kind; env references against `environment`. */
+  resolve(
+    ref: SecretReference,
+    environment: Readonly<NodeJS.ProcessEnv>,
+  ): Promise<string>;
+}
+
+/** The shipped provider presets (`@harnesshub/gateway/presets`, injected). */
+export interface PresetCatalog {
+  list(): ProviderPreset[];
+  get(id: string): ProviderPreset | undefined;
 }
 
 /** `GET /api/v1/system/info`. */
@@ -68,6 +80,9 @@ export interface ApiV1Options {
   adminTokenDigest: Buffer;
   modelPlane: ModelPlaneStore;
   secrets: ManagedSecrets;
+  presets: PresetCatalog;
+  /** The daemon's environment snapshot, for `env` credential references. */
+  environment: Readonly<NodeJS.ProcessEnv>;
   system: SystemInfo;
   /** Internal failures (500) are recorded here, without request bodies. */
   log?: LogSink;

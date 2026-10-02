@@ -195,7 +195,6 @@ void test("providers are created, patched and deleted; invalid ones are refused 
   const created = await client.providers.create({
     id: "alpha",
     endpoints: { chat: "https://api.example.test/v1" },
-    preset: "example",
     models: { source: "manual", list: [{ id: "chat-1" }], expose: "all" },
   });
   assert.equal(created.name, "alpha");
@@ -267,7 +266,7 @@ void test("providers are created, patched and deleted; invalid ones are refused 
     problem("INVALID_REQUEST", 400),
   );
 
-  // Merge patch: add an endpoint, rename, remove the preset.
+  // Merge patch: add an endpoint, rename, detach from a preset (none here).
   const patched = await client.providers.update("alpha", {
     name: "Alpha",
     preset: null,

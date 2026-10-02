@@ -17,6 +17,7 @@ import {
   type ProviderConfig,
   type ProviderCredential,
   type ProviderId,
+  type ProviderModel,
   type RetryPolicy,
   type RouteGroup,
   type RouteGroupId,
@@ -32,6 +33,12 @@ import {
 import type { SessionId } from "@harnesshub/core/types";
 import { ApiProblem, type ApiV1Options, type ProblemItem } from "./api-v1.js";
 import {
+  fetchModelList,
+  listingProtocol,
+  ModelListError,
+} from "./model-list.js";
+import { providerFromPreset } from "@harnesshub/core/provider-presets";
+import {
   credentialCreateSchema,
   credentialParams,
   credentialSchema,
@@ -45,6 +52,7 @@ import {
   modelCallPageSchema,
   modelCallsQuerySchema,
   noContent,
+  presetSchema,
   providerCreateSchema,
   providerPatchSchema,
   providerSchema,
@@ -169,6 +177,60 @@ function usageFilter(query: CallQuery): UsageFilter {
   };
 }
 
+interface CredentialBody {
+  id?: string;
+  name: string;
+  value?: string;
+  ref?: SecretReference;
+  protocols?: WireProtocol[];
+  enabled?: boolean;
+}
+
+/** Exactly one of `value` and `ref`; a reference names an env variable or an absolute file. */
+function checkCredentialBody(body: CredentialBody, at: string): void {
+  if ((body.value === undefined) === (body.ref === undefined))
+    throw invalid(
+      "CREDENTIAL_INVALID",
+      "Give either the secret value or a reference",
+      [{ pointer: `${at}/value`, detail: "exactly one of value and ref" }],
+    );
+  if (
+    body.ref !== undefined &&
+    (body.ref.kind === "env"
+      ? !/^[A-Z][A-Z0-9_]*$/.test(body.ref.value)
+      : !path.isAbsolute(body.ref.value))
+  )
+    throw invalid("CREDENTIAL_INVALID", "The reference is invalid", [
+      {
+        pointer: `${at}/ref/value`,
+        detail:
+          body.ref.kind === "env"
+            ? "must name an environment variable (A-Z, 0-9, _)"
+            : "must be an absolute path",
+      },
+    ]);
+}
+
+/** The requested credential ID, or the first free `key-N`. */
+function credentialId(
+  existing: readonly ProviderCredential[],
+  requested: string | undefined,
+): CredentialId {
+  const taken = new Set<string>(existing.map((item) => item.id));
+  if (requested !== undefined) {
+    if (taken.has(requested))
+      throw new ApiProblem(
+        "CREDENTIAL_EXISTS",
+        "The provider has a credential with this ID",
+        409,
+      );
+    return requested as CredentialId;
+  }
+  let index = existing.length + 1;
+  while (taken.has(`key-${index}`)) index += 1;
+  return `key-${index}` as CredentialId;
+}
+
 /** Whether an allowlist entry names a provider's models (`p/*` or `p/model`). */
 function allowsProvider(entry: string, provider: string): boolean {
   const parsed = parseModelRef(entry);
@@ -184,10 +246,49 @@ function allowsProvider(entry: string, provider: string): boolean {
  */
 export function registerModelPlaneRoutes(
   api: FastifyInstance,
-  options: Pick<ApiV1Options, "modelPlane" | "secrets">,
+  options: Pick<
+    ApiV1Options,
+    "modelPlane" | "secrets" | "presets" | "environment"
+  >,
 ): void {
   const store: ModelPlaneStore = options.modelPlane;
   const secrets = options.secrets;
+  /**
+   * Store the credential's value (when it has one), then write the provider
+   * that `withCredential` builds; a secret written for a failed provider
+   * write is removed again.
+   */
+  const writeWithCredential = async (
+    body: CredentialBody,
+    id: CredentialId,
+    withCredential: (credential: ProviderCredential) => ProviderConfig,
+  ): Promise<ProviderCredential> => {
+    const ref =
+      body.value !== undefined ? await secrets.create(body.value) : body.ref!;
+    const credential: ProviderCredential = {
+      id,
+      name: body.name,
+      ref,
+      ...(body.protocols ? { protocols: body.protocols } : {}),
+      enabled: body.enabled ?? true,
+    };
+    try {
+      await store.putProvider(checkProvider(withCredential(credential)));
+    } catch (error) {
+      if (ref.kind === "store") {
+        try {
+          await secrets.delete(ref);
+        } catch (cleanup) {
+          throw new AggregateError(
+            [error, cleanup],
+            "Credential write failed and its secret could not be removed",
+          );
+        }
+      }
+      throw error;
+    }
+    return credential;
+  };
   let queue: Promise<unknown> = Promise.resolve();
   /** Run one mutation after the previous one settled. */
   const serialized = <T>(operation: () => Promise<T>): Promise<T> => {
@@ -218,7 +319,20 @@ export function registerModelPlaneRoutes(
     { schema: { response: responses(listOf(providerSchema)) } },
     async () => ({ items: await store.listProviders(), nextCursor: null }),
   );
-  api.post<{ Body: Json }>(
+  api.get(
+    "/presets",
+    { schema: { response: responses(listOf(presetSchema)) } },
+    async () => ({ items: options.presets.list(), nextCursor: null }),
+  );
+  api.post<{
+    Body: Json & {
+      preset?: string;
+      id?: string;
+      name?: string;
+      endpoints?: Partial<Record<WireProtocol, string>>;
+      credential?: Omit<CredentialBody, "name"> & { name?: string };
+    };
+  }>(
     "/providers",
     {
       schema: {
@@ -228,28 +342,80 @@ export function registerModelPlaneRoutes(
     },
     async (request, reply) =>
       serialized(async () => {
-        const body = request.body;
-        const id = String(body.id);
-        if (await store.getProvider(id as ProviderId))
+        const {
+          preset: presetId,
+          credential: credentialBody,
+          ...fields
+        } = request.body;
+        const now = new Date().toISOString();
+        let base: Json;
+        if (presetId !== undefined) {
+          const preset = options.presets.get(presetId);
+          if (!preset)
+            throw invalid("PRESET_NOT_FOUND", "There is no such preset", [
+              { pointer: "/preset", detail: "is not a known preset ID" },
+            ]);
+          // Fields given with the preset override it, endpoints by protocol.
+          const { id, name, endpoints, ...rest } = fields;
+          base = {
+            ...providerFromPreset(preset, {
+              ...(id !== undefined ? { id } : {}),
+              ...(name !== undefined ? { name } : {}),
+              ...(endpoints !== undefined ? { endpoints } : {}),
+              now,
+            }),
+            ...rest,
+          };
+        } else {
+          const missing = (["id", "endpoints"] as const).filter(
+            (field) => fields[field] === undefined,
+          );
+          if (missing.length)
+            throw invalid(
+              "PROVIDER_INVALID",
+              "Give a preset, or an id and endpoints",
+              missing.map((field) => ({
+                pointer: `/${field}`,
+                detail: "is required without a preset",
+              })),
+            );
+          base = {
+            schemaVersion: 1,
+            name: fields.id,
+            kind: "custom",
+            auth: { apiKeyHeader: "authorization-bearer" },
+            models: { source: "manual", list: [], expose: "all" },
+            ...fields,
+          };
+        }
+        const candidate = {
+          ...base,
+          credentials: [],
+          createdAt: now,
+          updatedAt: now,
+        };
+        const created = checkProvider(candidate);
+        if (await store.getProvider(created.id))
           throw new ApiProblem(
             "PROVIDER_EXISTS",
             "A provider with this ID exists",
             409,
           );
-        const now = new Date().toISOString();
-        const created = checkProvider({
-          schemaVersion: 1,
-          name: id,
-          kind: "custom",
-          auth: { apiKeyHeader: "authorization-bearer" },
-          models: { source: "manual", list: [], expose: "all" },
-          ...body,
-          credentials: [],
-          createdAt: now,
-          updatedAt: now,
-        });
-        await store.putProvider(created);
-        return reply.code(201).send(created);
+        if (credentialBody === undefined) {
+          await store.putProvider(created);
+          return reply.code(201).send(created);
+        }
+        const named = {
+          ...credentialBody,
+          name: credentialBody.name ?? "default",
+        };
+        checkCredentialBody(named, "/credential");
+        const credential = await writeWithCredential(
+          named,
+          credentialId([], credentialBody.id),
+          (item) => ({ ...created, credentials: [item] }),
+        );
+        return reply.code(201).send({ ...created, credentials: [credential] });
       }),
   );
   api.get<{ Params: { id: string } }>(
@@ -317,6 +483,88 @@ export function registerModelPlaneRoutes(
       }),
   );
 
+  api.post<{ Params: { id: string } }>(
+    "/providers/:id/models/refresh",
+    {
+      schema: {
+        params: idParams,
+        body: emptyBodySchema,
+        response: responses(providerSchema),
+      },
+    },
+    async (request) => {
+      // The upstream request runs outside the write queue; its result is
+      // merged into the provider as it is when the request ends.
+      const listed = await provider(request.params.id);
+      const protocol = listingProtocol(listed);
+      const credential = listed.credentials.find(
+        (item) =>
+          item.enabled &&
+          (item.protocols === undefined ||
+            (protocol !== undefined && item.protocols.includes(protocol))),
+      );
+      let models: ProviderModel[] | undefined;
+      let failure: ApiProblem | undefined;
+      let key: string | undefined;
+      try {
+        key = credential
+          ? await secrets.resolve(credential.ref, options.environment)
+          : undefined;
+      } catch {
+        failure = new ApiProblem(
+          "CREDENTIAL_UNAVAILABLE",
+          `The credential ${credential?.id ?? ""} could not be read`,
+          409,
+        );
+      }
+      if (!failure)
+        try {
+          models = await fetchModelList(listed, key);
+        } catch (error) {
+          if (!(error instanceof ModelListError)) throw error;
+          failure = new ApiProblem(
+            "MODELS_REFRESH_FAILED",
+            `The model list could not be refreshed: ${error.message}`,
+            502,
+          );
+        }
+      return serialized(async () => {
+        const current = await provider(request.params.id);
+        const now = new Date().toISOString();
+        if (!models) {
+          // The previous list stays; it is marked stale.
+          await store.putProvider(
+            checkProvider({
+              ...current,
+              models: { ...current.models, stale: true },
+              updatedAt: now,
+            }),
+          );
+          throw failure!;
+        }
+        const previous = new Map(
+          current.models.list.map((model) => [model.id, model]),
+        );
+        const { stale: _stale, ...rest } = current.models;
+        const refreshed = checkProvider({
+          ...current,
+          models: {
+            ...rest,
+            source: "live",
+            // Metadata already known for a model (a price, a window) is kept.
+            list: models.map((model) => ({
+              ...model,
+              ...previous.get(model.id),
+            })),
+            refreshedAt: now,
+          },
+          updatedAt: now,
+        });
+        await store.putProvider(refreshed);
+        return refreshed;
+      });
+    },
+  );
   api.get<{ Params: { id: string } }>(
     "/providers/:id/credentials",
     {
@@ -330,17 +578,7 @@ export function registerModelPlaneRoutes(
       nextCursor: null,
     }),
   );
-  api.post<{
-    Params: { id: string };
-    Body: {
-      id?: string;
-      name: string;
-      value?: string;
-      ref?: SecretReference;
-      protocols?: WireProtocol[];
-      enabled?: boolean;
-    };
-  }>(
+  api.post<{ Params: { id: string }; Body: CredentialBody }>(
     "/providers/:id/credentials",
     {
       schema: {
@@ -352,74 +590,17 @@ export function registerModelPlaneRoutes(
     async (request, reply) =>
       serialized(async () => {
         const body = request.body;
-        if ((body.value === undefined) === (body.ref === undefined))
-          throw invalid(
-            "CREDENTIAL_INVALID",
-            "Give either the secret value or a reference",
-            [{ pointer: "/value", detail: "exactly one of value and ref" }],
-          );
-        if (
-          body.ref !== undefined &&
-          (body.ref.kind === "env"
-            ? !/^[A-Z][A-Z0-9_]*$/.test(body.ref.value)
-            : !path.isAbsolute(body.ref.value))
-        )
-          throw invalid("CREDENTIAL_INVALID", "The reference is invalid", [
-            {
-              pointer: "/ref/value",
-              detail:
-                body.ref.kind === "env"
-                  ? "must name an environment variable (A-Z, 0-9, _)"
-                  : "must be an absolute path",
-            },
-          ]);
+        checkCredentialBody(body, "");
         const current = await provider(request.params.id);
-        const taken = new Set<string>(
-          current.credentials.map((item) => item.id),
+        const added = await writeWithCredential(
+          body,
+          credentialId(current.credentials, body.id),
+          (credential) => ({
+            ...current,
+            credentials: [...current.credentials, credential],
+            updatedAt: new Date().toISOString(),
+          }),
         );
-        let id = body.id;
-        if (id === undefined) {
-          let index = current.credentials.length + 1;
-          while (taken.has(`key-${index}`)) index += 1;
-          id = `key-${index}`;
-        } else if (taken.has(id))
-          throw new ApiProblem(
-            "CREDENTIAL_EXISTS",
-            "The provider has a credential with this ID",
-            409,
-          );
-        const ref =
-          body.value !== undefined
-            ? await secrets.create(body.value)
-            : body.ref!;
-        const added: ProviderCredential = {
-          id: id as CredentialId,
-          name: body.name,
-          ref,
-          ...(body.protocols ? { protocols: body.protocols } : {}),
-          enabled: body.enabled ?? true,
-        };
-        try {
-          await store.putProvider(
-            checkProvider({
-              ...current,
-              credentials: [...current.credentials, added],
-              updatedAt: new Date().toISOString(),
-            }),
-          );
-        } catch (error) {
-          if (ref.kind === "store") {
-            try {
-              await secrets.delete(ref);
-            } catch (cleanup) {
-              throw new AggregateError(
-                [error, cleanup],
-                "Credential write failed and its secret could not be removed",
-              );
-            }
-          }
-          throw error;
-        }
         return reply.code(201).send(added);
       }),
   );

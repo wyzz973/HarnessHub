@@ -238,16 +238,40 @@ export const providerSchema = {
   },
 } as const;
 
-/** `POST /providers`: credentials are added through their own route. */
+/**
+ * `POST /providers`: either `preset` (fields given with it override the
+ * preset) or `id` and `endpoints`; `credential` adds the first credential.
+ */
 export const providerCreateSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["id", "endpoints"],
   properties: {
+    preset: slug,
+    credential: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        id: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,62}$" },
+        name: text(200),
+        value: { type: "string", minLength: 1, maxLength: 8192 },
+        ref: {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind", "value"],
+          properties: { kind: { enum: ["env", "file"] }, value: text(8192) },
+        },
+        protocols: {
+          type: "array",
+          minItems: 1,
+          uniqueItems: true,
+          items: protocol,
+        },
+        enabled: { type: "boolean" },
+      },
+    },
     id: slug,
     name: text(200),
     kind: providerSchema.properties.kind,
-    preset: text(200),
     endpoints,
     auth: providerSchema.properties.auth,
     headers,
@@ -259,6 +283,61 @@ export const providerCreateSchema = {
   },
 } as const;
 
+/** A shipped provider preset (`GET /presets`). */
+export const presetSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "schemaVersion",
+    "id",
+    "name",
+    "kind",
+    "verified",
+    "auth",
+    "endpoints",
+    "models",
+  ],
+  properties: {
+    schemaVersion: { type: "integer", enum: [1] },
+    id: slug,
+    name: text(200),
+    kind: providerSchema.properties.kind,
+    website: { type: "string" },
+    keysUrl: { type: "string" },
+    catalog: { type: "string" },
+    verified: {
+      type: "string",
+      description: "YYYY-MM-DD the endpoints were checked, or unverified",
+    },
+    auth: {
+      type: "object",
+      additionalProperties: false,
+      required: ["methods", "apiKeyHeader"],
+      properties: {
+        methods: {
+          type: "array",
+          items: { type: "string", enum: ["api-key", "none"] },
+        },
+        apiKeyHeader,
+      },
+    },
+    endpoints,
+    models: {
+      type: "object",
+      additionalProperties: false,
+      required: ["source"],
+      properties: {
+        source: { type: "string", enum: ["live", "static", "catalog"] },
+        listPath: { type: "string" },
+        list: { type: "array", items: providerModel },
+      },
+    },
+    capabilities,
+    patches,
+    notes: { type: "string" },
+  },
+} as const;
+
 /** `PATCH /providers/{id}`: JSON Merge Patch (RFC 7396); `null` removes an optional member. */
 export const providerPatchSchema = {
   type: "object",
@@ -267,7 +346,8 @@ export const providerPatchSchema = {
   properties: {
     name: text(200),
     kind: providerSchema.properties.kind,
-    preset: { type: ["string", "null"], minLength: 1, maxLength: 200 },
+    /** Only null: detaches the provider from its preset. */
+    preset: { type: "null" },
     endpoints: {
       type: "object",
       additionalProperties: false,

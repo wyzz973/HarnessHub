@@ -45,6 +45,7 @@ import {
 } from "@harnesshub/secrets/secret-store";
 import { ensureAdminToken, ADMIN_TOKEN_FILE } from "./admin-token.js";
 import { registerApiV1 } from "./http/api-v1.js";
+import { getPreset, listPresets } from "@harnesshub/gateway/presets";
 import { ProcessWorkerHost } from "@harnesshub/runtime/process/worker-host";
 import { sharedProcessLauncher } from "@harnesshub/runtime/process/launcher";
 import { usePlatformLauncher } from "@harnesshub/store/platform/process-launcher";
@@ -568,6 +569,9 @@ export async function startHub(options: {
       adminTokenDigest,
       modelPlane,
       secrets,
+      presets: { list: listPresets, get: getPreset },
+      // env credential references read the environment the daemon started with.
+      environment: Object.freeze({ ...process.env }),
       system: {
         apiVersion: "v1",
         version: build.version,
