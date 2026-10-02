@@ -8,7 +8,7 @@
 - `auth.apiKeyHeader`：Key 的发送方式；`auth.methods` 为 `["api-key"]`，本机服务为 `["none"]`（可选 Key 时两者都列）。
 - `models.source`：优先 `live`，由 `POST /api/v1/providers/{id}/models/refresh` 从上游列出；只有稳定时才给 `static` 的小列表。
 - `verified`：对照厂商官方文档核对端点基址与 Key 的发送方式的日期（`YYYY-MM-DD`），没有核对时写 `unverified`；`website`、`keysUrl` 与 `notes` 中的链接只是方便，不在核对范围内。修改端点时同步更新它。
-- 一个 provider 只有一种 Key 发送方式。厂商的不同端点要求不同方式时（如 DeepSeek 的对话端点用 Bearer、Anthropic 兼容端点用 `x-api-key`），预设只收录与认证方式一致的端点，其余写在 `notes` 中。
-- `notes`：展示给用户的简短说明，例如国际站地址或需要修改端点的本机服务。
+- 一个 provider 只有一种 Key 发送方式。厂商的不同端点要求不同方式时（如 Gemini 的原生端点用 `x-goog-api-key`、OpenAI 兼容端点用 Bearer），预设只收录与认证方式一致的端点，其余写在 `notes` 中。
+- `notes`：展示给用户的简短说明，例如国际站地址或需要修改端点的本机服务。预设格式还没有地域字段，有多个地域的厂商默认收录中国站，其他地域写在这里。
 
 添加预设只需新增一个文件，并在提交说明中给出核对所依据的官方文档链接。

@@ -14,7 +14,9 @@
     "apiKeyHeader": "authorization-bearer"
   },
   "endpoints": {
-    "chat": "https://api.deepseek.com"
+    "chat": "https://api.deepseek.com",
+    "responses": "https://api.deepseek.com",
+    "anthropic": "https://api.deepseek.com/anthropic"
   },
   "models": {
     "source": "live"
@@ -28,6 +30,5 @@
         "developer-to-system"
       ]
     }
-  },
-  "notes": "DeepSeek 的 Anthropic 兼容端点 https://api.deepseek.com/anthropic 要求 x-api-key，与对话端点的 Bearer 不同；需要时另建一个 provider，Key 发送方式选 x-api-key。"
+  }
 }

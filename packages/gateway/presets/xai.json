@@ -4,7 +4,7 @@
   "name": "xAI (Grok)",
   "kind": "vendor",
   "website": "https://x.ai/api",
-  "keysUrl": "https://console.x.ai",
+  "keysUrl": "https://console.x.ai/team/default/api-keys",
   "catalog": "xai",
   "verified": "2026-10-02",
   "auth": {

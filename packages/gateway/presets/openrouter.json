@@ -14,7 +14,9 @@
     "apiKeyHeader": "authorization-bearer"
   },
   "endpoints": {
-    "chat": "https://openrouter.ai/api/v1"
+    "chat": "https://openrouter.ai/api/v1",
+    "responses": "https://openrouter.ai/api/v1",
+    "anthropic": "https://openrouter.ai/api"
   },
   "models": {
     "source": "live"

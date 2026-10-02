@@ -18,5 +18,6 @@
   },
   "models": {
     "source": "live"
-  }
+  },
+  "notes": "Gemini 另有 OpenAI 兼容端点 https://generativelanguage.googleapis.com/v1beta/openai，但它用 Bearer 发送 Key，与原生端点的 x-goog-api-key 不同；需要时另建一个 provider。"
 }

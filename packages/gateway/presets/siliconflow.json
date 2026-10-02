@@ -14,10 +14,11 @@
     "apiKeyHeader": "authorization-bearer"
   },
   "endpoints": {
-    "chat": "https://api.siliconflow.cn/v1"
+    "chat": "https://api.siliconflow.cn/v1",
+    "anthropic": "https://api.siliconflow.cn"
   },
   "models": {
     "source": "live"
   },
-  "notes": "中国站；国际站请把端点改为 api.siliconflow.com。"
+  "notes": "中国站。国际站账号请把端点改为 https://api.siliconflow.com/v1 与 https://api.siliconflow.com，Key 在 https://cloud.siliconflow.com/account/ak。"
 }

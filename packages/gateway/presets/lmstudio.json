@@ -14,7 +14,8 @@
   },
   "endpoints": {
     "chat": "http://127.0.0.1:1234/v1",
-    "responses": "http://127.0.0.1:1234/v1"
+    "responses": "http://127.0.0.1:1234/v1",
+    "anthropic": "http://127.0.0.1:1234"
   },
   "models": {
     "source": "live"

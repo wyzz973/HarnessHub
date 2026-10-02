@@ -409,9 +409,12 @@ void test(
     );
     assert.match(
       presets.stdout,
-      /\ndeepseek +DeepSeek +vendor +chat +required +2026-10-02/,
+      /\ndeepseek +DeepSeek +vendor +chat,responses,anthropic +required +2026-10-02\n/,
     );
-    assert.match(presets.stdout, /\nollama +Ollama +local +chat +none +/);
+    assert.match(
+      presets.stdout,
+      /\nollama +Ollama +local +chat,responses,anthropic +none +2026-10-02\n/,
+    );
 
     const added = await run(
       [

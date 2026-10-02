@@ -4,7 +4,7 @@
   "name": "阿里云百炼 (Qwen)",
   "kind": "vendor",
   "website": "https://bailian.console.aliyun.com",
-  "keysUrl": "https://bailian.console.aliyun.com/?apiKey=1",
+  "keysUrl": "https://bailian.console.aliyun.com/cn-beijing/model/settings/api-key",
   "catalog": "alibaba-cn",
   "verified": "2026-10-02",
   "auth": {
@@ -14,10 +14,11 @@
     "apiKeyHeader": "authorization-bearer"
   },
   "endpoints": {
-    "chat": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    "chat": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "anthropic": "https://dashscope.aliyuncs.com/apps/anthropic"
   },
   "models": {
     "source": "live"
   },
-  "notes": "北京地域的旧式地址，仍受支持；官方现在推荐按工作空间的地址 https://<WorkspaceId>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1，其他地域（新加坡、弗吉尼亚等）的 Key 只能用对应地域的地址。"
+  "notes": "北京地域的共享域名（阿里云称为旧式域名，仍可用，推荐改用 https://<WorkspaceId>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1）。Key 按地域区分：新加坡用 dashscope-intl.aliyuncs.com，美国用 dashscope-us.aliyuncs.com。兼容模式的 /models 接口未核对，刷新模型可能失败，届时请手动填写。"
 }

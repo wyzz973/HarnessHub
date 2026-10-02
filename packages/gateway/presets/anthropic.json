@@ -18,5 +18,6 @@
   },
   "models": {
     "source": "live"
-  }
+  },
+  "notes": "Anthropic 的 OpenAI 兼容对话端点官方说明不适合生产使用，未收录。"
 }

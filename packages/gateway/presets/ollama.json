@@ -12,10 +12,12 @@
     "apiKeyHeader": "authorization-bearer"
   },
   "endpoints": {
-    "chat": "http://127.0.0.1:11434/v1"
+    "chat": "http://127.0.0.1:11434/v1",
+    "responses": "http://127.0.0.1:11434/v1",
+    "anthropic": "http://127.0.0.1:11434"
   },
   "models": {
     "source": "live"
   },
-  "notes": "本机 Ollama 的默认地址；不需要 API Key。"
+  "notes": "本机 Ollama 的默认地址；不需要 API Key。Responses 只支持无状态调用。"
 }

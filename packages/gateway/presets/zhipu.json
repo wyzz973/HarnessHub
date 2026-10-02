@@ -15,9 +15,11 @@
   },
   "endpoints": {
     "chat": "https://open.bigmodel.cn/api/paas/v4",
+    "responses": "https://open.bigmodel.cn/api/v1",
     "anthropic": "https://open.bigmodel.cn/api/anthropic"
   },
   "models": {
-    "source": "live"
-  }
+    "source": "static"
+  },
+  "notes": "智谱没有公开的模型列表接口，请在编辑 provider 时手动填写模型（如 GLM 系列的模型 ID）。Coding Plan 的对话端点是 https://open.bigmodel.cn/api/coding/paas/v4。"
 }

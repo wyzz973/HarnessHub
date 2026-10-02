@@ -14,7 +14,8 @@
     "apiKeyHeader": "authorization-bearer"
   },
   "endpoints": {
-    "chat": "https://api.groq.com/openai/v1"
+    "chat": "https://api.groq.com/openai/v1",
+    "responses": "https://api.groq.com/openai/v1"
   },
   "models": {
     "source": "live"
