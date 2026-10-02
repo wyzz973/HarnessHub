@@ -3,16 +3,20 @@ import {
   GatewayError,
   array,
   boundedNumber,
+  imagePart,
   omittedMedia,
   nativeTool,
   object,
   record,
   string,
   toolAlias,
+  userContent,
   type ChatResult,
   type ChatTranslation,
+  type ReasoningRequest,
   type ToolBinding,
   type ToolCall,
+  type TranslateOptions,
   type Usage,
 } from "./protocol.js";
 import {
@@ -62,28 +66,46 @@ const FIELDS = new Set([
   "safety_identifier",
 ]);
 
+/** Content parts as Chat text parts, and as image parts when `images` allows. */
+function parts(
+  value: unknown,
+  what: string,
+  images = false,
+): Record<string, unknown>[] {
+  if (value === undefined || value === null) return [];
+  if (typeof value === "string") return [{ type: "text", text: value }];
+  return array(value).map((raw) => {
+    const part = object(raw);
+    switch (part.type) {
+      case "input_text":
+      case "output_text":
+      case "text":
+        return { type: "text", text: string(part.text) };
+      case "refusal":
+        return { type: "text", text: string(part.refusal) };
+      case "input_image":
+        if (images && typeof part.image_url === "string" && part.image_url)
+          return imagePart(part.image_url);
+        return { type: "text", text: omittedMedia(`${what} ${part.type}`) };
+      case "input_file":
+      case "input_audio":
+        return { type: "text", text: omittedMedia(`${what} ${part.type}`) };
+      default:
+        throw new GatewayError(`Unsupported ${what} content part`);
+    }
+  });
+}
 function text(value: unknown, what: string): string {
-  if (value === undefined || value === null) return "";
-  if (typeof value === "string") return value;
-  return array(value)
-    .map((raw) => {
-      const part = object(raw);
-      switch (part.type) {
-        case "input_text":
-        case "output_text":
-        case "text":
-          return string(part.text);
-        case "refusal":
-          return string(part.refusal);
-        case "input_image":
-        case "input_file":
-        case "input_audio":
-          return omittedMedia(`${what} ${part.type}`);
-        default:
-          throw new GatewayError(`Unsupported ${what} content part`);
-      }
-    })
+  return parts(value, what)
+    .map((part) => part.text as string)
     .join("\n");
+}
+function reasoningRequest(value: unknown): ReasoningRequest | undefined {
+  const reasoning = record(value);
+  if (!reasoning) return undefined;
+  const effort = reasoning.effort;
+  if (effort === "none") return { off: true };
+  return typeof effort === "string" ? { effort } : {};
 }
 function reasoningText(item: Record<string, unknown>): string {
   const encoded = decodeReasoning(item.encrypted_content);
@@ -106,9 +128,13 @@ function reasoningText(item: Record<string, unknown>): string {
  * Function, custom (freeform) and namespace tools map to Chat functions;
  * reasoning items become `reasoning_content` of the next assistant message.
  * Server state (`previous_response_id`, `conversation`, stored prompts,
- * background) and hosted tools fail explicitly; media input becomes text placeholders.
+ * background) and hosted tools fail explicitly. Image input becomes Chat image
+ * parts with `options.images`; other media become text placeholders.
  */
-export function responsesToChat(raw: unknown): ChatTranslation {
+export function responsesToChat(
+  raw: unknown,
+  options: TranslateOptions = {},
+): ChatTranslation {
   const request = object(raw);
   for (const key of Object.keys(request))
     if (!FIELDS.has(key))
@@ -205,6 +231,16 @@ export function responsesToChat(raw: unknown): ChatTranslation {
       const role = string(item.role);
       if (!["system", "developer", "user", "assistant"].includes(role))
         throw new GatewayError("Unsupported message role");
+      if (role === "user") {
+        messages.push({
+          role,
+          content: userContent(
+            parts(item.content, "message", options.images),
+            "\n",
+          ),
+        });
+        continue;
+      }
       const content = text(item.content, "message");
       if (role !== "assistant") {
         messages.push({ role, content });
@@ -323,6 +359,7 @@ export function responsesToChat(raw: unknown): ChatTranslation {
     else if (format.type !== "text")
       throw new GatewayError("Unsupported output format");
   }
+  const effort = reasoningRequest(request.reasoning);
   return {
     body,
     tools: bindings,
@@ -330,6 +367,7 @@ export function responsesToChat(raw: unknown): ChatTranslation {
     ...(typeof request.model === "string"
       ? { requestedModel: request.model }
       : {}),
+    ...(effort ? { reasoning: effort } : {}),
   };
 }
 

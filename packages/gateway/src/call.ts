@@ -6,6 +6,7 @@
  * content event while alternatives remain, and the `model.call` entry
  * committed before the terminal event or body is written (section 8).
  */
+import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
@@ -37,6 +38,8 @@ import {
   type MemoryBudget,
   type Slots,
 } from "./http.js";
+import { createDecoder, type UpstreamDecoder } from "./decode.js";
+import { encodeRequest } from "./encode.js";
 import { Keepalive } from "./keepalive.js";
 import { callCost, callUsage, usageParts, type UsageParts } from "./ledger.js";
 import type { HandlerLimits } from "./limits.js";
@@ -61,6 +64,7 @@ import {
   type ChatResult,
   type ChatTranslation,
   type ReasoningField,
+  type TranslateOptions,
 } from "./protocol.js";
 import { ReasoningCache, restoreReasoning, resultKeys } from "./reasoning.js";
 import { responsesToChat, ResponsesSink, streamCode } from "./responses.js";
@@ -154,7 +158,60 @@ export class ReasoningCaches {
   setField(provider: string, field: ReasoningField): void {
     this.#fields.set(provider, field);
   }
+
+  /** Gateway Key → signature key → issuing provider and signature; both levels LRU. */
+  #signatures = new Map<
+    string,
+    Map<string, { provider: string; signature: string }>
+  >();
+  #signatureKey(kind: "thinking" | "call", key: string): string {
+    return kind === "thinking"
+      ? `t:${createHash("sha256").update(key).digest("hex")}`
+      : `c:${key}`;
+  }
+  /**
+   * A signature the provider issued for a thinking text or a tool call id in
+   * this key's earlier answers. Signatures are only valid for their issuer,
+   * so another provider's signature is never returned.
+   */
+  signature(
+    keyId: string,
+    provider: string,
+    kind: "thinking" | "call",
+    key: string,
+  ): string | undefined {
+    const entry = this.#signatures
+      .get(keyId)
+      ?.get(this.#signatureKey(kind, key));
+    return entry?.provider === provider ? entry.signature : undefined;
+  }
+  rememberSignature(
+    keyId: string,
+    provider: string,
+    kind: "thinking" | "call",
+    key: string,
+    signature: string,
+  ): void {
+    let entries = this.#signatures.get(keyId);
+    if (entries) this.#signatures.delete(keyId);
+    else entries = new Map();
+    this.#signatures.set(keyId, entries);
+    const name = this.#signatureKey(kind, key);
+    entries.delete(name);
+    entries.set(name, { provider, signature });
+    for (const oldest of entries.keys()) {
+      if (entries.size <= SIGNATURES_PER_KEY) break;
+      entries.delete(oldest);
+    }
+    for (const oldest of this.#signatures.keys()) {
+      if (this.#signatures.size <= SIGNATURE_KEYS) break;
+      this.#signatures.delete(oldest);
+    }
+  }
 }
+/** Signatures kept per Gateway Key, and Gateway Keys with signatures. */
+const SIGNATURES_PER_KEY = 512;
+const SIGNATURE_KEYS = 1024;
 
 /** Handler-owned services one call uses. */
 export interface CallServices {
@@ -215,8 +272,12 @@ type Prepared =
   | {
       kind: "translated";
       translation: ChatTranslation;
+      /** The normalized Chat request (the pivot). */
+      chat: Record<string, unknown>;
+      /** The upstream request body: the Chat request, or its encoding for another protocol. */
       body: string;
       patches: string[];
+      unmapped: string[];
       replay: boolean;
     }
   | { kind: "skip"; error: AttemptError };
@@ -295,16 +356,16 @@ function cancelled(call: Call): AttemptError {
   };
 }
 
-function translate(call: Call): ChatTranslation {
+function translate(call: Call, options: TranslateOptions): ChatTranslation {
   switch (call.route.protocol) {
     case "chat":
       return chatToChat(call.raw);
     case "responses":
-      return responsesToChat(call.raw);
+      return responsesToChat(call.raw, options);
     case "anthropic":
-      return anthropicToChat(call.raw);
+      return anthropicToChat(call.raw, options);
     case "gemini":
-      return googleToChat(call.raw, call.requested, call.stream);
+      return googleToChat(call.raw, call.requested, call.stream, options);
   }
 }
 
@@ -710,9 +771,10 @@ function prepare(call: Call, candidate: Candidate): Prepared {
     );
     return tooLarge(body.length) ?? { kind: "passthrough", body, patches };
   }
+  const images = candidate.model?.inputModalities?.includes("image") === true;
   let translation: ChatTranslation;
   try {
-    translation = translate(call);
+    translation = translate(call, { images });
   } catch (error) {
     if (!(error instanceof GatewayError)) throw error;
     return {
@@ -731,8 +793,12 @@ function prepare(call: Call, candidate: Candidate): Prepared {
     };
   }
   const patches = new Set(set?.patches ?? []);
+  const chatUpstream = candidate.upstream === "chat";
+  // Anthropic takes history thinking only with its signature, which is
+  // looked up by the reasoning text the cache restores.
   const replay =
-    candidate.provider.capabilities?.requiresReasoningReplay === true;
+    candidate.provider.capabilities?.requiresReasoningReplay === true ||
+    candidate.upstream === "anthropic";
   if (replay)
     restoreReasoning(
       translation.body.messages,
@@ -749,14 +815,14 @@ function prepare(call: Call, candidate: Candidate): Prepared {
     maxTokensField: patches.has("max-tokens-field")
       ? "max_completion_tokens"
       : "max_tokens",
-    dropParameters: drops,
-    images: candidate.model?.inputModalities?.includes("image")
-      ? "passthrough"
-      : "placeholder",
+    // Other protocols drop their fields from the encoded body below.
+    dropParameters: chatUpstream ? drops : [],
+    images: images ? "passthrough" : "placeholder",
   };
   const applied: string[] = [];
-  for (const field of drops)
-    if (field in translation.body) applied.push(`drop-fields:${field}`);
+  if (chatUpstream)
+    for (const field of drops)
+      if (field in translation.body) applied.push(`drop-fields:${field}`);
   if (
     patches.has("json-schema-to-json-object") &&
     (translation.body.response_format as { type?: unknown } | undefined)
@@ -785,13 +851,34 @@ function prepare(call: Call, candidate: Candidate): Prepared {
   }
   if (patches.has("max-tokens-field") && "max_completion_tokens" in body)
     applied.push("max-tokens-field");
-  const text = JSON.stringify(body);
+  let upstream = body;
+  let unmapped: string[] = [];
+  if (candidate.upstream !== "chat") {
+    const { reasoning } = call.services;
+    const encoded = encodeRequest(candidate.upstream, body, {
+      translation,
+      model: candidate.model,
+      signature: (kind, key) =>
+        reasoning.signature(call.key.keyId, candidate.provider.id, kind, key),
+    });
+    upstream = encoded.body;
+    for (const field of drops)
+      if (field in upstream) {
+        delete upstream[field];
+        applied.push(`drop-fields:${field}`);
+      }
+    applied.push(...encoded.patches);
+    unmapped = encoded.unmapped;
+  }
+  const text = JSON.stringify(upstream);
   return (
     tooLarge(Buffer.byteLength(text)) ?? {
       kind: "translated",
       translation,
+      chat: body,
       body: text,
       patches: applied,
+      unmapped,
       replay,
     }
   );
@@ -981,6 +1068,35 @@ function recordSuccess(
   entry.completion = terminated ? "explicit" : "inferred";
 }
 
+/**
+ * Keep the signatures of a successful answer for this key's next request to
+ * the same provider: a single thinking block's signature by its text, and
+ * Gemini function-call signatures by the call id the client will send back.
+ */
+function rememberSignatures(
+  call: Call,
+  candidate: Candidate,
+  decoder: UpstreamDecoder,
+  result: ChatResult,
+): void {
+  const { reasoning } = call.services;
+  const remember = (kind: "thinking" | "call", key: string, value: string) =>
+    reasoning.rememberSignature(
+      call.key.keyId,
+      candidate.provider.id,
+      kind,
+      key,
+      value,
+    );
+  const [thinking, ...more] = decoder.thinking;
+  if (thinking?.signature && !more.length && thinking.text === result.reasoning)
+    remember("thinking", thinking.text, thinking.signature);
+  for (const [index, signature] of decoder.callSignatures) {
+    const id = result.calls[index]?.id;
+    if (id) remember("call", id, signature);
+  }
+}
+
 async function translatedAttempt(
   call: Call,
   candidate: Candidate,
@@ -992,11 +1108,11 @@ async function translatedAttempt(
   const { limits } = services;
   const abort = new AbortController();
   const timers = new AttemptTimers();
-  const sink = createSink(
-    call,
-    prepared.translation,
-    JSON.parse(prepared.body) as Record<string, unknown>,
-  );
+  const sink = createSink(call, prepared.translation, prepared.chat);
+  const decoder =
+    candidate.upstream === "chat"
+      ? undefined
+      : createDecoder(candidate.upstream);
   const hold = new SinkHold(
     sink,
     alternatives && prepared.translation.stream,
@@ -1007,9 +1123,21 @@ async function translatedAttempt(
     },
   );
   const sent = await send(call, candidate, attempt, abort, timers, (secret) => {
-    const url = chatCompletionsUrl(candidate.endpoint);
+    const url =
+      candidate.upstream === "chat"
+        ? chatCompletionsUrl(candidate.endpoint)
+        : upstreamUrl(
+            candidate.upstream,
+            candidate.endpoint,
+            candidate.wireModel,
+            {
+              version: call.route.gemini?.version ?? "v1beta",
+              method: "streamGenerateContent",
+              sse: true,
+            },
+          );
     const { headers } = upstreamHeaders(
-      "chat",
+      candidate.upstream,
       undefined,
       candidate.provider,
       secret,
@@ -1082,6 +1210,7 @@ async function translatedAttempt(
           keepalive.data();
         },
       },
+      decoder,
     );
     await timers.stop(call.closed);
     if (data === 0)
@@ -1109,6 +1238,10 @@ async function translatedAttempt(
       result.finish,
       result.terminated === true,
     );
+    if (decoder?.unmapped.size)
+      call.entry.unmapped = [
+        ...new Set([...call.entry.unmapped, ...decoder.unmapped]),
+      ];
     const recorded = await commit(call);
     try {
       if (recorded) {
@@ -1128,6 +1261,8 @@ async function translatedAttempt(
         .cache(call.key.keyId)
         .remember(result.reasoning, resultKeys(result));
     }
+    if (recorded && decoder)
+      rememberSignatures(call, candidate, decoder, result);
     return { kind: "published", tokens: tokens(call.entry.usage) };
   } catch (error) {
     await timers.stop(call.closed);
@@ -1450,8 +1585,9 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
           call,
           last ?? localError(503, "attempts_exhausted", "No attempt left"),
         );
-      // A retry of this call was already decided with its wait (a Retry-After
-      // cooldown included), so only the first try asks the breaker.
+      // A retry of this call was decided with its wait, a Retry-After
+      // cooldown included, and checked the breaker then; only the first try
+      // asks the breaker here.
       if (retries === 0) {
         const admitted = services.breakers.admit(candidate);
         if (!admitted.ok) {
@@ -1473,6 +1609,7 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
       entry.upstreamProtocol = candidate.upstream;
       entry.mode = candidate.mode;
       entry.patches = prepared.patches;
+      entry.unmapped = prepared.kind === "translated" ? prepared.unmapped : [];
       const attempt: CallAttempt = {
         provider: candidate.provider.id,
         credentialId: candidate.credential.id,
@@ -1555,9 +1692,12 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
         decision = "retry";
         wait = backoff(policy, retries);
       } else if (left && verdict.failover && more) decision = "failover";
+      // A retry onto a breaker this failure just opened fails over instead;
+      // only a Retry-After wait (its own cooldown) retries regardless.
       if (
         decision === "retry" &&
-        performance.now() - began + wait > RETRY_BUDGET_MS
+        (performance.now() - began + wait > RETRY_BUDGET_MS ||
+          (verdict.retry !== "after" && services.breakers.blocked(candidate)))
       )
         decision = verdict.failover && more ? "failover" : "stop";
       attempt.decision = decision;
@@ -1601,7 +1741,7 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
       400,
       "unsupported_route",
       plan.skipped.length
-        ? `No candidate can serve ${call.route.protocol} requests: ${plan.skipped.join("; ")}. Translation to non-Chat upstreams is not implemented yet`.slice(
+        ? `No candidate can serve ${call.route.protocol} requests: ${plan.skipped.join("; ")}`.slice(
             0,
             500,
           )

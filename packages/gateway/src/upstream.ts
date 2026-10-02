@@ -211,12 +211,14 @@ export function parseUsage(raw: unknown): Usage | undefined {
     count(completion?.reasoning_tokens) ?? count(value.reasoning_tokens);
   const cached =
     count(prompt?.cached_tokens) ?? count(value.prompt_cache_hit_tokens);
+  const cacheWrite = count(value.cache_creation_input_tokens);
   return {
     ...(input === undefined ? {} : { input }),
     ...(output === undefined ? {} : { output }),
     ...(total === undefined ? {} : { total }),
     ...(reasoning === undefined ? {} : { reasoning }),
     ...(cached === undefined ? {} : { cached }),
+    ...(cacheWrite === undefined ? {} : { cacheWrite }),
   };
 }
 
@@ -524,6 +526,19 @@ class SseParser {
   }
 }
 
+/**
+ * Turns the payloads of a non-Chat upstream protocol into Chat chunks, so
+ * that {@link readCompletion} reads every protocol through one tool
+ * accumulator and finish normalization. Stateful per response; throws a
+ * {@link GatewayError} for an upstream error event.
+ */
+export interface ChunkDecoder {
+  /** Chat chunks for one SSE data payload; empty for events without content. */
+  event(payload: unknown): Record<string, unknown>[];
+  /** Chat chunks for a complete JSON body. */
+  body(payload: unknown): Record<string, unknown>[];
+}
+
 /** Read-side limits and progress observers owned by the gateway. */
 export interface ReadLimits {
   maxBytes: number;
@@ -539,20 +554,23 @@ export interface ReadLimits {
 /**
  * Read a successful (2xx) upstream response. SSE is parsed leniently (missing
  * `[DONE]`, missing trailing blank line, null fields); a JSON body is read as a
- * complete Chat completion. Throws {@link GatewayError} for upstream errors,
- * malformed data or bodies above `maxBytes`. Abort errors propagate unchanged.
+ * complete Chat completion. With a `decoder`, payloads of another protocol
+ * are turned into Chat chunks first. Throws {@link GatewayError} for upstream
+ * errors, malformed data or bodies above `maxBytes`. Abort errors propagate
+ * unchanged.
  */
 export async function readCompletion(
   response: Response,
   handlers: CompletionHandlers,
   makeId: () => string,
   limits: ReadLimits,
+  decoder?: ChunkDecoder,
 ): Promise<ChatResult> {
   const completion = new Completion(makeId, handlers);
   const json = /application\/json/i.test(
     response.headers.get("content-type") ?? "",
   );
-  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const utf8 = new TextDecoder("utf-8", { fatal: true });
   const parse = (data: string): unknown => {
     try {
       return JSON.parse(data);
@@ -561,7 +579,12 @@ export async function readCompletion(
     }
   };
   const sse = new SseParser(
-    (data) => completion.chunk(parse(data), true),
+    async (data) => {
+      const payload = parse(data);
+      if (!decoder) return completion.chunk(payload, true);
+      for (const chunk of decoder.event(payload))
+        await completion.chunk(chunk, true);
+    },
     () => limits.data(),
   );
   let body = "",
@@ -578,7 +601,7 @@ export async function readCompletion(
         );
       let text: string;
       try {
-        text = decoder.decode(chunk, { stream: true });
+        text = utf8.decode(chunk, { stream: true });
       } catch {
         throw new GatewayError("Upstream sent invalid UTF-8", 502);
       }
@@ -589,12 +612,17 @@ export async function readCompletion(
     }
   let tail: string;
   try {
-    tail = decoder.decode();
+    tail = utf8.decode();
   } catch {
     throw new GatewayError("Upstream sent invalid UTF-8", 502);
   }
-  if (json) await completion.chunk(parse(body + tail), false);
-  else await sse.feed(tail, true);
+  if (json) {
+    const payload = parse(body + tail);
+    if (!decoder) await completion.chunk(payload, false);
+    else
+      for (const chunk of decoder.body(payload))
+        await completion.chunk(chunk, true);
+  } else await sse.feed(tail, true);
   return completion.result(json || sse.done);
 }
 

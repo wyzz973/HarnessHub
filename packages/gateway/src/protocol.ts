@@ -115,6 +115,37 @@ export function nativeTool(
   return tools.get(name) ?? { name, custom: false };
 }
 
+/**
+ * Reasoning the client asked for, in its own protocol's terms. The Chat body
+ * has no common field for it; non-Chat upstream encoders read it here.
+ */
+export interface ReasoningRequest {
+  /** OpenAI-style effort (`minimal`, `low`, `medium`, `high`, …). */
+  effort?: string;
+  /** Explicit token budget (Anthropic `budget_tokens`, Gemini `thinkingBudget`). */
+  budgetTokens?: number;
+  /** The client explicitly turned reasoning off. */
+  off?: boolean;
+}
+/** Options of the inbound translators; absent options keep the Session gateway's behaviour. */
+export interface TranslateOptions {
+  /** Keep images as Chat `image_url` parts instead of text placeholders. */
+  images?: boolean;
+}
+/** Image content as a Chat `image_url` part. */
+export function imagePart(url: string): Record<string, unknown> {
+  return { type: "image_url", image_url: { url } };
+}
+/** User content from text and image parts: a joined string when there are no images. */
+export function userContent(
+  parts: Record<string, unknown>[],
+  separator: string,
+): string | Record<string, unknown>[] {
+  return parts.every((part) => part.type === "text")
+    ? parts.map((part) => part.text as string).join(separator)
+    : parts;
+}
+
 /** Validated Chat Completions request produced by one inbound adapter, before upstream normalization. */
 export interface ChatTranslation {
   /** Chat request body; `messages` holds fresh objects the gateway may mutate. */
@@ -127,6 +158,10 @@ export interface ChatTranslation {
   includeUsage?: boolean;
   /** Google only: `thinkingConfig.includeThoughts` was explicitly false. */
   hideThoughts?: boolean;
+  /** Reasoning the client asked for, when it said anything about it. */
+  reasoning?: ReasoningRequest;
+  /** `tool_call_id`s whose results the client marked as errors. */
+  toolErrors?: Set<string>;
 }
 
 /** Upstream token usage parsed leniently; absent fields were not reported. */
@@ -136,6 +171,8 @@ export interface Usage {
   total?: number;
   reasoning?: number;
   cached?: number;
+  /** Prompt tokens written to a cache (Anthropic `cache_creation_input_tokens`), included in `input`. */
+  cacheWrite?: number;
 }
 /** One completed upstream tool call. `input` is set only when `arguments` is a JSON object. */
 export interface ToolCall {

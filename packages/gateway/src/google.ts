@@ -3,6 +3,7 @@ import {
   GatewayError,
   array,
   boundedNumber,
+  imagePart,
   multimodal,
   omittedMedia,
   nativeTool,
@@ -10,9 +11,12 @@ import {
   record,
   string,
   toolAlias,
+  userContent,
   type ChatResult,
   type ChatTranslation,
+  type ReasoningRequest,
   type ToolBinding,
+  type TranslateOptions,
 } from "./protocol.js";
 import type { Failure, HttpWriter, OutputSink, SinkContext } from "./output.js";
 import { decodeReasoning, encodeReasoning } from "./reasoning.js";
@@ -68,18 +72,55 @@ function toolContent(response: Record<string, unknown>): string {
     : JSON.stringify(response);
 }
 
+/** An image `inlineData` or https `fileData` part as a URL; undefined for anything else. */
+function partImage(part: Record<string, unknown>): string | undefined {
+  const inline = record(part.inlineData);
+  if (
+    inline &&
+    typeof inline.mimeType === "string" &&
+    inline.mimeType.startsWith("image/") &&
+    typeof inline.data === "string"
+  )
+    return `data:${inline.mimeType};base64,${inline.data}`;
+  const file = record(part.fileData);
+  if (
+    file &&
+    typeof file.fileUri === "string" &&
+    /^https:\/\//.test(file.fileUri) &&
+    (typeof file.mimeType !== "string" || file.mimeType.startsWith("image/"))
+  )
+    return file.fileUri;
+  return undefined;
+}
+function thinkingRequest(value: unknown): ReasoningRequest | undefined {
+  const config = record(value);
+  if (!config) return undefined;
+  const budget = config.thinkingBudget;
+  if (budget === 0) return { off: true };
+  if (typeof config.thinkingLevel === "string")
+    return { effort: config.thinkingLevel.toLowerCase() };
+  return typeof budget === "number" && budget > 0
+    ? { budgetTokens: budget }
+    : config.includeThoughts === true || budget === -1
+      ? {}
+      : undefined;
+}
+
 /**
  * Translate a Gemini GenerateContent request to Chat: text, thought parts
  * and our thought signatures (as reasoning), functionCall/functionResponse,
  * function declarations, tool config and generation settings. Hosted Google
- * tools and cached content fail explicitly; media parts become text
- * placeholders; Google-only
- * hints (safety settings, topK, labels) are ignored.
+ * tools and cached content fail explicitly. Image parts become Chat image
+ * parts with `options.images`, other media text placeholders; a function
+ * response with an `error` and no `output` is a tool error; `thinkingConfig`
+ * becomes the reasoning request. Google-only hints (safety settings, topK,
+ * labels) are ignored.
  */
 export function googleToChat(
   raw: unknown,
   requestedModel: string,
   stream: boolean,
+  options: TranslateOptions = {},
 ): ChatTranslation {
   const request = object(raw);
   for (const key of Object.keys(request))
@@ -99,12 +140,14 @@ export function googleToChat(
   }
   let generated = 0;
   const pending: { id: string; name: string }[] = [];
+  const toolErrors = new Set<string>();
   for (const rawContent of array(request.contents)) {
     const content = object(rawContent);
     const role = content.role ?? "user";
     if (role !== "user" && role !== "model" && role !== "function")
       throw new GatewayError("Unsupported Google content role");
     const texts: string[] = [],
+      parts: Record<string, unknown>[] = [],
       thoughts: string[] = [],
       calls: Record<string, unknown>[] = [],
       results: Record<string, unknown>[] = [];
@@ -115,7 +158,10 @@ export function googleToChat(
       if (typeof part.text === "string") {
         if (part.thought === true) {
           if (role === "model") thoughts.push(part.text);
-        } else texts.push(part.text);
+        } else {
+          texts.push(part.text);
+          parts.push({ type: "text", text: part.text });
+        }
       } else if (part.functionCall) {
         if (role !== "model")
           throw new GatewayError("Function call requires model role");
@@ -152,19 +198,26 @@ export function googleToChat(
             "Google function response has no matching call",
           );
         const [call] = pending.splice(index, 1);
+        const response =
+          answer.response === undefined || answer.response === null
+            ? {}
+            : object(answer.response);
+        if (response.error !== undefined && response.output === undefined)
+          toolErrors.add(call!.id);
         results.push({
           role: "tool",
           tool_call_id: call!.id,
-          content:
-            toolContent(
-              answer.response === undefined || answer.response === null
-                ? {}
-                : object(answer.response),
-            ) + omitted,
+          content: toolContent(response) + omitted,
         });
-      } else if (part.inlineData || part.fileData)
-        texts.push(omittedMedia("Google inline or file data"));
-      else if (part.thought === true || part.thoughtSignature !== undefined)
+      } else if (part.inlineData || part.fileData) {
+        const url = options.images ? partImage(part) : undefined;
+        if (url) parts.push(imagePart(url));
+        else {
+          const text = omittedMedia("Google inline or file data");
+          texts.push(text);
+          parts.push({ type: "text", text });
+        }
+      } else if (part.thought === true || part.thoughtSignature !== undefined)
         continue;
       else
         throw new GatewayError(
@@ -173,8 +226,8 @@ export function googleToChat(
     }
     if (role !== "model") {
       messages.push(...results);
-      if (texts.length)
-        messages.push({ role: "user", content: texts.join("") });
+      if (parts.length)
+        messages.push({ role: "user", content: userContent(parts, "") });
       continue;
     }
     if (!texts.length && !calls.length && !thoughts.length) continue;
@@ -302,12 +355,15 @@ export function googleToChat(
         : { type: "json_object" };
     }
   }
+  const reasoning = thinkingRequest(generation?.thinkingConfig);
   return {
     body,
     tools: bindings,
     stream,
     requestedModel,
     ...(hideThoughts ? { hideThoughts } : {}),
+    ...(reasoning ? { reasoning } : {}),
+    ...(toolErrors.size ? { toolErrors } : {}),
   };
 }
 

@@ -4,15 +4,19 @@ import {
   array,
   boundedNumber,
   estimateTokens,
+  imagePart,
   nativeTool,
   omittedMedia,
   object,
   record,
   string,
   toolAlias,
+  userContent,
   type ChatResult,
   type ChatTranslation,
+  type ReasoningRequest,
   type ToolBinding,
+  type TranslateOptions,
 } from "./protocol.js";
 import {
   sse,
@@ -51,15 +55,42 @@ function resultText(value: unknown): string {
     .join("\n");
 }
 
+/** An Anthropic image block as a data or https URL; undefined for other sources. */
+function imageUrl(block: Record<string, unknown>): string | undefined {
+  const source = record(block.source);
+  if (source?.type === "url" && typeof source.url === "string")
+    return source.url;
+  if (
+    source?.type === "base64" &&
+    typeof source.media_type === "string" &&
+    typeof source.data === "string"
+  )
+    return `data:${source.media_type};base64,${source.data}`;
+  return undefined;
+}
+function thinkingRequest(value: unknown): ReasoningRequest | undefined {
+  const thinking = record(value);
+  if (!thinking) return undefined;
+  if (thinking.type === "disabled") return { off: true };
+  return typeof thinking.budget_tokens === "number"
+    ? { budgetTokens: thinking.budget_tokens }
+    : {};
+}
+
 /**
  * Translate an Anthropic Messages request (Claude Code) to Chat: system text,
  * text/tool_use/tool_result/thinking blocks, client tools, tool_choice,
  * max_tokens, stop_sequences and sampling. Thinking text becomes
- * `reasoning_content`. Images and documents become text placeholders; server
- * tools, `container` and `mcp_servers` fail explicitly; unknown top-level hint
- * fields are ignored.
+ * `reasoning_content`, the `thinking` setting the reasoning request, and
+ * `is_error` results the translation's tool errors. Images become Chat image
+ * parts with `options.images`, otherwise text placeholders like documents;
+ * server tools, `container` and `mcp_servers` fail explicitly; unknown
+ * top-level hint fields are ignored.
  */
-export function anthropicToChat(raw: unknown): ChatTranslation {
+export function anthropicToChat(
+  raw: unknown,
+  options: TranslateOptions = {},
+): ChatTranslation {
   const request = object(raw);
   for (const key of ["container", "mcp_servers"]) {
     const value = request[key];
@@ -103,6 +134,7 @@ export function anthropicToChat(raw: unknown): ChatTranslation {
     });
   }
   const messages: Record<string, unknown>[] = [];
+  const toolErrors = new Set<string>();
   const system = systemText(request.system);
   if (system) messages.push({ role: "system", content: system });
   for (const rawMessage of array(request.messages)) {
@@ -118,6 +150,7 @@ export function anthropicToChat(raw: unknown): ChatTranslation {
     if (role !== "user" && role !== "assistant")
       throw new GatewayError("Unsupported Anthropic message role");
     const texts: string[] = [],
+      parts: Record<string, unknown>[] = [],
       thoughts: string[] = [],
       calls: Record<string, unknown>[] = [],
       results: Record<string, unknown>[] = [];
@@ -125,6 +158,7 @@ export function anthropicToChat(raw: unknown): ChatTranslation {
       switch (block.type) {
         case "text":
           texts.push(string(block.text));
+          parts.push({ type: "text", text: string(block.text) });
           break;
         case "thinking":
           if (role === "assistant" && typeof block.thinking === "string")
@@ -151,6 +185,8 @@ export function anthropicToChat(raw: unknown): ChatTranslation {
         case "tool_result":
           if (role !== "user")
             throw new GatewayError("tool_result requires the user role");
+          if (block.is_error === true)
+            toolErrors.add(string(block.tool_use_id));
           results.push({
             role: "tool",
             tool_call_id: string(block.tool_use_id),
@@ -158,9 +194,16 @@ export function anthropicToChat(raw: unknown): ChatTranslation {
           });
           break;
         case "image":
-        case "document":
-          texts.push(omittedMedia(`Anthropic ${block.type}`));
+        case "document": {
+          const url = block.type === "image" ? imageUrl(block) : undefined;
+          if (options.images && url) parts.push(imagePart(url));
+          else {
+            const text = omittedMedia(`Anthropic ${block.type}`);
+            texts.push(text);
+            parts.push({ type: "text", text });
+          }
           break;
+        }
         default:
           throw new GatewayError(
             `Unsupported Anthropic content block: ${typeof block.type === "string" ? block.type.slice(0, 64) : "unknown"}`,
@@ -169,8 +212,8 @@ export function anthropicToChat(raw: unknown): ChatTranslation {
     }
     if (role === "user") {
       messages.push(...results);
-      if (texts.length)
-        messages.push({ role: "user", content: texts.join("\n") });
+      if (parts.length)
+        messages.push({ role: "user", content: userContent(parts, "\n") });
       continue;
     }
     const assistant: Record<string, unknown> = {
@@ -228,6 +271,7 @@ export function anthropicToChat(raw: unknown): ChatTranslation {
       type: "json_schema",
       json_schema: { name: "response", schema: format.schema },
     };
+  const reasoning = thinkingRequest(request.thinking);
   return {
     body,
     tools: bindings,
@@ -235,6 +279,8 @@ export function anthropicToChat(raw: unknown): ChatTranslation {
     ...(typeof request.model === "string"
       ? { requestedModel: request.model }
       : {}),
+    ...(reasoning ? { reasoning } : {}),
+    ...(toolErrors.size ? { toolErrors } : {}),
   };
 }
 
@@ -330,9 +376,10 @@ export class AnthropicSink implements OutputSink {
   }
   #usage(result: ChatResult): Record<string, unknown> {
     const cached = result.usage?.cached ?? 0;
+    const written = result.usage?.cacheWrite ?? 0;
     const input = result.usage?.input ?? this.context.promptEstimate;
     return {
-      input_tokens: Math.max(0, input - cached),
+      input_tokens: Math.max(0, input - cached - written),
       output_tokens:
         result.usage?.output ??
         estimateTokens(
@@ -340,7 +387,7 @@ export class AnthropicSink implements OutputSink {
             result.text +
             result.calls.map((call) => call.arguments).join(""),
         ),
-      cache_creation_input_tokens: 0,
+      cache_creation_input_tokens: written,
       cache_read_input_tokens: cached,
     };
   }

@@ -18,7 +18,8 @@ import {
 
 /**
  * Accept an OpenAI Chat Completions request. Fields pass through to the
- * upstream normalizer; only `n > 1` is rejected because one choice is streamed.
+ * upstream normalizer; only `n > 1` is rejected because one choice is
+ * streamed. `reasoning_effort` also becomes the reasoning request.
  */
 export function chatToChat(raw: unknown): ChatTranslation {
   const request = object(raw);
@@ -30,6 +31,7 @@ export function chatToChat(raw: unknown): ChatTranslation {
       ...object(message),
     })),
   };
+  const effort = request.reasoning_effort;
   return {
     body,
     tools: new Map(),
@@ -38,6 +40,9 @@ export function chatToChat(raw: unknown): ChatTranslation {
       ? { requestedModel: request.model }
       : {}),
     includeUsage: record(request.stream_options)?.include_usage === true,
+    ...(typeof effort === "string"
+      ? { reasoning: effort === "none" ? { off: true } : { effort } }
+      : {}),
   };
 }
 

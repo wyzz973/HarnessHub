@@ -40,7 +40,7 @@ function defined(parts: {
 
 /**
  * Usage object of one protocol, normalized. Chat and Responses count cached
- * tokens inside the prompt and reasoning inside the output; Anthropic reports
+ * tokens (and Chat cache writes) inside the prompt and reasoning inside the output; Anthropic reports
  * cache reads and writes beside the input and no reasoning count; Gemini
  * counts cached tokens inside the prompt and thoughts beside the candidates.
  */
@@ -55,10 +55,11 @@ export function usageParts(protocol: WireProtocol, raw: unknown): UsageParts {
       const reasoning =
         count(record(usage.completion_tokens_details)?.reasoning_tokens) ??
         count(usage.reasoning_tokens);
+      const written = count(usage.cache_creation_input_tokens);
       return defined({
-        input: minus(count(usage.prompt_tokens), cached),
+        input: minus(minus(count(usage.prompt_tokens), cached), written),
         cacheRead: cached,
-        cacheWrite: count(usage.cache_creation_input_tokens),
+        cacheWrite: written,
         output: minus(count(usage.completion_tokens), reasoning),
         reasoning,
       });

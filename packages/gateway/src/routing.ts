@@ -52,13 +52,17 @@ function validFor(credential: ProviderCredential, protocol: WireProtocol) {
   );
 }
 
+/** Upstream protocols tried, in order, when neither passthrough nor Chat is possible. */
+const TRANSLATION_TARGETS = ["anthropic", "responses", "gemini"] as const;
+
 /**
  * Candidates of one Model Ref for an inbound protocol, one per enabled
  * credential in configuration order. A credential serves the inbound
  * protocol natively (passthrough) when the provider declares that endpoint,
  * is not `translateOnly` and the credential is valid for it; otherwise it is
- * translated to the provider's Chat endpoint. Credentials that can do neither
- * are reported in `skipped`.
+ * translated to the provider's Chat endpoint, else to its Anthropic,
+ * Responses or Gemini endpoint in that order. Credentials valid for none of
+ * the provider's endpoints are reported in `skipped`.
  */
 export function modelCandidates(
   provider: ProviderConfig,
@@ -89,10 +93,24 @@ export function modelCandidates(
         upstream: "chat",
         endpoint: chat,
       });
-    else
-      skipped.push(
-        `${ref} via ${credential.id}: no ${inbound} or chat endpoint for this credential`,
+    else {
+      const target = TRANSLATION_TARGETS.find(
+        (protocol) =>
+          provider.endpoints[protocol] !== undefined &&
+          validFor(credential, protocol),
       );
+      if (target)
+        candidates.push({
+          ...base,
+          mode: "translated",
+          upstream: target,
+          endpoint: provider.endpoints[target]!,
+        });
+      else
+        skipped.push(
+          `${ref} via ${credential.id}: the credential is valid for none of the provider's endpoints`,
+        );
+    }
   }
   return { candidates, skipped };
 }
@@ -405,6 +423,15 @@ export class Breakers {
         ...(state.last ? { last: state.last } : {}),
       };
     return { ok: true };
+  }
+
+  /** Whether the candidate is open or marked right now; no side effects (unlike {@link admit}). */
+  blocked(candidate: Candidate): boolean {
+    const now = this.clock();
+    const mark = this.#marks.get(this.#markKey(candidate));
+    if (mark !== undefined && mark > now) return true;
+    const state = this.#states.get(this.#key(candidate));
+    return state?.state === "open" && now < state.until;
   }
 
   success(candidate: Candidate): void {

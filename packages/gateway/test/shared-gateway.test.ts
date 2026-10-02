@@ -712,7 +712,7 @@ void test("every inbound protocol is translated to a Chat upstream with the wire
   assert.equal(store.entries[0]!.completion, "explicit");
 });
 
-void test("translation falls back to the Chat endpoint and unsupported routes fail with 400", async (t) => {
+void test("translation prefers the Chat endpoint and a credential valid for no endpoint fails with 400", async (t) => {
   const store = new MemoryStore();
   const up = await upstream(t, CHAT_REPLY);
   await store.putProvider(
@@ -722,7 +722,9 @@ void test("translation falls back to the Chat endpoint and unsupported routes fa
       { translateOnly: true },
     ),
   );
-  await store.putProvider(provider("ant", { anthropic: up.base }));
+  const narrow = provider("ant", { anthropic: up.base });
+  narrow.credentials[0]!.protocols = ["gemini"];
+  await store.putProvider(narrow);
   await store.putProvider(
     provider(
       "patched",
@@ -751,7 +753,7 @@ void test("translation falls back to the Chat endpoint and unsupported routes fa
   assert.equal(at(unsupported.json(), "error", "code"), "unsupported_route");
   assert.match(
     String(at(unsupported.json(), "error", "message")),
-    /not implemented yet/,
+    /valid for none of the provider's endpoints/,
   );
   const patched = await send(gw.port, "/v1/chat/completions", {
     headers: { authorization: `Bearer ${key.text}` },
