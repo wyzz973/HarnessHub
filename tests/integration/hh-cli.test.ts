@@ -357,3 +357,121 @@ void test(
       assert.equal(text.includes(canary), false);
   },
 );
+
+void test(
+  "hh lists presets, adds a provider from one with a key from stdin and refreshes its models",
+  { timeout: 120_000 },
+  async (t) => {
+    const { directory, defer } = await temporaryDirectory(
+      t,
+      "harnesshub-cli-presets-",
+    );
+    const dataDir = path.join(directory, "data");
+    const hub = await startHub({
+      dataDir,
+      configDir: path.join(directory, "config"),
+      secretsBackend: "file",
+      demo: true,
+      cwd: directory,
+      port: 0,
+      host: "127.0.0.1",
+    });
+    defer(() => hub.server.close());
+    const key = `sk-synthetic-cli-preset-${Date.now()}`;
+    const { createServer } = await import("node:http");
+    const upstream = createServer((request, response) => {
+      const ok = request.headers.authorization === `Bearer ${key}`;
+      response.writeHead(ok ? 200 : 401, {
+        "content-type": "application/json",
+      });
+      response.end(
+        ok
+          ? '{"data":[{"id":"deepseek-chat"},{"id":"deepseek-reasoner"}]}'
+          : "{}",
+      );
+    });
+    await new Promise<void>((resolve) =>
+      upstream.listen(0, "127.0.0.1", resolve),
+    );
+    defer(
+      () => new Promise<void>((resolve) => upstream.close(() => resolve())),
+    );
+    const base = `http://127.0.0.1:${(upstream.address() as { port: number }).port}/v1`;
+    const daemon = ["--url", hub.url, "--data-dir", dataDir];
+    const run = (args: string[], input?: string) =>
+      hh(directory, [...args, ...daemon], input === undefined ? {} : { input });
+
+    const presets = await run(["provider", "presets"]);
+    assert.equal(presets.code, 0, presets.stderr);
+    assert.match(
+      presets.stdout,
+      /^PRESET +NAME +KIND +ENDPOINTS +KEY +VERIFIED\n/,
+    );
+    assert.match(
+      presets.stdout,
+      /\ndeepseek +DeepSeek +vendor +chat,anthropic +required +/,
+    );
+    assert.match(presets.stdout, /\nollama +Ollama +local +chat +none +/);
+
+    const added = await run(
+      [
+        "provider",
+        "add",
+        "--preset",
+        "deepseek",
+        "--chat",
+        base,
+        "--credential-from-stdin",
+      ],
+      `${key}\n`,
+    );
+    assert.equal(added.code, 0, added.stderr);
+    assert.equal(
+      added.stdout,
+      "Added provider deepseek from preset deepseek with a stored credential\n",
+    );
+    const refreshed = await run([
+      "provider",
+      "models",
+      "deepseek",
+      "--refresh",
+    ]);
+    assert.equal(refreshed.code, 0, refreshed.stderr);
+    assert.match(refreshed.stdout, /^Source: live, refreshed /);
+    assert.match(refreshed.stdout, /\ndeepseek\/deepseek-chat +- +yes\n/);
+    assert.match(refreshed.stdout, /\ndeepseek\/deepseek-reasoner +- +yes\n/);
+    const shown = await run(["provider", "models", "deepseek", "--json"]);
+    assert.equal(
+      (JSON.parse(shown.stdout) as { list: unknown[] }).list.length,
+      2,
+    );
+
+    // A failed refresh keeps the list, reports stale and exits with 1 (502).
+    await run(
+      [
+        "provider",
+        "add",
+        "--preset",
+        "deepseek",
+        "team",
+        "--chat",
+        base,
+        "--credential-from-stdin",
+      ],
+      "sk-synthetic-wrong\n",
+    );
+    const failed = await run(["provider", "models", "team", "--refresh"]);
+    assert.equal(failed.code, 1, failed.stderr);
+    assert.match(failed.stderr, /MODELS_REFRESH_FAILED/);
+    assert.match(failed.stderr, /answered HTTP 401/);
+    assert.match(
+      (await run(["provider", "models", "team"])).stdout,
+      /\(stale: the last refresh failed\)/,
+    );
+    const unknown = await run(["provider", "add", "--preset", "nope"]);
+    assert.equal(unknown.code, 2);
+    assert.match(unknown.stderr, /PRESET_NOT_FOUND/);
+    for (const outcome of [presets, added, refreshed, shown, failed])
+      assert.equal(`${outcome.stdout}${outcome.stderr}`.includes(key), false);
+  },
+);

@@ -35,9 +35,14 @@ const EXIT = {
 
 const USAGE = `Usage: hh <command> [options]
 
-  hh provider list | show <id> | add <id> --chat URL [--responses URL]
-              [--anthropic URL] [--gemini URL] [--name N] [--kind K]
-              [--api-key-header H] [--model ID]... | remove <id>
+  hh provider list | show <id> | presets | models <id> [--refresh]
+              | add <id> --chat URL [--responses URL] [--anthropic URL]
+                [--gemini URL] [--name N] [--kind K] [--api-key-header H]
+                [--model ID]...
+              | add [<id>] --preset P [--name N] [--chat URL ...]
+                [--credential-from-stdin | --credential-from-env VAR
+                 | --credential-from-file PATH]
+              | remove <id>
   hh credential list <provider> | add <provider> [--name N] [--id ID]
               [--protocol P]... | rotate <provider> <credential>
               | remove <provider> <credential>
@@ -231,31 +236,41 @@ const secretSources = {
 async function readSecret(
   ctx: Context,
   values: Record<string, unknown>,
+  prefix = "",
 ): Promise<string> {
-  const chosen = ["from-stdin", "from-env", "from-file"].filter(
+  const [stdin, env, file] = ["from-stdin", "from-env", "from-file"].map(
+    (name) => `${prefix}${name}`,
+  ) as [string, string, string];
+  const chosen = [stdin, env, file].filter(
     (name) => values[name] !== undefined && values[name] !== false,
   );
   if (chosen.length > 1)
-    throw new UsageError(
-      "Use only one of --from-stdin, --from-env, --from-file",
-    );
+    throw new UsageError(`Use only one of --${stdin}, --${env}, --${file}`);
   const trim = (text: string) => text.replace(/\r?\n$/, "");
-  if (values["from-stdin"] === true) return trim(await readStdin());
-  if (typeof values["from-env"] === "string") {
-    const value = process.env[values["from-env"]];
+  if (values[stdin] === true) return trim(await readStdin());
+  const variable = values[env];
+  if (typeof variable === "string") {
+    const value = process.env[variable];
     if (value === undefined)
-      throw new UsageError(
-        `Environment variable ${values["from-env"]} is not set`,
-      );
+      throw new UsageError(`Environment variable ${variable} is not set`);
     return value;
   }
-  if (typeof values["from-file"] === "string")
-    return trim(await readFile(values["from-file"], "utf8"));
+  const path = values[file];
+  if (typeof path === "string") return trim(await readFile(path, "utf8"));
   if (!ctx.interactive)
     throw new UsageError(
-      "No terminal for a hidden prompt: pass --from-stdin, --from-env VAR or --from-file PATH",
+      `No terminal for a hidden prompt: pass --${stdin}, --${env} VAR or --${file} PATH`,
     );
   return hiddenPrompt("Secret value (hidden): ");
+}
+
+/** Whether any `--credential-from-*` option was given. */
+function credentialGiven(values: Record<string, unknown>): boolean {
+  return [
+    "credential-from-stdin",
+    "credential-from-env",
+    "credential-from-file",
+  ].some((name) => values[name] !== undefined && values[name] !== false);
 }
 
 function list(value: unknown): string[] {
@@ -275,9 +290,55 @@ async function providerCommand(args: string[]): Promise<void> {
     gemini: { type: "string" },
     "api-key-header": { type: "string" },
     model: { type: "string", multiple: true },
+    preset: { type: "string" },
+    refresh: { type: "boolean" },
+    "credential-from-stdin": { type: "boolean" },
+    "credential-from-env": { type: "string" },
+    "credential-from-file": { type: "string" },
   });
   const ctx = context(values);
   switch (action) {
+    case "presets": {
+      positionals(given, []);
+      const page = await (await ctx.client()).presets.list();
+      return output(ctx, page, () =>
+        table(
+          ["PRESET", "NAME", "KIND", "ENDPOINTS", "KEY", "VERIFIED"],
+          page.items.map((item) => [
+            item.id,
+            item.name,
+            item.kind,
+            Object.keys(item.endpoints).join(","),
+            item.auth.methods.includes("api-key") ? "required" : "none",
+            item.verified,
+          ]),
+        ),
+      );
+    }
+    case "models": {
+      const [id] = positionals(given, ["id"]);
+      const client = await ctx.client();
+      const item = values.refresh
+        ? await client.providers.refreshModels(id!)
+        : await client.providers.get(id!);
+      const models = item.models;
+      const exposed = (model: string) =>
+        models.expose === "all" || models.expose.includes(model);
+      return output(ctx, models, () =>
+        [
+          `Source: ${models.source}${models.refreshedAt ? `, refreshed ${localTime(models.refreshedAt)}` : ""}${models.stale ? " (stale: the last refresh failed)" : ""}`,
+          "",
+          table(
+            ["MODEL", "CONTEXT", "EXPOSED"],
+            models.list.map((model) => [
+              `${item.id}/${model.id}`,
+              model.contextWindow?.toString() ?? "-",
+              exposed(model.id) ? "yes" : "no",
+            ]),
+          ),
+        ].join("\n"),
+      );
+    }
     case "list": {
       positionals(given, []);
       const page = await (await ctx.client()).providers.list();
@@ -324,22 +385,36 @@ async function providerCommand(args: string[]): Promise<void> {
       );
     }
     case "add": {
-      const [id] = positionals(given, ["id"]);
+      const preset =
+        typeof values.preset === "string" ? values.preset : undefined;
+      if (given.length > 1 || (!preset && given.length !== 1))
+        throw new UsageError(
+          "provider add takes <id>, or --preset P with an optional <id>",
+        );
+      const id = given[0];
       const endpoints = Object.fromEntries(
         (["chat", "responses", "anthropic", "gemini"] as const)
           .filter((protocol) => typeof values[protocol] === "string")
           .map((protocol) => [protocol, values[protocol] as string]),
       );
-      if (!Object.keys(endpoints).length)
+      if (!preset && !Object.keys(endpoints).length)
         throw new UsageError(
           "Give at least one of --chat, --responses, --anthropic, --gemini",
         );
+      const client = await ctx.client();
+      const credential = credentialGiven(values)
+        ? { value: await readSecret(ctx, values, "credential-") }
+        : undefined;
       const models = list(values.model);
-      const created = await (
-        await ctx.client()
-      ).providers.create({
-        id: id!,
-        endpoints,
+      const created = await client.providers.create({
+        ...(preset
+          ? {
+              preset,
+              ...(id !== undefined ? { id } : {}),
+              ...(Object.keys(endpoints).length ? { endpoints } : {}),
+            }
+          : { id: id!, endpoints }),
+        ...(credential ? { credential } : {}),
         ...(typeof values.name === "string" ? { name: values.name } : {}),
         ...(typeof values.kind === "string"
           ? { kind: values.kind as "vendor" | "relay" | "local" | "custom" }
@@ -361,7 +436,12 @@ async function providerCommand(args: string[]): Promise<void> {
             }
           : {}),
       });
-      return output(ctx, created, () => `Added provider ${created.id}`);
+      return output(
+        ctx,
+        created,
+        () =>
+          `Added provider ${created.id}${created.preset ? ` from preset ${created.preset}` : ""}${created.credentials.length ? " with a stored credential" : ""}`,
+      );
     }
     case "remove":
     case "rm": {
