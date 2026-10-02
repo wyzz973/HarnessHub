@@ -870,3 +870,56 @@ test("runtime owns process creation for good, and the probe keeps its drivers ru
     [],
   );
 });
+
+test("the daemon's http/ keeps the gateway rules, cli stays on core, and URLs resolve from dist", () => {
+  assert.deepEqual(
+    checkAt(
+      "packages/daemon/src/http/server.ts",
+      'import type { HubApplication } from "@harnesshub/runtime/application/service";',
+    ),
+    [],
+  );
+  assert.match(
+    checkAt(
+      "packages/daemon/src/http/engines.ts",
+      'import { EngineManager } from "@harnesshub/agents/engine/manager";',
+    ).join("\n"),
+    /gateway cannot depend on engine/,
+  );
+  assert.match(
+    checkAt(
+      "packages/daemon/src/logging/store.ts",
+      'import { Runtime } from "@harnesshub/runtime/runtime/runtime";',
+    ).join("\n"),
+    /logging cannot depend on runtime/,
+  );
+  assert.deepEqual(
+    checkAt(
+      "packages/cli/src/rollout/export.ts",
+      'import type { RunId } from "@harnesshub/core/types";',
+    ),
+    [],
+  );
+  assert.match(
+    checkAt(
+      "packages/cli/src/cli.ts",
+      'import { Runtime } from "@harnesshub/runtime/runtime/runtime";',
+    ).join("\n"),
+    /packages\/cli cannot depend on @harnesshub\/runtime/,
+  );
+  // packages/daemon/dist/src/benchmark-main.js reads packages/daemon/package.json.
+  assert.deepEqual(
+    checkAt(
+      "packages/daemon/src/benchmark-main.ts",
+      'const file = new URL("../../package.json", import.meta.url);',
+    ),
+    [],
+  );
+  assert.match(
+    checkAt(
+      "packages/daemon/src/benchmark-main.ts",
+      'const file = new URL("../../../package.json", import.meta.url);',
+    ).join("\n"),
+    /new URL leaves packages\/daemon: \.\.\/\.\.\/\.\.\/package\.json/,
+  );
+});

@@ -20,7 +20,8 @@
  *   the importing file moves to (LEGACY_DESTINATIONS) may depend on it.
  * - Relative imports and `new URL(..., import.meta.url)` inside a package or
  *   application must stay inside it, except for an unexpired URL_EXCEPTIONS
- *   entry.
+ *   entry. A URL resolves at run time from the compiled file
+ *   (`dist/src/...`), so it is checked from there.
  * - Inside the daemon (and the src/ files that move to it), only worker/ may
  *   import @harnesshub/drivers.
  * - node:sqlite belongs in the storage module of @harnesshub/store. Inside
@@ -110,6 +111,9 @@ export const PACKAGE_ORIGINS = {
   },
   // The configuration probe moved into process/ but keeps its drivers rules.
   runtime: { "process/probe": "drivers/configuration/probe" },
+  // The daemon's HTTP layer is the former gateway module.
+  daemon: { http: "gateway" },
+  cli: {},
 };
 
 /**
@@ -566,9 +570,15 @@ export function checkSource(
       base.name.text === "url";
     if (!fromModule) return;
     const literal = first !== undefined && ts.isStringLiteralLike(first);
+    // import.meta.url names the compiled file, one level below dist/.
+    const compiled = join(
+      where.container,
+      "dist",
+      relative(where.container, filePath),
+    );
     if (
       literal &&
-      inside(where.container, resolve(dirname(filePath), first.text))
+      inside(where.container, resolve(dirname(compiled), first.text))
     )
       return;
     const exception = exceptionFor(URL_EXCEPTIONS);
