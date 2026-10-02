@@ -45,3 +45,17 @@ store 暂时包含与存储无关的 Windows 文件原语，命名与职责不�
 - 未提供 `workerEntry` 时无法构造 Worker 宿主；迁移前创建的租约仍然通过校验（测试）。
 - 旧的 command-mcp 路径被映射到 `COMMAND_MCP_ENTRY`，其他路径不变（测试）。
 - 每个包的原生辅助程序路径常量指向实际存在的文件（各包测试）；`scripts/` 中的运行时资源仍可由已登记的引擎命令启动（现有 Windows 启动与引擎发现测试）。
+
+## 补充：运行时资源迁入 agents（2026-10-02）
+
+决定 6 约定的迁移在 OSS-013 之前完成，替代该决定中“留在 `scripts/`”与 URL 例外的部分：
+
+1. **位置与形式**：`launch-engine.mjs`、`spawn-engine.mjs`、`launch-{dsh,openclaw,opencode,pi}-acp.mjs` 与 `native-mcp/pi-extension.mjs` 原样移到 `packages/agents/assets/`，相对路径不变，仍是不经编译的 `.mjs`。它们是独立程序：引擎命令以 `node <路径>` 运行启动器，Pi 按路径加载扩展，契约是文件路径与 argv，而不是被包内代码导入的模块。原样移动使 Windows 上 `.cmd`/`.bat` 与 PowerShell 的启动行为不变，只有位置与 `cross-spawn` 的解析位置改变；不经编译，路径在构建前后都存在，已登记的命令不依赖 `dist/` 的布局。改写为 `src/` 中的 TypeScript 会把三处进程创建（`spawn-engine` 的 cross-spawn、`launch-dsh-acp` 与 `launch-pi-acp` 的 `child_process`）放进 agents 的源码，需要新增 `child_process` 例外，而 OSS-010 F08 正在把进程创建收拢到 `ProcessLauncher`。
+2. **定位**：[assets.ts](../../packages/agents/src/assets.ts) 的 `assetPath(name)` 对每个资源用一个字面量 `new URL("../../assets/…", import.meta.url)`，留在包内。`repository.ts` 与边界检查的 URL 例外表删除，越出包的 `new URL` 不再有任何例外，拒绝样例保留。
+3. **已保存的旧路径**：配置准备与安装检查经 `currentEngineCommand` 把命令中的 `<检出目录>/scripts/<name>` 读作当前路径，SQLite 中的记录不改写；决定 7 的旧 command-mcp 入口改用同一种识别。识别从已保存的路径推出检出目录，再与本包所在位置 `<检出目录>/packages/agents` 比对，因此包内代码不计算、也不读取包外的路径，其他检出目录中的同名路径不映射。`engines/*.example.json` 与文档改为新路径。引擎命令的这一映射没有期限：删除前必须先迁移已保存的登记，或改为保存符号化的启动器引用（见 [SEA 原型](../proposals/oss/sea-spike.md) 的风险表）。
+4. **发现**：DSH 与 OpenClaw 的启动器改由包内定位，不再按 Gateway 的工作目录查找 `scripts/`；DSH 的 `engines/dsh-local.patch.yaml` 仍属于项目目录。
+5. **依赖与 SEA**：`cross-spawn` 成为 agents 的依赖，根包不再有运行时依赖，未使用的 `@types/cross-spawn` 删除。SEA 的 `launch-engine` 角色与解包的 Pi 扩展改为 `packages/agents/assets/` 下的路径。
+
+代价：资源没有类型检查，边界检查也不扫描 `assets/`（与原 `scripts/` 相同），它们只导入 Node 内建模块、`cross-spawn`、`yaml` 与同目录文件。F08 引入 `ProcessLauncher` 时重新评估是否改为编译代码。
+
+验证：集成测试在真实 Gateway 中登记一条用旧启动器路径的引擎命令，重启后读回，记录不变，Run 经 Worker 完成、启动器的环境赋值生效，安装证据记录新位置；去掉准备或安装检查中的映射时它失败。包内测试检查每个资源存在、旧路径映射与不映射的情况；Windows 上的 `.cmd` 与 PowerShell 启动由现有 Windows 启动测试经新位置执行。
