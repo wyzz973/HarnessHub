@@ -1,0 +1,720 @@
+// SPDX-License-Identifier: MIT
+import type { FastifyInstance } from "fastify";
+import type { SecretReference } from "@harnesshub/core/engine-configuration";
+import {
+  issueGatewayKey,
+  parseModelRef,
+  wireProtocols,
+  type CredentialId,
+  type GatewayKeyId,
+  type GatewayKeyQuota,
+  type GatewayKeyRecord,
+  type GatewayKeyView,
+  type ModelCallEntry,
+  type ModelPlaneStore,
+  type ModelRef,
+  type ProviderConfig,
+  type ProviderCredential,
+  type ProviderId,
+  type RetryPolicy,
+  type RouteGroup,
+  type RouteGroupId,
+  type UsageFilter,
+  type UsageGroupBy,
+  type WireProtocol,
+} from "@harnesshub/core/model-plane";
+import {
+  endpointProblem,
+  isProviderConfig,
+  isRouteGroup,
+} from "@harnesshub/core/model-plane-records";
+import type { SessionId } from "@harnesshub/core/types";
+import { ApiProblem, type ApiV1Options, type ProblemItem } from "./api-v1.js";
+import {
+  credentialCreateSchema,
+  credentialParams,
+  credentialSchema,
+  credentialSecretSchema,
+  emptyBodySchema,
+  gatewayKeyCreatedSchema,
+  gatewayKeyCreateSchema,
+  gatewayKeySchema,
+  idParams,
+  listOf,
+  modelCallPageSchema,
+  modelCallsQuerySchema,
+  noContent,
+  providerCreateSchema,
+  providerPatchSchema,
+  providerSchema,
+  responses,
+  routeGroupCreateSchema,
+  routeGroupPatchSchema,
+  routeGroupSchema,
+  usageQuerySchema,
+  usageSchema,
+} from "./api-v1-schemas.js";
+
+/** Client keys expire after 90 days unless the request says otherwise (03 section 2). */
+const CLIENT_KEY_LIFETIME_MS = 90 * 24 * 60 * 60 * 1000;
+
+type Json = Record<string, unknown>;
+
+function object(value: unknown): value is Json {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** JSON Merge Patch (RFC 7396): objects merge, `null` removes, anything else replaces. */
+function mergePatch(target: unknown, patch: unknown): unknown {
+  if (!object(patch)) return patch;
+  const result: Json = object(target) ? { ...target } : {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) delete result[key];
+    else result[key] = mergePatch(result[key], value);
+  }
+  return result;
+}
+
+function notFound(kind: string, id: string): ApiProblem {
+  return new ApiProblem(
+    `${kind.toUpperCase().replaceAll(" ", "_")}_NOT_FOUND`,
+    `No ${kind} has the ID ${JSON.stringify(id).slice(0, 120)}`,
+    404,
+  );
+}
+
+function invalid(code: string, message: string, errors: ProblemItem[]) {
+  return new ApiProblem(code, message, 400, { errors });
+}
+
+/** Explains why a provider candidate is invalid, endpoint by endpoint. */
+function checkProvider(candidate: unknown): ProviderConfig {
+  const errors: ProblemItem[] = [];
+  if (object(candidate) && object(candidate.endpoints))
+    for (const [name, url] of Object.entries(candidate.endpoints)) {
+      const problem =
+        typeof url === "string" &&
+        (wireProtocols as readonly string[]).includes(name)
+          ? endpointProblem(name as WireProtocol, url)
+          : "is not a known protocol endpoint";
+      if (problem)
+        errors.push({ pointer: `/endpoints/${name}`, detail: problem });
+    }
+  if (object(candidate) && object(candidate.endpoints))
+    if (Object.keys(candidate.endpoints).length === 0)
+      errors.push({
+        pointer: "/endpoints",
+        detail: "must name at least one endpoint",
+      });
+  if (errors.length || !isProviderConfig(candidate))
+    throw invalid(
+      "PROVIDER_INVALID",
+      "The provider configuration is invalid",
+      errors.length
+        ? errors
+        : [{ pointer: "", detail: "does not form a valid provider" }],
+    );
+  return candidate;
+}
+
+function view(record: GatewayKeyRecord): GatewayKeyView {
+  const { secretHash: _hash, ...rest } = record;
+  return rest;
+}
+
+/** Decimal string for a USD amount (06 section 2.1), at most 10 decimals. */
+function decimal(amount: number): string {
+  const fixed = amount.toFixed(10).replace(/0+$/, "").replace(/\.$/, "");
+  return fixed === "-0" ? "0" : fixed;
+}
+
+function callView(entry: ModelCallEntry) {
+  return {
+    ...entry,
+    cost:
+      entry.cost === null
+        ? null
+        : {
+            amount: decimal(entry.cost.amountUsd),
+            currency: "USD" as const,
+            priceSource: entry.cost.priceSource,
+          },
+  };
+}
+
+interface CallQuery {
+  from?: string;
+  to?: string;
+  keyId?: string;
+  provider?: string;
+  model?: string;
+  sessionId?: string;
+}
+
+function usageFilter(query: CallQuery): UsageFilter {
+  return {
+    ...(query.from !== undefined ? { from: query.from } : {}),
+    ...(query.to !== undefined ? { to: query.to } : {}),
+    ...(query.keyId !== undefined
+      ? { keyId: query.keyId as GatewayKeyId }
+      : {}),
+    ...(query.provider !== undefined
+      ? { provider: query.provider as ProviderId }
+      : {}),
+    ...(query.model !== undefined ? { modelRef: query.model as ModelRef } : {}),
+    ...(query.sessionId !== undefined
+      ? { sessionId: query.sessionId as SessionId }
+      : {}),
+  };
+}
+
+/** Whether an allowlist entry names a provider's models (`p/*` or `p/model`). */
+function allowsProvider(entry: string, provider: string): boolean {
+  const parsed = parseModelRef(entry);
+  return parsed?.kind === "model" && parsed.provider === provider;
+}
+
+/**
+ * Model-plane routes under `/api/v1` (06 section 3, 03 sections 2, 4 and 8):
+ * providers and their credentials, route groups, `client:` Gateway Keys, the
+ * `model.call` ledger and usage. Writes are serialized within the daemon, so
+ * each read-modify-write of a provider sees the previous one. Secret values
+ * reach only `secrets`; responses carry references, keys their text once.
+ */
+export function registerModelPlaneRoutes(
+  api: FastifyInstance,
+  options: Pick<ApiV1Options, "modelPlane" | "secrets">,
+): void {
+  const store: ModelPlaneStore = options.modelPlane;
+  const secrets = options.secrets;
+  let queue: Promise<unknown> = Promise.resolve();
+  /** Run one mutation after the previous one settled. */
+  const serialized = <T>(operation: () => Promise<T>): Promise<T> => {
+    const result = queue.then(operation, operation);
+    queue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  };
+  const provider = async (id: string): Promise<ProviderConfig> => {
+    const found = await store.getProvider(id as ProviderId);
+    if (!found) throw notFound("provider", id);
+    return found;
+  };
+  const credential = (config: ProviderConfig, id: string) => {
+    const found = config.credentials.find((item) => item.id === id);
+    if (!found) throw notFound("credential", id);
+    return found;
+  };
+  const activeKeys = async () =>
+    (await store.listGatewayKeys()).filter(
+      (key) => key.revokedAt === undefined,
+    );
+
+  api.get(
+    "/providers",
+    { schema: { response: responses(listOf(providerSchema)) } },
+    async () => ({ items: await store.listProviders(), nextCursor: null }),
+  );
+  api.post<{ Body: Json }>(
+    "/providers",
+    {
+      schema: {
+        body: providerCreateSchema,
+        response: responses(providerSchema, 201),
+      },
+    },
+    async (request, reply) =>
+      serialized(async () => {
+        const body = request.body;
+        const id = String(body.id);
+        if (await store.getProvider(id as ProviderId))
+          throw new ApiProblem(
+            "PROVIDER_EXISTS",
+            "A provider with this ID exists",
+            409,
+          );
+        const now = new Date().toISOString();
+        const created = checkProvider({
+          schemaVersion: 1,
+          name: id,
+          kind: "custom",
+          auth: { apiKeyHeader: "authorization-bearer" },
+          models: { source: "manual", list: [], expose: "all" },
+          ...body,
+          credentials: [],
+          createdAt: now,
+          updatedAt: now,
+        });
+        await store.putProvider(created);
+        return reply.code(201).send(created);
+      }),
+  );
+  api.get<{ Params: { id: string } }>(
+    "/providers/:id",
+    { schema: { params: idParams, response: responses(providerSchema) } },
+    async (request) => provider(request.params.id),
+  );
+  api.patch<{ Params: { id: string }; Body: Json }>(
+    "/providers/:id",
+    {
+      schema: {
+        params: idParams,
+        body: providerPatchSchema,
+        response: responses(providerSchema),
+      },
+    },
+    async (request) =>
+      serialized(async () => {
+        const current = await provider(request.params.id);
+        const updated = checkProvider({
+          ...(mergePatch(current, request.body) as Json),
+          id: current.id,
+          schemaVersion: 1,
+          credentials: current.credentials,
+          createdAt: current.createdAt,
+          updatedAt: new Date().toISOString(),
+        });
+        await store.putProvider(updated);
+        return updated;
+      }),
+  );
+  api.delete<{ Params: { id: string } }>(
+    "/providers/:id",
+    { schema: { params: idParams, response: noContent } },
+    async (request, reply) =>
+      serialized(async () => {
+        const current = await provider(request.params.id);
+        const references = [
+          ...(await store.listRouteGroups())
+            .filter((group) =>
+              group.members.some((member) =>
+                allowsProvider(member, current.id),
+              ),
+            )
+            .map((group) => ({ type: "route-group", id: group.id })),
+          ...(await activeKeys())
+            .filter((key) =>
+              key.modelAllow.some((entry) => allowsProvider(entry, current.id)),
+            )
+            .map((key) => ({ type: "gateway-key", id: key.keyId })),
+        ];
+        if (references.length)
+          throw new ApiProblem(
+            "PROVIDER_IN_USE",
+            "Route groups or Gateway Keys still refer to this provider",
+            409,
+            { references },
+          );
+        // Secrets first: a failure leaves the provider, and repeating the
+        // delete finishes the job (an already deleted secret is skipped).
+        for (const item of current.credentials)
+          if (item.ref.kind === "store") await secrets.delete(item.ref);
+        await store.deleteProvider(current.id);
+        return reply.code(204).send();
+      }),
+  );
+
+  api.get<{ Params: { id: string } }>(
+    "/providers/:id/credentials",
+    {
+      schema: {
+        params: idParams,
+        response: responses(listOf(credentialSchema)),
+      },
+    },
+    async (request) => ({
+      items: (await provider(request.params.id)).credentials,
+      nextCursor: null,
+    }),
+  );
+  api.post<{
+    Params: { id: string };
+    Body: {
+      id?: string;
+      name: string;
+      value?: string;
+      ref?: SecretReference;
+      protocols?: WireProtocol[];
+      enabled?: boolean;
+    };
+  }>(
+    "/providers/:id/credentials",
+    {
+      schema: {
+        params: idParams,
+        body: credentialCreateSchema,
+        response: responses(credentialSchema, 201),
+      },
+    },
+    async (request, reply) =>
+      serialized(async () => {
+        const body = request.body;
+        if ((body.value === undefined) === (body.ref === undefined))
+          throw invalid(
+            "CREDENTIAL_INVALID",
+            "Give either the secret value or a reference",
+            [{ pointer: "/value", detail: "exactly one of value and ref" }],
+          );
+        const current = await provider(request.params.id);
+        const taken = new Set<string>(
+          current.credentials.map((item) => item.id),
+        );
+        let id = body.id;
+        if (id === undefined) {
+          let index = current.credentials.length + 1;
+          while (taken.has(`key-${index}`)) index += 1;
+          id = `key-${index}`;
+        } else if (taken.has(id))
+          throw new ApiProblem(
+            "CREDENTIAL_EXISTS",
+            "The provider has a credential with this ID",
+            409,
+          );
+        const ref =
+          body.value !== undefined
+            ? await secrets.create(body.value)
+            : body.ref!;
+        const added: ProviderCredential = {
+          id: id as CredentialId,
+          name: body.name,
+          ref,
+          ...(body.protocols ? { protocols: body.protocols } : {}),
+          enabled: body.enabled ?? true,
+        };
+        try {
+          await store.putProvider(
+            checkProvider({
+              ...current,
+              credentials: [...current.credentials, added],
+              updatedAt: new Date().toISOString(),
+            }),
+          );
+        } catch (error) {
+          if (ref.kind === "store") {
+            try {
+              await secrets.delete(ref);
+            } catch (cleanup) {
+              throw new AggregateError(
+                [error, cleanup],
+                "Credential write failed and its secret could not be removed",
+              );
+            }
+          }
+          throw error;
+        }
+        return reply.code(201).send(added);
+      }),
+  );
+  api.put<{
+    Params: { id: string; credentialId: string };
+    Body: { value: string };
+  }>(
+    "/providers/:id/credentials/:credentialId/secret",
+    {
+      schema: {
+        params: credentialParams,
+        body: credentialSecretSchema,
+        response: responses(credentialSchema),
+      },
+    },
+    async (request) =>
+      serialized(async () => {
+        const found = credential(
+          await provider(request.params.id),
+          request.params.credentialId,
+        );
+        if (found.ref.kind !== "store")
+          throw new ApiProblem(
+            "CREDENTIAL_NOT_MANAGED",
+            "Only credentials stored by HarnessHub can be rotated here",
+            409,
+          );
+        await secrets.rotate(found.ref, request.body.value);
+        return found;
+      }),
+  );
+  api.delete<{ Params: { id: string; credentialId: string } }>(
+    "/providers/:id/credentials/:credentialId",
+    { schema: { params: credentialParams, response: noContent } },
+    async (request, reply) =>
+      serialized(async () => {
+        const current = await provider(request.params.id);
+        const found = credential(current, request.params.credentialId);
+        // Secret first, as for providers: a retry completes a partial delete.
+        if (found.ref.kind === "store") await secrets.delete(found.ref);
+        await store.putProvider(
+          checkProvider({
+            ...current,
+            credentials: current.credentials.filter((item) => item !== found),
+            updatedAt: new Date().toISOString(),
+          }),
+        );
+        return reply.code(204).send();
+      }),
+  );
+
+  const group = async (id: string): Promise<RouteGroup> => {
+    const found = await store.getRouteGroup(id as RouteGroupId);
+    if (!found) throw notFound("route group", id);
+    return found;
+  };
+  /** Members must name models of existing providers. */
+  const checkGroup = async (candidate: unknown): Promise<RouteGroup> => {
+    if (!isRouteGroup(candidate))
+      throw invalid("ROUTE_GROUP_INVALID", "The route group is invalid", [
+        { pointer: "", detail: "does not form a valid route group" },
+      ]);
+    const providers = new Set(
+      (await store.listProviders()).map((item) => item.id),
+    );
+    const errors = candidate.members.flatMap((member, index): ProblemItem[] => {
+      const parsed = parseModelRef(member);
+      return parsed?.kind === "model" && providers.has(parsed.provider)
+        ? []
+        : [
+            {
+              pointer: `/members/${index}`,
+              detail: "must name a model of an existing provider",
+            },
+          ];
+    });
+    if (errors.length)
+      throw invalid(
+        "ROUTE_GROUP_INVALID",
+        "The route group is invalid",
+        errors,
+      );
+    return candidate;
+  };
+  api.get(
+    "/route-groups",
+    { schema: { response: responses(listOf(routeGroupSchema)) } },
+    async () => ({ items: await store.listRouteGroups(), nextCursor: null }),
+  );
+  api.post<{
+    Body: {
+      id: string;
+      members: string[];
+      strategy?: RouteGroup["strategy"];
+      stickiness?: RouteGroup["stickiness"];
+      retry?: Partial<RetryPolicy>;
+    };
+  }>(
+    "/route-groups",
+    {
+      schema: {
+        body: routeGroupCreateSchema,
+        response: responses(routeGroupSchema, 201),
+      },
+    },
+    async (request, reply) =>
+      serialized(async () => {
+        const body = request.body;
+        if (await store.getRouteGroup(body.id as RouteGroupId))
+          throw new ApiProblem(
+            "ROUTE_GROUP_EXISTS",
+            "A route group with this ID exists",
+            409,
+          );
+        const now = new Date().toISOString();
+        const created = await checkGroup({
+          strategy: "order",
+          stickiness: "auto",
+          ...body,
+          createdAt: now,
+          updatedAt: now,
+        });
+        await store.putRouteGroup(created);
+        return reply.code(201).send(created);
+      }),
+  );
+  api.get<{ Params: { id: string } }>(
+    "/route-groups/:id",
+    { schema: { params: idParams, response: responses(routeGroupSchema) } },
+    async (request) => group(request.params.id),
+  );
+  api.patch<{ Params: { id: string }; Body: Json }>(
+    "/route-groups/:id",
+    {
+      schema: {
+        params: idParams,
+        body: routeGroupPatchSchema,
+        response: responses(routeGroupSchema),
+      },
+    },
+    async (request) =>
+      serialized(async () => {
+        const current = await group(request.params.id);
+        const updated = await checkGroup({
+          ...(mergePatch(current, request.body) as Json),
+          id: current.id,
+          createdAt: current.createdAt,
+          updatedAt: new Date().toISOString(),
+        });
+        await store.putRouteGroup(updated);
+        return updated;
+      }),
+  );
+  api.delete<{ Params: { id: string } }>(
+    "/route-groups/:id",
+    { schema: { params: idParams, response: noContent } },
+    async (request, reply) =>
+      serialized(async () => {
+        const current = await group(request.params.id);
+        const references = (await activeKeys())
+          .filter((key) => key.modelAllow.includes(`group/${current.id}`))
+          .map((key) => ({ type: "gateway-key", id: key.keyId }));
+        if (references.length)
+          throw new ApiProblem(
+            "ROUTE_GROUP_IN_USE",
+            "Gateway Keys still allow this route group",
+            409,
+            { references },
+          );
+        await store.deleteRouteGroup(current.id);
+        return reply.code(204).send();
+      }),
+  );
+
+  const gatewayKey = async (id: string): Promise<GatewayKeyRecord> => {
+    const found = await store.getGatewayKey(id as GatewayKeyId);
+    if (!found) throw notFound("gateway key", id);
+    return found;
+  };
+  api.get(
+    "/gateway-keys",
+    { schema: { response: responses(listOf(gatewayKeySchema)) } },
+    async () => ({
+      items: (await store.listGatewayKeys()).map(view),
+      nextCursor: null,
+    }),
+  );
+  api.post<{
+    Body: {
+      name: string;
+      modelAllow: string[];
+      quota?: GatewayKeyQuota;
+      expiresAt?: string | null;
+    };
+  }>(
+    "/gateway-keys",
+    {
+      schema: {
+        body: gatewayKeyCreateSchema,
+        response: responses(gatewayKeyCreatedSchema, 201),
+      },
+    },
+    async (request, reply) =>
+      serialized(async () => {
+        const body = request.body;
+        const errors = body.modelAllow.flatMap((entry, index): ProblemItem[] =>
+          parseModelRef(entry)
+            ? []
+            : [
+                {
+                  pointer: `/modelAllow/${index}`,
+                  detail: "must be provider/model, provider/* or group/<id>",
+                },
+              ],
+        );
+        const now = Date.now();
+        const expiresAt =
+          body.expiresAt === undefined
+            ? new Date(now + CLIENT_KEY_LIFETIME_MS).toISOString()
+            : body.expiresAt;
+        if (expiresAt !== null && Date.parse(expiresAt) <= now)
+          errors.push({
+            pointer: "/expiresAt",
+            detail: "must be in the future",
+          });
+        if (errors.length)
+          throw invalid(
+            "GATEWAY_KEY_INVALID",
+            "The Gateway Key is invalid",
+            errors,
+          );
+        const scope = { kind: "client" as const, name: body.name };
+        const issued = issueGatewayKey(scope);
+        const record: GatewayKeyRecord = {
+          keyId: issued.keyId,
+          name: body.name,
+          scope,
+          modelAllow: body.modelAllow,
+          ...(body.quota ? { quota: body.quota } : {}),
+          secretHash: issued.secretHash,
+          createdAt: new Date(now).toISOString(),
+          ...(expiresAt !== null ? { expiresAt } : {}),
+        };
+        await store.createGatewayKey(record);
+        return reply
+          .code(201)
+          .header("cache-control", "no-store")
+          .send({ key: issued.text, gatewayKey: view(record) });
+      }),
+  );
+  api.get<{ Params: { id: string } }>(
+    "/gateway-keys/:id",
+    { schema: { params: idParams, response: responses(gatewayKeySchema) } },
+    async (request) => view(await gatewayKey(request.params.id)),
+  );
+  api.post<{ Params: { id: string } }>(
+    "/gateway-keys/:id/revoke",
+    {
+      schema: {
+        params: idParams,
+        body: emptyBodySchema,
+        response: responses(gatewayKeySchema),
+      },
+    },
+    async (request) =>
+      serialized(async () => {
+        const id = (await gatewayKey(request.params.id)).keyId;
+        await store.revokeGatewayKey(id, new Date().toISOString());
+        return view(await gatewayKey(id));
+      }),
+  );
+
+  api.get<{ Querystring: CallQuery & { limit: number; cursor?: string } }>(
+    "/model-calls",
+    {
+      schema: {
+        querystring: modelCallsQuerySchema,
+        response: responses(modelCallPageSchema),
+      },
+    },
+    async (request) => {
+      const { limit, cursor } = request.query;
+      const page = await store.listModelCalls(
+        usageFilter(request.query),
+        cursor === undefined ? { limit } : { limit, cursor },
+      );
+      return {
+        items: page.items.map(callView),
+        nextCursor: page.nextCursor ?? null,
+      };
+    },
+  );
+  api.get<{ Querystring: CallQuery & { groupBy: UsageGroupBy } }>(
+    "/usage",
+    {
+      schema: {
+        querystring: usageQuerySchema,
+        response: responses(usageSchema),
+      },
+    },
+    async (request) => ({
+      groupBy: request.query.groupBy,
+      items: (
+        await store.aggregateUsage(
+          usageFilter(request.query),
+          request.query.groupBy,
+        )
+      ).map(({ costUsd, ...bucket }) => ({
+        ...bucket,
+        cost: { amount: decimal(costUsd), currency: "USD" as const },
+      })),
+    }),
+  );
+}

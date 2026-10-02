@@ -1,0 +1,715 @@
+// SPDX-License-Identifier: MIT
+/**
+ * JSON Schemas of the `/api/v1` model-plane routes: request validation (Ajv)
+ * and response serialization and OpenAPI both use them. Field rules follow
+ * `@harnesshub/core/model-plane`; the record validators of
+ * `@harnesshub/core/model-plane-records` remain the authority before a write.
+ */
+import {
+  droppableFields,
+  providerPatches,
+  wireProtocols,
+} from "@harnesshub/core/model-plane";
+
+const text = (maxLength: number) =>
+  ({ type: "string", minLength: 1, maxLength }) as const;
+const slug = {
+  type: "string",
+  pattern: "^[a-z0-9][a-z0-9-]{0,62}$",
+} as const;
+const timestamp = { type: "string", format: "date-time" } as const;
+const count = { type: "integer", minimum: 0 } as const;
+const positive = { type: "integer", minimum: 1 } as const;
+const amount = { type: "number", minimum: 0 } as const;
+const protocol = { enum: [...wireProtocols] } as const;
+const strings = (maxLength: number, maxItems = 1000) =>
+  ({ type: "array", maxItems, items: text(maxLength) }) as const;
+const modelRefText = {
+  type: "string",
+  minLength: 3,
+  maxLength: 512,
+  pattern: "^[a-z0-9][a-z0-9-]{0,62}/\\S+$",
+} as const;
+const allowEntry = { ...modelRefText, maxLength: 600 } as const;
+
+/** Problem details (RFC 9457) of every `/api/v1` error response. */
+export const problemSchema = {
+  type: "object",
+  required: ["type", "title", "status", "code", "requestId"],
+  properties: {
+    type: { type: "string" },
+    title: { type: "string" },
+    status: { type: "integer" },
+    detail: { type: "string" },
+    instance: { type: "string" },
+    code: { type: "string" },
+    requestId: { type: "string" },
+    errors: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["detail"],
+        properties: {
+          pointer: { type: "string" },
+          parameter: { type: "string" },
+          detail: { type: "string" },
+        },
+      },
+    },
+    references: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["type", "id"],
+        properties: { type: { type: "string" }, id: { type: "string" } },
+      },
+    },
+  },
+} as const;
+
+/** Success response plus the problem object for every error status. */
+export function responses(schema: object, code = 200) {
+  return { [code]: schema, default: problemSchema };
+}
+export const noContent = {
+  204: { type: "null", description: "No content" },
+  default: problemSchema,
+} as const;
+
+export const idParams = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id"],
+  properties: { id: text(100) },
+} as const;
+export const credentialParams = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "credentialId"],
+  properties: { id: text(100), credentialId: text(200) },
+} as const;
+
+const secretReference = {
+  type: "object",
+  additionalProperties: false,
+  required: ["kind", "value"],
+  properties: {
+    kind: { enum: ["env", "file", "keychain", "store"] },
+    value: text(8192),
+  },
+} as const;
+const endpointUrl = text(2048);
+const endpoints = {
+  type: "object",
+  additionalProperties: false,
+  minProperties: 1,
+  properties: Object.fromEntries(
+    wireProtocols.map((name) => [name, endpointUrl]),
+  ),
+} as const;
+const apiKeyHeader = {
+  type: "string",
+  pattern:
+    "^(authorization-bearer|x-api-key|api-key|x-goog-api-key|query-key|custom:[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128})$",
+} as const;
+const headers = {
+  type: "object",
+  maxProperties: 64,
+  additionalProperties: { type: "string", maxLength: 8192 },
+} as const;
+const price = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    input: amount,
+    output: amount,
+    cacheRead: amount,
+    cacheWrite: amount,
+  },
+} as const;
+const providerModel = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id"],
+  properties: {
+    id: text(512),
+    wire: text(512),
+    contextWindow: positive,
+    maxOutputTokens: positive,
+    reasoning: { type: "boolean" },
+    inputModalities: {
+      type: "array",
+      items: { enum: ["text", "image", "pdf", "audio", "video"] },
+    },
+    price,
+  },
+} as const;
+const providerModels = {
+  type: "object",
+  additionalProperties: false,
+  required: ["source", "list", "expose"],
+  properties: {
+    source: { enum: ["live", "catalog", "static", "manual"] },
+    list: { type: "array", maxItems: 10_000, items: providerModel },
+    expose: {
+      anyOf: [{ type: "string", enum: ["all"] }, strings(512, 10_000)],
+    },
+    refreshedAt: timestamp,
+    stale: { type: "boolean" },
+    listPath: { type: "string", pattern: "^/\\S{0,511}$" },
+  },
+} as const;
+const patchSet = {
+  type: "object",
+  additionalProperties: false,
+  required: ["patches"],
+  properties: {
+    patches: { type: "array", items: { enum: [...providerPatches] } },
+    dropFields: { type: "array", items: { enum: [...droppableFields] } },
+    anthropicBetaAllow: strings(200, 100),
+  },
+} as const;
+const patches = {
+  type: "object",
+  additionalProperties: false,
+  properties: Object.fromEntries(wireProtocols.map((name) => [name, patchSet])),
+} as const;
+const capabilities = {
+  type: "object",
+  additionalProperties: false,
+  properties: { requiresReasoningReplay: { type: "boolean" } },
+} as const;
+const wire = {
+  type: "object",
+  maxProperties: 10_000,
+  additionalProperties: text(512),
+} as const;
+
+export const credentialSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "name", "ref", "enabled"],
+  properties: {
+    id: text(200),
+    name: text(200),
+    ref: secretReference,
+    protocols: { type: "array", items: protocol },
+    enabled: { type: "boolean" },
+  },
+} as const;
+
+export const providerSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "schemaVersion",
+    "id",
+    "name",
+    "kind",
+    "endpoints",
+    "auth",
+    "credentials",
+    "models",
+    "createdAt",
+    "updatedAt",
+  ],
+  properties: {
+    schemaVersion: { type: "integer", enum: [1] },
+    id: slug,
+    name: text(200),
+    kind: { enum: ["vendor", "relay", "local", "custom"] },
+    preset: text(200),
+    endpoints,
+    auth: {
+      type: "object",
+      additionalProperties: false,
+      required: ["apiKeyHeader"],
+      properties: { apiKeyHeader },
+    },
+    headers,
+    credentials: { type: "array", items: credentialSchema },
+    models: providerModels,
+    wire,
+    patches,
+    capabilities,
+    translateOnly: { type: "boolean" },
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  },
+} as const;
+
+/** `POST /providers`: credentials are added through their own route. */
+export const providerCreateSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "endpoints"],
+  properties: {
+    id: slug,
+    name: text(200),
+    kind: providerSchema.properties.kind,
+    preset: text(200),
+    endpoints,
+    auth: providerSchema.properties.auth,
+    headers,
+    models: providerModels,
+    wire,
+    patches,
+    capabilities,
+    translateOnly: { type: "boolean" },
+  },
+} as const;
+
+/** `PATCH /providers/{id}`: JSON Merge Patch (RFC 7396); `null` removes an optional member. */
+export const providerPatchSchema = {
+  type: "object",
+  additionalProperties: false,
+  minProperties: 1,
+  properties: {
+    name: text(200),
+    kind: providerSchema.properties.kind,
+    preset: { type: ["string", "null"], minLength: 1, maxLength: 200 },
+    endpoints: {
+      type: "object",
+      additionalProperties: false,
+      properties: Object.fromEntries(
+        wireProtocols.map((name) => [
+          name,
+          { type: ["string", "null"], minLength: 1, maxLength: 2048 },
+        ]),
+      ),
+    },
+    auth: providerSchema.properties.auth,
+    headers: {
+      type: ["object", "null"],
+      additionalProperties: { type: ["string", "null"], maxLength: 8192 },
+    },
+    models: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        ...providerModels.properties,
+        refreshedAt: { type: ["string", "null"], format: "date-time" },
+        stale: { type: ["boolean", "null"] },
+        listPath: { type: ["string", "null"], pattern: "^/\\S{0,511}$" },
+      },
+    },
+    wire: {
+      type: ["object", "null"],
+      additionalProperties: {
+        type: ["string", "null"],
+        minLength: 1,
+        maxLength: 512,
+      },
+    },
+    patches: {
+      type: ["object", "null"],
+      additionalProperties: false,
+      properties: Object.fromEntries(
+        wireProtocols.map((name) => [
+          name,
+          { ...patchSet, type: ["object", "null"] },
+        ]),
+      ),
+    },
+    capabilities: { ...capabilities, type: ["object", "null"] },
+    translateOnly: { type: ["boolean", "null"] },
+  },
+} as const;
+
+export const credentialCreateSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["name"],
+  properties: {
+    id: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,62}$" },
+    name: text(200),
+    value: { type: "string", minLength: 1, maxLength: 8192 },
+    ref: {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "value"],
+      properties: { kind: { enum: ["env", "file"] }, value: text(8192) },
+    },
+    protocols: {
+      type: "array",
+      minItems: 1,
+      uniqueItems: true,
+      items: protocol,
+    },
+    enabled: { type: "boolean" },
+  },
+} as const;
+export const credentialSecretSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["value"],
+  properties: { value: { type: "string", minLength: 1, maxLength: 8192 } },
+} as const;
+
+const retry = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    perCandidate: count,
+    totalAttempts: count,
+    baseBackoffMs: count,
+    maxBackoffMs: count,
+    retryAfterWaitCapMs: count,
+  },
+} as const;
+const strategy = {
+  enum: ["order", "rotate", "least-used", "latency"],
+} as const;
+const stickiness = { enum: ["auto", "session", "turn", "off"] } as const;
+const members = {
+  type: "array",
+  minItems: 1,
+  maxItems: 100,
+  uniqueItems: true,
+  items: modelRefText,
+} as const;
+
+export const routeGroupSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "id",
+    "strategy",
+    "stickiness",
+    "members",
+    "createdAt",
+    "updatedAt",
+  ],
+  properties: {
+    id: slug,
+    strategy,
+    stickiness,
+    members,
+    retry,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  },
+} as const;
+export const routeGroupCreateSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "members"],
+  properties: { id: slug, strategy, stickiness, members, retry },
+} as const;
+export const routeGroupPatchSchema = {
+  type: "object",
+  additionalProperties: false,
+  minProperties: 1,
+  properties: {
+    strategy,
+    stickiness,
+    members,
+    retry: { ...retry, type: ["object", "null"] },
+  },
+} as const;
+
+const scope = {
+  type: "object",
+  additionalProperties: false,
+  required: ["kind"],
+  properties: {
+    kind: { enum: ["agent", "session", "client"] },
+    adapterId: text(200),
+    sessionId: text(200),
+    name: text(200),
+  },
+} as const;
+const quota = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    requestsPerMinute: positive,
+    tokensPerDay: positive,
+    costPerMonthUsd: amount,
+  },
+} as const;
+export const gatewayKeySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["keyId", "name", "scope", "modelAllow", "createdAt"],
+  properties: {
+    keyId: { type: "string", pattern: "^[a-z2-7]{12}$" },
+    name: text(200),
+    scope,
+    modelAllow: { type: "array", items: allowEntry },
+    quota,
+    createdAt: timestamp,
+    expiresAt: timestamp,
+    revokedAt: timestamp,
+    lastUsedAt: timestamp,
+  },
+} as const;
+export const gatewayKeyCreateSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["name", "modelAllow"],
+  properties: {
+    name: text(200),
+    modelAllow: {
+      type: "array",
+      minItems: 1,
+      maxItems: 1000,
+      uniqueItems: true,
+      items: allowEntry,
+    },
+    quota,
+    /** Absent: 90 days from now (03 section 2); null: never expires. */
+    expiresAt: { type: ["string", "null"], format: "date-time" },
+  },
+} as const;
+export const gatewayKeyCreatedSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["key", "gatewayKey"],
+  properties: {
+    key: { type: "string", description: "The key text; shown only once." },
+    gatewayKey: gatewayKeySchema,
+  },
+} as const;
+export const emptyBodySchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {},
+} as const;
+
+const money = {
+  type: "object",
+  additionalProperties: false,
+  required: ["amount", "currency"],
+  properties: {
+    amount: { type: "string", pattern: "^[0-9]+(\\.[0-9]+)?$" },
+    currency: { type: "string", enum: ["USD"] },
+  },
+} as const;
+const tokens = {
+  type: "object",
+  additionalProperties: false,
+  required: ["input", "cacheRead", "cacheWrite", "output", "reasoning"],
+  properties: {
+    input: count,
+    cacheRead: count,
+    cacheWrite: count,
+    output: count,
+    reasoning: count,
+  },
+} as const;
+const callFilter = {
+  from: timestamp,
+  to: timestamp,
+  keyId: { type: "string", pattern: "^[a-z2-7]{12}$" },
+  provider: slug,
+  model: modelRefText,
+  sessionId: text(200),
+} as const;
+export const modelCallsQuerySchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    limit: { type: "integer", minimum: 1, maximum: 200, default: 50 },
+    cursor: text(200),
+    ...callFilter,
+  },
+} as const;
+export const usageQuerySchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    groupBy: {
+      enum: ["day", "provider", "model", "key", "adapter"],
+      default: "model",
+    },
+    ...callFilter,
+  },
+} as const;
+
+const attempt = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "provider",
+    "credentialId",
+    "modelRef",
+    "wireModel",
+    "upstreamProtocol",
+    "startedAt",
+    "decision",
+  ],
+  properties: {
+    provider: slug,
+    credentialId: { type: "string" },
+    modelRef: { type: "string" },
+    wireModel: { type: "string" },
+    upstreamProtocol: protocol,
+    startedAt: timestamp,
+    firstByteMs: amount,
+    status: { type: "integer" },
+    errorClass: { type: "string" },
+    retryAfterMs: amount,
+    decision: { enum: ["success", "retry", "failover", "stop"] },
+    backoffMs: amount,
+  },
+} as const;
+export const modelCallSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "callId",
+    "occurredAt",
+    "inbound",
+    "patches",
+    "unmapped",
+    "status",
+    "timing",
+    "attempts",
+    "cost",
+  ],
+  properties: {
+    callId: { type: "string" },
+    occurredAt: timestamp,
+    keyId: { type: "string" },
+    scope,
+    sessionId: { type: "string" },
+    runId: { type: "string" },
+    inbound: {
+      type: "object",
+      additionalProperties: false,
+      required: ["protocol", "path", "stream"],
+      properties: {
+        protocol,
+        path: { type: "string" },
+        stream: { type: "boolean" },
+      },
+    },
+    requestedModel: { type: "string" },
+    modelRef: { type: "string" },
+    group: { type: "string" },
+    provider: { type: "string" },
+    credentialId: { type: "string" },
+    wireModel: { type: "string" },
+    upstreamProtocol: protocol,
+    mode: { enum: ["passthrough", "translated"] },
+    servedModel: { type: "string" },
+    patches: { type: "array", items: { type: "string" } },
+    unmapped: { type: "array", items: { type: "string" } },
+    status: { type: "integer" },
+    errorClass: { type: "string" },
+    errorSource: { enum: ["gateway", "upstream"] },
+    error: { type: "string" },
+    finishReason: { type: "string" },
+    usage: {
+      ...tokens,
+      required: [...tokens.required, "source"],
+      properties: {
+        ...tokens.properties,
+        source: { enum: ["reported", "estimated", "missing"] },
+      },
+    },
+    timing: {
+      type: "object",
+      additionalProperties: false,
+      required: ["durationMs"],
+      properties: {
+        firstByteMs: amount,
+        firstContentMs: amount,
+        durationMs: amount,
+      },
+    },
+    attempts: { type: "array", items: attempt },
+    cost: {
+      type: ["object", "null"],
+      additionalProperties: false,
+      required: ["amount", "currency", "priceSource"],
+      properties: {
+        ...money.properties,
+        priceSource: { type: "string" },
+      },
+    },
+    completion: { enum: ["explicit", "inferred"] },
+    rejected: { type: "boolean" },
+    rejectReason: { type: "string" },
+  },
+} as const;
+export const modelCallPageSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["items", "nextCursor"],
+  properties: {
+    items: { type: "array", items: modelCallSchema },
+    nextCursor: { type: ["string", "null"] },
+  },
+} as const;
+export const usageSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["groupBy", "items"],
+  properties: {
+    groupBy: usageQuerySchema.properties.groupBy,
+    items: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "key",
+          "calls",
+          "failedCalls",
+          "usage",
+          "cost",
+          "unpricedCalls",
+        ],
+        properties: {
+          key: {
+            type: "string",
+            description: "Empty for calls without the grouped attribute.",
+          },
+          calls: count,
+          failedCalls: count,
+          usage: tokens,
+          cost: money,
+          unpricedCalls: count,
+        },
+      },
+    },
+  },
+} as const;
+
+/** `{items, nextCursor: null}`: configuration lists are returned whole. */
+export function listOf(item: object) {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["items", "nextCursor"],
+    properties: {
+      items: { type: "array", items: item },
+      nextCursor: { type: ["string", "null"] },
+    },
+  } as const;
+}
+
+export const systemInfoSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "apiVersion",
+    "version",
+    "commit",
+    "pid",
+    "startedAt",
+    "dataDir",
+    "secretBackend",
+  ],
+  properties: {
+    apiVersion: { type: "string", enum: ["v1"] },
+    version: { type: "string" },
+    commit: { type: "string" },
+    pid: { type: "integer" },
+    startedAt: timestamp,
+    dataDir: { type: "string" },
+    secretBackend: { enum: ["keychain", "dpapi", "file"] },
+  },
+} as const;

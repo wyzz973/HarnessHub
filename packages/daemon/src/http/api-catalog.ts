@@ -856,4 +856,391 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     tests: ["tests/integration/observability.test.ts"],
     operationId: "hh_get_v1_observability",
   },
+  {
+    method: "GET",
+    path: "/api/v1/system/info",
+    title: "守护进程信息",
+    group: "system",
+    request: "无参数。",
+    response:
+      "200：apiVersion=v1、version、commit、pid、startedAt、dataDir、secretBackend。",
+    implementation:
+      "组合根在启动时固定的构建身份与秘密后端；`hh status` 读取它。",
+    effects: "只读。",
+    errors:
+      "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/api-v1.ts",
+    tests: [
+      "tests/integration/api-v1.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_get_system_info",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/providers",
+    title: "provider 列表",
+    group: "providers",
+    request: "无参数。",
+    response:
+      "200：items（ProviderConfig，凭据只含引用）、nextCursor=null；配置列表不分页。",
+    implementation: "ModelPlaneStore.listProviders，按 id 排序。",
+    effects: "只读；从不返回秘密值。",
+    errors:
+      "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/api-v1.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_list_providers",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/providers",
+    title: "添加 provider",
+    group: "providers",
+    request:
+      "id（slug）、endpoints（至少一个）必填；name、kind、preset、auth、headers、models、wire、patches、capabilities、translateOnly 可选；未知字段 400。",
+    response: "201：ProviderConfig，credentials 为空。",
+    implementation:
+      "默认 name=id、kind=custom、auth=authorization-bearer、models={manual,[],all}；端点按官方 SDK 基址约定校验（chat/responses 含 /v1，anthropic、gemini 不含版本段）。",
+    effects: "写入 providers 表。",
+    errors:
+      "400 PROVIDER_INVALID（errors[] 指向 /endpoints/<协议>：操作路径、版本段、内嵌凭据、查询串、片段、非 HTTPS 的公网地址）；409 PROVIDER_EXISTS；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/api-v1.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_create_provider",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/providers/{id}",
+    title: "provider 详情",
+    group: "providers",
+    request: "路径参数 id。",
+    response: "200：ProviderConfig。",
+    implementation: "ModelPlaneStore.getProvider。",
+    effects: "只读。",
+    errors:
+      "404 PROVIDER_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/api-v1.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_get_provider",
+  },
+  {
+    method: "PATCH",
+    path: "/api/v1/providers/{id}",
+    title: "修改 provider",
+    group: "providers",
+    request:
+      "JSON Merge Patch（application/merge-patch+json 或 application/json）：null 删除可选成员；id、credentials、时间戳不可改。",
+    response: "200：更新后的 ProviderConfig。",
+    implementation:
+      "合并后按创建时的规则整体校验，再整体替换；同一守护进程内的写入串行执行。",
+    effects: "更新 providers 记录与 updatedAt。尚无 ETag/If-Match。",
+    errors:
+      "400 PROVIDER_INVALID 或 INVALID_REQUEST；404 PROVIDER_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: ["tests/integration/api-v1.test.ts"],
+    operationId: "hh_api_v1_update_provider",
+  },
+  {
+    method: "DELETE",
+    path: "/api/v1/providers/{id}",
+    title: "删除 provider",
+    group: "providers",
+    request: "路径参数 id。",
+    response: "204。",
+    implementation:
+      "先检查引用；再删除其托管秘密（store 引用），最后删除记录，失败后重试同一请求即可完成。",
+    effects: "删除记录与托管秘密。",
+    errors:
+      "409 PROVIDER_IN_USE（references 列出路由组与未吊销的 Gateway Key）；404；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/api-v1.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_delete_provider",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/providers/{id}/credentials",
+    title: "凭据列表",
+    group: "credentials",
+    request: "路径参数 id。",
+    response:
+      "200：items（id、name、ref、protocols、enabled）、nextCursor=null。",
+    implementation: "读取 provider 的 credentials。",
+    effects:
+      "只读；ref 是引用（store 的 UUID、环境变量名或文件路径），从不含值。",
+    errors:
+      "404 PROVIDER_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: ["tests/integration/api-v1.test.ts"],
+    operationId: "hh_api_v1_list_credentials",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/providers/{id}/credentials",
+    title: "添加凭据",
+    group: "credentials",
+    request:
+      "name 必填；value（存入秘密后端）与 ref（env 或 file 引用）二选一；id（slug，默认 key-N）、protocols、enabled 可选。",
+    response:
+      "201：凭据，ref 为 {kind:store,value:UUID} 或给定引用；不回显值。",
+    implementation:
+      "value 经 SecretStore.create 写入托管秘密，再把引用写进 provider；provider 写入失败时删除刚写入的秘密。",
+    effects: "写秘密条目与 providers 记录；值不进入日志与响应。",
+    errors:
+      "400 CREDENTIAL_INVALID、INVALID_SECRET；409 CREDENTIAL_EXISTS；404；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/api-v1.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_add_credential",
+  },
+  {
+    method: "PUT",
+    path: "/api/v1/providers/{id}/credentials/{credentialId}/secret",
+    title: "轮换凭据",
+    group: "credentials",
+    request: "value 必填。",
+    response: "200：凭据（引用不变）。",
+    implementation: "SecretStore.rotate 在同一引用下替换值。",
+    effects: "替换托管秘密的值。",
+    errors:
+      "409 CREDENTIAL_NOT_MANAGED（env/file 引用不能在此轮换）；404 CREDENTIAL_NOT_FOUND；400 INVALID_SECRET；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/api-v1.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_rotate_credential",
+  },
+  {
+    method: "DELETE",
+    path: "/api/v1/providers/{id}/credentials/{credentialId}",
+    title: "删除凭据",
+    group: "credentials",
+    request: "路径参数 id、credentialId。",
+    response: "204。",
+    implementation:
+      "先删除托管秘密，再从 provider 移除凭据；失败后重试同一请求即可完成。",
+    effects: "删除秘密条目，更新 providers 记录。",
+    errors:
+      "404；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/api-v1.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_delete_credential",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/route-groups",
+    title: "路由组列表",
+    group: "route-groups",
+    request: "无参数。",
+    response: "200：items（RouteGroup）、nextCursor=null。",
+    implementation: "ModelPlaneStore.listRouteGroups。",
+    effects: "只读。",
+    errors:
+      "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/api-v1.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_list_route_groups",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/route-groups",
+    title: "添加路由组",
+    group: "route-groups",
+    request:
+      "id、members（Model Ref，至少一个，不重复）必填；strategy（默认 order）、stickiness（默认 auto）、retry 可选。",
+    response: "201：RouteGroup。",
+    implementation: "成员必须是已存在 provider 的模型。",
+    effects: "写入 route_groups 表。",
+    errors:
+      "400 ROUTE_GROUP_INVALID（errors[] 指向 /members/<i>）；409 ROUTE_GROUP_EXISTS；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/api-v1.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_create_route_group",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/route-groups/{id}",
+    title: "路由组详情",
+    group: "route-groups",
+    request: "路径参数 id。",
+    response: "200：RouteGroup。",
+    implementation: "ModelPlaneStore.getRouteGroup。",
+    effects: "只读。",
+    errors:
+      "404 ROUTE_GROUP_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: ["tests/integration/api-v1.test.ts"],
+    operationId: "hh_api_v1_get_route_group",
+  },
+  {
+    method: "PATCH",
+    path: "/api/v1/route-groups/{id}",
+    title: "修改路由组",
+    group: "route-groups",
+    request:
+      "JSON Merge Patch：strategy、stickiness、members、retry（null 删除）。",
+    response: "200：RouteGroup。",
+    implementation: "合并后整体校验并替换。",
+    effects: "更新 route_groups 记录。尚无 ETag/If-Match。",
+    errors:
+      "400 ROUTE_GROUP_INVALID；404；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: ["tests/integration/api-v1.test.ts"],
+    operationId: "hh_api_v1_update_route_group",
+  },
+  {
+    method: "DELETE",
+    path: "/api/v1/route-groups/{id}",
+    title: "删除路由组",
+    group: "route-groups",
+    request: "路径参数 id。",
+    response: "204。",
+    implementation: "未吊销的 Gateway Key 允许 group/<id> 时拒绝。",
+    effects: "删除记录。",
+    errors:
+      "409 ROUTE_GROUP_IN_USE（references）；404；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/api-v1.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_delete_route_group",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/gateway-keys",
+    title: "Gateway Key 列表",
+    group: "gateway-keys",
+    request: "无参数。",
+    response:
+      "200：items（GatewayKeyView，不含 secretHash）、nextCursor=null，按创建顺序。",
+    implementation: "ModelPlaneStore.listGatewayKeys 后去掉哈希。",
+    effects: "只读；从不返回 Key 文本或哈希。",
+    errors:
+      "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/api-v1.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_list_gateway_keys",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/gateway-keys",
+    title: "签发 client Key",
+    group: "gateway-keys",
+    request:
+      "name、modelAllow（provider/model、provider/*、group/<id>，至少一个）必填；quota 可选；expiresAt 缺省为 90 天后，null 为不过期。",
+    response:
+      "201：key（hhk_c_… 文本，只在此响应中出现）与 gatewayKey 视图；Cache-Control: no-store。",
+    implementation:
+      "issueGatewayKey 生成 client 作用域 Key，只保存秘密部分的 SHA-256。",
+    effects: "写入 gateway_keys 表。",
+    errors:
+      "400 GATEWAY_KEY_INVALID（errors[]：/modelAllow/<i>、/expiresAt 必须在未来）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/api-v1.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_create_gateway_key",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/gateway-keys/{id}",
+    title: "Gateway Key 详情",
+    group: "gateway-keys",
+    request: "路径参数 id（keyId）。",
+    response: "200：GatewayKeyView。",
+    implementation: "ModelPlaneStore.getGatewayKey 后去掉哈希。",
+    effects: "只读。",
+    errors:
+      "404 GATEWAY_KEY_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: ["tests/integration/api-v1.test.ts"],
+    operationId: "hh_api_v1_get_gateway_key",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/gateway-keys/{id}/revoke",
+    title: "吊销 Gateway Key",
+    group: "gateway-keys",
+    request: "路径参数 id；请求体为空对象。",
+    response: "200：带 revokedAt 的 GatewayKeyView。",
+    implementation:
+      "ModelPlaneStore.revokeGatewayKey；已吊销的 Key 保留第一次的时间。",
+    effects: "更新 gateway_keys 记录；在途调用的终止尚未实现。",
+    errors:
+      "404 GATEWAY_KEY_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/api-v1.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_revoke_gateway_key",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/model-calls",
+    title: "model.call 账本",
+    group: "usage",
+    request:
+      "limit（1–200，默认 50）、cursor；过滤 from（含）、to（不含）、keyId、provider、model、sessionId。",
+    response:
+      "200：items（ModelCallEntry，cost 为 {amount 十进制字符串, currency, priceSource} 或 null）、nextCursor。",
+    implementation:
+      "ModelPlaneStore.listModelCalls，按 occurredAt 新到旧，游标为不透明字符串。",
+    effects: "只读。",
+    errors:
+      "400 INVALID_REQUEST、INVALID_CURSOR、INVALID_USAGE_FILTER；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: ["tests/integration/api-v1.test.ts"],
+    operationId: "hh_api_v1_list_model_calls",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/usage",
+    title: "用量聚合",
+    group: "usage",
+    request:
+      "groupBy（day、provider、model、key、adapter，默认 model）与 /model-calls 相同的过滤。",
+    response:
+      "200：groupBy、items（key、calls、failedCalls、usage、cost 十进制字符串、unpricedCalls）。",
+    implementation:
+      "ModelPlaneStore.aggregateUsage：状态码不低于 400 记为失败，cost 只累加已知成本，null 成本计入 unpricedCalls，missing 用量按 0 计，日期为 UTC。",
+    effects: "只读。",
+    errors:
+      "400 INVALID_REQUEST、INVALID_USAGE_FILTER；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/api-v1.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_get_usage",
+  },
 ];

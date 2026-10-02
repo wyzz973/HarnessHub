@@ -38,6 +38,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "@harnesshub/agents/engine/registry";
 import { SqliteStore } from "@harnesshub/store/storage/sqlite-store";
+import { SqliteModelPlaneStore } from "@harnesshub/store/storage/model-plane-store";
+import {
+  SecretStore,
+  type SecretBackendSetting,
+} from "@harnesshub/secrets/secret-store";
+import { ensureAdminToken, ADMIN_TOKEN_FILE } from "./admin-token.js";
+import { registerApiV1 } from "./http/api-v1.js";
 import { ProcessWorkerHost } from "@harnesshub/runtime/process/worker-host";
 import { sharedProcessLauncher } from "@harnesshub/runtime/process/launcher";
 import { usePlatformLauncher } from "@harnesshub/store/platform/process-launcher";
@@ -147,6 +154,40 @@ export async function loadBuildInfo(
   return parseBuildInfo(raw);
 }
 
+const secretBackends: readonly string[] = ["auto", "keychain", "dpapi", "file"];
+
+/**
+ * The platform's HarnessHub config root (07-data-security section 1): macOS
+ * `~/Library/Application Support/HarnessHub/config`, Windows
+ * `%LOCALAPPDATA%\HarnessHub\config`, elsewhere `$XDG_CONFIG_HOME/harnesshub`
+ * (an absolute XDG value only) or `~/.config/harnesshub`.
+ */
+export function defaultConfigDir(
+  environment: Readonly<NodeJS.ProcessEnv> = process.env,
+  platform: NodeJS.Platform = process.platform,
+  home: string = homedir(),
+): string {
+  if (platform === "darwin")
+    return path.join(
+      home,
+      "Library",
+      "Application Support",
+      "HarnessHub",
+      "config",
+    );
+  if (platform === "win32")
+    return path.win32.join(
+      environment.LOCALAPPDATA ?? path.win32.join(home, "AppData", "Local"),
+      "HarnessHub",
+      "config",
+    );
+  const xdg = environment.XDG_CONFIG_HOME;
+  return path.join(
+    xdg && path.isAbsolute(xdg) ? xdg : path.join(home, ".config"),
+    "harnesshub",
+  );
+}
+
 /** Composition root: concrete implementations are assembled only here. */
 export async function startHub(options: {
   dataDir: string;
@@ -172,6 +213,14 @@ export async function startHub(options: {
    * only the entry point's own ready events).
    */
   logEcho?: boolean;
+  /**
+   * Config root holding `secrets.key` of the encrypted-file secret backend
+   * (07-data-security section 1); defaults to the platform's HarnessHub
+   * config directory (`defaultConfigDir`).
+   */
+  configDir?: string;
+  /** Backend for new managed secrets (`secrets.backend`); `auto` by default. */
+  secretsBackend?: SecretBackendSetting;
 }) {
   // HARNESSHUB_LOG_LEVEL is validated before anything starts; Workers inherit the value.
   const logLevel = parseLogLevel(process.env[LOG_LEVEL_ENVIRONMENT]);
@@ -209,7 +258,9 @@ export async function startHub(options: {
   const dataDir = await realpath(requestedDataDir);
   // Ownership comes first: a second start on this directory fails before it
   // writes anything, including the running Gateway's log and model file (F05).
-  const store = new SqliteStore(path.join(dataDir, "harnesshub.sqlite"));
+  const store = new SqliteStore(path.join(dataDir, "harnesshub.sqlite"), {
+    appVersion: build.version,
+  });
   try {
     store.acquireOwner();
   } catch (error) {
@@ -312,7 +363,20 @@ export async function startHub(options: {
   let manager: EngineManager | undefined;
   let workflowStore: SqliteWorkflowStore | undefined;
   let workflows: WorkflowService | undefined;
+  let modelPlane: SqliteModelPlaneStore | undefined;
   try {
+    // The model-plane API: the admin token, managed secrets and the store
+    // on this owned database (opened after SqliteStore applied migrations).
+    const adminTokenDigest = await ensureAdminToken(dataDir);
+    const secrets = await SecretStore.open({
+      dataDir,
+      configDir: path.resolve(options.configDir ?? defaultConfigDir()),
+      backend: options.secretsBackend ?? "auto",
+      launcher,
+    });
+    modelPlane = new SqliteModelPlaneStore(
+      path.join(dataDir, "harnesshub.sqlite"),
+    );
     manager = new EngineManager({
       config,
       persistence: store,
@@ -500,6 +564,21 @@ export async function startHub(options: {
     });
     registerToolPackageRoutes(server, toolPackages);
     registerHarnessModelRoutes(server, harnessModel, () => runtimeInfo);
+    registerApiV1(server, {
+      adminTokenDigest,
+      modelPlane,
+      secrets,
+      system: {
+        apiVersion: "v1",
+        version: build.version,
+        commit: build.commit,
+        pid: process.pid,
+        startedAt: new Date().toISOString(),
+        dataDir,
+        secretBackend: secrets.backend,
+      },
+      log: gatewayLog,
+    });
     // Registered after createGateway's hook, so the application has already cancelled
     // Runs; this only stops a pending model test and waits for its Session cleanup.
     server.addHook("preClose", async () => harnessModel.close());
@@ -513,6 +592,7 @@ export async function startHub(options: {
     });
     server.addHook("onClose", async () => {
       workflowStore?.close();
+      modelPlane?.close();
       store.close();
     });
     // Fastify runs onClose hooks last-registered first, so this marks the start of
@@ -532,6 +612,7 @@ export async function startHub(options: {
       ),
       fullAccess: runtimeInfo.fullAccess,
       consoleUrl: options.consoleUrl ?? null,
+      adminToken: path.join(dataDir, ADMIN_TOKEN_FILE),
       maxConcurrency: config.maxConcurrency,
       defaultTimeoutMs: config.defaultTimeoutMs,
     });
@@ -554,6 +635,7 @@ export async function startHub(options: {
       /* Unconfirmed process leases remain available to the next startup. */
     }
     workflowStore?.close();
+    modelPlane?.close();
     store.close();
     throw error;
   }
@@ -579,6 +661,8 @@ export async function main(argv: string[]): Promise<void> {
       host: { type: "string", default: "localhost" },
       port: { type: "string" },
       "data-dir": { type: "string", default: "./data" },
+      "config-dir": { type: "string" },
+      "secrets-backend": { type: "string" },
       "tool-package-root": { type: "string" },
       "harness-model-file": { type: "string" },
       "console-url": { type: "string" },
@@ -612,9 +696,17 @@ export async function main(argv: string[]): Promise<void> {
       );
       process.exitCode = 1;
     }
+  } else if (
+    values["secrets-backend"] !== undefined &&
+    !secretBackends.includes(values["secrets-backend"])
+  ) {
+    console.error(
+      `--secrets-backend must be one of ${secretBackends.join(", ")}`,
+    );
+    process.exitCode = 2;
   } else if (values.help)
     console.log(
-      "HarnessHub: node dist/src/main.js [--engine opencode] [--host localhost] [--port 3180] [--config engines/local.yaml] [--data-dir ./data] [--tool-package-root DIR] [--harness-model-file FILE] [--console-url URL] | --version [--json]",
+      "HarnessHub: node dist/src/main.js [--engine opencode] [--host localhost] [--port 3180] [--config engines/local.yaml] [--data-dir ./data] [--config-dir DIR] [--secrets-backend auto|keychain|dpapi|file] [--tool-package-root DIR] [--harness-model-file FILE] [--console-url URL] | --version [--json]",
     );
   else {
     const selectedEngine = values.engine ?? process.env.AGENT_ENGINE;
@@ -623,6 +715,12 @@ export async function main(argv: string[]): Promise<void> {
       throw new Error("Invalid port");
     const hub = await startHub({
       dataDir: values["data-dir"],
+      ...(values["config-dir"] ? { configDir: values["config-dir"] } : {}),
+      ...(values["secrets-backend"]
+        ? {
+            secretsBackend: values["secrets-backend"] as SecretBackendSetting,
+          }
+        : {}),
       demo: values.demo,
       port,
       host: values.host,
