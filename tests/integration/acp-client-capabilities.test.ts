@@ -16,6 +16,7 @@ import { probeConfiguration } from "../../src/drivers/configuration/probe.js";
 import { normalizeEngine } from "../../src/engine/registry.js";
 import type { RunId, SessionId } from "../../src/domain/types.js";
 import type { WorkerMessage } from "../../src/domain/ports.js";
+import { temporaryDirectory } from "../support/temporary.js";
 
 const peer = fileURLToPath(
   new URL("../fixtures/acp-capabilities-peer.js", import.meta.url),
@@ -109,7 +110,10 @@ for (const scenario of [
     `patched acpx public API preserves exact permission semantics: ${scenario}`,
     { timeout: 15_000 },
     async (t) => {
-      const root = await mkdtemp(join(tmpdir(), "hh-acpx-exact-"));
+      const { directory: root, defer } = await temporaryDirectory(
+        t,
+        "hh-acpx-exact-",
+      );
       const controller = new AbortController();
       const runtime = createAcpRuntime({
         cwd: root,
@@ -166,10 +170,7 @@ for (const scenario of [
         agent: "peer",
         mode: "persistent",
       });
-      t.after(async () => {
-        await runtime.close({ handle, reason: "fixture_done" });
-        await rm(root, { recursive: true, force: true });
-      });
+      defer(() => runtime.close({ handle, reason: "fixture_done" }));
       const turn = runtime.startTurn({
         handle,
         text: scenario === "duplicate" ? "duplicate-options" : "choose",

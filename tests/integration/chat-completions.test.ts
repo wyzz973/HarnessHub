@@ -26,6 +26,7 @@ import type { HubApplication } from "../../src/application/service.js";
 import { ensurePrivateDirectory } from "../../src/platform/windows-acl.js";
 import { startModelGateway } from "../../src/drivers/chat-completions/gateway.js";
 import { writePrivateSecretFile } from "../fixtures/private-secret-file.js";
+import { temporaryDirectory } from "../support/temporary.js";
 
 type Hub = Awaited<ReturnType<typeof startHub>>;
 type RunView = ReturnType<HubApplication["getRun"]>;
@@ -80,7 +81,10 @@ void test(
   "model gateway routes Chat engines to one upstream model, commits model.call events and fails explicitly on upstream errors",
   { timeout: 60000 },
   async (t) => {
-    const root = await mkdtemp(join(tmpdir(), "hh-model-gateway-"));
+    const { directory: root, defer } = await temporaryDirectory(
+      t,
+      "hh-model-gateway-",
+    );
     const upstreamKey = "synthetic-upstream-gateway-key-0123456789";
     const vendorKey = "sk-vendor-key-that-must-not-reach-engines";
     const saved = {
@@ -90,6 +94,13 @@ void test(
     // The Gateway snapshots its environment for Workers when it starts.
     process.env.HH_GATEWAY_FIXTURE_UPSTREAM_KEY = upstreamKey;
     process.env.OPENAI_API_KEY = vendorKey;
+    defer(() => {
+      if (saved.upstream === undefined)
+        delete process.env.HH_GATEWAY_FIXTURE_UPSTREAM_KEY;
+      else process.env.HH_GATEWAY_FIXTURE_UPSTREAM_KEY = saved.upstream;
+      if (saved.vendor === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = saved.vendor;
+    });
     let hub: Hub | undefined;
     const started = Promise.withResolvers<void>(),
       disconnected = Promise.withResolvers<void>();
@@ -163,16 +174,10 @@ void test(
         response.end("data: [DONE]\n\n");
       })().catch(() => response.destroy());
     });
-    t.after(async () => {
+    defer(async () => {
       await hub?.server.close();
       upstream.closeAllConnections();
       await new Promise<void>((resolve) => upstream.close(() => resolve()));
-      if (saved.upstream === undefined)
-        delete process.env.HH_GATEWAY_FIXTURE_UPSTREAM_KEY;
-      else process.env.HH_GATEWAY_FIXTURE_UPSTREAM_KEY = saved.upstream;
-      if (saved.vendor === undefined) delete process.env.OPENAI_API_KEY;
-      else process.env.OPENAI_API_KEY = saved.vendor;
-      await rm(root, { recursive: true, force: true });
     });
     upstream.listen(0, "127.0.0.1");
     await once(upstream, "listening");

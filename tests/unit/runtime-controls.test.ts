@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
@@ -20,6 +18,7 @@ import type {
 import { Runtime } from "../../src/runtime/runtime.js";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
 import { loadConfig } from "../../src/engine/registry.js";
+import { temporaryDirectory } from "../support/temporary.js";
 
 /** A handshake barrier for actor unit tests; real IPC is covered by Worker integration tests. */
 class ControlledHost implements WorkerHost {
@@ -75,10 +74,12 @@ async function settled(store: SqliteStore, id: RunId) {
   }
 }
 void test("cancelling during a blocked handshake settles once and rejects late completion", async (t) => {
-  const directory = await mkdtemp(
-    path.join(os.tmpdir(), "harnesshub-handshake-"),
+  const { directory, defer } = await temporaryDirectory(
+    t,
+    "harnesshub-handshake-",
   );
   const store = new SqliteStore(path.join(directory, "store.db"));
+  defer(() => store.close());
   const host = new ControlledHost();
   const runtime = new Runtime(store, host, {
     ...(await loadConfig({ cwd: directory, demo: true })),
@@ -87,11 +88,7 @@ void test("cancelling during a blocked handshake settles once and rejects late c
       throw new Error("not used");
     },
   });
-  t.after(async () => {
-    await runtime.close();
-    store.close();
-    await rm(directory, { recursive: true, force: true });
-  });
+  defer(() => runtime.close());
   const session = runtime.createSession({});
   const { run } = runtime.submit(session.id, { text: "hold" });
   await host.entered.promise;
@@ -114,10 +111,12 @@ void test("cancelling during a blocked handshake settles once and rejects late c
   );
 });
 void test("cancellation wins a same-turn backend-completion race without duplicate terminal events", async (t) => {
-  const directory = await mkdtemp(
-    path.join(os.tmpdir(), "harnesshub-result-race-"),
+  const { directory, defer } = await temporaryDirectory(
+    t,
+    "harnesshub-result-race-",
   );
   const store = new SqliteStore(path.join(directory, "store.db"));
+  defer(() => store.close());
   const host = new ControlledHost();
   const runtime = new Runtime(store, host, {
     ...(await loadConfig({ cwd: directory, demo: true })),
@@ -126,11 +125,7 @@ void test("cancellation wins a same-turn backend-completion race without duplica
       throw new Error("not used");
     },
   });
-  t.after(async () => {
-    await runtime.close();
-    store.close();
-    await rm(directory, { recursive: true, force: true });
-  });
+  defer(() => runtime.close());
   const session = runtime.createSession({});
   const { run } = runtime.submit(session.id, { text: "race" });
   await host.entered.promise;

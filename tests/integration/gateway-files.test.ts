@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
@@ -12,13 +11,15 @@ import {
   type RunRecord,
   type SessionRecord,
 } from "../../src/domain/types.js";
+import { temporaryDirectory } from "../support/temporary.js";
 
 void test(
   "Gateway captures declared JSON/binary outputs before terminal, preserves replay identity and restart reads",
   { timeout: 15000 },
   async (t) => {
-    const directory = await mkdtemp(
-      path.join(os.tmpdir(), "hh-gateway-files-"),
+    const { directory, defer } = await temporaryDirectory(
+      t,
+      "hh-gateway-files-",
     );
     const file = path.join(directory, "config.json");
     await writeFile(
@@ -50,10 +51,7 @@ void test(
       demo: false,
     };
     let hub = await startHub(options);
-    t.after(async () => {
-      await hub.server.close();
-      await rm(directory, { recursive: true, force: true });
-    });
+    defer(() => hub.server.close());
     async function waitForTerminal(accepted: RunRecord) {
       // Each submission owns the same eight-second wait bound. Downloads and
       // Gateway restart must not consume the next Run's observation window.

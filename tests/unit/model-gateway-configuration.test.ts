@@ -17,6 +17,7 @@ import type {
   SessionId,
 } from "../../src/domain/types.js";
 import type { ConfigurationAdapter } from "../../src/domain/engine-configuration.js";
+import { temporaryDirectory } from "../support/temporary.js";
 
 const upstreamKey = "synthetic-upstream-upstream-key-0001";
 const headerSecret = "synthetic-upstream-header-secret-0002";
@@ -75,7 +76,10 @@ async function prepare(
   profile: EngineProfile,
   extra: NodeJS.ProcessEnv = {},
 ) {
-  const root = await mkdtemp(path.join(tmpdir(), `hh-gateway-${profile.id}-`));
+  const { directory: root, defer } = await temporaryDirectory(
+    t,
+    `hh-gateway-${profile.id}-`,
+  );
   const secrets = new Set<string>();
   const prepared = await prepareConfiguration(
     {
@@ -90,10 +94,7 @@ async function prepare(
     { ...environment, ...extra },
     { secrets },
   );
-  t.after(async () => {
-    await prepared.modelBridge?.close();
-    await rm(root, { recursive: true, force: true });
-  });
+  defer(() => prepared.modelBridge?.close());
   return { root, state: path.join(root, "state"), prepared, secrets };
 }
 async function files(directory: string): Promise<string[]> {

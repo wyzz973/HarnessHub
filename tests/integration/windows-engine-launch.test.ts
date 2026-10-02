@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { startHub } from "../../src/main.js";
 import type { RunRecord, SessionRecord } from "../../src/domain/types.js";
+import { temporaryDirectory } from "../support/temporary.js";
 
 void test(
   "Windows Gateway executes registered cmd and PowerShell engines with UTF-8 multiline stdin and confirmed cleanup",
@@ -15,7 +15,10 @@ void test(
     timeout: 15_000,
   },
   async (t) => {
-    const directory = await mkdtemp(join(tmpdir(), "hh-engine 中文 空格 "));
+    const { directory, defer } = await temporaryDirectory(
+      t,
+      "hh-engine 中文 空格 ",
+    );
     const cmd = join(directory, "echo.cmd");
     const powershell = join(directory, "echo.ps1");
     const entry = join(directory, "echo.mjs");
@@ -49,10 +52,7 @@ void test(
       }),
     );
     let hub: Awaited<ReturnType<typeof startHub>> | undefined;
-    t.after(async () => {
-      await hub?.server.close();
-      await rm(directory, { recursive: true, force: true });
-    });
+    defer(() => hub?.server.close());
     const running = await startHub({
       configFile: config,
       dataDir: join(directory, "data"),

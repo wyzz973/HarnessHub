@@ -14,6 +14,7 @@ import { ProcessWorkerHost } from "../../src/process/worker-host.js";
 import { startHub } from "../../src/main.js";
 import type { RunId, SessionId } from "../../src/domain/types.js";
 import type { ExecutionSpec, WorkerMessage } from "../../src/domain/ports.js";
+import { temporaryDirectory } from "../support/temporary.js";
 
 void test(
   "ACP recovery keeps initialization bounded until reconnect and reclaims the actual hanging peer and descendant",
@@ -151,13 +152,13 @@ void test(
 );
 
 void test("HTTP registration, update, listing and restart retain an independent ACP initialization budget", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "hh-acp-http-config-"));
+  const { directory: root, defer } = await temporaryDirectory(
+    t,
+    "hh-acp-http-config-",
+  );
   const options = { dataDir: root, cwd: root, port: 0, demo: false };
   let hub = await startHub(options);
-  t.after(async () => {
-    await hub.server.close();
-    await rm(root, { recursive: true, force: true });
-  });
+  defer(() => hub.server.close());
   const base = {
     id: "bounded-acp",
     driver: "acp",

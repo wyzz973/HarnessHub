@@ -2,12 +2,10 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
+import { temporaryDirectory } from "../support/temporary.js";
 
 const entry = fileURLToPath(new URL("../../src/main.js", import.meta.url));
 async function launch(directory: string) {
@@ -45,9 +43,9 @@ void test(
   "published CLI starts in plain Node and repairs an interrupted run after process crash",
   { timeout: 25_000 },
   async (t) => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), "harnesshub-cli-"));
+    const { directory, defer } = await temporaryDirectory(t, "harnesshub-cli-");
     let running = await launch(directory);
-    t.after(async () => {
+    defer(async () => {
       if (
         running.child.exitCode === null &&
         running.child.signalCode === null
@@ -56,7 +54,6 @@ void test(
         running.child.kill("SIGTERM");
         await exited;
       }
-      await rm(directory, { recursive: true, force: true });
     });
     const session = (await (
       await fetch(`${running.url}/v1/sessions`, {

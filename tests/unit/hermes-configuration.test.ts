@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: MIT
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parse } from "yaml";
 import { normalizeEngine } from "../../src/engine/registry.js";
 import { prepareConfiguration } from "../../src/drivers/configuration/prepare.js";
 import type { RunId, SessionId } from "../../src/domain/types.js";
+import { temporaryDirectory } from "../support/temporary.js";
 
 void test("Hermes selects the gateway alias natively through a named custom provider key_env without persisting keys", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "hh-hermes-key-env-"));
+  const { directory: root, defer } = await temporaryDirectory(
+    t,
+    "hh-hermes-key-env-",
+  );
   const secret = "synthetic-hermes-key-only-in-memory";
   const profile = normalizeEngine({
     id: "hermes",
@@ -38,10 +41,7 @@ void test("Hermes selects the gateway alias natively through a named custom prov
     },
     { CONTEST_KEY: secret },
   );
-  t.after(async () => {
-    await prepared.modelBridge?.close();
-    await rm(root, { recursive: true, force: true });
-  });
+  defer(() => prepared.modelBridge?.close());
   const gateway = prepared.modelBridge;
   assert.ok(gateway);
   const v1 = `${gateway.baseUrl}/v1`;

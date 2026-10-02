@@ -25,6 +25,7 @@ import {
   startMcp,
   substituteSessionWorkspace,
 } from "../fixtures/tool-pack-mcp-client.js";
+import { temporaryDirectory } from "../support/temporary.js";
 
 const example = fileURLToPath(
   new URL("../../../examples/tool-packages/simple-toolkit", import.meta.url),
@@ -61,23 +62,19 @@ function byEngine(results: EngineResult[]): Record<string, EngineResult> {
  * Formal startHub Gateway plus, when `wired`, a second formal Gateway
  * (createGateway + tool-pack routes) for the same application whose Tool Pack
  * service also lists engines, as the composition root is expected to wire it.
- * Both share one teardown: the wired server closes first because either
- * server's close hook closes the shared application.
+ * Teardown closes the wired server first because either server's close hook
+ * closes the shared application.
  */
 async function hubWithEngines(t: test.TestContext, wired = false) {
-  const dataDir = await realpath(
-    await mkdtemp(path.join(os.tmpdir(), "hh-tool-pack-gateway-")),
+  const { directory, defer } = await temporaryDirectory(
+    t,
+    "hh-tool-pack-gateway-",
   );
+  const dataDir = await realpath(directory);
   const hub = await startHub({ dataDir, cwd: dataDir, demo: true, port: 0 });
+  defer(() => hub.server.close());
   const listing = wired ? await createGateway(hub.app) : undefined;
-  t.after(async () => {
-    try {
-      await listing?.close();
-    } finally {
-      await hub.server.close();
-      await rm(dataDir, { recursive: true, force: true });
-    }
-  });
+  defer(() => listing?.close());
   if (listing)
     registerToolPackageRoutes(
       listing,

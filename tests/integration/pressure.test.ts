@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import { get, type ClientRequest } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { startHub } from "../../src/main.js";
@@ -13,13 +10,15 @@ import {
   type PermissionRecord,
   type SessionRecord,
 } from "../../src/domain/types.js";
+import { temporaryDirectory } from "../support/temporary.js";
 
 void test(
   "paused SSE does not stop execution; an expired permission cannot be approved",
   { timeout: 15_000 },
   async (t) => {
-    const directory = await mkdtemp(
-      path.join(os.tmpdir(), "harnesshub-pressure-"),
+    const { directory, defer } = await temporaryDirectory(
+      t,
+      "harnesshub-pressure-",
     );
     const hub = await startHub({
       dataDir: directory,
@@ -28,10 +27,9 @@ void test(
       port: 0,
     });
     let paused: ClientRequest | undefined;
-    t.after(async () => {
+    defer(async () => {
       paused?.destroy();
       await hub.server.close();
-      await rm(directory, { recursive: true, force: true });
     });
     const request = async <T>(route: string, body?: unknown): Promise<T> =>
       (await (

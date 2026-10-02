@@ -1,19 +1,20 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { startHub } from "../../src/main.js";
+import { temporaryDirectory } from "../support/temporary.js";
 
 void test(
   "a workflow persistence failure still releases Runtime sessions and the Gateway database owner",
   { timeout: 10000 },
   async (t) => {
-    const directory = await mkdtemp(
-      path.join(os.tmpdir(), "hub-console-close-"),
+    const { directory, defer } = await temporaryDirectory(
+      t,
+      "hub-console-close-",
     );
     const configFile = path.join(directory, "config.json");
     await writeFile(
@@ -35,12 +36,9 @@ void test(
       demo: false,
       port: 0,
     });
+    defer(() => hub.server.close().catch(() => undefined));
     const fault = new DatabaseSync(path.join(directory, "harnesshub.sqlite"));
-    t.after(async () => {
-      await hub.server.close().catch(() => undefined);
-      fault.close();
-      await rm(directory, { recursive: true, force: true });
-    });
+    defer(() => fault.close());
     fault.exec(
       "CREATE TRIGGER reject_workflow_update BEFORE UPDATE ON workflows BEGIN SELECT RAISE(FAIL, 'fixture workflow storage error'); END",
     );

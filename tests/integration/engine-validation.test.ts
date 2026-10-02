@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { startHub } from "../../src/main.js";
 import type { EngineProfile } from "../../src/domain/types.js";
+import { temporaryDirectory } from "../support/temporary.js";
 
 void test(
   "Gateway rejects unknown registration fields, reserved ids and inline credentials before persistence",
   { timeout: 10_000 },
   async (t) => {
-    const directory = await mkdtemp(join(tmpdir(), "hh-engine-validation-"));
+    const { directory, defer } = await temporaryDirectory(
+      t,
+      "hh-engine-validation-",
+    );
     const options = {
       dataDir: join(directory, "data"),
       cwd: directory,
@@ -19,10 +21,7 @@ void test(
       port: 0,
     };
     let hub = await startHub(options);
-    t.after(async () => {
-      await hub.server.close();
-      await rm(directory, { recursive: true });
-    });
+    defer(() => hub.server.close());
     const registration = {
       id: "valid-cli",
       driver: "cli",

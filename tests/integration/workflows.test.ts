@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { DatabaseSync } from "node:sqlite";
@@ -22,6 +21,7 @@ import {
 } from "../../src/domain/workflows.js";
 import { isTerminal } from "../../src/domain/types.js";
 import { selectWorkflowEngine } from "../../src/application/workflows.js";
+import { temporaryDirectory } from "../support/temporary.js";
 
 if (process.argv.includes("--workflow-acp-peer")) {
   let finishWaiting: (() => void) | undefined;
@@ -180,8 +180,8 @@ if (process.argv.includes("--workflow-acp-peer")) {
         (await request<Workflow>(url, `/v1/workflows/${workflow.id}`)).value,
       ready,
     );
-  async function setup() {
-    const directory = await mkdtemp(join(tmpdir(), "hh-workflows-"));
+  async function setup(t: test.TestContext) {
+    const { directory, defer } = await temporaryDirectory(t, "hh-workflows-");
     const configFile = join(directory, "engines.json");
     await writeFile(
       configFile,
@@ -198,18 +198,15 @@ if (process.argv.includes("--workflow-acp-peer")) {
       port: 0,
     };
     const hub = await startHub(options);
-    return { directory, hub, options };
+    return { hub, options, defer };
   }
   void test(
     "workflow planning, approval, routing and dependent Runs use the formal Gateway and persist idempotently",
     { timeout: 30_000 },
     async (t) => {
-      const fixture = await setup();
+      const fixture = await setup(t);
       let hub = fixture.hub;
-      t.after(async () => {
-        await hub.server.close();
-        await rm(fixture.directory, { recursive: true, force: true });
-      });
+      fixture.defer(() => hub.server.close());
       const input = { goal: "two useful text steps", engineId: "auto" };
       const created = await request<Workflow>(
         hub.url,
@@ -318,11 +315,8 @@ if (process.argv.includes("--workflow-acp-peer")) {
     "invalid/cyclic/escaping/oversized/tool-using plans fail before approval or step execution",
     { timeout: 30_000 },
     async (t) => {
-      const { hub, directory } = await setup();
-      t.after(async () => {
-        await hub.server.close();
-        await rm(directory, { recursive: true, force: true });
-      });
+      const { hub, defer } = await setup(t);
+      defer(() => hub.server.close());
       for (const goal of [
         "cycle-plan",
         "escape-plan",
@@ -362,11 +356,8 @@ if (process.argv.includes("--workflow-acp-peer")) {
     "failure blocks dependencies and cancellation converges the owned Run without rerouting",
     { timeout: 30_000 },
     async (t) => {
-      const { hub, directory } = await setup();
-      t.after(async () => {
-        await hub.server.close();
-        await rm(directory, { recursive: true, force: true });
-      });
+      const { hub, defer } = await setup(t);
+      defer(() => hub.server.close());
       for (const goal of ["fail-step", "wait-step"]) {
         const created = (
           await request<Workflow>(hub.url, "/v1/workflows", "POST", {
@@ -422,11 +413,8 @@ if (process.argv.includes("--workflow-acp-peer")) {
     "approval rejects changed revisions; auto selection records capability and load exclusions",
     { timeout: 25_000 },
     async (t) => {
-      const { hub, directory } = await setup();
-      t.after(async () => {
-        await hub.server.close();
-        await rm(directory, { recursive: true, force: true });
-      });
+      const { hub, defer } = await setup(t);
+      defer(() => hub.server.close());
       const created = (
         await request<Workflow>(hub.url, "/v1/workflows", "POST", {
           goal: "plan pinned draft",
@@ -482,12 +470,9 @@ if (process.argv.includes("--workflow-acp-peer")) {
     "shutdown and restart never resubmit active steps; completed Run evidence reconciles stale workflow projection",
     { timeout: 30_000 },
     async (t) => {
-      const fixture = await setup();
+      const fixture = await setup(t);
       let hub = fixture.hub;
-      t.after(async () => {
-        await hub.server.close();
-        await rm(fixture.directory, { recursive: true, force: true });
-      });
+      fixture.defer(() => hub.server.close());
       const created = (
         await request<Workflow>(hub.url, "/v1/workflows", "POST", {
           goal: "wait-step",

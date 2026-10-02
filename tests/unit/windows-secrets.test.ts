@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
@@ -18,6 +18,17 @@ import { HubError } from "../../src/domain/errors.js";
 import { writePrivateSecretFile } from "../fixtures/private-secret-file.js";
 
 const execute = promisify(execFile);
+/**
+ * Where the helper keeps encrypted values: the token's profile, not the
+ * process's LOCALAPPDATA, which the test launcher points at a private directory.
+ */
+const secretStore = path.join(
+  process.env.HARNESSHUB_TEST_SYSTEM_HOME ?? homedir(),
+  "AppData",
+  "Local",
+  "HarnessHub",
+  "secrets-v1",
+);
 
 async function privateAcl(file: string): Promise<unknown> {
   return fixtureFileSecurity(
@@ -77,12 +88,7 @@ void test(
     assert.notEqual(first.value, second.value);
     assert.equal(await resolveSecret(first, {}), value);
     const encrypted = await readFile(
-      path.join(
-        process.env.LOCALAPPDATA!,
-        "HarnessHub",
-        "secrets-v1",
-        `${first.value}.dpapi`,
-      ),
+      path.join(secretStore, `${first.value}.dpapi`),
     );
     assert.equal(encrypted.includes(Buffer.from(value)), false);
     await deleteSecret(first);
@@ -294,12 +300,7 @@ void test(
   async (t) => {
     const reference = await createSecret("synthetic-explicit-acl-fixture");
     t.after(() => deleteSecret(reference));
-    const file = path.join(
-      process.env.LOCALAPPDATA!,
-      "HarnessHub",
-      "secrets-v1",
-      `${reference.value}.dpapi`,
-    );
+    const file = path.join(secretStore, `${reference.value}.dpapi`);
     assert.deepEqual(await privateAcl(file), {
       ownerMatches: true,
       protected: true,

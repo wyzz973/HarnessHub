@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile, rename } from "node:fs/promises";
-import os from "node:os";
+import { writeFile, rename } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
@@ -12,6 +11,7 @@ import {
   type RunRecord,
   type SessionRecord,
 } from "../../src/domain/types.js";
+import { temporaryDirectory } from "../support/temporary.js";
 
 async function json<T>(
   base: string,
@@ -59,7 +59,7 @@ void test(
   "live registration pins active/queued/old sessions and survives update, disable, removal and restart",
   { timeout: 20000 },
   async (t) => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), "hh-engines-"));
+    const { directory, defer } = await temporaryDirectory(t, "hh-engines-");
     const options = {
       dataDir: directory,
       cwd: directory,
@@ -67,10 +67,7 @@ void test(
       port: 0,
     };
     let hub = await startHub(options);
-    t.after(async () => {
-      await hub.server.close();
-      await rm(directory, { recursive: true, force: true });
-    });
+    defer(() => hub.server.close());
     assert.equal((await json(hub.url, "/v1/sessions", "POST", {})).status, 404);
     const one = await json<EngineProfile>(
       hub.url,
@@ -183,7 +180,7 @@ void test(
   "file watcher reloads atomic replacement; invalid engine/deployment edits preserve last valid catalog",
   { timeout: 20000 },
   async (t) => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), "hh-reload-"));
+    const { directory, defer } = await temporaryDirectory(t, "hh-reload-");
     const file = path.join(directory, "engines.json");
     await writeFile(file, JSON.stringify({ engines: [registration("old:")] }));
     const hub = await startHub({
@@ -193,10 +190,7 @@ void test(
       demo: false,
       port: 0,
     });
-    t.after(async () => {
-      await hub.server.close();
-      await rm(directory, { recursive: true, force: true });
-    });
+    defer(() => hub.server.close());
     const list = async () =>
       (await json<{ engines: EngineProfile[] }>(hub.url, "/v1/engines")).value
         .engines;

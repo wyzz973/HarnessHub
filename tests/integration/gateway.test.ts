@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { startHub } from "../../src/main.js";
+import { temporaryDirectory } from "../support/temporary.js";
 import type {
   AgentEvent,
   ArtifactRecord,
@@ -55,17 +55,17 @@ void test(
   "real Gateway/SQLite/Worker: execution, idempotency, events, artifact and restart",
   { timeout: 20_000 },
   async (t) => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), "harnesshub-http-"));
+    const { directory, defer } = await temporaryDirectory(
+      t,
+      "harnesshub-http-",
+    );
     let hub = await startHub({
       dataDir: directory,
       demo: true,
       cwd: directory,
       port: 0,
     });
-    t.after(async () => {
-      await hub.server.close();
-      await rm(directory, { recursive: true, force: true });
-    });
+    defer(() => hub.server.close());
     const { value: session } = await json<SessionRecord>(
       hub.url,
       "/v1/sessions",
@@ -191,8 +191,9 @@ void test(
   "serial queue, queued timeout, exact cancellation and permission round trip",
   { timeout: 20_000 },
   async (t) => {
-    const directory = await mkdtemp(
-      path.join(os.tmpdir(), "harnesshub-controls-"),
+    const { directory, defer } = await temporaryDirectory(
+      t,
+      "harnesshub-controls-",
     );
     const hub = await startHub({
       dataDir: directory,
@@ -200,10 +201,7 @@ void test(
       cwd: directory,
       port: 0,
     });
-    t.after(async () => {
-      await hub.server.close();
-      await rm(directory, { recursive: true, force: true });
-    });
+    defer(() => hub.server.close());
     const { value: session } = await json<SessionRecord>(
       hub.url,
       "/v1/sessions",
@@ -317,8 +315,9 @@ void test(
   "a full queue still accepts an idempotent retry without scheduling twice",
   { timeout: 10_000 },
   async (t) => {
-    const directory = await mkdtemp(
-      path.join(os.tmpdir(), "harnesshub-queue-"),
+    const { directory, defer } = await temporaryDirectory(
+      t,
+      "harnesshub-queue-",
     );
     const config = path.join(directory, "config.json");
     await writeFile(config, JSON.stringify({ maxQueuedRuns: 1 }));
@@ -329,10 +328,7 @@ void test(
       cwd: directory,
       port: 0,
     });
-    t.after(async () => {
-      await hub.server.close();
-      await rm(directory, { recursive: true, force: true });
-    });
+    defer(() => hub.server.close());
     const { value: session } = await json<SessionRecord>(
       hub.url,
       "/v1/sessions",
@@ -376,8 +372,9 @@ void test(
   "closing one session does not wait for another session active run",
   { timeout: 10_000 },
   async (t) => {
-    const directory = await mkdtemp(
-      path.join(os.tmpdir(), "harnesshub-close-"),
+    const { directory, defer } = await temporaryDirectory(
+      t,
+      "harnesshub-close-",
     );
     const hub = await startHub({
       dataDir: directory,
@@ -385,10 +382,7 @@ void test(
       cwd: directory,
       port: 0,
     });
-    t.after(async () => {
-      await hub.server.close();
-      await rm(directory, { recursive: true, force: true });
-    });
+    defer(() => hub.server.close());
     const sessions = await Promise.all(
       [1, 2].map(
         async () =>
@@ -431,8 +425,9 @@ void test(
   "event persistence failure closes execution and makes readiness unavailable",
   { timeout: 10_000 },
   async (t) => {
-    const directory = await mkdtemp(
-      path.join(os.tmpdir(), "harnesshub-db-fault-"),
+    const { directory, defer } = await temporaryDirectory(
+      t,
+      "harnesshub-db-fault-",
     );
     const hub = await startHub({
       dataDir: directory,
@@ -440,12 +435,9 @@ void test(
       cwd: directory,
       port: 0,
     });
+    defer(() => hub.server.close());
     const fault = new DatabaseSync(path.join(directory, "harnesshub.sqlite"));
-    t.after(async () => {
-      fault.close();
-      await hub.server.close();
-      await rm(directory, { recursive: true, force: true });
-    });
+    defer(() => fault.close());
     fault.exec(
       "CREATE TRIGGER reject_delta BEFORE INSERT ON events WHEN NEW.type = 'message.delta' BEGIN SELECT RAISE(FAIL, 'injected write failure'); END",
     );
@@ -473,8 +465,9 @@ void test(
   "resident Worker capacity is bounded and a closed session releases the slot",
   { timeout: 10_000 },
   async (t) => {
-    const directory = await mkdtemp(
-      path.join(os.tmpdir(), "harnesshub-workers-"),
+    const { directory, defer } = await temporaryDirectory(
+      t,
+      "harnesshub-workers-",
     );
     const config = path.join(directory, "config.json");
     await writeFile(config, JSON.stringify({ maxWorkers: 1 }));
@@ -485,10 +478,7 @@ void test(
       cwd: directory,
       port: 0,
     });
-    t.after(async () => {
-      await hub.server.close();
-      await rm(directory, { recursive: true, force: true });
-    });
+    defer(() => hub.server.close());
     const first = (
       await json<SessionRecord>(hub.url, "/v1/sessions", "POST", {})
     ).value;
