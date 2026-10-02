@@ -366,6 +366,7 @@ export function isModelCallEntry(value: unknown): value is ModelCallEntry {
     optional(value.scope, scope) &&
     optional(value.sessionId, text(200)) &&
     optional(value.runId, text(200)) &&
+    optional(value.generation, amount) &&
     object(value.inbound) &&
     protocol(value.inbound.protocol) &&
     text(2048)(value.inbound.path) &&

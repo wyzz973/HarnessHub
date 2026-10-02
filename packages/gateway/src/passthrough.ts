@@ -171,8 +171,12 @@ export function passthroughBody(
   }
   if (protocol === "gemini") return { body: bytes, patches: applied };
   const text = rewriteModel(bytes.toString("utf8"), wireModel);
+  // A Session's request may leave the model to its Run's target.
   if (text === undefined)
-    throw new GatewayError("The request requires a string model");
+    return {
+      body: Buffer.from(JSON.stringify({ ...parsed, model: wireModel })),
+      patches: applied,
+    };
   return { body: Buffer.from(text), patches: applied };
 }
 

@@ -267,7 +267,10 @@ export interface Call {
   writer: HttpWriter;
   bytes: Buffer;
   raw: Record<string, unknown>;
+  /** The Model Ref or group the call routes to. */
   requested: string;
+  /** The model name shown back to the client: what it asked for (a Session's alias), else `requested`. */
+  shownModel?: string;
   stream: boolean;
   /** The conversation for stickiness; absent before the request was read. */
   conversation?: Conversation;
@@ -373,7 +376,12 @@ function translate(call: Call, options: TranslateOptions): ChatTranslation {
     case "anthropic":
       return anthropicToChat(call.raw, options);
     case "gemini":
-      return googleToChat(call.raw, call.requested, call.stream, options);
+      return googleToChat(
+        call.raw,
+        call.shownModel ?? call.requested,
+        call.stream,
+        options,
+      );
   }
 }
 
@@ -383,7 +391,7 @@ function createSink(
   body: Record<string, unknown>,
 ): OutputSink {
   const context = {
-    model: call.requested,
+    model: call.shownModel ?? call.requested,
     reasoning: true,
     promptEstimate:
       call.route.protocol === "anthropic"

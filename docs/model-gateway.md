@@ -193,7 +193,7 @@ node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js dist/tests/un
 - 所有拒绝都使用该路径所属协议的错误格式并带 `x-hh-error-source: gateway`，同时提交 `rejected: true`、`rejectReason` 的账本记录；Key 有效（含已吊销、已过期）时记录 `keyId`。同一 Key（无 Key 归为一类）与同一原因每分钟最多 20 条明细，其余计数，在该组合下一次被拒绝时或 `close()` 时写成一条汇总记录。
 - 鉴权通过后调用 `touchGatewayKey`，同一 Key 每分钟最多一次；失败只写日志。
 - **额度**（`GatewayKeyRecord.quota`，[quota.ts](../packages/gateway/src/quota.ts)）在白名单之后、转发之前检查。`tokensPerDay`（五项 token 之和，按 UTC 日）与 `costPerMonthUsd`（已知成本之和，按 UTC 自然月）比较已提交的账本：用 `aggregateUsage` 按 `keyId` 读取，每个 Key 缓存 10 秒，期间本网关提交的调用直接累加。达到阈值之前开始的调用照常完成，所以跨过阈值的那一次会完成，之后的调用被拒绝；同一 Key 并发的调用都按同一合计放行。`requestsPerMinute` 是令牌桶（容量与每分钟补充量都是该值），硬限制；只有通过用量检查的调用才取令牌。超额返回 429 `quota_exceeded`，`retry-after` 指向窗口重置的时刻（不截断：日额度到 UTC 零点，月额度到下月 1 日，请求数到下一个令牌），Gemini 的错误体另带 `RetryInfo`；拒绝写入账本（`rejected: true`），按 Key 与原因节流。账本读失败时返回 503 `store_unavailable`。
-- `session:` Key 的活动 Run 校验尚未实现。
+- **`session:` Key**：处理函数的 `deps.sessions.activeRun(sessionId)` 给出该 Session 的活动 Run（`runId`、`generation` 与 Run 选定的目标，Model Ref 或 `group/<id>`）。没有活动 Run（或没有注入 `sessions`）时，调用返回 409 `no_active_run` 并写入拒绝记录。有活动 Run 时：请求的模型是别名 `harnesshub-model`、缺省或不是 Model Ref（引擎自己的模型名）都解析为该目标；名为其他 Model Ref 时仍按 `modelAllow` 检查，目标本身总是允许。账本记录带 `sessionId`、`runId` 与 `generation`；每条提交后的记录交给 `deps.sessions.committed`（在客户端收到终止事件之前，异常只写日志）。`/v1/models` 对这类 Key 额外列出别名，元数据取自目标。`handler.awaitSessionIdle(sessionId, {abort})` 是 Run 的结算屏障：等到该 Session 没有在途调用、且已结束调用的记录都已提交；`abort` 时先取消在途调用（账本 499 `client_cancelled`）。
 
 ### 模型解析与列表
 
@@ -264,6 +264,6 @@ node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js
 ### 与 03 的差异与未实现项
 
 - 协议矩阵以 Chat 为枢纽，而不是 03 第 3 节的 IR；编码器与解码器按 IR 的边来组织，以后可以替换枢纽。经过 Chat 枢纽会丢失 Chat 表达不了的区别，例如 Anthropic 的 `stop_sequence` 与 `end_turn` 都成为 `stop`。
-- 尚未实现：`session:` Key 的活动 Run（409 `no_active_run`）及 `runId` 归因；粘性记录的持久化与账本中的粘性字段（目前写在 `patches[]`）；`route.breaker` 事件（目前只写日志）；provider 声明的请求体上限与 `onUnsupportedMedia`；上游 `count_tokens` 转发；局域网共享与 `publicBaseUrl`；`shape`、`conversationKey` 等账本扩展字段；入站转换器自身丢弃的提示字段尚未记入 `unmapped[]`；转换到 Gemini 的图片 URL 与 Anthropic 的结构化输出（beta）；拒绝记录的定时汇总（目前在下一次同类拒绝或 `close()` 时写出）。
+- 尚未实现：粘性记录的持久化与账本中的粘性字段（目前写在 `patches[]`）；`route.breaker` 事件（目前只写日志）；provider 声明的请求体上限与 `onUnsupportedMedia`；上游 `count_tokens` 转发；局域网共享与 `publicBaseUrl`；`shape`、`conversationKey` 等账本扩展字段；入站转换器自身丢弃的提示字段尚未记入 `unmapped[]`；转换到 Gemini 的图片 URL 与 Anthropic 的结构化输出（beta）；拒绝记录的定时汇总（目前在下一次同类拒绝或 `close()` 时写出）。
 - 直通只给 Gemini 入站注入保活（它在响应头提交期限后已提交头部）；其他协议的直通流保持上游的原样字节，不插入保活。
 - 响应体上限按原始字节而不是解码后的内容计算；`least-used` 与 `latency` 只统计本次启动以来的调用；认证失败的熔断最长 10 分钟后进入半开，而不是一直保持到 Credential 更新。

@@ -29,6 +29,8 @@ import {
   type Stickiness,
   type WireProtocol,
 } from "@harnesshub/core/model-plane";
+import { HARNESS_MODEL_ALIAS } from "@harnesshub/core/harness-model";
+import type { RunId, SessionId } from "@harnesshub/core/types";
 import { anthropicCountTokens } from "./anthropic.js";
 import {
   errorResponse,
@@ -60,6 +62,29 @@ import {
   type Candidate,
 } from "./routing.js";
 
+/** The Run a `session:` key's calls belong to, and the model target it selected. */
+export interface ActiveSessionRun {
+  runId: RunId;
+  generation: number;
+  /** Model Ref or `group/<id>` that the alias, and names that are no Model Ref, resolve to. */
+  target: string;
+}
+
+/** The Session and Run lifecycle the gateway needs for `session:` keys (05 section 4). */
+export interface GatewaySessions {
+  /**
+   * The Session's active Run, or undefined between Runs: a `session:` key's
+   * calls are then refused with 409 `no_active_run`. Called once per request.
+   */
+  activeRun(sessionId: SessionId): ActiveSessionRun | undefined;
+  /**
+   * A `session:` key's ledger entry was committed. Called synchronously
+   * after the commit, before the client sees the terminal event; exceptions
+   * are logged and ignored.
+   */
+  committed?(entry: ModelCallEntry): void;
+}
+
 /** What the shared gateway needs from its composition root. */
 export interface GatewayHandlerDeps {
   /** Providers, route groups, Gateway Keys and the ledger. */
@@ -77,6 +102,8 @@ export interface GatewayHandlerDeps {
   limits: Readonly<HandlerLimits>;
   /** Diagnostics: ledger and touch failures, breaker changes, internal errors. */
   log?: LogSink;
+  /** Session Runs for `session:` keys; without it every `session:` key call gets 409. */
+  sessions?: GatewaySessions;
 }
 
 /**
@@ -94,6 +121,16 @@ export interface GatewayHandler {
    * Idempotent; every call returns the same promise.
    */
   close(): Promise<void>;
+  /**
+   * Resolves once no model call of the Session is in flight and every
+   * finished call's entry was committed (or its commit failed). With
+   * `abort`, in-flight calls are cancelled first (ledger 499
+   * `client_cancelled`); calls that start meanwhile are waited for too.
+   */
+  awaitSessionIdle(
+    sessionId: SessionId,
+    options?: { abort?: boolean },
+  ): Promise<void>;
 }
 
 function normalize(pathname: string): string {
@@ -240,9 +277,14 @@ function modelObject(entry: ListedModel): Record<string, unknown> {
     created_at: new Date(entry.created * 1000).toISOString(),
     owned_by: entry.owner,
     display_name: entry.id,
+    // The names OpenAI-compatible clients read a window from.
     ...(model?.contextWindow === undefined
       ? {}
-      : { context_window: model.contextWindow }),
+      : {
+          context_window: model.contextWindow,
+          context_length: model.contextWindow,
+          max_model_len: model.contextWindow,
+        }),
     ...(model?.maxOutputTokens === undefined
       ? {}
       : { max_output_tokens: model.maxOutputTokens }),
@@ -337,6 +379,11 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
   const tasks = new Set<Promise<void>>();
   let closing: Promise<void> | undefined;
   const throttle = new RejectionThrottle(clock);
+  /** In-flight model calls of `session:` keys, per Session. */
+  const sessionCalls = new Map<
+    SessionId,
+    Map<Promise<void>, AbortController>
+  >();
   const touched = new Map<GatewayKeyId, number>();
   const credentialSlots = new Map<string, Slots>();
   const nonce = randomBytes(4).toString("hex");
@@ -373,6 +420,18 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       try {
         await store.appendModelCall(entry);
         services.quotas.record(entry);
+        if (entry.scope?.kind === "session" && deps.sessions?.committed)
+          try {
+            deps.sessions.committed(entry);
+          } catch (error) {
+            log.info("gateway.session.observer_failed", {
+              callId: entry.callId,
+              error:
+                error instanceof Error
+                  ? error.message.slice(0, 200)
+                  : "unknown",
+            });
+          }
         return true;
       } catch (error) {
         log.info("gateway.ledger.failed", {
@@ -540,6 +599,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
 
   const visibleModels = async (
     key: GatewayKeyRecord,
+    session?: ActiveSessionRun,
   ): Promise<ListedModel[]> => {
     const [providers, groups] = await Promise.all([
       store.listProviders(),
@@ -554,6 +614,25 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         ?.models.list.find((model) => model.id === parsed.model);
     };
     const listed: ListedModel[] = [];
+    if (session) {
+      // The alias a Session's engine was configured with, described as its Run's target.
+      const target = parseModelRef(session.target);
+      const group =
+        target?.kind === "group"
+          ? groups.find((entry) => entry.id === target.group)
+          : undefined;
+      listed.push({
+        id: HARNESS_MODEL_ALIAS,
+        owner: "harnesshub",
+        created: 0,
+        model:
+          target?.kind === "group"
+            ? groupModel(group?.members.map(metadata) ?? [])
+            : (metadata(session.target as ModelRef) ?? {
+                id: HARNESS_MODEL_ALIAS,
+              }),
+      });
+    }
     for (const provider of providers) {
       const exposed =
         provider.models.expose === "all"
@@ -563,7 +642,8 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
             );
       for (const model of exposed) {
         const id = `${provider.id}/${model.id}`;
-        if (!modelAllowed(key.modelAllow, id)) continue;
+        if (!modelAllowed(key.modelAllow, id) && id !== session?.target)
+          continue;
         listed.push({
           id,
           owner: provider.id,
@@ -577,7 +657,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     }
     for (const group of groups) {
       const id = `group/${group.id}`;
-      if (!modelAllowed(key.modelAllow, id)) continue;
+      if (!modelAllowed(key.modelAllow, id) && id !== session?.target) continue;
       listed.push({
         id,
         owner: "harnesshub",
@@ -593,7 +673,12 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     key: GatewayKeyRecord,
     route: Extract<Route, { kind: "models" }>,
   ) => {
-    const listed = await visibleModels(key);
+    const listed = await visibleModels(
+      key,
+      key.scope.kind === "session"
+        ? deps.sessions?.activeRun(key.scope.sessionId)
+        : undefined,
+    );
     const writer = new HttpWriter(response);
     if (route.id !== undefined) {
       const found = listed.find((entry) => entry.id === route.id);
@@ -707,8 +792,9 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     key: GatewayKeyRecord,
     entry: ModelCallEntry,
     started: number,
+    abort: AbortController,
+    session: ActiveSessionRun | undefined,
   ) => {
-    const abort = new AbortController();
     let disconnected = false;
     const closed = new Promise<void>((resolve) =>
       response.once("close", () => resolve()),
@@ -779,15 +865,25 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       });
       reserved = bytes.length;
       const raw = object(parseJsonBody(bytes));
-      const requested = route.gemini?.model ?? raw.model;
+      const named = route.gemini?.model ?? raw.model;
       const stream =
         route.gemini !== undefined
           ? route.gemini.method === "streamGenerateContent"
           : raw.stream === true;
       entry.inbound.stream = stream;
+      if (typeof named === "string" && named)
+        entry.requestedModel = named.slice(0, 256);
+      // A Session's engine names the alias, or any model name of its own;
+      // both mean the target the Run selected.
+      const requested =
+        session &&
+        (typeof named !== "string" ||
+          named === HARNESS_MODEL_ALIAS ||
+          !parseModelRef(named))
+          ? session.target
+          : named;
       if (typeof requested !== "string" || !requested)
         throw new GatewayError("The request requires a model");
-      entry.requestedModel = requested.slice(0, 256);
       if (
         route.protocol === "chat" &&
         raw.n !== undefined &&
@@ -803,7 +899,10 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
           400,
           "model_invalid",
         );
-      if (!modelAllowed(key.modelAllow, requested)) {
+      if (
+        !modelAllowed(key.modelAllow, requested) &&
+        requested !== session?.target
+      ) {
         await reject(
           response,
           entry,
@@ -874,6 +973,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         bytes,
         raw,
         requested,
+        shownModel: typeof named === "string" && named ? named : requested,
         stream,
         conversation,
         routePatches: sticky.patch ? [sticky.patch] : [],
@@ -1041,10 +1141,52 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         case "count":
           await countTokens(request, response, route.protocol);
           return;
-        case "call":
+        case "call": {
           entry.inbound.protocol = route.call.protocol;
-          await modelCall(request, response, route.call, key, entry, started);
+          let session: ActiveSessionRun | undefined;
+          if (key.scope.kind === "session") {
+            session = deps.sessions?.activeRun(key.scope.sessionId);
+            if (!session) {
+              await reject(
+                response,
+                entry,
+                "no_active_run",
+                failure(
+                  409,
+                  "no_active_run",
+                  "No active Run owns this Session's model request",
+                ),
+                started,
+              );
+              return;
+            }
+            entry.runId = session.runId;
+            entry.generation = session.generation;
+          }
+          const abort = new AbortController();
+          const task = modelCall(
+            request,
+            response,
+            route.call,
+            key,
+            entry,
+            started,
+            abort,
+            session,
+          );
+          if (key.scope.kind === "session") {
+            const id = key.scope.sessionId;
+            const calls = sessionCalls.get(id) ?? new Map();
+            sessionCalls.set(id, calls);
+            calls.set(task, abort);
+            void task.finally(() => {
+              calls.delete(task);
+              if (!calls.size) sessionCalls.delete(id);
+            });
+          }
+          await task;
           return;
+        }
       }
     } catch (error) {
       if (!(error instanceof GatewayError))
@@ -1066,6 +1208,17 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     track(serve(request, response).catch(() => void response.destroy()));
   };
   return Object.assign(handler, {
+    async awaitSessionIdle(
+      sessionId: SessionId,
+      options: { abort?: boolean } = {},
+    ): Promise<void> {
+      for (;;) {
+        const calls = sessionCalls.get(sessionId);
+        if (!calls?.size) return;
+        if (options.abort) for (const abort of calls.values()) abort.abort();
+        await Promise.allSettled([...calls.keys()]);
+      }
+    },
     close(): Promise<void> {
       closing ??= (async () => {
         shutdown.abort();

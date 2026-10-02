@@ -349,6 +349,8 @@ export interface ModelCallEntry {
   scope?: GatewayKeyScope;
   sessionId?: SessionId;
   runId?: RunId;
+  /** Generation of the Run (`session:` keys), as in the Worker execution identity. */
+  generation?: number;
   inbound: { protocol: WireProtocol; path: string; stream: boolean };
   requestedModel?: string;
   modelRef?: ModelRef;
