@@ -3,13 +3,14 @@ name: SEA spike
 # OSS-008 single-executable feasibility spike (ADR-P01). Builds the SEA on each target's
 # native runner, measures size and cold start, and runs the end-to-end check from
 # tools/sea/measure.mjs. Runs on demand and on pull requests that change the SEA
-# tooling; uploads small JSON results per platform (sea-<target>, and the start phases in
-# sea-phases-<target>) and never publishes the binary.
+# tooling or the fake provider it calls; uploads small JSON results per platform
+# (sea-<target>, and the start phases in sea-phases-<target>) and never publishes the binary.
 # Findings: docs/proposals/oss/sea-spike.md.
 on:
   pull_request:
     paths:
       - "tools/sea/**"
+      - "tools/fake-provider/**"
       - ".github/workflows/sea-spike.yml"
   workflow_dispatch:
     inputs:

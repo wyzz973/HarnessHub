@@ -34,7 +34,7 @@
 | `scripts/native`（Keychain、DPAPI、Job Object、ACL 辅助程序） | 保留 | `secrets/native`、`runtime/native` | Linux Secret Service 后端为新增 |
 | `web/`（Next.js 控制台） | 替换 | `console`（React + Vite） | [ADR-P10](adr-drafts.md#adr-p10-控制台改为内嵌静态单页)；shadcn/ui、assistant-ui 组件与展示逻辑按需复用 |
 | `scripts/check-*`（边界、文档、运行时、API 文档）及其测试 | 保留 | `tools/` | 按包结构扩展，拒绝样例一并迁移 |
-| `scripts/mock-company-model.mjs`、`scripts/lib/strict-chat.mjs`、`scripts/strict-chat-proxy.mjs` | 重构 | `tools/fake-provider` | 扩展为四协议，增加白名单模式（10 第 3.4 节） |
+| `scripts/mock-company-model.mjs`、`scripts/lib/strict-chat.mjs`、`scripts/strict-chat-proxy.mjs` | 重构 | `tools/fake-provider` | 扩展为四协议，增加白名单模式（10 第 3.4 节）；严格代理不移植，对真实 provider 的检验由 M1 一致性套件的在线抽样承担（已在 OSS-009 实现，见 [ADR 0017 补充](../../decisions/0017-package-layout-migration.md#补充假-provider-取代模拟上游与严格代理oss-0092026-10-02)） |
 | 比赛与离线交付脚本（`competition-*`、`prepare-*`、`package-bundle.mjs`、`offline-development.mjs`、`vendor-engine-sources.mjs`、`launch-*.mjs`、`archive-offline.py`、`*.ps1` 等） | 移除 | 归档分支 | 只服务于 Windows 离线比赛包 |
 | `tests/`（单元 42、集成 48、smoke 3 个文件，约 2.8 万行） | 保留 | 各包 `test/` 与顶层 `tests/` | 比赛、统一模型与便携包的用例随模块删除，其余全部迁移 |
 | `engines/*.example*` | 替换 | Adapter 清单 | |

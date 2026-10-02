@@ -83,3 +83,20 @@ store 暂时包含与存储无关的 Windows 文件原语，命名与职责不�
 - 启动器测试覆盖超时与中止的终止、忽略 SIGTERM 的进程在超时 2 秒后被 SIGKILL 结束（去掉升级时该测试超时失败）、`maxBuffer`、环境隔离、只对 `cmd.exe` 允许 `windowsVerbatimArguments`、无法启动的程序，以及所有者关闭后不留进程。
 - 用注入的启动器替身测试失败模式：没有启动器时 Keychain 引用与 Windows 文件原语报 `PROCESS_LAUNCHER_NOT_INJECTED`，已保存绑定缺少当前入口时报 `COMMAND_MCP_ENTRY_NOT_INJECTED`；辅助程序的 stdout 与 stderr 即使含有金丝雀值也不出现在抛出的错误中（把 stderr 放进 `cause` 时该测试失败）。密钥辅助程序的测试只在 macOS 与 Windows 上运行，ACL 辅助程序的只在 Windows 上运行。
 - 原有测试只增加启动器接线（`tests/support/process-launcher.ts`、secrets 调用参数、command MCP 入口的导入位置）。Windows 上 DPAPI、ACL、`.cmd` 与 PowerShell 的路径由现有 Windows 测试在 CI 上执行。
+
+## 补充：假 provider 取代模拟上游与严格代理（OSS-009，2026-10-02）
+
+第 1 步从 `scripts/` 移入 `tools/` 的 `mock-chat-provider.mjs`、`strict-chat-proxy.mjs` 与二者共用的 `lib/strict-chat.mjs` 来自比赛版（[ADR 0013](0013-unified-model-gateway.md)）：当时唯一的上游是只接受流式 Chat Completions 的公司网关，模拟上游按它的规则回答，严格代理在本机按同样的规则检查真实引擎的请求后转发给真实模型（例如 DeepSeek），用于真实引擎与公司网关组合的验收。按 [12 第 1 节](../proposals/oss/12-roadmap-migration.md#1-现有模块去留) 的去留表，它们由 `tools/fake-provider` 取代（使用说明见 [README](../../tools/fake-provider/README.md)）：
+
+1. **四协议的严格模拟上游**：Chat Completions、Responses、Anthropic Messages（含 count_tokens）、Gemini 与 `GET /v1/models`，各有流式与非流式、原生鉴权与原生错误信封，报文形态按各厂商公开文档。字段检查有黑名单（默认）与白名单两种模式，违规以该协议的格式返回 400 并给出字段路径；字段清单是数据（`fields.mjs`），以后的按 Agent 字段清单只追加。回答依次来自 JSON 脚本、内置指令与默认的 `OK`；10 第 3.4 节列出的九个怪癖都可全局或按回合打开。请求记录只含 Key 的标识与凭据指纹，不含提示词、回答或 Key 的值；监听地址只能是回环地址。
+2. **保留的行为**：`HH_MOCK_TOOL`、`HH_MOCK_SLOW`、`HH_MOCK_UNICODE`、按会话计数的工具循环停止与推理回传要求照旧。推理回传成为默认开启的选项 `reasoningReplay`，并在四个协议各自的原生位置检查（Chat 的 `reasoning_content`、Responses 的 `reasoning` 项、开启 `thinking` 时的 Messages 思考块、Gemini 的 `thoughtSignature`）。`strict-chat.mjs` 的字段名单与结构规则移植为 Chat 的黑名单与结构检查；“只接受流式”是公司网关的限制，改为 `streamOnly` 选项，集成测试用它证明网关向上游总是流式；“模型必须是统一模型”改为提供的模型列表，其他模型按协议返回 404 并记为 `model` 违规。同名同参数的多个工具调用（Gemini 没有调用 id，翻译方也可能换掉 id）按带回的推理区分，避免把回传判为不一致。
+3. **严格代理退役，不移植**：只在真实引擎经公司网关运行时需要按公司的规则检查请求，开源版不再有这一约束。对真实 provider 的检验由 M1 协议一致性套件的在线部分承担（同一套用例对真实 provider 抽样运行，[10 第 3.3 节](../proposals/oss/10-engineering.md#33-三类一致性套件)）；网关发往上游的请求是否干净，由假 provider 在集成测试中检查。假 provider 因此不转发、不联网。
+4. **使用方与不兼容之处**：`tools/sea/measure.mjs` 改用 `startFakeProvider`，网关调用检查另要求匹配的 Key 标识与零违规；SEA 工作流在 `tools/fake-provider/**` 变化时也运行。命令行与观测接口不保留旧形式：`--api-key-env` 改为可重复的 `--key-env`（Key 标识即变量名），`--quirks` 改为逐项的 `--quirk`，`/__mock/requests` 改为 `/__fake/requests`，记录的 `violations` 由字符串改为 `{path, rule, message}`，`url` 不再带 `/v1`。仓库内没有其他使用方。
+5. **测试接入**：`tools/fake-provider/*.test.mjs` 加入启动器的 tooling 组；TypeScript 测试经 [tests/support/fake-provider.ts](../../tests/support/fake-provider.ts) 按路径加载这个未编译的工具，只声明测试用到的那部分接口，工具的 JSDoc 是唯一权威。
+
+代价与限制：白名单的基础清单是按厂商文档整理的可移植子集，还没有用真实 Agent 的语料校准（`tools/capture-corpus`，M1）；解码器（`decode.mjs`）按文档自行编写，不是官方 SDK，官方 SDK 的解析由 M1 协议套件验证；Gemini SSE 的 CRLF 分隔按 @google/genai 的解析器推断。语料录制、`hh provider add` 登记与开发模式的 `dev/fake` 预设尚未实现。
+
+验证：
+- tooling 组中的协议矩阵（每个协议的流式与非流式各有接受、黑名单拒绝、带路径的白名单拒绝、鉴权失败与错误信封）、每个怪癖与每项脚本功能的用例、四个协议的推理回传、拒绝非回环地址，以及客户端中途断开后不留响应、计时器与连接（让计时器不可取消时该用例失败）。
+- 集成测试 [fake-provider.test.ts](../../tests/integration/fake-provider.test.ts)：真实会话模型网关的 Chat 上游指向黑名单模式的假 provider，经四种入站协议各发流式与非流式请求（含工具往返），零违规且上游只见到配置的 Key；兼容性设置让网关发送 `stream_options` 与 `max_completion_tokens` 时，假 provider 报告这两处违规（拒绝样例）；守护进程经 Worker 与 ACP 夹具引擎完成一次 Run，同样零违规。
+- macOS arm64 本机运行 `node tools/sea/build.mjs` 与 `node tools/sea/measure.mjs`，两项网关调用检查通过（Key 标识匹配、零违规）。

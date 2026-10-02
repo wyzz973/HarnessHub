@@ -29,12 +29,12 @@
  * `serve` reaches ready; the engine launcher and the command MCP server run
  * as roles of the SEA; a demo Session Run on the fake engine completes in a Worker that the SEA
  * re-executed itself for; an ACP engine (the repository's model-gateway-peer fixture, on this
- * Node) calls the Session model gateway, which makes one authenticated streaming call to a
- * scripted Chat Completions upstream; the same fixture launched through the SEA itself
- * (node-compat mode) does the same; after SIGKILL of the Gateway during a Run, a restarted SEA
- * marks the Run interrupted with confirmed cleanup (on POSIX the Worker lease identity is also
- * compared with `ps`); SIGTERM stops the Gateway with exit code 0 (not on Windows, where kill()
- * terminates).
+ * Node) calls the Session model gateway, which makes one authenticated streaming call to the
+ * strict fake provider (tools/fake-provider) without field violations; the same fixture
+ * launched through the SEA itself (node-compat mode) does the same; after SIGKILL of the
+ * Gateway during a Run, a restarted SEA marks the Run interrupted with confirmed cleanup (on
+ * POSIX the Worker lease identity is also compared with `ps`); SIGTERM stops the Gateway with
+ * exit code 0 (not on Windows, where kill() terminates).
  *
  * Writes one JSON result; exits 1 when any check or measured start fails. Never contacts
  * anything but loopback. Needs `pnpm build` (for the fixture) and tools/sea/build.mjs.
@@ -56,7 +56,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { startMockUpstreamModel } from "../mock-chat-provider.mjs";
+import { startFakeProvider } from "../fake-provider/index.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const READY_TIMEOUT_MS = 30_000;
@@ -380,11 +380,9 @@ async function endToEnd(binary, build) {
   const workspace = path.join(directory, "workspace");
   const dataDir = path.join(directory, "data");
   await mkdir(workspace);
-  const mock = await startMockUpstreamModel({
-    host: "127.0.0.1",
-    port: 0,
-    model: "upstream-sim",
-    apiKey: key,
+  const provider = await startFakeProvider({
+    models: ["upstream-sim"],
+    keys: { sea: key },
   });
   let gateway;
   try {
@@ -623,18 +621,19 @@ async function endToEnd(binary, build) {
             adapter: "opencode",
             provider: {
               protocol: "openai-completions",
-              baseUrl: mock.url,
+              baseUrl: `${provider.url}/v1`,
               apiKey: { kind: "env", value: UPSTREAM_KEY_ENV },
             },
           },
         });
-        const before = mock.records().length;
+        const before = provider.records().length;
         const session = await api("POST", "/v1/sessions", { engineId });
         const view = await runToEnd(
           session.id,
           "hello through the model gateway",
         );
-        const upstream = mock
+        await provider.idle();
+        const upstream = provider
           .records()
           .slice(before)
           .filter((record) => record.path === "/v1/chat/completions");
@@ -648,15 +647,21 @@ async function endToEnd(binary, build) {
             upstream.length === 1 &&
             upstream[0].status === 200 &&
             upstream[0].auth === "ok" &&
+            upstream[0].keyId === "sea" &&
+            upstream[0].violations.length === 0 &&
             calls.length === 1 &&
             calls[0].ok === true,
           {
             ...runSummary(view),
-            upstream: upstream.map(({ status, auth, durationMs }) => ({
-              status,
-              auth,
-              durationMs,
-            })),
+            upstream: upstream.map(
+              ({ status, auth, keyId, violations, durationMs }) => ({
+                status,
+                auth,
+                keyId,
+                violations,
+                durationMs,
+              }),
+            ),
             modelCalls: calls.map(
               ({ ok, status, inbound, finishReason, ms }) => ({
                 ok,
@@ -750,7 +755,7 @@ async function endToEnd(binary, build) {
     return checks;
   } finally {
     if (gateway) await stop(gateway.child);
-    await mock.close();
+    await provider.close();
     await remove(directory);
   }
 }
