@@ -1,0 +1,297 @@
+#!/usr/bin/env node
+// SPDX-License-Identifier: MIT
+/**
+ * Build the HarnessHub single executable for the current platform (SEA feasibility spike,
+ * OSS-008). Run after `pnpm build`; the result goes to dist/sea/.
+ *
+ * Usage: node scripts/sea/build.mjs [--out dist/sea]
+ *
+ * Steps: esbuild bundles scripts/sea/entry.mjs with the Gateway, the Worker, the command MCP
+ * and the engine launcher into one CommonJS script, rewriting `import.meta.url` of every module
+ * to its repository-relative location under the runtime extraction root (see entry.mjs); files
+ * other programs read from disk become SEA assets; `node --experimental-sea-config` writes the
+ * blob (with V8 code cache); postject injects it into a copy of this Node executable; macOS
+ * gets an ad-hoc signature. `build.json` records sizes and inputs for the spike report.
+ *
+ * Fails when Node does not match .node-version (the binary is a copy of process.execPath),
+ * when dist/ is missing, or when any bundled module keeps an `import.meta` use the rewrite does
+ * not cover.
+ */
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
+import { gzipSync } from "node:zlib";
+import * as esbuild from "esbuild";
+
+const ROOT = fileURLToPath(new URL("../../", import.meta.url));
+const require = createRequire(import.meta.url);
+const SENTINEL_FUSE = "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2";
+const BUILD_ID_PLACEHOLDER = "HARNESSHUB-SEA-BUILD-ID-PLACEHOLDER";
+const ROLE_ENTRIES = [
+  "dist/src/main.js",
+  "dist/src/worker/main.js",
+  "dist/src/drivers/tool-command/command-mcp.js",
+  "scripts/launch-engine.mjs",
+];
+const ROLE_PLACEHOLDER = `// Placeholder for a HarnessHub single-executable role entry. The executable that wrote this
+// directory runs the bundled role when it is started with this path; nothing else may run it.
+throw new Error("HarnessHub single-executable role placeholder; start it through the executable");
+`;
+
+const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const relativeToRoot = (file) =>
+  path.relative(ROOT, file).split(path.sep).join("/");
+
+/** Rewrites `import.meta.url` per module; see entry.mjs for the runtime half. */
+const moduleUrlPlugin = {
+  name: "harnesshub-sea-module-url",
+  setup(build) {
+    build.onLoad({ filter: /\.(?:m?js|cjs)$/ }, async (args) => {
+      const source = await readFile(args.path, "utf8");
+      if (!source.includes("import.meta")) return undefined;
+      const relative = relativeToRoot(args.path);
+      if (relative.startsWith("../"))
+        throw new Error(`Bundled module outside the repository: ${args.path}`);
+      return {
+        contents: source.replaceAll(
+          "import.meta.url",
+          `globalThis.__harnesshubSeaModuleUrl(${JSON.stringify(relative)})`,
+        ),
+        loader: "js",
+      };
+    });
+  },
+};
+
+function run(command, args) {
+  const result = spawnSync(command, args, { cwd: ROOT, stdio: "inherit" });
+  if (result.error) throw result.error;
+  if (result.status !== 0)
+    throw new Error(`${command} ${args.join(" ")} exited ${result.status}`);
+}
+
+/** Group bundled input bytes by package (or by src/ top directory) for the size breakdown. */
+function inputBreakdown(metafile) {
+  const groups = new Map();
+  for (const [file, input] of Object.entries(metafile.inputs)) {
+    const match =
+      /node_modules\/(?:\.pnpm\/[^/]+\/node_modules\/)?((?:@[^/]+\/)?[^/]+)/.exec(
+        file,
+      );
+    const key = match
+      ? match[1]
+      : file.startsWith("dist/src/")
+        ? `harnesshub:${file.split("/").slice(2, 3).join("/")}`
+        : `harnesshub:${file}`;
+    groups.set(key, (groups.get(key) ?? 0) + input.bytes);
+  }
+  return Object.fromEntries([...groups].sort((a, b) => b[1] - a[1]));
+}
+
+export async function buildSea({ out = path.join(ROOT, "dist", "sea") } = {}) {
+  const expectedNode = readFileSync(
+    path.join(ROOT, ".node-version"),
+    "utf8",
+  ).trim();
+  if (process.versions.node !== expectedNode)
+    throw new Error(
+      `Node ${expectedNode} is required; found ${process.versions.node}`,
+    );
+  const buildInfoFile = path.join(ROOT, "dist", "build-info.json");
+  if (
+    !existsSync(buildInfoFile) ||
+    !existsSync(path.join(ROOT, "dist", "src", "main.js"))
+  )
+    throw new Error("dist/ is missing; run pnpm build first");
+  rmSync(out, { recursive: true, force: true });
+  mkdirSync(out, { recursive: true });
+
+  // Files other programs read from disk, extracted under the runtime root.
+  const buildInfo = JSON.parse(readFileSync(buildInfoFile, "utf8"));
+  const assets = new Map([
+    [
+      "dist/build-info.json",
+      {
+        bytes: Buffer.from(
+          `${JSON.stringify({ ...buildInfo, installMethod: "sea" }, null, 2)}\n`,
+        ),
+        executable: false,
+      },
+    ],
+    [
+      "scripts/native-mcp/pi-extension.mjs",
+      {
+        bytes: readFileSync(
+          path.join(ROOT, "scripts", "native-mcp", "pi-extension.mjs"),
+        ),
+        executable: false,
+      },
+    ],
+  ]);
+  const nativeDirectory = path.join(ROOT, "dist", "native");
+  for (const name of existsSync(nativeDirectory)
+    ? readdirSync(nativeDirectory).sort()
+    : [])
+    assets.set(`dist/native/${name}`, {
+      bytes: readFileSync(path.join(nativeDirectory, name)),
+      executable: true,
+    });
+  const placeholder = Buffer.from(ROLE_PLACEHOLDER);
+  const files = [
+    ...[...assets].map(([relative, { bytes, executable }]) => ({
+      path: relative,
+      asset: relative,
+      sha256: sha256(bytes),
+      size: bytes.length,
+      executable,
+    })),
+    ...ROLE_ENTRIES.map((relative) => ({
+      path: relative,
+      asset: "role-placeholder.js",
+      sha256: sha256(placeholder),
+      size: placeholder.length,
+      executable: false,
+    })),
+  ];
+
+  const bundled = await esbuild.build({
+    absWorkingDir: ROOT,
+    entryPoints: ["scripts/sea/entry.mjs"],
+    bundle: true,
+    platform: "node",
+    target: "node24",
+    format: "cjs",
+    write: false,
+    metafile: true,
+    legalComments: "none",
+    outfile: path.join(out, "harnesshub-sea.cjs"),
+    define: {
+      __HH_SEA_BUILD_ID__: JSON.stringify(BUILD_ID_PLACEHOLDER),
+      __HH_SEA_FILES__: JSON.stringify(files),
+    },
+    plugins: [moduleUrlPlugin],
+    logLevel: "warning",
+    logOverride: { "empty-import-meta": "error" },
+  });
+  const [output] = bundled.outputFiles;
+  const hash = createHash("sha256").update(output.text);
+  for (const file of files) hash.update(`${file.path}\0${file.sha256}\0`);
+  const buildId = hash.digest("hex").slice(0, 16);
+  const quoted = JSON.stringify(BUILD_ID_PLACEHOLDER);
+  if (!output.text.includes(quoted))
+    throw new Error("Build ID placeholder missing from the bundle");
+  const bundle = output.text.replaceAll(quoted, JSON.stringify(buildId));
+  const bundleFile = path.join(out, "harnesshub-sea.cjs");
+  writeFileSync(bundleFile, bundle);
+
+  const assetDirectory = path.join(out, "assets");
+  const seaAssets = {};
+  for (const [relative, { bytes }] of assets) {
+    const file = path.join(assetDirectory, ...relative.split("/"));
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, bytes);
+    seaAssets[relative] = file;
+  }
+  const placeholderFile = path.join(assetDirectory, "role-placeholder.js");
+  writeFileSync(placeholderFile, placeholder);
+  seaAssets["role-placeholder.js"] = placeholderFile;
+
+  const blobFile = path.join(out, "sea-prep.blob");
+  const configFile = path.join(out, "sea-config.json");
+  writeFileSync(
+    configFile,
+    `${JSON.stringify(
+      {
+        main: bundleFile,
+        output: blobFile,
+        disableExperimentalSEAWarning: true,
+        useCodeCache: true,
+        assets: seaAssets,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  run(process.execPath, ["--experimental-sea-config", configFile]);
+
+  const binary = path.join(
+    out,
+    process.platform === "win32" ? "harnesshub.exe" : "harnesshub",
+  );
+  copyFileSync(process.execPath, binary);
+  chmodSync(binary, 0o755);
+  if (process.platform === "darwin")
+    run("codesign", ["--remove-signature", binary]);
+  const { inject } = require("postject");
+  await inject(binary, "NODE_SEA_BLOB", readFileSync(blobFile), {
+    sentinelFuse: SENTINEL_FUSE,
+    ...(process.platform === "darwin" ? { machoSegmentName: "NODE_SEA" } : {}),
+  });
+  if (process.platform === "darwin") run("codesign", ["--sign", "-", binary]);
+
+  const record = {
+    platform: process.platform,
+    arch: process.arch,
+    node: process.version,
+    esbuild: esbuild.version,
+    buildId,
+    commit: buildInfo.commit,
+    dirty: buildInfo.dirty,
+    binary: path.relative(ROOT, binary).split(path.sep).join("/"),
+    sizes: {
+      nodeRuntime: statSync(process.execPath).size,
+      bundle: Buffer.byteLength(bundle),
+      assets: Object.fromEntries(
+        files.filter((f) => f.asset === f.path).map((f) => [f.path, f.size]),
+      ),
+      blob: statSync(blobFile).size,
+      binary: statSync(binary).size,
+      // Download-size estimate; release archives are tar.gz (zip on Windows).
+      binaryGzip9: gzipSync(readFileSync(binary), { level: 9 }).length,
+    },
+    bundleInputs: inputBreakdown(bundled.metafile),
+  };
+  writeFileSync(
+    path.join(out, "build.json"),
+    `${JSON.stringify(record, null, 2)}\n`,
+  );
+  return record;
+}
+
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  const { values } = parseArgs({ options: { out: { type: "string" } } });
+  try {
+    const record = await buildSea(
+      values.out ? { out: path.resolve(values.out) } : {},
+    );
+    console.log(
+      JSON.stringify({
+        event: "sea.built",
+        binary: record.binary,
+        buildId: record.buildId,
+        sizes: { ...record.sizes, assets: undefined },
+      }),
+    );
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
+}

@@ -547,10 +547,12 @@ export async function startHub(options: {
   }
 }
 
-if (
-  process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-) {
+/**
+ * Command-line entry: `--version [--json]`, `--help`, or start the Gateway and print the
+ * `ready` line on stdout. A startup failure rejects, which ends the process with exit
+ * code 1 exactly like the former top-level await did.
+ */
+async function runFromCommandLine(): Promise<void> {
   const { values } = parseArgs({
     options: {
       demo: { type: "boolean", default: false },
@@ -640,4 +642,14 @@ if (
     process.on("SIGINT", stop);
     process.on("SIGTERM", stop);
   }
+}
+
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  // Not a top-level await: the single-executable spike (scripts/sea) bundles this
+  // module as CommonJS, which cannot contain one. The rejection stays unhandled on
+  // purpose so the process still exits with code 1 and prints the error.
+  void runFromCommandLine();
 }
