@@ -24,7 +24,8 @@ test("accepts MIT headers, shebang files and listed third-party licenses", async
     "packages/core/src/types.ts": "// SPDX-License-Identifier: MIT\nexport {};\n",
     "packages/core/node_modules/ajv/index.js": "dependency without a header\n",
     "packages/core/dist/src/types.js": "compiled output\n",
-    "web/components/ai-elements/x.tsx": "// SPDX-License-Identifier: Apache-2.0\n\"use client\";\n",
+    "packages/console/components/ai-elements/x.tsx": "// SPDX-License-Identifier: Apache-2.0\n\"use client\";\n",
+    "packages/console/next-env.d.ts": '/// <reference types="next" />\n',
     "packages/agents/src/configuration/codex-default-instructions.ts": "// SPDX-License-Identifier: Apache-2.0\n",
     "src/node_modules/ignored.ts": "no header\n",
     "examples/tool-packages/demo/cli/run.mjs": "pinned payload bytes\n",
@@ -41,7 +42,7 @@ test("rejects missing headers, wrong identifiers and an empty inventory", async 
     "tests/apache.ts": "// SPDX-License-Identifier: Apache-2.0\n",
     "tools/lib/missing.mjs": "export {};\n",
     "apps/hh/src/main.ts": "export {};\n",
-    "web/components/ai-elements/mit.tsx": "// SPDX-License-Identifier: MIT\n",
+    "packages/console/components/ai-elements/mit.tsx": "// SPDX-License-Identifier: MIT\n",
   });
   const { diagnostics } = await checkSpdx(root);
   assert.equal(diagnostics.length, 6);

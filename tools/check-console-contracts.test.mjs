@@ -10,7 +10,7 @@ import ts from "typescript";
 // change; TypeScript's compiler erases types before Node loads the modules.
 async function consoleContracts() {
   const require = createRequire(
-    new URL("../web/package.json", import.meta.url),
+    new URL("../packages/console/package.json", import.meta.url),
   );
   const zod = pathToFileURL(require.resolve("zod")).href;
   const asModule = (source) =>
@@ -25,7 +25,7 @@ async function consoleContracts() {
   const configuration = asModule(
     (
       await readFile(
-        new URL("../web/lib/engine-configuration.ts", import.meta.url),
+        new URL("../packages/console/lib/engine-configuration.ts", import.meta.url),
         "utf8",
       )
     ).replace('from "zod"', `from ${JSON.stringify(zod)}`),
@@ -33,7 +33,7 @@ async function consoleContracts() {
   const contract = asModule(
     (
       await readFile(
-        new URL("../web/lib/contracts.ts", import.meta.url),
+        new URL("../packages/console/lib/contracts.ts", import.meta.url),
         "utf8",
       )
     )

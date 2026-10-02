@@ -59,7 +59,7 @@ Console不是引擎执行器：它调用Next的 `/api/gateway/...` 代理，再�
 | [storage](../packages/store/src/storage/sqlite-store.ts) | 事务、幂等、记录校验、事件序号、公共终态唯一性 |
 | [artifacts](../packages/runtime/src/artifacts/collector.ts) | 声明式outputs采集、不可变文件、hash与安全读取 |
 | [benchmark](../packages/daemon/src/benchmark-main.ts) | 隔离attempt、调用Application、Evaluator与报告 |
-| [web](../web/README.md) | 控制台、代理、UI响应校验、SSE重放与任务选择 |
+| [console](../packages/console/README.md) | 控制台、代理、UI响应校验、SSE重放与任务选择 |
 
 依赖由 [边界检查脚本](../tools/check-boundaries.mjs)校验。第三方ACP类型止于Driver，不流入公共Session/Run类型。
 

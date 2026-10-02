@@ -278,7 +278,7 @@ hh users list|remove                     团队服务器用户管理（1.x）
 
 ## 6. Web 控制台
 
-控制台是 React + Vite 构建的静态单页，内嵌在守护进程中（ADR-P10），只通过 `@harnesshub/sdk` 调用 API；现有组件（shadcn/ui、assistant-ui、AI Elements、Streamdown）按 [web/README.md](../../../web/README.md) 的来源与许可迁移复用。全局元素：顶部状态条（守护进程、网关地址、存储与构建身份）；待决权限收件箱（任何页面都能处理）；命令面板（`Ctrl/⌘+K`）；未隔离或证据强度为 `observed` 时的持续标识。
+控制台是 React + Vite 构建的静态单页，内嵌在守护进程中（ADR-P10），只通过 `@harnesshub/sdk` 调用 API；现有组件（shadcn/ui、assistant-ui、AI Elements、Streamdown）按 [packages/console/README.md](../../../packages/console/README.md) 的来源与许可迁移复用。全局元素：顶部状态条（守护进程、网关地址、存储与构建身份）；待决权限收件箱（任何页面都能处理）；命令面板（`Ctrl/⌘+K`）；未隔离或证据强度为 `observed` 时的持续标识。
 
 | 页面 | 核心内容 | 主要 API |
 |---|---|---|

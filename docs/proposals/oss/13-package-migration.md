@@ -185,3 +185,9 @@ daemon 内只有 `src/worker/**` 可以导入 drivers。
 - `benchmark-main.ts` 原来按 `../../package.json` 读取根包版本；迁移后同一相对路径指向 daemon 自己的 `package.json`，留在包内，不需要越出包的例外。各包版本保持一致（均为 0.1.0），版本统一由发布流程（M1）维护。
 - 边界检查：`PACKAGE_ORIGINS` 加入 daemon（`http/` 按原 `gateway` 模块检查）与 cli；`new URL` 改为按编译后文件（`dist/src/...`）的位置检查，因为 `import.meta.url` 在运行时指向编译产物，按源码位置检查会多算一层而误判。只针对 `src/` 的规则（目的地表等）此后不再有检查对象，留到 OSS-005 重写检查时一并处理。
 - SEA：`main.js` 与 Worker 角色改为 `packages/daemon/dist/src/...`，内嵌的构建身份改为 `packages/daemon/dist/build-info.json`；租约记录的 Worker 路径随之改变，迁移前创建的租约按自己记录的旧路径校验（第 8 步的测试）。
+
+第 10 步（控制台）：
+
+- `git mv web packages/console`，workspace 改为只列出 `packages/*` 与 `apps/*`。`tools/console.mjs` 按自身位置找到 `packages/console/`，构建后的环境金丝雀扫描随之检查 `packages/console/.next`，白名单不变；控制台的 `dev`/`build` 脚本改为 `../../tools/console.mjs`；`next.config.ts` 的 `outputFileTracingRoot` 改为 `../../`，仍指向 workspace 根目录。
+- 根包的 `lint:console`、ESLint 配置、`.gitignore`、`start-local`、控制台契约测试与 SPDX 扫描范围改用新路径；`pnpm lint` 用 `--ignore-pattern` 排除控制台，控制台仍由 `lint:console` 以自己的 tsconfig 检查。SPDX 扫描 `packages/` 时跳过 Next.js 生成且不入库的 `next-env.d.ts`。
+- 边界检查：`SOURCE_AREAS` 让检查扫描控制台的 `app/`、`components/` 与 `lib/`；按依赖图控制台只能导入 `@harnesshub/sdk`，相对导入不得离开包。控制台目前不导入任何 `@harnesshub/*` 包。`next.config.ts` 有意解析仓库根目录，不在扫描范围内。

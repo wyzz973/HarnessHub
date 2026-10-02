@@ -25,8 +25,8 @@
 
 | 内容 | 许可证 | 开源版处置 |
 |---|---|---|
-| `web/components/ui`（shadcn/ui） | MIT | 控制台重写时按需复用，复用则保留许可文本 |
-| `web/components/ai-elements`（Vercel AI Elements） | Apache-2.0 | 同上，保留原始声明 |
+| `packages/console/components/ui`（shadcn/ui） | MIT | 控制台重写时按需复用，复用则保留许可文本 |
+| `packages/console/components/ai-elements`（Vercel AI Elements） | Apache-2.0 | 同上，保留原始声明 |
 | `packages/agents/src/configuration/codex-default-instructions.ts`（Codex `rust-v0.153.4` 的提示词原文） | Apache-2.0，附上游 NOTICE | 只在 Codex Adapter 仍需要时保留，并保持原文字节、LICENSE 与 NOTICE；否则删除 |
 | `patches/acpx@0.13.2.patch` | acpx 为 MIT | 保留，同时向上游提交，合入后删除补丁 |
 | `vendor/engine-sources/`：14 个上游源码归档（acpx、claude-agent-acp、codex-acp、codex、dsh、gemini、hermes、kimi、mimo、openclaw、opencode、pi-acp、pi、qwen），约 480 MB | 各自附 LICENSE 与 provenance | 不迁入公开仓库；它服务于离线比赛交付，开源版不分发任何 Agent |

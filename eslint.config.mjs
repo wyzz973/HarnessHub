@@ -31,12 +31,16 @@ export default tseslint.config(
     rules,
   },
   {
-    files: ["web/**/*.ts", "web/**/*.tsx"],
-    ignores: ["web/.next/**", "web/next-env.d.ts", "web/node_modules/**"],
+    files: ["packages/console/**/*.ts", "packages/console/**/*.tsx"],
+    ignores: [
+      "packages/console/.next/**",
+      "packages/console/next-env.d.ts",
+      "packages/console/node_modules/**",
+    ],
     languageOptions: {
       parser: tseslint.parser,
       parserOptions: {
-        project: "./web/tsconfig.json",
+        project: "./packages/console/tsconfig.json",
         tsconfigRootDir: import.meta.dirname,
       },
     },
