@@ -94,7 +94,12 @@ void test(
         "code" in error &&
         error.code === "SESSION_BUSY",
     );
-    assert.equal((await wait(active)).output, "original-nonce");
+    const remembered = await wait(active);
+    assert.equal(
+      remembered.output,
+      "original-nonce",
+      JSON.stringify(remembered),
+    );
     const release = await hub.server.inject({
       method: "POST",
       url: `/v1/sessions/${session.id}/suspend`,
@@ -104,7 +109,7 @@ void test(
     const restored = await wait(
       hub.app.submit(session.id, { text: "recall", timeoutMs: 5000 }).run,
     );
-    assert.equal(restored.output, "original-nonce");
+    assert.equal(restored.output, "original-nonce", JSON.stringify(restored));
     assert.ok(
       hub.app
         .events(restored.id)
@@ -121,7 +126,11 @@ void test(
     const afterRestart = await wait(
       hub.app.submit(session.id, { text: "recall", timeoutMs: 5000 }).run,
     );
-    assert.equal(afterRestart.output, "original-nonce");
+    assert.equal(
+      afterRestart.output,
+      "original-nonce",
+      JSON.stringify(afterRestart),
+    );
     assert.equal(hub.app.getSession(session.id).backendSessionId, backend);
     await hub.app.suspendSession(session.id);
     await rm(path.join(peerState, `${backend}.txt`));

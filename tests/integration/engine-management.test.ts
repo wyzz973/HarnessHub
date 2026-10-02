@@ -143,7 +143,8 @@ void test(
     const newer = (
       await json<SessionRecord>(hub.url, "/v1/sessions", "POST", {})
     ).value;
-    assert.equal((await wait(await submit(newer.id))).output, "v2:中文");
+    const newerRun = await wait(await submit(newer.id));
+    assert.equal(newerRun.output, "v2:中文", JSON.stringify(newerRun));
     await hub.server.close();
     hub = await startHub({ ...options, defaultEngine: "custom" });
     assert.equal(
@@ -158,7 +159,8 @@ void test(
     const fresh = (
       await json<SessionRecord>(hub.url, "/v1/sessions", "POST", {})
     ).value;
-    assert.equal((await wait(await submit(fresh.id))).output, "v2:中文");
+    const freshRun = await wait(await submit(fresh.id));
+    assert.equal(freshRun.output, "v2:中文", JSON.stringify(freshRun));
     const hostile = await fetch(`${hub.url}/v1/engines`, {
       method: "POST",
       headers: {
