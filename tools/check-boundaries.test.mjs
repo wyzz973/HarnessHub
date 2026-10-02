@@ -800,3 +800,73 @@ test("only agents' repository.ts may resolve URLs outside the package, until OSS
     /packages\/agents has no child_process exception/,
   );
 });
+
+test("runtime owns process creation for good, and the probe keeps its drivers rules", () => {
+  const spawn = 'import { spawn } from "node:child_process";';
+  const done = { completedTasks: new Set(["OSS-013"]) };
+  // A permanent home, not an exception: it does not expire with OSS-013.
+  assert.deepEqual(
+    checkSource(
+      join(root, "packages/runtime/src/process/worker-host.ts"),
+      spawn,
+      root,
+      done,
+    ),
+    [],
+  );
+  assert.match(
+    checkSource(
+      join(root, "packages/runtime/src/application/service.ts"),
+      spawn,
+      root,
+      done,
+    ).join("\n"),
+    /packages\/runtime has no child_process exception/,
+  );
+  assert.equal(
+    legacyPathOf("runtime", "process/probe.ts"),
+    "drivers/configuration/probe.ts",
+  );
+  assert.equal(
+    legacyPathOf("runtime", "process/leases.ts"),
+    "process/leases.ts",
+  );
+  const prepared =
+    'import type { PreparedConfiguration } from "@harnesshub/agents/configuration/prepare";';
+  assert.deepEqual(
+    checkAt("packages/runtime/src/process/probe.ts", prepared),
+    [],
+  );
+  assert.match(
+    checkAt("packages/runtime/src/process/leases.ts", prepared).join("\n"),
+    /process cannot depend on drivers/,
+  );
+  assert.match(
+    checkAt(
+      "packages/runtime/src/runtime/runtime.ts",
+      'import { startModelGateway } from "@harnesshub/gateway/gateway";',
+    ).join("\n"),
+    /packages\/runtime cannot depend on @harnesshub\/gateway/,
+  );
+  assert.deepEqual(
+    check(
+      "gateway/server.ts",
+      'import type { HubApplication } from "@harnesshub/runtime/application/service";',
+    ),
+    [],
+  );
+  assert.match(
+    check(
+      "gateway/server.ts",
+      'import { ProcessWorkerHost } from "@harnesshub/runtime/process/worker-host";',
+    ).join("\n"),
+    /gateway cannot depend on process/,
+  );
+  assert.deepEqual(
+    check(
+      "main.ts",
+      'import { probeConfiguration } from "@harnesshub/runtime/process/probe";',
+    ),
+    [],
+  );
+});
