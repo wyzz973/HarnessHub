@@ -20,5 +20,7 @@ export const TOOL_PACKAGES_ENTRY = entry(
 );
 /** The `rollout` command line. */
 export const CLI_ENTRY = entry("@harnesshub/cli/cli");
+/** The `hh` command as installed: the `harnesshub` application's bin launcher. */
+export const HH_ENTRY = new URL("../../bin/hh.mjs", entry("harnesshub/main"));
 /** The build identity that `pnpm build` writes next to the daemon's compiled code. */
 export const BUILD_INFO = new URL("../build-info.json", MAIN_ENTRY);

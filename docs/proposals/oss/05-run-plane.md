@@ -298,7 +298,7 @@ HarnessHub 以 MCP Server 向其他 Agent 暴露执行平面，让它们把任�
 
 | 现状 | 开源版 | 迁移动作 |
 |---|---|---|
-| Worker 内 `settleGatewayResult` 两条改判规则（[ADR 0013](../../decisions/0013-unified-model-gateway.md) 的“Run 结果”） | 守护进程内的规则表 R1–R14 与三个结算面 | 新 ADR 替代该节；`tests/unit/worker-outcome.test.ts` 中“有文本、0 次调用仍为 completed”的断言改为期望 `MODEL_GATEWAY_UNUSED` 并写明理由 |
+| Worker 内 `settleGatewayResult` 两条改判规则（[ADR 0013](../../decisions/0013-unified-model-gateway.md) 的“Run 结果”） | 守护进程内的规则表 R1–R14 与三个结算面 | 新 ADR 替代该节；`packages/daemon/test/worker-outcome.test.ts` 中“有文本、0 次调用仍为 completed”的断言改为期望 `MODEL_GATEWAY_UNUSED` 并写明理由 |
 | `ENGINE_NO_OUTPUT`、`MODEL_UPSTREAM_ERROR` | `AGENT_NO_OUTPUT`、`MODEL_UPSTREAM_ERROR`，新增 `MODEL_GATEWAY_UNUSED`、`AGENT_DISCONNECTED`、`MODEL_CONTENT_FILTERED`、`GATEWAY_REJECTED`、`MODEL_EMPTY_RESPONSE` | 保留 Session 的失败码集合同步扩展；旧码只出现在导入的历史数据中 |
 | 调用记录在 Worker 内存中，499 同时表示取消与断开 | 读 03 的 `model.call` 字段推导判定类别 | 依赖 03 先区分 `client_cancelled` 与 `engine_disconnected`；规则集在 Adapter 一致性测试通过后启用 |
 | `engineId`、`profileRevision`、`workspaceId` | `agent`、Adapter 与 Agent 版本快照、`workspace` 描述 | API 字段改名，见 06 |

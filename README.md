@@ -44,6 +44,8 @@ pnpm build:console
 pnpm start --port 3180 --data-dir ./data/local
 ```
 
+`pnpm exec hh serve --port 3180 --data-dir ./data/local` starts the same Gateway through the `hh` command, which also runs `benchmark`, `tools` and `rollout` ([apps/hh](apps/hh/README.md)).
+
 In a second terminal, start the console and open <http://127.0.0.1:3330>:
 
 ```sh

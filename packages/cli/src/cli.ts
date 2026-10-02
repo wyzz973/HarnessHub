@@ -61,14 +61,28 @@ export async function runCli(args: string[]): Promise<void> {
   }
 }
 
+/**
+ * Command-line entry (`node dist/src/cli.js rollout ...` and `hh rollout ...`):
+ * runs runCli and prints a failure's message on stderr.
+ *
+ * @param argv The command-line arguments, starting with the subcommand.
+ * @returns The process exit code.
+ */
+export async function main(argv: string[]): Promise<number> {
+  try {
+    await runCli(argv);
+    return 0;
+  } catch (error) {
+    console.error(
+      error instanceof Error ? error.message : "Rollout export failed",
+    );
+    return 1;
+  }
+}
+
 if (
   process.argv[1] &&
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
-  await runCli(process.argv.slice(2)).catch((error: unknown) => {
-    console.error(
-      error instanceof Error ? error.message : "Rollout export failed",
-    );
-    process.exitCode = 1;
-  });
+  process.exitCode = await main(process.argv.slice(2));
 }

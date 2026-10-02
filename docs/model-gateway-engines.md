@@ -73,12 +73,12 @@ codex-acp 缺省的 `agent` 模式用另一个 Guardian 模型自动审批，因
 单元与集成测试使用本地假上游和假 ACP 引擎，不调用真实模型：
 
 - [gateway 接入配置](../tests/unit/model-gateway-configuration.test.ts)：各适配器的原生配置指向网关、使用 alias、写入窗口与输出上限、请求头秘密不落盘、厂商变量与用户目录被移除、Full Access 保留、不可路由适配器报错、占位符替换（含带空格与中文的 Windows 路径）以及 provider 字段校验。
-- [Worker 结果语义](../tests/unit/worker-outcome.test.ts)：`MODEL_UPSTREAM_ERROR`、`ENGINE_NO_OUTPUT`、事件数据、脱敏、截断与诊断日志。
+- [Worker 结果语义](../packages/daemon/test/worker-outcome.test.ts)：`MODEL_UPSTREAM_ERROR`、`ENGINE_NO_OUTPUT`、事件数据、脱敏、截断与诊断日志。
 - [正式 Gateway/Worker 集成](../tests/integration/chat-completions.test.ts)：OpenCode、Qwen、Pi 三种原生配置经同一网关到达同一上游模型并带上游密钥与请求头；上游 400 使 Run 失败并带真实原因；`model.call` 事件提交到 SQLite；引擎环境不含厂商与上游秘密；数据库不含上游密钥、厂商密钥与网关令牌；Codex/Gemini 经 Responses 与 Google 入口完成 MCP、Skills、权限、产物与取消；ACP 会话创建时的 `Authentication required` 以真实原因公开并写入诊断日志。
 
 ```sh
 pnpm build
-node --test dist/tests/unit/model-gateway-configuration.test.js dist/tests/unit/worker-outcome.test.js
+node --test dist/tests/unit/model-gateway-configuration.test.js packages/daemon/dist/test/worker-outcome.test.js
 node --test dist/tests/integration/chat-completions.test.js
 ```
 

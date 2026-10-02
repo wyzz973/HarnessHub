@@ -155,15 +155,15 @@ Responses 和 Google 按固定客户端（Codex 0.153.4 的请求结构、@googl
 
 单元测试从 HTTP 入口运行，使用本地假上游，不访问真实模型：
 
-- [协议转换](../tests/unit/model-gateway.test.ts)：四种入站协议的流式与非流式输出、模型列表、`count_tokens`、四种鉴权方式与拒绝。
-- [上游行为](../tests/unit/model-gateway-upstream.test.ts)：宽松解析各变体、结束原因、usage、工具分片、请求规范化与截断、错误状态透传与脱敏、上下文超长映射、502/504/重定向（上游完全不应答时 Gemini 同样为 504，已应答但无数据时按提交期限提交后在流内超时）、大小限制与不支持输入。
-- [响应头与保活](../tests/unit/model-gateway-keepalive.test.ts)：Gemini SSE（含只有工具调用的回合）在首个上游块即收到响应头；Gemini 在请求后 `headerCommitMs` 收到响应头，上游扣留响应头或调用在队列中等待时也一样，上游在期限之后应答时随应答提交；四种流式协议在上游活动而无可转发内容时收到各自的保活，Responses 序号保持连续，去掉保活后输出、usage 与调用记录与无保活时相同；只发注释的上游在 `maxNoDataMs` 后不再获得保活并超时（已提交为流内错误，未提交为 504）；提交后完全静默的上游在超时前得不到保活；Gemini 非流式只在期限提交、期限前的失败保留状态码、之后为 200 错误体；socket 已销毁时写入立即失败；写入因引擎不读而阻塞时不发保活；限制的范围校验。
-- [推理与 Run](../tests/unit/model-gateway-runs.test.ts)：四种协议的推理回填（假上游在缺少 `reasoning_content` 时按 DeepSeek 实测返回 400）、strip 模式、缓存上限、Run 作用域、取消与断开、并发上限、调用记录与 `runErrors`。
+- [协议转换](../packages/gateway/test/model-gateway.test.ts)：四种入站协议的流式与非流式输出、模型列表、`count_tokens`、四种鉴权方式与拒绝。
+- [上游行为](../packages/gateway/test/model-gateway-upstream.test.ts)：宽松解析各变体、结束原因、usage、工具分片、请求规范化与截断、错误状态透传与脱敏、上下文超长映射、502/504/重定向（上游完全不应答时 Gemini 同样为 504，已应答但无数据时按提交期限提交后在流内超时）、大小限制与不支持输入。
+- [响应头与保活](../packages/gateway/test/model-gateway-keepalive.test.ts)：Gemini SSE（含只有工具调用的回合）在首个上游块即收到响应头；Gemini 在请求后 `headerCommitMs` 收到响应头，上游扣留响应头或调用在队列中等待时也一样，上游在期限之后应答时随应答提交；四种流式协议在上游活动而无可转发内容时收到各自的保活，Responses 序号保持连续，去掉保活后输出、usage 与调用记录与无保活时相同；只发注释的上游在 `maxNoDataMs` 后不再获得保活并超时（已提交为流内错误，未提交为 504）；提交后完全静默的上游在超时前得不到保活；Gemini 非流式只在期限提交、期限前的失败保留状态码、之后为 200 错误体；socket 已销毁时写入立即失败；写入因引擎不读而阻塞时不发保活；限制的范围校验。
+- [推理与 Run](../packages/gateway/test/model-gateway-runs.test.ts)：四种协议的推理回填（假上游在缺少 `reasoning_content` 时按 DeepSeek 实测返回 400）、strip 模式、缓存上限、Run 作用域、取消与断开、并发上限、调用记录与 `runErrors`。
 - [兼容入口](../tests/unit/chat-completions.test.ts)：`startModelBridge`、Responses/Google 转换与配置准备。
 
 ```sh
 pnpm build
-node tools/run-tests.mjs unit dist/tests/unit/model-gateway*.test.js dist/tests/unit/chat-completions.test.js
+node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js dist/tests/unit/model-gateway*.test.js dist/tests/unit/chat-completions.test.js
 ```
 
 2026-09-19 在 macOS 上做过一次性冒烟：本机已安装的 Codex 0.144.5、Gemini CLI 0.38.2、Claude Code 2.1.278（均非固定版本）以隔离的配置目录连接网关与本地假上游，各完成一次推理、Shell 工具调用与后续回合，后续请求都带回了推理内容。该冒烟发现并修正了 Claude Code 在 `messages` 中发送 system 角色消息的问题；脚本未入库，不代替固定版本引擎的验收。

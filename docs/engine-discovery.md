@@ -72,7 +72,7 @@ Windows 按分号拆分 PATH，允许带引号的目录，目录优先级高于�
 
 ## 验证范围
 
-[发现测试](../tests/unit/discovery.test.ts) 覆盖安装和 Adapter 变化、PATH 优先级、DSH 文件引用、运行时新增 manifest、无效输入拒绝，以及发现期间没有执行程序。[Windows 启动测试](../tests/unit/windows-launch.test.ts)在原生 Windows 上实际执行无模型 Node、npm 批处理和 PowerShell fixture，核对 Unicode/空格/特殊字符、环境覆盖及多行批处理拒绝；[安装快照测试](../tests/unit/installation.test.ts)覆盖启动目标、秘密参数排除、文件上限与 junction 拒绝。[Gateway Windows 启动集成](../tests/integration/windows-engine-launch.test.ts)从正式 Gateway/Worker 注册并执行批处理及 PowerShell，断言完整 UTF-8 多行输入输出和已确认清理。真实模型证据由对应验收记录维护，不能从文件存在推导。
+[发现测试](../packages/agents/test/discovery.test.ts) 覆盖安装和 Adapter 变化、PATH 优先级、DSH 文件引用、运行时新增 manifest、无效输入拒绝，以及发现期间没有执行程序。[Windows 启动测试](../packages/agents/test/windows-launch.test.ts)在原生 Windows 上实际执行无模型 Node、npm 批处理和 PowerShell fixture，核对 Unicode/空格/特殊字符、环境覆盖及多行批处理拒绝；[安装快照测试](../packages/agents/test/installation.test.ts)覆盖启动目标、秘密参数排除、文件上限与 junction 拒绝。[Gateway Windows 启动集成](../tests/integration/windows-engine-launch.test.ts)从正式 Gateway/Worker 注册并执行批处理及 PowerShell，断言完整 UTF-8 多行输入输出和已确认清理。真实模型证据由对应验收记录维护，不能从文件存在推导。
 
 OpenClaw 若项目中存在专用 Bridge launcher，发现配置会使用独立原生会话名，避免默认ACP前缀冲突；参见 [OpenClaw说明](openclaw-engine.md)。定制 Pi 和独立 OpenCode DeepSeek 可继续通过本机 manifest 加入发现，不需要扩展 Gateway 分支。
 

@@ -19,6 +19,7 @@ export default tseslint.config(
       "tests/**/*.ts",
       "packages/*/src/**/*.ts",
       "packages/*/test/**/*.ts",
+      "apps/*/src/**/*.ts",
     ],
     languageOptions: {
       parser: tseslint.parser,

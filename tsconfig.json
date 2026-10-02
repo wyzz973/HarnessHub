@@ -35,6 +35,9 @@
       "path": "./packages/sdk"
     },
     {
+      "path": "./apps/hh"
+    },
+    {
       "path": "./tests"
     }
   ]

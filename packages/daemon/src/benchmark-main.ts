@@ -145,12 +145,17 @@ export async function benchmarkMain(args: string[]): Promise<number> {
   }
 }
 
-if (
-  process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-) {
+/**
+ * Command-line entry of `benchmark` (`node dist/src/benchmark-main.js` and
+ * `hh benchmark`): runs benchmarkMain and reports a failure as one JSON line on
+ * stderr without its details.
+ *
+ * @param argv The command-line arguments after the command itself.
+ * @returns The process exit code.
+ */
+export async function main(argv: string[]): Promise<number> {
   try {
-    process.exitCode = await benchmarkMain(process.argv.slice(2));
+    return await benchmarkMain(argv);
   } catch (error) {
     console.error(
       JSON.stringify({
@@ -159,6 +164,13 @@ if (
           "Benchmark did not complete; inspect saved attempts and Gateway configuration",
       }),
     );
-    process.exitCode = 1;
+    return 1;
   }
+}
+
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  process.exitCode = await main(process.argv.slice(2));
 }
