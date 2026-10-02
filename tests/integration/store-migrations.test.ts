@@ -109,9 +109,14 @@ void test("migration checksums are pinned: an applied migration is never edited"
         "model_plane",
         "b52ea0abc6b2664a753079d7b3405278a93cef5ad6771e6c90a7f934a6ecd1d1",
       ],
+      [
+        3,
+        "model_metadata",
+        "69f0a38b6306bd1daa53145c8a47d0cdd876c748a9d0cf688cc320d5737014d2",
+      ],
     ],
   );
-  assert.equal(LATEST_SCHEMA_VERSION, 2);
+  assert.equal(LATEST_SCHEMA_VERSION, 3);
   assert.deepEqual(
     MIGRATIONS.map((migration) => migration.version),
     MIGRATIONS.map((_, index) => index + 1),
@@ -144,6 +149,8 @@ void test("a new database applies every migration in order and records them", (t
     "gateway_keys",
     "model_calls",
     "wirings",
+    "model_overrides",
+    "model_provenance",
   ])
     assert.ok(tables.includes(table), table);
   // Reopening applies nothing.
@@ -175,6 +182,7 @@ void test("a user_version 1 database from the previous build migrates forward wi
     [
       [1, "runtime_core", "adopted from user_version 1"],
       [2, "model_plane", null],
+      [3, "model_metadata", null],
     ],
   );
   assert.equal(applied[0]?.checksum_sha256, migrationChecksum(MIGRATIONS[0]!));
@@ -217,6 +225,60 @@ void test("a user_version 1 database from the previous build migrates forward wi
   const plane = new SqliteModelPlaneStore(path);
   t.after(() => plane.close());
   assert.deepEqual(await plane.listProviders(), []);
+});
+
+void test("a version 2 database gains the model metadata tables and keeps its providers", async (t) => {
+  const { path, open, inspector } = fixture(t);
+  const v2 = new DatabaseSync(path);
+  v2.exec(
+    "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, checksum_sha256 TEXT NOT NULL, applied_at TEXT NOT NULL, hh_version TEXT, note TEXT)",
+  );
+  for (const migration of MIGRATIONS.slice(0, 2)) {
+    v2.exec(migration.sql);
+    v2.prepare(
+      "INSERT INTO schema_migrations (version, name, checksum_sha256, applied_at) VALUES (?, ?, ?, '2026-10-01T00:00:00.000Z')",
+    ).run(migration.version, migration.name, migrationChecksum(migration));
+  }
+  v2.exec("PRAGMA user_version = 2");
+  const record = {
+    schemaVersion: 1,
+    id: "alpha",
+    name: "Alpha",
+    kind: "vendor",
+    endpoints: { chat: "https://api.example.test/v1" },
+    auth: { apiKeyHeader: "authorization-bearer" },
+    credentials: [],
+    models: {
+      source: "manual",
+      list: [{ id: "chat-1", contextWindow: 128000 }],
+      expose: "all",
+    },
+    createdAt: "2026-10-01T00:00:00.000Z",
+    updatedAt: "2026-10-01T00:00:00.000Z",
+  };
+  v2.prepare("INSERT INTO providers (id, record) VALUES (?, ?)").run(
+    "alpha",
+    JSON.stringify(record),
+  );
+  v2.close();
+
+  const store = open("9.9.9-test");
+  const db = inspector();
+  assert.equal(userVersion(db), 3);
+  assert.deepEqual(
+    migrations(db).map((row) => [row.version, row.name, row.hh_version]),
+    [
+      [1, "runtime_core", null],
+      [2, "model_plane", null],
+      [3, "model_metadata", "9.9.9-test"],
+    ],
+  );
+  store.acquireOwner();
+  const plane = new SqliteModelPlaneStore(path);
+  t.after(() => plane.close());
+  assert.deepEqual(await plane.listProviders(), [record]);
+  assert.deepEqual(await plane.listModelOverrides("alpha"), []);
+  assert.deepEqual(await plane.listModelProvenance("alpha"), []);
 });
 
 void test("a database newer than this build is refused without modification", (t) => {
@@ -363,6 +425,7 @@ void test("simultaneous opens of a version 1 database apply each migration exact
     [
       [1, "adopted from user_version 1"],
       [2, null],
+      [3, null],
     ],
   );
   assert.equal(userVersion(db), LATEST_SCHEMA_VERSION);

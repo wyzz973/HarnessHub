@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { nativeAssets, presetAssets } from "./sea/build.mjs";
+import { catalogAssets, nativeAssets, presetAssets } from "./sea/build.mjs";
 
 async function tree(t, files) {
   const root = await mkdtemp(path.join(os.tmpdir(), "hh-sea-native-"));
@@ -62,5 +62,19 @@ test("the single executable carries every provider preset at its repository path
   assert.deepEqual(
     presetAssets(root).map((asset) => asset.path),
     ["packages/gateway/presets/deepseek.json", "packages/gateway/presets/openai.json"],
+  );
+});
+
+test("the single executable carries the model catalog snapshot and its license", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "hh-sea-catalog-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  assert.deepEqual(catalogAssets(root), []);
+  const directory = path.join(root, "packages", "gateway", "catalog");
+  await mkdir(directory, { recursive: true });
+  for (const name of ["models-dev.json", "models-dev.LICENSE", "README.md", "scratch.json"])
+    await writeFile(path.join(directory, name), "{}");
+  assert.deepEqual(
+    catalogAssets(root).map((asset) => asset.path),
+    ["packages/gateway/catalog/models-dev.LICENSE", "packages/gateway/catalog/models-dev.json"],
   );
 });

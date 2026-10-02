@@ -15,6 +15,14 @@ import type {
   UsageGroupBy,
   WiringRecord,
 } from "@harnesshub/core/model-plane";
+import {
+  isModelOverride,
+  isModelProvenance,
+  type ModelMetadataStore,
+  type ModelOverride,
+  type ModelProvenance,
+  type OverrideChange,
+} from "@harnesshub/core/model-metadata";
 import { inspectSchema, LATEST_SCHEMA_VERSION } from "./migrations.js";
 import {
   isGatewayKeyRecord,
@@ -82,6 +90,11 @@ function textColumn(row: Record<string, unknown>, name: string): string {
   return value;
 }
 
+/** The provider ID of a validated `provider/model` ref. */
+function providerOf(ref: string): string {
+  return ref.slice(0, ref.indexOf("/"));
+}
+
 /** Opaque page position: the (occurred_ms, seq) of the last item returned. */
 function encodeCursor(occurredMs: number, seq: number): string {
   return Buffer.from(`v1:${occurredMs}:${seq}`, "utf8").toString("base64url");
@@ -143,7 +156,8 @@ function bucketExpression(groupBy: UsageGroupBy): string {
 }
 
 /**
- * SQLite persistence of the model plane in the Gateway's database file: the
+ * SQLite persistence of the model plane (with model overrides and metadata
+ * provenance) in the Gateway's database file: the
  * same path the daemon gives `SqliteStore` (`<dataDir>/harnesshub.sqlite`),
  * opened on a separate connection like the workflow and benchmark stores.
  *
@@ -166,7 +180,9 @@ function bucketExpression(groupBy: UsageGroupBy): string {
  * provider, a non-agent scope for `adapter`) form the bucket with key `""`.
  * Buckets are ordered by key.
  */
-export class SqliteModelPlaneStore implements ModelPlaneStore {
+export class SqliteModelPlaneStore
+  implements ModelPlaneStore, ModelMetadataStore
+{
   private readonly db: DatabaseSync;
   private closed = false;
 
@@ -284,8 +300,90 @@ export class SqliteModelPlaneStore implements ModelPlaneStore {
       .run(provider.id, record);
   }
 
+  /** Also deletes the provider's model overrides and provenance. */
   async deleteProvider(id: ProviderId): Promise<boolean> {
     return this.remove("DELETE FROM providers WHERE id = ?", id);
+  }
+
+  async getModelOverride(ref: string): Promise<ModelOverride | undefined> {
+    return this.readOne(
+      "SELECT record FROM model_overrides WHERE ref = ?",
+      ref,
+      isModelOverride,
+    );
+  }
+
+  async listModelOverrides(providerId: string): Promise<ModelOverride[]> {
+    return this.open()
+      .prepare(
+        "SELECT record FROM model_overrides WHERE provider = ? ORDER BY ref",
+      )
+      .all(providerId)
+      .map((row) => decodeRecord(row.record, isModelOverride));
+  }
+
+  async listModelProvenance(providerId: string): Promise<ModelProvenance[]> {
+    return this.open()
+      .prepare(
+        "SELECT record FROM model_provenance WHERE provider = ? ORDER BY ref",
+      )
+      .all(providerId)
+      .map((row) => decodeRecord(row.record, isModelProvenance));
+  }
+
+  async putProviderMetadata(
+    provider: ProviderConfig,
+    provenance: ModelProvenance[],
+    override?: OverrideChange,
+  ): Promise<void> {
+    const record = checked(provider, isProviderConfig, "provider");
+    const own = (ref: string, name: string) => {
+      if (providerOf(ref) !== provider.id)
+        throw invalid(
+          "MODEL_PLANE_RECORD_INVALID",
+          `The ${name} names another provider`,
+        );
+    };
+    const rows = provenance.map((item) => {
+      const json = checked(item, isModelProvenance, "model provenance");
+      own(item.ref, "model provenance");
+      return [item.ref, json] as const;
+    });
+    if (new Set(rows.map(([ref]) => ref)).size !== rows.length)
+      throw invalid(
+        "MODEL_PLANE_RECORD_INVALID",
+        "The model provenance names a model twice",
+      );
+    let change: (db: DatabaseSync) => void = () => undefined;
+    if (override && "put" in override) {
+      const json = checked(override.put, isModelOverride, "model override");
+      own(override.put.ref, "model override");
+      change = (db) =>
+        db
+          .prepare(
+            "INSERT INTO model_overrides (ref, provider, record) VALUES (?, ?, ?) ON CONFLICT(ref) DO UPDATE SET record = excluded.record",
+          )
+          .run(override.put.ref, provider.id, json);
+    } else if (override) {
+      own(override.delete, "model override");
+      change = (db) =>
+        db
+          .prepare("DELETE FROM model_overrides WHERE ref = ?")
+          .run(override.delete);
+    }
+    this.transaction((db) => {
+      db.prepare(
+        "INSERT INTO providers (id, record) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET record = excluded.record",
+      ).run(provider.id, record);
+      db.prepare("DELETE FROM model_provenance WHERE provider = ?").run(
+        provider.id,
+      );
+      const insert = db.prepare(
+        "INSERT INTO model_provenance (ref, provider, record) VALUES (?, ?, ?)",
+      );
+      for (const [ref, json] of rows) insert.run(ref, provider.id, json);
+      change(db);
+    });
   }
 
   async listRouteGroups(): Promise<RouteGroup[]> {

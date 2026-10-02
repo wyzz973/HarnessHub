@@ -5,7 +5,7 @@
   "kind": "relay",
   "website": "https://siliconflow.cn",
   "keysUrl": "https://cloud.siliconflow.cn/account/ak",
-  "catalog": "siliconflow",
+  "catalog": "siliconflow-cn",
   "verified": "2026-10-02",
   "auth": {
     "methods": [

@@ -54,6 +54,18 @@ CREATE INDEX model_calls_session ON model_calls(session_id, occurred_ms);
 CREATE TABLE wirings (adapter_id TEXT PRIMARY KEY, key_id TEXT NOT NULL REFERENCES gateway_keys(key_id), record TEXT NOT NULL CHECK(json_valid(record)));
 `,
   },
+  {
+    version: 3,
+    name: "model_metadata",
+    // User overrides and the provenance of derived model metadata (03 section
+    // 7); both go with their provider.
+    sql: `
+CREATE TABLE model_overrides (ref TEXT PRIMARY KEY, provider TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE, record TEXT NOT NULL CHECK(json_valid(record)));
+CREATE INDEX model_overrides_provider ON model_overrides(provider, ref);
+CREATE TABLE model_provenance (ref TEXT PRIMARY KEY, provider TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE, record TEXT NOT NULL CHECK(json_valid(record)));
+CREATE INDEX model_provenance_provider ON model_provenance(provider, ref);
+`,
+  },
 ]);
 
 /** The schema version this build creates and requires. */

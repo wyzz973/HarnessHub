@@ -27,7 +27,7 @@ Status: proposed
 
 ## 后果
 
-- 迁移前备份（`VACUUM INTO`）、迁移备份保留与空间检查尚未实现；当前两条迁移只新建表，不改写已有数据。
+- 迁移前备份（`VACUUM INTO`）、迁移备份保留与空间检查尚未实现；当前的迁移只新建表，不改写已有数据（迁移 3 见 [0020](0020-model-metadata-enrichment.md)）。
 - `runtime_metadata`、Workflow 与 Benchmark 的表仍由各自 store 按原方式管理版本，并入编号迁移需要后续迁移。
 - 同时首次打开一个全新的数据库文件时，切换到 WAL 模式的 `PRAGMA journal_mode` 可能直接返回 SQLITE_BUSY（SQLite 不为这一步调用忙等待）；这与迁移框架之前的行为相同。已是 WAL 模式的数据库（旧版本创建的都是）同时打开时迁移只应用一次。
 - 加密文件后端的主密钥文件只在 POSIX 上校验所有者与权限，Windows 上尚未校验 DACL；`HH_SECRETS_KEY`、`secrets.keyFile` 与 `hh secrets rekey` 尚未实现。

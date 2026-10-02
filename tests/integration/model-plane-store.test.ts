@@ -265,6 +265,142 @@ void test("providers are stored, replaced, listed and deleted; invalid ones are 
   );
 });
 
+void test("model overrides and provenance are written with their provider and go with it", async (t) => {
+  const { plane, store, raw, open } = fixture(t);
+  const alpha = provider("alpha");
+  await plane.putProvider(provider("beta"));
+  const exact = {
+    ref: "alpha/chat-1",
+    values: { contextWindow: 64_000, price: { input: 0.5 } },
+    updatedAt: AT,
+  };
+  const wildcard = {
+    ref: "alpha/*",
+    values: { maxOutputTokens: 4096 },
+    updatedAt: AT,
+  };
+  const provenance = {
+    ref: "alpha/chat-1",
+    fields: {
+      maxOutputTokens: { source: "catalog" as const, at: AT, value: 8192 },
+      "price.cacheRead": {
+        source: "preset" as const,
+        at: "2026-10-02",
+        value: 0.1,
+      },
+    },
+  };
+  // A new provider is written with its provenance and an override at once.
+  await plane.putProviderMetadata(alpha, [provenance], { put: exact });
+  await plane.putProviderMetadata(alpha, [provenance], { put: wildcard });
+  await plane.putProviderMetadata(provider("beta"), [], {
+    put: { ...exact, ref: "beta/chat-1" },
+  });
+  assert.deepEqual(await plane.getProvider("alpha" as ProviderId), alpha);
+  assert.deepEqual(await plane.getModelOverride("alpha/chat-1"), exact);
+  assert.deepEqual(
+    (await plane.listModelOverrides("alpha")).map((item) => item.ref),
+    ["alpha/*", "alpha/chat-1"],
+  );
+  assert.deepEqual(await plane.listModelProvenance("alpha"), [provenance]);
+  // An override is replaced as a whole; provenance is replaced per provider.
+  await plane.putProviderMetadata(alpha, [], {
+    put: { ...exact, values: { reasoning: true } },
+  });
+  assert.deepEqual((await plane.getModelOverride("alpha/chat-1"))?.values, {
+    reasoning: true,
+  });
+  assert.deepEqual(await plane.listModelProvenance("alpha"), []);
+  await plane.putProviderMetadata(alpha, [provenance], {
+    delete: "alpha/chat-1",
+  });
+  assert.equal(await plane.getModelOverride("alpha/chat-1"), undefined);
+  assert.deepEqual(await plane.listModelProvenance("alpha"), [provenance]);
+
+  // A refused write changes nothing: not the provider, its provenance or overrides.
+  const invalidOverrides: unknown[] = [
+    { ...exact, ref: "alpha" },
+    { ...exact, ref: "group/fast" },
+    { ...exact, ref: "beta/chat-1" },
+    { ...exact, ref: "alpha/chat 1" },
+    { ...exact, values: {} },
+    { ...exact, values: { contextWindow: 0 } },
+    { ...exact, values: { contextWindow: 1.5 } },
+    { ...exact, values: { window: 1000 } },
+    { ...exact, values: { price: {} } },
+    { ...exact, values: { price: { input: -1 } } },
+    { ...exact, values: { price: { tier: 1 } } },
+    { ...exact, values: { inputModalities: ["text", "text"] } },
+    { ...exact, values: { inputModalities: ["smell"] } },
+    { ...exact, updatedAt: "today" },
+  ];
+  const renamed = provider("alpha", { name: "Renamed" });
+  for (const sample of invalidOverrides)
+    await assert.rejects(
+      plane.putProviderMetadata(renamed, [], {
+        put: sample as typeof exact,
+      }),
+      code("MODEL_PLANE_RECORD_INVALID"),
+      JSON.stringify(sample),
+    );
+  await assert.rejects(
+    plane.putProviderMetadata(renamed, [], { delete: "beta/chat-1" }),
+    code("MODEL_PLANE_RECORD_INVALID"),
+  );
+  const invalidProvenance: unknown[][] = [
+    [{ ...provenance, ref: "beta/chat-1" }],
+    [provenance, provenance],
+    [{ ...provenance, fields: { window: { source: "catalog", value: 1 } } }],
+    [
+      {
+        ...provenance,
+        fields: { contextWindow: { source: "provider", value: 1 } },
+      },
+    ],
+    [
+      {
+        ...provenance,
+        fields: { contextWindow: { source: "catalog", value: "big" } },
+      },
+    ],
+  ];
+  for (const sample of invalidProvenance)
+    await assert.rejects(
+      plane.putProviderMetadata(renamed, sample as (typeof provenance)[]),
+      code("MODEL_PLANE_RECORD_INVALID"),
+      JSON.stringify(sample),
+    );
+  assert.deepEqual(await plane.getProvider("alpha" as ProviderId), alpha);
+  assert.deepEqual(await plane.listModelProvenance("alpha"), [provenance]);
+  assert.equal(count(raw(), "model_overrides"), 2);
+
+  // Both survive a reopen and go with their provider.
+  plane.close();
+  store.close();
+  const reopened = open().plane;
+  assert.deepEqual(await reopened.listModelProvenance("alpha"), [provenance]);
+  assert.deepEqual(
+    (await reopened.listModelOverrides("alpha")).map((item) => item.ref),
+    ["alpha/*"],
+  );
+  assert.equal(await reopened.deleteProvider("alpha" as ProviderId), true);
+  assert.deepEqual(await reopened.listModelOverrides("alpha"), []);
+  assert.deepEqual(await reopened.listModelProvenance("alpha"), []);
+  assert.equal(count(raw(), "model_provenance"), 0);
+  assert.equal(count(raw(), "model_overrides"), 1);
+
+  // Rows read back are validated, not trusted.
+  raw()
+    .prepare(
+      "UPDATE model_overrides SET record = json_set(record, '$.values.contextWindow', -1)",
+    )
+    .run();
+  await assert.rejects(
+    reopened.getModelOverride("beta/chat-1"),
+    code("STORAGE_CORRUPT"),
+  );
+});
+
 void test("route groups are stored, replaced and deleted; invalid ones are refused", async (t) => {
   const { plane, raw } = fixture(t);
   await plane.putRouteGroup(group("fast"));

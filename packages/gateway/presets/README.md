@@ -6,7 +6,8 @@
 
 - `endpoints`：厂商官方 SDK 使用的基址。chat 与 responses 通常含版本段（如 `https://api.openai.com/v1`，网关追加 `/chat/completions`、`/responses`）；anthropic 不含 `/v1`（网关追加 `/v1/messages`）；gemini 不含版本段（网关追加 `/v1beta/models/…`）。本机服务可以用 `http://127.0.0.1`。
 - `auth.apiKeyHeader`：Key 的发送方式；`auth.methods` 为 `["api-key"]`，本机服务为 `["none"]`（可选 Key 时两者都列）。
-- `models.source`：优先 `live`，由 `POST /api/v1/providers/{id}/models/refresh` 从上游列出；只有稳定时才给 `static` 的小列表。
+- `models.source`：优先 `live`，由 `POST /api/v1/providers/{id}/models/refresh` 从上游列出；只有稳定时才给 `static` 的小列表。列表中模型的窗口、价格等值的来源记为“预设”，`verified` 为其时间。
+- `catalog`：该厂商在 [models.dev 目录快照](../catalog/README.md) 中的 provider id（有中国站与国际站之分时与默认端点一致，如 `moonshotai-cn`、`siliconflow-cn`），用于补齐模型的窗口、输出上限与价格；必须在内置快照中存在（[model-metadata.test.ts](../../../tests/unit/model-metadata.test.ts) 检查）。本机服务不写。
 - `verified`：对照厂商官方文档核对端点基址与 Key 的发送方式的日期（`YYYY-MM-DD`），没有核对时写 `unverified`；`website`、`keysUrl` 与 `notes` 中的链接只是方便，不在核对范围内。修改端点时同步更新它。
 - 一个 provider 只有一种 Key 发送方式。厂商的不同端点要求不同方式时（如 Gemini 的原生端点用 `x-goog-api-key`、OpenAI 兼容端点用 Bearer），预设只收录与认证方式一致的端点，其余写在 `notes` 中。
 - `notes`：展示给用户的简短说明，例如国际站地址或需要修改端点的本机服务。预设格式还没有地域字段，有多个地域的厂商默认收录中国站，其他地域写在这里。

@@ -142,6 +142,30 @@ export function presetAssets(root) {
     }));
 }
 
+/**
+ * The model catalog snapshot the gateway reads next to its compiled module
+ * (packages/gateway/src/catalog.ts) and the models.dev license that ships
+ * with it, at their repository-relative paths.
+ *
+ * @param {string} root Repository root.
+ * @returns {{path: string, file: string}[]} Sorted by path.
+ */
+export function catalogAssets(root) {
+  const relative = "packages/gateway/catalog";
+  const directory = path.join(root, ...relative.split("/"));
+  if (!existsSync(directory)) return [];
+  return readdirSync(directory)
+    .filter(
+      (name) =>
+        name.startsWith("models-dev.") && /\.(json|LICENSE)$/.test(name),
+    )
+    .sort()
+    .map((name) => ({
+      path: `${relative}/${name}`,
+      file: path.join(directory, name),
+    }));
+}
+
 const ROLE_PLACEHOLDER = `// Placeholder for a HarnessHub single-executable role entry. The executable that wrote this
 // directory runs the bundled role when it is started with this path; nothing else may run it.
 throw new Error("HarnessHub single-executable role placeholder; start it through the executable");
@@ -255,9 +279,9 @@ export async function buildSea({ out = path.join(ROOT, "dist", "sea") } = {}) {
       bytes: readFileSync(helper.file),
       executable: true,
     });
-  for (const preset of presetAssets(ROOT))
-    assets.set(preset.path, {
-      bytes: readFileSync(preset.file),
+  for (const data of [...presetAssets(ROOT), ...catalogAssets(ROOT)])
+    assets.set(data.path, {
+      bytes: readFileSync(data.file),
       executable: false,
     });
   const placeholder = Buffer.from(ROLE_PLACEHOLDER);
