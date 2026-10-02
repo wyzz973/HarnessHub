@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: MIT
 import type { EngineCandidate } from "./engines.js";
-/** Secret locations only. Values never belong to a profile, IPC message or public response. */
+/**
+ * Secret locations only. Values never belong to a profile, IPC message or public response.
+ * `store` names a HarnessHub-managed secret (a UUID) that only `SecretStore` resolves;
+ * engine configurations do not accept it yet (`secretReferenceSchema`).
+ */
 export interface SecretReference {
-  kind: "env" | "file" | "keychain";
+  kind: "env" | "file" | "keychain" | "store";
   value: string;
 }
 export const configurationAdapters = [
