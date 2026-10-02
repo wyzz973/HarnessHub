@@ -16,6 +16,7 @@
     "@harnesshub/secrets": "workspace:*",
     "@harnesshub/store": "workspace:*",
     "ajv": "8.20.0",
+    "cross-spawn": "7.0.6",
     "yaml": "2.9.0"
   }
 }

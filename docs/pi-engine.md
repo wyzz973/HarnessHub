@@ -33,7 +33,7 @@ Pi 0.85.0 的发布包包含对 `@earendil-works/pi-server` 的静态导入，�
 
 ## 现有 DeepSeek 凭证引用
 
-[launch-pi-acp.mjs](../scripts/launch-pi-acp.mjs) 的四个参数都是绝对路径：Adapter 入口、Pi 可执行文件、已有 DSH 设置文件、已有 DSH 凭证文件。[配置示例](../engines/pi.example.json)可通过 [动态管理 API](engine-management.md)注册；替换其中的占位路径即可。它是单个引擎配置，不是完整 Gateway 配置文件。
+[launch-pi-acp.mjs](../packages/agents/assets/launch-pi-acp.mjs) 的四个参数都是绝对路径：Adapter 入口、Pi 可执行文件、已有 DSH 设置文件、已有 DSH 凭证文件。[配置示例](../engines/pi.example.json)可通过 [动态管理 API](engine-management.md)注册；替换其中的占位路径即可。它是单个引擎配置，不是完整 Gateway 配置文件。
 
 Launcher 只接受 DSH `agent-default-model.provider: deepseek-official`，沿用其模型 ID 和显式 `reasoningEffort`。Pi 官方 [Provider 文档](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/providers.md)支持 `DEEPSEEK_API_KEY` 环境变量；本实现读取已有凭证文件中的 `refs.DEEPSEEK_API_KEY`，只传给启动的 Adapter/Pi 子进程环境。不会把原密钥写入 HarnessHub 配置、业务数据库或新的 `auth.json`。
 

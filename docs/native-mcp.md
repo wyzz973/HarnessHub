@@ -18,7 +18,7 @@ Kimi 的限制来自固定源码：CLI 直接解析 JSON，交给 FastMCP 3.2.4�
 
 ## Pi 扩展与资源所有权
 
-`scripts/native-mcp/pi-extension.mjs` 使用 Pi 的原生异步扩展工厂与 `registerTool()`。MCP SDK 从已固定引擎安装旁解析，当前准备包为 `@modelcontextprotocol/sdk@1.30.0`，运行时不下载依赖。SDK 缺失会在启动前明确拒绝；发行必须包含该 SDK 及本地扩展文件。[Pi 扩展 API](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/docs/extensions.md)。
+`packages/agents/assets/native-mcp/pi-extension.mjs` 使用 Pi 的原生异步扩展工厂与 `registerTool()`。MCP SDK 从已固定引擎安装旁解析，当前准备包为 `@modelcontextprotocol/sdk@1.30.0`，运行时不下载依赖。SDK 缺失会在启动前明确拒绝；发行必须包含该 SDK 及本地扩展文件。[Pi 扩展 API](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/docs/extensions.md)。
 
 - 工具名为 `mcp__<server>__<tool>`，须满足 1–64 位 ASCII 字母、数字、下划线或短横线；冲突或不合法时启动失败。
 - 完整读取 `tools/list` 分页，重复 cursor 作为协议错误拒绝。每次初始化、工具目录请求超时为 10 秒；工具调用沿用 SDK 请求超时及 Pi 的取消信号。

@@ -13,6 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import type { TestContext } from "node:test";
+import { assetPath } from "../src/assets.js";
 import { discoverEngines } from "../src/engine/discovery.js";
 import { normalizeEngine } from "../src/engine/registry.js";
 
@@ -147,7 +148,6 @@ void test("discovery uses PATH precedence, home installations and sibling DSH wi
   await file(path.join(home, ".local/bin/openclaw"), true);
   const dsh = path.join(directory, "deepseek-harness/apps/cli/lib/bin.js");
   await file(dsh);
-  await file(path.join(cwd, "scripts/launch-dsh-acp.mjs"));
   const patch = path.join(cwd, "engines/dsh-local.patch.yaml");
   await file(patch);
   await writeFile(patch, "not: [valid YAML\n");
@@ -162,9 +162,10 @@ void test("discovery uses PATH precedence, home installations and sibling DSH wi
   );
   const engine = found.find((candidate) => candidate.id === "dsh");
   assert.equal(engine?.source, "known-location");
+  // The DSH launcher is this package's asset; the patch belongs to the project.
   assert.deepEqual(engine?.registration?.command, [
     process.execPath,
-    path.join(cwd, "scripts/launch-dsh-acp.mjs"),
+    assetPath("launch-dsh-acp.mjs"),
     dsh,
     "--profile",
     "acp",

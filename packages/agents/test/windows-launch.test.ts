@@ -11,6 +11,7 @@ import {
   unwrapEnvironment,
 } from "../src/configuration/launch.js";
 import { prepareConfiguration } from "../src/configuration/prepare.js";
+import { assetPath } from "../src/assets.js";
 import { normalizeEngine } from "../src/engine/registry.js";
 import type { RunId, SessionId } from "@harnesshub/core/types";
 
@@ -226,7 +227,7 @@ void test(
     assert.deepEqual(JSON.parse(result.stdout), args);
     const bridge = await run([
       process.execPath,
-      path.join(path.dirname(portableLauncher), "launch-openclaw-acp.mjs"),
+      assetPath("launch-openclaw-acp.mjs"),
       script,
     ]);
     assert.equal(bridge.exit, 0, bridge.stderr);

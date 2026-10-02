@@ -3,12 +3,12 @@ import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { repositoryScript } from "../repository.js";
+import { assetPath } from "../assets.js";
 import type { ExecutionSpec } from "@harnesshub/core/ports";
 import { HubError } from "@harnesshub/core/errors";
 import type { PreparedConfiguration } from "./prepare.js";
 
-const piExtension = repositoryScript("native-mcp/pi-extension.mjs");
+const piExtension = assetPath("native-mcp/pi-extension.mjs");
 type JsonObject = Record<string, unknown>;
 type ReferencedServer =
   | {

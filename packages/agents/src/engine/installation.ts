@@ -6,14 +6,14 @@ import path from "node:path";
 import { HubError } from "@harnesshub/core/errors";
 import type { EngineProfile, JsonObject } from "@harnesshub/core/types";
 import { locateExecutable } from "./executables.js";
-import { repositoryScript } from "../repository.js";
+import { assetPath, currentEngineCommand } from "../assets.js";
 
 const MAX_STARTUP_FILES = 8;
 const MAX_FILE_BYTES = 512 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 1024 * 1024 * 1024;
 const MAX_PACKAGE_BYTES = 256 * 1024;
 const CODE_EXTENSION = /\.(?:[cm]?js|py|rb|sh|ps1|cmd|bat)$/i;
-const PORTABLE_LAUNCHER = repositoryScript("launch-engine.mjs");
+const PORTABLE_LAUNCHER = assetPath("launch-engine.mjs");
 const ENV_ASSIGNMENT = /^[a-zA-Z_][a-zA-Z0-9_]*=/;
 const BOOLEAN_FLAGS = new Set([
   "--no-warnings",
@@ -298,8 +298,9 @@ export async function inspectEngineInstallation(
   if (!profile.command?.length)
     throw failure("Engine has no configured launcher");
   try {
+    // A command stored before the runtime assets moved names their old paths.
     const { candidates, notes } = await launchFiles(
-      profile.command,
+      currentEngineCommand(profile.command),
       options.pathEnv,
       signal,
     );

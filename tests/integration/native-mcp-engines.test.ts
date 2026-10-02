@@ -17,6 +17,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { startHub } from "@harnesshub/daemon/main";
+import { assetPath } from "@harnesshub/agents/assets";
 import type {
   PermissionRecord,
   RunRecord,
@@ -342,7 +343,7 @@ process.exit(0);
               model: "fixture",
               command: [
                 process.execPath,
-                path.join(repository, "scripts/launch-engine.mjs"),
+                assetPath("launch-engine.mjs"),
                 ...Object.entries(environment).map(
                   ([name, value]) => `${name}=${value}`,
                 ),
