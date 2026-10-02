@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "vllm",
+  "name": "vLLM",
+  "kind": "local",
+  "website": "https://docs.vllm.ai",
+  "verified": "unverified",
+  "auth": {
+    "methods": [
+      "none",
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "http://127.0.0.1:8000/v1"
+  },
+  "models": {
+    "source": "live"
+  },
+  "notes": "vllm serve 的默认地址；部署在其他机器或端口时请修改端点。以 --api-key 启动时再添加凭据。"
+}

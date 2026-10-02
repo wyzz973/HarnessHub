@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "anthropic",
+  "name": "Anthropic",
+  "kind": "vendor",
+  "website": "https://www.anthropic.com",
+  "keysUrl": "https://console.anthropic.com/settings/keys",
+  "catalog": "anthropic",
+  "verified": "unverified",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "x-api-key"
+  },
+  "endpoints": {
+    "anthropic": "https://api.anthropic.com"
+  },
+  "models": {
+    "source": "live"
+  }
+}

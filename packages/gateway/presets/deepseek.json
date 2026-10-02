@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "deepseek",
+  "name": "DeepSeek",
+  "kind": "vendor",
+  "website": "https://platform.deepseek.com",
+  "keysUrl": "https://platform.deepseek.com/api_keys",
+  "catalog": "deepseek",
+  "verified": "unverified",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://api.deepseek.com/v1",
+    "anthropic": "https://api.deepseek.com/anthropic"
+  },
+  "models": {
+    "source": "live"
+  },
+  "capabilities": {
+    "requiresReasoningReplay": true
+  },
+  "patches": {
+    "chat": {
+      "patches": [
+        "developer-to-system"
+      ]
+    }
+  }
+}

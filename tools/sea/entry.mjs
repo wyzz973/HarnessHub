@@ -19,7 +19,7 @@
  *   bundled Node executable, which is this binary.
  *
  * Extraction root: files that other programs read from disk (build identity, native helpers,
- * the Pi extension) and placeholders for role entries (tool package binding checks that its
+ * the Pi extension, provider presets) and placeholders for role entries (tool package binding checks that its
  * entry is a regular file) are written once per build under a per-user cache directory
  * (`HARNESSHUB_SEA_ROOT` overrides it for measurements) and verified by SHA-256 whenever a user
  * command starts. A child accepts a root only when its marker names this build.

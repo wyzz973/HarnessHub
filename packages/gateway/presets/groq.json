@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "groq",
+  "name": "Groq",
+  "kind": "vendor",
+  "website": "https://groq.com",
+  "keysUrl": "https://console.groq.com/keys",
+  "catalog": "groq",
+  "verified": "unverified",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://api.groq.com/openai/v1"
+  },
+  "models": {
+    "source": "live"
+  }
+}

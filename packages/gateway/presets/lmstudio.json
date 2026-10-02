@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "lmstudio",
+  "name": "LM Studio",
+  "kind": "local",
+  "website": "https://lmstudio.ai",
+  "verified": "unverified",
+  "auth": {
+    "methods": [
+      "none"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "http://127.0.0.1:1234/v1"
+  },
+  "models": {
+    "source": "live"
+  },
+  "notes": "在 LM Studio 中启动本机服务器（默认端口 1234）；不需要 API Key。"
+}

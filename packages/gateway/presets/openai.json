@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "openai",
+  "name": "OpenAI",
+  "kind": "vendor",
+  "website": "https://platform.openai.com",
+  "keysUrl": "https://platform.openai.com/api-keys",
+  "catalog": "openai",
+  "verified": "unverified",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://api.openai.com/v1",
+    "responses": "https://api.openai.com/v1"
+  },
+  "models": {
+    "source": "live"
+  }
+}

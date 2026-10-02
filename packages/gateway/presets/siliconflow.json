@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "siliconflow",
+  "name": "硅基流动 SiliconFlow",
+  "kind": "relay",
+  "website": "https://siliconflow.cn",
+  "keysUrl": "https://cloud.siliconflow.cn/account/ak",
+  "catalog": "siliconflow",
+  "verified": "unverified",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://api.siliconflow.cn/v1"
+  },
+  "models": {
+    "source": "live"
+  },
+  "notes": "中国站；国际站请把端点改为 api.siliconflow.com。"
+}

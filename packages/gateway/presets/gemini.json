@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "gemini",
+  "name": "Google Gemini (AI Studio)",
+  "kind": "vendor",
+  "website": "https://ai.google.dev",
+  "keysUrl": "https://aistudio.google.com/apikey",
+  "catalog": "google",
+  "verified": "unverified",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "x-goog-api-key"
+  },
+  "endpoints": {
+    "gemini": "https://generativelanguage.googleapis.com"
+  },
+  "models": {
+    "source": "live"
+  }
+}

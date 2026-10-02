@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "dashscope",
+  "name": "阿里云百炼 (Qwen)",
+  "kind": "vendor",
+  "website": "https://bailian.console.aliyun.com",
+  "keysUrl": "https://bailian.console.aliyun.com/?apiKey=1",
+  "catalog": "alibaba-cn",
+  "verified": "unverified",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  },
+  "models": {
+    "source": "live"
+  },
+  "notes": "中国站；国际站请把端点改为 dashscope-intl.aliyuncs.com。"
+}

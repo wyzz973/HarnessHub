@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { nativeAssets } from "./sea/build.mjs";
+import { nativeAssets, presetAssets } from "./sea/build.mjs";
 
 async function tree(t, files) {
   const root = await mkdtemp(path.join(os.tmpdir(), "hh-sea-native-"));
@@ -48,5 +48,19 @@ test("a stale or unknown file in a native helper directory fails the build", asy
   assert.throws(
     () => nativeAssets(unlisted),
     /packages\/agents\/dist\/native\/launcher\.exe/,
+  );
+});
+
+test("the single executable carries every provider preset at its repository path", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "hh-sea-presets-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  assert.deepEqual(presetAssets(root), []);
+  const directory = path.join(root, "packages", "gateway", "presets");
+  await mkdir(directory, { recursive: true });
+  for (const name of ["openai.json", "deepseek.json", "README.md"])
+    await writeFile(path.join(directory, name), "{}");
+  assert.deepEqual(
+    presetAssets(root).map((asset) => asset.path),
+    ["packages/gateway/presets/deepseek.json", "packages/gateway/presets/openai.json"],
   );
 });

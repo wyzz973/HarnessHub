@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "mistral",
+  "name": "Mistral AI",
+  "kind": "vendor",
+  "website": "https://mistral.ai",
+  "keysUrl": "https://console.mistral.ai/api-keys",
+  "catalog": "mistral",
+  "verified": "unverified",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://api.mistral.ai/v1"
+  },
+  "models": {
+    "source": "live"
+  }
+}

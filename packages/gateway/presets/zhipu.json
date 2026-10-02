@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "zhipu",
+  "name": "智谱 GLM (BigModel)",
+  "kind": "vendor",
+  "website": "https://open.bigmodel.cn",
+  "keysUrl": "https://open.bigmodel.cn/usercenter/apikeys",
+  "catalog": "zhipuai",
+  "verified": "unverified",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://open.bigmodel.cn/api/paas/v4",
+    "anthropic": "https://open.bigmodel.cn/api/anthropic"
+  },
+  "models": {
+    "source": "live"
+  }
+}

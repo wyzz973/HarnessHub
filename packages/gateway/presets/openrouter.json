@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "openrouter",
+  "name": "OpenRouter",
+  "kind": "relay",
+  "website": "https://openrouter.ai",
+  "keysUrl": "https://openrouter.ai/keys",
+  "catalog": "openrouter",
+  "verified": "unverified",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://openrouter.ai/api/v1"
+  },
+  "models": {
+    "source": "live"
+  }
+}

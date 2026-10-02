@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "ollama",
+  "name": "Ollama",
+  "kind": "local",
+  "website": "https://ollama.com",
+  "verified": "unverified",
+  "auth": {
+    "methods": [
+      "none"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "http://127.0.0.1:11434/v1"
+  },
+  "models": {
+    "source": "live"
+  },
+  "notes": "本机 Ollama 的默认地址；不需要 API Key。"
+}
