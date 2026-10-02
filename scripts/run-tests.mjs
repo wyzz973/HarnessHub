@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 /**
  * Run a test suite in an isolated environment.
- * Usage: node scripts/run-tests.mjs <suite> [file ...]
+ * Usage: node scripts/run-tests.mjs <suite> [--inventory FILE] [file ...]
  *
  * Suites are listed in SUITES. Tests never see the developer's shell: the
  * `node --test` process gets the system variables of lib/environment.mjs, any
@@ -19,16 +19,24 @@
  * leaves a handle open otherwise never exits. After the run, anything left in the
  * sandbox's temporary directory is a leaked resource and fails the run. The
  * sandbox is removed in every case. Exits with the test status, or 1.
+ *
+ * `--inventory FILE` also writes the suite's test inventory (see `runSuite`) to
+ * FILE, replacing it; the spec output on stdout stays as it is. Without the
+ * flag, a non-empty HARNESSHUB_TEST_INVENTORY_DIR writes it to
+ * `<dir>/<suite>.jsonl`; CI sets it for `pnpm check` and uploads the directory.
+ * That variable is the launcher's own setting and is not passed to the tests.
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import { assignEnvironment, pickEnvironment } from "./lib/environment.mjs";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
+const INVENTORY_REPORTER = new URL("./test-inventory-reporter.mjs", import.meta.url).href;
 
 /** Default file patterns, per-test timeout and suite deadline. */
 export const SUITES = {
@@ -38,7 +46,8 @@ export const SUITES = {
   smoke: { files: ["dist/tests/smoke/*.test.js"], testTimeoutMs: 120_000, deadlineMs: 10 * 60_000 },
 };
 
-const OPT_IN = /^HARNESSHUB_TEST_/i;
+/** Test opt-in switches; the inventory directory belongs to the launcher, not to the tests. */
+const OPT_IN = /^HARNESSHUB_TEST_(?!INVENTORY_DIR$)/i;
 
 /**
  * The environment of the test process: allowlisted parent variables plus private directories.
@@ -86,6 +95,29 @@ function killTree(child) {
 }
 
 /**
+ * Add the suite name to the reporter's lines and write them to the inventory file.
+ *
+ * @param {string} reported The reporter's destination inside the sandbox.
+ * @param {{suite: string, file: string}} inventory
+ * @returns {Promise<string[]>} Diagnostics; a missing or cut-off reporter output is one.
+ */
+async function writeInventory(reported, { suite, file }) {
+  let text;
+  try {
+    text = await readFile(reported, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") return ["the test inventory reporter wrote nothing"];
+    throw error;
+  }
+  const lines = text.split("\n");
+  const cutOff = lines.pop() !== "";
+  const entries = lines.map((line) => `${JSON.stringify({ suite, ...JSON.parse(line) })}\n`);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, entries.join(""));
+  return cutOff ? ["the test inventory ends in an incomplete line"] : [];
+}
+
+/**
  * Run `node --test` over the files in a fresh sandbox and remove the sandbox afterwards.
  *
  * @param {object} options
@@ -95,8 +127,14 @@ function killTree(child) {
  * @param {Record<string, string | undefined>} [options.parentEnv]
  * @param {string} [options.cwd]
  * @param {"inherit" | "ignore"} [options.stdio] Test output; "ignore" is for tests of this launcher.
+ * @param {{suite: string, file: string}} [options.inventory] Also write the test
+ *   inventory to `file`, replacing it: one JSON line per reported test,
+ *   `{"suite", "file", "test", "status"}`, as test-inventory-reporter.mjs
+ *   describes, in the runner's reporting order. It is written after every run
+ *   that started, including failed ones, and lists only the tests the runner
+ *   reported. The spec reporter still writes to stdout.
  * @returns {Promise<{status: number, diagnostics: string[]}>} status 0 only when the
- *   tests passed, the deadline held and nothing leaked.
+ *   tests passed, the deadline held, nothing leaked and a requested inventory is complete.
  */
 export async function runSuite({
   files,
@@ -105,6 +143,7 @@ export async function runSuite({
   parentEnv = process.env,
   cwd = ROOT,
   stdio = "inherit",
+  inventory,
 }) {
   const sandbox = await mkdtemp(path.join(os.tmpdir(), "hh-test-"));
   const diagnostics = [];
@@ -113,7 +152,16 @@ export async function runSuite({
     const env = testEnvironment(parentEnv, sandbox, os.homedir());
     for (const directory of new Set(Object.values(privateDirectories(sandbox))))
       await mkdir(directory, { recursive: true });
-    const child = spawn(process.execPath, ["--test", `--test-timeout=${testTimeoutMs}`, ...files], {
+    const reported = path.join(sandbox, "inventory.jsonl");
+    const reporters = inventory
+      ? [
+          `--test-reporter=${INVENTORY_REPORTER}`,
+          `--test-reporter-destination=${reported}`,
+          "--test-reporter=spec",
+          "--test-reporter-destination=stdout",
+        ]
+      : [];
+    const child = spawn(process.execPath, ["--test", `--test-timeout=${testTimeoutMs}`, ...reporters, ...files], {
       cwd,
       env,
       stdio,
@@ -144,6 +192,7 @@ export async function runSuite({
     else if (exit.code !== 0) diagnostics.push(`node --test exited with ${exit.signal ?? exit.code}`);
     const leaked = await readdir(path.join(sandbox, "tmp"));
     if (leaked.length) diagnostics.push(`tests left temporary entries behind: ${leaked.sort().join(", ")}`);
+    if (inventory) diagnostics.push(...(await writeInventory(reported, inventory)));
     status = diagnostics.length ? 1 : 0;
   } finally {
     await rm(sandbox, { recursive: true, force: true, maxRetries: 5 });
@@ -151,14 +200,51 @@ export async function runSuite({
   return { status, diagnostics };
 }
 
+/**
+ * Parse the command line.
+ *
+ * @param {string[]} args Arguments after the script path.
+ * @param {Record<string, string | undefined>} env Supplies HARNESSHUB_TEST_INVENTORY_DIR.
+ * @returns {{name: string, files: string[], inventory?: {suite: string, file: string}}}
+ * @throws {Error} For an unknown suite or option, or `--inventory` without a file.
+ */
+export function parseCommandLine(args, env) {
+  const usage = `usage: node scripts/run-tests.mjs <${Object.keys(SUITES).join("|")}> [--inventory FILE] [file ...]`;
+  let parsed;
+  try {
+    parsed = parseArgs({ args, options: { inventory: { type: "string" } }, allowPositionals: true, strict: true });
+  } catch (error) {
+    throw new Error(`${error.message}\n${usage}`);
+  }
+  const [name, ...files] = parsed.positionals;
+  if (!Object.hasOwn(SUITES, name)) throw new Error(usage);
+  const directory = env.HARNESSHUB_TEST_INVENTORY_DIR;
+  const file =
+    parsed.values.inventory !== undefined
+      ? parsed.values.inventory
+      : directory
+        ? path.join(directory, `${name}.jsonl`)
+        : undefined;
+  if (file === "") throw new Error(`--inventory needs a file\n${usage}`);
+  return { name, files, ...(file === undefined ? {} : { inventory: { suite: name, file: path.resolve(file) } }) };
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const [name, ...files] = process.argv.slice(2);
-  const suite = SUITES[name];
-  if (!suite) {
-    console.error(`usage: node scripts/run-tests.mjs <${Object.keys(SUITES).join("|")}> [file ...]`);
+  let command;
+  try {
+    command = parseCommandLine(process.argv.slice(2), process.env);
+  } catch (error) {
+    console.error(error.message);
     process.exit(1);
   }
-  const { status, diagnostics } = await runSuite({ ...suite, files: files.length ? files : suite.files });
+  const { name, files, inventory } = command;
+  const suite = SUITES[name];
+  const { status, diagnostics } = await runSuite({
+    ...suite,
+    files: files.length ? files : suite.files,
+    ...(inventory ? { inventory } : {}),
+  });
   for (const line of diagnostics) console.error(`run-tests (${name}): ${line}`);
+  if (inventory && status === 0) console.error(`run-tests (${name}): test inventory written to ${inventory.file}`);
   process.exitCode = status;
 }
