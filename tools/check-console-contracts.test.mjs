@@ -338,6 +338,30 @@ test("the model-plane pages build API requests and read problem details", async 
     expose: "all",
   });
 
+  // Model metadata cells show the resolved values; tooltips name the source.
+  const cells = lib.modelMetadataCells({
+    ref: "deepseek/deepseek-chat",
+    listed: true,
+    fields: {
+      contextWindow: { value: 128000, source: "catalog", at: "2026-10-02T00:00:00.000Z" },
+      "price.input": { value: 0.27, source: "override", at: "2026-10-02T00:00:00.000Z" },
+      maxOutputTokens: { value: 8192, source: "preset", at: "2026-09-30" },
+    },
+    unknown: ["price.output"],
+    overrides: [],
+  });
+  assert.equal(cells.context.text, (128000).toLocaleString());
+  assert.match(cells.context.note, /^来源：models\.dev 目录快照，/);
+  assert.equal(cells.output.note, "来源：provider 预设，核对于 2026-09-30");
+  assert.equal(cells.price.text, "$0.27 / ?");
+  assert.match(cells.price.note, /^输入：来源：模型覆盖，.*\n输出：未知：没有来源提供此值/);
+  const empty = lib.modelMetadataCells(undefined);
+  assert.deepEqual(
+    [empty.context.text, empty.output.text, empty.price.text],
+    ["—", "—", "—"],
+  );
+  assert.match(empty.context.note, /^未知/);
+
   const now = Date.parse("2026-10-02T00:00:00.000Z");
   assert.equal(lib.expiresAtFor("never", now), null);
   assert.equal(lib.expiresAtFor("30d", now), "2026-11-01T00:00:00.000Z");

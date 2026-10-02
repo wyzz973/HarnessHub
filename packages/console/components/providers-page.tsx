@@ -33,6 +33,7 @@ import {
   endpointHints,
   failureOf,
   modelIds,
+  modelMetadataCells,
   modelPlane,
   protocolNames,
   protocols,
@@ -56,6 +57,80 @@ import {
 
 const kindName = (kind: ProviderConfig["kind"]) =>
   providerKinds.find((item) => item.id === kind)?.label ?? kind;
+
+/**
+ * The provider's models with context, output and price as the daemon
+ * resolves them; each value's tooltip names its source. Mounted per provider
+ * version, so a refresh or an edit loads the metadata again.
+ */
+function ModelTable({ provider }: { provider: ProviderConfig }) {
+  const load = useCallback(
+    () =>
+      modelPlane()
+        .providers.models(provider.id)
+        .then((page) => new Map(page.items.map((item) => [item.ref, item]))),
+    [provider.id],
+  );
+  const [metadata] = useLoaded(load);
+  const exposed = (id: string) =>
+    provider.models.expose === "all" || provider.models.expose.includes(id);
+  return (
+    <div className="panel overflow-x-auto">
+      <table className="data-table min-w-[760px]">
+        <thead>
+          <tr>
+            <th>Model Ref</th>
+            <th>上游名称</th>
+            <th>上下文</th>
+            <th>最大输出</th>
+            <th title="美元 / 百万 token">价格（输入 / 输出）</th>
+            <th>对外列出</th>
+          </tr>
+        </thead>
+        <tbody>
+          {provider.models.list.map((model) => {
+            const ref = `${provider.id}/${model.id}`;
+            const cells = modelMetadataCells(
+              metadata.state === "ready" ? metadata.value.get(ref) : undefined,
+            );
+            return (
+              <tr key={model.id}>
+                <td className="font-mono text-[12.5px]">{ref}</td>
+                <td className="font-mono text-[12.5px]">
+                  {model.wire ?? model.id}
+                </td>
+                <td className="tabular" title={cells.context.note}>
+                  {cells.context.text}
+                </td>
+                <td className="tabular" title={cells.output.note}>
+                  {cells.output.text}
+                </td>
+                <td className="tabular" title={cells.price.note}>
+                  {cells.price.text}
+                </td>
+                <td>
+                  <span className={exposed(model.id) ? "tag good" : "tag"}>
+                    {exposed(model.id) ? "是" : "否"}
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {metadata.state === "error" ? (
+        <p className="px-5 py-2 text-[12.5px] text-muted-foreground">
+          元数据读取失败：{metadata.message}
+        </p>
+      ) : null}
+      {!provider.models.list.length ? (
+        <p className="empty-state">
+          还没有模型，编辑 provider 时每行填写一个模型 ID。
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
 /** Add or edit a provider; the daemon's base-URL rules come back as field errors. */
 function ProviderDialog({
@@ -695,8 +770,6 @@ function ProviderDetail({
   const [deleting, setDeleting] = useState<ProviderCredential | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshFailure, setRefreshFailure] = useState<Failure | null>(null);
-  const exposed = (id: string) =>
-    provider.models.expose === "all" || provider.models.expose.includes(id);
   return (
     <>
       <button
@@ -856,43 +929,7 @@ function ProviderDetail({
         </Button>
       </div>
       <ErrorCallout failure={refreshFailure} className="mb-3" />
-      <div className="panel overflow-x-auto">
-        <table className="data-table min-w-[520px]">
-          <thead>
-            <tr>
-              <th>Model Ref</th>
-              <th>上游名称</th>
-              <th>上下文</th>
-              <th>对外列出</th>
-            </tr>
-          </thead>
-          <tbody>
-            {provider.models.list.map((model) => (
-              <tr key={model.id}>
-                <td className="font-mono text-[12.5px]">
-                  {provider.id}/{model.id}
-                </td>
-                <td className="font-mono text-[12.5px]">
-                  {model.wire ?? model.id}
-                </td>
-                <td className="tabular">
-                  {model.contextWindow?.toLocaleString() ?? "—"}
-                </td>
-                <td>
-                  <span className={exposed(model.id) ? "tag good" : "tag"}>
-                    {exposed(model.id) ? "是" : "否"}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {!provider.models.list.length ? (
-          <p className="empty-state">
-            还没有模型，编辑 provider 时每行填写一个模型 ID。
-          </p>
-        ) : null}
-      </div>
+      <ModelTable key={provider.updatedAt} provider={provider} />
       {secret ? (
         <SecretDialog
           provider={provider}

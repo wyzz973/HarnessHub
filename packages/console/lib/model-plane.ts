@@ -10,7 +10,10 @@ import {
   HarnessHubUnavailableError,
   type ProviderConfig,
   type ProviderInput,
+  type MetadataSource,
+  type ModelMetadataView,
   type ProviderPatch,
+  type ResolvedField,
   type WireProtocol,
 } from "@harnesshub/sdk/client";
 
@@ -291,4 +294,51 @@ export function addAmounts(amounts: string[]): string {
     .padStart(10, "0")
     .replace(/0+$/, "");
   return fraction ? `${whole}.${fraction}` : String(whole);
+}
+
+/** Where a model's value came from (03-model-plane section 7). */
+export const sourceNames: Record<MetadataSource, string> = {
+  override: "模型覆盖",
+  "override-provider": "provider 级覆盖（provider/*）",
+  provider: "provider 配置中手工填写",
+  live: "上游模型列表",
+  preset: "provider 预设",
+  catalog: "models.dev 目录快照",
+};
+
+/** Tooltip of one value: its source and when the source produced it. */
+export function sourceNote(field: ResolvedField | undefined): string {
+  if (!field) return "未知：没有来源提供此值，不会按默认值估计";
+  const at =
+    field.at === undefined
+      ? ""
+      : field.at.includes("T")
+        ? `，${new Date(field.at).toLocaleString()}`
+        : `，核对于 ${field.at}`;
+  return `来源：${sourceNames[field.source]}${at}`;
+}
+
+/** Context, output and price cells of one model, with their tooltips. */
+export function modelMetadataCells(metadata: ModelMetadataView | undefined) {
+  const fields = metadata?.fields ?? {};
+  const tokens = (field: ResolvedField | undefined) =>
+    typeof field?.value === "number" ? field.value.toLocaleString() : "—";
+  const price = (field: ResolvedField | undefined) =>
+    typeof field?.value === "number" ? `$${field.value}` : "?";
+  const input = fields["price.input"];
+  const output = fields["price.output"];
+  return {
+    context: {
+      text: tokens(fields.contextWindow),
+      note: sourceNote(fields.contextWindow),
+    },
+    output: {
+      text: tokens(fields.maxOutputTokens),
+      note: sourceNote(fields.maxOutputTokens),
+    },
+    price: {
+      text: input || output ? `${price(input)} / ${price(output)}` : "—",
+      note: `输入：${sourceNote(input)}\n输出：${sourceNote(output)}`,
+    },
+  };
 }
