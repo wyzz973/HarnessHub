@@ -174,17 +174,34 @@ void test("syncing creates group/default once, follows the file and never change
   });
   assert.equal(service.migrated(), true);
   assert.deepEqual(groups.get("default")?.members, ["migrated/default"]);
-  const created = providers.get("migrated")!.createdAt;
+  const stored = providers.get("migrated")!;
+  assert.equal(
+    stored.name,
+    "Unified model (managed by legacy harness-model source)",
+  );
   assert.deepEqual(await service.syncModelPlane(), {
     status: "synced",
     groupCreated: false,
   });
-  assert.equal(providers.get("migrated")!.createdAt, created);
+  assert.equal(
+    providers.get("migrated"),
+    stored,
+    "an unchanged provider is not written again",
+  );
   assert.deepEqual(
     lines.map(([event]) => event),
     ["model.migrated"],
     "logged once",
   );
+  // A manual edit is overwritten while the legacy source exists, and logged.
+  providers.set("migrated", { ...stored, headers: { "X-Edited": "1" } });
+  await service.syncModelPlane();
+  assert.deepEqual(providers.get("migrated")!.headers, {
+    "X-Tenant": "contest",
+  });
+  assert.equal(providers.get("migrated")!.createdAt, stored.createdAt);
+  assert.equal(lines.length, 2);
+  assert.equal(lines[1]![1]?.providerChanged, true);
   groups.set("default", {
     ...groups.get("default")!,
     members: ["other/model" as RouteGroup["members"][number]],

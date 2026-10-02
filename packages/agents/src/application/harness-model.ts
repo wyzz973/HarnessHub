@@ -718,6 +718,9 @@ export function evaluateHarnessModel(
 
 /** The model-plane provider a legacy unified model migrates to (03 section 10). */
 export const MIGRATED_PROVIDER_ID = "migrated" as ProviderId;
+/** Name that marks provider `migrated` as owned by the legacy unified-model source. */
+export const MIGRATED_PROVIDER_NAME =
+  "Unified model (managed by legacy harness-model source)";
 /** Its only model; the upstream model is its wire name, so the id never changes. */
 export const MIGRATED_MODEL_ID = "default";
 /** The route group every Run uses when it names no model. */
@@ -774,7 +777,9 @@ export function migratedProvider(
   return {
     schemaVersion: 1,
     id: MIGRATED_PROVIDER_ID,
-    name: "Migrated unified model",
+    // `hh provider show` and the console print the name: edits to this
+    // provider are overwritten while the legacy source exists.
+    name: MIGRATED_PROVIDER_NAME,
     kind: "custom",
     endpoints: { chat: provider.baseUrl },
     auth: { apiKeyHeader: "authorization-bearer" },
@@ -896,11 +901,13 @@ export class HarnessModelService implements HarnessModelManagement {
   }
 
   /**
-   * Mirror the active unified model into the model plane: upsert provider
-   * `migrated` and create `group/default` with its model when that group
-   * does not exist (an existing group is never changed). Logs the outcome
-   * once per change. With `store`, also keeps the store for {@link set}.
-   * Rejects when the store cannot be written.
+   * Mirror the active unified model into the model plane: write provider
+   * `migrated` when it differs from the stored one (manual edits to it are
+   * overwritten while the legacy source exists) and create `group/default`
+   * with its model when that group does not exist (an existing group is
+   * never changed). Logs `model.migrated` only when something was written.
+   * With `modelPlane`, also keeps the store for {@link set}. Rejects when the
+   * store cannot be written.
    */
   async syncModelPlane(modelPlane?: {
     store: ModelPlaneStore;
@@ -923,7 +930,12 @@ export class HarnessModelService implements HarnessModelManagement {
         reason: provider.unsupported,
       });
     }
-    await plane.store.putProvider(provider);
+    // Written, and logged, only when the legacy source changed it.
+    const unchanged =
+      previous !== undefined &&
+      JSON.stringify({ ...previous, updatedAt: "" }) ===
+        JSON.stringify({ ...provider, updatedAt: "" });
+    if (!unchanged) await plane.store.putProvider(provider);
     let groupCreated = false;
     if (!(await plane.store.getRouteGroup(DEFAULT_GROUP_ID))) {
       await plane.store.putRouteGroup({
@@ -936,11 +948,12 @@ export class HarnessModelService implements HarnessModelManagement {
       });
       groupCreated = true;
     }
-    if (groupCreated || !previous)
+    if (groupCreated || !unchanged)
       plane.log.info("model.migrated", {
         source: active.source,
         provider: MIGRATED_PROVIDER_ID,
         model: active.model,
+        providerChanged: !unchanged,
         groupCreated,
       });
     return (this.migration = { status: "synced", groupCreated });

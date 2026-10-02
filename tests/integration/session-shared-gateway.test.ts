@@ -44,7 +44,10 @@ async function upstream(t: test.TestContext) {
         model: body.model,
         stream: body.stream === true,
       });
-      if (JSON.stringify(body).includes("FAIL_UPSTREAM")) {
+      if (
+        JSON.stringify(body).includes("FAIL_UPSTREAM") ||
+        (JSON.stringify(body).includes("FAIL_CHAT") && !body.stream)
+      ) {
         response.writeHead(400, { "content-type": "application/json" });
         response.end(
           JSON.stringify({
@@ -207,6 +210,18 @@ void test(
       await call<SessionRecord>("POST", "/v1/sessions", { engineId: "claude" })
     ).value;
     const native = await run(before.id, "NO_MODEL");
+    assert.deepEqual(
+      (
+        await call<{ items: GatewayKeyView[] }>(
+          "GET",
+          "/api/v1/gateway-keys",
+          undefined,
+          true,
+        )
+      ).value.items,
+      [],
+      "a Session without a target gets no key",
+    );
     assert.equal(
       (await reports(directory, "claude")).length,
       0,
@@ -352,6 +367,22 @@ void test(
     assert.equal(failing.error?.message.includes(UPSTREAM_KEY), false);
     const silent = await run(session.id, "NO_MODEL");
     assert.equal(silent.error?.code, "ENGINE_NO_OUTPUT");
+    // The outcome rules are those of the Worker gateway: output without any
+    // model call stays completed, and a turn whose last call failed after an
+    // earlier success, without output, fails with that cause.
+    const echo = await run(session.id, "ECHO_ONLY");
+    assert.equal(echo.status, "completed", JSON.stringify(echo.error));
+    assert.equal(echo.output, "echo without a model");
+    const lastFailed = await run(session.id, "BOTH FAIL_CHAT");
+    assert.equal(lastFailed.status, "failed");
+    assert.equal(lastFailed.error?.code, "MODEL_UPSTREAM_ERROR");
+    const lastCalls = hub.app
+      .events(lastFailed.id, 0, 1000)
+      .filter((event) => event.type === "model.call");
+    assert.deepEqual(
+      lastCalls.map((event) => event.data.ok),
+      [true, false],
+    );
 
     await call("POST", `/v1/sessions/${session.id}/close`, {});
     const keys = (
@@ -399,6 +430,22 @@ void test(
 
     await hub.server.close();
     hub = undefined;
+    // The key never reaches Worker diagnostics or logs, though the engine printed it.
+    const backend = join(dataDir, "backends", session.id);
+    const logFiles = [
+      join(dataDir, "logs", "gateway.log"),
+      ...(await readdir(backend, { recursive: true }))
+        .filter((file) => /\.log$/.test(file))
+        .map((file) => join(backend, file)),
+    ];
+    assert.ok(logFiles.some((file) => file.endsWith("engine.log")));
+    let canary = false;
+    for (const file of logFiles) {
+      const text = await readFile(file, "utf8");
+      assert.equal(text.includes(report.token), false, file);
+      canary ||= text.includes("fixture key in use");
+    }
+    assert.ok(canary, "the engine's stderr reached the engine log, redacted");
     const database = await readFile(join(dataDir, "harnesshub.sqlite"));
     assert.equal(
       database.includes(Buffer.from(report.token)),

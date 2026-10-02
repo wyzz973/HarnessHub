@@ -12,7 +12,8 @@ import {
 // gateway only in the native configuration prepareConfiguration wrote for its
 // adapter, like the real engine: OpenCode speaks Chat, Claude Code speaks
 // Anthropic Messages. A prompt containing BOTH also makes a Chat call with
-// the same key. Upstream errors end the turn without text.
+// the same key. ECHO_ONLY answers without a model call. Upstream errors end
+// the turn without text. The key is printed to stderr as a redaction canary.
 const adapter = process.argv[2] ?? "";
 interface Endpoint {
   /** Chat base URL (with /v1) or Anthropic base URL (without). */
@@ -98,6 +99,9 @@ new AgentSideConnection(
     authenticate: async () => ({}),
     newSession: async () => {
       const target = endpoint();
+      // A canary: the Worker must redact the key wherever the engine prints it.
+      if (target.token)
+        process.stderr.write(`fixture key in use: ${target.token}\n`);
       await writeFile(
         join(process.cwd(), `shared-peer-${adapter}-${process.pid}.json`),
         JSON.stringify({
@@ -125,6 +129,16 @@ new AgentSideConnection(
         .map((part) => part.text)
         .join("");
       if (text.includes("NO_MODEL")) return { stopReason: "end_turn" };
+      if (text.includes("ECHO_ONLY")) {
+        await connection.sessionUpdate({
+          sessionId: request.sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "echo without a model" },
+          },
+        });
+        return { stopReason: "end_turn" };
+      }
       const target = endpoint();
       const answers =
         adapter === "claude"

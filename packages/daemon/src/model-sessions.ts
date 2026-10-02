@@ -217,6 +217,16 @@ export class ModelSessions implements GatewaySessions, RunModelPort {
       });
       state.keyId = issued.keyId;
       state.key = issued.text;
+      // An earlier key of this Session (its text was lost with a previous
+      // process) can never be presented again.
+      for (const key of await this.options.store.listGatewayKeys())
+        if (
+          key.scope.kind === "session" &&
+          key.scope.sessionId === session.id &&
+          key.keyId !== issued.keyId &&
+          key.revokedAt === undefined
+        )
+          await this.#revoke(key.keyId);
     }
     this.#runs.set(run.id, {
       sessionId: session.id,
@@ -278,8 +288,10 @@ export class ModelSessions implements GatewaySessions, RunModelPort {
   }
 
   /**
-   * Revoke every `session:` key that is not revoked yet: at startup their
-   * texts are gone with the previous process, at shutdown their Sessions end.
+   * Revoke every `session:` key that is not revoked yet. At startup no
+   * Session has a Worker of this process and every earlier key's text is
+   * gone, so all of them are stale, whether their Session is closed or not;
+   * at shutdown the open Sessions' Runs end with the process.
    */
   async revokeAll(): Promise<void> {
     this.#sessions.clear();
