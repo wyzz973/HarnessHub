@@ -214,6 +214,92 @@ void test(
     );
     await fails(["key", "create", "--name", "ci"], 2);
 
+    // Keys for the LAN listener, and sharing it.
+    const lanCreated = await ok([
+      "key",
+      "create",
+      "--name",
+      "laptop",
+      "--allow",
+      "alpha/*",
+      "--lan",
+    ]);
+    assert.match(lanCreated.stdout, /^hhk_c_[a-z2-7]{12}_/);
+    await fails(
+      [
+        "key",
+        "create",
+        "--name",
+        "forever",
+        "--allow",
+        "alpha/*",
+        "--lan",
+        "--no-expiry",
+      ],
+      2,
+    );
+    const keyList = (await ok(["key", "list"])).stdout;
+    assert.match(
+      keyList,
+      /^KEY ID +NAME +SCOPE +ALLOW +EXPIRES +LAN +STATUS\n/,
+    );
+    assert.match(
+      keyList,
+      /\n[a-z2-7]{12} +laptop +client +alpha\/\* +.+ +yes +active\n/,
+    );
+    assert.match(
+      keyList,
+      /\n[a-z2-7]{12} +ci +client +alpha\/\* +.+ +- +active\n/,
+    );
+    assert.match(
+      (await ok(["gateway", "share", "status"])).stdout,
+      /^LAN sharing: +off\n/,
+    );
+    const noHost = await fails(["gateway", "share", "on"], 2);
+    assert.match(noHost.stderr, /needs --host/);
+    await fails(["gateway", "share", "status", "--host", "127.0.0.1"], 2);
+    await fails(["gateway", "share", "explode"], 2);
+    await fails(["gateway", "open"], 2);
+    const badHost = await fails(
+      ["gateway", "share", "on", "--host", "my-laptop"],
+      2,
+    );
+    assert.match(badHost.stderr, /GATEWAY_SHARE_INVALID/);
+    assert.match(badHost.stderr, /\/lan\/host/);
+    const on = JSON.parse(
+      (
+        await ok([
+          "gateway",
+          "share",
+          "on",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "0",
+          "--name",
+          "hh.lan",
+          "--json",
+        ])
+      ).stdout,
+    ) as { listening: boolean; boundPort: number; urls: string[] };
+    assert.equal(on.listening, true);
+    assert.deepEqual(on.urls, [
+      `http://127.0.0.1:${on.boundPort}`,
+      `http://hh.lan:${on.boundPort}`,
+    ]);
+    const shared = (await ok(["gateway", "share", "status"])).stdout;
+    assert.match(shared, /^LAN sharing: +on\n/);
+    assert.match(
+      shared,
+      /\nPeers use http:\/\/127\.0\.0\.1:\d+ or http:\/\/hh\.lan:\d+ with a key from hh key create --lan\n/,
+    );
+    const off = (await ok(["gateway", "share", "off"])).stdout;
+    assert.match(off, /^LAN sharing: +off\n/);
+    assert.match(off, /\nAddress: +127\.0\.0\.1 port 0\n/);
+    assert.match(off, /\nNames: +hh\.lan\n/);
+    const laptopId = /^hhk_c_([a-z2-7]{12})_/.exec(lanCreated.stdout)![1]!;
+    await ok(["key", "revoke", laptopId, "--yes"]);
+
     assert.equal(
       (
         await ok([
@@ -613,6 +699,39 @@ void test(
     const unknown = await run(["provider", "add", "--preset", "nope"]);
     assert.equal(unknown.code, 2);
     assert.match(unknown.stderr, /PRESET_NOT_FOUND/);
+
+    // --base moves every endpoint of a preset onto another address; an
+    // explicit endpoint still wins.
+    const remote = await run([
+      "provider",
+      "add",
+      "office",
+      "--preset",
+      "harnesshub-remote",
+      "--base",
+      "http://192.168.50.10:3180/hh/",
+      "--gemini",
+      "http://192.168.50.11:3180",
+      "--json",
+    ]);
+    assert.equal(remote.code, 0, remote.stderr);
+    const office = JSON.parse(remote.stdout) as {
+      kind: string;
+      endpoints: Record<string, string>;
+    };
+    assert.equal(office.kind, "relay");
+    assert.deepEqual(office.endpoints, {
+      chat: "http://192.168.50.10:3180/hh/v1",
+      responses: "http://192.168.50.10:3180/hh/v1",
+      anthropic: "http://192.168.50.10:3180/hh",
+      gemini: "http://192.168.50.11:3180",
+    });
+    for (const args of [
+      ["provider", "add", "x", "--chat", base, "--base", "http://a.test"],
+      ["provider", "add", "--preset", "ollama", "--base", "ftp://a.test"],
+      ["provider", "add", "--preset", "ollama", "--base", "http://a.test?q=1"],
+    ])
+      assert.equal((await run(args)).code, 2, args.join(" "));
     for (const outcome of [presets, added, refreshed, shown, failed])
       assert.equal(`${outcome.stdout}${outcome.stderr}`.includes(key), false);
   },

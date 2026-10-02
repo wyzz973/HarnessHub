@@ -186,8 +186,37 @@ export interface GatewayKeyInput {
   /** Model Refs, `provider/*` and `group/<id>`; at least one. */
   modelAllow: string[];
   quota?: GatewayKeyQuota;
+  /** Usable on the daemon's LAN sharing listener; such a key must expire. */
+  allowLan?: boolean;
   /** Absent: 90 days from now; null: never expires. */
   expiresAt?: string | null;
+}
+
+/** LAN sharing settings: the body of `PUT /gateway/share`. */
+export interface GatewayShareSettings {
+  lan: {
+    enabled: boolean;
+    /** IP address to bind; `0.0.0.0` or `::` for every address. Required while enabled. */
+    host?: string;
+    /** Absent: the daemon's port. */
+    port?: number;
+    /** Further Host names peers use. */
+    names?: string[];
+  };
+  /** The address clients use behind a reverse proxy. */
+  publicBaseUrl?: string;
+}
+
+/** `GET /gateway/share`: the settings and the LAN listener's state. */
+export interface GatewayShareStatus {
+  lan: GatewayShareSettings["lan"] & { names: string[] };
+  publicBaseUrl?: string;
+  listening: boolean;
+  boundPort?: number;
+  /** Base URLs a peer configures, e.g. for the `harnesshub-remote` preset. */
+  urls: string[];
+  /** Why the listener is not serving although sharing is enabled. */
+  error?: string;
 }
 
 /** `POST /gateway-keys`: `key` is the key text, returned only by this call. */
@@ -647,6 +676,18 @@ export class HarnessHubClient {
     /** Restores the agent's files and revokes its key. */
     unwire: (id: string) =>
       this.request<AgentUnwired>("DELETE", `agents/${segment(id)}/wiring`),
+  };
+
+  readonly gatewayShare = {
+    status: () => this.request<GatewayShareStatus>("GET", "gateway/share"),
+    /**
+     * Replace the sharing settings. Rejects with `GATEWAY_SHARE_INVALID`
+     * (400) or `GATEWAY_SHARE_LISTEN_FAILED` (409); nothing changes then.
+     */
+    update: (settings: GatewayShareSettings) =>
+      this.request<GatewayShareStatus>("PUT", "gateway/share", {
+        body: settings,
+      }),
   };
 
   readonly modelCalls = {

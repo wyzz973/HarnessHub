@@ -7,6 +7,7 @@ Commands:
   provider    Manage model providers (list, show, add, remove)
   credential  Manage provider credentials (list, add, rotate, remove)
   key         Manage Gateway Keys (list, create, revoke)
+  gateway     Share the model gateway on the local network (gateway share on|off|status)
   group       Manage route groups (list, add, remove)
   model       Show model metadata with its sources; set overrides
   catalog     Show or refresh the models.dev catalog (status, refresh)
@@ -65,6 +66,7 @@ const COMMANDS: Readonly<Record<string, Command>> = {
       "model",
       "catalog",
       "usage",
+      "gateway",
     ].map((name): [string, Command] => [
       name,
       async (argv) => {
@@ -78,10 +80,10 @@ const COMMANDS: Readonly<Record<string, Command>> = {
 /**
  * Run one `hh` command: `serve`, `benchmark` and `tools` go to the daemon's
  * entries; `rollout` and the model-plane commands (`status`, `provider`,
- * `credential`, `key`, `group`, `model`, `catalog`, `usage`) and the agent
- * commands (`agents`, `wire`, `use`, `unwire`) to the CLI's, which reach the
- * running daemon over HTTP. `--help` prints the commands on stdout; a missing
- * or unknown command prints them on stderr and fails with exit code 2.
+ * `credential`, `key`, `group`, `model`, `catalog`, `usage`, `gateway`) and
+ * the agent commands (`agents`, `wire`, `use`, `unwire`) to the CLI's, which
+ * reach the running daemon over HTTP. `--help` prints the commands on stdout;
+ * a missing or unknown command prints them on stderr and fails with exit code 2.
  * A command's own failures keep that command's output and exit code; a
  * `serve` startup failure rejects.
  *

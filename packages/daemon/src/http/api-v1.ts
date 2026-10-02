@@ -20,6 +20,10 @@ import { responses, systemInfoSchema } from "./api-v1-schemas.js";
 import { registerModelPlaneRoutes } from "./model-plane-routes.js";
 import type { AgentWiringService } from "../agents-wiring.js";
 import { registerAgentRoutes } from "./agents-routes.js";
+import {
+  registerGatewayShareRoutes,
+  type GatewayShareControl,
+} from "./gateway-share-routes.js";
 
 /** Where a problem's `errors[]` entry points: a body member or a query parameter. */
 export type ProblemItem =
@@ -110,6 +114,8 @@ export interface ApiV1Options {
   log?: LogSink;
   /** Global wiring of local agents (`/agents`). */
   agents: AgentWiringService;
+  /** LAN sharing of the model gateway; without it `/gateway/share` is absent. */
+  gatewayShare?: GatewayShareControl;
 }
 
 const LOOPBACK =
@@ -300,6 +306,8 @@ export function registerApiV1(
       );
       registerModelPlaneRoutes(api, options);
       registerAgentRoutes(api, options.agents);
+      if (options.gatewayShare)
+        registerGatewayShareRoutes(api, options.gatewayShare);
     },
     { prefix: "/api/v1" },
   );

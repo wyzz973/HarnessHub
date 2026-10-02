@@ -1134,6 +1134,47 @@ export const apiCatalog: readonly ApiDocumentation[] = [
   },
   {
     method: "GET",
+    path: "/api/v1/gateway/share",
+    title: "局域网共享状态",
+    group: "gateway-share",
+    request: "无参数。",
+    response:
+      "200：lan（enabled、host、port、names）、publicBaseUrl、listening（局域网监听器是否在服务）、boundPort、urls（对端使用的基址：每个声明的局域网地址或名称一个，再加 publicBaseUrl）、error（已开启但未能监听的原因）。",
+    implementation:
+      "GatewayShare.status 读取 <dataDir>/gateway-sharing.json 中的设置与局域网监听器的状态。",
+    effects: "只读。",
+    errors:
+      "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；局域网监听器上不存在此路由（404）；错误一律为 application/problem+json。",
+    source: "packages/daemon/src/http/gateway-share-routes.ts",
+    tests: [
+      "tests/integration/gateway-lan-share.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_get_gateway_share",
+  },
+  {
+    method: "PUT",
+    path: "/api/v1/gateway/share",
+    title: "设置局域网共享",
+    group: "gateway-share",
+    request:
+      "完整的设置：lan.enabled 必填；开启时 lan.host 必填（本机 IP，0.0.0.0 或 :: 表示全部地址，此时需 lan.names 或 publicBaseUrl）；lan.port 缺省为守护进程端口；lan.names 为对端使用的其他主机名（最多 20 个）；publicBaseUrl 为反向代理后的对外地址。",
+    response: "200：与 GET 相同的状态。",
+    implementation:
+      "resolveGatewaySharing 校验；新地址先绑定，再原子写入 gateway-sharing.json，最后关闭旧监听器；局域网监听器只把模型协议路径交给网关的 lan 入口。",
+    effects:
+      "写入 <dataDir>/gateway-sharing.json；开启、移动或关闭局域网监听器；关闭时在途请求继续到结束。",
+    errors:
+      "400 GATEWAY_SHARE_INVALID（errors[] 指向字段）；409 GATEWAY_SHARE_LISTEN_FAILED（端口被占用、地址不属于本机等，设置不变）；需本机管理令牌与回环连接，否则 401 或 403；错误一律为 application/problem+json。",
+    source: "packages/daemon/src/http/gateway-share-routes.ts",
+    tests: [
+      "tests/integration/gateway-lan-share.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_put_gateway_share",
+  },
+  {
+    method: "GET",
     path: "/api/v1/gateway-keys",
     title: "Gateway Key 列表",
     group: "gateway-keys",
@@ -1157,14 +1198,14 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     title: "签发 client Key",
     group: "gateway-keys",
     request:
-      "name、modelAllow（provider/model、provider/*、group/<id>，至少一个）必填；quota 可选；expiresAt 缺省为 90 天后，null 为不过期。",
+      "name、modelAllow（provider/model、provider/*、group/<id>，至少一个）必填；quota 可选；allowLan=true 允许在局域网共享监听器上使用；expiresAt 缺省为 90 天后，null 为不过期（allowLan 的 Key 不允许）。",
     response:
       "201：key（hhk_c_… 文本，只在此响应中出现）与 gatewayKey 视图；Cache-Control: no-store。",
     implementation:
       "issueGatewayKey 生成 client 作用域 Key，只保存秘密部分的 SHA-256。",
     effects: "写入 gateway_keys 表。",
     errors:
-      "400 GATEWAY_KEY_INVALID（errors[]：/modelAllow/<i>、/expiresAt 必须在未来）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+      "400 GATEWAY_KEY_INVALID（errors[]：/modelAllow/<i>、/expiresAt 必须在未来，allowLan 时必须设置）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/model-plane-routes.ts",
     tests: [
       "tests/integration/api-v1.test.ts",

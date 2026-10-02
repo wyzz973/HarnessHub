@@ -1007,6 +1007,7 @@ export function registerModelPlaneRoutes(
       name: string;
       modelAllow: string[];
       quota?: GatewayKeyQuota;
+      allowLan?: boolean;
       expiresAt?: string | null;
     };
   }>(
@@ -1040,6 +1041,12 @@ export function registerModelPlaneRoutes(
             pointer: "/expiresAt",
             detail: "must be in the future",
           });
+        // A key usable from the local network always expires (07 section 5.4).
+        if (body.allowLan === true && expiresAt === null)
+          errors.push({
+            pointer: "/expiresAt",
+            detail: "must be set for a key with allowLan",
+          });
         if (errors.length)
           throw invalid(
             "GATEWAY_KEY_INVALID",
@@ -1054,6 +1061,7 @@ export function registerModelPlaneRoutes(
           scope,
           modelAllow: body.modelAllow,
           ...(body.quota ? { quota: body.quota } : {}),
+          ...(body.allowLan === true ? { allowLan: true } : {}),
           secretHash: issued.secretHash,
           createdAt: new Date(now).toISOString(),
           ...(expiresAt !== null ? { expiresAt } : {}),

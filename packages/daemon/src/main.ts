@@ -49,6 +49,7 @@ import {
 import { ensureAdminToken, ADMIN_TOKEN_FILE } from "./admin-token.js";
 import { registerApiV1 } from "./http/api-v1.js";
 import { AgentWiringService } from "./agents-wiring.js";
+import { GatewayShare } from "./lan-share.js";
 import { getPreset, listPresets } from "@harnesshub/gateway/presets";
 import { modelCatalog } from "@harnesshub/gateway/catalog";
 import {
@@ -441,6 +442,8 @@ export async function startHub(options: {
   let modelGateway: GatewayHandler | undefined;
   /** OTLP export of committed model calls; only with an `otlp` block. */
   let otlp: ModelCallExporter | undefined;
+  let shareToClose: GatewayShare | undefined;
+  let server: Awaited<ReturnType<typeof createGateway>> | undefined;
   /** The Runtime's store, where `model.call` Run events are committed. */
   let runStore: Store = store;
   let catalog: CatalogRefresher | undefined;
@@ -517,6 +520,22 @@ export async function startHub(options: {
         })
       : undefined;
     const exporter = otlp;
+    // LAN sharing (03 section 1): settings now, the LAN listener once the
+    // daemon's own listener is bound.
+    const share = new GatewayShare({
+      dataDir,
+      handle: (request, response) => modelGateway?.lan(request, response),
+      headersTimeoutMs: gatewayLimits.requestHeadersTimeoutMs,
+      daemonPort: () => {
+        const address = server?.server.address();
+        return address && typeof address === "object"
+          ? address.port
+          : undefined;
+      },
+      log: gatewayLog,
+    });
+    shareToClose = share;
+    await share.load();
     // The shared model gateway on this listener (03-model-plane); it reads
     // providers, keys and the ledger from the store and resolves credentials
     // per upstream attempt. With OTLP export, each committed ledger entry
@@ -530,6 +549,7 @@ export async function startHub(options: {
       limits: gatewayLimits,
       log: gatewayLog,
       sessions,
+      access: () => share.access(),
     });
     manager = new EngineManager({
       config,
@@ -695,7 +715,7 @@ export async function startHub(options: {
       },
     });
     const bindHost = options.host ?? "127.0.0.1";
-    const server = await createGateway(app, {
+    server = await createGateway(app, {
       workflows,
       observations,
       configuration,
@@ -722,6 +742,7 @@ export async function startHub(options: {
     server.addHook("preClose", async () => {
       await gatewayToClose.close();
       await exporter?.shutdown();
+      await share.close();
     });
     // Before the store closes: a running refresh may still update providers.
     const catalogToClose = catalog;
@@ -767,6 +788,7 @@ export async function startHub(options: {
         origin: () => gatewayOrigin,
         log: gatewayLog,
       }),
+      gatewayShare: share,
     });
     // Registered after createGateway's hook, so the application has already cancelled
     // Runs; this only stops a pending model test and waits for its Session cleanup.
@@ -800,6 +822,7 @@ export async function startHub(options: {
     const bound = server.server.address();
     if (bound && typeof bound === "object")
       gatewayOrigin = `http://127.0.0.1:${bound.port}`;
+    await share.listen();
     gatewayLog.info("gateway.listen", {
       url,
       host: bindHost,
@@ -835,6 +858,7 @@ export async function startHub(options: {
     await modelGateway?.close();
     await catalog?.close();
     await otlp?.shutdown();
+    await shareToClose?.close();
     workflowStore?.close();
     modelPlane?.close();
     store.close();

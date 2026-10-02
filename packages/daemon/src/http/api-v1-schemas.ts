@@ -519,6 +519,7 @@ export const gatewayKeySchema = {
     scope,
     modelAllow: { type: "array", items: allowEntry },
     quota,
+    allowLan: { type: "boolean" },
     createdAt: timestamp,
     expiresAt: timestamp,
     revokedAt: timestamp,
@@ -539,6 +540,8 @@ export const gatewayKeyCreateSchema = {
       items: allowEntry,
     },
     quota,
+    /** Usable on the LAN listener of gateway sharing; such a key must expire. */
+    allowLan: { type: "boolean" },
     /** Absent: 90 days from now (03 section 2); null: never expires. */
     expiresAt: { type: ["string", "null"], format: "date-time" },
   },
@@ -994,5 +997,44 @@ export const systemInfoSchema = {
         geminiBaseUrl: { type: "string" },
       },
     },
+  },
+} as const;
+
+const lanSettings = {
+  type: "object",
+  additionalProperties: false,
+  required: ["enabled"],
+  properties: {
+    enabled: { type: "boolean" },
+    host: {
+      ...text(64),
+      description:
+        "IP address the LAN listener binds; 0.0.0.0 or :: for every address",
+    },
+    port: { type: "integer", minimum: 0, maximum: 65535 },
+    names: { ...strings(253, 20), description: "Further Host names of peers" },
+  },
+} as const;
+
+/** `PUT /api/v1/gateway/share`: the whole sharing settings document. */
+export const gatewaySharePutSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["lan"],
+  properties: { lan: lanSettings, publicBaseUrl: text(500) },
+} as const;
+
+/** The sharing settings and the LAN listener's state. */
+export const gatewayShareSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["lan", "listening", "urls"],
+  properties: {
+    lan: { ...lanSettings, required: ["enabled", "names"] },
+    publicBaseUrl: { type: "string" },
+    listening: { type: "boolean" },
+    boundPort: { type: "integer" },
+    urls: { type: "array", items: { type: "string" } },
+    error: { type: "string" },
   },
 } as const;

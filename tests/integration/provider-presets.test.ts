@@ -78,7 +78,14 @@ async function upstream(t: TestContext) {
         object: "list",
         data: [
           { id: "chat-1" },
-          { id: "chat-2" },
+          // Metadata as a HarnessHub gateway or OpenRouter publishes it.
+          {
+            id: "chat-2",
+            context_length: 32768,
+            max_output_tokens: 4096,
+            reasoning: true,
+            input_modalities: ["text", "image", "hologram"],
+          },
           { id: "has space" },
           { id: "chat-1" },
         ],
@@ -263,10 +270,17 @@ void test("live model lists are fetched with the provider's key and kept when a 
   assert.equal(refreshed.models.source, "live");
   assert.ok(refreshed.models.refreshedAt);
   assert.equal(refreshed.models.stale, undefined);
-  // Invalid IDs and duplicates are dropped; known metadata is kept.
+  // Invalid IDs and duplicates are dropped; known metadata is kept, listed
+  // metadata is read, and unknown modalities are ignored.
   assert.deepEqual(refreshed.models.list, [
     { id: "chat-1", price: { input: 1, output: 2 } },
-    { id: "chat-2" },
+    {
+      id: "chat-2",
+      contextWindow: 32768,
+      maxOutputTokens: 4096,
+      reasoning: true,
+      inputModalities: ["text", "image"],
+    },
   ]);
   assert.equal(fake.seen.at(-1)?.headers.authorization, `Bearer ${KEY}`);
 

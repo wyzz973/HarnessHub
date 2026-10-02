@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 /**
  * The model-plane commands of `hh` (06-interfaces section 5): `provider`,
- * `credential`, `key`, `group`, `model`, `catalog`, `usage` and `status`. They talk to the
+ * `credential`, `key`, `group`, `model`, `catalog`, `usage`, `status` and `gateway share`. They talk to the
  * running daemon through `@harnesshub/sdk` with the admin token found in the
  * data directory, print a table (or `--json`, the API response), and exit
  * with the codes of 06 section 5. Secrets are read from a hidden prompt,
@@ -12,6 +12,7 @@ import { parseArgs, type ParseArgsConfig } from "node:util";
 import {
   HarnessHubError,
   HarnessHubUnavailableError,
+  type GatewayShareStatus,
   type HarnessHubClient,
   type MetadataField,
   type ModelOverride,
@@ -42,7 +43,7 @@ const USAGE = `Usage: hh <command> [options]
               | add <id> --chat URL [--responses URL] [--anthropic URL]
                 [--gemini URL] [--name N] [--kind K] [--api-key-header H]
                 [--model ID]...
-              | add [<id>] --preset P [--name N] [--chat URL ...]
+              | add [<id>] --preset P [--name N] [--base URL | --chat URL ...]
                 [--credential-from-stdin | --credential-from-env VAR
                  | --credential-from-file PATH]
               | remove <id>
@@ -51,7 +52,9 @@ const USAGE = `Usage: hh <command> [options]
               | remove <provider> <credential>
               secret from a hidden prompt, --from-stdin, --from-env VAR or --from-file PATH
   hh key list | create --name N --allow REF... [--expires-at TIME | --no-expiry]
-              | revoke <keyId>
+              [--lan] | revoke <keyId>
+  hh gateway share status | off | on [--host IP] [--port N] [--name HOST]...
+              [--public-base-url URL]
   hh group list | add <id> --member REF... [--strategy S] [--stickiness S]
               | remove <id>
   hh model show <provider/model | provider/*>
@@ -289,6 +292,41 @@ function list(value: unknown): string[] {
     : [];
 }
 
+/**
+ * A preset's endpoints moved onto `base` (`--base`): each endpoint's path is
+ * appended to the base's path, so `http://10.0.0.2:3180` turns
+ * `http://127.0.0.1:3180/v1` into `http://10.0.0.2:3180/v1`.
+ */
+function rebase(
+  endpoints: Partial<Record<string, string>>,
+  base: string,
+): Record<string, string> {
+  let root: URL;
+  try {
+    root = new URL(base);
+  } catch {
+    throw new UsageError("--base must be an http(s) URL");
+  }
+  if (
+    !["http:", "https:"].includes(root.protocol) ||
+    root.username ||
+    root.password ||
+    root.search ||
+    root.hash
+  )
+    throw new UsageError(
+      "--base must be an http(s) URL without credentials, query or fragment",
+    );
+  const prefix = root.pathname.replace(/\/+$/, "");
+  return Object.fromEntries(
+    Object.entries(endpoints).flatMap(([protocol, url]) => {
+      if (url === undefined) return [];
+      const path = new URL(url).pathname.replace(/\/+$/, "");
+      return [[protocol, `${root.origin}${prefix}${path}`]];
+    }),
+  );
+}
+
 async function providerCommand(args: string[]): Promise<void> {
   const [action = "", ...rest] = args;
   const { values, positionals: given } = parse(rest, {
@@ -301,6 +339,7 @@ async function providerCommand(args: string[]): Promise<void> {
     "api-key-header": { type: "string" },
     model: { type: "string", multiple: true },
     preset: { type: "string" },
+    base: { type: "string" },
     refresh: { type: "boolean" },
     "credential-from-stdin": { type: "boolean" },
     "credential-from-env": { type: "string" },
@@ -402,16 +441,28 @@ async function providerCommand(args: string[]): Promise<void> {
           "provider add takes <id>, or --preset P with an optional <id>",
         );
       const id = given[0];
-      const endpoints = Object.fromEntries(
+      const endpoints: Record<string, string> = Object.fromEntries(
         (["chat", "responses", "anthropic", "gemini"] as const)
           .filter((protocol) => typeof values[protocol] === "string")
           .map((protocol) => [protocol, values[protocol] as string]),
       );
+      if (typeof values.base === "string" && !preset)
+        throw new UsageError("--base needs --preset");
       if (!preset && !Object.keys(endpoints).length)
         throw new UsageError(
           "Give at least one of --chat, --responses, --anthropic, --gemini",
         );
       const client = await ctx.client();
+      if (typeof values.base === "string") {
+        const found = (await client.presets.list()).items.find(
+          (item) => item.id === preset,
+        );
+        if (!found) throw new UsageError(`There is no preset ${preset}`);
+        for (const [protocol, url] of Object.entries(
+          rebase(found.endpoints, values.base),
+        ))
+          endpoints[protocol] ??= url;
+      }
       const credential = credentialGiven(values)
         ? { value: await readSecret(ctx, values, "credential-") }
         : undefined;
@@ -553,6 +604,7 @@ async function keyCommand(args: string[]): Promise<void> {
     allow: { type: "string", multiple: true },
     "expires-at": { type: "string" },
     "no-expiry": { type: "boolean" },
+    lan: { type: "boolean" },
   });
   const ctx = context(values);
   switch (action) {
@@ -562,13 +614,14 @@ async function keyCommand(args: string[]): Promise<void> {
       const now = Date.now();
       return output(ctx, page, () =>
         table(
-          ["KEY ID", "NAME", "SCOPE", "ALLOW", "EXPIRES", "STATUS"],
+          ["KEY ID", "NAME", "SCOPE", "ALLOW", "EXPIRES", "LAN", "STATUS"],
           page.items.map((item) => [
             item.keyId,
             item.name,
             item.scope.kind,
             item.modelAllow.join(","),
             localTime(item.expiresAt),
+            item.allowLan ? "yes" : "-",
             item.revokedAt
               ? "revoked"
               : item.expiresAt && Date.parse(item.expiresAt) <= now
@@ -587,11 +640,14 @@ async function keyCommand(args: string[]): Promise<void> {
         );
       if (values["no-expiry"] && values["expires-at"] !== undefined)
         throw new UsageError("Use either --expires-at or --no-expiry");
+      if (values["no-expiry"] && values.lan)
+        throw new UsageError("A --lan key must expire; drop --no-expiry");
       const created = await (
         await ctx.client()
       ).gatewayKeys.create({
         name: values.name,
         modelAllow: allow,
+        ...(values.lan ? { allowLan: true } : {}),
         ...(values["no-expiry"] ? { expiresAt: null } : {}),
         ...(typeof values["expires-at"] === "string"
           ? { expiresAt: values["expires-at"] }
@@ -1010,6 +1066,91 @@ async function statusCommand(args: string[]): Promise<void> {
   );
 }
 
+function shareText(status: GatewayShareStatus): string {
+  const lan = status.lan;
+  return [
+    `LAN sharing:   ${lan.enabled ? "on" : "off"}${lan.enabled && !status.listening ? " (not listening)" : ""}`,
+    `Address:       ${lan.host ?? "-"}${lan.port !== undefined ? ` port ${lan.port}` : " (daemon port)"}${status.boundPort !== undefined ? `, bound to port ${status.boundPort}` : ""}`,
+    `Names:         ${lan.names.join(", ") || "-"}`,
+    `Public URL:    ${status.publicBaseUrl ?? "-"}`,
+    ...(status.error ? [`Error:         ${status.error}`] : []),
+    ...(status.urls.length
+      ? [
+          "",
+          `Peers use ${status.urls.join(" or ")} with a key from hh key create --lan`,
+          "(another HarnessHub: hh provider add <id> --preset harnesshub-remote --base URL).",
+          "LAN traffic is plain HTTP: share on trusted networks or behind a TLS proxy.",
+        ]
+      : []),
+  ].join("\n");
+}
+
+async function gatewayCommand(args: string[]): Promise<void> {
+  const [group = "", action = "", ...rest] = args;
+  if (group !== "share")
+    throw new UsageError(`Unknown gateway command: ${group || "(none)"}`);
+  const { values, positionals: given } = parse(rest, {
+    host: { type: "string" },
+    port: { type: "string" },
+    name: { type: "string", multiple: true },
+    "public-base-url": { type: "string" },
+  });
+  const ctx = context(values);
+  positionals(given, []);
+  const changes =
+    values.host !== undefined ||
+    values.port !== undefined ||
+    values.name !== undefined ||
+    values["public-base-url"] !== undefined;
+  if (action !== "on" && changes)
+    throw new UsageError(
+      "--host, --port, --name and --public-base-url belong to gateway share on",
+    );
+  const client = await ctx.client();
+  switch (action) {
+    case "status": {
+      const status = await client.gatewayShare.status();
+      return output(ctx, status, () => shareText(status));
+    }
+    case "on":
+    case "off": {
+      const current = await client.gatewayShare.status();
+      let port = current.lan.port;
+      if (typeof values.port === "string") {
+        port = Number(values.port);
+        if (!/^\d{1,5}$/.test(values.port) || port > 65535)
+          throw new UsageError("--port takes a port number from 0 to 65535");
+      }
+      const host =
+        typeof values.host === "string" ? values.host : current.lan.host;
+      if (action === "on" && host === undefined)
+        throw new UsageError(
+          "gateway share on needs --host: an IP address of this machine, or 0.0.0.0 for every address",
+        );
+      const names =
+        values.name !== undefined ? list(values.name) : current.lan.names;
+      const publicBaseUrl =
+        typeof values["public-base-url"] === "string"
+          ? values["public-base-url"]
+          : current.publicBaseUrl;
+      const status = await client.gatewayShare.update({
+        lan: {
+          enabled: action === "on",
+          ...(host !== undefined ? { host } : {}),
+          ...(port !== undefined ? { port } : {}),
+          names,
+        },
+        ...(publicBaseUrl !== undefined ? { publicBaseUrl } : {}),
+      });
+      return output(ctx, status, () => shareText(status));
+    }
+    default:
+      throw new UsageError(
+        `Unknown gateway share command: ${action || "(none)"}`,
+      );
+  }
+}
+
 const COMMANDS: Readonly<Record<string, (args: string[]) => Promise<void>>> = {
   provider: providerCommand,
   credential: credentialCommand,
@@ -1019,6 +1160,7 @@ const COMMANDS: Readonly<Record<string, (args: string[]) => Promise<void>>> = {
   catalog: catalogCommand,
   usage: usageCommand,
   status: statusCommand,
+  gateway: gatewayCommand,
 };
 
 function exitCode(status: number): number {

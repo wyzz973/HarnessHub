@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "harnesshub-remote",
+  "name": "HarnessHub (remote)",
+  "kind": "relay",
+  "verified": "2026-10-03",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "http://127.0.0.1:3180/v1",
+    "responses": "http://127.0.0.1:3180/v1",
+    "anthropic": "http://127.0.0.1:3180",
+    "gemini": "http://127.0.0.1:3180"
+  },
+  "models": {
+    "source": "live"
+  },
+  "notes": "另一台 HarnessHub 的模型网关：用 --base 填对方 hh gateway share status 显示的地址，凭据为对方 hh key create --lan 签发的 Key。四种协议都直通，对方的 provider/model 在本机为 <本 provider ID>/provider/model。"
+}

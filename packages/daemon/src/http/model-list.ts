@@ -96,9 +96,44 @@ function idOf(value: unknown): string | undefined {
   return typeof value === "string" && MODEL_ID.test(value) ? value : undefined;
 }
 
+const MODALITIES = ["text", "image", "pdf", "audio", "video"] as const;
+
+/**
+ * The metadata an OpenAI-format list item may add to its id: the fields a
+ * HarnessHub gateway publishes (`context_window`, `max_output_tokens`,
+ * `reasoning`, `input_modalities`) and OpenRouter's `context_length`.
+ * Values of the wrong type are ignored.
+ */
+function listedMetadata(item: Json): Omit<ProviderModel, "id"> {
+  const positive = (value: unknown) =>
+    Number.isSafeInteger(value) && (value as number) > 0
+      ? (value as number)
+      : undefined;
+  const contextWindow =
+    positive(item.context_window) ?? positive(item.context_length);
+  const maxOutputTokens = positive(item.max_output_tokens);
+  const modalities = Array.isArray(item.input_modalities)
+    ? item.input_modalities.filter(
+        (value): value is (typeof MODALITIES)[number] =>
+          (MODALITIES as readonly unknown[]).includes(value),
+      )
+    : undefined;
+  return {
+    ...(contextWindow !== undefined ? { contextWindow } : {}),
+    ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+    ...(typeof item.reasoning === "boolean"
+      ? { reasoning: item.reasoning }
+      : {}),
+    ...(modalities?.length
+      ? { inputModalities: [...new Set(modalities)] }
+      : {}),
+  };
+}
+
 /**
  * List the provider's models from its upstream: `GET {chat base}{listPath}`
- * (default `/models`, OpenAI format), `GET {anthropic base}/v1/models` with
+ * (default `/models`, OpenAI format, with the window, output and modality
+ * fields that HarnessHub and OpenRouter add), `GET {anthropic base}/v1/models` with
  * `anthropic-version`, or `GET {gemini base}/v1beta/models` (models that
  * support `generateContent`). Follows the vendor's pagination up to 20 pages.
  * `key` is sent by the provider's key scheme; without one the request is
@@ -127,7 +162,7 @@ export async function fetchModelList(
       throw new ModelListError(`${url.host} sent no data array`);
     for (const item of data) {
       const id = object(item) ? idOf(item.id) : undefined;
-      if (id) add({ id });
+      if (id && object(item)) add({ id, ...listedMetadata(item) });
     }
   } else if (protocol === "anthropic") {
     let after: string | undefined;
