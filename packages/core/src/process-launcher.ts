@@ -12,7 +12,14 @@
  * result of `run`), and the launcher registers it with the launcher's own
  * owner, which terminates and awaits every process still running when it
  * closes. Processes never get a shell and never open a console window on
- * Windows.
+ * Windows. They stay in the launching process's process group (for engines
+ * and tools, the Worker's, which its host supervises together with F07's
+ * reclaim of escaped descendants) or, on Windows, its Job Object; the
+ * launcher signals only the process it started.
+ *
+ * Not every process goes through this interface: acpx starts ACP engines
+ * itself, and the launchers in agents' `assets/` start the engine they wrap
+ * with cross-spawn. Both run inside the Worker's process group or Job Object.
  */
 
 /** How one standard stream is connected: a pipe for the caller, or nothing. */
@@ -42,25 +49,21 @@ export interface ProcessLaunch {
   readonly cwd?: string;
   /** stdin, stdout and stderr; all `"pipe"` by default. */
   readonly stdio?: readonly [ProcessStdio, ProcessStdio, ProcessStdio];
-  /**
-   * POSIX: start the process as the leader of a new process group, so that
-   * termination by timeout, abort, `kill` or the owner's close signals the
-   * whole group, descendants included. Without it the process stays in the
-   * launching process's group (for engines and tools, the Worker's, which
-   * its host supervises) and only the process itself is signalled. Windows
-   * has no process groups: the process alone is terminated, and the Worker's
-   * Job Object contains its descendants.
-   */
-  readonly processGroup?: boolean;
   /** Terminates the process when it aborts; the exit then reports `aborted`. */
   readonly signal?: AbortSignal;
   /** Terminates the process after this many milliseconds; the exit then reports `timedOut`. */
   readonly timeoutMs?: number;
-  /** Signal used for timeout, abort and an exceeded `maxBuffer`; SIGTERM by default. */
+  /**
+   * Signal that terminates the process on timeout, abort and an exceeded
+   * `maxBuffer`; SIGTERM by default. A process still running two seconds
+   * later receives SIGKILL, so one that ignores the signal cannot outlive
+   * its deadline.
+   */
   readonly killSignal?: NodeJS.Signals;
   /**
    * Windows: pass the arguments without quoting them, for a `cmd.exe /d /s /c`
-   * command line whose arguments the caller has already quoted.
+   * command line whose arguments the caller has already quoted. Only allowed
+   * when `file` is `cmd.exe`; `launch` throws otherwise.
    */
   readonly windowsVerbatimArguments?: boolean;
 }
@@ -101,10 +104,7 @@ export interface LaunchedProcess {
   readonly exit: Promise<ProcessExit>;
   /** Settles like `exit`, after the process's standard streams have also closed. */
   readonly closed: Promise<ProcessExit>;
-  /**
-   * Sends a signal (SIGTERM by default) to the process, or to its group with
-   * `processGroup`; ignored once it has exited.
-   */
+  /** Sends a signal (SIGTERM by default) to the process; ignored once it has exited. */
   kill(signal?: NodeJS.Signals): void;
 }
 
@@ -114,7 +114,7 @@ export interface ProcessRun extends Omit<ProcessLaunch, "stdio"> {
   readonly input?: string | Uint8Array;
   /**
    * Most bytes kept from stdout and from stderr each. More output terminates
-   * the process with `killSignal` and is reported as `exceeded`.
+   * the process (as `killSignal` describes) and is reported as `exceeded`.
    */
   readonly maxBuffer: number;
 }
@@ -133,8 +133,10 @@ export interface ProcessLauncher {
    * Starts a process; the caller owns it and awaits `exit` or `closed`. A
    * process whose `signal` has already aborted is not started. Throws what
    * spawning throws synchronously, for example for a Windows batch file
-   * started without `cmd.exe`; reports failures to start asynchronously in
-   * `exit`. Throws once the launcher's owner has closed it.
+   * started without `cmd.exe`, and throws INVALID_PROCESS_LAUNCH for
+   * `windowsVerbatimArguments` with another program; reports failures to
+   * start asynchronously in `exit`. Throws once the launcher's owner has
+   * closed it.
    */
   launch(spec: ProcessLaunch): LaunchedProcess;
   /**

@@ -123,7 +123,9 @@ async function execute(
   const stderr: Buffer[] = [];
   const output = { size: 0, truncated: false };
   // The tool stays in this server's process group, which belongs to the
-  // engine's Worker; the launcher terminates it after TIMEOUT_MS.
+  // engine's Worker. After TIMEOUT_MS the launcher sends SIGTERM, and SIGKILL
+  // two seconds later if the tool is still running; the call answers once the
+  // tool has exited.
   const child = server.launcher.launch({
     file: command.file,
     args: command.argv,

@@ -52,7 +52,7 @@ HTTP、配置文件、Worker IPC、引擎输出和持久记录入口使用 `unkn
 
 清理顺序为停止接收新工作 → 解除或隔离回调 → 请求取消 → 等待退出 → 必要时升级终止 → 核实残留 → 释放资源。清理必须幂等且可等待；发出 abort/kill 不等于完成。清理失败单独报告，不覆盖原始执行错误。
 
-子进程只经 `@harnesshub/core/process-launcher` 的 `ProcessLauncher` 启动（OSS-010 F08）。实现在 runtime 的 `process/`，那里也是 Worker 宿主、Job 辅助程序、配置探测与进程表扫描的位置，是唯一可以导入 `node:child_process` 的包内位置；`tools/` 与 agents 的 `assets/`（引擎按路径运行的启动器）不在边界检查的扫描范围内。每个进程入口（`startHub`、Worker、command MCP 入口、工具包命令）创建并注入本进程的启动器：drivers 与 secrets 由调用方传入，agents 的 command MCP 服务器由其入口传入，store 的 Windows 文件原语由组合根启动时设置一次。启动器不经 shell、不在 Windows 上打开控制台窗口；环境必须显式给出，只有写明 `"inherit"` 才继承当前进程环境；超时、`AbortSignal` 与 `maxBuffer` 由启动器执行；POSIX 上 `processGroup` 让终止信号覆盖整个进程组，Windows 上由 Worker 的 Job Object 收容后代。每个启动的进程有所有者：调用方等待 `exit`（或 `run` 的结果），启动器的所有者在关闭时终止并等待仍在运行的进程。
+子进程只经 `@harnesshub/core/process-launcher` 的 `ProcessLauncher` 启动（OSS-010 F08）。实现在 runtime 的 `process/`，那里也是 Worker 宿主、Job 辅助程序、配置探测与进程表扫描的位置，是唯一可以导入 `node:child_process` 的包内位置；`tools/` 与 agents 的 `assets/`（引擎按路径运行的启动器）不在边界检查的扫描范围内。每个进程入口（`startHub`、Worker、command MCP 入口、工具包命令）创建并注入本进程的启动器：drivers 与 secrets 由调用方传入，agents 的 command MCP 服务器由其入口传入，store 的 Windows 文件原语由组合根启动时设置一次。启动器不经 shell、不在 Windows 上打开控制台窗口；环境必须显式给出，只有写明 `"inherit"` 才继承当前进程环境；超时、`AbortSignal` 与 `maxBuffer` 由启动器执行，终止信号发出 2 秒后进程仍在运行则发 SIGKILL；Windows 上 libuv 会为显式环境补上一组必需的系统变量（见 `ProcessEnvironment`），不能依靠显式环境隐藏它们。启动器只向它启动的进程发信号，进程留在 Worker 的进程组或 Job Object 中，后代由它们与 F07 的回收负责；acpx 启动的 ACP 引擎与 agents `assets/` 中的启动器也在其中运行，但不经启动器。每个启动的进程有所有者：调用方等待 `exit`（或 `run` 的结果），启动器的所有者在关闭时终止并等待仍在运行的进程。
 
 状态变更的校验、提交和事件发布各有明确顺序。不能用“先通知再补写 DB”的方式改善响应速度。跨数据库和文件的操作定义发布、重试和孤儿清理策略，不假定跨介质事务存在。
 

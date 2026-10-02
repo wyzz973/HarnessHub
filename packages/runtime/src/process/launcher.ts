@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { spawn } from "node:child_process";
+import path from "node:path";
 import { HubError } from "@harnesshub/core/errors";
 import type {
   LaunchedProcess,
@@ -12,16 +13,19 @@ import type {
   ProcessRunResult,
 } from "@harnesshub/core/process-launcher";
 
-/** How long `close` waits after its first signal before it sends SIGKILL. */
-const CLOSE_GRACE_MS = 2_000;
+/**
+ * How long a process may take to exit after its first termination signal
+ * (timeout, abort, exceeded `maxBuffer`, or the owner's close) before it
+ * receives SIGKILL.
+ */
+const KILL_GRACE_MS = 2_000;
 
 /** A launcher together with the entry point of its owner. */
 export interface OwnedProcessLauncher extends ProcessLauncher {
   /**
-   * Terminates every process this launcher started that has not exited
-   * (its group, for `processGroup`): SIGTERM, then SIGKILL after a grace
-   * period. Settles once they have all exited; later `launch` calls throw
-   * PROCESS_LAUNCHER_CLOSED. Idempotent.
+   * Terminates every process this launcher started that has not exited:
+   * SIGTERM, then SIGKILL after a grace period. Settles once they have all
+   * exited; later `launch` calls throw PROCESS_LAUNCHER_CLOSED. Idempotent.
    */
   close(): Promise<void>;
 }
@@ -48,6 +52,12 @@ function notStarted(outcome: ProcessExit): LaunchedProcess {
   };
 }
 
+/** A started process and its termination: the kill signal, then SIGKILL. */
+interface Started {
+  readonly handle: LaunchedProcess;
+  readonly terminate: () => void;
+}
+
 class NodeProcessLauncher implements OwnedProcessLauncher {
   private readonly live = new Set<{
     exit: Promise<ProcessExit>;
@@ -56,15 +66,30 @@ class NodeProcessLauncher implements OwnedProcessLauncher {
   private closing: Promise<void> | undefined;
 
   launch(spec: ProcessLaunch): LaunchedProcess {
+    return this.start(spec).handle;
+  }
+
+  private start(spec: ProcessLaunch): Started {
     if (this.closing) throw closedError();
+    if (
+      spec.windowsVerbatimArguments === true &&
+      path.win32.basename(spec.file).toLowerCase() !== "cmd.exe"
+    )
+      throw new HubError(
+        "INVALID_PROCESS_LAUNCH",
+        "Unquoted arguments are only passed to cmd.exe",
+        500,
+      );
     if (spec.signal?.aborted)
-      return notStarted({
-        code: null,
-        signal: null,
-        timedOut: false,
-        aborted: true,
-      });
-    const group = spec.processGroup === true && process.platform !== "win32";
+      return {
+        handle: notStarted({
+          code: null,
+          signal: null,
+          timedOut: false,
+          aborted: true,
+        }),
+        terminate: () => undefined,
+      };
     const killSignal = spec.killSignal ?? "SIGTERM";
     // Throws synchronously for arguments spawn rejects (for example EINVAL
     // for a Windows batch file without cmd.exe); nothing is registered then.
@@ -74,13 +99,14 @@ class NodeProcessLauncher implements OwnedProcessLauncher {
       stdio: [...(spec.stdio ?? ["pipe", "pipe", "pipe"])],
       shell: false,
       windowsHide: true,
-      detached: group,
+      detached: false,
       windowsVerbatimArguments: spec.windowsVerbatimArguments === true,
     });
     let exited = false;
     let timedOut = false;
     let aborted = false;
     let failure: Error | undefined;
+    let escalation: NodeJS.Timeout | undefined;
     const exit = Promise.withResolvers<ProcessExit>();
     const closed = Promise.withResolvers<ProcessExit>();
     const outcome = (
@@ -95,34 +121,30 @@ class NodeProcessLauncher implements OwnedProcessLauncher {
     });
     const kill = (signal: NodeJS.Signals = "SIGTERM") => {
       if (exited || child.pid === undefined) return;
-      if (group) {
-        // The leader has not been reaped, so its PID still names this group.
-        // A group that is gone (ESRCH) or not entirely signallable (EPERM)
-        // falls back to the leader itself; its exit reports the outcome.
-        try {
-          process.kill(-child.pid, signal);
-          return;
-        } catch {
-          // Fall through to the leader.
-        }
-      }
       child.kill(signal);
+    };
+    // A process that ignores the kill signal must not outlive its deadline.
+    const terminate = () => {
+      kill(killSignal);
+      if (killSignal !== "SIGKILL" && !exited && escalation === undefined)
+        escalation = setTimeout(() => kill("SIGKILL"), KILL_GRACE_MS);
     };
     const timer =
       spec.timeoutMs === undefined
         ? undefined
         : setTimeout(() => {
             timedOut = true;
-            kill(killSignal);
+            terminate();
           }, spec.timeoutMs);
     const abort = () => {
       aborted = true;
-      kill(killSignal);
+      terminate();
     };
     spec.signal?.addEventListener("abort", abort, { once: true });
     const settle = (result: ProcessExit) => {
       exited = true;
       if (timer) clearTimeout(timer);
+      if (escalation) clearTimeout(escalation);
       spec.signal?.removeEventListener("abort", abort);
       exit.resolve(result);
     };
@@ -144,22 +166,24 @@ class NodeProcessLauncher implements OwnedProcessLauncher {
     this.live.add(entry);
     void exit.promise.then(() => this.live.delete(entry));
     return {
-      pid: child.pid,
-      stdin: child.stdin as ProcessInput | null,
-      stdout: child.stdout as ProcessOutput | null,
-      stderr: child.stderr as ProcessOutput | null,
-      exit: exit.promise,
-      closed: closed.promise,
-      kill,
+      handle: {
+        pid: child.pid,
+        stdin: child.stdin as ProcessInput | null,
+        stdout: child.stdout as ProcessOutput | null,
+        stderr: child.stderr as ProcessOutput | null,
+        exit: exit.promise,
+        closed: closed.promise,
+        kill,
+      },
+      terminate,
     };
   }
 
   async run(spec: ProcessRun): Promise<ProcessRunResult> {
     const { input, maxBuffer, ...launch } = spec;
-    const killSignal = spec.killSignal ?? "SIGTERM";
-    let started: LaunchedProcess;
+    let started: Started;
     try {
-      started = this.launch({
+      started = this.start({
         ...launch,
         stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       });
@@ -174,6 +198,7 @@ class NodeProcessLauncher implements OwnedProcessLauncher {
         stderr: Buffer.alloc(0),
       };
     }
+    const { handle, terminate } = started;
     let exceeded: "stdout" | "stderr" | undefined;
     const collect = (
       stream: ProcessOutput | null,
@@ -187,7 +212,7 @@ class NodeProcessLauncher implements OwnedProcessLauncher {
           chunks.push(chunk.subarray(0, maxBuffer - size));
           size = maxBuffer;
           exceeded = name;
-          started.kill(killSignal);
+          terminate();
           return;
         }
         chunks.push(chunk);
@@ -195,14 +220,14 @@ class NodeProcessLauncher implements OwnedProcessLauncher {
       });
       return chunks;
     };
-    const stdout = collect(started.stdout, "stdout");
-    const stderr = collect(started.stderr, "stderr");
-    if (started.stdin && input !== undefined) {
+    const stdout = collect(handle.stdout, "stdout");
+    const stderr = collect(handle.stderr, "stderr");
+    if (handle.stdin && input !== undefined) {
       // A closed pipe ends the process; its exit decides the outcome.
-      started.stdin.on("error", () => started.kill(killSignal));
-      started.stdin.end(input);
+      handle.stdin.on("error", terminate);
+      handle.stdin.end(input);
     }
-    const result = await started.closed;
+    const result = await handle.closed;
     return {
       ...result,
       stdout: Buffer.concat(stdout),
@@ -217,7 +242,7 @@ class NodeProcessLauncher implements OwnedProcessLauncher {
       for (const entry of live) entry.kill("SIGTERM");
       const escalation = setTimeout(() => {
         for (const entry of live) entry.kill("SIGKILL");
-      }, CLOSE_GRACE_MS);
+      }, KILL_GRACE_MS);
       try {
         await Promise.all(live.map((entry) => entry.exit));
       } finally {

@@ -1,18 +1,13 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import type { ProcessOutput } from "@harnesshub/core/process-launcher";
 import { createProcessLauncher } from "../src/process/launcher.js";
 
 const posix = process.platform !== "win32";
 const forever = "setInterval(() => {}, 1000);";
-/** A parent that starts a grandchild in its own group, prints its PID, and waits. */
-const parentOfGrandchild = `
-const { spawn } = require("node:child_process");
-const grandchild = spawn(process.execPath, ["-e", ${JSON.stringify(forever)}], { stdio: "ignore" });
-process.stdout.write(String(grandchild.pid) + "\\n");
-${forever}`;
+/** Ignores SIGTERM (reporting each on stdout), says it is ready, and waits. */
+const stubborn = `process.on("SIGTERM", () => process.stdout.write("term\\n")); process.stdout.write("ready\\n"); ${forever}`;
 
 function alive(pid: number): boolean {
   try {
@@ -25,23 +20,24 @@ function alive(pid: number): boolean {
   }
 }
 
-async function gone(pid: number): Promise<void> {
-  const deadline = Date.now() + 5_000;
-  while (alive(pid)) {
-    assert.ok(Date.now() < deadline, `process ${pid} is still running`);
-    await delay(25);
-  }
-}
-
-async function firstLine(stream: ProcessOutput | null): Promise<string> {
+/** Collects a stream's text; `line(text)` settles once that line was seen. */
+function lines(stream: ProcessOutput | null) {
   assert.ok(stream);
   let text = "";
-  for await (const chunk of stream) {
-    text += String(chunk);
-    const newline = text.indexOf("\n");
-    if (newline >= 0) return text.slice(0, newline);
-  }
-  throw new Error("stream ended without a line");
+  const waiting = new Map<string, () => void>();
+  stream.on("data", (chunk: Buffer) => {
+    text += chunk.toString();
+    for (const [expected, resolve] of waiting)
+      if (text.split("\n").includes(expected)) resolve();
+  });
+  return {
+    text: () => text,
+    line: (expected: string) =>
+      new Promise<void>((resolve) => {
+        if (text.split("\n").includes(expected)) resolve();
+        else waiting.set(expected, resolve);
+      }),
+  };
 }
 
 void test("a timeout terminates the process and is reported", async (t) => {
@@ -61,31 +57,83 @@ void test("a timeout terminates the process and is reported", async (t) => {
   assert.ok(Date.now() - started < 10_000);
 });
 
+void test("an abort terminates the process and is reported", async (t) => {
+  const launcher = createProcessLauncher();
+  t.after(() => launcher.close());
+  const controller = new AbortController();
+  const started = launcher.launch({
+    file: process.execPath,
+    args: ["-e", `process.stdout.write("ready\\n"); ${forever}`],
+    env: "inherit",
+    stdio: ["ignore", "pipe", "ignore"],
+    signal: controller.signal,
+  });
+  await lines(started.stdout).line("ready");
+  controller.abort();
+  const exit = await started.exit;
+  assert.equal(exit.aborted, true);
+  assert.equal(exit.timedOut, false);
+  assert.notEqual(exit.code, 0);
+  if (posix) assert.equal(exit.signal, "SIGTERM");
+  // An abort before the start starts nothing.
+  const skipped = launcher.launch({
+    file: process.execPath,
+    args: ["-e", forever],
+    env: "inherit",
+    signal: controller.signal,
+  });
+  assert.equal(skipped.pid, undefined);
+  assert.equal((await skipped.exit).aborted, true);
+});
+
 void test(
-  "an abort terminates the whole process group on POSIX",
-  { skip: posix ? false : "process groups exist on POSIX only" },
+  "a timeout ends a process that ignores SIGTERM with SIGKILL after a grace period",
+  { timeout: 20_000 },
   async (t) => {
     const launcher = createProcessLauncher();
     t.after(() => launcher.close());
-    const controller = new AbortController();
-    const started = launcher.launch({
+    const started = Date.now();
+    const child = launcher.launch({
       file: process.execPath,
-      args: ["-e", parentOfGrandchild],
+      args: ["-e", stubborn],
       env: "inherit",
       stdio: ["ignore", "pipe", "ignore"],
-      processGroup: true,
-      signal: controller.signal,
+      timeoutMs: 2_500,
     });
-    const grandchild = Number(await firstLine(started.stdout));
-    assert.ok(Number.isInteger(grandchild) && grandchild > 0);
-    assert.ok(alive(grandchild));
-    controller.abort();
-    const exit = await started.exit;
-    assert.equal(exit.aborted, true);
-    assert.equal(exit.signal, "SIGTERM");
-    await gone(grandchild);
+    const output = lines(child.stdout);
+    await output.line("ready");
+    const exit = await child.exit;
+    const elapsed = Date.now() - started;
+    assert.equal(exit.timedOut, true);
+    assert.notEqual(exit.code, 0);
+    assert.ok(elapsed < 10_000, `${elapsed} ms`);
+    if (posix) {
+      // SIGTERM arrived and was ignored; SIGKILL ended it two seconds later.
+      await output.line("term");
+      assert.equal(exit.signal, "SIGKILL");
+      assert.ok(elapsed >= 4_000, `${elapsed} ms`);
+    }
   },
 );
+
+void test("unquoted Windows arguments are only passed to cmd.exe", async (t) => {
+  const launcher = createProcessLauncher();
+  t.after(() => launcher.close());
+  const spec = {
+    file: process.execPath,
+    args: ["-e", "0"],
+    env: "inherit" as const,
+    windowsVerbatimArguments: true,
+  };
+  assert.throws(() => launcher.launch(spec), {
+    code: "INVALID_PROCESS_LAUNCH",
+  });
+  const result = await launcher.run({ ...spec, maxBuffer: 1024 });
+  assert.equal(
+    (result.error as (Error & { code?: string }) | undefined)?.code,
+    "INVALID_PROCESS_LAUNCH",
+  );
+});
 
 void test("output beyond maxBuffer terminates the process and keeps maxBuffer bytes", async (t) => {
   const launcher = createProcessLauncher();
@@ -180,24 +228,20 @@ void test("a program that cannot start reports why", async (t) => {
 
 void test("closing the owner leaves no process behind and refuses new ones", async () => {
   const launcher = createProcessLauncher();
-  // The leader ignores SIGTERM, so closing escalates to SIGKILL.
+  // It ignores SIGTERM, so closing escalates to SIGKILL.
   const started = launcher.launch({
     file: process.execPath,
-    args: [
-      "-e",
-      `process.on("SIGTERM", () => {}); ${posix ? parentOfGrandchild : `process.stdout.write("0\\n"); ${forever}`}`,
-    ],
+    args: ["-e", stubborn],
     env: "inherit",
     stdio: ["ignore", "pipe", "ignore"],
-    processGroup: true,
   });
-  const reported = Number(await firstLine(started.stdout));
+  await lines(started.stdout).line("ready");
   assert.ok(started.pid !== undefined && alive(started.pid));
   await launcher.close();
   const exit = await started.exit;
-  assert.equal(exit.code === 0, false);
+  assert.notEqual(exit.code, 0);
+  if (posix) assert.equal(exit.signal, "SIGKILL");
   assert.equal(alive(started.pid), false);
-  if (posix) await gone(reported);
   assert.throws(
     () => launcher.launch({ file: process.execPath, args: [], env: "inherit" }),
     { code: "PROCESS_LAUNCHER_CLOSED" },
