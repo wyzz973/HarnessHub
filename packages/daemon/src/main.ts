@@ -51,6 +51,11 @@ import { registerApiV1 } from "./http/api-v1.js";
 import { getPreset, listPresets } from "@harnesshub/gateway/presets";
 import { modelCatalog } from "@harnesshub/gateway/catalog";
 import {
+  CatalogRefresher,
+  resolveCatalogSettings,
+} from "@harnesshub/gateway/catalog-refresh";
+import type { ModelCallEntry } from "@harnesshub/core/model-plane";
+import {
   createGatewayHandler,
   type GatewayHandler,
 } from "@harnesshub/gateway/server";
@@ -201,6 +206,24 @@ export function defaultConfigDir(
   );
 }
 
+/**
+ * The model-plane store whose ledger reports each committed call, so the
+ * catalog can refresh early when a served model had no price.
+ */
+class CallObservingModelPlaneStore extends SqliteModelPlaneStore {
+  constructor(
+    file: string,
+    private readonly observe: (entry: ModelCallEntry) => void,
+  ) {
+    super(file);
+  }
+
+  override async appendModelCall(entry: ModelCallEntry): Promise<void> {
+    await super.appendModelCall(entry);
+    this.observe(entry);
+  }
+}
+
 /** Composition root: concrete implementations are assembled only here. */
 export async function startHub(options: {
   dataDir: string;
@@ -239,10 +262,18 @@ export async function startHub(options: {
    * by `resolveHandlerLimits`; unknown or out-of-range values fail the start.
    */
   gatewayLimits?: unknown;
+  /**
+   * The model catalog settings (`catalog.autoRefresh`, default true;
+   * `catalog.url`, default models.dev), resolved by
+   * `resolveCatalogSettings`; `HH_OFFLINE=1` turns the background refresh
+   * off. Invalid values fail the start.
+   */
+  catalog?: { autoRefresh?: boolean; url?: string };
 }) {
   // HARNESSHUB_LOG_LEVEL is validated before anything starts; Workers inherit the value.
   const logLevel = parseLogLevel(process.env[LOG_LEVEL_ENVIRONMENT]);
   const gatewayLimits = resolveHandlerLimits(options.gatewayLimits);
+  const catalogSettings = resolveCatalogSettings(options.catalog, process.env);
   // Helper programs (secrets, Windows ACLs) start through this process's
   // launcher; every Gateway of the process shares it, and `main` closes it.
   const launcher = sharedProcessLauncher();
@@ -386,6 +417,7 @@ export async function startHub(options: {
   let modelGateway: GatewayHandler | undefined;
   /** The Runtime's store, where `model.call` Run events are committed. */
   let runStore: Store = store;
+  let catalog: CatalogRefresher | undefined;
   /** Where local clients reach the model gateway; known once the listener is bound. */
   let gatewayOrigin: string | undefined;
   // env credential references read the environment the daemon started with.
@@ -401,8 +433,9 @@ export async function startHub(options: {
       backend: options.secretsBackend ?? "auto",
       launcher,
     });
-    modelPlane = new SqliteModelPlaneStore(
+    modelPlane = new CallObservingModelPlaneStore(
       path.join(dataDir, "harnesshub.sqlite"),
+      (entry) => catalog?.noteCall(entry),
     );
     // Session Runs use the shared gateway (03 section 10). A Session's engine
     // is routed when the unified model was applied to its profile, or when it
@@ -440,6 +473,14 @@ export async function startHub(options: {
     await sessions.revokeAll();
     // The legacy unified model is mirrored into the model plane once.
     await harnessModel.syncModelPlane({ store: modelPlane, log: gatewayLog });
+    // The models.dev catalog: the bundled snapshot or a newer refreshed copy
+    // under <dataDir>/catalog; refreshing starts once the daemon listens.
+    catalog = await CatalogRefresher.open({
+      directory: path.join(dataDir, "catalog"),
+      settings: catalogSettings,
+      bundled: modelCatalog,
+      log: gatewayLog,
+    });
     // The shared model gateway on this listener (03-model-plane); it reads
     // providers, keys and the ledger from the store and resolves credentials
     // per upstream attempt.
@@ -638,6 +679,9 @@ export async function startHub(options: {
     // upstream requests in flight and wait for their ledger entries.
     const gatewayToClose = modelGateway;
     server.addHook("preClose", async () => gatewayToClose.close());
+    // Before the store closes: a running refresh may still update providers.
+    const catalogToClose = catalog;
+    server.addHook("preClose", async () => catalogToClose.close());
     const toolPackages = createToolPackageManagement({
       root: options.toolPackageRoot ?? path.join(dataDir, "tool-packages"),
       nodeExecutable: process.execPath,
@@ -653,7 +697,7 @@ export async function startHub(options: {
       modelPlane,
       secrets,
       presets: { list: listPresets, get: getPreset },
-      catalog: modelCatalog,
+      catalog,
       environment,
       system: () => ({
         apiVersion: "v1",
@@ -718,6 +762,7 @@ export async function startHub(options: {
       maxConcurrency: config.maxConcurrency,
       defaultTimeoutMs: config.defaultTimeoutMs,
     });
+    catalog.start();
     return { server, app, url, logFile: gatewayLog.file };
   } catch (error) {
     gatewayLog.info("gateway.start_failed", {
@@ -737,6 +782,7 @@ export async function startHub(options: {
       /* Unconfirmed process leases remain available to the next startup. */
     }
     await modelGateway?.close();
+    await catalog?.close();
     workflowStore?.close();
     modelPlane?.close();
     store.close();

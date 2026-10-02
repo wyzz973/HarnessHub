@@ -864,12 +864,24 @@ export const modelMetadataSchema = {
   },
 } as const;
 
-/** `GET /api/v1/catalog`. */
+/** `GET /api/v1/catalog` and `POST /api/v1/catalog/refresh`. */
 export const catalogStatusSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["snapshot", "autoRefresh"],
+  required: [
+    "source",
+    "snapshot",
+    "url",
+    "autoRefresh",
+    "lastRefresh",
+    "nextRefreshAt",
+  ],
   properties: {
+    source: {
+      enum: ["bundled", "refreshed"],
+      description:
+        "The catalog in use: the snapshot bundled with this build, or the copy of the last successful refresh",
+    },
     snapshot: {
       type: "object",
       additionalProperties: false,
@@ -893,7 +905,8 @@ export const catalogStatusSchema = {
         etag: { type: ["string", "null"] },
         commit: {
           type: ["string", "null"],
-          description: "models.dev repository commit seen at retrieval",
+          description:
+            "models.dev repository commit seen at retrieval; null for a refreshed copy",
         },
         sha256: {
           type: "string",
@@ -904,10 +917,33 @@ export const catalogStatusSchema = {
         models: count,
       },
     },
+    url: { type: "string", description: "Where refreshes are fetched from" },
     autoRefresh: {
-      type: "boolean",
+      type: "object",
+      additionalProperties: false,
+      required: ["enabled"],
+      properties: {
+        enabled: { type: "boolean" },
+        disabledBy: {
+          enum: ["setting", "offline"],
+          description: "catalog.autoRefresh: false, or HH_OFFLINE=1",
+        },
+      },
+    },
+    lastRefresh: {
+      type: ["object", "null"],
+      additionalProperties: false,
+      required: ["at", "outcome"],
+      properties: {
+        at: timestamp,
+        outcome: { enum: ["updated", "unchanged", "failed"] },
+        error: { type: "string" },
+      },
+    },
+    nextRefreshAt: {
+      type: ["string", "null"],
       description:
-        "Whether the catalog is refreshed in the background; always false in this version (no network use)",
+        "When the next background refresh is due; null while it is off",
     },
   },
 } as const;

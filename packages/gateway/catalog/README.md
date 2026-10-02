@@ -29,9 +29,18 @@
 
 ## 使用
 
-[src/catalog.ts](../src/catalog.ts) 在首次解析元数据时读取并校验本文件（`parseCatalog`：`meta` 完整、每个模型只有上述字段且取值有效、计数与 `meta` 一致），之后在进程内复用；文件缺失或无效是打包缺陷，读取失败。查找先按预设的 `catalog` id，再按 `author/model` 形式模型名中的作者；都没有时该模型的字段为未知，不按名称猜测。单可执行文件把本目录的 `models-dev.json` 与 `models-dev.LICENSE` 作为资源解出到同一相对路径（`tools/sea/build.mjs` 的 `catalogAssets`）。
+[src/catalog.ts](../src/catalog.ts) 在守护进程启动时读取并校验本文件（`parseCatalog`：`meta` 完整、每个模型只有上述字段且取值有效、计数与 `meta` 一致），之后在进程内复用；文件缺失或无效是打包缺陷，读取失败。查找先按预设的 `catalog` id，再按 `author/model` 形式模型名中的作者；都没有时该模型的字段为未知，不按名称猜测。单可执行文件把本目录的 `models-dev.json` 与 `models-dev.LICENSE` 作为资源解出到同一相对路径（`tools/sea/build.mjs` 的 `catalogAssets`）。
 
-运行时不联网：没有后台刷新，`GET /api/v1/catalog` 的 `autoRefresh` 为 `false`。03 第 7 节中经用户同意的自动刷新与 `hh catalog refresh` 尚未实现。
+## 运行时刷新
+
+守护进程默认在后台刷新目录（03 第 7 节，所有者 2026-10-03 决定，与 Magpie 相同），由 [src/catalog-refresh.ts](../src/catalog-refresh.ts) 的 `CatalogRefresher` 执行，组合根拥有并在关闭时等待它：
+
+- 启动后，若从未刷新或上次尝试已超过 24 小时，立即请求 `catalog.url`（默认 `https://models.dev/api.json`），之后每 24 小时一次；请求带 `If-None-Match`（使用中目录的 ETag），超时 10 秒，响应超过 64 MiB 视为失败。
+- 某次服务成功、有用量但模型没有价格的调用（账本中 `cost` 为 null）会提前刷新，距上次尝试至少 6 小时。
+- 刷新结果按上面的格式写入 `<dataDir>/catalog/models-dev.json`（`commit` 为 null，`source` 为实际地址），最近一次尝试写入 `<dataDir>/catalog/refresh.json`，都原子替换；本目录的快照不变。刷新副本比内置快照新时才使用，所以升级到带更新快照的版本后以内置快照为准。
+- 内容有变化时，守护进程在 provider 写入队列中重新解析全部 provider 的模型元数据，网关随即使用新价格。失败（连接、超时、非 2xx、内容无效）保留正在使用的目录，错误只含主机、HTTP 状态或超时。
+- `catalog.autoRefresh: false`（`startHub` 的 `catalog` 选项；配置文件尚未实现）或环境变量 `HH_OFFLINE=1` 关闭后台刷新；`HH_OFFLINE` 只接受 `1`、`0` 或空，其他值使启动失败。关闭后 `hh catalog refresh`（`POST /api/v1/catalog/refresh`）仍可手动刷新。`hh catalog status` 显示使用中的目录、来源地址、上次刷新与是否开启。
+- 测试不联网：测试启动器为所有测试设置 `HH_OFFLINE=1`，需要刷新的测试把 `catalog.url` 指向本机回环的假服务；`pnpm docs:api` 生成文档时以 `autoRefresh: false` 启动守护进程，SEA 测量脚本同样设置 `HH_OFFLINE=1`。
 
 ## 更新快照
 
@@ -39,4 +48,4 @@
 node tools/catalog-snapshot.mjs --commit "$(git ls-remote https://github.com/anomalyco/models.dev HEAD | cut -f1)"
 ```
 
-脚本下载 `api.json`（60 秒超时）与上游 `LICENSE`，确认许可仍是 MIT 后写入本目录的两个文件；`--input <api.json>` 改为读取已保存的文档并保留现有 LICENSE。任何失败以 1 退出且不写文件。更新后同步上面的表格，并运行 `pnpm check`：[model-metadata.test.ts](../../../tests/unit/model-metadata.test.ts) 检查快照能加载、只含上述字段、带许可文本，且每个预设的 `catalog` id 都在快照中；[check-catalog-snapshot.test.mjs](../../../tools/check-catalog-snapshot.test.mjs) 离线检查裁剪与格式。测试不访问网络。
+先 `pnpm build`：脚本使用网关的 `snapshotText`，与运行时刷新写出相同的格式。脚本下载 `api.json`（60 秒超时）与上游 `LICENSE`，确认许可仍是 MIT 后写入本目录的两个文件；`--input <api.json>` 改为读取已保存的文档并保留现有 LICENSE。任何失败以 1 退出且不写文件。更新后同步上面的表格，并运行 `pnpm check`：[model-metadata.test.ts](../../../tests/unit/model-metadata.test.ts) 检查快照能加载、只含上述字段、带许可文本、每个预设的 `catalog` id 都在快照中，并离线检查裁剪与格式；[catalog-refresh.test.ts](../../../tests/unit/catalog-refresh.test.ts) 以注入的 fetch 与计时器检查刷新。测试不访问网络。

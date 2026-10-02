@@ -145,6 +145,51 @@ export interface ModelCatalog {
   ): CatalogModel | undefined;
 }
 
+/** The catalog in use and how it is kept fresh (`GET /api/v1/catalog`, 03 section 7). */
+export interface CatalogStatus {
+  /** The bundled snapshot, or the copy of the last successful refresh. */
+  source: "bundled" | "refreshed";
+  /** Metadata of the catalog in use. */
+  snapshot: CatalogMeta;
+  /** Where refreshes are fetched from. */
+  url: string;
+  /** Background refresh; `disabledBy` says why it is off. */
+  autoRefresh: { enabled: boolean; disabledBy?: "setting" | "offline" };
+  /** The last refresh attempt, background or manual; null before the first. */
+  lastRefresh: {
+    at: string;
+    outcome: "updated" | "unchanged" | "failed";
+    /** Why it failed, without response bodies. */
+    error?: string;
+  } | null;
+  /** When the next background refresh is due; null while refreshing is off. */
+  nextRefreshAt: string | null;
+}
+
+/**
+ * The model catalog as the daemon uses it: the bundled snapshot or a newer
+ * refreshed copy, with its refresh. Implemented by the gateway's
+ * `CatalogRefresher`, owned by the composition root.
+ */
+export interface CatalogService {
+  /** The catalog in use; it changes only when a refresh succeeds. */
+  current(): ModelCatalog;
+  status(): CatalogStatus;
+  /**
+   * Fetch the catalog now, whether or not background refresh is on (a
+   * request already running is joined), and resolve to the status after it.
+   *
+   * @throws HubError `CATALOG_REFRESH_FAILED` (502) when the fetch or the
+   *   document fails; the catalog in use stays as it was.
+   */
+  refresh(): Promise<CatalogStatus>;
+  /**
+   * Call `listener` after each refresh that changed the catalog, before
+   * `refresh` resolves; its failure is logged, not thrown.
+   */
+  subscribe(listener: () => Promise<void>): void;
+}
+
 /** Everything resolution reads besides the provider itself. */
 export interface MetadataSources {
   /** Override of `provider/model`. */

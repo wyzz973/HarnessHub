@@ -21086,7 +21086,7 @@
         "tags": [
           "models"
         ],
-        "description": "组合根注入 @harnesshub/gateway 的 modelCatalog：读取并校验包内 catalog/models-dev.json（tools/catalog-snapshot.mjs 生成）。\n\n输入：无参数。\n\n返回：200：snapshot（source、repository、license、retrievedAt、etag、commit、上游 api.json 的 sha256 与 bytes、providers、models 数）、autoRefresh=false。\n\n副作用：只读；不联网，本版本没有后台刷新。\n\n失败与边界：需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "description": "组合根注入 @harnesshub/gateway 的 CatalogRefresher：使用内置 catalog/models-dev.json，或 <dataDir>/catalog/models-dev.json 中较新的刷新副本。\n\n输入：无参数。\n\n返回：200：source（bundled 内置快照或 refreshed 刷新副本）、snapshot（使用中目录的 source、repository、license、retrievedAt、etag、commit、上游 api.json 的 sha256 与 bytes、providers、models 数）、url、autoRefresh（enabled，关闭时 disabledBy 为 setting 或 offline）、lastRefresh（at、outcome：updated、unchanged 或 failed，失败时 error）、nextRefreshAt。\n\n副作用：只读。\n\n失败与边界：需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
         "responses": {
           "200": {
             "description": "Default Response",
@@ -21096,10 +21096,21 @@
                   "type": "object",
                   "additionalProperties": false,
                   "required": [
+                    "source",
                     "snapshot",
-                    "autoRefresh"
+                    "url",
+                    "autoRefresh",
+                    "lastRefresh",
+                    "nextRefreshAt"
                   ],
                   "properties": {
+                    "source": {
+                      "enum": [
+                        "bundled",
+                        "refreshed"
+                      ],
+                      "description": "The catalog in use: the snapshot bundled with this build, or the copy of the last successful refresh"
+                    },
                     "snapshot": {
                       "type": "object",
                       "additionalProperties": false,
@@ -21135,7 +21146,7 @@
                         },
                         "commit": {
                           "type": "string",
-                          "description": "models.dev repository commit seen at retrieval",
+                          "description": "models.dev repository commit seen at retrieval; null for a refreshed copy",
                           "nullable": true
                         },
                         "sha256": {
@@ -21157,9 +21168,298 @@
                         }
                       }
                     },
+                    "url": {
+                      "type": "string",
+                      "description": "Where refreshes are fetched from"
+                    },
                     "autoRefresh": {
-                      "type": "boolean",
-                      "description": "Whether the catalog is refreshed in the background; always false in this version (no network use)"
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "enabled"
+                      ],
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "disabledBy": {
+                          "enum": [
+                            "setting",
+                            "offline"
+                          ],
+                          "description": "catalog.autoRefresh: false, or HH_OFFLINE=1"
+                        }
+                      }
+                    },
+                    "lastRefresh": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "at",
+                        "outcome"
+                      ],
+                      "properties": {
+                        "at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "outcome": {
+                          "enum": [
+                            "updated",
+                            "unchanged",
+                            "failed"
+                          ]
+                        },
+                        "error": {
+                          "type": "string"
+                        }
+                      },
+                      "nullable": true
+                    },
+                    "nextRefreshAt": {
+                      "type": "string",
+                      "description": "When the next background refresh is due; null while it is off",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/catalog/refresh": {
+      "post": {
+        "operationId": "hh_api_v1_refresh_catalog",
+        "summary": "刷新模型目录",
+        "tags": [
+          "models"
+        ],
+        "description": "立即请求 catalog.url（默认 https://models.dev/api.json，带 If-None-Match，超时 10 秒），后台刷新关闭时也执行；已有刷新在进行时等待同一次。内容有变化时原子写入 <dataDir>/catalog/models-dev.json，再在写入队列中重新解析全部 provider 的模型元数据。\n\n输入：请求体为空对象。\n\n返回：200：刷新后的目录状态（同 GET /api/v1/catalog）。\n\n副作用：可能替换 <dataDir>/catalog 下的刷新副本与 refresh.json，并更新各 provider 的模型元数据；内置快照不变。\n\n失败与边界：502 CATALOG_REFRESH_FAILED（detail 只含主机、HTTP 状态或超时，不含响应体；原目录继续使用）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "source",
+                    "snapshot",
+                    "url",
+                    "autoRefresh",
+                    "lastRefresh",
+                    "nextRefreshAt"
+                  ],
+                  "properties": {
+                    "source": {
+                      "enum": [
+                        "bundled",
+                        "refreshed"
+                      ],
+                      "description": "The catalog in use: the snapshot bundled with this build, or the copy of the last successful refresh"
+                    },
+                    "snapshot": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "source",
+                        "repository",
+                        "license",
+                        "retrievedAt",
+                        "etag",
+                        "commit",
+                        "sha256",
+                        "bytes",
+                        "providers",
+                        "models"
+                      ],
+                      "properties": {
+                        "source": {
+                          "type": "string"
+                        },
+                        "repository": {
+                          "type": "string"
+                        },
+                        "license": {
+                          "type": "string"
+                        },
+                        "retrievedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "etag": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "commit": {
+                          "type": "string",
+                          "description": "models.dev repository commit seen at retrieval; null for a refreshed copy",
+                          "nullable": true
+                        },
+                        "sha256": {
+                          "type": "string",
+                          "description": "SHA-256 of the full upstream api.json"
+                        },
+                        "bytes": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "description": "Size of the full upstream api.json"
+                        },
+                        "providers": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "models": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      }
+                    },
+                    "url": {
+                      "type": "string",
+                      "description": "Where refreshes are fetched from"
+                    },
+                    "autoRefresh": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "enabled"
+                      ],
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "disabledBy": {
+                          "enum": [
+                            "setting",
+                            "offline"
+                          ],
+                          "description": "catalog.autoRefresh: false, or HH_OFFLINE=1"
+                        }
+                      }
+                    },
+                    "lastRefresh": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "at",
+                        "outcome"
+                      ],
+                      "properties": {
+                        "at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "outcome": {
+                          "enum": [
+                            "updated",
+                            "unchanged",
+                            "failed"
+                          ]
+                        },
+                        "error": {
+                          "type": "string"
+                        }
+                      },
+                      "nullable": true
+                    },
+                    "nextRefreshAt": {
+                      "type": "string",
+                      "description": "When the next background refresh is due; null while it is off",
+                      "nullable": true
                     }
                   }
                 }

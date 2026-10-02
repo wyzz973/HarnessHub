@@ -1384,10 +1384,10 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     group: "models",
     request: "无参数。",
     response:
-      "200：snapshot（source、repository、license、retrievedAt、etag、commit、上游 api.json 的 sha256 与 bytes、providers、models 数）、autoRefresh=false。",
+      "200：source（bundled 内置快照或 refreshed 刷新副本）、snapshot（使用中目录的 source、repository、license、retrievedAt、etag、commit、上游 api.json 的 sha256 与 bytes、providers、models 数）、url、autoRefresh（enabled，关闭时 disabledBy 为 setting 或 offline）、lastRefresh（at、outcome：updated、unchanged 或 failed，失败时 error）、nextRefreshAt。",
     implementation:
-      "组合根注入 @harnesshub/gateway 的 modelCatalog：读取并校验包内 catalog/models-dev.json（tools/catalog-snapshot.mjs 生成）。",
-    effects: "只读；不联网，本版本没有后台刷新。",
+      "组合根注入 @harnesshub/gateway 的 CatalogRefresher：使用内置 catalog/models-dev.json，或 <dataDir>/catalog/models-dev.json 中较新的刷新副本。",
+    effects: "只读。",
     errors:
       "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/model-plane-routes.ts",
@@ -1396,5 +1396,25 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "tests/integration/hh-cli.test.ts",
     ],
     operationId: "hh_api_v1_get_catalog_status",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/catalog/refresh",
+    title: "刷新模型目录",
+    group: "models",
+    request: "请求体为空对象。",
+    response: "200：刷新后的目录状态（同 GET /api/v1/catalog）。",
+    implementation:
+      "立即请求 catalog.url（默认 https://models.dev/api.json，带 If-None-Match，超时 10 秒），后台刷新关闭时也执行；已有刷新在进行时等待同一次。内容有变化时原子写入 <dataDir>/catalog/models-dev.json，再在写入队列中重新解析全部 provider 的模型元数据。",
+    effects:
+      "可能替换 <dataDir>/catalog 下的刷新副本与 refresh.json，并更新各 provider 的模型元数据；内置快照不变。",
+    errors:
+      "502 CATALOG_REFRESH_FAILED（detail 只含主机、HTTP 状态或超时，不含响应体；原目录继续使用）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/model-metadata.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_refresh_catalog",
   },
 ];

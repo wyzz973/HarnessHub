@@ -3,7 +3,7 @@
 Status: proposed
 
 日期：2026-10-02
-关联决定：[0018 编号迁移、模型平面存储与托管秘密](0018-schema-migrations-and-managed-secrets.md)；设计依据 [03 模型平面](../proposals/oss/03-model-plane.md) 第 7、8 节
+关联决定：[0018 编号迁移、模型平面存储与托管秘密](0018-schema-migrations-and-managed-secrets.md)；设计依据 [03 模型平面](../proposals/oss/03-model-plane.md) 第 7、8 节与所有者 2026-10-03 关于目录后台刷新的决定（[07 第 8 节](../proposals/oss/07-data-security.md#8-隐私与遥测)）
 
 ## 问题
 
@@ -11,7 +11,8 @@ Status: proposed
 
 ## 决定
 
-- 内置 models.dev 的裁剪快照（`packages/gateway/catalog/models-dev.json`，附 MIT 许可文本），由 `tools/catalog-snapshot.mjs` 生成，运行时只读、不联网。查找先按预设的 `catalog` id，再按 `author/model` 的作者，不按名称猜测。
+- 内置 models.dev 的裁剪快照（`packages/gateway/catalog/models-dev.json`，附 MIT 许可文本），由 `tools/catalog-snapshot.mjs` 生成。查找先按预设的 `catalog` id，再按 `author/model` 的作者，不按名称猜测。
+- 守护进程默认在后台刷新目录：每 24 小时一次，服务了无价格的调用后最早 6 小时提前一次，带 ETag，超时 10 秒；结果以同一格式存放在 `<dataDir>/catalog`，比内置快照新时才使用，失败保留正在使用的目录。内容变化后在 provider 写入队列中重新解析全部 provider。`catalog.autoRefresh: false` 或 `HH_OFFLINE=1` 关闭后台刷新，手动刷新不受影响。刷新器是组合根拥有的资源，关闭时中止请求并等待其写入；测试启动器设置 `HH_OFFLINE=1`。无价格调用经账本写入通知刷新器（组合根中覆盖 `appendModelCall` 的子类），网关代码不依赖目录。
 - 解析在写入时进行：创建 provider、`PATCH`、刷新模型列表与修改覆盖时，守护进程把每个字段的解析结果写入 `models.list` 项，网关与 `/v1/models` 不需要知道目录与覆盖。解析函数 `resolveModelMetadata` 在 core 中，是纯函数；查询接口用同一函数现算。
 - 每个推导值的来源、时间与写入时的值记录在 `model_provenance` 表中，与 provider 记录在同一事务内写入（迁移 3）。存储值与记录的推导值不同即视为手工填写，排在两种覆盖之后、实时列表之前，此后不被推导值覆盖；覆盖替换手工值时记下被替换的值，删除覆盖后恢复。
 - 覆盖存放在 `model_overrides` 表中，键为 `provider/model` 或 `provider/*`，`PUT` 整体替换；覆盖、provider 与来源记录在一个事务内写入，删除 provider 时级联删除。
@@ -26,11 +27,13 @@ Status: proposed
 
 - 本功能之前创建的 provider 没有来源记录，已有的值都按手工值保留；目录或预设更新后，要等该 provider 下一次写入（刷新、编辑或修改覆盖）才会用新数据。
 - 刷新时新的实时列表替换上一次列表给出的值；不带列表的写入沿用上一次列表的值。删除一个覆盖后，被它替换的推导值回落到预设或目录，直到下一次刷新。
-- 快照约 1.4 MB，首次解析元数据时读取并校验，之后留在内存中。
-- 尚未实现：经用户同意的后台刷新与 `hh catalog refresh`、推理档位、结构化输出、按上下文分档的价格、“输出上限小于窗口”的统一校验与缺窗口告警。
+- 快照约 1.4 MB，启动时读取并校验，之后留在内存中；刷新副本同样大小。
+- 后台刷新默认联网（GET models.dev，不带用户信息）；离线环境中请求失败，只记录在 `refresh.json` 与日志中。
+- 尚未实现：`catalog.autoRefresh` 的配置文件入口（目前是 `startHub` 的选项）、推理档位、结构化输出、按上下文分档的价格、“输出上限小于窗口”的统一校验与缺窗口告警。
 
 ## 验证要求
 
 - 单元测试：逐字段的优先顺序与来源时间、未知字段不补默认值、按作者查找、手工值在目录更新后保留、覆盖替换手工值并在删除后恢复、新实时列表替换旧值。
 - 存储测试：覆盖与来源随 provider 在一个事务内写入，无效记录不改变任何数据，删除 provider 时一并删除，重开后仍在；迁移 3 的校验和固定，版本 2 的数据库升级后数据不变。
 - 集成测试（经 SDK 与真实守护进程、本机假上游）：预设 provider 刷新后得到快照中的窗口与价格，网关按该价格记录成本；覆盖立即改变成本；重启后覆盖仍在。
+- 刷新：单元测试以注入的 fetch 与计时器检查 24 小时与 6 小时的节奏、ETag、失败保留数据与关闭；集成测试以回环假服务检查手动刷新更新 provider、`HH_OFFLINE` 关闭后台刷新、开启时启动即刷新、无价格调用提前刷新。

@@ -11,7 +11,7 @@ import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import { HubError } from "@harnesshub/core/errors";
 import type { LogSink } from "@harnesshub/core/logging";
 import type {
-  ModelCatalog,
+  CatalogService,
   ModelMetadataStore,
 } from "@harnesshub/core/model-metadata";
 import type { ModelPlaneStore } from "@harnesshub/core/model-plane";
@@ -96,10 +96,10 @@ export interface ApiV1Options {
   secrets: ManagedSecrets;
   presets: PresetCatalog;
   /**
-   * The bundled models.dev snapshot (`@harnesshub/gateway/catalog`,
-   * injected); called when metadata is first resolved, not at startup.
+   * The models.dev catalog in use and its refresh (the gateway's
+   * `CatalogRefresher`, injected and owned by the composition root).
    */
-  catalog: () => ModelCatalog;
+  catalog: CatalogService;
   /** The daemon's environment snapshot, for `env` credential references. */
   environment: Readonly<NodeJS.ProcessEnv>;
   /** Read on every `GET /system/info`. */

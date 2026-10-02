@@ -292,7 +292,7 @@ export function registerModelPlaneRoutes(
   const enrichment = createModelEnrichment({
     store: metadata,
     presets: options.presets,
-    catalog: options.catalog,
+    catalog: () => options.catalog.current(),
   });
   /** Resolve the metadata of every model of `config`, then write both. */
   const writeEnriched = async (
@@ -740,10 +740,44 @@ export function registerModelPlaneRoutes(
         return reply.code(204).send();
       }),
   );
+  // A refreshed catalog reaches the providers' stored metadata (and so the
+  // gateway's prices) in the same write queue as every other provider write.
+  options.catalog.subscribe(() =>
+    serialized(async () => {
+      const failures: unknown[] = [];
+      for (const config of await store.listProviders())
+        try {
+          const { provider: enriched, provenance } =
+            await enrichment.enrich(config);
+          await metadata.putProviderMetadata(
+            checkProvider(enriched),
+            provenance,
+          );
+        } catch (error) {
+          failures.push(error);
+        }
+      if (failures.length)
+        throw new AggregateError(
+          failures,
+          `${failures.length} providers kept their previous model metadata`,
+        );
+    }),
+  );
   api.get(
     "/catalog",
     { schema: { response: responses(catalogStatusSchema) } },
-    async () => ({ snapshot: options.catalog().meta, autoRefresh: false }),
+    async () => options.catalog.status(),
+  );
+  api.post(
+    "/catalog/refresh",
+    {
+      schema: {
+        body: emptyBodySchema,
+        response: responses(catalogStatusSchema),
+      },
+    },
+    // Not in the write queue: the provider updates of a changed catalog are.
+    async () => options.catalog.refresh(),
   );
   api.get<{ Params: { id: string } }>(
     "/providers/:id/credentials",

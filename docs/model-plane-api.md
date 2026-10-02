@@ -19,7 +19,7 @@
 | providers | `GET`、`POST /providers`；`GET`、`PATCH`、`DELETE /providers/{id}`；`POST /providers/{id}/models/refresh` | `POST` 可以只给 `preset`（可加 `id`、`name`、按协议覆盖的 `endpoints` 与第一个 `credential`）。刷新用第一个启用的凭据从上游列出模型（chat 基址 + `/models`、anthropic 基址 + `/v1/models`、gemini 基址 + `/v1beta/models`），按[模型元数据](#模型元数据)补齐每个模型的窗口与价格，手工填写的值保留；失败时保留原列表并标记 `stale`，错误只含主机与 HTTP 状态。端点是厂商官方 SDK 的基址：chat 与 responses 含 `/v1`，anthropic 与 gemini 不含版本段；以操作路径或版本段结尾、内嵌凭据、带查询串或片段、公网 HTTP 的基址被拒绝，`errors[]` 指向 `/endpoints/<协议>`。`PATCH` 是 JSON Merge Patch。被路由组或未吊销的 Key 引用时删除返回 409 |
 | credentials | `GET`、`POST /providers/{id}/credentials`；`PUT .../{credentialId}/secret`；`DELETE .../{credentialId}` | `value` 存入秘密后端，响应只含 `{kind:"store", value:<UUID>}` 引用；也可以给 `env` 或 `file` 引用。轮换保持引用不变；删除凭据或 provider 时同时删除托管秘密。06 第 3 节的 `/credentials` 顶层资源改为挂在 provider 下 |
 | models | `GET /providers/{id}/models`；`GET /models/{ref}`；`GET`、`PUT`、`DELETE /models/{ref}/overrides` | 见[模型元数据](#模型元数据)。`{ref}` 中的斜杠编码为 `%2F`（模型名本身可含斜杠）；覆盖的 `{ref}` 也可以是 `provider/*` |
-| catalog | `GET /catalog` | 内置 models.dev 快照的来源、取得时间、上游提交与 SHA-256、provider 与模型数；`autoRefresh` 为 `false` |
+| catalog | `GET /catalog`；`POST /catalog/refresh` | 使用中的 models.dev 目录（`source` 为内置快照 `bundled` 或刷新副本 `refreshed`）及其取得时间、上游提交与 SHA-256、provider 与模型数，刷新地址、是否后台刷新（关闭原因 `setting` 或 `offline`）、上次刷新与下次时间。`POST` 立即刷新，后台刷新关闭时也执行；失败为 502 `CATALOG_REFRESH_FAILED`，原目录继续使用 |
 | route-groups | `GET`、`POST /route-groups`；`GET`、`PATCH`、`DELETE /route-groups/{id}` | 成员必须是已存在 provider 的 Model Ref；被未吊销的 Key 允许时删除返回 409 |
 | gateway-keys | `GET`、`POST /gateway-keys`；`GET /gateway-keys/{id}`；`POST /gateway-keys/{id}/revoke` | 只签发 `client:` 作用域，`modelAllow` 必填；默认 90 天后过期，`expiresAt: null` 不过期。Key 文本只出现在创建响应中，列表与详情不含哈希 |
 | model-calls | `GET /model-calls` | 新到旧，`limit` 1–200（默认 50），`cursor` 为上一页的 `nextCursor`；按 `from`（含）、`to`（不含）、`keyId`、`provider`、`model`、`sessionId` 过滤 |
@@ -46,7 +46,8 @@
 - 创建 provider、`PATCH`、刷新模型列表与修改覆盖时，守护进程把解析结果写入 provider 的每个 `models.list` 项，网关按这些值计算成本（`priceSource: "provider"`）并在 `/v1/models` 中列出窗口与输出上限；同一事务内在 `model_provenance` 表中记录每个推导值的来源、时间与写入的值。
 - 手工填写：存储的值与记录的推导值不同，就视为用户在 provider 配置中填写的值，之后的写入不覆盖它；把读到的列表原样写回（如控制台编辑）不会把推导值变成手工值。覆盖会替换手工值，删除覆盖后手工值恢复。本功能之前创建的 provider 没有来源记录，其中已有的值都按手工值保留。
 - 覆盖存放在 `model_overrides` 表中，`PUT` 整体替换该 ref 的覆盖，删除 provider 时一并删除。`GET /models/{ref}` 返回 `fields`（每个已知字段的 `value`、`source`、`at`）、`unknown`、`listed`（provider 列表中是否有该模型）与适用的 `overrides`；不在列表中的模型同样可以覆盖与查询。
-- 运行时不联网。快照随发行附带 models.dev 的 MIT 许可文本，由 `tools/catalog-snapshot.mjs` 重新生成。03 第 7 节中经用户同意的后台刷新、`hh catalog refresh`、推理档位、结构化输出、按上下文分档的价格与“输出上限小于窗口”的统一校验尚未实现。
+- 目录默认在后台刷新：每 24 小时请求一次 `https://models.dev/api.json`，服务了无价格的调用后最早 6 小时提前刷新；结果存放在 `<dataDir>/catalog`，不覆盖内置快照，内容变化后重新解析全部 provider 的元数据。`HH_OFFLINE=1` 或 `catalog.autoRefresh: false` 关闭后台刷新，`hh catalog refresh` 仍可手动刷新。细节见 [模型目录](../packages/gateway/catalog/README.md#运行时刷新)。快照随发行附带 models.dev 的 MIT 许可文本。
+- 尚未实现：推理档位、结构化输出、按上下文分档的价格、“输出上限小于窗口”的统一校验与缺窗口告警，以及 `catalog.autoRefresh` 的配置文件入口（目前是 `startHub` 的选项）。
 
 ## CLI
 
@@ -66,7 +67,8 @@ hh model set deepseek/deepseek-chat context=65536 price.input=0.27 price.output=
 hh model set 'deepseek/*' output=8192        # 该 provider 的全部模型
 hh model set deepseek/deepseek-chat price.output=   # 删除覆盖中的一项
 hh model unset deepseek/deepseek-chat
-hh catalog status
+hh catalog status                            # 使用中的目录、上次刷新、是否后台刷新
+hh catalog refresh
 hh group add fast --member deepseek/deepseek-chat --strategy latency
 hh key create --name ci --allow deepseek/* --allow group/fast   # Key 只打印这一次
 hh usage --by provider --since 7d

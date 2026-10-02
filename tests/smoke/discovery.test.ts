@@ -80,7 +80,8 @@ void test(
       [fileURLToPath(MAIN_ENTRY), "--port", "0", "--data-dir", dataDir],
       {
         cwd: directory,
-        env: { HOME: home, PATH: bin },
+        // Only the fixture engines are on PATH; no catalog refresh leaves the machine.
+        env: { HOME: home, PATH: bin, HH_OFFLINE: "1" },
         stdio: ["ignore", "pipe", "pipe"],
       },
     );

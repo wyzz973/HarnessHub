@@ -21,6 +21,8 @@ try {
     dataDir: directory,
     demo: true,
     port: 0,
+    // Documentation generation never reaches the network.
+    catalog: { autoRefresh: false },
   });
   const spec = hub.server.swagger();
   const count = await checkApiCatalog(apiCatalog, spec, root);

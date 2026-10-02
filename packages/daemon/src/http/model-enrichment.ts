@@ -59,7 +59,7 @@ export type ResolvedModel = ModelMetadata & {
 export function createModelEnrichment(options: {
   store: ModelMetadataStore;
   presets: PresetCatalog;
-  /** Loaded on first use. */
+  /** The catalog in use, read once per operation. */
   catalog: () => ModelCatalog;
 }): ModelEnrichment {
   /** Per-model sources of one provider, read once per operation. */

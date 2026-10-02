@@ -7,7 +7,9 @@
  * Suites are listed in SUITES. Tests never see the developer's shell: the
  * `node --test` process gets the system variables of lib/environment.mjs, any
  * `HARNESSHUB_TEST_*` opt-in switch, and private HOME, USERPROFILE, APPDATA,
- * LOCALAPPDATA, XDG and temporary directories in a fresh sandbox. Product
+ * LOCALAPPDATA, XDG and temporary directories in a fresh sandbox, and
+ * `HH_OFFLINE=1`, so no daemon refreshes the model catalog from the network
+ * in the background. Product
  * settings (HARNESSHUB_MODEL*, AGENT_ENGINE, ...) and credentials are absent
  * unless a test sets them itself, so a developer's key can never reach an
  * upstream through a test. HARNESSHUB_TEST_SYSTEM_HOME carries the account's
@@ -68,7 +70,9 @@ const OPT_IN = /^HARNESSHUB_TEST_(?!INVENTORY_DIR$)/i;
 export function testEnvironment(parent, sandbox, systemHome) {
   const { env } = pickEnvironment(parent, { patterns: [OPT_IN] });
   env.HARNESSHUB_TEST_SYSTEM_HOME ??= systemHome;
-  return assignEnvironment(env, privateDirectories(sandbox));
+  // Daemons started by tests never refresh the model catalog from the network
+  // in the background; a test that refreshes points the daemon at a loopback URL.
+  return assignEnvironment(env, { ...privateDirectories(sandbox), HH_OFFLINE: "1" });
 }
 
 function privateDirectories(sandbox) {

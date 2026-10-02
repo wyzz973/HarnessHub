@@ -6,7 +6,7 @@
  */
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import type {
-  CatalogMeta,
+  CatalogStatus,
   MetadataField,
   ModelOverride,
   OverrideValues,
@@ -44,6 +44,7 @@ export type { SecretReference } from "@harnesshub/core/engine-configuration";
 export type { ProviderPreset } from "@harnesshub/core/provider-presets";
 export type {
   CatalogMeta,
+  CatalogStatus,
   MetadataField,
   MetadataSource,
   Modality,
@@ -277,12 +278,6 @@ export interface ModelMetadataView {
   overrides: ModelOverride[];
 }
 
-/** The bundled models.dev snapshot; it is never refreshed in the background. */
-export interface CatalogStatus {
-  snapshot: CatalogMeta;
-  autoRefresh: boolean;
-}
-
 type Query = Record<string, string | number | undefined>;
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -455,7 +450,15 @@ export class HarnessHubClient {
   };
 
   readonly catalog = {
+    /** The catalog in use (bundled snapshot or refreshed copy) and its refresh. */
     status: () => this.request<CatalogStatus>("GET", "catalog"),
+    /**
+     * Fetch the catalog now, even with background refresh off; providers'
+     * metadata is updated when it changed. A failure
+     * (`CATALOG_REFRESH_FAILED`, 502) keeps the catalog in use.
+     */
+    refresh: () =>
+      this.request<CatalogStatus>("POST", "catalog/refresh", { body: {} }),
   };
 
   readonly presets = {

@@ -282,7 +282,8 @@ async function series({ command, prefixArgs, runs, root, trace = false }) {
     try {
       const workspace = path.join(directory, "workspace");
       await mkdir(workspace);
-      const env = { ...process.env };
+      // Measurements never refresh the model catalog from the network.
+      const env = { ...process.env, HH_OFFLINE: "1" };
       const seaRoot =
         root === "fresh" ? path.join(directory, "sea-root") : root;
       if (seaRoot) env.HARNESSHUB_SEA_ROOT = seaRoot;
@@ -374,6 +375,7 @@ async function endToEnd(binary, build) {
   const key = `sea-spike-${randomUUID()}`;
   const env = {
     ...process.env,
+    HH_OFFLINE: "1",
     HARNESSHUB_SEA_ROOT: path.join(directory, "sea-root"),
     [UPSTREAM_KEY_ENV]: key,
   };

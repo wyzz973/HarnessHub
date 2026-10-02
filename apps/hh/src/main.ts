@@ -9,7 +9,7 @@ Commands:
   key         Manage Gateway Keys (list, create, revoke)
   group       Manage route groups (list, add, remove)
   model       Show model metadata with its sources; set overrides
-  catalog     Show the bundled model catalog snapshot
+  catalog     Show or refresh the models.dev catalog (status, refresh)
   usage       Summarize model-call usage by model, provider or day
   benchmark   Run, regrade or report a benchmark (hh benchmark --help)
   tools       Manage Tool Packs (hh tools --root <directory> <command>)

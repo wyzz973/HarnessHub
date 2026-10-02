@@ -373,19 +373,22 @@ void test(
       "harnesshub-cli-presets-",
     );
     const dataDir = path.join(directory, "data");
-    const hub = await startHub({
-      dataDir,
-      configDir: path.join(directory, "config"),
-      secretsBackend: "file",
-      demo: true,
-      cwd: directory,
-      port: 0,
-      host: "127.0.0.1",
-    });
-    defer(() => hub.server.close());
     const key = `sk-synthetic-cli-preset-${Date.now()}`;
     const { createServer } = await import("node:http");
     const upstream = createServer((request, response) => {
+      // A models.dev stand-in for hh catalog refresh.
+      if (request.url === "/catalog/api.json") {
+        response.writeHead(200, { "content-type": "application/json" });
+        return response.end(
+          JSON.stringify({
+            deepseek: {
+              id: "deepseek",
+              name: "DeepSeek",
+              models: { "deepseek-chat": { limit: { context: 64000 } } },
+            },
+          }),
+        );
+      }
       const ok = request.headers.authorization === `Bearer ${key}`;
       response.writeHead(ok ? 200 : 401, {
         "content-type": "application/json",
@@ -402,7 +405,19 @@ void test(
     defer(
       () => new Promise<void>((resolve) => upstream.close(() => resolve())),
     );
-    const base = `http://127.0.0.1:${(upstream.address() as { port: number }).port}/v1`;
+    const origin = `http://127.0.0.1:${(upstream.address() as { port: number }).port}`;
+    const base = `${origin}/v1`;
+    const hub = await startHub({
+      dataDir,
+      configDir: path.join(directory, "config"),
+      secretsBackend: "file",
+      demo: true,
+      cwd: directory,
+      port: 0,
+      host: "127.0.0.1",
+      catalog: { url: `${origin}/catalog/api.json` },
+    });
+    defer(() => hub.server.close());
     const daemon = ["--url", hub.url, "--data-dir", dataDir];
     const run = (args: string[], input?: string) =>
       hh(directory, [...args, ...daemon], input === undefined ? {} : { input });
@@ -542,11 +557,28 @@ void test(
     assert.equal(catalog.code, 0, catalog.stderr);
     assert.match(
       catalog.stdout,
-      /^Catalog: +models\.dev snapshot, \d+ providers, \d+ models\n/,
+      /^Catalog: +bundled snapshot of models\.dev, \d+ providers, \d+ models\n/,
     );
     assert.match(catalog.stdout, /\nCommit: +[0-9a-f]{40}\n/);
     assert.match(catalog.stdout, /\nLicense: +MIT/);
-    assert.match(catalog.stdout, /\nRefresh: +off /);
+    assert.match(
+      catalog.stdout,
+      /\nRefresh: +off \(HH_OFFLINE=1\); hh catalog refresh fetches http:\/\/127\.0\.0\.1:\d+\/catalog\/api\.json\n/,
+    );
+    assert.match(catalog.stdout, /\nLast: +never\n/);
+    const refreshedCatalog = await run(["catalog", "refresh"]);
+    assert.equal(refreshedCatalog.code, 0, refreshedCatalog.stderr);
+    assert.match(
+      refreshedCatalog.stdout,
+      /^Catalog: +refreshed copy of models\.dev, 1 providers, 1 models\n/,
+    );
+    assert.match(refreshedCatalog.stdout, /\nCommit: +unknown\n/);
+    assert.match(refreshedCatalog.stdout, /\nLast: +.+, updated\n/);
+    // The refreshed catalog reaches the provider's models.
+    assert.match(
+      (await run(["model", "show", "deepseek/deepseek-chat"])).stdout,
+      /\ncontext +64000 +catalog +\S/,
+    );
     assert.match(
       (
         JSON.parse((await run(["catalog", "status", "--json"])).stdout) as {

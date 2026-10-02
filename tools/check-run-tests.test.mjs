@@ -29,6 +29,7 @@ test("the test environment keeps system variables and opt-in switches only", () 
       HOME: "/Users/dev",
       UserProfile: "C:\\Users\\dev",
       TMPDIR: "/var/tmp",
+      HH_OFFLINE: "0",
     },
     sandbox,
     "/Users/dev",
@@ -37,6 +38,7 @@ test("the test environment keeps system variables and opt-in switches only", () 
     "APPDATA",
     "HARNESSHUB_TEST_EXAMPLE",
     "HARNESSHUB_TEST_SYSTEM_HOME",
+    "HH_OFFLINE",
     "HOME",
     "LANG",
     "LOCALAPPDATA",
@@ -55,6 +57,8 @@ test("the test environment keeps system variables and opt-in switches only", () 
   assert.equal(env.USERPROFILE, env.HOME);
   assert.equal(env.TMPDIR, path.join(sandbox, "tmp"));
   assert.equal(env.HARNESSHUB_TEST_SYSTEM_HOME, "/Users/dev");
+  // Background catalog refresh is off even when the shell turned it on.
+  assert.equal(env.HH_OFFLINE, "1");
   // A nested run keeps the outer launcher's real home.
   assert.equal(
     testEnvironment({ HARNESSHUB_TEST_SYSTEM_HOME: "/Users/dev" }, sandbox, env.HOME).HARNESSHUB_TEST_SYSTEM_HOME,

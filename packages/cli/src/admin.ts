@@ -60,7 +60,7 @@ const USAGE = `Usage: hh <command> [options]
               modalities (text,image,pdf,audio,video), price.input,
               price.output, price.cacheRead, price.cacheWrite (USD per
               million tokens); KEY= removes one key of the override
-  hh catalog status
+  hh catalog status | refresh
   hh usage [--by model|provider|day|key|adapter] [--since 7d] [--from TIME]
               [--to TIME] [--provider P] [--model REF] [--key KEY_ID]
   hh status
@@ -875,20 +875,32 @@ async function catalogCommand(args: string[]): Promise<void> {
   const [action = "", ...rest] = args;
   const { values, positionals: given } = parse(rest, {});
   const ctx = context(values);
-  if (action !== "status")
+  if (action !== "status" && action !== "refresh")
     throw new UsageError(`Unknown catalog action: ${action || "(none)"}`);
   positionals(given, []);
-  const status = await (await ctx.client()).catalog.status();
-  const { snapshot } = status;
+  const client = await ctx.client();
+  const status =
+    action === "refresh"
+      ? await client.catalog.refresh()
+      : await client.catalog.status();
+  const { snapshot, lastRefresh, autoRefresh } = status;
   output(ctx, status, () =>
     [
-      `Catalog:   models.dev snapshot, ${snapshot.providers} providers, ${snapshot.models} models`,
-      `Retrieved: ${localTime(snapshot.retrievedAt)}`,
+      `Catalog:   ${status.source === "refreshed" ? "refreshed copy" : "bundled snapshot"} of models.dev, ${snapshot.providers} providers, ${snapshot.models} models`,
+      `Retrieved: ${localTime(snapshot.retrievedAt)} from ${snapshot.source}`,
       `Commit:    ${snapshot.commit ?? "unknown"}`,
       `SHA-256:   ${snapshot.sha256} (${snapshot.bytes} bytes upstream)`,
-      `Source:    ${snapshot.source}`,
       `License:   ${snapshot.license}`,
-      `Refresh:   ${status.autoRefresh ? "automatic" : "off (bundled snapshot only; nothing is fetched)"}`,
+      `Refresh:   ${
+        autoRefresh.enabled
+          ? `on, every 24 h from ${status.url}${status.nextRefreshAt ? `; next ${localTime(status.nextRefreshAt)}` : ""}`
+          : `off (${autoRefresh.disabledBy === "offline" ? "HH_OFFLINE=1" : "catalog.autoRefresh: false"}); hh catalog refresh fetches ${status.url}`
+      }`,
+      `Last:      ${
+        lastRefresh
+          ? `${localTime(lastRefresh.at)}, ${lastRefresh.outcome}${lastRefresh.error ? `: ${lastRefresh.error}` : ""}`
+          : "never"
+      }`,
     ].join("\n"),
   );
 }

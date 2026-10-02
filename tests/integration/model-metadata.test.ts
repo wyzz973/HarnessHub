@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
+import { rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
@@ -7,6 +8,7 @@ import test from "node:test";
 import type { TestContext } from "node:test";
 import { startHub } from "@harnesshub/daemon/main";
 import { modelCatalog } from "@harnesshub/gateway/catalog";
+import { DEFAULT_CATALOG_URL } from "@harnesshub/gateway/catalog-refresh";
 import { HarnessHubError } from "@harnesshub/sdk/client";
 import { connectLocal } from "@harnesshub/sdk/local";
 import { temporaryDirectory } from "../support/temporary.js";
@@ -105,9 +107,14 @@ void test(
     const catalogAt = snapshot.meta.retrievedAt;
 
     // The catalog status comes from the bundled snapshot; nothing refreshes it.
+    // The test launcher sets HH_OFFLINE=1: the default URL is never fetched.
     assert.deepEqual(await client.catalog.status(), {
+      source: "bundled",
       snapshot: snapshot.meta,
-      autoRefresh: false,
+      url: DEFAULT_CATALOG_URL,
+      autoRefresh: { enabled: false, disabledBy: "offline" },
+      lastRefresh: null,
+      nextRefreshAt: null,
     });
 
     await client.providers.create({
@@ -347,5 +354,209 @@ void test(
     running = false;
     await hub.server.close();
     assert.equal(bodies.join("\n").includes(KEY), false);
+  },
+);
+
+/** A loopback models.dev stand-in that answers 304 to its own ETag and can fail. */
+async function catalogServer(t: TestContext) {
+  const state = { requests: 0, failWith: 0, etag: '"v1"' };
+  const body = JSON.stringify({
+    deepseek: {
+      id: "deepseek",
+      name: "DeepSeek",
+      models: {
+        [MODEL]: {
+          limit: { context: 500_000, output: 1000 },
+          cost: { input: 0.5, output: 1.5 },
+        },
+      },
+    },
+  });
+  const server = createServer((request, response) => {
+    state.requests += 1;
+    if (state.failWith) {
+      response.writeHead(state.failWith, { "content-type": "text/plain" });
+      return response.end("catalog unavailable");
+    }
+    if (request.headers["if-none-match"] === state.etag) {
+      response.writeHead(304, { etag: state.etag });
+      return response.end();
+    }
+    response.writeHead(200, {
+      "content-type": "application/json",
+      etag: state.etag,
+    });
+    response.end(body);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  return {
+    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/api.json`,
+    state,
+  };
+}
+
+async function until(condition: () => boolean, what: string): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+void test(
+  "the catalog refreshes from its URL, updates provider metadata, keeps its data on failure and refreshes in the background unless offline",
+  { timeout: 60_000 },
+  async (t) => {
+    const { directory, defer } = await temporaryDirectory(
+      t,
+      "harnesshub-catalog-refresh-",
+    );
+    const dataDir = path.join(directory, "data");
+    const base = await upstream(t);
+    const catalog = await catalogServer(t);
+    const start = () =>
+      startHub({
+        dataDir,
+        configDir: path.join(directory, "config"),
+        secretsBackend: "file",
+        demo: true,
+        cwd: directory,
+        port: 0,
+        host: "127.0.0.1",
+        catalog: { url: catalog.url },
+      });
+    let hub = await start();
+    let running = true;
+    defer(() => (running ? hub.server.close() : undefined));
+    let client = await connectLocal({ dataDir, url: hub.url });
+    const restart = async () => {
+      running = false;
+      await hub.server.close();
+      hub = await start();
+      running = true;
+      client = await connectLocal({ dataDir, url: hub.url });
+    };
+
+    // Offline (the launcher's HH_OFFLINE=1): nothing is fetched on its own.
+    const offline = await client.catalog.status();
+    assert.deepEqual(offline.autoRefresh, {
+      enabled: false,
+      disabledBy: "offline",
+    });
+    assert.equal(offline.url, catalog.url);
+    await client.providers.create({
+      preset: "deepseek",
+      endpoints: {
+        chat: `${base}/v1`,
+        responses: `${base}/v1`,
+        anthropic: `${base}/anthropic`,
+      },
+      credential: { value: KEY },
+    });
+    await client.providers.refreshModels("deepseek");
+    const bundledPrice = modelCatalog().lookup("deepseek", MODEL)?.price;
+    assert.deepEqual(
+      (await client.providers.get("deepseek")).models.list[0]?.price,
+      bundledPrice,
+    );
+    assert.equal(catalog.state.requests, 0);
+
+    // A manual refresh runs anyway and reaches the stored provider metadata.
+    const refreshed = await client.catalog.refresh();
+    assert.equal(catalog.state.requests, 1);
+    assert.equal(refreshed.source, "refreshed");
+    assert.equal(refreshed.snapshot.source, catalog.url);
+    assert.equal(refreshed.lastRefresh?.outcome, "updated");
+    assert.deepEqual((await client.providers.get("deepseek")).models.list[0], {
+      id: MODEL,
+      contextWindow: 500_000,
+      maxOutputTokens: 1000,
+      price: { input: 0.5, output: 1.5 },
+    });
+    assert.deepEqual(
+      (await client.models.get(`deepseek/${MODEL}`)).fields["price.input"],
+      { value: 0.5, source: "catalog", at: refreshed.snapshot.retrievedAt },
+    );
+
+    // A failed refresh keeps the refreshed copy and reports only the status.
+    catalog.state.failWith = 503;
+    await assert.rejects(client.catalog.refresh(), (error: unknown) => {
+      problem("CATALOG_REFRESH_FAILED", 502)(error);
+      const detail = (error as HarnessHubError).problem.detail ?? "";
+      assert.match(detail, /answered HTTP 503/);
+      assert.equal(detail.includes("catalog unavailable"), false);
+      return true;
+    });
+    catalog.state.failWith = 0;
+    const failed = await client.catalog.status();
+    assert.equal(failed.source, "refreshed");
+    assert.equal(failed.lastRefresh?.outcome, "failed");
+    assert.equal(
+      (await client.providers.get("deepseek")).models.list[0]?.price?.input,
+      0.5,
+    );
+
+    // Background refresh on: due 24 h after the last attempt, earlier after
+    // a served call without a price once 6 h have passed.
+    const saved = process.env.HH_OFFLINE;
+    process.env.HH_OFFLINE = "0";
+    t.after(() => {
+      if (saved === undefined) delete process.env.HH_OFFLINE;
+      else process.env.HH_OFFLINE = saved;
+    });
+    const sevenHoursAgo = new Date(Date.now() - 7 * 3_600_000).toISOString();
+    await writeFile(
+      path.join(dataDir, "catalog", "refresh.json"),
+      JSON.stringify({ at: sevenHoursAgo, outcome: "unchanged" }),
+    );
+    await restart();
+    const online = await client.catalog.status();
+    assert.deepEqual(online.autoRefresh, { enabled: true });
+    assert.equal(online.source, "refreshed");
+    assert.equal(
+      online.nextRefreshAt,
+      new Date(Date.parse(sevenHoursAgo) + 24 * 3_600_000).toISOString(),
+    );
+    const before = catalog.state.requests;
+    const info = await client.system.info();
+    const { key } = await client.gatewayKeys.create({
+      name: "unpriced",
+      modelAllow: ["deepseek/*"],
+    });
+    const response = await fetch(
+      `${info.gateway!.openaiBaseUrl}/chat/completions`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${key}`,
+        },
+        body: JSON.stringify({
+          model: "deepseek/deepseek-in-house",
+          messages: [{ role: "user", content: "Hello" }],
+        }),
+      },
+    );
+    assert.equal(response.status, 200, await response.text());
+    await until(
+      () => catalog.state.requests === before + 1,
+      "the early refresh after an unpriced call",
+    );
+    const early = await client.catalog.status();
+    assert.equal(early.lastRefresh?.outcome, "unchanged");
+    assert.ok(Date.parse(early.lastRefresh!.at) > Date.parse(sevenHoursAgo));
+
+    // Without a recorded attempt the background refresh runs at start.
+    await rm(path.join(dataDir, "catalog", "refresh.json"));
+    const beforeStart = catalog.state.requests;
+    await restart();
+    await until(
+      () => catalog.state.requests === beforeStart + 1,
+      "the refresh at start",
+    );
+
+    running = false;
+    await hub.server.close();
   },
 );
