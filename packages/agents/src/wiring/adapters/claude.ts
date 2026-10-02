@@ -20,6 +20,7 @@ export const claude: WiringAdapter = {
   name: "Claude Code",
   protocol: "anthropic",
   keyDelivery: "config-file",
+  executables: ["claude"],
   files: [
     {
       id: "settings",

@@ -16,6 +16,7 @@ import {
 import path from "node:path";
 import {
   applyWiring,
+  detectAgent,
   detectDrift,
   planWiring,
   unwire,
@@ -399,4 +400,33 @@ void test("a user deleting a wired file leaves nothing to unwire", async (t) => 
     result.files.map((file) => file.action),
     ["absent"],
   );
+});
+
+void test("detection uses only the explicit PATH and the adapter's directories and runs nothing", async (t) => {
+  const context = await sandbox(t);
+  const bin = path.join(context.root, "bin");
+  await mkdir(bin);
+  const marker = path.join(context.root, "ran");
+  const name = process.platform === "win32" ? "codex.cmd" : "codex";
+  // Running the command would create the marker file.
+  await writeFile(path.join(bin, name), `echo ran > "${marker}"\n`);
+  await chmod(path.join(bin, name), 0o755);
+  await writeFiles(context.home, { ".claude/settings.json": "{}\n" });
+  const env = { PATH: bin };
+  const codex = await detectAgent("codex", { ...context, env });
+  assert.equal(codex.status, "installed");
+  assert.equal(codex.executable, path.join(bin, name));
+  assert.deepEqual(codex.configDirectories, []);
+  const claude = await detectAgent("claude", { ...context, env });
+  assert.equal(claude.status, "configured-only");
+  assert.deepEqual(claude.configDirectories, [
+    path.join(context.home, ".claude"),
+  ]);
+  assert.equal((await detectAgent("codex", context)).status, "not-found");
+  assert.equal(
+    (await detectAgent("gemini", { ...context, env })).status,
+    "not-found",
+  );
+  await assert.rejects(readFile(marker), /ENOENT/);
+  await rejectsWith(detectAgent("nobody", context), "WIRING_ADAPTER_UNKNOWN");
 });

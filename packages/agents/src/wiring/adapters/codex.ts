@@ -14,6 +14,7 @@ export const codex: WiringAdapter = {
   name: "Codex CLI",
   protocol: "responses",
   keyDelivery: "config-file",
+  executables: ["codex"],
   files: [
     {
       id: "config",

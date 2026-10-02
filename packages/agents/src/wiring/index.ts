@@ -13,6 +13,7 @@ export {
   planWiring,
   unwire,
   type ApplyOptions,
+  type ConfirmedPlan,
   type DriftFinding,
   type DriftKind,
   type DriftReport,
@@ -26,6 +27,7 @@ export {
   type WiringPlan,
   type WiringTarget,
 } from "./operations.js";
+export { detectAgent, type AgentInstallation } from "./detect.js";
 export { wiringAdapter, wiringAdapters } from "./adapters/index.js";
 export type { WiringAdapter, WiringModel } from "./adapters/index.js";
 export {

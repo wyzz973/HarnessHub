@@ -22,6 +22,7 @@ export const opencode: WiringAdapter = {
   name: "OpenCode",
   protocol: "chat",
   keyDelivery: "config-file",
+  executables: ["opencode"],
   files: [{ id: "config", format: "json", locate: openCodeFile }],
   baseUrlField: {
     file: "config",

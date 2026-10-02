@@ -68,6 +68,8 @@ export interface WiringAdapter {
   readonly protocol: WireProtocol;
   /** Whether the key is written into the agent's configuration or into the dotenv file the agent loads itself. */
   readonly keyDelivery: "config-file" | "env-file";
+  /** Command names looked up on PATH to tell whether the agent is installed; never run. */
+  readonly executables: readonly string[];
   readonly files: readonly AdapterFile[];
   /** The setting that holds the gateway URL, for drift classification. */
   readonly baseUrlField: { readonly file: string; readonly path: KeyPath };

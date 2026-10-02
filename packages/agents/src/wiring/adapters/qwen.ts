@@ -16,6 +16,7 @@ export const qwen: WiringAdapter = {
   name: "Qwen Code",
   protocol: "chat",
   keyDelivery: "env-file",
+  executables: ["qwen"],
   files: [
     {
       id: "settings",

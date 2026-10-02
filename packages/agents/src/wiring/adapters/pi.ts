@@ -12,6 +12,7 @@ export const pi: WiringAdapter = {
   name: "Pi",
   protocol: "chat",
   keyDelivery: "config-file",
+  executables: ["pi"],
   files: [
     {
       id: "settings",

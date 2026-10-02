@@ -18,6 +18,7 @@ export const gemini: WiringAdapter = {
   name: "Gemini CLI",
   protocol: "gemini",
   keyDelivery: "env-file",
+  executables: ["gemini"],
   files: [
     {
       id: "settings",

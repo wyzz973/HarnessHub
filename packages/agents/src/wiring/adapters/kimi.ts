@@ -20,6 +20,7 @@ export const kimi: WiringAdapter = {
   name: "Kimi Code",
   protocol: "chat",
   keyDelivery: "config-file",
+  executables: ["kimi"],
   files: [
     {
       id: "config",

@@ -139,9 +139,14 @@ export interface WiringOptions {
   previous?: WiringRecord;
 }
 
+/** What `applyWiring` compares of a confirmed plan: each file's existence and hash. */
+export interface ConfirmedPlan {
+  files: ReadonlyArray<Pick<PlannedFile, "path" | "exists" | "hash">>;
+}
+
 export interface ApplyOptions extends WiringOptions {
-  /** The plan the user confirmed; a file that changed since fails with WIRING_CONCURRENT_MODIFICATION. */
-  expect?: WiringPlan;
+  /** The plan the user confirmed (a `WiringPlan` will do); a file that changed since fails with WIRING_CONCURRENT_MODIFICATION. */
+  expect?: ConfirmedPlan;
 }
 
 export interface WiringOutcome {
@@ -1101,7 +1106,7 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function checkExpected(plans: FilePlan[], expect: WiringPlan): void {
+function checkExpected(plans: FilePlan[], expect: ConfirmedPlan): void {
   for (const plan of plans) {
     const confirmed = expect.files.find((file) => file.path === plan.path);
     const hash = plan.state.exists ? plan.state.hash : undefined;
@@ -1195,7 +1200,8 @@ function resolveBaseUrl(text: string): string {
   return text.replace(/\/+$/, "");
 }
 
-async function checkContext(context: WiringContext): Promise<void> {
+/** Checks that `home` and `dataDir` are absolute and that `home` exists. */
+export async function checkContext(context: WiringContext): Promise<void> {
   for (const [name, value] of [
     ["home", context.home],
     ["dataDir", context.dataDir],
@@ -1240,7 +1246,8 @@ function checkRecord(record: WiringRecord): void {
     );
 }
 
-function adapterEnvironment(context: WiringContext): AdapterEnvironment {
+/** The adapter view of a context: the home and the explicit directory overrides. */
+export function adapterEnvironment(context: WiringContext): AdapterEnvironment {
   return {
     home: path.resolve(context.home),
     platform: process.platform,

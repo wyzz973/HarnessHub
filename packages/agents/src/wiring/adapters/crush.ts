@@ -19,6 +19,7 @@ export const crush: WiringAdapter = {
   name: "Crush",
   protocol: "chat",
   keyDelivery: "config-file",
+  executables: ["crush"],
   files: [{ id: "config", format: "json", locate: crushFile }],
   baseUrlField: {
     file: "config",
