@@ -1,13 +1,14 @@
 # 单可执行文件（SEA）可行性验证
 
-状态：验证记录，2026-10-02，对应 TODO 中的 OSS-008 与 [ADR-P01](adr-drafts.md#adr-p01-语言与运行时)。macOS arm64 为本机实测；macOS x64、Linux x64、Linux arm64 与 Windows x64 的构建、测量与端到端检查已写成手动工作流 [sea-spike.yml](../../../.github/workflows/sea-spike.yml)，结果待 CI，本文对应位置标为“待 CI”。本文记录的是可行性原型，不是发布流水线；发布要求仍以 [10 第 4.3 节](10-engineering.md#43-发布流水线) 与 [第 5 节](10-engineering.md#5-发布工程) 为准。
+状态：验证记录，2026-10-02，对应 TODO 中的 OSS-008 与 [ADR-P01](adr-drafts.md#adr-p01-语言与运行时)。macOS arm64 为本机实测；五个平台的构建、测量与端到端检查由工作流 [sea-spike.yml](../../../.github/workflows/sea-spike.yml) 在 CI 上完成（PR #17，运行 36970981208，每组 10 次，结果见第 5.5 节）。本文记录的是可行性原型，不是发布流水线；发布要求仍以 [10 第 4.3 节](10-engineering.md#43-发布流水线) 与 [第 5 节](10-engineering.md#5-发布工程) 为准。
 
 ## 1. 结论
 
 1. 可行。Node 24.20.0 的 SEA 能用同一个二进制承载 Gateway、Session Worker 与我们自己作为子进程启动的脚本：二进制按 argv 选择角色，`fork()` 与 `spawn(process.execPath)` 重新执行自身。macOS arm64 上 9 项端到端检查全部通过，其中包括经 Session 模型网关对脚本化 Chat Completions 上游的一次鉴权流式调用，以及 Gateway 被 SIGKILL 后的崩溃恢复。
 2. 体积：macOS arm64 二进制 125,610,416 字节（119.8 MiB），低于 ADR-P01 的 150 MB 条件，但高于 ADR 中“约 90–110 MB”的估计；其中 Node 运行时占 96%。gzip -9 后 40,542,461 字节。
 3. 冷启动：从启动进程到 `ready` 行，每次使用新的数据目录，20 次的 p95 为 166.9 ms（首次运行，含解包）与 162.6 ms（已解包），远低于 1.5 s；同机 `node dist/src/main.js` 的 p95 为 196.2 ms。
-4. 对 ADR-P01 的建议：不触发重新评估，继续以 SEA 为主要分发形式。前提是 CI 上其余四个平台的数字同样在条件之内；在此之前 OSS-008 不能勾选。第 7 节列出进入 M1 前必须解决的事项。
+4. CI 五个平台：构建与端到端检查全部通过；体积 98–131 MB，全部低于 150 MB；冷启动在每个平台都快于同机的 `node dist/src/main.js`。已解包后的 p95 在 macOS arm64、Linux x64/arm64 与 Windows x64 上为 376–721 ms；macOS x64 runner 上为 1838 ms，超过 1.5 s，但同机 node 基线也是 2310 ms；Windows 首次运行（含解包）的 p95 为 4224 ms。
+5. 对 ADR-P01 的建议：保持 SEA 为主要分发形式，不因这两项改用其他语言——它们来自 runner 本身的速度与首次解包，不来自 SEA 机制；但这两项尚不能算作“在条件之内”：macOS x64 需在真实硬件上复测，Windows 首次运行需要查明耗时来源（推测是 Defender 扫描新写入的可执行文件）并设法消除或改为安装时解包。第 7 节列出进入 M1 前必须解决的事项。
 
 ## 2. Node 24.20.0 的 SEA 能力
 
@@ -105,14 +106,17 @@ bundle 的输入共 3,937 KiB：自有代码 923 KiB（drivers 316、tool-packag
 | `recovery.after-crash` | 通过 | Run 运行中 SIGKILL Gateway，重启的 SEA 把 Run 标为 `interrupted`/`gateway_restarted`，清理 `confirmed`；Worker 租约记录的命令行与 `ps` 输出一致 |
 | `serve.stop` | 通过 | SIGTERM 后退出码 0 |
 
-### 5.5 其他平台
+### 5.5 CI 五个平台
 
-| 目标 | runner | 体积 | 冷启动 p95 | 端到端 |
-|---|---|---|---|---|
-| darwin-x64 | macos-15-intel | 待 CI | 待 CI | 待 CI |
-| linux-x64 | ubuntu-latest | 待 CI | 待 CI | 待 CI |
-| linux-arm64 | ubuntu-24.04-arm | 待 CI | 待 CI | 待 CI |
-| win32-x64 | windows-latest | 待 CI | 待 CI | 待 CI |
+GitHub 托管 runner，PR #17 的运行 36970981208（提交 e57ed2a），每组 10 次；“首次运行”每次使用新的解包根目录，“已解包”复用同一根目录，基线为同机 `node dist/src/main.js`。runner 的速度与本机不同，跨平台比较应看同机基线。
+
+| 目标 | runner | 体积（字节） | 首次运行 p50/p95 | 已解包 p50/p95 | node 基线 p50/p95 | 端到端 |
+|---|---|---|---|---|---|---|
+| darwin-arm64 | macos-latest | 125,626,832 | 327 / 398 ms | 283 / 376 ms | 388 / 537 ms | 9/9 |
+| darwin-x64 | macos-15-intel | 128,698,128 | 1226 / 2118 ms | 1162 / 1838 ms | 1458 / 2310 ms | 9/9 |
+| linux-arm64 | ubuntu-24.04-arm | 127,274,112 | 398 / 423 ms | 398 / 406 ms | 520 / 592 ms | 9/9 |
+| linux-x64 | ubuntu-latest | 131,075,264 | 452 / 456 ms | 448 / 455 ms | 576 / 581 ms | 9/9 |
+| win32-x64 | windows-latest | 98,080,768 | 716 / 4224 ms | 679 / 721 ms | 803 / 861 ms | 8/8 |
 
 macos-13 已不再向公开仓库提供（2026-10-02 查阅 GitHub 托管 runner 文档），darwin-x64 改用 macos-15-intel。Windows 上 `kill()` 直接终止进程，因此不做 `serve.stop` 检查；Worker 租约的命令行比对只适用于 POSIX，Windows 的恢复走 Job 对象。win32-arm64 是 [10 第 5 节](10-engineering.md#5-发布工程) 的产物目标之一，但不在 ADR-P01 的验证范围内，本次未覆盖。
 
@@ -133,14 +137,14 @@ macos-13 已不再向公开仓库提供（2026-10-02 查阅 GitHub 托管 runner
 
 ## 7. 对照 ADR-P01 的建议
 
-ADR-P01 的重新评估条件是冷启动超过 1.5 s 或体积超过 150 MB。macOS arm64 的 p95 为 166.9 ms，体积 125.6 MB，两项都不触发；体积余量约 24 MB，主要风险是 Node 运行时本身继续变大，HarnessHub 的代码与依赖只占约 4%。建议保持 ADR-P01 的决定，在 CI 五个平台通过后勾选 OSS-008，并把 ADR-P01 中的体积估计更新为实测值。
+ADR-P01 的重新评估条件是冷启动超过 1.5 s 或体积超过 150 MB。体积在五个平台都不触发（最大 131 MB，余量约 19 MB；主要风险是 Node 运行时本身继续变大，HarnessHub 的代码与依赖只占约 4%）。冷启动在本机与四个 runner 上远低于 1.5 s，且所有平台都快于同机 node 基线；超过 1.5 s 的两项是 macOS x64 runner（同机 node 基线同样超过）与 Windows 首次运行（解包后降到 721 ms）。建议保持 ADR-P01 的决定，把 ADR-P01 中的体积估计更新为实测值；OSS-008 视为“机制可行、两项数字待复核”：在真实 Intel Mac 上复测冷启动，查明并消除 Windows 首次运行的耗时，然后再勾选。
 
 进入 M1 前需要的工作：
 
 1. 用一个模块统一负责“自有子进程入口与磁盘资源的位置”（Worker、启动器、command MCP、原生辅助程序、Pi 扩展、构建身份），npm 包与 SEA 都经它解析，替代构建时的 `import.meta.url` 改写。
 2. 持久化的引擎命令改为符号化的启动器引用，使升级与移动可执行文件不破坏已有登记。
 3. 确定 node-compat 的契约：支持的调用形式、不支持的 Node 选项、`node` 垫片目录。
-4. 签名与公证后重跑端到端检查；Windows 首次启动受 Defender 扫描的影响看 CI 结果中的预热时间。
+4. 签名与公证后重跑端到端检查；查明 Windows 首次运行 p95 4.2 s 的来源（推测 Defender 扫描新解包的可执行文件），考虑安装时解包或减少需要解包的可执行文件。
 5. 升级 Node 主版本时重新验证 SEA 接口；本次只调研了 Node 24.20.0。
 
 ## 8. 复现
@@ -158,8 +162,8 @@ node scripts/sea/measure.mjs --runs 20 --baseline
 
 ## 9. 未验证
 
-- 其余四个平台的构建、体积、冷启动与端到端检查（待 CI）。
+- 真实 Intel Mac 上的冷启动（CI 的 macos-15-intel runner 本身较慢）；Windows 首次运行耗时的来源。
 - 重启后页缓存为空时的冷启动、内存占用。
 - 签名与公证后的产物，以及 macOS 隔离属性下的首次运行。
 - 真实引擎；工具包的 CLI 工具调用（只验证了 `tools/list`）；Pi 读取解包出的扩展；从解包位置调用钥匙串辅助程序完成密钥操作。
-- Windows 上的全部行为，包括 Job 辅助程序与 ACL 辅助程序从解包位置运行。
+- Windows 上除端到端检查覆盖之外的行为：端到端检查已覆盖从解包位置运行的 Job 辅助程序（demo Run 与崩溃恢复的清理为 `confirmed`），ACL 辅助程序与 DPAPI 辅助程序未单独验证。
