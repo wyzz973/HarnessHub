@@ -197,6 +197,12 @@ export interface GatewayKeyRecord {
   /** Model Refs, `provider/*` and `group/<id>`; empty allows nothing. */
   modelAllow: string[];
   quota?: GatewayKeyQuota;
+  /**
+   * The key may be presented on the LAN listener of gateway sharing
+   * (03 section 2, 07 section 5.4). Only `client` keys carry it; every other
+   * key works from loopback connections only.
+   */
+  allowLan?: boolean;
   /** Lowercase hex SHA-256 of the secret part. */
   secretHash: string;
   createdAt: string;

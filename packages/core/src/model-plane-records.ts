@@ -315,6 +315,12 @@ export function isGatewayKeyRecord(value: unknown): value is GatewayKeyRecord {
       1000,
     )(value.modelAllow) &&
     optional(value.quota, quota) &&
+    optional(
+      value.allowLan,
+      (allow) =>
+        typeof allow === "boolean" &&
+        (!allow || (object(value.scope) && value.scope.kind === "client")),
+    ) &&
     sha256(value.secretHash) &&
     isTimestamp(value.createdAt) &&
     optional(value.expiresAt, isTimestamp) &&

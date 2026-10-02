@@ -519,6 +519,9 @@ void test("Gateway Keys keep only the secret hash and support revoke and touch",
     { ...fresh.record, scope: { kind: "user", id: "x" } },
     { ...fresh.record, modelAllow: ["no-slash"] },
     { ...fresh.record, quota: { requestsPerMinute: 0 } },
+    // Only client keys may be used from the local network.
+    { ...fresh.record, allowLan: true },
+    { ...fresh.record, allowLan: "yes" },
   ];
   for (const sample of invalid)
     await assert.rejects(
@@ -526,6 +529,14 @@ void test("Gateway Keys keep only the secret hash and support revoke and touch",
       code("MODEL_PLANE_RECORD_INVALID"),
     );
   assert.equal(count(raw(), "gateway_keys"), 2);
+  const lan = key({ kind: "client", name: "laptop" }, "lan key");
+  await plane.createGatewayKey({ ...lan.record, allowLan: true });
+  assert.equal((await plane.getGatewayKey(lan.record.keyId))?.allowLan, true);
+  await plane.createGatewayKey({
+    ...fresh.record,
+    allowLan: false,
+  });
+  assert.equal(count(raw(), "gateway_keys"), 4);
 });
 
 void test("wirings refer to stored keys and are replaced per adapter", async (t) => {
