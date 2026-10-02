@@ -18,8 +18,8 @@ OSS-004 把 `src` 迁入 12 个 pnpm workspace 包，要求行为不变、用例
 3. **注入模型网关工厂**：`ModelGateway`、`ModelGatewayOptions`、`ModelCallRecord`、`InboundProtocol` 移到 `core/model-bridge.ts`；`PreparationHooks` 新增可选的 `startModelGateway`，由 daemon 的 Worker 入口与组合根（配置探测路径）注入。准备过程需要模型路由而调用方没有注入时，抛出具名 HubError，不静默跳过网关。M1 把网关移入 daemon 时沿用同一接缝。
 4. **临时 `child_process` 例外**：drivers/cli、secrets、store/platform 与 agents/tool-command 暂时保留各自的 `child_process` 调用；probe.ts 移入 runtime。例外写在边界检查的允许表中，每项带所有者 OSS-010 F08 与期限 M0 退出（OSS-013）。期限到达时 `ProcessLauncher` 接口在 core、实现在 runtime、由 daemon 注入，例外随之删除。
 5. **注入 Worker 入口**：Worker 宿主新增必填选项 `workerEntry`；daemon 传入自己的 `new URL("./worker/main.js", import.meta.url)`，测试从 `tests/support/entries.ts` 取得 `WORKER_ENTRY`。租约保存自己的 `workerPath`，迁移前创建的租约继续按其记录校验。OSS-008 之前 Worker 仍按路径派生。
-6. **运行时资源留在 `scripts/`**：`launch-engine.mjs`、`spawn-engine.mjs`、`launch-{dsh,openclaw,opencode,pi}-acp.mjs` 与 `native-mcp/pi-extension.mjs` 在 OSS-004 期间不移动，仓库工具移到 `tools/`。agents 只通过 `agents/configuration/launch.ts` 中唯一的 `repositoryScript(name)` 定位这些文件；这一越出包的相对 URL 是归 OSS-004 所有的例外，资源以后带旧路径别名迁移时删除。
-7. **映射已保存的旧 command-mcp 路径**：`tool-packages/bind.ts` 把 `command-mcp.js` 的绝对路径写入工具包绑定的 MCP 参数并保存在 SQLite 中。agents 导出 `COMMAND_MCP_ENTRY`；prepare 在启动前把旧位置 `dist/src/drivers/tool-command/command-mcp.js` 映射到当前入口，其他路径原样保留，并以测试固定这一行为。该映射在 M1 删除。
+6. **运行时资源留在 `scripts/`**：`launch-engine.mjs`、`spawn-engine.mjs`、`launch-{dsh,openclaw,opencode,pi}-acp.mjs` 与 `native-mcp/pi-extension.mjs` 在 OSS-004 期间不移动，仓库工具移到 `tools/`。agents 只通过一个 `repositoryScript(name)` 定位这些文件；这一越出包的相对 URL 是归 OSS-004 所有的例外，登记在边界检查的 URL 例外表中，随 OSS-013 到期，资源届时带旧路径别名迁入包内。实现时该函数放在包级的 `agents/src/repository.ts` 而不是 `configuration/launch.ts`：engine 的发现与安装快照也要定位启动器，而 engine 不能依赖原 drivers 模块（2026-10-02 第 7 步）。
+7. **映射已保存的旧 command-mcp 路径**：`tool-packages/bind.ts` 把 `command-mcp.js` 的绝对路径写入工具包绑定的 MCP 参数并保存在 SQLite 中。agents 导出 `COMMAND_MCP_ENTRY`；prepare 在启动前把旧位置 `dist/src/drivers/tool-command/command-mcp.js` 映射到当前入口，其他路径原样保留，SQLite 中的记录不改写，并以使用已保存记录的集成测试固定这一行为。该映射在 M1 删除。
 
 ## 考虑过的替代方案
 
