@@ -199,14 +199,25 @@ export async function startHub(options: {
   const requestedDataDir = path.resolve(options.dataDir);
   await mkdir(requestedDataDir, { recursive: true, mode: 0o700 });
   const dataDir = await realpath(requestedDataDir);
+  // Ownership comes first: a second start on this directory fails before it
+  // writes anything, including the running Gateway's log and model file (F05).
+  const store = new SqliteStore(path.join(dataDir, "harnesshub.sqlite"));
+  try {
+    store.acquireOwner();
+  } catch (error) {
+    store.close();
+    throw error;
+  }
   /** A Session's engine log, written by its Worker under the Session state directory. */
   const engineLogPath = (sessionId: string) =>
     path.join(dataDir, "backends", sessionId, "diagnostics", "engine.log");
-  const gatewayLog = openGatewayLog(
-    dataDir,
-    logLevel,
-    options.logEcho ?? false,
-  );
+  let gatewayLog: ReturnType<typeof openGatewayLog>;
+  try {
+    gatewayLog = openGatewayLog(dataDir, logLevel, options.logEcho ?? false);
+  } catch (error) {
+    store.close();
+    throw error;
+  }
   gatewayLog.info("gateway.start", {
     pid: process.pid,
     dataDir,
@@ -240,6 +251,7 @@ export async function startHub(options: {
       stage: "unified-model",
       message: error instanceof Error ? error.message : String(error),
     });
+    store.close();
     throw error;
   }
   {
@@ -279,13 +291,6 @@ export async function startHub(options: {
     ...(options.consoleUrl ? { consoleUrl: options.consoleUrl } : {}),
   };
   const artifactRoot = path.join(dataDir, "artifacts");
-  const store = new SqliteStore(path.join(dataDir, "harnesshub.sqlite"));
-  try {
-    store.acquireOwner();
-  } catch (error) {
-    store.close();
-    throw error;
-  }
   const host = new ProcessWorkerHost({
     shutdownGraceMs: config.cancelGraceMs,
     maxWorkers: config.maxWorkers,

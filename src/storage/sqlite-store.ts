@@ -4,6 +4,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { HubError } from "../domain/errors.js";
+import { acquireInstanceLock, type InstanceLock } from "./instance-lock.js";
 import type { Store } from "../domain/ports.js";
 import { isTerminal } from "../domain/types.js";
 import type {
@@ -88,37 +89,6 @@ interface RuntimeOwner {
   startedAt: number;
 }
 
-function runtimeOwner(value: unknown): value is RuntimeOwner {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    return false;
-  return (
-    "pid" in value &&
-    typeof value.pid === "number" &&
-    Number.isSafeInteger(value.pid) &&
-    value.pid > 0 &&
-    "token" in value &&
-    typeof value.token === "string" &&
-    value.token.length > 0 &&
-    "startedAt" in value &&
-    typeof value.startedAt === "number" &&
-    Number.isSafeInteger(value.startedAt) &&
-    value.startedAt >= 0
-  );
-}
-
-function pidIsAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if (typeof error === "object" && error !== null && "code" in error) {
-      if (error.code === "ESRCH") return false;
-      if (error.code === "EPERM") return true;
-    }
-    throw error;
-  }
-}
-
 function readSession(value: unknown): SessionRecord {
   const session = decodeRecord(value, sessionRecord);
   return {
@@ -163,8 +133,12 @@ export class SqliteStore implements Store {
   private readonly db: DatabaseSync;
   private closed = false;
   private ownerToken: string | undefined;
+  private ownerLock: InstanceLock | undefined;
+  /** Lock file next to the database; an in-memory database has no other users. */
+  private readonly lockPath: string | undefined;
 
   constructor(dbPath: string) {
+    this.lockPath = dbPath === ":memory:" ? undefined : `${dbPath}.lock`;
     if (dbPath !== ":memory:")
       mkdirSync(dirname(dbPath), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(dbPath);
@@ -221,56 +195,64 @@ export class SqliteStore implements Store {
   }
 
   /** Composition roots acquire the local Gateway ownership before recovery or accepting
-   * work. Ordinary read/test connections do not acquire it. A live owner (including
-   * another instance in this PID) produces 409; dead owners are replaced atomically.
-   * Returned release callbacks are idempotent and can only remove their original token.
+   * work. Ordinary read/test connections do not acquire it.
+   *
+   * Ownership is the exclusive lock on `<database>.lock` (see acquireInstanceLock),
+   * held until release or close. Another holder, in this process or another,
+   * produces 409 `RUNTIME_ALREADY_RUNNING`. The owner record in the database
+   * (pid, token, start time) is diagnostic: once the lock is held, a previous
+   * record is stale by definition and is replaced, whatever its PID now names.
+   * Acquiring again on the owning store returns the same token. Returned release
+   * callbacks are idempotent and can only remove their original token.
    */
   acquireOwner(): () => void {
-    const token = this.transaction(() => {
-      // Operational ownership metadata is separate from the versioned public records.
-      this.db.exec(
-        "CREATE TABLE IF NOT EXISTS runtime_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL CHECK(json_valid(value)))",
-      );
-      const previous = this.db
-        .prepare("SELECT value FROM runtime_metadata WHERE key = 'owner'")
-        .get();
-      if (previous) {
-        const owner = decodeRecord(previous.value, runtimeOwner);
-        if (owner.token === this.ownerToken && owner.pid === process.pid)
-          return owner.token;
-        if (pidIsAlive(owner.pid))
-          throw new HubError(
-            "RUNTIME_ALREADY_RUNNING",
-            "Another live Gateway owns this database",
-            409,
+    if (this.ownerToken === undefined) {
+      const lock = this.lockPath
+        ? acquireInstanceLock(this.lockPath)
+        : { release: () => undefined };
+      try {
+        this.ownerToken = this.transaction(() => {
+          // Operational ownership metadata is separate from the versioned public records.
+          this.db.exec(
+            "CREATE TABLE IF NOT EXISTS runtime_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL CHECK(json_valid(value)))",
           );
+          const owner: RuntimeOwner = {
+            pid: process.pid,
+            token: randomUUID(),
+            startedAt: Date.now(),
+          };
+          this.db
+            .prepare(
+              "INSERT INTO runtime_metadata (key, value) VALUES ('owner', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            )
+            .run(JSON.stringify(owner));
+          return owner.token;
+        });
+      } catch (error) {
+        lock.release();
+        throw error;
       }
-      const owner: RuntimeOwner = {
-        pid: process.pid,
-        token: randomUUID(),
-        startedAt: Date.now(),
-      };
-      this.db
-        .prepare(
-          "INSERT INTO runtime_metadata (key, value) VALUES ('owner', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        )
-        .run(JSON.stringify(owner));
-      return owner.token;
-    });
-    this.ownerToken = token;
+      this.ownerLock = lock;
+    }
+    const token = this.ownerToken;
     return () => this.releaseOwner(token);
   }
 
   private releaseOwner(token: string): void {
-    if (this.closed) return;
-    this.transaction(() => {
-      this.db
-        .prepare(
-          "DELETE FROM runtime_metadata WHERE key = 'owner' AND json_extract(value, '$.token') = ?",
-        )
-        .run(token);
-    });
-    if (this.ownerToken === token) this.ownerToken = undefined;
+    if (this.closed || this.ownerToken !== token) return;
+    try {
+      this.transaction(() => {
+        this.db
+          .prepare(
+            "DELETE FROM runtime_metadata WHERE key = 'owner' AND json_extract(value, '$.token') = ?",
+          )
+          .run(token);
+      });
+    } finally {
+      this.ownerToken = undefined;
+      this.ownerLock?.release();
+      this.ownerLock = undefined;
+    }
   }
 
   /** Versioned operational catalog; the owner must acquire this database first. */
