@@ -923,3 +923,68 @@ test("the daemon's http/ keeps the gateway rules, cli stays on core, and URLs re
     /new URL leaves packages\/daemon: \.\.\/\.\.\/\.\.\/package\.json/,
   );
 });
+
+test("the console reaches the daemon only through the sdk", () => {
+  assert.deepEqual(
+    checkAt(
+      "packages/console/lib/api.ts",
+      'import type { Client } from "@harnesshub/sdk/index";',
+    ),
+    [],
+  );
+  assert.deepEqual(
+    checkAt(
+      "packages/console/app/page.tsx",
+      'import { contracts } from "../lib/contracts";\nimport { Button } from "@/components/ui/button";',
+    ),
+    [],
+  );
+  assert.match(
+    checkAt(
+      "packages/console/lib/contracts.ts",
+      'import type { RunId } from "@harnesshub/core/types";',
+    ).join("\n"),
+    /packages\/console cannot depend on @harnesshub\/core/,
+  );
+  assert.match(
+    checkAt(
+      "packages/console/components/run.tsx",
+      'import { startHub } from "@harnesshub/daemon/main";',
+    ).join("\n"),
+    /packages\/console cannot depend on @harnesshub\/daemon/,
+  );
+  assert.match(
+    checkAt(
+      "packages/console/lib/server.ts",
+      'import { createGateway } from "../../daemon/src/http/server.js";',
+    ).join("\n"),
+    /relative import leaves packages\/console/,
+  );
+});
+
+test("CLI scans the console's app/, components/ and lib/", (context) => {
+  const directory = mkdtempSync(
+    join(tmpdir(), "harnesshub-boundaries-console-"),
+  );
+  context.after(() => rmSync(directory, { recursive: true, force: true }));
+  const lib = join(directory, "packages", "console", "lib");
+  mkdirSync(lib, { recursive: true });
+  const run = () =>
+    spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL("./check-boundaries.mjs", import.meta.url)),
+        directory,
+      ],
+      { encoding: "utf8" },
+    );
+  writeFileSync(join(lib, "contracts.ts"), 'import "@harnesshub/core/types";');
+  const invalid = run();
+  assert.equal(invalid.status, 1);
+  assert.match(
+    invalid.stderr,
+    /packages\/console\/lib\/contracts\.ts:1 packages\/console cannot depend on @harnesshub\/core/,
+  );
+  writeFileSync(join(lib, "contracts.ts"), "export const ok = true;");
+  assert.equal(run().status, 0);
+});

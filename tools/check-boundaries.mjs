@@ -4,8 +4,8 @@
  * Usage: node tools/check-boundaries.mjs [repository root]
  *
  * Scans the legacy tree `src/`, and `src/` and `test/` of every workspace
- * package under `packages/` and `apps/`, while OSS-004 moves code into
- * packages (docs/proposals/oss/13-package-migration.md):
+ * package under `packages/` and `apps/` (SOURCE_AREAS for the console), while
+ * OSS-004 moves code into packages (docs/proposals/oss/13-package-migration.md):
  *
  * - Legacy modules (`allowed`) keep their rules, in src/ and inside packages:
  *   PACKAGE_ORIGINS maps each package file back to its legacy path. Package
@@ -87,6 +87,14 @@ export const PACKAGE_GRAPH = {
   sdk: ["core"],
   console: ["sdk"],
 };
+
+/**
+ * Source directories of packages that do not use src/ and test/: the Next.js
+ * console keeps its code in app/, components/ and lib/. Their files are bound
+ * by the dependency graph (console may import only the sdk) and the
+ * stay-inside rule, without legacy module rules.
+ */
+export const SOURCE_AREAS = { console: ["app", "components", "lib"] };
 
 /** Applications only dispatch to the packages that own the commands. */
 export const APP_GRAPH = { hh: ["cli", "daemon"] };
@@ -663,10 +671,8 @@ function sourceTrees(root) {
     }
     for (const entry of entries)
       if (entry.isDirectory())
-        trees.push(
-          join(root, top, entry.name, "src"),
-          join(root, top, entry.name, "test"),
-        );
+        for (const area of SOURCE_AREAS[entry.name] ?? ["src", "test"])
+          trees.push(join(root, top, entry.name, area));
   }
   return trees;
 }
