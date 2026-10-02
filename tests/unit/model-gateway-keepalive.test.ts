@@ -577,7 +577,7 @@ void test(
       if (text.includes("fail-late"))
         return [
           data(delta({ content: "Hel" })),
-          ...busy(9, 200, [data(delta({}))]),
+          ...busy(11, 200, [data(delta({}))]),
           ERROR,
         ];
       return [
