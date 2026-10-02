@@ -13,50 +13,64 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
+  checkManifest,
   checkSource,
-  legacyDestination,
+  declaredDependencies,
   legacyPathOf,
 } from "./check-boundaries.mjs";
 
 const root = join(tmpdir(), "harnesshub-boundary-fixture");
-const check = (file, contents) =>
-  checkSource(join(root, "src", file), contents, root);
-const checkAt = (file, contents) =>
-  checkSource(join(root, file), contents, root);
+/** Check a file at a repository path; `declared` enables that rule. */
+const checkAt = (file, contents, declared) =>
+  checkSource(join(root, file), contents, root, declared);
+const cli = fileURLToPath(new URL("./check-boundaries.mjs", import.meta.url));
+/** Run the CLI on a repository directory. */
+const run = (directory) =>
+  spawnSync(process.execPath, [cli, directory], { encoding: "utf8" });
+/** Write files below a directory, creating their parents. */
+function write(directory, files) {
+  for (const [path, text] of Object.entries(files)) {
+    const file = join(directory, ...path.split("/"));
+    mkdirSync(join(file, ".."), { recursive: true });
+    writeFileSync(file, text);
+  }
+}
+const manifest = (name, dependencies = {}, devDependencies = {}) =>
+  JSON.stringify({ name, dependencies, devDependencies });
 
 test("release templates and tool packages cannot create a second execution path", () => {
   assert.deepEqual(
-    check(
-      "distribution/config.ts",
-      'import type { EngineRegistration } from "../domain/engines.js";',
+    checkAt(
+      "packages/agents/src/distribution/config.ts",
+      'import type { EngineRegistration } from "@harnesshub/core/engines";',
     ),
     [],
   );
   assert.deepEqual(
-    check(
-      "tool-packages/store.ts",
-      'import { openPrivate } from "../platform/windows-acl.js";',
+    checkAt(
+      "packages/agents/src/tool-packages/store.ts",
+      'import { ensurePrivateDirectory } from "@harnesshub/store/platform/windows-acl";',
     ),
     [],
   );
   assert.match(
-    check(
-      "distribution/run.ts",
-      'import { AcpDriver } from "../drivers/acp/driver.js";',
+    checkAt(
+      "packages/agents/src/distribution/run.ts",
+      'import { prepareConfiguration } from "../configuration/prepare.js";',
     ).join("\n"),
     /distribution cannot depend on drivers/,
   );
   assert.match(
-    check(
-      "tool-packages/run.ts",
-      'import { Runtime } from "../runtime/runtime.js";',
+    checkAt(
+      "packages/agents/src/tool-packages/run.ts",
+      'import { normalizeEngine } from "../engine/registry.js";',
     ).join("\n"),
-    /tool-packages cannot depend on runtime/,
+    /tool-packages cannot depend on engine/,
   );
   assert.match(
-    check(
-      "gateway/tools.ts",
-      'import { installLocal } from "../tool-packages/index.js";',
+    checkAt(
+      "packages/daemon/src/http/tools.ts",
+      'import { installLocal } from "@harnesshub/agents/tool-packages/index";',
     ).join("\n"),
     /gateway cannot depend on tool-packages/,
   );
@@ -64,68 +78,68 @@ test("release templates and tool packages cannot create a second execution path"
 
 test("diagnostic log files are written by process owners, never by business modules", () => {
   assert.deepEqual(
-    check(
-      "worker/log.ts",
+    checkAt(
+      "packages/daemon/src/worker/log.ts",
       'import { JsonLogFile } from "../logging/json-log-file.js";',
     ),
     [],
   );
   assert.deepEqual(
-    check(
-      "logging/json-log-file.ts",
-      'import type { LogSink } from "../domain/logging.js";',
+    checkAt(
+      "packages/daemon/src/logging/json-log-file.ts",
+      'import type { LogSink } from "@harnesshub/core/logging";',
     ),
     [],
   );
   assert.match(
-    check(
-      "logging/store.ts",
-      'import { Runtime } from "../runtime/runtime.js";',
+    checkAt(
+      "packages/daemon/src/logging/store.ts",
+      'import { Runtime } from "@harnesshub/runtime/runtime/runtime";',
     ).join("\n"),
     /logging cannot depend on runtime/,
   );
   assert.match(
-    check(
-      "gateway/log.ts",
+    checkAt(
+      "packages/daemon/src/http/log.ts",
       'import { JsonLogFile } from "../logging/json-log-file.js";',
     ).join("\n"),
     /gateway cannot depend on logging/,
   );
   assert.match(
-    check(
-      "drivers/acp/log.ts",
-      'import { JsonLogFile } from "../../logging/json-log-file.js";',
+    checkAt(
+      "packages/drivers/src/acp/log.ts",
+      'import { JsonLogFile } from "@harnesshub/daemon/logging/json-log-file";',
     ).join("\n"),
-    /drivers cannot depend on logging/,
+    /packages\/drivers cannot depend on @harnesshub\/daemon/,
   );
 });
 
 test("platform filesystem primitives have bounded dependencies and cannot leak into business modules", () => {
   assert.deepEqual(
-    check(
-      "artifacts/files.ts",
-      'import { verifyPrivateFile } from "../platform/windows-acl.js";',
+    checkAt(
+      "packages/runtime/src/artifacts/files.ts",
+      'import { verifyPrivateFile } from "@harnesshub/store/platform/windows-acl";',
     ),
     [],
   );
   assert.deepEqual(
-    check(
-      "platform/windows-acl.ts",
-      'import { execFile } from "node:child_process";',
+    checkAt(
+      "packages/store/src/platform/windows-acl.ts",
+      'import { HubError } from "@harnesshub/core/errors";',
     ),
     [],
   );
   assert.match(
-    check(
-      "platform/windows-acl.ts",
-      'import { Runtime } from "../runtime/run.js";',
+    checkAt(
+      "packages/store/src/platform/windows-acl.ts",
+      'import { SqliteStore } from "../storage/sqlite-store.js";',
     ).join("\n"),
-    /platform cannot depend on runtime/,
+    /platform cannot depend on storage/,
   );
   assert.match(
-    check(
-      "runtime/run.ts",
-      'import { verifyPrivateFile } from "../platform/windows-acl.js";',
+    checkAt(
+      "packages/runtime/src/runtime/run.ts",
+      'import { verifyPrivateFile } from "@harnesshub/store/platform/windows-acl";',
     ).join("\n"),
     /runtime cannot depend on platform/,
   );
@@ -133,37 +147,47 @@ test("platform filesystem primitives have bounded dependencies and cannot leak i
 
 test("allows domain ports, ACP implementation and composition injection", () => {
   assert.deepEqual(
-    check("runtime/run.ts", 'import type { Run } from "../domain/run.js";'),
+    checkAt(
+      "packages/runtime/src/runtime/run.ts",
+      'import type { Run } from "@harnesshub/core/run";',
+    ),
     [],
   );
   assert.deepEqual(
-    check("domain/ids.ts", 'import { randomUUID } from "node:crypto";'),
+    checkAt(
+      "packages/core/src/ids.ts",
+      'import { randomUUID } from "node:crypto";',
+    ),
     [],
   );
   assert.deepEqual(
-    check(
-      "drivers/acp/index.ts",
+    checkAt(
+      "packages/drivers/src/acp/index.ts",
       'import type { Runtime } from "acpx/runtime";',
     ),
     [],
   );
   assert.deepEqual(
-    check("main.ts", 'import { Store } from "./storage/sqlite.js";'),
+    checkAt(
+      "packages/daemon/src/main.ts",
+      'import { SqliteStore } from "@harnesshub/store/storage/sqlite-store";',
+    ),
     [],
   );
 });
 
+const storage = "@harnesshub/store/storage/sqlite-store";
 for (const [kind, source] of [
-  ["import", 'import { db } from "../storage/sqlite.js";'],
-  ["type-only import", 'import type { Store } from "../storage/sqlite.js";'],
-  ["re-export", 'export * from "../storage/sqlite.js";'],
-  ["dynamic import", 'const db = import("../storage/sqlite.js");'],
-  ["import type expression", 'type DB = import("../storage/sqlite.js").Store;'],
-  ["require", 'const db = require("../storage/sqlite.js");'],
+  ["import", `import { db } from "${storage}";`],
+  ["type-only import", `import type { Store } from "${storage}";`],
+  ["re-export", `export * from "${storage}";`],
+  ["dynamic import", `const db = import("${storage}");`],
+  ["import type expression", `type DB = import("${storage}").Store;`],
+  ["require", `const db = require("${storage}");`],
 ]) {
   test(`rejects Gateway to storage ${kind}`, () => {
     assert.match(
-      check("gateway/http.ts", source).join("\n"),
+      checkAt("packages/daemon/src/http/http.ts", source).join("\n"),
       /gateway cannot depend on storage/,
     );
   });
@@ -171,20 +195,24 @@ for (const [kind, source] of [
 
 test("rejects SDK leakage, Worker database access and unknown dynamic imports", () => {
   assert.match(
-    check(
-      "domain/driver.ts",
+    checkAt(
+      "packages/core/src/driver.ts",
       'export type { AcpRuntime } from "acpx/runtime";',
     ).join("\n"),
     /drivers\/acp/,
   );
   assert.match(
-    check("worker/main.ts", 'import { DatabaseSync } from "node:sqlite";').join(
-      "\n",
-    ),
+    checkAt(
+      "packages/daemon/src/worker/main.ts",
+      'import { DatabaseSync } from "node:sqlite";',
+    ).join("\n"),
     /SQLite belongs in storage/,
   );
   assert.match(
-    check("gateway/http.ts", "const impl = import(name);").join("\n"),
+    checkAt(
+      "packages/daemon/src/http/http.ts",
+      "const impl = import(name);",
+    ).join("\n"),
     /nonliteral/,
   );
 });
@@ -192,70 +220,31 @@ test("rejects SDK leakage, Worker database access and unknown dynamic imports", 
 test("CLI returns nonzero for invalid fixtures and accepts a valid tree", (context) => {
   const directory = mkdtempSync(join(tmpdir(), "harnesshub-boundaries-"));
   context.after(() => rmSync(directory, { recursive: true, force: true }));
-  const gateway = join(directory, "src", "gateway");
-  mkdirSync(gateway, { recursive: true });
-  const file = join(gateway, "http.ts");
-  const run = () =>
-    spawnSync(
-      process.execPath,
-      [
-        fileURLToPath(new URL("./check-boundaries.mjs", import.meta.url)),
-        directory,
-      ],
-      { encoding: "utf8" },
-    );
-  writeFileSync(file, 'import type { Store } from "../storage/sqlite.js";');
-  const invalid = run();
+  write(directory, {
+    "packages/daemon/package.json": manifest("@harnesshub/daemon", {
+      "@harnesshub/core": "workspace:*",
+      "@harnesshub/store": "workspace:*",
+    }),
+    "packages/daemon/src/http/http.ts":
+      'import type { Store } from "@harnesshub/store/storage/sqlite";',
+  });
+  const invalid = run(directory);
   assert.equal(invalid.status, 1);
   assert.match(invalid.stderr, /gateway cannot depend on storage/);
-  writeFileSync(file, 'import type { Run } from "../domain/run.js";');
-  assert.equal(run().status, 0);
+  write(directory, {
+    "packages/daemon/src/http/http.ts":
+      'import type { Run } from "@harnesshub/core/run";',
+  });
+  const valid = run(directory);
+  assert.equal(valid.status, 0, valid.stderr);
 });
 
 test("empty source tree cannot report success", (context) => {
   const directory = mkdtempSync(join(tmpdir(), "harnesshub-boundaries-empty-"));
   context.after(() => rmSync(directory, { recursive: true, force: true }));
-  const result = spawnSync(
-    process.execPath,
-    [
-      fileURLToPath(new URL("./check-boundaries.mjs", import.meta.url)),
-      directory,
-    ],
-    { encoding: "utf8" },
-  );
+  const result = run(directory);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /No source files found/);
-});
-
-test("src imports a package only through its legacy alias, under the aliased module's rules", () => {
-  assert.deepEqual(
-    check(
-      "gateway/http.ts",
-      'import type { RunId } from "@harnesshub/core/types";',
-    ),
-    [],
-  );
-  assert.deepEqual(
-    check("main.ts", 'import { HubError } from "@harnesshub/core/errors";'),
-    [],
-  );
-  assert.match(
-    check("cli.ts", 'import { client } from "@harnesshub/sdk/index";').join(
-      "\n",
-    ),
-    /src cannot import @harnesshub\/sdk before it has a legacy alias/,
-  );
-  assert.match(
-    check("main.ts", 'import { x } from "@harnesshub/nope/x";').join("\n"),
-    /unknown workspace package: @harnesshub\/nope\/x/,
-  );
-  assert.match(
-    check(
-      "worker/main.ts",
-      'import type { Run } from "../../packages/core/src/types.js";',
-    ).join("\n"),
-    /worker cannot depend on outside-src/,
-  );
 });
 
 test("packages and applications follow the dependency graph", () => {
@@ -300,6 +289,21 @@ test("packages and applications follow the dependency graph", () => {
       'import { open } from "@harnesshub/store/storage/sqlite";',
     ).join("\n"),
     /apps\/hh cannot depend on @harnesshub\/store/,
+  );
+  assert.match(
+    checkAt(
+      "packages/daemon/src/main.ts",
+      'import { x } from "@harnesshub/nope/x";',
+    ).join("\n"),
+    /unknown workspace package: @harnesshub\/nope\/x/,
+  );
+  // V1: configuration preparation, in agents, may not reach the gateway.
+  assert.match(
+    checkAt(
+      "packages/agents/src/configuration/prepare.ts",
+      'import { startModelGateway } from "@harnesshub/gateway/gateway";',
+    ).join("\n"),
+    /packages\/agents cannot depend on @harnesshub\/gateway/,
   );
   assert.match(
     checkAt("packages/extras/src/index.ts", "export {};").join("\n"),
@@ -388,7 +392,14 @@ test("legacy module and third-party rules apply inside packages", () => {
     ).join("\n"),
     /runtime cannot depend on storage/,
   );
-  // Tests are bound by the graph only, as tests/ is not scanned at all.
+  assert.match(
+    checkAt(
+      "packages/runtime/src/runtime/run.ts",
+      'import { SqliteStore } from "@harnesshub/store/storage/sqlite-store";',
+    ).join("\n"),
+    /runtime cannot depend on storage/,
+  );
+  // Package tests have no module rules: only the graph and their declarations.
   assert.deepEqual(
     checkAt(
       "packages/core/test/ipc.test.ts",
@@ -402,6 +413,9 @@ test("CLI scans packages and applications and does not follow their node_modules
   const directory = mkdtempSync(join(tmpdir(), "harnesshub-boundaries-pkg-"));
   context.after(() => rmSync(directory, { recursive: true, force: true }));
   const source = join(directory, "packages", "core", "src");
+  write(directory, {
+    "packages/core/package.json": manifest("@harnesshub/core"),
+  });
   mkdirSync(source, { recursive: true });
   mkdirSync(join(directory, "packages", "core", "node_modules"));
   // A junction needs no privilege on Windows; other systems ignore the type.
@@ -410,64 +424,17 @@ test("CLI scans packages and applications and does not follow their node_modules
     join(directory, "packages", "core", "node_modules", "self"),
     "junction",
   );
-  const run = () =>
-    spawnSync(
-      process.execPath,
-      [
-        fileURLToPath(new URL("./check-boundaries.mjs", import.meta.url)),
-        directory,
-      ],
-      { encoding: "utf8" },
-    );
   writeFileSync(join(source, "types.ts"), 'import "@harnesshub/store/x";');
-  const invalid = run();
+  const invalid = run(directory);
   assert.equal(invalid.status, 1);
   assert.match(
     invalid.stderr,
     /packages\/core\/src\/types\.ts:1 packages\/core cannot depend on @harnesshub\/store/,
   );
   writeFileSync(join(source, "types.ts"), "export type RunId = string;");
-  const valid = run();
+  const valid = run(directory);
   assert.equal(valid.status, 0, valid.stderr);
   assert.match(valid.stdout, /verified for 1 source files/);
-});
-
-test("src imports @harnesshub/store only through its legacy modules, under their rules", () => {
-  assert.deepEqual(
-    check(
-      "main.ts",
-      'import { SqliteStore } from "@harnesshub/store/storage/sqlite-store";',
-    ),
-    [],
-  );
-  assert.deepEqual(
-    check(
-      "artifacts/publisher.ts",
-      'import { verifyPrivateFile } from "@harnesshub/store/platform/windows-acl";',
-    ),
-    [],
-  );
-  assert.match(
-    check(
-      "gateway/http.ts",
-      'import type { SqliteStore } from "@harnesshub/store/storage/sqlite-store";',
-    ).join("\n"),
-    /gateway cannot depend on storage/,
-  );
-  assert.match(
-    check(
-      "runtime/run.ts",
-      'import { verifyPrivateFile } from "@harnesshub/store/platform/windows-acl";',
-    ).join("\n"),
-    /runtime cannot depend on platform/,
-  );
-  assert.match(
-    check(
-      "main.ts",
-      'import { cache } from "@harnesshub/store/cache/lru";',
-    ).join("\n"),
-    /@harnesshub\/store holds no legacy module cache/,
-  );
 });
 
 test("SQLite belongs in the storage module of @harnesshub/store", () => {
@@ -536,17 +503,17 @@ test("child_process belongs in runtime's process/, and the files that once used 
   );
 });
 
-test("secrets keeps the drivers rules in src/ and starts its helper through an injected launcher", () => {
+test("secrets keeps the drivers rules and starts its helper through an injected launcher", () => {
   assert.deepEqual(
-    check(
-      "drivers/configuration/prepare.ts",
+    checkAt(
+      "packages/agents/src/configuration/prepare.ts",
       'import { resolveSecret } from "@harnesshub/secrets/secrets";',
     ),
     [],
   );
   assert.match(
-    check(
-      "gateway/secrets.ts",
+    checkAt(
+      "packages/daemon/src/http/secrets.ts",
       'import { createSecret } from "@harnesshub/secrets/secrets";',
     ).join("\n"),
     /gateway cannot depend on drivers/,
@@ -577,44 +544,11 @@ test("secrets keeps the drivers rules in src/ and starts its helper through an i
     );
 });
 
-test("a src/ file may import only the packages its destination package may depend on", () => {
-  assert.equal(legacyDestination("drivers/configuration/prepare.ts"), "agents");
-  assert.equal(legacyDestination("drivers/configuration/probe.ts"), "runtime");
-  assert.equal(legacyDestination("drivers/acp/driver.ts"), "drivers");
-  assert.equal(legacyDestination("main.ts"), "daemon");
-  const gateway =
-    'import { startModelGateway } from "@harnesshub/gateway/gateway";';
-  assert.deepEqual(check("worker/main.ts", gateway), []);
-  assert.deepEqual(check("main.ts", gateway), []);
-  // V1: preparation moves to agents, which may not depend on the gateway.
-  assert.match(
-    check("drivers/configuration/prepare.ts", gateway).join("\n"),
-    /src\/drivers\/configuration\/prepare\.ts moves to @harnesshub\/agents, which cannot depend on @harnesshub\/gateway/,
-  );
-  // V4: drivers never import secrets.
-  assert.match(
-    check(
-      "drivers/acp/driver.ts",
-      'import { resolveSecret } from "@harnesshub/secrets/secrets";',
-    ).join("\n"),
-    /moves to @harnesshub\/drivers, which cannot depend on @harnesshub\/secrets/,
-  );
-  assert.match(
-    check("gateway/models.ts", gateway).join("\n"),
-    /gateway cannot depend on drivers/,
-  );
-});
-
 test("drivers keep their module rules, and only the Worker loads them inside the daemon", () => {
   const acp = 'import { AcpDriver } from "@harnesshub/drivers/acp/driver";';
-  assert.deepEqual(check("worker/main.ts", acp), []);
   assert.match(
-    check("main.ts", acp).join("\n"),
-    /only src\/worker\/ may import @harnesshub\/drivers among the files that move to the daemon/,
-  );
-  assert.match(
-    check("runtime/run.ts", acp).join("\n"),
-    /runtime cannot depend on drivers/,
+    checkAt("packages/runtime/src/runtime/run.ts", acp).join("\n"),
+    /packages\/runtime cannot depend on @harnesshub\/drivers/,
   );
   assert.deepEqual(checkAt("packages/daemon/src/worker/main.ts", acp), []);
   assert.match(
@@ -674,29 +608,29 @@ test("agents files keep the rules of the legacy modules they came from", () => {
   );
   assert.equal(legacyPathOf("plugin-host", "index.ts"), undefined);
   assert.deepEqual(
-    check(
-      "main.ts",
+    checkAt(
+      "packages/daemon/src/main.ts",
       'import { normalizeEngine } from "@harnesshub/agents/engine/registry";',
     ),
     [],
   );
   assert.deepEqual(
-    check(
-      "gateway/harness-model-routes.ts",
+    checkAt(
+      "packages/daemon/src/http/harness-model-routes.ts",
       'import { HarnessModelService } from "@harnesshub/agents/application/harness-model";',
     ),
     [],
   );
   assert.match(
-    check(
-      "gateway/engines.ts",
+    checkAt(
+      "packages/daemon/src/http/engines.ts",
       'import { EngineManager } from "@harnesshub/agents/engine/manager";',
     ).join("\n"),
     /gateway cannot depend on engine/,
   );
   assert.match(
-    check(
-      "runtime/run.ts",
+    checkAt(
+      "packages/runtime/src/runtime/run.ts",
       'import { prepareConfiguration } from "@harnesshub/agents/configuration/prepare";',
     ).join("\n"),
     /runtime cannot depend on drivers/,
@@ -719,7 +653,7 @@ test("agents files keep the rules of the legacy modules they came from", () => {
   assert.deepEqual(
     checkAt(
       "packages/agents/src/configuration/prepare.ts",
-      'import { currentCommandMcpEntry } from "../tool-command/entry.js";',
+      'import { isFormerCommandMcpEntry } from "../tool-command/entry.js";',
     ),
     [],
   );
@@ -808,23 +742,16 @@ test("runtime owns process creation for good, and the probe keeps its drivers ru
     ).join("\n"),
     /packages\/runtime cannot depend on @harnesshub\/gateway/,
   );
-  assert.deepEqual(
-    check(
-      "gateway/server.ts",
-      'import type { HubApplication } from "@harnesshub/runtime/application/service";',
-    ),
-    [],
-  );
   assert.match(
-    check(
-      "gateway/server.ts",
+    checkAt(
+      "packages/daemon/src/http/server.ts",
       'import { ProcessWorkerHost } from "@harnesshub/runtime/process/worker-host";',
     ).join("\n"),
     /gateway cannot depend on process/,
   );
   assert.deepEqual(
-    check(
-      "main.ts",
+    checkAt(
+      "packages/daemon/src/main.ts",
       'import { probeConfiguration } from "@harnesshub/runtime/process/probe";',
     ),
     [],
@@ -927,24 +854,372 @@ test("CLI scans the console's app/, components/ and lib/", (context) => {
     join(tmpdir(), "harnesshub-boundaries-console-"),
   );
   context.after(() => rmSync(directory, { recursive: true, force: true }));
-  const lib = join(directory, "packages", "console", "lib");
-  mkdirSync(lib, { recursive: true });
-  const run = () =>
-    spawnSync(
-      process.execPath,
-      [
-        fileURLToPath(new URL("./check-boundaries.mjs", import.meta.url)),
-        directory,
-      ],
-      { encoding: "utf8" },
-    );
-  writeFileSync(join(lib, "contracts.ts"), 'import "@harnesshub/core/types";');
-  const invalid = run();
+  write(directory, {
+    "packages/console/package.json": manifest("@harnesshub/console"),
+    "packages/console/lib/contracts.ts": 'import "@harnesshub/core/types";',
+  });
+  const invalid = run(directory);
   assert.equal(invalid.status, 1);
   assert.match(
     invalid.stderr,
     /packages\/console\/lib\/contracts\.ts:1 packages\/console cannot depend on @harnesshub\/core/,
   );
-  writeFileSync(join(lib, "contracts.ts"), "export const ok = true;");
-  assert.equal(run().status, 0);
+  write(directory, {
+    "packages/console/lib/contracts.ts": "export const ok = true;",
+  });
+  assert.equal(run(directory).status, 0);
+});
+
+test("package manifests declare only the internal dependencies of their graph entry", () => {
+  assert.deepEqual(
+    checkManifest("package", "runtime", {
+      name: "@harnesshub/runtime",
+      dependencies: { "@harnesshub/core": "workspace:*", ajv: "8.20.0" },
+    }),
+    [],
+  );
+  assert.deepEqual(
+    checkManifest("app", "hh", {
+      name: "harnesshub",
+      dependencies: { "@harnesshub/cli": "workspace:*" },
+    }),
+    [],
+  );
+  for (const field of [
+    "dependencies",
+    "devDependencies",
+    "peerDependencies",
+    "optionalDependencies",
+  ])
+    assert.match(
+      checkManifest("package", "cli", {
+        name: "@harnesshub/cli",
+        [field]: { "@harnesshub/daemon": "workspace:*" },
+      }).join("\n"),
+      new RegExp(
+        `packages/cli/package\\.json declares @harnesshub/daemon in ${field}, outside its dependency graph`,
+      ),
+    );
+  assert.match(
+    checkManifest("app", "hh", {
+      name: "harnesshub",
+      dependencies: { "@harnesshub/store": "workspace:*" },
+    }).join("\n"),
+    /apps\/hh\/package\.json declares @harnesshub\/store in dependencies/,
+  );
+  // No package may depend on the application.
+  assert.match(
+    checkManifest("package", "daemon", {
+      name: "@harnesshub/daemon",
+      devDependencies: { harnesshub: "workspace:*" },
+    }).join("\n"),
+    /declares harnesshub in devDependencies, outside its dependency graph/,
+  );
+  assert.match(
+    checkManifest("package", "core", { name: "@harnesshub/kernel" }).join("\n"),
+    /packages\/core\/package\.json is named "@harnesshub\/kernel", not @harnesshub\/core/,
+  );
+  assert.match(
+    checkManifest("package", "extras", { name: "@harnesshub/extras" }).join(
+      "\n",
+    ),
+    /unknown package extras; add it to the dependency graph/,
+  );
+});
+
+test("imports target only the dependencies their package declares, internal and third-party alike", () => {
+  const declared = declaredDependencies(
+    {
+      dependencies: { "@harnesshub/core": "workspace:*", yaml: "2.9.0" },
+      peerDependencies: { react: "19" },
+      optionalDependencies: { fsevents: "2" },
+      devDependencies: { fastify: "5" },
+    },
+    "src",
+  );
+  assert.deepEqual([...declared].sort(), [
+    "@harnesshub/core",
+    "fsevents",
+    "react",
+    "yaml",
+  ]);
+  assert.equal(
+    declaredDependencies({ devDependencies: { fastify: "5" } }, "test").has(
+      "fastify",
+    ),
+    true,
+  );
+  const file = "packages/agents/src/engine/registry.ts";
+  for (const source of [
+    'import { parse } from "yaml";',
+    'import type { Document } from "yaml";',
+    'export { parse } from "yaml";',
+    'const yaml = import("yaml");',
+    'type Y = import("yaml").Document;',
+  ])
+    assert.deepEqual(checkAt(file, source, declared), [], source);
+  // Hoisting would let these resolve at run time; the manifest decides.
+  assert.match(
+    checkAt(file, 'import Fastify from "fastify";', declared).join("\n"),
+    /packages\/agents imports fastify without declaring it in package\.json \(dependencies, peerDependencies or optionalDependencies\)/,
+  );
+  assert.match(
+    checkAt(
+      file,
+      'import { open } from "@harnesshub/store/storage/sqlite-store";',
+      declared,
+    ).join("\n"),
+    /packages\/agents imports @harnesshub\/store without declaring it/,
+  );
+  assert.match(
+    checkAt(file, 'const parse = require("ajv");', declared).join("\n"),
+    /imports ajv without declaring it/,
+  );
+  // Tests may use devDependencies; built-ins need no declaration.
+  assert.deepEqual(
+    checkAt(
+      "packages/agents/test/registry.test.ts",
+      'import Fastify from "fastify";\nimport { readFile } from "node:fs/promises";\nimport path from "path";',
+      declaredDependencies({ devDependencies: { fastify: "5" } }, "test"),
+    ),
+    [],
+  );
+  assert.match(
+    checkAt(
+      "packages/agents/test/registry.test.ts",
+      'import { parse } from "yaml";',
+      new Set(),
+    ).join("\n"),
+    /imports yaml without declaring it in package\.json \(dependencies or devDependencies\)/,
+  );
+  // The console's "@/" alias is its own directory, not a package.
+  assert.deepEqual(
+    checkAt(
+      "packages/console/app/page.tsx",
+      'import { Button } from "@/components/ui/button";',
+      new Set(),
+    ),
+    [],
+  );
+  assert.match(
+    checkAt(
+      "packages/console/app/page.tsx",
+      'import { x } from "@/../daemon/src/main";',
+      new Set(),
+    ).join("\n"),
+    /relative import leaves packages\/console/,
+  );
+});
+
+test("root tests use what the root package.json declares and stay in tests/", () => {
+  const declared = new Set(["acpx", "@harnesshub/daemon"]);
+  assert.deepEqual(
+    checkAt(
+      "tests/integration/run.test.ts",
+      'import { startHub } from "@harnesshub/daemon/main";\nimport "acpx/runtime";\nimport { spawn } from "node:child_process";\nimport { temporaryDirectory } from "../support/temporary.js";\nconst copy = await import(location);',
+      declared,
+    ),
+    [],
+  );
+  assert.match(
+    checkAt(
+      "tests/integration/run.test.ts",
+      'import Fastify from "fastify";',
+      declared,
+    ).join("\n"),
+    /tests imports fastify without declaring it in package\.json/,
+  );
+  assert.match(
+    checkAt(
+      "tests/integration/run.test.ts",
+      'import { open } from "@harnesshub/store/storage/sqlite-store";',
+      declared,
+    ).join("\n"),
+    /tests imports @harnesshub\/store without declaring it/,
+  );
+  assert.match(
+    checkAt(
+      "tests/unit/prepare.test.ts",
+      'import { prepare } from "../../packages/agents/src/configuration/prepare.js";',
+      declared,
+    ).join("\n"),
+    /relative import leaves tests/,
+  );
+});
+
+for (const tree of ["conformance", "tests/e2e", "tests/browser", "examples"]) {
+  test(`${tree}/ is a black box: only core, sdk, HTTP and the hh command`, () => {
+    const file = `${tree}/run/lifecycle.test.mjs`;
+    assert.deepEqual(
+      checkAt(
+        file,
+        [
+          'import { createClient } from "@harnesshub/sdk/index";',
+          'import type { RunId } from "@harnesshub/core/types";',
+          'import { request } from "node:http";',
+          'import { spawn } from "node:child_process";',
+          'import { fixture } from "./fixture.mjs";',
+          'const data = new URL("./data.json", import.meta.url);',
+        ].join("\n"),
+      ),
+      [],
+    );
+    const rejected =
+      /black-box code may use only @harnesshub\/core, @harnesshub\/sdk, HTTP and the hh command/;
+    assert.match(
+      checkAt(file, 'import { startHub } from "@harnesshub/daemon/main";').join(
+        "\n",
+      ),
+      rejected,
+    );
+    assert.match(
+      checkAt(file, 'const { Fastify } = await import("fastify");').join("\n"),
+      rejected,
+    );
+    assert.match(
+      checkAt(
+        file,
+        `import { startHub } from "${"../".repeat(tree.split("/").length + 1)}packages/daemon/src/main.js";`,
+      ).join("\n"),
+      new RegExp(`relative import leaves ${tree}`),
+    );
+    assert.match(
+      checkAt(
+        file,
+        `const main = new URL("${"../".repeat(tree.split("/").length + 1)}packages/daemon/dist/src/main.js", import.meta.url);`,
+      ).join("\n"),
+      new RegExp(`new URL leaves ${tree}`),
+    );
+  });
+}
+
+test("CLI fails on a manifest outside the graph, a missing manifest, an undeclared import and a black-box violation", (context) => {
+  const directory = mkdtempSync(
+    join(tmpdir(), "harnesshub-boundaries-oss005-"),
+  );
+  context.after(() => rmSync(directory, { recursive: true, force: true }));
+  const valid = {
+    "package.json": manifest("harnesshub-workspace", {}, { yaml: "2.9.0" }),
+    "packages/agents/package.json": manifest("@harnesshub/agents", {
+      yaml: "2.9.0",
+    }),
+    "packages/agents/src/engine/registry.ts": 'import { parse } from "yaml";',
+    "tests/unit/types.test.ts": 'import { parse } from "yaml";',
+    "examples/lifecycle.mjs": 'import { request } from "node:http";',
+  };
+  write(directory, valid);
+  const passed = run(directory);
+  assert.equal(passed.status, 0, passed.stderr);
+  for (const [files, message] of [
+    [
+      {
+        "packages/agents/package.json": manifest("@harnesshub/agents", {
+          yaml: "2.9.0",
+          "@harnesshub/daemon": "workspace:*",
+        }),
+      },
+      /packages\/agents\/package\.json declares @harnesshub\/daemon in dependencies, outside its dependency graph/,
+    ],
+    [
+      { "packages/agents/package.json": manifest("@harnesshub/agents") },
+      /packages\/agents\/src\/engine\/registry\.ts:1 packages\/agents imports yaml without declaring it/,
+    ],
+    [
+      { "package.json": manifest("harnesshub-workspace") },
+      /tests\/unit\/types\.test\.ts:1 tests imports yaml without declaring it/,
+    ],
+    [
+      { "examples/lifecycle.mjs": 'import { parse } from "yaml";' },
+      /examples\/lifecycle\.mjs:1 black-box code may use only/,
+    ],
+    [
+      { "packages/sdk/src/index.ts": "export {};" },
+      /packages\/sdk\/package\.json is missing/,
+    ],
+  ]) {
+    write(directory, files);
+    const failed = run(directory);
+    assert.equal(failed.status, 1, JSON.stringify(files));
+    assert.match(failed.stderr, message);
+    rmSync(join(directory, "packages", "sdk"), {
+      recursive: true,
+      force: true,
+    });
+    write(directory, valid);
+  }
+});
+
+test("agents' assets/ and applications' bin/ import only declared packages and stay in their package", () => {
+  const agents = new Set(["cross-spawn", "yaml"]);
+  // Program areas have no module rules: assets launchers start their engine
+  // themselves (ADR 0017, F08 addendum).
+  assert.deepEqual(
+    checkAt(
+      "packages/agents/assets/spawn-engine.mjs",
+      'import spawn from "cross-spawn";\nimport { spawn as start } from "node:child_process";\nimport { parse } from "yaml";\nimport { spawnEngine } from "./spawn-engine.mjs";',
+      agents,
+    ),
+    [],
+  );
+  assert.match(
+    checkAt(
+      "packages/agents/assets/launch-pi-acp.mjs",
+      'import { execa } from "execa";',
+      agents,
+    ).join("\n"),
+    /packages\/agents imports execa without declaring it in package\.json \(dependencies, peerDependencies or optionalDependencies\)/,
+  );
+  assert.match(
+    checkAt(
+      "packages/agents/assets/launch-pi-acp.mjs",
+      'import { startHub } from "../../daemon/dist/src/main.js";',
+      agents,
+    ).join("\n"),
+    /relative import leaves packages\/agents/,
+  );
+  // Only the named file may import a computed path.
+  const computed = "const sdk = await import(config.sdk.index);";
+  assert.deepEqual(
+    checkAt(
+      "packages/agents/assets/native-mcp/pi-extension.mjs",
+      computed,
+      agents,
+    ),
+    [],
+  );
+  assert.match(
+    checkAt("packages/agents/assets/launch-pi-acp.mjs", computed, agents).join(
+      "\n",
+    ),
+    /nonliteral import\/require cannot be checked/,
+  );
+  assert.match(
+    checkAt(
+      "packages/agents/assets/native-mcp/pi-extension.mjs",
+      "const sdk = require(config.sdk.index);",
+      agents,
+    ).join("\n"),
+    /nonliteral import\/require cannot be checked/,
+  );
+  const hh = new Set(["@harnesshub/cli", "@harnesshub/daemon"]);
+  assert.deepEqual(
+    checkAt(
+      "apps/hh/bin/hh.mjs",
+      'import { main } from "../dist/src/main.js";',
+      hh,
+    ),
+    [],
+  );
+  assert.match(
+    checkAt("apps/hh/bin/hh.mjs", 'import chalk from "chalk";', hh).join("\n"),
+    /apps\/hh imports chalk without declaring it in package\.json/,
+  );
+  assert.match(
+    checkAt(
+      "apps/hh/bin/hh.mjs",
+      'import { open } from "@harnesshub/store/storage/sqlite-store";',
+      hh,
+    ).join("\n"),
+    /apps\/hh cannot depend on @harnesshub\/store/,
+  );
 });
