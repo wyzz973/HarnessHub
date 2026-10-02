@@ -6,6 +6,7 @@
 - [OpenAPI JSON](openapi.json)：可供编辑器与客户端工具读取的生成契约。
 - 运行中的 `/openapi.json`：该进程实际启用路由的schema与说明。
 - [可执行HTTP示例](../../examples/http-lifecycle.mjs)：无模型依赖的demo生命周期。
+- [模型平面 API 与 CLI](../model-plane-api.md)：`/api/v1` 的管理令牌、problem 错误格式与模型平面资源；下文的共同约定只适用于 `/v1` 等现有路由。
 
 ## 共同约定
 
