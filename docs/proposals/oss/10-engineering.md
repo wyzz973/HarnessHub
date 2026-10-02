@@ -158,7 +158,7 @@ flaky 测试指同一提交、同一环境下既有通过也有失败的测试�
 
 ### 4.1 PR 必需检查
 
-所有工作流默认 `permissions: contents: read`，第三方 Action 按 commit SHA 固定；同一 ref 的运行开启 `concurrency` 并取消进行中的旧运行。分支保护只要求聚合任务 `ci-ok` 通过：它依赖下表全部必需任务，任何一个失败、取消或被意外跳过都判失败，必需检查跳过不算通过。合并使用 GitHub merge queue，必需检查在合并后的结果上重跑。
+所有工作流默认 `permissions: contents: read`，第三方 Action 按 commit SHA 固定；同一 PR 的新推送取消进行中的旧运行，`main` 上每个提交都完整运行，保留逐提交的证据。聚合任务 `ci-ok` 依赖平台矩阵中的全部必需任务，任何一个失败、取消或被意外跳过都判失败，必需检查跳过不算通过。DCO、CodeQL 与依赖审查的触发条件和权限不同，各自是独立工作流；分支保护要求 `ci-ok` 与这三项同时通过。合并使用 GitHub merge queue，必需检查在合并后的结果上重跑。
 
 | 检查 | Linux x64 | macOS arm64 | Windows x64 |
 |---|---|---|---|

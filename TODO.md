@@ -26,11 +26,11 @@
 - [ ] **OSS-004 多包结构**：按 [02 第 8 节](docs/proposals/oss/02-architecture.md#8-模块与依赖规则) 迁入 12 个 pnpm workspace 包，行为不变；迁移前后的用例数逐项对账。
 - [ ] **OSS-005 包级边界检查**：依赖方向由检查脚本强制，每条规则附拒绝样例。
 - [ ] **OSS-006 测试启动器与环境沙箱**（F01、F02）：清洗 `HARNESSHUB_*` 等产品变量，私有 HOME/USERPROFILE/APPDATA，启动失败时也清理临时目录，默认用例超时。
-- [ ] **OSS-007 CI**：Linux x64、macOS arm64、Windows x64 上运行 `pnpm check`；DCO、CodeQL、依赖审查、OpenSSF Scorecard、标签同步工作流；并发取消与按阶段拆分（[10 第 4 节](docs/proposals/oss/10-engineering.md#4-ci-与质量门禁)）。
+- [ ] **OSS-007 CI**（进行中）：Linux x64、macOS arm64、Windows x64 上运行 `pnpm check`；DCO、CodeQL、依赖审查、OpenSSF Scorecard、标签同步工作流；PR 上取消旧运行。证据：`991a8f3`、`b243fb8`；运行 36961535246 三个平台与 `ci-ok` 全部通过（36961337697 中 Windows 失败时 `ci-ok` 同样判失败，修复见 `b243fb8`）；actionlint 1.7.12 无问题；`scripts/check-dco.mjs` 与 `scripts/check-labels.mjs` 带拒绝样例。未验证：DCO 与依赖审查只在 PR 上运行，CodeQL、Scorecard 与标签同步只在 `main` 上运行，均待 OSS-012 后首次触发；启用 merge queue 前需给 CodeQL 与依赖审查加 `merge_group` 触发。按阶段拆分推迟到 PR 墙钟接近 25 min 目标时（当前约 5 min）。
 - [ ] **OSS-008 单可执行文件验证**（ADR-P01）：五个平台构建 SEA，记录体积与冷启动 p50/p95，跑通 `serve` 加一次假上游网关调用，按 ADR-P01 的条件给出结论。
 - [ ] **OSS-009 假 Agent 与假 provider**：`tools/fake-agent`（可脚本化 ACP 对端）与 `tools/fake-provider`（四协议、黑名单与白名单模式），由现有 fake driver 与 `scripts/mock-chat-provider.mjs` 演进。
 - [ ] **OSS-010 M0 先行修复**：F04 构建身份、F05 单实例锁、F06 Windows Worker 环境变量、F07 POSIX setsid 后代、F08 子进程创建收口、F09 SSE 响应头 flush 与协议内保活。每项附 Fails-without 用例，F06 需要 Windows 证据。
-- [ ] **OSS-011 秘密扫描**：对现有仓库全部 ref 与新 `main` 运行 gitleaks 与 trufflehog；扫描到的真实凭据一律吊销。
+- [x] **OSS-011 秘密扫描**：对现有仓库全部 ref 与新 `main` 运行 gitleaks 与 trufflehog；扫描到的真实凭据一律吊销。证据（2026-10-02，gitleaks 8.30.1；trufflehog 3.97.9，`--no-verification`，不向外部服务发送候选值）：`oss-main` 全部历史只有 1 处命中，即 `tests/unit/engine-configuration.test.ts` 中故意构造的 `https://user:password@example.com` 拒绝样例；旧历史 248 处命中，几乎全部位于第三方上游源码归档 `vendor/engine-sources/*.zip`（上游公开仓库自带的测试样例）与锁文件完整性哈希，其余为合成测试 URL，没有 HarnessHub 自有凭据，无需吊销。另在本机构建缓存中发现过开发者令牌，见 OSS-014。
 - [ ] **OSS-012 切换 main**（ADR-P12）：推送 `archive/competition` 分支与 `competition-final` 标签并核对，再以 `oss-main` 替换远端 `main`；确认旧 Release 仍可下载；开启秘密扫描与推送保护。
 - [ ] **OSS-014 控制台构建的环境卫生**：Next.js 16 的 Turbopack 持久缓存会记录构建时的环境变量；2026-10-02 在本机 `web/.next/cache` 中发现开发者 shell 中的 GitHub 令牌（缓存已删除，令牌未进入任何提交或发布）。控制台构建改为使用最小环境变量白名单，或关闭持久缓存，并以“缓存中不含金丝雀变量”的检查附拒绝样例；控制台改为 Vite（ADR-P10）后同样适用。
 - [ ] **OSS-013 M0 组合验收**：从全新克隆执行 `pnpm install --frozen-lockfile` 与 `pnpm check`，在 Linux x64、macOS arm64、Windows x64 上通过；记录 Scorecard 基线分数。
