@@ -137,3 +137,10 @@ daemon 内只有 `src/worker/**` 可以导入 drivers。
 - 三个集成测试需要把编译后的 Store 模块地址交给子进程或 Worker 线程，改用 `import.meta.resolve("@harnesshub/store/storage/...")`，按包导出解析到编译产物。
 - 边界检查：别名表的值可以是该包保存的旧模块列表（store 为 storage 与 platform），导入的第一段子路径必须是其中之一，并按该模块的规则检查；`node:sqlite` 只允许在 store 的 storage 中；包内的 `node:child_process` 只允许 `CHILD_PROCESS_EXCEPTIONS` 中的条目，每项写明所有者与到期任务，检查读取 `TODO.md`，该任务勾选后、或缺少 `TODO.md` 而无法判断时，导入即失败。
 - SEA 构建把每个包的 `dist/native` 与根 `dist/native` 一样按仓库相对路径嵌入并解包。
+
+第 4 步（secrets）：
+
+- `drivers/configuration/secrets.ts` 平铺迁入 `packages/secrets/src/secrets.ts`，以 `@harnesshub/secrets/secrets` 导入；它只依赖 core。别名表把它映射到原 `drivers` 模块，因此 `src/` 中只有原来可以导入 drivers 的模块（drivers 自身、worker 与组合根）可以导入它。
+- 钥匙串（Swift）与 DPAPI（C#）辅助程序源码及构建脚本迁入 `packages/secrets/native/`，构建到本包的 `dist/native`。运行时路径由 `secretHelperPath(platform)` 计算，相对层级从 `../../../native/` 变为 `../native/`；包内测试在所有平台检查两个路径，并在各自平台检查文件存在。`src/secrets.ts` 启动辅助程序，因此是第二个 `child_process` 例外（所有者 OSS-010 F08，随 OSS-013 到期）。
+- 一个 Windows DPAPI 测试把编译后的模块交给子进程，改用 `import.meta.resolve`。
+- macOS 钥匙串条目的访问控制绑定创建它的那个辅助程序二进制。`swiftc` 的产物每次构建都不同（同一源码路径连续两次构建的 cdhash 也不同），另一个构建的辅助程序读取已有条目时，系统会等待用户批准，`interactionNotAllowed` 不能阻止；运行时在 20 秒后终止辅助程序并报 `SECRET_UNAVAILABLE`。这在迁移前的每次 `pnpm build` 后就已存在，迁移没有改变它；稳定的签名身份留给 M1 的发布签名。
