@@ -12,7 +12,9 @@ import { formatPath, getPath, isRecord, leaves, startsWith } from "./values.js";
  * byte alone. Keys are added to the table's existing header or dotted-key
  * group, after its last assignment; a missing table is appended at the end of
  * the file after one blank line, and removing such a trailing table removes
- * that blank line again. Paths into inline tables or arrays of tables are
+ * that blank line again. Removing a table stops after its last assignment
+ * and the blank lines after it, so comments that follow stay. Paths into
+ * inline tables or arrays of tables are
  * refused, as are arrays of tables in values.
  */
 export const tomlEditor: FormatEditor = {
@@ -168,7 +170,7 @@ function removeEntry(text: string, path: KeyPath): string {
   );
   refuseInlineTables(assignments, path);
   const ranges: Array<{ start: number; end: number; table: boolean }> = [];
-  for (const [index, statement] of statements.entries()) {
+  for (const statement of statements) {
     if (statement.kind === "assignment") {
       if (statement.full && startsWith(statement.full, path))
         ranges.push({
@@ -179,12 +181,12 @@ function removeEntry(text: string, path: KeyPath): string {
       continue;
     }
     if (!startsWith(statement.path, path)) continue;
-    const next = statements
-      .slice(index + 1)
-      .find((s): s is Header => s.kind === "header");
+    // The section ends after its last assignment and the blank lines that
+    // follow; comments after it may be the user's and stay.
+    const last = assignments.filter((a) => a.section === statement).at(-1);
     ranges.push({
       start: statement.start,
-      end: next ? attachedStart(text, next.start) : text.length,
+      end: blankLinesAfter(text, last?.end ?? statement.end),
       table: true,
     });
   }
@@ -273,6 +275,15 @@ function attachedStart(text: string, headerStart: number): number {
     start = previous;
   }
   return start;
+}
+
+function blankLinesAfter(text: string, offset: number): number {
+  let end = offset;
+  for (;;) {
+    const blank = /^[ \t]*\r?\n/.exec(text.slice(end));
+    if (!blank) return end;
+    end += blank[0].length;
+  }
 }
 
 function blankLineBefore(text: string, start: number): number {

@@ -231,6 +231,13 @@ void test("TOML replaces a subtree exactly and handles multi-line strings, escap
   assert.equal(quoted, '[models."openai/gpt-5"]\nmax_context_size = 1\n');
 });
 
+void test("TOML table removal keeps comments that follow the table", () => {
+  const wired = "[a]\nx = 1\n\n[t]\nk = 1\n\n# the user's note\n";
+  assert.equal(toml.remove(wired, ["t"]), "[a]\nx = 1\n\n# the user's note\n");
+  const middle = "[t]\nk = 1\n# kept\n[b]\ny = 2\n";
+  assert.equal(toml.remove(middle, ["t"]), "# kept\n[b]\ny = 2\n");
+});
+
 void test("TOML refuses inline tables, arrays of tables and invalid documents", () => {
   rejects(
     () => toml.set("p = { a = 1 }\n", ["p", "b"], 2),
