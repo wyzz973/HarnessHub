@@ -23,7 +23,17 @@
  * entry is a regular file) are written once per build under a per-user cache directory
  * (`HARNESSHUB_SEA_ROOT` overrides it for measurements) and verified by SHA-256 whenever a user
  * command starts. A child accepts a root only when its marker names this build.
+ *
+ * Phase trace (measurement only, off by default): with `HARNESSHUB_SEA_TRACE=1`, which only
+ * tools/sea/measure.mjs sets, a `serve` or `version` process writes one JSON line per event to
+ * stderr, `{"event":"sea.trace","phase":...,"at":<epoch ms>}`: when the process started and
+ * reached this script, each extracted file (repository-relative path, verified or written, and
+ * the time it took), the end of extraction, the start and evaluation of the Gateway role, and
+ * each native helper the process starts (file name only: spawn, process created, first output,
+ * exit). It never names the extraction root, arguments or environment values. Child processes
+ * (Workers, launchers, node-compat scripts) write no trace.
  */
+import childProcess from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
   chmodSync,
@@ -40,6 +50,17 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { getAsset, isSea } from "node:sea";
 import { pathToFileURL } from "node:url";
+
+/** Epoch milliseconds, with sub-millisecond precision, comparable across processes. */
+const now = () => performance.timeOrigin + performance.now();
+const ENTERED_AT = now();
+let tracing = false;
+function trace(phase, fields = {}) {
+  if (!tracing) return;
+  process.stderr.write(
+    `${JSON.stringify({ event: "sea.trace", phase, at: Math.round(now() * 1000) / 1000, ...fields })}\n`,
+  );
+}
 
 /* global __HH_SEA_BUILD_ID__, __HH_SEA_FILES__ -- replaced by tools/sea/build.mjs */
 const BUILD_ID = __HH_SEA_BUILD_ID__;
@@ -146,7 +167,15 @@ function ensureRoot(root) {
   let written = 0;
   for (const file of FILES) {
     const target = under(root, file.path);
-    if (sameFile(target, file)) continue;
+    const started = now();
+    if (sameFile(target, file)) {
+      trace("extract.file", {
+        file: file.path,
+        action: "verified",
+        ms: now() - started,
+      });
+      continue;
+    }
     const bytes = Buffer.from(getAsset(file.asset));
     if (bytes.length !== file.size || sha256(bytes) !== file.sha256)
       throw new Error(
@@ -154,6 +183,11 @@ function ensureRoot(root) {
       );
     writeAtomically(target, bytes, file.executable ? 0o700 : 0o600);
     written += 1;
+    trace("extract.file", {
+      file: file.path,
+      action: "written",
+      ms: now() - started,
+    });
   }
   if (readMarker(root) !== BUILD_ID) {
     writeAtomically(
@@ -176,6 +210,40 @@ function matchRole(argument) {
     if (readMarker(root) === BUILD_ID) return { root, relative };
   }
   return undefined;
+}
+
+/** Native helpers whose first starts the phase trace records, by file name. */
+const NATIVE_HELPERS = new Set(
+  FILES.filter((file) => file.executable).map((file) =>
+    path.basename(file.path),
+  ),
+);
+
+/**
+ * Wrap spawn and execFile of this process so that each native helper start is traced; the
+ * bundled modules read these functions from the shared module object at call time.
+ */
+function traceHelpers() {
+  for (const name of ["spawn", "execFile"]) {
+    const original = childProcess[name];
+    childProcess[name] = function (file, ...rest) {
+      const child = original.call(this, file, ...rest);
+      const helper = typeof file === "string" ? path.basename(file) : "";
+      if (!NATIVE_HELPERS.has(helper)) return child;
+      const started = now();
+      trace("helper.start", { helper });
+      child.once("spawn", () =>
+        trace("helper.spawned", { helper, ms: now() - started }),
+      );
+      child.stdout?.once("data", () =>
+        trace("helper.output", { helper, ms: now() - started }),
+      );
+      child.once("exit", (code) =>
+        trace("helper.exit", { helper, code, ms: now() - started }),
+      );
+      return child;
+    };
+  }
 }
 
 async function runRole(root, relative, args) {
@@ -207,18 +275,26 @@ async function main() {
     case "serve":
     case "version":
     case "--version": {
+      tracing = process.env.HARNESSHUB_SEA_TRACE === "1";
+      if (tracing) {
+        trace("entry", {
+          processStart: performance.timeOrigin,
+          entered: ENTERED_AT,
+        });
+        traceHelpers();
+      }
       const root = defaultRoot();
-      const started = performance.now();
+      trace("extract.start");
       const written = ensureRoot(root);
-      if (process.env.HARNESSHUB_SEA_TRACE === "1")
-        process.stderr.write(
-          `${JSON.stringify({ event: "sea.root", root, written, ms: Math.round(performance.now() - started) })}\n`,
-        );
-      return runRole(
+      trace("extract.end", { written });
+      trace("role.start");
+      await runRole(
         root,
         "packages/daemon/dist/src/main.js",
         command === "serve" ? rest : ["--version", ...rest],
       );
+      trace("role.evaluated");
+      return;
     }
     case undefined:
     case "help":

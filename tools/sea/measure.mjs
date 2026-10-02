@@ -4,13 +4,24 @@
  * Measure and check a HarnessHub single executable (SEA feasibility spike, OSS-008).
  *
  * Usage: node tools/sea/measure.mjs [--binary dist/sea/harnesshub] [--runs 10]
- *   [--out dist/sea/result.json] [--baseline]
+ *   [--out dist/sea/result.json] [--phases-out FILE] [--baseline]
  *
  * Cold start: time from spawn to the `ready` line of `serve --demo --port 0`, each run with a
  * fresh data directory and workspace. "first-run" also uses a fresh extraction root (what the
  * first start after installation pays); "installed" reuses one prepared root. `--baseline`
  * measures `node packages/daemon/dist/src/main.js` the same way. One unmeasured warm-up start precedes each
  * series. p50/p95 are nearest-rank.
+ *
+ * Phases (OSS-008 first-run investigation): the SEA starts of both series run with
+ * `HARNESSHUB_SEA_TRACE=1`, which makes the executable's entry report, on stderr, when its
+ * process started and reached the entry, each extracted file, the end of extraction, the
+ * Gateway role's evaluation and each native helper start. The result gives p50/p95 per phase
+ * for each series: spawn to process start, process start to entry, extraction (and per file),
+ * role evaluation, role to `ready`, entry to `ready`, and per native helper the time from its
+ * spawn to process creation, first output and exit. `--phases-out FILE` also writes them,
+ * with every start's own phases in order (so a single slow start shows where it lost time),
+ * to a file of their own. The trace is off by default and names no root, argument or
+ * environment value.
  *
  * End-to-end checks, all against the SEA: `version --json` carries the build identity of
  * packages/daemon/dist/build-info.json; the extracted secret helper of this platform (macOS keychain, Windows
@@ -79,6 +90,89 @@ function summary(samples) {
       }
     : { n: 0 };
 }
+/** One start's phases (ms) from its trace events, or null without a trace. */
+function phasesOf({ events, spawnedAt, readyAt }) {
+  const first = (phase) => events.find((event) => event.phase === phase);
+  const entry = first("entry");
+  if (!entry) return null;
+  const at = (phase) => first(phase)?.at;
+  const span = (from, to) =>
+    from === undefined || to === undefined ? undefined : to - from;
+  const helpers = {};
+  for (const event of events) {
+    if (!event.phase.startsWith("helper.")) continue;
+    const helper = (helpers[event.helper] ??= { starts: 0 });
+    if (event.phase === "helper.start") {
+      helper.starts += 1;
+      helper.startedAfterEntry ??= event.at - entry.entered;
+    } else {
+      const key = event.phase.slice("helper.".length);
+      helper[key] ??= event.ms;
+    }
+  }
+  const files = {};
+  for (const event of events)
+    if (event.phase === "extract.file")
+      files[event.file] = { action: event.action, ms: event.ms };
+  return {
+    spawnToProcess: entry.processStart - spawnedAt,
+    processToEntry: entry.entered - entry.processStart,
+    extract: span(at("extract.start"), at("extract.end")),
+    roleEvaluation: span(at("role.start"), at("role.evaluated")),
+    roleToReady: span(at("role.evaluated"), readyAt),
+    entryToReady: readyAt - entry.entered,
+    spawnToReady: readyAt - spawnedAt,
+    files,
+    helpers,
+  };
+}
+
+/** p50/p95 of every phase over the starts of a series. */
+function phaseSummary(runs) {
+  const traced = runs.filter(Boolean);
+  if (!traced.length) return null;
+  const pick = (values) => {
+    const defined = values.filter((value) => typeof value === "number");
+    if (!defined.length) return undefined;
+    const { n, p50, p95, max } = summary(defined);
+    return { n, p50, p95, max };
+  };
+  const phases = {};
+  for (const name of [
+    "spawnToProcess",
+    "processToEntry",
+    "extract",
+    "roleEvaluation",
+    "roleToReady",
+    "entryToReady",
+    "spawnToReady",
+  ])
+    phases[name] = pick(traced.map((run) => run[name]));
+  const files = {};
+  for (const name of new Set(traced.flatMap((run) => Object.keys(run.files))))
+    for (const action of ["written", "verified"]) {
+      const values = traced
+        .map((run) => run.files[name])
+        .filter((file) => file?.action === action)
+        .map((file) => file.ms);
+      if (values.length) (files[name] ??= {})[action] = pick(values);
+    }
+  const helpers = {};
+  for (const name of new Set(
+    traced.flatMap((run) => Object.keys(run.helpers)),
+  )) {
+    const values = traced.map((run) => run.helpers[name]).filter(Boolean);
+    helpers[name] = {
+      startsPerRun: pick(traced.map((run) => run.helpers[name]?.starts ?? 0)),
+      startedAfterEntry: pick(values.map((value) => value.startedAfterEntry)),
+      spawned: pick(values.map((value) => value.spawned)),
+      output: pick(values.map((value) => value.output)),
+      exit: pick(values.map((value) => value.exit)),
+    };
+  }
+  return { traced: traced.length, ...phases, files, helpers };
+}
+
 const temporary = (prefix) => mkdtemp(path.join(tmpdir(), prefix));
 const remove = (directory) =>
   rm(directory, {
@@ -99,9 +193,18 @@ async function stop(child, timeoutMs = 15_000) {
   return { code, signal };
 }
 
-/** Spawn a Gateway and resolve with its ready record and the time to it. */
+/** Epoch milliseconds, comparable with the child's performance.timeOrigin. */
+const epoch = () => performance.timeOrigin + performance.now();
+
+/**
+ * Spawn a Gateway and resolve with its ready record, the time to it, and the phase trace
+ * events its stderr carried until then (none without HARNESSHUB_SEA_TRACE).
+ */
 async function startGateway(command, args, { cwd, env }) {
+  const spawnedAt = epoch();
   const started = performance.now();
+  const events = [];
+  let partial = "";
   const child = spawn(command, args, {
     cwd,
     env,
@@ -112,6 +215,16 @@ async function startGateway(command, args, { cwd, env }) {
   let stderr = "";
   child.stderr.setEncoding("utf8").on("data", (data) => {
     stderr = (stderr + data).slice(-20_000);
+    const lines = (partial + data).split("\n");
+    partial = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.startsWith('{"event":"sea.trace"')) continue;
+      try {
+        events.push(JSON.parse(line));
+      } catch {
+        /* A trace line is written whole; anything else is not a trace. */
+      }
+    }
   });
   try {
     const ready = await new Promise((resolve, reject) => {
@@ -135,7 +248,13 @@ async function startGateway(command, args, { cwd, env }) {
             const record = JSON.parse(line);
             if (record.event !== "ready") continue;
             clearTimeout(timer);
-            resolve({ record, ms: performance.now() - started });
+            resolve({
+              record,
+              ms: performance.now() - started,
+              spawnedAt,
+              readyAt: epoch(),
+              events,
+            });
           } catch {
             /* An incomplete line is completed by the next chunk. */
           }
@@ -149,9 +268,13 @@ async function startGateway(command, args, { cwd, env }) {
   }
 }
 
-/** One series of starts, each with a fresh data directory; `root` decides the SEA root. */
-async function series({ command, prefixArgs, runs, root }) {
+/**
+ * One series of starts, each with a fresh data directory; `root` decides the SEA root, and
+ * `trace` turns on the executable's phase trace.
+ */
+async function series({ command, prefixArgs, runs, root, trace = false }) {
   const samples = [];
+  const phases = [];
   const failures = [];
   let warmUpMs = null;
   for (let index = 0; index <= runs; index += 1) {
@@ -163,7 +286,9 @@ async function series({ command, prefixArgs, runs, root }) {
       const seaRoot =
         root === "fresh" ? path.join(directory, "sea-root") : root;
       if (seaRoot) env.HARNESSHUB_SEA_ROOT = seaRoot;
-      const { child, ms } = await startGateway(
+      if (trace) env.HARNESSHUB_SEA_TRACE = "1";
+      else delete env.HARNESSHUB_SEA_TRACE;
+      const started = await startGateway(
         command,
         [
           ...prefixArgs,
@@ -175,17 +300,26 @@ async function series({ command, prefixArgs, runs, root }) {
         ],
         { cwd: workspace, env },
       );
-      await stop(child);
+      await stop(started.child);
       // The first start warms the page cache for the executable; it is reported, not measured.
-      if (index > 0) samples.push(ms);
-      else warmUpMs = round(ms);
+      if (index > 0) {
+        samples.push(started.ms);
+        if (trace) phases.push(phasesOf(started));
+      } else warmUpMs = round(started.ms);
     } catch (error) {
       failures.push(error.message);
     } finally {
       await remove(directory);
     }
   }
-  return { ...summary(samples), warmUpMs, failures };
+  return {
+    ...summary(samples),
+    warmUpMs,
+    failures,
+    ...(trace ? { phases: phaseSummary(phases) } : {}),
+    // Per start, in order, for the phases file only: a slow start shows where it lost time.
+    ...(trace ? { phaseRuns: phases } : {}),
+  };
 }
 
 /** Run to exit; `input` is written to stdin, which is then closed. */
@@ -621,13 +755,49 @@ async function endToEnd(binary, build) {
   }
 }
 
-function markdownSummary(result) {
+/** The phase tables of the step summary: first run beside installed, p50/p95 ms. */
+function phasesMarkdown(coldStart) {
+  const first = coldStart.firstRun.phases;
+  const installed = coldStart.installed.phases;
+  if (!first && !installed) return "";
+  const cell = (value) => (value ? `${value.p50} / ${value.p95}` : "-");
+  const rows = [
+    "\n| Phase (p50 / p95 ms) | first run | installed |\n|---|---|---|\n",
+  ];
+  for (const name of [
+    "spawnToProcess",
+    "processToEntry",
+    "extract",
+    "roleEvaluation",
+    "roleToReady",
+    "entryToReady",
+    "spawnToReady",
+  ])
+    rows.push(
+      `| ${name} | ${cell(first?.[name])} | ${cell(installed?.[name])} |\n`,
+    );
+  for (const name of new Set([
+    ...Object.keys(first?.helpers ?? {}),
+    ...Object.keys(installed?.helpers ?? {}),
+  ]))
+    for (const step of ["startedAfterEntry", "spawned", "output", "exit"])
+      rows.push(
+        `| helper ${name} ${step} | ${cell(first?.helpers[name]?.[step])} | ${cell(installed?.helpers[name]?.[step])} |\n`,
+      );
+  for (const name of Object.keys(first?.files ?? {}))
+    rows.push(
+      `| extract ${name} (written / verified) | ${cell(first.files[name].written)} | ${cell(installed?.files[name]?.verified)} |\n`,
+    );
+  return rows.join("");
+}
+
+function markdownSummary(result, file) {
   const series = (name, value) =>
     value
       ? `| ${name} | ${value.p50 ?? "-"} | ${value.p95 ?? "-"} | ${value.warmUpMs ?? "-"} | ${value.failures.length} |\n`
       : "";
   return [
-    `### SEA ${result.platform}-${result.arch} (${result.ok ? "passed" : "FAILED"})\n\n`,
+    `### SEA ${result.platform}-${result.arch} (${result.ok ? "passed" : "FAILED"}): ${file}\n\n`,
     `Binary ${result.binary.mib} MiB (${result.binary.bytes} bytes); commit ${result.commit ?? "unknown"}.\n\n`,
     "| Start series | p50 ms | p95 ms | warm-up ms | failures |\n|---|---|---|---|---|\n",
     series("first run (fresh root)", result.coldStartMs.firstRun),
@@ -636,6 +806,7 @@ function markdownSummary(result) {
       "node packages/daemon/dist/src/main.js",
       result.coldStartMs.nodeBaseline,
     ),
+    phasesMarkdown(result.coldStartMs),
     "\n| Check | Result |\n|---|---|\n",
     ...result.e2e.checks.map(
       (item) => `| ${item.name} | ${item.ok ? "pass" : "FAIL"} |\n`,
@@ -650,6 +821,7 @@ async function main() {
       binary: { type: "string" },
       runs: { type: "string", default: "10" },
       out: { type: "string" },
+      "phases-out": { type: "string" },
       baseline: { type: "boolean", default: false },
     },
   });
@@ -694,12 +866,14 @@ async function main() {
         prefixArgs: ["serve"],
         runs,
         root: "fresh",
+        trace: true,
       }),
       installed: await series({
         command: binary,
         prefixArgs: ["serve"],
         runs,
         root: installedRoot,
+        trace: true,
       }),
       ...(values.baseline
         ? {
@@ -737,7 +911,13 @@ async function main() {
       mib: round(size / 2 ** 20),
     },
     build: build ? { buildId: build.buildId, sizes: build.sizes } : null,
-    coldStartMs: coldStart,
+    coldStartMs: Object.fromEntries(
+      Object.entries(coldStart).map(([name, value]) => {
+        if (typeof value !== "object" || value === null) return [name, value];
+        const { phaseRuns: _phaseRuns, ...rest } = value;
+        return [name, rest];
+      }),
+    ),
     e2e: { ok: e2eOk, checks },
     adrP01: {
       coldStartLimitMs: LIMITS.coldStartMs,
@@ -752,6 +932,27 @@ async function main() {
   };
   await mkdir(path.dirname(out), { recursive: true });
   await writeFile(out, `${JSON.stringify(result, null, 2)}\n`);
+  if (values["phases-out"]) {
+    const phasesOut = path.resolve(values["phases-out"]);
+    await mkdir(path.dirname(phasesOut), { recursive: true });
+    await writeFile(
+      phasesOut,
+      `${JSON.stringify(
+        {
+          platform: result.platform,
+          arch: result.arch,
+          commit: result.commit,
+          measuredAt: result.measuredAt,
+          firstRun: coldStart.firstRun.phases ?? null,
+          installed: coldStart.installed.phases ?? null,
+          firstRunStarts: coldStart.firstRun.phaseRuns ?? [],
+          installedStarts: coldStart.installed.phaseRuns ?? [],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  }
   console.log(
     JSON.stringify({
       event: "sea.measured",
@@ -761,7 +962,10 @@ async function main() {
     }),
   );
   if (process.env.GITHUB_STEP_SUMMARY)
-    await appendFile(process.env.GITHUB_STEP_SUMMARY, markdownSummary(result));
+    await appendFile(
+      process.env.GITHUB_STEP_SUMMARY,
+      markdownSummary(result, path.basename(out)),
+    );
   for (const item of checks) if (!item.ok) console.error(JSON.stringify(item));
   if (!result.ok) process.exitCode = 1;
 }
