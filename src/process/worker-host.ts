@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: MIT
-import { WINDOWS_SYSTEM_ENVIRONMENT } from "../domain/environment.js";
+import {
+  WINDOWS_SYSTEM_ENVIRONMENT,
+  WORKER_TREE_ENVIRONMENT,
+} from "../domain/environment.js";
 import { configurationEnvironmentNames } from "../domain/engine-configuration.js";
 import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -12,6 +15,12 @@ import {
   type WorkerLease,
 } from "./leases.js";
 import { settleWorkerCleanup } from "./cleanup-settlement.js";
+import {
+  readProcessTable,
+  reclaimTreeSurvivors,
+  workerTree,
+  type TreeProcess,
+} from "./posix-tree.js";
 import { superviseWindowsWorker, type WindowsJob } from "./windows-job.js";
 import type {
   ExecutionHandle,
@@ -65,7 +74,11 @@ interface SessionWorker {
   spawnedAt: number;
 }
 
-/** Owns POSIX process groups or Windows kill-on-close Jobs, with awaited descendant cleanup. */
+/**
+ * Owns POSIX process groups or Windows kill-on-close Jobs, with awaited
+ * descendant cleanup. On POSIX, cleanup also reclaims descendants that left the
+ * Worker's group (see `posix-tree.ts`, including the residual gap).
+ */
 export class ProcessWorkerHost implements WorkerHost {
   private readonly sessions = new Map<SessionId, SessionWorker>();
   private readonly quarantinedLeases = new Set<SessionId>();
@@ -246,7 +259,7 @@ export class ProcessWorkerHost implements WorkerHost {
     const ownerToken = randomUUID();
     const child = fork(workerPath, [`--harnesshub-owner=${ownerToken}`], {
       cwd: spec.cwd,
-      env: this.workerEnvironment(spec),
+      env: this.workerEnvironment(spec, ownerToken),
       detached: process.platform !== "win32",
       stdio: ["ignore", "ignore", "ignore", "ipc"],
       serialization: "json",
@@ -395,7 +408,10 @@ export class ProcessWorkerHost implements WorkerHost {
     return worker;
   }
 
-  private workerEnvironment(spec: ExecutionSpec): NodeJS.ProcessEnv {
+  private workerEnvironment(
+    spec: ExecutionSpec,
+    ownerToken: string,
+  ): NodeJS.ProcessEnv {
     const normalize = (name: string) =>
       process.platform === "win32" ? name.toUpperCase() : name;
     const inherited = new Map(
@@ -461,7 +477,14 @@ export class ProcessWorkerHost implements WorkerHost {
       if (process.platform !== "win32") chmodSync(directory, 0o700);
     }
     // Per-session paths win over explicit values so backend logs and temporary files stay local.
-    return { ...env, ...privatePaths };
+    // The tree marker wins over everything: process ownership is not configuration.
+    return {
+      ...env,
+      ...privatePaths,
+      ...(process.platform === "win32"
+        ? {}
+        : { [WORKER_TREE_ENVIRONMENT]: ownerToken }),
+    };
   }
 
   private fail(worker: SessionWorker, error: unknown): void {
@@ -556,6 +579,9 @@ export class ProcessWorkerHost implements WorkerHost {
   }
 
   private async terminate(worker: SessionWorker): Promise<CleanupStatus> {
+    // Shutdown ends the engine and breaks parent links; record the tree first.
+    const tree =
+      process.platform === "win32" ? [] : await this.recordTree(worker);
     if (worker.child.connected) {
       try {
         await this.send(worker, { version: 1, type: "shutdown" });
@@ -570,6 +596,40 @@ export class ProcessWorkerHost implements WorkerHost {
       const exited = await this.waitExit(worker, this.shutdownGraceMs);
       return cleanup === "confirmed" && exited ? "confirmed" : "unconfirmed";
     }
+    const group = await this.terminateGroup(worker, exitedGracefully);
+    // A Worker that never started has no tree to reclaim.
+    if (group !== "confirmed" || worker.child.pid === undefined) return group;
+    return reclaimTreeSurvivors({
+      marker: worker.ownerToken,
+      recorded: tree,
+      graceMs: this.shutdownGraceMs,
+    });
+  }
+
+  /**
+   * POSIX snapshot of the Worker tree before shutdown, or `undefined` when the
+   * process table cannot be read (cleanup then stays at best `unconfirmed`).
+   */
+  private async recordTree(
+    worker: SessionWorker,
+  ): Promise<TreeProcess[] | undefined> {
+    const pid = worker.child.pid;
+    if (pid === undefined) return [];
+    // Node emits 'exit' when it reaps the Worker; until then its PID cannot be reused.
+    const live = !worker.hasExited;
+    try {
+      const table = await readProcessTable();
+      return workerTree(table, pid, live && !worker.hasExited);
+    } catch {
+      // Only the snapshot can fail here; the caller reports its absence.
+      return undefined;
+    }
+  }
+
+  private async terminateGroup(
+    worker: SessionWorker,
+    exitedGracefully: boolean,
+  ): Promise<CleanupStatus> {
     if (exitedGracefully && !this.groupExists(worker)) return "confirmed";
     for (const signal of ["SIGTERM", "SIGKILL"] as const) {
       const pid = worker.child.pid;

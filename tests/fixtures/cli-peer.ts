@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
 
 const mode = process.argv[2];
@@ -59,6 +60,77 @@ switch (mode) {
   }
   case "descendant":
     process.on("SIGTERM", () => {});
+    setInterval(() => {}, 10_000);
+    break;
+  case "escape-intermediate": {
+    // Start a descendant in its own session (setsid), report it and exit, so
+    // the descendant is reparented before any cleanup begins.
+    const child = spawn(process.execPath, [process.argv[1]!, "descendant"], {
+      stdio: "ignore",
+      detached: true,
+    });
+    child.unref();
+    process.stdout.write(`${child.pid}\n`);
+    break;
+  }
+  case "escape-orphan":
+  case "escape-both": {
+    process.stdin.resume();
+    const intermediate = spawn(
+      process.execPath,
+      [process.argv[1]!, "escape-intermediate"],
+      { stdio: ["ignore", "pipe", "ignore"] },
+    );
+    const closed = once(intermediate, "close");
+    let reported = "";
+    intermediate.stdout.setEncoding("utf8");
+    for await (const chunk of intermediate.stdout) reported += String(chunk);
+    await closed;
+    const report: Record<string, unknown> = {
+      parent: process.pid,
+      orphan: Number(reported.trim()),
+      marker: process.env.HARNESSHUB_WORKER_TREE ?? null,
+    };
+    if (mode === "escape-both") {
+      // A setsid descendant with a fresh environment: only its parent chain
+      // links it to the Worker while this engine is alive.
+      const cleared = spawn(
+        process.execPath,
+        [process.argv[1]!, "descendant"],
+        {
+          stdio: "ignore",
+          detached: true,
+          env: { PATH: process.env.PATH ?? "" },
+        },
+      );
+      report.cleared = cleared.pid;
+    }
+    process.stdout.write(JSON.stringify(report) + "\n");
+    if (mode === "escape-both" || process.argv[3] === "wait")
+      setInterval(() => {}, 10_000);
+    break;
+  }
+  case "orphan-sentinel": {
+    // Started by a test, not by a Worker: an unrelated process in its own
+    // session whose environment carries argv[3] as its tree marker value.
+    const child = spawn(
+      process.execPath,
+      [process.argv[1]!, "sentinel", ...process.argv.slice(4)],
+      {
+        stdio: "ignore",
+        detached: true,
+        env: {
+          PATH: process.env.PATH ?? "",
+          HARNESSHUB_WORKER_TREE: process.argv[3] ?? "",
+        },
+      },
+    );
+    child.unref();
+    process.stdout.write(`${child.pid}\n`);
+    break;
+  }
+  case "sentinel":
+    // An unrelated look-alike with default SIGTERM handling: any signal ends it.
     setInterval(() => {}, 10_000);
     break;
   default:

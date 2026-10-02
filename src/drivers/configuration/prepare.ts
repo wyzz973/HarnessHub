@@ -12,6 +12,7 @@ import type {
 } from "../../domain/engine-configuration.js";
 import { HARNESS_MODEL_ALIAS } from "../../domain/harness-model.js";
 import { HubError } from "../../domain/errors.js";
+import { WORKER_TREE_ENVIRONMENT } from "../../domain/environment.js";
 import { resolveSecret } from "./secrets.js";
 import { portableCommand, unwrapEnvironment } from "./launch.js";
 import { codexGatewayCatalog, codexModelCatalog } from "./codex-models.js";
@@ -265,6 +266,7 @@ async function mcp(
   server: EngineMcpServer,
   resolve: Resolver,
   workspace: string,
+  treeMarker: string | undefined,
 ): Promise<RuntimeMcpServer> {
   if (server.type === "stdio") {
     const command = portableCommand([
@@ -283,6 +285,11 @@ async function mcp(
           ]),
         ),
         ...(await secretMap(server.secretEnv, resolve)),
+        // Engines may start stdio servers with only the configured variables.
+        // The Worker's tree marker keeps the server's descendants attributable.
+        ...(treeMarker === undefined
+          ? {}
+          : { [WORKER_TREE_ENVIRONMENT]: treeMarker }),
       }).map(([name, value]) => ({ name, value })),
     };
   }
@@ -369,7 +376,9 @@ export async function prepareConfiguration(
   result.mcpServers = await settledValues(
     (config.mcpServers ?? [])
       .filter((s) => s.enabled)
-      .map((s) => mcp(s, resolve, spec.cwd)),
+      .map((s) =>
+        mcp(s, resolve, spec.cwd, environment[WORKER_TREE_ENVIRONMENT]),
+      ),
   );
   if (config.adapter === "mimo" && result.mcpServers.length > 0) {
     // MiMo 0.1.14 logs the complete ACP session state, including resolved

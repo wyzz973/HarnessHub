@@ -19,6 +19,12 @@ import { Ajv } from "ajv";
 import { HubError } from "../domain/errors.js";
 import type { CleanupStatus, SessionId } from "../domain/types.js";
 import { closeWindowsJob } from "./windows-job.js";
+import {
+  readProcessTable,
+  reclaimTreeSurvivors,
+  workerTree,
+  type TreeProcess,
+} from "./posix-tree.js";
 
 export interface WorkerLease {
   version: 1 | 2;
@@ -216,7 +222,15 @@ async function identity(
   return !exists(lease.pid) && !exists(-lease.pid) ? "gone" : "unknown";
 }
 
-/** Composition calls this only after acquiring the exclusive Gateway owner lock. */
+/**
+ * Composition calls this only after acquiring the exclusive Gateway owner lock.
+ *
+ * POSIX: the prior Worker's group is reclaimed only after its identity (token,
+ * full command and PGID) is verified. Descendants that left the group are then
+ * reclaimed by the rules of `posix-tree.ts`: those recorded below the verified
+ * live root, and those carrying the lease's owner token as their tree marker.
+ * A root that is already gone attributes nothing by parent chain.
+ */
 export async function recoverWorkerLease(
   lease: WorkerLease,
   graceMs: number,
@@ -236,6 +250,31 @@ export async function recoverWorkerLease(
     lease.platform !== process.platform
   )
     return "unconfirmed";
+  // Parent links are read before any signal breaks them; they count only once
+  // the identity check below proves the root is still the leased Worker.
+  const table = await readProcessTable().catch(
+    // The missing snapshot is reported through `recorded` below.
+    () => undefined,
+  );
+  const root = await identity(lease);
+  if (root === "unknown") return "unconfirmed";
+  let recorded: TreeProcess[] | undefined = [];
+  if (root === "owned") {
+    recorded = table ? workerTree(table, lease.pid, true) : undefined;
+    const group = await terminateLeaseGroup(lease, graceMs);
+    if (group !== "confirmed") return group;
+  }
+  return reclaimTreeSurvivors({
+    marker: lease.ownerToken,
+    recorded,
+    graceMs,
+  });
+}
+
+async function terminateLeaseGroup(
+  lease: WorkerLease,
+  graceMs: number,
+): Promise<CleanupStatus> {
   for (const signal of ["SIGTERM", "SIGKILL"] as const) {
     const current = await identity(lease);
     if (current === "gone") return "confirmed";

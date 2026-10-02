@@ -67,6 +67,18 @@ DSH 已完成 Mac 上的严格上下文恢复验收：显式 `acp.sessionMode: r
 
 数据库有独占Gateway owner，同一目录被活实例占用时新实例拒绝启动。重启先按旧Worker lease的token、完整命令及PGID核实归属；可确认退出或回收的进程记confirmed，身份不明则保留unconfirmed与隔离容量，不盲杀PID。Windows恢复仍保守返回unconfirmed。
 
+### POSIX 上脱离进程组的后代
+
+POSIX 上 Worker 自成会话与进程组，清理先按组发送 SIGTERM、再 SIGKILL。用 setsid（例如 Node 的 `detached: true`）、守护化或作业控制离开该组的后代另行认定归属，规则在 [posix-tree.ts](../src/process/posix-tree.ts)，决定见 [ADR 0016](decisions/0016-posix-escaped-descendants.md)：
+
+- 发送 shutdown 前读取一次进程表（macOS 用 `ps`，Linux 读 `/proc`），按父链记录 Worker 树中的每个进程，以 PID 加启动时间识别，进程被重新托管后仍可认定。
+- 每个 POSIX Worker 的环境含 `HARNESSHUB_WORKER_TREE=<owner token>`。引擎及继承环境的工具都会携带；HarnessHub 下发的 stdio MCP 服务配置也加入该变量，Worker 应用引擎环境时不会被启动配方或凭证隔离替换或删除。macOS 用 `ps -E` 读取同用户进程的环境，并用不带 `-E` 的第二次读取排除参数中出现的同名文本；Linux 读 `/proc/<pid>/environ`。
+- 进程组确认退出后再扫描一次：仍存活的已记录进程、环境带本 Worker 标记的进程以及它们的后代逐个收到 SIGTERM，宽限期后对剩余者发送 SIGKILL，最后重新扫描。只有扫描不到任何此类进程时才是 `confirmed`；仍有残留、进程表无法读取或无法区分参数与环境时为 `unconfirmed`，资源保持隔离。没有任何后代逃逸时只多两次进程表读取，不发信号。
+- 重启恢复以 lease 中的 token 作为标记执行同一检查；旧 Worker 仍存活并通过身份核实时，同样先记录其进程树。
+- 不会向未被证明归属的进程发送信号。Gateway 自身及其祖先永不归属，归属也不经由它们向下传递；进程组只在快照显示组长和所有成员都归属时整体发信号。
+
+已知缺口：清理开始前父进程已经退出、且环境里看不到标记的后代无法识别，此时 `cleanupStatus` 仍可能为 `confirmed`，`confirmed` 不证明这类进程已经结束。看不到标记的情况包括：以全新环境启动（`env -i` 或显式的 `env` 选项）、属于其他用户、Linux 上不可 dump 的进程，以及 macOS 上 `ps -E` 不显示环境的 Apple 平台二进制（2026-10-02 在 macOS 26.6 上核实 `/bin/sh`、`/bin/bash`、`/bin/sleep`、`/usr/bin/perl`；Node 及非 Apple 签名的程序可读）。由 launchd、systemd 等服务管理器代为启动的进程从一开始就不在 Worker 树内，也不受此清理覆盖。
+
 Session/Run保存安全配置快照，包含配置标识、模型选择、凭证变量名和命令hash，不记录凭证值或完整argv；旧记录缺快照时明确标unknown。
 
 Worker IPC 每条消息上限 8 MiB，文本产物入口上限 4 MiB，HTTP body 上限 2 MiB，超限明确失败而非截断；这些传输限制不等于模型 token 预算。Host 对 IPC 用 ACK 控制背压，但不能据此声称 acpx 内部队列或全部输出已受同样约束。

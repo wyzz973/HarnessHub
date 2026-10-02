@@ -139,7 +139,7 @@ Kimi 必须在普通 `env` 填写模型实际上下文窗口，例如 `{"KIMI_MO
 
 Skills 为 `{path,enabled,sha256?}` 数组，最多 16 项。每项主指令限 64 KiB、合计 256 KiB；这些是本层新增输入的限制，不更改模型的输出/上下文预算。保存时 pin 主指令 hash；运行中的 Worker 使用已读取的主指令，重建 Worker 时检查来源是否仍匹配。内容改变后需审阅并重新保存。附件仍引用原目录，不复制/固定整个 Skill 包。
 
-MCP 最多 16 项，名称唯一：stdio 需要 absolute command，可带 args/env/secretEnv；HTTP/SSE 需要 url，可带 headers/secretHeaders。URL 只允许 HTTP(S)，不允许内嵌身份、query 或 fragment；请用请求头秘密引用。程序按 argv 启动，配置本身不会执行脚本或安装包。enabled:false 不解析其秘密也不下发。Pi 通过本地扩展注册工具，OpenClaw 使用原生 Gateway 的 `mcp.servers`，Kimi CLI 使用独立 MCP 文件，具体要求和验证见 [原生 MCP](native-mcp.md)。其他普通 CLI 明确拒绝统一注入；其他 ACP 引擎下发后的服务建立、工具审批和调用按引擎协议分别验证。
+MCP 最多 16 项，名称唯一：stdio 需要 absolute command，可带 args/env/secretEnv，POSIX 上其 env 另含 Worker 树标记（见 [运行说明](runtime-api.md#posix-上脱离进程组的后代)）；HTTP/SSE 需要 url，可带 headers/secretHeaders。URL 只允许 HTTP(S)，不允许内嵌身份、query 或 fragment；请用请求头秘密引用。程序按 argv 启动，配置本身不会执行脚本或安装包。enabled:false 不解析其秘密也不下发。Pi 通过本地扩展注册工具，OpenClaw 使用原生 Gateway 的 `mcp.servers`，Kimi CLI 使用独立 MCP 文件，具体要求和验证见 [原生 MCP](native-mcp.md)。其他普通 CLI 明确拒绝统一注入；其他 ACP 引擎下发后的服务建立、工具审批和调用按引擎协议分别验证。
 
 上游只支持 Chat Completions 时，所有引擎经 [统一模型网关](model-gateway.md) 访问它，协议转换范围、错误/断流/取消及资源责任见该文档与 [ADR 0013](decisions/0013-unified-model-gateway.md)。原生托管搜索等无法转换的请求会明确失败；图片等媒体默认替换为文字占位。
 

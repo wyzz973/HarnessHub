@@ -24,7 +24,7 @@ Kimi 的限制来自固定源码：CLI 直接解析 JSON，交给 FastMCP 3.2.4�
 - 完整读取 `tools/list` 分页，重复 cursor 作为协议错误拒绝。每次初始化、工具目录请求超时为 10 秒；工具调用沿用 SDK 请求超时及 Pi 的取消信号。
 - 工具结果支持 MCP `text`、`image`；其他内容类型明确报错。`structuredContent` 保留于工具 details。
 - 初始化失败会先关闭已建立的客户端，再退出所属 Pi，防止 Pi 默认的“扩展加载失败后继续运行”造成工具静默缺失。
-- stdio 只向所属 MCP 进程传递其配置的 env 与 SDK 规定的基础系统环境；MCP stderr 被 drain，不进入公开事件。
+- stdio 只向所属 MCP 进程传递其配置的 env、POSIX 上的 Worker 树标记 `HARNESSHUB_WORKER_TREE`（见 [运行说明](runtime-api.md#posix-上脱离进程组的后代)）与 SDK 规定的基础系统环境；MCP stderr 被 drain，不进入公开事件。
 - `session_shutdown` 等待 SDK 客户端关闭并确认直接子进程退出；最终进程树由正式 Worker 的 Windows Job 负责回收。取消 Run 仍走同一 ProcessHost，不创建另一套任务循环。
 
 OpenClaw 直接使用其内置 MCP 客户端与生命周期，支持 `mcp.servers` 的三个传输类型；不需要下载插件。工具仍经过 OpenClaw 自身的 profile 和 policy。[OpenClaw MCP 文档](https://docs.openclaw.ai/tools/mcp)、[原生配置](https://docs.openclaw.ai/gateway/config-extensions)。
