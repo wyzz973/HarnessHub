@@ -120,6 +120,43 @@ GitHub 托管 runner，PR #17 的运行 36970981208（提交 e57ed2a），每组
 
 macos-13 已不再向公开仓库提供（2026-10-02 查阅 GitHub 托管 runner 文档），darwin-x64 改用 macos-15-intel。Windows 上 `kill()` 直接终止进程，因此不做 `serve.stop` 检查；Worker 租约的命令行比对只适用于 POSIX，Windows 的恢复走 Job 对象。win32-arm64 是 [10 第 5 节](10-engineering.md#5-发布工程) 的产物目标之一，但不在 ADR-P01 的验证范围内，本次未覆盖。
 
+### 5.6 首次运行的分阶段测量
+
+Windows 首次运行的 p95 为 4224 ms，而 p50 为 716 ms：每组 10 次时 p95 就是最慢的一次，所以这是个别启动的长尾，而不是每次都慢。为了查明时间花在哪里，`measure.mjs` 在两组 SEA 启动中设置只用于测量的 `HARNESSHUB_SEA_TRACE=1`。可执行文件的入口（[entry.mjs](../../../tools/sea/entry.mjs)）只在 `serve` 与 `version` 进程中、且只在设置了该变量时，向 stderr 写出每个事件一行 JSON（`{"event":"sea.trace",...}`）。默认关闭，产品的正常输出不变。事件只用仓库相对路径称呼解包的文件，用文件名称呼原生辅助程序，不包含解包根目录、参数或环境变量的值；Worker、启动器与 node-compat 子进程不写跟踪。
+
+每次启动拆成以下阶段（时间用 `performance.timeOrigin` 加 `performance.now()` 的纪元毫秒，父子进程可以直接比较）：
+
+| 阶段 | 含义 | 对应的假设 |
+|---|---|---|
+| `spawnToProcess` | 父进程调用 spawn 到子进程开始（Node 记录的进程起点） | 可执行文件本身首次执行的开销，含杀毒扫描（c） |
+| `processToEntry` | 进程开始到入口脚本的第一行 JavaScript：Node 启动与 SEA blob、代码缓存的反序列化 | （c） |
+| `extract` 与逐个文件 | 解包根目录的检查与写入，每个文件记录“写入”或“校验”及耗时 | 写入本身（b），SHA 校验（d） |
+| `roleEvaluation` | 加载并求值 Gateway 角色（daemon 的 `main`） | 我们的首次运行路径（d） |
+| `roleToReady` | 角色求值后到 `ready` 行：启动 Gateway、恢复、监听 | （d），以及启动前运行的原生辅助程序 |
+| `entryToReady`、`spawnToReady` | 入口到 `ready`；spawn 到 `ready`（即冷启动本身） | |
+| 原生辅助程序 | 本进程启动的每个原生辅助程序（Job、ACL、DPAPI/钥匙串）：从 spawn 到进程建立、首次输出与退出，以及它在入口之后多久启动 | 新写入的可执行文件首次执行时被扫描（a） |
+
+结果文件中每组都有各阶段的 p50/p95；`--phases-out` 另写一个文件，包含同样的汇总以及每次启动各自的阶段，单次慢启动的时间去向可以直接看出。
+
+本机 macOS arm64（Apple M5 Pro，Node 24.20.0，每组 20 次，2026-10-02）：
+
+| 阶段，p50 / p95 ms | 首次运行 | 已解包 |
+|---|---|---|
+| `spawnToProcess` | 7.8 / 8.1 | 7.7 / 8.2 |
+| `processToEntry` | 16.4 / 17.5 | 15.8 / 17.8 |
+| `extract` | 2.5 / 2.7 | 0.9 / 0.9 |
+| `roleEvaluation` | 65.2 / 68.8 | 65.4 / 68.0 |
+| `roleToReady` | 62.4 / 64.3 | 63.0 / 66.1 |
+| `entryToReady` | 130.9 / 136.7 | 129.8 / 134.7 |
+| `spawnToReady` | 155.5 / 161.4 | 154.0 / 158.0 |
+
+冷启动总计与 5.3 节一致（首次运行 p95 161.4 ms，已解包 158.0 ms，node 基线 206.3 ms）。macOS 上 `serve` 到 `ready` 之前不启动任何原生辅助程序；8 个文件的写入每个在 0.6 ms 以内。
+
+Windows 上另有两个只用于诊断的 CI 步骤，只在临时 runner 上运行，不是给用户的建议：一是记录 Defender 的状态（`Get-MpComputerStatus` 的实时保护等字段，只读）；二是把临时目录（每个解包根目录都在其中）加入 Defender 排除项后，再测一遍。两组结果的差异可以把“扫描新写入的辅助程序”与首次运行的其他开销分开。
+
+- CI 上的位置：每个目标的 `sea-phases-<目标>` 构件中有 `phases-<目标>.json`；Windows 上还有 `defender-win32-x64.json`、`phases-win32-x64-defender-excluded.json` 与 `result-win32-x64-defender-excluded.json`。
+- 作业摘要中，每次测量都有一张“Phase (p50 / p95 ms)”表，标题注明结果文件名。
+
 ## 6. 阻塞点与处理
 
 | 问题 | 本次处理 | 剩余工作 |
@@ -155,14 +192,14 @@ ADR-P01 的重新评估条件是冷启动超过 1.5 s 或体积超过 150 MB。�
 pnpm install --frozen-lockfile
 pnpm build
 node tools/sea/build.mjs
-node tools/sea/measure.mjs --runs 20 --baseline
+node tools/sea/measure.mjs --runs 20 --baseline --phases-out dist/sea/phases.json
 ```
 
-`build.mjs` 产出 `dist/sea/harnesshub`（Windows 为 `harnesshub.exe`）与 `dist/sea/build.json`；`measure.mjs` 写出 `dist/sea/result.json`，全部检查与启动都成功时退出码为 0、`ok` 为 `true`，任何一项失败时退出码为 1。CI 上在 Actions 中手动运行“SEA spike”，每个目标上传名为 `sea-<目标>` 的 JSON 结果。
+`build.mjs` 产出 `dist/sea/harnesshub`（Windows 为 `harnesshub.exe`）与 `dist/sea/build.json`；`measure.mjs` 写出 `dist/sea/result.json`，全部检查与启动都成功时退出码为 0、`ok` 为 `true`，任何一项失败时退出码为 1。CI 上在 Actions 中手动运行“SEA spike”，每个目标上传名为 `sea-<目标>` 的 JSON 结果与名为 `sea-phases-<目标>` 的分阶段报告（见 5.6 节）。
 
 ## 9. 未验证
 
-- 真实 Intel Mac 上的冷启动（CI 的 macos-15-intel runner 本身较慢）；Windows 首次运行耗时的来源。
+- 真实 Intel Mac 上的冷启动（CI 的 macos-15-intel runner 本身较慢）；Windows 首次运行耗时的来源（分阶段测量已加入，待 Windows runner 的数据）。
 - 重启后页缓存为空时的冷启动、内存占用。
 - 签名与公证后的产物，以及 macOS 隔离属性下的首次运行。
 - 真实引擎；工具包的 CLI 工具调用（只验证了 `tools/list`）；Pi 读取解包出的扩展；从解包位置调用钥匙串辅助程序完成密钥操作。
