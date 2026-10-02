@@ -28,6 +28,17 @@ import {
   type HarnessModelView,
 } from "@harnesshub/core/harness-model";
 import {
+  droppableFields,
+  type DroppableField,
+  type ModelPlaneStore,
+  type ProviderConfig,
+  type ProviderId,
+  type ProviderPatch,
+  type RouteGroupId,
+  type ModelRef,
+} from "@harnesshub/core/model-plane";
+import type { LogSink } from "@harnesshub/core/logging";
+import {
   isTerminal,
   type EngineProfile,
   type PublicError,
@@ -705,6 +716,114 @@ export function evaluateHarnessModel(
   }
 }
 
+/** The model-plane provider a legacy unified model migrates to (03 section 10). */
+export const MIGRATED_PROVIDER_ID = "migrated" as ProviderId;
+/** Its only model; the upstream model is its wire name, so the id never changes. */
+export const MIGRATED_MODEL_ID = "default";
+/** The route group every Run uses when it names no model. */
+export const DEFAULT_GROUP_ID = "default" as RouteGroupId;
+
+/** Parameters the legacy Session gateway always removed, as far as `drop-fields` can name them. */
+const LEGACY_DROPPED: readonly DroppableField[] = [
+  "store",
+  "metadata",
+  "service_tier",
+  "user",
+  "parallel_tool_calls",
+];
+
+/**
+ * Provider `migrated` for the active unified model: a translate-only Chat
+ * provider whose patches reproduce the legacy gateway's normalization, with
+ * the credential keeping its reference kind. Returns the reason instead when
+ * the unified model uses settings the model plane cannot hold (secret
+ * headers, reasoning stripping, removal of parameters outside `drop-fields`).
+ */
+export function migratedProvider(
+  active: ActiveHarnessModel,
+  now: string,
+  previous?: ProviderConfig,
+): ProviderConfig | { unsupported: string } {
+  const provider = active.provider;
+  if (Object.keys(provider.secretHeaders ?? {}).length)
+    return { unsupported: "secretHeaders" };
+  const compatibility = provider.compatibility ?? {};
+  if (compatibility.reasoning === "strip")
+    return { unsupported: "compatibility.reasoning strip" };
+  const extra = compatibility.dropParameters ?? [];
+  const outside = extra.filter(
+    (name) => !(droppableFields as readonly string[]).includes(name),
+  );
+  if (outside.length)
+    return {
+      unsupported: `compatibility.dropParameters ${outside.join(", ")}`,
+    };
+  if (!provider.baseUrl) return { unsupported: "a missing baseUrl" };
+  const dropFields = [
+    ...new Set([...LEGACY_DROPPED, ...(extra as DroppableField[])]),
+  ];
+  const patches: ProviderPatch[] = [
+    "developer-to-system",
+    "json-schema-to-json-object",
+    "drop-fields",
+    ...(compatibility.maxTokensField === "max_completion_tokens"
+      ? (["max-tokens-field"] as const)
+      : []),
+    ...(compatibility.includeUsage ? (["include-usage"] as const) : []),
+  ];
+  return {
+    schemaVersion: 1,
+    id: MIGRATED_PROVIDER_ID,
+    name: "Migrated unified model",
+    kind: "custom",
+    endpoints: { chat: provider.baseUrl },
+    auth: { apiKeyHeader: "authorization-bearer" },
+    ...(provider.headers && Object.keys(provider.headers).length
+      ? { headers: { ...provider.headers } }
+      : {}),
+    credentials: provider.apiKey
+      ? [
+          {
+            id: "migrated" as ProviderConfig["credentials"][number]["id"],
+            name: "migrated",
+            ref: { ...provider.apiKey },
+            enabled: true,
+          },
+        ]
+      : [],
+    models: {
+      source: "manual",
+      list: [
+        {
+          id: MIGRATED_MODEL_ID,
+          wire: active.model,
+          ...(provider.contextWindow !== undefined
+            ? { contextWindow: provider.contextWindow }
+            : {}),
+          ...(provider.maxOutputTokens !== undefined
+            ? { maxOutputTokens: provider.maxOutputTokens }
+            : {}),
+          ...(compatibility.images === "passthrough"
+            ? { inputModalities: ["text", "image"] as const }
+            : {}),
+        },
+      ],
+      expose: "all",
+    },
+    patches: { chat: { patches, dropFields } },
+    // The legacy gateway normalized every request; so does translation.
+    translateOnly: true,
+    createdAt: previous?.createdAt ?? now,
+    updatedAt: now,
+  } as ProviderConfig;
+}
+
+/** Outcome of {@link HarnessModelService.syncModelPlane}. */
+export type ModelPlaneSync =
+  | { status: "none" }
+  | { status: "synced"; groupCreated: boolean }
+  | { status: "unsupported"; reason: string };
+
 const testPrompt =
   "这是 HarnessHub 统一模型连通性测试。不要调用任何工具，只回复 OK。";
 const testTimeoutMs = 90_000;
@@ -721,6 +840,8 @@ export class HarnessModelService implements HarnessModelManagement {
   private testing:
     { abort: AbortController; task: Promise<unknown> } | undefined;
   private closed = false;
+  private modelPlane: { store: ModelPlaneStore; log: LogSink } | undefined;
+  private migration: ModelPlaneSync = { status: "none" };
 
   private constructor(
     private readonly ports: HarnessModelPorts,
@@ -772,6 +893,62 @@ export class HarnessModelService implements HarnessModelManagement {
     this.catalog = options.catalog;
     this.sessions = options.sessions;
     this.scratch = options.scratchDirectory;
+  }
+
+  /**
+   * Mirror the active unified model into the model plane: upsert provider
+   * `migrated` and create `group/default` with its model when that group
+   * does not exist (an existing group is never changed). Logs the outcome
+   * once per change. With `store`, also keeps the store for {@link set}.
+   * Rejects when the store cannot be written.
+   */
+  async syncModelPlane(modelPlane?: {
+    store: ModelPlaneStore;
+    log: LogSink;
+  }): Promise<ModelPlaneSync> {
+    if (modelPlane) this.modelPlane = modelPlane;
+    const plane = this.modelPlane;
+    const active = this.active();
+    if (!plane || !active) return (this.migration = { status: "none" });
+    const now = new Date().toISOString();
+    const previous = await plane.store.getProvider(MIGRATED_PROVIDER_ID);
+    const provider = migratedProvider(active, now, previous);
+    if ("unsupported" in provider) {
+      plane.log.info("model.migration.unsupported", {
+        source: active.source,
+        reason: provider.unsupported,
+      });
+      return (this.migration = {
+        status: "unsupported",
+        reason: provider.unsupported,
+      });
+    }
+    await plane.store.putProvider(provider);
+    let groupCreated = false;
+    if (!(await plane.store.getRouteGroup(DEFAULT_GROUP_ID))) {
+      await plane.store.putRouteGroup({
+        id: DEFAULT_GROUP_ID,
+        strategy: "order",
+        stickiness: "auto",
+        members: [`${MIGRATED_PROVIDER_ID}/${MIGRATED_MODEL_ID}` as ModelRef],
+        createdAt: now,
+        updatedAt: now,
+      });
+      groupCreated = true;
+    }
+    if (groupCreated || !previous)
+      plane.log.info("model.migrated", {
+        source: active.source,
+        provider: MIGRATED_PROVIDER_ID,
+        model: active.model,
+        groupCreated,
+      });
+    return (this.migration = { status: "synced", groupCreated });
+  }
+
+  /** Whether Sessions of unified-model engines can use the shared gateway. */
+  migrated(): boolean {
+    return this.migration.status === "synced";
   }
 
   active(): ActiveHarnessModel | undefined {
@@ -870,6 +1047,8 @@ export class HarnessModelService implements HarnessModelManagement {
       await writeHarnessModelFile(file, model);
       this.fileModel = model;
     });
+    // The model plane serves Runs: provider `migrated` follows the file.
+    await this.syncModelPlane();
     return this.view();
   }
 
