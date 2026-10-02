@@ -93,11 +93,48 @@ const testResponseSchema = {
     },
   },
 } as const;
+const buildInfoSchema = {
+  type: "object",
+  description:
+    'Identity of the running build. Values the build could not determine are "unknown".',
+  additionalProperties: false,
+  required: [
+    "version",
+    "channel",
+    "commit",
+    "commitDate",
+    "ref",
+    "dirty",
+    "builtAt",
+    "workflowRun",
+    "os",
+    "arch",
+    "nodeVersion",
+    "installMethod",
+  ],
+  properties: {
+    version: { type: "string" },
+    channel: { type: "string" },
+    commit: { type: "string" },
+    commitDate: { type: "string" },
+    ref: { type: "string" },
+    dirty: {
+      anyOf: [{ type: "boolean" }, { type: "string", enum: ["unknown"] }],
+    },
+    builtAt: { type: "string" },
+    workflowRun: { type: ["string", "null"] },
+    os: { type: "string" },
+    arch: { type: "string" },
+    nodeVersion: { type: "string" },
+    installMethod: { type: "string" },
+  },
+} as const;
 const runtimeInfoSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["fullAccess"],
+  required: ["build", "fullAccess"],
   properties: {
+    build: buildInfoSchema,
     fullAccess: { type: "boolean" },
     consoleUrl: { type: "string" },
   },

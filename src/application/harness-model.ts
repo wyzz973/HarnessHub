@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import type { BuildInfo } from "../domain/build-info.js";
 import { randomUUID } from "node:crypto";
 import {
   mkdir,
@@ -125,6 +126,8 @@ export interface HarnessModelTestResult {
 
 /** Response of `GET /v1/runtime/info`, fixed when the Gateway starts. */
 export interface RuntimeInfo {
+  /** Identity of the running build (dist/build-info.json). */
+  build: BuildInfo;
   fullAccess: boolean;
   consoleUrl?: string;
 }
