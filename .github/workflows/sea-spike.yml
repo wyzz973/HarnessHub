@@ -2,9 +2,14 @@ name: SEA spike
 
 # OSS-008 single-executable feasibility spike (ADR-P01). Builds the SEA on each target's
 # native runner, measures size and cold start, and runs the end-to-end check from
-# scripts/sea/measure.mjs. Manual only; uploads one small JSON result per platform and
-# never publishes the binary. Findings: docs/proposals/oss/sea-spike.md.
+# scripts/sea/measure.mjs. Runs on demand and on pull requests that change the SEA
+# tooling; uploads one small JSON result per platform and never publishes the binary.
+# Findings: docs/proposals/oss/sea-spike.md.
 on:
+  pull_request:
+    paths:
+      - "scripts/sea/**"
+      - ".github/workflows/sea-spike.yml"
   workflow_dispatch:
     inputs:
       runs:
@@ -63,7 +68,7 @@ jobs:
       - name: Measure and run the end-to-end check
         shell: bash
         env:
-          RUNS: ${{ inputs.runs }}
+          RUNS: ${{ inputs.runs || '10' }}
           TARGET: ${{ matrix.target }}
         run: node scripts/sea/measure.mjs --runs "$RUNS" --baseline --out "dist/sea/result-$TARGET.json"
       - name: Upload the result
