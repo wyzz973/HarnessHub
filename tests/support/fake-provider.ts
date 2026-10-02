@@ -70,6 +70,7 @@ interface TestingModule {
     protocol: WireProtocol,
     body: Record<string, unknown>,
     answer: DecodedAnswer,
+    options?: { echo?: boolean; result?: string },
   ): Record<string, unknown>;
 }
 
