@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, oss-main]
+    branches: [main]
   pull_request:
   merge_group:
 

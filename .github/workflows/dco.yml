@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 jobs:
-  sign-off:
+  dco:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
