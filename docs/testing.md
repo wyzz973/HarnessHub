@@ -53,7 +53,7 @@ Windows 用原生环境验证中文/空格路径、env 大小写、cmd/PowerShel
 
 当前实际可运行入口在 [README](../README.md#当前可运行检查)。文档检查是局部检查，不等于完整构建或质量检查。
 
-下表按所属模块与实施阶段逐步实现。当前类型、lint/格式、边界、单元、DB/IPC/HTTP 集成、构建入口 smoke 和文档检查已在 [package.json](../package.json)接入，并有 [CI 配置](../.github/workflows/ci.yml)。Windows 专用 `test:windows` 已接入，要求本机 Windows 并从正式编译产物执行测试；同组测试也包含在 `pnpm check` 的常规单元/集成组。CI 已增加 Windows matrix，远端运行结果与本机证据分别报告。首次 Ubuntu 远端 CI 见 历史发布验收（归档于 `archive/competition` 分支的 `2026-09-05-github-documentation.md`）。真实引擎 `test:engine` 尚未接入；真实模型必须另有配置、预算和执行证据。
+下表按所属模块与实施阶段逐步实现。当前类型、lint/格式、边界、SPDX 文件头、标签定义、单元、DB/IPC/HTTP 集成、构建入口 smoke 和文档检查已在 [package.json](../package.json)接入。[CI 配置](../.github/workflows/ci.yml)在 Ubuntu、macOS 与 Windows 上运行完整 `pnpm check`，由 `ci-ok` 汇总为单一必需状态；另有 [DCO 签名](../.github/workflows/dco.yml)（`scripts/check-dco.mjs`）、[CodeQL](../.github/workflows/codeql.yml)、[依赖审查](../.github/workflows/dependency-review.yml)、[OpenSSF Scorecard](../.github/workflows/scorecard.yml) 与[标签同步](../.github/workflows/labels.yml)。第三方 Action 按提交 SHA 固定，工作流默认只读权限。Windows 专用 `test:windows` 已接入，要求本机 Windows 并从正式编译产物执行测试；同组测试也包含在 `pnpm check` 的常规单元/集成组。远端 CI 结果与本机证据分别报告。真实引擎 `test:engine` 尚未接入；真实模型必须另有配置、预算和执行证据。
 
 | 目标检查名 | 职责与接入点 |
 |---|---|
