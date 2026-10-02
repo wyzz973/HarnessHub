@@ -198,7 +198,7 @@ node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js dist/tests/un
 
 - 请求的模型取自请求体的 `model`（Gemini 取路径中 `/models/` 之后到最后一个 `:` 之前的部分），必须是 Model Ref `provider/model` 或 `group/<id>`，否则 400 `model_invalid`；provider 或组不存在为 404 `model_not_found`（不是拒绝记录）。provider 列表中没有的模型照常路由，元数据未知。
 - wire 名依次取模型自己的 `wire`、provider `wire` 中该模型的条目、`*` 条目（`*` 替换为模型名），否则为模型名。
-- 每个启用的 Credential 是一个候选。provider 声明了与入站相同的端点、不是 `translateOnly`、Credential 对该端点有效时直通；否则转换到 provider 的 Chat 端点；两者都不行的 Credential 被跳过。没有任何候选时返回 400 `unsupported_route`，消息说明转换到非 Chat 上游尚未实现。
+- 每个启用的 Credential 是一个候选。provider 声明了与入站相同的端点、不是 `translateOnly`、Credential 对该端点有效时直通；否则转换到 provider 的 Chat 端点；没有 Chat 端点时依次转换到它的 Anthropic、Responses 或 Gemini 端点。对 provider 的任何端点都无效的 Credential 被跳过；没有任何候选时返回 400 `unsupported_route`，消息列出被跳过的原因。
 - 端点基址是该厂商官方 SDK 使用的基址，这是对 `ProviderConfig.endpoints` 注释中“不含操作路径”的明确约定，存储的基址校验按同一约定执行：Chat 与 Responses 含版本（OpenAI SDK 的 `baseURL`，如 `https://api.openai.com/v1`，拼接 `/chat/completions`、`/responses`）；Anthropic 不含版本（`ANTHROPIC_BASE_URL` 形式，如 `https://api.deepseek.com/anthropic`，拼接 `/v1/messages`）；Gemini 不含版本（`@google/genai` 的 `baseUrl`，拼接客户端所用的 `v1beta`、`v1` 或 `v1alpha`，再接 `/models/{wire}:{method}`，SSE 时带 `alt=sse`）。基址末尾的斜杠不影响结果。
 - `GET /v1/models`、`GET /v1/models/{ref}`（`{ref}` 可含 `/`）与 `GET /v1beta/models` 只列出 Key 允许、且在 provider `expose` 中的模型，以及 Key 允许的路由组。每项含 `id`、`owned_by`、`context_window`、`max_output_tokens`、`reasoning`、`input_modalities`（已知时）与 `native_endpoints`（`translateOnly` 时为空，路由组没有该字段）；路由组取成员中最小的窗口与输出上限，成员都已知时取推理与模态的交集。列表与计数不访问上游，也不写账本。
 - `count_tokens` 与 Gemini `:countTokens` 返回本地估算，响应头带 `x-hh-token-count: estimated`。
@@ -208,19 +208,25 @@ node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js dist/tests/un
 - **直通**只改写请求体顶层的 `model` 字符串（原位替换，其他字节不变，包括键序、空白和未知字段；Gemini 请求体不变，wire 名进入路径），去掉 HarnessHub 的鉴权头，按 `auth.apiKeyHeader` 加上 provider 的 Credential（`query-key` 写入 URL），再加上 provider 的 `headers`。客户端的 `anthropic-version`（缺省补 `2023-06-01`）、`anthropic-beta`、`openai-beta` 与 `user-agent` 被转发。
 - 已实现的补丁：Chat 的 `developer-to-system`、`max-tokens-field`、`drop-fields`、`include-usage`、`json-schema-to-json-object`；各协议的 `drop-fields`；Anthropic 的 `anthropic-beta-allow`（只转发列出的 beta 值）。任何补丁生效时请求体改为解析后重新序列化，实际生效的补丁写入 `patches[]`。`thinking-off-unless-asked`、`lift-additional-tools`，以及声明在不适用端点上的补丁，会使该候选以 500 `patch_unsupported` 跳过，不静默忽略。
 - 直通响应按完整的 SSE 事件或 Gemini 数组元素转发，字节不变；旁路解析首内容、usage、served model、终止事件与流内错误。第一个数据事件之前的注释与空事件先缓存，因此此前的超时仍以真实状态码返回。上游的流内错误不原样转发，而是改写为该协议格式、经过脱敏的错误；上游 HTTP 错误同样按入站协议格式重写，带 `x-hh-error-source: upstream`。
-- **转换**沿用 Session 网关的入站转换器与输出（含保活与 Gemini 响应头提交期限），差别是：默认不去掉任何参数、不把 `json_schema` 降级（只由补丁触发）、总是请求 `stream_options.include_usage`；模型的 `maxOutputTokens` 限制输出上限；模型声明图片输入时 Chat 的 `image_url` 原样转发；provider 声明 `requiresReasoningReplay` 时才按 Gateway Key 缓存并回填推理。2xx 却没有任何数据事件为 502 `upstream_invalid_response`。
+- **转换**以 Chat 形态的请求与流为枢纽：入站转换器把请求转成 Chat 请求并规范化；上游是 Chat 时直接发送，否则由编码器（[encode.ts](../packages/gateway/src/encode.ts)）转成 Anthropic Messages、Responses 或 Gemini `streamGenerateContent`（总是流式，Gemini 用 `alt=sse`）；解码器（[decode.ts](../packages/gateway/src/decode.ts)）把这些协议的流或 JSON 响应变成 Chat 块，经同一个工具调用累积与结束原因规范化，交给入站协议原有的输出（含保活与 Gemini 响应头提交期限）。与 Session 网关的差别：默认不去掉任何参数、不把 `json_schema` 降级（只由补丁触发）、总是请求 Chat 上游的 `stream_options.include_usage`；模型的 `maxOutputTokens` 限制输出上限；模型声明图片输入时图片作为 Chat 的 `image_url` 保留（否则仍是文字占位）；provider 声明 `requiresReasoningReplay` 或上游是 Anthropic 时，按 Gateway Key 缓存并回填推理文本。2xx 却没有任何数据事件为 502 `upstream_invalid_response`。
+- 入站转换器另外带出客户端的推理请求（Chat `reasoning_effort`、Responses `reasoning.effort`、Anthropic `thinking`、Gemini `thinkingConfig`）与标记为错误的工具结果（Anthropic `is_error`、只有 `error` 的 Gemini `functionResponse`），编码器按目标协议使用：
+  - **Anthropic**：首条 system 消息成为 `system`；工具结果成为用户轮中领先的 `tool_result` 块，带 `is_error`；base64 与 URL 图片；`stop` 成为 `stop_sequences`，`temperature` 截到 1，`parallel_tool_calls: false` 成为 `disable_parallel_tool_use`；`max_tokens` 依次取请求、模型的 `maxOutputTokens`、默认 4096（`anthropicMaxTokens` 是唯一的解析处，非请求来源记为补丁 `max_tokens:model` 或 `max_tokens:default`）；请求头带 `anthropic-version: 2023-06-01`。有推理请求时开启 `thinking`（预算取请求值或按 effort 换算，限制在 1024 与 `max_tokens - 1` 之间），并去掉 `temperature`、`top_p` 与强制工具选择（记为补丁）。历史中的推理只有找到同一 provider 为该文本签发的签名时才作为 `thinking` 块回传，否则丢弃并记入 `unmapped`；正在进行的工具轮缺少已签名的推理时不开启 `thinking`（补丁 `thinking:off:unsigned_history`），因为 Anthropic 会拒绝。
+  - **Responses**：无状态请求（`store: false`）；system 成为 `instructions`，工具调用与结果成为 `function_call` 与 `function_call_output` 项；函数工具除非 Chat 工具要求严格模式，否则以 `strict: false` 发送；`response_format` 成为 `text.format`；推理请求成为 `reasoning.effort`，并要求 `summary: auto` 以便流回推理文本。历史推理（没有该 provider 的加密内容）、`stop` 与工具错误标记无法携带，记入 `unmapped`。
+  - **Gemini**：system 成为 `systemInstruction`，工具成为 `functionDeclarations`；JSON Schema 只保留 Gemini 接受的关键字（类型转为大写，含 `null` 的类型联合成为 `nullable`，`const` 成为单值 `enum`，`oneOf` 成为 `anyOf`），去掉的关键字以 `schema.<关键字>` 记入 `unmapped`；工具结果成为以所答调用命名的 `functionResponse`，工具错误为 `{error}`，JSON 对象结果原样作为 `response`；base64 图片成为 `inlineData`，图片 URL 无法发送；推理请求成为 `thinkingConfig`（关闭时 `thinkingBudget: 0`）。同一 provider 在函数调用上签发的 `thoughtSignature` 按调用 id 缓存，下一轮回传。
+- 解码器把推理（Anthropic `thinking`、Responses 推理摘要与推理文本、Gemini thought 部分）交给入站协议的推理块；签名、加密推理与 redacted thinking 从不转发给其他协议的客户端，redacted thinking 与服务端工具块记入 `unmapped`。结束原因：`end_turn` 与 `stop_sequence` 为 `stop`，`max_tokens` 为 `length`，`tool_use` 为 `tool_calls`，`refusal` 与 Gemini 的安全类原因为 `content_filter`，Responses 的 `incomplete` 按原因映射，其他值原样保留；Gemini `MALFORMED_FUNCTION_CALL` 为 502 上游错误。usage 换算为同一口径：Anthropic 的缓存读写、OpenAI 的缓存与推理 token、Gemini 的缓存与 thoughts 都进入账本对应的字段。各协议的上游错误（含流内错误事件）按入站协议的错误格式返回，规则同直通。
+- 签名缓存按 Gateway Key 分开（每个 Key 512 条，最多 1024 个 Key），只对签发它的 provider 返回。
 
 ### 路由、重试与熔断
 
 - 单个 Model Ref 的候选是该 provider 的 Credential；路由组按策略排列成员：`order` 按配置；`rotate` 每次调用从下一个成员开始；`least-used` 取最近 24 小时 token 最少者；`latency` 取首内容时间指数平均最小者，样本少于 5 次的成员优先。后两者只统计本处理函数启动以来的调用；粘性（stickiness）尚未实现。
 - 重试策略取组的 `retry` 覆盖 `DEFAULT_RETRY_POLICY`，`totalAttempts` 不超过 8；单 Model Ref 使用默认值。退避为 `baseBackoffMs × 2^n`，不超过 `maxBackoffMs`，±20% 抖动；等待总计不超过 30 秒。
 - 分类按 03 第 5 节：连接失败与 408、500、502、503、504、529 先同候选重试再转移；等待响应头超时最多重试 1 次；429 的 `Retry-After`（或 `retry-after-ms`）不超过上限时有其他候选先转移，否则等待后重试，超过上限或没有时不等待，转移或把 429 返回客户端，`retry-after` 截断到 60 秒（Gemini 在错误体中写 `RetryInfo`）；401、402、403 与配额措辞转移不重试；404 与模型不存在措辞转移，并把该 Credential 与模型标记 10 分钟；其他 4xx 与上下文超长（429 一律不算超长）直接返回。客户端断开或 `close()` 立即停止，不再发起尝试。
-- 熔断以 Credential 为单位：连续 3 次计入的失败、一次认证或配额失败使其打开；时长取上游给出的等待，否则 60 秒起每次重新打开翻倍，上限 10 分钟；认证失败打开 10 分钟，Credential 引用变化时立即关闭。到期后半开放行一个探测请求，成功关闭、计入的失败再次打开。所有候选都不可用时不访问上游，返回最近一次失败的状态与原因。同一调用内已决定的重试不再询问熔断（`Retry-After` 冷却已计入等待）。
+- 熔断以 Credential 为单位：连续 3 次计入的失败、一次认证或配额失败使其打开；时长取上游给出的等待，否则 60 秒起每次重新打开翻倍，上限 10 分钟；认证失败打开 10 分钟，Credential 引用变化时立即关闭。到期后半开放行一个探测请求，成功关闭、计入的失败再次打开。所有候选都不可用时不访问上游，返回最近一次失败的状态与原因。一次失败使该 Credential 的熔断打开时，本调用原本要做的同候选重试改为转移；只有按 `Retry-After` 等待后的重试不受熔断影响（等待已计入冷却）。直通与各种转换路由的重试、转移、扣留与熔断行为相同。
 - **首字节前扣留**：还有替代路径（其他候选或剩余同候选重试）时，流式输出在第一个内容事件（文本、推理或工具调用）之前被扣留，最多 `holdMs`（15 秒）或 `holdBytes`（1 MiB）；扣留期间不发保活，期间的流内错误按首字节前失败处理。首字节送达客户端之后的任何失败只在流内报告，不重试、不转移。
 
 ### 账本
 
-每个进入网关的模型调用提交一条 `ModelCallEntry`：`attempts[]`（候选、开始时间、上游首字节、状态、错误类别、`Retry-After`、决定与退避）、按协议规范化的五项 usage（无上报时 `source: missing` 且各项为 0）、`timing`（`durationMs`；已写出字节时的 `firstByteMs`；首内容时的 `firstContentMs`）、`status`、`errorClass`、`errorSource`、脱敏后的 `error`、`patches[]`、`mode`、`servedModel`、`finishReason`、`completion`（`explicit` 或 `inferred`）。`cost` 只在 provider 模型声明了价格、且每个用到的 token 类别都有价格时计算（推理按输出价格），否则为 null。`unmapped[]` 目前总为空。
+每个进入网关的模型调用提交一条 `ModelCallEntry`：`attempts[]`（候选、开始时间、上游首字节、状态、错误类别、`Retry-After`、决定与退避）、按协议规范化的五项 usage（无上报时 `source: missing` 且各项为 0）、`timing`（`durationMs`；已写出字节时的 `firstByteMs`；首内容时的 `firstContentMs`）、`status`、`errorClass`、`errorSource`、脱敏后的 `error`、`patches[]`、`mode`、`servedModel`、`finishReason`、`completion`（`explicit` 或 `inferred`）。`cost` 只在 provider 模型声明了价格、且每个用到的 token 类别都有价格时计算（推理按输出价格），否则为 null。`unmapped[]` 列出转换到其他协议时丢弃的请求字段与内容（如 `reasoning`、`stop`、`schema.additionalProperties`）以及无法转给客户端的响应块（如 `response.redacted_thinking`）；直通与转换到 Chat 上游时为空。
 
 **先提交后发布**：流式响应的终止事件（`[DONE]`、`response.completed` 或 `response.incomplete`、`message_stop`、带结束原因的 Gemini 块及其后的内容、数组的 `]`）与非流式响应体在 `appendModelCall` 成功之后才写出。提交失败时，尚未写出响应头则返回 503 `evidence_unavailable`，否则在流内写出该错误且不写终止事件。每个调用至多追加一条记录。
 
@@ -242,7 +248,7 @@ node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js dist/tests/un
 
 ### 验证
 
-[共享网关测试](../packages/gateway/test/shared-gateway.test.ts) 与 [路由测试](../packages/gateway/test/shared-gateway-routing.test.ts) 把处理函数挂在 `listen(0)` 的回环服务上，使用测试内的内存 `ModelPlaneStore` 与回环假上游，不访问真实模型：每种 Key 拒绝及其账本记录与节流、白名单、模型列表、四种协议的直通（请求体除 `model` 外逐字节相同、鉴权头替换、响应字节相同）、四种入站到 Chat 上游的转换、补丁、压缩请求、503 后转移成功、首字节后不重试、400 不重试、上下文超长不重试、`Retry-After` 超过上限直接返回与上限内等待、扣留期间的流内错误转移、扣留超时释放、熔断打开与半开、认证失败换 Credential、取消后不再尝试、`close()` 中止在途调用、提交前不写终止事件、提交失败时的 `evidence_unavailable`、响应头与空闲超时、转换路径的保活与 Gemini 响应头提交。
+[共享网关测试](../packages/gateway/test/shared-gateway.test.ts)、[路由测试](../packages/gateway/test/shared-gateway-routing.test.ts) 与 [协议矩阵测试](../packages/gateway/test/shared-gateway-matrix.test.ts) 把处理函数挂在 `listen(0)` 的回环服务上，使用测试内的内存 `ModelPlaneStore` 与回环假上游，不访问真实模型：每种 Key 拒绝及其账本记录与节流、白名单、模型列表、四种协议的直通（请求体除 `model` 外逐字节相同、鉴权头替换、响应字节相同）、四种入站到 Chat 上游的转换、补丁、压缩请求、503 后转移成功、首字节后不重试、400 不重试、上下文超长不重试、`Retry-After` 超过上限直接返回与上限内等待、扣留期间的流内错误转移、扣留超时释放、熔断打开与半开、认证失败换 Credential、取消后不再尝试、`close()` 中止在途调用、提交前不写终止事件、提交失败时的 `evidence_unavailable`、响应头与空闲超时、转换路径的保活与 Gemini 响应头提交；以及 Chat 入站到仅有 Anthropic 端点的 provider（推理、工具、缓存读写 usage、同一 provider 的签名回传）、Claude Code 到仅有 Responses 或 Gemini 端点的 provider（图片、推理、工具、错误结果、Schema 限制）、Codex 到 Claude、交错的并行工具参数、各协议上游错误的格式映射，以及转换路由上的重试、转移、扣留与熔断。[编解码测试](../packages/gateway/test/matrix-codec.test.ts) 逐项覆盖编码器、解码器、结束原因映射与 `max_tokens` 解析。
 
 ```sh
 pnpm build
@@ -251,6 +257,7 @@ node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js
 
 ### 与 03 的差异与未实现项
 
-- 尚未实现：转换到非 Chat 上游（IR 的 N×M 转换）；额度与 `session:` Key 的活动 Run（409 `no_active_run`）及 `runId` 归因；粘性路由；`route.breaker` 事件（目前只写日志）；provider 声明的请求体上限与 `onUnsupportedMedia`；上游 `count_tokens` 转发；局域网共享与 `publicBaseUrl`；`unmapped[]`、`shape`、`conversationKey` 等账本扩展字段；拒绝记录的定时汇总（目前在下一次同类拒绝或 `close()` 时写出）。
+- 协议矩阵以 Chat 为枢纽，而不是 03 第 3 节的 IR；编码器与解码器按 IR 的边来组织，以后可以替换枢纽。经过 Chat 枢纽会丢失 Chat 表达不了的区别，例如 Anthropic 的 `stop_sequence` 与 `end_turn` 都成为 `stop`。
+- 尚未实现：额度与 `session:` Key 的活动 Run（409 `no_active_run`）及 `runId` 归因；粘性路由；`route.breaker` 事件（目前只写日志）；provider 声明的请求体上限与 `onUnsupportedMedia`；上游 `count_tokens` 转发；局域网共享与 `publicBaseUrl`；`shape`、`conversationKey` 等账本扩展字段；入站转换器自身丢弃的提示字段尚未记入 `unmapped[]`；转换到 Gemini 的图片 URL 与 Anthropic 的结构化输出（beta）；拒绝记录的定时汇总（目前在下一次同类拒绝或 `close()` 时写出）。
 - 直通只给 Gemini 入站注入保活（它在响应头提交期限后已提交头部）；其他协议的直通流保持上游的原样字节，不插入保活。
 - 响应体上限按原始字节而不是解码后的内容计算；`least-used` 与 `latency` 只统计本次启动以来的调用；认证失败的熔断最长 10 分钟后进入半开，而不是一直保持到 Credential 更新。

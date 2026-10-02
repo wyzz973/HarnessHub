@@ -24,7 +24,7 @@ The code base comes from an earlier, single-model edition of HarnessHub and is b
 |---|---|
 | Execution | Durable Sessions and Runs in SQLite, serialized per Session; SSE replay from committed events; idempotent submission; deadlines and cancellation; permission requests; declared file outputs as immutable artifacts; JSONL export |
 | Agents | ACP and CLI drivers; discovery of installed agents (OpenCode, Codex, Qwen Code, Gemini CLI, Pi, MiMo, DSH, OpenClaw, Kimi, Hermes and more); per-Session private configuration, so user configuration files are never modified |
-| Model gateway | A shared gateway on the daemon port for any OpenAI, Anthropic or Gemini client: providers from presets or by hand, route groups, Gateway Keys with model allowlists, passthrough to native endpoints or translation to Chat, and a `model.call` ledger with usage and cost. Runs still use the per-Session gateway with one configured model |
+| Model gateway | A shared gateway on the daemon port for any OpenAI, Anthropic or Gemini client: providers from presets or by hand, route groups, Gateway Keys with model allowlists, passthrough to native endpoints or translation between the four protocols, and a `model.call` ledger with usage and cost. Runs still use the per-Session gateway with one configured model |
 | Tools | Tool packs with Skills, MCP servers and CLI tools, stored by content hash and bound per agent |
 | Process supervision | One Worker process per Session; process groups on POSIX and Job Objects on Windows; restart recovery |
 | Console | A local web console (Next.js) for tasks, models, tools, agents and observability |
