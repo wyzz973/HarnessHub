@@ -38,7 +38,7 @@
 - 每个用例默认有超时，整组有总期限；超过总期限时结束整个进程树并判为失败，这通常说明某个文件留下了未关闭的句柄。
 - 运行结束后沙箱临时目录中仍有内容即判为资源泄漏并失败；沙箱在任何情况下都会删除。拒绝样例见 `scripts/check-run-tests.test.mjs`。
 - `--inventory FILE` 另外写出本组的用例清单：[自定义 reporter](../scripts/test-inventory-reporter.mjs) 经 `--test-reporter` 写入沙箱，启动器补上组名后写成 JSON Lines（组名、测试文件名、从最外层到该用例的名称路径、状态 pass/fail/skip/todo），spec 输出照常写到 stdout。未给该参数而 `HARNESSHUB_TEST_INVENTORY_DIR` 非空时写到 `<目录>/<组名>.jsonl`；这个变量只供启动器使用，不传给测试。失败的运行同样写出清单，清单只含 runner 实际报告的用例。
-- [`scripts/compare-inventory.mjs`](../scripts/compare-inventory.mjs) 比较两份清单（文件或目录）：按组名、名称路径和状态计数匹配，忽略测试文件位置，逐条列出缺少与新增的用例；有差异退出 1，输入无效或没有条目退出 2。`--allow FILE` 列出预期新增的条目，未出现的预期新增同样算差异。拒绝样例见 `scripts/check-compare-inventory.test.mjs`。
+- [`scripts/compare-inventory.mjs`](../scripts/compare-inventory.mjs) 比较两份清单（文件或目录）：按组名、名称路径和状态计数匹配，忽略测试文件位置，逐条列出缺少与新增的用例；有差异退出 1，输入无效或没有条目退出 2。`--allow FILE` 列出预期新增的条目，未出现的预期新增同样算差异。拒绝样例见 `scripts/check-compare-inventory.test.mjs`。多包迁移用它逐平台核对用例清单不变，见 [多包迁移计划](proposals/oss/13-package-migration.md#5-步骤与对账)。
 
 就绪等待使用带期限的握手、查询或状态事件；固定 sleep 不作就绪证据。重试仅用于明确瞬时故障，记录触发原因及次数；不能通过更长 timeout、整套串行或反复重跑掩盖竞态。
 
