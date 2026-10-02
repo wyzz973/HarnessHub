@@ -54,4 +54,8 @@ export async function assertExited(pid: number, marker: string): Promise<void> {
     line === undefined || !line.includes(marker),
     `process ${pid} still runs ${marker}: ${line ?? ""}`,
   );
+  // Evidence for the CI log: how often a PID was reused, and by what.
+  process.stderr.write(
+    `assertExited: PID ${pid} of ${marker} now belongs to ${line ?? "a process that exited or cannot be read"}\n`,
+  );
 }
