@@ -401,7 +401,11 @@ async function execute(owned: Active, selected: Driver): Promise<void> {
           command: preparation.command,
           model: preparation.model ?? null,
           mcpServers: preparation.mcpServers.map((server) => server.name),
-          modelGateway: preparation.modelBridge?.baseUrl ?? null,
+          // The origin only: the shared gateway's key is a secret.
+          modelGateway:
+            preparation.modelBridge?.baseUrl ??
+            owned.spec.modelGateway?.baseUrl ??
+            null,
           instructionPrefixChars: preparation.instructionPrefix.length,
         });
       preparation.modelBridge?.beginRun(owned.abort.signal);

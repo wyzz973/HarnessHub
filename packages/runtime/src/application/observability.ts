@@ -110,6 +110,80 @@ export function percentile(values: number[], quantile: number): number | null {
   return ordered[Math.max(0, Math.ceil(quantile * ordered.length) - 1)] ?? null;
 }
 
+/**
+ * Run usage from `model.call` events that copy committed ledger entries of
+ * the shared gateway (their `usage` has a `source`); null without any. The
+ * ledger's prompt input excludes cache reads and writes and its output
+ * excludes reasoning, so both are added back to match {@link ObservedTokens}.
+ */
+function ledgerUsage(
+  run: RunRecord,
+  events: AgentEvent[],
+): UsageObservation | null {
+  let calls = 0,
+    reported = 0,
+    unpriced = 0,
+    amount = 0,
+    model: string | null = null;
+  const tokens = {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    reasoning: 0,
+  };
+  for (const event of events) {
+    if (event.type !== "model.call") continue;
+    const usage = object(event.data.usage);
+    if (!usage || typeof usage.source !== "string") continue;
+    calls++;
+    if (usage.source === "reported") reported++;
+    for (const key of [
+      "input",
+      "output",
+      "cacheRead",
+      "cacheWrite",
+      "reasoning",
+    ] as const)
+      tokens[key] += integer(usage[key]) ?? 0;
+    const cost = object(event.data.cost);
+    const value = number(cost?.amountUsd);
+    if (value === null) unpriced++;
+    else amount += value;
+    model = text(event.data.upstreamModel) ?? model;
+  }
+  if (!calls) return null;
+  const input = tokens.input + tokens.cacheRead + tokens.cacheWrite;
+  const output = tokens.output + tokens.reasoning;
+  return {
+    schemaVersion: 1,
+    scope: "run",
+    source: "gateway-ledger",
+    backendSessionId: "gateway",
+    requestId: `${run.id}:${run.generation}`,
+    tokens: {
+      input,
+      output,
+      cacheRead: tokens.cacheRead,
+      cacheWrite: tokens.cacheWrite,
+      reasoning: tokens.reasoning,
+      total: input + output,
+    },
+    cost: unpriced
+      ? unknownCost("run-cost-partially-unpriced")
+      : {
+          amount,
+          currency: "USD",
+          kind: "estimated",
+          source: "gateway-ledger",
+          missingReason: null,
+        },
+    model,
+    missingReason:
+      reported === calls ? null : "run-token-usage-partially-not-reported",
+  };
+}
+
 /** Pure committed-record projection. Historical cumulative usage is shown as a session snapshot, never as run charges. */
 export function projectRunObservations(
   run: RunRecord,
@@ -201,6 +275,15 @@ export function projectRunObservations(
         model: actualModel,
         missingReason: "historical-session-usage-not-attributable-to-run",
       };
+    }
+  }
+  // The shared gateway's ledger is the Run's usage source when it served the Run.
+  const ledger = ledgerUsage(run, events);
+  if (ledger) {
+    usage = ledger;
+    if (!actualModel && ledger.model) {
+      actualModel = ledger.model;
+      modelSource = ledger.source;
     }
   }
   const tokens = usage?.tokens ?? unknownTokens();

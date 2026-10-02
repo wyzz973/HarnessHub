@@ -16,7 +16,10 @@ import { registerHarnessModelRoutes } from "./http/harness-model-routes.js";
 import { providerProtocols } from "@harnesshub/agents/engine/configuration";
 import { configurationAdapters } from "@harnesshub/core/engine-configuration";
 import { createSecret } from "@harnesshub/secrets/secrets";
-import { prepareConfiguration } from "@harnesshub/agents/configuration/prepare";
+import {
+  gatewayRoutable,
+  prepareConfiguration,
+} from "@harnesshub/agents/configuration/prepare";
 import { startModelGateway } from "@harnesshub/gateway/gateway";
 import { probeConfiguration } from "@harnesshub/runtime/process/probe";
 import { HubError } from "@harnesshub/core/errors";
@@ -75,6 +78,9 @@ import { JsonLogFile } from "./logging/json-log-file.js";
 import { observeStore } from "./logging/observed-store.js";
 import { createSessionLogReader } from "./logging/session-log-reader.js";
 import { createRedactor } from "./worker/diagnostics.js";
+import { ModelSessions, type ModelRouting } from "./model-sessions.js";
+import type { Store } from "@harnesshub/core/ports";
+import type { EngineProfile } from "@harnesshub/core/types";
 
 /** Gateway log records not mirrored by `logEcho`; per-request and per-call lines stay in the file. */
 const QUIET_ECHO = new Set([
@@ -377,6 +383,8 @@ export async function startHub(options: {
   let workflows: WorkflowService | undefined;
   let modelPlane: SqliteModelPlaneStore | undefined;
   let modelGateway: GatewayHandler | undefined;
+  /** The Runtime's store, where `model.call` Run events are committed. */
+  let runStore: Store = store;
   /** Where local clients reach the model gateway; known once the listener is bound. */
   let gatewayOrigin: string | undefined;
   // env credential references read the environment the daemon started with.
@@ -395,6 +403,42 @@ export async function startHub(options: {
     modelPlane = new SqliteModelPlaneStore(
       path.join(dataDir, "harnesshub.sqlite"),
     );
+    // Session Runs use the shared gateway (03 section 10). A Session's engine
+    // is routed when the unified model was applied to its profile, or when it
+    // is routable and declares no provider of its own (then only once a
+    // model target exists); explicit providers keep the Worker gateway.
+    const routeSession = (profile: EngineProfile): ModelRouting | undefined => {
+      if (profile.driver === "fake" || !profile.command) return undefined;
+      const configuration = profile.configuration;
+      if (configuration?.provider) {
+        const active = harnessModel.active();
+        return active &&
+          harnessModel.migrated() &&
+          gatewayRoutable(configuration.adapter) &&
+          JSON.stringify(configuration.provider) ===
+            JSON.stringify(active.provider)
+          ? { adapter: configuration.adapter, required: true }
+          : undefined;
+      }
+      const adapter =
+        configuration?.adapter ?? builtinConfigurationAdapter(profile.id);
+      return adapter && gatewayRoutable(adapter)
+        ? { adapter, required: false }
+        : undefined;
+    };
+    const sessions = new ModelSessions({
+      store: modelPlane,
+      events: () => runStore,
+      gateway: () => modelGateway,
+      origin: () => gatewayOrigin,
+      route: routeSession,
+      clock: Date.now,
+      log: gatewayLog,
+    });
+    // Keys of a previous process cannot be presented any more.
+    await sessions.revokeAll();
+    // The legacy unified model is mirrored into the model plane once.
+    await harnessModel.syncModelPlane({ store: modelPlane, log: gatewayLog });
     // The shared model gateway on this listener (03-model-plane); it reads
     // providers, keys and the ledger from the store and resolves credentials
     // per upstream attempt.
@@ -404,6 +448,7 @@ export async function startHub(options: {
       clock: Date.now,
       limits: gatewayLimits,
       log: gatewayLog,
+      sessions,
     });
     manager = new EngineManager({
       config,
@@ -422,6 +467,7 @@ export async function startHub(options: {
     const observedStore = observeStore(store, gatewayLog, {
       engineLog: engineLogPath,
     });
+    runStore = observedStore;
     runtime = new Runtime(observedStore, host, {
       ...config,
       catalog: manager,
@@ -435,6 +481,7 @@ export async function startHub(options: {
           pathEnv: process.env.PATH ?? "",
           signal,
         }),
+      models: sessions,
     });
     const app = new HubApplication(
       runtime,
@@ -640,6 +687,9 @@ export async function startHub(options: {
       modelPlane?.close();
       store.close();
     });
+    // onClose hooks run last-registered first: before the stores close,
+    // the keys of Sessions still open are revoked.
+    server.addHook("onClose", async () => sessions.revokeAll());
     // Fastify runs onClose hooks last-registered first, so this marks the start of
     // shutdown; Worker exits recorded by the host afterwards still reach the file.
     server.addHook("onClose", async () => {

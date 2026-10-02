@@ -1,51 +1,27 @@
 // SPDX-License-Identifier: MIT
-import type { WorkerPayload } from "@harnesshub/core/ipc";
 import type { DriverResult, JsonObject } from "@harnesshub/core/types";
 import type { ModelCallRecord } from "@harnesshub/core/model-bridge";
+import {
+  RunObservation as BaseObservation,
+  settleModelRun,
+  upstreamFailureMessage,
+} from "@harnesshub/core/model-outcome";
 import { truncatePublic, type Redactor } from "./diagnostics.js";
 
 /**
- * Evidence collected by the Worker for one Run: visible engine output and the
- * model gateway calls attributed to that Run. It never decides success on its
- * own; {@link settleGatewayResult} combines it with the backend result.
+ * Evidence collected by the Worker for one Run: visible engine output (see
+ * {@link BaseObservation}) and the Session gateway calls attributed to that
+ * Run. It never decides success on its own; {@link settleGatewayResult}
+ * combines it with the backend result.
  */
-export class RunObservation {
-  private textCharacters = 0;
-  private toolActivity = 0;
+export class RunObservation extends BaseObservation {
   private calls = 0;
   private successfulCalls = 0;
-
-  /**
-   * Inspect one outgoing Driver payload. Non-thought `message.delta` text,
-   * `tool.update` events and permission requests count as output; all other
-   * payloads are ignored.
-   */
-  observe(payload: WorkerPayload): void {
-    if (payload.type === "permission") {
-      this.toolActivity++;
-      return;
-    }
-    if (payload.type !== "event") return;
-    const { type, data } = payload.event;
-    if (
-      type === "message.delta" &&
-      data.stream !== "thought" &&
-      typeof data.text === "string" &&
-      data.text.trim()
-    )
-      this.textCharacters += data.text.length;
-    else if (type === "tool.update") this.toolActivity++;
-  }
 
   /** Count one gateway call record of this Run. */
   recordCall(call: ModelCallRecord): void {
     this.calls++;
     if (call.ok) this.successfulCalls++;
-  }
-
-  /** Non-thought text or tool activity was observed. */
-  get producedOutput(): boolean {
-    return this.textCharacters > 0 || this.toolActivity > 0;
   }
   get modelCalls(): number {
     return this.calls;
@@ -101,28 +77,16 @@ export function upstreamErrorMessage(
   call: ModelCallRecord,
   redact: Redactor,
 ): string {
-  const detail = call.error?.message.trim() || "no error detail";
   return truncatePublic(
-    redact(
-      call.status >= 100
-        ? `上游模型返回 HTTP ${call.status}：${detail}`
-        : `上游模型请求失败：${detail}`,
-    ),
+    redact(upstreamFailureMessage(call.status, call.error?.message ?? "")),
   );
 }
 
 /**
- * Final Run result for an engine routed through the model gateway (ADR 0013).
- *
- * - Cancelled results are returned unchanged.
- * - `MODEL_UPSTREAM_ERROR`: the Run had upstream failures and either produced
- *   no visible output (non-thought text, tool events or permission requests),
- *   or completed no model call successfully — engines such as codex-acp print
- *   the upstream error as ordinary text, which is not a model answer.
- * - `ENGINE_NO_OUTPUT`: a `completed` result without any model call and
- *   without visible output.
- * Other results are returned unchanged. The caller must pass evidence captured
- * after the gateway Run scope ended and after all call events were delivered.
+ * Final Run result for an engine routed through the Worker's Session gateway
+ * (ADR 0013): {@link settleModelRun} over this Worker's evidence. The caller
+ * must pass evidence captured after the gateway Run scope ended and after all
+ * call events were delivered.
  */
 export function settleGatewayResult(
   result: DriverResult,
@@ -133,35 +97,17 @@ export function settleGatewayResult(
     redact: Redactor;
   },
 ): DriverResult {
-  if (evidence.cancelled || result.status === "cancelled") return result;
-  const { observation } = evidence;
   const last = evidence.upstreamErrors.at(-1);
-  if (
-    last &&
-    (!observation.producedOutput || observation.successfulModelCalls === 0)
-  )
-    return {
-      ...result,
-      status: "failed",
-      stopReason: "model_upstream_error",
-      error: {
-        code: "MODEL_UPSTREAM_ERROR",
-        message: upstreamErrorMessage(last, evidence.redact),
-      },
-    };
-  if (
-    result.status === "completed" &&
-    observation.modelCalls === 0 &&
-    !observation.producedOutput
-  )
-    return {
-      ...result,
-      status: "failed",
-      stopReason: "engine_no_output",
-      error: {
-        code: "ENGINE_NO_OUTPUT",
-        message: "引擎未调用模型也未产生输出",
-      },
-    };
-  return result;
+  return settleModelRun(
+    result,
+    {
+      producedOutput: evidence.observation.producedOutput,
+      modelCalls: evidence.observation.modelCalls,
+      successfulModelCalls: evidence.observation.successfulModelCalls,
+      ...(last
+        ? { lastUpstreamError: upstreamErrorMessage(last, evidence.redact) }
+        : {}),
+    },
+    evidence.cancelled,
+  );
 }

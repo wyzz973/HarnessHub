@@ -3,9 +3,12 @@ import { validateFileOutputs } from "@harnesshub/core/files";
 import type { EngineCatalog } from "@harnesshub/core/engines";
 import path from "node:path";
 import { HubError, modelRunFailureCodes } from "@harnesshub/core/errors";
+import { RunObservation, settleModelRun } from "@harnesshub/core/model-outcome";
 import type {
   ExecutionHandle,
   FileArtifactCollector,
+  RunModelPort,
+  SessionModelGateway,
   Store,
   WorkerHost,
   WorkerMessage,
@@ -48,6 +51,8 @@ interface RuntimeOptions {
     runId: RunId,
     artifact: { name: string; mediaType: string; text: string },
   ) => Promise<ArtifactRecord>;
+  /** The shared model gateway's side of Runs; absent where engines never use it. */
+  models?: RunModelPort;
 }
 interface ActiveRun {
   run: RunRecord;
@@ -59,6 +64,8 @@ interface ActiveRun {
   stopping?: Promise<CleanupStatus>;
   settlement?: Promise<void>;
   cleanup?: { durationMs: number; status: CleanupStatus; performed: boolean };
+  /** Set while the Run uses the shared model gateway, until its calls were summarized. */
+  model?: { observation: RunObservation; ended: boolean };
 }
 /** Owns public execution outcomes. All asynchronous backend work remains tied to a run generation. */
 export class Runtime {
@@ -334,6 +341,28 @@ export class Runtime {
           data: { installation },
         });
       }
+      let modelGateway: SessionModelGateway | undefined;
+      try {
+        modelGateway = await this.options.models?.begin(
+          session,
+          run,
+          active.profile,
+        );
+      } catch (error) {
+        if (!(error instanceof HubError)) throw error;
+        // The model selection cannot be served: nothing started, the
+        // Session and its Worker stay as they are.
+        this.recordCleanup(active, "confirmed");
+        this.store.finishRun(run.id, {
+          status: "failed",
+          stopReason: "model_unavailable",
+          cleanupStatus: "confirmed",
+          error: { code: error.code, message: error.message },
+        });
+        return;
+      }
+      if (modelGateway)
+        active.model = { observation: new RunObservation(), ended: false };
       active.handle = await this.host.start(
         {
           sessionId: session.id,
@@ -346,11 +375,30 @@ export class Runtime {
           ...(session.backendSessionId
             ? { backendSessionId: session.backendSessionId }
             : {}),
+          ...(modelGateway ? { modelGateway } : {}),
         },
         async (message) => this.receive(active, message),
       );
       if (active.stop) await active.handle.cancel();
-      const result = await active.handle.result;
+      const backend = await active.handle.result;
+      // A Run on the shared gateway is judged with its committed model calls
+      // (05 section 4), after every call of the Run ended.
+      const result = active.model
+        ? settleModelRun(
+            backend,
+            {
+              producedOutput: active.model.observation.producedOutput,
+              ...(await this.endModels(active, session).then((summary) => ({
+                modelCalls: summary.calls,
+                successfulModelCalls: summary.successfulCalls,
+                ...(summary.lastError !== undefined
+                  ? { lastUpstreamError: summary.lastError }
+                  : {}),
+              }))),
+            },
+            active.stop !== undefined,
+          )
+        : backend;
       // A model failure seen by the Worker gateway leaves the engine backend
       // healthy, so the Session keeps its Worker for the next Run (ADR 0013).
       backendFailed =
@@ -413,6 +461,8 @@ export class Runtime {
           },
         });
     } finally {
+      if (active.model && !active.model.ended)
+        await this.endModels(active, session).catch(() => undefined);
       clearTimeout(this.deadlines.get(run.id));
       this.deadlines.delete(run.id);
       this.active.delete(session.id);
@@ -422,6 +472,11 @@ export class Runtime {
         this.store.setSessionStatus(session.id, "closed");
       queueMicrotask(() => this.pump());
     }
+  }
+  /** End the Run's shared-gateway scope once; see {@link RunModelPort.end}. */
+  private endModels(active: ActiveRun, session: SessionRecord) {
+    active.model!.ended = true;
+    return this.options.models!.end(session, this.store.getRun(active.run.id));
   }
   private async closeWorker(active: ActiveRun): Promise<CleanupStatus> {
     const started = performance.now();
@@ -494,6 +549,7 @@ export class Runtime {
       active.stop
     )
       return;
+    active.model?.observation.observe(message);
     switch (message.type) {
       case "started":
         this.store.setRunStatus(run.id, "running");
@@ -709,6 +765,7 @@ export class Runtime {
     this.installations.delete(id);
     if (this.store.getSession(id).status === "closed") {
       await this.host.closeSession(id);
+      await this.options.models?.close(id);
       return this.store.getSession(id);
     }
     this.store.setSessionStatus(id, "closing");
@@ -719,7 +776,9 @@ export class Runtime {
     await this.host.closeSession(id);
     // Wait for execute() to commit terminal status before publishing a closed session.
     await active?.settlement;
-    return this.store.setSessionStatus(id, "closed");
+    const closed = this.store.setSessionStatus(id, "closed");
+    await this.options.models?.close(id);
+    return closed;
   }
   async close(): Promise<void> {
     this.closed = true;
