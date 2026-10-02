@@ -749,7 +749,7 @@ test("agents files keep the rules of the legacy modules they came from", () => {
   assert.deepEqual(
     checkAt(
       "packages/agents/src/engine/discovery.ts",
-      'import { repositoryScript } from "../repository.js";',
+      'import { assetPath } from "../assets.js";',
     ),
     [],
   );
@@ -762,19 +762,36 @@ test("agents files keep the rules of the legacy modules they came from", () => {
   );
 });
 
-test("only agents' repository.ts may resolve URLs outside the package, until OSS-013", () => {
-  const helper = join(root, "packages/agents/src/repository.ts");
-  const source =
-    "const file = new URL(`../../../../${relative}`, import.meta.url);";
+test("agents resolves its runtime assets inside the package, and no file may resolve URLs outside it", () => {
+  const open = { completedTasks: new Set() };
   assert.deepEqual(
-    checkSource(helper, source, root, { completedTasks: new Set() }),
+    checkSource(
+      join(root, "packages/agents/src/assets.ts"),
+      'const launcher = new URL("../../assets/launch-engine.mjs", import.meta.url);',
+      root,
+      open,
+    ),
     [],
   );
+  // The former exception for repository.ts is gone, before OSS-013 as well.
+  const helper = join(root, "packages/agents/src/repository.ts");
   assert.match(
-    checkSource(helper, source, root, {
-      completedTasks: new Set(["OSS-013"]),
-    }).join("\n"),
-    /the new URL exception for agents\/repository\.ts \(owner OSS-004\) expired with OSS-013/,
+    checkSource(
+      helper,
+      "const file = new URL(`../../../../${relative}`, import.meta.url);",
+      root,
+      open,
+    ).join("\n"),
+    /nonliteral new URL\(\.\.\., import\.meta\.url\) cannot be checked/,
+  );
+  assert.match(
+    checkSource(
+      helper,
+      'const launcher = new URL("../../../../scripts/launch-engine.mjs", import.meta.url);',
+      root,
+      open,
+    ).join("\n"),
+    /new URL leaves packages\/agents: \.\.\/\.\.\/\.\.\/\.\.\/scripts\/launch-engine\.mjs/,
   );
   assert.match(
     checkSource(
