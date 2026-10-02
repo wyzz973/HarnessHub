@@ -24,7 +24,7 @@
 - `/v1`、`/v1beta`、`/v1alpha` 只属于模型协议，管理接口永不放在这些前缀下；现状管理接口位于 `/v1/*`，开源版整体迁到 `/api/v1/*`。保留前缀下的未知路径返回所属协议格式的 404，并按 03 第 2 节留下拒绝记录。
 - 控制台的单页回退只对 `GET` 且 `Accept` 含 `text/html` 的非保留路径生效；`/api/`、`/v1`、`/v1beta`、`/v1alpha` 永不回退到 `index.html`。
 - 端口被占用时启动失败并说明原因，不自动换端口，因为全局接线把地址写进了 Agent 配置；用 `--port` 改端口后，已接线的 Agent 会被漂移检测报告为 `unwired`（[04 第 5 节](04-agent-plane.md#5-漂移检测)）。同一数据根的第二个实例由单实例锁拒绝（02 第 5 节）。
-- 浏览器防护：Host、Origin 与 `Sec-Fetch-Site` 的校验在路由之前执行，规则见 [07 第 5.3 节](07-data-security.md#53-hostorigin-与-sec-fetch-校验)（由现状 `src/gateway/server.ts:174-195` 演进）；模型协议路径上带 `Origin` 的请求返回 403（03 第 1 节）；`/api/v1` 只接受同源请求，不开放 CORS。
+- 浏览器防护：Host、Origin 与 `Sec-Fetch-Site` 的校验在路由之前执行，规则见 [07 第 5.3 节](07-data-security.md#53-hostorigin-与-sec-fetch-校验)（由现状 `packages/daemon/src/http/server.ts:174-195` 演进）；模型协议路径上带 `Origin` 的请求返回 403（03 第 1 节）；`/api/v1` 只接受同源请求，不开放 CORS。
 - 局域网监听器的开启条件、TLS 要求与来源校验见 [07 第 5.4 节](07-data-security.md#54-局域网共享10)；回环监听器照常提供全部路由。
 - 认证材料与控制台登录按 [07 第 5.2 节](07-data-security.md#52-本机管理令牌与控制台会话)：CLI 读取 `<数据根>/admin.token` 以 Bearer 调用 `/api/v1`；`hh console` 经 `POST /api/v1/auth/console-links` 取得一次性登录码，打开 `/#login=<code>`，单页再调用 `POST /api/v1/auth/console-sessions` 换取 HttpOnly、`SameSite=Strict` 的会话 Cookie。改变状态的请求必须是 `application/json`，守护进程不响应 CORS 预检。Gateway Key 不能访问 `/api/v1`（03 第 2 节）。团队服务器的 OIDC 登录与 RBAC 属于 1.x。
 
@@ -82,7 +82,7 @@
 
 ### 2.8 OpenAPI 3.1 与兼容性测试
 
-契约由 Fastify 路由的 JSON Schema 生成，沿用现状 `src/gateway/openapi.ts`、`src/gateway/api-catalog.ts` 与 `pnpm docs:api`、`pnpm check:api` 的做法（[文档规范](../../documentation.md)），运行时在 `/api/v1/openapi.json` 提供。CI 中的检查：
+契约由 Fastify 路由的 JSON Schema 生成，沿用现状 `packages/daemon/src/http/openapi.ts`、`packages/daemon/src/http/api-catalog.ts` 与 `pnpm docs:api`、`pnpm check:api` 的做法（[文档规范](../../documentation.md)），运行时在 `/api/v1/openapi.json` 提供。CI 中的检查：
 
 1. 路由与文档双向覆盖、`operationId` 唯一、实现与测试链接存在（现有 `check:api` 的规则）。
 2. 用上一个发布版本的契约做差异比对（如 oasdiff）：删除字段、改变类型、收紧枚举或校验即失败，除非大版本号变化。

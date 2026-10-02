@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import test, { type TestContext } from "node:test";
-import { startHub } from "../../src/main.js";
+import { startHub } from "@harnesshub/daemon/main";
 import { ProcessWorkerHost } from "@harnesshub/runtime/process/worker-host";
 import { readProcessTable } from "@harnesshub/runtime/process/process-table";
 import type { LogFields, LogSink } from "@harnesshub/core/logging";

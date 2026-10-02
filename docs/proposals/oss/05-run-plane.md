@@ -20,7 +20,7 @@
 
 开源版的变化：
 
-1. **判定位置**：现状由 Worker 内的 `settleGatewayResult`（`src/worker/outcome.ts:126-165`）改判结果。开源版网关在守护进程内，`model.call` 由守护进程直接提交；Worker 只上报 Driver 结果与输出观测，Runtime 在守护进程内按第 4 节的规则表判定，规则只读已提交的证据。
+1. **判定位置**：现状由 Worker 内的 `settleGatewayResult`（`packages/daemon/src/worker/outcome.ts:126-165`）改判结果。开源版网关在守护进程内，`model.call` 由守护进程直接提交；Worker 只上报 Driver 结果与输出观测，Runtime 在守护进程内按第 4 节的规则表判定，规则只读已提交的证据。
 2. **调用归属**：Session 作用域的 Gateway Key 取代现状每个 Worker 的私有网关与令牌。Session 的 Run 串行，所以带该 Key 的调用归属当时活动 Run 的 `runId` 与 generation；没有活动 Run 时返回 409 `no_active_run`，并按 [03 第 2 节](03-model-plane.md#2-gateway-key-与作用域) 留下拒绝记录。
 3. **事件信封 v2**：增加 `generation` 与全库递增的 `gseq`（控制台全局事件流用它续传）；事件类型统一为小写点分，如 `run.accepted`、`run.status`、`run.finished`、`permission.requested`，旧名称映射见第 11 节。
 4. **默认期限**：现状默认 60 秒（`packages/agents/src/engine/registry.ts` 的 `defaultTimeoutMs`），对编码任务过短；开源版默认 30 分钟、上限 24 小时，由配置解析器集中解析。
@@ -115,7 +115,7 @@ Runtime 从 [03 第 8 节](03-model-plane.md#8-用量与成本账本) 的 `model
 | R6 | Worker 或 Agent 异常退出、协议错误，没有 Driver 结果 | `failed` | `AGENT_CRASHED`、`AGENT_PROTOCOL_ERROR` / `backend_error` | 细分现状的 `BACKEND_ERROR` |
 | R7 | 无人值守 Run 遇到 `ask` 且 `onAsk = fail` | `failed` | `PERMISSION_REQUIRED` / `permission_required` | 见第 5 节 |
 | R8 | Driver 报告失败，或 Agent 自行取消 | `failed` | `AGENT_REPORTED_FAILURE` / `agent_failed`、`agent_cancelled` | 公开 Agent 给出的原因，最多 500 字符 |
-| R9 | 本 Run 没有任何调用（不计 `client_cancelled`），有可见输出（非思考文本、工具事件或权限请求，沿用 `src/worker/outcome.ts:17-37`），且输入不是 Adapter 声明的本地命令 | `failed` | `MODEL_GATEWAY_UNUSED` | 输出不是经网关的模型回答，可能是 Agent 打印的连接错误、本地命令或配置层绕过（核验 V5-N1、zero-calls-completed） |
+| R9 | 本 Run 没有任何调用（不计 `client_cancelled`），有可见输出（非思考文本、工具事件或权限请求，沿用 `packages/daemon/src/worker/outcome.ts:17-37`），且输入不是 Adapter 声明的本地命令 | `failed` | `MODEL_GATEWAY_UNUSED` | 输出不是经网关的模型回答，可能是 Agent 打印的连接错误、本地命令或配置层绕过（核验 V5-N1、zero-calls-completed） |
 | R10 | 没有任何调用，也没有可见输出 | `failed` | `AGENT_NO_OUTPUT` | 即现状的 `ENGINE_NO_OUTPUT` |
 | R11 | 按开始时间排序的最后一次主调用属于失败类别，且其后没有 `ok` 的主调用 | `failed` | `upstream_error`、`invalid_response` → `MODEL_UPSTREAM_ERROR`；`engine_disconnected` → `AGENT_DISCONNECTED`；`content_filtered` → `MODEL_CONTENT_FILTERED`；`rejected` → `GATEWAY_REJECTED` | Agent 可能把错误写成正文后以 end_turn 结束（codex-acp 1.10.0 未协商 sessionFailure 时即如此），也可能静默结束；“之前成功过”不能掩盖最后一次失败（核验 V7-N1、V3-N1、abort-vs-cancel、stream-integrity、V7-N2） |
 | R12 | 有主调用且全部为 `empty`，并且没有可见输出 | `failed` | `MODEL_EMPTY_RESPONSE` | 模型没有给出任何回答 |

@@ -16,7 +16,6 @@ export default tseslint.config(
     // tsconfig.json and reads workspace packages from source (the
     // @harnesshub/source condition), so linting needs no prior build.
     files: [
-      "src/**/*.ts",
       "tests/**/*.ts",
       "packages/*/src/**/*.ts",
       "packages/*/test/**/*.ts",

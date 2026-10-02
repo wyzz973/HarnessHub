@@ -174,5 +174,14 @@ daemon 内只有 `src/worker/**` 可以导入 drivers。
 - 探测文件移入 `process/`，但仍导入 agents 中准备好的配置类型，而原 `process` 模块不能依赖 drivers；因此 `PACKAGE_ORIGINS` 支持单个文件的来源，`process/probe.ts` 按原 `drivers/configuration/probe.ts` 检查。
 - `child_process`：runtime 的 `process/` 是 `ProcessLauncher` 实现的长期归属（02 第 8 节、10 第 2 节），边界检查以 `PROCESS_LAUNCHERS` 永久允许，不设期限；F08 再把范围收窄到启动器实现本身。runtime 的其他目录仍不允许。
 - V5：`ProcessWorkerHost` 的 `workerEntry` 必填（文件 URL 或绝对路径），`main.ts` 传入 `new URL("./worker/main.js", import.meta.url)`，27 处测试构造与一个夹具使用 `tests/support/entries.ts` 的 `WORKER_ENTRY`。新集成测试用入口不同且不存在的宿主回收旧宿主写下的租约，确认租约按自己记录的 Worker 路径校验并回收；相对路径的入口被拒绝。
-- Job 辅助程序的源码与构建脚本迁入 `packages/runtime/native/`，构建到本包的 `dist/native`；`windows-job.ts` 导出 `jobHelperPath()`，但不导入包内其他模块，因为一个 Windows 测试单独复制它来检查缺少辅助程序的情况，该测试改用 `import.meta.resolve` 取得编译后的文件。`probe.ts` 按相同层级自行计算路径；`start-local` 指向新位置；包内测试检查路径，并在 Windows 上检查文件存在。
+- Job 辅助程序的源码与构建脚本迁入 `packages/runtime/native/`，构建到本包的 `dist/native`；`windows-job.ts` 导出 `jobHelperPath()`，但不导入包内其他模块，因为一个 Windows 测试单独复制它来检查缺少辅助程序的情况，该测试改用 `import.meta.resolve` 取得编译后的文件。`probe.ts` 按相同层级自行计算路径；`start-local` 指向新位置；包内测试检查路径，并在 Windows 上检查文件存在。Windows 进程集成测试原先自行拼出 `../../native/harnesshub-job.exe`，这类测试在 macOS 上跳过，旧路径因此直到 #28 的 Windows CI 才暴露；它改用 `jobHelperPath()`。此后每一步都在测试与工具中检索写死的编译位置（`dist/native`、`dist/src`、`../../src/`、`../../native/`）。
 - SEA：proc-scan 角色改为 `packages/runtime/dist/src/process/proc-scan-main.js`；`NATIVE_HELPERS` 中 Job 辅助程序移到 `packages/runtime/dist/native`，根 `dist/native` 不再允许任何文件，旧构建留下的辅助程序会使 SEA 构建失败。
+
+第 9 步（daemon、cli 与删除 `src/`）：
+
+- `main.ts`、`benchmark-main.ts`、`tool-packages-main.ts`、`gateway/`（改名 `http/`）、`logging/` 与 `worker/` 迁入 `packages/daemon/src/`；`cli.ts` 与 `rollout/` 迁入 `packages/cli/src/`。`src/` 与 `tsconfig.legacy.json` 删除；测试改由 `tests/tsconfig.json`（输出到 `../dist/tests`，引用全部包）编译，单元、集成与 smoke 的匹配不变。
+- daemon 依赖 core、store、secrets、gateway、agents、runtime、drivers、fastify 与 `@fastify/swagger`；cli 只依赖 core。根包只剩运行时资源需要的 `cross-spawn` 作为依赖，测试与工具使用的包（各 `@harnesshub/*`、acpx、ajv、yaml、fastify、`@agentclientprotocol/sdk`）改为开发依赖。
+- 入口与路径：`pnpm start`、`benchmark`、`tools` 指向 `packages/daemon/dist/src/`；构建身份写到 `packages/daemon/dist/build-info.json`，即 `main.js` 读取的位置；`tests/support/entries.ts` 经包导出解析 `MAIN_ENTRY`、`WORKER_ENTRY`、`BENCHMARK_ENTRY`、`TOOL_PACKAGES_ENTRY`、`CLI_ENTRY` 与 `BUILD_INFO`，按路径启动编译入口的测试都改用它们。`start-local` 与 API 文档生成器指向新位置；api-catalog 的 49 个源码指针改为 `packages/daemon/src/http/...`，`docs/api/reference.md` 已重新生成。
+- `benchmark-main.ts` 原来按 `../../package.json` 读取根包版本；迁移后同一相对路径指向 daemon 自己的 `package.json`，留在包内，不需要越出包的例外。各包版本保持一致（均为 0.1.0），版本统一由发布流程（M1）维护。
+- 边界检查：`PACKAGE_ORIGINS` 加入 daemon（`http/` 按原 `gateway` 模块检查）与 cli；`new URL` 改为按编译后文件（`dist/src/...`）的位置检查，因为 `import.meta.url` 在运行时指向编译产物，按源码位置检查会多算一层而误判。只针对 `src/` 的规则（目的地表等）此后不再有检查对象，留到 OSS-005 重写检查时一并处理。
+- SEA：`main.js` 与 Worker 角色改为 `packages/daemon/dist/src/...`，内嵌的构建身份改为 `packages/daemon/dist/build-info.json`；租约记录的 Worker 路径随之改变，迁移前创建的租约按自己记录的旧路径校验（第 8 步的测试）。

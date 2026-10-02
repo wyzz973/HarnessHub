@@ -1,6 +1,6 @@
 # 引擎经统一模型网关接入
 
-本页说明 Worker 在准备 Session 配置时，如何让每个引擎只经 [统一模型网关](model-gateway.md) 使用 HarnessHub 配置的同一个模型，以及各引擎写入的原生配置项、上下文窗口与输出上限的映射和已知限制。取舍见 [ADR 0013](decisions/0013-unified-model-gateway.md)；实现位于 [prepare.ts](../packages/agents/src/configuration/prepare.ts)，Run 结果与错误语义位于 [Worker](../src/worker/main.ts)、[outcome.ts](../src/worker/outcome.ts) 与 [diagnostics.ts](../src/worker/diagnostics.ts)。统一模型如何写入引擎登记见 [引擎独立配置](engine-configuration.md)。
+本页说明 Worker 在准备 Session 配置时，如何让每个引擎只经 [统一模型网关](model-gateway.md) 使用 HarnessHub 配置的同一个模型，以及各引擎写入的原生配置项、上下文窗口与输出上限的映射和已知限制。取舍见 [ADR 0013](decisions/0013-unified-model-gateway.md)；实现位于 [prepare.ts](../packages/agents/src/configuration/prepare.ts)，Run 结果与错误语义位于 [Worker](../packages/daemon/src/worker/main.ts)、[outcome.ts](../packages/daemon/src/worker/outcome.ts) 与 [diagnostics.ts](../packages/daemon/src/worker/diagnostics.ts)。统一模型如何写入引擎登记见 [引擎独立配置](engine-configuration.md)。
 
 各引擎配置项均按 `vendor/engine-sources` 中的固定源码核对：Codex 0.153.4 与 codex-acp 1.10.0、claude-agent-acp 0.75.1、Gemini CLI 0.58.0、OpenCode 1.18.29、MiMo 0.1.14、Pi 0.85.1 与 pi-acp 0.0.33、Qwen Code 0.23.0、Hermes 0.19.0、OpenClaw 2026.9.2、DSH 0.1.2-rc.1、Kimi CLI 1.50.0。Claude Code 本体与 Copilot CLI 不在源码快照中：Claude Code 的变量按本机安装的 2.1.278 二进制和 SDK 0.3.257 核对，Copilot 沿用原有 BYOK 映射。以上都是源码与配置层面的核对，固定版本引擎经网关的真实任务尚未验收。
 

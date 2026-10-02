@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import test from "node:test";
-import { startHub } from "../../src/main.js";
+import { startHub } from "@harnesshub/daemon/main";
 import type { EngineProfile } from "@harnesshub/core/types";
 import { temporaryDirectory } from "../support/temporary.js";
 

@@ -17,10 +17,10 @@ import {
   type LogFields,
   type LogSink,
 } from "@harnesshub/core/logging";
-import { JsonLogFile } from "../../src/logging/json-log-file.js";
+import { JsonLogFile } from "@harnesshub/daemon/logging/json-log-file";
 import { AcpTrafficLog } from "@harnesshub/drivers/acp/traffic-log";
-import { observeStore } from "../../src/logging/observed-store.js";
-import { createRedactor } from "../../src/worker/diagnostics.js";
+import { observeStore } from "@harnesshub/daemon/logging/observed-store";
+import { createRedactor } from "@harnesshub/daemon/worker/diagnostics";
 import type { Store } from "@harnesshub/core/ports";
 
 function directory(t: test.TestContext): string {

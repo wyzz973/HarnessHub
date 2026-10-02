@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT
+import { fileURLToPath } from "node:url";
+import { BENCHMARK_ENTRY } from "../support/entries.js";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -6,7 +8,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { startHub } from "../../src/main.js";
+import { startHub } from "@harnesshub/daemon/main";
 import {
   BenchmarkRunner,
   parseDataset,
@@ -272,7 +274,7 @@ void test(
     const child = spawn(
       process.execPath,
       [
-        "dist/src/benchmark-main.js",
+        fileURLToPath(BENCHMARK_ENTRY),
         "--demo",
         "--dataset",
         "examples/benchmark-demo.json",

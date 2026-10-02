@@ -5,8 +5,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkApiCatalog } from "./check-api-docs.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
-const { startHub } = await import("../dist/src/main.js");
-const { apiCatalog } = await import("../dist/src/gateway/api-catalog.js");
+const { startHub } = await import("../packages/daemon/dist/src/main.js");
+const { apiCatalog } = await import(
+  "../packages/daemon/dist/src/http/api-catalog.js"
+);
 if (process.argv.slice(2).some((arg) => arg !== "--check"))
   throw new Error(
     "Usage: node tools/generate-api-docs.mjs [--check] (build first)",

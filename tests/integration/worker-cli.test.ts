@@ -9,7 +9,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { ProcessWorkerHost } from "@harnesshub/runtime/process/worker-host";
-import { startHub } from "../../src/main.js";
+import { startHub } from "@harnesshub/daemon/main";
 import type { ExecutionSpec, WorkerMessage } from "@harnesshub/core/ports";
 import type {
   RunId,

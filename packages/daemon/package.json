@@ -1,0 +1,25 @@
+{
+  "name": "@harnesshub/daemon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    "./*": {
+      "@harnesshub/source": "./src/*.ts",
+      "types": "./dist/src/*.d.ts",
+      "default": "./dist/src/*.js"
+    }
+  },
+  "dependencies": {
+    "@fastify/swagger": "9.8.1",
+    "@harnesshub/agents": "workspace:*",
+    "@harnesshub/core": "workspace:*",
+    "@harnesshub/drivers": "workspace:*",
+    "@harnesshub/gateway": "workspace:*",
+    "@harnesshub/runtime": "workspace:*",
+    "@harnesshub/secrets": "workspace:*",
+    "@harnesshub/store": "workspace:*",
+    "fastify": "5.12.5"
+  }
+}

@@ -9,8 +9,9 @@
  * pass) against code it does not belong to. `tsc -b` also trusts each project's
  * .tsbuildinfo: with the outputs gone but the .tsbuildinfo kept, it reports the
  * project as up to date and emits nothing. Every output directory is therefore
- * removed together with its .tsbuildinfo: `dist/{src,tests,.tsbuildinfo}` of
- * the legacy project at the root, and `dist/{src,test,.tsbuildinfo}` of every
+ * removed together with its .tsbuildinfo: `dist/{src,tests,.tsbuildinfo}` at
+ * the root (the tests project, and src/ until OSS-004 step 9 removed it), and
+ * `dist/{src,test,.tsbuildinfo}` of every
  * workspace package under packages/ and apps/. `dist/native` is left to the
  * native helper scripts, which rebuild it on every `pnpm build`; `dist/sea` and
  * `dist/build-info.json` belong to their own build steps.

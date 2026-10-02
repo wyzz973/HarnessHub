@@ -66,7 +66,7 @@
 - 持久化与副作用：只读；不写库。
 - 失败与边界：仍受 loopback Host/Origin 检查。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)。
 
 ## hh_get_health_ready
 
@@ -78,7 +78,7 @@
 - 持久化与副作用：只读。引擎是否安装或登录不在此检查中。
 - 失败与边界：503 表示服务当前不接收可靠执行，不能用重跑未知 Run 修复。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)。
 
 ## hh_get_openapi_json
 
@@ -90,7 +90,7 @@
 - 持久化与副作用：只读；不枚举真实引擎配置、凭证或任务。
 - 失败与边界：仅包含本次组合根启用的路由；startHub 启用全部模块。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/observability.test.ts](../../tests/integration/observability.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/observability.test.ts](../../tests/integration/observability.test.ts)。
 
 ## hh_get_v1_engines
 
@@ -102,7 +102,7 @@
 - 持久化与副作用：只读，包含停用项，不自动发现/注册。
 - 失败与边界：validated 无证据时为 null；不能从 configured 推断验证通过。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/engine-management.test.ts](../../tests/integration/engine-management.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/engine-management.test.ts](../../tests/integration/engine-management.test.ts)。
 
 ## hh_get_v1_engines_discover
 
@@ -114,7 +114,7 @@
 - 持久化与副作用：读取安装和 manifest；不执行程序、不安装包、不调用模型或注册。
 - 失败与边界：INVALID_ENGINE_MANIFEST：目录/内容/命令非法或多个 manifest 同 ID。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/unit/discovery.test.ts](../../tests/unit/discovery.test.ts)、[tests/smoke/discovery.test.ts](../../tests/smoke/discovery.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/unit/discovery.test.ts](../../tests/unit/discovery.test.ts)、[tests/smoke/discovery.test.ts](../../tests/smoke/discovery.test.ts)。
 
 ## hh_get_v1_engines_registry
 
@@ -126,7 +126,7 @@
 - 持久化与副作用：只读；不是检查运行中的每个模型。
 - 失败与边界：无有效默认引擎时 defaultEngine 为空字符串。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/engine-management.test.ts](../../tests/integration/engine-management.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/engine-management.test.ts](../../tests/integration/engine-management.test.ts)。
 
 ## hh_post_v1_engines
 
@@ -138,7 +138,7 @@
 - 持久化与副作用：先写 SQLite engine_catalog v2（overlay与完整历史revision），再替换内存目录；旧 Session 保留旧 revision。不是 PATCH。
 - 失败与边界：INVALID_REQUEST、INVALID_CONFIG、INVALID_ENGINE_CONFIGURATION、ENGINE_CONFIGURATION_UNSUPPORTED、ENGINE_RESERVED、ENGINE_CATALOG_FULL；PUT另有ENGINE_ID_MISMATCH。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/engine-management.test.ts](../../tests/integration/engine-management.test.ts)、[tests/integration/engine-configuration.test.ts](../../tests/integration/engine-configuration.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/engine-management.test.ts](../../tests/integration/engine-management.test.ts)、[tests/integration/engine-configuration.test.ts](../../tests/integration/engine-configuration.test.ts)。
 
 ## hh_put_v1_engines_id
 
@@ -151,7 +151,7 @@
 - 失败与边界：INVALID_REQUEST、INVALID_CONFIG、INVALID_ENGINE_CONFIGURATION、ENGINE_CONFIGURATION_UNSUPPORTED、ENGINE_RESERVED、ENGINE_CATALOG_FULL；PUT另有ENGINE_ID_MISMATCH。
 - Schema 参数索引：path: id（必需）。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/engine-management.test.ts](../../tests/integration/engine-management.test.ts)、[tests/integration/engine-configuration.test.ts](../../tests/integration/engine-configuration.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/engine-management.test.ts](../../tests/integration/engine-management.test.ts)、[tests/integration/engine-configuration.test.ts](../../tests/integration/engine-configuration.test.ts)。
 
 ## hh_delete_v1_engines_id
 
@@ -164,7 +164,7 @@
 - 失败与边界：ENGINE_UNAVAILABLE：未登记；ENGINE_RESERVED：demo 引擎不能由此删除。
 - Schema 参数索引：path: id（必需）。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/engine-management.test.ts](../../tests/integration/engine-management.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/engine-management.test.ts](../../tests/integration/engine-management.test.ts)。
 
 ## hh_put_v1_engines_default
 
@@ -176,7 +176,7 @@
 - 持久化与副作用：只改变新 Session 的默认选择。
 - 失败与边界：ENGINE_UNAVAILABLE：不存在/停用；ENGINE_RESERVED：fake默认由demo控制。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/engine-management.test.ts](../../tests/integration/engine-management.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/engine-management.test.ts](../../tests/integration/engine-management.test.ts)。
 
 ## hh_post_v1_engines_reload
 
@@ -188,7 +188,7 @@
 - 持久化与副作用：全量校验通过后才应用引擎项；失败保留最后有效目录并记录 lastError。API overlay继续优先。
 - 失败与边界：CONFIG_RESTART_REQUIRED：Workspace/并发等部署项变化；配置/文件错误不部分应用。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/engine-management.test.ts](../../tests/integration/engine-management.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/engine-management.test.ts](../../tests/integration/engine-management.test.ts)。
 
 ## hh_get_v1_engine_configuration_templates
 
@@ -200,7 +200,7 @@
 - 持久化与副作用：只读安装证据，故意忽略 manifest 覆盖，供用户明确替换固定脚本。
 - 失败与边界：模板缺失/adapter-required 不等于自动安装；文件访问错误单独失败。
 
-实现入口：[src/gateway/engine-configuration-routes.ts](../../src/gateway/engine-configuration-routes.ts)。验证依据：[tests/unit/discovery.test.ts](../../tests/unit/discovery.test.ts)。
+实现入口：[packages/daemon/src/http/engine-configuration-routes.ts](../../packages/daemon/src/http/engine-configuration-routes.ts)。验证依据：[tests/unit/discovery.test.ts](../../tests/unit/discovery.test.ts)。
 
 ## hh_get_v1_engine_configuration_adapters
 
@@ -212,7 +212,7 @@
 - 持久化与副作用：只读静态能力表；不保证某个二进制版本已安装或已验证。
 - 失败与边界：协议列表为空时保留原生配置/显式环境引用，不接受统一 Provider 字段。
 
-实现入口：[src/gateway/engine-configuration-routes.ts](../../src/gateway/engine-configuration-routes.ts)。验证依据：[tests/unit/engine-configuration.test.ts](../../tests/unit/engine-configuration.test.ts)。
+实现入口：[packages/daemon/src/http/engine-configuration-routes.ts](../../packages/daemon/src/http/engine-configuration-routes.ts)。验证依据：[tests/unit/engine-configuration.test.ts](../../tests/unit/engine-configuration.test.ts)。
 
 ## hh_post_v1_engine_configuration_inspect
 
@@ -224,7 +224,7 @@
 - 持久化与副作用：读本地 Skill 文件，不注册、不写业务库、不解析秘密值、不启动引擎。
 - 失败与边界：配置不支持、Skill不可用/过大/指纹已变化均失败。
 
-实现入口：[src/gateway/engine-configuration-routes.ts](../../src/gateway/engine-configuration-routes.ts)。验证依据：[tests/unit/engine-configuration.test.ts](../../tests/unit/engine-configuration.test.ts)、[tests/integration/engine-configuration.test.ts](../../tests/integration/engine-configuration.test.ts)。
+实现入口：[packages/daemon/src/http/engine-configuration-routes.ts](../../packages/daemon/src/http/engine-configuration-routes.ts)。验证依据：[tests/unit/engine-configuration.test.ts](../../tests/unit/engine-configuration.test.ts)、[tests/integration/engine-configuration.test.ts](../../tests/integration/engine-configuration.test.ts)。
 
 ## hh_post_v1_engines_id_test
 
@@ -237,7 +237,7 @@
 - 失败与边界：不存在/fake → ENGINE_UNAVAILABLE；并发满 → PROBE_BUSY/429；解析/握手失败通常是200中的failed分项，不是模型可用证明。
 - Schema 参数索引：path: id（必需）。
 
-实现入口：[src/gateway/engine-configuration-routes.ts](../../src/gateway/engine-configuration-routes.ts)。验证依据：[tests/unit/engine-configuration.test.ts](../../tests/unit/engine-configuration.test.ts)、[tests/integration/engine-configuration.test.ts](../../tests/integration/engine-configuration.test.ts)。
+实现入口：[packages/daemon/src/http/engine-configuration-routes.ts](../../packages/daemon/src/http/engine-configuration-routes.ts)。验证依据：[tests/unit/engine-configuration.test.ts](../../tests/unit/engine-configuration.test.ts)、[tests/integration/engine-configuration.test.ts](../../tests/integration/engine-configuration.test.ts)。
 
 ## hh_post_v1_secrets
 
@@ -249,7 +249,7 @@
 - 持久化与副作用：写操作，仅macOS；新引用不可变，历史引用不自动删除。业务库不保存密钥值。
 - 失败与边界：INVALID_SECRET；KEYCHAIN_UNSUPPORTED；SECRET_UNAVAILABLE（锁定、缺失或不可读）。
 
-实现入口：[src/gateway/engine-configuration-routes.ts](../../src/gateway/engine-configuration-routes.ts)。验证依据：[tests/unit/engine-configuration.test.ts](../../tests/unit/engine-configuration.test.ts)。
+实现入口：[packages/daemon/src/http/engine-configuration-routes.ts](../../packages/daemon/src/http/engine-configuration-routes.ts)。验证依据：[tests/unit/engine-configuration.test.ts](../../tests/unit/engine-configuration.test.ts)。
 
 ## hh_get_v1_harness_model
 
@@ -261,7 +261,7 @@
 - 持久化与副作用：只读；不解析秘密、不调用模型。
 - 失败与边界：未配置时返回 configured=false，不报错。
 
-实现入口：[src/gateway/harness-model-routes.ts](../../src/gateway/harness-model-routes.ts)。验证依据：[tests/integration/harness-model.test.ts](../../tests/integration/harness-model.test.ts)。
+实现入口：[packages/daemon/src/http/harness-model-routes.ts](../../packages/daemon/src/http/harness-model-routes.ts)。验证依据：[tests/integration/harness-model.test.ts](../../tests/integration/harness-model.test.ts)。
 
 ## hh_put_v1_harness_model
 
@@ -273,7 +273,7 @@
 - 持久化与副作用：写统一模型文件和引擎目录；新 Session 使用新 revision，已有 Session 保留原 revision。文件只保存秘密引用。
 - 失败与边界：INVALID_HARNESS_MODEL、HARNESS_MODEL_PROTOCOL_UNSUPPORTED（400）；HARNESS_MODEL_ENVIRONMENT_OVERRIDE（409，环境变量来源生效时）；HARNESS_MODEL_FILE_UNAVAILABLE（409）。
 
-实现入口：[src/gateway/harness-model-routes.ts](../../src/gateway/harness-model-routes.ts)。验证依据：[tests/integration/harness-model.test.ts](../../tests/integration/harness-model.test.ts)。
+实现入口：[packages/daemon/src/http/harness-model-routes.ts](../../packages/daemon/src/http/harness-model-routes.ts)。验证依据：[tests/integration/harness-model.test.ts](../../tests/integration/harness-model.test.ts)。
 
 ## hh_post_v1_harness_model_test
 
@@ -285,7 +285,7 @@
 - 持久化与副作用：会实际调用模型并消耗额度；产生一条正式 Run 记录。
 - 失败与边界：HARNESS_MODEL_NOT_CONFIGURED、HARNESS_MODEL_TEST_UNSUPPORTED（409）；HARNESS_MODEL_TEST_BUSY（429）；HARNESS_MODEL_CLOSED（503）。
 
-实现入口：[src/gateway/harness-model-routes.ts](../../src/gateway/harness-model-routes.ts)。验证依据：[tests/integration/harness-model.test.ts](../../tests/integration/harness-model.test.ts)。
+实现入口：[packages/daemon/src/http/harness-model-routes.ts](../../packages/daemon/src/http/harness-model-routes.ts)。验证依据：[tests/integration/harness-model.test.ts](../../tests/integration/harness-model.test.ts)。
 
 ## hh_get_v1_tool_packs
 
@@ -297,7 +297,7 @@
 - 持久化与副作用：只读；不执行包内程序。
 - 失败与边界：TOOL_PACKAGE_REGISTRY_CORRUPT。
 
-实现入口：[src/gateway/tool-package-routes.ts](../../src/gateway/tool-package-routes.ts)。验证依据：[tests/integration/tool-pack-gateway.test.ts](../../tests/integration/tool-pack-gateway.test.ts)。
+实现入口：[packages/daemon/src/http/tool-package-routes.ts](../../packages/daemon/src/http/tool-package-routes.ts)。验证依据：[tests/integration/tool-pack-gateway.test.ts](../../tests/integration/tool-pack-gateway.test.ts)。
 
 ## hh_post_v1_tool_packs_import
 
@@ -309,7 +309,7 @@
 - 持久化与副作用：写工具包存储；指定 applyTo 时为每个接受的引擎发布新 revision，已有 Session 不变。
 - 失败与边界：INVALID_TOOL_PACKAGE_SOURCE、TOOL_PACKAGE_IMPORT_UNSUPPORTED、TOOL_PACKAGE_TOO_LARGE、TOOL_PACKAGE_VERSION_CONFLICT（400）；TOOL_PACKAGE_BUSY。
 
-实现入口：[src/gateway/tool-package-routes.ts](../../src/gateway/tool-package-routes.ts)。验证依据：[tests/integration/tool-pack-gateway.test.ts](../../tests/integration/tool-pack-gateway.test.ts)、[tests/unit/tool-packages-import.test.ts](../../tests/unit/tool-packages-import.test.ts)。
+实现入口：[packages/daemon/src/http/tool-package-routes.ts](../../packages/daemon/src/http/tool-package-routes.ts)。验证依据：[tests/integration/tool-pack-gateway.test.ts](../../tests/integration/tool-pack-gateway.test.ts)、[tests/unit/tool-packages-import.test.ts](../../tests/unit/tool-packages-import.test.ts)。
 
 ## hh_post_v1_tool_packs_apply
 
@@ -321,7 +321,7 @@
 - 持久化与副作用：写引擎 overlay；只影响新 Session。单个引擎失败不影响其他引擎。
 - 失败与边界：INVALID_REQUEST、INVALID_TOOL_PACKAGE_BINDING（400）；TOOL_PACKAGE_NOT_FOUND、ENGINE_UNAVAILABLE（404）；单引擎模式的绑定冲突（409）；ENGINE_LISTING_UNAVAILABLE（501）。
 
-实现入口：[src/gateway/tool-package-routes.ts](../../src/gateway/tool-package-routes.ts)。验证依据：[tests/integration/tool-pack-gateway.test.ts](../../tests/integration/tool-pack-gateway.test.ts)、[tests/integration/tool-pack-apply.test.ts](../../tests/integration/tool-pack-apply.test.ts)。
+实现入口：[packages/daemon/src/http/tool-package-routes.ts](../../packages/daemon/src/http/tool-package-routes.ts)。验证依据：[tests/integration/tool-pack-gateway.test.ts](../../tests/integration/tool-pack-gateway.test.ts)、[tests/integration/tool-pack-apply.test.ts](../../tests/integration/tool-pack-apply.test.ts)。
 
 ## hh_delete_v1_tool_packs_id_version_bindings
 
@@ -334,7 +334,7 @@
 - 失败与边界：400；TOOL_PACKAGE_NOT_FOUND（404）；ENGINE_LISTING_UNAVAILABLE（501）。
 - Schema 参数索引：query: engineIds；path: id（必需）；path: version（必需）。
 
-实现入口：[src/gateway/tool-package-routes.ts](../../src/gateway/tool-package-routes.ts)。验证依据：[tests/integration/tool-pack-gateway.test.ts](../../tests/integration/tool-pack-gateway.test.ts)。
+实现入口：[packages/daemon/src/http/tool-package-routes.ts](../../packages/daemon/src/http/tool-package-routes.ts)。验证依据：[tests/integration/tool-pack-gateway.test.ts](../../tests/integration/tool-pack-gateway.test.ts)。
 
 ## hh_get_v1_runtime_info
 
@@ -346,7 +346,7 @@
 - 持久化与副作用：只读。
 - 失败与边界：无业务错误。
 
-实现入口：[src/gateway/harness-model-routes.ts](../../src/gateway/harness-model-routes.ts)。验证依据：[tests/integration/harness-model.test.ts](../../tests/integration/harness-model.test.ts)。
+实现入口：[packages/daemon/src/http/harness-model-routes.ts](../../packages/daemon/src/http/harness-model-routes.ts)。验证依据：[tests/integration/harness-model.test.ts](../../tests/integration/harness-model.test.ts)。
 
 ## hh_get_v1_workspaces
 
@@ -358,7 +358,7 @@
 - 持久化与副作用：只读；本版本无远程创建/修改Workspace接口，调整部署工作区需重启。
 - 失败与边界：HTTP只接收已登记workspaceId，不能在Run里提交任意cwd。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)。
 
 ## hh_get_v1_sessions
 
@@ -371,7 +371,7 @@
 - 失败与边界：INVALID_REQUEST：非法limit；空集合返回空数组。
 - Schema 参数索引：query: limit。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/console-lifecycle.test.ts](../../tests/integration/console-lifecycle.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/console-lifecycle.test.ts](../../tests/integration/console-lifecycle.test.ts)。
 
 ## hh_post_v1_sessions
 
@@ -383,7 +383,7 @@
 - 持久化与副作用：写SQLite；Worker懒启动，创建Session本身不请求模型。
 - 失败与边界：ENGINE_UNAVAILABLE、Workspace不可用、服务关闭；无跨引擎迁移或调用方身份隔离。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)、[tests/integration/engine-management.test.ts](../../tests/integration/engine-management.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)、[tests/integration/engine-management.test.ts](../../tests/integration/engine-management.test.ts)。
 
 ## hh_post_v1_sessions_auto
 
@@ -395,7 +395,7 @@
 - 持久化与副作用：写Session与选路证据；不安装、调用或重新分配已有Session。
 - 失败与边界：无符合能力的已启用引擎会失败；不是模型质量最优的证明。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/workflows.test.ts](../../tests/integration/workflows.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/workflows.test.ts](../../tests/integration/workflows.test.ts)。
 
 ## hh_get_v1_sessions_id
 
@@ -408,7 +408,7 @@
 - 失败与边界：未知ID明确失败，不创建同名空会话。
 - Schema 参数索引：path: id（必需）。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)。
 
 ## hh_post_v1_sessions_id_suspend
 
@@ -421,7 +421,7 @@
 - 失败与边界：忙碌/有排队工作/恢复不支持时拒绝；清理未确认不得当作成功可复用。
 - Schema 参数索引：path: id（必需）。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/gateway-recovery.test.ts](../../tests/integration/gateway-recovery.test.ts)、[tests/integration/acp-recovery.test.ts](../../tests/integration/acp-recovery.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/gateway-recovery.test.ts](../../tests/integration/gateway-recovery.test.ts)、[tests/integration/acp-recovery.test.ts](../../tests/integration/acp-recovery.test.ts)。
 
 ## hh_post_v1_sessions_id_close
 
@@ -434,7 +434,7 @@
 - 失败与边界：未知ID失败；已关闭的调用保持收敛语义；无法确认清理时不能据返回文本推断进程已消失。
 - Schema 参数索引：path: id（必需）。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)。
 
 ## hh_get_v1_runs
 
@@ -447,7 +447,7 @@
 - 失败与边界：INVALID_REQUEST：非法/未知query参数。
 - Schema 参数索引：query: limit。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/console-lifecycle.test.ts](../../tests/integration/console-lifecycle.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/console-lifecycle.test.ts](../../tests/integration/console-lifecycle.test.ts)。
 
 ## hh_get_v1_sessions_id_runs
 
@@ -460,7 +460,7 @@
 - 失败与边界：Session不存在失败；Run数组可为空。
 - Schema 参数索引：path: id（必需）。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)。
 
 ## hh_get_v1_sessions_id_logs
 
@@ -473,7 +473,7 @@
 - 失败与边界：Session不存在404；非法source/limit/after为400 INVALID_REQUEST；未配置日志503 LOGS_UNAVAILABLE；读文件失败500 LOG_READ_FAILED。文件尚不存在时exists=false、records为空。truncated表示有记录因数量、大小、扫描预算或轮转被跳过。
 - Schema 参数索引：query: source；query: limit；query: after；path: id（必需）。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/session-logs.test.ts](../../tests/integration/session-logs.test.ts)、[tests/unit/session-log-reader.test.ts](../../tests/unit/session-log-reader.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/session-logs.test.ts](../../tests/integration/session-logs.test.ts)、[tests/unit/session-log-reader.test.ts](../../tests/unit/session-log-reader.test.ts)。
 
 ## hh_post_v1_sessions_id_runs
 
@@ -486,7 +486,7 @@
 - 失败与边界：幂等key相同且输入不同冲突；会话关闭、队列满、能力/outputs非法会拒绝。202不是任务完成。
 - Schema 参数索引：path: id（必需）；header: idempotency-key。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)、[tests/integration/gateway-files.test.ts](../../tests/integration/gateway-files.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)、[tests/integration/gateway-files.test.ts](../../tests/integration/gateway-files.test.ts)。
 
 ## hh_get_v1_runs_id
 
@@ -499,7 +499,7 @@
 - 失败与边界：未知ID失败；completed只表示执行正常结束，正确性由Evaluator判断。
 - Schema 参数索引：path: id（必需）。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)。
 
 ## hh_post_v1_runs_id_cancel
 
@@ -512,7 +512,7 @@
 - 失败与边界：202不代表进程已经退出；轮询Run的终态和cleanupStatus。
 - Schema 参数索引：path: id（必需）。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/worker-cli.test.ts](../../tests/integration/worker-cli.test.ts)、[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/worker-cli.test.ts](../../tests/integration/worker-cli.test.ts)、[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)。
 
 ## hh_post_v1_permissions_id_decision
 
@@ -525,7 +525,7 @@
 - 失败与边界：不存在、过期、冲突和非法option明确失败；decided不等于后端已执行。
 - Schema 参数索引：path: id（必需）。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)、[tests/integration/pressure.test.ts](../../tests/integration/pressure.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)、[tests/integration/pressure.test.ts](../../tests/integration/pressure.test.ts)。
 
 ## hh_get_v1_runs_id_event_log
 
@@ -538,7 +538,7 @@
 - 失败与边界：参数非法失败；不要把空页当作执行结束，另查Run终态。
 - Schema 参数索引：query: afterSeq；query: limit；path: id（必需）。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/observability.test.ts](../../tests/integration/observability.test.ts)、[tests/integration/store.test.ts](../../tests/integration/store.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/observability.test.ts](../../tests/integration/observability.test.ts)、[tests/integration/store.test.ts](../../tests/integration/store.test.ts)。
 
 ## hh_get_v1_runs_id_events
 
@@ -551,7 +551,7 @@
 - 失败与边界：INVALID_CURSOR；写流后错误会断开连接，需带游标重连并查询Run。
 - Schema 参数索引：query: afterSeq；path: id（必需）。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)、[tests/integration/pressure.test.ts](../../tests/integration/pressure.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/gateway.test.ts](../../tests/integration/gateway.test.ts)、[tests/integration/pressure.test.ts](../../tests/integration/pressure.test.ts)。
 
 ## hh_get_v1_runs_id_rollout
 
@@ -564,7 +564,7 @@
 - 失败与边界：未知Run失败；流输出开始后不能再返回标准JSON错误。
 - Schema 参数索引：path: id（必需）。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/smoke/rollout.test.ts](../../tests/smoke/rollout.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/smoke/rollout.test.ts](../../tests/smoke/rollout.test.ts)。
 
 ## hh_get_v1_artifacts_id
 
@@ -577,7 +577,7 @@
 - 失败与边界：未登记、文件缺失/身份或完整性变化明确失败。
 - Schema 参数索引：path: id（必需）。
 
-实现入口：[src/gateway/server.ts](../../src/gateway/server.ts)。验证依据：[tests/integration/gateway-files.test.ts](../../tests/integration/gateway-files.test.ts)、[tests/integration/file-artifacts.test.ts](../../tests/integration/file-artifacts.test.ts)。
+实现入口：[packages/daemon/src/http/server.ts](../../packages/daemon/src/http/server.ts)。验证依据：[tests/integration/gateway-files.test.ts](../../tests/integration/gateway-files.test.ts)、[tests/integration/file-artifacts.test.ts](../../tests/integration/file-artifacts.test.ts)。
 
 ## hh_get_v1_workflows
 
@@ -589,7 +589,7 @@
 - 持久化与副作用：只读；不重新规划、不自动重跑。
 - 失败与边界：该模块由startHub启用；其他自定义组合根可以不注册此组路由。
 
-实现入口：[src/gateway/workflow-routes.ts](../../src/gateway/workflow-routes.ts)。验证依据：[tests/integration/workflows.test.ts](../../tests/integration/workflows.test.ts)。
+实现入口：[packages/daemon/src/http/workflow-routes.ts](../../packages/daemon/src/http/workflow-routes.ts)。验证依据：[tests/integration/workflows.test.ts](../../tests/integration/workflows.test.ts)。
 
 ## hh_post_v1_workflows
 
@@ -602,7 +602,7 @@
 - 失败与边界：幂等输入冲突；规划超时/非法JSON/环/越界/规划工具行为等记失败；202不表示计划已通过。
 - Schema 参数索引：header: idempotency-key。
 
-实现入口：[src/gateway/workflow-routes.ts](../../src/gateway/workflow-routes.ts)。验证依据：[tests/integration/workflows.test.ts](../../tests/integration/workflows.test.ts)。
+实现入口：[packages/daemon/src/http/workflow-routes.ts](../../packages/daemon/src/http/workflow-routes.ts)。验证依据：[tests/integration/workflows.test.ts](../../tests/integration/workflows.test.ts)。
 
 ## hh_get_v1_workflows_id
 
@@ -615,7 +615,7 @@
 - 失败与边界：未知Workflow失败。
 - Schema 参数索引：path: id（必需）。
 
-实现入口：[src/gateway/workflow-routes.ts](../../src/gateway/workflow-routes.ts)。验证依据：[tests/integration/workflows.test.ts](../../tests/integration/workflows.test.ts)。
+实现入口：[packages/daemon/src/http/workflow-routes.ts](../../packages/daemon/src/http/workflow-routes.ts)。验证依据：[tests/integration/workflows.test.ts](../../tests/integration/workflows.test.ts)。
 
 ## hh_post_v1_workflows_id_approve
 
@@ -628,7 +628,7 @@
 - 失败与边界：revision变化、状态不允许或引擎不可用拒绝；任一步骤失败即停止整个计划，全部尚未执行步骤（包括无依赖步骤）标记blocked，不切换引擎或重跑。
 - Schema 参数索引：path: id（必需）。
 
-实现入口：[src/gateway/workflow-routes.ts](../../src/gateway/workflow-routes.ts)。验证依据：[tests/integration/workflows.test.ts](../../tests/integration/workflows.test.ts)。
+实现入口：[packages/daemon/src/http/workflow-routes.ts](../../packages/daemon/src/http/workflow-routes.ts)。验证依据：[tests/integration/workflows.test.ts](../../tests/integration/workflows.test.ts)。
 
 ## hh_post_v1_workflows_id_cancel
 
@@ -641,7 +641,7 @@
 - 失败与边界：状态可能仍为cancelling，需继续查询；重启不会重新提交旧步骤。
 - Schema 参数索引：path: id（必需）。
 
-实现入口：[src/gateway/workflow-routes.ts](../../src/gateway/workflow-routes.ts)。验证依据：[tests/integration/workflows.test.ts](../../tests/integration/workflows.test.ts)。
+实现入口：[packages/daemon/src/http/workflow-routes.ts](../../packages/daemon/src/http/workflow-routes.ts)。验证依据：[tests/integration/workflows.test.ts](../../tests/integration/workflows.test.ts)。
 
 ## hh_get_v1_runs_id_observations
 
@@ -654,7 +654,7 @@
 - 失败与边界：缺失证据保留null及missingReason；累计Session用量不能重复归入每个Run。
 - Schema 参数索引：path: id（必需）。
 
-实现入口：[src/gateway/observation-routes.ts](../../src/gateway/observation-routes.ts)。验证依据：[tests/integration/observability.test.ts](../../tests/integration/observability.test.ts)、[tests/unit/observability.test.ts](../../tests/unit/observability.test.ts)。
+实现入口：[packages/daemon/src/http/observation-routes.ts](../../packages/daemon/src/http/observation-routes.ts)。验证依据：[tests/integration/observability.test.ts](../../tests/integration/observability.test.ts)、[tests/unit/observability.test.ts](../../tests/unit/observability.test.ts)。
 
 ## hh_get_v1_observability
 
@@ -667,4 +667,4 @@
 - 失败与边界：INVALID_OBSERVATION_LIMIT/INVALID_REQUEST；未知费用或用量不补0。
 - Schema 参数索引：query: limit。
 
-实现入口：[src/gateway/observation-routes.ts](../../src/gateway/observation-routes.ts)。验证依据：[tests/integration/observability.test.ts](../../tests/integration/observability.test.ts)。
+实现入口：[packages/daemon/src/http/observation-routes.ts](../../packages/daemon/src/http/observation-routes.ts)。验证依据：[tests/integration/observability.test.ts](../../tests/integration/observability.test.ts)。

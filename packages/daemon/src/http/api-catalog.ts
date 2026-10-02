@@ -25,7 +25,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     implementation: "路由直接返回固定存活标记，不调用 Engine、不检查模型。",
     effects: "只读；不写库。",
     errors: "仍受 loopback Host/Origin 检查。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: ["tests/integration/gateway.test.ts"],
     operationId: "hh_get_health_live",
   },
@@ -40,7 +40,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "汇总 HubApplication.isReady 与 WorkflowService.isReady；Runtime/存储失败会反映为未就绪。",
     effects: "只读。引擎是否安装或登录不在此检查中。",
     errors: "503 表示服务当前不接收可靠执行，不能用重跑未知 Run 修复。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: ["tests/integration/gateway.test.ts"],
     operationId: "hh_get_health_ready",
   },
@@ -55,7 +55,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "@fastify/swagger 从已注册路由 schema 生成文档；api-catalog 补充说明。",
     effects: "只读；不枚举真实引擎配置、凭证或任务。",
     errors: "仅包含本次组合根启用的路由；startHub 启用全部模块。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: ["tests/integration/observability.test.ts"],
     operationId: "hh_get_openapi_json",
   },
@@ -71,7 +71,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "HubApplication.engines → Runtime.listEngines → EngineManager 当前文件+overlay视图；观测按 revision 关联。",
     effects: "只读，包含停用项，不自动发现/注册。",
     errors: "validated 无证据时为 null；不能从 configured 推断验证通过。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: ["tests/integration/engine-management.test.ts"],
     operationId: "hh_get_v1_engines",
   },
@@ -88,7 +88,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     effects: "读取安装和 manifest；不执行程序、不安装包、不调用模型或注册。",
     errors:
       "INVALID_ENGINE_MANIFEST：目录/内容/命令非法或多个 manifest 同 ID。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: ["tests/unit/discovery.test.ts", "tests/smoke/discovery.test.ts"],
     operationId: "hh_get_v1_engines_discover",
   },
@@ -103,7 +103,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "读取 EngineManager.status/defaultId，展示上次配置 reload 的结果。",
     effects: "只读；不是检查运行中的每个模型。",
     errors: "无有效默认引擎时 defaultEngine 为空字符串。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: ["tests/integration/engine-management.test.ts"],
     operationId: "hh_get_v1_engines_registry",
   },
@@ -121,7 +121,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "先写 SQLite engine_catalog v2（overlay与完整历史revision），再替换内存目录；旧 Session 保留旧 revision。不是 PATCH。",
     errors:
       "INVALID_REQUEST、INVALID_CONFIG、INVALID_ENGINE_CONFIGURATION、ENGINE_CONFIGURATION_UNSUPPORTED、ENGINE_RESERVED、ENGINE_CATALOG_FULL；PUT另有ENGINE_ID_MISMATCH。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: [
       "tests/integration/engine-management.test.ts",
       "tests/integration/engine-configuration.test.ts",
@@ -142,7 +142,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "先写 SQLite engine_catalog v2（overlay与完整历史revision），再替换内存目录；旧 Session 保留旧 revision。不是 PATCH。",
     errors:
       "INVALID_REQUEST、INVALID_CONFIG、INVALID_ENGINE_CONFIGURATION、ENGINE_CONFIGURATION_UNSUPPORTED、ENGINE_RESERVED、ENGINE_CATALOG_FULL；PUT另有ENGINE_ID_MISMATCH。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: [
       "tests/integration/engine-management.test.ts",
       "tests/integration/engine-configuration.test.ts",
@@ -162,7 +162,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "影响新 Session；保留历史配置、Session、Run，文件 reload 不会使已删除项复活。",
     errors:
       "ENGINE_UNAVAILABLE：未登记；ENGINE_RESERVED：demo 引擎不能由此删除。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: ["tests/integration/engine-management.test.ts"],
     operationId: "hh_delete_v1_engines_id",
   },
@@ -178,7 +178,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     effects: "只改变新 Session 的默认选择。",
     errors:
       "ENGINE_UNAVAILABLE：不存在/停用；ENGINE_RESERVED：fake默认由demo控制。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: ["tests/integration/engine-management.test.ts"],
     operationId: "hh_put_v1_engines_default",
   },
@@ -195,7 +195,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "全量校验通过后才应用引擎项；失败保留最后有效目录并记录 lastError。API overlay继续优先。",
     errors:
       "CONFIG_RESTART_REQUIRED：Workspace/并发等部署项变化；配置/文件错误不部分应用。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: ["tests/integration/engine-management.test.ts"],
     operationId: "hh_post_v1_engines_reload",
   },
@@ -210,7 +210,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "注入的 ConfigurationManagement.templates 调用发现器 includeManifests=false。",
     effects: "只读安装证据，故意忽略 manifest 覆盖，供用户明确替换固定脚本。",
     errors: "模板缺失/adapter-required 不等于自动安装；文件访问错误单独失败。",
-    source: "src/gateway/engine-configuration-routes.ts",
+    source: "packages/daemon/src/http/engine-configuration-routes.ts",
     tests: ["tests/unit/discovery.test.ts"],
     operationId: "hh_get_v1_engine_configuration_templates",
   },
@@ -226,7 +226,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     effects: "只读静态能力表；不保证某个二进制版本已安装或已验证。",
     errors:
       "协议列表为空时保留原生配置/显式环境引用，不接受统一 Provider 字段。",
-    source: "src/gateway/engine-configuration-routes.ts",
+    source: "packages/daemon/src/http/engine-configuration-routes.ts",
     tests: ["tests/unit/engine-configuration.test.ts"],
     operationId: "hh_get_v1_engine_configuration_adapters",
   },
@@ -242,7 +242,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     effects:
       "读本地 Skill 文件，不注册、不写业务库、不解析秘密值、不启动引擎。",
     errors: "配置不支持、Skill不可用/过大/指纹已变化均失败。",
-    source: "src/gateway/engine-configuration-routes.ts",
+    source: "packages/daemon/src/http/engine-configuration-routes.ts",
     tests: [
       "tests/unit/engine-configuration.test.ts",
       "tests/integration/engine-configuration.test.ts",
@@ -263,7 +263,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "会读秘密、创建临时文件并启动ACP检查进程；不发送prompt。结束等待进程组清理并回收测试目录。",
     errors:
       "不存在/fake → ENGINE_UNAVAILABLE；并发满 → PROBE_BUSY/429；解析/握手失败通常是200中的failed分项，不是模型可用证明。",
-    source: "src/gateway/engine-configuration-routes.ts",
+    source: "packages/daemon/src/http/engine-configuration-routes.ts",
     tests: [
       "tests/unit/engine-configuration.test.ts",
       "tests/integration/engine-configuration.test.ts",
@@ -283,7 +283,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "写操作，仅macOS；新引用不可变，历史引用不自动删除。业务库不保存密钥值。",
     errors:
       "INVALID_SECRET；KEYCHAIN_UNSUPPORTED；SECRET_UNAVAILABLE（锁定、缺失或不可读）。",
-    source: "src/gateway/engine-configuration-routes.ts",
+    source: "packages/daemon/src/http/engine-configuration-routes.ts",
     tests: ["tests/unit/engine-configuration.test.ts"],
     operationId: "hh_post_v1_secrets",
   },
@@ -299,7 +299,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "HarnessModelService.view 读取启动时解析的生效来源，并按当前引擎目录计算每个引擎的登记策略结果。",
     effects: "只读；不解析秘密、不调用模型。",
     errors: "未配置时返回 configured=false，不报错。",
-    source: "src/gateway/harness-model-routes.ts",
+    source: "packages/daemon/src/http/harness-model-routes.ts",
     tests: ["tests/integration/harness-model.test.ts"],
     operationId: "hh_get_v1_harness_model",
   },
@@ -317,7 +317,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "写统一模型文件和引擎目录；新 Session 使用新 revision，已有 Session 保留原 revision。文件只保存秘密引用。",
     errors:
       "INVALID_HARNESS_MODEL、HARNESS_MODEL_PROTOCOL_UNSUPPORTED（400）；HARNESS_MODEL_ENVIRONMENT_OVERRIDE（409，环境变量来源生效时）；HARNESS_MODEL_FILE_UNAVAILABLE（409）。",
-    source: "src/gateway/harness-model-routes.ts",
+    source: "packages/daemon/src/http/harness-model-routes.ts",
     tests: ["tests/integration/harness-model.test.ts"],
     operationId: "hh_put_v1_harness_model",
   },
@@ -334,7 +334,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     effects: "会实际调用模型并消耗额度；产生一条正式 Run 记录。",
     errors:
       "HARNESS_MODEL_NOT_CONFIGURED、HARNESS_MODEL_TEST_UNSUPPORTED（409）；HARNESS_MODEL_TEST_BUSY（429）；HARNESS_MODEL_CLOSED（503）。",
-    source: "src/gateway/harness-model-routes.ts",
+    source: "packages/daemon/src/http/harness-model-routes.ts",
     tests: ["tests/integration/harness-model.test.ts"],
     operationId: "hh_post_v1_harness_model_test",
   },
@@ -350,7 +350,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "读取工具包存储的登记表与各包清单，并按引擎目录计算绑定关系。",
     effects: "只读；不执行包内程序。",
     errors: "TOOL_PACKAGE_REGISTRY_CORRUPT。",
-    source: "src/gateway/tool-package-routes.ts",
+    source: "packages/daemon/src/http/tool-package-routes.ts",
     tests: ["tests/integration/tool-pack-gateway.test.ts"],
     operationId: "hh_get_v1_tool_packs",
   },
@@ -369,7 +369,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "写工具包存储；指定 applyTo 时为每个接受的引擎发布新 revision，已有 Session 不变。",
     errors:
       "INVALID_TOOL_PACKAGE_SOURCE、TOOL_PACKAGE_IMPORT_UNSUPPORTED、TOOL_PACKAGE_TOO_LARGE、TOOL_PACKAGE_VERSION_CONFLICT（400）；TOOL_PACKAGE_BUSY。",
-    source: "src/gateway/tool-package-routes.ts",
+    source: "packages/daemon/src/http/tool-package-routes.ts",
     tests: [
       "tests/integration/tool-pack-gateway.test.ts",
       "tests/unit/tool-packages-import.test.ts",
@@ -390,7 +390,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     effects: "写引擎 overlay；只影响新 Session。单个引擎失败不影响其他引擎。",
     errors:
       "INVALID_REQUEST、INVALID_TOOL_PACKAGE_BINDING（400）；TOOL_PACKAGE_NOT_FOUND、ENGINE_UNAVAILABLE（404）；单引擎模式的绑定冲突（409）；ENGINE_LISTING_UNAVAILABLE（501）。",
-    source: "src/gateway/tool-package-routes.ts",
+    source: "packages/daemon/src/http/tool-package-routes.ts",
     tests: [
       "tests/integration/tool-pack-gateway.test.ts",
       "tests/integration/tool-pack-apply.test.ts",
@@ -411,7 +411,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     effects: "写引擎 overlay；已有 Session 不变，工具包文件保留。",
     errors:
       "400；TOOL_PACKAGE_NOT_FOUND（404）；ENGINE_LISTING_UNAVAILABLE（501）。",
-    source: "src/gateway/tool-package-routes.ts",
+    source: "packages/daemon/src/http/tool-package-routes.ts",
     tests: ["tests/integration/tool-pack-gateway.test.ts"],
     operationId: "hh_delete_v1_tool_packs_id_version_bindings",
   },
@@ -425,7 +425,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     implementation: "返回 Gateway 启动时确定的运行模式，供控制台显示。",
     effects: "只读。",
     errors: "无业务错误。",
-    source: "src/gateway/harness-model-routes.ts",
+    source: "packages/daemon/src/http/harness-model-routes.ts",
     tests: ["tests/integration/harness-model.test.ts"],
     operationId: "hh_get_v1_runtime_info",
   },
@@ -439,7 +439,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     implementation: "HubApplication读取已解析并realpath校验的部署配置。",
     effects: "只读；本版本无远程创建/修改Workspace接口，调整部署工作区需重启。",
     errors: "HTTP只接收已登记workspaceId，不能在Run里提交任意cwd。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: ["tests/integration/gateway.test.ts"],
     operationId: "hh_get_v1_workspaces",
   },
@@ -453,7 +453,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     implementation: "Gateway读取Store全部Session后排序并限制返回数量。",
     effects: "只读；当前不是分页游标API，也不是大规模数据库分页。",
     errors: "INVALID_REQUEST：非法limit；空集合返回空数组。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: ["tests/integration/console-lifecycle.test.ts"],
     operationId: "hh_get_v1_sessions",
   },
@@ -469,7 +469,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     effects: "写SQLite；Worker懒启动，创建Session本身不请求模型。",
     errors:
       "ENGINE_UNAVAILABLE、Workspace不可用、服务关闭；无跨引擎迁移或调用方身份隔离。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: [
       "tests/integration/gateway.test.ts",
       "tests/integration/engine-management.test.ts",
@@ -488,7 +488,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "selectWorkflowEngine按能力、历史、负载和默认偏好选取，Runtime创建显式绑定Session，selection记入routing。",
     effects: "写Session与选路证据；不安装、调用或重新分配已有Session。",
     errors: "无符合能力的已启用引擎会失败；不是模型质量最优的证明。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: ["tests/integration/workflows.test.ts"],
     operationId: "hh_post_v1_sessions_auto",
   },
@@ -502,7 +502,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     implementation: "HubApplication.getSession → SqliteStore.getSession。",
     effects: "只读，包括已关闭会话；不恢复Worker。",
     errors: "未知ID明确失败，不创建同名空会话。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: ["tests/integration/gateway.test.ts"],
     operationId: "hh_get_v1_sessions_id",
   },
@@ -518,7 +518,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     effects:
       "回收进程，写清理/会话状态；后续Run严格按原backend/checkpoint恢复。",
     errors: "忙碌/有排队工作/恢复不支持时拒绝；清理未确认不得当作成功可复用。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: [
       "tests/integration/gateway-recovery.test.ts",
       "tests/integration/acp-recovery.test.ts",
@@ -538,7 +538,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "会结束该会话所属执行资源；保留历史记录、事件与产物；不等待其他Session的Run。",
     errors:
       "未知ID失败；已关闭的调用保持收敛语义；无法确认清理时不能据返回文本推断进程已消失。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: ["tests/integration/gateway.test.ts"],
     operationId: "hh_post_v1_sessions_id_close",
   },
@@ -552,7 +552,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     implementation: "Gateway读Store运行集合，再排序并截取。",
     effects: "只读；没有过滤任意engine/状态的查询参数。",
     errors: "INVALID_REQUEST：非法/未知query参数。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: ["tests/integration/console-lifecycle.test.ts"],
     operationId: "hh_get_v1_runs",
   },
@@ -566,7 +566,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     implementation: "先确认Session存在，Store按Session读Run并slice(-200)。",
     effects: "只读；不是全量历史导出接口。",
     errors: "Session不存在失败；Run数组可为空。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: ["tests/integration/gateway.test.ts"],
     operationId: "hh_get_v1_sessions_id_runs",
   },
@@ -585,7 +585,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "只读文件，不启动或联系Worker；单次最多扫描32 MiB、返回2 MiB；本接口自身的访问行不出现在gateway页中。",
     errors:
       "Session不存在404；非法source/limit/after为400 INVALID_REQUEST；未配置日志503 LOGS_UNAVAILABLE；读文件失败500 LOG_READ_FAILED。文件尚不存在时exists=false、records为空。truncated表示有记录因数量、大小、扫描预算或轮转被跳过。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: [
       "tests/integration/session-logs.test.ts",
       "tests/unit/session-log-reader.test.ts",
@@ -606,7 +606,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "先持久接收再异步执行；相同Session串行、跨Session受并发限制；截止时间从接收起算。",
     errors:
       "幂等key相同且输入不同冲突；会话关闭、队列满、能力/outputs非法会拒绝。202不是任务完成。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: [
       "tests/integration/gateway.test.ts",
       "tests/integration/gateway-files.test.ts",
@@ -624,7 +624,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "HubApplication.getRun组合Store中的Run、Permission和Artifact元数据。",
     effects: "只读持久记录，不因浏览器查询而启动任务。",
     errors: "未知ID失败；completed只表示执行正常结束，正确性由Evaluator判断。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: ["tests/integration/gateway.test.ts"],
     operationId: "hh_get_v1_runs_id",
   },
@@ -639,7 +639,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "Runtime.cancel幂等仲裁，排队任务直接收敛；活动执行向Worker发送cancel，再按Host策略升级终止。",
     effects: "写取消与终态相关事件，回收拥有的进程；迟到完成不能覆盖取消结果。",
     errors: "202不代表进程已经退出；轮询Run的终态和cleanupStatus。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: [
       "tests/integration/worker-cli.test.ts",
       "tests/integration/gateway.test.ts",
@@ -657,7 +657,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "Runtime核对run/generation/tool关联、有效期和实际选项，Store先提交决定，再发送Worker；后端确认再记applied。",
     effects: "会允许或拒绝所选工具动作；重复相同决定幂等，冲突不能覆盖。",
     errors: "不存在、过期、冲突和非法option明确失败；decided不等于后端已执行。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: [
       "tests/integration/gateway.test.ts",
       "tests/integration/pressure.test.ts",
@@ -675,7 +675,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "HubApplication.events → SqliteStore.events；直接查询持久日志，不依赖实时订阅内存。",
     effects: "只读；客户端用最后一条seq继续请求；此接口不阻塞等待新事件。",
     errors: "参数非法失败；不要把空页当作执行结束，另查Run终态。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: [
       "tests/integration/observability.test.ts",
       "tests/integration/store.test.ts",
@@ -695,7 +695,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "每批查100条已提交事件，按seq发送；背压等待drain；无新事件25ms后继续，终态且追平后结束。",
     effects: "只读。客户端断开仅取消订阅，不取消Run；客户端按runId/seq去重。",
     errors: "INVALID_CURSOR；写流后错误会断开连接，需带游标重连并查询Run。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: [
       "tests/integration/gateway.test.ts",
       "tests/integration/pressure.test.ts",
@@ -713,7 +713,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "HubApplication.rollout每批100条从Store读取，Readable流返回；不读取独立第二份JSONL事实源。",
     effects: "只读；活动Run的导出是读取当时可见的提交日志，不是持续SSE订阅。",
     errors: "未知Run失败；流输出开始后不能再返回标准JSON错误。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: ["tests/smoke/rollout.test.ts"],
     operationId: "hh_get_v1_runs_id_rollout",
   },
@@ -730,7 +730,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     effects:
       "只读不可变快照；元数据来自Run.artifacts，不直接暴露内部storagePath。",
     errors: "未登记、文件缺失/身份或完整性变化明确失败。",
-    source: "src/gateway/server.ts",
+    source: "packages/daemon/src/http/server.ts",
     tests: [
       "tests/integration/gateway-files.test.ts",
       "tests/integration/file-artifacts.test.ts",
@@ -748,7 +748,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "WorkflowService.list → SqliteWorkflowStore；包含规划中、draft及终态记录。",
     effects: "只读；不重新规划、不自动重跑。",
     errors: "该模块由startHub启用；其他自定义组合根可以不注册此组路由。",
-    source: "src/gateway/workflow-routes.ts",
+    source: "packages/daemon/src/http/workflow-routes.ts",
     tests: ["tests/integration/workflows.test.ts"],
     operationId: "hh_get_v1_workflows",
   },
@@ -766,7 +766,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "会调用所选规划引擎；draft之前不执行步骤。计划最多8步，校验依赖、输出路径与能力。",
     errors:
       "幂等输入冲突；规划超时/非法JSON/环/越界/规划工具行为等记失败；202不表示计划已通过。",
-    source: "src/gateway/workflow-routes.ts",
+    source: "packages/daemon/src/http/workflow-routes.ts",
     tests: ["tests/integration/workflows.test.ts"],
     operationId: "hh_post_v1_workflows",
   },
@@ -781,7 +781,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     implementation: "WorkflowService.get从持久Store读取一致记录。",
     effects: "只读，可在刷新/重启后恢复查看；不恢复未知执行。",
     errors: "未知Workflow失败。",
-    source: "src/gateway/workflow-routes.ts",
+    source: "packages/daemon/src/http/workflow-routes.ts",
     tests: ["tests/integration/workflows.test.ts"],
     operationId: "hh_get_v1_workflows_id",
   },
@@ -798,7 +798,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "会实际执行计划中的文件/工具/模型动作，沿用Runtime权限、期限、产物与事件机制。",
     errors:
       "revision变化、状态不允许或引擎不可用拒绝；任一步骤失败即停止整个计划，全部尚未执行步骤（包括无依赖步骤）标记blocked，不切换引擎或重跑。",
-    source: "src/gateway/workflow-routes.ts",
+    source: "packages/daemon/src/http/workflow-routes.ts",
     tests: ["tests/integration/workflows.test.ts"],
     operationId: "hh_post_v1_workflows_id_approve",
   },
@@ -813,7 +813,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "WorkflowService.cancel持久化取消意图，取消活动Run，阻止后续步骤并关闭所属Session。",
     effects: "会结束工作流拥有的执行；保留已提交步骤结果与产物。",
     errors: "状态可能仍为cancelling，需继续查询；重启不会重新提交旧步骤。",
-    source: "src/gateway/workflow-routes.ts",
+    source: "packages/daemon/src/http/workflow-routes.ts",
     tests: ["tests/integration/workflows.test.ts"],
     operationId: "hh_post_v1_workflows_id_cancel",
   },
@@ -830,7 +830,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     effects: "只读投影；不另调用模型、账户账单或计费API。",
     errors:
       "缺失证据保留null及missingReason；累计Session用量不能重复归入每个Run。",
-    source: "src/gateway/observation-routes.ts",
+    source: "packages/daemon/src/http/observation-routes.ts",
     tests: [
       "tests/integration/observability.test.ts",
       "tests/unit/observability.test.ts",
@@ -849,7 +849,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     effects:
       "只读；scope明确totalRuns和sampledRuns，不将近期样本冒充全量账单。",
     errors: "INVALID_OBSERVATION_LIMIT/INVALID_REQUEST；未知费用或用量不补0。",
-    source: "src/gateway/observation-routes.ts",
+    source: "packages/daemon/src/http/observation-routes.ts",
     tests: ["tests/integration/observability.test.ts"],
     operationId: "hh_get_v1_observability",
   },

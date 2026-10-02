@@ -13,18 +13,25 @@ importers:
 
   .:
     dependencies:
+      cross-spawn:
+        specifier: 7.0.6
+        version: 7.0.6
+    devDependencies:
       '@agentclientprotocol/sdk':
         specifier: 1.4.0
         version: 1.4.0(zod@4.5.4)
-      '@fastify/swagger':
-        specifier: 9.8.1
-        version: 9.8.1
       '@harnesshub/agents':
         specifier: workspace:*
         version: link:packages/agents
+      '@harnesshub/cli':
+        specifier: workspace:*
+        version: link:packages/cli
       '@harnesshub/core':
         specifier: workspace:*
         version: link:packages/core
+      '@harnesshub/daemon':
+        specifier: workspace:*
+        version: link:packages/daemon
       '@harnesshub/drivers':
         specifier: workspace:*
         version: link:packages/drivers
@@ -40,13 +47,6 @@ importers:
       '@harnesshub/store':
         specifier: workspace:*
         version: link:packages/store
-      cross-spawn:
-        specifier: 7.0.6
-        version: 7.0.6
-      fastify:
-        specifier: 5.12.5
-        version: 5.12.5
-    devDependencies:
       '@types/cross-spawn':
         specifier: 6.0.6
         version: 6.0.6
@@ -65,6 +65,9 @@ importers:
       eslint:
         specifier: 10.10.0
         version: 10.10.0(jiti@2.7.0)
+      fastify:
+        specifier: 5.12.5
+        version: 5.12.5
       postject:
         specifier: 1.0.0-alpha.6
         version: 1.0.0-alpha.6
@@ -99,11 +102,47 @@ importers:
         specifier: 2.9.0
         version: 2.9.0
 
+  packages/cli:
+    dependencies:
+      '@harnesshub/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/core:
     dependencies:
       ajv:
         specifier: 8.20.0
         version: 8.20.0
+
+  packages/daemon:
+    dependencies:
+      '@fastify/swagger':
+        specifier: 9.8.1
+        version: 9.8.1
+      '@harnesshub/agents':
+        specifier: workspace:*
+        version: link:../agents
+      '@harnesshub/core':
+        specifier: workspace:*
+        version: link:../core
+      '@harnesshub/drivers':
+        specifier: workspace:*
+        version: link:../drivers
+      '@harnesshub/gateway':
+        specifier: workspace:*
+        version: link:../gateway
+      '@harnesshub/runtime':
+        specifier: workspace:*
+        version: link:../runtime
+      '@harnesshub/secrets':
+        specifier: workspace:*
+        version: link:../secrets
+      '@harnesshub/store':
+        specifier: workspace:*
+        version: link:../store
+      fastify:
+        specifier: 5.12.5
+        version: 5.12.5
 
   packages/drivers:
     dependencies:

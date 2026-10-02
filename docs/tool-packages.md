@@ -81,7 +81,7 @@ id 默认取目录名；源为 JSON 文件时取文件名，`mcp.json` 这类通
 
 ## HTTP 接口
 
-四个路由都受 Gateway 的 loopback Host/Origin 检查，请求与响应 schema 定义在 [tool-package-routes.ts](../src/gateway/tool-package-routes.ts)，实现为 [management.ts](../packages/agents/src/tool-packages/management.ts)。所有变更请求在同一进程内串行执行；多个引擎逐个处理，单个引擎失败不回滚、也不影响其他引擎。
+四个路由都受 Gateway 的 loopback Host/Origin 检查，请求与响应 schema 定义在 [tool-package-routes.ts](../packages/daemon/src/http/tool-package-routes.ts)，实现为 [management.ts](../packages/agents/src/tool-packages/management.ts)。所有变更请求在同一进程内串行执行；多个引擎逐个处理，单个引擎失败不回滚、也不影响其他引擎。
 
 `GET /v1/tool-packs` 返回 `{packages:[...]}`。每项是登记记录 `schemaVersion/id/version/digest/installedAt/status`，加上 `displayName`、`counts:{skills,mcp,cli}` 和 `engines`（当前配置包含该版本的引擎 id）。清单无法读取的包仍会列出，并附 `problem:{code,message}`。
 
@@ -129,18 +129,18 @@ id 默认取目录名；源为 JSON 文件时取文件名，`mcp.json` 这类通
 
 ## 可脚本化 CLI
 
-开发仓库先完成构建，使用当前 Node 运行 [组合入口](../src/tool-packages-main.ts)。`--root` 必须是第一项，后跟显式绝对存储目录，其余参数交给工具模块。成功向 stdout 输出 JSON；失败向 stderr 输出带 `code/message` 的 JSON 并返回非零状态。调用者负责选择是否保存或提交返回的引擎配置。
+开发仓库先完成构建，使用当前 Node 运行 [组合入口](../packages/daemon/src/tool-packages-main.ts)。`--root` 必须是第一项，后跟显式绝对存储目录，其余参数交给工具模块。成功向 stdout 输出 JSON；失败向 stderr 输出带 `code/message` 的 JSON 并返回非零状态。调用者负责选择是否保存或提交返回的引擎配置。
 
 ```powershell
-node dist/src/tool-packages-main.js --root C:\HarnessHub\data\tool-packages inspect --source C:\HarnessHub\examples\tool-packages\portable-review
-node dist/src/tool-packages-main.js --root C:\HarnessHub\data\tool-packages install --source C:\HarnessHub\examples\tool-packages\portable-review
-node dist/src/tool-packages-main.js --root C:\HarnessHub\data\tool-packages import --source C:\HarnessHub\examples\tool-packages\simple-toolkit
-node dist/src/tool-packages-main.js --root C:\HarnessHub\data\tool-packages import --source D:\configs\mcp.json --kind mcp --id github-tools --version 1.0.0
-node dist/src/tool-packages-main.js --root C:\HarnessHub\data\tool-packages list
-node dist/src/tool-packages-main.js --root C:\HarnessHub\data\tool-packages verify --id portable-review --version 1.0.0
-node dist/src/tool-packages-main.js --root C:\HarnessHub\data\tool-packages bind --id portable-review --version 1.0.0 --engine C:\HarnessHub\registration.json
-node dist/src/tool-packages-main.js --root C:\HarnessHub\data\tool-packages remove --id portable-review --version 1.0.0
-node dist/src/tool-packages-main.js --root C:\HarnessHub\data\tool-packages list --include-removed
+node packages/daemon/dist/src/tool-packages-main.js --root C:\HarnessHub\data\tool-packages inspect --source C:\HarnessHub\examples\tool-packages\portable-review
+node packages/daemon/dist/src/tool-packages-main.js --root C:\HarnessHub\data\tool-packages install --source C:\HarnessHub\examples\tool-packages\portable-review
+node packages/daemon/dist/src/tool-packages-main.js --root C:\HarnessHub\data\tool-packages import --source C:\HarnessHub\examples\tool-packages\simple-toolkit
+node packages/daemon/dist/src/tool-packages-main.js --root C:\HarnessHub\data\tool-packages import --source D:\configs\mcp.json --kind mcp --id github-tools --version 1.0.0
+node packages/daemon/dist/src/tool-packages-main.js --root C:\HarnessHub\data\tool-packages list
+node packages/daemon/dist/src/tool-packages-main.js --root C:\HarnessHub\data\tool-packages verify --id portable-review --version 1.0.0
+node packages/daemon/dist/src/tool-packages-main.js --root C:\HarnessHub\data\tool-packages bind --id portable-review --version 1.0.0 --engine C:\HarnessHub\registration.json
+node packages/daemon/dist/src/tool-packages-main.js --root C:\HarnessHub\data\tool-packages remove --id portable-review --version 1.0.0
+node packages/daemon/dist/src/tool-packages-main.js --root C:\HarnessHub\data\tool-packages list --include-removed
 ```
 
 `import` 可加 `--kind`、`--id`、`--version`、`--display-name`，输出 `{package,displayName,digest,format,counts,warnings}`，只安装不绑定。`bind` 可加 `--bindings <绝对 JSON 文件路径>` 和 `--replace`；`--workspace` 仍被接受但不再生效。`--engine` 输入完整 [EngineRegistration](../packages/core/src/engines.ts)，而不是包含 capabilities/revision 的引擎响应对象。结果为 `{registration,revision,package:{id,version},capabilities,replaced?}`。生成的 `registration` 已调用既有 `prepareEngine` 校验及固定 Skill hash，可通过已有 `PUT /v1/engines/:id` 应用。同一版本重复绑定会刷新该版本的条目；绑定、替换和冲突规则与上文 [引擎绑定、替换与解除](#引擎绑定替换与解除) 相同。命令不会写回输入文件或发送 HTTP 请求。多个包可依次对上一次返回的 registration 绑定，仍受单引擎既有数量与能力限制。
@@ -167,7 +167,7 @@ Windows 上 Node 拒绝直接启动 `.cmd`/`.bat`（CVE-2024-27980，报 EINVAL�
 
 ```powershell
 node examples/tool-packages/workspace-tools/workspace-tools.mjs --root C:\Projects\example list '{"path":"."}'
-node examples/tool-packages/workspace-tools/workspace-tools.mjs --root C:\Projects\example read '{"path":"src/main.ts","startLine":1,"maxLines":40}'
+node examples/tool-packages/workspace-tools/workspace-tools.mjs --root C:\Projects\example read '{"path":"packages/daemon/src/main.ts","startLine":1,"maxLines":40}'
 node examples/tool-packages/workspace-tools/workspace-tools.mjs --root C:\Projects\example search '{"path":"src","query":"TODO","maxResults":20}'
 ```
 

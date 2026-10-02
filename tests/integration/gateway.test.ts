@@ -5,7 +5,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { startHub } from "../../src/main.js";
+import { startHub } from "@harnesshub/daemon/main";
 import { temporaryDirectory } from "../support/temporary.js";
 import type {
   AgentEvent,

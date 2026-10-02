@@ -12,9 +12,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HubError } from "@harnesshub/core/errors";
 import type { SessionLogQuery } from "@harnesshub/core/logging";
-import { JsonLogFile } from "../../src/logging/json-log-file.js";
-import { createSessionLogReader } from "../../src/logging/session-log-reader.js";
-import { createRedactor } from "../../src/worker/diagnostics.js";
+import { JsonLogFile } from "@harnesshub/daemon/logging/json-log-file";
+import { createSessionLogReader } from "@harnesshub/daemon/logging/session-log-reader";
+import { createRedactor } from "@harnesshub/daemon/worker/diagnostics";
 
 function directory(t: test.TestContext): string {
   const root = mkdtempSync(join(tmpdir(), "hh-session-log-"));

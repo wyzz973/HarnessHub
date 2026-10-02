@@ -57,7 +57,7 @@ ACP 0.13.2 的 reducer 会把最新 breakdown 直接赋给名称为 `cumulative_
 
 `HARNESSHUB_LOG_LEVEL` 取 `info`（默认）或 `debug`，大小写不敏感，其他值拒绝启动；Gateway 解析后把同一值传给每个 Worker。`debug` 另写 `run.input`、`acp.request.params`、`acp.response.result`、`acp.notification.params`、`acp.update`、`model.payload`（上游请求体与回答）和 CLI 的 `engine.input`/`engine.stdout`，每项最多 2,048 个字符并标注截断长度。这些摘录包含任务提示词和模型回答，只在排查时开启。
 
-所有字符串字段最多 8 KiB；每行写入前按已知密钥值（Session 解析出的密钥、模型网关 token、环境中的统一模型密钥）和 Bearer、`sk-`、`token=`/`api_key:` 等形式脱敏。文件权限 0600，超过 16 MiB 轮转为 `.1`～`.3`。日志写失败不影响执行：Gateway 向 stderr 输出一次 `log.error`，Worker 在当前 Run 发出一次 `diagnostics.log_failed` 事件。`node dist/src/main.js` 把 info 级生命周期行同时写到 stderr（即启动窗口），stdout 仍只输出 ready 事件；访问和模型调用行只进文件。
+所有字符串字段最多 8 KiB；每行写入前按已知密钥值（Session 解析出的密钥、模型网关 token、环境中的统一模型密钥）和 Bearer、`sk-`、`token=`/`api_key:` 等形式脱敏。文件权限 0600，超过 16 MiB 轮转为 `.1`～`.3`。日志写失败不影响执行：Gateway 向 stderr 输出一次 `log.error`，Worker 在当前 Run 发出一次 `diagnostics.log_failed` 事件。`node packages/daemon/dist/src/main.js` 把 info 级生命周期行同时写到 stderr（即启动窗口），stdout 仍只输出 ready 事件；访问和模型调用行只进文件。
 
 运行中不必打开文件：`GET /v1/sessions/{id}/logs` 按页读取一个 Session 的诊断记录。`source=engine`（默认）返回该 Session 的引擎日志；`source=gateway` 返回 Gateway 日志中含该 Session id 或其 Run id 的行，不含读取本接口自身的访问行。不带 `after` 时返回最新 `limit` 条（默认 200，最多 2000，按写入顺序）；带上一页的 `cursor`（文件身份与字节偏移，轮转后仍有效）时只返回之后写入的完整行。单次最多扫描 32 MiB（含 `.1`～`.3`）、返回 2 MiB；`truncated=true` 表示有记录因数量、大小、扫描预算或游标所在文件已轮转出去而被跳过。每行读出时再次脱敏，无法解析的行计入 `skipped`。接口只读文件、不联系 Worker，未知 Session 返回 404。控制台“执行详情”中的“诊断日志”使用该接口，可切换引擎/Gateway 日志、按级别和关键字筛选，任务运行时每 2 秒增量刷新，并能复制或下载当前显示的记录（JSON Lines）。
 

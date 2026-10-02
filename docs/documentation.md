@@ -59,4 +59,4 @@ TypeScript 类型只有一个定义。文档优先链接声明；需要复制时
 
 ## HTTP文档同步
 
-逐接口行为与实现指针在 [api-catalog.ts](../src/gateway/api-catalog.ts)集中维护，参数/响应schema仍由domain或所属route声明拥有。`pnpm docs:api`启动临时Gateway提取OpenAPI并生成 [参考](api/reference.md)与 [JSON](api/openapi.json)；不调用模型。`pnpm check:api`检查路由双向覆盖、operationId唯一性、源码/测试文件存在和生成内容新鲜度，已进入pnpm check及CI；[拒绝样例](../tools/check-api-docs.test.mjs)验证缺失、重复、失效和越界链接会失败。生成器对流式响应补实际媒体类型，不将开放原生payload伪装成封闭结构。
+逐接口行为与实现指针在 [api-catalog.ts](../packages/daemon/src/http/api-catalog.ts)集中维护，参数/响应schema仍由domain或所属route声明拥有。`pnpm docs:api`启动临时Gateway提取OpenAPI并生成 [参考](api/reference.md)与 [JSON](api/openapi.json)；不调用模型。`pnpm check:api`检查路由双向覆盖、operationId唯一性、源码/测试文件存在和生成内容新鲜度，已进入pnpm check及CI；[拒绝样例](../tools/check-api-docs.test.mjs)验证缺失、重复、失效和越界链接会失败。生成器对流式响应补实际媒体类型，不将开放原生payload伪装成封闭结构。

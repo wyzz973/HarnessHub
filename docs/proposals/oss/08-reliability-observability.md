@@ -2,7 +2,7 @@
 
 状态：提案（草案），2026-10-02。术语、进程与部署形态以 [02 系统架构](02-architecture.md) 为准，顶层性能与可靠性目标来自 [01 成功指标](01-product.md#7-成功指标)，重试与故障转移规则以 [ADR-P05](adr-drafts.md#adr-p05-路由重试与故障转移) 为准。数据目录、迁移备份与秘密见 [07 数据与安全](07-data-security.md)。文中的命令名、API 路径与配置键表示所需的能力，最终命名以 [06 接口与交互面](06-interfaces.md) 为准。
 
-依据：现有实现（[运行观测与诊断日志](../../observability.md)、[ADR 0014](../../decisions/0014-diagnostic-logs.md)、[ADR 0007](../../decisions/0007-windows-process-supervision.md)、[`json-log-file.ts`](../../../src/logging/json-log-file.ts)、[`diagnostics.ts`](../../../src/worker/diagnostics.ts)、[`sqlite-store.ts`](../../../packages/store/src/storage/sqlite-store.ts)）；`yetone/magpie@d874adb` 的 `internal/redact` 与 README 中的 OTLP 导出说明；2026-10-02 的对比核验（调研材料，未入库，以问题编号引用）；[OpenTelemetry GenAI 语义约定](https://github.com/open-telemetry/semantic-conventions-genai)（Development 状态）。
+依据：现有实现（[运行观测与诊断日志](../../observability.md)、[ADR 0014](../../decisions/0014-diagnostic-logs.md)、[ADR 0007](../../decisions/0007-windows-process-supervision.md)、[`json-log-file.ts`](../../../packages/daemon/src/logging/json-log-file.ts)、[`diagnostics.ts`](../../../packages/daemon/src/worker/diagnostics.ts)、[`sqlite-store.ts`](../../../packages/store/src/storage/sqlite-store.ts)）；`yetone/magpie@d874adb` 的 `internal/redact` 与 README 中的 OTLP 导出说明；2026-10-02 的对比核验（调研材料，未入库，以问题编号引用）；[OpenTelemetry GenAI 语义约定](https://github.com/open-telemetry/semantic-conventions-genai)（Development 状态）。
 
 ## 1. SLI 与 SLO
 
@@ -201,7 +201,7 @@ invoke_workflow compare-fix-foo          并行比较或评测（多个 Run）
 
 ## 7. 日志与脱敏
 
-现状有四个缺口（核验 redaction-unify、V9-N1）：两套规则分叉，即 [`createRedactor`](../../../src/worker/diagnostics.ts)（第 18–32 行）与上游错误用的 `sanitize`（`packages/gateway/src/upstream.ts` 第 648 行起）；[`JsonLogFile`](../../../src/logging/json-log-file.ts) 先截断、序列化整行再脱敏（第 75–97 行），赋值规则会吞掉 `\"` 中的反斜杠，实测 7 条带引号凭据的输入中 5 条整条变成 `log.unserializable`；调用方先截断（2 KiB、200 字符、8 KiB、16 KiB）再交给脱敏，已知秘密跨过截断点时留下前缀；名字前的 `\b` 使 `DB_PASSWORD`、`client_secret` 等漏检，25 条正样例中 17 条原样保留。
+现状有四个缺口（核验 redaction-unify、V9-N1）：两套规则分叉，即 [`createRedactor`](../../../packages/daemon/src/worker/diagnostics.ts)（第 18–32 行）与上游错误用的 `sanitize`（`packages/gateway/src/upstream.ts` 第 648 行起）；[`JsonLogFile`](../../../packages/daemon/src/logging/json-log-file.ts) 先截断、序列化整行再脱敏（第 75–97 行），赋值规则会吞掉 `\"` 中的反斜杠，实测 7 条带引号凭据的输入中 5 条整条变成 `log.unserializable`；调用方先截断（2 KiB、200 字符、8 KiB、16 KiB）再交给脱敏，已知秘密跨过截断点时留下前缀；名字前的 `\b` 使 `DB_PASSWORD`、`client_secret` 等漏检，25 条正样例中 17 条原样保留。
 
 日志格式沿用 ADR 0014 的 JSON Lines：`{time, level, event, ...}`，级别扩展为 `error`、`warn`、`info`、`debug`，在 span 内的记录带 `trace_id`、`span_id`，并按需带 `run_id`、`session_id`、`plugin`。文件为 `<日志根>/daemon.log`、`<日志根>/sessions/<sessionId>/engine.log`、`<日志根>/plugins/<id>.log`，每个 16 MiB 轮转、保留 3 代。`log.level`（或 `HH_LOG_LEVEL`）默认 `info`；`debug` 包含提示词摘录，只用于排查。开启 OTLP 时日志也可导出，经同一套脱敏。
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeOpenApiDocument } from "../../src/gateway/openapi.js";
+import { normalizeOpenApiDocument } from "@harnesshub/daemon/http/openapi";
 void test("OpenAPI 3.0 projection describes nullable schema and streaming content without mutating original schema", () => {
   const source = {
     paths: {

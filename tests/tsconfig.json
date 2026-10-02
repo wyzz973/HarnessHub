@@ -1,0 +1,38 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "../dist/tests",
+    "tsBuildInfoFile": "../dist/.tsbuildinfo"
+  },
+  "include": ["**/*.ts"],
+  "references": [
+    {
+      "path": "../packages/core"
+    },
+    {
+      "path": "../packages/store"
+    },
+    {
+      "path": "../packages/secrets"
+    },
+    {
+      "path": "../packages/gateway"
+    },
+    {
+      "path": "../packages/drivers"
+    },
+    {
+      "path": "../packages/agents"
+    },
+    {
+      "path": "../packages/runtime"
+    },
+    {
+      "path": "../packages/daemon"
+    },
+    {
+      "path": "../packages/cli"
+    }
+  ]
+}

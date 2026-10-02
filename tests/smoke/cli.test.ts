@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { BUILD_INFO, MAIN_ENTRY } from "../support/entries.js";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
@@ -9,7 +10,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { temporaryDirectory } from "../support/temporary.js";
 
-const entry = fileURLToPath(new URL("../../src/main.js", import.meta.url));
+const entry = fileURLToPath(MAIN_ENTRY);
 async function launch(directory: string) {
   const child = spawn(
     process.execPath,
@@ -102,10 +103,7 @@ void test(
   { timeout: 10_000 },
   async () => {
     const written: unknown = JSON.parse(
-      await readFile(
-        fileURLToPath(new URL("../../build-info.json", import.meta.url)),
-        "utf8",
-      ),
+      await readFile(fileURLToPath(BUILD_INFO), "utf8"),
     );
     const run = promisify(execFile);
     const json = await run(process.execPath, [entry, "--version", "--json"]);

@@ -12,7 +12,7 @@ import {
   type HubConfig,
 } from "@harnesshub/agents/engine/registry";
 import { fullAccessEnabled } from "@harnesshub/agents/engine/full-access";
-import { registerHarnessModelRoutes } from "./gateway/harness-model-routes.js";
+import { registerHarnessModelRoutes } from "./http/harness-model-routes.js";
 import { providerProtocols } from "@harnesshub/agents/engine/configuration";
 import { configurationAdapters } from "@harnesshub/core/engine-configuration";
 import { createSecret } from "@harnesshub/secrets/secrets";
@@ -47,8 +47,8 @@ import {
 import { createFileArtifactCollector } from "@harnesshub/runtime/artifacts/collector";
 import { Runtime } from "@harnesshub/runtime/runtime/runtime";
 import { HubApplication } from "@harnesshub/runtime/application/service";
-import { createGateway } from "./gateway/server.js";
-import { registerToolPackageRoutes } from "./gateway/tool-package-routes.js";
+import { createGateway } from "./http/server.js";
+import { registerToolPackageRoutes } from "./http/tool-package-routes.js";
 import { createToolPackageManagement } from "@harnesshub/agents/tool-packages/management";
 import {
   LOG_LEVEL_ENVIRONMENT,
