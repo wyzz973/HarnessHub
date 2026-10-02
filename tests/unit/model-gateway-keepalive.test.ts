@@ -733,60 +733,59 @@ void test("a write after the engine's socket was destroyed fails at once instead
 });
 
 void test(
-  "no keepalive is sent while a write to an engine that stopped reading waits for the socket",
+  "no keepalive is sent while a write to the engine waits for the socket, and one is sent once it drains",
   { timeout: 30_000 },
-  async (t) => {
+  async () => {
+    // A response whose writes complete only when the test says so. Kernel
+    // socket buffers differ per platform (Windows accepted 32 MiB to a paused
+    // reader), so a real socket cannot hold a write pending reliably.
+    const pending: (() => void)[] = [];
+    const response = {
+      headersSent: false,
+      destroyed: false,
+      writableEnded: false,
+      socket: { destroyed: false },
+      writeHead() {
+        this.headersSent = true;
+        return this;
+      },
+      flushHeaders() {},
+      write(_text: string, callback: (error?: Error | null) => void) {
+        pending.push(() => callback());
+        return false;
+      },
+    };
+    const writer = new HttpWriter(response as unknown as ServerResponse);
+    writer.begin(200, "text/plain");
+    const stalled = writer.write("content the engine has not read yet");
     let sends = 0;
-    const done = Promise.withResolvers<void>();
-    const server = createServer((_, response) => {
-      void (async () => {
-        const writer = new HttpWriter(response);
-        writer.begin(200, "text/plain");
-        // Far above any socket buffer: this write cannot complete while the
-        // engine does not read.
-        const stalled = writer
-          .write("x".repeat(32 * 1024 * 1024))
-          .catch((error: unknown) => {
-            if (!(error instanceof ClientClosed)) throw error;
-          });
-        const keepalive = new Keepalive(
-          writer,
-          { gapMs: 1_000, maxNoDataMs: 60_000 },
-          () => {
-            sends++;
-            return Promise.resolve();
-          },
-        );
-        // Upstream data the engine never sees, for two and a half seconds.
-        for (let index = 0; index < 12; index++) {
-          await delay(200);
-          assert.equal(writer.busy, true);
-          keepalive.data();
-        }
-        keepalive.stop();
-        await keepalive.settled();
-        response.destroy();
-        await stalled;
-      })().then(done.resolve, done.reject);
-    });
-    server.listen(0, "127.0.0.1");
-    await once(server, "listening");
-    t.after(async () => {
-      server.closeAllConnections();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-    });
-    const address = server.address();
-    assert.ok(address && typeof address !== "string");
-    const client = request(`http://127.0.0.1:${address.port}/`);
-    client.on("error", () => undefined);
-    client.on("response", (response) => {
-      response.on("error", () => undefined);
-      response.pause();
-    });
-    client.end();
-    t.after(() => client.destroy());
-    await done.promise;
+    const keepalive = new Keepalive(
+      writer,
+      { gapMs: 1_000, maxNoDataMs: 60_000 },
+      () => {
+        sends++;
+        return Promise.resolve();
+      },
+    );
+    // Upstream data the engine never sees, for two and a half seconds.
+    for (let index = 0; index < 12; index++) {
+      await delay(200);
+      assert.equal(writer.busy, true);
+      keepalive.data();
+    }
     assert.equal(sends, 0);
+    // Positive control: once the write drains, the same activity is kept alive.
+    for (const release of pending.splice(0)) release();
+    await stalled;
+    assert.equal(writer.busy, false);
+    keepalive.data();
+    await delay(1_300);
+    keepalive.stop();
+    await keepalive.settled();
+    assert.ok(
+      sends >= 1,
+      `expected a keepalive after the write drained, got ${sends}`,
+    );
   },
 );
 
