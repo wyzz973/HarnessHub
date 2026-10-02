@@ -32,6 +32,12 @@ export const runInputSchema = {
   properties: {
     text: { type: "string", minLength: 1, maxLength: 1_048_576 },
     timeoutMs: { type: "integer", minimum: 1, maximum: 86_400_000 },
+    model: {
+      type: "string",
+      minLength: 3,
+      maxLength: 1024,
+      pattern: "^[^\\s/]+/\\S+$",
+    },
     outputs: {
       type: "array",
       minItems: 1,

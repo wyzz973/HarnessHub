@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: MIT
-import { engineConfigurationSchema } from "./engine-configuration.js";
+import {
+  configurationAdapters,
+  engineConfigurationSchema,
+} from "./engine-configuration.js";
 import { Ajv } from "ajv";
 import type {
   ExecutionIdentity,
@@ -110,6 +113,16 @@ const spec = object(
     stateDir: string,
     backendSessionId: string,
     input: { ...runInputSchema, required: ["text", "timeoutMs"] },
+    modelGateway: object(
+      {
+        baseUrl: string,
+        key: string,
+        adapter: { enum: [...configurationAdapters] },
+        contextWindow: { type: "integer", minimum: 1 },
+        maxOutputTokens: { type: "integer", minimum: 1 },
+      },
+      ["baseUrl", "key", "adapter"],
+    ),
   },
   ["sessionId", "runId", "generation", "profile", "cwd", "stateDir", "input"],
 );

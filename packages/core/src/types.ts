@@ -73,6 +73,11 @@ export interface FileOutput {
 export interface RunInput {
   text: string;
   timeoutMs: number;
+  /**
+   * Model Ref (`provider/model`) or `group/<id>` this Run uses through the
+   * shared model gateway; default `group/default`.
+   */
+  model?: string;
   fixture?: FakeOptions;
   outputs?: FileOutput[];
 }

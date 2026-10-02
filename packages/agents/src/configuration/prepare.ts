@@ -3,7 +3,10 @@ import { createHash } from "node:crypto";
 import { mkdir, lstat, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { stringify as stringifyYaml } from "yaml";
-import type { ExecutionSpec } from "@harnesshub/core/ports";
+import type {
+  ExecutionSpec,
+  SessionModelGateway,
+} from "@harnesshub/core/ports";
 import type {
   ConfigurationAdapter,
   EngineMcpServer,
@@ -389,7 +392,21 @@ export async function prepareConfiguration(
       throw error;
     }
   };
-  if (!config) return finish();
+  const shared = spec.modelGateway;
+  if (!config) {
+    // An engine without a declared configuration is routed by its built-in
+    // recipe's adapter, which the daemon names in the spec.
+    if (shared)
+      await prepareSharedGateway({
+        spec,
+        result,
+        root: await configurationRoot(spec),
+        shared,
+        hooks,
+        fullAccess: fullAccess(environment, launchEnvironment),
+      });
+    return finish();
+  }
   Object.assign(
     result.env,
     config.env,
@@ -504,7 +521,8 @@ export async function prepareConfiguration(
     }
   }
   const provider = config.provider;
-  const gatewayRouted = provider?.protocol === "openai-completions";
+  const gatewayRouted =
+    shared !== undefined || provider?.protocol === "openai-completions";
   if (spec.profile.driver === "cli" && spec.profile.model) {
     if (!["cursor", "antigravity", "kimi"].includes(config.adapter))
       unsupported("This CLI adapter cannot translate model selection");
@@ -519,7 +537,7 @@ export async function prepareConfiguration(
       );
     // A gateway-routed Kimi selects the alias defined in its private config.
     const selected = gatewayRouted
-      ? (provider.modelAlias ?? HARNESS_MODEL_ALIAS)
+      ? (provider?.modelAlias ?? HARNESS_MODEL_ALIAS)
       : spec.profile.model;
     if (config.adapter === "kimi") result.command.push("--model", selected);
     else {
@@ -532,7 +550,7 @@ export async function prepareConfiguration(
       );
     }
   }
-  if (!provider) return finish();
+  if (!provider && !shared) return finish();
   if (
     result.command.some((arg) =>
       /launch-(?:pi|opencode|dsh|openclaw)-acp\.mjs$/.test(arg),
@@ -541,8 +559,19 @@ export async function prepareConfiguration(
     unsupported(
       "This custom launcher fixes its own provider. Select the discovered standard launch template before applying managed provider settings",
     );
-  const root = path.join(spec.stateDir, "configuration");
-  await mkdir(root, { recursive: true, mode: 0o700 });
+  const root = await configurationRoot(spec);
+  if (shared) {
+    await prepareSharedGateway({
+      spec,
+      result,
+      root,
+      shared,
+      hooks,
+      fullAccess: fullAccess(environment, launchEnvironment),
+    });
+    return finish();
+  }
+  if (!provider) return finish();
   if (gatewayRouted) {
     await prepareGateway({
       spec,
@@ -568,12 +597,18 @@ interface GatewayPreparation {
   hooks: PreparationHooks;
   fullAccess: boolean;
 }
+/** Where an engine reaches a model gateway: its origin and the credential it presents. */
+interface GatewayEndpoint {
+  baseUrl: string;
+  token: string;
+}
 interface GatewayWiring {
   spec: ExecutionSpec;
   result: PreparedConfiguration;
   root: string;
+  adapter: RoutableAdapter;
   alias: string;
-  gateway: ModelGateway;
+  gateway: GatewayEndpoint;
   /** Chat/Responses base URL including /v1. */
   v1: string;
   contextWindow: number;
@@ -631,38 +666,15 @@ async function prepareGateway(context: GatewayPreparation): Promise<void> {
   result.modelBridge = gateway;
   hooks.secrets?.add(gateway.token);
   try {
-    isolateEnvironment(spec, result, provider);
-    await privateHome(spec, result);
-    const contextWindow =
-      provider.contextWindow ?? DEFAULT_GATEWAY_CONTEXT_WINDOW;
-    // Explicit limits are validated at registration and used unchanged; the
-    // default never exceeds half of a small declared window.
-    const maxOutputTokens =
-      provider.maxOutputTokens ??
-      Math.min(
-        DEFAULT_GATEWAY_MAX_OUTPUT_TOKENS,
-        Math.floor(contextWindow / 2),
-      );
-    const wiring: GatewayWiring = {
-      spec,
-      result,
-      root,
-      alias,
+    isolateEnvironment(spec, result, adapter, provider);
+    await wireGateway(
+      context,
+      adapter,
       gateway,
-      v1: `${gateway.baseUrl}/v1`,
-      contextWindow,
-      maxOutputTokens,
-      fullAccess: context.fullAccess,
-      jsonFile: async (name, value) => {
-        const file = path.join(root, name);
-        await writeFile(file, JSON.stringify(value, null, 2) + "\n", {
-          mode: 0o600,
-        });
-        return file;
-      },
-    };
-    result.env.HARNESSHUB_PROVIDER_KEY = gateway.token;
-    await gatewayAdapters[adapter](wiring);
+      alias,
+      provider.contextWindow,
+      provider.maxOutputTokens,
+    );
   } catch (error) {
     await gateway.close();
     delete result.modelBridge;
@@ -670,18 +682,106 @@ async function prepareGateway(context: GatewayPreparation): Promise<void> {
   }
 }
 
+/** The Session's private configuration directory. */
+async function configurationRoot(spec: ExecutionSpec): Promise<string> {
+  const root = path.join(spec.stateDir, "configuration");
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  return root;
+}
+
+/**
+ * Route one Session through the daemon's shared model gateway (03 section
+ * 10): the engine gets the daemon origin, the Session's `session:` key and
+ * the alias; the daemon resolves the alias to the Run's model target, so no
+ * upstream credential is resolved here and nothing is started. Vendor
+ * credentials are removed and every engine home points into the Session's
+ * private state, as for the Worker-owned gateway.
+ */
+async function prepareSharedGateway(context: {
+  spec: ExecutionSpec;
+  result: PreparedConfiguration;
+  root: string;
+  shared: SessionModelGateway;
+  hooks: PreparationHooks;
+  fullAccess: boolean;
+}): Promise<void> {
+  const { spec, result, shared, hooks } = context;
+  const adapter = shared.adapter;
+  if (!routable(adapter))
+    unsupported(
+      "This engine cannot be routed through the HarnessHub model gateway; it would use its own account or provider",
+    );
+  hooks.secrets?.add(shared.key);
+  isolateEnvironment(spec, result, adapter, undefined);
+  // A unified-model profile keeps its alias, so engine configurations stay
+  // as before; the shared gateway resolves any alias to the Run's target.
+  await wireGateway(
+    context,
+    adapter,
+    { baseUrl: shared.baseUrl, token: shared.key },
+    spec.profile.configuration?.provider?.modelAlias ?? HARNESS_MODEL_ALIAS,
+    shared.contextWindow,
+    shared.maxOutputTokens,
+  );
+}
+
+/** Private homes, limits and the adapter's own configuration for one gateway endpoint. */
+async function wireGateway(
+  context: {
+    spec: ExecutionSpec;
+    result: PreparedConfiguration;
+    root: string;
+    fullAccess: boolean;
+  },
+  adapter: RoutableAdapter,
+  gateway: GatewayEndpoint,
+  alias: string,
+  declaredWindow: number | undefined,
+  declaredOutput: number | undefined,
+): Promise<void> {
+  const { spec, result, root } = context;
+  await privateHome(spec, result);
+  const contextWindow = declaredWindow ?? DEFAULT_GATEWAY_CONTEXT_WINDOW;
+  // Explicit limits are validated at registration and used unchanged; the
+  // default never exceeds half of a small declared window.
+  const maxOutputTokens =
+    declaredOutput ??
+    Math.min(DEFAULT_GATEWAY_MAX_OUTPUT_TOKENS, Math.floor(contextWindow / 2));
+  const wiring: GatewayWiring = {
+    spec,
+    result,
+    root,
+    adapter,
+    alias,
+    gateway,
+    v1: `${gateway.baseUrl}/v1`,
+    contextWindow,
+    maxOutputTokens,
+    fullAccess: context.fullAccess,
+    jsonFile: async (name, value) => {
+      const file = path.join(root, name);
+      await writeFile(file, JSON.stringify(value, null, 2) + "\n", {
+        mode: 0o600,
+      });
+      return file;
+    },
+  };
+  result.env.HARNESSHUB_PROVIDER_KEY = gateway.token;
+  await gatewayAdapters[adapter](wiring);
+}
+
 /** Remove vendor credentials and upstream secret sources from the engine environment. */
 function isolateEnvironment(
   spec: ExecutionSpec,
   result: PreparedConfiguration,
-  provider: ModelProviderConfiguration,
+  adapter: ConfigurationAdapter,
+  provider: ModelProviderConfiguration | undefined,
 ): void {
-  const adapter = spec.profile.configuration!.adapter;
   const names = new Set<string>([
     ...VENDOR_CREDENTIAL_ENVIRONMENT,
     ...(adapter === "copilot" ? COPILOT_ACCOUNT_ENVIRONMENT : []),
     ...(spec.profile.credentialEnv ?? []),
-    ...[provider.apiKey, ...Object.values(provider.secretHeaders ?? {})]
+    ...[provider?.apiKey, ...Object.values(provider?.secretHeaders ?? {})]
       .filter((ref) => ref?.kind === "env")
       .map((ref) => ref!.value),
   ]);
@@ -758,6 +858,10 @@ type RoutableAdapter = Extract<
 >;
 function routable(adapter: ConfigurationAdapter): adapter is RoutableAdapter {
   return Object.hasOwn(gatewayAdapters, adapter);
+}
+/** Whether an engine with this adapter can be wired to a HarnessHub model gateway. */
+export function gatewayRoutable(adapter: ConfigurationAdapter): boolean {
+  return routable(adapter);
 }
 const gatewayAdapters: Record<
   RoutableAdapter,
@@ -1034,7 +1138,7 @@ async function geminiGateway(wiring: GatewayWiring): Promise<void> {
  */
 async function openCodeGateway(wiring: GatewayWiring): Promise<void> {
   const { result, alias, v1, contextWindow, maxOutputTokens } = wiring;
-  const mimo = wiring.spec.profile.configuration!.adapter === "mimo";
+  const mimo = wiring.adapter === "mimo";
   const prefix = mimo ? "MIMOCODE" : "OPENCODE";
   const selection = `harnesshub/${alias}`;
   const pinned = { model: selection };
@@ -1427,9 +1531,9 @@ async function kimiGateway(wiring: GatewayWiring): Promise<void> {
   const { spec, result, root, alias, v1, gateway, maxOutputTokens } = wiring;
   kimiLaunchTemplate(result.command);
   const configured =
-    spec.profile.configuration!.env?.KIMI_MODEL_MAX_CONTEXT_SIZE;
+    spec.profile.configuration?.env?.KIMI_MODEL_MAX_CONTEXT_SIZE;
   const contextWindow =
-    spec.profile.configuration!.provider?.contextWindow ??
+    spec.profile.configuration?.provider?.contextWindow ??
     (configured ? Number(configured) : wiring.contextWindow);
   // Kimi 1.50.0's print CLI accepts this file. Its ACP server requires native
   // OAuth and its deprecated --acp mode rejects every protocol method.
