@@ -16,7 +16,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SOURCE_ROOTS = ["src", "tests", "tools", "scripts", "examples", "web/app", "web/components", "web/lib"];
+const SOURCE_ROOTS = ["src", "packages", "apps", "tests", "tools", "scripts", "examples", "web/app", "web/components", "web/lib"];
 const ROOT_FILES = ["eslint.config.mjs", "web/next.config.ts", "web/postcss.config.mjs"];
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".mjs", ".js", ".cjs", ".cs", ".swift"]);
 const SKIPPED_DIRECTORIES = new Set(["node_modules", "dist", ".next", "out", "coverage"]);

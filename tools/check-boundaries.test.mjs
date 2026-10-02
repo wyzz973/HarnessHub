@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -8,8 +14,11 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { checkSource } from "./check-boundaries.mjs";
 
-const root = join(tmpdir(), "harnesshub-boundary-fixture", "src");
-const check = (file, contents) => checkSource(join(root, file), contents, root);
+const root = join(tmpdir(), "harnesshub-boundary-fixture");
+const check = (file, contents) =>
+  checkSource(join(root, "src", file), contents, root);
+const checkAt = (file, contents) =>
+  checkSource(join(root, file), contents, root);
 
 test("release templates and tool packages cannot create a second execution path", () => {
   assert.deepEqual(
@@ -179,8 +188,8 @@ test("rejects SDK leakage, Worker database access and unknown dynamic imports", 
 test("CLI returns nonzero for invalid fixtures and accepts a valid tree", (context) => {
   const directory = mkdtempSync(join(tmpdir(), "harnesshub-boundaries-"));
   context.after(() => rmSync(directory, { recursive: true, force: true }));
-  const gateway = join(directory, "gateway");
-  mkdirSync(gateway);
+  const gateway = join(directory, "src", "gateway");
+  mkdirSync(gateway, { recursive: true });
   const file = join(gateway, "http.ts");
   const run = () =>
     spawnSync(
@@ -212,4 +221,209 @@ test("empty source tree cannot report success", (context) => {
   );
   assert.equal(result.status, 1);
   assert.match(result.stderr, /No source files found/);
+});
+
+test("src imports a package only through its legacy alias, under the aliased module's rules", () => {
+  assert.deepEqual(
+    check(
+      "gateway/http.ts",
+      'import type { RunId } from "@harnesshub/core/types";',
+    ),
+    [],
+  );
+  assert.deepEqual(
+    check("main.ts", 'import { HubError } from "@harnesshub/core/errors";'),
+    [],
+  );
+  assert.match(
+    check("cli.ts", 'import { client } from "@harnesshub/sdk/index";').join(
+      "\n",
+    ),
+    /src cannot import @harnesshub\/sdk before it has a legacy alias/,
+  );
+  assert.match(
+    check("main.ts", 'import { x } from "@harnesshub/nope/x";').join("\n"),
+    /unknown workspace package: @harnesshub\/nope\/x/,
+  );
+  assert.match(
+    check(
+      "worker/main.ts",
+      'import type { Run } from "../../packages/core/src/types.js";',
+    ).join("\n"),
+    /worker cannot depend on outside-src/,
+  );
+});
+
+test("packages and applications follow the dependency graph", () => {
+  assert.deepEqual(
+    checkAt(
+      "packages/store/src/storage/sqlite.ts",
+      'import type { RunId } from "@harnesshub/core/types";',
+    ),
+    [],
+  );
+  assert.deepEqual(
+    checkAt(
+      "apps/hh/src/main.ts",
+      'import { main } from "@harnesshub/daemon/main";',
+    ),
+    [],
+  );
+  assert.match(
+    checkAt(
+      "packages/core/src/types.ts",
+      'import type { Store } from "@harnesshub/store/storage/sqlite";',
+    ).join("\n"),
+    /packages\/core cannot depend on @harnesshub\/store/,
+  );
+  assert.match(
+    checkAt(
+      "packages/cli/src/cli.ts",
+      'export { startHub } from "@harnesshub/daemon/main";',
+    ).join("\n"),
+    /packages\/cli cannot depend on @harnesshub\/daemon/,
+  );
+  assert.match(
+    checkAt(
+      "packages/core/test/types.test.ts",
+      'const store = import("@harnesshub/store/storage/sqlite");',
+    ).join("\n"),
+    /packages\/core cannot depend on @harnesshub\/store/,
+  );
+  assert.match(
+    checkAt(
+      "apps/hh/src/main.ts",
+      'import { open } from "@harnesshub/store/storage/sqlite";',
+    ).join("\n"),
+    /apps\/hh cannot depend on @harnesshub\/store/,
+  );
+  assert.match(
+    checkAt("packages/extras/src/index.ts", "export {};").join("\n"),
+    /unknown package extras; add it to the dependency graph/,
+  );
+  assert.match(
+    checkAt("apps/tray/src/main.ts", "export {};").join("\n"),
+    /unknown app tray; add it to the dependency graph/,
+  );
+});
+
+test("relative imports and new URL stay inside their package", () => {
+  assert.deepEqual(
+    checkAt(
+      "packages/core/src/ipc.ts",
+      'import { HubError } from "./errors.js";\nconst schema = new URL("./schema.json", import.meta.url);',
+    ),
+    [],
+  );
+  assert.deepEqual(
+    checkAt(
+      "packages/core/test/ipc.test.ts",
+      'import { parse } from "../src/ipc.js";',
+    ),
+    [],
+  );
+  assert.match(
+    checkAt(
+      "packages/core/src/ipc.ts",
+      'import { startHub } from "../../../src/main.js";',
+    ).join("\n"),
+    /relative import leaves packages\/core: \.\.\/\.\.\/\.\.\/src\/main\.js/,
+  );
+  assert.match(
+    checkAt(
+      "packages/core/test/ipc.test.ts",
+      'import { temporaryDirectory } from "../../../tests/support/temporary.js";',
+    ).join("\n"),
+    /relative import leaves packages\/core/,
+  );
+  assert.match(
+    checkAt(
+      "packages/core/src/ipc.ts",
+      'const launcher = new URL("../../../scripts/launch-engine.mjs", import.meta.url);',
+    ).join("\n"),
+    /new URL leaves packages\/core: \.\.\/\.\.\/\.\.\/scripts\/launch-engine\.mjs/,
+  );
+  assert.match(
+    checkAt(
+      "apps/hh/src/main.ts",
+      "const entry = new URL(`../${name}/main.js`, import.meta.url);",
+    ).join("\n"),
+    /nonliteral new URL\(\.\.\., import\.meta\.url\) cannot be checked/,
+  );
+});
+
+test("legacy module and third-party rules apply inside packages", () => {
+  assert.deepEqual(
+    checkAt("packages/core/src/ipc.ts", 'import { Ajv } from "ajv";'),
+    [],
+  );
+  assert.match(
+    checkAt("packages/core/src/ipc.ts", 'import Fastify from "fastify";').join(
+      "\n",
+    ),
+    /domain cannot import concrete dependency: fastify/,
+  );
+  assert.match(
+    checkAt(
+      "packages/sdk/src/index.ts",
+      'import { DatabaseSync } from "node:sqlite";',
+    ).join("\n"),
+    /SQLite belongs in storage/,
+  );
+  assert.match(
+    checkAt(
+      "packages/plugin-host/src/index.ts",
+      'import { spawn } from "node:child_process";',
+    ).join("\n"),
+    /process creation belongs in ProcessHost or Driver/,
+  );
+  assert.match(
+    checkAt(
+      "packages/runtime/src/runtime/run.ts",
+      'import { open } from "../storage/sqlite.js";',
+    ).join("\n"),
+    /runtime cannot depend on storage/,
+  );
+  // Tests are bound by the graph only, as tests/ is not scanned at all.
+  assert.deepEqual(
+    checkAt(
+      "packages/core/test/ipc.test.ts",
+      'import { spawn } from "node:child_process";',
+    ),
+    [],
+  );
+});
+
+test("CLI scans packages and applications and does not follow their node_modules", (context) => {
+  const directory = mkdtempSync(join(tmpdir(), "harnesshub-boundaries-pkg-"));
+  context.after(() => rmSync(directory, { recursive: true, force: true }));
+  const source = join(directory, "packages", "core", "src");
+  mkdirSync(source, { recursive: true });
+  mkdirSync(join(directory, "packages", "core", "node_modules"));
+  // A junction needs no privilege on Windows; other systems ignore the type.
+  symlinkSync(
+    source,
+    join(directory, "packages", "core", "node_modules", "self"),
+    "junction",
+  );
+  const run = () =>
+    spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL("./check-boundaries.mjs", import.meta.url)),
+        directory,
+      ],
+      { encoding: "utf8" },
+    );
+  writeFileSync(join(source, "types.ts"), 'import "@harnesshub/store/x";');
+  const invalid = run();
+  assert.equal(invalid.status, 1);
+  assert.match(
+    invalid.stderr,
+    /packages\/core\/src\/types\.ts:1 packages\/core cannot depend on @harnesshub\/store/,
+  );
+  writeFileSync(join(source, "types.ts"), "export type RunId = string;");
+  const valid = run();
+  assert.equal(valid.status, 0, valid.stderr);
+  assert.match(valid.stdout, /verified for 1 source files/);
 });
