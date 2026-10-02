@@ -88,6 +88,10 @@ function launch(args, cwd, extraEnv = {}) {
 }
 process.once("SIGINT", () => void stop());
 process.once("SIGTERM", () => void stop());
+// The console proxy reads the daemon's admin token from this data directory.
+const dataDir = fileURLToPath(
+  new URL(demo ? "../data/demo" : "../data/local", import.meta.url),
+);
 launch(
   [
     "packages/daemon/dist/src/main.js",
@@ -95,7 +99,7 @@ launch(
     "--port",
     "3180",
     "--data-dir",
-    demo ? "./data/demo" : "./data/local",
+    dataDir,
   ],
   root,
 );
@@ -109,7 +113,7 @@ launch(
     "3330",
   ],
   fileURLToPath(new URL("../packages/console/", import.meta.url)),
-  { HARNESSHUB_GATEWAY_URL: "http://127.0.0.1:3180" },
+  { HARNESSHUB_GATEWAY_URL: "http://127.0.0.1:3180", HARNESSHUB_DATA_DIR: dataDir },
 );
 console.log(
   `HarnessHub ${demo ? "demo" : "local"}: http://127.0.0.1:3330 (Ctrl+C stops both services)`,

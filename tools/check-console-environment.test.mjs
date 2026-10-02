@@ -12,6 +12,7 @@ test("the console toolchain sees system variables and its own settings only", ()
     HOME: "/Users/dev",
     CI: "true",
     HARNESSHUB_GATEWAY_URL: "http://127.0.0.1:3180",
+    HARNESSHUB_DATA_DIR: "/Users/dev/HarnessHub/data/local",
     GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_developer_token_value",
     HARNESSHUB_MODEL_API_KEY: "sk-developer-key",
     AWS_SESSION_TOKEN: "short",
@@ -24,6 +25,7 @@ test("the console toolchain sees system variables and its own settings only", ()
     HOME: "/Users/dev",
     CI: "true",
     HARNESSHUB_GATEWAY_URL: "http://127.0.0.1:3180",
+    HARNESSHUB_DATA_DIR: "/Users/dev/HarnessHub/data/local",
     NEXT_TELEMETRY_DISABLED: "1",
   });
   // Credential-looking and canary values are scanned for; paths and short values are not.

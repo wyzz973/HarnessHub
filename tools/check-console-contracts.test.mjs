@@ -160,3 +160,112 @@ test("console reads Session diagnostics pages with free-form records and rejects
       JSON.stringify(invalid),
     );
 });
+
+/** A console module transpiled for Node, with the SDK resolved to its build. */
+async function consoleModule(file, replacements = {}) {
+  const sdk = (name) =>
+    JSON.stringify(
+      new URL(`../packages/sdk/dist/src/${name}.js`, import.meta.url).href,
+    );
+  let source = await readFile(
+    new URL(`../packages/console/${file}`, import.meta.url),
+    "utf8",
+  );
+  source = source
+    .replaceAll('from "@harnesshub/sdk/client"', `from ${sdk("client")}`)
+    .replaceAll('from "@harnesshub/sdk/local"', `from ${sdk("local")}`);
+  for (const [from, to] of Object.entries(replacements))
+    source = source.replaceAll(from, to);
+  const output = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2024 },
+  }).outputText;
+  return import(`data:text/javascript;base64,${Buffer.from(output).toString("base64")}`);
+}
+
+test("the console proxy adds the admin token to /api/v1 only and keeps its local-origin checks", async (t) => {
+  const { mkdtemp, rm, writeFile } = await import("node:fs/promises");
+  const { createServer } = await import("node:http");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const directory = await mkdtemp(path.join(os.tmpdir(), "hh-console-proxy-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const token = "T".repeat(40) + "abc";
+  await writeFile(path.join(directory, "admin.token"), `${token}\n`, { mode: 0o600 });
+  const seen = [];
+  const upstream = createServer((request, response) => {
+    seen.push({ url: request.url, authorization: request.headers.authorization });
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end('{"items":[],"nextCursor":null}');
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => upstream.close(resolve)));
+  const saved = {
+    url: process.env.HARNESSHUB_GATEWAY_URL,
+    dir: process.env.HARNESSHUB_DATA_DIR,
+  };
+  t.after(() => {
+    for (const [name, value] of [
+      ["HARNESSHUB_GATEWAY_URL", saved.url],
+      ["HARNESSHUB_DATA_DIR", saved.dir],
+    ])
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+  });
+  process.env.HARNESSHUB_GATEWAY_URL = `http://127.0.0.1:${upstream.address().port}`;
+  process.env.HARNESSHUB_DATA_DIR = directory;
+  const proxy = await consoleModule("app/api/gateway/[...path]/route.ts");
+  const call = (segments, init = {}) =>
+    proxy.GET(
+      new Request(`http://127.0.0.1:3330/api/gateway/${segments.join("/")}`, init),
+      { params: Promise.resolve({ path: segments }) },
+    );
+
+  // /api/v1: the browser's own Authorization is replaced by the daemon token.
+  const listed = await call(["api", "v1", "providers"], {
+    headers: { authorization: "Bearer from-the-browser" },
+  });
+  assert.equal(listed.status, 200);
+  const body = await listed.text();
+  assert.equal(body, '{"items":[],"nextCursor":null}');
+  assert.deepEqual(seen.at(-1), {
+    url: "/api/v1/providers",
+    authorization: `Bearer ${token}`,
+  });
+  for (const [name, value] of listed.headers) {
+    assert.equal(value.includes(token), false, name);
+  }
+  // Other roots get no credentials.
+  await call(["v1", "engines"], { headers: { authorization: "Bearer x" } });
+  assert.deepEqual(seen.at(-1), { url: "/v1/engines", authorization: undefined });
+
+  // Refused before any upstream request; /api errors are problem details.
+  const before = seen.length;
+  const cases = [
+    [["api", "admin"], {}, 400, "INVALID_GATEWAY_PATH"],
+    [["api"], {}, 400, "INVALID_GATEWAY_PATH"],
+    [["api", "v1", ".."], {}, 400, "INVALID_GATEWAY_PATH"],
+    [["api", "v1", "providers"], { headers: { origin: "http://evil.example" } }, 403, "LOCAL_ACCESS_REQUIRED"],
+    [["api", "v1", "providers"], { headers: { "sec-fetch-site": "cross-site" } }, 403, "LOCAL_ACCESS_REQUIRED"],
+  ];
+  for (const [segments, init, status, code] of cases) {
+    const refused = await call(segments, init);
+    assert.equal(refused.status, status, segments.join("/"));
+    assert.match(refused.headers.get("content-type"), /^application\/problem\+json/);
+    assert.equal((await refused.json()).code, code);
+  }
+  const legacy = await call(["admin"]);
+  assert.equal(legacy.status, 400);
+  assert.equal((await legacy.json()).error.code, "INVALID_GATEWAY_PATH");
+
+  // Without a readable token the proxy answers 503 and forwards nothing.
+  await writeFile(path.join(directory, "admin.token"), "short\n", { mode: 0o600 });
+  const broken = await call(["api", "v1", "providers"]);
+  assert.equal(broken.status, 503);
+  assert.equal((await broken.json()).code, "ADMIN_TOKEN_UNAVAILABLE");
+  delete process.env.HARNESSHUB_DATA_DIR;
+  const unset = await call(["api", "v1", "providers"]);
+  assert.equal(unset.status, 503);
+  assert.equal((await unset.json()).code, "ADMIN_TOKEN_UNAVAILABLE");
+  assert.equal(seen.length, before);
+  assert.equal(typeof proxy.PATCH, "function");
+});

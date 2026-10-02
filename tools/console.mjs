@@ -7,8 +7,10 @@
  * Next.js 16 records the environment of the build process in its Turbopack
  * cache (packages/console/.next/cache), so a token in the developer's shell ends up on disk.
  * The console toolchain therefore gets only the system variables of
- * lib/environment.mjs, the home and temporary directories, CI and
- * HARNESSHUB_GATEWAY_URL, with Next.js telemetry disabled.
+ * lib/environment.mjs, the home and temporary directories, CI,
+ * HARNESSHUB_GATEWAY_URL and HARNESSHUB_DATA_DIR (the daemon's data directory,
+ * where the proxy reads the admin token at request time; the path, not the
+ * token), with Next.js telemetry disabled.
  *
  * After a build, packages/console/.next is searched for a random canary that was placed in the
  * parent environment and for every dropped variable whose name looks like a
@@ -37,6 +39,7 @@ const ALLOWED = [
   "TMP",
   "CI",
   "HARNESSHUB_GATEWAY_URL",
+  "HARNESSHUB_DATA_DIR",
 ];
 const CREDENTIAL_NAME = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE|SESSION|PAT)(_|$)/i;
 const CANARY = "HARNESSHUB_CONSOLE_CANARY";
