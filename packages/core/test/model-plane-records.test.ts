@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { WireProtocol } from "@harnesshub/core/model-plane";
-import { endpointProblem } from "../src/storage/model-plane-records.js";
+import type { WireProtocol } from "../src/model-plane.js";
+import { endpointProblem } from "../src/model-plane-records.js";
 
 void test("provider base URLs follow the official SDK convention", () => {
   const accepted: Array<[WireProtocol, string]> = [

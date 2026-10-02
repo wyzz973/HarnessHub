@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 /**
- * Validators of the model-plane records (`@harnesshub/core/model-plane`) at the
- * SQLite boundary: records are checked before they are written and again when
- * they are read back, where they are `unknown` until checked. They check shape,
- * closed sets and identifier formats, not cross-record references.
+ * Validators of the model-plane records (`./model-plane.ts`), shared by the
+ * store (before writing and when reading back, where records are `unknown`
+ * until checked) and the `/api/v1` routes. They check shape, closed sets and
+ * identifier formats, not cross-record references.
  */
 import {
   droppableFields,
@@ -18,7 +18,7 @@ import {
   type RouteGroup,
   type WireProtocol,
   type WiringRecord,
-} from "@harnesshub/core/model-plane";
+} from "./model-plane.js";
 
 type Check = (value: unknown) => boolean;
 

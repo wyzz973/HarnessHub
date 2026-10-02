@@ -23,7 +23,7 @@ import {
   isRouteGroup,
   isTimestamp,
   isWiringRecord,
-} from "./model-plane-records.js";
+} from "@harnesshub/core/model-plane-records";
 import { decodeRecord } from "./records.js";
 
 /** Largest `listModelCalls` page, the same bound as event reads. */
