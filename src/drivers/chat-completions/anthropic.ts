@@ -310,7 +310,8 @@ type OpenBlock =
 /**
  * Anthropic Messages output. Streams message_start, thinking/text/tool_use
  * content blocks (one open block at a time; tool input as input_json_delta),
- * message_delta with stop_reason and usage, then message_stop.
+ * message_delta with stop_reason and usage, then message_stop. The keepalive
+ * is the protocol's own `ping` event, which Claude Code's stream watchdog counts.
  */
 export class AnthropicSink implements OutputSink {
   #blocks = 0;
@@ -482,6 +483,9 @@ export class AnthropicSink implements OutputSink {
       stop_sequence: null,
       usage: this.#usage(result),
     });
+  }
+  async keepalive(): Promise<void> {
+    if (this.translation.stream) await this.#event("ping", {});
   }
   async fail(failure: Failure): Promise<void> {
     await this.#event("error", { error: anthropicError(failure) });

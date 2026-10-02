@@ -417,10 +417,13 @@ interface CallState {
  * Responses output. Streams `response.created`, reasoning summary items
  * (with `encrypted_content` carrying the text back), message text deltas and
  * function-call argument deltas, then `response.completed` with usage, or
- * `response.incomplete` when the token limit cut the output.
+ * `response.incomplete` when the token limit cut the output. The keepalive is
+ * a repeated `response.in_progress`: Codex counts only events toward its
+ * stream idle timeout and ignores SSE comments.
  */
 export class ResponsesSink implements OutputSink {
   #sequence = 0;
+  #created = false;
   #output: Record<string, unknown>[] = [];
   #open: OpenItem | undefined;
   #calls = new Map<string, CallState>();
@@ -447,18 +450,26 @@ export class ResponsesSink implements OutputSink {
     this.#output.push({});
     return this.#output.length - 1;
   }
+  #pending(): Record<string, unknown> {
+    return {
+      ...this.#base(),
+      status: "in_progress",
+      output: [],
+      error: null,
+      incomplete_details: null,
+    };
+  }
   async start(): Promise<void> {
-    if (!this.translation.stream || this.writer.sent) return;
+    if (!this.translation.stream || this.#created) return;
+    this.#created = true;
     this.writer.begin(200, "text/event-stream; charset=utf-8");
-    await this.#event("response.created", {
-      response: {
-        ...this.#base(),
-        status: "in_progress",
-        output: [],
-        error: null,
-        incomplete_details: null,
-      },
-    });
+    await this.#event("response.created", { response: this.#pending() });
+  }
+  /** `response.created` first when it was not sent yet, then `response.in_progress`. */
+  async keepalive(): Promise<void> {
+    if (!this.translation.stream) return;
+    await this.start();
+    await this.#event("response.in_progress", { response: this.#pending() });
   }
   async #close(): Promise<void> {
     const open = this.#open;

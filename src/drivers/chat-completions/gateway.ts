@@ -15,6 +15,7 @@ import {
 } from "./anthropic.js";
 import { chatToChat, ChatSink, openAiErrorResponse } from "./chat.js";
 import { googleErrorResponse, googleToChat, GoogleSink } from "./google.js";
+import { Keepalive } from "./keepalive.js";
 import {
   ClientClosed,
   HttpWriter,
@@ -86,8 +87,9 @@ export interface ModelGatewayOptions {
 /**
  * One engine model call. Contains no prompt, completion text or secret.
  * `status` is the HTTP status returned to the engine, or for a failure after
- * streaming began, the status that failure would have had; 499 marks a call
- * cancelled by the engine disconnecting or by the Run ending.
+ * the 200 headers were committed (a stream, or a Gemini answer committed
+ * early), the status that failure would have had; 499 marks a call cancelled
+ * by the engine disconnecting or by the Run ending. Keepalives never change it.
  */
 export interface ModelCallRecord {
   id: string;
@@ -147,14 +149,31 @@ export interface ModelGateway {
   close(): Promise<void>;
 }
 
-/** Resource limits of one gateway. */
+/** Resource limits of one gateway, all integers. */
 export interface GatewayLimits {
   /** Inbound request body bytes. */
   maxRequestBytes: number;
   /** Upstream response body bytes. */
   maxResponseBytes: number;
-  /** Longest wait for upstream response headers or between body chunks. */
+  /**
+   * Longest wait for the upstream response headers, or between two upstream
+   * data events. SSE comments and blank lines do not reset it, so an upstream
+   * that only sends comments still times out (504, or in-stream once committed).
+   */
   idleTimeoutMs: number;
+  /**
+   * Engine-side silence after which a protocol keepalive is written while the
+   * upstream is still active (1–30 s). See {@link Keepalive}.
+   */
+  keepaliveGapMs: number;
+  /** Keepalives stop once the upstream sent no data event for this long. */
+  maxNoDataMs: number;
+  /**
+   * Gemini inbound only: this long after a 2xx upstream answer without a first
+   * chunk, the 200 headers are committed anyway (below Gemini's 60 s header
+   * timeout). An upstream that never answers is unaffected and gets 504.
+   */
+  headerCommitMs: number;
   /** Concurrent upstream requests per Session; further calls wait in order. */
   maxConcurrent: number;
   /** Calls allowed to wait for a slot before new ones get 429. */
@@ -166,11 +185,50 @@ export const DEFAULT_GATEWAY_LIMITS: Readonly<GatewayLimits> = {
   maxRequestBytes: 8 * 1024 * 1024,
   maxResponseBytes: 8 * 1024 * 1024,
   idleTimeoutMs: 300_000,
+  keepaliveGapMs: 10_000,
+  maxNoDataMs: 300_000,
+  headerCommitMs: 45_000,
   maxConcurrent: 4,
   maxQueued: 32,
   reasoningEntries: 256,
   reasoningBytes: 4 * 1024 * 1024,
 };
+/** Longest delay Node timers accept. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+/**
+ * Accepted range of each limit. Time limits other than the keepalive gap only
+ * need to be positive, so tests can shorten them as they always could.
+ */
+const LIMIT_RANGES: Readonly<
+  Record<keyof GatewayLimits, readonly [number, number]>
+> = {
+  maxRequestBytes: [1, Number.MAX_SAFE_INTEGER],
+  maxResponseBytes: [1, Number.MAX_SAFE_INTEGER],
+  idleTimeoutMs: [1, MAX_TIMER_MS],
+  keepaliveGapMs: [1_000, 30_000],
+  maxNoDataMs: [1, MAX_TIMER_MS],
+  // Must stay below the 60 s after which Gemini clients abandon the request.
+  headerCommitMs: [1, 59_000],
+  maxConcurrent: [1, Number.MAX_SAFE_INTEGER],
+  maxQueued: [0, Number.MAX_SAFE_INTEGER],
+  reasoningEntries: [0, Number.MAX_SAFE_INTEGER],
+  reasoningBytes: [0, Number.MAX_SAFE_INTEGER],
+};
+/** Throw a `RangeError` naming the first limit that is not an integer in its range. */
+function checkLimits(limits: Readonly<GatewayLimits>): void {
+  for (const [name, [min, max]] of Object.entries(LIMIT_RANGES)) {
+    const value: unknown = limits[name as keyof GatewayLimits];
+    if (
+      typeof value !== "number" ||
+      !Number.isSafeInteger(value) ||
+      value < min ||
+      value > max
+    )
+      throw new RangeError(
+        `Model gateway limit ${name} must be an integer from ${min} to ${max}`,
+      );
+  }
+}
 
 type Route =
   | { kind: "models"; id?: string }
@@ -379,11 +437,15 @@ function networkFailure(error: unknown): Failure | undefined {
   );
 }
 
-/** Same as {@link startModelGateway} with explicit resource limits. */
+/**
+ * Same as {@link startModelGateway} with explicit resource limits. Throws a
+ * `RangeError` before listening when a limit is outside its accepted range.
+ */
 export async function createModelGateway(
   options: ModelGatewayOptions,
   limits: Readonly<GatewayLimits>,
 ): Promise<ModelGateway> {
+  checkLimits(limits);
   if (options.upstream.protocol !== "openai-completions")
     throw new Error(
       "The model gateway supports Chat Completions upstreams only",
@@ -579,7 +641,10 @@ export async function createModelGateway(
     let translation: ChatTranslation | undefined;
     let admitted = false,
       idle = false;
+    // Every timer of this call is cleared in `finally`; the keepalive is
+    // stopped before final events and settled before the record is emitted.
     let timer: NodeJS.Timeout | undefined;
+    let commitTimer: NodeJS.Timeout | undefined;
     const idleAbort = new AbortController();
     const touch = () => {
       clearTimeout(timer);
@@ -588,6 +653,11 @@ export async function createModelGateway(
         idleAbort.abort();
       }, limits.idleTimeoutMs);
     };
+    const keepalive = new Keepalive(
+      writer,
+      { gapMs: limits.keepaliveGapMs, maxNoDataMs: limits.maxNoDataMs },
+      () => sink?.keepalive() ?? Promise.resolve(),
+    );
     try {
       const raw = await readJson(request, limits.maxRequestBytes);
       translation = translate(route, raw);
@@ -640,6 +710,7 @@ export async function createModelGateway(
         body: JSON.stringify(body),
       });
       touch();
+      keepalive.answered();
       if (!upstream.ok) {
         const reported = upstreamError(
           await readLimited(upstream, 64 * 1024),
@@ -652,15 +723,32 @@ export async function createModelGateway(
           isContextOverflow(reported.code, reported.message),
         );
       }
+      // Gemini clients abandon a request after 60 s without headers. Once the
+      // upstream accepted the call (2xx) but sent no chunk for headerCommitMs,
+      // commit the 200 headers; keepalives may follow and a later failure is
+      // reported in the body. An upstream that never answers does not reach
+      // this point and still ends with 504 by the idle timeout.
+      const commit = sink.commit?.bind(sink);
+      if (commit)
+        commitTimer = setTimeout(() => {
+          if (!writer.sent && !writer.closed) commit();
+        }, limits.headerCommitMs);
       const result = await readCompletion(upstream, sink, makeId, {
         maxBytes: limits.maxResponseBytes,
         activity: () => {
           record.firstByteMs ??= Math.round(performance.now() - started);
+          keepalive.activity();
+        },
+        data: () => {
           touch();
+          keepalive.data();
         },
       });
       answer = result;
       clearTimeout(timer);
+      clearTimeout(commitTimer);
+      keepalive.stop();
+      await keepalive.settled();
       await sink.finish(result);
       if (passReasoning && result.reasoning) {
         if (result.reasoningField) reasoningField = result.reasoningField;
@@ -700,6 +788,7 @@ export async function createModelGateway(
           : reported.code,
         message: reported.message,
       };
+      keepalive.stop();
       if (reported.code === "cancelled") {
         if (!response.writableEnded) response.destroy();
       } else
@@ -722,6 +811,12 @@ export async function createModelGateway(
         }
     } finally {
       clearTimeout(timer);
+      clearTimeout(commitTimer);
+      keepalive.stop();
+      // The response has ended or was destroyed, so a keepalive write still
+      // in progress settles now. A write error other than a disconnect is
+      // impossible for these sinks; on this path the call's own outcome wins.
+      await keepalive.settled().catch(() => undefined);
       if (admitted) slots.release();
       owned.abort.signal.removeEventListener("abort", cancel);
       response.removeListener("close", closed);

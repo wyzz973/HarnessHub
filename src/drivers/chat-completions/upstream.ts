@@ -443,12 +443,19 @@ class Completion {
   }
 }
 
-/** Parse one SSE payload stream; `feed` accepts decoded text in arbitrary splits. */
+/**
+ * Parse one SSE payload stream; `feed` accepts decoded text in arbitrary
+ * splits. `received` runs for every `data` line, comments and other fields
+ * excluded, before the event it belongs to is dispatched.
+ */
 class SseParser {
   #pending = "";
   #data: string[] = [];
   #done = false;
-  constructor(private readonly dispatch: (data: string) => Promise<void>) {}
+  constructor(
+    private readonly dispatch: (data: string) => Promise<void>,
+    private readonly received: () => void,
+  ) {}
   async feed(text: string, final = false): Promise<void> {
     this.#pending += text;
     let hold = "";
@@ -477,16 +484,23 @@ class SseParser {
     const colon = line.indexOf(":");
     const field = colon < 0 ? line : line.slice(0, colon);
     if (field !== "data") return;
+    this.received();
     const value = colon < 0 ? "" : line.slice(colon + 1);
     this.#data.push(value.startsWith(" ") ? value.slice(1) : value);
   }
 }
 
-/** Read-side limits owned by the gateway. */
+/** Read-side limits and progress observers owned by the gateway. */
 export interface ReadLimits {
   maxBytes: number;
-  /** Called for each received body chunk, e.g. to reset an idle timer. */
+  /** Called for each received body chunk, including chunks of only SSE comments or blank lines. */
   activity(): void;
+  /**
+   * Called for each upstream data event: an SSE `data` line, or a JSON body
+   * chunk with non-whitespace text. Comments and blank lines are not data, so
+   * an upstream that only sends them cannot reset an idle timer driven by this.
+   */
+  data(): void;
 }
 /**
  * Read a successful (2xx) upstream response. SSE is parsed leniently (missing
@@ -512,7 +526,10 @@ export async function readCompletion(
       throw new GatewayError("Upstream sent malformed stream data", 502);
     }
   };
-  const sse = new SseParser((data) => completion.chunk(parse(data), true));
+  const sse = new SseParser(
+    (data) => completion.chunk(parse(data), true),
+    () => limits.data(),
+  );
   let body = "",
     bytes = 0;
   if (response.body)
@@ -531,8 +548,10 @@ export async function readCompletion(
       } catch {
         throw new GatewayError("Upstream sent invalid UTF-8", 502);
       }
-      if (json) body += text;
-      else await sse.feed(text);
+      if (json) {
+        body += text;
+        if (/\S/.test(text)) limits.data();
+      } else await sse.feed(text);
     }
   let tail: string;
   try {

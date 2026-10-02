@@ -372,14 +372,28 @@ function finishReason(finish: string): string {
   }
 }
 
+/** The SSE keepalive measured with Gemini CLI 0.38.2: an empty candidate, never an SSE comment. */
+const KEEPALIVE = {
+  candidates: [{ content: { role: "model", parts: [] }, index: 0 }],
+};
+
 /**
  * Gemini output: SSE (`alt=sse`) or a streamed JSON array of
  * GenerateContentResponse chunks, or one response. Thought parts carry
  * reasoning; function calls are sent complete in the final chunk, the first
  * one carrying the reasoning as its thought signature.
+ *
+ * Every form commits its 200 headers on the first upstream chunk, or earlier
+ * through {@link commit}, because Gemini clients give up after 60 s without
+ * headers. Keepalives are an empty candidate on SSE (`@google/genai` stalls on
+ * SSE comments) and JSON whitespace otherwise. A failure after the commit can
+ * no longer change the status: SSE and the array carry the error object as
+ * their last element, and a non-streaming answer becomes `{"error":{...}}`
+ * with status 200; the call record keeps the failure's own status.
  */
 export class GoogleSink implements OutputSink {
   #first = true;
+  #opened = false;
   constructor(
     private readonly writer: HttpWriter,
     private readonly translation: ChatTranslation,
@@ -446,15 +460,31 @@ export class GoogleSink implements OutputSink {
       ...(usage.cached ? { cachedContentTokenCount: usage.cached } : {}),
     };
   }
-  async start(): Promise<void> {
-    if (!this.translation.stream) return;
+  commit(): void {
     this.writer.begin(
       200,
-      this.eventStream
+      this.translation.stream && this.eventStream
         ? "text/event-stream; charset=utf-8"
         : "application/json; charset=utf-8",
     );
-    if (!this.eventStream) await this.writer.write("[");
+  }
+  async start(): Promise<void> {
+    this.commit();
+    await this.#open();
+  }
+  /** Write the array's opening bracket once (streamed JSON array only). */
+  async #open(): Promise<void> {
+    if (!this.translation.stream || this.eventStream || this.#opened) return;
+    this.#opened = true;
+    await this.writer.write("[");
+  }
+  async keepalive(): Promise<void> {
+    // JSON allows whitespace before a value and between array elements.
+    await this.writer.write(
+      this.translation.stream && this.eventStream
+        ? `data: ${JSON.stringify(KEEPALIVE)}\n\n`
+        : "\n",
+    );
   }
   async reasoning(text: string): Promise<void> {
     if (
@@ -496,15 +526,18 @@ export class GoogleSink implements OutputSink {
     });
   }
   async fail(failure: Failure): Promise<void> {
-    const error = { error: googleError(failure) };
-    if (this.eventStream) {
-      await this.writer.write(`data: ${JSON.stringify(error)}\n\n`);
-      await this.writer.end();
-    } else {
-      await this.writer.write(
-        (this.#first ? "" : ",\r\n") + JSON.stringify(error),
-      );
-      await this.writer.end("]");
+    const error = JSON.stringify({ error: googleError(failure) });
+    if (!this.translation.stream) {
+      await this.writer.end(error);
+      return;
     }
+    if (this.eventStream) {
+      await this.writer.write(`data: ${error}\n\n`);
+      await this.writer.end();
+      return;
+    }
+    await this.#open();
+    await this.writer.write((this.#first ? "" : ",\r\n") + error);
+    await this.writer.end("]");
   }
 }
