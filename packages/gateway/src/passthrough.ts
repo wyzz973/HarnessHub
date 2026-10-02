@@ -223,6 +223,11 @@ export function upstreamUrl(
   }
 }
 
+/** Anthropic's token counting operation under an anthropic endpoint base. */
+export function countTokensUrl(base: string): URL {
+  return joinPath(base, "v1/messages/count_tokens");
+}
+
 /** Client headers forwarded on passthrough; authentication is never among them. */
 const FORWARDED = ["anthropic-version", "openai-beta", "user-agent"] as const;
 

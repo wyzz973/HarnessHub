@@ -52,6 +52,8 @@ import {
 import { RejectionThrottle } from "./ledger.js";
 import { Quotas, type QuotaRefusal } from "./quota.js";
 import { conversationOf, StickyRoutes } from "./sticky.js";
+import { canonicalHost, LOOPBACK_ONLY, type GatewayAccess } from "./sharing.js";
+import { forwardCountTokens } from "./count.js";
 import type { HandlerLimits } from "./limits.js";
 import { HttpWriter, type Failure } from "./output.js";
 import { GatewayError, estimateTokens, object } from "./protocol.js";
@@ -104,6 +106,11 @@ export interface GatewayHandlerDeps {
   log?: LogSink;
   /** Session Runs for `session:` keys; without it every `session:` key call gets 409. */
   sessions?: GatewaySessions;
+  /**
+   * The Host and LAN rules of gateway sharing, read once per
+   * request (`sharingAccess` of ./sharing.js). Absent: {@link LOOPBACK_ONLY}.
+   */
+  access?: () => GatewayAccess;
 }
 
 /**
@@ -113,7 +120,17 @@ export interface GatewayHandlerDeps {
  * and must await {@link GatewayHandler.close} before closing the store.
  */
 export interface GatewayHandler {
+  /** A request of the loopback listener: loopback peers with loopback (or public) Hosts. */
   (request: IncomingMessage, response: ServerResponse): void;
+  /**
+   * A request of the LAN listener of gateway sharing. Whatever the peer's
+   * address, only `client:` keys with `allowLan` are accepted (403
+   * `source_not_allowed` otherwise, and for every request while the access
+   * rules say sharing is off), and the Host must be a declared LAN name or
+   * the public host. The owner of that listener applies the same
+   * `headersTimeout` and closes it after {@link GatewayHandler.close}.
+   */
+  lan(request: IncomingMessage, response: ServerResponse): void;
   /**
    * Stop accepting calls (new requests get 503 `gateway_closing`), abort
    * in-flight upstream requests, wait until every request ended and its
@@ -710,10 +727,57 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     );
   };
 
+  /**
+   * The native Anthropic candidate that may count an Anthropic request: the
+   * model resolved as for a call (a Session's alias to its Run's target),
+   * allowed for the key, and the first member, in configured order, whose
+   * provider passes Anthropic through and whose breaker is not open.
+   */
+  const countCandidate = async (
+    key: GatewayKeyRecord,
+    raw: Record<string, unknown>,
+  ): Promise<Candidate | undefined> => {
+    const session =
+      key.scope.kind === "session"
+        ? deps.sessions?.activeRun(key.scope.sessionId)
+        : undefined;
+    if (key.scope.kind === "session" && !session) return undefined;
+    const named = raw.model;
+    const requested =
+      session &&
+      (typeof named !== "string" ||
+        named === HARNESS_MODEL_ALIAS ||
+        !parseModelRef(named))
+        ? session.target
+        : named;
+    if (typeof requested !== "string" || !parseModelRef(requested))
+      return undefined;
+    if (
+      !modelAllowed(key.modelAllow, requested) &&
+      requested !== session?.target
+    )
+      return undefined;
+    let resolved: CallPlan;
+    try {
+      // Configured order: counting must not advance a group's rotation.
+      resolved = await plan(requested, "anthropic", (group) => group.members);
+    } catch (error) {
+      if (error instanceof GatewayError) return undefined;
+      throw error;
+    }
+    return resolved.candidates.find(
+      (candidate) =>
+        candidate.mode === "passthrough" &&
+        candidate.upstream === "anthropic" &&
+        !services.breakers.blocked(candidate),
+    );
+  };
+
   const countTokens = async (
     request: IncomingMessage,
     response: ServerResponse,
     protocol: "anthropic" | "gemini",
+    key: GatewayKeyRecord,
   ) => {
     const bytes = await readBody(request, {
       maxBytes: limits.maxRequestBytes,
@@ -721,8 +785,34 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       signal: shutdown.signal,
       memory: services.memory,
     });
+    const abort = new AbortController();
+    const onClose = () => {
+      if (!response.writableFinished) abort.abort();
+    };
+    response.once("close", onClose);
     try {
       const raw = parseJsonBody(bytes);
+      if (protocol === "anthropic") {
+        const candidate = await countCandidate(key, object(raw));
+        const forwarded =
+          candidate &&
+          (await forwardCountTokens({
+            candidate,
+            bytes,
+            raw: object(raw),
+            headers: request.headers,
+            services,
+            signal: AbortSignal.any([shutdown.signal, abort.signal]),
+          }));
+        if (forwarded) {
+          response.setHeader(
+            "x-hh-token-count",
+            forwarded.estimated ? "estimated" : "upstream",
+          );
+          await new HttpWriter(response).json(200, forwarded.body);
+          return;
+        }
+      }
       const counted =
         protocol === "anthropic"
           ? anthropicCountTokens(raw)
@@ -730,6 +820,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       response.setHeader("x-hh-token-count", "estimated");
       await new HttpWriter(response).json(200, counted);
     } finally {
+      response.removeListener("close", onClose);
       services.memory.give(bytes.length);
     }
   };
@@ -738,6 +829,8 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
   const plan = async (
     requested: string,
     protocol: WireProtocol,
+    order: (group: RouteGroup) => readonly ModelRef[] = (group) =>
+      services.router.order(group),
   ): Promise<CallPlan & { group?: RouteGroup }> => {
     const parsed = parseModelRef(requested);
     if (!parsed)
@@ -761,7 +854,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     if (!group) throw notFound();
     const providers = new Map<string, ProviderConfig | undefined>();
     const result: CallPlan = { candidates: [], group, skipped: [] };
-    for (const member of services.router.order(group)) {
+    for (const member of order(group)) {
       const ref = parseModelRef(member);
       if (ref?.kind !== "model") {
         result.skipped.push(`${member}: not a Model Ref`);
@@ -1002,7 +1095,11 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     }
   };
 
-  const serve = async (request: IncomingMessage, response: ServerResponse) => {
+  const serve = async (
+    request: IncomingMessage,
+    response: ServerResponse,
+    listener: "loopback" | "lan",
+  ) => {
     request.on("error", () => undefined);
     response.on("error", () => undefined);
     const started = performance.now();
@@ -1036,7 +1133,9 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       );
       return;
     }
-    if (!loopbackAddress(request.socket.remoteAddress)) {
+    const access = deps.access?.() ?? LOOPBACK_ONLY;
+    const viaLan = listener === "lan";
+    if (viaLan ? !access.lan : !loopbackAddress(request.socket.remoteAddress)) {
       await reject(
         response,
         baseEntry(protocol, path, occurredAt, undefined),
@@ -1044,7 +1143,9 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         failure(
           403,
           "source_not_allowed",
-          "The model gateway accepts loopback connections only",
+          viaLan
+            ? "Gateway sharing on the local network is off"
+            : "The model gateway accepts loopback connections only",
         ),
         started,
       );
@@ -1081,7 +1182,26 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       return;
     }
     const key = auth.key;
-    if (request.headers.origin !== undefined) {
+    if (viaLan && !(key.scope.kind === "client" && key.allowLan === true)) {
+      await reject(
+        response,
+        entry,
+        "source_not_allowed",
+        failure(
+          403,
+          "source_not_allowed",
+          "This Gateway Key may not be used from the local network",
+        ),
+        started,
+      );
+      return;
+    }
+    // No client the gateway serves is a browser: every Origin is refused,
+    // on both listeners, and so are cross-site fetches without one.
+    if (
+      request.headers.origin !== undefined ||
+      request.headers["sec-fetch-site"] === "cross-site"
+    ) {
       await reject(
         response,
         entry,
@@ -1091,7 +1211,14 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       );
       return;
     }
-    if (!loopbackHost(request.headers.host)) {
+    const host = canonicalHost(request.headers.host);
+    if (
+      host === undefined ||
+      !(
+        access.publicHosts.has(host) ||
+        (viaLan ? access.lanHosts.has(host) : loopbackHost(host))
+      )
+    ) {
       await reject(
         response,
         entry,
@@ -1099,7 +1226,9 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         failure(
           403,
           "origin_forbidden",
-          "The Host header must name a loopback address",
+          viaLan
+            ? "The Host header must name a declared LAN address"
+            : "The Host header must name a loopback address",
         ),
         started,
       );
@@ -1139,7 +1268,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
           await listModels(response, key, route);
           return;
         case "count":
-          await countTokens(request, response, route.protocol);
+          await countTokens(request, response, route.protocol, key);
           return;
         case "call": {
           entry.inbound.protocol = route.call.protocol;
@@ -1205,9 +1334,16 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
   };
 
   const handler = (request: IncomingMessage, response: ServerResponse) => {
-    track(serve(request, response).catch(() => void response.destroy()));
+    track(
+      serve(request, response, "loopback").catch(() => void response.destroy()),
+    );
   };
   return Object.assign(handler, {
+    lan(request: IncomingMessage, response: ServerResponse): void {
+      track(
+        serve(request, response, "lan").catch(() => void response.destroy()),
+      );
+    },
     async awaitSessionIdle(
       sessionId: SessionId,
       options: { abort?: boolean } = {},
