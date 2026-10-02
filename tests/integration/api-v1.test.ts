@@ -386,6 +386,21 @@ void test("credential values reach only the secret store", async (t) => {
     client.credentials.add("alpha", { name: "bad", value: "two\nlines" }),
     problem("INVALID_SECRET", 400),
   );
+  for (const ref of [
+    { kind: "env", value: "lower-case" },
+    { kind: "file", value: "relative/key.txt" },
+  ] as const)
+    await assert.rejects(
+      client.credentials.add("alpha", { name: "bad", ref }),
+      (error: unknown) => {
+        problem("CREDENTIAL_INVALID", 400)(error);
+        assert.equal(
+          (error as HarnessHubError).problem.errors?.[0]?.pointer,
+          "/ref/value",
+        );
+        return true;
+      },
+    );
   await assert.rejects(
     client.credentials.add("missing", { name: "x", value: "x-value" }),
     problem("PROVIDER_NOT_FOUND", 404),

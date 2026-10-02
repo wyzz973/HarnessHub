@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import {
@@ -357,6 +358,21 @@ export function registerModelPlaneRoutes(
             "Give either the secret value or a reference",
             [{ pointer: "/value", detail: "exactly one of value and ref" }],
           );
+        if (
+          body.ref !== undefined &&
+          (body.ref.kind === "env"
+            ? !/^[A-Z][A-Z0-9_]*$/.test(body.ref.value)
+            : !path.isAbsolute(body.ref.value))
+        )
+          throw invalid("CREDENTIAL_INVALID", "The reference is invalid", [
+            {
+              pointer: "/ref/value",
+              detail:
+                body.ref.kind === "env"
+                  ? "must name an environment variable (A-Z, 0-9, _)"
+                  : "must be an absolute path",
+            },
+          ]);
         const current = await provider(request.params.id);
         const taken = new Set<string>(
           current.credentials.map((item) => item.id),
