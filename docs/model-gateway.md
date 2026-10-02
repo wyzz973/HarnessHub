@@ -170,6 +170,16 @@ node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js dist/tests/un
 
 未验证：固定版本引擎（Codex 0.153.4、Gemini CLI 0.58.0、Claude Code 2.1.263）与 Chat 类引擎经网关运行；Windows；真实上游模型与真实 DeepSeek（回填行为只用假上游复现了实测错误）。这些须在引擎接入后按 ADR 0013 的集成与 Windows 验收另行记录。
 
+## Session Run 与共享网关
+
+Session 的 Run 经守护进程端口上的共享网关使用模型（03 第 10 节），与本机其他客户端共用 provider、路由组与 `model.call` 账本。实现见 [model-sessions.ts](../packages/daemon/src/model-sessions.ts) 与 [Runtime](../packages/runtime/src/runtime/runtime.ts)。
+
+- **哪些 Session 走共享网关**：在 Session 第一个 Run 开始前决定，之后不变。引擎登记应用了统一模型（见 [统一模型](engine-configuration.md#统一模型)）时必须走，目标不存在则 Run 以 `MODEL_NOT_CONFIGURED` 失败；引擎可接入网关、没有自己的 provider（声明或由内置配方推断出适配器）时，存在目标才走，否则仍用引擎自己的登录。声明了自己的 openai-completions provider 的引擎，以及配置检查，仍使用 Worker 内的 Session 网关（本页上文）；其他协议的直连 provider 不变。
+- **目标**：Run 的 `model`（Model Ref 或 `group/<id>`，`POST /v1/sessions/:id/runs` 可填），缺省为 `group/default`。指定的目标不存在时 Run 在启动 Worker 之前以 409 `MODEL_NOT_CONFIGURED` 失败，Session 保持打开；没走共享网关的 Session 不能指定 `model`（`MODEL_SELECTION_UNSUPPORTED`）。
+- **`session:` Key**：Session 第一个走共享网关的 Run 签发一把，`modelAllow` 为空，只能用于该 Session 活动 Run 的目标；Key 文本只在守护进程内存与该 Run 的 ExecutionSpec（Worker IPC）中，从不写入数据库、日志或事件，数据库只存哈希。Worker 把引擎配置指向守护进程端口，凭据为这把 Key，模型名为别名（应用了统一模型的引擎沿用其别名），因此各引擎的原生配置与 Worker 网关时相同，只是地址与令牌不同。Session 关闭且在途调用结束后吊销；启动时吊销上一个进程留下的、关闭时吊销仍打开的 Session 的 Key。
+- **Run 范围与结算屏障**：Run 执行期间是该 Session 的活动 Run，网关据此把调用记到 `runId` 与 `generation`；Run 前后的调用返回 409 `no_active_run`。引擎结果返回后，Runtime 结束活动 Run，取消并等待该 Session 的在途调用提交（`awaitSessionIdle`），再按已提交的调用与 Run 中观察到的输出判定 `MODEL_UPSTREAM_ERROR` 与 `ENGINE_NO_OUTPUT`（规则见 [model-outcome.ts](../packages/core/src/model-outcome.ts)，与 Worker 网关相同）。
+- **事件与用量**：每条已提交的调用成为该 Run 的 `model.call` 事件（协议、是否流式、请求的模型、Model Ref、served model、状态、耗时、结束原因、五项 usage、成本与错误）；Run 观测（`/v1/runs/:id/observations`）的 token、成本与实际模型来自这些事件，来源为 `gateway-ledger`。
+
 ## 共享网关
 
 `createGatewayHandler(deps)`（[server.ts](../packages/gateway/src/server.ts)）返回一个不带监听器的 Node `(request, response)` 处理函数，由守护进程挂载到自己的端口上；`isGatewayPath(pathname)` 判断某条路径是否交给它（`/v1/*`、`/v1beta/*`、`/v1alpha/*`，以及省略 `/v1` 的 `/chat/completions`、`/responses`、`/messages`、`/messages/count_tokens`、`/models`）。守护进程在 `startHub` 中用 `SqliteModelPlaneStore`、`SecretStore.resolve`（`env` 引用读取守护进程启动时的环境快照）与 `resolveHandlerLimits(gatewayLimits)` 构造它，经 Fastify 的 `serverFactory` 挂在同一个监听器上、先于 Fastify 处理：交给它的是 `/v1beta/*`、`/v1alpha/*`、`/v1` 下的 `chat/completions`、`responses`、`messages`、`messages/count_tokens`、`models` 与 `models/…`，以及这些路径省略 `/v1` 的形式（[model-gateway-mount.ts](../packages/daemon/src/http/model-gateway-mount.ts) 的 `isModelGatewayPath`）。`/v1` 下的其他路径仍是现有管理接口，由 Fastify 处理，直到它们迁到 `/api/v1`；这些请求不经过 Fastify 的 2 MiB 请求体上限、JSON 解析与钩子。监听器的 `headersTimeout` 取 `requestHeadersTimeoutMs`；关闭时先在 `preClose` 中 `await close()`，再关闭存储。`GET /api/v1/system/info` 的 `gateway` 给出本机客户端使用的基址，见 [快速上手](quickstart.md)。本节描述已实现的行为；目标设计与本节不同之处列在最后。
@@ -264,6 +274,7 @@ node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js
 ### 与 03 的差异与未实现项
 
 - 协议矩阵以 Chat 为枢纽，而不是 03 第 3 节的 IR；编码器与解码器按 IR 的边来组织，以后可以替换枢纽。经过 Chat 枢纽会丢失 Chat 表达不了的区别，例如 Anthropic 的 `stop_sequence` 与 `end_turn` 都成为 `stop`。
+- `/api/v1/model-calls` 的响应 schema 还没有 `generation`，该字段目前只在账本记录与网关内可见。
 - 尚未实现：粘性记录的持久化与账本中的粘性字段（目前写在 `patches[]`）；`route.breaker` 事件（目前只写日志）；provider 声明的请求体上限与 `onUnsupportedMedia`；上游 `count_tokens` 转发；局域网共享与 `publicBaseUrl`；`shape`、`conversationKey` 等账本扩展字段；入站转换器自身丢弃的提示字段尚未记入 `unmapped[]`；转换到 Gemini 的图片 URL 与 Anthropic 的结构化输出（beta）；拒绝记录的定时汇总（目前在下一次同类拒绝或 `close()` 时写出）。
 - 直通只给 Gemini 入站注入保活（它在响应头提交期限后已提交头部）；其他协议的直通流保持上游的原样字节，不插入保活。
 - 响应体上限按原始字节而不是解码后的内容计算；`least-used` 与 `latency` 只统计本次启动以来的调用；认证失败的熔断最长 10 分钟后进入半开，而不是一直保持到 Credential 更新。

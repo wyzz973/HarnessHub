@@ -22,6 +22,7 @@ ADR 记录重要且未来可能重新讨论的决定。适用范围见 [文档�
 - [0016：POSIX 上脱离 Worker 进程组的后代](0016-posix-escaped-descendants.md)
 - [0017：多包布局迁移中的归属与接缝](0017-package-layout-migration.md)（OSS-004）
 - [0018：编号迁移、模型平面存储与托管秘密](0018-schema-migrations-and-managed-secrets.md)（proposed）
+- [0019：Session Run 使用共享网关](0019-session-runs-on-the-shared-gateway.md)（proposed）
 
 编号 0009、0011、0012、0015 是早期版本的 Windows 便携发行、上游网关适配、离线交付与预装工具包决定，随对应功能一起移除，原文保留在 `archive/competition` 分支；编号不再复用。
 
