@@ -60,8 +60,8 @@ const ROLES = new Map([
     () => import("../../packages/daemon/dist/src/worker/main.js"),
   ],
   [
-    "packages/agents/dist/src/tool-command/command-mcp.js",
-    () => import("../../packages/agents/dist/src/tool-command/command-mcp.js"),
+    "packages/daemon/dist/src/command-mcp-main.js",
+    () => import("../../packages/daemon/dist/src/command-mcp-main.js"),
   ],
   [
     "packages/agents/assets/launch-engine.mjs",

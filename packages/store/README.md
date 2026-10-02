@@ -6,4 +6,4 @@
 
 Windows ACL 辅助程序的源码是 [native/windows-acl.cs](native/windows-acl.cs)，`pnpm build` 在 Windows 上用 .NET Framework C# 编译器经 [native/build-windows-acl.mjs](native/build-windows-acl.mjs) 构建到本包的 `dist/native/harnesshub-acl.exe`，其他平台不构建。运行时路径由 [native-helper.ts](src/platform/native-helper.ts) 的 `aclHelperPath()` 给出，[test/native-helper.test.ts](test/native-helper.test.ts) 检查该路径，在 Windows 上还检查文件存在。
 
-`src/platform` 中启动辅助程序的 `node:child_process` 调用是带期限的例外：所有者 OSS-010 F08，在 M0 退出（OSS-013 完成）时到期，届时改由 runtime 的 `ProcessLauncher` 启动。例外登记在 [边界检查](../../tools/check-boundaries.mjs) 的 `CHILD_PROCESS_EXCEPTIONS` 中，`TODO.md` 中 OSS-013 勾选后检查即失败。
+`src/platform` 的 Windows 文件原语经 [process-launcher.ts](src/platform/process-launcher.ts) 中设置的 `ProcessLauncher` 启动 ACL 辅助程序（OSS-010 F08）。它们深藏在 artifacts 与工具包存储的调用链中，没有上下文可以传递，因此每个进程的组合根（`startHub`、工具包命令）在启动时用 `usePlatformLauncher` 设置一次本进程的启动器；未设置时报 `PROCESS_LAUNCHER_NOT_INJECTED`（500），设置另一个启动器会抛出错误。本包不导入 `node:child_process`。

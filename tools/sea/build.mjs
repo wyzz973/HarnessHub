@@ -45,7 +45,7 @@ const BUILD_ID_PLACEHOLDER = "HARNESSHUB-SEA-BUILD-ID-PLACEHOLDER";
 const ROLE_ENTRIES = [
   "packages/daemon/dist/src/main.js",
   "packages/daemon/dist/src/worker/main.js",
-  "packages/agents/dist/src/tool-command/command-mcp.js",
+  "packages/daemon/dist/src/command-mcp-main.js",
   "packages/agents/assets/launch-engine.mjs",
   "packages/runtime/dist/src/process/proc-scan-main.js",
 ];

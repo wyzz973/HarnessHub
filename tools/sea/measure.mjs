@@ -412,11 +412,10 @@ async function endToEnd(binary, build) {
           path.join(
             root,
             "packages",
-            "agents",
+            "daemon",
             "dist",
             "src",
-            "tool-command",
-            "command-mcp.js",
+            "command-mcp-main.js",
           ),
           "--workspace",
           workspace,

@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT
+// Sets the process launcher for the Windows filesystem primitives used directly here.
+import "../support/process-launcher.js";
 import { BUILD_INFO } from "../support/entries.js";
 import assert from "node:assert/strict";
 import test from "node:test";

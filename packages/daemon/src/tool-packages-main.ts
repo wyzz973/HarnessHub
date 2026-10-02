@@ -1,13 +1,20 @@
 // SPDX-License-Identifier: MIT
-import { COMMAND_MCP_ENTRY } from "@harnesshub/agents/tool-command/entry";
+import { COMMAND_MCP_ENTRY } from "./command-mcp-entry.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { HubError } from "@harnesshub/core/errors";
 import { prepareEngine } from "@harnesshub/agents/engine/registry";
 import { runToolPackageCli } from "@harnesshub/agents/tool-packages/index";
+import { sharedProcessLauncher } from "@harnesshub/runtime/process/launcher";
+import { usePlatformLauncher } from "@harnesshub/store/platform/process-launcher";
 
-/** Standalone composition; publishing wrappers can inject their own root into runToolPackageCli. */
+/**
+ * Standalone composition; publishing wrappers can inject their own root into
+ * runToolPackageCli. Package storage on Windows starts the ACL helper through
+ * this process's launcher, which `main` closes.
+ */
 export async function toolPackagesMain(argv: string[]): Promise<unknown> {
+  usePlatformLauncher(sharedProcessLauncher());
   const [flag, root, ...command] = argv;
   if (flag !== "--root" || !root || !path.isAbsolute(root))
     throw new HubError(
@@ -46,6 +53,8 @@ export async function main(argv: string[]): Promise<number> {
       }),
     );
     return 1;
+  } finally {
+    await sharedProcessLauncher().close();
   }
 }
 

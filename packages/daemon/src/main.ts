@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { COMMAND_MCP_ENTRY } from "@harnesshub/agents/tool-command/entry";
+import { COMMAND_MCP_ENTRY } from "./command-mcp-entry.js";
 import { EngineConfigurationService } from "@harnesshub/agents/application/engine-configuration";
 import {
   HarnessModelService,
@@ -39,6 +39,8 @@ import { fileURLToPath } from "node:url";
 import { loadConfig } from "@harnesshub/agents/engine/registry";
 import { SqliteStore } from "@harnesshub/store/storage/sqlite-store";
 import { ProcessWorkerHost } from "@harnesshub/runtime/process/worker-host";
+import { sharedProcessLauncher } from "@harnesshub/runtime/process/launcher";
+import { usePlatformLauncher } from "@harnesshub/store/platform/process-launcher";
 import {
   createArtifactPublisher,
   readArtifact,
@@ -173,6 +175,10 @@ export async function startHub(options: {
 }) {
   // HARNESSHUB_LOG_LEVEL is validated before anything starts; Workers inherit the value.
   const logLevel = parseLogLevel(process.env[LOG_LEVEL_ENVIRONMENT]);
+  // Helper programs (secrets, Windows ACLs) start through this process's
+  // launcher; every Gateway of the process shares it, and `main` closes it.
+  const launcher = sharedProcessLauncher();
+  usePlatformLauncher(launcher);
   const build = await loadBuildInfo();
   const resolveConfig = async () => {
     const config = await loadConfig({
@@ -361,7 +367,7 @@ export async function startHub(options: {
     const configuration = new EngineConfigurationService({
       templates: () => discover(false),
       inspect: prepareEngine,
-      createSecret,
+      createSecret: (value) => createSecret(value, launcher),
       adapters: () =>
         configurationAdapters.map((id) => ({
           id,
@@ -405,7 +411,11 @@ export async function startHub(options: {
                 input: { text: "", timeoutMs: 10000 },
               },
               process.env,
-              { startModelGateway },
+              {
+                startModelGateway,
+                processLauncher: launcher,
+                commandMcpEntry: COMMAND_MCP_ENTRY,
+              },
             );
             const probe = await probeConfiguration(
               prepared,
@@ -642,10 +652,13 @@ export async function main(argv: string[]): Promise<void> {
     const stop = () => {
       if (stopping) return;
       stopping = true;
-      void hub.server.close().catch((error: unknown) => {
-        console.error(error);
-        process.exitCode = 1;
-      });
+      void hub.server
+        .close()
+        .then(() => sharedProcessLauncher().close())
+        .catch((error: unknown) => {
+          console.error(error);
+          process.exitCode = 1;
+        });
     };
     process.on("SIGINT", stop);
     process.on("SIGTERM", stop);

@@ -9,10 +9,7 @@ import {
   currentAssetPath,
   currentEngineCommand,
 } from "../src/assets.js";
-import {
-  COMMAND_MCP_ENTRY,
-  currentCommandMcpEntry,
-} from "../src/tool-command/entry.js";
+import { isFormerCommandMcpEntry } from "../src/tool-command/entry.js";
 
 /** This checkout: packages/agents/assets/launch-engine.mjs is four levels below it. */
 const checkout = path.resolve(assetPath("launch-engine.mjs"), "../../../..");
@@ -78,16 +75,25 @@ void test("a stored path of a moved file of this checkout maps to its current lo
   ]);
   assert.deepEqual(stored, copy);
 
-  const entry = legacy("dist/src/drivers/tool-command/command-mcp.js");
-  assert.equal(currentCommandMcpEntry(entry), COMMAND_MCP_ENTRY);
-  const foreign = path.join(
-    path.dirname(checkout),
-    "other-checkout",
+  // Both entries that Tool Pack bindings stored before the daemon's.
+  for (const entry of [
     "dist/src/drivers/tool-command/command-mcp.js",
-  );
-  assert.equal(currentCommandMcpEntry(foreign), foreign);
+    "packages/agents/dist/src/tool-command/command-mcp.js",
+  ]) {
+    assert.equal(isFormerCommandMcpEntry(legacy(entry)), true, entry);
+    assert.equal(isFormerCommandMcpEntry(entry), false, entry);
+    assert.equal(
+      isFormerCommandMcpEntry(
+        path.join(path.dirname(checkout), "other-checkout", entry),
+      ),
+      false,
+      entry,
+    );
+  }
   assert.equal(
-    currentCommandMcpEntry("dist/src/drivers/tool-command/command-mcp.js"),
-    "dist/src/drivers/tool-command/command-mcp.js",
+    isFormerCommandMcpEntry(
+      legacy("packages/daemon/dist/src/command-mcp-main.js"),
+    ),
+    false,
   );
 });

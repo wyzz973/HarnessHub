@@ -51,7 +51,8 @@ const allowed = {
   gateway: ["gateway", "application", "domain"],
   engine: ["engine", "domain"],
   process: ["process", "domain"],
-  worker: ["worker", "drivers", "domain", "logging"],
+  // The Worker entry composes its process: it creates the process launcher.
+  worker: ["worker", "drivers", "domain", "logging", "process"],
   drivers: ["drivers", "domain", "platform"],
   storage: ["storage", "domain"],
   artifacts: ["artifacts", "domain", "platform"],

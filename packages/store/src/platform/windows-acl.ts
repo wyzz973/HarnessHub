@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: MIT
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { HubError } from "@harnesshub/core/errors";
 import { aclHelperPath } from "./native-helper.js";
-
-const execute = promisify(execFile);
+import { platformLauncher } from "./process-launcher.js";
 
 async function privatePaths(
   paths: string[],
@@ -13,18 +10,26 @@ async function privatePaths(
 ): Promise<void> {
   if (process.platform !== "win32")
     throw new HubError("UNSUPPORTED_PLATFORM", "Windows ACLs require Windows");
+  const launcher = platformLauncher();
   try {
-    const operation = execute(aclHelperPath(), [], {
-      windowsHide: true,
-      timeout: 10_000,
+    // The helper reads bounded path metadata from stdin and never runs a shell.
+    // A pipe failure terminates the child; its failed exit is then observed.
+    const result = await launcher.run({
+      file: aclHelperPath(),
+      args: [],
+      env: "inherit",
+      input: JSON.stringify({ paths, kind, protect }),
+      timeoutMs: 10_000,
       maxBuffer: 16 * 1024,
     });
-    // The helper reads bounded path metadata from stdin and never runs a shell.
-    // A pipe failure terminates the child; execute then observes its failed exit.
-    operation.child.stdin?.on("error", () => operation.child.kill());
-    operation.child.stdin?.end(JSON.stringify({ paths, kind, protect }));
-    const { stdout } = await operation;
-    if (stdout !== "private") throw new Error("Unexpected ACL response");
+    if (result.error) throw result.error;
+    if (
+      result.code !== 0 ||
+      result.timedOut ||
+      result.exceeded ||
+      result.stdout.toString("utf8") !== "private"
+    )
+      throw new Error("Unexpected ACL response");
   } catch (cause) {
     const error = new HubError(
       "INVALID_PRIVATE_PATH",

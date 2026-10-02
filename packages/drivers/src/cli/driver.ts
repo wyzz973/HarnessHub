@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MIT
-import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { excerpt, NO_LOG, type LogSink } from "@harnesshub/core/logging";
 import type { ExecutionSpec } from "@harnesshub/core/ports";
+import type {
+  LaunchedProcess,
+  ProcessLauncher,
+} from "@harnesshub/core/process-launcher";
 import type { DriverResult } from "@harnesshub/core/types";
 import type { Driver, DriverChannel } from "../driver.js";
 
@@ -28,10 +31,14 @@ export class CliDriver implements Driver {
     { abort: AbortController; completion: Promise<DriverResult> } | undefined;
   private closed = false;
   /**
-   * `log` receives process spawn/exit, bounded stderr lines and output sizes. Stderr
+   * `launcher` starts the engine process (the Worker injects its own). `log`
+   * receives process spawn/exit, bounded stderr lines and output sizes. Stderr
    * never reaches Run events; it is written only to this private, redacted log.
    */
-  constructor(private readonly log: LogSink = NO_LOG) {}
+  constructor(
+    private readonly launcher: ProcessLauncher,
+    private readonly log: LogSink = NO_LOG,
+  ) {}
 
   async execute(
     spec: ExecutionSpec,
@@ -80,19 +87,20 @@ export class CliDriver implements Driver {
           ? spec.input.text
           : argument,
       );
-    // Never detach: ProcessHost owns the Worker group, including CLI descendants.
-    // Stderr can contain credentials or provider configuration: it is never
-    // published, only written to the Session's private, redacted engine log.
+    // No process group of its own: ProcessHost owns the Worker group, including
+    // CLI descendants. The engine inherits the Worker's environment, which the
+    // Worker prepared for it. Stderr can contain credentials or provider
+    // configuration: it is never published, only written to the Session's
+    // private, redacted engine log.
     const start = () =>
-      spawn(command[0]!, args, {
+      this.launcher.launch({
+        file: command[0]!,
+        args,
         cwd: spec.cwd,
-        shell: false,
-        detached: false,
-        windowsHide: true,
-        stdio: ["pipe", "pipe", "pipe"],
+        env: "inherit",
       });
     const started = performance.now();
-    let child: ReturnType<typeof start>;
+    let child: LaunchedProcess;
     try {
       child = start();
     } catch (error) {
@@ -120,6 +128,9 @@ export class CliDriver implements Driver {
       pid: child.pid ?? null,
       text: excerpt(spec.input.text),
     });
+    const { stdin, stdout, stderr: errors } = child;
+    if (!stdin || !stdout || !errors)
+      throw new Error("CLI engine processes need piped standard streams");
     const stderr = new StringDecoder("utf8");
     let stderrPartial = "";
     let stderrLogged = 0;
@@ -138,29 +149,27 @@ export class CliDriver implements Driver {
       });
     };
     // Always drained so a chatty engine cannot block on a full stderr pipe.
-    child.stderr.on("data", (chunk: Buffer) => {
+    errors.on("data", (chunk: Buffer) => {
       const lines = (stderrPartial + stderr.write(chunk)).split(/\r?\n/);
       stderrPartial = lines.pop() ?? "";
       for (const line of lines) stderrLine(line);
     });
-    child.stderr.on("error", () => undefined);
+    errors.on("error", () => undefined);
     let failure: DriverResult | undefined;
     let exited = false;
     let escalation: NodeJS.Timeout | undefined;
     const exit = Promise.withResolvers<Exit>();
-    child.once("error", (error) => {
-      this.log.info("engine.spawn_failed", {
-        pid: child.pid ?? null,
-        command: command[0]!,
-        message: excerpt(error.message, 500),
-      });
-      failure = failed("CLI_SPAWN_ERROR", "Engine process could not start");
+    void child.exit.then((outcome) => {
       exited = true;
-      exit.resolve({ code: null, signal: null });
-    });
-    child.once("exit", (code, reason) => {
-      exited = true;
-      exit.resolve({ code, signal: reason });
+      if (outcome.error) {
+        this.log.info("engine.spawn_failed", {
+          pid: child.pid ?? null,
+          command: command[0]!,
+          message: excerpt(outcome.error.message, 500),
+        });
+        failure = failed("CLI_SPAWN_ERROR", "Engine process could not start");
+        exit.resolve({ code: null, signal: null });
+      } else exit.resolve({ code: outcome.code, signal: outcome.signal });
     });
     void exit.promise.then((outcome) => {
       stderrLine(stderrPartial + stderr.end());
@@ -179,8 +188,8 @@ export class CliDriver implements Driver {
       });
     });
     const stop = () => {
-      child.stdout.destroy();
-      child.stdin.destroy();
+      stdout.destroy();
+      stdin.destroy();
       if (exited || escalation) return;
       child.kill("SIGTERM");
       escalation = setTimeout(() => {
@@ -194,15 +203,13 @@ export class CliDriver implements Driver {
       );
       stop();
     };
-    child.stdin.on("error", inputError);
+    stdin.on("error", inputError);
     signal.addEventListener("abort", stop, { once: true });
     if (signal.aborted) stop();
     const input = new Promise<void>((resolve) => {
-      child.stdin.end(
-        configuration.inputMode === "stdin" ? spec.input.text : undefined,
-        "utf8",
-        () => resolve(),
-      );
+      if (configuration.inputMode === "stdin")
+        stdin.end(spec.input.text, "utf8", () => resolve());
+      else stdin.end(() => resolve());
     });
     const decoder = new StringDecoder("utf8");
     const output: string[] = [];
@@ -220,7 +227,7 @@ export class CliDriver implements Driver {
     };
     try {
       try {
-        for await (const raw of child.stdout) {
+        for await (const raw of stdout) {
           if (signal.aborted || failure) break;
           // Node pipe data is a Buffer unless an encoding is configured.
           if (!Buffer.isBuffer(raw))

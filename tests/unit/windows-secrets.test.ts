@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { PROCESS_LAUNCHER } from "../support/process-launcher.js";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
@@ -72,7 +73,9 @@ void test(
   async (t) => {
     const owned = new Set<SecretReference>();
     t.after(async () => {
-      const results = await Promise.allSettled([...owned].map(deleteSecret));
+      const results = await Promise.allSettled(
+        [...owned].map((ref) => deleteSecret(ref, PROCESS_LAUNCHER)),
+      );
       const failures = results.filter((result) => result.status === "rejected");
       if (failures.length)
         throw new AggregateError(
@@ -81,25 +84,29 @@ void test(
         );
     });
     const value = `fixture-only-${randomUUID()}-${"测".repeat(2700)}`;
-    const first = await createSecret(value);
+    const first = await createSecret(value, PROCESS_LAUNCHER);
     owned.add(first);
-    const second = await createSecret(value);
+    const second = await createSecret(value, PROCESS_LAUNCHER);
     owned.add(second);
     assert.notEqual(first.value, second.value);
-    assert.equal(await resolveSecret(first, {}), value);
+    assert.equal(await resolveSecret(first, {}, PROCESS_LAUNCHER), value);
     const encrypted = await readFile(
       path.join(secretStore, `${first.value}.dpapi`),
     );
     assert.equal(encrypted.includes(Buffer.from(value)), false);
-    await deleteSecret(first);
+    await deleteSecret(first, PROCESS_LAUNCHER);
     owned.delete(first);
-    await deleteSecret(second);
+    await deleteSecret(second, PROCESS_LAUNCHER);
     owned.delete(second);
-    await assert.rejects(resolveSecret(first, {}), {
+    await assert.rejects(resolveSecret(first, {}, PROCESS_LAUNCHER), {
       code: "SECRET_UNAVAILABLE",
     });
     await assert.rejects(
-      resolveSecret({ kind: "keychain", value: "../foreign" }, {}),
+      resolveSecret(
+        { kind: "keychain", value: "../foreign" },
+        {},
+        PROCESS_LAUNCHER,
+      ),
       { code: "SECRET_UNAVAILABLE" },
     );
   },
@@ -137,7 +144,7 @@ void test(
       ruleCount: 1,
     });
     assert.equal(
-      await resolveSecret({ kind: "file", value: file }, {}),
+      await resolveSecret({ kind: "file", value: file }, {}, PROCESS_LAUNCHER),
       "fixture-value",
     );
     assert.deepEqual(await privateAcl(file), acl);
@@ -147,6 +154,7 @@ void test(
       resolveSecret(
         { kind: "file", value: path.join(alias, "fixture-key") },
         {},
+        PROCESS_LAUNCHER,
       ),
       (error: unknown) => {
         assert.ok(error instanceof HubError);
@@ -161,9 +169,12 @@ void test(
       },
     );
     await writeFile(file, "invalid\nmultiline");
-    await assert.rejects(resolveSecret({ kind: "file", value: file }, {}), {
-      code: "SECRET_UNAVAILABLE",
-    });
+    await assert.rejects(
+      resolveSecret({ kind: "file", value: file }, {}, PROCESS_LAUNCHER),
+      {
+        code: "SECRET_UNAVAILABLE",
+      },
+    );
   },
 );
 
@@ -194,7 +205,7 @@ $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($publ
       ruleCount: 2,
     });
     await assert.rejects(
-      resolveSecret({ kind: "file", value: file }, {}),
+      resolveSecret({ kind: "file", value: file }, {}, PROCESS_LAUNCHER),
       (error: unknown) => {
         assert.ok(error instanceof HubError);
         assert.equal(error.code, "SECRET_UNAVAILABLE");
@@ -215,20 +226,24 @@ void test(
     );
     t.after(() => rm(directory, { recursive: true, force: true }));
     const value = `fixture-private-worker-${randomUUID()}-中文`;
-    const reference = await createSecret(value);
+    const reference = await createSecret(value, PROCESS_LAUNCHER);
     let deleted = false;
     t.after(async () => {
-      if (!deleted) await deleteSecret(reference);
+      if (!deleted) await deleteSecret(reference, PROCESS_LAUNCHER);
     });
     const module = import.meta.resolve("@harnesshub/secrets/secrets");
+    const launcherModule = import.meta
+      .resolve("@harnesshub/runtime/process/launcher");
     const script = `import { resolveSecret, deleteSecret } from ${JSON.stringify(module)};
+import { sharedProcessLauncher } from ${JSON.stringify(launcherModule)};
 import { createHash } from 'node:crypto';
+const launcher=sharedProcessLauncher();
 let input=''; for await (const bytes of process.stdin) input+=bytes;
 const request=JSON.parse(input);
 try {
-  const resolved=await resolveSecret(request.reference, {});
+  const resolved=await resolveSecret(request.reference, {}, launcher);
   if(createHash('sha256').update(resolved).digest('hex')!==request.digest) throw new Error('mismatch');
-  await deleteSecret(request.reference);
+  await deleteSecret(request.reference, launcher);
   process.stdout.write(JSON.stringify({readMatched:true,deleted:true}));
 } catch { process.stderr.write('Fixture credential was unavailable in the private Worker environment'); process.exitCode=1; }`;
     const environment = Object.fromEntries(
@@ -285,7 +300,7 @@ try {
       deleted: true,
     });
     deleted = true;
-    await assert.rejects(resolveSecret(reference, {}), {
+    await assert.rejects(resolveSecret(reference, {}, PROCESS_LAUNCHER), {
       code: "SECRET_UNAVAILABLE",
     });
   },
@@ -295,8 +310,11 @@ void test(
   "Windows DPAPI creates an explicit user-owned protected file ACL independent of the token default owner",
   { skip: process.platform !== "win32" },
   async (t) => {
-    const reference = await createSecret("synthetic-explicit-acl-fixture");
-    t.after(() => deleteSecret(reference));
+    const reference = await createSecret(
+      "synthetic-explicit-acl-fixture",
+      PROCESS_LAUNCHER,
+    );
+    t.after(() => deleteSecret(reference, PROCESS_LAUNCHER));
     const file = path.join(secretStore, `${reference.value}.dpapi`);
     assert.deepEqual(await privateAcl(file), {
       ownerMatches: true,
