@@ -3,6 +3,7 @@
 import {
   Activity,
   Blocks,
+  Bot,
   BrainCircuit,
   ChartColumn,
   Cpu,
@@ -38,7 +39,8 @@ export type Page =
   | "providers"
   | "groups"
   | "keys"
-  | "usage";
+  | "usage"
+  | "agents";
 export interface HistoryItem {
   type: "session" | "workflow";
   id: string;
@@ -56,6 +58,7 @@ const navigation: {
   { page: "groups", label: "路由组", icon: Route },
   { page: "keys", label: "Gateway Key", icon: KeyRound },
   { page: "usage", label: "用量", icon: ChartColumn },
+  { page: "agents", label: "Agent", icon: Bot },
   { page: "tools", label: "工具", icon: Blocks },
   { page: "engines", label: "引擎", icon: Cpu },
   { page: "observability", label: "观测", icon: Activity },

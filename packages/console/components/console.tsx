@@ -76,6 +76,7 @@ import { ProvidersPage } from "./providers-page";
 import { GroupsPage } from "./groups-page";
 import { KeysPage } from "./keys-page";
 import { UsagePage } from "./usage-page";
+import { AgentsPage } from "./agents-page";
 
 type ActiveSelection = { type: "session" | "workflow"; id: string } | null;
 const ENGINE_KEY = "harnesshub.engine";
@@ -1054,6 +1055,8 @@ export function Console() {
               <KeysPage key={refreshEpoch} />
             ) : page === "usage" ? (
               <UsagePage key={refreshEpoch} />
+            ) : page === "agents" ? (
+              <AgentsPage key={refreshEpoch} />
             ) : page === "tools" ? (
               <ToolPacksPage engines={engines} refreshEngines={refresh} />
             ) : page === "engines" ? (
