@@ -14,7 +14,13 @@ const child = spawn(
 await new Promise((resolve) => child.once("message", resolve));
 await writeFile(
   process.argv[2]!,
-  JSON.stringify({ parent: process.pid, child: child.pid }),
+  JSON.stringify({
+    parent: process.pid,
+    child: child.pid,
+    programFiles: process.env.ProgramFiles ?? null,
+    programData: process.env.ProgramData ?? null,
+    allUsersProfile: process.env.ALLUSERSPROFILE ?? null,
+  }),
 );
 for await (const line of createInterface({ input: process.stdin })) {
   if (process.argv[3] === "silent") continue;

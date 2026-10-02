@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { WINDOWS_SYSTEM_ENVIRONMENT } from "../domain/environment.js";
 import { configurationEnvironmentNames } from "../domain/engine-configuration.js";
 import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -406,14 +407,7 @@ export class ProcessWorkerHost implements WorkerHost {
     const env: NodeJS.ProcessEnv = {};
     const systemNames = [
       "PATH",
-      "PATHEXT",
-      "SYSTEMROOT",
-      "WINDIR",
-      "COMSPEC",
-      "SYSTEMDRIVE",
-      "PROCESSOR_ARCHITECTURE",
-      "NUMBER_OF_PROCESSORS",
-      "OS",
+      ...WINDOWS_SYSTEM_ENVIRONMENT,
       "LANG",
       "LC_ALL",
       "LC_CTYPE",
@@ -425,10 +419,6 @@ export class ProcessWorkerHost implements WorkerHost {
       "USER",
       "USERNAME",
       "LOGNAME",
-      // Without it, Windows PowerShell 5.1 spends ~22 s on every command that
-      // autoloads a module (Write-Output, Out-File, ConvertTo-Json); engine shell
-      // tools start it per command, and Gemini CLI twice (AST parser, command).
-      "PSModulePath",
     ];
     for (const name of [
       ...systemNames,
