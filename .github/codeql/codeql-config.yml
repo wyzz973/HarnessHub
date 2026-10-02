@@ -1,0 +1,7 @@
+# CodeQL analyzes the code that ships and the development scripts. Tests and
+# their fixtures are excluded: they deliberately construct code, forward local
+# requests and hash fixture keys, and none of it runs outside the test suite.
+name: HarnessHub CodeQL
+paths-ignore:
+  - tests
+  - "**/*.test.mjs"
