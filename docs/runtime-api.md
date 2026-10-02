@@ -71,13 +71,18 @@ DSH 已完成 Mac 上的严格上下文恢复验收：显式 `acp.sessionMode: r
 
 POSIX 上 Worker 自成会话与进程组，清理先按组发送 SIGTERM、再 SIGKILL。用 setsid（例如 Node 的 `detached: true`）、守护化或作业控制离开该组的后代另行认定归属，规则在 [posix-tree.ts](../src/process/posix-tree.ts)，决定见 [ADR 0016](decisions/0016-posix-escaped-descendants.md)：
 
-- 发送 shutdown 前读取一次进程表（macOS 用 `ps`，Linux 读 `/proc`），按父链记录 Worker 树中的每个进程，以 PID 加启动时间识别，进程被重新托管后仍可认定。
-- 每个 POSIX Worker 的环境含 `HARNESSHUB_WORKER_TREE=<owner token>`。引擎及继承环境的工具都会携带；HarnessHub 下发的 stdio MCP 服务配置也加入该变量，Worker 应用引擎环境时不会被启动配方或凭证隔离替换或删除。macOS 用 `ps -E` 读取同用户进程的环境，并用不带 `-E` 的第二次读取排除参数中出现的同名文本；Linux 读 `/proc/<pid>/environ`。
-- 进程组确认退出后再扫描一次：仍存活的已记录进程、环境带本 Worker 标记的进程以及它们的后代逐个收到 SIGTERM，宽限期后对剩余者发送 SIGKILL，最后重新扫描。只有扫描不到任何此类进程时才是 `confirmed`；仍有残留、进程表无法读取或无法区分参数与环境时为 `unconfirmed`，资源保持隔离。没有任何后代逃逸时只多两次进程表读取，不发信号。
-- 重启恢复以 lease 中的 token 作为标记执行同一检查；旧 Worker 仍存活并通过身份核实时，同样先记录其进程树。
-- 不会向未被证明归属的进程发送信号。Gateway 自身及其祖先永不归属，归属也不经由它们向下传递；进程组只在快照显示组长和所有成员都归属时整体发信号。
+- 每次读取进程表都在一个短生命周期的子进程中进行，最长 5 秒、输出最多 64 MiB，到期即发送 SIGKILL 并立即返回，Gateway 自身不执行可能阻塞的读取。macOS 用 `/bin/ps`（`LC_ALL=C`、`TZ=UTC0`）。Linux 由子进程逐个读取 `/proc/<pid>/stat`、`status` 与 `environ`：读取某个进程的 `environ` 要拿它的内存映射锁，可能因卡住的 NFS/FUSE 映射而长时间阻塞，阻塞只影响这个子进程。
+- 发送 shutdown 前读取一次进程表，按父链记录 Worker 树中的每个进程，以 PID 加启动时间识别：进程被重新托管后仍可认定，记录与之后的扫描之间 PID 被复用也能区分。Worker 崩溃后尚未被回收（僵尸）时，从其进程组成员开始记录。
+- 每个 POSIX Worker 的环境含 `HARNESSHUB_WORKER_TREE=<owner token>`。引擎及继承环境的工具都会携带；HarnessHub 下发的 stdio MCP 服务配置也加入该变量，Worker 应用引擎环境时不会被启动配方或凭证隔离替换或删除。macOS 用 `ps -E` 读取同用户进程的环境，并用不带 `-E` 的第二次读取排除参数中出现的同名文本；Linux 读 `/proc/<pid>/environ`。该值是公开的：同一用户的任何进程都能读到它，也能把它写进自己的环境，因此不得把它用作凭证。
+- 进程组确认退出后再扫描一次：仍存活的已记录进程、环境带本 Worker 标记的进程以及它们的后代逐个收到 SIGTERM，宽限期后对剩余者发送 SIGKILL，最后重新扫描。只有扫描不到任何此类进程时才是 `confirmed`。仍有残留、进程表无法读取、无法区分参数与环境，或按规则可达的进程属于其他用户时为 `unconfirmed`，资源保持隔离，原因写入 Gateway 日志的 `worker.tree_unconfirmed` 或 `worker.tree_record_failed` 记录。没有任何后代逃逸时只多两次进程表读取，不发信号。
+- 只有真实与有效 UID 都等于 Gateway 有效 UID 的进程可以归属。按上述规则可达、但属于其他用户的进程（例如 `sudo` 启动的进程）从不收到信号，并使结果为 `unconfirmed`；以 root 运行的 Gateway 上，其他本地用户可以在自己的进程中写入公开的标记，使这类会话一直处于 `unconfirmed`。
+- Linux 的 `hidepid` 挂载下，无权读取的 `/proc/<pid>` 记录（EACCES/EPERM）被跳过，只记入日志中的 `hidden` 计数，不使结果变为 `unconfirmed`。这些进程要么属于其他用户（本来就不能归属），要么是同用户的不可 dump 进程（其环境即使没有 `hidepid` 也读不到，属于下面的缺口）；同用户的普通进程始终可读。
+- 重启恢复以 lease 中的 token 作为标记执行同一检查；旧 Worker 仍存活并通过身份核实时，同样先记录其进程树。快照显示 Gateway 自身或其祖先在被租用的进程组中，或者读不到快照时，恢复不发送任何信号，直接返回 `unconfirmed`。
+- 不会向未被证明归属的进程发送信号。Gateway 自身及其祖先永不归属，归属也不经由它们向下传递；进程组只在快照显示组长和所有成员都归属时整体发信号；PID 或进程组 0、1 以及 Gateway 自己的进程组在发信号前一律被拒绝。
 
-已知缺口：清理开始前父进程已经退出、且环境里看不到标记的后代无法识别，此时 `cleanupStatus` 仍可能为 `confirmed`，`confirmed` 不证明这类进程已经结束。看不到标记的情况包括：以全新环境启动（`env -i` 或显式的 `env` 选项）、属于其他用户、Linux 上不可 dump 的进程，以及 macOS 上 `ps -E` 不显示环境的 Apple 平台二进制（2026-10-02 在 macOS 26.6 上核实 `/bin/sh`、`/bin/bash`、`/bin/sleep`、`/usr/bin/perl`；Node 及非 Apple 签名的程序可读）。由 launchd、systemd 等服务管理器代为启动的进程从一开始就不在 Worker 树内，也不受此清理覆盖。
+标记会被 Run 启动的所有进程继承，包括 Run 首次启动的共享守护进程和应用：tmux 或 screen 服务器（及其全部窗格）、ssh 的 ControlPersist 主连接、gpg-agent、Gradle/Bazel/Nx 守护进程、以分离方式启动的 GUI 应用（例如 VS Code 尚未运行时执行的 `code .`），以及它们之后为用户启动的一切。清理时这些进程连同其后代一起被结束；此前它们在调用 setsid 后会留存。在旧 Worker 树中启动的新 Gateway 在恢复时不会结束自己，但同样带有旧标记的兄弟进程（例如同一 IDE 的其他终端）会被结束。
+
+已知缺口：父进程在能把它与 Worker 联系起来的那次扫描之前已经退出、且环境里看不到标记的后代无法识别，此时 `cleanupStatus` 仍可能为 `confirmed`，`confirmed` 不证明这类进程已经结束。这包括清理开始前已被重新托管的后代，以及在 shutdown 前的快照之后才创建、且父进程在最终扫描前退出的后代。看不到标记的情况包括：以全新环境启动（`env -i` 或显式的 `env` 选项）、属于其他用户、Linux 上不可 dump 的进程，以及 macOS 上 `ps -E` 不显示环境的 Apple 平台二进制（2026-10-02 在 macOS 26.6 上核实 `/bin/sh`、`/bin/bash`、`/bin/sleep`、`/usr/bin/perl`；Node 及非 Apple 签名的程序可读）。由 launchd、systemd 等服务管理器代为启动的进程从一开始就不在 Worker 树内，也不受此清理覆盖。读取进程表的子进程若阻塞在内核中，SIGKILL 后可能要等读取返回才退出；Gateway 不等待它。
 
 Session/Run保存安全配置快照，包含配置标识、模型选择、凭证变量名和命令hash，不记录凭证值或完整argv；旧记录缺快照时明确标unknown。
 

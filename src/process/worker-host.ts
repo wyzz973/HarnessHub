@@ -15,8 +15,9 @@ import {
   type WorkerLease,
 } from "./leases.js";
 import { settleWorkerCleanup } from "./cleanup-settlement.js";
+import { ProcessTableError, readProcessTable } from "./process-table.js";
 import {
-  readProcessTable,
+  gatewayIdentity,
   reclaimTreeSurvivors,
   workerTree,
   type TreeProcess,
@@ -562,7 +563,11 @@ export class ProcessWorkerHost implements WorkerHost {
       }
       if (this.sessions.get(entry.sessionId)?.lease?.id === entry.lease.id)
         continue;
-      let cleanup = await recoverWorkerLease(entry.lease, this.shutdownGraceMs);
+      let cleanup = await recoverWorkerLease(
+        entry.lease,
+        this.shutdownGraceMs,
+        this.log,
+      );
       if (cleanup === "confirmed") {
         try {
           this.leases.remove(entry.lease);
@@ -603,25 +608,38 @@ export class ProcessWorkerHost implements WorkerHost {
       marker: worker.ownerToken,
       recorded: tree,
       graceMs: this.shutdownGraceMs,
+      log: this.log,
+      context: { sessionId: worker.sessionId, pid: worker.child.pid },
     });
   }
 
   /**
    * POSIX snapshot of the Worker tree before shutdown, or `undefined` when the
    * process table cannot be read (cleanup then stays at best `unconfirmed`).
+   * The snapshot child starts synchronously, before this call yields.
    */
   private async recordTree(
     worker: SessionWorker,
   ): Promise<TreeProcess[] | undefined> {
     const pid = worker.child.pid;
     if (pid === undefined) return [];
-    // Node emits 'exit' when it reaps the Worker; until then its PID cannot be reused.
-    const live = !worker.hasExited;
+    // Node emits 'exit' when it reaps the Worker; until then its PID cannot
+    // be reused, even if the Worker is already a zombie.
+    const unreaped = !worker.hasExited;
     try {
-      const table = await readProcessTable();
-      return workerTree(table, pid, live && !worker.hasExited);
-    } catch {
-      // Only the snapshot can fail here; the caller reports its absence.
+      const identity = gatewayIdentity();
+      const snapshot = await readProcessTable();
+      return workerTree(snapshot.table, pid, unreaped, identity);
+    } catch (error) {
+      // Only the snapshot can fail here; its reason is a fixed string.
+      this.log.info("worker.tree_record_failed", {
+        sessionId: worker.sessionId,
+        pid,
+        error:
+          error instanceof ProcessTableError
+            ? error.message
+            : "unexpected error",
+      });
       return undefined;
     }
   }

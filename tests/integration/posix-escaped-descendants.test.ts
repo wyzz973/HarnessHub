@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import test, { type TestContext } from "node:test";
 import { startHub } from "../../src/main.js";
 import { ProcessWorkerHost } from "../../src/process/worker-host.js";
+import { readProcessTable } from "../../src/process/process-table.js";
+import type { LogFields, LogSink } from "../../src/domain/logging.js";
 import type { ExecutionSpec, WorkerMessage } from "../../src/domain/ports.js";
 import type {
   RunId,
@@ -62,28 +65,42 @@ function parseReport(text: string): Report {
   };
 }
 
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ESRCH")
-      return false;
-    throw error;
-  }
-}
-
-/** Teardown for processes a failing assertion would otherwise leave running. */
-function reap(t: TestContext, pids: () => number[]): void {
-  t.after(() => {
-    for (const pid of pids()) {
+/**
+ * Fixture processes by PID and start time. `running` is false once a process
+ * has exited, is a zombie or its PID names another process. Teardown kills
+ * only processes that are still the recorded ones, so a passing test signals
+ * nothing and a reused PID is never hit.
+ */
+async function processes(t: TestContext) {
+  const recorded = new Map<number, string>();
+  t.after(async () => {
+    const { table } = await readProcessTable();
+    for (const [pid, started] of recorded) {
+      const row = table.get(pid);
+      if (!row || row.zombie || row.started !== started) continue;
       try {
         process.kill(pid, "SIGKILL");
       } catch {
-        /* Already gone: the expected outcome. */
+        /* Exited after the snapshot. */
       }
     }
   });
+  return {
+    async track(...pids: number[]) {
+      const { table } = await readProcessTable();
+      for (const pid of pids) {
+        const row = table.get(pid);
+        assert.ok(row && !row.zombie, `${pid} must be running`);
+        recorded.set(pid, row.started);
+      }
+    },
+    async running(pid: number) {
+      const row = (await readProcessTable()).table.get(pid);
+      return (
+        row !== undefined && !row.zombie && row.started === recorded.get(pid)
+      );
+    },
+  };
 }
 
 function cliSpec(
@@ -139,31 +156,44 @@ async function startReported(
   return { report, result: handle.result };
 }
 
-async function ownerToken(leaseDir: string): Promise<string> {
+async function lease(
+  leaseDir: string,
+): Promise<{ pid: number; ownerToken: string }> {
   const files = await readdir(leaseDir);
   assert.equal(files.length, 1);
-  const lease: unknown = JSON.parse(
+  const value: unknown = JSON.parse(
     await readFile(join(leaseDir, files[0]!), "utf8"),
   );
   assert.ok(
-    typeof lease === "object" &&
-      lease !== null &&
-      "ownerToken" in lease &&
-      typeof lease.ownerToken === "string",
+    typeof value === "object" &&
+      value !== null &&
+      "ownerToken" in value &&
+      typeof value.ownerToken === "string" &&
+      "pid" in value &&
+      typeof value.pid === "number",
   );
-  return lease.ownerToken;
+  return { pid: value.pid, ownerToken: value.ownerToken };
+}
+
+/** Collect a child's stdout until it closes. */
+async function output(child: ReturnType<typeof spawn>): Promise<string> {
+  const closed = once(child, "close");
+  let text = "";
+  child.stdout!.setEncoding("utf8");
+  for await (const chunk of child.stdout!) text += String(chunk);
+  await closed;
+  return text;
 }
 
 void test(
-  "Session close reclaims setsid descendants found by parent chain and by tree marker, sparing a look-alike",
+  "Session close reclaims setsid descendants found by parent chain and by tree marker, and never signals a look-alike",
   posix,
   async (t) => {
     const { directory } = await temporaryDirectory(t, "harnesshub-escape-");
     const leaseDir = join(directory, "leases");
     const host = new ProcessWorkerHost({ leaseDir, shutdownGraceMs: 400 });
     t.after(() => host.close());
-    let pids: number[] = [];
-    reap(t, () => pids);
+    const fixtures = await processes(t);
     // A launch recipe naming the marker must not detach the engine's tree.
     const input = cliSpec(directory, "escape-both", [
       "/usr/bin/env",
@@ -174,54 +204,61 @@ void test(
     ]);
     const { report } = await startReported(host, input);
     assert.ok(report.cleared !== undefined);
-    pids = [report.parent, report.orphan, report.cleared];
-    for (const pid of pids) assert.ok(alive(pid), `${pid} must be running`);
+    await fixtures.track(report.parent, report.orphan, report.cleared);
 
     // An unrelated look-alike: the same script in its own session, reparented
     // like the escaped orphan (so it is not below this test process either),
     // with this Worker's marker text in its arguments and another tree's
-    // marker in its environment. Its default SIGTERM handling ends it on any
-    // signal.
-    const starter = spawn(
-      process.execPath,
-      [
-        peer,
-        "orphan-sentinel",
-        randomUUID(),
-        `${WORKER_TREE_ENVIRONMENT}=${report.marker}`,
-      ],
-      {
-        stdio: ["ignore", "pipe", "ignore"],
-        env: { PATH: process.env.PATH ?? "" },
-      },
+    // marker in its environment. It records any catchable signal in a file.
+    const signalFile = join(directory, "look-alike-signal");
+    const lookAlike = Number(
+      (
+        await output(
+          spawn(
+            process.execPath,
+            [
+              peer,
+              "orphan-sentinel",
+              randomUUID(),
+              signalFile,
+              `${WORKER_TREE_ENVIRONMENT}=${report.marker}`,
+            ],
+            {
+              stdio: ["ignore", "pipe", "ignore"],
+              env: { PATH: process.env.PATH ?? "" },
+            },
+          ),
+        )
+      ).trim(),
     );
-    const started = once(starter, "close");
-    let starterOutput = "";
-    starter.stdout.setEncoding("utf8");
-    for await (const chunk of starter.stdout) starterOutput += String(chunk);
-    await started;
-    const lookAlike = Number(starterOutput.trim());
-    assert.ok(Number.isSafeInteger(lookAlike) && lookAlike > 0);
-    pids.push(lookAlike);
-    assert.ok(alive(lookAlike));
+    assert.ok(Number.isSafeInteger(lookAlike) && lookAlike > 1);
+    await fixtures.track(lookAlike);
 
-    const token = await ownerToken(leaseDir);
+    const token = (await lease(leaseDir)).ownerToken;
     assert.equal(await host.closeSession(input.sessionId), "confirmed");
-    assert.equal(alive(report.orphan), false, "marked orphan must be gone");
-    assert.equal(alive(report.cleared), false, "cleared child must be gone");
-    assert.equal(alive(report.parent), false);
+    assert.equal(
+      await fixtures.running(report.orphan),
+      false,
+      "marked orphan must be gone",
+    );
+    assert.equal(
+      await fixtures.running(report.cleared),
+      false,
+      "cleared child must be gone",
+    );
+    assert.equal(await fixtures.running(report.parent), false);
     assert.deepEqual(await readdir(leaseDir), []);
     assert.equal(
       report.marker,
       token,
       "The engine inherits the Worker's owner token as its tree marker",
     );
-    // Its parent reaps it promptly if it was signalled.
-    await delay(200);
-    assert.ok(
-      alive(lookAlike),
+    assert.equal(
+      existsSync(signalFile),
+      false,
       "An unattributed look-alike must never be signalled",
     );
+    assert.equal(await fixtures.running(lookAlike), true);
   },
 );
 
@@ -256,8 +293,6 @@ void test(
       port: 0,
     });
     defer(() => hub.server.close());
-    let pids: number[] = [];
-    reap(t, () => pids);
     const created = await hub.server.inject({
       method: "POST",
       url: "/v1/sessions",
@@ -290,11 +325,13 @@ void test(
         .map((event) => event.data.text)
         .join(""),
     );
-    pids = [report.parent, report.orphan];
     assert.equal(run.status, "completed");
     assert.equal(run.cleanupStatus, "confirmed");
-    assert.equal(alive(report.orphan), false, "marked orphan must be gone");
-    assert.equal(alive(report.parent), false);
+    // The orphan was started before the Run settled. If it still runs, the
+    // cleanup above was wrong; it is killed here so the failure leaks nothing.
+    const orphan = (await readProcessTable()).table.get(report.orphan);
+    if (orphan && !orphan.zombie) process.kill(report.orphan, "SIGKILL");
+    assert.ok(!orphan || orphan.zombie, "marked orphan must be gone");
     assert.deepEqual(await readdir(join(dataDir, "workers")), []);
     assert.match(report.marker ?? "", /^[a-f0-9-]{36}$/);
   },
@@ -309,7 +346,13 @@ void test(
       "harnesshub-escape-eperm-",
     );
     const leaseDir = join(directory, "leases");
-    const host = new ProcessWorkerHost({ leaseDir, shutdownGraceMs: 200 });
+    const records: { event: string; fields: LogFields | undefined }[] = [];
+    const log: LogSink = {
+      level: "info",
+      info: (event, fields) => void records.push({ event, fields }),
+      debug: () => undefined,
+    };
+    const host = new ProcessWorkerHost({ leaseDir, shutdownGraceMs: 200, log });
     const recovery = new ProcessWorkerHost({ leaseDir, shutdownGraceMs: 400 });
     let quarantined = false;
     t.after(async () => {
@@ -318,8 +361,7 @@ void test(
       else await host.close();
       await recovery.close();
     });
-    let pids: number[] = [];
-    reap(t, () => pids);
+    const fixtures = await processes(t);
     const input = cliSpec(directory, "escape-denied", [
       process.execPath,
       peer,
@@ -327,7 +369,7 @@ void test(
       "wait",
     ]);
     const { report } = await startReported(host, input);
-    pids = [report.parent, report.orphan];
+    await fixtures.track(report.parent, report.orphan);
     const leaseFiles = await readdir(leaseDir);
     const realKill = process.kill;
     const denied = new Set<number | NodeJS.Signals | undefined>();
@@ -354,15 +396,30 @@ void test(
       quarantined = cleanup !== "confirmed";
       assert.equal(cleanup, "unconfirmed");
       assert.ok(denied.has("SIGTERM") && denied.has("SIGKILL"));
-      assert.ok(alive(report.orphan));
-      assert.equal(alive(report.parent), false);
+      // The reason is in the Gateway log, so a quarantine can be diagnosed.
+      assert.deepEqual(
+        records
+          .filter((record) => record.event === "worker.tree_unconfirmed")
+          .map((record) => [
+            record.fields?.reason,
+            record.fields?.survivors,
+            record.fields?.status,
+          ]),
+        [["survivors", 1, "unconfirmed"]],
+      );
+      assert.equal(await fixtures.running(report.orphan), true);
+      assert.equal(await fixtures.running(report.parent), false);
       assert.deepEqual(await readdir(leaseDir), leaseFiles);
     } finally {
       denial.mock.restore();
     }
     // The prior Worker is gone; only the lease's token attributes the orphan.
     assert.equal((await recovery.recover()).get(input.sessionId), "confirmed");
-    assert.equal(alive(report.orphan), false, "recovery must reclaim it");
+    assert.equal(
+      await fixtures.running(report.orphan),
+      false,
+      "recovery must reclaim it",
+    );
     assert.deepEqual(await readdir(leaseDir), []);
   },
 );
@@ -382,8 +439,7 @@ void test(
       await oldHost.close();
       await nextHost.close();
     });
-    let pids: number[] = [];
-    reap(t, () => pids);
+    const fixtures = await processes(t);
     const input = cliSpec(directory, "escape-recovery", [
       process.execPath,
       peer,
@@ -391,12 +447,181 @@ void test(
     ]);
     const { report, result } = await startReported(oldHost, input);
     assert.ok(report.cleared !== undefined);
-    pids = [report.parent, report.orphan, report.cleared];
+    await fixtures.track(report.parent, report.orphan, report.cleared);
     assert.equal((await nextHost.recover()).get(input.sessionId), "confirmed");
     await assert.rejects(result, /Worker/);
-    assert.equal(alive(report.orphan), false, "marked orphan must be gone");
-    assert.equal(alive(report.cleared), false, "cleared child must be gone");
-    assert.equal(alive(report.parent), false);
+    assert.equal(
+      await fixtures.running(report.orphan),
+      false,
+      "marked orphan must be gone",
+    );
+    assert.equal(
+      await fixtures.running(report.cleared),
+      false,
+      "cleared child must be gone",
+    );
+    assert.equal(await fixtures.running(report.parent), false);
     assert.deepEqual(await readdir(leaseDir), []);
+  },
+);
+
+/** States of this process's direct children, read without running the event loop. */
+function childStates(): Map<number, string> {
+  const listing = spawnSync("/bin/ps", ["-A", "-o", "pid=,ppid=,stat="], {
+    encoding: "utf8",
+  });
+  assert.equal(listing.status, 0);
+  const states = new Map<number, string>();
+  for (const line of listing.stdout.split("\n")) {
+    const [pid, ppid, stat] = line.trim().split(/\s+/);
+    if (Number(ppid) === process.pid && stat) states.set(Number(pid), stat);
+  }
+  return states;
+}
+
+/** Wait without yielding to the event loop, so Node reaps no child meanwhile. */
+function blockUntil(
+  condition: () => boolean,
+  message: string,
+  limitMs = 10_000,
+): boolean {
+  const until = Date.now() + limitMs;
+  while (!condition()) {
+    if (Date.now() >= until) {
+      assert.ok(limitMs < 10_000, message);
+      return false;
+    }
+    const pause = Date.now() + 10;
+    while (Date.now() < pause);
+  }
+  return true;
+}
+
+void test(
+  "A crashed Worker that is an unreaped zombie during the snapshot keeps its group's escaped children attributable",
+  posix,
+  async (t) => {
+    const { directory } = await temporaryDirectory(
+      t,
+      "harnesshub-escape-crash-",
+    );
+    const leaseDir = join(directory, "leases");
+    const host = new ProcessWorkerHost({ leaseDir, shutdownGraceMs: 400 });
+    t.after(() => host.close());
+    const fixtures = await processes(t);
+    const input = cliSpec(directory, "escape-crash", [
+      process.execPath,
+      peer,
+      "escape-both",
+    ]);
+    const { report, result } = await startReported(host, input);
+    assert.ok(report.cleared !== undefined);
+    await fixtures.track(report.parent, report.orphan, report.cleared);
+    const worker = (await lease(leaseDir)).pid;
+    // The event loop does not run until the snapshot child has read the
+    // process table, so the killed Worker is an unreaped zombie in that
+    // snapshot, and Node reaps it before the snapshot settles. The child may
+    // block writing its output to the unread pipe, so it gets a bounded time
+    // to read the table instead of being awaited to exit.
+    const before = new Set(childStates().keys());
+    process.kill(worker, "SIGKILL");
+    blockUntil(
+      () => childStates().get(worker)?.startsWith("Z") === true,
+      "the killed Worker must become a zombie",
+    );
+    const closing = host.closeSession(input.sessionId);
+    const snapshot = () =>
+      [...childStates()].find(([pid]) => !before.has(pid) && pid !== worker);
+    blockUntil(() => snapshot() !== undefined, "the snapshot child must start");
+    blockUntil(
+      () => snapshot()?.[1].startsWith("Z") !== false,
+      "the snapshot child may still be writing",
+      1_500,
+    );
+    assert.equal(await closing, "confirmed");
+    await assert.rejects(result, /Worker/);
+    assert.equal(
+      await fixtures.running(report.cleared),
+      false,
+      "cleared child of a group member must be gone",
+    );
+    assert.equal(
+      await fixtures.running(report.orphan),
+      false,
+      "marked orphan must be gone",
+    );
+    assert.equal(await fixtures.running(report.parent), false);
+  },
+);
+
+void test(
+  "Recovery never signals a leased group that contains the recovering Gateway",
+  posix,
+  async (t) => {
+    const { directory } = await temporaryDirectory(
+      t,
+      "harnesshub-escape-shield-",
+    );
+    const leaseDir = join(directory, "leases");
+    const signalFile = join(directory, "fake-worker-signal");
+    const fixtures = await processes(t);
+    // A process with a leased Worker's exact command line, leading its own
+    // group. The recovering Gateway runs as its child, inside that group.
+    const ownerToken = randomUUID();
+    const fake = spawn(
+      process.execPath,
+      [peer, `--harnesshub-owner=${ownerToken}`],
+      {
+        detached: true,
+        stdio: ["pipe", "pipe", "ignore"],
+        env: {
+          PATH: process.env.PATH ?? "",
+          FIXTURE_LEASE_DIR: leaseDir,
+          FIXTURE_SIGNAL_FILE: signalFile,
+        },
+      },
+    );
+    assert.ok(fake.pid !== undefined);
+    let text = "";
+    fake.stdout!.setEncoding("utf8");
+    fake.stdout!.on("data", (chunk: string) => {
+      text += chunk;
+    });
+    await mkdir(leaseDir, { mode: 0o700 });
+    await writeFile(
+      join(leaseDir, "shielded.json"),
+      JSON.stringify({
+        version: 1,
+        id: randomUUID(),
+        sessionId: "shielded",
+        pid: fake.pid,
+        ownerToken,
+        workerPath: peer,
+        executable: process.execPath,
+        startedAt: Date.now(),
+        platform: process.platform,
+      }),
+    );
+    await fixtures.track(fake.pid);
+    fake.stdin!.end("recover\n");
+    const until = Date.now() + 15_000;
+    while (!text.includes('"recovery"') && fake.exitCode === null) {
+      assert.ok(Date.now() < until, `No recovery report: ${text}`);
+      await delay(20);
+    }
+    const lines = text.trim().split("\n");
+    assert.equal(
+      existsSync(signalFile),
+      false,
+      "the leased group must not be signalled",
+    );
+    assert.deepEqual(
+      lines.map((line) => JSON.parse(line) as unknown),
+      [
+        { statuses: { shielded: "unconfirmed" } },
+        { recovery: { code: 0, signal: null } },
+      ],
+    );
+    assert.equal(await fixtures.running(fake.pid), true);
   },
 );

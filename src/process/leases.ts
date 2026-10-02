@@ -18,9 +18,12 @@ import { promisify } from "node:util";
 import { Ajv } from "ajv";
 import { HubError } from "../domain/errors.js";
 import type { CleanupStatus, SessionId } from "../domain/types.js";
+import { NO_LOG, type LogSink } from "../domain/logging.js";
 import { closeWindowsJob } from "./windows-job.js";
+import { ProcessTableError, readProcessTable } from "./process-table.js";
 import {
-  readProcessTable,
+  gatewayIdentity,
+  groupShieldsSelf,
   reclaimTreeSurvivors,
   workerTree,
   type TreeProcess,
@@ -31,6 +34,13 @@ export interface WorkerLease {
   id: string;
   sessionId: SessionId;
   pid: number;
+  /**
+   * Random identity of one Worker. Public, not a secret: it appears in the
+   * Worker's argv, as the POSIX tree marker in the environment of the Worker
+   * and every descendant, and in the Windows Job name. Ownership is proven
+   * only together with the PID, the full command and the PGID (or the Job),
+   * so it must never become a credential, for Worker IPC or anything else.
+   */
   ownerToken: string;
   workerPath: string;
   executable: string;
@@ -226,14 +236,18 @@ async function identity(
  * Composition calls this only after acquiring the exclusive Gateway owner lock.
  *
  * POSIX: the prior Worker's group is reclaimed only after its identity (token,
- * full command and PGID) is verified. Descendants that left the group are then
- * reclaimed by the rules of `posix-tree.ts`: those recorded below the verified
- * live root, and those carrying the lease's owner token as their tree marker.
- * A root that is already gone attributes nothing by parent chain.
+ * full command and PGID) is verified, and never when a snapshot shows this
+ * Gateway or one of its ancestors in that group (or no snapshot can be read):
+ * the lease then stays `unconfirmed` and nothing is signalled. Descendants
+ * that left the group are then reclaimed by the rules of `posix-tree.ts`:
+ * those recorded below the verified live root, and those carrying the lease's
+ * owner token as their tree marker. A root that is already gone attributes
+ * nothing by parent chain. Refusals and scan failures are logged to `log`.
  */
 export async function recoverWorkerLease(
   lease: WorkerLease,
   graceMs: number,
+  log: LogSink = NO_LOG,
 ): Promise<CleanupStatus> {
   if (process.platform === "win32" && lease.platform === "win32") {
     // Version 1 never established native descendant ownership. Preserve it for manual reconciliation.
@@ -250,17 +264,38 @@ export async function recoverWorkerLease(
     lease.platform !== process.platform
   )
     return "unconfirmed";
+  const context = { sessionId: lease.sessionId, pid: lease.pid };
   // Parent links are read before any signal breaks them; they count only once
   // the identity check below proves the root is still the leased Worker.
-  const table = await readProcessTable().catch(
-    // The missing snapshot is reported through `recorded` below.
-    () => undefined,
-  );
+  let snapshot: Awaited<ReturnType<typeof readProcessTable>> | undefined;
+  let gateway: ReturnType<typeof gatewayIdentity> | undefined;
+  try {
+    gateway = gatewayIdentity();
+    snapshot = await readProcessTable();
+  } catch (error) {
+    log.info("worker.tree_record_failed", {
+      ...context,
+      error:
+        error instanceof ProcessTableError ? error.message : "unexpected error",
+    });
+  }
   const root = await identity(lease);
   if (root === "unknown") return "unconfirmed";
   let recorded: TreeProcess[] | undefined = [];
   if (root === "owned") {
-    recorded = table ? workerTree(table, lease.pid, true) : undefined;
+    if (
+      !snapshot ||
+      !gateway ||
+      groupShieldsSelf(snapshot.table, lease.pid, gateway.self)
+    ) {
+      // Without a snapshot the group cannot be shown to exclude this Gateway.
+      log.info("worker.recovery_group_refused", {
+        ...context,
+        reason: snapshot ? "contains_gateway" : "no_snapshot",
+      });
+      return "unconfirmed";
+    }
+    recorded = workerTree(snapshot.table, lease.pid, true, gateway);
     const group = await terminateLeaseGroup(lease, graceMs);
     if (group !== "confirmed") return group;
   }
@@ -268,6 +303,8 @@ export async function recoverWorkerLease(
     marker: lease.ownerToken,
     recorded,
     graceMs,
+    log,
+    context,
   });
 }
 

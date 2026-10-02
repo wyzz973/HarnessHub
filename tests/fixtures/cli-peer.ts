@@ -1,10 +1,18 @@
 // SPDX-License-Identifier: MIT
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { writeFileSync } from "node:fs";
+import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 
+/** Waiting fixtures exit on their own after this, so a failed test cannot leak them. */
+const MAX_LIFETIME_MS = 60_000;
+function linger(): void {
+  setTimeout(() => process.exit(0), MAX_LIFETIME_MS);
+}
+
 const mode = process.argv[2];
-switch (mode) {
+switch (mode?.startsWith("--harnesshub-owner=") ? "fake-worker" : mode) {
   case "stdin": {
     const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) {
@@ -55,12 +63,12 @@ switch (mode) {
     process.stdout.write(
       JSON.stringify({ parent: process.pid, child: child.pid }) + "\n",
     );
-    setInterval(() => {}, 10_000);
+    linger();
     break;
   }
   case "descendant":
     process.on("SIGTERM", () => {});
-    setInterval(() => {}, 10_000);
+    linger();
     break;
   case "escape-intermediate": {
     // Start a descendant in its own session (setsid), report it and exit, so
@@ -106,13 +114,13 @@ switch (mode) {
       report.cleared = cleared.pid;
     }
     process.stdout.write(JSON.stringify(report) + "\n");
-    if (mode === "escape-both" || process.argv[3] === "wait")
-      setInterval(() => {}, 10_000);
+    if (mode === "escape-both" || process.argv[3] === "wait") linger();
     break;
   }
   case "orphan-sentinel": {
     // Started by a test, not by a Worker: an unrelated process in its own
     // session whose environment carries argv[3] as its tree marker value.
+    // argv[4] is the sentinel's signal file, the rest its extra arguments.
     const child = spawn(
       process.execPath,
       [process.argv[1]!, "sentinel", ...process.argv.slice(4)],
@@ -129,10 +137,61 @@ switch (mode) {
     process.stdout.write(`${child.pid}\n`);
     break;
   }
-  case "sentinel":
-    // An unrelated look-alike with default SIGTERM handling: any signal ends it.
-    setInterval(() => {}, 10_000);
+  case "sentinel": {
+    // Records any catchable termination signal in argv[3], then exits.
+    const file = process.argv[3]!;
+    for (const signal of ["SIGTERM", "SIGHUP", "SIGINT"] as const)
+      process.on(signal, () => {
+        writeFileSync(file, signal);
+        process.exit(0);
+      });
+    linger();
     break;
+  }
+  case "fake-worker": {
+    // Command line of a leased Worker (`node <script> --harnesshub-owner=...`)
+    // in its own group. After a line on stdin it runs lease recovery in a
+    // child that stays in this group, printing the child's result.
+    const file = process.env.FIXTURE_SIGNAL_FILE!;
+    for (const signal of ["SIGTERM", "SIGHUP", "SIGINT"] as const)
+      process.on(signal, () => {
+        writeFileSync(file, signal);
+        process.exit(0);
+      });
+    const lines = createInterface({ input: process.stdin });
+    for await (const line of lines) {
+      if (line !== "recover") continue;
+      lines.close();
+      const child = spawn(
+        process.execPath,
+        [process.argv[1]!, "recover-leases", process.env.FIXTURE_LEASE_DIR!],
+        { stdio: ["ignore", "inherit", "ignore"] },
+      );
+      const [code, signal] = (await once(child, "exit")) as [
+        number | null,
+        NodeJS.Signals | null,
+      ];
+      process.stdout.write(
+        JSON.stringify({ recovery: { code, signal } }) + "\n",
+      );
+      break;
+    }
+    linger();
+    break;
+  }
+  case "recover-leases": {
+    const { ProcessWorkerHost } =
+      await import("../../src/process/worker-host.js");
+    const host = new ProcessWorkerHost({
+      leaseDir: process.argv[3]!,
+      shutdownGraceMs: 300,
+    });
+    const statuses = await host.recover();
+    process.stdout.write(
+      JSON.stringify({ statuses: Object.fromEntries(statuses) }) + "\n",
+    );
+    break;
+  }
   default:
     throw new Error("Unknown CLI fixture scenario");
 }

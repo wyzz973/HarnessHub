@@ -10,6 +10,12 @@
  * carry it; HarnessHub adds it to the stdio MCP servers it configures, and the
  * Worker keeps it when it applies a prepared engine environment. Windows
  * Workers do not receive it: their Job Object contains every descendant.
+ *
+ * The value is public: any process of the same user can read it from the
+ * Worker's argv or a descendant's environment, and any process can set it to
+ * have itself and its descendants reclaimed with the tree. It must never
+ * become a credential: nothing, including Worker IPC and the Windows Job name
+ * derived from the same token, may rely on it being secret.
  */
 export const WORKER_TREE_ENVIRONMENT = "HARNESSHUB_WORKER_TREE";
 

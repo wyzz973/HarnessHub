@@ -182,7 +182,7 @@ MVP 默认绑定本机。公开网络访问时增加认证及 Session/Run 所有
 
 ProcessHost 直接控制 Worker 的 argv、cwd、env、stdio 和退出。内部 Agent/MCP/工具进程是否都能被清理，须验证整棵进程树。进程归属记录避免仅凭 PID 误终止其他进程。
 
-POSIX 上用 setsid 等方式离开 Worker 进程组的后代，按清理前进程表中的父链与环境中的 Worker 树标记认定归属并回收，仍有残留则 `cleanupStatus` 为 unconfirmed。父进程已退出且看不到标记的后代无法识别，`confirmed` 不覆盖这类进程；规则与缺口见 [运行说明](docs/runtime-api.md#posix-上脱离进程组的后代)。
+POSIX 上用 setsid 等方式离开 Worker 进程组的后代，按清理前进程表中的父链与环境中的 Worker 树标记认定归属并回收（只限 Gateway 同一用户的进程），仍有残留或可达进程属于其他用户则 `cleanupStatus` 为 unconfirmed。父进程已退出且看不到标记的后代无法识别，`confirmed` 不覆盖这类进程；规则与缺口见 [运行说明](docs/runtime-api.md#posix-上脱离进程组的后代)。
 
 Windows 原生 supervisor 优先研究 Job Object/受控 launcher；DSH 提供的参考不能泛化为所有 spawn 都有同等保证。平台隔离策略独立表达 filesystem read/write、network、process，以及实际 `none / partial / full` 能力。
 
