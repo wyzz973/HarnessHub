@@ -26,6 +26,7 @@ import type { HubApplication } from "../../src/application/service.js";
 import { ensurePrivateDirectory } from "../../src/platform/windows-acl.js";
 import { startModelGateway } from "../../src/drivers/chat-completions/gateway.js";
 import { writePrivateSecretFile } from "../fixtures/private-secret-file.js";
+import { assertExited } from "../support/process.js";
 import { temporaryDirectory } from "../support/temporary.js";
 
 type Hub = Awaited<ReturnType<typeof startHub>>;
@@ -381,7 +382,7 @@ void test(
       );
       tokens.add(report.token);
       await assert.rejects(fetch(report.url.replace(/\/v1$/, "")));
-      assert.throws(() => process.kill(report.pid, 0), { code: "ESRCH" });
+      await assertExited(report.pid, "model-gateway-peer.js");
     }
     assert.equal(tokens.size, reports.length);
 
@@ -652,7 +653,7 @@ void test(
         pid: number;
       };
       await assert.rejects(fetch(record.url));
-      assert.throws(() => process.kill(record.pid, 0), { code: "ESRCH" });
+      await assertExited(record.pid, "chat-bridge-peer.js");
     }
     const db = await readFile(join(root, "data", "harnesshub.sqlite"));
     assert.equal(
