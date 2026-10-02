@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: MIT
 /**
- * Write the build identity to dist/build-info.json (F04).
+ * Write the build identity to packages/daemon/dist/build-info.json (F04),
+ * next to the compiled daemon that reads it.
  * Usage: node tools/build-info.mjs [--out FILE]
  *
  * Fields follow docs/proposals/oss/10-engineering.md section 5. CI builds take
@@ -74,7 +75,7 @@ export async function collectBuildInfo({ cwd = ROOT, env = process.env, now = ne
   const { version } = JSON.parse(await readFile(path.join(cwd, "package.json"), "utf8"));
   const local = (await ownCheckout(cwd)) ? (args) => git(cwd, args) : () => undefined;
   const commit = env.GITHUB_SHA || local(["rev-parse", "HEAD"]) || UNKNOWN;
-  // Untracked files count: tsc compiles any src/**/*.ts, tracked or not.
+  // Untracked files count: tsc compiles any packages/*/src/**/*.ts, tracked or not.
   const status = local(["status", "--porcelain"]);
   const symbolicRef = local(["rev-parse", "--symbolic-full-name", "HEAD"]);
   const run =
@@ -100,7 +101,7 @@ export async function collectBuildInfo({ cwd = ROOT, env = process.env, now = ne
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const outIndex = process.argv.indexOf("--out");
-  const out = outIndex > 0 ? path.resolve(process.argv[outIndex + 1]) : path.join(ROOT, "dist", "build-info.json");
+  const out = outIndex > 0 ? path.resolve(process.argv[outIndex + 1]) : path.join(ROOT, "packages", "daemon", "dist", "build-info.json");
   const info = await collectBuildInfo();
   await mkdir(path.dirname(out), { recursive: true });
   await writeFile(out, `${JSON.stringify(info, null, 2)}\n`);

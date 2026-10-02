@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { startHub } from "../../src/main.js";
+import { startHub } from "@harnesshub/daemon/main";
 import {
   BenchmarkRunner,
   parseDataset,

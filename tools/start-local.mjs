@@ -90,7 +90,7 @@ process.once("SIGINT", () => void stop());
 process.once("SIGTERM", () => void stop());
 launch(
   [
-    "dist/src/main.js",
+    "packages/daemon/dist/src/main.js",
     ...(demo ? ["--demo"] : []),
     "--port",
     "3180",

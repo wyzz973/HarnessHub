@@ -9,11 +9,11 @@
  * Cold start: time from spawn to the `ready` line of `serve --demo --port 0`, each run with a
  * fresh data directory and workspace. "first-run" also uses a fresh extraction root (what the
  * first start after installation pays); "installed" reuses one prepared root. `--baseline`
- * measures `node dist/src/main.js` the same way. One unmeasured warm-up start precedes each
+ * measures `node packages/daemon/dist/src/main.js` the same way. One unmeasured warm-up start precedes each
  * series. p50/p95 are nearest-rank.
  *
  * End-to-end checks, all against the SEA: `version --json` carries the build identity of
- * dist/build-info.json; the extracted secret helper of this platform (macOS keychain, Windows
+ * packages/daemon/dist/build-info.json; the extracted secret helper of this platform (macOS keychain, Windows
  * DPAPI; none on Linux) has the SHA-256 that build.json recorded, read as a file only;
  * `serve` reaches ready; the engine launcher and the command MCP server run
  * as roles of the SEA; a demo Session Run on the fake engine completes in a Worker that the SEA
@@ -258,7 +258,10 @@ async function endToEnd(binary, build) {
       const result = await capture(binary, ["version", "--json"], env);
       const reported = JSON.parse(result.stdout);
       const written = JSON.parse(
-        await readFile(path.join(ROOT, "dist", "build-info.json"), "utf8"),
+        await readFile(
+          path.join(ROOT, "packages", "daemon", "dist", "build-info.json"),
+          "utf8",
+        ),
       );
       const differing = Object.keys({ ...written, ...reported }).filter(
         (field) =>
@@ -555,7 +558,7 @@ async function endToEnd(binary, build) {
         (record) =>
           record.event === "worker.spawn" && record.sessionId === session.id,
       )?.pid;
-      // The same comparison src/process/leases.ts makes before it may signal a recovered Worker.
+      // The same comparison packages/runtime/src/process/leases.ts makes before it may signal a recovered Worker.
       let leaseIdentity = "not-applicable";
       if (process.platform !== "win32") {
         const lease = JSON.parse(
@@ -630,7 +633,10 @@ function markdownSummary(result) {
     "| Start series | p50 ms | p95 ms | warm-up ms | failures |\n|---|---|---|---|---|\n",
     series("first run (fresh root)", result.coldStartMs.firstRun),
     series("installed (prepared root)", result.coldStartMs.installed),
-    series("node dist/src/main.js", result.coldStartMs.nodeBaseline),
+    series(
+      "node packages/daemon/dist/src/main.js",
+      result.coldStartMs.nodeBaseline,
+    ),
     "\n| Check | Result |\n|---|---|\n",
     ...result.e2e.checks.map(
       (item) => `| ${item.name} | ${item.ok ? "pass" : "FAIL"} |\n`,
@@ -700,7 +706,9 @@ async function main() {
         ? {
             nodeBaseline: await series({
               command: process.execPath,
-              prefixArgs: [path.join(ROOT, "dist", "src", "main.js")],
+              prefixArgs: [
+                path.join(ROOT, "packages", "daemon", "dist", "src", "main.js"),
+              ],
               runs,
             }),
           }

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { BUILD_INFO } from "../support/entries.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createServer, type IncomingMessage } from "node:http";
@@ -8,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { startHub } from "../../src/main.js";
+import { startHub } from "@harnesshub/daemon/main";
 import type { RunRecord, SessionRecord } from "@harnesshub/core/types";
 import type { HubApplication } from "@harnesshub/runtime/application/service";
 import { ensurePrivateDirectory } from "@harnesshub/store/platform/windows-acl";
@@ -253,12 +254,12 @@ void test(
           `gateway log has ${event}`,
         );
       // The startup record names the build (F04).
-      const build = JSON.parse(
-        await readFile(
-          new URL("../../build-info.json", import.meta.url),
-          "utf8",
-        ),
-      ) as { version: string; commit: string; dirty: unknown; builtAt: string };
+      const build = JSON.parse(await readFile(BUILD_INFO, "utf8")) as {
+        version: string;
+        commit: string;
+        dirty: unknown;
+        builtAt: string;
+      };
       assert.deepEqual(events(gateway, "gateway.start")[0]!.build, {
         version: build.version,
         commit: build.commit,

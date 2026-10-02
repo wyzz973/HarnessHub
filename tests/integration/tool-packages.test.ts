@@ -21,7 +21,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { prepareEngine } from "@harnesshub/agents/engine/registry";
-import { startHub } from "../../src/main.js";
+import { startHub } from "@harnesshub/daemon/main";
 import {
   bindInstalled,
   inspectLocal,

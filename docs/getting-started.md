@@ -13,7 +13,7 @@
 | Console | 默认3330；生产模式必须先`pnpm build:console`；开发用`pnpm dev:console` |
 | Console 后端 | `HARNESSHUB_GATEWAY_URL`；新环境显式设置为实际Gateway URL，不能依赖历史3182默认 |
 | `--console-url <URL>` | 可选；Gateway 根路径 `/` 302 跳转到该控制台地址，并在 `GET /v1/runtime/info` 中返回 |
-| `--version [--json]` | 打印构建身份（版本、提交、是否有未提交改动）后退出；`--json` 输出 `dist/build-info.json` 的全部字段。同一身份出现在 `GET /v1/runtime/info` 的 `build` 与 `gateway.log` 的 `gateway.start` 记录中；`pnpm build` 生成该文件，缺失或损坏时 Gateway 拒绝启动 |
+| `--version [--json]` | 打印构建身份（版本、提交、是否有未提交改动）后退出；`--json` 输出 `packages/daemon/dist/build-info.json` 的全部字段。同一身份出现在 `GET /v1/runtime/info` 的 `build` 与 `gateway.log` 的 `gateway.start` 记录中；`pnpm build` 生成该文件，缺失或损坏时 Gateway 拒绝启动 |
 
 服务绑定loopback，拒绝跨Origin/跨站浏览器访问。当前没有远程多用户认证和租户隔离，不应直接当公网服务部署。
 

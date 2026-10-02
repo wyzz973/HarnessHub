@@ -6,7 +6,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
 import { promisify } from "node:util";
-import { startHub } from "../../src/main.js";
+import { startHub } from "@harnesshub/daemon/main";
 import type {
   ArtifactRecord,
   RunRecord,

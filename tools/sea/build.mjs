@@ -43,8 +43,8 @@ const require = createRequire(import.meta.url);
 const SENTINEL_FUSE = "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2";
 const BUILD_ID_PLACEHOLDER = "HARNESSHUB-SEA-BUILD-ID-PLACEHOLDER";
 const ROLE_ENTRIES = [
-  "dist/src/main.js",
-  "dist/src/worker/main.js",
+  "packages/daemon/dist/src/main.js",
+  "packages/daemon/dist/src/worker/main.js",
   "packages/agents/dist/src/tool-command/command-mcp.js",
   "scripts/launch-engine.mjs",
   "packages/runtime/dist/src/process/proc-scan-main.js",
@@ -168,8 +168,8 @@ function inputBreakdown(metafile) {
       );
     const key = match
       ? match[1]
-      : file.startsWith("dist/src/")
-        ? `harnesshub:${file.split("/").slice(2, 3).join("/")}`
+      : file.startsWith("packages/")
+        ? `harnesshub:${file.split("/")[1]}`
         : `harnesshub:${file}`;
     groups.set(key, (groups.get(key) ?? 0) + input.bytes);
   }
@@ -185,10 +185,16 @@ export async function buildSea({ out = path.join(ROOT, "dist", "sea") } = {}) {
     throw new Error(
       `Node ${expectedNode} is required; found ${process.versions.node}`,
     );
-  const buildInfoFile = path.join(ROOT, "dist", "build-info.json");
+  const buildInfoFile = path.join(
+    ROOT,
+    "packages",
+    "daemon",
+    "dist",
+    "build-info.json",
+  );
   if (
     !existsSync(buildInfoFile) ||
-    !existsSync(path.join(ROOT, "dist", "src", "main.js"))
+    !existsSync(path.join(ROOT, "packages", "daemon", "dist", "src", "main.js"))
   )
     throw new Error("dist/ is missing; run pnpm build first");
   rmSync(out, { recursive: true, force: true });
@@ -198,7 +204,7 @@ export async function buildSea({ out = path.join(ROOT, "dist", "sea") } = {}) {
   const buildInfo = JSON.parse(readFileSync(buildInfoFile, "utf8"));
   const assets = new Map([
     [
-      "dist/build-info.json",
+      "packages/daemon/dist/build-info.json",
       {
         bytes: Buffer.from(
           `${JSON.stringify({ ...buildInfo, installMethod: "sea" }, null, 2)}\n`,

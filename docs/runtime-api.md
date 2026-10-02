@@ -90,4 +90,4 @@ Worker IPC 每条消息上限 8 MiB，文本产物入口上限 4 MiB，HTTP body
 
 Windows 进程监督尚未原生验收；当前没有统一读/写/网络沙箱。API `/v1/engines` 把能力分为configured、observed和validated：observed按profile revision区分，只含本进程实际记录的Runtime控制/模型信息，不推导恢复或平台支持；没有验证时validated为null。[通用 CLI Driver](cli-driver.md)、[动态发现与管理](engine-management.md)和 [文件与文本 Benchmark](benchmark.md)已实现；直接 Native SDK Driver、跨引擎续聊仍未实现。
 
-独立导出命令为 `node dist/src/cli.js rollout --url http://127.0.0.1:3180 --run RUN_ID --output FILE`。它读取同一Gateway轨迹接口，流式写入新文件，拒绝覆盖，失败清理半成品。对运行中的Run，导出只包含当时已提交的事件，不能称为完整终态轨迹。
+独立导出命令为 `node packages/cli/dist/src/cli.js rollout --url http://127.0.0.1:3180 --run RUN_ID --output FILE`。它读取同一Gateway轨迹接口，流式写入新文件，拒绝覆盖，失败清理半成品。对运行中的Run，导出只包含当时已提交的事件，不能称为完整终态轨迹。

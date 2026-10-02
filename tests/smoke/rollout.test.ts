@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { CLI_ENTRY } from "../support/entries.js";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
@@ -6,14 +7,14 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { startHub } from "../../src/main.js";
+import { startHub } from "@harnesshub/daemon/main";
 import type {
   AgentEvent,
   RunRecord,
   SessionRecord,
 } from "@harnesshub/core/types";
 
-const entry = fileURLToPath(new URL("../../src/cli.js", import.meta.url));
+const entry = fileURLToPath(CLI_ENTRY);
 
 async function cli(args: string[], cwd: string, signal: AbortSignal) {
   const child = spawn(process.execPath, [entry, ...args], {

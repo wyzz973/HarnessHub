@@ -9,13 +9,13 @@ Benchmark 支持版本化文本、JSON 及文件任务，复用 `startHub → Hu
 无需凭证的 Worker 示例：
 
 ```sh
-PATH="$PWD/.tools/node/bin:$PATH" node dist/src/benchmark-main.js --demo --dataset examples/benchmark-demo.json --engines fake --data-dir ./data/benchmark-demo
+PATH="$PWD/.tools/node/bin:$PATH" node packages/daemon/dist/src/benchmark-main.js --demo --dataset examples/benchmark-demo.json --engines fake --data-dir ./data/benchmark-demo
 ```
 
 真实引擎的[文件任务](../examples/benchmark-files.json)读取 CSV 订单和 JSON 规则，计算汇总，写出 `result.json` 与 `summary.txt`：
 
 ```sh
-PATH="$PWD/.tools/node/bin:$PATH" node dist/src/benchmark-main.js --config engines/local.yaml --dataset examples/benchmark-files.json --engines dsh,opencode --permissions allow-once --data-dir ./data/benchmark-files
+PATH="$PWD/.tools/node/bin:$PATH" node packages/daemon/dist/src/benchmark-main.js --config engines/local.yaml --dataset examples/benchmark-files.json --engines dsh,opencode --permissions allow-once --data-dir ./data/benchmark-files
 ```
 
 该样例以 `json-equal` 检查 `result.json` 的所有字段与数组顺序，并要求两份文件都已登记。`summary.txt` 的存在与字节完整性会检查，但此样例没有单独评判其文字正确性。文本任务可使用 [benchmark-text.json](../examples/benchmark-text.json)。引擎 ID 必须已配置；CLI 不安装引擎或补充凭证。
@@ -69,7 +69,7 @@ ACP usage 可能来自 `acp-session-checkpoint`，包含会话累计 token、逐
 重新评分仅读取保存证据，不调用模型，每次新增 Evaluation 并保留历史分数：
 
 ```sh
-PATH="$PWD/.tools/node/bin:$PATH" node dist/src/benchmark-main.js --regrade ATTEMPT_ID --data-dir ./data/benchmark-files --config engines/local.yaml
+PATH="$PWD/.tools/node/bin:$PATH" node packages/daemon/dist/src/benchmark-main.js --regrade ATTEMPT_ID --data-dir ./data/benchmark-files --config engines/local.yaml
 ```
 
 替换为实际 attempt ID。重启先由 Runtime 恢复公开 Run，再用 Session 与 attempt 的 Idempotency-Key 补齐“Run 已提交、attempt 尚未绑定”的窗口；绑定要求 Run 属于该 Session 且 key 等于 attempt ID。已保存终态/证据但缺少评分时仅补 Evaluation。未知执行结果不自动重跑；尚未执行的旧准备记录标记设置中断。
@@ -79,7 +79,7 @@ PATH="$PWD/.tools/node/bin:$PATH" node dist/src/benchmark-main.js --regrade ATTE
 报告只读取已保存记录，不执行任务、恢复或重新评分：
 
 ```sh
-PATH="$PWD/.tools/node/bin:$PATH" node dist/src/benchmark-main.js --report --data-dir ./data/benchmark-files --config engines/local.yaml
+PATH="$PWD/.tools/node/bin:$PATH" node packages/daemon/dist/src/benchmark-main.js --report --data-dir ./data/benchmark-files --config engines/local.yaml
 ```
 
 输出单个 `schemaVersion: 1` JSON。可加 `--batch BATCH_ID`；不指定时按 batch 和 dataset 的 `id/version/sha256` 分组。`--report` 与执行或 `--regrade` 参数互斥。每个 attempt 采用最后一次提交的 Evaluation，并展示重新评分次数，不重复计分。

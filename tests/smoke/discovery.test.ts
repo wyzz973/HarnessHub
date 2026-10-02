@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { MAIN_ENTRY } from "../support/entries.js";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
@@ -76,13 +77,7 @@ void test(
     );
     const child = spawn(
       process.execPath,
-      [
-        fileURLToPath(new URL("../../src/main.js", import.meta.url)),
-        "--port",
-        "0",
-        "--data-dir",
-        dataDir,
-      ],
+      [fileURLToPath(MAIN_ENTRY), "--port", "0", "--data-dir", dataDir],
       {
         cwd: directory,
         env: { HOME: home, PATH: bin },

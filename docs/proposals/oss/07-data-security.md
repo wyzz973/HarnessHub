@@ -2,7 +2,7 @@
 
 状态：提案（草案），2026-10-02。术语、包名、进程与部署形态以 [02 系统架构](02-architecture.md) 为准；网关入口 `127.0.0.1:3180` 与 Gateway Key 作用域以 [ADR-P03](adr-drafts.md#adr-p03-共享网关与作用域-gateway-key) 为准；存储决定见 [ADR-P06](adr-drafts.md#adr-p06-存储)。日志脱敏的实现、诊断包与崩溃恢复见 [08 可靠性与可观测性](08-reliability-observability.md)，插件协议与权限的执行方式见 [09 扩展](09-extensibility.md)。文中的命令名、API 路径与配置键表示所需的能力，最终命名以 [06 接口与交互面](06-interfaces.md) 为准。
 
-依据：现有实现（[秘密引用](../../../packages/secrets/src/secrets.ts)、[Host/Origin 校验](../../../src/gateway/server.ts)、[SQLite Store](../../../packages/store/src/storage/sqlite-store.ts)、[ADR 0008](../../decisions/0008-windows-secret-storage.md)、[ADR 0014](../../decisions/0014-diagnostic-logs.md)）；`yetone/magpie@d874adb` 的 `internal/access`、`internal/backup`、`internal/gateway/lan.go`、`internal/plugin`、`internal/stats`；2026-10-02 的 Magpie 与 HarnessHub 对比核验（调研材料，未入库，下文用其问题编号引用，如 V9-N2）。
+依据：现有实现（[秘密引用](../../../packages/secrets/src/secrets.ts)、[Host/Origin 校验](../../../packages/daemon/src/http/server.ts)、[SQLite Store](../../../packages/store/src/storage/sqlite-store.ts)、[ADR 0008](../../decisions/0008-windows-secret-storage.md)、[ADR 0014](../../decisions/0014-diagnostic-logs.md)）；`yetone/magpie@d874adb` 的 `internal/access`、`internal/backup`、`internal/gateway/lan.go`、`internal/plugin`、`internal/stats`；2026-10-02 的 Magpie 与 HarnessHub 对比核验（调研材料，未入库，下文用其问题编号引用，如 V9-N2）。
 
 ## 1. 数据目录与文件布局
 
@@ -209,7 +209,7 @@ HarnessHub 把本机文件分成配置、数据、日志、缓存四类根目录
 
 ### 5.3 Host、Origin 与 Sec-Fetch 校验
 
-现有实现在回环模式下校验 Host 为回环名、Origin 等于 `http://<host>`、拒绝 `Sec-Fetch-Site: cross-site`（[`server.ts`](../../../src/gateway/server.ts) 第 174–195 行）；但 `--host 0.0.0.0` 时 Host 校验整体关闭，Host 与 Origin 同为攻击者域名的 DNS rebinding 请求可以通过，全部配置接口对网络开放（核验 remote-binding-exposure，已复现）。开源版在每个监听器上、路由之前执行以下规则：
+现有实现在回环模式下校验 Host 为回环名、Origin 等于 `http://<host>`、拒绝 `Sec-Fetch-Site: cross-site`（[`server.ts`](../../../packages/daemon/src/http/server.ts) 第 174–195 行）；但 `--host 0.0.0.0` 时 Host 校验整体关闭，Host 与 Origin 同为攻击者域名的 DNS rebinding 请求可以通过，全部配置接口对网络开放（核验 remote-binding-exposure，已复现）。开源版在每个监听器上、路由之前执行以下规则：
 
 1. Host 必须属于该监听器的允许名单。回环监听器为 `localhost`、`127.0.0.1`、`[::1]` 加端口；局域网监听器为配置项 `server.lan.names` 显式列出的主机名或 IP，不支持通配。不在名单内返回 403 `HOST_NOT_ALLOWED`。DNS rebinding 请求的 Host 是攻击者的域名，因此被拒绝。
 2. 请求带 Origin 时，它必须等于该监听器某个允许名的 `scheme://host:port`。模型协议路径上的跨源请求一律拒绝，网页不能直接消耗本机网关额度。

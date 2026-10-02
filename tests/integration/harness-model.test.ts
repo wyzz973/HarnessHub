@@ -13,7 +13,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { loadBuildInfo, startHub } from "../../src/main.js";
+import { loadBuildInfo, startHub } from "@harnesshub/daemon/main";
 import type { HarnessModelView } from "@harnesshub/core/harness-model";
 import {
   isTerminal,

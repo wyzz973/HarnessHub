@@ -11,7 +11,7 @@
  * - `harnesshub <root>/<role entry> ...`: a child started by our own code. The code keeps
  *   computing child entry paths from `import.meta.url`; the build rewrites `import.meta.url`
  *   of every bundled module to the module's repository-relative location under the extraction
- *   root. `fork(<root>/dist/src/worker/main.js)` therefore re-executes this binary
+ *   root. `fork(<root>/packages/daemon/dist/src/worker/main.js)` therefore re-executes this binary
  *   (`process.execPath`) with that path, and the dispatcher runs the bundled Worker. The child
  *   takes the root from that path, so a Worker whose HOME is private resolves the same files.
  * - `harnesshub <file.js|.mjs|.cjs> ...`: any other script runs as with `node <file>`
@@ -51,8 +51,14 @@ const USAGE =
 
 /** Role entries, keyed by the repository-relative path their callers compute. */
 const ROLES = new Map([
-  ["dist/src/main.js", () => import("../../dist/src/main.js")],
-  ["dist/src/worker/main.js", () => import("../../dist/src/worker/main.js")],
+  [
+    "packages/daemon/dist/src/main.js",
+    () => import("../../packages/daemon/dist/src/main.js"),
+  ],
+  [
+    "packages/daemon/dist/src/worker/main.js",
+    () => import("../../packages/daemon/dist/src/worker/main.js"),
+  ],
   [
     "packages/agents/dist/src/tool-command/command-mcp.js",
     () => import("../../packages/agents/dist/src/tool-command/command-mcp.js"),
@@ -210,7 +216,7 @@ async function main() {
         );
       return runRole(
         root,
-        "dist/src/main.js",
+        "packages/daemon/dist/src/main.js",
         command === "serve" ? rest : ["--version", ...rest],
       );
     }

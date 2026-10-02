@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { startHub } from "../../src/main.js";
+import { startHub } from "@harnesshub/daemon/main";
 import { temporaryDirectory } from "../support/temporary.js";
 
 async function snapshot(directory: string): Promise<Record<string, string>> {

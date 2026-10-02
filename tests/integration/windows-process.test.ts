@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { WORKER_ENTRY } from "../support/entries.js";
+import { MAIN_ENTRY, WORKER_ENTRY } from "../support/entries.js";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
-import { startHub } from "../../src/main.js";
+import { startHub } from "@harnesshub/daemon/main";
 import { probeConfiguration } from "@harnesshub/runtime/process/probe";
 import { ProcessWorkerHost } from "@harnesshub/runtime/process/worker-host";
 import { jobHelperPath } from "@harnesshub/runtime/process/windows-job";
@@ -314,7 +314,7 @@ void test(
     const gateway = spawn(
       process.execPath,
       [
-        fileURLToPath(new URL("../../src/main.js", import.meta.url)),
+        fileURLToPath(MAIN_ENTRY),
         "--config",
         configFile,
         "--data-dir",

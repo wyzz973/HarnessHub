@@ -5,7 +5,7 @@ import { request } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { startHub } from "../../src/main.js";
+import { startHub } from "@harnesshub/daemon/main";
 
 /** GET through 127.0.0.1 with an explicit Host header, as a remote judge would send it. */
 function get(

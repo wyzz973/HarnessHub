@@ -37,9 +37,9 @@
 
 | argv | 运行内容 |
 |---|---|
-| `harnesshub serve [Gateway 参数]` | Gateway（`dist/src/main.js` 的命令行入口） |
+| `harnesshub serve [Gateway 参数]` | Gateway（`packages/daemon/dist/src/main.js` 的命令行入口） |
 | `harnesshub version [--json]` | 输出构建身份 |
-| `harnesshub <根目录>/dist/src/worker/main.js …` | Session Worker；由 `fork()` 产生 |
+| `harnesshub <根目录>/packages/daemon/dist/src/worker/main.js …` | Session Worker；由 `fork()` 产生 |
 | `harnesshub <根目录>/scripts/launch-engine.mjs …` | 可移植引擎启动器 |
 | `harnesshub <根目录>/packages/agents/dist/src/tool-command/command-mcp.js …` | 工具包的 command MCP 服务器 |
 | `harnesshub <其他 .js/.mjs/.cjs 文件> …` | node-compat：用 `Module.runMain()` 像 `node <文件>` 一样运行 |
@@ -48,13 +48,13 @@
 
 **解包根目录**：其他程序必须从磁盘读取的文件（构建身份、原生辅助程序、Pi 扩展）作为 SEA 资源嵌入，按构建写入每个用户的缓存目录：macOS 为 `~/Library/Caches/HarnessHub/sea/<构建号>`，Linux 为 `$XDG_CACHE_HOME/harnesshub/sea/<构建号>`（缺省 `~/.cache`），Windows 为 `%LOCALAPPDATA%\HarnessHub\sea\<构建号>`。角色入口位置写入占位文件，因为工具包绑定会检查 command MCP 入口是普通文件；占位文件被其他程序直接执行时抛错。用户命令每次启动都按 SHA-256 校验并修复这些文件，原子写入（临时文件加改名），目录权限 0700 且必须属于当前用户。`HARNESSHUB_SEA_ROOT` 可以覆盖根目录，只用于测量。构建号是 bundle 与全部资源的 SHA-256 前 16 位。原生辅助程序只从 `dist/native` 与各包的 `dist/native` 嵌入 `build.mjs` 中 `NATIVE_HELPERS` 列出的文件，这些目录中的其他文件（例如早先构建留下的旧辅助程序）会使构建失败；`build.json` 记录每个嵌入资源的 SHA-256，`measure.mjs` 的 `asset.secret-helper` 检查当前平台的密钥辅助程序解包后与记录一致（只读文件，不访问密钥库；Linux 没有该辅助程序，检查注明原因后跳过）。
 
-**构建身份**：SEA 内嵌的 `build-info.json` 与 `dist/build-info.json` 相同，只把 `installMethod` 改为 `sea`。`harnesshub version --json` 输出它，端到端检查逐字段与构建时写入的文件比对。
+**构建身份**：SEA 内嵌的 `build-info.json` 与 `packages/daemon/dist/build-info.json` 相同，只把 `installMethod` 改为 `sea`。`harnesshub version --json` 输出它，端到端检查逐字段与构建时写入的文件比对。
 
 ## 4. 改动
 
 | 改动 | 原因与影响 |
 |---|---|
-| [src/main.ts](../../../src/main.ts) 的命令行块移入 `runFromCommandLine()`，以 `void` 调用 | Gateway 与 Worker 依赖图中唯一的顶层 await；CommonJS 不能包含顶层 await。拒绝仍不被处理，启动失败时照旧打印错误并以退出码 1 结束（已用 `--port abc` 核对）；非 SEA 行为不变，由 `pnpm check` 中从 `dist/src/main.js` 启动的 CLI smoke 测试覆盖 |
+| [packages/daemon/src/main.ts](../../../packages/daemon/src/main.ts) 的命令行块移入 `runFromCommandLine()`，以 `void` 调用 | Gateway 与 Worker 依赖图中唯一的顶层 await；CommonJS 不能包含顶层 await。拒绝仍不被处理，启动失败时照旧打印错误并以退出码 1 结束（已用 `--port abc` 核对）；非 SEA 行为不变，由 `pnpm check` 中从 `packages/daemon/dist/src/main.js` 启动的 CLI smoke 测试覆盖 |
 | 新增开发依赖 esbuild 0.28.2 | 打包器；同一版本此前已经通过 tsx 进入锁文件，没有新增包 |
 | 新增开发依赖 postject 1.0.0-alpha.6（依赖 commander 9.5.0，均为 MIT） | Node SEA 文档使用的注入工具；Node 24.20 没有内置的注入命令。两者都精确固定版本 |
 | 新增 `tools/sea/` 与手动工作流 | 构建、测量与端到端检查；不改变现有构建与 CI |
@@ -124,7 +124,7 @@ macos-13 已不再向公开仓库提供（2026-10-02 查阅 GitHub 托管 runner
 
 | 问题 | 本次处理 | 剩余工作 |
 |---|---|---|
-| SEA main 只能是 CommonJS，`src/main.ts` 有顶层 await | 改为不带顶层 await 的函数调用（第 4 节） | `src/cli.ts`（rollout 导出）同样有顶层 await，进入 SEA 前要同样处理 |
+| SEA main 只能是 CommonJS，`packages/daemon/src/main.ts` 有顶层 await | 改为不带顶层 await 的函数调用（第 4 节） | `packages/cli/src/cli.ts`（rollout 导出）同样有顶层 await，进入 SEA 前要同样处理 |
 | 子进程入口、原生辅助程序与脚本按 `import.meta.url` 相对定位 | 构建时逐模块改写，资源解包到按构建区分的根目录 | 见第 7 节第 1 项 |
 | 自有子进程用 `process.execPath` 启动，在 SEA 中会再次运行 SEA | 按角色路径分派；Worker 租约中的命令行仍与 `ps` 一致，崩溃恢复可以识别 | 无 |
 | 第三方 Node 脚本按“随附的 Node”启动：发现的 Claude 与 Codex ACP 适配器（`[node, adapter]`）、DSH、工具包中 `launch: node` 的 MCP 与 CLI 工具 | node-compat 模式，已用 ACP 夹具验证 | `Module.runMain()` 不是文档化的公开接口；不支持 Node 命令行选项（`node -e`、`--inspect` 等），`harnesshub --version` 输出的是 HarnessHub 版本；只按扩展名识别脚本 |

@@ -4,7 +4,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
-import { startHub } from "../../src/main.js";
+import { startHub } from "@harnesshub/daemon/main";
 import type { RunRecord, SessionRecord } from "@harnesshub/core/types";
 import { temporaryDirectory } from "../support/temporary.js";
 

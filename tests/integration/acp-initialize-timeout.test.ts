@@ -12,7 +12,7 @@ import { ACP_INITIALIZE_TIMEOUT_LIMIT_MS } from "@harnesshub/core/engines";
 import { normalizeEngine } from "@harnesshub/agents/engine/registry";
 import { probeConfiguration } from "@harnesshub/runtime/process/probe";
 import { ProcessWorkerHost } from "@harnesshub/runtime/process/worker-host";
-import { startHub } from "../../src/main.js";
+import { startHub } from "@harnesshub/daemon/main";
 import type { RunId, SessionId } from "@harnesshub/core/types";
 import type { ExecutionSpec, WorkerMessage } from "@harnesshub/core/ports";
 import { temporaryDirectory } from "../support/temporary.js";

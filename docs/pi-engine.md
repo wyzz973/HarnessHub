@@ -57,7 +57,7 @@ Launcher 的正例及原始 HOME、缺失凭证两项拒绝测试通过；对本
 随后复用 [文件 Benchmark](../examples/benchmark-files.json)执行一次完整文件任务，沿用相同模型和 `max` 配置：
 
 ```sh
-PATH="$PWD/.tools/node/bin:$PATH" node dist/src/benchmark-main.js --config .tmp/pi-connect/benchmark.config.json --dataset examples/benchmark-files.json --engines pi --permissions allow-once --data-dir data/benchmark-pi-files-mac
+PATH="$PWD/.tools/node/bin:$PATH" node packages/daemon/dist/src/benchmark-main.js --config .tmp/pi-connect/benchmark.config.json --dataset examples/benchmark-files.json --engines pi --permissions allow-once --data-dir data/benchmark-pi-files-mac
 ```
 
 此命令引用本次本机配置路径；在其他机器运行时需先按配置示例生成自己的完整配置。结果为 `completed` 与 `passed / json_match`，约 8.80 秒，`result.json` 的全部字段和数组顺序匹配预期。另对 `summary.txt` 独立核对了精确的 42 字节内容：`paid_orders=4 units=10 revenue_cents=5750` 加一个换行。原输入文件 SHA-256 不变，两份产物均已登记，关闭后 Worker lease 为零。

@@ -50,7 +50,7 @@ SSE使用`id: seq`、`event: type`、`data: AgentEvent JSON`。`afterSeq`优先�
 
 ## 文档维护
 
-人工说明集中在 [api-catalog.ts](../../src/gateway/api-catalog.ts)，参数与响应schema保留在原domain/route声明。运行：
+人工说明集中在 [api-catalog.ts](../../packages/daemon/src/http/api-catalog.ts)，参数与响应schema保留在原domain/route声明。运行：
 
 ```sh
 pnpm docs:api

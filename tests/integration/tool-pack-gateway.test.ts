@@ -17,9 +17,9 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import type { EngineMcpServer } from "@harnesshub/core/engine-configuration";
-import { createGateway } from "../../src/gateway/server.js";
-import { registerToolPackageRoutes } from "../../src/gateway/tool-package-routes.js";
-import { startHub } from "../../src/main.js";
+import { createGateway } from "@harnesshub/daemon/http/server";
+import { registerToolPackageRoutes } from "@harnesshub/daemon/http/tool-package-routes";
+import { startHub } from "@harnesshub/daemon/main";
 import { SESSION_WORKSPACE_PLACEHOLDER } from "@harnesshub/agents/tool-packages/index";
 import { createToolPackageManagement } from "@harnesshub/agents/tool-packages/management";
 import {

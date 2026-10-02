@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { WORKER_ENTRY } from "../support/entries.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fork } from "node:child_process";
@@ -13,11 +14,11 @@ void test(
   { timeout: 15000 },
   async (t) => {
     const root = await mkdtemp(join(tmpdir(), "hh-result-ack-reuse-"));
-    const child = fork(
-      new URL("../../src/worker/main.js", import.meta.url),
-      [],
-      { cwd: root, stdio: ["ignore", "ignore", "ignore", "ipc"], execArgv: [] },
-    );
+    const child = fork(WORKER_ENTRY, [], {
+      cwd: root,
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+      execArgv: [],
+    });
     const exit = once(child, "exit");
     let exited = false;
     child.once("exit", () => {

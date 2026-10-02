@@ -23,13 +23,19 @@
       "path": "./packages/runtime"
     },
     {
+      "path": "./packages/daemon"
+    },
+    {
+      "path": "./packages/cli"
+    },
+    {
       "path": "./packages/plugin-host"
     },
     {
       "path": "./packages/sdk"
     },
     {
-      "path": "./tsconfig.legacy.json"
+      "path": "./tests"
     }
   ]
 }

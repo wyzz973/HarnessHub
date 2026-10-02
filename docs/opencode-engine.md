@@ -30,7 +30,7 @@ DSH 设置必须选择 `deepseek-official / deepseek-v4-flash / max`。脚本读
 脚本的 `--check-config` 末尾参数只校验本地解析结果，输出模型、reasoning、插件版本和隔离模式，不调用模型。Benchmark 文件任务使用：
 
 ```sh
-PATH="$PWD/.tools/node/bin:$PATH" node dist/src/benchmark-main.js --config .tmp/opencode-file-fix/opencode-deepseek.json --dataset examples/benchmark-files.json --engines opencode-deepseek --permissions allow-once --data-dir data/benchmark-opencode-deepseek-mac
+PATH="$PWD/.tools/node/bin:$PATH" node packages/daemon/dist/src/benchmark-main.js --config .tmp/opencode-file-fix/opencode-deepseek.json --dataset examples/benchmark-files.json --engines opencode-deepseek --permissions allow-once --data-dir data/benchmark-opencode-deepseek-mac
 ```
 
 上面的配置路径是本次本机验证所生成的独立配置，不属于可跨机器直接使用的模板。其他机器应从 example 替换实际路径，并准备相应本地依赖。

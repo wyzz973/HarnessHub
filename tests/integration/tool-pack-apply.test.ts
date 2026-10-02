@@ -4,7 +4,7 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { startHub } from "../../src/main.js";
+import { startHub } from "@harnesshub/daemon/main";
 import { SESSION_WORKSPACE_PLACEHOLDER } from "@harnesshub/agents/tool-packages/index";
 import { prepareConfiguration } from "@harnesshub/agents/configuration/prepare";
 import {

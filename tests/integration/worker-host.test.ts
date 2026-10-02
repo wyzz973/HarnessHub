@@ -131,11 +131,10 @@ void test(
   "compiled Worker exits on invalid incoming protocol",
   { timeout: 10_000 },
   async (context) => {
-    const child = fork(
-      new URL("../../src/worker/main.js", import.meta.url),
-      [],
-      { stdio: ["ignore", "ignore", "ignore", "ipc"], execArgv: [] },
-    );
+    const child = fork(WORKER_ENTRY, [], {
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+      execArgv: [],
+    });
     context.after(() => {
       if (child.exitCode === null) child.kill("SIGKILL");
     });
@@ -211,7 +210,10 @@ void test(
   },
   async (context) => {
     assert.throws(
-      () => new ProcessWorkerHost({ workerEntry: "dist/src/worker/main.js" }),
+      () =>
+        new ProcessWorkerHost({
+          workerEntry: "packages/daemon/dist/src/worker/main.js",
+        }),
       /workerEntry must be a file URL or an absolute path/,
     );
     const directory = await mkdtemp(join(tmpdir(), "harnesshub-worker-entry-"));
