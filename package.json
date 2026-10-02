@@ -11,7 +11,7 @@
   "packageManager": "pnpm@10.12.3",
   "scripts": {
     "check:runtime": "node scripts/check-runtime.mjs",
-    "build": "tsc -p tsconfig.json && node scripts/build-info.mjs && node scripts/build-keychain.mjs && node scripts/build-windows-job.mjs && node scripts/build-windows-acl.mjs",
+    "build": "node scripts/clean-build.mjs && tsc -p tsconfig.json && node scripts/build-info.mjs && node scripts/build-keychain.mjs && node scripts/build-windows-job.mjs && node scripts/build-windows-acl.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src tests --max-warnings=0",
     "format:check": "prettier --check package.json tsconfig.json eslint.config.mjs \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/check-boundaries*.mjs\" \"scripts/check-runtime*.mjs\" \".github/workflows/*.yml\"",

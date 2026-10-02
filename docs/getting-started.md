@@ -67,7 +67,7 @@ curl -s -X POST http://127.0.0.1:3180/v1/sessions \
 
 ## 数据与停止
 
-数据目录含 `harnesshub.sqlite`、产物、Worker lease、后端checkpoint/私有目录；这些都不属于源代码。停止Gateway先用Ctrl+C等待清理，避免直接杀进程造成未知执行结果。重新启动使用原数据目录可查询已提交历史；运行中崩溃的任务不会自动重跑。
+数据目录含 `harnesshub.sqlite`、所有权锁 `harnesshub.sqlite.lock`、产物、Worker lease、后端checkpoint/私有目录；这些都不属于源代码。同一数据目录同时只能有一个 Gateway：所有权是锁文件上的操作系统文件锁，进程退出（包括崩溃）时由系统释放，与 PID 无关；第二个 Gateway 在写入数据目录中的任何文件之前就以 `RUNTIME_ALREADY_RUNNING` 失败。停止Gateway先用Ctrl+C等待清理，避免直接杀进程造成未知执行结果。重新启动使用原数据目录可查询已提交历史；运行中崩溃的任务不会自动重跑。
 
 目录升级前应在停止写入或使用一致备份机制后备份SQLite及关联产物/后端目录。引擎目录当前为version2，兼容读取version1；旧版本程序不能保证读取新目录。不要删库来绕过迁移或恢复失败。
 
@@ -84,7 +84,7 @@ curl -s -X POST http://127.0.0.1:3180/v1/sessions \
 | API 200但检查失败 | `/engines/:id/test`的分项在`checks[].status`，不能只看HTTP状态 |
 | 更新配置后老对话没变 | 正常；已有Session固定revision，为新配置创建新Session |
 | curl SSE结束/断开 | SSE断开不取消Run；带游标重连并查询Run状态 |
-| `RUNTIME_ALREADY_RUNNING` | 已有Gateway拥有该数据库；不要开第二个写入者或删除owner记录 |
+| `RUNTIME_ALREADY_RUNNING` | 另一个仍在运行的 Gateway 持有该数据目录的锁；换用其他 `--data-dir` 或先停止它。删除 owner 记录不会绕过它；不要删除运行中的锁文件（POSIX 上锁随文件而非路径，删除后第二个实例会建立新锁） |
 | Windows能否直接使用 | 原生启动、Job 监督、脚本后缀与文件路径在早期版本取得过 Windows 证据；见 [Windows 指南](windows.md)及[平台边界](../DESIGN.md#8-windows-能力与验证边界) |
 
 ## 本地开发

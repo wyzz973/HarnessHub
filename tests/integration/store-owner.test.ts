@@ -54,11 +54,17 @@ void test("owner lease rejects live instances and stale releases cannot remove a
   open().acquireOwner();
 });
 
-void test("owner close only deletes its token even when operational metadata was replaced", (t) => {
+void test("owner close only deletes its own token; a record without a lock holder is stale", (t) => {
   const { open, path } = fixture(t);
   const first = open();
   first.acquireOwner();
   const db = new DatabaseSync(path);
+  const ownerToken = () =>
+    db
+      .prepare(
+        "SELECT json_extract(value, '$.token') AS token FROM runtime_metadata WHERE key = 'owner'",
+      )
+      .get()?.token;
   try {
     db.prepare("UPDATE runtime_metadata SET value = ? WHERE key = 'owner'").run(
       JSON.stringify({
@@ -68,19 +74,55 @@ void test("owner close only deletes its token even when operational metadata was
       }),
     );
     first.close();
-    assert.throws(() => open().acquireOwner(), /Another live Gateway/);
-    assert.equal(
-      db
-        .prepare(
-          "SELECT json_extract(value, '$.token') AS token FROM runtime_metadata WHERE key = 'owner'",
-        )
-        .get()?.token,
-      "replacement-owner",
-    );
+    assert.equal(ownerToken(), "replacement-owner");
+    // Nobody holds the lock any more, so the remaining record is stale.
+    open().acquireOwner();
+    assert.notEqual(ownerToken(), "replacement-owner");
   } finally {
     db.close();
   }
 });
+
+void test(
+  "a stale owner record naming a live, unrelated PID cannot block startup",
+  { timeout: 10_000 },
+  async (t) => {
+    const { open, path } = fixture(t);
+    open().close();
+    // Stands in for an unrelated process that reused the dead Gateway's PID.
+    const unrelated = spawn(
+      process.execPath,
+      ["-e", "setInterval(() => {}, 1000)"],
+      {
+        stdio: "ignore",
+      },
+    );
+    t.after(() => unrelated.kill("SIGKILL"));
+    await new Promise<void>((resolve, reject) => {
+      unrelated.once("spawn", resolve);
+      unrelated.once("error", reject);
+    });
+    const db = new DatabaseSync(path);
+    try {
+      db.exec(
+        "CREATE TABLE IF NOT EXISTS runtime_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL CHECK(json_valid(value)))",
+      );
+      db.prepare(
+        "INSERT INTO runtime_metadata (key, value) VALUES ('owner', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      ).run(
+        JSON.stringify({
+          pid: unrelated.pid,
+          token: "dead-gateway",
+          startedAt: 1,
+        }),
+      );
+    } finally {
+      db.close();
+    }
+    const release = open().acquireOwner();
+    release();
+  },
+);
 
 void test(
   "dead owner recovery serializes competing startups in the same SQLite transaction",
