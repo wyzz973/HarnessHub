@@ -82,4 +82,4 @@ node --test dist/tests/unit/model-gateway-configuration.test.js packages/daemon/
 node --test dist/tests/integration/chat-completions.test.js
 ```
 
-未验证：固定版本引擎经网关的真实任务（`native-mcp-engines` 的显式验收在 Windows ARM64 准备包上运行，本次未执行）、Windows x64、目标上游的真实模型；Copilot 的窗口与输出变量；各引擎在私有 HOME 下首次启动时的离线行为（例如 OpenCode/MiMo 后台安装插件包失败被忽略、pi-acp 每次新建会话执行一次 `npm view`）。
+未验证：固定版本引擎经网关的真实任务（随 M1 的 Adapter 一致性套件重建，见 [原生 MCP](native-mcp.md#验证)）、Windows x64、目标上游的真实模型；Copilot 的窗口与输出变量；各引擎在私有 HOME 下首次启动时的离线行为（例如 OpenCode/MiMo 后台安装插件包失败被忽略、pi-acp 每次新建会话执行一次 `npm view`）。

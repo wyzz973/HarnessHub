@@ -29,25 +29,12 @@ Kimi 的限制来自固定源码：CLI 直接解析 JSON，交给 FastMCP 3.2.4�
 
 OpenClaw 直接使用其内置 MCP 客户端与生命周期，支持 `mcp.servers` 的三个传输类型；不需要下载插件。工具仍经过 OpenClaw 自身的 profile 和 policy。[OpenClaw MCP 文档](https://docs.openclaw.ai/tools/mcp)、[原生配置](https://docs.openclaw.ai/gateway/config-extensions)。
 
-MiMo 0.1.14 的原生 INFO 日志会序列化 ACP Session 的 `mcpServers`，包含解密后的 env。托管 MCP 因而要求原生 `--log-level ERROR`：缺少参数时添加；已有 ERROR 保留，其他日志等级或缺值明确拒绝。固定程序验收会检查整个 backend 私有目录，不能仅因为秘密没有进入公开事件就认定没有落盘。
+MiMo 0.1.14 的原生 INFO 日志会序列化 ACP Session 的 `mcpServers`，包含解密后的 env。托管 MCP 因而要求原生 `--log-level ERROR`：缺少参数时添加；已有 ERROR 保留，其他日志等级或缺值明确拒绝。真实引擎验收必须检查整个 backend 私有目录，不能仅因为秘密没有进入公开事件就认定没有落盘。
 
 ## 验证
 
 单元测试覆盖私有路径约束、已有模型/工具策略保留、秘密引用、重复 native owner、错误 Driver、Kimi 秘密及固定参数拒绝。
 
-`tests/integration/native-mcp-engines.test.ts` 是显式启用的固定程序验收；默认不启动原生引擎并记录 skipped，不代替单元检查。设置开关后若缺少准备包则明确失败。在准备好 Windows 11 ARM64 固定引擎后运行：
+真实引擎经原生 MCP 的验收尚未在开源版本中重建。比赛版本曾有一个显式启用的固定程序验收，依赖 Windows 11 ARM64 准备包与比赛期的启动脚本；开源快照不含二者，该用例只会跳过，已随 #34 删除，原内容保留在 `archive/competition` 分支。2026-09-07 它在比赛版本上通过十个固定引擎的 Chat + Skill 注入 + stdio MCP 链路与 Pi 的两个失败分支，这一结果早于统一模型网关，也不代表当前版本。重建属于 M1 的 Adapter 一致性套件（[10 工程体系](proposals/oss/10-engineering.md#33-三类一致性套件)）：经正式 Gateway 与 Worker 启动固定版本的真实引擎，确认 MCP 工具调用的真实参数与结果回到模型、关闭 Session 后工具进程不存在，并扫描 backend 私有目录不含合成密钥。
 
-```powershell
-$env:HARNESSHUB_TEST_NATIVE_MCP = '1'
-& '.tools/node-v24.20.0-win-arm64/node.exe' tools/clean-build.mjs
-& '.tools/node-v24.20.0-win-arm64/node.exe' node_modules/typescript/bin/tsc -b
-& '.tools/node-v24.20.0-win-arm64/node.exe' --test dist/tests/integration/native-mcp-engines.test.js
-```
-
-测试通过正式 Gateway 创建 Session、提交 Run，由编译后的 Worker 启动原生程序。本地 Chat Completions 服务返回工具调用；独立 stdio MCP 服务记录 `tools/call` 的真实参数，随后确认工具结果回到模型。固定 Skill 内容和附件 `base_directory` 必须出现在原生程序发出的模型请求中；这证明上下文注入，不将其称作附件文件已被工具读取。出现原生权限请求时，仅对 fixture 指定的工具调用通过正式权限 API 执行一次允许。关闭 Session 后核实工具进程及故意保留的子进程不存在，并扫描 backend 文件不含合成 MCP 密钥。另有 Pi 初始化失败及工具执行中取消分支。所有模型请求只到随机 loopback 端口，HTTP 代理拒绝外部 CONNECT，使用合成密钥，未调用外部模型。
-
-2026-09-07 本机 Windows 11 ARM64、Node 24.20.0 已完成十个固定引擎的 Chat + Skill 注入 + stdio MCP 成功链路：Codex、Gemini、Qwen、Pi、MiMo、DSH、OpenClaw、Kimi、OpenCode、Hermes。当时 Codex/Gemini 经过 ADR 0011 的本地 Chat Completions 转换，其余引擎直连本地合成服务；Hermes 使用固定 x64 Python 仿真。加上 Pi 初始化失败、执行中取消，共十二个分支通过。MiMo 在原生日志等级修复后通过全量秘密扫描。
-
-ADR 0013 之后，这十个引擎的 `openai-completions` provider 都经 Worker 的统一模型网关访问本地合成服务：合成服务仍收到上游密钥与真实模型名，引擎只看到网关地址、本地令牌和 alias。上述 2026-09-07 结果早于这次变更，不代表网关接入后的通过；需要在准备包上按本节命令重新执行。
-
-HTTP/SSE 的配置映射已实现，当前固定程序验收用例不覆盖远程服务器的 OAuth、TLS 证书或资源/提示词调用。没有提供这些能力的等价承诺。
+HTTP/SSE 的配置映射已实现，但没有真实引擎验收覆盖远程服务器的 OAuth、TLS 证书或资源/提示词调用，也没有提供这些能力的等价承诺。
