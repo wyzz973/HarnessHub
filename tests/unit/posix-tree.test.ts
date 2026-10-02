@@ -350,6 +350,14 @@ void test("a recorded Worker tree seeds from the group when the root is a zombie
   // Reaped before the snapshot but present: the PID and group may be reused.
   assert.deepEqual(workerTree(live, 500, false, identity), []);
   assert.deepEqual(workerTree(zombie, 500, false, identity), []);
+  // A snapshot that does not show this process cannot shield it or its
+  // ancestors, so it counts as unreadable.
+  const withoutSelf = new Map(live);
+  withoutSelf.delete(SELF);
+  assert.throws(
+    () => workerTree(withoutSelf, 500, true, identity),
+    ProcessTableError,
+  );
 });
 
 void test("a group is signalled whole only when its leader and all live members are owned and it is not this process's group", () => {

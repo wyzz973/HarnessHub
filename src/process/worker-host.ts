@@ -629,7 +629,13 @@ export class ProcessWorkerHost implements WorkerHost {
     try {
       const identity = gatewayIdentity();
       const snapshot = await readProcessTable();
-      return workerTree(snapshot.table, pid, unreaped, identity);
+      // Re-check after the await: if the Worker was reaped during the snapshot,
+      // a live row with its PID may already belong to another process; a row
+      // that is still a zombie is the Worker itself.
+      const rootTrusted =
+        unreaped &&
+        (!worker.hasExited || snapshot.table.get(pid)?.zombie === true);
+      return workerTree(snapshot.table, pid, rootTrusted, identity);
     } catch (error) {
       // Only the snapshot can fail here; its reason is a fixed string.
       this.log.info("worker.tree_record_failed", {

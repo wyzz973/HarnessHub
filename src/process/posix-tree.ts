@@ -89,6 +89,20 @@ export function groupShieldsSelf(
   return [...lineage(table, self)].some((pid) => table.get(pid)?.pgid === pgid);
 }
 
+/**
+ * A snapshot that does not show this process cannot shield it or its
+ * ancestors (for example a non-dumpable Gateway hidden from the Linux scanner
+ * by `hidepid`), so it counts as unreadable.
+ *
+ * @throws ProcessTableError
+ */
+function requireSelf(table: ProcessTable, identity: ScanIdentity): void {
+  if (!table.has(identity.self))
+    throw new ProcessTableError(
+      "this process is missing from the process table",
+    );
+}
+
 /** Processes reachable from seeds: owned ones, and other users' ones where the walk stopped. */
 export interface Ownership {
   owned: ProcessRow[];
@@ -148,6 +162,7 @@ export function workerTree(
   rootUnreaped: boolean,
   identity: ScanIdentity,
 ): TreeProcess[] {
+  requireSelf(table, identity);
   const rootRow = table.get(root);
   if (!rootUnreaped && rootRow) return [];
   const seeds = [...table.values()]
@@ -318,6 +333,7 @@ async function survivors(
   identity: ScanIdentity,
 ): Promise<Survivors> {
   const snapshot = await readMarkerSnapshot(marker);
+  requireSelf(snapshot.table, identity);
   const seeds = new Set(snapshot.marked);
   for (const entry of recorded)
     if (snapshot.table.get(entry.pid)?.started === entry.started)
