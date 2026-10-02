@@ -282,7 +282,8 @@ function findIssuedCall(messages, issued) {
 function bearer(request) {
   const header = request.headers.authorization;
   if (typeof header !== "string") return undefined;
-  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
+  // `\s+` then `\S` cannot overlap, so matching stays linear in the header length.
+  const match = /^Bearer\s+(\S.*)$/i.exec(header.trim());
   return match?.[1];
 }
 

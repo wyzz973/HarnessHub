@@ -1,0 +1,45 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Dependency updates as defined in docs/proposals/oss/10-engineering.md section 7.",
+  "extends": ["config:recommended", ":semanticCommits", "helpers:pinGitHubActionDigests"],
+  "timezone": "Asia/Shanghai",
+  "schedule": ["before 9am on monday"],
+  "minimumReleaseAge": "3 days",
+  "rangeStrategy": "pin",
+  "labels": ["kind/chore"],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 9am on the first day of the month"]
+  },
+  "vulnerabilityAlerts": {
+    "labels": ["kind/chore", "security"],
+    "schedule": ["at any time"],
+    "minimumReleaseAge": null
+  },
+  "packageRules": [
+    {
+      "description": "Development dependencies are grouped; patch and minor updates merge once the required checks pass.",
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "groupName": "development dependencies",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "Runtime dependencies, the Node.js and pnpm versions, and GitHub Actions are reviewed by hand.",
+      "matchDepTypes": ["dependencies", "packageManager", "engines"],
+      "automerge": false
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions",
+      "addLabels": ["area/ci"],
+      "automerge": false
+    },
+    {
+      "matchManagers": ["nodenv"],
+      "automerge": false
+    }
+  ]
+}
