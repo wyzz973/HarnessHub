@@ -7,7 +7,7 @@
  * Contract emulated:
  * - Only `POST /v1/chat/completions` with `stream: true`; non-streaming requests,
  *   vendor-only fields, `developer` roles and a model other than `--model` get HTTP 400
- *   (rules in scripts/lib/strict-chat.mjs).
+ *   (rules in tools/lib/strict-chat.mjs).
  * - Every answer streams `reasoning_content` before the text; the final chunk carries
  *   `finish_reason` plus usage, followed by `data: [DONE]`.
  * - When the current user turn contains `HH_MOCK_TOOL` and the request offers a shell-like
@@ -29,7 +29,7 @@
  * returns request records without prompts or credentials; `--log` appends the same records
  * as JSON lines.
  *
- * Usage: node scripts/mock-chat-provider.mjs [--host 127.0.0.1] [--port 0] [--model upstream-sim]
+ * Usage: node tools/mock-chat-provider.mjs [--host 127.0.0.1] [--port 0] [--model upstream-sim]
  *   [--api-key-env NAME] [--log FILE] [--ready-file FILE] [--quirks] [--slow-ms 120000]
  */
 import { createHash, randomUUID } from "node:crypto";
@@ -784,7 +784,7 @@ if (
     });
     if (values.help) {
       console.log(
-        "node scripts/mock-chat-provider.mjs [--host 127.0.0.1] [--port 0] [--model upstream-sim] [--api-key-env NAME] [--log FILE] [--ready-file FILE] [--quirks] [--slow-ms 120000]",
+        "node tools/mock-chat-provider.mjs [--host 127.0.0.1] [--port 0] [--model upstream-sim] [--api-key-env NAME] [--log FILE] [--ready-file FILE] [--quirks] [--slow-ms 120000]",
       );
     } else {
       const port = Number(values.port);

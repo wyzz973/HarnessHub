@@ -4,9 +4,9 @@
  * Build the HarnessHub single executable for the current platform (SEA feasibility spike,
  * OSS-008). Run after `pnpm build`; the result goes to dist/sea/.
  *
- * Usage: node scripts/sea/build.mjs [--out dist/sea]
+ * Usage: node tools/sea/build.mjs [--out dist/sea]
  *
- * Steps: esbuild bundles scripts/sea/entry.mjs with the Gateway, the Worker, the command MCP
+ * Steps: esbuild bundles tools/sea/entry.mjs with the Gateway, the Worker, the command MCP
  * and the engine launcher into one CommonJS script, rewriting `import.meta.url` of every module
  * to its repository-relative location under the runtime extraction root (see entry.mjs); files
  * other programs read from disk become SEA assets; `node --experimental-sea-config` writes the
@@ -171,7 +171,7 @@ export async function buildSea({ out = path.join(ROOT, "dist", "sea") } = {}) {
 
   const bundled = await esbuild.build({
     absWorkingDir: ROOT,
-    entryPoints: ["scripts/sea/entry.mjs"],
+    entryPoints: ["tools/sea/entry.mjs"],
     bundle: true,
     platform: "node",
     target: "node24",

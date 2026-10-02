@@ -2,13 +2,13 @@ name: SEA spike
 
 # OSS-008 single-executable feasibility spike (ADR-P01). Builds the SEA on each target's
 # native runner, measures size and cold start, and runs the end-to-end check from
-# scripts/sea/measure.mjs. Runs on demand and on pull requests that change the SEA
+# tools/sea/measure.mjs. Runs on demand and on pull requests that change the SEA
 # tooling; uploads one small JSON result per platform and never publishes the binary.
 # Findings: docs/proposals/oss/sea-spike.md.
 on:
   pull_request:
     paths:
-      - "scripts/sea/**"
+      - "tools/sea/**"
       - ".github/workflows/sea-spike.yml"
   workflow_dispatch:
     inputs:
@@ -64,13 +64,13 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - name: Build the single executable
-        run: node scripts/sea/build.mjs
+        run: node tools/sea/build.mjs
       - name: Measure and run the end-to-end check
         shell: bash
         env:
           RUNS: ${{ inputs.runs || '10' }}
           TARGET: ${{ matrix.target }}
-        run: node scripts/sea/measure.mjs --runs "$RUNS" --baseline --out "dist/sea/result-$TARGET.json"
+        run: node tools/sea/measure.mjs --runs "$RUNS" --baseline --out "dist/sea/result-$TARGET.json"
       - name: Upload the result
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

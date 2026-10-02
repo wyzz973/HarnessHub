@@ -3,7 +3,7 @@
 /**
  * Measure and check a HarnessHub single executable (SEA feasibility spike, OSS-008).
  *
- * Usage: node scripts/sea/measure.mjs [--binary dist/sea/harnesshub] [--runs 10]
+ * Usage: node tools/sea/measure.mjs [--binary dist/sea/harnesshub] [--runs 10]
  *   [--out dist/sea/result.json] [--baseline]
  *
  * Cold start: time from spawn to the `ready` line of `serve --demo --port 0`, each run with a
@@ -24,7 +24,7 @@
  * terminates).
  *
  * Writes one JSON result; exits 1 when any check or measured start fails. Never contacts
- * anything but loopback. Needs `pnpm build` (for the fixture) and scripts/sea/build.mjs.
+ * anything but loopback. Needs `pnpm build` (for the fixture) and tools/sea/build.mjs.
  */
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";

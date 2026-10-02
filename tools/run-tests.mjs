@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 /**
  * Run a test suite in an isolated environment.
- * Usage: node scripts/run-tests.mjs <suite> [--inventory FILE] [file ...]
+ * Usage: node tools/run-tests.mjs <suite> [--inventory FILE] [file ...]
  *
  * Suites are listed in SUITES. Tests never see the developer's shell: the
  * `node --test` process gets the system variables of lib/environment.mjs, any
@@ -40,7 +40,7 @@ const INVENTORY_REPORTER = new URL("./test-inventory-reporter.mjs", import.meta.
 
 /** Default file patterns, per-test timeout and suite deadline. */
 export const SUITES = {
-  tooling: { files: ["scripts/check-*.test.mjs"], testTimeoutMs: 60_000, deadlineMs: 5 * 60_000 },
+  tooling: { files: ["tools/check-*.test.mjs"], testTimeoutMs: 60_000, deadlineMs: 5 * 60_000 },
   unit: { files: ["dist/tests/unit/*.test.js"], testTimeoutMs: 60_000, deadlineMs: 10 * 60_000 },
   integration: { files: ["dist/tests/integration/*.test.js"], testTimeoutMs: 120_000, deadlineMs: 25 * 60_000 },
   smoke: { files: ["dist/tests/smoke/*.test.js"], testTimeoutMs: 120_000, deadlineMs: 10 * 60_000 },
@@ -209,7 +209,7 @@ export async function runSuite({
  * @throws {Error} For an unknown suite or option, or `--inventory` without a file.
  */
 export function parseCommandLine(args, env) {
-  const usage = `usage: node scripts/run-tests.mjs <${Object.keys(SUITES).join("|")}> [--inventory FILE] [file ...]`;
+  const usage = `usage: node tools/run-tests.mjs <${Object.keys(SUITES).join("|")}> [--inventory FILE] [file ...]`;
   let parsed;
   try {
     parsed = parseArgs({ args, options: { inventory: { type: "string" } }, allowPositionals: true, strict: true });

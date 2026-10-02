@@ -1,6 +1,6 @@
 # Single source of truth for the repository's issue and pull request labels.
 # The Labels workflow applies this file to the repository on every change on
-# main (scripts/check-labels.mjs --sync); do not create or edit labels by hand.
+# main (tools/check-labels.mjs --sync); do not create or edit labels by hand.
 # It never deletes labels: remove an obsolete label manually after review.
 # The label scheme is defined in
 # docs/proposals/oss/11-governance.md, section 6. Triage rules are in MAINTAINERS.md.

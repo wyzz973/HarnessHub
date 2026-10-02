@@ -2,7 +2,7 @@
 
 状态：提案（草案），2026-10-02。术语、包名、端口与技术选型以 [02 系统架构](02-architecture.md) 为准，版本范围与成功指标以 [01 产品定义](01-product.md) 为准，许可证、存储、API 版本等决定见 [ADR 草案](adr-drafts.md)。采纳后，本文内容拆分进 [开发规范](../../development.md)、[测试要求](../../testing.md) 与 [文档规范](../../documentation.md)；现有规则中与比赛、公司和单一平台无关的部分全部沿用。
 
-本文出现的 `pnpm` 脚本、`tools/` 下的工具与工作流文件都是计划名称，尚未创建。它们在实现并通过各自的无效样例测试之前，不能被写成“可运行”或“已接入”。
+本文出现的 `pnpm` 脚本、`tools/` 下的新工具与工作流文件都是计划名称，尚未创建；`tools/` 目录与其中现有的仓库工具已在 OSS-004 第 1 步从 `scripts/` 移入。它们在实现并通过各自的无效样例测试之前，不能被写成“可运行”或“已接入”。
 
 ## 1. 仓库结构
 
@@ -45,7 +45,7 @@ rfcs/                RFC 正文与模板，流程见 11 开源治理
 
 `apps/hh` 只做两件事：把 `serve` 与 Worker 子命令交给 `daemon`，其余子命令交给 `cli`。它没有业务逻辑，因此不构成第二个组合根。原生辅助程序（macOS Keychain、Windows DPAPI 与 Job Object）在 SEA 中作为带哈希的内嵌资源，首次使用时解压到私有目录并校验；npm 发行时按 `@harnesshub/native-<os>-<arch>` 可选依赖分发。
 
-依赖方向由 `tools/check-boundaries` 强制执行，它由现有 [边界检查](../../../scripts/check-boundaries.mjs) 演进而来，分两层检查：各包 `package.json` 声明的内部依赖必须是 02 依赖图的子集；源码中的静态导入、动态导入、类型导入与 re-export 只能指向已声明的依赖。`conformance/`、`tests/e2e`、`tests/browser` 与 `examples/` 是黑盒，只能使用 `core`、`sdk`、HTTP 接口与 `hh` 命令。第三方依赖只能出现在声明它的包内，并且不得出现在该包的公开类型中，后者由第 2 节的 API 报告检查。检查脚本对每条规则保留拒绝样例。
+依赖方向由 `tools/check-boundaries` 强制执行，它由现有 [边界检查](../../../tools/check-boundaries.mjs) 演进而来，分两层检查：各包 `package.json` 声明的内部依赖必须是 02 依赖图的子集；源码中的静态导入、动态导入、类型导入与 re-export 只能指向已声明的依赖。`conformance/`、`tests/e2e`、`tests/browser` 与 `examples/` 是黑盒，只能使用 `core`、`sdk`、HTTP 接口与 `hh` 命令。第三方依赖只能出现在声明它的包内，并且不得出现在该包的公开类型中，后者由第 2 节的 API 报告检查。检查脚本对每条规则保留拒绝样例。
 
 ## 2. 代码规范
 

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 /**
  * Check that every source file starts with an SPDX license identifier.
- * Usage: node scripts/check-spdx.mjs [--root <directory>]
+ * Usage: node tools/check-spdx.mjs [--root <directory>]
  *
  * Scans SOURCE_ROOTS below for SOURCE_EXTENSIONS, skipping generated and
  * dependency directories and tool package payloads, whose bytes their manifests
@@ -16,7 +16,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SOURCE_ROOTS = ["src", "tests", "scripts", "examples", "web/app", "web/components", "web/lib"];
+const SOURCE_ROOTS = ["src", "tests", "tools", "scripts", "examples", "web/app", "web/components", "web/lib"];
 const ROOT_FILES = ["eslint.config.mjs", "web/next.config.ts", "web/postcss.config.mjs"];
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".mjs", ".js", ".cjs", ".cs", ".swift"]);
 const SKIPPED_DIRECTORIES = new Set(["node_modules", "dist", ".next", "out", "coverage"]);

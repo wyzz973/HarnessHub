@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 /**
  * Small offline check for this repository's Markdown, not a CommonMark parser.
- * Usage: node scripts/check-docs.mjs [--root <directory>]
+ * Usage: node tools/check-docs.mjs [--root <directory>]
  *
  * Checks .md/.markdown files recursively, except GENERATED_DIRECTORIES below.
  * Supports top-level fences (0-3 spaces, backticks or tildes), matching backtick
@@ -243,7 +243,7 @@ export async function checkDocs(rootDirectory = DEFAULT_ROOT) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   if (args.length && (args.length !== 2 || args[0] !== '--root' || !args[1])) {
-    console.error('Usage: node scripts/check-docs.mjs [--root <directory>]');
+    console.error('Usage: node tools/check-docs.mjs [--root <directory>]');
     process.exitCode = 2;
   } else {
     try {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 /**
- * Upstream model gateway emulation shared by scripts/strict-chat-proxy.mjs and
- * scripts/mock-chat-provider.mjs (ADR 0013). The upstream gateway accepts only
+ * Upstream model gateway emulation shared by tools/strict-chat-proxy.mjs and
+ * tools/mock-chat-provider.mjs (ADR 0013). The upstream gateway accepts only
  * streaming OpenAI Chat Completions; these rules reject the vendor-specific
  * parameters that the unified model gateway is required to remove or rewrite.
  *

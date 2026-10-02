@@ -59,4 +59,4 @@ pnpm check:api
 
 生成器启动一个临时demo Gateway以读取实际路由，不调用引擎/模型；同时补齐导出版的SSE/NDJSON/二进制媒体类型。`check:api`双向检查路由与文档覆盖、唯一operationId、源码/测试链接以及生成文件是否过期，已加入`pnpm check`。泛型JSON扩展事件/原生观测仍保留开放schema，不假装为第三方所有payload提供封闭类型。
 
-新增、删除或修改路由时，同次更新catalog、schema、实现与相关测试，然后重新生成两个文件；不要直接编辑reference.md/openapi.json。检查器的拒绝用例见 [API文档检查测试](../../scripts/check-api-docs.test.mjs)。
+新增、删除或修改路由时，同次更新catalog、schema、实现与相关测试，然后重新生成两个文件；不要直接编辑reference.md/openapi.json。检查器的拒绝用例见 [API文档检查测试](../../tools/check-api-docs.test.mjs)。

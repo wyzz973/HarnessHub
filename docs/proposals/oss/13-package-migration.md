@@ -6,7 +6,7 @@
 
 ## 1. 现状
 
-`src` 有 105 个源文件。测试有单元 38 个、集成 42 个、smoke 3 个文件，另有 16 个 fixture 与 2 个支持文件；`scripts/` 下有 14 个工具测试文件。模块之间的导入（不含模块内部导入）：
+`src` 有 105 个源文件。测试有单元 38 个、集成 42 个、smoke 3 个文件，另有 16 个 fixture 与 2 个支持文件；`scripts/` 下有 14 个工具测试文件（第 1 步后位于 `tools/`）。模块之间的导入（不含模块内部导入）：
 
 | 模块 | 导入的其他模块（导入数） | 第三方 |
 |---|---|---|
@@ -52,7 +52,7 @@
 
 `apps/hh`：npm 包名 `harnesshub`，命令 `hh`；`src/main.ts` 把 `serve`、`benchmark`、`tools` 分派给 daemon，把 `rollout` 分派给 cli（从各入口的直接执行判断中抽出 `main(argv)` 函数）。OSS-008 之前 Worker 仍按路径派生。根包改名（如 `harnesshub-workspace`）。
 
-`tools/`：`scripts/` 下的仓库工具全部移入，包括 `check-*` 及其测试、`run-tests`、`lib/`、`build-*`、`clean-build`、`build-info`、`generate-api-docs`、`console`、`start-local`、`mock-chat-provider`、`strict-chat-proxy`、`compare-inventory` 等。`scripts/` 只保留已登记引擎命令与 `engines/*.example.json` 中以绝对路径保存的运行时文件：`launch-engine.mjs`、`spawn-engine.mjs`、`launch-{dsh,openclaw,opencode,pi}-acp.mjs`、`native-mcp/pi-extension.mjs`；`cross-spawn` 因此仍是根依赖。
+`tools/`：`scripts/` 下的仓库工具全部移入，包括 `check-*` 及其测试、`run-tests`、`lib/`、`build-*`、`clean-build`、`build-info`、`generate-api-docs`、`console`、`start-local`、`mock-chat-provider`、`strict-chat-proxy`、`compare-inventory`，以及 OSS-008 的 SEA 原型 `sea/`。`scripts/` 只保留已登记引擎命令与 `engines/*.example.json` 中以绝对路径保存的运行时文件：`launch-engine.mjs`、`spawn-engine.mjs`、`launch-{dsh,openclaw,opencode,pi}-acp.mjs`、`native-mcp/pi-extension.mjs`；`cross-spawn` 因此仍是根依赖。原生辅助程序源码 `scripts/native/` 也暂留原处，在第 3、4、8 步随所属包一次迁移，避免移动两次。
 
 测试：25 个单元测试移入所属包的 `packages/<包>/test/`。core：schema、worker-protocol；gateway：model-gateway、model-gateway-runs、model-gateway-upstream、model-gateway-keepalive；agents：command-mcp-windows-batch、config、discovery、engine-manager、harness-model、installation、mimo-mcp-logging、native-mcp、qwen-configuration、registry-harness-model、tool-packages-import、tool-packages-manifest、windows-launch；runtime：files、runtime-inspection；daemon：benchmark-report、diagnostic-log、openapi、session-log-reader、worker-outcome。其余单元测试跨包或依赖 `tests/support`，暂留 `tests/unit`。集成、smoke、fixture 与支持文件不动；新增 `tests/support/entries.ts` 向测试提供各入口路径。
 
@@ -100,7 +100,7 @@ daemon 内只有 `src/worker/**` 可以导入 drivers。
 | 10 | 控制台迁移 | 中 |
 | 11 | 迁移包内单元测试；apps/hh 骨架及 1 个 smoke 测试（唯一的用例数变化）；最终对账 | 低中 |
 
-对账方法：测试启动器以 `--inventory` 写出每组用例清单（组名、测试文件名、名称路径、状态），CI 在 `pnpm check` 中设置 `HARNESSHUB_TEST_INVENTORY_DIR` 并按平台上传 `test-inventory-<os>` 构件；用 [`compare-inventory.mjs`](../../../scripts/compare-inventory.mjs) 按平台比较上一步与本步的清单，它忽略文件位置，按组名、名称路径与状态计数匹配。每一步差异必须为空；第 11 步的新 smoke 测试经 `--allow` 列为唯一的预期新增。工具用法见 [测试要求](../../testing.md#测试可靠性)。
+对账方法：测试启动器以 `--inventory` 写出每组用例清单（组名、测试文件名、名称路径、状态），CI 在 `pnpm check` 中设置 `HARNESSHUB_TEST_INVENTORY_DIR` 并按平台上传 `test-inventory-<os>` 构件；用 [`compare-inventory.mjs`](../../../tools/compare-inventory.mjs) 按平台比较上一步与本步的清单，它忽略文件位置，按组名、名称路径与状态计数匹配。每一步差异必须为空；第 11 步的新 smoke 测试经 `--allow` 列为唯一的预期新增。工具用法见 [测试要求](../../testing.md#测试可靠性)。
 
 ## 6. 决定
 

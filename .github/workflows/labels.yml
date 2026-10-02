@@ -3,7 +3,7 @@ name: Labels
 on:
   push:
     branches: [main]
-    paths: [.github/labels.yml, scripts/check-labels.mjs]
+    paths: [.github/labels.yml, tools/check-labels.mjs]
   workflow_dispatch:
 
 permissions:
@@ -28,7 +28,7 @@ jobs:
           node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: node scripts/check-labels.mjs --sync
+      - run: node tools/check-labels.mjs --sync
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}

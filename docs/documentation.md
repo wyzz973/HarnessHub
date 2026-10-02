@@ -51,7 +51,7 @@ TypeScript 类型只有一个定义。文档优先链接声明；需要复制时
 
 ## 自动检查与人工审查
 
-已有 [文档检查脚本](../scripts/check-docs.mjs) 检查项目 Markdown 的 UTF-8/BOM/换行、代码围栏闭合，以及代码区域外显式行内本地链接的文件存在性与根目录范围。无 Markdown、无效内容或错误链接应以非零退出；[检查脚本测试](../scripts/check-docs.test.mjs)用临时项目验证接受与拒绝行为。
+已有 [文档检查脚本](../tools/check-docs.mjs) 检查项目 Markdown 的 UTF-8/BOM/换行、代码围栏闭合，以及代码区域外显式行内本地链接的文件存在性与根目录范围。无 Markdown、无效内容或错误链接应以非零退出；[检查脚本测试](../tools/check-docs.test.mjs)用临时项目验证接受与拒绝行为。
 
 当前检查不验证 HTTPS 可用性、页内/跨页标题锚点、定义式链接、autolink/HTML、完整 CommonMark 容器语法、Mermaid 渲染或 TS 示例编译。四空格或 tab 缩进行会按代码示例跳过；关键文件链接应写成未缩进段落或普通一级列表，嵌套列表及引用块中的链接需要人工复核。上述范围通过人工复核及后续工具链接入，不能把脚本通过称为“所有文档正确”。暂不引入完整文档站点或检查调度器。
 
@@ -59,4 +59,4 @@ TypeScript 类型只有一个定义。文档优先链接声明；需要复制时
 
 ## HTTP文档同步
 
-逐接口行为与实现指针在 [api-catalog.ts](../src/gateway/api-catalog.ts)集中维护，参数/响应schema仍由domain或所属route声明拥有。`pnpm docs:api`启动临时Gateway提取OpenAPI并生成 [参考](api/reference.md)与 [JSON](api/openapi.json)；不调用模型。`pnpm check:api`检查路由双向覆盖、operationId唯一性、源码/测试文件存在和生成内容新鲜度，已进入pnpm check及CI；[拒绝样例](../scripts/check-api-docs.test.mjs)验证缺失、重复、失效和越界链接会失败。生成器对流式响应补实际媒体类型，不将开放原生payload伪装成封闭结构。
+逐接口行为与实现指针在 [api-catalog.ts](../src/gateway/api-catalog.ts)集中维护，参数/响应schema仍由domain或所属route声明拥有。`pnpm docs:api`启动临时Gateway提取OpenAPI并生成 [参考](api/reference.md)与 [JSON](api/openapi.json)；不调用模型。`pnpm check:api`检查路由双向覆盖、operationId唯一性、源码/测试文件存在和生成内容新鲜度，已进入pnpm check及CI；[拒绝样例](../tools/check-api-docs.test.mjs)验证缺失、重复、失效和越界链接会失败。生成器对流式响应补实际媒体类型，不将开放原生payload伪装成封闭结构。

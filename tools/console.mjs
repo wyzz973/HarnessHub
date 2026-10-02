@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 /**
  * Build or develop the console without the developer's environment.
- * Usage: node scripts/console.mjs <build|dev> [next arguments]
+ * Usage: node tools/console.mjs <build|dev> [next arguments]
  *
  * Next.js 16 records the environment of the build process in its Turbopack
  * cache (web/.next/cache), so a token in the developer's shell ends up on disk.
@@ -81,7 +81,7 @@ export async function findLeaks(directory, needles) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [command, ...rest] = process.argv.slice(2);
   if (command !== "build" && command !== "dev") {
-    console.error("usage: node scripts/console.mjs <build|dev> [next arguments]");
+    console.error("usage: node tools/console.mjs <build|dev> [next arguments]");
     process.exit(1);
   }
   const { env, needles } = consoleEnvironment({ ...process.env, [CANARY]: randomBytes(16).toString("hex") });

@@ -9,7 +9,7 @@ const { startHub } = await import("../dist/src/main.js");
 const { apiCatalog } = await import("../dist/src/gateway/api-catalog.js");
 if (process.argv.slice(2).some((arg) => arg !== "--check"))
   throw new Error(
-    "Usage: node scripts/generate-api-docs.mjs [--check] (build first)",
+    "Usage: node tools/generate-api-docs.mjs [--check] (build first)",
   );
 const directory = await mkdtemp(path.join(os.tmpdir(), "harnesshub-api-docs-"));
 let hub;

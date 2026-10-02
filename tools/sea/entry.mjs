@@ -2,7 +2,7 @@
 /**
  * Main script of the HarnessHub single executable (SEA feasibility spike, OSS-008).
  *
- * scripts/sea/build.mjs bundles this file together with the Gateway, the Worker and our own
+ * tools/sea/build.mjs bundles this file together with the Gateway, the Worker and our own
  * child-process scripts into one CommonJS script that Node runs as the SEA main. It only
  * works inside that executable and is never run from the repository.
  *
@@ -41,7 +41,7 @@ import path from "node:path";
 import { getAsset, isSea } from "node:sea";
 import { pathToFileURL } from "node:url";
 
-/* global __HH_SEA_BUILD_ID__, __HH_SEA_FILES__ -- replaced by scripts/sea/build.mjs */
+/* global __HH_SEA_BUILD_ID__, __HH_SEA_FILES__ -- replaced by tools/sea/build.mjs */
 const BUILD_ID = __HH_SEA_BUILD_ID__;
 /** @type {{path: string, asset: string, sha256: string, size: number, executable: boolean}[]} */
 const FILES = __HH_SEA_FILES__;
@@ -57,7 +57,10 @@ const ROLES = new Map([
     "dist/src/drivers/tool-command/command-mcp.js",
     () => import("../../dist/src/drivers/tool-command/command-mcp.js"),
   ],
-  ["scripts/launch-engine.mjs", () => import("../launch-engine.mjs")],
+  [
+    "scripts/launch-engine.mjs",
+    () => import("../../scripts/launch-engine.mjs"),
+  ],
 ]);
 
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");

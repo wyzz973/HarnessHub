@@ -27,7 +27,7 @@
 
 ## 3. 原型做法
 
-实现位于 `scripts/sea/`：[build.mjs](../../../scripts/sea/build.mjs) 构建，[entry.mjs](../../../scripts/sea/entry.mjs) 是 SEA 的 main，[measure.mjs](../../../scripts/sea/measure.mjs) 测量并运行端到端检查。
+实现位于 `tools/sea/`：[build.mjs](../../../tools/sea/build.mjs) 构建，[entry.mjs](../../../tools/sea/entry.mjs) 是 SEA 的 main，[measure.mjs](../../../tools/sea/measure.mjs) 测量并运行端到端检查。
 
 **打包**：esbuild 把 `entry.mjs` 与 Gateway、Worker、command MCP、引擎启动器打成一个 CommonJS 脚本（target node24，不压缩，不带 source map）。各角色通过动态 `import()` 引入，esbuild 把它们包成惰性初始化的模块，所以一个进程只执行自己角色的模块顶层代码。
 
@@ -57,7 +57,7 @@
 | [src/main.ts](../../../src/main.ts) 的命令行块移入 `runFromCommandLine()`，以 `void` 调用 | Gateway 与 Worker 依赖图中唯一的顶层 await；CommonJS 不能包含顶层 await。拒绝仍不被处理，启动失败时照旧打印错误并以退出码 1 结束（已用 `--port abc` 核对）；非 SEA 行为不变，由 `pnpm check` 中从 `dist/src/main.js` 启动的 CLI smoke 测试覆盖 |
 | 新增开发依赖 esbuild 0.28.2 | 打包器；同一版本此前已经通过 tsx 进入锁文件，没有新增包 |
 | 新增开发依赖 postject 1.0.0-alpha.6（依赖 commander 9.5.0，均为 MIT） | Node SEA 文档使用的注入工具；Node 24.20 没有内置的注入命令。两者都精确固定版本 |
-| 新增 `scripts/sea/` 与手动工作流 | 构建、测量与端到端检查；不改变现有构建与 CI |
+| 新增 `tools/sea/` 与手动工作流 | 构建、测量与端到端检查；不改变现有构建与 CI |
 
 ## 5. 实测数据
 
@@ -154,8 +154,8 @@ ADR-P01 的重新评估条件是冷启动超过 1.5 s 或体积超过 150 MB。�
 ```sh
 pnpm install --frozen-lockfile
 pnpm build
-node scripts/sea/build.mjs
-node scripts/sea/measure.mjs --runs 20 --baseline
+node tools/sea/build.mjs
+node tools/sea/measure.mjs --runs 20 --baseline
 ```
 
 `build.mjs` 产出 `dist/sea/harnesshub`（Windows 为 `harnesshub.exe`）与 `dist/sea/build.json`；`measure.mjs` 写出 `dist/sea/result.json`，全部检查与启动都成功时退出码为 0、`ok` 为 `true`，任何一项失败时退出码为 1。CI 上在 Actions 中手动运行“SEA spike”，每个目标上传名为 `sea-<目标>` 的 JSON 结果。
