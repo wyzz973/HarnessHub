@@ -1,0 +1,55 @@
+{"step":"OSS-010 F07 (#16)","suite":"integration","file":"posix-escaped-descendants.test.js","test":["A crashed Worker that is an unreaped zombie during the snapshot keeps its group's escaped children attributable"],"status":"pass"}
+{"step":"OSS-010 F07 (#16)","suite":"integration","file":"posix-escaped-descendants.test.js","test":["Escaped descendants that cannot be signalled keep cleanup unconfirmed; recovery reclaims them by marker after the root is gone"],"status":"pass"}
+{"step":"OSS-010 F07 (#16)","suite":"integration","file":"posix-escaped-descendants.test.js","test":["Gateway reaps a setsid descendant orphaned before cleanup through its tree marker before publishing confirmed cleanup"],"status":"pass"}
+{"step":"OSS-010 F07 (#16)","suite":"integration","file":"posix-escaped-descendants.test.js","test":["Gateway restart recovery reclaims a live prior Worker's escaped descendants by parent chain and marker"],"status":"pass"}
+{"step":"OSS-010 F07 (#16)","suite":"integration","file":"posix-escaped-descendants.test.js","test":["Recovery never signals a leased group that contains the recovering Gateway"],"status":"pass"}
+{"step":"OSS-010 F07 (#16)","suite":"integration","file":"posix-escaped-descendants.test.js","test":["Session close reclaims setsid descendants found by parent chain and by tree marker, and never signals a look-alike"],"status":"pass"}
+{"step":"OSS-010 F07 (#16)","suite":"unit","file":"posix-tree.test.js","test":["a bounded snapshot child is killed at its deadline, and errors never carry its output"],"status":"pass"}
+{"step":"OSS-010 F07 (#16)","suite":"unit","file":"posix-tree.test.js","test":["a group is signalled whole only when its leader and all live members are owned and it is not this process's group"],"status":"pass"}
+{"step":"OSS-010 F07 (#16)","suite":"unit","file":"posix-tree.test.js","test":["a recorded Worker tree seeds from the group when the root is a zombie, and attributes nothing for a reused root PID"],"status":"pass"}
+{"step":"OSS-010 F07 (#16)","suite":"unit","file":"posix-tree.test.js","test":["Linux /proc records parse the start time, user IDs and odd command names"],"status":"pass"}
+{"step":"OSS-010 F07 (#16)","suite":"unit","file":"posix-tree.test.js","test":["macOS ps rows keep user IDs, the start time as identity and the command with its environment"],"status":"pass"}
+{"step":"OSS-010 F07 (#16)","suite":"unit","file":"posix-tree.test.js","test":["ownership follows parent links, never includes or passes through this process or its ancestors, and stops at other users"],"status":"pass"}
+{"step":"OSS-010 F07 (#16)","suite":"unit","file":"posix-tree.test.js","test":["reclaim confirms only a clean final scan of a complete record"],"status":"pass"}
+{"step":"OSS-010 F07 (#16)","suite":"unit","file":"posix-tree.test.js","test":["recovery refuses a leased group that holds this process or an ancestor"],"status":"pass"}
+{"step":"OSS-010 F07 (#16)","suite":"unit","file":"posix-tree.test.js","test":["scanner output is validated before it becomes a process table"],"status":"pass"}
+{"step":"OSS-010 F07 (#16)","suite":"unit","file":"posix-tree.test.js","test":["signal targets never include PID or group 0/1, this process or its own group"],"status":"pass"}
+{"step":"OSS-010 F07 (#16)","suite":"unit","file":"engine-configuration.test.js","test":["stdio MCP servers carry the Worker's tree marker; remote servers and unmarked environments do not"],"status":"pass"}
+{"step":"OSS-010 F07 (#16)","suite":"unit","file":"posix-tree.test.js","test":["the /proc scan skips hidden and vanished processes, matches the marker exactly and fails on unexpected errors"],"status":"pass"}
+{"step":"OSS-010 F07 (#16)","suite":"unit","file":"posix-tree.test.js","test":["the live snapshot shows this process as its own user, and the marker only where the environment carries it"],"status":"pass"}
+{"step":"OSS-010 F07 (#16)","suite":"unit","file":"posix-tree.test.js","test":["the macOS marker counts only after the arguments of the same process"],"status":"pass"}
+{"step":"OSS-004 step 2 (#21)","suite":"tooling","file":"check-boundaries.test.mjs","test":["CLI scans packages and applications and does not follow their node_modules"],"status":"pass"}
+{"step":"OSS-004 step 2 (#21)","suite":"tooling","file":"check-boundaries.test.mjs","test":["legacy module and third-party rules apply inside packages"],"status":"pass"}
+{"step":"OSS-004 step 2 (#21)","suite":"tooling","file":"check-boundaries.test.mjs","test":["packages and applications follow the dependency graph"],"status":"pass"}
+{"step":"OSS-004 step 2 (#21)","suite":"tooling","file":"check-boundaries.test.mjs","test":["relative imports and new URL stay inside their package"],"status":"pass"}
+{"step":"OSS-004 step 2 (#21)","suite":"tooling","file":"check-clean-build.test.mjs","test":["removes every project's outputs together with its .tsbuildinfo and keeps other build products"],"status":"pass"}
+{"step":"OSS-004 step 2 (#21)","suite":"tooling","file":"check-boundaries.test.mjs","test":["src imports a package only through its legacy alias, under the aliased module's rules"],"status":"pass"}
+{"step":"OSS-004 step 3 (#22)","suite":"tooling","file":"check-boundaries.test.mjs","test":["child_process inside a package needs an unexpired exception"],"status":"pass"}
+{"step":"OSS-004 step 3 (#22)","suite":"tooling","file":"check-boundaries.test.mjs","test":["CLI ends a child_process exception when its TODO.md task is ticked"],"status":"pass"}
+{"step":"OSS-004 step 3 (#22)","suite":"tooling","file":"check-boundaries.test.mjs","test":["SQLite belongs in the storage module of @harnesshub/store"],"status":"pass"}
+{"step":"OSS-004 step 3 (#22)","suite":"tooling","file":"check-boundaries.test.mjs","test":["src imports @harnesshub/store only through its legacy modules, under their rules"],"status":"pass"}
+{"step":"OSS-004 step 3 (#22)","suite":"unit","file":"native-helper.test.js","test":["the ACL helper exists after the build"],"status":"skip"}
+{"step":"OSS-004 step 3 (#22)","suite":"unit","file":"native-helper.test.js","test":["the ACL helper path is the store package's dist/native/harnesshub-acl.exe"],"status":"pass"}
+{"step":"OSS-004 step 4 (#23)","suite":"tooling","file":"check-boundaries.test.mjs","test":["secrets keeps the drivers rules in src/ and spawns its helper only under its exception"],"status":"pass"}
+{"step":"OSS-004 step 4 (#23)","suite":"unit","file":"native-helper.test.js","test":["the darwin secret helper exists after the build"],"status":"skip"}
+{"step":"OSS-004 step 4 (#23)","suite":"unit","file":"native-helper.test.js","test":["the darwin secret helper path is the secrets package's dist/native/harnesshub-keychain"],"status":"pass"}
+{"step":"OSS-004 step 4 (#23)","suite":"unit","file":"native-helper.test.js","test":["the win32 secret helper exists after the build"],"status":"skip"}
+{"step":"OSS-004 step 4 (#23)","suite":"unit","file":"native-helper.test.js","test":["the win32 secret helper path is the secrets package's dist/native/harnesshub-secrets.exe"],"status":"pass"}
+{"step":"OSS-004 step 5 (#25)","suite":"tooling","file":"check-boundaries.test.mjs","test":["a src/ file may import only the packages its destination package may depend on"],"status":"pass"}
+{"step":"OSS-004 step 5 (#25)","suite":"tooling","file":"check-sea-build.test.mjs","test":["a stale or unknown file in a native helper directory fails the build"],"status":"pass"}
+{"step":"OSS-004 step 5 (#25)","suite":"tooling","file":"check-spdx.test.mjs","test":["package native directories hold helper sources only, never compiled helpers"],"status":"pass"}
+{"step":"OSS-004 step 5 (#25)","suite":"tooling","file":"check-sea-build.test.mjs","test":["the single executable embeds only the listed native helpers"],"status":"pass"}
+{"step":"OSS-004 step 5 (#25)","suite":"unit","file":"model-gateway-configuration.test.js","test":["a routed configuration without an injected model gateway fails before resolving secrets or writing engine files"],"status":"pass"}
+{"step":"OSS-004 step 6 (#26)","suite":"tooling","file":"check-boundaries.test.mjs","test":["drivers keep their module rules, and only the Worker loads them inside the daemon"],"status":"pass"}
+{"step":"OSS-004 step 7 (#27)","suite":"integration","file":"tool-pack-apply.test.js","test":["a Tool Pack binding stored before the agents package existed keeps its record and starts the command MCP from its new entry"],"status":"pass"}
+{"step":"OSS-004 step 7 (#27)","suite":"tooling","file":"check-boundaries.test.mjs","test":["agents files keep the rules of the legacy modules they came from"],"status":"pass"}
+{"step":"OSS-004 step 7 (#27)","suite":"tooling","file":"check-boundaries.test.mjs","test":["only agents' repository.ts may resolve URLs outside the package, until OSS-013"],"status":"pass"}
+{"step":"OSS-004 step 8 (#28)","suite":"integration","file":"worker-host.test.js","test":["Worker recovery validates a lease by the Worker path it recorded, not by the recovering host's entry"],"status":"pass"}
+{"step":"OSS-004 step 8 (#28)","suite":"tooling","file":"check-docs.test.mjs","test":["an empty or whitespace-only document is an error, such as a truncated file"],"status":"pass"}
+{"step":"OSS-004 step 8 (#28)","suite":"tooling","file":"check-boundaries.test.mjs","test":["runtime owns process creation for good, and the probe keeps its drivers rules"],"status":"pass"}
+{"step":"OSS-004 step 8 (#28)","suite":"unit","file":"native-helper.test.js","test":["the Job helper exists after the build"],"status":"skip"}
+{"step":"OSS-004 step 8 (#28)","suite":"unit","file":"native-helper.test.js","test":["the Job helper path is the runtime package's dist/native/harnesshub-job.exe"],"status":"pass"}
+{"step":"OSS-004 step 9","suite":"tooling","file":"check-boundaries.test.mjs","test":["the daemon's http/ keeps the gateway rules, cli stays on core, and URLs resolve from dist"],"status":"pass"}
+{"step":"OSS-004 step 10","suite":"tooling","file":"check-boundaries.test.mjs","test":["CLI scans the console's app/, components/ and lib/"],"status":"pass"}
+{"step":"OSS-004 step 10","suite":"tooling","file":"check-boundaries.test.mjs","test":["the console reaches the daemon only through the sdk"],"status":"pass"}
+{"step":"OSS-004 step 11","suite":"smoke","file":"hh.test.js","test":["hh dispatches serve, benchmark and tools to the daemon and rollout to the CLI"],"status":"pass"}
