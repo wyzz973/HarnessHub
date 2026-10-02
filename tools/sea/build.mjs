@@ -161,14 +161,26 @@ export async function buildSea({ out = path.join(ROOT, "dist", "sea") } = {}) {
       },
     ],
   ]);
-  const nativeDirectory = path.join(ROOT, "dist", "native");
-  for (const name of existsSync(nativeDirectory)
-    ? readdirSync(nativeDirectory).sort()
-    : [])
-    assets.set(`dist/native/${name}`, {
-      bytes: readFileSync(path.join(nativeDirectory, name)),
-      executable: true,
-    });
+  // Native helpers keep their repository-relative path under the extraction
+  // root, where the bundled modules resolve them from their own location:
+  // dist/native for the legacy tree, and each package's dist/native.
+  const packages = path.join(ROOT, "packages");
+  const nativeDirectories = [
+    "dist/native",
+    ...(existsSync(packages) ? readdirSync(packages).sort() : []).map(
+      (name) => `packages/${name}/dist/native`,
+    ),
+  ];
+  for (const relative of nativeDirectories) {
+    const directory = path.join(ROOT, ...relative.split("/"));
+    for (const name of existsSync(directory)
+      ? readdirSync(directory).sort()
+      : [])
+      assets.set(`${relative}/${name}`, {
+        bytes: readFileSync(path.join(directory, name)),
+        executable: true,
+      });
+  }
   const placeholder = Buffer.from(ROLE_PLACEHOLDER);
   const files = [
     ...[...assets].map(([relative, { bytes, executable }]) => ({
