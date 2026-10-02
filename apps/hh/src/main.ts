@@ -2,10 +2,16 @@
 const USAGE = `Usage: hh <command> [arguments]
 
 Commands:
-  serve      Start the Gateway (hh serve --help)
-  benchmark  Run, regrade or report a benchmark (hh benchmark --help)
-  tools      Manage Tool Packs (hh tools --root <directory> <command>)
-  rollout    Export a run's rollout (hh rollout --help)`;
+  serve       Start the Gateway (hh serve --help)
+  status      Show the running daemon and its model plane
+  provider    Manage model providers (list, show, add, remove)
+  credential  Manage provider credentials (list, add, rotate, remove)
+  key         Manage Gateway Keys (list, create, revoke)
+  group       Manage route groups (list, add, remove)
+  usage       Summarize model-call usage by model, provider or day
+  benchmark   Run, regrade or report a benchmark (hh benchmark --help)
+  tools       Manage Tool Packs (hh tools --root <directory> <command>)
+  rollout     Export a run's rollout (hh rollout --help)`;
 
 /**
  * A command's entry function, loaded only when the command is chosen, so that
@@ -34,11 +40,24 @@ const COMMANDS: Readonly<Record<string, Command>> = {
     const { main } = await import("@harnesshub/cli/cli");
     return main(argv);
   },
+  ...Object.fromEntries(
+    ["status", "provider", "credential", "key", "group", "usage"].map(
+      (name): [string, Command] => [
+        name,
+        async (argv) => {
+          const { main } = await import("@harnesshub/cli/admin");
+          return main(argv);
+        },
+      ],
+    ),
+  ),
 };
 
 /**
  * Run one `hh` command: `serve`, `benchmark` and `tools` go to the daemon's
- * entries, `rollout` to the CLI's. `--help` prints the commands on stdout; a
+ * entries; `rollout` and the model-plane commands (`status`, `provider`,
+ * `credential`, `key`, `group`, `usage`) to the CLI's, which reach the
+ * running daemon over HTTP. `--help` prints the commands on stdout; a
  * missing or unknown command prints them on stderr and fails with exit code 2.
  * A command's own failures keep that command's output and exit code; a
  * `serve` startup failure rejects.

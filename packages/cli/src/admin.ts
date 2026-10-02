@@ -1,0 +1,763 @@
+// SPDX-License-Identifier: MIT
+/**
+ * The model-plane commands of `hh` (06-interfaces section 5): `provider`,
+ * `credential`, `key`, `group`, `usage` and `status`. They talk to the
+ * running daemon through `@harnesshub/sdk` with the admin token found in the
+ * data directory, print a table (or `--json`, the API response), and exit
+ * with the codes of 06 section 5. Secrets are read from a hidden prompt,
+ * stdin, an environment variable or a file, never from the command line.
+ */
+import { readFile } from "node:fs/promises";
+import { parseArgs, type ParseArgsConfig } from "node:util";
+import {
+  HarnessHubError,
+  HarnessHubUnavailableError,
+  type HarnessHubClient,
+} from "@harnesshub/sdk/client";
+import {
+  AdminTokenUnavailableError,
+  connectLocal,
+  DEFAULT_DAEMON_URL,
+} from "@harnesshub/sdk/local";
+import type { UsageGroupBy, WireProtocol } from "@harnesshub/core/model-plane";
+
+const EXIT = {
+  ok: 0,
+  internal: 1,
+  usage: 2,
+  unavailable: 3,
+  confirm: 4,
+  conflict: 5,
+  auth: 6,
+  limit: 7,
+  interrupted: 130,
+} as const;
+
+const USAGE = `Usage: hh <command> [options]
+
+  hh provider list | show <id> | add <id> --chat URL [--responses URL]
+              [--anthropic URL] [--gemini URL] [--name N] [--kind K]
+              [--api-key-header H] [--model ID]... | remove <id>
+  hh credential list <provider> | add <provider> [--name N] [--id ID]
+              [--protocol P]... | rotate <provider> <credential>
+              | remove <provider> <credential>
+              secret from a hidden prompt, --from-stdin, --from-env VAR or --from-file PATH
+  hh key list | create --name N --allow REF... [--expires-at TIME | --no-expiry]
+              | revoke <keyId>
+  hh group list | add <id> --member REF... [--strategy S] [--stickiness S]
+              | remove <id>
+  hh usage [--by model|provider|day|key|adapter] [--since 7d] [--from TIME]
+              [--to TIME] [--provider P] [--model REF] [--key KEY_ID]
+  hh status
+
+Common options: --url URL (default ${DEFAULT_DAEMON_URL}), --data-dir DIR
+(the daemon's data directory holding admin.token, default ./data), --json,
+--yes, --non-interactive.`;
+
+class UsageError extends Error {}
+class ConfirmationRequired extends Error {}
+class Interrupted extends Error {}
+
+const common = {
+  url: { type: "string" },
+  "data-dir": { type: "string" },
+  json: { type: "boolean" },
+  yes: { type: "boolean" },
+  "non-interactive": { type: "boolean" },
+  help: { type: "boolean" },
+} as const;
+
+function parse<T extends NonNullable<ParseArgsConfig["options"]>>(
+  args: string[],
+  options: T,
+) {
+  try {
+    return parseArgs({
+      args,
+      allowPositionals: true,
+      options: { ...common, ...options },
+    });
+  } catch (error) {
+    throw new UsageError(
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
+interface Context {
+  json: boolean;
+  yes: boolean;
+  interactive: boolean;
+  client: () => Promise<HarnessHubClient>;
+}
+
+function context(values: Record<string, unknown>): Context {
+  const url = typeof values.url === "string" ? values.url : DEFAULT_DAEMON_URL;
+  const dataDir =
+    typeof values["data-dir"] === "string" ? values["data-dir"] : "./data";
+  return {
+    json: values.json === true,
+    yes: values.yes === true,
+    interactive:
+      process.stdin.isTTY === true &&
+      !process.env.CI &&
+      values["non-interactive"] !== true,
+    client: () => connectLocal({ dataDir, url }),
+  };
+}
+
+function positionals(list: string[], names: string[]): string[] {
+  if (list.length !== names.length)
+    throw new UsageError(
+      `Expected ${names.map((name) => `<${name}>`).join(" ") || "no arguments"}`,
+    );
+  return list;
+}
+
+function write(text: string): void {
+  process.stdout.write(text.endsWith("\n") ? text : `${text}\n`);
+}
+
+function output(ctx: Context, value: unknown, human: () => string): void {
+  write(ctx.json ? JSON.stringify(value, null, 2) : human());
+}
+
+/** Columns padded to their widest cell; IDs are never shortened. */
+function table(headers: string[], rows: string[][]): string {
+  if (!rows.length) return "(none)";
+  const widths = headers.map((header, column) =>
+    Math.max(header.length, ...rows.map((row) => (row[column] ?? "").length)),
+  );
+  const line = (cells: string[]) =>
+    cells
+      .map((cell, column) => cell.padEnd(widths[column]!))
+      .join("  ")
+      .trimEnd();
+  return [line(headers), ...rows.map(line)].join("\n");
+}
+
+function localTime(value: string | undefined): string {
+  return value === undefined ? "-" : new Date(value).toLocaleString();
+}
+
+/** Ask `[y/N]` on stderr unless `--yes`; refuse without a terminal. */
+async function confirm(ctx: Context, question: string): Promise<void> {
+  if (ctx.yes) return;
+  if (!ctx.interactive)
+    throw new ConfirmationRequired(
+      `${question} Confirmation needed; pass --yes to proceed without a prompt.`,
+    );
+  process.stderr.write(`${question} [y/N] `);
+  const answer = await readLine();
+  if (!/^y(es)?$/i.test(answer.trim()))
+    throw new ConfirmationRequired("Cancelled; nothing was changed.");
+}
+
+function readLine(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let text = "";
+    const onData = (chunk: Buffer | string) => {
+      text += chunk.toString();
+      const end = text.indexOf("\n");
+      if (end >= 0) {
+        cleanup();
+        resolve(text.slice(0, end));
+      }
+    };
+    const onEnd = () => {
+      cleanup();
+      resolve(text);
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const cleanup = () => {
+      process.stdin.off("data", onData);
+      process.stdin.off("end", onEnd);
+      process.stdin.off("error", onError);
+      process.stdin.pause();
+    };
+    process.stdin.on("data", onData);
+    process.stdin.once("end", onEnd);
+    process.stdin.once("error", onError);
+    process.stdin.resume();
+  });
+}
+
+/** Read a secret without echo from the terminal (stderr carries the prompt). */
+function hiddenPrompt(question: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const stdin = process.stdin;
+    let value = "";
+    process.stderr.write(question);
+    const finish = (error?: Error) => {
+      stdin.off("data", onData);
+      stdin.setRawMode(false);
+      stdin.pause();
+      process.stderr.write("\n");
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const onData = (chunk: Buffer) => {
+      for (const character of chunk.toString("utf8")) {
+        if (character === "\u0003") return finish(new Interrupted());
+        if (character === "\r" || character === "\n") return finish();
+        if (character === "\u007f" || character === "\b")
+          value = [...value].slice(0, -1).join("");
+        else value += character;
+      }
+    };
+    stdin.setRawMode(true);
+    stdin.on("data", onData);
+    stdin.resume();
+  });
+}
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin)
+    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+const secretSources = {
+  "from-stdin": { type: "boolean" },
+  "from-env": { type: "string" },
+  "from-file": { type: "string" },
+} as const;
+
+/** The secret value from exactly one source; one trailing newline is dropped. */
+async function readSecret(
+  ctx: Context,
+  values: Record<string, unknown>,
+): Promise<string> {
+  const chosen = ["from-stdin", "from-env", "from-file"].filter(
+    (name) => values[name] !== undefined && values[name] !== false,
+  );
+  if (chosen.length > 1)
+    throw new UsageError(
+      "Use only one of --from-stdin, --from-env, --from-file",
+    );
+  const trim = (text: string) => text.replace(/\r?\n$/, "");
+  if (values["from-stdin"] === true) return trim(await readStdin());
+  if (typeof values["from-env"] === "string") {
+    const value = process.env[values["from-env"]];
+    if (value === undefined)
+      throw new UsageError(
+        `Environment variable ${values["from-env"]} is not set`,
+      );
+    return value;
+  }
+  if (typeof values["from-file"] === "string")
+    return trim(await readFile(values["from-file"], "utf8"));
+  if (!ctx.interactive)
+    throw new UsageError(
+      "No terminal for a hidden prompt: pass --from-stdin, --from-env VAR or --from-file PATH",
+    );
+  return hiddenPrompt("Secret value (hidden): ");
+}
+
+function list(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+async function providerCommand(args: string[]): Promise<void> {
+  const [action = "", ...rest] = args;
+  const { values, positionals: given } = parse(rest, {
+    name: { type: "string" },
+    kind: { type: "string" },
+    chat: { type: "string" },
+    responses: { type: "string" },
+    anthropic: { type: "string" },
+    gemini: { type: "string" },
+    "api-key-header": { type: "string" },
+    model: { type: "string", multiple: true },
+  });
+  const ctx = context(values);
+  switch (action) {
+    case "list": {
+      positionals(given, []);
+      const page = await (await ctx.client()).providers.list();
+      return output(ctx, page, () =>
+        table(
+          ["ID", "NAME", "KIND", "ENDPOINTS", "CREDENTIALS", "MODELS"],
+          page.items.map((item) => [
+            item.id,
+            item.name,
+            item.kind,
+            Object.keys(item.endpoints).join(","),
+            String(item.credentials.length),
+            String(item.models.list.length),
+          ]),
+        ),
+      );
+    }
+    case "show": {
+      const [id] = positionals(given, ["id"]);
+      const item = await (await ctx.client()).providers.get(id!);
+      return output(ctx, item, () =>
+        [
+          `ID:       ${item.id}`,
+          `Name:     ${item.name}`,
+          `Kind:     ${item.kind}`,
+          `Auth:     ${item.auth.apiKeyHeader}`,
+          ...Object.entries(item.endpoints).map(
+            ([protocol, url]) => `Endpoint: ${protocol} ${url}`,
+          ),
+          `Models:   ${item.models.list.map((model) => model.id).join(", ") || "-"}`,
+          `Updated:  ${localTime(item.updatedAt)}`,
+          "",
+          table(
+            ["CREDENTIAL", "NAME", "REFERENCE", "PROTOCOLS", "ENABLED"],
+            item.credentials.map((credential) => [
+              credential.id,
+              credential.name,
+              `${credential.ref.kind}:${credential.ref.value}`,
+              credential.protocols?.join(",") ?? "all",
+              credential.enabled ? "yes" : "no",
+            ]),
+          ),
+        ].join("\n"),
+      );
+    }
+    case "add": {
+      const [id] = positionals(given, ["id"]);
+      const endpoints = Object.fromEntries(
+        (["chat", "responses", "anthropic", "gemini"] as const)
+          .filter((protocol) => typeof values[protocol] === "string")
+          .map((protocol) => [protocol, values[protocol] as string]),
+      );
+      if (!Object.keys(endpoints).length)
+        throw new UsageError(
+          "Give at least one of --chat, --responses, --anthropic, --gemini",
+        );
+      const models = list(values.model);
+      const created = await (
+        await ctx.client()
+      ).providers.create({
+        id: id!,
+        endpoints,
+        ...(typeof values.name === "string" ? { name: values.name } : {}),
+        ...(typeof values.kind === "string"
+          ? { kind: values.kind as "vendor" | "relay" | "local" | "custom" }
+          : {}),
+        ...(typeof values["api-key-header"] === "string"
+          ? {
+              auth: {
+                apiKeyHeader: values["api-key-header"] as "x-api-key",
+              },
+            }
+          : {}),
+        ...(models.length
+          ? {
+              models: {
+                source: "manual",
+                list: models.map((model) => ({ id: model })),
+                expose: "all",
+              },
+            }
+          : {}),
+      });
+      return output(ctx, created, () => `Added provider ${created.id}`);
+    }
+    case "remove":
+    case "rm": {
+      const [id] = positionals(given, ["id"]);
+      await confirm(ctx, `Remove provider ${id} and its stored credentials?`);
+      await (await ctx.client()).providers.remove(id!);
+      return output(ctx, { deleted: true, id }, () => `Removed provider ${id}`);
+    }
+    default:
+      throw new UsageError(`Unknown provider command: ${action || "(none)"}`);
+  }
+}
+
+async function credentialCommand(args: string[]): Promise<void> {
+  const [action = "", ...rest] = args;
+  const { values, positionals: given } = parse(rest, {
+    name: { type: "string" },
+    id: { type: "string" },
+    protocol: { type: "string", multiple: true },
+    ...secretSources,
+  });
+  const ctx = context(values);
+  switch (action) {
+    case "list": {
+      const [provider] = positionals(given, ["provider"]);
+      const page = await (await ctx.client()).credentials.list(provider!);
+      return output(ctx, page, () =>
+        table(
+          ["CREDENTIAL", "NAME", "REFERENCE", "PROTOCOLS", "ENABLED"],
+          page.items.map((item) => [
+            item.id,
+            item.name,
+            `${item.ref.kind}:${item.ref.value}`,
+            item.protocols?.join(",") ?? "all",
+            item.enabled ? "yes" : "no",
+          ]),
+        ),
+      );
+    }
+    case "add": {
+      const [provider] = positionals(given, ["provider"]);
+      const client = await ctx.client();
+      const value = await readSecret(ctx, values);
+      const protocols = list(values.protocol) as WireProtocol[];
+      const added = await client.credentials.add(provider!, {
+        name: typeof values.name === "string" ? values.name : "default",
+        value,
+        ...(typeof values.id === "string" ? { id: values.id } : {}),
+        ...(protocols.length ? { protocols } : {}),
+      });
+      return output(
+        ctx,
+        added,
+        () =>
+          `Added credential ${added.id} to ${provider} (${added.ref.kind}:${added.ref.value})`,
+      );
+    }
+    case "rotate": {
+      const [provider, credential] = positionals(given, [
+        "provider",
+        "credential",
+      ]);
+      const client = await ctx.client();
+      const value = await readSecret(ctx, values);
+      const rotated = await client.credentials.rotate(
+        provider!,
+        credential!,
+        value,
+      );
+      return output(
+        ctx,
+        rotated,
+        () => `Rotated credential ${rotated.id} of ${provider}`,
+      );
+    }
+    case "remove":
+    case "rm": {
+      const [provider, credential] = positionals(given, [
+        "provider",
+        "credential",
+      ]);
+      await confirm(ctx, `Remove credential ${credential} of ${provider}?`);
+      await (await ctx.client()).credentials.remove(provider!, credential!);
+      return output(
+        ctx,
+        { deleted: true, provider, id: credential },
+        () => `Removed credential ${credential} of ${provider}`,
+      );
+    }
+    default:
+      throw new UsageError(`Unknown credential command: ${action || "(none)"}`);
+  }
+}
+
+async function keyCommand(args: string[]): Promise<void> {
+  const [action = "", ...rest] = args;
+  const { values, positionals: given } = parse(rest, {
+    name: { type: "string" },
+    allow: { type: "string", multiple: true },
+    "expires-at": { type: "string" },
+    "no-expiry": { type: "boolean" },
+  });
+  const ctx = context(values);
+  switch (action) {
+    case "list": {
+      positionals(given, []);
+      const page = await (await ctx.client()).gatewayKeys.list();
+      const now = Date.now();
+      return output(ctx, page, () =>
+        table(
+          ["KEY ID", "NAME", "SCOPE", "ALLOW", "EXPIRES", "STATUS"],
+          page.items.map((item) => [
+            item.keyId,
+            item.name,
+            item.scope.kind,
+            item.modelAllow.join(","),
+            localTime(item.expiresAt),
+            item.revokedAt
+              ? "revoked"
+              : item.expiresAt && Date.parse(item.expiresAt) <= now
+                ? "expired"
+                : "active",
+          ]),
+        ),
+      );
+    }
+    case "create": {
+      positionals(given, []);
+      const allow = list(values.allow);
+      if (typeof values.name !== "string" || !allow.length)
+        throw new UsageError(
+          "key create needs --name and at least one --allow",
+        );
+      if (values["no-expiry"] && values["expires-at"] !== undefined)
+        throw new UsageError("Use either --expires-at or --no-expiry");
+      const created = await (
+        await ctx.client()
+      ).gatewayKeys.create({
+        name: values.name,
+        modelAllow: allow,
+        ...(values["no-expiry"] ? { expiresAt: null } : {}),
+        ...(typeof values["expires-at"] === "string"
+          ? { expiresAt: values["expires-at"] }
+          : {}),
+      });
+      process.stderr.write(
+        `Created key ${created.gatewayKey.keyId}. Store it now: it is not shown again.\n`,
+      );
+      return output(ctx, created, () => created.key);
+    }
+    case "revoke": {
+      const [keyId] = positionals(given, ["keyId"]);
+      await confirm(ctx, `Revoke Gateway Key ${keyId}?`);
+      const revoked = await (await ctx.client()).gatewayKeys.revoke(keyId!);
+      return output(ctx, revoked, () => `Revoked key ${revoked.keyId}`);
+    }
+    default:
+      throw new UsageError(`Unknown key command: ${action || "(none)"}`);
+  }
+}
+
+async function groupCommand(args: string[]): Promise<void> {
+  const [action = "", ...rest] = args;
+  const { values, positionals: given } = parse(rest, {
+    member: { type: "string", multiple: true },
+    strategy: { type: "string" },
+    stickiness: { type: "string" },
+  });
+  const ctx = context(values);
+  switch (action) {
+    case "list": {
+      positionals(given, []);
+      const page = await (await ctx.client()).routeGroups.list();
+      return output(ctx, page, () =>
+        table(
+          ["GROUP", "STRATEGY", "STICKINESS", "MEMBERS"],
+          page.items.map((item) => [
+            `group/${item.id}`,
+            item.strategy,
+            item.stickiness,
+            item.members.join(","),
+          ]),
+        ),
+      );
+    }
+    case "add": {
+      const [id] = positionals(given, ["id"]);
+      const members = list(values.member);
+      if (!members.length)
+        throw new UsageError("group add needs at least one --member");
+      const created = await (
+        await ctx.client()
+      ).routeGroups.create({
+        id: id!,
+        members,
+        ...(typeof values.strategy === "string"
+          ? { strategy: values.strategy as "order" }
+          : {}),
+        ...(typeof values.stickiness === "string"
+          ? { stickiness: values.stickiness as "auto" }
+          : {}),
+      });
+      return output(ctx, created, () => `Added group/${created.id}`);
+    }
+    case "remove":
+    case "rm": {
+      const [id] = positionals(given, ["id"]);
+      await confirm(ctx, `Remove route group ${id}?`);
+      await (await ctx.client()).routeGroups.remove(id!);
+      return output(ctx, { deleted: true, id }, () => `Removed group/${id}`);
+    }
+    default:
+      throw new UsageError(`Unknown group command: ${action || "(none)"}`);
+  }
+}
+
+/** `7d`, `24h`, `30m` before now, as an RFC 3339 time. */
+function since(text: string): string {
+  const match = /^(\d{1,5})([dhm])$/.exec(text);
+  if (!match)
+    throw new UsageError("--since takes a duration like 7d, 24h or 30m");
+  const unit = { d: 86_400_000, h: 3_600_000, m: 60_000 }[match[2] as "d"];
+  return new Date(Date.now() - Number(match[1]) * unit).toISOString();
+}
+
+async function usageCommand(args: string[]): Promise<void> {
+  const { values, positionals: given } = parse(args, {
+    by: { type: "string" },
+    since: { type: "string" },
+    from: { type: "string" },
+    to: { type: "string" },
+    provider: { type: "string" },
+    model: { type: "string" },
+    key: { type: "string" },
+  });
+  const ctx = context(values);
+  positionals(given, []);
+  if (values.since !== undefined && values.from !== undefined)
+    throw new UsageError("Use either --since or --from");
+  const groupBy = (values.by ?? "model") as UsageGroupBy;
+  if (!["model", "provider", "day", "key", "adapter"].includes(groupBy))
+    throw new UsageError("--by is model, provider, day, key or adapter");
+  const from = values.since !== undefined ? since(values.since) : values.from;
+  const report = await (
+    await ctx.client()
+  ).usage.aggregate({
+    groupBy,
+    ...(from !== undefined ? { from } : {}),
+    ...(values.to !== undefined ? { to: values.to } : {}),
+    ...(values.provider !== undefined ? { provider: values.provider } : {}),
+    ...(values.model !== undefined ? { model: values.model } : {}),
+    ...(values.key !== undefined ? { keyId: values.key } : {}),
+  });
+  output(ctx, report, () =>
+    table(
+      [
+        groupBy.toUpperCase(),
+        "CALLS",
+        "FAILED",
+        "INPUT",
+        "CACHE READ",
+        "CACHE WRITE",
+        "OUTPUT",
+        "REASONING",
+        "COST USD",
+        "UNPRICED",
+      ],
+      report.items.map((bucket) => [
+        bucket.key || "(none)",
+        String(bucket.calls),
+        String(bucket.failedCalls),
+        String(bucket.usage.input),
+        String(bucket.usage.cacheRead),
+        String(bucket.usage.cacheWrite),
+        String(bucket.usage.output),
+        String(bucket.usage.reasoning),
+        bucket.cost.amount,
+        String(bucket.unpricedCalls),
+      ]),
+    ),
+  );
+}
+
+async function statusCommand(args: string[]): Promise<void> {
+  const { values, positionals: given } = parse(args, {});
+  const ctx = context(values);
+  positionals(given, []);
+  const client = await ctx.client();
+  const [info, providers, groups, keys] = await Promise.all([
+    client.system.info(),
+    client.providers.list(),
+    client.routeGroups.list(),
+    client.gatewayKeys.list(),
+  ]);
+  const activeKeys = keys.items.filter((key) => !key.revokedAt).length;
+  const status = {
+    daemon: info,
+    providers: providers.items.length,
+    routeGroups: groups.items.length,
+    activeGatewayKeys: activeKeys,
+  };
+  output(ctx, status, () =>
+    [
+      `Daemon:        running, pid ${info.pid}, since ${localTime(info.startedAt)}`,
+      `Version:       ${info.version} (${info.commit})`,
+      `API:           ${info.apiVersion}`,
+      `Data dir:      ${info.dataDir}`,
+      `Secrets:       ${info.secretBackend}`,
+      `Providers:     ${providers.items.length}`,
+      `Route groups:  ${groups.items.length}`,
+      `Gateway Keys:  ${activeKeys} active`,
+    ].join("\n"),
+  );
+}
+
+const COMMANDS: Readonly<Record<string, (args: string[]) => Promise<void>>> = {
+  provider: providerCommand,
+  credential: credentialCommand,
+  key: keyCommand,
+  group: groupCommand,
+  usage: usageCommand,
+  status: statusCommand,
+};
+
+function exitCode(status: number): number {
+  if (status === 400 || status === 404) return EXIT.usage;
+  if (status === 401 || status === 403) return EXIT.auth;
+  if ([409, 412, 422].includes(status)) return EXIT.conflict;
+  if (status === 429 || status === 503) return EXIT.limit;
+  return EXIT.internal;
+}
+
+/** Print a failure (problem object on stdout with `--json`) and choose the exit code. */
+function report(error: unknown, json: boolean): number {
+  if (error instanceof HarnessHubError) {
+    if (json) write(JSON.stringify(error.problem, null, 2));
+    const details = [
+      ...(error.problem.errors ?? []).map((item) =>
+        `  ${item.pointer ?? item.parameter ?? ""}: ${item.detail}`.trimEnd(),
+      ),
+      ...(error.problem.references ?? []).map(
+        (item) => `  used by ${item.type} ${item.id}`,
+      ),
+    ];
+    process.stderr.write(
+      `Error: ${error.message} (${error.code})\n${details.map((line) => `${line}\n`).join("")}`,
+    );
+    return exitCode(error.status);
+  }
+  const [code, message] =
+    error instanceof UsageError
+      ? [EXIT.usage, `${error.message}\n\n${USAGE}`]
+      : error instanceof ConfirmationRequired
+        ? [EXIT.confirm, error.message]
+        : error instanceof Interrupted
+          ? [EXIT.interrupted, "Interrupted"]
+          : error instanceof HarnessHubUnavailableError ||
+              error instanceof AdminTokenUnavailableError
+            ? [EXIT.unavailable, `${error.message}. Start it with hh serve.`]
+            : [
+                EXIT.internal,
+                error instanceof Error ? error.message : String(error),
+              ];
+  if (json)
+    write(
+      JSON.stringify({
+        code: code === EXIT.usage ? "USAGE" : "CLI_ERROR",
+        message: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  process.stderr.write(`Error: ${message}\n`);
+  return code;
+}
+
+/**
+ * Run one model-plane command (`argv` starts with the command name).
+ *
+ * @returns The exit code of 06 section 5: 0, 1 internal, 2 usage or unknown
+ *   name, 3 daemon unavailable, 4 confirmation needed, 5 conflict, 6
+ *   authentication, 7 limit or not ready, 130 interrupted.
+ */
+export async function main(argv: string[]): Promise<number> {
+  const [name, ...args] = argv;
+  if (name === undefined || name === "--help" || args.includes("--help")) {
+    write(USAGE);
+    return name === undefined ? EXIT.usage : EXIT.ok;
+  }
+  const command = Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : undefined;
+  if (!command) {
+    process.stderr.write(`Unknown command: ${name}\n${USAGE}\n`);
+    return EXIT.usage;
+  }
+  try {
+    await command(args);
+    return EXIT.ok;
+  } catch (error) {
+    return report(error, args.includes("--json"));
+  }
+}

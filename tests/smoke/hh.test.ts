@@ -36,7 +36,7 @@ function hh(cwd: string, args: string[]): Promise<Outcome> {
 }
 
 void test(
-  "hh dispatches serve, benchmark and tools to the daemon and rollout to the CLI",
+  "hh dispatches serve, benchmark and tools to the daemon and rollout and status to the CLI",
   { timeout: 60_000 },
   async (t) => {
     const { directory } = await temporaryDirectory(t, "harnesshub-hh-");
@@ -56,6 +56,15 @@ void test(
       (JSON.parse(tools.stderr) as { error: { code: string } }).error.code,
       "INVALID_TOOL_PACKAGE_ARGUMENT",
     );
+
+    // Model-plane commands go to the CLI, which needs the daemon's admin token.
+    const status = await hh(directory, [
+      "status",
+      "--url",
+      "http://127.0.0.1:9",
+    ]);
+    assert.equal(status.code, 3);
+    assert.match(status.stderr, /admin\.token/);
 
     const rollout = await hh(directory, ["rollout"]);
     assert.equal(rollout.code, 1);
