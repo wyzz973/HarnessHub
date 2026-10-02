@@ -34,7 +34,7 @@
 `pnpm test:*` 与 `test:windows` 都经 [`scripts/run-tests.mjs`](../scripts/run-tests.mjs) 运行，它负责测试环境的隔离与期限：
 
 - 测试进程只继承白名单中的系统变量与 `HARNESSHUB_TEST_*` 显式开关；开发者 shell 中的 `HARNESSHUB_MODEL*`、`AGENT_ENGINE`、各家 API Key 与令牌一律不可见，测试需要时自行设置。
-- HOME、USERPROFILE、APPDATA、LOCALAPPDATA、XDG 目录与临时目录指向本次运行私有的沙箱。必须使用账户级系统服务的测试（目前只有 macOS 登录钥匙串）从 `HARNESSHUB_TEST_SYSTEM_HOME` 取得真实 HOME，并在测试结束时恢复。
+- HOME、USERPROFILE、APPDATA、LOCALAPPDATA、XDG 目录与临时目录指向本次运行私有的沙箱。涉及账户级系统服务的测试从 `HARNESSHUB_TEST_SYSTEM_HOME` 取得真实 HOME：macOS 钥匙串测试临时切换 HOME 并在结束时恢复，Windows DPAPI 测试据此定位按令牌用户配置目录保存的密文。
 - 每个用例默认有超时，整组有总期限；超过总期限时结束整个进程树并判为失败，这通常说明某个文件留下了未关闭的句柄。
 - 运行结束后沙箱临时目录中仍有内容即判为资源泄漏并失败；沙箱在任何情况下都会删除。拒绝样例见 `scripts/check-run-tests.test.mjs`。
 
