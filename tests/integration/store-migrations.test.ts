@@ -14,6 +14,7 @@ import {
   MIGRATIONS,
   migrationChecksum,
 } from "@harnesshub/store/storage/migrations";
+import { SqliteModelPlaneStore } from "@harnesshub/store/storage/model-plane-store";
 import { SqliteStore } from "@harnesshub/store/storage/sqlite-store";
 import {
   STORE_V1_RUN_IDS,
@@ -151,7 +152,7 @@ void test("a new database applies every migration in order and records them", (t
   assert.equal(migrations(db)[0]?.hh_version, "9.9.9-test");
 });
 
-void test("a user_version 1 database from the previous build migrates forward without data loss", (t) => {
+void test("a user_version 1 database from the previous build migrates forward without data loss", async (t) => {
   const { path, open, inspector } = fixture(t);
   const legacy = new DatabaseSync(path);
   for (const statement of STORE_V1_STATEMENTS) legacy.exec(statement);
@@ -213,6 +214,9 @@ void test("a user_version 1 database from the previous build migrates forward wi
       .run.generation,
     1,
   );
+  const plane = new SqliteModelPlaneStore(path);
+  t.after(() => plane.close());
+  assert.deepEqual(await plane.listProviders(), []);
 });
 
 void test("a database newer than this build is refused without modification", (t) => {
