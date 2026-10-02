@@ -192,7 +192,8 @@ node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js dist/tests/un
 - 非回环来源地址返回 403 `source_not_allowed`；带 `Origin` 头，或 `Host` 不是回环名称（`localhost`、`*.localhost`、`127.x.x.x`、`[::1]`）返回 403 `origin_forbidden`；未知路径 404 `route_not_found`，路径无法解码 400 `route_invalid`；请求的模型不在 `modelAllow` 内 403 `model_not_allowed`。
 - 所有拒绝都使用该路径所属协议的错误格式并带 `x-hh-error-source: gateway`，同时提交 `rejected: true`、`rejectReason` 的账本记录；Key 有效（含已吊销、已过期）时记录 `keyId`。同一 Key（无 Key 归为一类）与同一原因每分钟最多 20 条明细，其余计数，在该组合下一次被拒绝时或 `close()` 时写成一条汇总记录。
 - 鉴权通过后调用 `touchGatewayKey`，同一 Key 每分钟最多一次；失败只写日志。
-- 额度（`quota`）与 `session:` Key 的活动 Run 校验尚未实现。
+- **额度**（`GatewayKeyRecord.quota`，[quota.ts](../packages/gateway/src/quota.ts)）在白名单之后、转发之前检查。`tokensPerDay`（五项 token 之和，按 UTC 日）与 `costPerMonthUsd`（已知成本之和，按 UTC 自然月）比较已提交的账本：用 `aggregateUsage` 按 `keyId` 读取，每个 Key 缓存 10 秒，期间本网关提交的调用直接累加。达到阈值之前开始的调用照常完成，所以跨过阈值的那一次会完成，之后的调用被拒绝；同一 Key 并发的调用都按同一合计放行。`requestsPerMinute` 是令牌桶（容量与每分钟补充量都是该值），硬限制；只有通过用量检查的调用才取令牌。超额返回 429 `quota_exceeded`，`retry-after` 指向窗口重置的时刻（不截断：日额度到 UTC 零点，月额度到下月 1 日，请求数到下一个令牌），Gemini 的错误体另带 `RetryInfo`；拒绝写入账本（`rejected: true`），按 Key 与原因节流。账本读失败时返回 503 `store_unavailable`。
+- `session:` Key 的活动 Run 校验尚未实现。
 
 ### 模型解析与列表
 
@@ -218,7 +219,12 @@ node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js dist/tests/un
 
 ### 路由、重试与熔断
 
-- 单个 Model Ref 的候选是该 provider 的 Credential；路由组按策略排列成员：`order` 按配置；`rotate` 每次调用从下一个成员开始；`least-used` 取最近 24 小时 token 最少者；`latency` 取首内容时间指数平均最小者，样本少于 5 次的成员优先。后两者只统计本处理函数启动以来的调用；粘性（stickiness）尚未实现。
+- 单个 Model Ref 的候选是该 provider 的 Credential；路由组按策略排列成员：`order` 按配置；`rotate` 每次调用从下一个成员开始；`least-used` 取最近 24 小时 token 最少者；`latency` 取首内容时间指数平均最小者，样本少于 5 次的成员优先。后两者只统计本处理函数启动以来的调用。
+- **粘性**（[sticky.ts](../packages/gateway/src/sticky.ts)）让同一会话留在上次应答的 Credential，以保持上游提示缓存与推理签名有效。会话键依次取 `x-hh-conversation` 请求头、客户端自带的标识（Chat 与 Responses 的 `prompt_cache_key`，Anthropic `metadata.user_id` 中的 `session_…` 部分），否则为 system 文本加第一条用户消息的哈希；所有会话键都按 Gateway Key 隔离。请求以工具结果结尾（Chat 的 `tool` 消息、Responses 的 `function_call_output`、Anthropic 的 `tool_result`、Gemini 的 `functionResponse`）时视为同一轮之内。模式取路由组的 `stickiness`，单个 Model Ref 为 `auto`；`session:` Key 在 `auto` 时改为 `session`：
+  - `auto`：同一轮内总是留下；跨轮只有上次调用读取了至少 1024 个缓存 token、且距今不到 5 分钟才留下。
+  - `session`：总是留下；`turn`：只在同一轮内留下；`off`：不粘。
+  - 留下的候选排到最前，其余按策略的顺序跟在后面；它的熔断打开或已不在候选中（白名单、组成员或 Credential 变化）时粘性被打破，按策略路由。
+  - 有多个候选时，决定写入 `patches[]`：`sticky:hit`、`sticky:miss:<new|model_changed|cache_cold|new_turn>` 或 `sticky:broken:<breaker|unavailable>`；账本合约还没有专门的粘性字段（后续合约变更）。成功的调用更新记录。记录只在内存中保存最近 512 个会话、24 小时，守护进程重启后重新开始。
 - 重试策略取组的 `retry` 覆盖 `DEFAULT_RETRY_POLICY`，`totalAttempts` 不超过 8；单 Model Ref 使用默认值。退避为 `baseBackoffMs × 2^n`，不超过 `maxBackoffMs`，±20% 抖动；等待总计不超过 30 秒。
 - 分类按 03 第 5 节：连接失败与 408、500、502、503、504、529 先同候选重试再转移；等待响应头超时最多重试 1 次；429 的 `Retry-After`（或 `retry-after-ms`）不超过上限时有其他候选先转移，否则等待后重试，超过上限或没有时不等待，转移或把 429 返回客户端，`retry-after` 截断到 60 秒（Gemini 在错误体中写 `RetryInfo`）；401、402、403 与配额措辞转移不重试；404 与模型不存在措辞转移，并把该 Credential 与模型标记 10 分钟；其他 4xx 与上下文超长（429 一律不算超长）直接返回。客户端断开或 `close()` 立即停止，不再发起尝试。
 - 熔断以 Credential 为单位：连续 3 次计入的失败、一次认证或配额失败使其打开；时长取上游给出的等待，否则 60 秒起每次重新打开翻倍，上限 10 分钟；认证失败打开 10 分钟，Credential 引用变化时立即关闭。到期后半开放行一个探测请求，成功关闭、计入的失败再次打开。所有候选都不可用时不访问上游，返回最近一次失败的状态与原因。一次失败使该 Credential 的熔断打开时，本调用原本要做的同候选重试改为转移；只有按 `Retry-After` 等待后的重试不受熔断影响（等待已计入冷却）。直通与各种转换路由的重试、转移、扣留与熔断行为相同。
@@ -248,7 +254,7 @@ node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js dist/tests/un
 
 ### 验证
 
-[共享网关测试](../packages/gateway/test/shared-gateway.test.ts)、[路由测试](../packages/gateway/test/shared-gateway-routing.test.ts) 与 [协议矩阵测试](../packages/gateway/test/shared-gateway-matrix.test.ts) 把处理函数挂在 `listen(0)` 的回环服务上，使用测试内的内存 `ModelPlaneStore` 与回环假上游，不访问真实模型：每种 Key 拒绝及其账本记录与节流、白名单、模型列表、四种协议的直通（请求体除 `model` 外逐字节相同、鉴权头替换、响应字节相同）、四种入站到 Chat 上游的转换、补丁、压缩请求、503 后转移成功、首字节后不重试、400 不重试、上下文超长不重试、`Retry-After` 超过上限直接返回与上限内等待、扣留期间的流内错误转移、扣留超时释放、熔断打开与半开、认证失败换 Credential、取消后不再尝试、`close()` 中止在途调用、提交前不写终止事件、提交失败时的 `evidence_unavailable`、响应头与空闲超时、转换路径的保活与 Gemini 响应头提交；以及 Chat 入站到仅有 Anthropic 端点的 provider（推理、工具、缓存读写 usage、同一 provider 的签名回传）、Claude Code 到仅有 Responses 或 Gemini 端点的 provider（图片、推理、工具、错误结果、Schema 限制）、Codex 到 Claude、交错的并行工具参数、各协议上游错误的格式映射，以及转换路由上的重试、转移、扣留与熔断。[编解码测试](../packages/gateway/test/matrix-codec.test.ts) 逐项覆盖编码器、解码器、结束原因映射与 `max_tokens` 解析。
+[共享网关测试](../packages/gateway/test/shared-gateway.test.ts)、[路由测试](../packages/gateway/test/shared-gateway-routing.test.ts) 与 [协议矩阵测试](../packages/gateway/test/shared-gateway-matrix.test.ts) 与 [粘性与额度测试](../packages/gateway/test/shared-gateway-sticky.test.ts) 把处理函数挂在 `listen(0)` 的回环服务上，使用测试内的内存 `ModelPlaneStore` 与回环假上游，不访问真实模型：每种 Key 拒绝及其账本记录与节流、白名单、模型列表、四种协议的直通（请求体除 `model` 外逐字节相同、鉴权头替换、响应字节相同）、四种入站到 Chat 上游的转换、补丁、压缩请求、503 后转移成功、首字节后不重试、400 不重试、上下文超长不重试、`Retry-After` 超过上限直接返回与上限内等待、扣留期间的流内错误转移、扣留超时释放、熔断打开与半开、认证失败换 Credential、取消后不再尝试、`close()` 中止在途调用、提交前不写终止事件、提交失败时的 `evidence_unavailable`、响应头与空闲超时、转换路径的保活与 Gemini 响应头提交；以及 Chat 入站到仅有 Anthropic 端点的 provider（推理、工具、缓存读写 usage、同一 provider 的签名回传）、Claude Code 到仅有 Responses 或 Gemini 端点的 provider（图片、推理、工具、错误结果、Schema 限制）、Codex 到 Claude、交错的并行工具参数、各协议上游错误的格式映射，以及转换路由上的重试、转移、扣留与熔断。[编解码测试](../packages/gateway/test/matrix-codec.test.ts) 逐项覆盖编码器、解码器、结束原因映射与 `max_tokens` 解析。粘性与额度测试覆盖四种协议的会话键与轮次判断、每种粘性模式与缓存价值规则、熔断打开时粘性被打破、轮换策略下的 `auto` 粘性，以及三种额度（跨过阈值的调用完成、下一次被拒绝、窗口重置后恢复）。
 
 ```sh
 pnpm build
@@ -258,6 +264,6 @@ node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js
 ### 与 03 的差异与未实现项
 
 - 协议矩阵以 Chat 为枢纽，而不是 03 第 3 节的 IR；编码器与解码器按 IR 的边来组织，以后可以替换枢纽。经过 Chat 枢纽会丢失 Chat 表达不了的区别，例如 Anthropic 的 `stop_sequence` 与 `end_turn` 都成为 `stop`。
-- 尚未实现：额度与 `session:` Key 的活动 Run（409 `no_active_run`）及 `runId` 归因；粘性路由；`route.breaker` 事件（目前只写日志）；provider 声明的请求体上限与 `onUnsupportedMedia`；上游 `count_tokens` 转发；局域网共享与 `publicBaseUrl`；`shape`、`conversationKey` 等账本扩展字段；入站转换器自身丢弃的提示字段尚未记入 `unmapped[]`；转换到 Gemini 的图片 URL 与 Anthropic 的结构化输出（beta）；拒绝记录的定时汇总（目前在下一次同类拒绝或 `close()` 时写出）。
+- 尚未实现：`session:` Key 的活动 Run（409 `no_active_run`）及 `runId` 归因；粘性记录的持久化与账本中的粘性字段（目前写在 `patches[]`）；`route.breaker` 事件（目前只写日志）；provider 声明的请求体上限与 `onUnsupportedMedia`；上游 `count_tokens` 转发；局域网共享与 `publicBaseUrl`；`shape`、`conversationKey` 等账本扩展字段；入站转换器自身丢弃的提示字段尚未记入 `unmapped[]`；转换到 Gemini 的图片 URL 与 Anthropic 的结构化输出（beta）；拒绝记录的定时汇总（目前在下一次同类拒绝或 `close()` 时写出）。
 - 直通只给 Gemini 入站注入保活（它在响应头提交期限后已提交头部）；其他协议的直通流保持上游的原样字节，不插入保活。
 - 响应体上限按原始字节而不是解码后的内容计算；`least-used` 与 `latency` 只统计本次启动以来的调用；认证失败的熔断最长 10 分钟后进入半开，而不是一直保持到 Credential 更新。
