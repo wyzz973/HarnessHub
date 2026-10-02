@@ -19,6 +19,7 @@ ADR 记录重要且未来可能重新讨论的决定。适用范围见 [文档�
 - [0010：ACP 客户端能力与精确权限选择](0010-acpx-client-capabilities.md)
 - [0013：统一模型网关](0013-unified-model-gateway.md)（开源版计划在 M1 由共享网关与作用域 Gateway Key 取代）
 - [0014：Gateway 与引擎之间的诊断日志](0014-diagnostic-logs.md)
+- [0016：POSIX 上脱离 Worker 进程组的后代](0016-posix-escaped-descendants.md)
 - [0017：多包布局迁移中的归属与接缝](0017-package-layout-migration.md)（OSS-004）
 
 编号 0009、0011、0012、0015 是早期版本的 Windows 便携发行、上游网关适配、离线交付与预装工具包决定，随对应功能一起移除，原文保留在 `archive/competition` 分支；编号不再复用。

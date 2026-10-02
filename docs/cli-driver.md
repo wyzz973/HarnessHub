@@ -51,7 +51,7 @@ engines:
 
 ## 资源和能力边界
 
-Run 的总 deadline 由 Runtime 管理。取消会先向所属 CLI 进程发送 SIGTERM；直接子进程在 250 ms 内未退出时升级为 SIGKILL，并等待退出。Driver 不创建独立进程组。CLI 每轮成功或失败后，Runtime 都先请求 Host 关闭 Worker、核实并清理进程组，再提交 Run 结果及实际 `cleanupStatus`；取消、deadline 和显式关闭 Session 同样经过 Host 清理。CLI 本身退出、stdout 关闭都不能代替后台孙进程的清理证据。
+Run 的总 deadline 由 Runtime 管理。取消会先向所属 CLI 进程发送 SIGTERM；直接子进程在 250 ms 内未退出时升级为 SIGKILL，并等待退出。Driver 不创建独立进程组。CLI 每轮成功或失败后，Runtime 都先请求 Host 关闭 Worker、核实并清理进程组及[脱离进程组的后代](runtime-api.md#posix-上脱离进程组的后代)，再提交 Run 结果及实际 `cleanupStatus`；取消、deadline 和显式关闭 Session 同样经过 Host 清理。CLI 本身退出、stdout 关闭都不能代替后台孙进程的清理证据。
 
 每轮使用新 CLI 进程；不自动传递上一轮历史，不宣称支持上下文恢复、图片或交互式权限审批。引擎执行本身仍能读写其工作目录和引擎配置允许的资源；进程隔离不等于操作系统沙箱。Windows 的进程树清理与原生命令行为尚未验证。
 

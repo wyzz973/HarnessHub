@@ -5,6 +5,7 @@ import {
 } from "../drivers/configuration/prepare.js";
 import type { ModelCallRecord } from "../drivers/chat-completions/gateway.js";
 import { HubError } from "../domain/errors.js";
+import { WORKER_TREE_ENVIRONMENT } from "../domain/environment.js";
 import type { ExecutionSpec } from "../domain/ports.js";
 import type {
   DriverResult,
@@ -258,7 +259,14 @@ function recordModelCall(call: ModelCallRecord): void {
   owned.modelEvents.push(delivered);
 }
 
-/** Remove inherited vendor credentials, then apply the prepared engine environment. */
+/** The POSIX tree marker the ProcessHost gave this Worker; absent on Windows. */
+const workerTree = process.env[WORKER_TREE_ENVIRONMENT];
+
+/**
+ * Remove inherited vendor credentials, then apply the prepared engine
+ * environment. The tree marker survives both: a launch recipe or credential
+ * list that names it cannot hide the engine's descendants from cleanup.
+ */
 function applyEnvironment(prepared: PreparedConfiguration): void {
   // This process belongs to one Session; no Gateway or other Worker's environment is changed.
   const removed = new Set(
@@ -267,6 +275,8 @@ function applyEnvironment(prepared: PreparedConfiguration): void {
   for (const name of Object.keys(process.env))
     if (removed.has(name.toUpperCase())) delete process.env[name];
   Object.assign(process.env, prepared.env);
+  if (workerTree !== undefined)
+    process.env[WORKER_TREE_ENVIRONMENT] = workerTree;
 }
 
 /**

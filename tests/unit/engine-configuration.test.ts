@@ -417,6 +417,59 @@ void test("Copilot stdio MCP uses a private native configuration while remote se
   );
   assert.equal(await readFile(nativeFile, "utf8"), bytes);
 });
+void test("stdio MCP servers carry the Worker's tree marker; remote servers and unmarked environments do not", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "hh-mcp-marker-"));
+  t.after(async () => rm(directory, { recursive: true, force: true }));
+  const profile = normalizeEngine({
+    ...base,
+    configuration: {
+      adapter: "generic",
+      mcpServers: [
+        {
+          name: "local",
+          type: "stdio",
+          command: process.execPath,
+          env: { MODE: "read-only" },
+          enabled: true,
+        },
+        {
+          name: "remote",
+          type: "http",
+          url: "http://127.0.0.1:4321/mcp",
+          enabled: true,
+        },
+      ],
+    },
+  });
+  const marked = await prepareConfiguration(spec(profile, directory), {
+    HARNESSHUB_WORKER_TREE: "tree-token",
+  });
+  assert.deepEqual(marked.mcpServers, [
+    {
+      name: "local",
+      command: process.execPath,
+      args: [],
+      env: [
+        { name: "MODE", value: "read-only" },
+        { name: "HARNESSHUB_WORKER_TREE", value: "tree-token" },
+      ],
+    },
+    {
+      name: "remote",
+      type: "http",
+      url: "http://127.0.0.1:4321/mcp",
+      headers: [],
+    },
+  ]);
+  // Windows Workers and configuration probes have no marker to pass on.
+  const unmarked = await prepareConfiguration(spec(profile, directory), {});
+  assert.deepEqual(
+    unmarked.mcpServers.map((server) =>
+      "env" in server ? server.env : server.headers,
+    ),
+    [[{ name: "MODE", value: "read-only" }], []],
+  );
+});
 void test("Pi and OpenClaw reject enabled ACP MCP injection instead of silently dropping tools", () => {
   for (const adapter of ["pi", "openclaw"]) {
     const configuration = {

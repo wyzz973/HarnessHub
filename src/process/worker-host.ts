@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: MIT
-import { WINDOWS_SYSTEM_ENVIRONMENT } from "../domain/environment.js";
+import {
+  WINDOWS_SYSTEM_ENVIRONMENT,
+  WORKER_TREE_ENVIRONMENT,
+} from "../domain/environment.js";
 import { configurationEnvironmentNames } from "../domain/engine-configuration.js";
 import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -12,6 +15,13 @@ import {
   type WorkerLease,
 } from "./leases.js";
 import { settleWorkerCleanup } from "./cleanup-settlement.js";
+import { ProcessTableError, readProcessTable } from "./process-table.js";
+import {
+  gatewayIdentity,
+  reclaimTreeSurvivors,
+  workerTree,
+  type TreeProcess,
+} from "./posix-tree.js";
 import { superviseWindowsWorker, type WindowsJob } from "./windows-job.js";
 import type {
   ExecutionHandle,
@@ -65,7 +75,11 @@ interface SessionWorker {
   spawnedAt: number;
 }
 
-/** Owns POSIX process groups or Windows kill-on-close Jobs, with awaited descendant cleanup. */
+/**
+ * Owns POSIX process groups or Windows kill-on-close Jobs, with awaited
+ * descendant cleanup. On POSIX, cleanup also reclaims descendants that left the
+ * Worker's group (see `posix-tree.ts`, including the residual gap).
+ */
 export class ProcessWorkerHost implements WorkerHost {
   private readonly sessions = new Map<SessionId, SessionWorker>();
   private readonly quarantinedLeases = new Set<SessionId>();
@@ -246,7 +260,7 @@ export class ProcessWorkerHost implements WorkerHost {
     const ownerToken = randomUUID();
     const child = fork(workerPath, [`--harnesshub-owner=${ownerToken}`], {
       cwd: spec.cwd,
-      env: this.workerEnvironment(spec),
+      env: this.workerEnvironment(spec, ownerToken),
       detached: process.platform !== "win32",
       stdio: ["ignore", "ignore", "ignore", "ipc"],
       serialization: "json",
@@ -395,7 +409,10 @@ export class ProcessWorkerHost implements WorkerHost {
     return worker;
   }
 
-  private workerEnvironment(spec: ExecutionSpec): NodeJS.ProcessEnv {
+  private workerEnvironment(
+    spec: ExecutionSpec,
+    ownerToken: string,
+  ): NodeJS.ProcessEnv {
     const normalize = (name: string) =>
       process.platform === "win32" ? name.toUpperCase() : name;
     const inherited = new Map(
@@ -461,7 +478,14 @@ export class ProcessWorkerHost implements WorkerHost {
       if (process.platform !== "win32") chmodSync(directory, 0o700);
     }
     // Per-session paths win over explicit values so backend logs and temporary files stay local.
-    return { ...env, ...privatePaths };
+    // The tree marker wins over everything: process ownership is not configuration.
+    return {
+      ...env,
+      ...privatePaths,
+      ...(process.platform === "win32"
+        ? {}
+        : { [WORKER_TREE_ENVIRONMENT]: ownerToken }),
+    };
   }
 
   private fail(worker: SessionWorker, error: unknown): void {
@@ -539,7 +563,11 @@ export class ProcessWorkerHost implements WorkerHost {
       }
       if (this.sessions.get(entry.sessionId)?.lease?.id === entry.lease.id)
         continue;
-      let cleanup = await recoverWorkerLease(entry.lease, this.shutdownGraceMs);
+      let cleanup = await recoverWorkerLease(
+        entry.lease,
+        this.shutdownGraceMs,
+        this.log,
+      );
       if (cleanup === "confirmed") {
         try {
           this.leases.remove(entry.lease);
@@ -556,6 +584,9 @@ export class ProcessWorkerHost implements WorkerHost {
   }
 
   private async terminate(worker: SessionWorker): Promise<CleanupStatus> {
+    // Shutdown ends the engine and breaks parent links; record the tree first.
+    const tree =
+      process.platform === "win32" ? [] : await this.recordTree(worker);
     if (worker.child.connected) {
       try {
         await this.send(worker, { version: 1, type: "shutdown" });
@@ -570,6 +601,59 @@ export class ProcessWorkerHost implements WorkerHost {
       const exited = await this.waitExit(worker, this.shutdownGraceMs);
       return cleanup === "confirmed" && exited ? "confirmed" : "unconfirmed";
     }
+    const group = await this.terminateGroup(worker, exitedGracefully);
+    // A Worker that never started has no tree to reclaim.
+    if (group !== "confirmed" || worker.child.pid === undefined) return group;
+    return reclaimTreeSurvivors({
+      marker: worker.ownerToken,
+      recorded: tree,
+      graceMs: this.shutdownGraceMs,
+      log: this.log,
+      context: { sessionId: worker.sessionId, pid: worker.child.pid },
+    });
+  }
+
+  /**
+   * POSIX snapshot of the Worker tree before shutdown, or `undefined` when the
+   * process table cannot be read (cleanup then stays at best `unconfirmed`).
+   * The snapshot child starts synchronously, before this call yields.
+   */
+  private async recordTree(
+    worker: SessionWorker,
+  ): Promise<TreeProcess[] | undefined> {
+    const pid = worker.child.pid;
+    if (pid === undefined) return [];
+    // Node emits 'exit' when it reaps the Worker; until then its PID cannot
+    // be reused, even if the Worker is already a zombie.
+    const unreaped = !worker.hasExited;
+    try {
+      const identity = gatewayIdentity();
+      const snapshot = await readProcessTable();
+      // Re-check after the await: if the Worker was reaped during the snapshot,
+      // a live row with its PID may already belong to another process; a row
+      // that is still a zombie is the Worker itself.
+      const rootTrusted =
+        unreaped &&
+        (!worker.hasExited || snapshot.table.get(pid)?.zombie === true);
+      return workerTree(snapshot.table, pid, rootTrusted, identity);
+    } catch (error) {
+      // Only the snapshot can fail here; its reason is a fixed string.
+      this.log.info("worker.tree_record_failed", {
+        sessionId: worker.sessionId,
+        pid,
+        error:
+          error instanceof ProcessTableError
+            ? error.message
+            : "unexpected error",
+      });
+      return undefined;
+    }
+  }
+
+  private async terminateGroup(
+    worker: SessionWorker,
+    exitedGracefully: boolean,
+  ): Promise<CleanupStatus> {
     if (exitedGracefully && !this.groupExists(worker)) return "confirmed";
     for (const signal of ["SIGTERM", "SIGKILL"] as const) {
       const pid = worker.child.pid;
