@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { checkSource } from "./check-boundaries.mjs";
+import { checkSource, legacyDestination } from "./check-boundaries.mjs";
 
 const root = join(tmpdir(), "harnesshub-boundary-fixture");
 const check = (file, contents) =>
@@ -596,5 +596,33 @@ test("secrets keeps the drivers rules in src/ and spawns its helper only under i
       completedTasks: new Set(["OSS-013"]),
     }).join("\n"),
     /exception for secrets\/secrets\.ts \(owner OSS-010 F08\) expired with OSS-013/,
+  );
+});
+
+test("a src/ file may import only the packages its destination package may depend on", () => {
+  assert.equal(legacyDestination("drivers/configuration/prepare.ts"), "agents");
+  assert.equal(legacyDestination("drivers/configuration/probe.ts"), "runtime");
+  assert.equal(legacyDestination("drivers/acp/driver.ts"), "drivers");
+  assert.equal(legacyDestination("main.ts"), "daemon");
+  const gateway =
+    'import { startModelGateway } from "@harnesshub/gateway/gateway";';
+  assert.deepEqual(check("worker/main.ts", gateway), []);
+  assert.deepEqual(check("main.ts", gateway), []);
+  // V1: preparation moves to agents, which may not depend on the gateway.
+  assert.match(
+    check("drivers/configuration/prepare.ts", gateway).join("\n"),
+    /src\/drivers\/configuration\/prepare\.ts moves to @harnesshub\/agents, which cannot depend on @harnesshub\/gateway/,
+  );
+  // V4: drivers never import secrets.
+  assert.match(
+    check(
+      "drivers/acp/driver.ts",
+      'import { resolveSecret } from "@harnesshub/secrets/secrets";',
+    ).join("\n"),
+    /moves to @harnesshub\/drivers, which cannot depend on @harnesshub\/secrets/,
+  );
+  assert.match(
+    check("gateway/models.ts", gateway).join("\n"),
+    /gateway cannot depend on drivers/,
   );
 });

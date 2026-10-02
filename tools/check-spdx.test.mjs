@@ -55,3 +55,31 @@ test("rejects missing headers, wrong identifiers and an empty inventory", async 
   const empty = await project(t, { "README.md": "# x\n" });
   assert.deepEqual((await checkSpdx(empty)).diagnostics, ["no source files found"]);
 });
+
+test("package native directories hold helper sources only, never compiled helpers", async (t) => {
+  const sources = await project(t, {
+    "packages/store/native/windows-acl.cs": "// SPDX-License-Identifier: MIT\nclass Acl {}\n",
+    "packages/store/native/build-windows-acl.mjs": "// SPDX-License-Identifier: MIT\n",
+    "packages/secrets/native/keychain.swift": "// SPDX-License-Identifier: MIT\nimport Foundation\n",
+    "packages/store/dist/native/harnesshub-acl.exe": "MZ\0\0 built output, not committed",
+  });
+  assert.deepEqual((await checkSpdx(sources)).diagnostics, []);
+
+  const binaries = await project(t, {
+    "packages/core/src/a.ts": "// SPDX-License-Identifier: MIT\n",
+    "packages/store/native/harnesshub-acl.exe": "MZ\0\0 compiled helper",
+    "packages/secrets/native/bin/harnesshub-keychain": "Ïúíþ\0\0",
+    "packages/secrets/native/keychain.swift": "// SPDX-License-Identifier: MIT\n\0\0",
+  });
+  const { diagnostics } = await checkSpdx(binaries);
+  assert.equal(diagnostics.length, 3, diagnostics.join("\n"));
+  for (const file of [
+    "packages/store/native/harnesshub-acl.exe",
+    "packages/secrets/native/bin/harnesshub-keychain",
+    "packages/secrets/native/keychain.swift",
+  ])
+    assert.ok(
+      diagnostics.some((line) => line.startsWith(`${file}: native/ holds helper sources`)),
+      file,
+    );
+});

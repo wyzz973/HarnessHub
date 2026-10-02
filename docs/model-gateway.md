@@ -2,7 +2,7 @@
 
 统一模型网关让所有引擎只经过同一个 Session 私有入口访问 HarnessHub 配置的唯一模型。引擎按自己的原生协议调用网关；网关把每次调用转换为一次流式 OpenAI Chat Completions 上游请求，再按原协议返回。设计取舍见 [ADR 0013](decisions/0013-unified-model-gateway.md)，它扩展了 ADR 0011（归档于 `archive/competition` 分支的 `0011-chat-completions-bridge.md`） 的 Codex/Gemini 协议桥。
 
-实现位于 [gateway.ts](../src/drivers/chat-completions/gateway.ts)，协议转换分别在同目录的 `chat.ts`、`responses.ts`、`anthropic.ts`、`google.ts`，上游请求与流解析在 `upstream.ts`，推理缓存在 `reasoning.ts`。本页描述当前代码行为；哪些引擎、由谁启动网关由 Worker 配置准备决定，不在本页。
+实现位于 [gateway.ts](../packages/gateway/src/gateway.ts)，协议转换分别在同目录的 `chat.ts`、`responses.ts`、`anthropic.ts`、`google.ts`，上游请求与流解析在 `upstream.ts`，推理缓存在 `reasoning.ts`。本页描述当前代码行为；哪些引擎、由谁启动网关由 Worker 配置准备决定，不在本页。
 
 ## 生命周期与所有权
 
@@ -134,7 +134,7 @@ OpenAI 与 Anthropic 路径的 `/v1` 前缀可省略；Google 路径也接受 `/
 | 入站请求头 / 请求体接收时限 | 10 秒 / 60 秒 |
 | 推理缓存 | 256 条、4 MiB |
 
-排队中的调用在引擎断开或 Run 取消时离开队列。限制值在 [gateway.ts](../src/drivers/chat-completions/gateway.ts) 的 `DEFAULT_GATEWAY_LIMITS` 中集中定义；`startModelGateway` 总是使用这些默认值，目前没有用户配置入口。`createModelGateway` 接受显式限制，在监听前校验每一项为范围内的整数，否则抛出 `RangeError`；除保活间隔外，时间限制只要求为正数，测试据此缩短它们。
+排队中的调用在引擎断开或 Run 取消时离开队列。限制值在 [gateway.ts](../packages/gateway/src/gateway.ts) 的 `DEFAULT_GATEWAY_LIMITS` 中集中定义；`startModelGateway` 总是使用这些默认值，目前没有用户配置入口。`createModelGateway` 接受显式限制，在监听前校验每一项为范围内的整数，否则抛出 `RangeError`；除保活间隔外，时间限制只要求为正数，测试据此缩短它们。
 
 ## 媒体内容
 

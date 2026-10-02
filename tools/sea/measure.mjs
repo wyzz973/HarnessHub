@@ -13,7 +13,9 @@
  * series. p50/p95 are nearest-rank.
  *
  * End-to-end checks, all against the SEA: `version --json` carries the build identity of
- * dist/build-info.json; `serve` reaches ready; the engine launcher and the command MCP server run
+ * dist/build-info.json; the extracted secret helper of this platform (macOS keychain, Windows
+ * DPAPI; none on Linux) has the SHA-256 that build.json recorded, read as a file only;
+ * `serve` reaches ready; the engine launcher and the command MCP server run
  * as roles of the SEA; a demo Session Run on the fake engine completes in a Worker that the SEA
  * re-executed itself for; an ACP engine (the repository's model-gateway-peer fixture, on this
  * Node) calls the Session model gateway, which makes one authenticated streaming call to a
@@ -27,7 +29,7 @@
  * anything but loopback. Needs `pnpm build` (for the fixture) and tools/sea/build.mjs.
  */
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import {
   appendFile,
@@ -208,7 +210,14 @@ function capture(command, args, env, input) {
   });
 }
 
-async function endToEnd(binary) {
+/** The system secret helper each platform embeds, relative to the extraction root. */
+const SECRET_HELPERS = {
+  darwin: "packages/secrets/dist/native/harnesshub-keychain",
+  win32: "packages/secrets/dist/native/harnesshub-secrets.exe",
+};
+
+/** @param {object | null} build The build record (build.json) of the binary, if any. */
+async function endToEnd(binary, build) {
   const checks = [];
   const check = (name, ok, detail) => {
     checks.push({
@@ -271,6 +280,30 @@ async function endToEnd(binary) {
     });
 
     const serveArgs = ["serve", "--demo", "--port", "0", "--data-dir", dataDir];
+    // The secret helper the executable extracted must be the one it embedded.
+    // Only the file is read: no secret store is touched.
+    await attempt("asset.secret-helper", async () => {
+      const relative = SECRET_HELPERS[process.platform];
+      if (!relative) {
+        check("asset.secret-helper", true, {
+          skipped: `no system secret helper on ${process.platform}; secrets use environment and file references`,
+        });
+        return;
+      }
+      const recorded = build?.assetSha256?.[relative] ?? null;
+      const actual = createHash("sha256")
+        .update(
+          await readFile(
+            path.join(env.HARNESSHUB_SEA_ROOT, ...relative.split("/")),
+          ),
+        )
+        .digest("hex");
+      check("asset.secret-helper", recorded !== null && actual === recorded, {
+        path: relative,
+        recorded,
+        actual,
+      });
+    });
     await attempt("serve.ready", async () => {
       gateway = await startGateway(binary, serveArgs, { cwd: workspace, env });
       check("serve.ready", true, {
@@ -675,7 +708,7 @@ async function main() {
   } finally {
     await remove(installedRoot);
   }
-  const checks = await endToEnd(binary);
+  const checks = await endToEnd(binary, build);
   const startsOk = [
     coldStart.firstRun,
     coldStart.installed,

@@ -143,4 +143,11 @@ daemon 内只有 `src/worker/**` 可以导入 drivers。
 - `drivers/configuration/secrets.ts` 平铺迁入 `packages/secrets/src/secrets.ts`，以 `@harnesshub/secrets/secrets` 导入；它只依赖 core。别名表把它映射到原 `drivers` 模块，因此 `src/` 中只有原来可以导入 drivers 的模块（drivers 自身、worker 与组合根）可以导入它。
 - 钥匙串（Swift）与 DPAPI（C#）辅助程序源码及构建脚本迁入 `packages/secrets/native/`，构建到本包的 `dist/native`。运行时路径由 `secretHelperPath(platform)` 计算，相对层级从 `../../../native/` 变为 `../native/`；包内测试在所有平台检查两个路径，并在各自平台检查文件存在。`src/secrets.ts` 启动辅助程序，因此是第二个 `child_process` 例外（所有者 OSS-010 F08，随 OSS-013 到期）。
 - 一个 Windows DPAPI 测试把编译后的模块交给子进程，改用 `import.meta.resolve`。
+
+第 5 步（gateway 与 V1、V3）：
+
+- `drivers/chat-completions` 的 11 个文件平铺迁入 `packages/gateway/src/`，以 `@harnesshub/gateway/<文件>` 导入；包只依赖 core。`InboundProtocol`、`ModelGatewayOptions`、`ModelCallRecord`、`ModelGateway` 从 `gateway.ts` 原样移到 `packages/core/src/model-bridge.ts`，不在网关中再导出；测试从 core 导入这些类型。
+- V1：`PreparationHooks.startModelGateway` 由 Worker 入口与组合根的配置探测注入；需要路由而未注入时，在解析任何秘密、写入任何文件之前抛出 `MODEL_GATEWAY_NOT_INJECTED`（500，表示组合缺陷），由新单元测试固定。直接调用 `prepareConfiguration` 并经网关路由的 6 个单元测试文件改为注入同一个工厂。V3：`worker/outcome.ts` 改用 core 类型。
+- 边界检查：别名表把 gateway 映射到原 `drivers` 模块；新增 `LEGACY_DESTINATIONS`，按第 2 节记录每个 `src/` 路径将迁入的包，`src/` 文件的 `@harnesshub/*` 导入还必须是该包按依赖图可以依赖的包。这使 V1（agents 的 `prepare.ts` 不得导入 gateway）与 V4（drivers 不得导入 secrets）从现在起就被检查，而不是等到对应文件迁入包时。
+- 第 4 步安全审查提出的三项加固随第 5 步提交：SEA 构建只嵌入 `NATIVE_HELPERS` 列出的原生辅助程序，`dist/native` 或各包 `dist/native` 中的其他文件使构建失败，开发机上旧构建留下的辅助程序因此不会被打包（迁移辅助程序的步骤同时更新该表，第 8 步移走 Job 辅助程序）；`build.json` 记录每个嵌入资源的 SHA-256，`measure.mjs` 检查当前平台的密钥辅助程序解包后与记录一致，Linux 注明原因后跳过；`check-spdx` 拒绝 `packages/*/native` 中不是 `.cs`、`.swift`、`.mjs` 的文件和含 NUL 字节的文件，编译产物因此不会被提交。
 - macOS 钥匙串条目的访问控制绑定创建它的那个辅助程序二进制。`swiftc` 的产物每次构建都不同（同一源码路径连续两次构建的 cdhash 也不同），另一个构建的辅助程序读取已有条目时，系统会等待用户批准，`interactionNotAllowed` 不能阻止；运行时在 20 秒后终止辅助程序并报 `SECRET_UNAVAILABLE`。这在迁移前的每次 `pnpm build` 后就已存在，迁移没有改变它；稳定的签名身份留给 M1 的发布签名。

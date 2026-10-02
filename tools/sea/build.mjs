@@ -66,6 +66,59 @@ if (
   throw new Error(
     `tools/sea/entry.mjs dispatches [${ENTRY_ROLES.join(", ")}] but the build extracts [${ROLE_ENTRIES.join(", ")}]`,
   );
+/**
+ * Native helpers the executable may embed, by directory relative to the
+ * repository. A migration step that moves or adds a helper updates this table.
+ */
+export const NATIVE_HELPERS = {
+  "dist/native": ["harnesshub-job.exe"],
+  "packages/secrets/dist/native": [
+    "harnesshub-keychain",
+    "harnesshub-secrets.exe",
+  ],
+  "packages/store/dist/native": ["harnesshub-acl.exe"],
+};
+
+/**
+ * The native helpers to embed: every file of dist/native and of each
+ * packages/<name>/dist/native, at its repository-relative path, where the
+ * bundled modules resolve it from their own location under the extraction
+ * root. Helpers absent on this platform are simply not embedded.
+ *
+ * @param {string} root Repository root.
+ * @returns {{path: string, file: string}[]} Sorted by path.
+ * @throws {Error} When a native directory holds a file NATIVE_HELPERS does not
+ *   list, such as a stale helper from an earlier build, so it is never shipped.
+ */
+export function nativeAssets(root) {
+  const packages = path.join(root, "packages");
+  const directories = [
+    "dist/native",
+    ...(existsSync(packages) ? readdirSync(packages).sort() : []).map(
+      (name) => `packages/${name}/dist/native`,
+    ),
+  ];
+  const helpers = [];
+  const unknown = [];
+  for (const relative of directories) {
+    const directory = path.join(root, ...relative.split("/"));
+    if (!existsSync(directory)) continue;
+    const allowed = NATIVE_HELPERS[relative] ?? [];
+    for (const name of readdirSync(directory).sort())
+      if (allowed.includes(name))
+        helpers.push({
+          path: `${relative}/${name}`,
+          file: path.join(directory, name),
+        });
+      else unknown.push(`${relative}/${name}`);
+  }
+  if (unknown.length)
+    throw new Error(
+      `Native helper directories hold files NATIVE_HELPERS does not list: ${unknown.join(", ")}. Delete stale helpers, or list a new helper in tools/sea/build.mjs.`,
+    );
+  return helpers;
+}
+
 const ROLE_PLACEHOLDER = `// Placeholder for a HarnessHub single-executable role entry. The executable that wrote this
 // directory runs the bundled role when it is started with this path; nothing else may run it.
 throw new Error("HarnessHub single-executable role placeholder; start it through the executable");
@@ -161,26 +214,11 @@ export async function buildSea({ out = path.join(ROOT, "dist", "sea") } = {}) {
       },
     ],
   ]);
-  // Native helpers keep their repository-relative path under the extraction
-  // root, where the bundled modules resolve them from their own location:
-  // dist/native for the legacy tree, and each package's dist/native.
-  const packages = path.join(ROOT, "packages");
-  const nativeDirectories = [
-    "dist/native",
-    ...(existsSync(packages) ? readdirSync(packages).sort() : []).map(
-      (name) => `packages/${name}/dist/native`,
-    ),
-  ];
-  for (const relative of nativeDirectories) {
-    const directory = path.join(ROOT, ...relative.split("/"));
-    for (const name of existsSync(directory)
-      ? readdirSync(directory).sort()
-      : [])
-      assets.set(`${relative}/${name}`, {
-        bytes: readFileSync(path.join(directory, name)),
-        executable: true,
-      });
-  }
+  for (const helper of nativeAssets(ROOT))
+    assets.set(helper.path, {
+      bytes: readFileSync(helper.file),
+      executable: true,
+    });
   const placeholder = Buffer.from(ROLE_PLACEHOLDER);
   const files = [
     ...[...assets].map(([relative, { bytes, executable }]) => ({
@@ -294,6 +332,11 @@ export async function buildSea({ out = path.join(ROOT, "dist", "sea") } = {}) {
       // Download-size estimate; release archives are tar.gz (zip on Windows).
       binaryGzip9: gzipSync(readFileSync(binary), { level: 9 }).length,
     },
+    // SHA-256 of every embedded asset, which measure.mjs compares with the
+    // extracted files.
+    assetSha256: Object.fromEntries(
+      files.filter((f) => f.asset === f.path).map((f) => [f.path, f.sha256]),
+    ),
     bundleInputs: inputBreakdown(bundled.metafile),
   };
   writeFileSync(

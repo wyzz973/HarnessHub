@@ -117,7 +117,8 @@ Status: accepted
 ### 模型网关模块
 
 ```ts
-// src/drivers/chat-completions/gateway.ts
+// 类型：packages/core/src/model-bridge.ts；startModelGateway：packages/gateway/src/gateway.ts，
+// 由 Worker 与组合根经 PreparationHooks.startModelGateway 注入配置准备（ADR 0017）
 export type InboundProtocol = "openai-completions" | "openai-responses" | "anthropic" | "google";
 export interface ModelGatewayOptions {
   upstream: {

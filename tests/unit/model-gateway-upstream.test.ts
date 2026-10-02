@@ -11,9 +11,11 @@ import {
   DEFAULT_GATEWAY_LIMITS,
   createModelGateway,
   type GatewayLimits,
-  type ModelCallRecord,
-  type ModelGatewayOptions,
-} from "../../src/drivers/chat-completions/gateway.js";
+} from "@harnesshub/gateway/gateway";
+import type {
+  ModelCallRecord,
+  ModelGatewayOptions,
+} from "@harnesshub/core/model-bridge";
 
 type Body = Record<string, unknown>;
 interface Upstream {

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ModelCallRecord } from "../../src/drivers/chat-completions/gateway.js";
+import type { ModelCallRecord } from "@harnesshub/core/model-bridge";
 import type { DriverResult } from "@harnesshub/core/types";
 import {
   appendDiagnostic,

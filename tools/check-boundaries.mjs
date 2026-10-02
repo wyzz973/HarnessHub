@@ -15,7 +15,8 @@
  * - `@harnesshub/<package>` imports follow the dependency graph of
  *   docs/proposals/oss/02-architecture.md section 8 (PACKAGE_GRAPH, APP_GRAPH).
  * - src/ may import a package only through LEGACY_ALIASES, which names the
- *   legacy module whose rules apply to it.
+ *   legacy module whose rules apply to it, and only when the package that
+ *   the importing file moves to (LEGACY_DESTINATIONS) may depend on it.
  * - Relative imports and `new URL(..., import.meta.url)` inside a package or
  *   application must stay inside it.
  * - node:sqlite belongs in the storage module of @harnesshub/store. Inside
@@ -98,7 +99,46 @@ export const LEGACY_ALIASES = {
   store: ["storage", "platform"],
   // secrets.ts came from drivers/configuration; src/ keeps the drivers rules for it.
   secrets: "drivers",
+  // The model gateway came from drivers/chat-completions.
+  gateway: "drivers",
 };
+
+/**
+ * The package each legacy path moves to (13-package-migration section 2),
+ * most specific prefix first. A src/ file may import only the packages its
+ * destination may depend on, so an edge that would break the 02 graph after
+ * the move (such as agents' prepare.ts importing the gateway, V1) fails now.
+ */
+export const LEGACY_DESTINATIONS = [
+  ["drivers/configuration/probe.ts", "runtime"],
+  ["drivers/configuration/", "agents"],
+  ["drivers/tool-command/", "agents"],
+  ["drivers/", "drivers"],
+  ["application/engine-configuration.ts", "agents"],
+  ["application/harness-model.ts", "agents"],
+  ["application/", "runtime"],
+  ["engine/", "agents"],
+  ["tool-packages/", "agents"],
+  ["runtime/", "runtime"],
+  ["process/", "runtime"],
+  ["benchmark/", "runtime"],
+  ["artifacts/", "runtime"],
+  ["gateway/", "daemon"],
+  ["logging/", "daemon"],
+  ["worker/", "daemon"],
+  ["main.ts", "daemon"],
+  ["benchmark-main.ts", "daemon"],
+  ["tool-packages-main.ts", "daemon"],
+  ["cli.ts", "cli"],
+  ["rollout/", "cli"],
+];
+
+/** The package a legacy path moves to, or undefined when the table names none. */
+export function legacyDestination(legacyPath) {
+  return LEGACY_DESTINATIONS.find(([prefix]) =>
+    legacyPath.startsWith(prefix),
+  )?.[1];
+}
 
 /**
  * Temporary node:child_process exceptions inside packages (ADR 0017, decision
@@ -282,8 +322,20 @@ export function checkSource(
         );
         return;
       }
-      if (!moduleAllows(target))
+      if (!moduleAllows(target)) {
         report(node, `${owner} cannot depend on ${target}: ${specifier}`);
+        return;
+      }
+      const destination = legacyDestination(where.legacyPath);
+      if (
+        destination !== undefined &&
+        destination !== name &&
+        !PACKAGE_GRAPH[destination].includes(name)
+      )
+        report(
+          node,
+          `src/${where.legacyPath} moves to @harnesshub/${destination}, which cannot depend on @harnesshub/${name}: ${specifier}`,
+        );
       return;
     }
     const graph = where.kind === "app" ? APP_GRAPH : PACKAGE_GRAPH;

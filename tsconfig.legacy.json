@@ -16,6 +16,9 @@
     },
     {
       "path": "./packages/secrets"
+    },
+    {
+      "path": "./packages/gateway"
     }
   ]
 }

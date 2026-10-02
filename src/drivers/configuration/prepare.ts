@@ -17,12 +17,11 @@ import { resolveSecret } from "@harnesshub/secrets/secrets";
 import { portableCommand, unwrapEnvironment } from "./launch.js";
 import { codexGatewayCatalog, codexModelCatalog } from "./codex-models.js";
 import { prepareNativeMcp } from "./native-mcp.js";
-import {
-  startModelGateway,
-  type ModelCallRecord,
-  type ModelGateway,
-  type ModelGatewayOptions,
-} from "../chat-completions/gateway.js";
+import type {
+  ModelCallRecord,
+  ModelGateway,
+  ModelGatewayOptions,
+} from "@harnesshub/core/model-bridge";
 export type RuntimeMcpServer =
   | {
       name: string;
@@ -59,8 +58,20 @@ export interface PreparedConfiguration {
    */
   modelBridge?: ModelGateway;
 }
-/** Optional Worker callbacks. Neither is required for a configuration probe. */
+/**
+ * Optional callbacks of the preparation's owner (the Worker, or the composition
+ * root for a configuration probe).
+ */
 export interface PreparationHooks {
+  /**
+   * Starts the Session's model gateway (ADR 0013). Required whenever the
+   * configuration routes the engine through the gateway: preparation then fails
+   * with `MODEL_GATEWAY_NOT_INJECTED` before resolving any secret or starting
+   * anything. The Worker and the composition root inject the gateway package's
+   * `startModelGateway`; the caller of `prepareConfiguration` owns the started
+   * gateway through `PreparedConfiguration.modelBridge`.
+   */
+  startModelGateway?: (options: ModelGatewayOptions) => Promise<ModelGateway>;
   /**
    * Receives every gateway call record. Invoked synchronously by the gateway
    * before the call's request task settles; must not throw.
@@ -542,6 +553,13 @@ async function prepareGateway(context: GatewayPreparation): Promise<void> {
   if (!routable(adapter))
     unsupported(
       "This engine cannot be routed through the HarnessHub model gateway; it would use its own account or provider",
+    );
+  const startModelGateway = hooks.startModelGateway;
+  if (!startModelGateway)
+    throw new HubError(
+      "MODEL_GATEWAY_NOT_INJECTED",
+      "The configuration routes the engine through the model gateway, but its owner provided no gateway",
+      500,
     );
   const apiKey = provider.apiKey ? await resolve(provider.apiKey) : undefined;
   const secretHeaders = await secretMap(provider.secretHeaders, resolve);

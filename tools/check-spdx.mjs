@@ -10,6 +10,11 @@
  * `// SPDX-License-Identifier: <id>`. Project code uses MIT; files that keep a
  * third-party license are listed in THIRD_PARTY_LICENSES and must carry exactly
  * that identifier. Exits non-zero when any file fails or none is found.
+ *
+ * packages/<name>/native holds the sources of native helpers only: any file
+ * there that is not a .cs, .swift or .mjs file, or that contains a NUL byte,
+ * fails, so a compiled helper is never committed. Builds write helpers to the
+ * package's dist/native, which is not committed.
  */
 
 import { readdir, readFile } from "node:fs/promises";
@@ -28,6 +33,46 @@ export const THIRD_PARTY_LICENSES = new Map([
   ["src/drivers/configuration/codex-default-instructions.ts", "Apache-2.0"],
   ["web/components/ai-elements/", "Apache-2.0"],
 ]);
+
+/** File types allowed in packages/<name>/native: helper sources and their build scripts. */
+const NATIVE_SOURCE_EXTENSIONS = new Set([".cs", ".swift", ".mjs"]);
+
+/** Report every file in packages/<name>/native that is not a helper source, by type or binary content. */
+async function nativeDirectoryDiagnostics(root) {
+  const diagnostics = [];
+  let packages;
+  try {
+    packages = await readdir(path.join(root, "packages"), { withFileTypes: true });
+  } catch (error) {
+    if (error && error.code === "ENOENT") return diagnostics;
+    throw error;
+  }
+  for (const entry of packages) {
+    if (!entry.isDirectory()) continue;
+    const directory = path.join(root, "packages", entry.name, "native");
+    let files;
+    try {
+      files = await readdir(directory, { recursive: true, withFileTypes: true });
+    } catch (error) {
+      if (error && error.code === "ENOENT") continue;
+      throw error;
+    }
+    for (const file of files) {
+      if (file.isDirectory()) continue;
+      const absolute = path.join(file.parentPath, file.name);
+      const relative = path.relative(root, absolute).split(path.sep).join("/");
+      if (
+        !file.isFile() ||
+        !NATIVE_SOURCE_EXTENSIONS.has(path.extname(file.name)) ||
+        (await readFile(absolute)).includes(0)
+      )
+        diagnostics.push(
+          `${relative}: native/ holds helper sources (.cs, .swift, .mjs) only; compiled helpers belong in dist/native`,
+        );
+    }
+  }
+  return diagnostics;
+}
 
 function expectedLicense(relative) {
   for (const [prefix, license] of THIRD_PARTY_LICENSES)
@@ -81,6 +126,7 @@ export async function checkSpdx(rootDirectory = fileURLToPath(new URL("../", imp
     else if (match[1] !== expected) diagnostics.push(`${relative}: expected ${expected}, found ${match[1]}`);
   }
   if (!files.length) diagnostics.push("no source files found");
+  diagnostics.push(...(await nativeDirectoryDiagnostics(root)));
   return { checkedFiles: files.length, diagnostics };
 }
 

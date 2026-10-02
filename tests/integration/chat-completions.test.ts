@@ -24,7 +24,7 @@ import type {
 } from "@harnesshub/core/types";
 import type { HubApplication } from "../../src/application/service.js";
 import { ensurePrivateDirectory } from "@harnesshub/store/platform/windows-acl";
-import { startModelGateway } from "../../src/drivers/chat-completions/gateway.js";
+import { startModelGateway } from "@harnesshub/gateway/gateway";
 import { writePrivateSecretFile } from "../fixtures/private-secret-file.js";
 import { assertExited } from "../support/process.js";
 import { temporaryDirectory } from "../support/temporary.js";

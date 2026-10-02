@@ -13,16 +13,18 @@ import {
   createModelGateway,
   startModelGateway,
   type GatewayLimits,
-  type ModelCallRecord,
-  type ModelGateway,
-  type ModelGatewayOptions,
-} from "../../src/drivers/chat-completions/gateway.js";
+} from "@harnesshub/gateway/gateway";
+import type {
+  ModelCallRecord,
+  ModelGateway,
+  ModelGatewayOptions,
+} from "@harnesshub/core/model-bridge";
 import {
   ReasoningCache,
   callKeys,
   encodeReasoning,
   restoreReasoning,
-} from "../../src/drivers/chat-completions/reasoning.js";
+} from "@harnesshub/gateway/reasoning";
 
 type Body = Record<string, unknown>;
 interface Upstream {
