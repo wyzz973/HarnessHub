@@ -18,7 +18,7 @@ import {
   type LogSink,
 } from "@harnesshub/core/logging";
 import { JsonLogFile } from "../../src/logging/json-log-file.js";
-import { AcpTrafficLog } from "../../src/drivers/acp/traffic-log.js";
+import { AcpTrafficLog } from "@harnesshub/drivers/acp/traffic-log";
 import { observeStore } from "../../src/logging/observed-store.js";
 import { createRedactor } from "../../src/worker/diagnostics.js";
 import type { Store } from "@harnesshub/core/ports";

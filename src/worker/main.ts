@@ -13,10 +13,10 @@ import type {
   PermissionId,
   PermissionOption,
 } from "@harnesshub/core/types";
-import type { Driver, DriverChannel } from "../drivers/driver.js";
-import { FakeDriver } from "../drivers/fake/driver.js";
-import { AcpDriver } from "../drivers/acp/driver.js";
-import { CliDriver } from "../drivers/cli/driver.js";
+import type { Driver, DriverChannel } from "@harnesshub/drivers/driver";
+import { FakeDriver } from "@harnesshub/drivers/fake/driver";
+import { AcpDriver } from "@harnesshub/drivers/acp/driver";
+import { CliDriver } from "@harnesshub/drivers/cli/driver";
 import {
   assertMessageSize,
   matchesIdentity,

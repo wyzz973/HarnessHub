@@ -151,3 +151,10 @@ daemon 内只有 `src/worker/**` 可以导入 drivers。
 - 边界检查：别名表把 gateway 映射到原 `drivers` 模块；新增 `LEGACY_DESTINATIONS`，按第 2 节记录每个 `src/` 路径将迁入的包，`src/` 文件的 `@harnesshub/*` 导入还必须是该包按依赖图可以依赖的包。这使 V1（agents 的 `prepare.ts` 不得导入 gateway）与 V4（drivers 不得导入 secrets）从现在起就被检查，而不是等到对应文件迁入包时。
 - 第 4 步安全审查提出的三项加固随第 5 步提交：SEA 构建只嵌入 `NATIVE_HELPERS` 列出的原生辅助程序，`dist/native` 或各包 `dist/native` 中的其他文件使构建失败，开发机上旧构建留下的辅助程序因此不会被打包（迁移辅助程序的步骤同时更新该表，第 8 步移走 Job 辅助程序）；`build.json` 记录每个嵌入资源的 SHA-256，`measure.mjs` 检查当前平台的密钥辅助程序解包后与记录一致，Linux 注明原因后跳过；`check-spdx` 拒绝 `packages/*/native` 中不是 `.cs`、`.swift`、`.mjs` 的文件和含 NUL 字节的文件，编译产物因此不会被提交。
 - macOS 钥匙串条目的访问控制绑定创建它的那个辅助程序二进制。`swiftc` 的产物每次构建都不同（同一源码路径连续两次构建的 cdhash 也不同），另一个构建的辅助程序读取已有条目时，系统会等待用户批准，`interactionNotAllowed` 不能阻止；运行时在 20 秒后终止辅助程序并报 `SECRET_UNAVAILABLE`。这在迁移前的每次 `pnpm build` 后就已存在，迁移没有改变它；稳定的签名身份留给 M1 的发布签名。
+
+第 6 步（drivers 与 V2）：
+
+- `drivers/driver.ts`、`acp/`、`cli/`、`fake/` 迁入 `packages/drivers/src/`，子目录不变，以 `@harnesshub/drivers/<子目录>/<文件>` 导入；包只依赖 core，平铺映射到原 `drivers` 模块，ACP 规则因此照旧只允许 `src/acp` 使用 acpx。
+- V2：`RuntimeMcpServer` 原样移到 `packages/core/src/runtime-mcp.ts`，`prepare.ts` 再导出它，ACP 驱动从 core 导入。
+- `acpx` 成为 drivers 的依赖；根包只有一个集成测试直接导入 `acpx/runtime`，因此改为根包的开发依赖。根 `package.json` 的 `patchedDependencies` 对整个 workspace 生效，drivers 与根解析到同一个已打补丁的实例，补丁哈希不变。
+- 边界检查：CLI 驱动是第三个 `child_process` 例外（所有者 OSS-010 F08，随 OSS-013 到期）；守护进程中只有 `worker/` 可以导入 drivers，对将迁入守护进程的 `src/` 文件和将来的 `packages/daemon` 同样检查。

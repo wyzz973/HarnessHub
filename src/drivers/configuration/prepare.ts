@@ -22,19 +22,9 @@ import type {
   ModelGateway,
   ModelGatewayOptions,
 } from "@harnesshub/core/model-bridge";
-export type RuntimeMcpServer =
-  | {
-      name: string;
-      command: string;
-      args: string[];
-      env: { name: string; value: string }[];
-    }
-  | {
-      name: string;
-      type: "http" | "sse";
-      url: string;
-      headers: { name: string; value: string }[];
-    };
+import type { RuntimeMcpServer } from "@harnesshub/core/runtime-mcp";
+// The type lives in core so that drivers need not import configuration (V2).
+export type { RuntimeMcpServer } from "@harnesshub/core/runtime-mcp";
 /** Worker-owned launch material. Contains in-memory credentials: never serialize this into a store or IPC. */
 export interface PreparedConfiguration {
   command: string[];

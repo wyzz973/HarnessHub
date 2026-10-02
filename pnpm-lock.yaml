@@ -22,6 +22,9 @@ importers:
       '@harnesshub/core':
         specifier: workspace:*
         version: link:packages/core
+      '@harnesshub/drivers':
+        specifier: workspace:*
+        version: link:packages/drivers
       '@harnesshub/gateway':
         specifier: workspace:*
         version: link:packages/gateway
@@ -31,9 +34,6 @@ importers:
       '@harnesshub/store':
         specifier: workspace:*
         version: link:packages/store
-      acpx:
-        specifier: 0.13.2
-        version: 0.13.2(patch_hash=2fc8dc1222d3663c1c357409b341ce293d920dbab00f71b069b42a732d6dba7f)
       ajv:
         specifier: 8.20.0
         version: 8.20.0
@@ -53,6 +53,9 @@ importers:
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
+      acpx:
+        specifier: 0.13.2
+        version: 0.13.2(patch_hash=2fc8dc1222d3663c1c357409b341ce293d920dbab00f71b069b42a732d6dba7f)
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
@@ -77,6 +80,15 @@ importers:
       ajv:
         specifier: 8.20.0
         version: 8.20.0
+
+  packages/drivers:
+    dependencies:
+      '@harnesshub/core':
+        specifier: workspace:*
+        version: link:../core
+      acpx:
+        specifier: 0.13.2
+        version: 0.13.2(patch_hash=2fc8dc1222d3663c1c357409b341ce293d920dbab00f71b069b42a732d6dba7f)
 
   packages/gateway:
     dependencies:

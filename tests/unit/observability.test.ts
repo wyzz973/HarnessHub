@@ -17,7 +17,7 @@ import {
   acpUsageObservation,
   captureNativeUsage,
   nativeUsageObservation,
-} from "../../src/drivers/acp/observations.js";
+} from "@harnesshub/drivers/acp/observations";
 import {
   percentile,
   projectRunObservations,

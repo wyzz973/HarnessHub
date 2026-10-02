@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import type { RuntimeMcpServer } from "../configuration/prepare.js";
+import type { RuntimeMcpServer } from "@harnesshub/core/runtime-mcp";
 import { randomUUID } from "node:crypto";
 import {
   createAcpRuntime,

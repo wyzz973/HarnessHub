@@ -50,8 +50,8 @@ Console不是引擎执行器：它调用Next的 `/api/gateway/...` 代理，再�
 | [engine](../src/engine/manager.ts) | 配置校验、静态文件+API overlay、不可变revision、发现和模板 |
 | [process](../src/process/worker-host.ts) | 懒启动Worker、有限驻留数、进程归属、升级终止与lease恢复 |
 | [worker](../src/worker/main.ts) | 校验IPC、单Session绑定、确认事件、选择Driver和准备配置 |
-| [ACP Driver](../src/drivers/acp/driver.ts) | acpx/runtime边界、ACP会话/模型/MCP、权限与事件适配 |
-| [CLI Driver](../src/drivers/cli/driver.ts) | argv/stdin、stdout文本、退出/输出限额/取消；每Run独立 |
+| [ACP Driver](../packages/drivers/src/acp/driver.ts) | acpx/runtime边界、ACP会话/模型/MCP、权限与事件适配 |
+| [CLI Driver](../packages/drivers/src/cli/driver.ts) | argv/stdin、stdout文本、退出/输出限额/取消；每Run独立 |
 | [配置准备](../src/drivers/configuration/prepare.ts) | 进程级原生配置、秘密引用、Skill上下文和MCP参数 |
 | [模型网关](../packages/gateway/src/gateway.ts) | Session私有端点：Responses/Anthropic/Google/Chat入站转换、参数清理、推理回填、`model.call` 记录 |
 | [工具包](../src/tool-packages/management.ts) | 导入与校验、按引擎绑定与解绑、一键应用到全部引擎 |
