@@ -78,16 +78,6 @@ jobs:
           RUNS: ${{ inputs.runs || '10' }}
           TARGET: ${{ matrix.target }}
         run: node tools/sea/measure.mjs --runs "$RUNS" --baseline --out "dist/sea/result-$TARGET.json" --phases-out "dist/sea/phases-$TARGET.json"
-      # Diagnostic only, on this ephemeral runner: the same measurement with the temporary
-      # directory (where every extraction root is written) excluded from Defender, to separate
-      # scanning of freshly written helpers from the rest of the first run. Never a user step.
-      - name: Measure again with the extraction roots excluded from Defender (diagnostic)
-        if: runner.os == 'Windows'
-        continue-on-error: true
-        shell: pwsh
-        env:
-          RUNS: ${{ inputs.runs || '10' }}
-        run: Add-MpPreference -ExclusionPath $env:TEMP; node tools/sea/measure.mjs --runs $env:RUNS --out dist/sea/result-win32-x64-defender-excluded.json --phases-out dist/sea/phases-win32-x64-defender-excluded.json
       - name: Upload the result
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -106,6 +96,5 @@ jobs:
           path: |
             dist/sea/phases-*.json
             dist/sea/defender-*.json
-            dist/sea/result-*-defender-excluded.json
           if-no-files-found: warn
           retention-days: 30
