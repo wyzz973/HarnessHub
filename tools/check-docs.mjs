@@ -5,6 +5,8 @@
  * Usage: node tools/check-docs.mjs [--root <directory>]
  *
  * Checks .md/.markdown files recursively, except GENERATED_DIRECTORIES below.
+ * A document that is empty or holds only whitespace fails: it is almost always
+ * an accidental truncation, which the other checks would accept.
  * Supports top-level fences (0-3 spaces, backticks or tildes), matching backtick
  * code spans, and single-line inline links/images: [label](path) and angle
  * destinations with spaces, with optional quoted titles. URL-encoded destinations and
@@ -185,6 +187,10 @@ export async function checkDocs(rootDirectory = DEFAULT_ROOT) {
       text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
     } catch {
       report(file, 1, 'invalid UTF-8');
+      continue;
+    }
+    if (text.trim() === '') {
+      report(file, 1, 'document is empty or holds only whitespace');
       continue;
     }
     if (text.startsWith('\uFEFF')) report(file, 1, 'UTF-8 BOM is not allowed');
