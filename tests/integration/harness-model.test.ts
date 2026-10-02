@@ -13,7 +13,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { startHub } from "../../src/main.js";
+import { loadBuildInfo, startHub } from "../../src/main.js";
 import type { HarnessModelView } from "../../src/domain/harness-model.js";
 import {
   isTerminal,
@@ -338,6 +338,7 @@ void test(
       "deepseek-flash",
     );
     assert.deepEqual((await call(hub, "GET", "/v1/runtime/info")).value, {
+      build: await loadBuildInfo(),
       fullAccess: false,
     });
 
@@ -493,6 +494,7 @@ void test(
     });
     hubs.push(hub);
     assert.deepEqual((await call(hub, "GET", "/v1/runtime/info")).value, {
+      build: await loadBuildInfo(),
       fullAccess: true,
       consoleUrl: "http://127.0.0.1:3330/",
     });

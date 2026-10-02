@@ -341,7 +341,7 @@
 **GET `/v1/runtime/info` — 运行模式信息**
 
 - 输入：无参数。
-- 返回：200：fullAccess、可选 consoleUrl。
+- 返回：200：build（构建身份）、fullAccess、可选 consoleUrl。
 - 实现链路：返回 Gateway 启动时确定的运行模式，供控制台显示。
 - 持久化与副作用：只读。
 - 失败与边界：无业务错误。

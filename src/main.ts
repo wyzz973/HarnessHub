@@ -18,7 +18,8 @@ import { createSecret } from "./drivers/configuration/secrets.js";
 import { prepareConfiguration } from "./drivers/configuration/prepare.js";
 import { probeConfiguration } from "./drivers/configuration/probe.js";
 import { HubError } from "./domain/errors.js";
-import { mkdtemp, rm } from "node:fs/promises";
+import { parseBuildInfo, type BuildInfo } from "./domain/build-info.js";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import type { RunId, SessionId } from "./domain/types.js";
 import { SqliteWorkflowStore } from "./storage/workflow-store.js";
@@ -109,6 +110,39 @@ function openGatewayLog(
   });
 }
 
+/**
+ * Read the identity written next to the compiled code by `scripts/build-info.mjs`
+ * (`dist/build-info.json`).
+ *
+ * @throws HubError `BUILD_INFO_UNAVAILABLE` when the file is missing or unreadable
+ *   (the code was compiled without `pnpm build`), or `BUILD_INFO_INVALID`.
+ */
+export async function loadBuildInfo(
+  file: URL = new URL("../build-info.json", import.meta.url),
+): Promise<BuildInfo> {
+  let text: string;
+  try {
+    text = await readFile(file, "utf8");
+  } catch (error) {
+    throw new HubError(
+      "BUILD_INFO_UNAVAILABLE",
+      `Build identity ${fileURLToPath(file)} is unavailable (${error instanceof Error ? error.message : String(error)}); build with pnpm build`,
+      500,
+    );
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch (error) {
+    throw new HubError(
+      "BUILD_INFO_INVALID",
+      `build-info.json is not valid JSON (${error instanceof Error ? error.message : String(error)})`,
+      500,
+    );
+  }
+  return parseBuildInfo(raw);
+}
+
 /** Composition root: concrete implementations are assembled only here. */
 export async function startHub(options: {
   dataDir: string;
@@ -137,6 +171,7 @@ export async function startHub(options: {
 }) {
   // HARNESSHUB_LOG_LEVEL is validated before anything starts; Workers inherit the value.
   const logLevel = parseLogLevel(process.env[LOG_LEVEL_ENVIRONMENT]);
+  const build = await loadBuildInfo();
   const resolveConfig = async () => {
     const config = await loadConfig({
       demo: options.demo,
@@ -177,6 +212,12 @@ export async function startHub(options: {
     dataDir,
     engine: options.defaultEngine ?? null,
     logLevel,
+    build: {
+      version: build.version,
+      commit: build.commit,
+      dirty: build.dirty,
+      builtAt: build.builtAt,
+    },
     node: process.version,
     platform: `${process.platform}/${process.arch}`,
     engineLogs: path.join(dataDir, "backends", "<sessionId>", "diagnostics"),
@@ -233,6 +274,7 @@ export async function startHub(options: {
     });
   const config = baseConfig;
   const runtimeInfo: RuntimeInfo = {
+    build,
     fullAccess: fullAccessEnabled(process.env),
     ...(options.consoleUrl ? { consoleUrl: options.consoleUrl } : {}),
   };
@@ -516,11 +558,38 @@ if (
       "harness-model-file": { type: "string" },
       "console-url": { type: "string" },
       help: { type: "boolean" },
+      version: { type: "boolean" },
+      json: { type: "boolean" },
     },
   });
-  if (values.help)
+  if (values.json && !values.version) {
+    console.error("--json is only valid with --version");
+    process.exitCode = 2;
+  } else if (values.version) {
+    try {
+      const build = await loadBuildInfo();
+      const dirty =
+        build.dirty === true
+          ? " (dirty)"
+          : build.dirty === "unknown"
+            ? " (dirty: unknown)"
+            : "";
+      console.log(
+        values.json
+          ? JSON.stringify(build)
+          : `HarnessHub ${build.version} ${build.commit}${dirty}`,
+      );
+    } catch (error) {
+      console.error(
+        error instanceof HubError
+          ? `${error.code}: ${error.message}`
+          : String(error),
+      );
+      process.exitCode = 1;
+    }
+  } else if (values.help)
     console.log(
-      "HarnessHub: node dist/src/main.js [--engine opencode] [--host localhost] [--port 3180] [--config engines/local.yaml] [--data-dir ./data] [--tool-package-root DIR] [--harness-model-file FILE] [--console-url URL]",
+      "HarnessHub: node dist/src/main.js [--engine opencode] [--host localhost] [--port 3180] [--config engines/local.yaml] [--data-dir ./data] [--tool-package-root DIR] [--harness-model-file FILE] [--console-url URL] | --version [--json]",
     );
   else {
     const selectedEngine = values.engine ?? process.env.AGENT_ENGINE;

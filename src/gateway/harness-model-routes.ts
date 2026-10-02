@@ -93,11 +93,65 @@ const testResponseSchema = {
     },
   },
 } as const;
+const buildInfoSchema = {
+  type: "object",
+  description:
+    'Identity of the running build. Values the build could not determine are "unknown".',
+  additionalProperties: false,
+  required: [
+    "version",
+    "channel",
+    "commit",
+    "commitDate",
+    "ref",
+    "dirty",
+    "builtAt",
+    "workflowRun",
+    "os",
+    "arch",
+    "nodeVersion",
+    "installMethod",
+  ],
+  properties: {
+    version: { type: "string" },
+    channel: { type: "string" },
+    commit: { type: "string", description: 'Full commit hash, or "unknown".' },
+    commitDate: { type: "string", description: 'ISO 8601, or "unknown".' },
+    ref: {
+      type: "string",
+      description: 'Git ref that was built, or "unknown" (detached HEAD).',
+    },
+    dirty: {
+      description:
+        'Whether tracked or untracked non-ignored files differed from commit, or "unknown".',
+      anyOf: [{ type: "boolean" }, { type: "string", enum: ["unknown"] }],
+    },
+    builtAt: { type: "string" },
+    workflowRun: {
+      type: ["string", "null"],
+      description: "CI run that built it; null for a local build.",
+    },
+    os: {
+      type: "string",
+      description: "Platform of the build machine, not of this process.",
+    },
+    arch: {
+      type: "string",
+      description: "Architecture of the build machine.",
+    },
+    nodeVersion: {
+      type: "string",
+      description: "Node.js that ran the build, not necessarily this process.",
+    },
+    installMethod: { type: "string" },
+  },
+} as const;
 const runtimeInfoSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["fullAccess"],
+  required: ["build", "fullAccess"],
   properties: {
+    build: buildInfoSchema,
     fullAccess: { type: "boolean" },
     consoleUrl: { type: "string" },
   },

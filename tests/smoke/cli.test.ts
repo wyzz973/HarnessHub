@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { temporaryDirectory } from "../support/temporary.js";
@@ -92,5 +94,38 @@ void test(
     assert.equal(recovered.status, "interrupted");
     assert.equal(recovered.stopReason, "gateway_restarted");
     assert.equal(recovered.cleanupStatus, "confirmed");
+  },
+);
+
+void test(
+  "published CLI reports the build identity written at build time",
+  { timeout: 10_000 },
+  async () => {
+    const written: unknown = JSON.parse(
+      await readFile(
+        fileURLToPath(new URL("../../build-info.json", import.meta.url)),
+        "utf8",
+      ),
+    );
+    const run = promisify(execFile);
+    const json = await run(process.execPath, [entry, "--version", "--json"]);
+    assert.deepEqual(JSON.parse(json.stdout), written);
+    const text = await run(process.execPath, [entry, "--version"]);
+    const { version, commit, dirty } = written as {
+      version: string;
+      commit: string;
+      dirty: boolean | "unknown";
+    };
+    const suffix =
+      dirty === true
+        ? " (dirty)"
+        : dirty === "unknown"
+          ? " (dirty: unknown)"
+          : "";
+    assert.equal(text.stdout, `HarnessHub ${version} ${commit}${suffix}\n`);
+    // --json alone is a usage error, not a Gateway start.
+    await assert.rejects(run(process.execPath, [entry, "--json"]), {
+      code: 2,
+    });
   },
 );
