@@ -455,6 +455,107 @@ void test(
       2,
     );
 
+    // Model metadata: values with their sources, and overrides set by key.
+    const unknownModel = await run(["model", "show", "deepseek/deepseek-chat"]);
+    assert.equal(unknownModel.code, 0, unknownModel.stderr);
+    assert.match(unknownModel.stdout, /^Model: +deepseek\/deepseek-chat\n/);
+    assert.match(unknownModel.stdout, /\nKEY +VALUE +SOURCE +SINCE\n/);
+    assert.match(unknownModel.stdout, /\ncontext +unknown +- +-\n/);
+    const set = await run([
+      "model",
+      "set",
+      "deepseek/deepseek-chat",
+      "context=64000",
+      "price.input=0.27",
+      "price.output=1.1",
+    ]);
+    assert.equal(set.code, 0, set.stderr);
+    assert.equal(
+      set.stdout,
+      "Override deepseek/deepseek-chat: context=64000 price.input=0.27 price.output=1.1\n",
+    );
+    const merged = await run([
+      "model",
+      "set",
+      "deepseek/deepseek-chat",
+      "price.output=",
+      "reasoning=yes",
+    ]);
+    assert.equal(
+      merged.stdout,
+      "Override deepseek/deepseek-chat: context=64000 reasoning=yes price.input=0.27\n",
+    );
+    const overridden = await run(["model", "show", "deepseek/deepseek-chat"]);
+    assert.match(overridden.stdout, /\ncontext +64000 +override +\S/);
+    assert.match(overridden.stdout, /\nprice\.output +unknown +- +-\n/);
+    assert.match(
+      overridden.stdout,
+      /\n\nOverride deepseek\/deepseek-chat: context=64000 reasoning=yes price\.input=0\.27\n$/,
+    );
+    assert.equal(
+      (await run(["model", "set", "deepseek/*", "output=4096"])).code,
+      0,
+    );
+    assert.match(
+      (await run(["model", "show", "deepseek/*"])).stdout,
+      /^Override: +deepseek\/\*\nValues: +output=4096\n/,
+    );
+    const reasoner = JSON.parse(
+      (await run(["model", "show", "deepseek/deepseek-reasoner", "--json"]))
+        .stdout,
+    ) as { fields: Record<string, { value: unknown; source: string }> };
+    assert.deepEqual(reasoner.fields.maxOutputTokens?.value, 4096);
+    assert.equal(reasoner.fields.maxOutputTokens?.source, "override-provider");
+    const badValue = await run([
+      "model",
+      "set",
+      "deepseek/deepseek-chat",
+      "context=0",
+    ]);
+    assert.equal(badValue.code, 2);
+    assert.match(badValue.stderr, /context must be a positive whole number/);
+    assert.equal(
+      (await run(["model", "set", "deepseek/deepseek-chat", "window=1"])).code,
+      2,
+    );
+    assert.equal(
+      (await run(["model", "unset", "deepseek/*"])).stdout,
+      "Removed the override of deepseek/*.\n",
+    );
+    const missing = await run(["model", "unset", "deepseek/*"]);
+    assert.equal(missing.code, 2);
+    assert.match(missing.stderr, /MODEL_OVERRIDE_NOT_FOUND/);
+    assert.equal(
+      (
+        await run([
+          "model",
+          "set",
+          "deepseek/deepseek-chat",
+          "context=",
+          "reasoning=",
+          "price.input=",
+        ])
+      ).stdout,
+      "Removed the override of deepseek/deepseek-chat.\n",
+    );
+    const catalog = await run(["catalog", "status"]);
+    assert.equal(catalog.code, 0, catalog.stderr);
+    assert.match(
+      catalog.stdout,
+      /^Catalog: +models\.dev snapshot, \d+ providers, \d+ models\n/,
+    );
+    assert.match(catalog.stdout, /\nCommit: +[0-9a-f]{40}\n/);
+    assert.match(catalog.stdout, /\nLicense: +MIT/);
+    assert.match(catalog.stdout, /\nRefresh: +off /);
+    assert.match(
+      (
+        JSON.parse((await run(["catalog", "status", "--json"])).stdout) as {
+          snapshot: { sha256: string };
+        }
+      ).snapshot.sha256,
+      /^[0-9a-f]{64}$/,
+    );
+
     // A failed refresh keeps the list, reports stale and exits with 1 (502).
     await run(
       [

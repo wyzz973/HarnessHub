@@ -24,7 +24,7 @@ HH_KEY=$(pnpm exec hh key create --name quickstart --allow 'deepseek/*')
 ```
 
 - 厂商的 API Key 从标准输入读取，存入秘密存储后只保留引用；在终端里不加 `--credential-from-*` 时，`hh credential add deepseek` 以隐藏输入读取。Key 从不出现在命令行参数中。
-- `hh provider models --refresh` 用这把 Key 从厂商列出模型；失败时保留原列表并说明原因。
+- `hh provider models --refresh` 用这把 Key 从厂商列出模型；失败时保留原列表并说明原因。窗口、输出上限与价格从预设和内置的 models.dev 快照补齐，`hh model show deepseek/<模型>` 显示每个值的来源；`hh model set` 可以覆盖（见 [模型元数据](model-plane-api.md#模型元数据)）。价格已知的模型在用量中显示成本。
 - `hh key create` 在标准输出打印 `hhk_c_…` 形式的 Gateway Key，只显示这一次；`--allow` 限定它能用的模型（`provider/model`、`provider/*` 或 `group/<id>`），默认 90 天后过期。
 
 ## 3. 调用模型
