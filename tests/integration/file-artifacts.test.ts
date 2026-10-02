@@ -27,7 +27,7 @@ import {
 } from "../../src/artifacts/publisher.js";
 import { HubError } from "@harnesshub/core/errors";
 import type { EngineProfile, FileOutput } from "@harnesshub/core/types";
-import { SqliteStore } from "../../src/storage/sqlite-store.js";
+import { SqliteStore } from "@harnesshub/store/storage/sqlite-store";
 
 const engine: EngineProfile = {
   id: "artifact-test",

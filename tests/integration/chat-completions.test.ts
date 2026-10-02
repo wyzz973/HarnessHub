@@ -23,7 +23,7 @@ import type {
   SessionRecord,
 } from "@harnesshub/core/types";
 import type { HubApplication } from "../../src/application/service.js";
-import { ensurePrivateDirectory } from "../../src/platform/windows-acl.js";
+import { ensurePrivateDirectory } from "@harnesshub/store/platform/windows-acl";
 import { startModelGateway } from "../../src/drivers/chat-completions/gateway.js";
 import { writePrivateSecretFile } from "../fixtures/private-secret-file.js";
 import { assertExited } from "../support/process.js";

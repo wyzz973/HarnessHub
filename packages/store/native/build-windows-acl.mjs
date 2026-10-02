@@ -1,7 +1,18 @@
 // SPDX-License-Identifier: MIT
-import { mkdirSync, existsSync } from "node:fs";
+/**
+ * Build the Windows ACL helper into this package's dist/native.
+ * Usage: node packages/store/native/build-windows-acl.mjs (run by `pnpm build`)
+ *
+ * On Windows, compiles windows-acl.cs with the .NET Framework C# compiler into
+ * packages/store/dist/native/harnesshub-acl.exe, the path that
+ * src/platform/native-helper.ts computes. Paths are resolved from this file, not
+ * from the working directory. Fails when SystemRoot or the compiler is missing;
+ * does nothing on other platforms.
+ */
+import { existsSync, mkdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 if (process.platform === "win32") {
   const root = process.env.SystemRoot ?? process.env.SYSTEMROOT;
@@ -16,7 +27,8 @@ if (process.platform === "win32") {
     throw new Error(
       "Windows .NET Framework C# compiler is required for the ACL helper",
     );
-  mkdirSync("dist/native", { recursive: true });
+  const output = fileURLToPath(new URL("../dist/native/", import.meta.url));
+  mkdirSync(output, { recursive: true });
   const result = spawnSync(
     compiler,
     [
@@ -25,8 +37,8 @@ if (process.platform === "win32") {
       "/platform:anycpu",
       "/optimize+",
       "/reference:System.Web.Extensions.dll",
-      `/out:${resolve("dist/native/harnesshub-acl.exe")}`,
-      resolve("scripts/native/windows-acl.cs"),
+      `/out:${join(output, "harnesshub-acl.exe")}`,
+      fileURLToPath(new URL("./windows-acl.cs", import.meta.url)),
     ],
     { stdio: "inherit", windowsHide: true },
   );

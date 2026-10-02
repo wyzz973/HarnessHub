@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { SqliteStore } from "../../src/storage/sqlite-store.js";
+import { SqliteStore } from "@harnesshub/store/storage/sqlite-store";
 
 void test("backend identity and source event commit atomically and cannot change on subsequent Runs", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "hh-backend-id-"));

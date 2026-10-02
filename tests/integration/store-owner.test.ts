@@ -9,7 +9,7 @@ import { test } from "node:test";
 import type { TestContext } from "node:test";
 import { Worker } from "node:worker_threads";
 import { HubError } from "@harnesshub/core/errors";
-import { SqliteStore } from "../../src/storage/sqlite-store.js";
+import { SqliteStore } from "@harnesshub/store/storage/sqlite-store";
 
 function fixture(t: TestContext) {
   const dir = mkdtempSync(join(tmpdir(), "harnesshub-owner-"));
@@ -130,10 +130,8 @@ void test(
   async (t) => {
     const { open, path } = fixture(t);
     open();
-    const moduleUrl = new URL(
-      "../../src/storage/sqlite-store.js",
-      import.meta.url,
-    ).href;
+    const moduleUrl = import.meta
+      .resolve("@harnesshub/store/storage/sqlite-store");
     const child = spawn(
       process.execPath,
       [

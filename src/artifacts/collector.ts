@@ -5,7 +5,7 @@ import path from "node:path";
 import { HubError } from "@harnesshub/core/errors";
 import { validateFileOutputs } from "@harnesshub/core/files";
 import type { ArtifactRecord, FileOutput, RunId } from "@harnesshub/core/types";
-import { WindowsFileSession } from "../platform/windows-file-session.js";
+import { WindowsFileSession } from "@harnesshub/store/platform/windows-file-session";
 import { discardArtifacts, publishArtifactBytes } from "./publisher.js";
 
 const MAX_FILE_BYTES = 16 * 1024 * 1024;

@@ -10,7 +10,7 @@ Agent 通过自己的工具写入 Workspace。后端正常完成后，Gateway �
 
 Windows 在写句柄关闭前可能延迟更新时间戳（见 [Microsoft 文件时间说明](https://learn.microsoft.com/en-us/windows/win32/sysinfo/file-times)），因此采集期间额外持有原生 `FileShare.Read` 句柄，拒绝写入和删除共享。已有写句柄会使采集以 `ARTIFACT_CHANGED` 失败；正常结束、取消或读取失败均等待 helper 退出并释放句柄。每次采集仅启动一个 helper，串行执行各文件的锁定和 ACL 校验，避免反复启动进程挤占 Run deadline。[原生句柄测试](../tests/integration/windows-file-lock.test.ts)验证已有写者拒绝、读取期间不能新开写者，以及取消后可以重新写入。
 
-目标目录由 Gateway 创建，POSIX 目录权限为 0700，文件权限为 0600。Windows 不支持用 POSIX mode 位表达此限制，改由 [Windows ACL 实现](../src/platform/windows-acl.ts)为产物根及 Run 目录安装受保护、可继承的 DACL，仅允许当前用户、SYSTEM 和 Administrators；文件继承该权限。读取前重新核验目录和文件的所有者及访问授予，未知账户的授予明确失败。构建通过系统 .NET Framework 编译器生成 `dist/native/harnesshub-acl.exe`；缺失或无法验证 ACL 时明确失败。.NET 4.6.2 以上使用 helper 进程内长路径开关及原生扩展路径，源文件与产物路径超过 260 字符的本地 NTFS 场景有测试覆盖。这保护不同普通用户之间的访问；同用户运行的引擎仍不受此 DACL 隔离。内部文件名使用独立 UUID；用户传入的名称不用于拼接目标路径。发布检查目标祖先及文件身份，出现错误或取消时删除本次尚未登记且已确认身份的目标。Runtime 在登记前再次仲裁取消和 deadline；未登记文件由 [discardArtifacts](../src/artifacts/publisher.ts)回收。源文件从不由采集器删除或修改。
+目标目录由 Gateway 创建，POSIX 目录权限为 0700，文件权限为 0600。Windows 不支持用 POSIX mode 位表达此限制，改由 [Windows ACL 实现](../packages/store/src/platform/windows-acl.ts)为产物根及 Run 目录安装受保护、可继承的 DACL，仅允许当前用户、SYSTEM 和 Administrators；文件继承该权限。读取前重新核验目录和文件的所有者及访问授予，未知账户的授予明确失败。构建通过系统 .NET Framework 编译器生成 `dist/native/harnesshub-acl.exe`；缺失或无法验证 ACL 时明确失败。.NET 4.6.2 以上使用 helper 进程内长路径开关及原生扩展路径，源文件与产物路径超过 260 字符的本地 NTFS 场景有测试覆盖。这保护不同普通用户之间的访问；同用户运行的引擎仍不受此 DACL 隔离。内部文件名使用独立 UUID；用户传入的名称不用于拼接目标路径。发布检查目标祖先及文件身份，出现错误或取消时删除本次尚未登记且已确认身份的目标。Runtime 在登记前再次仲裁取消和 deadline；未登记文件由 [discardArtifacts](../src/artifacts/publisher.ts)回收。源文件从不由采集器删除或修改。
 
 声明 `mediaType` 时使用声明值；否则按有限扩展名表识别 txt、md、json、csv、html、pdf、png、jpg/jpeg、zip，其他文件使用 `application/octet-stream`。媒体类型不承担内容正确性判断。
 

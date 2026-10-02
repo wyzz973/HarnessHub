@@ -41,7 +41,7 @@ curl -s http://127.0.0.1:3180/v1/workflows \
 
 请求/schema、领域类型与 JSON 规划校验在 [workflows.ts](../packages/core/src/workflows.ts)。OpenAPI 从同一 schema 生成。规划 Run 使用 `<workflowId>:planning` 作为 Session 范围幂等键，步骤 Run 使用 `<workflowId>:<stepId>`；身份写入后不能更换。
 
-Workflow 记录存入现有 Gateway 数据库的 `workflows` 表。`workflow_metadata.schema_version=1` 独立管理新增表版本，未知版本拒绝启动，不删除旧业务数据。写入要求当前进程已拥有 Gateway owner；Worker 无权修改计划表。存储实现见 [workflow-store.ts](../src/storage/workflow-store.ts)。
+Workflow 记录存入现有 Gateway 数据库的 `workflows` 表。`workflow_metadata.schema_version=1` 独立管理新增表版本，未知版本拒绝启动，不删除旧业务数据。写入要求当前进程已拥有 Gateway owner；Worker 无权修改计划表。存储实现见 [workflow-store.ts](../packages/store/src/storage/workflow-store.ts)。
 
 ## 自动拆任务
 

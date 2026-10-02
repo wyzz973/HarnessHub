@@ -2,7 +2,7 @@
 
 状态：提案（草案），2026-10-02。术语、包名、进程与部署形态以 [02 系统架构](02-architecture.md) 为准；网关入口 `127.0.0.1:3180` 与 Gateway Key 作用域以 [ADR-P03](adr-drafts.md#adr-p03-共享网关与作用域-gateway-key) 为准；存储决定见 [ADR-P06](adr-drafts.md#adr-p06-存储)。日志脱敏的实现、诊断包与崩溃恢复见 [08 可靠性与可观测性](08-reliability-observability.md)，插件协议与权限的执行方式见 [09 扩展](09-extensibility.md)。文中的命令名、API 路径与配置键表示所需的能力，最终命名以 [06 接口与交互面](06-interfaces.md) 为准。
 
-依据：现有实现（[秘密引用](../../../src/drivers/configuration/secrets.ts)、[Host/Origin 校验](../../../src/gateway/server.ts)、[SQLite Store](../../../src/storage/sqlite-store.ts)、[ADR 0008](../../decisions/0008-windows-secret-storage.md)、[ADR 0014](../../decisions/0014-diagnostic-logs.md)）；`yetone/magpie@d874adb` 的 `internal/access`、`internal/backup`、`internal/gateway/lan.go`、`internal/plugin`、`internal/stats`；2026-10-02 的 Magpie 与 HarnessHub 对比核验（调研材料，未入库，下文用其问题编号引用，如 V9-N2）。
+依据：现有实现（[秘密引用](../../../src/drivers/configuration/secrets.ts)、[Host/Origin 校验](../../../src/gateway/server.ts)、[SQLite Store](../../../packages/store/src/storage/sqlite-store.ts)、[ADR 0008](../../decisions/0008-windows-secret-storage.md)、[ADR 0014](../../decisions/0014-diagnostic-logs.md)）；`yetone/magpie@d874adb` 的 `internal/access`、`internal/backup`、`internal/gateway/lan.go`、`internal/plugin`、`internal/stats`；2026-10-02 的 Magpie 与 HarnessHub 对比核验（调研材料，未入库，下文用其问题编号引用，如 V9-N2）。
 
 ## 1. 数据目录与文件布局
 
@@ -44,7 +44,7 @@ HarnessHub 把本机文件分成配置、数据、日志、缓存四类根目录
 权限要求在守护进程取得单实例锁之前检查，失败即拒绝启动（错误码 `DATA_DIR_INSECURE`），并提示 `hh doctor --fix`：
 
 - POSIX：四个根目录为 0700、文件为 0600，所有者是当前用户；组或其他用户有任何权限都视为不安全。日志根同样适用，因为 debug 日志含提示词摘录。
-- Windows：根目录新建时设置受保护的 DACL，只授予当前用户、SYSTEM 与 Administrators 完全控制，复用 [`src/platform/windows-acl.ts`](../../../src/platform/windows-acl.ts) 的 helper。现状只给产物与工具包目录设置 ACL，数据目录完全继承父目录（核验 windows-dacl-datadir），ADR 0014 中“文件 0600”的描述在 Windows 上不成立。已存在的根目录只校验不改写：Everyone、Authenticated Users、Users 或其他非管理员主体有读写权限即判为不安全。`hh doctor --fix` 只对根目录设置可继承 DACL，单次上限 60 s，超时报告失败，不声称部分成功。
+- Windows：根目录新建时设置受保护的 DACL，只授予当前用户、SYSTEM 与 Administrators 完全控制，复用 [`packages/store/src/platform/windows-acl.ts`](../../../packages/store/src/platform/windows-acl.ts) 的 helper。现状只给产物与工具包目录设置 ACL，数据目录完全继承父目录（核验 windows-dacl-datadir），ADR 0014 中“文件 0600”的描述在 Windows 上不成立。已存在的根目录只校验不改写：Everyone、Authenticated Users、Users 或其他非管理员主体有读写权限即判为不安全。`hh doctor --fix` 只对根目录设置可继承 DACL，单次上限 60 s，超时报告失败，不声称部分成功。
 - FAT32、exFAT 等不支持 ACL 的卷拒绝作为数据根。Linux 上通过 `statfs` 的文件系统类型识别 NFS 与 CIFS 并拒绝，因为 SQLite 与锁文件依赖的文件锁在网络文件系统上不可靠；macOS 与 Windows 上无法可靠识别，只在 `hh doctor` 中告警。路径含空格与非 ASCII 字符（如中文用户名）的情形在三平台 CI 中各有用例。
 
 ## 2. 存储模型与迁移
@@ -53,7 +53,7 @@ HarnessHub 把本机文件分成配置、数据、日志、缓存四类根目录
 
 `store` 包提供一个 `Store` 接口和两个实现：`SqliteStore`（`node:sqlite`，0.1 起）与 `PostgresStore`（1.x）。接口以业务操作为单位（例如接收 Run、提交一批事件、提交一次 `model.call`），每个方法内部是一个事务；SQL 和连接对象不越过 `store` 包，也不引入 ORM（理由见 ADR-P06）。同一套 Store 契约测试在两个后端上运行。
 
-- 事务：SQLite 沿用现有设置，即 WAL、`synchronous=FULL`、`busy_timeout=5000`、写事务使用 `BEGIN IMMEDIATE`（[`sqlite-store.ts`](../../../src/storage/sqlite-store.ts) 第 168–204 行）。PostgreSQL 使用 `READ COMMITTED`，靠唯一约束与显式行锁保证同样的结果。
+- 事务：SQLite 沿用现有设置，即 WAL、`synchronous=FULL`、`busy_timeout=5000`、写事务使用 `BEGIN IMMEDIATE`（[`sqlite-store.ts`](../../../packages/store/src/storage/sqlite-store.ts) 第 168–204 行）。PostgreSQL 使用 `READ COMMITTED`，靠唯一约束与显式行锁保证同样的结果。
 - 序号：事件以 `(run_id, seq)` 唯一约束保证 Run 内单调，Worker 的 generation 与原始序号用于去重，与 [DESIGN.md 第 6 节](../../../DESIGN.md#6-业务存储与事件) 相同。
 - 单写者：两种后端都只有一个守护进程写入。团队服务器 1.x 只支持单个活动实例：启动时取得 PostgreSQL 会话级 advisory lock（键由数据库名和固定命名空间派生），取不到就拒绝启动；第二个实例只能等待接管，不并发写入。多活写入不在 1.x 范围内。
 - 业务对象的位置：provider、路由组、Gateway Key、Profile、Library 索引、接线记录都是 Store 中带版本的记录；`config.jsonc` 只保存启动参数（监听、存储后端、秘密后端、日志级别、导出器、遥测同意）。需要以文件形式声明配置时，使用第 3 节的导入导出。

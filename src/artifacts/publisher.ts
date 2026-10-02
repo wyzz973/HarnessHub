@@ -8,8 +8,8 @@ import type { ArtifactId, ArtifactRecord, RunId } from "@harnesshub/core/types";
 import {
   ensurePrivateDirectories,
   verifyPrivatePaths,
-} from "../platform/windows-acl.js";
-import type { WindowsFileSession } from "../platform/windows-file-session.js";
+} from "@harnesshub/store/platform/windows-acl";
+import type { WindowsFileSession } from "@harnesshub/store/platform/windows-file-session";
 
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
 const CHUNK_BYTES = 64 * 1024;

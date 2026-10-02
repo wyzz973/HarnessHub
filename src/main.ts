@@ -22,7 +22,7 @@ import { parseBuildInfo, type BuildInfo } from "@harnesshub/core/build-info";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import type { RunId, SessionId } from "@harnesshub/core/types";
-import { SqliteWorkflowStore } from "./storage/workflow-store.js";
+import { SqliteWorkflowStore } from "@harnesshub/store/storage/workflow-store";
 import { WorkflowService } from "./application/workflows.js";
 import { ObservationService } from "./application/observability.js";
 import { parseArgs } from "node:util";
@@ -35,7 +35,7 @@ import { mkdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./engine/registry.js";
-import { SqliteStore } from "./storage/sqlite-store.js";
+import { SqliteStore } from "@harnesshub/store/storage/sqlite-store";
 import { ProcessWorkerHost } from "./process/worker-host.js";
 import {
   createArtifactPublisher,

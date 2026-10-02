@@ -19,7 +19,7 @@ import {
   prepareAttempts,
 } from "../../src/benchmark/runner.js";
 import { benchmarkHash, type BenchmarkTask } from "@harnesshub/core/benchmark";
-import { SqliteBenchmarkStore } from "../../src/storage/benchmark-store.js";
+import { SqliteBenchmarkStore } from "@harnesshub/store/storage/benchmark-store";
 
 const fixtureTask: BenchmarkTask = {
   id: "json",

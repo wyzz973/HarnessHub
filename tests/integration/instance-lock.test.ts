@@ -4,7 +4,7 @@ import { once } from "node:events";
 import path from "node:path";
 import test from "node:test";
 import { Worker } from "node:worker_threads";
-import { acquireInstanceLock } from "../../src/storage/instance-lock.js";
+import { acquireInstanceLock } from "@harnesshub/store/storage/instance-lock";
 import { temporaryDirectory } from "../support/temporary.js";
 
 const contenderSource = `
@@ -30,10 +30,8 @@ const { parentPort, workerData } = require("node:worker_threads");
 `;
 
 async function round(file: string, contenders: number): Promise<unknown[]> {
-  const moduleUrl = new URL(
-    "../../src/storage/instance-lock.js",
-    import.meta.url,
-  ).href;
+  const moduleUrl = import.meta
+    .resolve("@harnesshub/store/storage/instance-lock");
   const gate = new SharedArrayBuffer(4);
   const workers = Array.from(
     { length: contenders },
