@@ -17,7 +17,7 @@ import {
   BenchmarkRunner,
   parseDataset,
   prepareAttempts,
-} from "../../src/benchmark/runner.js";
+} from "@harnesshub/runtime/benchmark/runner";
 import { benchmarkHash, type BenchmarkTask } from "@harnesshub/core/benchmark";
 import { SqliteBenchmarkStore } from "@harnesshub/store/storage/benchmark-store";
 

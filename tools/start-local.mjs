@@ -27,7 +27,7 @@ for (const port of [3180, 3330]) {
 }
 const children = new Set();
 const jobHelper = fileURLToPath(
-  new URL("../dist/native/harnesshub-job.exe", import.meta.url),
+  new URL("../packages/runtime/dist/native/harnesshub-job.exe", import.meta.url),
 );
 let stopping;
 function stop(code = 0) {

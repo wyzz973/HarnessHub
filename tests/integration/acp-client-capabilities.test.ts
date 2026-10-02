@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { WORKER_ENTRY } from "../support/entries.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -11,8 +12,8 @@ import {
   createFileSessionStore,
   type AcpPermissionDecision,
 } from "acpx/runtime";
-import { ProcessWorkerHost } from "../../src/process/worker-host.js";
-import { probeConfiguration } from "../../src/drivers/configuration/probe.js";
+import { ProcessWorkerHost } from "@harnesshub/runtime/process/worker-host";
+import { probeConfiguration } from "@harnesshub/runtime/process/probe";
 import { normalizeEngine } from "@harnesshub/agents/engine/registry";
 import type { RunId, SessionId } from "@harnesshub/core/types";
 import type { WorkerMessage } from "@harnesshub/core/ports";
@@ -40,7 +41,7 @@ void test(
   { timeout: 20_000 },
   async (t) => {
     const root = await mkdtemp(join(tmpdir(), "hh-acp-capabilities-"));
-    const host = new ProcessWorkerHost();
+    const host = new ProcessWorkerHost({ workerEntry: WORKER_ENTRY });
     t.after(async () => {
       await host.close();
       await rm(root, { recursive: true, force: true });

@@ -24,8 +24,9 @@
  * - Inside the daemon (and the src/ files that move to it), only worker/ may
  *   import @harnesshub/drivers.
  * - node:sqlite belongs in the storage module of @harnesshub/store. Inside
- *   packages, node:child_process is allowed only by CHILD_PROCESS_EXCEPTIONS,
- *   each of which expires when its TODO.md task is ticked.
+ *   packages, node:child_process belongs in PROCESS_LAUNCHERS (runtime's
+ *   process/) and is otherwise allowed only by CHILD_PROCESS_EXCEPTIONS, each
+ *   of which expires when its TODO.md task is ticked.
  *
  * Exits non-zero for any violation and when no source file is found.
  */
@@ -91,10 +92,11 @@ export const APP_GRAPH = { hh: ["cli", "daemon"] };
 
 /**
  * Where the src/ of each package that came from the legacy tree came from: a
- * string when its whole src/ was one legacy directory, or the legacy directory
- * of each renamed first-level subdirectory (the others kept their names, such
- * as store's storage/ and platform/). Packages without an entry hold only new
- * code, and src/ cannot import them.
+ * string when its whole src/ was one legacy directory, or the legacy origin of
+ * each renamed first-level subdirectory or single file, written without its
+ * extension (the others kept their names, such as store's storage/ and
+ * platform/). Packages without an entry hold only new code, and src/ cannot
+ * import them.
  */
 export const PACKAGE_ORIGINS = {
   core: "domain",
@@ -106,6 +108,8 @@ export const PACKAGE_ORIGINS = {
     configuration: "drivers/configuration",
     "tool-command": "drivers/tool-command",
   },
+  // The configuration probe moved into process/ but keeps its drivers rules.
+  runtime: { "process/probe": "drivers/configuration/probe" },
 };
 
 /**
@@ -119,6 +123,9 @@ export function legacyPathOf(name, sourcePath) {
   const origin = PACKAGE_ORIGINS[name];
   if (origin === undefined) return undefined;
   if (typeof origin === "string") return `${origin}/${sourcePath}`;
+  const file = sourcePath.replace(/\.(?:[cm]?ts|tsx)$/, "");
+  if (Object.hasOwn(origin, file))
+    return `${origin[file]}${sourcePath.slice(file.length)}`;
   const [first, ...rest] = sourcePath.split("/");
   return [origin[first] ?? first, ...rest].join("/");
 }
@@ -191,6 +198,13 @@ export const CHILD_PROCESS_EXCEPTIONS = [
     expiresWith: "OSS-013",
   },
 ];
+
+/**
+ * Where node:child_process belongs for good: runtime's process/, the home of
+ * the ProcessLauncher implementation (02 section 8, 10 section 2). Not an
+ * exception and without expiry; OSS-010 F08 narrows it to the launcher itself.
+ */
+export const PROCESS_LAUNCHERS = [{ package: "runtime", path: "process/" }];
 
 /**
  * Temporary exceptions to "new URL(..., import.meta.url) stays inside its
@@ -531,6 +545,7 @@ export function checkSource(
 
   /** Inside packages only an unexpired CHILD_PROCESS_EXCEPTIONS entry allows node:child_process. */
   const inspectChildProcess = (node, specifier) => {
+    if (exceptionFor(PROCESS_LAUNCHERS)) return;
     const exception = exceptionFor(CHILD_PROCESS_EXCEPTIONS);
     if (!exception)
       report(

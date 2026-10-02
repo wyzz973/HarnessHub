@@ -31,15 +31,15 @@ importers:
       '@harnesshub/gateway':
         specifier: workspace:*
         version: link:packages/gateway
+      '@harnesshub/runtime':
+        specifier: workspace:*
+        version: link:packages/runtime
       '@harnesshub/secrets':
         specifier: workspace:*
         version: link:packages/secrets
       '@harnesshub/store':
         specifier: workspace:*
         version: link:packages/store
-      ajv:
-        specifier: 8.20.0
-        version: 8.20.0
       cross-spawn:
         specifier: 7.0.6
         version: 7.0.6
@@ -56,6 +56,9 @@ importers:
       acpx:
         specifier: 0.13.2
         version: 0.13.2(patch_hash=2fc8dc1222d3663c1c357409b341ce293d920dbab00f71b069b42a732d6dba7f)
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
@@ -118,6 +121,21 @@ importers:
         version: link:../core
 
   packages/plugin-host: {}
+
+  packages/runtime:
+    dependencies:
+      '@harnesshub/agents':
+        specifier: workspace:*
+        version: link:../agents
+      '@harnesshub/core':
+        specifier: workspace:*
+        version: link:../core
+      '@harnesshub/store':
+        specifier: workspace:*
+        version: link:../store
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
 
   packages/sdk: {}
 

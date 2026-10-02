@@ -18,15 +18,15 @@ import { configurationAdapters } from "@harnesshub/core/engine-configuration";
 import { createSecret } from "@harnesshub/secrets/secrets";
 import { prepareConfiguration } from "@harnesshub/agents/configuration/prepare";
 import { startModelGateway } from "@harnesshub/gateway/gateway";
-import { probeConfiguration } from "./drivers/configuration/probe.js";
+import { probeConfiguration } from "@harnesshub/runtime/process/probe";
 import { HubError } from "@harnesshub/core/errors";
 import { parseBuildInfo, type BuildInfo } from "@harnesshub/core/build-info";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import type { RunId, SessionId } from "@harnesshub/core/types";
 import { SqliteWorkflowStore } from "@harnesshub/store/storage/workflow-store";
-import { WorkflowService } from "./application/workflows.js";
-import { ObservationService } from "./application/observability.js";
+import { WorkflowService } from "@harnesshub/runtime/application/workflows";
+import { ObservationService } from "@harnesshub/runtime/application/observability";
 import { parseArgs } from "node:util";
 import { homedir } from "node:os";
 import { EngineManager } from "@harnesshub/agents/engine/manager";
@@ -38,15 +38,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "@harnesshub/agents/engine/registry";
 import { SqliteStore } from "@harnesshub/store/storage/sqlite-store";
-import { ProcessWorkerHost } from "./process/worker-host.js";
+import { ProcessWorkerHost } from "@harnesshub/runtime/process/worker-host";
 import {
   createArtifactPublisher,
   readArtifact,
   discardArtifacts,
-} from "./artifacts/publisher.js";
-import { createFileArtifactCollector } from "./artifacts/collector.js";
-import { Runtime } from "./runtime/runtime.js";
-import { HubApplication } from "./application/service.js";
+} from "@harnesshub/runtime/artifacts/publisher";
+import { createFileArtifactCollector } from "@harnesshub/runtime/artifacts/collector";
+import { Runtime } from "@harnesshub/runtime/runtime/runtime";
+import { HubApplication } from "@harnesshub/runtime/application/service";
 import { createGateway } from "./gateway/server.js";
 import { registerToolPackageRoutes } from "./gateway/tool-package-routes.js";
 import { createToolPackageManagement } from "@harnesshub/agents/tool-packages/management";
@@ -294,6 +294,7 @@ export async function startHub(options: {
   };
   const artifactRoot = path.join(dataDir, "artifacts");
   const host = new ProcessWorkerHost({
+    workerEntry: new URL("./worker/main.js", import.meta.url),
     shutdownGraceMs: config.cancelGraceMs,
     maxWorkers: config.maxWorkers,
     leaseDir: path.join(dataDir, "workers"),

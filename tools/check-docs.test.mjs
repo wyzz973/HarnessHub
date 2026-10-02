@@ -165,3 +165,21 @@ test('CLI passes for valid documents and rejects unsupported arguments', async (
   assert.equal(invalid.status, 2);
   assert.match(invalid.stderr, /Usage:/);
 });
+
+test('an empty or whitespace-only document is an error, such as a truncated file', async (t) => {
+  const root = await fixture(t, {
+    'README.md': '# Project\n',
+    'docs/empty.md': '',
+    'docs/newline.md': '\n',
+    'docs/blank.md': '  \n\t\n',
+  });
+  const result = await checkDocs(root);
+  assert.equal(result.checkedFiles, 4);
+  assert.deepEqual(result.diagnostics.sort(), [
+    'docs/blank.md:1: document is empty or holds only whitespace',
+    'docs/empty.md:1: document is empty or holds only whitespace',
+    'docs/newline.md:1: document is empty or holds only whitespace',
+  ]);
+  const cli = spawnSync(process.execPath, [script, '--root', root], { encoding: 'utf8' });
+  assert.equal(cli.status, 1);
+});

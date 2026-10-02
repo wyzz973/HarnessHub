@@ -45,10 +45,10 @@ Console不是引擎执行器：它调用Next的 `/api/gateway/...` 代理，再�
 | [main.ts](../src/main.ts) | 组合根：配置、Store、Host、Runtime、Workflow、观测、秘密/配置操作与Gateway组装 |
 | [domain](../packages/core/src/types.ts)（`@harnesshub/core`） | 自有实体/品牌ID、状态、公共schema、IPC和接口；不依赖具体后端SDK |
 | [gateway](../src/gateway/server.ts) | 请求校验、HTTP错误映射、SSE/下载；不选择引擎实现 |
-| [application](../src/application/service.ts) | HTTP、Benchmark共同入口；工作流、选路和观测服务 |
-| [runtime](../src/runtime/runtime.ts) | Session队列、Run状态、总deadline、权限、结果仲裁与恢复 |
+| [application](../packages/runtime/src/application/service.ts) | HTTP、Benchmark共同入口；工作流、选路和观测服务 |
+| [runtime](../packages/runtime/src/runtime/runtime.ts) | Session队列、Run状态、总deadline、权限、结果仲裁与恢复 |
 | [engine](../packages/agents/src/engine/manager.ts) | 配置校验、静态文件+API overlay、不可变revision、发现和模板 |
-| [process](../src/process/worker-host.ts) | 懒启动Worker、有限驻留数、进程归属、升级终止与lease恢复 |
+| [process](../packages/runtime/src/process/worker-host.ts) | 懒启动Worker、有限驻留数、进程归属、升级终止与lease恢复 |
 | [worker](../src/worker/main.ts) | 校验IPC、单Session绑定、确认事件、选择Driver和准备配置 |
 | [ACP Driver](../packages/drivers/src/acp/driver.ts) | acpx/runtime边界、ACP会话/模型/MCP、权限与事件适配 |
 | [CLI Driver](../packages/drivers/src/cli/driver.ts) | argv/stdin、stdout文本、退出/输出限额/取消；每Run独立 |
@@ -57,7 +57,7 @@ Console不是引擎执行器：它调用Next的 `/api/gateway/...` 代理，再�
 | [工具包](../packages/agents/src/tool-packages/management.ts) | 导入与校验、按引擎绑定与解绑、一键应用到全部引擎 |
 | [诊断日志](../src/logging/json-log-file.ts) | JSON Lines写入、脱敏、轮转；Store装饰器与Session日志读取 |
 | [storage](../packages/store/src/storage/sqlite-store.ts) | 事务、幂等、记录校验、事件序号、公共终态唯一性 |
-| [artifacts](../src/artifacts/collector.ts) | 声明式outputs采集、不可变文件、hash与安全读取 |
+| [artifacts](../packages/runtime/src/artifacts/collector.ts) | 声明式outputs采集、不可变文件、hash与安全读取 |
 | [benchmark](../src/benchmark-main.ts) | 隔离attempt、调用Application、Evaluator与报告 |
 | [web](../web/README.md) | 控制台、代理、UI响应校验、SSE重放与任务选择 |
 

@@ -9,9 +9,9 @@ import {
   BenchmarkRunner,
   parseDataset,
   prepareAttempts,
-} from "./benchmark/runner.js";
+} from "@harnesshub/runtime/benchmark/runner";
 import type { AttemptId } from "@harnesshub/core/benchmark";
-import { buildBenchmarkReport } from "./benchmark/report.js";
+import { buildBenchmarkReport } from "@harnesshub/runtime/benchmark/report";
 
 /** Plain-Node benchmark composition. SIGINT/SIGTERM cancel through the same Runtime and stop further attempts. */
 export async function benchmarkMain(args: string[]): Promise<number> {

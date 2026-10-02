@@ -8,7 +8,7 @@ import test from "node:test";
 import type { WorkerHost } from "@harnesshub/core/ports";
 import { isTerminal } from "@harnesshub/core/types";
 import type { EngineProfile, JsonObject, RunId } from "@harnesshub/core/types";
-import { Runtime } from "../../src/runtime/runtime.js";
+import { Runtime } from "@harnesshub/runtime/runtime/runtime";
 import { SqliteStore } from "@harnesshub/store/storage/sqlite-store";
 
 async function settled(store: SqliteStore, id: RunId) {

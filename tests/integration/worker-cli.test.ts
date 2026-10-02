@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { WORKER_ENTRY } from "../support/entries.js";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
@@ -7,7 +8,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { ProcessWorkerHost } from "../../src/process/worker-host.js";
+import { ProcessWorkerHost } from "@harnesshub/runtime/process/worker-host";
 import { startHub } from "../../src/main.js";
 import type { ExecutionSpec, WorkerMessage } from "@harnesshub/core/ports";
 import type {
@@ -74,7 +75,10 @@ void test(
   { timeout: 15_000 },
   async (t) => {
     const directory = await mkdtemp(join(tmpdir(), "harnesshub-cli-中文 "));
-    const host = new ProcessWorkerHost({ shutdownGraceMs: 500 });
+    const host = new ProcessWorkerHost({
+      workerEntry: WORKER_ENTRY,
+      shutdownGraceMs: 500,
+    });
     t.after(async () => {
       await host.close();
       await rm(directory, { recursive: true });
@@ -113,7 +117,10 @@ void test(
   { timeout: 15_000 },
   async (t) => {
     const directory = await mkdtemp(join(tmpdir(), "harnesshub-cli-errors-"));
-    const host = new ProcessWorkerHost({ shutdownGraceMs: 500 });
+    const host = new ProcessWorkerHost({
+      workerEntry: WORKER_ENTRY,
+      shutdownGraceMs: 500,
+    });
     t.after(async () => {
       await host.close();
       await rm(directory, { recursive: true });
@@ -151,7 +158,10 @@ void test(
   },
   async (t) => {
     const directory = await mkdtemp(join(tmpdir(), "harnesshub-cli-cancel-"));
-    const host = new ProcessWorkerHost({ shutdownGraceMs: 700 });
+    const host = new ProcessWorkerHost({
+      workerEntry: WORKER_ENTRY,
+      shutdownGraceMs: 700,
+    });
     t.after(async () => {
       await host.close();
       await rm(directory, { recursive: true });
@@ -441,8 +451,16 @@ void test(
   async (t) => {
     const directory = await mkdtemp(join(tmpdir(), "harnesshub-cli-eperm-"));
     const leaseDir = join(directory, "leases");
-    const host = new ProcessWorkerHost({ leaseDir, shutdownGraceMs: 40 });
-    const recovery = new ProcessWorkerHost({ leaseDir, shutdownGraceMs: 40 });
+    const host = new ProcessWorkerHost({
+      workerEntry: WORKER_ENTRY,
+      leaseDir,
+      shutdownGraceMs: 40,
+    });
+    const recovery = new ProcessWorkerHost({
+      workerEntry: WORKER_ENTRY,
+      leaseDir,
+      shutdownGraceMs: 40,
+    });
     let quarantined = false;
     t.after(async () => {
       if (quarantined)

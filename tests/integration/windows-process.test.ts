@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { WORKER_ENTRY } from "../support/entries.js";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -18,13 +19,14 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import { startHub } from "../../src/main.js";
-import { probeConfiguration } from "../../src/drivers/configuration/probe.js";
-import { ProcessWorkerHost } from "../../src/process/worker-host.js";
-import type * as WindowsJobModule from "../../src/process/windows-job.js";
+import { probeConfiguration } from "@harnesshub/runtime/process/probe";
+import { ProcessWorkerHost } from "@harnesshub/runtime/process/worker-host";
+import { jobHelperPath } from "@harnesshub/runtime/process/windows-job";
+import type * as WindowsJobModule from "@harnesshub/runtime/process/windows-job";
 import {
   recoverWorkerLease,
   WorkerLeaseStore,
-} from "../../src/process/leases.js";
+} from "@harnesshub/runtime/process/leases";
 import type { ExecutionSpec } from "@harnesshub/core/ports";
 import type {
   RunId,
@@ -34,9 +36,8 @@ import type {
 } from "@harnesshub/core/types";
 import { temporaryDirectory } from "../support/temporary.js";
 
-const native = fileURLToPath(
-  new URL("../../native/harnesshub-job.exe", import.meta.url),
-);
+// The helper lives in the runtime package; use its own resolver, never a second path.
+const native = jobHelperPath();
 const cli = fileURLToPath(new URL("../fixtures/cli-peer.js", import.meta.url));
 const windows = {
   skip: process.platform !== "win32" ? "Windows native Job Objects" : false,
@@ -89,7 +90,7 @@ void test(
     );
     await copyFile(
       fileURLToPath(
-        new URL("../../src/process/windows-job.js", import.meta.url),
+        import.meta.resolve("@harnesshub/runtime/process/windows-job"),
       ),
       modulePath,
     );
@@ -241,6 +242,7 @@ void test(
   async (t) => {
     const directory = await mkdtemp(join(tmpdir(), "hh-startup-cancel-"));
     const host = new ProcessWorkerHost({
+      workerEntry: WORKER_ENTRY,
       leaseDir: join(directory, "leases"),
       shutdownGraceMs: 100,
     });

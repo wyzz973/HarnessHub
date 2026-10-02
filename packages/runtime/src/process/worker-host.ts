@@ -7,7 +7,7 @@ import { configurationEnvironmentNames } from "@harnesshub/core/engine-configura
 import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { chmodSync, lstatSync, mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   WorkerLeaseStore,
@@ -90,19 +90,32 @@ export class ProcessWorkerHost implements WorkerHost {
   private readonly explicitEnv: Readonly<Record<string, string>>;
   private readonly leases: WorkerLeaseStore | undefined;
   private readonly log: LogSink;
+  private readonly workerPath: string;
   private closing = false;
 
-  constructor(
-    options: {
-      handshakeTimeoutMs?: number;
-      shutdownGraceMs?: number;
-      maxWorkers?: number;
-      env?: Record<string, string>;
-      leaseDir?: string;
-      /** Receives Worker spawn, ready, exit and failure records. */
-      log?: LogSink;
-    } = {},
-  ) {
+  constructor(options: {
+    /**
+     * The compiled Worker entry, forked for every Session Worker: a file URL or
+     * an absolute path. The composition root that owns the Worker passes its
+     * location (ADR 0017 decision 5, V5). Recovery validates each lease by the
+     * Worker path that the lease recorded, never by this option, so leases
+     * written by a host with another entry still validate.
+     */
+    workerEntry: string | URL;
+    handshakeTimeoutMs?: number;
+    shutdownGraceMs?: number;
+    maxWorkers?: number;
+    env?: Record<string, string>;
+    leaseDir?: string;
+    /** Receives Worker spawn, ready, exit and failure records. */
+    log?: LogSink;
+  }) {
+    this.workerPath =
+      typeof options.workerEntry === "string"
+        ? options.workerEntry
+        : fileURLToPath(options.workerEntry);
+    if (!isAbsolute(this.workerPath))
+      throw new Error("workerEntry must be a file URL or an absolute path");
     this.log = options.log ?? NO_LOG;
     this.handshakeTimeoutMs = options.handshakeTimeoutMs ?? 10_000;
     this.shutdownGraceMs = options.shutdownGraceMs ?? 1_500;
@@ -254,9 +267,7 @@ export class ProcessWorkerHost implements WorkerHost {
   }
 
   private createWorker(spec: ExecutionSpec, anchor: string): SessionWorker {
-    const workerPath = fileURLToPath(
-      new URL("../worker/main.js", import.meta.url),
-    );
+    const workerPath = this.workerPath;
     const ownerToken = randomUUID();
     const child = fork(workerPath, [`--harnesshub-owner=${ownerToken}`], {
       cwd: spec.cwd,

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { WORKER_ENTRY } from "../support/entries.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
@@ -13,7 +14,7 @@ import {
   ndJsonStream,
   PROTOCOL_VERSION,
 } from "@agentclientprotocol/sdk";
-import { ProcessWorkerHost } from "../../src/process/worker-host.js";
+import { ProcessWorkerHost } from "@harnesshub/runtime/process/worker-host";
 import type { ExecutionSpec, WorkerMessage } from "@harnesshub/core/ports";
 import type { RunId, SessionId } from "@harnesshub/core/types";
 
@@ -130,6 +131,7 @@ if (process.argv.includes("--acp-peer")) {
   const directory = process.argv.at(-1);
   if (!directory) throw new Error("Environment fixture needs a directory");
   const host = new ProcessWorkerHost({
+    workerEntry: WORKER_ENTRY,
     env: { HH_TEST_EXPLICIT_VALUE: "explicit-fixture" },
   });
   try {
@@ -180,7 +182,10 @@ if (process.argv.includes("--acp-peer")) {
     { timeout: 30_000 },
     async (context) => {
       const directory = await mkdtemp(join(tmpdir(), "harnesshub-acp-"));
-      const host = new ProcessWorkerHost({ shutdownGraceMs: 500 });
+      const host = new ProcessWorkerHost({
+        workerEntry: WORKER_ENTRY,
+        shutdownGraceMs: 500,
+      });
       context.after(async () => {
         await host.close();
         await rm(directory, { recursive: true });

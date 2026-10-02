@@ -761,7 +761,7 @@ void test(
   { timeout: 15_000 },
   async () => {
     const { probeConfiguration } =
-      await import("../../src/drivers/configuration/probe.js");
+      await import("@harnesshub/runtime/process/probe");
     const { fileURLToPath } = await import("node:url");
     const result = await probeConfiguration(
       {

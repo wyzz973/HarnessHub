@@ -63,8 +63,8 @@ const ROLES = new Map([
   ],
   // Linux process-table scanner, started with process.execPath during Worker cleanup.
   [
-    "dist/src/process/proc-scan-main.js",
-    () => import("../../dist/src/process/proc-scan-main.js"),
+    "packages/runtime/dist/src/process/proc-scan-main.js",
+    () => import("../../packages/runtime/dist/src/process/proc-scan-main.js"),
   ],
 ]);
 

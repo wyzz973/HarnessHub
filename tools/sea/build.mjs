@@ -47,7 +47,7 @@ const ROLE_ENTRIES = [
   "dist/src/worker/main.js",
   "packages/agents/dist/src/tool-command/command-mcp.js",
   "scripts/launch-engine.mjs",
-  "dist/src/process/proc-scan-main.js",
+  "packages/runtime/dist/src/process/proc-scan-main.js",
 ];
 /**
  * entry.mjs dispatches the same role entries. A role missing there makes the
@@ -71,7 +71,9 @@ if (
  * repository. A migration step that moves or adds a helper updates this table.
  */
 export const NATIVE_HELPERS = {
-  "dist/native": ["harnesshub-job.exe"],
+  // No helper is built into the root dist/native any more; a file there is stale.
+  "dist/native": [],
+  "packages/runtime/dist/native": ["harnesshub-job.exe"],
   "packages/secrets/dist/native": [
     "harnesshub-keychain",
     "harnesshub-secrets.exe",

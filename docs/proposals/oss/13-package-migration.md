@@ -167,3 +167,12 @@ daemon 内只有 `src/worker/**` 可以导入 drivers。
 - V9：`tool-command/entry.ts` 导出 `COMMAND_MCP_ENTRY`，`main.ts`、`tool-packages-main.ts` 与两个集成测试使用它。同一文件的 `LEGACY_COMMAND_MCP_ENTRY` 是迁移前的编译位置；准备 MCP 服务器时，等于它的参数改为当前入口（Windows 上不区分大小写），SQLite 中的记录不改写。集成测试在真实 Gateway 中登记与旧绑定相同的记录，重启后读回，确认记录未变、准备后的参数是新入口，并经它启动 command MCP 列出工具；去掉映射时该测试失败。该映射在 M1 删除。
 - command MCP 服务器用 `node:child_process` 执行工具，是第四个 `child_process` 例外；`configuration/launch.ts` 不启动进程，不需要例外。
 - SEA：command MCP 角色改为 `packages/agents/dist/src/tool-command/command-mcp.js`，`entry.mjs`、`build.mjs` 与 `measure.mjs` 同步。
+
+第 8 步（runtime 与 V5）：
+
+- `runtime/`、`process/`（含 F07 的 posix-tree、process-table、proc-scan 与 proc-scan-main）、`benchmark/`、`artifacts/` 与 application 的 service、workflows、observability 迁入 `packages/runtime/src/` 的同名目录；`drivers/configuration/probe.ts` 迁为 `process/probe.ts`。包依赖 core、store、agents 与 ajv；根包的 `ajv` 只剩一个单元测试使用，改为开发依赖。`src/` 只剩 daemon 与 cli 的部分（gateway、logging、worker、rollout 与入口）。
+- 探测文件移入 `process/`，但仍导入 agents 中准备好的配置类型，而原 `process` 模块不能依赖 drivers；因此 `PACKAGE_ORIGINS` 支持单个文件的来源，`process/probe.ts` 按原 `drivers/configuration/probe.ts` 检查。
+- `child_process`：runtime 的 `process/` 是 `ProcessLauncher` 实现的长期归属（02 第 8 节、10 第 2 节），边界检查以 `PROCESS_LAUNCHERS` 永久允许，不设期限；F08 再把范围收窄到启动器实现本身。runtime 的其他目录仍不允许。
+- V5：`ProcessWorkerHost` 的 `workerEntry` 必填（文件 URL 或绝对路径），`main.ts` 传入 `new URL("./worker/main.js", import.meta.url)`，27 处测试构造与一个夹具使用 `tests/support/entries.ts` 的 `WORKER_ENTRY`。新集成测试用入口不同且不存在的宿主回收旧宿主写下的租约，确认租约按自己记录的 Worker 路径校验并回收；相对路径的入口被拒绝。
+- Job 辅助程序的源码与构建脚本迁入 `packages/runtime/native/`，构建到本包的 `dist/native`；`windows-job.ts` 导出 `jobHelperPath()`，但不导入包内其他模块，因为一个 Windows 测试单独复制它来检查缺少辅助程序的情况，该测试改用 `import.meta.resolve` 取得编译后的文件。`probe.ts` 按相同层级自行计算路径；`start-local` 指向新位置；包内测试检查路径，并在 Windows 上检查文件存在。
+- SEA：proc-scan 角色改为 `packages/runtime/dist/src/process/proc-scan-main.js`；`NATIVE_HELPERS` 中 Job 辅助程序移到 `packages/runtime/dist/native`，根 `dist/native` 不再允许任何文件，旧构建留下的辅助程序会使 SEA 构建失败。

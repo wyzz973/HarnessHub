@@ -11,7 +11,7 @@ Status: accepted
 
 ## 决定
 
-增加一个独立 C# helper，通过 Win32 Job Object API 管理进程归属。Windows 构建使用系统 .NET Framework C# 编译器生成 AnyCPU 的 `dist/native/harnesshub-job.exe`；编译器或所需原生 API 不可用时明确失败。helper 不进入业务域，Gateway 仍是业务数据库的唯一写入者。
+增加一个独立 C# helper，通过 Win32 Job Object API 管理进程归属。Windows 构建使用系统 .NET Framework C# 编译器生成 AnyCPU 的 `dist/native/harnesshub-job.exe`（OSS-004 第 8 步起为 `packages/runtime/dist/native/harnesshub-job.exe`，源码与构建脚本在 `packages/runtime/native/`）；编译器或所需原生 API 不可用时明确失败。helper 不进入业务域，Gateway 仍是业务数据库的唯一写入者。
 
 每个 Worker 使用随机 UUID 对应的本机会话命名 Job，设置 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`，不允许 breakaway。Worker 先由 Node fork 建立 IPC，helper 将空闲 Worker 分配到 Job；ProcessHost 同时等待 Worker ready 和原生分配成功，才发送第一个 Run。分配前 Worker 只能运行受信任的协议入口，不能创建引擎或执行 Run。分配失败、超时或提前取消都会收敛本次启动，不降级为无监督执行。
 

@@ -8,8 +8,8 @@ import { registerObservationRoutes } from "./observation-routes.js";
 import {
   selectWorkflowEngine,
   type WorkflowService,
-} from "../application/workflows.js";
-import type { ObservationService } from "../application/observability.js";
+} from "@harnesshub/runtime/application/workflows";
+import type { ObservationService } from "@harnesshub/runtime/application/observability";
 import {
   engineSelectionSchema,
   type WorkflowCapability,
@@ -19,7 +19,7 @@ import { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import Fastify, { type FastifyError } from "fastify";
 import swagger from "@fastify/swagger";
-import type { HubApplication } from "../application/service.js";
+import type { HubApplication } from "@harnesshub/runtime/application/service";
 import { HubError } from "@harnesshub/core/errors";
 import type {
   LogSink,

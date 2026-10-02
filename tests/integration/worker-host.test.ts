@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT
+import { fileURLToPath } from "node:url";
+import { WORKER_ENTRY } from "../support/entries.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -7,8 +9,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fork } from "node:child_process";
 import { once } from "node:events";
-import { ProcessWorkerHost } from "../../src/process/worker-host.js";
-import { settleWorkerCleanup } from "../../src/process/cleanup-settlement.js";
+import { ProcessWorkerHost } from "@harnesshub/runtime/process/worker-host";
+import { settleWorkerCleanup } from "@harnesshub/runtime/process/cleanup-settlement";
 import type { ExecutionSpec, WorkerMessage } from "@harnesshub/core/ports";
 import type { RunId, SessionId } from "@harnesshub/core/types";
 
@@ -40,7 +42,10 @@ void test(
   { timeout: 15_000 },
   async (context) => {
     const directory = await mkdtemp(join(tmpdir(), "harnesshub-worker-"));
-    const host = new ProcessWorkerHost({ shutdownGraceMs: 300 });
+    const host = new ProcessWorkerHost({
+      workerEntry: WORKER_ENTRY,
+      shutdownGraceMs: 300,
+    });
     context.after(async () => {
       await host.close();
       await rm(directory, { recursive: true });
@@ -81,7 +86,10 @@ void test(
   { timeout: 15_000 },
   async (context) => {
     const directory = await mkdtemp(join(tmpdir(), "harnesshub-worker-"));
-    const host = new ProcessWorkerHost({ shutdownGraceMs: 100 });
+    const host = new ProcessWorkerHost({
+      workerEntry: WORKER_ENTRY,
+      shutdownGraceMs: 100,
+    });
     context.after(async () => {
       await host.close();
       await rm(directory, { recursive: true });
@@ -148,8 +156,16 @@ void test(
       join(tmpdir(), "harnesshub-worker-recovery-"),
     );
     const leaseDir = join(directory, "leases");
-    const oldHost = new ProcessWorkerHost({ leaseDir, shutdownGraceMs: 300 });
-    const nextHost = new ProcessWorkerHost({ leaseDir, shutdownGraceMs: 300 });
+    const oldHost = new ProcessWorkerHost({
+      workerEntry: WORKER_ENTRY,
+      leaseDir,
+      shutdownGraceMs: 300,
+    });
+    const nextHost = new ProcessWorkerHost({
+      workerEntry: WORKER_ENTRY,
+      leaseDir,
+      shutdownGraceMs: 300,
+    });
     context.after(async () => {
       await oldHost.close();
       await nextHost.close();
@@ -189,6 +205,70 @@ void test(
 );
 
 void test(
+  "Worker recovery validates a lease by the Worker path it recorded, not by the recovering host's entry",
+  {
+    timeout: 10_000,
+  },
+  async (context) => {
+    assert.throws(
+      () => new ProcessWorkerHost({ workerEntry: "dist/src/worker/main.js" }),
+      /workerEntry must be a file URL or an absolute path/,
+    );
+    const directory = await mkdtemp(join(tmpdir(), "harnesshub-worker-entry-"));
+    const leaseDir = join(directory, "leases");
+    const oldHost = new ProcessWorkerHost({
+      workerEntry: WORKER_ENTRY,
+      leaseDir,
+      shutdownGraceMs: 300,
+    });
+    // A later Gateway may fork its Worker from elsewhere, as the daemon package
+    // will after OSS-004 step 9; this entry does not even exist.
+    const nextHost = new ProcessWorkerHost({
+      workerEntry: new URL("./moved/worker/main.js", WORKER_ENTRY),
+      leaseDir,
+      shutdownGraceMs: 300,
+    });
+    context.after(async () => {
+      await oldHost.close();
+      await nextHost.close();
+      await rm(directory, { recursive: true });
+    });
+    const input = spec(directory);
+    const waiting = Promise.withResolvers<void>();
+    const handle = await oldHost.start(
+      { ...input, input: { ...input.input, fixture: { scenario: "wait" } } },
+      async (message) => {
+        if (
+          message.type === "event" &&
+          message.event.type === "fixture.waiting"
+        )
+          waiting.resolve();
+      },
+    );
+    await waiting.promise;
+    const files = await readdir(leaseDir);
+    assert.equal(files.length, 1);
+    const record: unknown = JSON.parse(
+      await readFile(join(leaseDir, files[0]!), "utf8"),
+    );
+    assert.ok(
+      typeof record === "object" &&
+        record !== null &&
+        "pid" in record &&
+        typeof record.pid === "number" &&
+        "workerPath" in record,
+    );
+    assert.equal(record.workerPath, fileURLToPath(WORKER_ENTRY));
+    const pid = record.pid;
+    const recovered = await nextHost.recover();
+    assert.equal(recovered.get(input.sessionId), "confirmed");
+    await assert.rejects(handle.result, /Worker/);
+    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+    assert.deepEqual(await readdir(leaseDir), []);
+  },
+);
+
+void test(
   "Worker recovery retains a mismatched lease without signalling the live process",
   {
     timeout: 10_000,
@@ -198,8 +278,16 @@ void test(
       join(tmpdir(), "harnesshub-worker-identity-"),
     );
     const leaseDir = join(directory, "leases");
-    const oldHost = new ProcessWorkerHost({ leaseDir, shutdownGraceMs: 300 });
-    const nextHost = new ProcessWorkerHost({ leaseDir, shutdownGraceMs: 300 });
+    const oldHost = new ProcessWorkerHost({
+      workerEntry: WORKER_ENTRY,
+      leaseDir,
+      shutdownGraceMs: 300,
+    });
+    const nextHost = new ProcessWorkerHost({
+      workerEntry: WORKER_ENTRY,
+      leaseDir,
+      shutdownGraceMs: 300,
+    });
     let original: string | undefined;
     let leasePath: string | undefined;
     context.after(async () => {
@@ -267,7 +355,11 @@ void test(
       join(tmpdir(), "harnesshub-worker-capacity-"),
     );
     const leaseDir = join(directory, "leases");
-    const host = new ProcessWorkerHost({ leaseDir, maxWorkers: 1 });
+    const host = new ProcessWorkerHost({
+      workerEntry: WORKER_ENTRY,
+      leaseDir,
+      maxWorkers: 1,
+    });
     context.after(async () => {
       await host.close();
       await rm(directory, { recursive: true });
