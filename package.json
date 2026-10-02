@@ -1,0 +1,71 @@
+{
+  "name": "harnesshub",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Open-source control plane for coding agents: wire any agent to any model, run them headless through one API, and keep the evidence.",
+  "engines": {
+    "node": "24.20.0",
+    "pnpm": "10.12.3"
+  },
+  "packageManager": "pnpm@10.12.3",
+  "scripts": {
+    "check:runtime": "node scripts/check-runtime.mjs",
+    "build": "tsc -p tsconfig.json && node scripts/build-keychain.mjs && node scripts/build-windows-job.mjs && node scripts/build-windows-acl.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src tests --max-warnings=0",
+    "format:check": "prettier --check package.json tsconfig.json eslint.config.mjs \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/check-boundaries*.mjs\" \"scripts/check-runtime*.mjs\" \".github/workflows/*.yml\"",
+    "format": "prettier --write package.json tsconfig.json eslint.config.mjs \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/check-boundaries*.mjs\" \"scripts/check-runtime*.mjs\" \".github/workflows/*.yml\"",
+    "check:boundaries": "node scripts/check-boundaries.mjs",
+    "docs:api": "pnpm build && node scripts/generate-api-docs.mjs",
+    "check:api": "node scripts/generate-api-docs.mjs --check",
+    "check:docs": "node scripts/check-docs.mjs",
+    "test:tooling": "node --test scripts/check-*.test.mjs",
+    "test:unit": "node --test dist/tests/unit/*.test.js",
+    "test:integration": "node --test dist/tests/integration/*.test.js",
+    "test:smoke": "node --test dist/tests/smoke/*.test.js",
+    "test": "pnpm build && pnpm test:tooling && pnpm test:unit && pnpm test:integration && pnpm test:smoke",
+    "check": "pnpm check:runtime && pnpm lint && pnpm format:check && pnpm check:boundaries && pnpm check:docs && pnpm test && pnpm check:api && pnpm check:console",
+    "start": "node dist/src/main.js",
+    "benchmark": "node dist/src/benchmark-main.js",
+    "dev:console": "pnpm --filter @harnesshub/console dev",
+    "build:console": "pnpm --filter @harnesshub/console build",
+    "start:console": "pnpm --filter @harnesshub/console start",
+    "typecheck:console": "pnpm --filter @harnesshub/console typecheck",
+    "lint:console": "eslint web/app web/components web/lib web/next.config.ts --max-warnings=0",
+    "check:console": "pnpm lint:console && pnpm build:console",
+    "start:local": "node scripts/start-local.mjs",
+    "test:windows": "pnpm build && node scripts/check-windows.mjs",
+    "tools": "node dist/src/tool-packages-main.js"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "1.4.0",
+    "@fastify/swagger": "9.8.1",
+    "acpx": "0.13.2",
+    "ajv": "8.20.0",
+    "cross-spawn": "7.0.6",
+    "fastify": "5.12.3",
+    "yaml": "2.9.0"
+  },
+  "devDependencies": {
+    "@types/cross-spawn": "6.0.6",
+    "@types/node": "24.13.3",
+    "eslint": "10.10.0",
+    "prettier": "3.9.6",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.56.1"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ],
+    "patchedDependencies": {
+      "acpx@0.13.2": "patches/acpx@0.13.2.patch"
+    }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wyzz973/HarnessHub.git"
+  }
+}

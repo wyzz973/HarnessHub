@@ -1,0 +1,15 @@
+{
+  "id": "opencode-deepseek",
+  "driver": "acp",
+  "command": [
+    "/absolute/path/to/node24",
+    "/absolute/path/to/HarnessHub/scripts/launch-opencode-acp.mjs",
+    "/absolute/path/to/installed/opencode-1.1.21",
+    "/absolute/path/to/existing/.dsh/settings.yaml",
+    "/absolute/path/to/existing/.dsh/.credentials.yaml",
+    "/absolute/path/to/existing/.config/opencode",
+    "/absolute/path/to/existing/.cache/opencode/models.json"
+  ],
+  "model": "deepseek/deepseek-v4-flash",
+  "maxConcurrency": 1
+}

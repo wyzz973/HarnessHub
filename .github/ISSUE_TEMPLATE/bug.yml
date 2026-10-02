@@ -1,0 +1,139 @@
+name: Bug report
+description: Report a reproducible defect in HarnessHub.
+labels: ["kind/bug", "status/needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+
+        - **Security vulnerabilities must not be reported here.** Follow [SECURITY.md](https://github.com/wyzz973/HarnessHub/blob/main/SECURITY.md) instead.
+        - Usage questions belong in [GitHub Discussions](https://github.com/wyzz973/HarnessHub/discussions).
+        - If the problem also happens when you use the agent without HarnessHub, please report it to that agent's project.
+        - **Remove API keys, gateway keys, tokens, and private paths** from everything you paste below.
+  - type: checkboxes
+    id: prechecks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched existing issues and Discussions and did not find this bug.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
+        - label: I removed all secrets (API keys, gateway keys, tokens) from this report.
+          required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Describe the observable problem. Include the exact error message if there is one.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps, starting from a clean state if possible. Include the commands you ran.
+      placeholder: |
+        1. harnesshub ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: version
+    attributes:
+      label: HarnessHub version
+      description: Output of `harnesshub version --json` if your version has it; otherwise the release name or the commit SHA you built from.
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How did you install HarnessHub?
+      options:
+        - Built from source
+        - Release archive (single executable)
+        - npm
+        - Homebrew
+        - Scoop
+        - winget
+        - Docker image
+        - deb / rpm package
+        - Other (describe below)
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      multiple: true
+      options:
+        - Linux x64
+        - Linux arm64
+        - macOS arm64
+        - macOS x64
+        - Windows x64
+        - Windows arm64
+        - Other (describe below)
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Your best guess is fine.
+      multiple: true
+      options:
+        - Gateway (model calls, routing, usage ledger)
+        - Agents (Adapters, wiring, restore, drift)
+        - Runtime (sessions, runs, workspaces)
+        - Console (web UI)
+        - CLI
+        - SDK
+        - Plugins
+        - Docs
+        - Release / packaging
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Agent and version
+      description: The coding agent involved, if any, and its version.
+      placeholder: "codex 0.160.0"
+  - type: input
+    id: provider
+    attributes:
+      label: Provider and model
+      description: The provider preset or custom provider and the model involved, if any. Do not include keys.
+      placeholder: "deepseek / deepseek-chat"
+  - type: dropdown
+    id: regression
+    attributes:
+      label: Did this work in an earlier version?
+      options:
+        - "No, or I don't know"
+        - "Yes (name the last working version below)"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and diagnostics
+      description: |
+        Relevant log lines or `harnesshub doctor --json` output if your version has it. Diagnostic bundles are redacted by HarnessHub, but check them before attaching.
+      render: text
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else that helps, such as the last working version, configuration excerpts with secrets removed, or screenshots.

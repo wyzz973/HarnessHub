@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "overview": {
+      "command": "node",
+      "args": ["servers/overview-mcp.mjs", "--root", "${workspaceFolder}"],
+      "env": { "OVERVIEW_LIMIT": "50" }
+    }
+  }
+}

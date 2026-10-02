@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "developer-cli",
+  "version": "1.0.0",
+  "displayName": "Developer CLI",
+  "files": [
+    {
+      "path": "cli/echo.mjs",
+      "size": 125,
+      "sha256": "56f6ccf198c3497311bee10f8dadb6aa2dccf2928d46d6e2cff43d813a628faf"
+    }
+  ],
+  "cliTools": [
+    {
+      "name": "echo",
+      "description": "Echo literal argv and the bound workspace for Tool Pack verification.",
+      "launch": "node",
+      "entry": "cli/echo.mjs"
+    }
+  ]
+}

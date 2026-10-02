@@ -1,0 +1,10 @@
+{
+  "cliTools": [
+    {
+      "name": "wordcount",
+      "description": "Count lines, words and bytes of files in the Session workspace. Pass workspace-relative paths.",
+      "entry": "bin/wordcount.mjs",
+      "launch": "node"
+    }
+  ]
+}

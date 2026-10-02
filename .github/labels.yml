@@ -1,0 +1,168 @@
+# Single source of truth for the repository's issue and pull request labels.
+# A label sync workflow is planned to apply this file to the repository (it is
+# not in place yet); once it is, labels are not created or edited by hand.
+# The label scheme is defined in
+# docs/proposals/oss/11-governance.md, section 6. Triage rules are in MAINTAINERS.md.
+#
+# Each entry has a name, a 6-digit hex color without "#", and a description of
+# at most 100 characters.
+
+# kind/: what type of work this is. Every triaged issue has exactly one.
+- name: kind/bug
+  color: "d73a4a"
+  description: Something does not work as documented
+- name: kind/regression
+  color: "b60205"
+  description: Worked in a previous release and is broken now
+- name: kind/feature
+  color: "a2eeef"
+  description: New capability or a change in behavior
+- name: kind/docs
+  color: "0075ca"
+  description: Documentation only
+- name: kind/question
+  color: "d876e3"
+  description: A usage question; usually moved to Discussions
+- name: kind/chore
+  color: "cfd3d7"
+  description: Maintenance such as tooling, refactoring, or dependency updates
+
+# area/: which part of the project is affected. At least one per triaged issue.
+- name: area/gateway
+  color: "c5def5"
+  description: Shared model gateway, providers, routing, usage and cost ledger
+- name: area/agents
+  color: "c5def5"
+  description: Adapters, discovery, wiring and restore, drift, Profiles, Library
+- name: area/runtime
+  color: "c5def5"
+  description: Sessions, runs, workspaces, process supervision
+- name: area/console
+  color: "c5def5"
+  description: Web console
+- name: area/cli
+  color: "c5def5"
+  description: The harnesshub command line interface
+- name: area/sdk
+  color: "c5def5"
+  description: TypeScript and Python SDKs
+- name: area/plugins
+  color: "c5def5"
+  description: Plugin host and plugin protocol
+- name: area/docs
+  color: "c5def5"
+  description: Documentation and the documentation site
+- name: area/release
+  color: "c5def5"
+  description: Packaging, distribution channels, release pipeline
+- name: area/ci
+  color: "c5def5"
+  description: CI workflows and repository tooling
+
+# adapter/: one label per agent Adapter. The suffix must equal the Adapter's
+# manifest id. These are the 12 planned core Adapters; add a label in the same
+# pull request that adds a new Adapter.
+- name: adapter/claude-code
+  color: "bfd4f2"
+  description: Claude Code Adapter
+- name: adapter/codex
+  color: "bfd4f2"
+  description: Codex CLI Adapter
+- name: adapter/gemini
+  color: "bfd4f2"
+  description: Gemini CLI Adapter
+- name: adapter/qwen
+  color: "bfd4f2"
+  description: Qwen Code Adapter
+- name: adapter/opencode
+  color: "bfd4f2"
+  description: OpenCode Adapter
+- name: adapter/copilot
+  color: "bfd4f2"
+  description: GitHub Copilot CLI Adapter
+- name: adapter/kimi
+  color: "bfd4f2"
+  description: Kimi Code Adapter
+- name: adapter/pi
+  color: "bfd4f2"
+  description: Pi Adapter
+- name: adapter/crush
+  color: "bfd4f2"
+  description: Crush Adapter
+- name: adapter/hermes
+  color: "bfd4f2"
+  description: Hermes Agent Adapter
+- name: adapter/openclaw
+  color: "bfd4f2"
+  description: OpenClaw Adapter
+- name: adapter/mimo
+  color: "bfd4f2"
+  description: MiMo Code Adapter
+
+# provider/: one label per provider preset, named provider/<preset id>. No
+# presets exist yet; add the label in the same pull request that adds a preset.
+
+# platform/: the issue is specific to one operating system.
+- name: platform/windows
+  color: "d4c5f9"
+  description: Specific to Windows
+- name: platform/macos
+  color: "d4c5f9"
+  description: Specific to macOS
+- name: platform/linux
+  color: "d4c5f9"
+  description: Specific to Linux
+
+# priority/: definitions are in MAINTAINERS.md. Exactly one per triaged issue.
+- name: priority/p0
+  color: "b60205"
+  description: Data loss, leaked secret, unrestorable config, cannot start, or high+ security issue
+- name: priority/p1
+  color: "d93f0b"
+  description: Main user journey broken for some users, or a regression from the previous release
+- name: priority/p2
+  color: "fbca04"
+  description: Functional defect with a workaround
+- name: priority/p3
+  color: "c2e0c6"
+  description: Everything else
+
+# status/: where the issue is in its life cycle.
+- name: status/needs-triage
+  color: "ededed"
+  description: New; waiting for triage
+- name: status/needs-info
+  color: "fef2c0"
+  description: Waiting for the reporter; closed after 14 days without a reply
+- name: status/accepted
+  color: "0e8a16"
+  description: Confirmed and accepted for work
+- name: status/blocked
+  color: "5f6368"
+  description: Cannot proceed until something else is resolved
+- name: status/in-progress
+  color: "1d76db"
+  description: Someone is working on it
+
+# Labels without a prefix.
+- name: good first issue
+  color: "7057ff"
+  description: Can be done in a day; has acceptance criteria, file pointers, and a mentor
+- name: help wanted
+  color: "008672"
+  description: Contributions are especially welcome
+- name: breaking-change
+  color: "e11d21"
+  description: Breaks a public interface or a stored format; needs migration notes
+- name: security
+  color: "ee0701"
+  description: Security hardening or a disclosed security fix
+- name: security-review
+  color: "d93f0b"
+  description: Touches a security-sensitive path; needs a security-focused review
+- name: flaky
+  color: "f9d0c4"
+  description: A test that passes and fails without code changes
+- name: rfc
+  color: "0052cc"
+  description: A request for comments or its tracking issue

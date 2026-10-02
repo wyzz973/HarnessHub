@@ -1,0 +1,84 @@
+name: Feature request
+description: Propose a new capability or a change in behavior.
+labels: ["kind/feature", "status/needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion.
+
+        - For a **new agent Adapter** or a **new provider preset**, use the dedicated forms instead.
+        - Open-ended ideas are welcome in the *Ideas* category of [GitHub Discussions](https://github.com/wyzz973/HarnessHub/discussions) first.
+        - Changes to public interfaces, configuration or persisted formats, the plugin protocol, the Adapter manifest schema, the security model, or governance need an RFC. See [rfcs/README.md](https://github.com/wyzz973/HarnessHub/blob/main/rfcs/README.md).
+        - Please check the project's [non-goals](https://github.com/wyzz973/HarnessHub/blob/main/docs/proposals/oss/01-product.md#6-非目标) and the [roadmap](https://github.com/wyzz973/HarnessHub/blob/main/ROADMAP.md) before proposing.
+  - type: checkboxes
+    id: prechecks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched existing issues, Discussions, and RFCs and did not find this request.
+          required: true
+        - label: This request is not one of the project's non-goals (for example a hosted service or reusing subscription logins in the core).
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What are you trying to do, and what stops you today? Describe the problem rather than a solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should HarnessHub do? Include example commands, API calls, or configuration if it helps.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you use today, or how other tools solve this.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Gateway (model calls, routing, usage ledger)
+        - Agents (Adapters, wiring, restore, drift)
+        - Runtime (sessions, runs, workspaces)
+        - Console (web UI)
+        - CLI
+        - SDK
+        - Plugins
+        - Docs
+        - Release / packaging
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: public-surface
+    attributes:
+      label: Would this change a public interface or a stored format?
+      description: For example the REST or SSE API, SDKs, CLI `--json` output, configuration files, or the database.
+      options:
+        - "No"
+        - "Yes, this probably needs an RFC"
+        - "Not sure"
+    validations:
+      required: true
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Would you like to work on this?
+      options:
+        - "Yes, I would like to submit a pull request"
+        - "Maybe, with guidance"
+        - "No"
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context

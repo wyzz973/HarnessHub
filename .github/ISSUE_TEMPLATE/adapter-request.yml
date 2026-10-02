@@ -1,0 +1,130 @@
+name: Agent Adapter request
+description: Ask for support for a coding agent that HarnessHub does not support yet.
+title: "Adapter: <agent name>"
+labels: ["kind/feature", "area/agents", "status/needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        An Adapter is a declarative manifest that tells HarnessHub how to find an agent, wire it to the shared gateway, restore its configuration, and run it. New Adapters that follow the existing manifest schema do not need an RFC.
+
+        Agents are prioritized by these criteria, in order: the model endpoint can point to a custom base URL; there is an unattended entry point (ACP preferred, then a CLI with structured output); the configuration format is public and can be tested at a pinned version in CI; the size of the user base.
+
+        Please write down only facts about the agent. Do not copy text from the vendor's documentation; link to it instead.
+  - type: checkboxes
+    id: prechecks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched existing issues and did not find a request for this agent.
+          required: true
+        - label: This request does not depend on reusing a subscription login or a reverse-engineered interface.
+          required: true
+  - type: input
+    id: agent-name
+    attributes:
+      label: Agent name
+      placeholder: "Example Code CLI"
+    validations:
+      required: true
+  - type: input
+    id: homepage
+    attributes:
+      label: Homepage or repository
+      description: A link to the agent's official homepage or source repository.
+    validations:
+      required: true
+  - type: input
+    id: distribution
+    attributes:
+      label: License and distribution
+      description: The agent's license, and how it is installed (npm, pipx, Homebrew, Scoop, standalone binary, …).
+      placeholder: "Apache-2.0; npm package example-code"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version you checked
+      description: The agent version your answers below are based on.
+    validations:
+      required: true
+  - type: dropdown
+    id: custom-base-url
+    attributes:
+      label: Can the agent's model endpoint be pointed to a custom base URL?
+      description: Without this, requests cannot pass through the HarnessHub gateway and no call evidence can be recorded.
+      options:
+        - "Yes"
+        - "Only through environment variables"
+        - "No"
+        - "Not sure"
+    validations:
+      required: true
+  - type: dropdown
+    id: protocol
+    attributes:
+      label: Which protocol does the agent use to call the model?
+      multiple: true
+      options:
+        - OpenAI Chat Completions
+        - OpenAI Responses
+        - Anthropic Messages
+        - Google Gemini
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: unattended
+    attributes:
+      label: How can the agent run unattended?
+      multiple: true
+      options:
+        - ACP (Agent Client Protocol)
+        - CLI with structured output (for example JSON lines)
+        - CLI with plain text output only
+        - No unattended mode
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration files and keys
+      description: |
+        Where the agent stores its configuration on each platform, the file format, and which settings control the base URL, the API key, and the model. Mention environment variables that override the location. Write the samples yourself; do not paste vendor documentation.
+      placeholder: |
+        - Linux/macOS: ~/.example/config.toml (TOML); EXAMPLE_HOME overrides the directory
+        - Windows: %USERPROFILE%\.example\config.toml
+        - base URL: providers.custom.base_url
+        - API key: providers.custom.api_key, or the EXAMPLE_API_KEY environment variable
+        - model: model
+    validations:
+      required: true
+  - type: textarea
+    id: library
+    attributes:
+      label: Instructions, Skills, and MCP
+      description: Optional. Where the agent reads instructions files, Skills, and MCP server configuration, and which MCP transports it supports.
+  - type: textarea
+    id: terms
+    attributes:
+      label: Terms of service
+      description: Do the agent's or vendor's terms restrict third-party gateways, custom endpoints, or changing its configuration? Link to the relevant terms if you know them.
+  - type: textarea
+    id: users
+    attributes:
+      label: User base
+      description: Evidence of adoption, such as GitHub stars or package download counts, with the date you checked.
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Would you like to implement or maintain this Adapter?
+      description: Contributors with at least 3 merged pull requests to an Adapter can become its steward.
+      options:
+        - "Yes, I would like to implement it"
+        - "Yes, and I would like to help maintain it afterwards"
+        - "Maybe, with guidance"
+        - "No"
+    validations:
+      required: true

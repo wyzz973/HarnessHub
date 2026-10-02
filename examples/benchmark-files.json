@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "id": "harnesshub-file-workflow",
+  "version": "1",
+  "tasks": [
+    {
+      "id": "paid-order-summary",
+      "version": "1",
+      "fixtureFiles": [
+        {
+          "path": "inputs/orders.csv",
+          "text": "id,region,quantity,unit_cents,status\nA01,east,2,1250,paid\nA02,west,3,500,paid\nA03,east,1,900,pending\nA04,east,4,250,paid\nA05,north,1,750,paid\nA06,west,2,600,cancelled\n"
+        },
+        {
+          "path": "inputs/rules.json",
+          "text": "{\"included_status\":\"paid\",\"region_order\":[\"east\",\"north\",\"west\"],\"currency\":\"CNY\"}\n"
+        }
+      ],
+      "input": {
+        "text": "Complete this file task in the current workspace. Read inputs/orders.csv and inputs/rules.json from disk. Include only orders whose status equals included_status in rules.json. For each region in region_order, calculate order_count, units (sum quantity), and revenue_cents (sum quantity * unit_cents). Use integer arithmetic. Write result.json with exactly keys currency, regions (an array in region_order; each item has region, order_count, units, revenue_cents), and totals (order_count, units, revenue_cents). Also write summary.txt with exactly one line in this format followed by a newline: paid_orders=<total count> units=<total units> revenue_cents=<total revenue>. Both files must be created in the workspace root. Check both files after writing. Do not edit the input files, install dependencies, access the network, or write outside this workspace. You may use locally installed tools. Reply briefly when done.",
+        "timeoutMs": 180000,
+        "outputs": [
+          { "path": "result.json", "name": "result.json", "mediaType": "application/json" },
+          { "path": "summary.txt", "name": "summary.txt", "mediaType": "text/plain" }
+        ]
+      },
+      "evaluator": {
+        "id": "json-equal",
+        "version": "1",
+        "artifactName": "result.json",
+        "expected": {
+          "currency": "CNY",
+          "regions": [
+            { "region": "east", "order_count": 2, "units": 6, "revenue_cents": 3500 },
+            { "region": "north", "order_count": 1, "units": 1, "revenue_cents": 750 },
+            { "region": "west", "order_count": 1, "units": 3, "revenue_cents": 1500 }
+          ],
+          "totals": { "order_count": 4, "units": 10, "revenue_cents": 5750 }
+        }
+      }
+    }
+  ]
+}

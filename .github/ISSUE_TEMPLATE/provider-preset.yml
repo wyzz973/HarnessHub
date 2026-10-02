@@ -1,0 +1,118 @@
+name: Provider preset request
+description: Ask for a built-in preset for a model provider, relay, or local model server.
+title: "Preset: <provider name>"
+labels: ["kind/feature", "area/gateway", "status/needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A provider preset is a data file that describes a provider's endpoints, authentication, and model list. New presets that follow the existing schema do not need an RFC, and you can always add any provider yourself as a custom provider.
+
+        Presets contain facts only: endpoints, model names, and prices with their source. They contain no logos. **Never paste an API key into this issue.**
+  - type: checkboxes
+    id: prechecks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched existing issues and did not find a request for this provider.
+          required: true
+        - label: This issue contains no API keys or other credentials.
+          required: true
+        - label: The provider can be used with an API key or another officially supported authentication method, without reusing a subscription login.
+          required: true
+  - type: input
+    id: provider-name
+    attributes:
+      label: Provider name
+      placeholder: "Example AI"
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of provider
+      options:
+        - Vendor (the model maker's official API)
+        - Relay or aggregator (for example OpenRouter or LiteLLM)
+        - Local model server (for example Ollama or vLLM)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: website
+    attributes:
+      label: Website
+    validations:
+      required: true
+  - type: input
+    id: docs
+    attributes:
+      label: API documentation
+      description: A link to the official API reference.
+    validations:
+      required: true
+  - type: input
+    id: pricing
+    attributes:
+      label: Pricing source
+      description: A link to the official pricing page, or "free" or "local". Prices in presets must cite their source.
+    validations:
+      required: true
+  - type: textarea
+    id: endpoints
+    attributes:
+      label: Endpoints
+      description: Base URLs for each protocol the provider supports. Use the base URL only, without `/chat/completions`, `/responses`, `/messages`, or `:generateContent` at the end.
+      placeholder: |
+        OpenAI Chat Completions: https://api.example.com/v1
+        OpenAI Responses: (not supported)
+        Anthropic Messages: https://api.example.com/anthropic
+        Google Gemini: (not supported)
+    validations:
+      required: true
+  - type: dropdown
+    id: auth-header
+    attributes:
+      label: How is the API key sent?
+      options:
+        - "Authorization: Bearer <key>"
+        - "x-api-key header"
+        - "api-key header (Azure style)"
+        - "x-goog-api-key header"
+        - "Query parameter key"
+        - "Another header (describe below)"
+        - "Not sure"
+    validations:
+      required: true
+  - type: dropdown
+    id: model-list
+    attributes:
+      label: Where does the model list come from?
+      options:
+        - "A live /models endpoint"
+        - "The models.dev catalog"
+        - "A fixed list (describe below)"
+        - "Not sure"
+    validations:
+      required: true
+  - type: input
+    id: catalog-id
+    attributes:
+      label: models.dev provider id
+      description: Optional. The provider's id in the models.dev catalog, if it has one.
+  - type: textarea
+    id: quirks
+    attributes:
+      label: Known quirks
+      description: Optional. Behavior that differs from the standard protocol, for example reasoning content that must be sent back, unsupported roles or fields, unusual error formats, or regional endpoints.
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Would you like to contribute this preset?
+      description: A preset pull request includes the data file and one recorded request and response exchange with all secrets removed.
+      options:
+        - "Yes, I can submit the preset and a recorded exchange"
+        - "Yes, but I cannot record an exchange"
+        - "No"
+    validations:
+      required: true

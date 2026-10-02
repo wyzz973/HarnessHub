@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/wyzz973/HarnessHub/security/advisories/new
+    about: Report vulnerabilities privately through GitHub. Please do not open a public issue for security problems.
+  - name: Ask a question or share an idea
+    url: https://github.com/wyzz973/HarnessHub/discussions
+    about: Usage questions, help with setup, and ideas (including RFC pre-discussion) belong in GitHub Discussions.
