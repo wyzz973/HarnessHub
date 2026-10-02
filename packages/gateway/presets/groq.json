@@ -6,7 +6,7 @@
   "website": "https://groq.com",
   "keysUrl": "https://console.groq.com/keys",
   "catalog": "groq",
-  "verified": "unverified",
+  "verified": "2026-10-02",
   "auth": {
     "methods": [
       "api-key"

@@ -4,7 +4,7 @@
   "name": "vLLM",
   "kind": "local",
   "website": "https://docs.vllm.ai",
-  "verified": "unverified",
+  "verified": "2026-10-02",
   "auth": {
     "methods": [
       "none",
@@ -13,7 +13,8 @@
     "apiKeyHeader": "authorization-bearer"
   },
   "endpoints": {
-    "chat": "http://127.0.0.1:8000/v1"
+    "chat": "http://127.0.0.1:8000/v1",
+    "responses": "http://127.0.0.1:8000/v1"
   },
   "models": {
     "source": "live"

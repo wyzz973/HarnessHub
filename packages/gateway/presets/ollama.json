@@ -4,7 +4,7 @@
   "name": "Ollama",
   "kind": "local",
   "website": "https://ollama.com",
-  "verified": "unverified",
+  "verified": "2026-10-02",
   "auth": {
     "methods": [
       "none"

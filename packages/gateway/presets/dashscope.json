@@ -6,7 +6,7 @@
   "website": "https://bailian.console.aliyun.com",
   "keysUrl": "https://bailian.console.aliyun.com/?apiKey=1",
   "catalog": "alibaba-cn",
-  "verified": "unverified",
+  "verified": "2026-10-02",
   "auth": {
     "methods": [
       "api-key"
@@ -19,5 +19,5 @@
   "models": {
     "source": "live"
   },
-  "notes": "中国站；国际站请把端点改为 dashscope-intl.aliyuncs.com。"
+  "notes": "北京地域的旧式地址，仍受支持；官方现在推荐按工作空间的地址 https://<WorkspaceId>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1，其他地域（新加坡、弗吉尼亚等）的 Key 只能用对应地域的地址。"
 }

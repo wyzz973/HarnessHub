@@ -4,9 +4,9 @@
   "name": "OpenRouter",
   "kind": "relay",
   "website": "https://openrouter.ai",
-  "keysUrl": "https://openrouter.ai/keys",
+  "keysUrl": "https://openrouter.ai/settings/keys",
   "catalog": "openrouter",
-  "verified": "unverified",
+  "verified": "2026-10-02",
   "auth": {
     "methods": [
       "api-key"

@@ -6,7 +6,7 @@
   "website": "https://ai.google.dev",
   "keysUrl": "https://aistudio.google.com/apikey",
   "catalog": "google",
-  "verified": "unverified",
+  "verified": "2026-10-02",
   "auth": {
     "methods": [
       "api-key"

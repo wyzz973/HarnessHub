@@ -6,7 +6,7 @@
   "website": "https://siliconflow.cn",
   "keysUrl": "https://cloud.siliconflow.cn/account/ak",
   "catalog": "siliconflow",
-  "verified": "unverified",
+  "verified": "2026-10-02",
   "auth": {
     "methods": [
       "api-key"

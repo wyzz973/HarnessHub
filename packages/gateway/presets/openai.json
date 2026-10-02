@@ -4,9 +4,9 @@
   "name": "OpenAI",
   "kind": "vendor",
   "website": "https://platform.openai.com",
-  "keysUrl": "https://platform.openai.com/api-keys",
+  "keysUrl": "https://platform.openai.com/settings/organization/api-keys",
   "catalog": "openai",
-  "verified": "unverified",
+  "verified": "2026-10-02",
   "auth": {
     "methods": [
       "api-key"

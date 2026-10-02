@@ -409,7 +409,7 @@ void test(
     );
     assert.match(
       presets.stdout,
-      /\ndeepseek +DeepSeek +vendor +chat,anthropic +required +/,
+      /\ndeepseek +DeepSeek +vendor +chat +required +2026-10-02/,
     );
     assert.match(presets.stdout, /\nollama +Ollama +local +chat +none +/);
 

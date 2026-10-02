@@ -6,7 +6,7 @@
   "website": "https://x.ai/api",
   "keysUrl": "https://console.x.ai",
   "catalog": "xai",
-  "verified": "unverified",
+  "verified": "2026-10-02",
   "auth": {
     "methods": [
       "api-key"

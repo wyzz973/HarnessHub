@@ -3,10 +3,10 @@
   "id": "zhipu",
   "name": "智谱 GLM (BigModel)",
   "kind": "vendor",
-  "website": "https://open.bigmodel.cn",
-  "keysUrl": "https://open.bigmodel.cn/usercenter/apikeys",
+  "website": "https://bigmodel.cn",
+  "keysUrl": "https://bigmodel.cn/usercenter/proj-mgmt/apikeys",
   "catalog": "zhipuai",
-  "verified": "unverified",
+  "verified": "2026-10-02",
   "auth": {
     "methods": [
       "api-key"

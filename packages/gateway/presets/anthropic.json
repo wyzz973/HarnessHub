@@ -3,10 +3,10 @@
   "id": "anthropic",
   "name": "Anthropic",
   "kind": "vendor",
-  "website": "https://www.anthropic.com",
-  "keysUrl": "https://console.anthropic.com/settings/keys",
+  "website": "https://platform.claude.com",
+  "keysUrl": "https://platform.claude.com/settings/keys",
   "catalog": "anthropic",
-  "verified": "unverified",
+  "verified": "2026-10-02",
   "auth": {
     "methods": [
       "api-key"

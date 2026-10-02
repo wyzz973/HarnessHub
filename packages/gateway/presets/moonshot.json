@@ -3,10 +3,10 @@
   "id": "moonshot",
   "name": "Moonshot AI (Kimi)",
   "kind": "vendor",
-  "website": "https://platform.moonshot.cn",
-  "keysUrl": "https://platform.moonshot.cn/console/api-keys",
-  "catalog": "moonshotai-cn",
-  "verified": "unverified",
+  "website": "https://platform.kimi.ai",
+  "keysUrl": "https://platform.kimi.ai/console/api-keys",
+  "catalog": "moonshotai",
+  "verified": "2026-10-02",
   "auth": {
     "methods": [
       "api-key"
@@ -14,11 +14,11 @@
     "apiKeyHeader": "authorization-bearer"
   },
   "endpoints": {
-    "chat": "https://api.moonshot.cn/v1",
-    "anthropic": "https://api.moonshot.cn/anthropic"
+    "chat": "https://api.moonshot.ai/v1",
+    "anthropic": "https://api.moonshot.ai/anthropic"
   },
   "models": {
     "source": "live"
   },
-  "notes": "中国站 api.moonshot.cn；国际站账号请把端点改为 api.moonshot.ai。"
+  "notes": "国际站 api.moonshot.ai；中国站账号请把端点改为 api.moonshot.cn（未核对）。"
 }
