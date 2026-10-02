@@ -11,7 +11,7 @@ import {
   createSecret,
   deleteSecret,
   resolveSecret,
-} from "../../src/drivers/configuration/secrets.js";
+} from "@harnesshub/secrets/secrets";
 import type { EngineProfile, RunId, SessionId } from "@harnesshub/core/types";
 import type { ConfigurationAdapter } from "@harnesshub/core/engine-configuration";
 const base = {

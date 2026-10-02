@@ -548,3 +548,53 @@ test("CLI ends a child_process exception when its TODO.md task is ticked", (cont
   assert.equal(expired.status, 1);
   assert.match(expired.stderr, /expired with OSS-013/);
 });
+
+test("secrets keeps the drivers rules in src/ and spawns its helper only under its exception", () => {
+  assert.deepEqual(
+    check(
+      "drivers/configuration/prepare.ts",
+      'import { resolveSecret } from "@harnesshub/secrets/secrets";',
+    ),
+    [],
+  );
+  assert.match(
+    check(
+      "gateway/secrets.ts",
+      'import { createSecret } from "@harnesshub/secrets/secrets";',
+    ).join("\n"),
+    /gateway cannot depend on drivers/,
+  );
+  assert.match(
+    checkAt(
+      "packages/secrets/src/secrets.ts",
+      'import { open } from "@harnesshub/store/storage/sqlite-store";',
+    ).join("\n"),
+    /packages\/secrets cannot depend on @harnesshub\/store/,
+  );
+  const source = 'import { spawn } from "node:child_process";';
+  const open = { completedTasks: new Set() };
+  assert.deepEqual(
+    checkSource(
+      join(root, "packages/secrets/src/secrets.ts"),
+      source,
+      root,
+      open,
+    ),
+    [],
+  );
+  assert.match(
+    checkSource(
+      join(root, "packages/secrets/src/native-helper.ts"),
+      source,
+      root,
+      open,
+    ).join("\n"),
+    /packages\/secrets has no child_process exception/,
+  );
+  assert.match(
+    checkSource(join(root, "packages/secrets/src/secrets.ts"), source, root, {
+      completedTasks: new Set(["OSS-013"]),
+    }).join("\n"),
+    /exception for secrets\/secrets\.ts \(owner OSS-010 F08\) expired with OSS-013/,
+  );
+});

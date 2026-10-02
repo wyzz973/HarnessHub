@@ -11,7 +11,7 @@
   "packageManager": "pnpm@10.12.3",
   "scripts": {
     "check:runtime": "node tools/check-runtime.mjs",
-    "build": "node tools/clean-build.mjs && tsc -b && node tools/build-info.mjs && node tools/build-keychain.mjs && node tools/build-windows-job.mjs && node packages/store/native/build-windows-acl.mjs",
+    "build": "node tools/clean-build.mjs && tsc -b && node tools/build-info.mjs && node packages/secrets/native/build-keychain.mjs && node tools/build-windows-job.mjs && node packages/store/native/build-windows-acl.mjs",
     "typecheck": "tsc -b",
     "lint": "eslint src tests packages --max-warnings=0",
     "format:check": "prettier --check package.json tsconfig.json tsconfig.base.json tsconfig.legacy.json pnpm-workspace.yaml eslint.config.mjs \"packages/*/package.json\" \"packages/*/tsconfig.json\" \"packages/*/src/**/*.ts\" \"packages/*/test/**/*.ts\" \"src/**/*.ts\" \"tests/**/*.ts\" \"tools/check-boundaries*.mjs\" \"tools/check-runtime*.mjs\" \".github/workflows/*.yml\"",
@@ -44,6 +44,7 @@
     "@agentclientprotocol/sdk": "1.4.0",
     "@fastify/swagger": "9.8.1",
     "@harnesshub/core": "workspace:*",
+    "@harnesshub/secrets": "workspace:*",
     "@harnesshub/store": "workspace:*",
     "acpx": "0.13.2",
     "ajv": "8.20.0",

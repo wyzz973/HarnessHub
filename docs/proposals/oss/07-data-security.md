@@ -2,7 +2,7 @@
 
 状态：提案（草案），2026-10-02。术语、包名、进程与部署形态以 [02 系统架构](02-architecture.md) 为准；网关入口 `127.0.0.1:3180` 与 Gateway Key 作用域以 [ADR-P03](adr-drafts.md#adr-p03-共享网关与作用域-gateway-key) 为准；存储决定见 [ADR-P06](adr-drafts.md#adr-p06-存储)。日志脱敏的实现、诊断包与崩溃恢复见 [08 可靠性与可观测性](08-reliability-observability.md)，插件协议与权限的执行方式见 [09 扩展](09-extensibility.md)。文中的命令名、API 路径与配置键表示所需的能力，最终命名以 [06 接口与交互面](06-interfaces.md) 为准。
 
-依据：现有实现（[秘密引用](../../../src/drivers/configuration/secrets.ts)、[Host/Origin 校验](../../../src/gateway/server.ts)、[SQLite Store](../../../packages/store/src/storage/sqlite-store.ts)、[ADR 0008](../../decisions/0008-windows-secret-storage.md)、[ADR 0014](../../decisions/0014-diagnostic-logs.md)）；`yetone/magpie@d874adb` 的 `internal/access`、`internal/backup`、`internal/gateway/lan.go`、`internal/plugin`、`internal/stats`；2026-10-02 的 Magpie 与 HarnessHub 对比核验（调研材料，未入库，下文用其问题编号引用，如 V9-N2）。
+依据：现有实现（[秘密引用](../../../packages/secrets/src/secrets.ts)、[Host/Origin 校验](../../../src/gateway/server.ts)、[SQLite Store](../../../packages/store/src/storage/sqlite-store.ts)、[ADR 0008](../../decisions/0008-windows-secret-storage.md)、[ADR 0014](../../decisions/0014-diagnostic-logs.md)）；`yetone/magpie@d874adb` 的 `internal/access`、`internal/backup`、`internal/gateway/lan.go`、`internal/plugin`、`internal/stats`；2026-10-02 的 Magpie 与 HarnessHub 对比核验（调研材料，未入库，下文用其问题编号引用，如 V9-N2）。
 
 ## 1. 数据目录与文件布局
 
@@ -144,7 +144,7 @@ HarnessHub 把本机文件分成配置、数据、日志、缓存四类根目录
 
 - 配置与数据库只保存引用，共三种：`{"kind":"store","id":"<uuid>"}`（HarnessHub 管理、与后端无关）、`{"kind":"env","name":"OPENAI_API_KEY"}`、`{"kind":"file","path":"/run/secrets/openai"}`。现有的 `keychain` 引用在迁移时改为 `store`，迁移方法见 [12 路线图与迁移](12-roadmap-migration.md#2-里程碑)。
 - 值只在使用点短暂存在于内存：网关向上游发请求时，Worker 为所属 MCP 进程解析工具秘密时（[04 第 8 节](04-agent-plane.md#8-library)），或插件宿主按授权下发给插件时（09 第 3 节）。解析出的值立即加入脱敏器的已知值集合（08 第 7 节），调用方不得记录它。
-- `env` 引用只读守护进程启动时的环境快照。Windows 上变量名大小写不敏感，多个大小写变体取值不同时拒绝（沿用 [`secrets.ts`](../../../src/drivers/configuration/secrets.ts) 第 139–152 行）。变量不存在时在启动和 `hh doctor` 中报告，不在第一次上游 401 时才暴露（核验 env-key-spread：环境来源下 Key 缺失会静默变成“不带 Key”）。
+- `env` 引用只读守护进程启动时的环境快照。Windows 上变量名大小写不敏感，多个大小写变体取值不同时拒绝（沿用 [`secrets.ts`](../../../packages/secrets/src/secrets.ts) 第 132–145 行）。变量不存在时在启动和 `hh doctor` 中报告，不在第一次上游 401 时才暴露（核验 env-key-spread：环境来源下 Key 缺失会静默变成“不带 Key”）。
 - `file` 引用要求普通文件、非符号链接、不超过 8 KiB；POSIX 上组和其他用户无权限，Windows 上 DACL 不宽于当前用户（沿用现有校验）。
 - 值必须非空、单行、不超过 8 KiB（沿用 `createSecret`）。provider 插件保存的 OAuth 凭据包（访问令牌、刷新令牌、过期时间）作为一个 JSON 秘密存放，上限 16 KiB。
 - 秘密索引表记录 `id、backend、label、purpose、owner、createdAt、rotatedAt、lastUsedAt、hint`。`purpose` 取 `provider:<id>`、`plugin:<id>`、`tool:<libraryItem>`、`system:<name>`；`hint` 只在值长度不少于 20 时保存末 4 位，用于界面上区分多把 Key。

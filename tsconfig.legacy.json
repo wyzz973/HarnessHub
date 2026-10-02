@@ -13,6 +13,9 @@
     },
     {
       "path": "./packages/store"
+    },
+    {
+      "path": "./packages/secrets"
     }
   ]
 }
