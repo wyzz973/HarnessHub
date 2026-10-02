@@ -68,6 +68,9 @@ importers:
       fastify:
         specifier: 5.12.5
         version: 5.12.5
+      harnesshub:
+        specifier: workspace:*
+        version: link:apps/hh
       postject:
         specifier: 1.0.0-alpha.6
         version: 1.0.0-alpha.6
@@ -83,6 +86,15 @@ importers:
       yaml:
         specifier: 2.9.0
         version: 2.9.0
+
+  apps/hh:
+    dependencies:
+      '@harnesshub/cli':
+        specifier: workspace:*
+        version: link:../../packages/cli
+      '@harnesshub/daemon':
+        specifier: workspace:*
+        version: link:../../packages/daemon
 
   packages/agents:
     dependencies:

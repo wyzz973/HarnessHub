@@ -22,14 +22,18 @@ export async function toolPackagesMain(argv: string[]): Promise<unknown> {
   });
 }
 
-if (
-  process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-) {
+/**
+ * Command-line entry of `tools` (`node dist/src/tool-packages-main.js` and
+ * `hh tools`): prints the result as JSON on stdout, or the error code and
+ * message as JSON on stderr.
+ *
+ * @param argv The command-line arguments after the command itself.
+ * @returns The process exit code.
+ */
+export async function main(argv: string[]): Promise<number> {
   try {
-    console.log(
-      JSON.stringify(await toolPackagesMain(process.argv.slice(2)), null, 2),
-    );
+    console.log(JSON.stringify(await toolPackagesMain(argv), null, 2));
+    return 0;
   } catch (error) {
     console.error(
       JSON.stringify({
@@ -41,6 +45,13 @@ if (
         },
       }),
     );
-    process.exitCode = 1;
+    return 1;
   }
+}
+
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  process.exitCode = await main(process.argv.slice(2));
 }

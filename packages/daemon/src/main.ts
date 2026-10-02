@@ -550,12 +550,18 @@ export async function startHub(options: {
 }
 
 /**
- * Command-line entry: `--version [--json]`, `--help`, or start the Gateway and print the
- * `ready` line on stdout. A startup failure rejects, which ends the process with exit
- * code 1 exactly like the former top-level await did.
+ * Command-line entry of `serve` (`node dist/src/main.js` and `hh serve`):
+ * `--version [--json]`, `--help`, or start the Gateway and print the `ready`
+ * line on stdout. Usage and version errors set `process.exitCode`; a startup
+ * failure rejects, which ends the process with exit code 1 exactly like the
+ * former top-level await did. A started Gateway keeps running after this
+ * resolves and stops on SIGINT or SIGTERM.
+ *
+ * @param argv The command-line arguments after the command itself.
  */
-async function runFromCommandLine(): Promise<void> {
+export async function main(argv: string[]): Promise<void> {
   const { values } = parseArgs({
+    args: argv,
     options: {
       demo: { type: "boolean", default: false },
       config: { type: "string" },
@@ -653,5 +659,5 @@ if (
   // Not a top-level await: the single-executable spike (tools/sea) bundles this
   // module as CommonJS, which cannot contain one. The rejection stays unhandled on
   // purpose so the process still exits with code 1 and prints the error.
-  void runFromCommandLine();
+  void main(process.argv.slice(2));
 }
