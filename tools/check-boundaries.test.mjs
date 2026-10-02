@@ -12,7 +12,11 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { checkSource, legacyDestination } from "./check-boundaries.mjs";
+import {
+  checkSource,
+  legacyDestination,
+  legacyPathOf,
+} from "./check-boundaries.mjs";
 
 const root = join(tmpdir(), "harnesshub-boundary-fixture");
 const check = (file, contents) =>
@@ -684,5 +688,115 @@ test("drivers keep their module rules, and only the Worker loads them inside the
       completedTasks: new Set(["OSS-013"]),
     }).join("\n"),
     /exception for drivers\/cli\/ \(owner OSS-010 F08\) expired with OSS-013/,
+  );
+});
+
+test("agents files keep the rules of the legacy modules they came from", () => {
+  assert.equal(
+    legacyPathOf("agents", "configuration/prepare.ts"),
+    "drivers/configuration/prepare.ts",
+  );
+  assert.equal(
+    legacyPathOf("agents", "engine/registry.ts"),
+    "engine/registry.ts",
+  );
+  assert.equal(
+    legacyPathOf("secrets", "secrets.ts"),
+    "drivers/configuration/secrets.ts",
+  );
+  assert.equal(legacyPathOf("plugin-host", "index.ts"), undefined);
+  assert.deepEqual(
+    check(
+      "main.ts",
+      'import { normalizeEngine } from "@harnesshub/agents/engine/registry";',
+    ),
+    [],
+  );
+  assert.deepEqual(
+    check(
+      "gateway/harness-model-routes.ts",
+      'import { HarnessModelService } from "@harnesshub/agents/application/harness-model";',
+    ),
+    [],
+  );
+  assert.match(
+    check(
+      "gateway/engines.ts",
+      'import { EngineManager } from "@harnesshub/agents/engine/manager";',
+    ).join("\n"),
+    /gateway cannot depend on engine/,
+  );
+  assert.match(
+    check(
+      "runtime/run.ts",
+      'import { prepareConfiguration } from "@harnesshub/agents/configuration/prepare";',
+    ).join("\n"),
+    /runtime cannot depend on drivers/,
+  );
+  assert.match(
+    checkAt(
+      "packages/agents/src/engine/registry.ts",
+      'import { prepareConfiguration } from "../configuration/prepare.js";',
+    ).join("\n"),
+    /engine cannot depend on drivers/,
+  );
+  // Package-level code is shared by the package's modules.
+  assert.deepEqual(
+    checkAt(
+      "packages/agents/src/engine/discovery.ts",
+      'import { repositoryScript } from "../repository.js";',
+    ),
+    [],
+  );
+  assert.deepEqual(
+    checkAt(
+      "packages/agents/src/configuration/prepare.ts",
+      'import { currentCommandMcpEntry } from "../tool-command/entry.js";',
+    ),
+    [],
+  );
+});
+
+test("only agents' repository.ts may resolve URLs outside the package, until OSS-013", () => {
+  const helper = join(root, "packages/agents/src/repository.ts");
+  const source =
+    "const file = new URL(`../../../../${relative}`, import.meta.url);";
+  assert.deepEqual(
+    checkSource(helper, source, root, { completedTasks: new Set() }),
+    [],
+  );
+  assert.match(
+    checkSource(helper, source, root, {
+      completedTasks: new Set(["OSS-013"]),
+    }).join("\n"),
+    /the new URL exception for agents\/repository\.ts \(owner OSS-004\) expired with OSS-013/,
+  );
+  assert.match(
+    checkSource(
+      join(root, "packages/agents/src/configuration/launch.ts"),
+      'const launcher = new URL("../../../../scripts/launch-engine.mjs", import.meta.url);',
+      root,
+      { completedTasks: new Set() },
+    ).join("\n"),
+    /new URL leaves packages\/agents: \.\.\/\.\.\/\.\.\/\.\.\/scripts\/launch-engine\.mjs/,
+  );
+  const spawn = 'import { spawn } from "node:child_process";';
+  assert.deepEqual(
+    checkSource(
+      join(root, "packages/agents/src/tool-command/command-mcp.ts"),
+      spawn,
+      root,
+      { completedTasks: new Set() },
+    ),
+    [],
+  );
+  assert.match(
+    checkSource(
+      join(root, "packages/agents/src/configuration/launch.ts"),
+      spawn,
+      root,
+      { completedTasks: new Set() },
+    ).join("\n"),
+    /packages\/agents has no child_process exception/,
   );
 });
