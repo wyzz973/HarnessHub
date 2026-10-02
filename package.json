@@ -44,6 +44,7 @@
     "@agentclientprotocol/sdk": "1.4.0",
     "@fastify/swagger": "9.8.1",
     "@harnesshub/core": "workspace:*",
+    "@harnesshub/gateway": "workspace:*",
     "@harnesshub/secrets": "workspace:*",
     "@harnesshub/store": "workspace:*",
     "acpx": "0.13.2",

@@ -19,7 +19,7 @@
 
 路径前缀规则：OpenAI 与 Anthropic 路径的 `/v1` 可以省略，兼容只配置根地址的客户端；Gemini 路径接受 `/v1beta`、`/v1` 与 `/v1alpha`。查询参数只解释 `key`（仅 Gemini）与 `alt`，其余忽略（如 Claude Code 的 `?beta=true`）。部署在反向代理之后时，用 `gateway.publicBaseUrl` 声明对外地址，接线与连接示例使用该地址；网关本身不支持路径前缀改写，由代理剥离。
 
-可接受的鉴权头：`Authorization: Bearer <key>`、`x-api-key`、`x-goog-api-key`，以及 Gemini 路径的查询参数 `key`。同一请求出现多个且取值不同时返回 401，防止代理链混入其他凭据。带 `Origin` 头的请求返回 403，`Host` 必须是回环名称或已声明的 `publicBaseUrl` 主机，用来阻断浏览器跨站与 DNS rebinding（沿用 [gateway.ts](../../../src/drivers/chat-completions/gateway.ts) 的 Origin 拒绝）。所有拒绝都使用该路径所属协议的错误格式，并带 `x-hh-error-source: gateway`，与上游错误区分。
+可接受的鉴权头：`Authorization: Bearer <key>`、`x-api-key`、`x-goog-api-key`，以及 Gemini 路径的查询参数 `key`。同一请求出现多个且取值不同时返回 401，防止代理链混入其他凭据。带 `Origin` 头的请求返回 403，`Host` 必须是回环名称或已声明的 `publicBaseUrl` 主机，用来阻断浏览器跨站与 DNS rebinding（沿用 [gateway.ts](../../../packages/gateway/src/gateway.ts) 的 Origin 拒绝）。所有拒绝都使用该路径所属协议的错误格式，并带 `x-hh-error-source: gateway`，与上游错误区分。
 
 ## 2. Gateway Key 与作用域
 
@@ -69,16 +69,16 @@ IR 事件：`start`（消息 ID、上游自报模型）、`text.delta`、`reason
 
 | 方面 | 要求 | 依据 |
 |---|---|---|
-| 工具名 | 原样保留；上游名称规则（`^[A-Za-z0-9_-]{1,64}$`）不满足时转为可读扁平名 `namespace__name`，超过 64 字符时截断并追加 8 位哈希，同一请求内建立双向映射。不再使用不透明的 `hh_<32hex>` | 现状 [protocol.ts](../../../src/drivers/chat-completions/protocol.ts) 第 103 行使 Codex 下全部 MCP 工具名不可读；Magpie `e3b6397` |
+| 工具名 | 原样保留；上游名称规则（`^[A-Za-z0-9_-]{1,64}$`）不满足时转为可读扁平名 `namespace__name`，超过 64 字符时截断并追加 8 位哈希，同一请求内建立双向映射。不再使用不透明的 `hh_<32hex>` | 现状 [protocol.ts](../../../packages/gateway/src/protocol.ts) 第 103 行使 Codex 下全部 MCP 工具名不可读；Magpie `e3b6397` |
 | 工具调用 | 并行调用按 index 归集，交错的参数增量不串线；custom 工具（Codex `apply_patch`）以 `{input}` 往返；`tool_choice: required` 而过滤后没有可调用工具时返回 400 | 现状已领先 Magpie（Magpie 翻译路径丢 freeform 工具，交错参数会开出空名调用） |
-| 推理文本 | 双向转换为对应协议的推理块；需要回传推理的上游（provider 能力 `requiresReasoningReplay`）由会话级缓存补回，缓存键按会话隔离，不逐出当前历史仍引用的条目 | 现状 [reasoning.ts](../../../src/drivers/chat-completions/reasoning.ts) 的 LRU 会逐出仍被引用的条目 |
+| 推理文本 | 双向转换为对应协议的推理块；需要回传推理的上游（provider 能力 `requiresReasoningReplay`）由会话级缓存补回，缓存键按会话隔离，不逐出当前历史仍引用的条目 | 现状 [reasoning.ts](../../../packages/gateway/src/reasoning.ts) 的 LRU 会逐出仍被引用的条目 |
 | 推理签名 | Anthropic `signature`、`redacted_thinking`、OpenAI `encrypted_content` 只对签发它的 provider 有效：上游与来源是同一 provider 时原样带回，否则丢弃并记录 `reasoning_dropped`；跨协议只携带明文推理（`hh-r1.` 编码），不伪造签名 | 粘性路由（第 5 节）使同一会话尽量留在同一 provider |
 | 图片与文档 | 在 base64 与 URL 两种形式之间转换；目录显示模型不接受该模态时，按 provider 的 `onUnsupportedMedia` 处理：默认替换为文字占位并记录 `media_placeholder` 计数，可设为 `reject` | 现状的占位策略防止“历史中出现一张图后整个会话失败”，开源版改为按模态元数据决定 |
 | usage | 规范化为 `input`（不含缓存）、`cacheRead`、`cacheWrite`、`output`、`reasoning` 五项，各协议输出时按其口径重组，避免缓存重复计数；转换到 Chat 上游时默认请求 `stream_options.include_usage`；上游仍未返回时 usage 记为 missing，不记为 0 | Magpie `ir.go:197-202` 的 `prompt()`、`chat.go:300-302`；上一轮核验 P1-1 |
 | 停止原因 | IR 取值：`end_turn`、`max_tokens`、`tool_use`、`stop_sequence`、`content_filter`、`refusal`、`other`（保留原值）。已知的异常值（`network_error`、`sensitive`、`error`、Gemini `MALFORMED_FUNCTION_CALL`）转为错误；未知值透传为 `other` 并记录原值 | 上一轮核验 P1-9 流完整性 |
 | 流完整性 | 2xx 但没有任何有效内容（HTML、业务错误 JSON、只有 index 不为 0 的 choice）记为 502 `upstream_invalid_response`；响应体正常结束但缺终止事件时视为完成并记录 `completion: inferred`；响应体中途断开为上游失败。执行平面据此推导调用的判定类别（[05 执行平面](05-run-plane.md#42-调用的判定类别)） | 现状把这几类都记为成功（核验 P1-9） |
 | 错误 | 保留上游状态码；按入站协议格式重写错误体；脱敏后截断到 500 字符，先脱敏后截断；保留 pydantic 校验错误前 3 条的 `msg（loc: …）`；404 与 405 附上实际请求的上游地址（脱敏），用于发现基址填错 | 核验 P1-11、P1-14 |
-| 上下文超长 | 判定同时看状态码与消息：429 与限速措辞一律不算超长；按数值区分 vLLM 的“输入超长”与“输出上限过大”；识别 GLM、火山引擎等措辞；判定为超长时按入站协议写成客户端会触发压缩的形式 | Magpie `eb3a074`、`40812f1`；现状 [upstream.ts](../../../src/drivers/chat-completions/upstream.ts) 第 547 行的模式会把 429 误判为超长 |
+| 上下文超长 | 判定同时看状态码与消息：429 与限速措辞一律不算超长；按数值区分 vLLM 的“输入超长”与“输出上限过大”；识别 GLM、火山引擎等措辞；判定为超长时按入站协议写成客户端会触发压缩的形式 | Magpie `eb3a074`、`40812f1`；现状 [upstream.ts](../../../packages/gateway/src/upstream.ts) 第 547 行的模式会把 429 误判为超长 |
 | Gemini 流内错误 | 写成 `@google/genai` 能识别的形式（不带 `data:` 前缀的错误 JSON），由黄金语料固定 | 核验 V1-N1：`data: {"error":…}` 使 SDK 1.30.0 反复重试后以 exit 0 结束 |
 
 不可转换的语义按下表处理。原则是：直通时一律原样转发；转换时只有“丢弃不改变任务结果、并且写入 `unmapped[]`”的字段可以丢弃，其余明确返回 400 `unsupported_feature` 并在消息中点名字段。
@@ -285,15 +285,15 @@ retry: {perCandidate: 2, totalAttempts: 4, baseBackoffMs: 500, maxBackoffMs: 800
 
 | 现状（`324c9e8`） | 开源版 | 迁移动作 |
 |---|---|---|
-| 每个 Session 的 Worker 内一个网关，随机端口加令牌（[gateway.ts](../../../src/drivers/chat-completions/gateway.ts)） | 守护进程内一个网关；Session 用 `session:` Key 归因 | Worker 不再启动网关，ExecutionSpec 改为携带网关地址与 Session Key；`beginRun`/`endRun` 语义移到 Key 校验 |
+| 每个 Session 的 Worker 内一个网关，随机端口加令牌（[gateway.ts](../../../packages/gateway/src/gateway.ts)） | 守护进程内一个网关；Session 用 `session:` Key 归因 | Worker 不再启动网关，ExecutionSpec 改为携带网关地址与 Session Key；`beginRun`/`endRun` 语义移到 Key 校验 |
 | 四种入站单向转为流式 Chat Completions | IR N×M 转换与原生直通 | 现有四个转换器拆成 IR 的 parse 与 encode；现有单元测试作为黄金语料的种子 |
 | 统一模型与 alias `harnesshub-model` | Model Ref、路由组、白名单 | `hh migrate` 把 `harness-model.json` 与 `HARNESSHUB_MODEL*` 转为一个 custom provider 和 `group/default`，秘密引用原样保留 |
 | `compatibility` 五个开关，默认剔除一组参数 | provider 补丁与能力标志，默认不剔除 | 迁移时把 `dropParameters` 转为 `drop-fields` 补丁，`maxTokensField` 转为 `max-tokens-field`，`includeUsage` 转为 `include-usage`，`reasoning: strip` 与 `images` 转为能力元数据 |
 | 默认把 `json_schema` 降级为 `json_object` | 显式补丁 | 由迁移为旧配置自动启用，新 provider 默认不启用 |
 | 零重试，并关闭 Codex 自身重试（[prepare.ts](../../../src/drivers/configuration/prepare.ts) 第 745–746 行） | 第 5 节的有界重试与熔断 | Codex 隔离接线恢复 `request_max_retries = 1`，`stream_max_retries` 保持 0 |
-| Gemini SSE 不 flush 响应头，无协议内保活（[output.ts](../../../src/drivers/chat-completions/output.ts)） | 第 6 节 | 在现有代码上先修，作为开源前的先行修复 |
+| Gemini SSE 不 flush 响应头，无协议内保活（[output.ts](../../../packages/gateway/src/output.ts)） | 第 6 节 | 在现有代码上先修，作为开源前的先行修复 |
 | 8 MiB 入站与原始 SSE 字节上限 | 第 6 节的上限表 | `DEFAULT_GATEWAY_LIMITS` 改为 `gateway.limits` 配置解析器 |
-| 上下文超长按消息匹配，429 会被误判 | 状态码加消息判定 | 修正 [upstream.ts](../../../src/drivers/chat-completions/upstream.ts) 的 `isContextOverflow` 并补反例测试 |
+| 上下文超长按消息匹配，429 会被误判 | 状态码加消息判定 | 修正 [upstream.ts](../../../packages/gateway/src/upstream.ts) 的 `isContextOverflow` 并补反例测试 |
 | 工具名 `hh_<32hex>` | 可读扁平名 | 黄金语料覆盖超长与非法字符 |
 | 调用记录在 Worker 内存与日志中，`runErrors()` 供结果判定 | `model.call` 事件先提交后发布 | 结果判定改读事件存储，规则见 [05 执行平面](05-run-plane.md#4-run-结果判定) |
 

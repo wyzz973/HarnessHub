@@ -3,7 +3,8 @@ import {
   prepareConfiguration,
   type PreparedConfiguration,
 } from "../drivers/configuration/prepare.js";
-import type { ModelCallRecord } from "../drivers/chat-completions/gateway.js";
+import { startModelGateway } from "@harnesshub/gateway/gateway";
+import type { ModelCallRecord } from "@harnesshub/core/model-bridge";
 import { HubError } from "@harnesshub/core/errors";
 import { WORKER_TREE_ENVIRONMENT } from "@harnesshub/core/environment";
 import type { ExecutionSpec } from "@harnesshub/core/ports";
@@ -374,6 +375,7 @@ async function execute(owned: Active, selected: Driver): Promise<void> {
       await reportLogFailure(owned);
       const firstPreparation = !preparation;
       preparation ??= await prepareConfiguration(owned.spec, process.env, {
+        startModelGateway,
         onModelCall: recordModelCall,
         ...(logLevel === "debug"
           ? {

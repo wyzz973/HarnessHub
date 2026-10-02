@@ -8,15 +8,14 @@ import {
   DEFAULT_GATEWAY_LIMITS,
   createModelGateway,
   type GatewayLimits,
-  type ModelCallRecord,
-  type ModelGatewayOptions,
-} from "../../src/drivers/chat-completions/gateway.js";
-import { Keepalive } from "../../src/drivers/chat-completions/keepalive.js";
-import {
-  ClientClosed,
-  HttpWriter,
-} from "../../src/drivers/chat-completions/output.js";
-import { ResponsesSink } from "../../src/drivers/chat-completions/responses.js";
+} from "@harnesshub/gateway/gateway";
+import type {
+  ModelCallRecord,
+  ModelGatewayOptions,
+} from "@harnesshub/core/model-bridge";
+import { Keepalive } from "@harnesshub/gateway/keepalive";
+import { ClientClosed, HttpWriter } from "@harnesshub/gateway/output";
+import { ResponsesSink } from "@harnesshub/gateway/responses";
 
 type Body = Record<string, unknown>;
 /** Text to write to the upstream response, or milliseconds to wait. */

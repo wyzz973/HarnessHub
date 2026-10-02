@@ -7,11 +7,7 @@ import {
   ndJsonStream,
   PROTOCOL_VERSION,
 } from "@agentclientprotocol/sdk";
-import {
-  object,
-  array,
-  string,
-} from "../../src/drivers/chat-completions/protocol.js";
+import { object, array, string } from "@harnesshub/gateway/protocol";
 
 const wire = process.argv[2];
 let baseUrl = process.env.GOOGLE_GEMINI_BASE_URL ?? "";

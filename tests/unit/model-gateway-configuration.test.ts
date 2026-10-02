@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { startModelGateway } from "@harnesshub/gateway/gateway";
 import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
@@ -88,7 +89,7 @@ async function prepare(
       input: { text: "", timeoutMs: 1000 },
     },
     { ...environment, ...extra },
-    { secrets },
+    { startModelGateway, secrets },
   );
   defer(() => prepared.modelBridge?.close());
   return { root, state: path.join(root, "state"), prepared, secrets };
@@ -614,6 +615,7 @@ void test("engines that cannot reach the gateway reject a managed provider befor
           input: { text: "", timeoutMs: 1000 },
         },
         {},
+        { startModelGateway },
       ),
       { code: "ENGINE_CONFIGURATION_UNSUPPORTED" },
     );
@@ -689,6 +691,7 @@ void test("stdio MCP arguments and env values receive the Session workspace at r
         input: { text: "", timeoutMs: 1000 },
       },
       { HH_LITERAL_SECRET: `secret-with-${placeholder}` },
+      { startModelGateway },
     );
     // Stored revisions keep the placeholder; only the prepared copy changes.
     assert.deepEqual(profile.configuration?.mcpServers?.[0]?.args, stdio.args);
@@ -787,4 +790,42 @@ void test("provider gateway fields are validated at registration without reading
     assert.throws(() => register("opencode", invalid), {
       code: "INVALID_ENGINE_CONFIGURATION",
     });
+});
+
+void test("a routed configuration without an injected model gateway fails before resolving secrets or writing engine files", async (t) => {
+  const { directory: root } = await temporaryDirectory(
+    t,
+    "hh-gateway-missing-",
+  );
+  const secrets = new Set<string>();
+  await assert.rejects(
+    prepareConfiguration(
+      {
+        profile: routed("codex"),
+        cwd: root,
+        stateDir: path.join(root, "state"),
+        sessionId: "session" as SessionId,
+        runId: "run" as RunId,
+        generation: 1,
+        input: { text: "", timeoutMs: 1000 },
+      },
+      environment,
+      { secrets },
+    ),
+    {
+      name: "HubError",
+      code: "MODEL_GATEWAY_NOT_INJECTED",
+      statusCode: 500,
+    },
+  );
+  assert.deepEqual([...secrets], []);
+  // Preparation creates its private directories first; no file was written.
+  const entries = await readdir(path.join(root, "state"), {
+    recursive: true,
+    withFileTypes: true,
+  });
+  assert.deepEqual(
+    entries.filter((entry) => !entry.isDirectory()).map((entry) => entry.name),
+    [],
+  );
 });

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { startModelGateway } from "@harnesshub/gateway/gateway";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -47,6 +48,7 @@ void test("DSH private overlay configures native routes and ACP model selectors 
         input: { text: "", timeoutMs: 1000 },
       },
       { CONTEST_KEY: secret },
+      { startModelGateway },
     );
     if (result.modelBridge) gateways.push(result.modelBridge);
     // Chat providers reach the upstream only through the Session gateway,
@@ -168,6 +170,7 @@ void test("DSH managed provider rejects templates whose app arguments or existin
           input: { text: "", timeoutMs: 1000 },
         },
         {},
+        { startModelGateway },
       ),
       /standard --profile acp/,
     );

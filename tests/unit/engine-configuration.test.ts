@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { startModelGateway } from "@harnesshub/gateway/gateway";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -153,9 +154,13 @@ void test("native provider mappings resolve distinct keys without writing key va
         },
       },
     });
-    const prepared = await prepareConfiguration(spec(profile, root), {
-      ENGINE_A_KEY: key,
-    });
+    const prepared = await prepareConfiguration(
+      spec(profile, root),
+      {
+        ENGINE_A_KEY: key,
+      },
+      { startModelGateway },
+    );
     const gateway = prepared.modelBridge;
     if (gateway) gateways.push(gateway);
     // Chat providers are served by the Session gateway: the engine receives
@@ -255,9 +260,13 @@ void test("Codex receives only the known DeepSeek model catalog with its pinned 
       },
     },
   });
-  const prepared = await prepareConfiguration(spec(profile, directory), {
-    FIXTURE_KEY: "synthetic-codex-secret",
-  });
+  const prepared = await prepareConfiguration(
+    spec(profile, directory),
+    {
+      FIXTURE_KEY: "synthetic-codex-secret",
+    },
+    { startModelGateway },
+  );
   const native = await readFile(
     path.join(prepared.env.CODEX_HOME!, "config.toml"),
     "utf8",
@@ -294,6 +303,7 @@ void test("Codex receives only the known DeepSeek model catalog with its pinned 
   const other = await prepareConfiguration(
     spec({ ...profile, model: "unknown-model" }, path.join(directory, "other")),
     { FIXTURE_KEY: "synthetic-codex-secret" },
+    { startModelGateway },
   );
   assert.equal(
     (
@@ -329,9 +339,12 @@ void test("managed Copilot rejects unsupported wire protocols, missing endpoints
       },
     },
   });
-  await assert.rejects(prepareConfiguration(spec(profile, directory), {}), {
-    code: "ENGINE_CONFIGURATION_UNSUPPORTED",
-  });
+  await assert.rejects(
+    prepareConfiguration(spec(profile, directory), {}, { startModelGateway }),
+    {
+      code: "ENGINE_CONFIGURATION_UNSUPPORTED",
+    },
+  );
 });
 void test("Copilot stdio MCP uses a private native configuration while remote servers stay on ACP and secrets stay off disk", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "hh-copilot-mcp-"));
@@ -363,9 +376,13 @@ void test("Copilot stdio MCP uses a private native configuration while remote se
       ],
     },
   });
-  const prepared = await prepareConfiguration(spec(profile, directory), {
-    FIXTURE_SECRET: secret,
-  });
+  const prepared = await prepareConfiguration(
+    spec(profile, directory),
+    {
+      FIXTURE_SECRET: secret,
+    },
+    { startModelGateway },
+  );
   assert.deepEqual(
     prepared.mcpServers.map((server) => server.name),
     ["remote"],
@@ -406,9 +423,13 @@ void test("Copilot stdio MCP uses a private native configuration while remote se
     configuration: profile.configuration,
   });
   await assert.rejects(
-    prepareConfiguration(spec(conflicting, directory), {
-      FIXTURE_SECRET: secret,
-    }),
+    prepareConfiguration(
+      spec(conflicting, directory),
+      {
+        FIXTURE_SECRET: secret,
+      },
+      { startModelGateway },
+    ),
     { code: "ENGINE_CONFIGURATION_UNSUPPORTED" },
   );
   assert.equal(await readFile(nativeFile, "utf8"), bytes);
@@ -437,9 +458,13 @@ void test("stdio MCP servers carry the Worker's tree marker; remote servers and 
       ],
     },
   });
-  const marked = await prepareConfiguration(spec(profile, directory), {
-    HARNESSHUB_WORKER_TREE: "tree-token",
-  });
+  const marked = await prepareConfiguration(
+    spec(profile, directory),
+    {
+      HARNESSHUB_WORKER_TREE: "tree-token",
+    },
+    { startModelGateway },
+  );
   assert.deepEqual(marked.mcpServers, [
     {
       name: "local",
@@ -458,7 +483,11 @@ void test("stdio MCP servers carry the Worker's tree marker; remote servers and 
     },
   ]);
   // Windows Workers and configuration probes have no marker to pass on.
-  const unmarked = await prepareConfiguration(spec(profile, directory), {});
+  const unmarked = await prepareConfiguration(
+    spec(profile, directory),
+    {},
+    { startModelGateway },
+  );
   assert.deepEqual(
     unmarked.mcpServers.map((server) =>
       "env" in server ? server.env : server.headers,
@@ -533,6 +562,7 @@ void test("Kimi print CLI maps four protocols without persisting credentials or 
     const prepared = await prepareConfiguration(
       spec(profile, path.join(directory, protocol!)),
       { KIMI_FIXTURE_KEY: "synthetic-kimi-secret" },
+      { startModelGateway },
     );
     const gateway = prepared.modelBridge;
     if (gateway) gateways.push(gateway);
@@ -645,9 +675,12 @@ void test("Kimi rejects managed ACP, invalid context windows and conflicting nat
       command: [...base.command, ...args, "{prompt}"],
       configuration,
     });
-    await assert.rejects(prepareConfiguration(spec(profile, directory), {}), {
-      code: "ENGINE_CONFIGURATION_UNSUPPORTED",
-    });
+    await assert.rejects(
+      prepareConfiguration(spec(profile, directory), {}, { startModelGateway }),
+      {
+        code: "ENGINE_CONFIGURATION_UNSUPPORTED",
+      },
+    );
   }
 });
 void test("skill revisions pin exact bytes and fail when a source changes; missing credentials fail explicitly", async (t) => {
@@ -666,13 +699,20 @@ void test("skill revisions pin exact bytes and fail when a source changes; missi
   assert.ok(profile.configuration?.skills?.[0]?.sha256);
   assert.ok(
     (
-      await prepareConfiguration(spec(profile, directory), {})
+      await prepareConfiguration(
+        spec(profile, directory),
+        {},
+        { startModelGateway },
+      )
     ).instructionPrefix.includes("fixture skill instruction"),
   );
   await writeFile(file, "changed instructions");
-  await assert.rejects(prepareConfiguration(spec(profile, directory), {}), {
-    code: "SKILL_CHANGED",
-  });
+  await assert.rejects(
+    prepareConfiguration(spec(profile, directory), {}, { startModelGateway }),
+    {
+      code: "SKILL_CHANGED",
+    },
+  );
   assert.notEqual((await prepareEngine(raw)).revision, profile.revision);
   await assert.rejects(resolveSecret({ kind: "env", value: "ABSENT" }, {}), {
     code: "SECRET_UNAVAILABLE",

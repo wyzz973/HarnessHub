@@ -16,6 +16,7 @@ import { providerProtocols } from "./engine/configuration.js";
 import { configurationAdapters } from "@harnesshub/core/engine-configuration";
 import { createSecret } from "@harnesshub/secrets/secrets";
 import { prepareConfiguration } from "./drivers/configuration/prepare.js";
+import { startModelGateway } from "@harnesshub/gateway/gateway";
 import { probeConfiguration } from "./drivers/configuration/probe.js";
 import { HubError } from "@harnesshub/core/errors";
 import { parseBuildInfo, type BuildInfo } from "@harnesshub/core/build-info";
@@ -402,6 +403,7 @@ export async function startHub(options: {
                 input: { text: "", timeoutMs: 10000 },
               },
               process.env,
+              { startModelGateway },
             );
             const probe = await probeConfiguration(
               prepared,

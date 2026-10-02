@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { startModelGateway } from "@harnesshub/gateway/gateway";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -40,6 +41,7 @@ void test("Hermes selects the gateway alias natively through a named custom prov
       input: { text: "", timeoutMs: 1000 },
     },
     { CONTEST_KEY: secret },
+    { startModelGateway },
   );
   defer(() => prepared.modelBridge?.close());
   const gateway = prepared.modelBridge;

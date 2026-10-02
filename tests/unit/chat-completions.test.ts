@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { startModelGateway } from "@harnesshub/gateway/gateway";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type ServerResponse } from "node:http";
@@ -8,10 +9,10 @@ import { join } from "node:path";
 import { normalizeEngine } from "../../src/engine/registry.js";
 import { prepareConfiguration } from "../../src/drivers/configuration/prepare.js";
 import type { RunId, SessionId } from "@harnesshub/core/types";
-import { startModelBridge } from "../../src/drivers/chat-completions/bridge.js";
-import { responsesToChat } from "../../src/drivers/chat-completions/responses.js";
-import { googleToChat } from "../../src/drivers/chat-completions/google.js";
-import { normalizeRequest } from "../../src/drivers/chat-completions/upstream.js";
+import { startModelBridge } from "@harnesshub/gateway/bridge";
+import { responsesToChat } from "@harnesshub/gateway/responses";
+import { googleToChat } from "@harnesshub/gateway/google";
+import { normalizeRequest } from "@harnesshub/gateway/upstream";
 import { temporaryDirectory } from "../support/temporary.js";
 
 const settings = {
@@ -361,6 +362,7 @@ for (const adapter of ["codex", "gemini"] as const)
         input: { text: "test", timeoutMs: 1000 },
       },
       { FIXTURE_KEY: "synthetic-upstream-key" },
+      { startModelGateway },
     );
     defer(() => prepared.modelBridge?.close());
     assert.ok(prepared.modelBridge);

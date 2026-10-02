@@ -11,6 +11,9 @@
       "path": "./packages/secrets"
     },
     {
+      "path": "./packages/gateway"
+    },
+    {
       "path": "./packages/plugin-host"
     },
     {
