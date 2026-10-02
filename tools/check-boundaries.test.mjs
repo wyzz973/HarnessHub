@@ -626,3 +626,63 @@ test("a src/ file may import only the packages its destination package may depen
     /gateway cannot depend on drivers/,
   );
 });
+
+test("drivers keep their module rules, and only the Worker loads them inside the daemon", () => {
+  const acp = 'import { AcpDriver } from "@harnesshub/drivers/acp/driver";';
+  assert.deepEqual(check("worker/main.ts", acp), []);
+  assert.match(
+    check("main.ts", acp).join("\n"),
+    /only src\/worker\/ may import @harnesshub\/drivers among the files that move to the daemon/,
+  );
+  assert.match(
+    check("runtime/run.ts", acp).join("\n"),
+    /runtime cannot depend on drivers/,
+  );
+  assert.deepEqual(checkAt("packages/daemon/src/worker/main.ts", acp), []);
+  assert.match(
+    checkAt("packages/daemon/src/main.ts", acp).join("\n"),
+    /only worker\/ of packages\/daemon may import @harnesshub\/drivers/,
+  );
+  assert.deepEqual(
+    checkAt(
+      "packages/drivers/src/acp/driver.ts",
+      'import { createAcpRuntime } from "acpx/runtime";',
+    ),
+    [],
+  );
+  assert.match(
+    checkAt(
+      "packages/drivers/src/cli/driver.ts",
+      'import { createAcpRuntime } from "acpx/runtime";',
+    ).join("\n"),
+    /ACP SDK types and implementation belong in drivers\/acp/,
+  );
+  assert.match(
+    checkAt(
+      "packages/drivers/src/acp/driver.ts",
+      'import { resolveSecret } from "@harnesshub/secrets/secrets";',
+    ).join("\n"),
+    /packages\/drivers cannot depend on @harnesshub\/secrets/,
+  );
+  const spawn = 'import { spawn } from "node:child_process";';
+  const cli = join(root, "packages/drivers/src/cli/driver.ts");
+  assert.deepEqual(
+    checkSource(cli, spawn, root, { completedTasks: new Set() }),
+    [],
+  );
+  assert.match(
+    checkSource(
+      join(root, "packages/drivers/src/fake/driver.ts"),
+      spawn,
+      root,
+      { completedTasks: new Set() },
+    ).join("\n"),
+    /packages\/drivers has no child_process exception/,
+  );
+  assert.match(
+    checkSource(cli, spawn, root, {
+      completedTasks: new Set(["OSS-013"]),
+    }).join("\n"),
+    /exception for drivers\/cli\/ \(owner OSS-010 F08\) expired with OSS-013/,
+  );
+});

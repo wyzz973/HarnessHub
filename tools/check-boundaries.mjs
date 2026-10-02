@@ -19,6 +19,8 @@
  *   the importing file moves to (LEGACY_DESTINATIONS) may depend on it.
  * - Relative imports and `new URL(..., import.meta.url)` inside a package or
  *   application must stay inside it.
+ * - Inside the daemon (and the src/ files that move to it), only worker/ may
+ *   import @harnesshub/drivers.
  * - node:sqlite belongs in the storage module of @harnesshub/store. Inside
  *   packages, node:child_process is allowed only by CHILD_PROCESS_EXCEPTIONS,
  *   each of which expires when its TODO.md task is ticked.
@@ -86,7 +88,11 @@ export const PACKAGE_GRAPH = {
 export const APP_GRAPH = { hh: ["cli", "daemon"] };
 
 /** Packages whose src/ is one flattened legacy module. */
-export const FLAT_MODULES = { core: "domain" };
+export const FLAT_MODULES = {
+  core: "domain",
+  // drivers/src holds driver.ts, acp/, cli/ and fake/ of the drivers module.
+  drivers: "drivers",
+};
 
 /**
  * Packages that src/ may import during the migration, and the legacy module
@@ -101,6 +107,7 @@ export const LEGACY_ALIASES = {
   secrets: "drivers",
   // The model gateway came from drivers/chat-completions.
   gateway: "drivers",
+  drivers: "drivers",
 };
 
 /**
@@ -158,7 +165,16 @@ export const CHILD_PROCESS_EXCEPTIONS = [
     owner: "OSS-010 F08",
     expiresWith: "OSS-013",
   },
+  {
+    package: "drivers",
+    path: "cli/",
+    owner: "OSS-010 F08",
+    expiresWith: "OSS-013",
+  },
 ];
+
+/** Inside the daemon, only the Worker loads drivers (02 section 8, 13 section 3). */
+const DRIVER_LOADER = "worker/";
 
 const domainPackages = new Set(["node:crypto", "node:buffer", "ajv"]);
 
@@ -336,11 +352,32 @@ export function checkSource(
           node,
           `src/${where.legacyPath} moves to @harnesshub/${destination}, which cannot depend on @harnesshub/${name}: ${specifier}`,
         );
+      else if (
+        name === "drivers" &&
+        destination === "daemon" &&
+        !where.legacyPath.startsWith(DRIVER_LOADER)
+      )
+        report(
+          node,
+          `only src/${DRIVER_LOADER} may import @harnesshub/drivers among the files that move to the daemon: ${specifier}`,
+        );
       return;
     }
     const graph = where.kind === "app" ? APP_GRAPH : PACKAGE_GRAPH;
     if (!graph[where.name]?.includes(name)) {
       report(node, `${container} cannot depend on @harnesshub/${name}`);
+      return;
+    }
+    if (
+      name === "drivers" &&
+      where.kind === "package" &&
+      where.name === "daemon" &&
+      !where.sourcePath?.startsWith(DRIVER_LOADER)
+    ) {
+      report(
+        node,
+        `only ${DRIVER_LOADER} of packages/daemon may import @harnesshub/drivers: ${specifier}`,
+      );
       return;
     }
     const target = FLAT_MODULES[name] ?? subpath[0];
