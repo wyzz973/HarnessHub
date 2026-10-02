@@ -61,4 +61,15 @@ pnpm exec hh usage --by model --since 1d
 
 每次进入网关的调用，包括被拒绝的，都记在 `model.call` 账本中：`GET /api/v1/model-calls` 列出明细，`GET /api/v1/usage` 按模型、provider、日期、Key 或 Agent 汇总；价格未知的调用单独计数，不按 0 计算。控制台的“用量”页面显示同样的数据（[控制台](../packages/console/README.md)）。
 
+## 5. 接入本机的编码 Agent
+
+把已安装的 Codex、Claude Code、Gemini CLI、Qwen Code、OpenCode 等改为经网关调用模型：
+
+```sh
+pnpm exec hh agents
+pnpm exec hh wire codex deepseek/deepseek-chat
+```
+
+`hh wire` 先显示对 Agent 配置文件（这里是 `~/.codex/config.toml`）的改动，确认后写入，并给该 Agent 签发一把只属于它的 Key；原文件先备份，`hh unwire codex` 恢复原样并吊销 Key。重启正在运行的 Agent 后生效，它的调用按 Agent 汇总在 `hh usage --by adapter` 中。支持的 Agent、写入的键与安全规则见 [全局接线](global-wiring.md)。
+
 更多说明：命令与 API 见 [模型平面 API 与 CLI](model-plane-api.md)，网关的路由、重试与限制见 [统一模型网关](model-gateway.md#共享网关)，预设的格式与核对见 [presets](../packages/gateway/presets/README.md)。

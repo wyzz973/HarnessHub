@@ -18,6 +18,8 @@ import type { ModelPlaneStore } from "@harnesshub/core/model-plane";
 import type { ProviderPreset } from "@harnesshub/core/provider-presets";
 import { responses, systemInfoSchema } from "./api-v1-schemas.js";
 import { registerModelPlaneRoutes } from "./model-plane-routes.js";
+import type { AgentWiringService } from "../agents-wiring.js";
+import { registerAgentRoutes } from "./agents-routes.js";
 
 /** Where a problem's `errors[]` entry points: a body member or a query parameter. */
 export type ProblemItem =
@@ -106,6 +108,8 @@ export interface ApiV1Options {
   system: () => SystemInfo;
   /** Internal failures (500) are recorded here, without request bodies. */
   log?: LogSink;
+  /** Global wiring of local agents (`/agents`). */
+  agents: AgentWiringService;
 }
 
 const LOOPBACK =
@@ -295,6 +299,7 @@ export function registerApiV1(
         async () => options.system(),
       );
       registerModelPlaneRoutes(api, options);
+      registerAgentRoutes(api, options.agents);
     },
     { prefix: "/api/v1" },
   );

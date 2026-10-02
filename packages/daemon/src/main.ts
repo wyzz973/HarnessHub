@@ -48,6 +48,7 @@ import {
 } from "@harnesshub/secrets/secret-store";
 import { ensureAdminToken, ADMIN_TOKEN_FILE } from "./admin-token.js";
 import { registerApiV1 } from "./http/api-v1.js";
+import { AgentWiringService } from "./agents-wiring.js";
 import { getPreset, listPresets } from "@harnesshub/gateway/presets";
 import { modelCatalog } from "@harnesshub/gateway/catalog";
 import {
@@ -280,6 +281,17 @@ export async function startHub(options: {
    * Resolved by `resolveOtlpConfig`; an invalid block fails the start.
    */
   otlp?: unknown;
+  /**
+   * The home directory whose agent configuration global wiring edits, and
+   * the environment agents see there (PATH, CODEX_HOME, ...). Only the
+   * `hh serve` entry passes the real home; without it every `/api/v1/agents`
+   * operation fails with AGENT_WIRING_UNAVAILABLE instead of falling back to
+   * the account's home.
+   */
+  wiringHome?: {
+    home: string;
+    env: Readonly<Record<string, string | undefined>>;
+  };
 }) {
   // HARNESSHUB_LOG_LEVEL is validated before anything starts; Workers inherit the value.
   const logLevel = parseLogLevel(process.env[LOG_LEVEL_ENVIRONMENT]);
@@ -748,6 +760,13 @@ export async function startHub(options: {
           : null,
       }),
       log: gatewayLog,
+      agents: new AgentWiringService({
+        store: modelPlane,
+        dataDir,
+        home: options.wiringHome,
+        origin: () => gatewayOrigin,
+        log: gatewayLog,
+      }),
     });
     // Registered after createGateway's hook, so the application has already cancelled
     // Runs; this only stops a pending model test and waits for its Session cleanup.
@@ -849,6 +868,7 @@ export async function main(argv: string[]): Promise<void> {
       "harness-model-file": { type: "string" },
       "console-url": { type: "string" },
       "otlp-config": { type: "string" },
+      "wiring-home": { type: "string" },
       help: { type: "boolean" },
       version: { type: "boolean" },
       json: { type: "boolean" },
@@ -889,7 +909,7 @@ export async function main(argv: string[]): Promise<void> {
     process.exitCode = 2;
   } else if (values.help)
     console.log(
-      "HarnessHub: node dist/src/main.js [--engine opencode] [--host localhost] [--port 3180] [--config engines/local.yaml] [--data-dir ./data] [--config-dir DIR] [--secrets-backend auto|keychain|dpapi|file] [--tool-package-root DIR] [--harness-model-file FILE] [--console-url URL] [--otlp-config FILE] | --version [--json]",
+      "HarnessHub: node dist/src/main.js [--engine opencode] [--host localhost] [--port 3180] [--config engines/local.yaml] [--data-dir ./data] [--config-dir DIR] [--secrets-backend auto|keychain|dpapi|file] [--tool-package-root DIR] [--harness-model-file FILE] [--console-url URL] [--otlp-config FILE] [--wiring-home DIR] | --version [--json]",
     );
   else {
     const selectedEngine = values.engine ?? process.env.AGENT_ENGINE;
@@ -925,6 +945,18 @@ export async function main(argv: string[]): Promise<void> {
             ) as unknown,
           }
         : {}),
+      // Global wiring edits the agents of this account. --wiring-home points
+      // it at another directory and then ignores the shell's agent directory
+      // variables (CODEX_HOME, ...), which name directories of the real home.
+      wiringHome: values["wiring-home"]
+        ? {
+            home: path.resolve(values["wiring-home"]),
+            env: {
+              PATH: process.env.PATH,
+              PATHEXT: process.env.PATHEXT,
+            },
+          }
+        : { home: homedir(), env: Object.freeze({ ...process.env }) },
       logEcho: true,
     });
     console.log(

@@ -1417,4 +1417,106 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     ],
     operationId: "hh_api_v1_refresh_catalog",
   },
+  {
+    method: "GET",
+    path: "/api/v1/agents",
+    title: "本机 Agent 列表",
+    group: "agents",
+    request: "无参数。",
+    response:
+      "200：items（Agent：id、name、protocol、keyDelivery、installation{status=installed|configured-only|not-found、executable、configDirectories}、wiring{model、models、keyId、keyState、wiredAt、files、drift、driftError}|null）、nextCursor=null。",
+    implementation:
+      "AgentWiringService.list：对每个支持的 Adapter 调用 detectAgent（只查 PATH 与配置目录，不执行 Agent）、读取 WiringRecord 与其 Key，并以当前网关地址调用 detectDrift。",
+    effects: "只读；不读取 Agent 的认证文件，不返回 Key 文本。",
+    errors:
+      "守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/agents-routes.ts",
+    tests: ["tests/integration/agents-wiring.test.ts"],
+    operationId: "hh_api_v1_list_agents",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/agents/{id}",
+    title: "单个 Agent",
+    group: "agents",
+    request: "路径参数 id（Adapter id）。",
+    response: "200：Agent，字段同列表项。",
+    implementation: "AgentWiringService.get，与列表的单项相同。",
+    effects: "只读。",
+    errors:
+      "404 WIRING_ADAPTER_UNKNOWN；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/agents-routes.ts",
+    tests: ["tests/integration/agents-wiring.test.ts"],
+    operationId: "hh_api_v1_get_agent",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/agents/{id}/wiring/plan",
+    title: "预览接线",
+    group: "agents",
+    request:
+      "路径参数 id；model（provider/model 或 group/<id>）必填；models 为 Agent 模型列表中显示的模型，缺省沿用当前列表或只有 model。",
+    response:
+      "200：AgentWiringPlan：adapterId、protocol、keyDelivery、model、changed、files[]（id、path、format、exists、hash、changes[]、diff）；diff 中 Gateway Key 显示为 hhk_a_xxxx…，被替换的旧 Key 值为 <redacted>。",
+    implementation:
+      "AgentWiringService.plan：按网关的 provider 与路由组核对模型并取窗口与输出上限，用一把不保存的临时 Key 调用 planWiring。",
+    effects: "只读；不写文件，不签发 Key。",
+    errors:
+      "404 WIRING_ADAPTER_UNKNOWN；400 AGENT_MODEL_UNAVAILABLE（网关不提供的模型）；409 WIRING_CONFIG_UNPARSEABLE、WIRING_SYMLINK_ESCAPE、WIRING_PATH_CONFLICT、WIRING_UNSUPPORTED_STRUCTURE；503 GATEWAY_NOT_LISTENING；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/agents-routes.ts",
+    tests: ["tests/integration/agents-wiring.test.ts"],
+    operationId: "hh_api_v1_plan_agent_wiring",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/agents/{id}/wiring",
+    title: "接线到网关",
+    group: "agents",
+    request:
+      "路径参数 id；model 必填，models 同预览；expect 必填，为用户确认的计划（预览响应即可），按 files[].path、exists、hash 核对。",
+    response: "200：接线后的 Agent。",
+    implementation:
+      "AgentWiringService.wire：签发 agent:<id> 作用域、modelAllow 为 model 与 models、不过期的新 Key，applyWiring 备份、原子写并回读校验，提交 WiringRecord 后吊销旧 Key；任何失败都吊销新 Key。Key 文本只写入 Agent 的配置文件，守护进程不保存。",
+    effects:
+      "改写 Agent 的配置文件（备份在 <dataDir>/backups/wiring/）；写入 gateway_keys 与 wirings 表。",
+    errors:
+      "409 WIRING_CONCURRENT_MODIFICATION（文件在预览后被改动，新 Key 已吊销）；500 WIRING_WRITE_FAILED、WIRING_VERIFY_FAILED（已写文件恢复为写前字节，消息列出恢复情况）；其余同预览；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/agents-routes.ts",
+    tests: ["tests/integration/agents-wiring.test.ts"],
+    operationId: "hh_api_v1_wire_agent",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/agents/{id}/wiring/rotate",
+    title: "轮换 Agent 的 Key",
+    group: "agents",
+    request: "路径参数 id；请求体为空对象。",
+    response: "200：换 Key 后的 Agent。",
+    implementation:
+      "AgentWiringService.rotate：以当前 model 与 Key 的 modelAllow 重新接线，流程同接线（不核对预览）。",
+    effects: "改写配置文件中的 Key；旧 Key 立即吊销。",
+    errors:
+      "409 AGENT_NOT_WIRED；其余同接线；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/agents-routes.ts",
+    tests: ["tests/integration/agents-wiring.test.ts"],
+    operationId: "hh_api_v1_rotate_agent_key",
+  },
+  {
+    method: "DELETE",
+    path: "/api/v1/agents/{id}/wiring",
+    title: "还原 Agent 配置",
+    group: "agents",
+    request: "路径参数 id。",
+    response:
+      "200：agent（还原后）与 files[]（path、action=restored|deleted|reverse-patched|unchanged|absent）。",
+    implementation:
+      "AgentWiringService.unwire：unwire 在文件未变时写回原始字节、否则只恢复 HarnessHub 写过的键，然后吊销 Key 并删除 WiringRecord。",
+    effects:
+      "改写或删除 Agent 的配置文件；吊销 Key；删除 wirings 记录。失败时记录与 Key 保留，可重试。",
+    errors:
+      "409 AGENT_NOT_WIRED、WIRING_CONFIG_UNPARSEABLE；500 WIRING_BACKUP_INVALID；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/agents-routes.ts",
+    tests: ["tests/integration/agents-wiring.test.ts"],
+    operationId: "hh_api_v1_unwire_agent",
+  },
 ];

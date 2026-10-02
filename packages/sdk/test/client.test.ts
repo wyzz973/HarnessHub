@@ -108,3 +108,64 @@ void test("error responses become HarnessHubError, problem or not", async () => 
     return true;
   });
 });
+
+void test("agent wiring sends only the confirmed files' identity as expect", async () => {
+  const bodies: unknown[] = [];
+  const urls: string[] = [];
+  const send: typeof fetch = (input, init) => {
+    urls.push(`${init?.method ?? "GET"} ${String(input)}`);
+    bodies.push(
+      init?.body === undefined ? undefined : JSON.parse(String(init.body)),
+    );
+    return Promise.resolve(Response.json({}));
+  };
+  const client = new HarnessHubClient({
+    url: "http://127.0.0.1:3180",
+    fetch: send,
+  });
+  const plan = {
+    adapterId: "codex",
+    protocol: "responses" as const,
+    keyDelivery: "config-file" as const,
+    model: "a/b",
+    changed: true,
+    files: [
+      {
+        id: "config",
+        path: "/home/u/.codex/config.toml",
+        format: "toml" as const,
+        exists: true,
+        hash: "0".repeat(64),
+        changes: [],
+        diff: "--- big diff",
+      },
+    ],
+  };
+  await client.agents.plan("codex", { model: "a/b" });
+  await client.agents.wire("codex", {
+    model: "a/b",
+    models: ["a/c"],
+    expect: plan,
+  });
+  await client.agents.rotate("codex");
+  await client.agents.unwire("codex");
+  assert.deepEqual(urls, [
+    "POST http://127.0.0.1:3180/api/v1/agents/codex/wiring/plan",
+    "POST http://127.0.0.1:3180/api/v1/agents/codex/wiring",
+    "POST http://127.0.0.1:3180/api/v1/agents/codex/wiring/rotate",
+    "DELETE http://127.0.0.1:3180/api/v1/agents/codex/wiring",
+  ]);
+  assert.deepEqual(bodies[1], {
+    model: "a/b",
+    models: ["a/c"],
+    expect: {
+      files: [
+        {
+          path: "/home/u/.codex/config.toml",
+          exists: true,
+          hash: "0".repeat(64),
+        },
+      ],
+    },
+  });
+});

@@ -1096,3 +1096,20 @@ export async function main(argv: string[]): Promise<number> {
     return report(error, args.includes("--json"));
   }
 }
+
+/** Shared with the agent commands (`agents.ts`), which use the same options, prompts and exit codes. */
+export {
+  confirm,
+  context,
+  EXIT,
+  list,
+  localTime,
+  output,
+  parse,
+  positionals,
+  report,
+  table,
+  UsageError,
+  write,
+  type Context,
+};

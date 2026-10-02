@@ -278,6 +278,90 @@ export interface ModelMetadataView {
   overrides: ModelOverride[];
 }
 
+/** How an agent is detected: a command on PATH or only its configuration directory. */
+export interface AgentInstallation {
+  status: "installed" | "configured-only" | "not-found";
+  executable?: string;
+  configDirectories: string[];
+}
+
+/** File drift of a wired agent (04-agent-plane section 5). */
+export type AgentDriftKind = "unwired" | "replaced" | "foreign-gateway";
+
+export interface AgentDriftFinding {
+  path: string;
+  keyPath: string[];
+  kind: AgentDriftKind;
+  reason: "missing" | "changed" | "other-key" | "file-missing" | "unreadable";
+}
+
+export interface AgentWiring {
+  model: string;
+  /** The models the agent lists; also its key's allowlist. */
+  models: string[];
+  keyId: string;
+  keyState: "active" | "revoked" | "expired" | "missing";
+  wiredAt: string;
+  files: string[];
+  drift: {
+    drifted: boolean;
+    kinds: AgentDriftKind[];
+    findings: AgentDriftFinding[];
+  } | null;
+  driftError?: string;
+}
+
+/** `GET /agents` item. */
+export interface Agent {
+  id: string;
+  name: string;
+  protocol: WireProtocol;
+  keyDelivery: "config-file" | "env-file";
+  installation: AgentInstallation;
+  wiring: AgentWiring | null;
+}
+
+/** One file of a wiring plan; Gateway Keys in `diff` and `changes` are masked. */
+export interface AgentPlanFile {
+  id: string;
+  path: string;
+  format: "json" | "toml" | "yaml" | "dotenv";
+  exists: boolean;
+  hash?: string;
+  changes: Array<{
+    keyPath: string[];
+    op: "set" | "remove";
+    before?: string;
+    after?: string;
+  }>;
+  diff: string;
+}
+
+/** `POST /agents/{id}/wiring/plan`. Pass it back as `expect` to apply exactly what was shown. */
+export interface AgentWiringPlan {
+  adapterId: string;
+  protocol: WireProtocol;
+  keyDelivery: "config-file" | "env-file";
+  model: string;
+  changed: boolean;
+  files: AgentPlanFile[];
+}
+
+export interface AgentWiringInput {
+  model: string;
+  /** Models the agent's picker lists; default: the current list, or just `model`. */
+  models?: string[];
+}
+
+/** `DELETE /agents/{id}/wiring`. */
+export interface AgentUnwired {
+  agent: Agent;
+  files: Array<{
+    path: string;
+    action: "restored" | "deleted" | "reverse-patched" | "unchanged" | "absent";
+  }>;
+}
+
 type Query = Record<string, string | number | undefined>;
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -520,6 +604,49 @@ export class HarnessHubClient {
         `gateway-keys/${segment(keyId)}/revoke`,
         { body: {} },
       ),
+  };
+
+  readonly agents = {
+    list: () => this.request<Page<Agent>>("GET", "agents"),
+    get: (id: string) => this.request<Agent>("GET", `agents/${segment(id)}`),
+    /** The file edits wiring would make; nothing is written and no key is issued. */
+    plan: (id: string, input: AgentWiringInput) =>
+      this.request<AgentWiringPlan>(
+        "POST",
+        `agents/${segment(id)}/wiring/plan`,
+        { body: input },
+      ),
+    /**
+     * Wires the agent with a new `agent:` key after checking that its files
+     * are as in `expect` (409 WIRING_CONCURRENT_MODIFICATION otherwise); the
+     * previous key is revoked. The key text never leaves the agent's files.
+     */
+    wire: (
+      id: string,
+      input: AgentWiringInput & {
+        expect: Pick<AgentWiringPlan, "files">;
+      },
+    ) =>
+      this.request<Agent>("POST", `agents/${segment(id)}/wiring`, {
+        body: {
+          ...input,
+          expect: {
+            files: input.expect.files.map((file) => ({
+              path: file.path,
+              exists: file.exists,
+              ...(file.hash !== undefined ? { hash: file.hash } : {}),
+            })),
+          },
+        },
+      }),
+    /** Re-wires with the same models and a new key; the old key stops working. */
+    rotate: (id: string) =>
+      this.request<Agent>("POST", `agents/${segment(id)}/wiring/rotate`, {
+        body: {},
+      }),
+    /** Restores the agent's files and revokes its key. */
+    unwire: (id: string) =>
+      this.request<AgentUnwired>("DELETE", `agents/${segment(id)}/wiring`),
   };
 
   readonly modelCalls = {

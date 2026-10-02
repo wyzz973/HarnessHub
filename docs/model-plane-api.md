@@ -1,6 +1,6 @@
 # 模型平面 API 与 CLI
 
-守护进程在 `/api/v1` 下提供模型平面的管理接口：provider 与凭据、模型元数据与覆盖、路由组、`client:` Gateway Key、`model.call` 账本与用量（设计见 [06 接口与交互面](proposals/oss/06-interfaces.md) 与 [03 模型平面](proposals/oss/03-model-plane.md)）。[`@harnesshub/sdk`](../packages/sdk/README.md) 是它的类型化客户端，`hh provider|credential|model|catalog|key|group|usage|status` 经 SDK 调用它。现有的 `/v1/*` 管理路由暂时保持原样，之后再迁到 `/api/v1`；模型网关的挂载与全局接线路由在网关与接线库落地后加入。逐接口的输入、返回与错误见 [API 实现参考](api/reference.md)（`/api/v1` 各节）。
+守护进程在 `/api/v1` 下提供模型平面的管理接口：provider 与凭据、模型元数据与覆盖、路由组、`client:` Gateway Key、`model.call` 账本与用量（设计见 [06 接口与交互面](proposals/oss/06-interfaces.md) 与 [03 模型平面](proposals/oss/03-model-plane.md)）。[`@harnesshub/sdk`](../packages/sdk/README.md) 是它的类型化客户端，`hh provider|credential|model|catalog|key|group|usage|status` 经 SDK 调用它。现有的 `/v1/*` 管理路由暂时保持原样，之后再迁到 `/api/v1`；全局接线（`/agents`，`hh agents|wire|use|unwire`）见 [全局接线](global-wiring.md)。逐接口的输入、返回与错误见 [API 实现参考](api/reference.md)（`/api/v1` 各节）。
 
 ## 认证与错误
 
@@ -24,6 +24,7 @@
 | gateway-keys | `GET`、`POST /gateway-keys`；`GET /gateway-keys/{id}`；`POST /gateway-keys/{id}/revoke` | 只签发 `client:` 作用域，`modelAllow` 必填；默认 90 天后过期，`expiresAt: null` 不过期。Key 文本只出现在创建响应中，列表与详情不含哈希 |
 | model-calls | `GET /model-calls` | 新到旧，`limit` 1–200（默认 50），`cursor` 为上一页的 `nextCursor`；按 `from`（含）、`to`（不含）、`keyId`、`provider`、`model`、`sessionId` 过滤 |
 | usage | `GET /usage` | `groupBy` 为 `day`（UTC）、`provider`、`model`（默认）、`key` 或 `adapter`；状态码不低于 400 记为失败，成本只累加已知价格，未知价格计入 `unpricedCalls`，`missing` 用量按 0 计 |
+| agents | `GET /agents`、`GET /agents/{id}`；`POST /agents/{id}/wiring/plan`、`POST /agents/{id}/wiring`、`POST /agents/{id}/wiring/rotate`、`DELETE /agents/{id}/wiring` | 本机 Agent 的安装、接线与漂移；接线签发 `agent:` Key，Key 文本只写入 Agent 的配置文件。见 [全局接线](global-wiring.md) |
 | system | `GET /system/info` | 版本、提交、pid、启动时间、数据目录、秘密后端，以及 `gateway`：本机客户端使用的模型网关基址（`openaiBaseUrl` 含 `/v1`，`anthropicBaseUrl` 与 `geminiBaseUrl` 不含版本段） |
 
 秘密后端由 `hh serve --secrets-backend auto|keychain|dpapi|file` 选择（默认 `auto`：macOS 钥匙串、Windows DPAPI、其他平台加密文件），加密文件后端的主密钥在 `--config-dir`（默认为平台的 HarnessHub 配置目录）下的 `secrets.key`，见 [secrets](../packages/secrets/README.md)。

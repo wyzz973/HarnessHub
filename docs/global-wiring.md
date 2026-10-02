@@ -2,17 +2,45 @@
 
 全局接线把本机已安装的 Agent 改为经 HarnessHub 网关调用模型：直接改写 Agent 自己的用户配置，并提供预览、备份、原子写、回读校验、逐字节还原与漂移检测。目标设计见 [04 Agent 平面第 4、5 节](proposals/oss/04-agent-plane.md#4-全局接线)；隔离接线（只为 Session 生成私有配置）仍由 [引擎独立配置](engine-configuration.md) 与 [统一模型下的引擎接线](model-gateway-engines.md) 描述，两者互不调用。
 
-现状：库已实现（`packages/agents/src/wiring/`），守护进程路由与 `hh wire`/`hh unwire` 命令尚未接入；没有用真实 Agent 验证过接线结果，也没有在 Windows 上运行过。
+现状：库（`packages/agents/src/wiring/`）、守护进程的 `/api/v1/agents`、`hh agents|wire|use|unwire` 与控制台的 Agent 页面已实现，并经正式守护进程入口与假上游端到端验证（写入的 Key 能调用网关，轮换与还原后旧 Key 被拒绝）；没有用真实 Agent 读取接线后的配置，也没有在 Windows 上运行过。
+
+## 使用
+
+```sh
+pnpm exec hh agents                                   # 已安装、已接线、模型、漂移
+pnpm exec hh wire codex deepseek/deepseek-chat        # 显示改动，确认后写入
+pnpm exec hh use claude deepseek/deepseek-chat --yes  # 同 wire，不询问
+pnpm exec hh wire codex --models deepseek/deepseek-chat,deepseek/deepseek-reasoner --yes
+pnpm exec hh wire codex --rotate                      # 换一把新 Key，旧 Key 立即失效
+pnpm exec hh unwire codex                             # 还原配置并吊销 Key
+```
+
+`hh wire <agent> [model]` 先打印各文件的统一 diff（Key 显示为 `hhk_a_xxxx…`），确认后按这份预览写入：预览之后文件又被改动则以 5 退出、什么都不写；`--yes` 跳过确认，非交互且没有 `--yes` 时以 4 退出。省略模型时沿用当前接线的模型；`--models` 给出 Agent 模型选择器里显示的模型（缺省沿用当前列表，首次接线只有所选模型），这份列表同时是该 Agent 的 Key 允许的模型。模型必须是网关提供的 Model Ref（provider 的公开模型）或 `group/<id>`。Agent 只在启动时读取配置，写入后需要重启正在运行的实例。控制台的“Agent”页面提供同样的操作：选择模型与显示的模型、预览改动、确认写入、换 Key、还原，并显示漂移标记。
+
+## 守护进程与 Key
+
+`hh serve` 以当前用户的主目录与环境作为接线目录（`--wiring-home DIR` 改用另一个目录，此时忽略 shell 中的 `CODEX_HOME` 等目录变量）；以 `startHub` 启动而未给 `wiringHome` 的守护进程（测试与嵌入）拒绝全部接线操作（503 `AGENT_WIRING_UNAVAILABLE`），从不回落到账户的主目录。接口见 [API 实现参考](api/reference.md) 的 `agents` 各节：
+
+| 接口 | 行为 |
+|---|---|
+| `GET /api/v1/agents`、`GET /api/v1/agents/{id}` | 每个 Adapter 的安装状态（PATH 上有其命令为 `installed`，只有配置目录为 `configured-only`；不执行 Agent）、接线的模型与模型列表、Key 状态与漂移 |
+| `POST /api/v1/agents/{id}/wiring/plan` | `{model, models?}`；用一把不保存的临时 Key 计算预览，不写文件、不签发 Key |
+| `POST /api/v1/agents/{id}/wiring` | `{model, models?, expect}`，`expect` 为确认过的预览 |
+| `POST /api/v1/agents/{id}/wiring/rotate` | 以当前模型与列表重新接线 |
+| `DELETE /api/v1/agents/{id}/wiring` | 还原文件、吊销 Key、删除记录 |
+
+每次接线签发一把新的 `agent:<id>` Key：`modelAllow` 为所选模型与模型列表，不过期。Key 文本只经库写入 Agent 的配置文件，守护进程不保存（存储中只有哈希）。文件写入并回读校验、`WiringRecord` 提交之后才吊销上一把 Key；任何一步失败都吊销新 Key，写入失败时已写文件恢复为写前字节。还原先恢复文件，再吊销 Key、删除记录；还原失败时记录与 Key 保留，可以重试。接线、换 Key 与还原在守护进程内串行执行，库的跨进程锁另外阻止两个进程同时改写同一 Agent。
 
 ## 库接口
 
-入口是 `@harnesshub/agents/wiring/index`，调用方（守护进程、CLI）负责签发与吊销 Key、持久化 `WiringRecord`（[model-plane.ts](../packages/core/src/model-plane.ts)）：
+入口是 `@harnesshub/agents/wiring/index`，调用方（守护进程）负责签发与吊销 Key、持久化 `WiringRecord`（[model-plane.ts](../packages/core/src/model-plane.ts)）：
 
 | 函数 | 行为 |
 |---|---|
 | `planWiring(adapterId, target, ctx, {previous?})` | 只读。返回每个文件的键级变更与统一 diff；Key 显示为 `hhk_a_xxxx…`，被替换的旧 Key 值显示为 `<redacted>`，dotenv 文件不带上下文行。已按同样方式接线时 `changed: false` |
 | `applyWiring(adapterId, target, ctx, {previous?, expect?})` | 在该 Adapter 的跨进程锁内重新计划；`expect` 为用户确认过的计划，文件哈希不一致即 `WIRING_CONCURRENT_MODIFICATION`。先保存原始字节，再逐个文件原子写并回读校验；任一步失败，已写文件恢复为写前字节，错误的 `rollback` 逐个报告。返回待持久化的记录 |
 | `unwire(record, ctx)` | 文件哈希等于 `afterHash` 时写回原始字节（接线时新建的文件则删除，连同为它新建且仍为空的目录）；用户之后改过文件时，只把 HarnessHub 写过的键恢复为原值或删除，其余修改保留。可重复执行 |
+| `detectAgent(adapterId, ctx)` | 只看 `ctx.env` 的 PATH 与 Adapter 的配置目录，判断 `installed`、`configured-only` 或 `not-found`；不执行任何程序 |
 | `detectDrift(record, ctx, {baseUrl?})` | 只读。基址字段缺失、Key 字段缺失或换成别的 Key 为 `unwired`；基址指向别处为 `foreign-gateway`；其他写过的字段被改为 `replaced`。`bypassed` 与 `stale-key` 需要网关账本，不在本库 |
 
 `target` 为 `{baseUrl, keyText, keyId, model, models[]}`：`baseUrl` 是网关根地址（如 `http://127.0.0.1:3180`），各 Adapter 按协议自行追加 `/v1`；`keyText` 必须是 `agent` 作用域且与 `keyId` 一致的 Gateway Key；`models` 带 `/v1/models` 的窗口与输出上限。`ctx` 为 `{home, dataDir, env?, clock?}`：`home` 必填，库从不读取 `os.homedir()` 或 `process.env`，Agent 的目录变量只来自显式的 `env`。
@@ -60,8 +88,9 @@ Shell 环境中已有的同名变量优先于 dotenv 文件（Gemini、Qwen）�
 - Codex 只写 `model_context_window`，尚未生成 HarnessHub 自有的模型清单文件（04 第 1 节的 `model_catalog_json`）。
 - OpenCode 在设置了 `OPENCODE_CONFIG_DIR` 时写入该目录，因为其中的文件覆盖全局配置。
 - 漂移检测没有区分“另一个 HarnessHub 实例”与其他网关：基址不同一律为 `foreign-gateway`。
-- 未实现：OpenClaw（JSON5）、Hermes、MiMo、Copilot（env-launch）Adapter；备份保留数清理；接线前检查 Agent 是否在运行；“rename 前被并发修改”之外的写后篡改注入测试（04 第 9 节第 6 项）；Windows 验证；真实 Agent 的接线生效测试（第 5 项）。
+- 每次接线都签发新 Key，所以对已接线的 Agent 预览时，即使模型不变，Key 一项也显示为改动（04 第 4 节的“无变化时计划为空”只在不换 Key 时成立）。
+- 未实现：OpenClaw（JSON5）、Hermes、MiMo、Copilot（env-launch）Adapter；备份保留数清理；接线前检查 Agent 是否在运行；`bypassed` 与 `stale-key` 漂移（需要网关账本）；“rename 前被并发修改”之外的写后篡改注入测试（04 第 9 节第 6 项）；Windows 验证；真实 Agent 的接线生效测试（第 5 项）。
 
 ## 验证
 
-`packages/agents/test/` 下：`wiring-formats.test.ts`（各编辑器的保留、拒绝与还原，以及每种格式 40 个种子的随机 set/remove 序列：每步按值核对目标键、其余内容与注释不变，JSON、TOML、dotenv 删除新增条目后字节与原文相同）；`wiring-adapters.test.ts`（每个 Adapter：空目录与已有配置的金样、逐字节还原、用户改动后的键级还原、解析失败拒绝、符号链接逃逸拒绝、漂移、Key 轮换后还原，金样在 `wiring-golden.ts`）；`wiring-safety.test.ts`（目录内符号链接、硬链接、只读文件与权限、BOM 与 CRLF、非 UTF-8、预览后被修改、写入失败回滚、锁、残留临时文件、目录变量、目标与上下文校验、预览掩码、损坏的备份）。测试只使用临时目录作为 `home`，Key 为合成值，不访问网络。
+[agents-wiring.test.ts](../tests/integration/agents-wiring.test.ts) 经 `startHub`（临时 `wiringHome`）与严格假上游：接线后从 Codex 配置文件读回基址与 Key 并成功调用网关；换 Key 后旧 Key 得到 401、新 Key 200；还原后文件逐字节一致且 Key 失效；手工修改后报告漂移并只撤销 HarnessHub 的项；预览后文件被改动时新 Key 被吊销；未接线、未知 Agent 与网关不提供的模型被拒绝；未设 `wiringHome` 的守护进程拒绝全部操作；真实 `hh` 入口的 `agents`、`wire`、`use`、`unwire` 只打印掩码后的 Key。`packages/agents/test/` 下：`wiring-formats.test.ts`（各编辑器的保留、拒绝与还原，以及每种格式 40 个种子的随机 set/remove 序列：每步按值核对目标键、其余内容与注释不变，JSON、TOML、dotenv 删除新增条目后字节与原文相同）；`wiring-adapters.test.ts`（每个 Adapter：空目录与已有配置的金样、逐字节还原、用户改动后的键级还原、解析失败拒绝、符号链接逃逸拒绝、漂移、Key 轮换后还原，金样在 `wiring-golden.ts`）；`wiring-safety.test.ts`（目录内符号链接、硬链接、只读文件与权限、BOM 与 CRLF、非 UTF-8、预览后被修改、写入失败回滚、锁、残留临时文件、目录变量、目标与上下文校验、预览掩码、损坏的备份）。测试只使用临时目录作为 `home`，Key 为合成值，不访问网络。
