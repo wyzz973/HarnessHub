@@ -61,6 +61,52 @@ ACP 0.13.2 的 reducer 会把最新 breakdown 直接赋给名称为 `cumulative_
 
 运行中不必打开文件：`GET /v1/sessions/{id}/logs` 按页读取一个 Session 的诊断记录。`source=engine`（默认）返回该 Session 的引擎日志；`source=gateway` 返回 Gateway 日志中含该 Session id 或其 Run id 的行，不含读取本接口自身的访问行。不带 `after` 时返回最新 `limit` 条（默认 200，最多 2000，按写入顺序）；带上一页的 `cursor`（文件身份与字节偏移，轮转后仍有效）时只返回之后写入的完整行。单次最多扫描 32 MiB（含 `.1`～`.3`）、返回 2 MiB；`truncated=true` 表示有记录因数量、大小、扫描预算或游标所在文件已轮转出去而被跳过。每行读出时再次脱敏，无法解析的行计入 `skipped`。接口只读文件、不联系 Worker，未知 Session 返回 404。控制台“执行详情”中的“诊断日志”使用该接口，可切换引擎/Gateway 日志、按级别和关键字筛选，任务运行时每 2 秒增量刷新，并能复制或下载当前显示的记录（JSON Lines）。
 
+## OTLP 导出
+
+守护进程可以把每次模型调用导出为一个 OpenTelemetry span（[08 第 5 节](proposals/oss/08-reliability-observability.md#5-追踪)），默认关闭：没有 `otlp` 配置时不创建导出器，也不发出任何网络请求，环境中的 `OTEL_EXPORTER_OTLP_ENDPOINT` 等标准变量同样不会打开导出。实现见 [otlp-export.ts](../packages/daemon/src/otlp-export.ts)。
+
+开启方式是把 `otlp` 配置块写成 JSON 文件，以 `hh serve --otlp-config <文件>`（或 `node packages/daemon/dist/src/main.js --otlp-config <文件>`）启动；配置无效时拒绝启动。
+
+| 字段 | 说明 |
+|---|---|
+| `endpoint` | 收集端基础地址（http 或 https，不含凭据、查询与片段）；span 发往 `<endpoint>/v1/traces` |
+| `protocol` | 只支持 `http/json`（默认）。`http/protobuf` 需要 protobuf 编码依赖，目前明确拒绝；常见收集端都接受 JSON |
+| `headers` | 可选，请求头；值为字符串或秘密引用 `{"kind": "env"\|"file"\|"keychain"\|"store", "value": ...}`，启动时解析一次，只用于请求头 |
+| `resource` | 可选，资源属性（字符串、数字或布尔），覆盖默认的 `service.name`（`harnesshub`）与 `service.version` |
+
+span 在 `model.call` 账本记录提交之后才进入导出队列，账本仍是唯一事实来源；账本写失败的调用不导出。每个调用一个 SERVER span，名称为 `chat <请求模型>`（Gemini 入口为 `generate_content`），时间取账本的开始时间与耗时，失败时状态为 ERROR、消息为错误类别。属性按 GenAI 语义约定：`gen_ai.operation.name`、`gen_ai.provider.name`（预设映射到约定值，如 `openai`、`anthropic`、`gcp.gemini`、`mistral_ai`、`x_ai`；其他预设用预设 ID，自定义 provider 用其 ID）、`gen_ai.request.model`、`gen_ai.response.model`、`gen_ai.conversation.id`（Session ID）、`gen_ai.response.finish_reasons`、`gen_ai.usage.input_tokens`（含缓存读写）与 `gen_ai.usage.output_tokens`（含推理），以及 `http.response.status_code`、`error.type`。HarnessHub 自有字段用 `hh.` 前缀：调用、Model Ref、provider、路由组、入站与上游协议、是否流式、`hh.mode`（passthrough 或 translated）、Key ID 与作用域种类（agent 作用域另有 Adapter ID）、Session、Run 与 generation、缓存读写与推理 token、用量来源、费用（美元金额与价格来源，未知时 `hh.cost.source=unknown`）、首字节与首内容时间、尝试次数、错误来源、拒绝原因。上游未回报用量时不写 token 属性，不写 0。
+
+从不导出：提示词、回答、推理内容、工具参数与结果、账本中的错误文本、凭据与请求头的值、Gateway Key 文本与 Key 名称（名称可能含邮箱），以及 provider 凭据 ID。
+
+导出不阻塞也不影响模型调用：队列上限 2,048 个 span，每批 512 个，每 5 秒刷新；单次请求 10 秒超时；429、502、503、504、超时与网络错误按 `Retry-After`（或 1 s、2 s）重试至多 2 次，间隔上限 60 s；其他状态不重试。队列满或已停止时丢弃并计数，`gateway.log` 中有 `otlp.dropped`、`otlp.export_failed` 记录，停止时 `otlp.stop` 给出导出、丢弃、失败与重试的累计数。守护进程停止时，在模型网关等完最后一批账本记录之后导出剩余队列，最多等 3 秒，到期后中止并把剩余部分计为丢弃。
+
+与 [08 第 5 节](proposals/oss/08-reliability-observability.md#5-追踪) 的设计相比，目前的差异是：配置块名为 `otlp`，经 `--otlp-config` 文件传入（设计中是配置文件的 `observability.otel.*`，配置文件尚无守护进程设置）；编码为 JSON 而不是 protobuf，以免为 protobuf 引入依赖；span 都是根 span（还没有 Run 与 attempt 的 span 可作父子）；尚无内容导出开关 `captureContent`、约定版本选择、采样与指标导出。
+
+示例（JSON 文件内容，未在真实后端上验证）：
+
+```json
+{ "endpoint": "http://127.0.0.1:4318" }
+```
+
+本机 Jaeger 或 Grafana Alloy、OpenTelemetry Collector 在 4318 端口接收 OTLP/HTTP 时使用上面的配置。Honeycomb：
+
+```json
+{
+  "endpoint": "https://api.honeycomb.io",
+  "headers": { "x-honeycomb-team": { "kind": "env", "value": "HONEYCOMB_API_KEY" } },
+  "resource": { "deployment.environment": "laptop" }
+}
+```
+
+Grafana Cloud 的 OTLP 入口（`<region>` 与凭据见 Grafana Cloud 的 OTLP 连接页面；`GRAFANA_OTLP_AUTH` 的值为 `Basic <base64(实例 ID:令牌)>`）：
+
+```json
+{
+  "endpoint": "https://otlp-gateway-prod-<region>.grafana.net/otlp",
+  "headers": { "Authorization": { "kind": "env", "value": "GRAFANA_OTLP_AUTH" } }
+}
+```
+
 ## 验证
 
 [单元测试](../tests/unit/observability.test.ts)覆盖 ACP 请求归属、累计快照不重复计量、Pi 消息差分、会话不匹配/链接拒绝、字符/工具去重、时间和缺失值。[HTTP 集成测试](../tests/integration/observability.test.ts)通过正式 Gateway、Worker、ACP 本地确定协议端和 SQLite 验证两次运行各自 usage、OpenAPI、范围限制、重启重建一致。
@@ -68,5 +114,7 @@ ACP 0.13.2 的 reducer 会把最新 breakdown 直接赋给名称为 `cumulative_
 读取接口由 [读取器单元测试](../packages/daemon/test/session-log-reader.test.ts)（尾部、游标、未写完的行、轮转后续读、游标失效、Gateway 过滤、再次脱敏、限额与预算）和 [接口集成测试](../tests/integration/session-logs.test.ts)（两个 Session 经正式 Gateway/Worker 与 ACP fixture 运行后分页读取、非法参数 400、未知 Session 404、不含上游密钥与 Session token）验证；控制台契约见 [控制台契约测试](../tools/check-console-contracts.test.mjs)。
 
 诊断日志由 [日志单元测试](../packages/daemon/test/diagnostic-log.test.ts)与 [集成测试](../tests/integration/diagnostic-logs.test.ts) 验证：后者经正式 Gateway/Worker、ACP fixture 和本地上游，以 info 与 debug 各运行一次含工具调用、权限和 stderr 的任务，检查两份日志的必备记录、推理回填计数与 debug 摘录，并确认上游模型密钥与 Session token 都未写入。
+
+OTLP 导出由 [导出器单元测试](../packages/daemon/test/otlp-export.test.ts)（配置校验与拒绝样例、属性逐项相等、未回报用量不写 0、队列满时丢弃而 `record` 不等待、收集端不应答时停止仍守期限、重试与不重试的状态、停止时导出队列、只有提交成功的记录进入导出）和 [集成测试](../tests/integration/otlp-export.test.ts)（经正式守护进程、共享网关与假 provider 完成普通、流式工具与被拒绝三次调用，停止守护进程后回环收集端收到三个 span，属性与账本记录逐项一致，载荷中没有提示词、工具参数、推理文本、上游 Key、Gateway Key 文本与名称和请求头秘密；没有 `otlp` 配置时即使设置了 `OTEL_EXPORTER_OTLP_ENDPOINT` 也没有任何导出请求；`http/protobuf` 配置拒绝启动）验证。未验证：真实的 Jaeger、Grafana 与 Honeycomb 后端。
 
 真实模型的最新验收以对应 `docs/verification/` 记录为准；读取历史原生文件能确认格式和已有用量，不等于新 Driver 已完成真实模型调用。Windows 原生采集仍需单独验证。
