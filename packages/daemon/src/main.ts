@@ -46,6 +46,11 @@ import {
 import { ensureAdminToken, ADMIN_TOKEN_FILE } from "./admin-token.js";
 import { registerApiV1 } from "./http/api-v1.js";
 import { getPreset, listPresets } from "@harnesshub/gateway/presets";
+import {
+  createGatewayHandler,
+  type GatewayHandler,
+} from "@harnesshub/gateway/server";
+import { resolveHandlerLimits } from "@harnesshub/gateway/limits";
 import { ProcessWorkerHost } from "@harnesshub/runtime/process/worker-host";
 import { sharedProcessLauncher } from "@harnesshub/runtime/process/launcher";
 import { usePlatformLauncher } from "@harnesshub/store/platform/process-launcher";
@@ -222,9 +227,15 @@ export async function startHub(options: {
   configDir?: string;
   /** Backend for new managed secrets (`secrets.backend`); `auto` by default. */
   secretsBackend?: SecretBackendSetting;
+  /**
+   * Overrides of the shared model gateway's limits (`gateway.limits`), resolved
+   * by `resolveHandlerLimits`; unknown or out-of-range values fail the start.
+   */
+  gatewayLimits?: unknown;
 }) {
   // HARNESSHUB_LOG_LEVEL is validated before anything starts; Workers inherit the value.
   const logLevel = parseLogLevel(process.env[LOG_LEVEL_ENVIRONMENT]);
+  const gatewayLimits = resolveHandlerLimits(options.gatewayLimits);
   // Helper programs (secrets, Windows ACLs) start through this process's
   // launcher; every Gateway of the process shares it, and `main` closes it.
   const launcher = sharedProcessLauncher();
@@ -365,6 +376,12 @@ export async function startHub(options: {
   let workflowStore: SqliteWorkflowStore | undefined;
   let workflows: WorkflowService | undefined;
   let modelPlane: SqliteModelPlaneStore | undefined;
+  let modelGateway: GatewayHandler | undefined;
+  /** Where local clients reach the model gateway; known once the listener is bound. */
+  let gatewayOrigin: string | undefined;
+  // env credential references read the environment the daemon started with.
+  const environment = Object.freeze({ ...process.env });
+  const startedAt = new Date().toISOString();
   try {
     // The model-plane API: the admin token, managed secrets and the store
     // on this owned database (opened after SqliteStore applied migrations).
@@ -378,6 +395,16 @@ export async function startHub(options: {
     modelPlane = new SqliteModelPlaneStore(
       path.join(dataDir, "harnesshub.sqlite"),
     );
+    // The shared model gateway on this listener (03-model-plane); it reads
+    // providers, keys and the ledger from the store and resolves credentials
+    // per upstream attempt.
+    modelGateway = createGatewayHandler({
+      store: modelPlane,
+      resolveSecret: (ref) => secrets.resolve(ref, environment),
+      clock: Date.now,
+      limits: gatewayLimits,
+      log: gatewayLog,
+    });
     manager = new EngineManager({
       config,
       persistence: store,
@@ -554,7 +581,15 @@ export async function startHub(options: {
         redact: createRedactor(gatewayLogSecrets()),
         ownRoute: "/v1/sessions/:id/logs",
       }),
+      modelGateway: {
+        handle: modelGateway,
+        headersTimeoutMs: gatewayLimits.requestHeadersTimeoutMs,
+      },
     });
+    // Before the stores close (onClose): stop new model calls, abort the
+    // upstream requests in flight and wait for their ledger entries.
+    const gatewayToClose = modelGateway;
+    server.addHook("preClose", async () => gatewayToClose.close());
     const toolPackages = createToolPackageManagement({
       root: options.toolPackageRoot ?? path.join(dataDir, "tool-packages"),
       nodeExecutable: process.execPath,
@@ -570,17 +605,23 @@ export async function startHub(options: {
       modelPlane,
       secrets,
       presets: { list: listPresets, get: getPreset },
-      // env credential references read the environment the daemon started with.
-      environment: Object.freeze({ ...process.env }),
-      system: {
+      environment,
+      system: () => ({
         apiVersion: "v1",
         version: build.version,
         commit: build.commit,
         pid: process.pid,
-        startedAt: new Date().toISOString(),
+        startedAt,
         dataDir,
         secretBackend: secrets.backend,
-      },
+        gateway: gatewayOrigin
+          ? {
+              openaiBaseUrl: `${gatewayOrigin}/v1`,
+              anthropicBaseUrl: gatewayOrigin,
+              geminiBaseUrl: gatewayOrigin,
+            }
+          : null,
+      }),
       log: gatewayLog,
     });
     // Registered after createGateway's hook, so the application has already cancelled
@@ -608,6 +649,10 @@ export async function startHub(options: {
       host: bindHost,
       port: options.port,
     });
+    // The gateway accepts loopback clients only, whatever address is bound.
+    const bound = server.server.address();
+    if (bound && typeof bound === "object")
+      gatewayOrigin = `http://127.0.0.1:${bound.port}`;
     gatewayLog.info("gateway.listen", {
       url,
       host: bindHost,
@@ -617,6 +662,7 @@ export async function startHub(options: {
       fullAccess: runtimeInfo.fullAccess,
       consoleUrl: options.consoleUrl ?? null,
       adminToken: path.join(dataDir, ADMIN_TOKEN_FILE),
+      modelGateway: gatewayOrigin ?? null,
       maxConcurrency: config.maxConcurrency,
       defaultTimeoutMs: config.defaultTimeoutMs,
     });
@@ -638,6 +684,7 @@ export async function startHub(options: {
     } catch {
       /* Unconfirmed process leases remain available to the next startup. */
     }
+    await modelGateway?.close();
     workflowStore?.close();
     modelPlane?.close();
     store.close();

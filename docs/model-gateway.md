@@ -172,7 +172,7 @@ node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js dist/tests/un
 
 ## 共享网关
 
-`createGatewayHandler(deps)`（[server.ts](../packages/gateway/src/server.ts)）返回一个不带监听器的 Node `(request, response)` 处理函数，由守护进程挂载到自己的端口上；`isGatewayPath(pathname)` 判断某条路径是否交给它（`/v1/*`、`/v1beta/*`、`/v1alpha/*`，以及省略 `/v1` 的 `/chat/completions`、`/responses`、`/messages`、`/messages/count_tokens`、`/models`）。目前只有测试挂载它，守护进程的组合尚未完成。本节描述已实现的行为；目标设计与本节不同之处列在最后。
+`createGatewayHandler(deps)`（[server.ts](../packages/gateway/src/server.ts)）返回一个不带监听器的 Node `(request, response)` 处理函数，由守护进程挂载到自己的端口上；`isGatewayPath(pathname)` 判断某条路径是否交给它（`/v1/*`、`/v1beta/*`、`/v1alpha/*`，以及省略 `/v1` 的 `/chat/completions`、`/responses`、`/messages`、`/messages/count_tokens`、`/models`）。守护进程在 `startHub` 中用 `SqliteModelPlaneStore`、`SecretStore.resolve`（`env` 引用读取守护进程启动时的环境快照）与 `resolveHandlerLimits(gatewayLimits)` 构造它，经 Fastify 的 `serverFactory` 挂在同一个监听器上、先于 Fastify 处理：交给它的是 `/v1beta/*`、`/v1alpha/*`、`/v1` 下的 `chat/completions`、`responses`、`messages`、`messages/count_tokens`、`models` 与 `models/…`，以及这些路径省略 `/v1` 的形式（[model-gateway-mount.ts](../packages/daemon/src/http/model-gateway-mount.ts) 的 `isModelGatewayPath`）。`/v1` 下的其他路径仍是现有管理接口，由 Fastify 处理，直到它们迁到 `/api/v1`；这些请求不经过 Fastify 的 2 MiB 请求体上限、JSON 解析与钩子。监听器的 `headersTimeout` 取 `requestHeadersTimeoutMs`；关闭时先在 `preClose` 中 `await close()`，再关闭存储。`GET /api/v1/system/info` 的 `gateway` 给出本机客户端使用的基址，见 [快速上手](quickstart.md)。本节描述已实现的行为；目标设计与本节不同之处列在最后。
 
 ### 依赖与所有权
 

@@ -782,6 +782,7 @@ export const systemInfoSchema = {
     "startedAt",
     "dataDir",
     "secretBackend",
+    "gateway",
   ],
   properties: {
     apiVersion: { type: "string", enum: ["v1"] },
@@ -791,5 +792,17 @@ export const systemInfoSchema = {
     startedAt: timestamp,
     dataDir: { type: "string" },
     secretBackend: { enum: ["keychain", "dpapi", "file"] },
+    gateway: {
+      type: ["object", "null"],
+      additionalProperties: false,
+      required: ["openaiBaseUrl", "anthropicBaseUrl", "geminiBaseUrl"],
+      description:
+        "Model gateway base URLs for local clients: OpenAI SDK baseURL (with /v1), Anthropic and Gemini base (without a version)",
+      properties: {
+        openaiBaseUrl: { type: "string" },
+        anthropicBaseUrl: { type: "string" },
+        geminiBaseUrl: { type: "string" },
+      },
+    },
   },
 } as const;

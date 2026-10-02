@@ -73,6 +73,15 @@ export interface SystemInfo {
   startedAt: string;
   dataDir: string;
   secretBackend: ManagedSecrets["backend"];
+  /**
+   * Base URLs of the model gateway on this daemon for local clients, by the
+   * official SDKs' conventions; null before the listener is bound.
+   */
+  gateway: {
+    openaiBaseUrl: string;
+    anthropicBaseUrl: string;
+    geminiBaseUrl: string;
+  } | null;
 }
 
 export interface ApiV1Options {
@@ -83,7 +92,8 @@ export interface ApiV1Options {
   presets: PresetCatalog;
   /** The daemon's environment snapshot, for `env` credential references. */
   environment: Readonly<NodeJS.ProcessEnv>;
-  system: SystemInfo;
+  /** Read on every `GET /system/info`. */
+  system: () => SystemInfo;
   /** Internal failures (500) are recorded here, without request bodies. */
   log?: LogSink;
 }
@@ -272,7 +282,7 @@ export function registerApiV1(
       api.get(
         "/system/info",
         { schema: { response: responses(systemInfoSchema) } },
-        async () => options.system,
+        async () => options.system(),
       );
       registerModelPlaneRoutes(api, options);
     },

@@ -15,6 +15,16 @@ import {
   type WorkflowCapability,
 } from "@harnesshub/core/workflows";
 import { once } from "node:events";
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
+import {
+  isModelGatewayPath,
+  requestPath,
+  type ModelGatewayMount,
+} from "./model-gateway-mount.js";
 import { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import Fastify, { type FastifyError } from "fastify";
@@ -88,9 +98,36 @@ export async function createGateway(
      * `GET /v1/sessions/{id}/logs`. Without it that route answers 503.
      */
     sessionLogs?: SessionLogReader;
+    /**
+     * The shared model gateway. Requests whose path {@link isModelGatewayPath}
+     * accepts go to it on the same listener before Fastify: they skip
+     * Fastify's body limit, JSON parser and hooks, and the gateway applies
+     * its own limits and loopback, Host and Origin rules. The owner closes
+     * the gateway before the stores.
+     */
+    modelGateway?: ModelGatewayMount;
   } = {},
 ) {
+  const modelGateway = options.modelGateway;
   const server = Fastify({
+    ...(modelGateway
+      ? {
+          serverFactory: (
+            handler: (
+              request: IncomingMessage,
+              response: ServerResponse,
+            ) => void,
+          ) => {
+            const listener = createServer((request, response) => {
+              if (isModelGatewayPath(requestPath(request.url)))
+                modelGateway.handle(request, response);
+              else handler(request, response);
+            });
+            listener.headersTimeout = modelGateway.headersTimeoutMs;
+            return listener;
+          },
+        }
+      : {}),
     logger: false,
     bodyLimit: 2 * 1024 * 1024,
     ajv: { customOptions: { removeAdditional: false } },

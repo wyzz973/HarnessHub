@@ -863,9 +863,9 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     group: "system",
     request: "无参数。",
     response:
-      "200：apiVersion=v1、version、commit、pid、startedAt、dataDir、secretBackend。",
+      "200：apiVersion=v1、version、commit、pid、startedAt、dataDir、secretBackend，以及 gateway：本机客户端使用的模型网关基址 openaiBaseUrl（含 /v1）、anthropicBaseUrl 与 geminiBaseUrl（不含版本段），监听器绑定之前为 null。",
     implementation:
-      "组合根在启动时固定的构建身份与秘密后端；`hh status` 读取它。",
+      "组合根在启动时固定的构建身份与秘密后端，加上监听器绑定后的回环地址；`hh status` 读取它并提示客户端的配置方式。",
     effects: "只读。",
     errors:
       "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",

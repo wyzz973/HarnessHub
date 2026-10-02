@@ -237,6 +237,12 @@ export interface SystemInfo {
   startedAt: string;
   dataDir: string;
   secretBackend: "keychain" | "dpapi" | "file";
+  /** The model gateway's base URLs for local clients; null before the daemon listens. */
+  gateway: {
+    openaiBaseUrl: string;
+    anthropicBaseUrl: string;
+    geminiBaseUrl: string;
+  } | null;
 }
 
 type Query = Record<string, string | number | undefined>;
