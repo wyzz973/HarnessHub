@@ -86,11 +86,17 @@ const notShellName =
   /(code|python|file|read|write|edit|search|grep|glob|web|fetch|browser|todo|task|agent|mcp|notebook|kill|output|status|stdin|process|background|list|view|patch|image)/i;
 const commandKeys = ["command", "cmd", "script", "commandLine", "command_line"];
 
+/**
+ * The JSON type a schema names, in lower case: Gemini function declarations
+ * spell the OpenAPI types in upper case (`STRING`, `OBJECT`).
+ */
 function schemaType(schema) {
   if (!isObject(schema)) return undefined;
-  if (typeof schema.type === "string") return schema.type;
+  if (typeof schema.type === "string") return schema.type.toLowerCase();
   if (Array.isArray(schema.type))
-    return schema.type.find((type) => type !== "null");
+    return schema.type
+      .find((type) => typeof type === "string" && type.toLowerCase() !== "null")
+      ?.toLowerCase();
   for (const key of ["anyOf", "oneOf"])
     if (Array.isArray(schema[key]))
       for (const option of schema[key]) {

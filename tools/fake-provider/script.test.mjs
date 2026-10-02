@@ -605,4 +605,29 @@ test("the marker command suits the shell tool's argument form and platform", () 
     "echo mock-ok> mock-ok.txt",
   ]);
   assert.equal(selectShellTool(tools.slice(0, 1)), undefined);
+  // Gemini declarations spell the types in upper case.
+  const gemini = selectShellTool([
+    {
+      name: "bash",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          command: { type: "STRING" },
+          timeout: { type: "INTEGER" },
+        },
+        required: ["command", "timeout"],
+      },
+    },
+  ]);
+  assert.equal(gemini?.name, "bash");
+  assert.deepEqual(markerArguments(gemini, "linux"), {
+    command: "echo mock-ok > mock-ok.txt",
+    timeout: 60,
+  });
+  assert.equal(
+    selectShellTool([
+      { name: "bash", parameters: { properties: { command: { type: "OBJECT" } } } },
+    ]),
+    undefined,
+  );
 });
