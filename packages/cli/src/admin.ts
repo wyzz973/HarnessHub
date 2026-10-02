@@ -753,6 +753,13 @@ async function statusCommand(args: string[]): Promise<void> {
       `Providers:     ${providers.items.length}`,
       `Route groups:  ${groups.items.length}`,
       `Gateway Keys:  ${activeKeys} active`,
+      ...(info.gateway
+        ? [
+            `Model gateway: ${info.gateway.openaiBaseUrl}`,
+            "",
+            `Point your OpenAI client at ${info.gateway.openaiBaseUrl} (Anthropic: ${info.gateway.anthropicBaseUrl}) with a key from hh key create.`,
+          ]
+        : []),
     ].join("\n"),
   );
 }

@@ -101,7 +101,13 @@ void test(
     assert.equal(status.daemon.apiVersion, "v1");
     assert.equal(status.daemon.secretBackend, "file");
     assert.equal(status.providers, 0);
-    assert.match((await ok(["status"])).stdout, /Daemon: +running, pid \d+/);
+    const human = (await ok(["status"])).stdout;
+    assert.match(human, /Daemon: +running, pid \d+/);
+    assert.match(human, /Model gateway: http:\/\/127\.0\.0\.1:\d+\/v1\n/);
+    assert.match(
+      human,
+      /Point your OpenAI client at http:\/\/127\.0\.0\.1:\d+\/v1 \(Anthropic: http:\/\/127\.0\.0\.1:\d+\) with a key from hh key create\./,
+    );
 
     assert.equal(
       (
