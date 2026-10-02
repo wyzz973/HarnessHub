@@ -14,7 +14,10 @@ import {
   ndJsonStream,
   PROTOCOL_VERSION,
 } from "@agentclientprotocol/sdk";
-import { ProcessWorkerHost } from "@harnesshub/runtime/process/worker-host";
+import {
+  ProcessWorkerHost,
+  windowsHomeEnvironment,
+} from "@harnesshub/runtime/process/worker-host";
 import type { ExecutionSpec, WorkerMessage } from "@harnesshub/core/ports";
 import type { RunId, SessionId } from "@harnesshub/core/types";
 
@@ -81,6 +84,8 @@ if (process.argv.includes("--acp-peer")) {
                   explicit: process.env.HH_TEST_EXPLICIT_VALUE ?? null,
                   home: process.env.HOME,
                   userProfile: process.env.USERPROFILE,
+                  homeDrive: process.env.HOMEDRIVE ?? null,
+                  homePath: process.env.HOMEPATH ?? null,
                   appData: process.env.APPDATA,
                   localAppData: process.env.LOCALAPPDATA,
                   tmpdir: process.env.TMPDIR,
@@ -267,6 +272,10 @@ if (process.argv.includes("--acp-peer")) {
             PSModulePath: "fixture-module-path",
             // Engines find Git, Python and machine-wide configuration through these.
             ...windowsLocationFixture,
+            // Stand-ins for the Gateway's real profile. On Windows, libuv copies
+            // them into any explicit environment that lacks them (#36).
+            HOMEDRIVE: "Z:",
+            HOMEPATH: "\\fixture-real-profile",
           },
           stdio: ["ignore", "ignore", "ignore", "ipc"],
           execArgv: [],
@@ -292,6 +301,8 @@ if (process.argv.includes("--acp-peer")) {
       const actual: unknown = JSON.parse(String(message[0]));
       const home = join(directory, "backend", "home");
       const temporary = join(directory, "backend", "tmp");
+      const windowsHome =
+        process.platform === "win32" ? windowsHomeEnvironment(home) : undefined;
       assert.deepEqual(actual, {
         ambient: null,
         psModulePath: "fixture-module-path",
@@ -300,6 +311,8 @@ if (process.argv.includes("--acp-peer")) {
         explicit: "explicit-fixture",
         home,
         userProfile: home,
+        homeDrive: windowsHome?.HOMEDRIVE ?? null,
+        homePath: windowsHome?.HOMEPATH ?? null,
         appData: join(home, "AppData", "Roaming"),
         localAppData: join(home, "AppData", "Local"),
         tmpdir: temporary,
