@@ -29,6 +29,17 @@ const windowsLocations = [
   "ALLUSERSPROFILE",
   "PUBLIC",
 ];
+/**
+ * Values as a 64-bit Windows sets them. Windows derives a 64-bit process's
+ * ProgramFiles and CommonProgramFiles from ProgramW6432 and CommonProgramW6432,
+ * so the fixture keeps each pair equal, as on a real system.
+ */
+const windowsLocationFixture = Object.fromEntries(
+  windowsLocations.map((name) => [
+    name,
+    `fixture-${name.replace(/^(Common)?ProgramW6432$/, "$1ProgramFiles")}`,
+  ]),
+);
 
 if (process.argv.includes("--acp-peer")) {
   let turns = 0;
@@ -250,9 +261,7 @@ if (process.argv.includes("--acp-peer")) {
             // Windows PowerShell needs it to autoload modules quickly.
             PSModulePath: "fixture-module-path",
             // Engines find Git, Python and machine-wide configuration through these.
-            ...Object.fromEntries(
-              windowsLocations.map((name) => [name, `fixture-${name}`]),
-            ),
+            ...windowsLocationFixture,
           },
           stdio: ["ignore", "ignore", "ignore", "ipc"],
           execArgv: [],
@@ -281,9 +290,7 @@ if (process.argv.includes("--acp-peer")) {
       assert.deepEqual(actual, {
         ambient: null,
         psModulePath: "fixture-module-path",
-        windowsLocations: Object.fromEntries(
-          windowsLocations.map((name) => [name, `fixture-${name}`]),
-        ),
+        windowsLocations: windowsLocationFixture,
         declared: "declared-fixture",
         explicit: "explicit-fixture",
         home,
