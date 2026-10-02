@@ -15,7 +15,8 @@
 
 | 资源 | 操作 | 要点 |
 |---|---|---|
-| providers | `GET`、`POST /providers`；`GET`、`PATCH`、`DELETE /providers/{id}` | 端点是厂商官方 SDK 的基址：chat 与 responses 含 `/v1`，anthropic 与 gemini 不含版本段；以操作路径或版本段结尾、内嵌凭据、带查询串或片段、公网 HTTP 的基址被拒绝，`errors[]` 指向 `/endpoints/<协议>`。`PATCH` 是 JSON Merge Patch。被路由组或未吊销的 Key 引用时删除返回 409 |
+| presets | `GET /presets` | 内置的 provider 预设（[presets](../packages/gateway/presets/README.md)）：端点、Key 的发送方式、获取 Key 的页面与核对日期 `verified` |
+| providers | `GET`、`POST /providers`；`GET`、`PATCH`、`DELETE /providers/{id}`；`POST /providers/{id}/models/refresh` | `POST` 可以只给 `preset`（可加 `id`、`name`、按协议覆盖的 `endpoints` 与第一个 `credential`）。刷新用第一个启用的凭据从上游列出模型（chat 基址 + `/models`、anthropic 基址 + `/v1/models`、gemini 基址 + `/v1beta/models`），保留已有模型的价格等元数据；失败时保留原列表并标记 `stale`，错误只含主机与 HTTP 状态。端点是厂商官方 SDK 的基址：chat 与 responses 含 `/v1`，anthropic 与 gemini 不含版本段；以操作路径或版本段结尾、内嵌凭据、带查询串或片段、公网 HTTP 的基址被拒绝，`errors[]` 指向 `/endpoints/<协议>`。`PATCH` 是 JSON Merge Patch。被路由组或未吊销的 Key 引用时删除返回 409 |
 | credentials | `GET`、`POST /providers/{id}/credentials`；`PUT .../{credentialId}/secret`；`DELETE .../{credentialId}` | `value` 存入秘密后端，响应只含 `{kind:"store", value:<UUID>}` 引用；也可以给 `env` 或 `file` 引用。轮换保持引用不变；删除凭据或 provider 时同时删除托管秘密。06 第 3 节的 `/credentials` 顶层资源改为挂在 provider 下 |
 | route-groups | `GET`、`POST /route-groups`；`GET`、`PATCH`、`DELETE /route-groups/{id}` | 成员必须是已存在 provider 的 Model Ref；被未吊销的 Key 允许时删除返回 409 |
 | gateway-keys | `GET`、`POST /gateway-keys`；`GET /gateway-keys/{id}`；`POST /gateway-keys/{id}/revoke` | 只签发 `client:` 作用域，`modelAllow` 必填；默认 90 天后过期，`expiresAt: null` 不过期。Key 文本只出现在创建响应中，列表与详情不含哈希 |
@@ -31,8 +32,10 @@
 
 ```sh
 hh status
-hh provider add deepseek --chat https://api.deepseek.com/v1 \
-  --anthropic https://api.deepseek.com/anthropic --model deepseek-chat
+hh provider presets
+printf '%s' "$KEY" | hh provider add --preset deepseek --credential-from-stdin
+hh provider models deepseek --refresh
+hh provider add local-llm --chat http://127.0.0.1:8000/v1 --model my-model
 hh credential add deepseek --name main          # 在终端中隐藏输入
 printf '%s' "$KEY" | hh credential add deepseek --from-stdin
 hh credential rotate deepseek key-1 --from-env NEW_KEY
