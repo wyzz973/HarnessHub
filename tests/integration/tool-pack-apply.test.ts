@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
+import { realpath } from "node:fs/promises";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { startHub } from "../../src/main.js";
@@ -11,16 +9,16 @@ import {
   startMcp,
   substituteSessionWorkspace,
 } from "../fixtures/tool-pack-mcp-client.js";
+import { temporaryDirectory } from "../support/temporary.js";
 
 void test(
   "one-click Tool Pack apply publishes a new engine revision and exposes allow-listed CLI through MCP in the Session workspace",
   { timeout: 30_000 },
   async (t) => {
-    const dataDir = await realpath(
-      await mkdtemp(path.join(os.tmpdir(), "hh-tool-apply-data-")),
-    );
+    const data = await temporaryDirectory(t, "hh-tool-apply-data-");
+    const dataDir = await realpath(data.directory);
     const workspace = await realpath(
-      await mkdtemp(path.join(os.tmpdir(), "hh-tool-apply-workspace-")),
+      (await temporaryDirectory(t, "hh-tool-apply-workspace-")).directory,
     );
     const source = fileURLToPath(
       new URL("../../../examples/tool-packages/developer-cli", import.meta.url),
@@ -31,11 +29,7 @@ void test(
       demo: true,
       port: 0,
     });
-    t.after(async () => {
-      await hub.server.close();
-      await rm(dataDir, { recursive: true, force: true });
-      await rm(workspace, { recursive: true, force: true });
-    });
+    data.defer(() => hub.server.close());
 
     const registered = await hub.server.inject({
       method: "POST",

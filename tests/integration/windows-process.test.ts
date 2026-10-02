@@ -32,6 +32,7 @@ import type {
   SessionId,
   SessionRecord,
 } from "../../src/domain/types.js";
+import { temporaryDirectory } from "../support/temporary.js";
 
 const native = fileURLToPath(
   new URL("../../native/harnesshub-job.exe", import.meta.url),
@@ -79,7 +80,7 @@ void test(
   "Windows missing packaged supervisor rejects readiness and stops its idle Worker without executing work",
   windows,
   async (t) => {
-    const directory = await mkdtemp(join(tmpdir(), "hh-missing-job-"));
+    const { directory, defer } = await temporaryDirectory(t, "hh-missing-job-");
     const modulePath = join(directory, "src", "process", "windows-job.js");
     await mkdir(join(directory, "src", "process"), { recursive: true });
     await writeFile(
@@ -102,11 +103,10 @@ void test(
       { stdio: ["ignore", "ignore", "ignore", "ipc"], windowsHide: true },
     );
     const closed = once(worker, "close");
-    t.after(async () => {
+    defer(async () => {
       if (worker.exitCode === null && worker.signalCode === null)
         worker.kill("SIGKILL");
       await closed;
-      await rm(directory, { recursive: true });
     });
     await once(worker, "message");
     const owned = isolated.superviseWindowsWorker(worker, randomUUID());
@@ -276,7 +276,10 @@ void test(
   "Windows compiled Gateway crash kills its CLI tree and restart records one interrupted Run without rerunning",
   windows,
   async (t) => {
-    const directory = await mkdtemp(join(tmpdir(), "hh-gateway-crash 中文 "));
+    const { directory, defer } = await temporaryDirectory(
+      t,
+      "hh-gateway-crash 中文 ",
+    );
     const configFile = join(directory, "engines.json");
     const dataDir = join(directory, "data");
     await writeFile(
@@ -305,11 +308,10 @@ void test(
       { cwd: directory, stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
     );
     const closed = once(gateway, "close");
-    t.after(async () => {
+    defer(async () => {
       if (gateway.exitCode === null && gateway.signalCode === null)
         gateway.kill("SIGKILL");
       await closed;
-      await rm(directory, { recursive: true });
     });
     let output = "";
     gateway.stdout.setEncoding("utf8").on("data", (chunk: string) => {

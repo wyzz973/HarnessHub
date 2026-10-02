@@ -16,6 +16,7 @@ import type {
   SessionId,
   SessionRecord,
 } from "../../src/domain/types.js";
+import { temporaryDirectory } from "../support/temporary.js";
 
 const peer = fileURLToPath(new URL("../fixtures/cli-peer.js", import.meta.url));
 
@@ -184,7 +185,10 @@ void test(
     timeout: 15_000,
   },
   async (t) => {
-    const directory = await mkdtemp(join(tmpdir(), "harnesshub-cli-deadline-"));
+    const { directory, defer } = await temporaryDirectory(
+      t,
+      "harnesshub-cli-deadline-",
+    );
     const config = join(directory, "engines.json");
     const input = spec(directory, "wait", "wait input");
     await writeFile(
@@ -212,7 +216,7 @@ void test(
     // Only the Gateway's acceptance clock is held until its CLI has emitted PIDs.
     const realDelay = delay;
     let clockEnabled = false;
-    t.after(async () => {
+    defer(async () => {
       const closing = hub.server.close();
       if (clockEnabled) {
         let closed = false;
@@ -236,7 +240,6 @@ void test(
           t.mock.timers.reset();
         }
       } else await closing;
-      await rm(directory, { recursive: true });
     });
     const session = (await (
       await fetch(`${hub.url}/v1/sessions`, {
@@ -353,7 +356,10 @@ void test(
     timeout: 15_000,
   },
   async (t) => {
-    const directory = await mkdtemp(join(tmpdir(), "harnesshub-cli-reap-"));
+    const { directory, defer } = await temporaryDirectory(
+      t,
+      "harnesshub-cli-reap-",
+    );
     const config = join(directory, "engines.json");
     const dataDir = join(directory, "data");
     const modes = ["background-success", "background-failure"] as const;
@@ -375,10 +381,7 @@ void test(
       demo: false,
       port: 0,
     });
-    t.after(async () => {
-      await hub.server.close();
-      await rm(directory, { recursive: true });
-    });
+    defer(() => hub.server.close());
     for (const mode of modes) {
       const created = await hub.server.inject({
         method: "POST",

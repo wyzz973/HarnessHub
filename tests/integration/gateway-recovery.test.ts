@@ -1,20 +1,21 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { startHub } from "../../src/main.js";
 import { isTerminal, type RunRecord } from "../../src/domain/types.js";
+import { temporaryDirectory } from "../support/temporary.js";
 
 void test(
   "Gateway persists backend identity across suspend/restart, rejects replacement and permits first initialization after queued timeout",
   { timeout: 20000 },
   async (t) => {
-    const directory = await mkdtemp(
-      path.join(os.tmpdir(), "hh-gateway-resume-"),
+    const { directory, defer } = await temporaryDirectory(
+      t,
+      "hh-gateway-resume-",
     );
     const peerState = path.join(directory, "peer");
     await mkdir(peerState);
@@ -47,10 +48,7 @@ void test(
       demo: true,
     };
     let hub = await startHub(options);
-    t.after(async () => {
-      await hub.server.close();
-      await rm(directory, { recursive: true, force: true });
-    });
+    defer(() => hub.server.close());
     const wait = async (run: RunRecord) => {
       const until = Date.now() + 8000;
       while (!isTerminal(hub.app.getRun(run.id).status)) {

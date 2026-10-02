@@ -1,15 +1,7 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
@@ -24,6 +16,7 @@ import {
   verifyPrivateDirectory,
   verifyPrivateFile,
 } from "../../src/platform/windows-acl.js";
+import { temporaryDirectory } from "../support/temporary.js";
 
 type RunView = RunRecord & { artifacts: ArtifactRecord[] };
 
@@ -31,8 +24,9 @@ void test(
   "Windows Gateway files: Chinese/space paths, DACL, immutable bytes, SQLite reopen, junction rejection",
   { skip: process.platform !== "win32", timeout: 40_000 },
   async (t) => {
-    const directory = await mkdtemp(
-      path.join(tmpdir(), "harnesshub-windows-files-"),
+    const { directory, defer } = await temporaryDirectory(
+      t,
+      "harnesshub-windows-files-",
     );
     const workspace = path.join(directory, "中文 工作目录");
     const dataDir = path.join(directory, "应用 数据");
@@ -42,10 +36,7 @@ void test(
     const bytes = Buffer.from([0, 255, 128, 13, 10, 1]);
     await writeFile(source, bytes);
     let hub: Awaited<ReturnType<typeof startHub>> | undefined;
-    t.after(async () => {
-      await hub?.server.close();
-      await rm(directory, { recursive: true, force: true });
-    });
+    defer(() => hub?.server.close());
     hub = await startHub({ dataDir, demo: true, cwd: workspace, port: 0 });
     const post = async (route: string, body: unknown) => {
       const response = await fetch(`${hub!.url}${route}`, {

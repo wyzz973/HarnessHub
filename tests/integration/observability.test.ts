@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Readable, Writable } from "node:stream";
@@ -18,6 +17,7 @@ import type {
   RunObservations,
 } from "../../src/domain/observability.js";
 import type { RunRecord, SessionRecord } from "../../src/domain/types.js";
+import { temporaryDirectory } from "../support/temporary.js";
 
 if (process.argv.includes("--observation-peer")) {
   let turns = 0;
@@ -81,8 +81,9 @@ if (process.argv.includes("--observation-peer")) {
     "formal Gateway/ACP Worker observations survive restart, avoid duplicate session totals, and expose sample coverage",
     { timeout: 20000 },
     async (t) => {
-      const directory = await mkdtemp(
-        path.join(os.tmpdir(), "hub-observe-http-"),
+      const { directory, defer } = await temporaryDirectory(
+        t,
+        "hub-observe-http-",
       );
       const configFile = path.join(directory, "engines.json");
       await writeFile(
@@ -111,10 +112,7 @@ if (process.argv.includes("--observation-peer")) {
         port: 0,
       };
       let hub = await startHub(options);
-      t.after(async () => {
-        await hub.server.close();
-        await rm(directory, { recursive: true, force: true });
-      });
+      defer(() => hub.server.close());
       async function get<T>(url: string): Promise<T> {
         const response = await fetch(`${hub.url}${url}`);
         assert.equal(response.status, 200);

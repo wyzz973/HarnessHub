@@ -3,8 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type ServerResponse } from "node:http";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { normalizeEngine } from "../../src/engine/registry.js";
 import { prepareConfiguration } from "../../src/drivers/configuration/prepare.js";
@@ -13,6 +12,7 @@ import { startModelBridge } from "../../src/drivers/chat-completions/bridge.js";
 import { responsesToChat } from "../../src/drivers/chat-completions/responses.js";
 import { googleToChat } from "../../src/drivers/chat-completions/google.js";
 import { normalizeRequest } from "../../src/drivers/chat-completions/upstream.js";
+import { temporaryDirectory } from "../support/temporary.js";
 
 const settings = {
   model: "fixture",
@@ -330,7 +330,10 @@ void test(
 
 for (const adapter of ["codex", "gemini"] as const)
   void test(`${adapter} Chat preparation keeps upstream credentials off disk and configures native approval/model before ACP`, async (t) => {
-    const root = await mkdtemp(join(tmpdir(), "hh-chat-config-"));
+    const { directory: root, defer } = await temporaryDirectory(
+      t,
+      "hh-chat-config-",
+    );
     const profile = normalizeEngine({
       id: adapter,
       driver: "acp",
@@ -359,10 +362,7 @@ for (const adapter of ["codex", "gemini"] as const)
       },
       { FIXTURE_KEY: "synthetic-upstream-key" },
     );
-    t.after(async () => {
-      await prepared.modelBridge?.close();
-      await rm(root, { recursive: true, force: true });
-    });
+    defer(() => prepared.modelBridge?.close());
     assert.ok(prepared.modelBridge);
     assert.notEqual(
       prepared.env.HARNESSHUB_PROVIDER_KEY,

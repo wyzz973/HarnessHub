@@ -29,7 +29,14 @@
 
 ## 测试可靠性
 
-每个测试独立拥有临时目录、数据库、端口、进程与环境；随机临时路径和 `listen(0)` 避免并发冲突。资源获取后立即登记 teardown，失败和断言抛错也要释放。
+每个测试独立拥有临时目录、数据库、端口、进程与环境；随机临时路径和 `listen(0)` 避免并发冲突。资源获取后立即登记 teardown，失败和断言抛错也要释放。临时目录用 [`tests/support/temporary.ts`](../tests/support/temporary.ts) 的 `temporaryDirectory(t, prefix)` 创建：删除在创建时登记，之后启动的 Gateway、Worker 或模型桥用 `defer` 登记关闭，启动失败也不会泄漏目录。
+
+`pnpm test:*` 与 `test:windows` 都经 [`scripts/run-tests.mjs`](../scripts/run-tests.mjs) 运行，它负责测试环境的隔离与期限：
+
+- 测试进程只继承白名单中的系统变量与 `HARNESSHUB_TEST_*` 显式开关；开发者 shell 中的 `HARNESSHUB_MODEL*`、`AGENT_ENGINE`、各家 API Key 与令牌一律不可见，测试需要时自行设置。
+- HOME、USERPROFILE、APPDATA、LOCALAPPDATA、XDG 目录与临时目录指向本次运行私有的沙箱。必须使用账户级系统服务的测试（目前只有 macOS 登录钥匙串）从 `HARNESSHUB_TEST_SYSTEM_HOME` 取得真实 HOME，并在测试结束时恢复。
+- 每个用例默认有超时，整组有总期限；超过总期限时结束整个进程树并判为失败，这通常说明某个文件留下了未关闭的句柄。
+- 运行结束后沙箱临时目录中仍有内容即判为资源泄漏并失败；沙箱在任何情况下都会删除。拒绝样例见 `scripts/check-run-tests.test.mjs`。
 
 就绪等待使用带期限的握手、查询或状态事件；固定 sleep 不作就绪证据。重试仅用于明确瞬时故障，记录触发原因及次数；不能通过更长 timeout、整套串行或反复重跑掩盖竞态。
 
