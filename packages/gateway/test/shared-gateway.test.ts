@@ -7,6 +7,7 @@ import {
   ArraySegmenter,
   rewriteModel,
   SseSegmenter,
+  upstreamUrl,
 } from "../src/passthrough.js";
 import { isGatewayPath } from "../src/server.js";
 import {
@@ -87,6 +88,33 @@ void test("segmenters split at event boundaries for any chunking without changin
     () => new SseSegmenter(8).push(Buffer.from("data: 0123456789")),
     /larger than the gateway limit/,
   );
+});
+
+void test("upstream URLs append the operation path to the SDK base URL, with or without trailing slashes", () => {
+  const gemini = {
+    version: "v1beta",
+    method: "streamGenerateContent" as const,
+    sse: true,
+  };
+  for (const slash of ["", "/", "//"]) {
+    assert.equal(
+      upstreamUrl("chat", `http://h:1/v1${slash}`, "m", undefined).href,
+      "http://h:1/v1/chat/completions",
+    );
+    assert.equal(
+      upstreamUrl("responses", `http://h:1/v1${slash}`, "m", undefined).href,
+      "http://h:1/v1/responses",
+    );
+    assert.equal(
+      upstreamUrl("anthropic", `https://h/anthropic${slash}`, "m", undefined)
+        .href,
+      "https://h/anthropic/v1/messages",
+    );
+    assert.equal(
+      upstreamUrl("gemini", `https://h${slash}`, "gemini-x", gemini).href,
+      "https://h/v1beta/models/gemini-x:streamGenerateContent?alt=sse",
+    );
+  }
 });
 
 void test("gateway paths cover /v1, /v1beta, /v1alpha and the prefix-less OpenAI and Anthropic paths", () => {
@@ -452,14 +480,14 @@ void test("Responses, Anthropic and Gemini passthrough keep the body and respons
   await store.putProvider(
     provider(
       "ant",
-      { anthropic: up.base },
+      { anthropic: `${up.base}/` },
       { auth: { apiKeyHeader: "x-api-key" }, headers: { "x-tenant": "t1" } },
     ),
   );
   await store.putProvider(
     provider(
       "gem",
-      { gemini: up.base },
+      { gemini: `${up.base}/` },
       { auth: { apiKeyHeader: "x-goog-api-key" } },
     ),
   );

@@ -199,7 +199,7 @@ node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js dist/tests/un
 - 请求的模型取自请求体的 `model`（Gemini 取路径中 `/models/` 之后到最后一个 `:` 之前的部分），必须是 Model Ref `provider/model` 或 `group/<id>`，否则 400 `model_invalid`；provider 或组不存在为 404 `model_not_found`（不是拒绝记录）。provider 列表中没有的模型照常路由，元数据未知。
 - wire 名依次取模型自己的 `wire`、provider `wire` 中该模型的条目、`*` 条目（`*` 替换为模型名），否则为模型名。
 - 每个启用的 Credential 是一个候选。provider 声明了与入站相同的端点、不是 `translateOnly`、Credential 对该端点有效时直通；否则转换到 provider 的 Chat 端点；两者都不行的 Credential 被跳过。没有任何候选时返回 400 `unsupported_route`，消息说明转换到非 Chat 上游尚未实现。
-- 端点基址是该厂商官方 SDK 使用的基址：Chat 与 Responses 含版本（`…/v1`，拼接 `/chat/completions`、`/responses`）；Anthropic 不含版本（拼接 `/v1/messages`）；Gemini 不含版本（拼接客户端所用的 `v1beta`、`v1` 或 `v1alpha`，再接 `/models/{wire}:{method}`，SSE 时带 `alt=sse`）。
+- 端点基址是该厂商官方 SDK 使用的基址，这是对 `ProviderConfig.endpoints` 注释中“不含操作路径”的明确约定，存储的基址校验按同一约定执行：Chat 与 Responses 含版本（OpenAI SDK 的 `baseURL`，如 `https://api.openai.com/v1`，拼接 `/chat/completions`、`/responses`）；Anthropic 不含版本（`ANTHROPIC_BASE_URL` 形式，如 `https://api.deepseek.com/anthropic`，拼接 `/v1/messages`）；Gemini 不含版本（`@google/genai` 的 `baseUrl`，拼接客户端所用的 `v1beta`、`v1` 或 `v1alpha`，再接 `/models/{wire}:{method}`，SSE 时带 `alt=sse`）。基址末尾的斜杠不影响结果。
 - `GET /v1/models`、`GET /v1/models/{ref}`（`{ref}` 可含 `/`）与 `GET /v1beta/models` 只列出 Key 允许、且在 provider `expose` 中的模型，以及 Key 允许的路由组。每项含 `id`、`owned_by`、`context_window`、`max_output_tokens`、`reasoning`、`input_modalities`（已知时）与 `native_endpoints`（`translateOnly` 时为空，路由组没有该字段）；路由组取成员中最小的窗口与输出上限，成员都已知时取推理与模态的交集。列表与计数不访问上游，也不写账本。
 - `count_tokens` 与 Gemini `:countTokens` 返回本地估算，响应头带 `x-hh-token-count: estimated`。
 
