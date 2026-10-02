@@ -5656,6 +5656,12 @@
                                 "minimum": 1,
                                 "maximum": 86400000
                               },
+                              "model": {
+                                "type": "string",
+                                "minLength": 3,
+                                "maxLength": 1024,
+                                "pattern": "^[^\\s/]+/\\S+$"
+                              },
                               "outputs": {
                                 "type": "array",
                                 "minItems": 1,
@@ -6038,6 +6044,12 @@
                                 "minimum": 1,
                                 "maximum": 86400000
                               },
+                              "model": {
+                                "type": "string",
+                                "minLength": 3,
+                                "maxLength": 1024,
+                                "pattern": "^[^\\s/]+/\\S+$"
+                              },
                               "outputs": {
                                 "type": "array",
                                 "minItems": 1,
@@ -6356,6 +6368,12 @@
                     "minimum": 1,
                     "maximum": 86400000
                   },
+                  "model": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 1024,
+                    "pattern": "^[^\\s/]+/\\S+$"
+                  },
                   "outputs": {
                     "type": "array",
                     "minItems": 1,
@@ -6504,6 +6522,12 @@
                           "type": "integer",
                           "minimum": 1,
                           "maximum": 86400000
+                        },
+                        "model": {
+                          "type": "string",
+                          "minLength": 3,
+                          "maxLength": 1024,
+                          "pattern": "^[^\\s/]+/\\S+$"
                         },
                         "outputs": {
                           "type": "array",
@@ -7734,6 +7758,12 @@
                           "minimum": 1,
                           "maximum": 86400000
                         },
+                        "model": {
+                          "type": "string",
+                          "minLength": 3,
+                          "maxLength": 1024,
+                          "pattern": "^[^\\s/]+/\\S+$"
+                        },
                         "outputs": {
                           "type": "array",
                           "minItems": 1,
@@ -8104,6 +8134,12 @@
                           "type": "integer",
                           "minimum": 1,
                           "maximum": 86400000
+                        },
+                        "model": {
+                          "type": "string",
+                          "minLength": 3,
+                          "maxLength": 1024,
+                          "pattern": "^[^\\s/]+/\\S+$"
                         },
                         "outputs": {
                           "type": "array",
