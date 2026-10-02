@@ -1,11 +1,23 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { checkSignoffs, readCommits } from "./check-dco.mjs";
+
+/** A repository whose git sees no user or system configuration (Windows git rejects os.devNull here). */
+async function repository(t) {
+  const root = await mkdtemp(path.join(os.tmpdir(), "hh-dco-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const cwd = path.join(root, "repo");
+  await mkdir(cwd);
+  await writeFile(path.join(root, "gitconfig"), "");
+  git(cwd, ["init", "-q", "-b", "main"]);
+  git(cwd, ["commit", "-q", "--allow-empty", "-m", "base"]);
+  return cwd;
+}
 
 function git(cwd, args, author = ["Ada", "ada@example.com"]) {
   return execFileSync("git", ["-c", "commit.gpgsign=false", "-c", "core.hooksPath=", ...args], {
@@ -15,7 +27,7 @@ function git(cwd, args, author = ["Ada", "ada@example.com"]) {
       PATH: process.env.PATH,
       SYSTEMROOT: process.env.SYSTEMROOT,
       GIT_CONFIG_NOSYSTEM: "1",
-      GIT_CONFIG_GLOBAL: os.devNull,
+      GIT_CONFIG_GLOBAL: path.join(cwd, "..", "gitconfig"),
       GIT_AUTHOR_NAME: author[0],
       GIT_AUTHOR_EMAIL: author[1],
       GIT_COMMITTER_NAME: author[0],
@@ -25,10 +37,7 @@ function git(cwd, args, author = ["Ada", "ada@example.com"]) {
 }
 
 test("accepts signed-off commits and bot commits, rejects the rest from a real range", async (t) => {
-  const cwd = await mkdtemp(path.join(os.tmpdir(), "hh-dco-"));
-  t.after(() => rm(cwd, { recursive: true, force: true }));
-  git(cwd, ["init", "-q", "-b", "main"]);
-  git(cwd, ["commit", "-q", "--allow-empty", "-m", "base"]);
+  const cwd = await repository(t);
   const base = git(cwd, ["rev-parse", "HEAD"]);
   git(cwd, ["commit", "-q", "--allow-empty", "-s", "-m", "feat: signed"]);
   git(cwd, ["commit", "-q", "--allow-empty", "-m", "fix: unsigned"]);
@@ -45,9 +54,6 @@ test("accepts signed-off commits and bot commits, rejects the rest from a real r
 });
 
 test("git failures are not reported as a passing range", async (t) => {
-  const cwd = await mkdtemp(path.join(os.tmpdir(), "hh-dco-"));
-  t.after(() => rm(cwd, { recursive: true, force: true }));
-  git(cwd, ["init", "-q", "-b", "main"]);
-  git(cwd, ["commit", "-q", "--allow-empty", "-m", "base"]);
+  const cwd = await repository(t);
   assert.throws(() => readCommits("does-not-exist..HEAD", cwd), /does-not-exist/);
 });
