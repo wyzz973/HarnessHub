@@ -19,6 +19,7 @@ import type {
   RunRecord,
   SessionId,
 } from "@harnesshub/core/types";
+import { LATEST_SCHEMA_VERSION } from "@harnesshub/store/storage/migrations";
 import { SqliteStore } from "@harnesshub/store/storage/sqlite-store";
 
 const engine: EngineProfile = {
@@ -393,7 +394,10 @@ void test("schema initialization preserves records and rejects future versions o
   const { store, session, path, owned } = fixture(t);
   const inspector = new DatabaseSync(path);
   owned.push(inspector);
-  assert.equal(inspector.prepare("PRAGMA user_version").get()?.user_version, 1);
+  assert.equal(
+    inspector.prepare("PRAGMA user_version").get()?.user_version,
+    LATEST_SCHEMA_VERSION,
+  );
   assert.equal(
     inspector.prepare("PRAGMA journal_mode").get()?.journal_mode,
     "wal",
@@ -406,13 +410,16 @@ void test("schema initialization preserves records and rejects future versions o
     (error: unknown) =>
       error instanceof HubError && error.code === "STORAGE_CORRUPT",
   );
-  inspector.exec("PRAGMA user_version = 2");
+  inspector.exec(`PRAGMA user_version = ${LATEST_SCHEMA_VERSION + 1}`);
   assert.throws(
     () => new SqliteStore(path),
     (error: unknown) =>
-      error instanceof HubError && error.code === "STORAGE_VERSION_UNSUPPORTED",
+      error instanceof HubError && error.code === "SCHEMA_TOO_NEW",
   );
-  assert.equal(inspector.prepare("PRAGMA user_version").get()?.user_version, 2);
+  assert.equal(
+    inspector.prepare("PRAGMA user_version").get()?.user_version,
+    LATEST_SCHEMA_VERSION + 1,
+  );
   assert.equal(
     inspector.prepare("SELECT COUNT(*) AS count FROM sessions").get()?.count,
     1,

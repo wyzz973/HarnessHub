@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import type { EngineProfile } from "@harnesshub/core/types";
+import { LATEST_SCHEMA_VERSION } from "@harnesshub/store/storage/migrations";
 import { SqliteStore } from "@harnesshub/store/storage/sqlite-store";
 
 void test("config snapshots preserve session configuration without credentials or raw commands", (t) => {
@@ -61,7 +62,10 @@ void test("config snapshots preserve session configuration without credentials o
       .join("\n");
     assert.equal(persisted.includes("synthetic-sensitive-value"), false);
     assert.equal(persisted.includes("acp-launcher"), false);
-    assert.equal(db.prepare("PRAGMA user_version").get()?.user_version, 1);
+    assert.equal(
+      db.prepare("PRAGMA user_version").get()?.user_version,
+      LATEST_SCHEMA_VERSION,
+    );
     // Simulate existing v1 records that predate configuration snapshots.
     db.prepare(
       "UPDATE sessions SET record = json_remove(record, '$.configSnapshot') WHERE id = ?",

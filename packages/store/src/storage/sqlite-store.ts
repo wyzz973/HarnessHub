@@ -5,6 +5,7 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { HubError } from "@harnesshub/core/errors";
 import { acquireInstanceLock, type InstanceLock } from "./instance-lock.js";
+import { inspectSchema, migrateSchema } from "./migrations.js";
 import type { Store } from "@harnesshub/core/ports";
 import { isTerminal } from "@harnesshub/core/types";
 import type {
@@ -127,7 +128,13 @@ function configSnapshot(engine: EngineProfile): JsonObject {
 
 /** Gateway-owned synchronous SQLite store. Each call completes a bounded transaction
  * before returning; event reads cap at 1,000 rows and there is no in-memory write queue.
- * The caller owns close(). A future schema version fails without modifying its tables.
+ * The caller owns close().
+ *
+ * Opening applies pending schema migrations (see `migrations.ts`), so the other
+ * stores that share the file (`SqliteModelPlaneStore`, workflows, benchmarks)
+ * find the current schema once this store is open. A newer schema version
+ * (`SCHEMA_TOO_NEW`) or a tampered migration (`MIGRATION_TAMPERED`) fails
+ * without modifying the database.
  */
 export class SqliteStore implements Store {
   private readonly db: DatabaseSync;
@@ -137,38 +144,18 @@ export class SqliteStore implements Store {
   /** Lock file next to the database; an in-memory database has no other users. */
   private readonly lockPath: string | undefined;
 
-  constructor(dbPath: string) {
+  /** @param options.appVersion Build version recorded with migrations this open applies. */
+  constructor(dbPath: string, options: { appVersion?: string } = {}) {
     this.lockPath = dbPath === ":memory:" ? undefined : `${dbPath}.lock`;
     if (dbPath !== ":memory:")
       mkdirSync(dirname(dbPath), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(dbPath);
     try {
       this.db.exec("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
-      const version = this.db
-        .prepare("PRAGMA user_version")
-        .get()?.user_version;
-      if (version !== 0 && version !== 1)
-        throw new HubError(
-          "STORAGE_VERSION_UNSUPPORTED",
-          "Database schema version is not supported by this build",
-          500,
-        );
+      // Refuse a newer or tampered database before changing its journal mode.
+      inspectSchema(this.db);
       this.db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;");
-      if (version === 0)
-        this.transaction(() =>
-          this.db.exec(`
-        CREATE TABLE sessions (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL, record TEXT NOT NULL CHECK(json_valid(record)));
-        CREATE TABLE runs (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), generation INTEGER NOT NULL, idempotency_key TEXT, input_hash TEXT NOT NULL, created_at INTEGER NOT NULL, record TEXT NOT NULL CHECK(json_valid(record)), UNIQUE(session_id, idempotency_key), UNIQUE(session_id, generation));
-        CREATE TABLE events (run_id TEXT NOT NULL REFERENCES runs(id), seq INTEGER NOT NULL CHECK(seq > 0), event_id TEXT NOT NULL UNIQUE, source_seq INTEGER, type TEXT NOT NULL, terminal INTEGER NOT NULL CHECK(terminal IN (0, 1)), record TEXT NOT NULL CHECK(json_valid(record)), PRIMARY KEY(run_id, seq), UNIQUE(run_id, source_seq));
-        CREATE UNIQUE INDEX events_one_terminal ON events(run_id) WHERE terminal = 1;
-        CREATE INDEX runs_session ON runs(session_id, generation);
-        CREATE TABLE permissions (id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), record TEXT NOT NULL CHECK(json_valid(record)));
-        CREATE INDEX permissions_run ON permissions(run_id);
-        CREATE TABLE artifacts (id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), record TEXT NOT NULL CHECK(json_valid(record)));
-        CREATE INDEX artifacts_run ON artifacts(run_id);
-        PRAGMA user_version = 1;
-      `),
-        );
+      migrateSchema(this.db, options.appVersion);
     } catch (error) {
       this.db.close();
       throw error;
