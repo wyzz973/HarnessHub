@@ -169,7 +169,7 @@ Worker 把 `ModelCallRecord` 原样作为 `type: "model.call"` 的事件 `data` 
 
 ### 运行信息
 
-`GET /v1/runtime/info` 返回 `{ fullAccess: boolean, consoleUrl?: string }`，供控制台显示当前运行模式。
+`GET /v1/runtime/info` 返回 `{ fullAccess: boolean, consoleUrl?: string }`，供控制台显示当前运行模式。（2026-10-02 起另含必需字段 `build`，即构建身份，见 [快速开始](../getting-started.md) 的 `--version`。）
 
 ### 会话工作目录占位符
 

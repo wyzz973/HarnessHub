@@ -110,7 +110,6 @@ function openGatewayLog(
   });
 }
 
-/** Composition root: concrete implementations are assembled only here. */
 /**
  * Read the identity written next to the compiled code by `scripts/build-info.mjs`
  * (`dist/build-info.json`).
@@ -144,6 +143,7 @@ export async function loadBuildInfo(
   return parseBuildInfo(raw);
 }
 
+/** Composition root: concrete implementations are assembled only here. */
 export async function startHub(options: {
   dataDir: string;
   configFile?: string;
@@ -562,13 +562,31 @@ if (
       json: { type: "boolean" },
     },
   });
-  if (values.version) {
-    const build = await loadBuildInfo();
-    console.log(
-      values.json
-        ? JSON.stringify(build)
-        : `HarnessHub ${build.version} ${build.commit}${build.dirty === true ? " (dirty)" : ""}`,
-    );
+  if (values.json && !values.version) {
+    console.error("--json is only valid with --version");
+    process.exitCode = 2;
+  } else if (values.version) {
+    try {
+      const build = await loadBuildInfo();
+      const dirty =
+        build.dirty === true
+          ? " (dirty)"
+          : build.dirty === "unknown"
+            ? " (dirty: unknown)"
+            : "";
+      console.log(
+        values.json
+          ? JSON.stringify(build)
+          : `HarnessHub ${build.version} ${build.commit}${dirty}`,
+      );
+    } catch (error) {
+      console.error(
+        error instanceof HubError
+          ? `${error.code}: ${error.message}`
+          : String(error),
+      );
+      process.exitCode = 1;
+    }
   } else if (values.help)
     console.log(
       "HarnessHub: node dist/src/main.js [--engine opencode] [--host localhost] [--port 3180] [--config engines/local.yaml] [--data-dir ./data] [--tool-package-root DIR] [--harness-model-file FILE] [--console-url URL] | --version [--json]",

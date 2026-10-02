@@ -14185,7 +14185,7 @@
         "tags": [
           "health"
         ],
-        "description": "返回 Gateway 启动时确定的运行模式，供控制台显示。\n\n输入：无参数。\n\n返回：200：fullAccess、可选 consoleUrl。\n\n副作用：只读。\n\n失败与边界：无业务错误。",
+        "description": "返回 Gateway 启动时确定的运行模式，供控制台显示。\n\n输入：无参数。\n\n返回：200：build（构建身份）、fullAccess、可选 consoleUrl。\n\n副作用：只读。\n\n失败与边界：无业务错误。",
         "responses": {
           "200": {
             "description": "Default Response",
@@ -14225,15 +14225,19 @@
                           "type": "string"
                         },
                         "commit": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Full commit hash, or \"unknown\"."
                         },
                         "commitDate": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "ISO 8601, or \"unknown\"."
                         },
                         "ref": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Git ref that was built, or \"unknown\" (detached HEAD)."
                         },
                         "dirty": {
+                          "description": "Whether tracked or untracked non-ignored files differed from commit, or \"unknown\".",
                           "anyOf": [
                             {
                               "type": "boolean"
@@ -14251,16 +14255,20 @@
                         },
                         "workflowRun": {
                           "type": "string",
+                          "description": "CI run that built it; null for a local build.",
                           "nullable": true
                         },
                         "os": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Platform of the build machine, not of this process."
                         },
                         "arch": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Architecture of the build machine."
                         },
                         "nodeVersion": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Node.js that ran the build, not necessarily this process."
                         },
                         "installMethod": {
                           "type": "string"

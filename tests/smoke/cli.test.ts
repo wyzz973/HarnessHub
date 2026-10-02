@@ -111,7 +111,21 @@ void test(
     const json = await run(process.execPath, [entry, "--version", "--json"]);
     assert.deepEqual(JSON.parse(json.stdout), written);
     const text = await run(process.execPath, [entry, "--version"]);
-    const { version, commit } = written as { version: string; commit: string };
-    assert.match(text.stdout, new RegExp(`^HarnessHub ${version} ${commit}`));
+    const { version, commit, dirty } = written as {
+      version: string;
+      commit: string;
+      dirty: boolean | "unknown";
+    };
+    const suffix =
+      dirty === true
+        ? " (dirty)"
+        : dirty === "unknown"
+          ? " (dirty: unknown)"
+          : "";
+    assert.equal(text.stdout, `HarnessHub ${version} ${commit}${suffix}\n`);
+    // --json alone is a usage error, not a Gateway start.
+    await assert.rejects(run(process.execPath, [entry, "--json"]), {
+      code: 2,
+    });
   },
 );

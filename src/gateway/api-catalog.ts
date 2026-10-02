@@ -421,7 +421,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     title: "运行模式信息",
     group: "health",
     request: "无参数。",
-    response: "200：fullAccess、可选 consoleUrl。",
+    response: "200：build（构建身份）、fullAccess、可选 consoleUrl。",
     implementation: "返回 Gateway 启动时确定的运行模式，供控制台显示。",
     effects: "只读。",
     errors: "无业务错误。",

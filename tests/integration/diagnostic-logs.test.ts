@@ -252,6 +252,19 @@ void test(
           events(gateway, event).length > 0,
           `gateway log has ${event}`,
         );
+      // The startup record names the build (F04).
+      const build = JSON.parse(
+        await readFile(
+          new URL("../../build-info.json", import.meta.url),
+          "utf8",
+        ),
+      ) as { version: string; commit: string; dirty: unknown; builtAt: string };
+      assert.deepEqual(events(gateway, "gateway.start")[0]!.build, {
+        version: build.version,
+        commit: build.commit,
+        dirty: build.dirty,
+        builtAt: build.builtAt,
+      });
       const created = events(gateway, "session.create")[0]!;
       assert.equal(created.sessionId, session.id);
       assert.equal(created.engineLog, engineLogFile);
