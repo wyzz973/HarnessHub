@@ -419,7 +419,9 @@ interface CallState {
  * function-call argument deltas, then `response.completed` with usage, or
  * `response.incomplete` when the token limit cut the output. The keepalive is
  * a repeated `response.in_progress`: Codex counts only events toward its
- * stream idle timeout and ignores SSE comments.
+ * stream idle timeout and ignores SSE comments. Its snapshot always carries
+ * `output: []`; openai-node and Codex (measured) ignore `in_progress`, but a
+ * client rebuilding its snapshot from it would drop items already received.
  */
 export class ResponsesSink implements OutputSink {
   #sequence = 0;

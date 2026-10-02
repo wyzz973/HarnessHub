@@ -185,11 +185,11 @@ retry: {perCandidate: 2, totalAttempts: 4, baseBackoffMs: 500, maxBackoffMs: 800
 | Anthropic Messages | `event: ping` | 协议原生事件；Magpie `a97643b` 指出 Claude Code 的看门狗计入它 |
 | OpenAI Chat | 空 delta 的 `chat.completion.chunk`，不用 SSE 注释 | openai-node 丢弃注释；Qwen 的 240 秒看门狗按 SDK chunk 计；实测空 delta 使 SDK chunk 间隔降到约 307 ms，注释不改变 SDK 间隔 |
 | Gemini SSE | 开始写出时立即 flush 响应头；保活为空 parts 的 candidate `{"candidates":[{"content":{"role":"model","parts":[]},"index":0}]}`；**绝不发 SSE 注释** | `@google/genai` 1.30.0 的流解析遇注释会卡住；Magpie 对 Gemini 不发保活（`internal/gateway/gemini.go:426`）；空 parts 只在 Gemini 0.38.2 上实测通过，M1 必须在当时的最新固定版本上复核 |
-| Gemini 非流式 | 首个有效上游块到达后提交 200 与 `application/json` 头，按间隔写 JSON 允许的前导空白，最后写完整响应 | Gemini 0.58.0 的上下文压缩是两次非流式调用，受 60 秒头部超时约束 |
+| Gemini 非流式 | 到 Gemini 入站的响应头提交期限（自引擎请求起计，不早于上游 2xx 应答）才提交 200 与 `application/json` 头，此后按间隔写 JSON 允许的前导空白，最后写完整响应；期限前的失败保留真实状态码 | Gemini 0.58.0 的上下文压缩是两次非流式调用，受 60 秒头部超时约束；不在首块提交，因为 `@google/genai` 只在 HTTP 状态非 OK 时抛错，提前提交会把可重试的 429、5xx 变成空回答 |
 
 保活规则：只在响应头已提交之后发送；只在上游仍有数据事件（包括被丢弃的推理、上游自己的空 delta、扣留中的工具参数）且客户端已静默不少于 `keepaliveGapMs`（默认 10 秒，可设 1–30 秒）时发送。上游只发注释时也可以触发保活，但距上一个数据事件超过 `maxNoDataMs`（默认 300 秒）后停止，让空闲超时生效。保活不是内容，不计入首内容时间、usage 或任何结果判定证据。必须保留的反例测试：上游完全静默时，网关仍按空闲超时返回 504。
 
-首字节扣留窗口见第 5 节：默认 15 秒或 1 MiB，只在存在替代路径时启用；Gemini 入站的响应头提交期限为 45 秒。扣留期间不发保活，因为保活会提交 200 响应头，使之后的上游错误无法以正确状态码返回。
+首字节扣留窗口见第 5 节：默认 15 秒或 1 MiB，只在存在替代路径时启用；Gemini 入站的响应头提交期限为 45 秒，自引擎请求起计，但不早于上游 2xx 应答。扣留期间不发保活，因为保活会提交 200 响应头，使之后的上游错误无法以正确状态码返回。
 
 空闲超时 `upstreamIdleTimeoutMs` 默认 300 秒，**只被上游数据事件重置**，注释与空行不重置（现状的计时会被任意字节重置，只发注释的上游可以让网关无限等待）。等待响应头的 `upstreamHeaderTimeoutMs` 默认 300 秒。隔离接线把 Agent 侧超时对齐到网关之上：Codex `stream_idle_timeout_ms` 设为 310000，Qwen 的请求与流空闲超时同样不低于 310 秒，Hermes 的 `auxiliary.compression.timeout` 设为 330 秒。
 

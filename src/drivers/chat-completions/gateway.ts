@@ -169,9 +169,11 @@ export interface GatewayLimits {
   /** Keepalives stop once the upstream sent no data event for this long. */
   maxNoDataMs: number;
   /**
-   * Gemini inbound only: this long after a 2xx upstream answer without a first
-   * chunk, the 200 headers are committed anyway (below Gemini's 60 s header
-   * timeout). An upstream that never answers is unaffected and gets 504.
+   * Gemini inbound only: measured from the engine request, but not before the
+   * upstream answered 2xx, the 200 headers are committed if nothing committed
+   * them yet. Queueing for a slot and waiting for upstream headers count, as
+   * on the client's 60 s header clock. An upstream that never answers is
+   * unaffected and gets 504.
    */
   headerCommitMs: number;
   /** Concurrent upstream requests per Session; further calls wait in order. */
@@ -207,8 +209,8 @@ const LIMIT_RANGES: Readonly<
   idleTimeoutMs: [1, MAX_TIMER_MS],
   keepaliveGapMs: [1_000, 30_000],
   maxNoDataMs: [1, MAX_TIMER_MS],
-  // Must stay below the 60 s after which Gemini clients abandon the request.
-  headerCommitMs: [1, 59_000],
+  // Leaves at least 5 s below the 60 s after which Gemini clients give up.
+  headerCommitMs: [1, 55_000],
   maxConcurrent: [1, Number.MAX_SAFE_INTEGER],
   maxQueued: [0, Number.MAX_SAFE_INTEGER],
   reasoningEntries: [0, Number.MAX_SAFE_INTEGER],
@@ -635,6 +637,10 @@ export async function createModelGateway(
       if (!response.writableFinished) abort.abort();
     };
     response.once("close", closed);
+    // Bounds every wait for a keepalive write by the response's lifetime.
+    const responseClosed = new Promise<void>((resolve) =>
+      response.once("close", () => resolve()),
+    );
     if (owned.abort.signal.aborted) cancel();
     const writer = new HttpWriter(response);
     let sink: OutputSink | undefined;
@@ -723,16 +729,20 @@ export async function createModelGateway(
           isContextOverflow(reported.code, reported.message),
         );
       }
-      // Gemini clients abandon a request after 60 s without headers. Once the
-      // upstream accepted the call (2xx) but sent no chunk for headerCommitMs,
-      // commit the 200 headers; keepalives may follow and a later failure is
-      // reported in the body. An upstream that never answers does not reach
-      // this point and still ends with 504 by the idle timeout.
+      // Gemini clients abandon a request after 60 s without headers, counted
+      // from their request. Commit the 200 headers headerCommitMs after the
+      // engine request, but not before this 2xx answer, unless a chunk did
+      // already; keepalives may follow and a later failure is reported in the
+      // body. An upstream that never answers does not reach this point and
+      // still ends with 504 by the idle timeout.
       const commit = sink.commit?.bind(sink);
       if (commit)
-        commitTimer = setTimeout(() => {
-          if (!writer.sent && !writer.closed) commit();
-        }, limits.headerCommitMs);
+        commitTimer = setTimeout(
+          () => {
+            if (!writer.sent && !writer.closed) commit();
+          },
+          Math.max(0, started + limits.headerCommitMs - performance.now()),
+        );
       const result = await readCompletion(upstream, sink, makeId, {
         maxBytes: limits.maxResponseBytes,
         activity: () => {
@@ -748,7 +758,7 @@ export async function createModelGateway(
       clearTimeout(timer);
       clearTimeout(commitTimer);
       keepalive.stop();
-      await keepalive.settled();
+      await Promise.race([keepalive.settled(), responseClosed]);
       await sink.finish(result);
       if (passReasoning && result.reasoning) {
         if (result.reasoningField) reasoningField = result.reasoningField;
@@ -814,9 +824,13 @@ export async function createModelGateway(
       clearTimeout(commitTimer);
       keepalive.stop();
       // The response has ended or was destroyed, so a keepalive write still
-      // in progress settles now. A write error other than a disconnect is
-      // impossible for these sinks; on this path the call's own outcome wins.
-      await keepalive.settled().catch(() => undefined);
+      // in progress settles now, or the response's close ends the wait. A
+      // write error other than a disconnect is impossible for these sinks; on
+      // this path the call's own outcome wins.
+      await Promise.race([
+        keepalive.settled().catch(() => undefined),
+        responseClosed,
+      ]);
       if (admitted) slots.release();
       owned.abort.signal.removeEventListener("abort", cancel);
       response.removeListener("close", closed);

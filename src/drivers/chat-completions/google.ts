@@ -383,9 +383,12 @@ const KEEPALIVE = {
  * reasoning; function calls are sent complete in the final chunk, the first
  * one carrying the reasoning as its thought signature.
  *
- * Every form commits its 200 headers on the first upstream chunk, or earlier
- * through {@link commit}, because Gemini clients give up after 60 s without
- * headers. Keepalives are an empty candidate on SSE (`@google/genai` stalls on
+ * Gemini clients give up after 60 s without headers. Streaming forms commit
+ * their 200 headers on the first upstream chunk, or earlier through
+ * {@link commit} at the gateway's header deadline. A non-streaming answer
+ * commits only at that deadline: `@google/genai` throws only for a non-OK
+ * status, so an earlier 200 would turn a retryable 429 or 5xx into an empty
+ * answer. Keepalives are an empty candidate on SSE (`@google/genai` stalls on
  * SSE comments) and JSON whitespace otherwise. A failure after the commit can
  * no longer change the status: SSE and the array carry the error object as
  * their last element, and a non-streaming answer becomes `{"error":{...}}`
@@ -469,6 +472,7 @@ export class GoogleSink implements OutputSink {
     );
   }
   async start(): Promise<void> {
+    if (!this.translation.stream) return;
     this.commit();
     await this.#open();
   }

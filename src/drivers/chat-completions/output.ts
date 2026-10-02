@@ -42,9 +42,17 @@ export class HttpWriter {
   get busy(): boolean {
     return this.#pending > 0;
   }
-  /** True once the response ended or the connection closed; writes now fail. */
+  /**
+   * True once the response ended or the connection closed; writes now fail.
+   * Includes a destroyed socket before the response saw `close`: Node then
+   * drops a write without ever calling its callback, which would never settle.
+   */
   get closed(): boolean {
-    return this.response.destroyed || this.response.writableEnded;
+    return (
+      this.response.destroyed ||
+      this.response.writableEnded ||
+      this.response.socket?.destroyed === true
+    );
   }
   /**
    * Commit a streaming answer: send the status line and headers to the engine

@@ -311,7 +311,10 @@ type OpenBlock =
  * Anthropic Messages output. Streams message_start, thinking/text/tool_use
  * content blocks (one open block at a time; tool input as input_json_delta),
  * message_delta with stop_reason and usage, then message_stop. The keepalive
- * is the protocol's own `ping` event, which Claude Code's stream watchdog counts.
+ * is the protocol's own `ping` event, as the Anthropic API sends it.
+ * `@anthropic-ai/sdk`'s stream iterator skips `ping`, so it resets byte-level
+ * timeouts only, not a watchdog that counts SDK events; its effect on Claude
+ * Code's watchdog has not been measured.
  */
 export class AnthropicSink implements OutputSink {
   #blocks = 0;

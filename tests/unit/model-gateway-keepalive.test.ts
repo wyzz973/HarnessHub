@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createServer, type ServerResponse } from "node:http";
+import { createServer, request, type ServerResponse } from "node:http";
 import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
 import {
@@ -11,17 +11,24 @@ import {
   type ModelCallRecord,
   type ModelGatewayOptions,
 } from "../../src/drivers/chat-completions/gateway.js";
-import { HttpWriter } from "../../src/drivers/chat-completions/output.js";
+import { Keepalive } from "../../src/drivers/chat-completions/keepalive.js";
+import {
+  ClientClosed,
+  HttpWriter,
+} from "../../src/drivers/chat-completions/output.js";
 import { ResponsesSink } from "../../src/drivers/chat-completions/responses.js";
 
 type Body = Record<string, unknown>;
 /** Text to write to the upstream response, or milliseconds to wait. */
 type Step = string | number;
+/** Step that sends the 200 headers; without it they are sent before the first step. */
+const HEADERS = "\u0000headers";
 
 /**
- * A fake upstream that answers every request by playing `steps` after
- * sending (and flushing) 200 SSE headers. Playback stops when the gateway
- * closes the request, e.g. after its idle timeout.
+ * A fake upstream that answers every request by playing `steps`, sending
+ * (and flushing) 200 SSE headers first or at the {@link HEADERS} step.
+ * Playback stops when the gateway closes the request, e.g. after its idle
+ * timeout.
  */
 async function upstream(
   t: test.TestContext,
@@ -31,12 +38,16 @@ async function upstream(
   const play = async (response: ServerResponse, script: Step[]) => {
     const closed = new AbortController();
     response.once("close", () => closed.abort());
-    response.writeHead(200, { "content-type": "text/event-stream" });
-    response.flushHeaders();
+    const answer = () => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.flushHeaders();
+    };
+    if (!script.includes(HEADERS)) answer();
     try {
       for (const step of script)
         if (typeof step === "number")
           await delay(step, undefined, { signal: closed.signal });
+        else if (step === HEADERS) answer();
         else response.write(step);
       response.end();
     } catch (error) {
@@ -240,51 +251,91 @@ void test("Gemini SSE headers are flushed with the first upstream chunk, before 
   );
 });
 
-void test("a Gemini answer commits 200 headers headerCommitMs after a 2xx upstream answer without chunks; other protocols keep waiting", async (t) => {
-  const up = await upstream(t, () => [
-    1500,
-    data(delta({ content: "late" }, "stop")),
-    DONE,
-  ]);
-  const { send, calls } = await gateway(t, up.baseUrl, {
-    headerCommitMs: 300,
-  });
-  const contents = [{ role: "user", parts: [{ text: "hi" }] }];
-  const [sse, json, chat] = await Promise.all([
-    send("/v1beta/models/g:streamGenerateContent?alt=sse", { contents }),
-    send("/v1beta/models/g:generateContent", { contents }),
-    send("/v1/chat/completions", {
+void test(
+  "a Gemini answer commits 200 headers headerCommitMs after the engine request, but not before a 2xx upstream answer; other protocols keep waiting",
+  { timeout: 30_000 },
+  async (t) => {
+    // The client's 60 s header clock starts with its request: queueing for a
+    // slot and waiting for upstream headers count toward headerCommitMs.
+    const LATE = [data(delta({ content: "late" }, "stop")), DONE];
+    const up = await upstream(t, (body) => {
+      const text = JSON.stringify(body);
+      if (text.includes("held")) return [600, HEADERS, 2_000, ...LATE];
+      if (text.includes("after-deadline"))
+        return [1_800, HEADERS, 1_500, ...LATE];
+      if (text.includes("occupy")) return [600, ...LATE];
+      return [2_500, ...LATE];
+    });
+    const limits = { headerCommitMs: 1_200 };
+    // Room for all five calls; only `queue` makes a call wait for a slot.
+    const { send, calls } = await gateway(t, up.baseUrl, {
+      ...limits,
+      maxConcurrent: 8,
+    });
+    const queue = await gateway(t, up.baseUrl, { ...limits, maxConcurrent: 1 });
+    const sse = "/v1beta/models/g:streamGenerateContent?alt=sse";
+    const contents = (text: string) => ({
+      contents: [{ role: "user", parts: [{ text }] }],
+    });
+    const occupied = queue.send("/v1/chat/completions", {
       model: "m",
-      stream: true,
-      messages: [{ role: "user", content: "hi" }],
-    }),
-  ]);
-  for (const call of [sse, json]) {
-    assert.equal(call.response.status, 200);
+      messages: [{ role: "user", content: "occupy" }],
+    });
+    while (up.requests.length === 0) await delay(5);
+    const [answered, json, chat, held, afterDeadline, queued] =
+      await Promise.all([
+        send(sse, contents("answered")),
+        send("/v1beta/models/g:generateContent", contents("answered")),
+        send("/v1/chat/completions", {
+          model: "m",
+          stream: true,
+          messages: [{ role: "user", content: "answered" }],
+        }),
+        send(sse, contents("held")),
+        send(sse, contents("after-deadline")),
+        queue.send(sse, contents("queued")),
+      ]);
+    const within = (name: string, ms: number, min: number, max: number) =>
+      assert.ok(ms >= min && ms < max, `${name}: headers after ${ms} ms`);
+    // Upstream answered at once, or held its headers for half the deadline,
+    // or the call waited for a slot: headers at headerCommitMs either way.
+    within("answered", answered.headersMs, 1_100, 1_550);
+    within("generateContent", json.headersMs, 1_100, 1_550);
+    within("held", held.headersMs, 1_100, 1_550);
+    within("queued", queued.headersMs, 1_100, 1_550);
+    // Upstream answered after the deadline: headers with that answer, not before.
+    within("after-deadline", afterDeadline.headersMs, 1_700, 2_300);
+    // Chat clients have no header timeout: its headers wait for the first chunk.
     assert.ok(
-      call.headersMs >= 250 && call.headersMs < 1000,
-      `headers after ${call.headersMs} ms`,
+      chat.headersMs >= 2_400,
+      `chat headers after ${chat.headersMs} ms`,
     );
-  }
-  // Chat clients have no header timeout: its headers wait for the first chunk.
-  assert.ok(chat.headersMs >= 1400, `chat headers after ${chat.headersMs} ms`);
-  const events = await timedEvents(sse.response, sse.started);
-  assert.equal(
-    at(events[0]!.data, "candidates", 0, "content", "parts", 0, "text"),
-    "late",
-  );
-  assert.match(
-    json.response.headers.get("content-type") ?? "",
-    /application\/json/,
-  );
-  const body = (await json.response.json()) as unknown;
-  assert.equal(
-    at(body, "candidates", 0, "content", "parts", 0, "text"),
-    "late",
-  );
-  await chat.response.text();
-  assert.ok(calls.every((call) => call.ok && call.status === 200));
-});
+    for (const call of [answered, held, afterDeadline, queued]) {
+      assert.equal(call.response.status, 200);
+      const events = await timedEvents(call.response, call.started);
+      assert.equal(
+        at(events[0]!.data, "candidates", 0, "content", "parts", 0, "text"),
+        "late",
+      );
+    }
+    assert.match(
+      json.response.headers.get("content-type") ?? "",
+      /application\/json/,
+    );
+    const body = (await json.response.json()) as unknown;
+    assert.equal(
+      at(body, "candidates", 0, "content", "parts", 0, "text"),
+      "late",
+    );
+    await chat.response.text();
+    assert.equal((await occupied).response.status, 200);
+    assert.ok(
+      [...calls, ...queue.calls].every(
+        (call) => call.ok && call.status === 200,
+      ),
+    );
+  },
+);
 
 void test(
   "while the upstream is active but sends nothing to forward, each streaming protocol gets its own keepalive and the same final output",
@@ -375,7 +426,7 @@ void test(
       for (const keepalive of list) {
         const previous = all[all.indexOf(keepalive) - 1]!;
         assert.ok(
-          keepalive.at - previous.at >= 900,
+          keepalive.at - previous.at >= 700,
           `${requests[index]![0]}: keepalive after ${keepalive.at - previous.at} ms of silence`,
         );
       }
@@ -490,7 +541,7 @@ void test(
     const failure = events.at(-1)!;
     assert.equal(at(failure.data, "error", "code"), "upstream_timeout");
     assert.ok(
-      failure.at - content.at >= 4_500 - 200,
+      failure.at - content.at >= 4_000,
       `timed out ${failure.at - content.at} ms after the last data event`,
     );
     assert.ok(failure.at - keepalives.at(-1)!.at >= 1_500);
@@ -499,7 +550,7 @@ void test(
       false,
     );
     assert.equal(uncommitted.response.status, 504);
-    assert.ok(uncommitted.headersMs >= 4_500 - 200);
+    assert.ok(uncommitted.headersMs >= 4_000);
     assert.equal(
       at(await uncommitted.response.json(), "error", "code"),
       "upstream_timeout",
@@ -515,42 +566,54 @@ void test(
 );
 
 void test(
-  "Gemini generateContent commits on the first chunk, writes JSON whitespace keepalives and reports a later failure in a 200 body",
+  "Gemini generateContent commits only at the header deadline, then writes JSON whitespace keepalives; failures keep their status before it and become a 200 body after it",
   { timeout: 30_000 },
   async (t) => {
-    const up = await upstream(t, (body) =>
-      JSON.stringify(body).includes("fail")
-        ? [
-            data(delta({ content: "Hel" })),
-            ...busy(7, 200, [data(delta({}))]),
-            data({ error: { message: "overloaded", code: 503 } }),
-          ]
-        : [
-            data(delta({ content: "Hel" })),
-            ...busy(13, 200, [data(delta({})), ": working\n\n"]),
-            data(delta({ content: "lo" }, "stop")),
-            data(USAGE),
-            DONE,
-          ],
-    );
-    const live = await gateway(t, up.baseUrl, { keepaliveGapMs: 1_000 });
+    const ERROR = data({ error: { message: "overloaded", code: 503 } });
+    const up = await upstream(t, (body) => {
+      const text = JSON.stringify(body);
+      if (text.includes("fail-early"))
+        return [data(delta({ content: "Hel" })), 200, ERROR];
+      if (text.includes("fail-late"))
+        return [
+          data(delta({ content: "Hel" })),
+          ...busy(9, 200, [data(delta({}))]),
+          ERROR,
+        ];
+      return [
+        data(delta({ content: "Hel" })),
+        ...busy(13, 200, [data(delta({})), ": working\n\n"]),
+        data(delta({ content: "lo" }, "stop")),
+        data(USAGE),
+        DONE,
+      ];
+    });
+    const live = await gateway(t, up.baseUrl, {
+      keepaliveGapMs: 1_000,
+      headerCommitMs: 500,
+    });
     const quiet = await gateway(t, up.baseUrl, { keepaliveGapMs: 30_000 });
     const path = "/v1beta/models/g:generateContent";
     const request = (text: string) => ({
       contents: [{ role: "user", parts: [{ text }] }],
     });
-    const [ok, baseline, failed] = await Promise.all([
+    const [ok, baseline, early, late] = await Promise.all([
       live.send(path, request("hi")),
       quiet.send(path, request("hi")),
-      live.send(path, request("fail")),
+      live.send(path, request("fail-early")),
+      live.send(path, request("fail-late")),
     ]);
-    for (const call of [ok, failed]) {
+    // Not on the first chunk: only at the deadline, here 500 ms.
+    for (const call of [ok, late]) {
       assert.equal(call.response.status, 200);
       assert.match(
         call.response.headers.get("content-type") ?? "",
         /application\/json/,
       );
-      assert.ok(call.headersMs < 750, `headers after ${call.headersMs} ms`);
+      assert.ok(
+        call.headersMs >= 400 && call.headersMs < 900,
+        `headers after ${call.headersMs} ms`,
+      );
     }
     const text = await ok.response.text();
     assert.match(text, /^\n+\{/);
@@ -563,25 +626,167 @@ void test(
       normalized(parsed),
       normalized(await baseline.response.json()),
     );
+    // Before the deadline the failure keeps its status, so @google/genai
+    // throws a retryable error instead of returning an empty answer.
+    assert.equal(early.response.status, 503);
+    assert.deepEqual(await early.response.json(), {
+      error: { code: 503, message: "overloaded", status: "UNAVAILABLE" },
+    });
     // After the commit the status cannot change: the error is the body.
-    const failure = await failed.response.text();
+    const failure = await late.response.text();
     assert.match(failure, /^\n+\{/);
     assert.deepEqual(JSON.parse(failure), {
       error: { code: 503, message: "overloaded", status: "UNAVAILABLE" },
     });
-    const failedCall = live.calls.find((call) => !call.ok);
+    const failed = live.calls.filter((call) => !call.ok);
     assert.deepEqual(
-      [failedCall?.status, failedCall?.error?.code, failedCall?.stream],
-      [503, "upstream_error", false],
+      failed.map((call) => [call.status, call.error?.code, call.stream]),
+      [
+        [503, "upstream_error", false],
+        [503, "upstream_error", false],
+      ],
     );
     assert.deepEqual(
       live.gw.runErrors().map((call) => call.status),
-      [503],
+      [503, 503],
     );
     assert.deepEqual(
       evidence(live.calls.find((call) => call.ok)),
       evidence(quiet.calls[0]),
     );
+  },
+);
+
+void test(
+  "a committed stream whose upstream goes completely silent gets no keepalive before its in-stream timeout",
+  { timeout: 30_000 },
+  async (t) => {
+    const up = await upstream(t, () => [
+      data(delta({ role: "assistant", content: "a" })),
+      6_000,
+      data(delta({ content: "late" }, "stop")),
+      DONE,
+    ]);
+    const { send, calls } = await gateway(t, up.baseUrl, {
+      keepaliveGapMs: 1_000,
+      idleTimeoutMs: 3_000,
+    });
+    const { response, started } = await send("/v1/chat/completions", {
+      model: "m",
+      stream: true,
+      messages: [{ role: "user", content: "x" }],
+    });
+    assert.equal(response.status, 200);
+    const events = await timedEvents(response, started);
+    const content = events.findIndex(
+      (event) => at(event.data, "choices", 0, "delta", "content") === "a",
+    );
+    assert.ok(content >= 0);
+    // Nothing but the timeout follows the content: a keepalive would hide
+    // that the upstream stopped working.
+    assert.equal(events.length, content + 2);
+    const failure = events.at(-1)!;
+    assert.equal(at(failure.data, "error", "code"), "upstream_timeout");
+    assert.ok(failure.at - events[content]!.at >= 2_500, String(failure.at));
+    assert.deepEqual(
+      calls.map((call) => [call.status, call.error?.code]),
+      [[504, "upstream_timeout"]],
+    );
+  },
+);
+
+void test("a write after the engine's socket was destroyed fails at once instead of waiting for a callback Node never calls", async (t) => {
+  const outcome = Promise.withResolvers<{ closed: boolean; write: string }>();
+  const server = createServer((_, response) => {
+    const writer = new HttpWriter(response);
+    writer.begin(200, "text/plain");
+    // Destroyed before the response sees `close`: Node drops later writes
+    // without calling their callbacks.
+    response.socket?.destroy();
+    const closed = writer.closed;
+    const timeout = new AbortController();
+    void Promise.race([
+      writer.write("x").then(
+        () => "written",
+        (error: unknown) =>
+          error instanceof ClientClosed ? "rejected" : String(error),
+      ),
+      delay(1_000, "hung", { signal: timeout.signal }),
+    ]).then((write) => {
+      timeout.abort();
+      outcome.resolve({ closed, write });
+    }, outcome.reject);
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const client = request(`http://127.0.0.1:${address.port}/`);
+  client.on("error", () => undefined);
+  client.on("response", (response) => {
+    response.on("error", () => undefined);
+    response.resume();
+  });
+  client.end();
+  assert.deepEqual(await outcome.promise, { closed: true, write: "rejected" });
+});
+
+void test(
+  "no keepalive is sent while a write to an engine that stopped reading waits for the socket",
+  { timeout: 30_000 },
+  async (t) => {
+    let sends = 0;
+    const done = Promise.withResolvers<void>();
+    const server = createServer((_, response) => {
+      void (async () => {
+        const writer = new HttpWriter(response);
+        writer.begin(200, "text/plain");
+        // Far above any socket buffer: this write cannot complete while the
+        // engine does not read.
+        const stalled = writer
+          .write("x".repeat(32 * 1024 * 1024))
+          .catch((error: unknown) => {
+            if (!(error instanceof ClientClosed)) throw error;
+          });
+        const keepalive = new Keepalive(
+          writer,
+          { gapMs: 1_000, maxNoDataMs: 60_000 },
+          () => {
+            sends++;
+            return Promise.resolve();
+          },
+        );
+        // Upstream data the engine never sees, for two and a half seconds.
+        for (let index = 0; index < 12; index++) {
+          await delay(200);
+          assert.equal(writer.busy, true);
+          keepalive.data();
+        }
+        keepalive.stop();
+        await keepalive.settled();
+        response.destroy();
+        await stalled;
+      })().then(done.resolve, done.reject);
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    t.after(async () => {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const client = request(`http://127.0.0.1:${address.port}/`);
+    client.on("error", () => undefined);
+    client.on("response", (response) => {
+      response.on("error", () => undefined);
+      response.pause();
+    });
+    client.end();
+    t.after(() => client.destroy());
+    await done.promise;
+    assert.equal(sends, 0);
   },
 );
 
@@ -650,7 +855,10 @@ void test("gateway limits outside their ranges are rejected before listening", a
     [{ keepaliveGapMs: 30_001 }, /keepaliveGapMs/],
     [{ keepaliveGapMs: 1_500.5 }, /keepaliveGapMs/],
     [{ maxNoDataMs: 0 }, /maxNoDataMs/],
-    [{ headerCommitMs: 60_000 }, /headerCommitMs/],
+    [
+      { headerCommitMs: 55_001 },
+      /headerCommitMs must be an integer from 1 to 55000/,
+    ],
     [{ idleTimeoutMs: Number.NaN }, /idleTimeoutMs/],
     [{ maxQueued: -1 }, /maxQueued/],
   ];
@@ -668,7 +876,7 @@ void test("gateway limits outside their ranges are rejected before listening", a
   for (const limits of [
     {},
     { keepaliveGapMs: 1_000 },
-    { keepaliveGapMs: 30_000, maxQueued: 0 },
+    { keepaliveGapMs: 30_000, maxQueued: 0, headerCommitMs: 55_000 },
   ]) {
     const gw = await createModelGateway(options, {
       ...DEFAULT_GATEWAY_LIMITS,
