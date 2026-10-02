@@ -81,6 +81,8 @@ if (process.argv.includes("--acp-peer")) {
                   explicit: process.env.HH_TEST_EXPLICIT_VALUE ?? null,
                   home: process.env.HOME,
                   userProfile: process.env.USERPROFILE,
+                  homeDrive: process.env.HOMEDRIVE ?? null,
+                  homePath: process.env.HOMEPATH ?? null,
                   appData: process.env.APPDATA,
                   localAppData: process.env.LOCALAPPDATA,
                   tmpdir: process.env.TMPDIR,
@@ -267,6 +269,10 @@ if (process.argv.includes("--acp-peer")) {
             PSModulePath: "fixture-module-path",
             // Engines find Git, Python and machine-wide configuration through these.
             ...windowsLocationFixture,
+            // Stand-ins for the Gateway's real profile. On Windows, libuv copies
+            // them into any explicit environment that lacks them (#36).
+            HOMEDRIVE: "Z:",
+            HOMEPATH: "\\fixture-real-profile",
           },
           stdio: ["ignore", "ignore", "ignore", "ipc"],
           execArgv: [],
@@ -292,7 +298,18 @@ if (process.argv.includes("--acp-peer")) {
       const actual: unknown = JSON.parse(String(message[0]));
       const home = join(directory, "backend", "home");
       const temporary = join(directory, "backend", "tmp");
-      assert.deepEqual(actual, {
+      assert.ok(typeof actual === "object" && actual !== null);
+      const { homeDrive, homePath, ...rest } = actual as Record<
+        string,
+        unknown
+      >;
+      // On Windows the two name the private home, not the stand-ins that libuv
+      // would copy (#36); elsewhere they are not inherited at all.
+      if (process.platform === "win32") {
+        assert.notEqual(homeDrive, "Z:");
+        assert.equal(`${String(homeDrive)}${String(homePath)}`, home);
+      } else assert.deepEqual([homeDrive, homePath], [null, null]);
+      assert.deepEqual(rest, {
         ambient: null,
         psModulePath: "fixture-module-path",
         windowsLocations: windowsLocationFixture,

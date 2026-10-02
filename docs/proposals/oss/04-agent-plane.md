@@ -185,7 +185,7 @@ flowchart TD
 
 ## 6. 隔离接线
 
-隔离接线只为执行平面的 Session 生成私有配置，不触碰用户文件，沿用现状的做法：Worker 在 Session 目录下建立私有 HOME 与 Agent 配置目录，设置 `HOME`、`USERPROFILE`、`APPDATA`、`LOCALAPPDATA`、`XDG_*` 以及 Agent 专属变量（`CODEX_HOME`、`CLAUDE_CONFIG_DIR` 等），按 Adapter 的 `wiring.isolated` 写入配置，Session Key 只经环境变量或私有文件传入（[prepare.ts](../../../packages/agents/src/configuration/prepare.ts) 的 `prepareConfiguration`）。Windows 的环境白名单必须保留 `ProgramFiles`、`ProgramFiles(x86)`、`ProgramW6432`、`ProgramData`、`ALLUSERSPROFILE`、`PUBLIC`、`COMPUTERNAME`，否则依赖它们的工具在任何 Windows 机器上都会失败（上一轮核验 P0-2）。
+隔离接线只为执行平面的 Session 生成私有配置，不触碰用户文件，沿用现状的做法：Worker 在 Session 目录下建立私有 HOME 与 Agent 配置目录，设置 `HOME`、`USERPROFILE`、`APPDATA`、`LOCALAPPDATA`、`XDG_*`（Windows 上还有由私有 HOME 拆出的 `HOMEDRIVE` 与 `HOMEPATH`：显式环境缺少它们时，Node 的 libuv 会从启动方复制真实值；Worker 与网关路由引擎的配置探测都设置它们）、私有临时目录以及 Agent 专属变量（`CODEX_HOME`、`CLAUDE_CONFIG_DIR` 等），按 Adapter 的 `wiring.isolated` 写入配置，Session Key 只经环境变量或私有文件传入（[prepare.ts](../../../packages/agents/src/configuration/prepare.ts) 的 `prepareConfiguration`）。Windows 的环境白名单必须保留 `ProgramFiles`、`ProgramFiles(x86)`、`ProgramW6432`、`ProgramData`、`ALLUSERSPROFILE`、`PUBLIC`、`COMPUTERNAME`，否则依赖它们的工具在任何 Windows 机器上都会失败（上一轮核验 P0-2）。
 
 私有 HOME 只隔离按用户目录查找的配置。上一轮核验确认了以下例外，每一项在 Adapter 清单中登记为 `quirks[]`，并有对应的一致性测试：
 
@@ -194,6 +194,7 @@ flowchart TD
 | Codex 工作区 `.codex/config.toml` | codex-acp 把 Session 工作目录标为可信，Codex 把其中的 `.codex/config.toml` 作为 Project 层加载，优先级高于 HH 写入的 User 层 | 工作区中的 `model_provider`、`base_url` 覆盖接线，请求可能绕过网关 | 关键键改用优先级更高的命令行覆盖（`-c`，见第 1 节示例），M2 以固定版本核实 codex-acp 的透传；准备阶段扫描工作区及其到仓库根之间的 `.codex/config.toml`，发现冲突键时报告 `ISOLATION_OVERRIDDEN` |
 | OpenCode、MiMo 的机器级托管配置 | `%ProgramData%\opencode\`、macOS `/Library/Application Support/opencode` 等位置的托管配置在内联配置之后合并并且优先 | Agent 直连别处，Run 却可能判为成功 | 准备阶段检测托管配置路径，存在即以 `ISOLATION_MANAGED_CONFIG` 失败；用户可以显式设置 `allowManagedConfig` 放行，此时界面标注“隔离不完整”；结果判定的零调用规则兜底 |
 | Gemini 祖先目录 `.gemini/.env` | 可信模式下从工作目录向上加载第一个 `.gemini/.env`，工作区在用户目录下时会读到真实的 `~/.gemini/.env`；`ignoreLocalEnv` 管不到这一分支，只回填尚未设置的变量 | `GEMINI_SYSTEM_MD`、`GOOGLE_*` 等变量混入 | Worker 显式设置 Adapter 列出的全部相关变量（包括设为空），使 `.env` 无法回填；准备阶段扫描祖先目录并在事件中报告；建议工作区使用数据目录下的 git worktree |
+| Windows PowerShell 的用户模块目录 | `PSModulePath` 必须保留在环境白名单中（否则 Windows PowerShell 5.1 每条自动加载模块的命令多花约 22 s），其值通常包含真实用户 `Documents\WindowsPowerShell\Modules` | Agent 的 shell 工具可能加载真实用户安装的 PowerShell 模块 | 登记为已知例外（来自 #38 的安全审查，未实测）；PowerShell 启动时还可能经 Known Folder 加入用户 Documents 下的模块目录，只改写环境变量不一定足够，先以 Windows 一致性测试中的金丝雀模块确认再定对策 |
 | Codex 在 Windows 上经 Known Folder 解析主目录 | Rust 的 `dirs::home_dir()` 读取 Known Folder Profile，忽略 `USERPROFILE` | 可能读到真实的用户级技能目录（未实测） | Windows 一致性测试用金丝雀文件验证；确认后在 Adapter 中登记对策 |
 | MCP 秘密引用带出 HH 凭据 | 登记 MCP 时把请求头引用为 HH 的网关或上游凭据 | 凭据交给 Agent 与任意 MCP 地址（上一轮实测） | 第 8 节的禁止规则，在登记、导入、绑定三处检查 |
 

@@ -2,6 +2,7 @@
 import {
   WINDOWS_SYSTEM_ENVIRONMENT,
   WORKER_TREE_ENVIRONMENT,
+  windowsHomeEnvironment,
 } from "@harnesshub/core/environment";
 import { configurationEnvironmentNames } from "@harnesshub/core/engine-configuration";
 import { fork, type ChildProcess } from "node:child_process";
@@ -494,7 +495,7 @@ export class ProcessWorkerHost implements WorkerHost {
       ...env,
       ...privatePaths,
       ...(process.platform === "win32"
-        ? {}
+        ? windowsHomeEnvironment(home)
         : { [WORKER_TREE_ENVIRONMENT]: ownerToken }),
     };
   }

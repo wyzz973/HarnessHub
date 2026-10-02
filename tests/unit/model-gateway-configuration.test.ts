@@ -121,6 +121,12 @@ async function assertIsolated(
   assert.equal(prepared.env.HOME, home);
   assert.equal(prepared.env.USERPROFILE, home);
   assert.equal(prepared.env.XDG_CONFIG_HOME, path.join(home, ".config"));
+  for (const name of ["TMPDIR", "TEMP", "TMP"])
+    assert.equal(prepared.env[name], path.join(path.resolve(state), "tmp"));
+  // Without them, libuv gives a probed engine the real profile (#36).
+  if (process.platform === "win32")
+    assert.equal(`${prepared.env.HOMEDRIVE}${prepared.env.HOMEPATH}`, home);
+  else assert.equal(prepared.env.HOMEDRIVE, undefined);
   for (const name of [
     ...VENDOR_CREDENTIAL_ENVIRONMENT,
     "DEEPSEEK_API_KEY",
