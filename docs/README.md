@@ -39,6 +39,7 @@
 | [独立配置](engine-configuration.md) | 统一模型、Provider/模型/URL、秘密引用、Skills、MCP、配置检查 |
 | [统一模型网关](model-gateway.md) | Chat/Responses/Anthropic/Google 协议转换、上游规范化、推理回填、媒体与错误 |
 | [统一模型下的引擎接线](model-gateway-engines.md) | 各引擎的私有配置、缺省值与已知限制 |
+| [全局接线](global-wiring.md) | 把本机 Agent 的用户配置接到网关：预览、备份、原子写、还原、漂移与各 Adapter 写入的键 |
 | [CLI Driver](cli-driver.md) | stdin/argv、文本输出、退出、取消与进程清理 |
 | [安装快照](engine-installation.md) | 文件 hash 与版本元数据的只读采集 |
 | [Pi](pi-engine.md) | 固定 Adapter、配置与限制 |

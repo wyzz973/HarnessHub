@@ -1,0 +1,67 @@
+# 全局接线
+
+全局接线把本机已安装的 Agent 改为经 HarnessHub 网关调用模型：直接改写 Agent 自己的用户配置，并提供预览、备份、原子写、回读校验、逐字节还原与漂移检测。目标设计见 [04 Agent 平面第 4、5 节](proposals/oss/04-agent-plane.md#4-全局接线)；隔离接线（只为 Session 生成私有配置）仍由 [引擎独立配置](engine-configuration.md) 与 [统一模型下的引擎接线](model-gateway-engines.md) 描述，两者互不调用。
+
+现状：库已实现（`packages/agents/src/wiring/`），守护进程路由与 `hh wire`/`hh unwire` 命令尚未接入；没有用真实 Agent 验证过接线结果，也没有在 Windows 上运行过。
+
+## 库接口
+
+入口是 `@harnesshub/agents/wiring/index`，调用方（守护进程、CLI）负责签发与吊销 Key、持久化 `WiringRecord`（[model-plane.ts](../packages/core/src/model-plane.ts)）：
+
+| 函数 | 行为 |
+|---|---|
+| `planWiring(adapterId, target, ctx, {previous?})` | 只读。返回每个文件的键级变更与统一 diff；Key 显示为 `hhk_a_xxxx…`，被替换的旧 Key 值显示为 `<redacted>`，dotenv 文件不带上下文行。已按同样方式接线时 `changed: false` |
+| `applyWiring(adapterId, target, ctx, {previous?, expect?})` | 在该 Adapter 的跨进程锁内重新计划；`expect` 为用户确认过的计划，文件哈希不一致即 `WIRING_CONCURRENT_MODIFICATION`。先保存原始字节，再逐个文件原子写并回读校验；任一步失败，已写文件恢复为写前字节，错误的 `rollback` 逐个报告。返回待持久化的记录 |
+| `unwire(record, ctx)` | 文件哈希等于 `afterHash` 时写回原始字节（接线时新建的文件则删除，连同为它新建且仍为空的目录）；用户之后改过文件时，只把 HarnessHub 写过的键恢复为原值或删除，其余修改保留。可重复执行 |
+| `detectDrift(record, ctx, {baseUrl?})` | 只读。基址字段缺失、Key 字段缺失或换成别的 Key 为 `unwired`；基址指向别处为 `foreign-gateway`；其他写过的字段被改为 `replaced`。`bypassed` 与 `stale-key` 需要网关账本，不在本库 |
+
+`target` 为 `{baseUrl, keyText, keyId, model, models[]}`：`baseUrl` 是网关根地址（如 `http://127.0.0.1:3180`），各 Adapter 按协议自行追加 `/v1`；`keyText` 必须是 `agent` 作用域且与 `keyId` 一致的 Gateway Key；`models` 带 `/v1/models` 的窗口与输出上限。`ctx` 为 `{home, dataDir, env?, clock?}`：`home` 必填，库从不读取 `os.homedir()` 或 `process.env`，Agent 的目录变量只来自显式的 `env`。
+
+重新接线（例如轮换 Key）时传入 `previous`：沿用首次接线前的备份，因此之后还原仍回到 HarnessHub 接线之前的状态；新目标不再设置的旧键按原值恢复。若两次接线之间用户改过文件，新记录不再允许逐字节还原，改用键级还原，以免丢失这些修改。
+
+## 备份与安全
+
+- 备份在 `<dataDir>/backups/wiring/<adapterId>/`：`objects/<sha256>` 是原始字节，`manifests/<id>.json` 的 id 是清单内容的 SHA-256，记录原始文件是否存在、哈希、权限、为它新建的目录、HarnessHub 拥有的键，以及写入值的模板（Key 与基址以占位符表示，清单中没有 Key）。均为 0600，读取时校验哈希。首次版本永久保留，尚未实现“其余保留 20 份”的清理。
+- 原子写：同目录临时文件、fsync、保留原权限、rename 前再核对哈希、目录 fsync；新文件为 0600，新目录为 0700。符号链接写其目标并保留链接；有多个硬链接时原地写。中断留下的临时文件在下次写入前清理。Windows 上 rename 遇共享冲突重试 5 次、间隔 100 ms（未在 Windows 上验证）。
+- 拒绝写入：文件无法解析或不是 UTF-8、配置路径经符号链接离开 `home`（或该 Agent 的目录变量所指目录）、悬空或循环链接、目标键的上级是非对象值，以及下文格式规则中的结构。错误信息只含文件路径、键路径与行列号，不含文件内容。
+- 同一 Adapter 的接线与还原由 `.lock` 目录串行化；持有者崩溃留下的锁需在确认 `owner.json` 中的进程已退出后手工删除。
+
+## 格式保真编辑
+
+| 格式 | 做法 | 拒绝 |
+|---|---|---|
+| JSON/JSONC | `jsonc-parser` 解析取得节点偏移，按偏移拼接；新属性放在所在对象最后一个属性之后，沿用该行缩进、对象的尾逗号风格，内联对象保持单行，上一行末尾的注释留在原行 | 解析错误、根不是对象、路径上的重复键 |
+| TOML | `smol-toml` 校验与回读，自带的行扫描器定位表头与赋值；只替换值、插入一行或删除条目的行。新键加在所在表（或点号键组）的最后一个赋值之后，缺失的表追加到文件末尾并以一个空行分隔，删除该表时一并删除这个空行 | 内联表与数组表中的键、数组中的表、非有限数 |
+| YAML | `yaml` 的 Document API，保留注释、空行、键顺序与标量样式；序列化可能规范化流式集合内的空白，因此按值校验 | 多文档、根不是映射、路径上的锚点或别名 |
+| dotenv | 按行编辑，保留 `export` 前缀与行尾注释；值为纯字符时不加引号，否则加单引号 | 未闭合的引号、重复赋值的目标变量、需要转义才能表达的值 |
+
+BOM 与换行风格（LF/CRLF）保持原样。回读校验用真实解析器确认每个目标键的值，并确认去掉这些键后文档与写前相同。
+
+## 支持的 Agent
+
+“核实”表示配置位置或键名来自 HarnessHub 隔离接线或 04 的记录，尚未以固定版本的真实 Agent 验证全局接线。
+
+| Adapter | 文件（目录变量） | 写入的键 | 协议 | Key 落点 |
+|---|---|---|---|---|
+| `claude` Claude Code | `settings.json`（`${CLAUDE_CONFIG_DIR:-~/.claude}`） | `env.ANTHROPIC_BASE_URL`（网关根）、`env.ANTHROPIC_AUTH_TOKEN`、`env.ANTHROPIC_MODEL`、`env.ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`；已知时 `env.CLAUDE_CODE_MAX_CONTEXT_TOKENS`、`env.CLAUDE_CODE_MAX_OUTPUT_TOKENS`（至多 128000） | Anthropic | 配置文件 |
+| `codex` Codex CLI | `config.toml`（`${CODEX_HOME:-~/.codex}`） | `model_provider = "harnesshub"`、`model`、已知时 `model_context_window`；`[model_providers.harnesshub]` 的 `name`、`base_url`（`/v1`）、`wire_api = "responses"`、`experimental_bearer_token`。ChatGPT 登录不动 | Responses | 配置文件 |
+| `gemini` Gemini CLI | `settings.json` 与 `.env`（`${GEMINI_CLI_HOME:-~}/.gemini`） | `security.auth.selectedType = "gemini-api-key"`、`model.name`；`.env` 中 `GEMINI_API_KEY`、`GOOGLE_GEMINI_BASE_URL`（网关根） | Gemini | Agent 自己加载的 dotenv |
+| `qwen` Qwen Code | `settings.json` 与 `.env`（`${QWEN_HOME:-~/.qwen}`，核实） | `security.auth.selectedType = "openai"`、`model.name`、已知时 `model.generationConfig.contextWindowSize` 与 `samplingParams.max_tokens`；`.env` 中 `OPENAI_BASE_URL`（`/v1`）、`OPENAI_API_KEY`、`OPENAI_MODEL` | Chat | Agent 自己加载的 dotenv |
+| `opencode` OpenCode | 已有的 `opencode.jsonc`，否则 `opencode.json`（`${OPENCODE_CONFIG_DIR}`，否则 `${XDG_CONFIG_HOME:-~/.config}/opencode`） | `provider.harnesshub`（`npm: @ai-sdk/openai-compatible`、`options.baseURL`、`options.apiKey`、每个模型的 `name` 与窗口和输出都已知时的 `limit`）、`model` 与 `small_model` 为 `harnesshub/<ref>` | Chat | 配置文件 |
+| `pi` Pi | `settings.json` 与 `models.json`（`${PI_CODING_AGENT_DIR:-~/.pi/agent}`） | `defaultProvider`、`defaultModel`；`providers.harnesshub`（`baseUrl`、`api: openai-completions`、`apiKey`、`models[]` 含 `contextWindow`、`maxTokens`） | Chat | 配置文件（字面 `apiKey` 的解析方式核实） |
+| `crush` Crush | `crush.json`（`${XDG_CONFIG_HOME:-~/.config}/crush`，Windows 为 `%LOCALAPPDATA%\crush`） | `providers.harnesshub`（`type: openai-compat`、`base_url`、`api_key`、`models[]` 含 `context_window`、`default_max_tokens`）、`models.large`、`models.small` | Chat | 配置文件 |
+| `kimi` Kimi Code | `config.toml`（`${KIMI_SHARE_DIR:-~/.kimi}`，核实） | `default_model`；`[providers.harnesshub]`（`type = "openai_legacy"`、`base_url`、`api_key`）；窗口已知的每个模型一个 `[models."<ref>"]`（`provider`、`model`、`max_context_size`）。所选模型必须有窗口 | Chat | 配置文件 |
+
+Shell 环境中已有的同名变量优先于 dotenv 文件（Gemini、Qwen），OpenCode 的 `OPENCODE_CONFIG_DIR` 与 Kimi 的 `OPENAI_*` 变量也会覆盖全局文件；这类绕过由漂移检测的网关证据（`bypassed`，尚未实现）发现。
+
+## 与 04 的差异与待做
+
+- Crush 使用 `type: openai-compat`（Crush 对 OpenAI 兼容 Chat 端点的类型；04 写作 `openai`，Crush 以它表示 OpenAI 本身）。
+- Codex 只写 `model_context_window`，尚未生成 HarnessHub 自有的模型清单文件（04 第 1 节的 `model_catalog_json`）。
+- OpenCode 在设置了 `OPENCODE_CONFIG_DIR` 时写入该目录，因为其中的文件覆盖全局配置。
+- 漂移检测没有区分“另一个 HarnessHub 实例”与其他网关：基址不同一律为 `foreign-gateway`。
+- 未实现：OpenClaw（JSON5）、Hermes、MiMo、Copilot（env-launch）Adapter；备份保留数清理；接线前检查 Agent 是否在运行；“rename 前被并发修改”之外的写后篡改注入测试（04 第 9 节第 6 项）；Windows 验证；真实 Agent 的接线生效测试（第 5 项）。
+
+## 验证
+
+`packages/agents/test/` 下：`wiring-formats.test.ts`（各编辑器的保留、拒绝与还原，以及每种格式 40 个种子的随机 set/remove 序列：每步按值核对目标键、其余内容与注释不变，JSON、TOML、dotenv 删除新增条目后字节与原文相同）；`wiring-adapters.test.ts`（每个 Adapter：空目录与已有配置的金样、逐字节还原、用户改动后的键级还原、解析失败拒绝、符号链接逃逸拒绝、漂移、Key 轮换后还原，金样在 `wiring-golden.ts`）；`wiring-safety.test.ts`（目录内符号链接、硬链接、只读文件与权限、BOM 与 CRLF、非 UTF-8、预览后被修改、写入失败回滚、锁、残留临时文件、目录变量、目标与上下文校验、预览掩码、损坏的备份）。测试只使用临时目录作为 `home`，Key 为合成值，不访问网络。
