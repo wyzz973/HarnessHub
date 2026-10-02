@@ -5,6 +5,7 @@
  * `@harnesshub/sdk/local`, which needs Node.
  */
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
+import type { ProviderPreset } from "@harnesshub/core/provider-presets";
 import type {
   GatewayKeyQuota,
   GatewayKeyView,
@@ -33,6 +34,7 @@ export type {
   WireProtocol,
 } from "@harnesshub/core/model-plane";
 export type { SecretReference } from "@harnesshub/core/engine-configuration";
+export type { ProviderPreset } from "@harnesshub/core/provider-presets";
 
 /** One `errors[]` entry of a problem: a body member or a query parameter. */
 export interface ProblemItem {
@@ -96,12 +98,11 @@ export interface ClientOptions {
 }
 
 /** `POST /providers`; credentials are added with `credentials.add`. */
-export interface ProviderInput {
-  id: string;
+/** Provider fields a client may set; the daemon fills the rest. */
+export interface ProviderFields {
   name?: string;
   kind?: ProviderConfig["kind"];
-  preset?: string;
-  endpoints: ProviderConfig["endpoints"];
+  endpoints?: ProviderConfig["endpoints"];
   auth?: ProviderConfig["auth"];
   headers?: Record<string, string>;
   models?: ProviderConfig["models"];
@@ -111,21 +112,42 @@ export interface ProviderInput {
   translateOnly?: boolean;
 }
 
-/** JSON Merge Patch of a provider: `null` removes an optional member. */
-export type ProviderPatch = {
-  [K in Exclude<keyof ProviderInput, "id">]?: ProviderInput[K] | null;
-};
+/** A value to store, or an `env` or `file` reference. */
+export type CredentialSource =
+  | { value: string; ref?: never }
+  | { ref: SecretReference & { kind: "env" | "file" }; value?: never };
 
-/** `POST /providers/{id}/credentials`: either a value to store or a reference. */
+/** `POST /providers/{id}/credentials`. */
 export type CredentialInput = {
   id?: string;
   name: string;
   protocols?: WireProtocol[];
   enabled?: boolean;
+} & CredentialSource;
+
+/**
+ * `POST /providers`: from a preset (`id` defaults to the preset's; other
+ * fields override it, endpoints by protocol) or from scratch (`id` and
+ * `endpoints`). `credential` adds the first credential (name `default`).
+ */
+export type ProviderInput = ProviderFields & {
+  credential?: Omit<CredentialInput, "name"> & { name?: string };
 } & (
-  | { value: string; ref?: never }
-  | { ref: SecretReference & { kind: "env" | "file" }; value?: never }
-);
+    | { preset: string; id?: string }
+    | {
+        preset?: never;
+        id: string;
+        endpoints: ProviderConfig["endpoints"];
+      }
+  );
+
+/** JSON Merge Patch of a provider: `null` removes an optional member. */
+export type ProviderPatch = {
+  [K in keyof ProviderFields]?: ProviderFields[K] | null;
+} & {
+  /** null detaches the provider from its preset. */
+  preset?: null;
+};
 
 export interface RouteGroupInput {
   id: string;
@@ -347,6 +369,22 @@ export class HarnessHubClient {
       }),
     remove: (id: string) =>
       this.request<void>("DELETE", `providers/${segment(id)}`),
+    /**
+     * List the provider's models from its upstream with its first enabled
+     * credential and store them. On failure the daemon keeps the previous
+     * list, marks it stale and rejects (`MODELS_REFRESH_FAILED`, 502, or
+     * `CREDENTIAL_UNAVAILABLE`, 409).
+     */
+    refreshModels: (id: string) =>
+      this.request<ProviderConfig>(
+        "POST",
+        `providers/${segment(id)}/models/refresh`,
+        { body: {} },
+      ),
+  };
+
+  readonly presets = {
+    list: () => this.request<Page<ProviderPreset>>("GET", "presets"),
   };
 
   readonly credentials = {
