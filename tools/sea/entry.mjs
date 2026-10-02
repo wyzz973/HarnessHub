@@ -61,6 +61,11 @@ const ROLES = new Map([
     "scripts/launch-engine.mjs",
     () => import("../../scripts/launch-engine.mjs"),
   ],
+  // Linux process-table scanner, started with process.execPath during Worker cleanup.
+  [
+    "dist/src/process/proc-scan-main.js",
+    () => import("../../dist/src/process/proc-scan-main.js"),
+  ],
 ]);
 
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
