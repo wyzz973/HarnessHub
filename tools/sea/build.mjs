@@ -47,7 +47,25 @@ const ROLE_ENTRIES = [
   "dist/src/worker/main.js",
   "dist/src/drivers/tool-command/command-mcp.js",
   "scripts/launch-engine.mjs",
+  "dist/src/process/proc-scan-main.js",
 ];
+/**
+ * entry.mjs dispatches the same role entries. A role missing there makes the
+ * child run a placeholder (the Linux process-table scanner once failed this way,
+ * leaving every crash recovery `unconfirmed`), so the two lists must match.
+ */
+const ENTRY_ROLES = [
+  ...readFileSync(path.join(ROOT, "tools/sea/entry.mjs"), "utf8").matchAll(
+    /\[\s*"([^"]+)",\s*\(\) => import\(/g,
+  ),
+].map((match) => match[1]);
+if (
+  ENTRY_ROLES.length !== ROLE_ENTRIES.length ||
+  ENTRY_ROLES.some((role) => !ROLE_ENTRIES.includes(role))
+)
+  throw new Error(
+    `tools/sea/entry.mjs dispatches [${ENTRY_ROLES.join(", ")}] but the build extracts [${ROLE_ENTRIES.join(", ")}]`,
+  );
 const ROLE_PLACEHOLDER = `// Placeholder for a HarnessHub single-executable role entry. The executable that wrote this
 // directory runs the bundled role when it is started with this path; nothing else may run it.
 throw new Error("HarnessHub single-executable role placeholder; start it through the executable");
