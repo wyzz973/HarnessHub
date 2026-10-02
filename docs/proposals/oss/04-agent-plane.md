@@ -185,7 +185,7 @@ flowchart TD
 
 ## 6. 隔离接线
 
-隔离接线只为执行平面的 Session 生成私有配置，不触碰用户文件，沿用现状的做法：Worker 在 Session 目录下建立私有 HOME 与 Agent 配置目录，设置 `HOME`、`USERPROFILE`、`APPDATA`、`LOCALAPPDATA`、`XDG_*` 以及 Agent 专属变量（`CODEX_HOME`、`CLAUDE_CONFIG_DIR` 等），按 Adapter 的 `wiring.isolated` 写入配置，Session Key 只经环境变量或私有文件传入（[prepare.ts](../../../packages/agents/src/configuration/prepare.ts) 的 `prepareConfiguration`）。Windows 的环境白名单必须保留 `ProgramFiles`、`ProgramFiles(x86)`、`ProgramW6432`、`ProgramData`、`ALLUSERSPROFILE`、`PUBLIC`、`COMPUTERNAME`，否则依赖它们的工具在任何 Windows 机器上都会失败（上一轮核验 P0-2）。
+隔离接线只为执行平面的 Session 生成私有配置，不触碰用户文件，沿用现状的做法：Worker 在 Session 目录下建立私有 HOME 与 Agent 配置目录，设置 `HOME`、`USERPROFILE`、`APPDATA`、`LOCALAPPDATA`、`XDG_*`（Windows 上还有由私有 HOME 拆出的 `HOMEDRIVE` 与 `HOMEPATH`：显式环境缺少它们时，Node 的 libuv 会从启动方复制真实值）以及 Agent 专属变量（`CODEX_HOME`、`CLAUDE_CONFIG_DIR` 等），按 Adapter 的 `wiring.isolated` 写入配置，Session Key 只经环境变量或私有文件传入（[prepare.ts](../../../packages/agents/src/configuration/prepare.ts) 的 `prepareConfiguration`）。Windows 的环境白名单必须保留 `ProgramFiles`、`ProgramFiles(x86)`、`ProgramW6432`、`ProgramData`、`ALLUSERSPROFILE`、`PUBLIC`、`COMPUTERNAME`，否则依赖它们的工具在任何 Windows 机器上都会失败（上一轮核验 P0-2）。
 
 私有 HOME 只隔离按用户目录查找的配置。上一轮核验确认了以下例外，每一项在 Adapter 清单中登记为 `quirks[]`，并有对应的一致性测试：
 

@@ -521,7 +521,7 @@ export class ProcessWorkerHost implements WorkerHost {
       ...env,
       ...privatePaths,
       ...(process.platform === "win32"
-        ? {}
+        ? windowsHomeEnvironment(home)
         : { [WORKER_TREE_ENVIRONMENT]: ownerToken }),
     };
   }
