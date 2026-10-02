@@ -41,6 +41,8 @@ import {
 import { createDecoder, type UpstreamDecoder } from "./decode.js";
 import { encodeRequest } from "./encode.js";
 import { Keepalive } from "./keepalive.js";
+import type { Quotas } from "./quota.js";
+import type { Conversation, StickyRoutes } from "./sticky.js";
 import { callCost, callUsage, usageParts, type UsageParts } from "./ledger.js";
 import type { HandlerLimits } from "./limits.js";
 import type { HttpWriter } from "./output.js";
@@ -225,6 +227,8 @@ export interface CallServices {
   memory: MemoryBudget;
   slots(candidate: Candidate): Slots;
   reasoning: ReasoningCaches;
+  sticky: StickyRoutes;
+  quotas: Quotas;
   makeId(): string;
   /** Append to the ledger; false when the store rejected it (the failure is logged). */
   commit(entry: ModelCallEntry): Promise<boolean>;
@@ -265,6 +269,10 @@ export interface Call {
   raw: Record<string, unknown>;
   requested: string;
   stream: boolean;
+  /** The conversation for stickiness; absent before the request was read. */
+  conversation?: Conversation;
+  /** Routing decisions recorded before any attempt (`sticky:…`). */
+  routePatches: string[];
 }
 
 type Prepared =
@@ -1339,7 +1347,11 @@ async function passthroughAttempt(
       url,
       set,
     );
-    call.entry.patches = [...prepared.patches, ...patches];
+    call.entry.patches = [
+      ...call.routePatches,
+      ...prepared.patches,
+      ...patches,
+    ];
     return { url, headers, body: prepared.body };
   });
   let secrets: string[] = [];
@@ -1608,7 +1620,7 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
       entry.wireModel = candidate.wireModel;
       entry.upstreamProtocol = candidate.upstream;
       entry.mode = candidate.mode;
-      entry.patches = prepared.patches;
+      entry.patches = [...call.routePatches, ...prepared.patches];
       entry.unmapped = prepared.kind === "translated" ? prepared.unmapped : [];
       const attempt: CallAttempt = {
         provider: candidate.provider.id,
@@ -1655,6 +1667,13 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
             result.tokens,
             entry.timing.firstContentMs,
           );
+          if (call.conversation)
+            services.sticky.remember(
+              call.conversation,
+              call.requested,
+              candidate,
+              entry.usage?.cacheRead ?? 0,
+            );
         }
         return;
       }

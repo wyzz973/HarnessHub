@@ -26,6 +26,7 @@ import {
   type ProviderConfig,
   type ProviderModel,
   type RouteGroup,
+  type Stickiness,
   type WireProtocol,
 } from "@harnesshub/core/model-plane";
 import { anthropicCountTokens } from "./anthropic.js";
@@ -47,6 +48,8 @@ import {
   Slots,
 } from "./http.js";
 import { RejectionThrottle } from "./ledger.js";
+import { Quotas, type QuotaRefusal } from "./quota.js";
+import { conversationOf, StickyRoutes } from "./sticky.js";
 import type { HandlerLimits } from "./limits.js";
 import { HttpWriter, type Failure } from "./output.js";
 import { GatewayError, estimateTokens, object } from "./protocol.js";
@@ -310,6 +313,19 @@ function groupModel(members: (ProviderModel | undefined)[]): ProviderModel {
 }
 
 /**
+ * Stickiness of a call: the group's setting, `auto` for a single Model Ref;
+ * `session:` keys keep their whole Session on one credential where the
+ * setting is `auto`.
+ */
+function stickiness(
+  group: RouteGroup | undefined,
+  key: GatewayKeyRecord,
+): Stickiness {
+  const mode = group?.stickiness ?? "auto";
+  return key.scope.kind === "session" && mode === "auto" ? "session" : mode;
+}
+
+/**
  * Create the shared gateway handler. Upstream requests happen only for
  * authenticated, allowed model calls; listing and token counting never
  * contact an upstream. See docs/model-gateway.md for the full behaviour.
@@ -350,10 +366,13 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       return slots;
     },
     reasoning: new ReasoningCaches(limits),
+    sticky: new StickyRoutes(clock),
+    quotas: new Quotas(store, clock),
     makeId: () => `call_${nonce}${(generated++).toString(36)}`,
     async commit(entry: ModelCallEntry): Promise<boolean> {
       try {
         await store.appendModelCall(entry);
+        services.quotas.record(entry);
         return true;
       } catch (error) {
         log.info("gateway.ledger.failed", {
@@ -401,13 +420,19 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     response: ServerResponse,
     protocol: WireProtocol,
     value: Failure,
+    retryAfterMs?: number,
   ) => {
     if (response.headersSent) {
       response.destroy();
       return;
     }
     response.setHeader("x-hh-error-source", "gateway");
-    const { status, body } = errorResponse(protocol, value);
+    if (retryAfterMs !== undefined)
+      response.setHeader(
+        "retry-after",
+        String(Math.max(1, Math.ceil(retryAfterMs / 1000))),
+      );
+    const { status, body } = errorResponse(protocol, value, retryAfterMs);
     await new HttpWriter(response).json(status, body).catch(() => {
       response.destroy();
     });
@@ -419,6 +444,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     reason: string,
     value: Failure,
     started: number,
+    retryAfterMs?: number,
   ) => {
     entry.status = value.status;
     entry.errorClass = reason;
@@ -429,7 +455,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     entry.timing.durationMs = Math.round(performance.now() - started);
     for (const record of throttle.admit(entry.keyId, reason, entry))
       await services.commit(record);
-    await reply(response, entry.inbound.protocol, value);
+    await reply(response, entry.inbound.protocol, value, retryAfterMs);
   };
 
   const authenticate = async (
@@ -716,6 +742,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         raw: {},
         requested: entry.requestedModel ?? "",
         stream: entry.inbound.stream,
+        routePatches: [],
       };
       if (abort.signal.aborted) {
         await publishFailure(stub, {
@@ -790,9 +817,48 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         );
         return;
       }
+      let refusal: QuotaRefusal | undefined;
+      try {
+        refusal = await services.quotas.admit(key);
+      } catch (error) {
+        log.info("gateway.store.unavailable", {
+          error:
+            error instanceof Error ? error.message.slice(0, 200) : "unknown",
+        });
+        throw new GatewayError(
+          "Gateway Key usage cannot be read",
+          503,
+          "store_unavailable",
+        );
+      }
+      if (refusal) {
+        await reject(
+          response,
+          entry,
+          "quota_exceeded",
+          failure(429, "quota_exceeded", refusal.message),
+          started,
+          refusal.retryAfterMs,
+        );
+        return;
+      }
       const resolved = await plan(requested, route.protocol);
       const parsed = parseModelRef(requested);
       if (parsed?.kind === "group") entry.group = parsed.group;
+      const conversation = conversationOf(
+        route.protocol,
+        raw,
+        request.headers,
+        key.keyId,
+      );
+      const sticky = services.sticky.apply(
+        conversation,
+        requested,
+        stickiness(resolved.group, key),
+        resolved.candidates,
+        (candidate) => services.breakers.blocked(candidate),
+      );
+      resolved.candidates = sticky.candidates;
       call = {
         services,
         request,
@@ -809,6 +875,8 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         raw,
         requested,
         stream,
+        conversation,
+        routePatches: sticky.patch ? [sticky.patch] : [],
       };
       try {
         await routeCall(call, resolved);

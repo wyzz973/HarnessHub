@@ -26,6 +26,9 @@ import {
   type ProviderId,
   type RouteGroup,
   type RouteGroupId,
+  type CallUsage,
+  type UsageBucket,
+  type UsageFilter,
   type WireProtocol,
   type WiringRecord,
 } from "@harnesshub/core/model-plane";
@@ -40,6 +43,7 @@ export class MemoryStore implements ModelPlaneStore {
   entries: ModelCallEntry[] = [];
   touches: string[] = [];
   failAppend = false;
+  aggregations = 0;
   appendGate: Promise<void> | undefined;
   appendStarted = 0;
   async listProviders() {
@@ -93,8 +97,42 @@ export class MemoryStore implements ModelPlaneStore {
   async listModelCalls() {
     return { items: this.entries };
   }
-  async aggregateUsage() {
-    return [];
+  /** Ledger totals of the matching entries in one bucket; `groupBy` is ignored. */
+  async aggregateUsage(filter: UsageFilter): Promise<UsageBucket[]> {
+    this.aggregations++;
+    const rows = this.entries.filter(
+      (entry) =>
+        (filter.keyId === undefined || entry.keyId === filter.keyId) &&
+        (filter.from === undefined ||
+          Date.parse(entry.occurredAt) >= Date.parse(filter.from)) &&
+        (filter.to === undefined ||
+          Date.parse(entry.occurredAt) < Date.parse(filter.to)),
+    );
+    if (!rows.length) return [];
+    const sum = (pick: (usage: CallUsage) => number) =>
+      rows.reduce(
+        (total, entry) => total + (entry.usage ? pick(entry.usage) : 0),
+        0,
+      );
+    return [
+      {
+        key: filter.keyId ?? "",
+        calls: rows.length,
+        failedCalls: rows.filter((entry) => entry.status >= 400).length,
+        usage: {
+          input: sum((usage) => usage.input),
+          cacheRead: sum((usage) => usage.cacheRead),
+          cacheWrite: sum((usage) => usage.cacheWrite),
+          output: sum((usage) => usage.output),
+          reasoning: sum((usage) => usage.reasoning),
+        },
+        costUsd: rows.reduce(
+          (total, entry) => total + (entry.cost?.amountUsd ?? 0),
+          0,
+        ),
+        unpricedCalls: rows.filter((entry) => entry.cost === null).length,
+      },
+    ];
   }
   async listWirings(): Promise<WiringRecord[]> {
     return [];
