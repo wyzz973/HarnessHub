@@ -371,7 +371,8 @@ export class SqliteModelPlaneStore implements ModelPlaneStore {
 
   /**
    * Idempotent: an already revoked key keeps its first `revokedAt`. Returns
-   * false only when the key does not exist.
+   * false only when the key does not exist. `at` must be an ISO 8601
+   * date-time with an offset (`INVALID_TIMESTAMP`, 400).
    */
   async revokeGatewayKey(keyId: GatewayKeyId, at: string): Promise<boolean> {
     time(at, "at", "INVALID_TIMESTAMP");
@@ -382,7 +383,7 @@ export class SqliteModelPlaneStore implements ModelPlaneStore {
 
   /**
    * Moves `lastUsedAt` forward to `at`, never back; a key that does not exist
-   * is ignored.
+   * is ignored. `at` is checked as for `revokeGatewayKey`.
    */
   async touchGatewayKey(keyId: GatewayKeyId, at: string): Promise<void> {
     const atMs = time(at, "at", "INVALID_TIMESTAMP");
