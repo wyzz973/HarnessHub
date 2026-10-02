@@ -1,0 +1,21 @@
+{
+  "name": "@harnesshub/agents",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    "./*": {
+      "@harnesshub/source": "./src/*.ts",
+      "types": "./dist/src/*.d.ts",
+      "default": "./dist/src/*.js"
+    }
+  },
+  "dependencies": {
+    "@harnesshub/core": "workspace:*",
+    "@harnesshub/secrets": "workspace:*",
+    "@harnesshub/store": "workspace:*",
+    "ajv": "8.20.0",
+    "yaml": "2.9.0"
+  }
+}

@@ -1,21 +1,22 @@
 // SPDX-License-Identifier: MIT
-import { EngineConfigurationService } from "./application/engine-configuration.js";
+import { COMMAND_MCP_ENTRY } from "@harnesshub/agents/tool-command/entry";
+import { EngineConfigurationService } from "@harnesshub/agents/application/engine-configuration";
 import {
   HarnessModelService,
   type RuntimeInfo,
-} from "./application/harness-model.js";
-import { builtinConfigurationAdapter } from "./engine/builtins.js";
+} from "@harnesshub/agents/application/harness-model";
+import { builtinConfigurationAdapter } from "@harnesshub/agents/engine/builtins";
 import {
   normalizeEngine,
   prepareEngine,
   type HubConfig,
-} from "./engine/registry.js";
-import { fullAccessEnabled } from "./engine/full-access.js";
+} from "@harnesshub/agents/engine/registry";
+import { fullAccessEnabled } from "@harnesshub/agents/engine/full-access";
 import { registerHarnessModelRoutes } from "./gateway/harness-model-routes.js";
-import { providerProtocols } from "./engine/configuration.js";
+import { providerProtocols } from "@harnesshub/agents/engine/configuration";
 import { configurationAdapters } from "@harnesshub/core/engine-configuration";
 import { createSecret } from "@harnesshub/secrets/secrets";
-import { prepareConfiguration } from "./drivers/configuration/prepare.js";
+import { prepareConfiguration } from "@harnesshub/agents/configuration/prepare";
 import { startModelGateway } from "@harnesshub/gateway/gateway";
 import { probeConfiguration } from "./drivers/configuration/probe.js";
 import { HubError } from "@harnesshub/core/errors";
@@ -28,14 +29,14 @@ import { WorkflowService } from "./application/workflows.js";
 import { ObservationService } from "./application/observability.js";
 import { parseArgs } from "node:util";
 import { homedir } from "node:os";
-import { EngineManager } from "./engine/manager.js";
-import { discoverEngines } from "./engine/discovery.js";
-import { inspectEngineInstallation } from "./engine/installation.js";
+import { EngineManager } from "@harnesshub/agents/engine/manager";
+import { discoverEngines } from "@harnesshub/agents/engine/discovery";
+import { inspectEngineInstallation } from "@harnesshub/agents/engine/installation";
 import type { Workspace } from "@harnesshub/core/types";
 import { mkdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig } from "./engine/registry.js";
+import { loadConfig } from "@harnesshub/agents/engine/registry";
 import { SqliteStore } from "@harnesshub/store/storage/sqlite-store";
 import { ProcessWorkerHost } from "./process/worker-host.js";
 import {
@@ -48,7 +49,7 @@ import { Runtime } from "./runtime/runtime.js";
 import { HubApplication } from "./application/service.js";
 import { createGateway } from "./gateway/server.js";
 import { registerToolPackageRoutes } from "./gateway/tool-package-routes.js";
-import { createToolPackageManagement } from "./tool-packages/management.js";
+import { createToolPackageManagement } from "@harnesshub/agents/tool-packages/management";
 import {
   LOG_LEVEL_ENVIRONMENT,
   parseLogLevel,
@@ -481,9 +482,7 @@ export async function startHub(options: {
     const toolPackages = createToolPackageManagement({
       root: options.toolPackageRoot ?? path.join(dataDir, "tool-packages"),
       nodeExecutable: process.execPath,
-      commandMcpEntry: fileURLToPath(
-        new URL("./drivers/tool-command/command-mcp.js", import.meta.url),
-      ),
+      commandMcpEntry: COMMAND_MCP_ENTRY,
       engineProfile: (id) => app.engineProfile(id),
       registerEngine: (input) => app.registerEngine(input),
       listEngines: () => app.engines(),

@@ -30,7 +30,7 @@ const PAYLOAD_DIRECTORIES = ["examples/tool-packages/"];
 const PROJECT_LICENSE = "MIT";
 /** Files copied from third parties keep their original license (see THIRD_PARTY_NOTICES.md). */
 export const THIRD_PARTY_LICENSES = new Map([
-  ["src/drivers/configuration/codex-default-instructions.ts", "Apache-2.0"],
+  ["packages/agents/src/configuration/codex-default-instructions.ts", "Apache-2.0"],
   ["web/components/ai-elements/", "Apache-2.0"],
 ]);
 

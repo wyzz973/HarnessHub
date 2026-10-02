@@ -3,7 +3,7 @@ import type { FastifyInstance } from "fastify";
 import type {
   HarnessModelManagement,
   RuntimeInfo,
-} from "../application/harness-model.js";
+} from "@harnesshub/agents/application/harness-model";
 import { engineConfigurationSchema } from "@harnesshub/core/engine-configuration";
 import { errorResponseSchema } from "@harnesshub/core/schemas";
 

@@ -2,7 +2,7 @@
 
 ## 统一模型
 
-配置统一模型后，所有引擎只使用 HarnessHub 配置的同一个模型，不能再使用引擎自带的 API Key、登录态、订阅或各自的 Provider。类型见 [统一模型定义](../packages/core/src/harness-model.ts)，决定见 [ADR 0013](decisions/0013-unified-model-gateway.md)，实现见 [统一模型服务](../src/application/harness-model.ts)。未配置统一模型时，本页后续的逐引擎配置保持原有行为。
+配置统一模型后，所有引擎只使用 HarnessHub 配置的同一个模型，不能再使用引擎自带的 API Key、登录态、订阅或各自的 Provider。类型见 [统一模型定义](../packages/core/src/harness-model.ts)，决定见 [ADR 0013](decisions/0013-unified-model-gateway.md)，实现见 [统一模型服务](../packages/agents/src/application/harness-model.ts)。未配置统一模型时，本页后续的逐引擎配置保持原有行为。
 
 ### 三种配置方式
 

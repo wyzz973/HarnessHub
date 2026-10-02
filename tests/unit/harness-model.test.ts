@@ -13,9 +13,9 @@ import {
   parseHarnessModel,
   readHarnessModelFile,
   writeHarnessModelFile,
-} from "../../src/application/harness-model.js";
-import { builtinConfigurationAdapter } from "../../src/engine/builtins.js";
-import { normalizeEngine } from "../../src/engine/registry.js";
+} from "@harnesshub/agents/application/harness-model";
+import { builtinConfigurationAdapter } from "@harnesshub/agents/engine/builtins";
+import { normalizeEngine } from "@harnesshub/agents/engine/registry";
 import type { EngineRegistration } from "@harnesshub/core/engines";
 import { HubError } from "@harnesshub/core/errors";
 import {

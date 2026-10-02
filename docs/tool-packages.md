@@ -6,7 +6,7 @@
 
 ## 清单与相对路径
 
-完整包目录有 `tool-package.json`。版本字段 `schemaVersion` 当前只接受 `1`；字段类型的权威定义为 [types.ts](../src/tool-packages/types.ts)，运行时 schema 与语义校验为 [manifest.ts](../src/tool-packages/manifest.ts)。未知字段或版本明确失败，没有隐式迁移。实际可安装样例为 [portable-review](../examples/tool-packages/portable-review/tool-package.json)，包含一个 SKILL.md 和相对路径引用的附件。
+完整包目录有 `tool-package.json`。版本字段 `schemaVersion` 当前只接受 `1`；字段类型的权威定义为 [types.ts](../packages/agents/src/tool-packages/types.ts)，运行时 schema 与语义校验为 [manifest.ts](../packages/agents/src/tool-packages/manifest.ts)。未知字段或版本明确失败，没有隐式迁移。实际可安装样例为 [portable-review](../examples/tool-packages/portable-review/tool-package.json)，包含一个 SKILL.md 和相对路径引用的附件。
 
 清单使用以下字段：
 
@@ -38,13 +38,13 @@
 
 按 [ADR 0013](decisions/0013-unified-model-gateway.md#会话工作目录占位符)，绑定不再写死工作区绝对路径。凡是指向工作目录的值都写成字面量 `${HARNESSHUB_SESSION_WORKSPACE}`：清单参数 `{"anchor":"workspace"}`；导入时 MCP 参数或 env 值中的 `${workspaceFolder}`（及旧名 `${workspaceRoot}`）；受控 CLI 服务 `<id>-cli` 的工作目录参数 `--workspace ${HARNESSHUB_SESSION_WORKSPACE}`。同一个引擎 revision 因此可以服务于不同目录的 Session。
 
-Worker 准备 Session 的 MCP 时，必须把 stdio 服务 `args` 和 `env` 值中出现的每一处占位符替换为该 Session 的实际目录，再交给 ACP 或原生适配器。替换位于 [prepare.ts](../src/drivers/configuration/prepare.ts)，由 Worker 配置任务交付，本页只定义契约。没有替换时，受控 CLI 服务和 [simple-toolkit](../examples/tool-packages/simple-toolkit/mcp.json) 示例服务都以 “placeholder was not substituted” 明确失败，不会退回进程当前目录。
+Worker 准备 Session 的 MCP 时，必须把 stdio 服务 `args` 和 `env` 值中出现的每一处占位符替换为该 Session 的实际目录，再交给 ACP 或原生适配器。替换位于 [prepare.ts](../packages/agents/src/configuration/prepare.ts)，由 Worker 配置任务交付，本页只定义契约。没有替换时，受控 CLI 服务和 [simple-toolkit](../examples/tool-packages/simple-toolkit/mcp.json) 示例服务都以 “placeholder was not substituted” 明确失败，不会退回进程当前目录。
 
 CLI 声明里的工作区参数在 `HHCAP_CLI_TOOLS_JSON` 环境值中保持结构化的 `{"anchor":"workspace"}`，由受控 CLI 服务按自己的 `--workspace` 解析；该 JSON 中不允许出现占位符字面量，因为按字符串替换会破坏 Windows 路径在 JSON 中的转义。本变更之前发布的 revision 仍在 `HHCAP_CLI_WORKSPACE` 中带有当时的绝对工作区，受控 CLI 服务继续兼容读取；再次应用同一版本即可换成占位符。
 
 ## 简易格式导入
 
-`POST /v1/tool-packs/import`、CLI `import` 命令和模块函数 `importLocal` 使用同一规则，实现为 [importer.ts](../src/tool-packages/importer.ts)。`source` 必须是本机绝对路径，可以是目录或文件：
+`POST /v1/tool-packs/import`、CLI `import` 命令和模块函数 `importLocal` 使用同一规则，实现为 [importer.ts](../packages/agents/src/tool-packages/importer.ts)。`source` 必须是本机绝对路径，可以是目录或文件：
 
 | 输入 | 处理 |
 | --- | --- |
@@ -81,7 +81,7 @@ id 默认取目录名；源为 JSON 文件时取文件名，`mcp.json` 这类通
 
 ## HTTP 接口
 
-四个路由都受 Gateway 的 loopback Host/Origin 检查，请求与响应 schema 定义在 [tool-package-routes.ts](../src/gateway/tool-package-routes.ts)，实现为 [management.ts](../src/tool-packages/management.ts)。所有变更请求在同一进程内串行执行；多个引擎逐个处理，单个引擎失败不回滚、也不影响其他引擎。
+四个路由都受 Gateway 的 loopback Host/Origin 检查，请求与响应 schema 定义在 [tool-package-routes.ts](../src/gateway/tool-package-routes.ts)，实现为 [management.ts](../packages/agents/src/tool-packages/management.ts)。所有变更请求在同一进程内串行执行；多个引擎逐个处理，单个引擎失败不回滚、也不影响其他引擎。
 
 `GET /v1/tool-packs` 返回 `{packages:[...]}`。每项是登记记录 `schemaVersion/id/version/digest/installedAt/status`，加上 `displayName`、`counts:{skills,mcp,cli}` 和 `engines`（当前配置包含该版本的引擎 id）。清单无法读取的包仍会列出，并附 `problem:{code,message}`。
 
@@ -147,7 +147,7 @@ node dist/src/tool-packages-main.js --root C:\HarnessHub\data\tool-packages list
 
 ## CLI 工具与 Windows 批处理
 
-`cliTools` 由受控 MCP 服务 [command-mcp.ts](../src/drivers/tool-command/command-mcp.ts) 暴露为 `cli_<name>` 工具，配置解析在 [config.ts](../src/drivers/tool-command/config.ts)。工作目录取自 `--workspace`（Worker 替换后的 Session 目录），旧 revision 取 `HHCAP_CLI_WORKSPACE`；缺失、相对路径或未替换的占位符都会让服务启动失败。模型只能传有界字符串 argv，执行使用 `shell:false`，限制见 [Capability Pack](capability-packs.md#cli-如何统一给不同-harness-使用)。
+`cliTools` 由受控 MCP 服务 [command-mcp.ts](../packages/agents/src/tool-command/command-mcp.ts) 暴露为 `cli_<name>` 工具，配置解析在 [config.ts](../packages/agents/src/tool-command/config.ts)。工作目录取自 `--workspace`（Worker 替换后的 Session 目录），旧 revision 取 `HHCAP_CLI_WORKSPACE`；缺失、相对路径或未替换的占位符都会让服务启动失败。模型只能传有界字符串 argv，执行使用 `shell:false`，限制见 [Capability Pack](capability-packs.md#cli-如何统一给不同-harness-使用)。
 
 Windows 上 Node 拒绝直接启动 `.cmd`/`.bat`（CVE-2024-27980，报 EINVAL）。受控服务改用绝对路径的 `cmd.exe /d /s /v:off /c "<行>"` 启动这类入口，并以 `windowsVerbatimArguments` 传入整行；`cmd.exe` 取自以 `cmd.exe` 结尾的绝对 `ComSpec`，否则取 `%SystemRoot%\System32\cmd.exe`，不经 PATH 查找。批处理路径和每个参数都用双引号包围，末尾反斜杠加倍，因此 `&|<>()^!`、空格和中文在外层 cmd 解析和批处理的 `%*` 展开中都保持原样。cmd.exe 即使在引号内也会展开或重新切分的 `"`、`%`、CR、LF 和 NUL 无法安全传递，含这些字符的调用返回 `isError`，不会改写参数；需要这类值时请改用原生可执行文件。`/v:off` 只关闭外层解析的延迟展开，批处理自己开启延迟展开时仍可能改写 `!`。`.ps1` 入口明确拒绝，请用 `.cmd` 包装。超时只终止 cmd.exe 本身，批处理启动的子进程由 Worker 的进程树监督回收。
 
@@ -175,7 +175,7 @@ node examples/tool-packages/workspace-tools/workspace-tools.mjs --root C:\Projec
 
 ## 模块接口
 
-统一导出为 [index.ts](../src/tool-packages/index.ts)，CLI 上下文为 [cli.ts](../src/tool-packages/cli.ts)，绑定归属与合并规则为 [footprint.ts](../src/tool-packages/footprint.ts)。所有 I/O 接口是 Promise，失败 reject；每次调用自行拥有并等待关闭文件/native helper，不需要调用者额外 close。参数中的源目录、存储根、Node 可执行文件和 JSON 文件必须为绝对路径。
+统一导出为 [index.ts](../packages/agents/src/tool-packages/index.ts)，CLI 上下文为 [cli.ts](../packages/agents/src/tool-packages/cli.ts)，绑定归属与合并规则为 [footprint.ts](../packages/agents/src/tool-packages/footprint.ts)。所有 I/O 接口是 Promise，失败 reject；每次调用自行拥有并等待关闭文件/native helper，不需要调用者额外 close。参数中的源目录、存储根、Node 可执行文件和 JSON 文件必须为绝对路径。
 
 | 接口 | 输入与结果 |
 | --- | --- |

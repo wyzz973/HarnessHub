@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: MIT
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { repositoryScript } from "../repository.js";
 import { HubError } from "@harnesshub/core/errors";
 import { existsSync } from "node:fs";
 
 /** This exact repository-owned wrapper is the only script whose env arguments are unpacked. */
-export const portableLauncher = fileURLToPath(
-  new URL("../../../../scripts/launch-engine.mjs", import.meta.url),
-);
+export const portableLauncher = repositoryScript("launch-engine.mjs");
 
 /** Convert our portable argv environment (or existing simple POSIX env recipe) into Worker-owned values. */
 export function unwrapEnvironment(command: readonly string[]): {

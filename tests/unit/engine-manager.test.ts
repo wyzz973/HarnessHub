@@ -4,10 +4,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { HarnessModelService } from "../../src/application/harness-model.js";
-import { builtinConfigurationAdapter } from "../../src/engine/builtins.js";
-import { EngineManager } from "../../src/engine/manager.js";
-import { normalizeEngine, type HubConfig } from "../../src/engine/registry.js";
+import { HarnessModelService } from "@harnesshub/agents/application/harness-model";
+import { builtinConfigurationAdapter } from "@harnesshub/agents/engine/builtins";
+import { EngineManager } from "@harnesshub/agents/engine/manager";
+import {
+  normalizeEngine,
+  type HubConfig,
+} from "@harnesshub/agents/engine/registry";
 import type { EngineRegistration } from "@harnesshub/core/engines";
 import { HubError } from "@harnesshub/core/errors";
 import type { HarnessModel } from "@harnesshub/core/harness-model";

@@ -6,7 +6,7 @@
 
 ## 内置安装发现
 
-识别清单由 [内置定义](../src/engine/builtins.ts)集中维护，DSH 的同级源码入口由发现器处理，合计 16 个引擎。优先按 Gateway 的 `PATH` 顺序查找，再查 `.local/bin`、`.npm-global/bin`、`.bun/bin`、`.volta/bin`、`Library/pnpm`、`.local/share/pnpm`、`.nvm/current/bin`，以及引擎专属目录。macOS 再检查 `/opt/homebrew/bin`、`/usr/local/bin`、`/usr/bin`、`/bin`；其他 POSIX 系统使用后三项。只检查普通文件及访问权限；同名目录、失效链接不会被识别为程序。POSIX 要求执行权限；Windows 检查文件可读性与可启动文件名，不能把 Unix 执行位用作 Windows 证据。空 PATH 项不会隐式指向当前目录。
+识别清单由 [内置定义](../packages/agents/src/engine/builtins.ts)集中维护，DSH 的同级源码入口由发现器处理，合计 16 个引擎。优先按 Gateway 的 `PATH` 顺序查找，再查 `.local/bin`、`.npm-global/bin`、`.bun/bin`、`.volta/bin`、`Library/pnpm`、`.local/share/pnpm`、`.nvm/current/bin`，以及引擎专属目录。macOS 再检查 `/opt/homebrew/bin`、`/usr/local/bin`、`/usr/bin`、`/bin`；其他 POSIX 系统使用后三项。只检查普通文件及访问权限；同名目录、失效链接不会被识别为程序。POSIX 要求执行权限；Windows 检查文件可读性与可启动文件名，不能把 Unix 执行位用作 Windows 证据。空 PATH 项不会隐式指向当前目录。
 
 | 引擎 | 启动来源 | 原有配置引用 |
 |---|---|---|
@@ -62,7 +62,7 @@ Windows 按分号拆分 PATH，允许带引号的目录，目录优先级高于�
 
 除通用用户目录外，还检查 `APPDATA/npm`、`LOCALAPPDATA/pnpm`、用户 `scoop/shims`、Volta 和 Hermes 的 `venv/Scripts`。Codex 桌面安装会补查 `LOCALAPPDATA/OpenAI/Codex/bin`；只有一个版本子目录时可以直接定位其中的 `codex.exe`，有多个版本时由 PATH 或 manifest 明确选择，不猜测不透明目录名的版本顺序。组合根传入 Windows 的 APPDATA、LOCALAPPDATA、PATHEXT；缺省目录才使用用户 HOME 下的 AppData。
 
-所有内置注册采用 [跨平台启动器](../scripts/launch-engine.mjs) 的 `node launcher NAME=value -- executable args...` 数组，不再依赖 `/usr/bin/env`。Worker 的[配置准备](../src/drivers/configuration/prepare.ts)只拆解本仓库的确切启动器路径，再应用已登记的配置覆盖。已有简单 `/usr/bin/env NAME=value executable` 配置继续支持；任意自定义脚本不会被拆解。发现配置显式保留用户 HOME、USERPROFILE、APPDATA、LOCALAPPDATA、XDG 与可用 PATH，使现有登录和解释器路径可用；不会读取认证文件或把凭证复制到注册参数。
+所有内置注册采用 [跨平台启动器](../scripts/launch-engine.mjs) 的 `node launcher NAME=value -- executable args...` 数组，不再依赖 `/usr/bin/env`。Worker 的[配置准备](../packages/agents/src/configuration/prepare.ts)只拆解本仓库的确切启动器路径，再应用已登记的配置覆盖。已有简单 `/usr/bin/env NAME=value executable` 配置继续支持；任意自定义脚本不会被拆解。发现配置显式保留用户 HOME、USERPROFILE、APPDATA、LOCALAPPDATA、XDG 与可用 PATH，使现有登录和解释器路径可用；不会读取认证文件或把凭证复制到注册参数。
 
 `.exe`/`.com` 直接使用 argv；`.cmd`/`.bat` 通过固定版本的 cross-spawn 转义，PowerShell 使用显式 `-File`，不把任务文本交给 `-Command`。PowerShell 的 RemoteSigned 仅对这个子进程生效，机器和用户策略不变，组策略仍有效。相同启动处理覆盖 CLI、ACP 与配置的 stdio MCP。Windows 批处理无法忠实传递 argv 中的换行，因此启动前明确拒绝这类参数；需要多行任务时使用 stdin 输入模式或原生 executable/PowerShell 脚本。stdin、原生 executable 与 PowerShell argv 支持多行、空字符串、中文、空格与 shell 特殊字符。
 

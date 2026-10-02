@@ -1,6 +1,6 @@
 # 引擎经统一模型网关接入
 
-本页说明 Worker 在准备 Session 配置时，如何让每个引擎只经 [统一模型网关](model-gateway.md) 使用 HarnessHub 配置的同一个模型，以及各引擎写入的原生配置项、上下文窗口与输出上限的映射和已知限制。取舍见 [ADR 0013](decisions/0013-unified-model-gateway.md)；实现位于 [prepare.ts](../src/drivers/configuration/prepare.ts)，Run 结果与错误语义位于 [Worker](../src/worker/main.ts)、[outcome.ts](../src/worker/outcome.ts) 与 [diagnostics.ts](../src/worker/diagnostics.ts)。统一模型如何写入引擎登记见 [引擎独立配置](engine-configuration.md)。
+本页说明 Worker 在准备 Session 配置时，如何让每个引擎只经 [统一模型网关](model-gateway.md) 使用 HarnessHub 配置的同一个模型，以及各引擎写入的原生配置项、上下文窗口与输出上限的映射和已知限制。取舍见 [ADR 0013](decisions/0013-unified-model-gateway.md)；实现位于 [prepare.ts](../packages/agents/src/configuration/prepare.ts)，Run 结果与错误语义位于 [Worker](../src/worker/main.ts)、[outcome.ts](../src/worker/outcome.ts) 与 [diagnostics.ts](../src/worker/diagnostics.ts)。统一模型如何写入引擎登记见 [引擎独立配置](engine-configuration.md)。
 
 各引擎配置项均按 `vendor/engine-sources` 中的固定源码核对：Codex 0.153.4 与 codex-acp 1.10.0、claude-agent-acp 0.75.1、Gemini CLI 0.58.0、OpenCode 1.18.29、MiMo 0.1.14、Pi 0.85.1 与 pi-acp 0.0.33、Qwen Code 0.23.0、Hermes 0.19.0、OpenClaw 2026.9.2、DSH 0.1.2-rc.1、Kimi CLI 1.50.0。Claude Code 本体与 Copilot CLI 不在源码快照中：Claude Code 的变量按本机安装的 2.1.278 二进制和 SDK 0.3.257 核对，Copilot 沿用原有 BYOK 映射。以上都是源码与配置层面的核对，固定版本引擎经网关的真实任务尚未验收。
 
@@ -24,7 +24,7 @@
 
 引擎只拿到回环地址、本 Session 的随机令牌和 alias，令牌写入 `HARNESSHUB_PROVIDER_KEY` 及各引擎自己的变量。准备时：
 
-- 从启动模板、普通 env 和引擎级 secretEnv 得到的环境中，删除 [厂商凭据变量](../src/drivers/configuration/prepare.ts)（`VENDOR_CREDENTIAL_ENVIRONMENT`，包括 OpenAI/Codex、Anthropic/Claude、Google/Gemini、Moonshot/Kimi、DeepSeek、DashScope、OpenRouter 等 API Key、Base URL 与账号开关）；Copilot 另外删除 `GH_TOKEN`、`GITHUB_TOKEN`。
+- 从启动模板、普通 env 和引擎级 secretEnv 得到的环境中，删除 [厂商凭据变量](../packages/agents/src/configuration/prepare.ts)（`VENDOR_CREDENTIAL_ENVIRONMENT`，包括 OpenAI/Codex、Anthropic/Claude、Google/Gemini、Moonshot/Kimi、DeepSeek、DashScope、OpenRouter 等 API Key、Base URL 与账号开关）；Copilot 另外删除 `GH_TOKEN`、`GITHUB_TOKEN`。
 - `PreparedConfiguration.unsetEnv` 列出上述变量、登记的 `credentialEnv`，以及 provider apiKey/secretHeaders 的 env 引用源变量；Worker 启动引擎前从进程环境中删除它们（大小写不敏感），然后才写入准备好的环境。上游密钥因此不进入引擎进程。
 - 启动模板中指向用户目录的引擎根目录变量（`CODEX_HOME`、`CLAUDE_CONFIG_DIR`、`GEMINI_CLI_HOME`、`QWEN_HOME`、`PI_CODING_AGENT_DIR`、`HERMES_HOME`、`DSH_HOME`、`OPENCLAW_STATE_DIR`、`KIMI_SHARE_DIR` 等）被丢弃，由各适配器改为 `<stateDir>/configuration` 下的私有目录。
 - `HOME`、`USERPROFILE`、`APPDATA`、`LOCALAPPDATA`、`XDG_CONFIG_HOME`、`XDG_DATA_HOME`、`XDG_CACHE_HOME`、`XDG_STATE_HOME` 一律改为 `<stateDir>/home` 下与 Worker 宿主一致的路径，覆盖把 HOME 指向真实用户目录的发现模板。原生登录文件（auth.json、.credentials.json、OAuth 令牌）因此不会被读取。

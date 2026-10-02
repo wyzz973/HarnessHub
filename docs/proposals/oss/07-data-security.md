@@ -299,7 +299,7 @@ HarnessHub 把本机文件分成配置、数据、日志、缓存四类根目录
 共同规则：
 
 - 安装不执行包内任何脚本，相当于 npm 的 `--ignore-scripts`（Magpie 同样如此，见 `internal/plugin/store.go` 的 `install`）；插件包必须自带依赖，安装只是下载、校验、解包。
-- 安装后的包按 SHA-256 存放在 `plugins/objects/<sha256>`，启动前校验摘要，沿用 Library 与现有工具包的内容寻址做法（[`src/tool-packages/store.ts`](../../../src/tool-packages/store.ts)）。
+- 安装后的包按 SHA-256 存放在 `plugins/objects/<sha256>`，启动前校验摘要，沿用 Library 与现有工具包的内容寻址做法（[`packages/agents/src/tool-packages/store.ts`](../../../packages/agents/src/tool-packages/store.ts)）。
 - 更新时权限扩大必须重新确认。权限不变的更新：本机对已审核级自动应用，对社区级询问；团队服务器一律需要 admin 确认。
 - 注册表撤销某个版本后，客户端在下次刷新索引（默认每天）时拒绝再启动该版本，并显示安全公告。
 - 工具包（Library）：Skills 与指令是纯文本，但会被 Agent 当作指令执行，安装与更新时展示全文差异；MCP 定义包含可执行命令与 URL，安装时逐项展示命令、参数、URL 与所需秘密槽，秘密槽只能绑定用户自己的秘密（4.6 节）。Library 包与插件使用同一套分级、签名与撤销机制。

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
+import { COMMAND_MCP_ENTRY } from "@harnesshub/agents/tool-command/entry";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { HubError } from "@harnesshub/core/errors";
-import { prepareEngine } from "./engine/registry.js";
-import { runToolPackageCli } from "./tool-packages/index.js";
+import { prepareEngine } from "@harnesshub/agents/engine/registry";
+import { runToolPackageCli } from "@harnesshub/agents/tool-packages/index";
 
 /** Standalone composition; publishing wrappers can inject their own root into runToolPackageCli. */
 export async function toolPackagesMain(argv: string[]): Promise<unknown> {
@@ -16,9 +17,7 @@ export async function toolPackagesMain(argv: string[]): Promise<unknown> {
   return runToolPackageCli(command, {
     root,
     nodeExecutable: process.execPath,
-    commandMcpEntry: fileURLToPath(
-      new URL("./drivers/tool-command/command-mcp.js", import.meta.url),
-    ),
+    commandMcpEntry: COMMAND_MCP_ENTRY,
     prepareEngine,
   });
 }

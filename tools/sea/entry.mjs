@@ -54,8 +54,8 @@ const ROLES = new Map([
   ["dist/src/main.js", () => import("../../dist/src/main.js")],
   ["dist/src/worker/main.js", () => import("../../dist/src/worker/main.js")],
   [
-    "dist/src/drivers/tool-command/command-mcp.js",
-    () => import("../../dist/src/drivers/tool-command/command-mcp.js"),
+    "packages/agents/dist/src/tool-command/command-mcp.js",
+    () => import("../../packages/agents/dist/src/tool-command/command-mcp.js"),
   ],
   [
     "scripts/launch-engine.mjs",

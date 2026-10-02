@@ -17,6 +17,9 @@
       "path": "./packages/drivers"
     },
     {
+      "path": "./packages/agents"
+    },
+    {
       "path": "./packages/plugin-host"
     },
     {

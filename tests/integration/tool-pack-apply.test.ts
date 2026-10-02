@@ -1,10 +1,18 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import { realpath } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { startHub } from "../../src/main.js";
-import { SESSION_WORKSPACE_PLACEHOLDER } from "../../src/tool-packages/index.js";
+import { SESSION_WORKSPACE_PLACEHOLDER } from "@harnesshub/agents/tool-packages/index";
+import { prepareConfiguration } from "@harnesshub/agents/configuration/prepare";
+import {
+  COMMAND_MCP_ENTRY,
+  LEGACY_COMMAND_MCP_ENTRY,
+} from "@harnesshub/agents/tool-command/entry";
+import type { RunId, SessionId } from "@harnesshub/core/types";
+import type { EngineMcpServer } from "@harnesshub/core/engine-configuration";
 import {
   startMcp,
   substituteSessionWorkspace,
@@ -129,6 +137,104 @@ void test(
     assert.equal(output.tool, "echo");
     assert.deepEqual(output.args, ["alpha", "beta"]);
     assert.equal(await realpath(output.cwd), workspace);
+    assert.equal(await client.close(), 0);
+  },
+);
+
+void test(
+  "a Tool Pack binding stored before the agents package existed keeps its record and starts the command MCP from its new entry",
+  { timeout: 30_000 },
+  async (t) => {
+    const data = await temporaryDirectory(t, "hh-tool-legacy-data-");
+    const dataDir = await realpath(data.directory);
+    const workspace = await realpath(
+      (await temporaryDirectory(t, "hh-tool-legacy-workspace-")).directory,
+    );
+    const source = fileURLToPath(
+      new URL("../../../examples/tool-packages/developer-cli", import.meta.url),
+    );
+    const options = { dataDir, cwd: dataDir, demo: true, port: 0 };
+    let hub = await startHub(options);
+    data.defer(() => hub.server.close());
+    const registered = await hub.server.inject({
+      method: "POST",
+      url: "/v1/engines",
+      payload: {
+        id: "pack-engine",
+        driver: "acp",
+        command: [process.execPath, "non-executed-peer.js"],
+        configuration: { adapter: "generic" },
+      },
+    });
+    assert.equal(registered.statusCode, 201, registered.body);
+    const applied = await hub.server.inject({
+      method: "POST",
+      url: "/v1/tool-packs/apply",
+      payload: { engineId: "pack-engine", source },
+    });
+    assert.equal(applied.statusCode, 200, applied.body);
+    const bound = hub.app
+      .engineProfile("pack-engine")
+      .configuration!.mcpServers!.find(
+        (server) => server.name === "developer-cli-cli",
+      )!;
+    assert.equal(bound.args![0], COMMAND_MCP_ENTRY);
+    // The same binding as one made before the move stored it in SQLite.
+    const legacy: EngineMcpServer = {
+      ...bound,
+      args: [LEGACY_COMMAND_MCP_ENTRY, ...bound.args!.slice(1)],
+    };
+    const stored = await hub.server.inject({
+      method: "POST",
+      url: "/v1/engines",
+      payload: {
+        id: "legacy-engine",
+        driver: "acp",
+        command: [process.execPath, "non-executed-peer.js"],
+        configuration: { adapter: "generic", mcpServers: [legacy] },
+      },
+    });
+    assert.equal(stored.statusCode, 201, stored.body);
+
+    // A restarted Gateway reads the record back unchanged from SQLite.
+    await hub.server.close();
+    hub = await startHub(options);
+    const profile = hub.app.engineProfile("legacy-engine");
+    const record = profile.configuration!.mcpServers![0]!;
+    assert.equal(record.args![0], LEGACY_COMMAND_MCP_ENTRY);
+
+    const prepared = await prepareConfiguration(
+      {
+        profile,
+        cwd: workspace,
+        stateDir: path.join(dataDir, "legacy-state"),
+        sessionId: "legacy-session" as SessionId,
+        runId: "legacy-run" as RunId,
+        generation: 1,
+        input: { text: "", timeoutMs: 1000 },
+      },
+      {},
+    );
+    const server = prepared.mcpServers.find(
+      (entry) => entry.name === "developer-cli-cli",
+    );
+    assert.ok(server && "command" in server);
+    assert.ok(server.args.includes(COMMAND_MCP_ENTRY), server.args.join(" "));
+    assert.equal(server.args.includes(LEGACY_COMMAND_MCP_ENTRY), false);
+
+    const client = startMcp(t, {
+      command: server.command,
+      args: server.args,
+      env: Object.fromEntries(
+        server.env.map((entry) => [entry.name, entry.value]),
+      ),
+    });
+    assert.equal((await client.initialize()).id, 1);
+    const listed = await client.request("tools/list");
+    assert.deepEqual(
+      listed.result!.tools!.map((tool) => tool.name),
+      ["cli_echo"],
+    );
     assert.equal(await client.close(), 0);
   },
 );

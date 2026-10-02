@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { ACP_INITIALIZE_TIMEOUT_LIMIT_MS } from "@harnesshub/core/engines";
-import { normalizeEngine } from "../../src/engine/registry.js";
+import { normalizeEngine } from "@harnesshub/agents/engine/registry";
 import { probeConfiguration } from "../../src/drivers/configuration/probe.js";
 import { ProcessWorkerHost } from "../../src/process/worker-host.js";
 import { startHub } from "../../src/main.js";

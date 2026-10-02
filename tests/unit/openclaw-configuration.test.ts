@@ -5,8 +5,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { normalizeEngine } from "../../src/engine/registry.js";
-import { prepareConfiguration } from "../../src/drivers/configuration/prepare.js";
+import { normalizeEngine } from "@harnesshub/agents/engine/registry";
+import { prepareConfiguration } from "@harnesshub/agents/configuration/prepare";
 import type { RunId, SessionId } from "@harnesshub/core/types";
 
 void test("OpenClaw provider uses per-session state, native wire protocols, and env SecretRefs without persisting keys", async (t) => {

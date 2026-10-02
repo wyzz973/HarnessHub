@@ -6,8 +6,11 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { normalizeEngine, prepareEngine } from "../../src/engine/registry.js";
-import { prepareConfiguration } from "../../src/drivers/configuration/prepare.js";
+import {
+  normalizeEngine,
+  prepareEngine,
+} from "@harnesshub/agents/engine/registry";
+import { prepareConfiguration } from "@harnesshub/agents/configuration/prepare";
 import {
   createSecret,
   deleteSecret,

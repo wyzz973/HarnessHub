@@ -17,6 +17,7 @@ import { resolveSecret } from "@harnesshub/secrets/secrets";
 import { portableCommand, unwrapEnvironment } from "./launch.js";
 import { codexGatewayCatalog, codexModelCatalog } from "./codex-models.js";
 import { prepareNativeMcp } from "./native-mcp.js";
+import { currentCommandMcpEntry } from "../tool-command/entry.js";
 import type {
   ModelCallRecord,
   ModelGateway,
@@ -261,7 +262,9 @@ function workspaceValue(value: string, workspace: string): string {
  * and plain `env` values receive the Session workspace (ADR 0013) before the
  * portable launcher wraps the command and before any native adapter reads
  * them; `command`, secret values and HTTP/SSE URLs and headers are never
- * rewritten. Stored revisions keep the placeholder.
+ * rewritten. Stored revisions keep the placeholder. An argument naming the
+ * pre-migration command MCP entry, as Tool Pack bindings stored it before
+ * OSS-004 step 7, becomes the current entry (removed in M1).
  */
 async function mcp(
   server: EngineMcpServer,
@@ -272,7 +275,9 @@ async function mcp(
   if (server.type === "stdio") {
     const command = portableCommand([
       server.command!,
-      ...(server.args ?? []).map((arg) => workspaceValue(arg, workspace)),
+      ...(server.args ?? []).map((arg) =>
+        workspaceValue(currentCommandMcpEntry(arg), workspace),
+      ),
     ]);
     return {
       name: server.name,

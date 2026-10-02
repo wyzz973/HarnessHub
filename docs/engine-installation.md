@@ -1,6 +1,6 @@
 # 本机引擎安装快照
 
-[inspectEngineInstallation](../src/engine/installation.ts)读取 Engine Profile 已固定的启动文件，记录 `source: local-files`、文件 canonical 路径、大小、修改时间、SHA-256 和可获得的 package name/version。组合根显式提供 PATH；检查器不执行引擎或 `--version`，不联网，也不请求模型。
+[inspectEngineInstallation](../packages/agents/src/engine/installation.ts)读取 Engine Profile 已固定的启动文件，记录 `source: local-files`、文件 canonical 路径、大小、修改时间、SHA-256 和可获得的 package name/version。组合根显式提供 PATH；检查器不执行引擎或 `--version`，不联网，也不请求模型。
 
 检查范围包括入口可执行文件、`env` 包装之后的实际可执行文件，以及参数中独立出现的绝对 js/mjs/cjs/py/rb/sh/ps1 启动文件。相同 canonical 文件只记录一次。PATH 查找只使用显式传入的绝对目录；相对 executable 路径不能在缺少 cwd 的情况下猜测，明确报错。相对脚本路径只在 `notes` 标记未检查。
 

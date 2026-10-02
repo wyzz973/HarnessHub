@@ -13,7 +13,7 @@ import {
 } from "acpx/runtime";
 import { ProcessWorkerHost } from "../../src/process/worker-host.js";
 import { probeConfiguration } from "../../src/drivers/configuration/probe.js";
-import { normalizeEngine } from "../../src/engine/registry.js";
+import { normalizeEngine } from "@harnesshub/agents/engine/registry";
 import type { RunId, SessionId } from "@harnesshub/core/types";
 import type { WorkerMessage } from "@harnesshub/core/ports";
 import { temporaryDirectory } from "../support/temporary.js";

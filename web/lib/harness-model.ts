@@ -78,7 +78,7 @@ export function formFromView(view: HarnessModelView | undefined) {
   };
   return form;
 }
-// Mirrors the Gateway unified-model rules (src/application/harness-model.ts) so mistakes are
+// Mirrors the Gateway unified-model rules (packages/agents/src/application/harness-model.ts) so mistakes are
 // explained before any secret is stored; the Gateway remains the authority.
 const headerName = /^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,128}$/;
 const sensitiveHeader =
