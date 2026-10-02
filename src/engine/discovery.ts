@@ -2,8 +2,11 @@
 import { constants } from "node:fs";
 import { access, lstat, readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
-import type { EngineCandidate, EngineRegistration } from "../domain/engines.js";
-import { HubError } from "../domain/errors.js";
+import type {
+  EngineCandidate,
+  EngineRegistration,
+} from "@harnesshub/core/engines";
+import { HubError } from "@harnesshub/core/errors";
 import { normalizeEngine } from "./registry.js";
 import { builtinEngines, type BuiltinEngine } from "./builtins.js";
 import { availableExecutable, locateExecutable } from "./executables.js";

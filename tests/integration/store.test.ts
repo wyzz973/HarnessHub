@@ -9,7 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
 import { Worker } from "node:worker_threads";
-import { HubError } from "../../src/domain/errors.js";
+import { HubError } from "@harnesshub/core/errors";
 import type {
   ArtifactId,
   EngineProfile,
@@ -18,7 +18,7 @@ import type {
   RunId,
   RunRecord,
   SessionId,
-} from "../../src/domain/types.js";
+} from "@harnesshub/core/types";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
 
 const engine: EngineProfile = {

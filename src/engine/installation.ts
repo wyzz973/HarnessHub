@@ -3,8 +3,8 @@ import { createHash } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import path from "node:path";
-import { HubError } from "../domain/errors.js";
-import type { EngineProfile, JsonObject } from "../domain/types.js";
+import { HubError } from "@harnesshub/core/errors";
+import type { EngineProfile, JsonObject } from "@harnesshub/core/types";
 import { locateExecutable } from "./executables.js";
 import { fileURLToPath } from "node:url";
 

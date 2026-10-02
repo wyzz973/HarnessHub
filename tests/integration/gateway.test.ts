@@ -13,7 +13,7 @@ import type {
   PermissionRecord,
   RunRecord,
   SessionRecord,
-} from "../../src/domain/types.js";
+} from "@harnesshub/core/types";
 
 type View = RunRecord & {
   permissions: PermissionRecord[];

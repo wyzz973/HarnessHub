@@ -2,7 +2,7 @@
 import { constants, type BigIntStats } from "node:fs";
 import { lstat, mkdir, open, readdir, realpath, rm } from "node:fs/promises";
 import path from "node:path";
-import { HubError } from "../domain/errors.js";
+import { HubError } from "@harnesshub/core/errors";
 import { WindowsFileSession } from "../platform/windows-file-session.js";
 import { ensurePrivateDirectory } from "../platform/windows-acl.js";
 import {

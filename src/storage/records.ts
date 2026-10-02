@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-import { isRelativeFilePath } from "../domain/files.js";
-import { HubError } from "../domain/errors.js";
+import { isRelativeFilePath } from "@harnesshub/core/files";
+import { HubError } from "@harnesshub/core/errors";
 import type {
   AgentEvent,
   ArtifactRecord,
@@ -10,7 +10,7 @@ import type {
   RunInput,
   RunRecord,
   SessionRecord,
-} from "../domain/types.js";
+} from "@harnesshub/core/types";
 
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

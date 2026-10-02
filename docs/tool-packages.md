@@ -143,7 +143,7 @@ node dist/src/tool-packages-main.js --root C:\HarnessHub\data\tool-packages remo
 node dist/src/tool-packages-main.js --root C:\HarnessHub\data\tool-packages list --include-removed
 ```
 
-`import` 可加 `--kind`、`--id`、`--version`、`--display-name`，输出 `{package,displayName,digest,format,counts,warnings}`，只安装不绑定。`bind` 可加 `--bindings <绝对 JSON 文件路径>` 和 `--replace`；`--workspace` 仍被接受但不再生效。`--engine` 输入完整 [EngineRegistration](../src/domain/engines.ts)，而不是包含 capabilities/revision 的引擎响应对象。结果为 `{registration,revision,package:{id,version},capabilities,replaced?}`。生成的 `registration` 已调用既有 `prepareEngine` 校验及固定 Skill hash，可通过已有 `PUT /v1/engines/:id` 应用。同一版本重复绑定会刷新该版本的条目；绑定、替换和冲突规则与上文 [引擎绑定、替换与解除](#引擎绑定替换与解除) 相同。命令不会写回输入文件或发送 HTTP 请求。多个包可依次对上一次返回的 registration 绑定，仍受单引擎既有数量与能力限制。
+`import` 可加 `--kind`、`--id`、`--version`、`--display-name`，输出 `{package,displayName,digest,format,counts,warnings}`，只安装不绑定。`bind` 可加 `--bindings <绝对 JSON 文件路径>` 和 `--replace`；`--workspace` 仍被接受但不再生效。`--engine` 输入完整 [EngineRegistration](../packages/core/src/engines.ts)，而不是包含 capabilities/revision 的引擎响应对象。结果为 `{registration,revision,package:{id,version},capabilities,replaced?}`。生成的 `registration` 已调用既有 `prepareEngine` 校验及固定 Skill hash，可通过已有 `PUT /v1/engines/:id` 应用。同一版本重复绑定会刷新该版本的条目；绑定、替换和冲突规则与上文 [引擎绑定、替换与解除](#引擎绑定替换与解除) 相同。命令不会写回输入文件或发送 HTTP 请求。多个包可依次对上一次返回的 registration 绑定，仍受单引擎既有数量与能力限制。
 
 ## CLI 工具与 Windows 批处理
 

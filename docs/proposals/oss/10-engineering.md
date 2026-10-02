@@ -49,7 +49,7 @@ rfcs/                RFC 正文与模板，流程见 11 开源治理
 
 ## 2. 代码规范
 
-**语言与编译**：TypeScript strict，开启 `noUncheckedIndexedAccess`、`exactOptionalPropertyTypes`、`noImplicitOverride`、`noFallthroughCasesInSwitch`、`verbatimModuleSyntax`，沿用 [现有配置](../../../tsconfig.json)；新增 `erasableSyntaxOnly`，使单元与集成测试可以借助 Node 24 默认启用的类型剥离直接从源码运行。只用 ESM（`"type": "module"`、NodeNext 解析）；各包用 project references 增量构建。`.node-version` 固定构建所用的 Node 补丁版本；npm 包声明 `"node": ">=24.11.0 <25"`，即 Node 24 进入 LTS 后的版本。`.mjs` 只用于零依赖的仓库工具。
+**语言与编译**：TypeScript strict，开启 `noUncheckedIndexedAccess`、`exactOptionalPropertyTypes`、`noImplicitOverride`、`noFallthroughCasesInSwitch`、`verbatimModuleSyntax`，沿用 [现有配置](../../../tsconfig.base.json)；新增 `erasableSyntaxOnly`，使单元与集成测试可以借助 Node 24 默认启用的类型剥离直接从源码运行。只用 ESM（`"type": "module"`、NodeNext 解析）；各包用 project references 增量构建。`.node-version` 固定构建所用的 Node 补丁版本；npm 包声明 `"node": ">=24.11.0 <25"`，即 Node 24 进入 LTS 后的版本。`.mjs` 只用于零依赖的仓库工具。
 
 **静态检查**：ESLint 保留现有规则（`no-floating-promises`、`no-misused-promises`、`no-explicit-any`、`ban-ts-comment`、`consistent-type-imports`），新增三条：`switch-exhaustiveness-check`；`node:child_process` 只允许在 `runtime` 的进程启动实现与 `tools/` 中导入（吸收 Magpie `TestNoCommandBypassesProc` 的做法）；`process.env` 只允许在配置解析器与组合根中读取。产品环境变量统一使用 `HH_` 前缀。Prettier 管格式，`--max-warnings=0`。
 

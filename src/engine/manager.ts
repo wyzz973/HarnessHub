@@ -4,9 +4,9 @@ import type {
   EngineCandidate,
   EngineCatalogPersistence,
   EngineManagement,
-} from "../domain/engines.js";
-import { HubError } from "../domain/errors.js";
-import type { EngineProfile } from "../domain/types.js";
+} from "@harnesshub/core/engines";
+import { HubError } from "@harnesshub/core/errors";
+import type { EngineProfile } from "@harnesshub/core/types";
 import { normalizeEngine, prepareEngine, type HubConfig } from "./registry.js";
 
 interface CatalogState {

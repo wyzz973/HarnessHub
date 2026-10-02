@@ -16,9 +16,9 @@ import {
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { Ajv } from "ajv";
-import { HubError } from "../domain/errors.js";
-import type { CleanupStatus, SessionId } from "../domain/types.js";
-import { NO_LOG, type LogSink } from "../domain/logging.js";
+import { HubError } from "@harnesshub/core/errors";
+import type { CleanupStatus, SessionId } from "@harnesshub/core/types";
+import { NO_LOG, type LogSink } from "@harnesshub/core/logging";
 import { closeWindowsJob } from "./windows-job.js";
 import { ProcessTableError, readProcessTable } from "./process-table.js";
 import {

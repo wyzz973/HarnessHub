@@ -2,7 +2,7 @@
 import type {
   EngineConfiguration,
   SecretReference,
-} from "../domain/engine-configuration.js";
+} from "@harnesshub/core/engine-configuration";
 
 /**
  * Written into bindings wherever a value refers to the Session working directory

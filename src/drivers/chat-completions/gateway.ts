@@ -5,8 +5,8 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import type { ModelCompatibility } from "../../domain/engine-configuration.js";
-import { excerpt } from "../../domain/logging.js";
+import type { ModelCompatibility } from "@harnesshub/core/engine-configuration";
+import { excerpt } from "@harnesshub/core/logging";
 import {
   anthropicCountTokens,
   anthropicErrorResponse,

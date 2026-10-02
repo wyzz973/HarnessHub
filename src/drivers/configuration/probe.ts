@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { WINDOWS_SYSTEM_ENVIRONMENT } from "../../domain/environment.js";
+import { WINDOWS_SYSTEM_ENVIRONMENT } from "@harnesshub/core/environment";
 import { setTimeout as delay } from "node:timers/promises";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -8,8 +8,8 @@ import { promisify } from "node:util";
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import type { PreparedConfiguration } from "./prepare.js";
-import type { ConfigurationCheck } from "../../domain/engine-configuration.js";
-import { ACP_INITIALIZE_TIMEOUT_LIMIT_MS } from "../../domain/engines.js";
+import type { ConfigurationCheck } from "@harnesshub/core/engine-configuration";
+import { ACP_INITIALIZE_TIMEOUT_LIMIT_MS } from "@harnesshub/core/engines";
 /** Read-only ACP initialize probe. Owns a process group, bounded output/time and awaited cleanup; never prompts. */
 export async function probeConfiguration(
   prepared: PreparedConfiguration,

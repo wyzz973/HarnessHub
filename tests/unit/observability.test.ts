@@ -28,8 +28,8 @@ import type {
   RunRecord,
   SessionId,
   SessionRecord,
-} from "../../src/domain/types.js";
-import type { ExecutionSpec } from "../../src/domain/ports.js";
+} from "@harnesshub/core/types";
+import type { ExecutionSpec } from "@harnesshub/core/ports";
 const identity = {
   backendSessionId: "backend-123",
   requestId: "run-123:1",

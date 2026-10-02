@@ -31,7 +31,7 @@ curl -s -X POST http://127.0.0.1:3180/v1/sessions \
 | `POST /v1/engines/reload` | 手动重新读取配置文件，全体校验通过后应用 |
 | `GET /v1/engines/registry` | 默认引擎、文件监视状态、最后成功 reload 时间和错误码 |
 
-注册字段为 `id`、`driver`、`command`，以及可选的 `enabled`、`model`、`credentialEnv`、`maxConcurrency`、`cli`、`acp`、`configuration`。独立模型/Provider、密钥引用、Skills、MCP 及校验见 [引擎配置](engine-configuration.md)。全部字段由 [公共 schema](../src/domain/schemas.ts)约束并进入生成的 OpenAPI。未知字段包括嵌套拼写错误直接失败，不会被删除后偷偷使用默认值。禁用使用完整注册配置并设置 `enabled:false`。`fake/default/discover/registry/reload` 是保留 ID。
+注册字段为 `id`、`driver`、`command`，以及可选的 `enabled`、`model`、`credentialEnv`、`maxConcurrency`、`cli`、`acp`、`configuration`。独立模型/Provider、密钥引用、Skills、MCP 及校验见 [引擎配置](engine-configuration.md)。全部字段由 [公共 schema](../packages/core/src/schemas.ts)约束并进入生成的 OpenAPI。未知字段包括嵌套拼写错误直接失败，不会被删除后偷偷使用默认值。禁用使用完整注册配置并设置 `enabled:false`。`fake/default/discover/registry/reload` 是保留 ID。
 
 配置了 [统一模型](engine-configuration.md#统一模型) 时，登记接口仍保存提交的原始配置，但 `model`、Provider、`credentialEnv` 和引擎级 `secretEnv` 会按统一模型覆盖或移除；无法经模型网关接入的引擎会被停用。`POST/PUT` 的响应和 `GET /v1/engines` 返回生效后的配置，原因见 `GET /v1/harness/model`。
 

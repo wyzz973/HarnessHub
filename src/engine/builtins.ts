@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import type { ConfigurationAdapter } from "../domain/engine-configuration.js";
+import type { ConfigurationAdapter } from "@harnesshub/core/engine-configuration";
 
 /**
  * Reviewed local launch recipes, consumed by discovery and by adapter inference for

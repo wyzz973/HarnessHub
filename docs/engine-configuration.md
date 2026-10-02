@@ -2,7 +2,7 @@
 
 ## 统一模型
 
-配置统一模型后，所有引擎只使用 HarnessHub 配置的同一个模型，不能再使用引擎自带的 API Key、登录态、订阅或各自的 Provider。类型见 [统一模型定义](../src/domain/harness-model.ts)，决定见 [ADR 0013](decisions/0013-unified-model-gateway.md)，实现见 [统一模型服务](../src/application/harness-model.ts)。未配置统一模型时，本页后续的逐引擎配置保持原有行为。
+配置统一模型后，所有引擎只使用 HarnessHub 配置的同一个模型，不能再使用引擎自带的 API Key、登录态、订阅或各自的 Provider。类型见 [统一模型定义](../packages/core/src/harness-model.ts)，决定见 [ADR 0013](decisions/0013-unified-model-gateway.md)，实现见 [统一模型服务](../src/application/harness-model.ts)。未配置统一模型时，本页后续的逐引擎配置保持原有行为。
 
 ### 三种配置方式
 
@@ -74,7 +74,7 @@ Gateway 在每个引擎登记或替换前应用统一模型。文件配置加载
 
 ## 逐引擎配置
 
-控制台“引擎管理”中，每个已注册引擎有“配置”和“检查连接”入口。配置弹窗支持模型、Provider / URL / API Key、Skills、MCP 和环境变量；保存后生成新 revision，已有 Session 不切换配置。配置了统一模型时，保存的模型和 Provider 仍会被统一模型覆盖。接口字段由 [配置类型与 schema](../src/domain/engine-configuration.ts)定义，决定见 [ADR 0006](decisions/0006-engine-configuration.md)。
+控制台“引擎管理”中，每个已注册引擎有“配置”和“检查连接”入口。配置弹窗支持模型、Provider / URL / API Key、Skills、MCP 和环境变量；保存后生成新 revision，已有 Session 不切换配置。配置了统一模型时，保存的模型和 Provider 仍会被统一模型覆盖。接口字段由 [配置类型与 schema](../packages/core/src/engine-configuration.ts)定义，决定见 [ADR 0006](decisions/0006-engine-configuration.md)。
 
 ## 操作顺序
 

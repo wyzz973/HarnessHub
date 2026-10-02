@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import type { BuildInfo } from "../domain/build-info.js";
+import type { BuildInfo } from "@harnesshub/core/build-info";
 import { randomUUID } from "node:crypto";
 import {
   mkdir,
@@ -17,16 +17,16 @@ import type {
   ModelCompatibility,
   ModelProviderConfiguration,
   SecretReference,
-} from "../domain/engine-configuration.js";
-import type { EngineRegistration } from "../domain/engines.js";
-import { HubError } from "../domain/errors.js";
+} from "@harnesshub/core/engine-configuration";
+import type { EngineRegistration } from "@harnesshub/core/engines";
+import { HubError } from "@harnesshub/core/errors";
 import {
   HARNESS_MODEL_ALIAS,
   harnessModelEnvironment,
   type HarnessModel,
   type HarnessModelEngineStatus,
   type HarnessModelView,
-} from "../domain/harness-model.js";
+} from "@harnesshub/core/harness-model";
 import {
   isTerminal,
   type EngineProfile,
@@ -36,7 +36,7 @@ import {
   type RunStatus,
   type SessionId,
   type SessionRecord,
-} from "../domain/types.js";
+} from "@harnesshub/core/types";
 
 /**
  * Adapters that only work with their vendor account or native Provider, so the

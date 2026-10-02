@@ -11,7 +11,7 @@ import type {
   AgentEvent,
   RunRecord,
   SessionRecord,
-} from "../../src/domain/types.js";
+} from "@harnesshub/core/types";
 
 const entry = fileURLToPath(new URL("../../src/cli.js", import.meta.url));
 

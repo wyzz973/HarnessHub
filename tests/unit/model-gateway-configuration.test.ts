@@ -11,12 +11,8 @@ import {
   VENDOR_CREDENTIAL_ENVIRONMENT,
   type PreparedConfiguration,
 } from "../../src/drivers/configuration/prepare.js";
-import type {
-  EngineProfile,
-  RunId,
-  SessionId,
-} from "../../src/domain/types.js";
-import type { ConfigurationAdapter } from "../../src/domain/engine-configuration.js";
+import type { EngineProfile, RunId, SessionId } from "@harnesshub/core/types";
+import type { ConfigurationAdapter } from "@harnesshub/core/engine-configuration";
 import { temporaryDirectory } from "../support/temporary.js";
 
 const upstreamKey = "synthetic-upstream-upstream-key-0001";

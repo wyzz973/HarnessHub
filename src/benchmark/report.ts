@@ -3,9 +3,9 @@ import type {
   BenchmarkAttempt,
   BenchmarkEvaluation,
   BenchmarkStore,
-} from "../domain/benchmark.js";
-import { HubError } from "../domain/errors.js";
-import type { JsonObject } from "../domain/types.js";
+} from "@harnesshub/core/benchmark";
+import { HubError } from "@harnesshub/core/errors";
+import type { JsonObject } from "@harnesshub/core/types";
 
 /** One persisted attempt and its latest committed Evaluation; missing observations remain null. */
 export interface BenchmarkReportRow {

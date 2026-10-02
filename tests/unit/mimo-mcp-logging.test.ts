@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { prepareConfiguration } from "../../src/drivers/configuration/prepare.js";
 import { normalizeEngine } from "../../src/engine/registry.js";
-import type { RunId, SessionId } from "../../src/domain/types.js";
+import type { RunId, SessionId } from "@harnesshub/core/types";
 
 void test("MiMo managed MCP requires a native log level that excludes resolved session credentials", async () => {
   const prepare = (args: string[], enabled = true) =>

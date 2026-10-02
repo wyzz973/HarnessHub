@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 import { StringDecoder } from "node:string_decoder";
-import { excerpt } from "../../domain/logging.js";
-import type { LogFields, LogSink } from "../../domain/logging.js";
-import type { JsonValue } from "../../domain/types.js";
+import { excerpt } from "@harnesshub/core/logging";
+import type { LogFields, LogSink } from "@harnesshub/core/logging";
+import type { JsonValue } from "@harnesshub/core/types";
 
 /** Engine stderr text logged per agent process before further lines are only counted. */
 const STDERR_BUDGET = 256 * 1024;

@@ -7,13 +7,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { ACP_INITIALIZE_TIMEOUT_LIMIT_MS } from "../../src/domain/engines.js";
+import { ACP_INITIALIZE_TIMEOUT_LIMIT_MS } from "@harnesshub/core/engines";
 import { normalizeEngine } from "../../src/engine/registry.js";
 import { probeConfiguration } from "../../src/drivers/configuration/probe.js";
 import { ProcessWorkerHost } from "../../src/process/worker-host.js";
 import { startHub } from "../../src/main.js";
-import type { RunId, SessionId } from "../../src/domain/types.js";
-import type { ExecutionSpec, WorkerMessage } from "../../src/domain/ports.js";
+import type { RunId, SessionId } from "@harnesshub/core/types";
+import type { ExecutionSpec, WorkerMessage } from "@harnesshub/core/ports";
 import { temporaryDirectory } from "../support/temporary.js";
 
 void test(

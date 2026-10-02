@@ -19,6 +19,9 @@ importers:
       '@fastify/swagger':
         specifier: 9.8.1
         version: 9.8.1
+      '@harnesshub/core':
+        specifier: workspace:*
+        version: link:packages/core
       acpx:
         specifier: 0.13.2
         version: 0.13.2(patch_hash=2fc8dc1222d3663c1c357409b341ce293d920dbab00f71b069b42a732d6dba7f)
@@ -59,6 +62,16 @@ importers:
       typescript-eslint:
         specifier: 8.56.1
         version: 8.56.1(eslint@10.10.0(jiti@2.7.0))(typescript@5.9.3)
+
+  packages/core:
+    dependencies:
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
+
+  packages/plugin-host: {}
+
+  packages/sdk: {}
 
   web:
     dependencies:

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { DatabaseSync } from "node:sqlite";
-import { HubError } from "../domain/errors.js";
+import { HubError } from "@harnesshub/core/errors";
 import {
   isBenchmarkAttempt,
   isBenchmarkEvaluation,
@@ -8,9 +8,9 @@ import {
   type BenchmarkAttempt,
   type BenchmarkEvaluation,
   type BenchmarkStore,
-} from "../domain/benchmark.js";
+} from "@harnesshub/core/benchmark";
 import { decodeRecord } from "./records.js";
-import type { RunId } from "../domain/types.js";
+import type { RunId } from "@harnesshub/core/types";
 
 /** Opens extra versioned tables in the active Gateway's database; close before releasing its owner. */
 export class SqliteBenchmarkStore implements BenchmarkStore {

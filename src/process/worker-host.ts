@@ -2,8 +2,8 @@
 import {
   WINDOWS_SYSTEM_ENVIRONMENT,
   WORKER_TREE_ENVIRONMENT,
-} from "../domain/environment.js";
-import { configurationEnvironmentNames } from "../domain/engine-configuration.js";
+} from "@harnesshub/core/environment";
+import { configurationEnvironmentNames } from "@harnesshub/core/engine-configuration";
 import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { chmodSync, lstatSync, mkdirSync } from "node:fs";
@@ -28,20 +28,20 @@ import type {
   ExecutionSpec,
   WorkerHost,
   WorkerMessage,
-} from "../domain/ports.js";
+} from "@harnesshub/core/ports";
 import type {
   CleanupStatus,
   DriverResult,
   SessionId,
-} from "../domain/types.js";
-import { HubError } from "../domain/errors.js";
-import { NO_LOG, type LogSink } from "../domain/logging.js";
+} from "@harnesshub/core/types";
+import { HubError } from "@harnesshub/core/errors";
+import { NO_LOG, type LogSink } from "@harnesshub/core/logging";
 import {
   assertMessageSize,
   matchesIdentity,
   parseWorkerMessage,
   type HostCommand,
-} from "../domain/ipc.js";
+} from "@harnesshub/core/ipc";
 
 function deferred<T>() {
   const result = Promise.withResolvers<T>();

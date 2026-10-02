@@ -4,14 +4,14 @@ import {
   type PreparedConfiguration,
 } from "../drivers/configuration/prepare.js";
 import type { ModelCallRecord } from "../drivers/chat-completions/gateway.js";
-import { HubError } from "../domain/errors.js";
-import { WORKER_TREE_ENVIRONMENT } from "../domain/environment.js";
-import type { ExecutionSpec } from "../domain/ports.js";
+import { HubError } from "@harnesshub/core/errors";
+import { WORKER_TREE_ENVIRONMENT } from "@harnesshub/core/environment";
+import type { ExecutionSpec } from "@harnesshub/core/ports";
 import type {
   DriverResult,
   PermissionId,
   PermissionOption,
-} from "../domain/types.js";
+} from "@harnesshub/core/types";
 import type { Driver, DriverChannel } from "../drivers/driver.js";
 import { FakeDriver } from "../drivers/fake/driver.js";
 import { AcpDriver } from "../drivers/acp/driver.js";
@@ -21,7 +21,7 @@ import {
   matchesIdentity,
   parseHostCommand,
   type WorkerPayload,
-} from "../domain/ipc.js";
+} from "@harnesshub/core/ipc";
 import {
   appendDiagnostic,
   createRedactor,
@@ -38,7 +38,7 @@ import {
   LOG_LEVEL_ENVIRONMENT,
   parseLogLevel,
   type LogLevel,
-} from "../domain/logging.js";
+} from "@harnesshub/core/logging";
 import { JsonLogFile } from "../logging/json-log-file.js";
 
 interface PermissionWaiter {

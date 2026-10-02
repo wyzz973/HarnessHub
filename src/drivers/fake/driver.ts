@@ -2,13 +2,13 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout } from "node:timers/promises";
 import type { Driver, DriverChannel } from "../driver.js";
-import type { ExecutionSpec } from "../../domain/ports.js";
+import type { ExecutionSpec } from "@harnesshub/core/ports";
 import type {
   DriverResult,
   FakeOptions,
   JsonObject,
   PermissionId,
-} from "../../domain/types.js";
+} from "@harnesshub/core/types";
 
 /** Scenarios reachable from a text directive; `tools` and `tool-only` exist only there. */
 type Scenario = FakeOptions["scenario"] | "tools" | "tool-only";

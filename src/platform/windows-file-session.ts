@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { HubError } from "../domain/errors.js";
+import { HubError } from "@harnesshub/core/errors";
 
 /** One bounded collection owns this native helper and must await close in finally. */
 export class WindowsFileSession {

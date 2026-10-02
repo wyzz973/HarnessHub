@@ -2,7 +2,7 @@
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { HubError } from "../domain/errors.js";
+import { HubError } from "@harnesshub/core/errors";
 
 const execute = promisify(execFile);
 

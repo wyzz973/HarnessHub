@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 import { createHash } from "node:crypto";
 import { Ajv } from "ajv";
-import { HubError } from "../domain/errors.js";
-import { isRelativeFilePath } from "../domain/files.js";
+import { HubError } from "@harnesshub/core/errors";
+import { isRelativeFilePath } from "@harnesshub/core/files";
 import type {
   ToolPackageInspection,
   ToolPackageManifest,

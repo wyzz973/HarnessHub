@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT
-import { validateFileOutputs } from "../domain/files.js";
-import type { EngineCatalog } from "../domain/engines.js";
+import { validateFileOutputs } from "@harnesshub/core/files";
+import type { EngineCatalog } from "@harnesshub/core/engines";
 import path from "node:path";
-import { HubError, modelRunFailureCodes } from "../domain/errors.js";
+import { HubError, modelRunFailureCodes } from "@harnesshub/core/errors";
 import type {
   ExecutionHandle,
   FileArtifactCollector,
   Store,
   WorkerHost,
   WorkerMessage,
-} from "../domain/ports.js";
-import { isTerminal } from "../domain/types.js";
+} from "@harnesshub/core/ports";
+import { isTerminal } from "@harnesshub/core/types";
 import type {
   ArtifactRecord,
   CleanupStatus,
@@ -24,7 +24,7 @@ import type {
   TerminalStatus,
   Workspace,
   JsonObject,
-} from "../domain/types.js";
+} from "@harnesshub/core/types";
 
 interface RuntimeOptions {
   catalog?: EngineCatalog;

@@ -12,7 +12,7 @@ import {
 } from "../../src/drivers/configuration/launch.js";
 import { prepareConfiguration } from "../../src/drivers/configuration/prepare.js";
 import { normalizeEngine } from "../../src/engine/registry.js";
-import type { RunId, SessionId } from "../../src/domain/types.js";
+import type { RunId, SessionId } from "@harnesshub/core/types";
 
 async function fixture(t: TestContext) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "harnesshub-launch-"));

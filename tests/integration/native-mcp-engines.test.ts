@@ -21,7 +21,7 @@ import type {
   PermissionRecord,
   RunRecord,
   SessionRecord,
-} from "../../src/domain/types.js";
+} from "@harnesshub/core/types";
 import { writePrivateSecretFile } from "../fixtures/private-secret-file.js";
 
 const repository = fileURLToPath(new URL("../../../", import.meta.url));

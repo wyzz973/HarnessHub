@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
-import { excerpt, NO_LOG, type LogSink } from "../../domain/logging.js";
-import type { ExecutionSpec } from "../../domain/ports.js";
-import type { DriverResult } from "../../domain/types.js";
+import { excerpt, NO_LOG, type LogSink } from "@harnesshub/core/logging";
+import type { ExecutionSpec } from "@harnesshub/core/ports";
+import type { DriverResult } from "@harnesshub/core/types";
 import type { Driver, DriverChannel } from "../driver.js";
 
 /** Engine stderr text written to the engine log per Run before lines are only counted. */

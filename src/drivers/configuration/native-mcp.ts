@@ -3,8 +3,8 @@ import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import type { ExecutionSpec } from "../../domain/ports.js";
-import { HubError } from "../../domain/errors.js";
+import type { ExecutionSpec } from "@harnesshub/core/ports";
+import { HubError } from "@harnesshub/core/errors";
 import type { PreparedConfiguration } from "./prepare.js";
 
 const piExtension = fileURLToPath(

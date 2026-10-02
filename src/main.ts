@@ -13,15 +13,15 @@ import {
 import { fullAccessEnabled } from "./engine/full-access.js";
 import { registerHarnessModelRoutes } from "./gateway/harness-model-routes.js";
 import { providerProtocols } from "./engine/configuration.js";
-import { configurationAdapters } from "./domain/engine-configuration.js";
+import { configurationAdapters } from "@harnesshub/core/engine-configuration";
 import { createSecret } from "./drivers/configuration/secrets.js";
 import { prepareConfiguration } from "./drivers/configuration/prepare.js";
 import { probeConfiguration } from "./drivers/configuration/probe.js";
-import { HubError } from "./domain/errors.js";
-import { parseBuildInfo, type BuildInfo } from "./domain/build-info.js";
+import { HubError } from "@harnesshub/core/errors";
+import { parseBuildInfo, type BuildInfo } from "@harnesshub/core/build-info";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import type { RunId, SessionId } from "./domain/types.js";
+import type { RunId, SessionId } from "@harnesshub/core/types";
 import { SqliteWorkflowStore } from "./storage/workflow-store.js";
 import { WorkflowService } from "./application/workflows.js";
 import { ObservationService } from "./application/observability.js";
@@ -30,7 +30,7 @@ import { homedir } from "node:os";
 import { EngineManager } from "./engine/manager.js";
 import { discoverEngines } from "./engine/discovery.js";
 import { inspectEngineInstallation } from "./engine/installation.js";
-import type { Workspace } from "./domain/types.js";
+import type { Workspace } from "@harnesshub/core/types";
 import { mkdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,8 +52,8 @@ import {
   LOG_LEVEL_ENVIRONMENT,
   parseLogLevel,
   type LogLevel,
-} from "./domain/logging.js";
-import { harnessModelEnvironment } from "./domain/harness-model.js";
+} from "@harnesshub/core/logging";
+import { harnessModelEnvironment } from "@harnesshub/core/harness-model";
 import { JsonLogFile } from "./logging/json-log-file.js";
 import { observeStore } from "./logging/observed-store.js";
 import { createSessionLogReader } from "./logging/session-log-reader.js";

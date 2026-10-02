@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { DatabaseSync } from "node:sqlite";
-import { HubError } from "../domain/errors.js";
+import { HubError } from "@harnesshub/core/errors";
 
 /** An exclusive lock held for as long as the owning process keeps it open. */
 export interface InstanceLock {

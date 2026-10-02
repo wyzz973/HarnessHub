@@ -5,13 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { setImmediate, setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
-import type { WorkerHost } from "../../src/domain/ports.js";
-import { isTerminal } from "../../src/domain/types.js";
-import type {
-  EngineProfile,
-  JsonObject,
-  RunId,
-} from "../../src/domain/types.js";
+import type { WorkerHost } from "@harnesshub/core/ports";
+import { isTerminal } from "@harnesshub/core/types";
+import type { EngineProfile, JsonObject, RunId } from "@harnesshub/core/types";
 import { Runtime } from "../../src/runtime/runtime.js";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
 

@@ -11,7 +11,7 @@ import type {
   ArtifactRecord,
   RunRecord,
   SessionRecord,
-} from "../../src/domain/types.js";
+} from "@harnesshub/core/types";
 import {
   verifyPrivateDirectory,
   verifyPrivateFile,

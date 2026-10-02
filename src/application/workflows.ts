@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { HubError } from "../domain/errors.js";
+import { HubError } from "@harnesshub/core/errors";
 import {
   isTerminal,
   type PublicError,
   type RunId,
   type SessionId,
-} from "../domain/types.js";
+} from "@harnesshub/core/types";
 import {
   isWorkflowRequest,
   isWorkflowTerminal,
@@ -18,7 +18,7 @@ import {
   type WorkflowId,
   type WorkflowStep,
   type WorkflowStore,
-} from "../domain/workflows.js";
+} from "@harnesshub/core/workflows";
 import type { HubApplication } from "./service.js";
 
 /** Select only enabled, capability-compatible engines; automatic routing excludes generic CLI and fixtures. */

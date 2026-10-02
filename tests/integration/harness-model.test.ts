@@ -14,13 +14,13 @@ import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { loadBuildInfo, startHub } from "../../src/main.js";
-import type { HarnessModelView } from "../../src/domain/harness-model.js";
+import type { HarnessModelView } from "@harnesshub/core/harness-model";
 import {
   isTerminal,
   type EngineProfile,
   type RunRecord,
   type SessionRecord,
-} from "../../src/domain/types.js";
+} from "@harnesshub/core/types";
 
 type Hub = Awaited<ReturnType<typeof startHub>>;
 const peer = fileURLToPath(

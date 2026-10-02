@@ -8,7 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
 import { Worker } from "node:worker_threads";
-import { HubError } from "../../src/domain/errors.js";
+import { HubError } from "@harnesshub/core/errors";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
 
 function fixture(t: TestContext) {

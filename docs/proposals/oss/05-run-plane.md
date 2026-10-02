@@ -127,7 +127,7 @@ Runtime 从 [03 第 8 节](03-model-plane.md#8-用量与成本账本) 的 `model
 - R9 的豁免只认 Adapter 清单 `run.localCommands`（在 [04 第 1 节](04-agent-plane.md#1-adapter-清单) 的 `run` 段新增）逐条声明的本地命令（如 codex-acp 的 `/status`），按输入首个词精确匹配，不笼统放行所有以 `/` 开头的输入。Magpie 用网关侧观测反证 Agent 侧的做法（`internal/agent/applied.go` 的 `bypassed`：Agent 被使用过而网关没有收到请求）是 R9 的参照，但它按时间窗判断，不涉及单次任务的结果。命中时 `evidence = not_applicable`，stopReason 为 `local_command`。
 - 侧调用在最后一次主调用成功之后失败，不触发 R11，避免并发的标题调用造成误判。
 - Agent 自身的限制触顶（`max_tokens`、`max_turn_requests`）按 [DESIGN.md §5](../../../DESIGN.md#5-run-生命周期与控制契约) 记为 `completed` 加具体 stopReason。
-- R9–R12 失败时 Agent 进程本身健康：Session 保留 Worker，可以继续提交下一个 Run，与现状 `modelRunFailureCodes`（`src/domain/errors.ts`）的语义一致。
+- R9–R12 失败时 Agent 进程本身健康：Session 保留 Worker，可以继续提交下一个 Run，与现状 `modelRunFailureCodes`（`packages/core/src/errors.ts`）的语义一致。
 
 ### 4.4 判定时机、可解释性与证据强度
 

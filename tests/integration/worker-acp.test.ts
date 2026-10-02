@@ -14,8 +14,8 @@ import {
   PROTOCOL_VERSION,
 } from "@agentclientprotocol/sdk";
 import { ProcessWorkerHost } from "../../src/process/worker-host.js";
-import type { ExecutionSpec, WorkerMessage } from "../../src/domain/ports.js";
-import type { RunId, SessionId } from "../../src/domain/types.js";
+import type { ExecutionSpec, WorkerMessage } from "@harnesshub/core/ports";
+import type { RunId, SessionId } from "@harnesshub/core/types";
 
 /** Windows install-location variables a Worker must pass through (F06). */
 const windowsLocations = [

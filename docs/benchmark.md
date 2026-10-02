@@ -26,7 +26,7 @@ Benchmark CLI 启动仅绑定回环地址的 Gateway，端口自动分配，必�
 
 ## 数据集与文件准备
 
-格式由[领域契约](../src/domain/benchmark.ts)定义：`schemaVersion: 1`、dataset `id/version`、不同的 task `id/version`、`input.text/timeoutMs` 和版本化 evaluator 为必需项。
+格式由[领域契约](../packages/core/src/benchmark.ts)定义：`schemaVersion: 1`、dataset `id/version`、不同的 task `id/version`、`input.text/timeoutMs` 和版本化 evaluator 为必需项。
 
 可选 `fixtureFiles` 是最多 32 个 `{ "path": "inputs/data.json", "text": "..." }`。内容随 dataset 版本和 hash 保存，不接受主机任意文件路径复制。单个字符串最多 1,048,576 字符，每任务全部 UTF-8 输入不超过 8 MiB。路径使用 `/` 分隔的相对文件名，拒绝绝对路径、父目录、符号链接、大小写或 Unicode 别名、文件/目录重叠及 Windows 保留名。
 

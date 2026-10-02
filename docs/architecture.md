@@ -43,7 +43,7 @@ Console不是引擎执行器：它调用Next的 `/api/gateway/...` 代理，再�
 | 位置 | 职责与主要入口 |
 |---|---|
 | [main.ts](../src/main.ts) | 组合根：配置、Store、Host、Runtime、Workflow、观测、秘密/配置操作与Gateway组装 |
-| [domain](../src/domain/types.ts) | 自有实体/品牌ID、状态、公共schema、IPC和接口；不依赖具体后端SDK |
+| [domain](../packages/core/src/types.ts)（`@harnesshub/core`） | 自有实体/品牌ID、状态、公共schema、IPC和接口；不依赖具体后端SDK |
 | [gateway](../src/gateway/server.ts) | 请求校验、HTTP错误映射、SSE/下载；不选择引擎实现 |
 | [application](../src/application/service.ts) | HTTP、Benchmark共同入口；工作流、选路和观测服务 |
 | [runtime](../src/runtime/runtime.ts) | Session队列、Run状态、总deadline、权限、结果仲裁与恢复 |

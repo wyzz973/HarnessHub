@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { HubError } from "../../domain/errors.js";
+import { HubError } from "@harnesshub/core/errors";
 import { existsSync } from "node:fs";
 
 /** This exact repository-owned wrapper is the only script whose env arguments are unpacked. */

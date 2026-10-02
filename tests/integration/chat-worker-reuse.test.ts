@@ -6,7 +6,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
-import { parseWorkerMessage } from "../../src/domain/ipc.js";
+import { parseWorkerMessage } from "@harnesshub/core/ipc";
 
 void test(
   "compiled Worker accepts the next Run immediately after result ACK without a scheduling gap",

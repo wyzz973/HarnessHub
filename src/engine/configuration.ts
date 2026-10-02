@@ -8,9 +8,9 @@ import {
   type EngineConfiguration,
   type SecretReference,
   type ConfigurationAdapter,
-} from "../domain/engine-configuration.js";
-import { HubError } from "../domain/errors.js";
-import type { EngineProfile } from "../domain/types.js";
+} from "@harnesshub/core/engine-configuration";
+import { HubError } from "@harnesshub/core/errors";
+import type { EngineProfile } from "@harnesshub/core/types";
 const validate = new Ajv({ allErrors: true }).compile<EngineConfiguration>(
   engineConfigurationSchema,
 );

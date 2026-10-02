@@ -3,16 +3,16 @@ import { createHash } from "node:crypto";
 import { mkdir, lstat, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { stringify as stringifyYaml } from "yaml";
-import type { ExecutionSpec } from "../../domain/ports.js";
+import type { ExecutionSpec } from "@harnesshub/core/ports";
 import type {
   ConfigurationAdapter,
   EngineMcpServer,
   ModelProviderConfiguration,
   SecretReference,
-} from "../../domain/engine-configuration.js";
-import { HARNESS_MODEL_ALIAS } from "../../domain/harness-model.js";
-import { HubError } from "../../domain/errors.js";
-import { WORKER_TREE_ENVIRONMENT } from "../../domain/environment.js";
+} from "@harnesshub/core/engine-configuration";
+import { HARNESS_MODEL_ALIAS } from "@harnesshub/core/harness-model";
+import { HubError } from "@harnesshub/core/errors";
+import { WORKER_TREE_ENVIRONMENT } from "@harnesshub/core/environment";
 import { resolveSecret } from "./secrets.js";
 import { portableCommand, unwrapEnvironment } from "./launch.js";
 import { codexGatewayCatalog, codexModelCatalog } from "./codex-models.js";

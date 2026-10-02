@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ProcessWorkerHost } from "../../src/process/worker-host.js";
-import type { ExecutionSpec, WorkerMessage } from "../../src/domain/ports.js";
-import type { RunId, SessionId } from "../../src/domain/types.js";
+import type { ExecutionSpec, WorkerMessage } from "@harnesshub/core/ports";
+import type { RunId, SessionId } from "@harnesshub/core/types";
 
 const peer = fileURLToPath(
   new URL("../fixtures/acp-recovery-peer.js", import.meta.url),

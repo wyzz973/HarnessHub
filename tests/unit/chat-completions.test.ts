@@ -7,7 +7,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { normalizeEngine } from "../../src/engine/registry.js";
 import { prepareConfiguration } from "../../src/drivers/configuration/prepare.js";
-import type { RunId, SessionId } from "../../src/domain/types.js";
+import type { RunId, SessionId } from "@harnesshub/core/types";
 import { startModelBridge } from "../../src/drivers/chat-completions/bridge.js";
 import { responsesToChat } from "../../src/drivers/chat-completions/responses.js";
 import { googleToChat } from "../../src/drivers/chat-completions/google.js";

@@ -4,7 +4,7 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
-import { parseBuildInfo } from "../../src/domain/build-info.js";
+import { parseBuildInfo } from "@harnesshub/core/build-info";
 import { loadBuildInfo } from "../../src/main.js";
 import { temporaryDirectory } from "../support/temporary.js";
 

@@ -4,7 +4,7 @@ import { test } from "node:test";
 import {
   isRelativeFilePath,
   validateFileOutputs,
-} from "../../src/domain/files.js";
+} from "@harnesshub/core/files";
 import { validateFixtures } from "../../src/benchmark/workspace.js";
 
 void test("portable output and fixture paths reject Windows aliases and accept Chinese/spaces", () => {

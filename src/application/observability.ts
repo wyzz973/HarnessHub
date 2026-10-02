@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import type { Store } from "../domain/ports.js";
+import type { Store } from "@harnesshub/core/ports";
 import type {
   AgentEvent,
   EngineProfile,
@@ -8,17 +8,17 @@ import type {
   RunId,
   RunRecord,
   SessionRecord,
-} from "../domain/types.js";
-import { isTerminal } from "../domain/types.js";
+} from "@harnesshub/core/types";
+import { isTerminal } from "@harnesshub/core/types";
 import type {
   ObservabilityOverview,
   ObservedCost,
   ObservedTokens,
   RunObservations,
   UsageObservation,
-} from "../domain/observability.js";
-import { unknownCost, unknownTokens } from "../domain/observability.js";
-import { HubError } from "../domain/errors.js";
+} from "@harnesshub/core/observability";
+import { unknownCost, unknownTokens } from "@harnesshub/core/observability";
+import { HubError } from "@harnesshub/core/errors";
 
 const MAX_EVENTS = 10_000;
 const MAX_RECENT_RUNS = 200;

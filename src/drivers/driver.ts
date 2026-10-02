@@ -3,12 +3,12 @@ import type {
   ExecutionIdentity,
   ExecutionSpec,
   WorkerMessage,
-} from "../domain/ports.js";
+} from "@harnesshub/core/ports";
 import type {
   DriverResult,
   PermissionId,
   PermissionOption,
-} from "../domain/types.js";
+} from "@harnesshub/core/types";
 type WorkerPayload = WorkerMessage extends infer Message
   ? Message extends WorkerMessage
     ? Omit<Message, keyof ExecutionIdentity | "version" | "seq">

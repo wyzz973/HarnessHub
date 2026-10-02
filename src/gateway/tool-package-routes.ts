@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 import type { FastifyInstance } from "fastify";
-import { secretReferenceSchema } from "../domain/engine-configuration.js";
-import { HubError } from "../domain/errors.js";
-import { errorResponseSchema } from "../domain/schemas.js";
-import type { ToolPackageManagement } from "../domain/tool-packages.js";
+import { secretReferenceSchema } from "@harnesshub/core/engine-configuration";
+import { HubError } from "@harnesshub/core/errors";
+import { errorResponseSchema } from "@harnesshub/core/schemas";
+import type { ToolPackageManagement } from "@harnesshub/core/tool-packages";
 
 /**
  * Tool Pack port used by these routes. It extends the shared domain port with

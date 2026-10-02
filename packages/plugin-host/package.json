@@ -1,0 +1,14 @@
+{
+  "name": "@harnesshub/plugin-host",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    "./*": {
+      "@harnesshub/source": "./src/*.ts",
+      "types": "./dist/src/*.d.ts",
+      "default": "./dist/src/*.js"
+    }
+  }
+}

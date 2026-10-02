@@ -25,8 +25,8 @@ import {
   discardArtifacts,
   readArtifact,
 } from "../../src/artifacts/publisher.js";
-import { HubError } from "../../src/domain/errors.js";
-import type { EngineProfile, FileOutput } from "../../src/domain/types.js";
+import { HubError } from "@harnesshub/core/errors";
+import type { EngineProfile, FileOutput } from "@harnesshub/core/types";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
 
 const engine: EngineProfile = {

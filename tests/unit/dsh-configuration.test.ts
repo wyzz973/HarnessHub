@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { normalizeEngine } from "../../src/engine/registry.js";
 import { prepareConfiguration } from "../../src/drivers/configuration/prepare.js";
-import type { RunId, SessionId } from "../../src/domain/types.js";
+import type { RunId, SessionId } from "@harnesshub/core/types";
 
 void test("DSH private overlay configures native routes and ACP model selectors without persisting credentials", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "hh-dsh-provider-"));

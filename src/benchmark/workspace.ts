@@ -12,9 +12,9 @@ import {
   benchmarkHash,
   type BenchmarkAttempt,
   type BenchmarkTask,
-} from "../domain/benchmark.js";
-import { HubError } from "../domain/errors.js";
-import { isRelativeFilePath } from "../domain/files.js";
+} from "@harnesshub/core/benchmark";
+import { HubError } from "@harnesshub/core/errors";
+import { isRelativeFilePath } from "@harnesshub/core/files";
 
 const maximumFixtureBytes = 8 * 1024 * 1024;
 

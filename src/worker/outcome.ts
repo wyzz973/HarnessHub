@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-import type { WorkerPayload } from "../domain/ipc.js";
-import type { DriverResult, JsonObject } from "../domain/types.js";
+import type { WorkerPayload } from "@harnesshub/core/ipc";
+import type { DriverResult, JsonObject } from "@harnesshub/core/types";
 import type { ModelCallRecord } from "../drivers/chat-completions/gateway.js";
 import { truncatePublic, type Redactor } from "./diagnostics.js";
 

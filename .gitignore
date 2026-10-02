@@ -1,6 +1,9 @@
 .DS_Store
 node_modules/
 /dist/
+# Build output of workspace packages and applications.
+/packages/*/dist/
+/apps/*/dist/
 /coverage/
 /.cache/
 /.tmp/

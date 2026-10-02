@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 import { DatabaseSync } from "node:sqlite";
-import { HubError } from "../domain/errors.js";
+import { HubError } from "@harnesshub/core/errors";
 import {
   isWorkflow,
   type Workflow,
   type WorkflowId,
   type WorkflowStore,
-} from "../domain/workflows.js";
-import type { RunId, SessionId } from "../domain/types.js";
+} from "@harnesshub/core/workflows";
+import type { RunId, SessionId } from "@harnesshub/core/types";
 import { decodeRecord } from "./records.js";
 
 /** Versioned workflow tables share the current process's Gateway owner and public Run identities. */

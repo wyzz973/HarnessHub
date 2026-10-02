@@ -1,6 +1,6 @@
 # 文件产物采集
 
-Run 的 `outputs` 声明需要保存的工作目录文件，字段定义见 [FileOutput](../src/domain/types.ts)，路径规则见 [公共输入校验](../src/domain/files.ts)。每项的 `path` 是 Workspace 内相对路径，`name` 是产物名称，`mediaType` 可选。省略 `outputs` 不扫描文件；声明列表必须为 1～32 项，名称和源路径分别唯一。
+Run 的 `outputs` 声明需要保存的工作目录文件，字段定义见 [FileOutput](../packages/core/src/types.ts)，路径规则见 [公共输入校验](../packages/core/src/files.ts)。每项的 `path` 是 Workspace 内相对路径，`name` 是产物名称，`mediaType` 可选。省略 `outputs` 不扫描文件；声明列表必须为 1～32 项，名称和源路径分别唯一。
 
 Agent 通过自己的工具写入 Workspace。后端正常完成后，Gateway 在总 deadline 内调用 [采集器](../src/artifacts/collector.ts)，读取声明文件的原始 bytes，写入自己的产物目录并同步到磁盘，然后登记 SQLite 元数据。二进制文件不经过 Worker IPC。已有 Worker 文本产物仍使用原来的 4 MiB 传输限额。
 

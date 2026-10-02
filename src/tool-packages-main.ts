@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { HubError } from "./domain/errors.js";
+import { HubError } from "@harnesshub/core/errors";
 import { prepareEngine } from "./engine/registry.js";
 import { runToolPackageCli } from "./tool-packages/index.js";
 
