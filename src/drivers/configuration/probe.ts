@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { WINDOWS_SYSTEM_ENVIRONMENT } from "../../domain/environment.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -222,21 +223,19 @@ async function probeWindowsConfiguration(
     new URL("../../../native/harnesshub-job.exe", import.meta.url),
   );
   const token = randomUUID();
-  const systemNames = new Set([
-    "PATH",
-    "PATHEXT",
-    "SYSTEMROOT",
-    "WINDIR",
-    "COMSPEC",
-    "SYSTEMDRIVE",
-    "HOME",
-    "USERPROFILE",
-    "APPDATA",
-    "LOCALAPPDATA",
-    "TEMP",
-    "TMP",
-    "LANG",
-  ]);
+  const systemNames = new Set(
+    [
+      "PATH",
+      ...WINDOWS_SYSTEM_ENVIRONMENT,
+      "HOME",
+      "USERPROFILE",
+      "APPDATA",
+      "LOCALAPPDATA",
+      "TEMP",
+      "TMP",
+      "LANG",
+    ].map((name) => name.toUpperCase()),
+  );
   const env: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(process.env))
     if (systemNames.has(name.toUpperCase())) env[name.toUpperCase()] = value;

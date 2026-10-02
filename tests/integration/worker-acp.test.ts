@@ -17,6 +17,19 @@ import { ProcessWorkerHost } from "../../src/process/worker-host.js";
 import type { ExecutionSpec, WorkerMessage } from "../../src/domain/ports.js";
 import type { RunId, SessionId } from "../../src/domain/types.js";
 
+/** Windows install-location variables a Worker must pass through (F06). */
+const windowsLocations = [
+  "ProgramFiles",
+  "ProgramFiles(x86)",
+  "ProgramW6432",
+  "CommonProgramFiles",
+  "CommonProgramFiles(x86)",
+  "CommonProgramW6432",
+  "ProgramData",
+  "ALLUSERSPROFILE",
+  "PUBLIC",
+];
+
 if (process.argv.includes("--acp-peer")) {
   let turns = 0;
   new AgentSideConnection(
@@ -46,6 +59,12 @@ if (process.argv.includes("--acp-peer")) {
                 text: JSON.stringify({
                   ambient: process.env.HH_TEST_AMBIENT_SECRET ?? null,
                   psModulePath: process.env.PSModulePath ?? null,
+                  windowsLocations: Object.fromEntries(
+                    windowsLocations.map((name) => [
+                      name,
+                      process.env[name] ?? null,
+                    ]),
+                  ),
                   declared: process.env.HH_TEST_DECLARED_SECRET ?? null,
                   explicit: process.env.HH_TEST_EXPLICIT_VALUE ?? null,
                   home: process.env.HOME,
@@ -230,6 +249,10 @@ if (process.argv.includes("--acp-peer")) {
             HH_TEST_DECLARED_SECRET: "declared-fixture",
             // Windows PowerShell needs it to autoload modules quickly.
             PSModulePath: "fixture-module-path",
+            // Engines find Git, Python and machine-wide configuration through these.
+            ...Object.fromEntries(
+              windowsLocations.map((name) => [name, `fixture-${name}`]),
+            ),
           },
           stdio: ["ignore", "ignore", "ignore", "ipc"],
           execArgv: [],
@@ -258,6 +281,9 @@ if (process.argv.includes("--acp-peer")) {
       assert.deepEqual(actual, {
         ambient: null,
         psModulePath: "fixture-module-path",
+        windowsLocations: Object.fromEntries(
+          windowsLocations.map((name) => [name, `fixture-${name}`]),
+        ),
         declared: "declared-fixture",
         explicit: "explicit-fixture",
         home,

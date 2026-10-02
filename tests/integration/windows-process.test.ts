@@ -210,7 +210,22 @@ void test(
       await until(async () =>
         (await readdir(directory)).includes(`${mode}.json`),
       );
-      const tree = pids(await readFile(marker, "utf8"));
+      const written = await readFile(marker, "utf8");
+      const tree = pids(written);
+      // F06: engines find installed programs and machine-wide configuration through these.
+      assert.deepEqual(
+        Object.fromEntries(
+          ["programFiles", "programData", "allUsersProfile"].map((key) => [
+            key,
+            (JSON.parse(written) as Record<string, unknown>)[key],
+          ]),
+        ),
+        {
+          programFiles: process.env.ProgramFiles ?? null,
+          programData: process.env.ProgramData ?? null,
+          allUsersProfile: process.env.ALLUSERSPROFILE ?? null,
+        },
+      );
       if (mode === "silent") abort.abort();
       const result = await probe;
       assert.equal(result.status, mode === "respond" ? "passed" : "failed");
