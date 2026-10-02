@@ -28,9 +28,27 @@ function helperLauncher(
     );
   return launcher;
 }
-async function keychain(
+/** Values a secret may hold: non-empty, single-line, at most 8 KiB. */
+export function validSecretValue(value: string): boolean {
+  return (
+    value.trim().length > 0 &&
+    Buffer.byteLength(value) <= 8192 &&
+    !/[\r\n\0]/.test(value)
+  );
+}
+/**
+ * One request to the platform secret helper (macOS Keychain, Windows DPAPI):
+ * `create` an immutable item, `read` it (returns the value), `delete` it, or
+ * on Windows `read-file`. Values travel on stdin and stdout only.
+ *
+ * @throws HubError `KEYCHAIN_UNSUPPORTED` on other platforms,
+ *   `PROCESS_LAUNCHER_NOT_INJECTED` without a launcher, `SECRET_UNAVAILABLE`
+ *   with `cause: {operation, stage}` when the helper fails; helper output
+ *   never reaches the error.
+ */
+export async function helperRequest(
   launcher: ProcessLauncher | undefined,
-  operation: string,
+  operation: "create" | "read" | "delete" | "read-file",
   id: string,
   value?: string,
 ): Promise<string | undefined> {
@@ -112,17 +130,13 @@ export async function createSecret(
   value: string,
   launcher: ProcessLauncher,
 ): Promise<SecretReference> {
-  if (
-    !value.trim() ||
-    Buffer.byteLength(value) > 8192 ||
-    /[\r\n\0]/.test(value)
-  )
+  if (!validSecretValue(value))
     throw new HubError(
       "INVALID_SECRET",
       "Credential must be a non-empty single-line value up to 8 KiB",
     );
   const id = randomUUID();
-  await keychain(launcher, "create", id, value);
+  await helperRequest(launcher, "create", id, value);
   return { kind: "keychain", value: id };
 }
 /** Remove only an explicitly owned HarnessHub item, used by fixture cleanup. */
@@ -131,7 +145,7 @@ export async function deleteSecret(
   launcher: ProcessLauncher,
 ): Promise<void> {
   if (ref.kind !== "keychain") throw failure();
-  await keychain(launcher, "delete", ref.value);
+  await helperRequest(launcher, "delete", ref.value);
 }
 /**
  * Resolve at execution/test time; callers own the in-memory value and must not
@@ -156,7 +170,14 @@ export async function resolveSecret(
     if (values.size > 1) throw failure();
     value = environment[names[0] ?? ref.value];
   } else if (ref.kind === "keychain")
-    value = await keychain(launcher, "read", ref.value);
+    value = await helperRequest(launcher, "read", ref.value);
+  else if (ref.kind === "store")
+    // Managed references need their data root; this is a composition defect.
+    throw new HubError(
+      "SECRET_STORE_REQUIRED",
+      "Store references are resolved by SecretStore",
+      500,
+    );
   else {
     try {
       const info = await lstat(ref.value);
@@ -169,7 +190,7 @@ export async function resolveSecret(
         throw failure();
       value =
         process.platform === "win32"
-          ? (await keychain(launcher, "read-file", ref.value))?.trim()
+          ? (await helperRequest(launcher, "read-file", ref.value))?.trim()
           : (await readFile(ref.value, "utf8")).trim();
     } catch (error) {
       if (
