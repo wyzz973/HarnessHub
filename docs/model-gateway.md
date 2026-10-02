@@ -161,9 +161,12 @@ Responses 和 Google 按固定客户端（Codex 0.153.4 的请求结构、@googl
 - [推理与 Run](../packages/gateway/test/model-gateway-runs.test.ts)：四种协议的推理回填（假上游在缺少 `reasoning_content` 时按 DeepSeek 实测返回 400）、strip 模式、缓存上限、Run 作用域、取消与断开、并发上限、调用记录与 `runErrors`。
 - [兼容入口](../tests/unit/chat-completions.test.ts)：`startModelBridge`、Responses/Google 转换与配置准备。
 
+集成测试 [fake-provider.test.ts](../tests/integration/fake-provider.test.ts) 让网关的 Chat 上游指向黑名单模式、只接受流式的 [假 provider](../tools/fake-provider/README.md)：经四种入站协议各发流式与非流式请求（含带推理回传的工具往返，入站请求带有引擎实际会加的 `stream_options`、`store`、`metadata`、`developer` 角色、`cache_control` 等字段），断言上游零违规且只见到配置的上游 Key；兼容性设置打开 `includeUsage` 与 `max_completion_tokens` 时，假 provider 报告 `stream_options` 与 `max_completion_tokens` 两处违规；另经守护进程、Worker 与 ACP 夹具引擎完成一次 Run。
+
 ```sh
 pnpm build
 node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js dist/tests/unit/model-gateway*.test.js dist/tests/unit/chat-completions.test.js
+node tools/run-tests.mjs integration dist/tests/integration/fake-provider.test.js
 ```
 
 2026-09-19 在 macOS 上做过一次性冒烟：本机已安装的 Codex 0.144.5、Gemini CLI 0.38.2、Claude Code 2.1.278（均非固定版本）以隔离的配置目录连接网关与本地假上游，各完成一次推理、Shell 工具调用与后续回合，后续请求都带回了推理内容。该冒烟发现并修正了 Claude Code 在 `messages` 中发送 system 角色消息的问题；脚本未入库，不代替固定版本引擎的验收。
