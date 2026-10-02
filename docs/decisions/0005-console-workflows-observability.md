@@ -22,4 +22,4 @@ Workflow 元数据有独立 version 1 表，与现有公共表共享 Gateway 数
 
 通过正式 Gateway/Worker/SQLite 验证计划、重复审批、失败、取消、版本变化、重启和观测归属，再从真实浏览器提交模型任务，确认计划、产物、刷新和观测一致。具体见 本轮验收（归档于 `archive/competition` 分支的 `2026-09-05-console.md`）。
 
-当前仅本机部署，不提供远端多用户权限体系。DAG 先串行执行；全面并行编排、失败自动重试与无损跨引擎上下文迁移仍是独立需求。使用和 API 分别见 [控制台](../../web/README.md)、[Workflow](../workflows.md)与 [观测](../observability.md)。
+当前仅本机部署，不提供远端多用户权限体系。DAG 先串行执行；全面并行编排、失败自动重试与无损跨引擎上下文迁移仍是独立需求。使用和 API 分别见 [控制台](../../packages/console/README.md)、[Workflow](../workflows.md)与 [观测](../observability.md)。

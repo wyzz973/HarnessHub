@@ -22,10 +22,10 @@ node_modules/
 engines/manifests/
 
 # Next.js console build/cache
-web/.next/
-web/out/
-web/next-env.d.ts
-web/*.tsbuildinfo
+/packages/console/.next/
+/packages/console/out/
+/packages/console/next-env.d.ts
+/packages/console/*.tsbuildinfo
 
 # Local console configuration and browser verification artifacts
 engines/*.local.yaml

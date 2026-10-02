@@ -20,7 +20,7 @@
 | [API 入口](api/README.md) | 共同约定、对象、幂等、流式与维护方法 |
 | [逐接口实现参考](api/reference.md) | 全部 HTTP 操作的输入/输出、调用链、副作用、错误与测试 |
 | [OpenAPI](api/openapi.json) | 从正式路由生成的可机读 API 契约 |
-| [控制台](../web/README.md) | 启动、页面状态、组件来源 |
+| [控制台](../packages/console/README.md) | 启动、页面状态、组件来源 |
 | [运行契约](runtime-api.md) | Gateway 配置、Run/Session 与执行边界 |
 | [工作流](workflows.md) | 模型规划、人工确认、选路、依赖执行与失败恢复 |
 | [观测](observability.md) | 实际模型、Token、费用来源、时间与证据覆盖 |

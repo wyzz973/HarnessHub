@@ -5,12 +5,12 @@
  * Usage: node tools/console.mjs <build|dev> [next arguments]
  *
  * Next.js 16 records the environment of the build process in its Turbopack
- * cache (web/.next/cache), so a token in the developer's shell ends up on disk.
+ * cache (packages/console/.next/cache), so a token in the developer's shell ends up on disk.
  * The console toolchain therefore gets only the system variables of
  * lib/environment.mjs, the home and temporary directories, CI and
  * HARNESSHUB_GATEWAY_URL, with Next.js telemetry disabled.
  *
- * After a build, web/.next is searched for a random canary that was placed in the
+ * After a build, packages/console/.next is searched for a random canary that was placed in the
  * parent environment and for every dropped variable whose name looks like a
  * credential; a hit fails the build and names the variable, never the value.
  * Exits with Next's status, or 1.
@@ -23,7 +23,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { assignEnvironment, pickEnvironment } from "./lib/environment.mjs";
 
-const WEB = fileURLToPath(new URL("../web/", import.meta.url));
+const WEB = fileURLToPath(new URL("../packages/console/", import.meta.url));
 const NEXT = path.join(WEB, "node_modules", "next", "dist", "bin", "next");
 const ALLOWED = [
   "HOME",

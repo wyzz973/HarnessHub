@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node ../tools/console.mjs dev",
-    "build": "node ../tools/console.mjs build",
+    "dev": "node ../../tools/console.mjs dev",
+    "build": "node ../../tools/console.mjs build",
     "start": "next start --hostname 127.0.0.1 --port 3330",
     "typecheck": "tsc --noEmit"
   },

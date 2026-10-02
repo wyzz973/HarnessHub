@@ -108,7 +108,7 @@ launch(
     "--port",
     "3330",
   ],
-  fileURLToPath(new URL("../web/", import.meta.url)),
+  fileURLToPath(new URL("../packages/console/", import.meta.url)),
   { HARNESSHUB_GATEWAY_URL: "http://127.0.0.1:3180" },
 );
 console.log(
