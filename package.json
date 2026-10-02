@@ -49,6 +49,7 @@
     "@harnesshub/drivers": "workspace:*",
     "@harnesshub/gateway": "workspace:*",
     "@harnesshub/runtime": "workspace:*",
+    "@harnesshub/sdk": "workspace:*",
     "@harnesshub/secrets": "workspace:*",
     "@harnesshub/store": "workspace:*",
     "harnesshub": "workspace:*",

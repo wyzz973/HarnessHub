@@ -37,6 +37,9 @@ importers:
       '@harnesshub/runtime':
         specifier: workspace:*
         version: link:packages/runtime
+      '@harnesshub/sdk':
+        specifier: workspace:*
+        version: link:packages/sdk
       '@harnesshub/secrets':
         specifier: workspace:*
         version: link:packages/secrets
@@ -115,6 +118,9 @@ importers:
       '@harnesshub/core':
         specifier: workspace:*
         version: link:../core
+      '@harnesshub/sdk':
+        specifier: workspace:*
+        version: link:../sdk
 
   packages/console:
     dependencies:
@@ -254,7 +260,11 @@ importers:
         specifier: 8.20.0
         version: 8.20.0
 
-  packages/sdk: {}
+  packages/sdk:
+    dependencies:
+      '@harnesshub/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/secrets:
     dependencies:

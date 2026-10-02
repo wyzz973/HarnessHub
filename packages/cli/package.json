@@ -12,6 +12,7 @@
     }
   },
   "dependencies": {
-    "@harnesshub/core": "workspace:*"
+    "@harnesshub/core": "workspace:*",
+    "@harnesshub/sdk": "workspace:*"
   }
 }
