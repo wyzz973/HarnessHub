@@ -46,7 +46,7 @@
 
 子进程从自身的角色路径推出根目录，只接受标记文件中构建号与自身一致的根目录。这样即使 Worker 的 HOME 被改成 Session 私有目录，也能找到与 Gateway 相同的文件。
 
-**解包根目录**：其他程序必须从磁盘读取的文件（构建身份、原生辅助程序、Pi 扩展）作为 SEA 资源嵌入，按构建写入每个用户的缓存目录：macOS 为 `~/Library/Caches/HarnessHub/sea/<构建号>`，Linux 为 `$XDG_CACHE_HOME/harnesshub/sea/<构建号>`（缺省 `~/.cache`），Windows 为 `%LOCALAPPDATA%\HarnessHub\sea\<构建号>`。角色入口位置写入占位文件，因为工具包绑定会检查 command MCP 入口是普通文件；占位文件被其他程序直接执行时抛错。用户命令每次启动都按 SHA-256 校验并修复这些文件，原子写入（临时文件加改名），目录权限 0700 且必须属于当前用户。`HARNESSHUB_SEA_ROOT` 可以覆盖根目录，只用于测量。构建号是 bundle 与全部资源的 SHA-256 前 16 位。
+**解包根目录**：其他程序必须从磁盘读取的文件（构建身份、原生辅助程序、Pi 扩展）作为 SEA 资源嵌入，按构建写入每个用户的缓存目录：macOS 为 `~/Library/Caches/HarnessHub/sea/<构建号>`，Linux 为 `$XDG_CACHE_HOME/harnesshub/sea/<构建号>`（缺省 `~/.cache`），Windows 为 `%LOCALAPPDATA%\HarnessHub\sea\<构建号>`。角色入口位置写入占位文件，因为工具包绑定会检查 command MCP 入口是普通文件；占位文件被其他程序直接执行时抛错。用户命令每次启动都按 SHA-256 校验并修复这些文件，原子写入（临时文件加改名），目录权限 0700 且必须属于当前用户。`HARNESSHUB_SEA_ROOT` 可以覆盖根目录，只用于测量。构建号是 bundle 与全部资源的 SHA-256 前 16 位。原生辅助程序只从 `dist/native` 与各包的 `dist/native` 嵌入 `build.mjs` 中 `NATIVE_HELPERS` 列出的文件，这些目录中的其他文件（例如早先构建留下的旧辅助程序）会使构建失败；`build.json` 记录每个嵌入资源的 SHA-256，`measure.mjs` 的 `asset.secret-helper` 检查当前平台的密钥辅助程序解包后与记录一致（只读文件，不访问密钥库；Linux 没有该辅助程序，检查注明原因后跳过）。
 
 **构建身份**：SEA 内嵌的 `build-info.json` 与 `dist/build-info.json` 相同，只把 `installMethod` 改为 `sea`。`harnesshub version --json` 输出它，端到端检查逐字段与构建时写入的文件比对。
 
