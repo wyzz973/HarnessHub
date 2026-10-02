@@ -5,6 +5,7 @@
  * `@harnesshub/core/model-plane`; the record validators of
  * `@harnesshub/core/model-plane-records` remain the authority before a write.
  */
+import { metadataFields } from "@harnesshub/core/model-metadata";
 import {
   droppableFields,
   providerPatches,
@@ -754,6 +755,159 @@ export const usageSchema = {
           unpricedCalls: count,
         },
       },
+    },
+  },
+} as const;
+
+const modality = { enum: ["text", "image", "pdf", "audio", "video"] } as const;
+
+/** `provider/model`, or `provider/*` for an override of all the provider's models. */
+export const modelRefParams = {
+  type: "object",
+  additionalProperties: false,
+  required: ["ref"],
+  properties: { ref: { ...modelRefText, maxLength: 600 } },
+} as const;
+
+const overrideValues = {
+  type: "object",
+  additionalProperties: false,
+  minProperties: 1,
+  properties: {
+    contextWindow: positive,
+    maxOutputTokens: positive,
+    reasoning: { type: "boolean" },
+    inputModalities: {
+      type: "array",
+      minItems: 1,
+      uniqueItems: true,
+      items: modality,
+    },
+    toolCall: { type: "boolean" },
+    price: {
+      ...price,
+      minProperties: 1,
+      description: "USD per million tokens",
+    },
+  },
+} as const;
+export const modelOverrideBodySchema = overrideValues;
+export const modelOverrideSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["ref", "values", "updatedAt"],
+  properties: {
+    ref: { type: "string" },
+    values: overrideValues,
+    updatedAt: timestamp,
+  },
+} as const;
+
+const resolvedField = {
+  type: "object",
+  additionalProperties: false,
+  required: ["value", "source"],
+  properties: {
+    value: {
+      anyOf: [
+        { type: "number" },
+        { type: "boolean" },
+        { type: "array", items: modality },
+      ],
+    },
+    source: {
+      enum: [
+        "override",
+        "override-provider",
+        "provider",
+        "live",
+        "preset",
+        "catalog",
+      ],
+      description:
+        "override: the model's override; override-provider: the provider/* override; provider: set on the provider's model entry; live: the provider's model list; preset: the provider preset; catalog: the bundled models.dev snapshot",
+    },
+    at: {
+      type: "string",
+      description:
+        "When the source produced the value: an ISO 8601 date-time, or the date a preset was verified",
+    },
+  },
+} as const;
+
+/** One model's metadata, field by field, with source and time (03 section 7). */
+export const modelMetadataSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["ref", "listed", "fields", "unknown", "overrides"],
+  properties: {
+    ref: { type: "string" },
+    listed: {
+      type: "boolean",
+      description: "Whether the provider's model list has this model",
+    },
+    fields: {
+      type: "object",
+      additionalProperties: false,
+      description:
+        "Known fields; price.* are USD per million tokens. Unknown fields are absent, never defaulted.",
+      properties: Object.fromEntries(
+        metadataFields.map((field) => [field, resolvedField]),
+      ),
+    },
+    unknown: { type: "array", items: { enum: [...metadataFields] } },
+    overrides: {
+      type: "array",
+      items: modelOverrideSchema,
+      description: "The stored provider/* override and this model's, if any",
+    },
+  },
+} as const;
+
+/** `GET /api/v1/catalog`. */
+export const catalogStatusSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["snapshot", "autoRefresh"],
+  properties: {
+    snapshot: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "source",
+        "repository",
+        "license",
+        "retrievedAt",
+        "etag",
+        "commit",
+        "sha256",
+        "bytes",
+        "providers",
+        "models",
+      ],
+      properties: {
+        source: { type: "string" },
+        repository: { type: "string" },
+        license: { type: "string" },
+        retrievedAt: timestamp,
+        etag: { type: ["string", "null"] },
+        commit: {
+          type: ["string", "null"],
+          description: "models.dev repository commit seen at retrieval",
+        },
+        sha256: {
+          type: "string",
+          description: "SHA-256 of the full upstream api.json",
+        },
+        bytes: { ...count, description: "Size of the full upstream api.json" },
+        providers: count,
+        models: count,
+      },
+    },
+    autoRefresh: {
+      type: "boolean",
+      description:
+        "Whether the catalog is refreshed in the background; always false in this version (no network use)",
     },
   },
 } as const;

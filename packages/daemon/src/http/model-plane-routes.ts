@@ -30,8 +30,15 @@ import {
   isProviderConfig,
   isRouteGroup,
 } from "@harnesshub/core/model-plane-records";
+import {
+  isOverrideRef,
+  type ModelOverride,
+  type ModelProvenance,
+  type OverrideValues,
+} from "@harnesshub/core/model-metadata";
 import type { SessionId } from "@harnesshub/core/types";
 import { ApiProblem, type ApiV1Options, type ProblemItem } from "./api-v1.js";
+import { createModelEnrichment, type LiveModels } from "./model-enrichment.js";
 import {
   fetchModelList,
   listingProtocol,
@@ -39,6 +46,7 @@ import {
 } from "./model-list.js";
 import { providerFromPreset } from "@harnesshub/core/provider-presets";
 import {
+  catalogStatusSchema,
   credentialCreateSchema,
   credentialParams,
   credentialSchema,
@@ -51,6 +59,10 @@ import {
   listOf,
   modelCallPageSchema,
   modelCallsQuerySchema,
+  modelMetadataSchema,
+  modelOverrideBodySchema,
+  modelOverrideSchema,
+  modelRefParams,
   noContent,
   presetSchema,
   providerCreateSchema,
@@ -237,31 +249,74 @@ function allowsProvider(entry: string, provider: string): boolean {
   return parsed?.kind === "model" && parsed.provider === provider;
 }
 
+/** The model reference of a metadata route, which must name a model of a provider. */
+function overrideRef(ref: string, wildcard: boolean) {
+  const parsed = parseModelRef(ref);
+  if (
+    !isOverrideRef(ref) ||
+    parsed?.kind !== "model" ||
+    (!wildcard && parsed.model === "*")
+  )
+    throw invalid("MODEL_REF_INVALID", "The Model Ref is invalid", [
+      {
+        parameter: "ref",
+        detail: wildcard
+          ? "must be provider/model or provider/*"
+          : "must be provider/model",
+      },
+    ]);
+  return parsed;
+}
+
 /**
- * Model-plane routes under `/api/v1` (06 section 3, 03 sections 2, 4 and 8):
- * providers and their credentials, route groups, `client:` Gateway Keys, the
- * `model.call` ledger and usage. Writes are serialized within the daemon, so
- * each read-modify-write of a provider sees the previous one. Secret values
- * reach only `secrets`; responses carry references, keys their text once.
+ * Model-plane routes under `/api/v1` (06 section 3, 03 sections 2, 4, 7 and
+ * 8): providers and their credentials, model metadata and overrides, the
+ * catalog snapshot, route groups, `client:` Gateway Keys, the `model.call`
+ * ledger and usage. Writes are serialized within the daemon, so each
+ * read-modify-write of a provider sees the previous one. Every write that
+ * changes a provider's models or overrides resolves the models' metadata
+ * into the provider (where the gateway reads prices and limits) and stores
+ * its provenance in the same transaction. Secret values reach only
+ * `secrets`; responses carry references, keys their text once.
  */
 export function registerModelPlaneRoutes(
   api: FastifyInstance,
   options: Pick<
     ApiV1Options,
-    "modelPlane" | "secrets" | "presets" | "environment"
+    "modelPlane" | "secrets" | "presets" | "catalog" | "environment"
   >,
 ): void {
   const store: ModelPlaneStore = options.modelPlane;
+  const metadata = options.modelPlane;
   const secrets = options.secrets;
+  const enrichment = createModelEnrichment({
+    store: metadata,
+    presets: options.presets,
+    catalog: options.catalog,
+  });
+  /** Resolve the metadata of every model of `config`, then write both. */
+  const writeEnriched = async (
+    config: ProviderConfig,
+    live?: LiveModels,
+  ): Promise<ProviderConfig> => {
+    const { provider: enriched, provenance } = await enrichment.enrich(
+      config,
+      live ? { live } : {},
+    );
+    const checked = checkProvider(enriched);
+    await metadata.putProviderMetadata(checked, provenance);
+    return checked;
+  };
   /**
    * Store the credential's value (when it has one), then write the provider
-   * that `withCredential` builds; a secret written for a failed provider
-   * write is removed again.
+   * that `withCredential` builds (with `provenance`, when given); a secret
+   * written for a failed provider write is removed again.
    */
   const writeWithCredential = async (
     body: CredentialBody,
     id: CredentialId,
     withCredential: (credential: ProviderCredential) => ProviderConfig,
+    provenance?: ModelProvenance[],
   ): Promise<ProviderCredential> => {
     const ref =
       body.value !== undefined ? await secrets.create(body.value) : body.ref!;
@@ -273,7 +328,9 @@ export function registerModelPlaneRoutes(
       enabled: body.enabled ?? true,
     };
     try {
-      await store.putProvider(checkProvider(withCredential(credential)));
+      const written = checkProvider(withCredential(credential));
+      if (provenance) await metadata.putProviderMetadata(written, provenance);
+      else await store.putProvider(written);
     } catch (error) {
       if (ref.kind === "store") {
         try {
@@ -357,13 +414,22 @@ export function registerModelPlaneRoutes(
             ]);
           // Fields given with the preset override it, endpoints by protocol.
           const { id, name, endpoints, ...rest } = fields;
+          const expanded = providerFromPreset(preset, {
+            ...(id !== undefined ? { id } : {}),
+            ...(name !== undefined ? { name } : {}),
+            ...(endpoints !== undefined ? { endpoints } : {}),
+            now,
+          });
           base = {
-            ...providerFromPreset(preset, {
-              ...(id !== undefined ? { id } : {}),
-              ...(name !== undefined ? { name } : {}),
-              ...(endpoints !== undefined ? { endpoints } : {}),
-              now,
-            }),
+            ...expanded,
+            models: {
+              ...expanded.models,
+              // The preset's values are resolved below with their source.
+              list: expanded.models.list.map((model) => ({
+                id: model.id,
+                ...(model.wire !== undefined ? { wire: model.wire } : {}),
+              })),
+            },
             ...rest,
           };
         } else {
@@ -394,15 +460,18 @@ export function registerModelPlaneRoutes(
           createdAt: now,
           updatedAt: now,
         };
-        const created = checkProvider(candidate);
-        if (await store.getProvider(created.id))
+        const valid = checkProvider(candidate);
+        if (await store.getProvider(valid.id))
           throw new ApiProblem(
             "PROVIDER_EXISTS",
             "A provider with this ID exists",
             409,
           );
+        const { provider: enriched, provenance } =
+          await enrichment.enrich(valid);
+        const created = checkProvider(enriched);
         if (credentialBody === undefined) {
-          await store.putProvider(created);
+          await metadata.putProviderMetadata(created, provenance);
           return reply.code(201).send(created);
         }
         const named = {
@@ -414,6 +483,7 @@ export function registerModelPlaneRoutes(
           named,
           credentialId([], credentialBody.id),
           (item) => ({ ...created, credentials: [item] }),
+          provenance,
         );
         return reply.code(201).send({ ...created, credentials: [credential] });
       }),
@@ -443,8 +513,7 @@ export function registerModelPlaneRoutes(
           createdAt: current.createdAt,
           updatedAt: new Date().toISOString(),
         });
-        await store.putProvider(updated);
-        return updated;
+        return writeEnriched(updated);
       }),
   );
   api.delete<{ Params: { id: string } }>(
@@ -546,24 +615,135 @@ export function registerModelPlaneRoutes(
           current.models.list.map((model) => [model.id, model]),
         );
         const { stale: _stale, ...rest } = current.models;
-        const refreshed = checkProvider({
-          ...current,
-          models: {
-            ...rest,
-            source: "live",
-            // Metadata already known for a model (a price, a window) is kept.
-            list: models.map((model) => ({
-              ...model,
-              ...previous.get(model.id),
-            })),
-            refreshedAt: now,
+        // Values set by hand on a model stay; the list's own values replace
+        // what an earlier list, the preset or the catalog supplied.
+        return writeEnriched(
+          checkProvider({
+            ...current,
+            models: {
+              ...rest,
+              source: "live",
+              list: models.map(
+                (model) => previous.get(model.id) ?? { id: model.id },
+              ),
+              refreshedAt: now,
+            },
+            updatedAt: now,
+          }),
+          {
+            models: new Map(models.map((model) => [model.id, model])),
+            at: now,
           },
-          updatedAt: now,
-        });
-        await store.putProvider(refreshed);
-        return refreshed;
+        );
       });
     },
+  );
+  api.get<{ Params: { id: string } }>(
+    "/providers/:id/models",
+    {
+      schema: {
+        params: idParams,
+        response: responses(listOf(modelMetadataSchema)),
+      },
+    },
+    async (request) => {
+      const config = await provider(request.params.id);
+      return {
+        items: await enrichment.resolve(
+          config,
+          config.models.list
+            .map((model) => model.id)
+            .filter((id) => isOverrideRef(`${config.id}/${id}`)),
+        ),
+        nextCursor: null,
+      };
+    },
+  );
+  api.get<{ Params: { ref: string } }>(
+    "/models/:ref",
+    {
+      schema: {
+        params: modelRefParams,
+        response: responses(modelMetadataSchema),
+      },
+    },
+    async (request) => {
+      const parsed = overrideRef(request.params.ref, false);
+      const [resolved] = await enrichment.resolve(
+        await provider(parsed.provider),
+        [parsed.model],
+      );
+      return resolved;
+    },
+  );
+  /** Write or remove one override with the values it implies, in one transaction. */
+  const changeOverride = async (
+    ref: string,
+    record: ModelOverride | null,
+  ): Promise<void> => {
+    const parsed = overrideRef(ref, true);
+    const current = await provider(parsed.provider);
+    if (record === null && !(await metadata.getModelOverride(parsed.ref)))
+      throw notFound("model override", parsed.ref);
+    const { provider: enriched, provenance } = await enrichment.enrich(
+      { ...current, updatedAt: new Date().toISOString() },
+      { override: { ref: parsed.ref, record } },
+    );
+    await metadata.putProviderMetadata(
+      checkProvider(enriched),
+      provenance,
+      record ? { put: record } : { delete: parsed.ref },
+    );
+  };
+  api.get<{ Params: { ref: string } }>(
+    "/models/:ref/overrides",
+    {
+      schema: {
+        params: modelRefParams,
+        response: responses(modelOverrideSchema),
+      },
+    },
+    async (request) => {
+      const parsed = overrideRef(request.params.ref, true);
+      await provider(parsed.provider);
+      const found = await metadata.getModelOverride(parsed.ref);
+      if (!found) throw notFound("model override", parsed.ref);
+      return found;
+    },
+  );
+  api.put<{ Params: { ref: string }; Body: OverrideValues }>(
+    "/models/:ref/overrides",
+    {
+      schema: {
+        params: modelRefParams,
+        body: modelOverrideBodySchema,
+        response: responses(modelOverrideSchema),
+      },
+    },
+    async (request) =>
+      serialized(async () => {
+        const record: ModelOverride = {
+          ref: request.params.ref,
+          values: request.body,
+          updatedAt: new Date().toISOString(),
+        };
+        await changeOverride(request.params.ref, record);
+        return record;
+      }),
+  );
+  api.delete<{ Params: { ref: string } }>(
+    "/models/:ref/overrides",
+    { schema: { params: modelRefParams, response: noContent } },
+    async (request, reply) =>
+      serialized(async () => {
+        await changeOverride(request.params.ref, null);
+        return reply.code(204).send();
+      }),
+  );
+  api.get(
+    "/catalog",
+    { schema: { response: responses(catalogStatusSchema) } },
+    async () => ({ snapshot: options.catalog().meta, autoRefresh: false }),
   );
   api.get<{ Params: { id: string } }>(
     "/providers/:id/credentials",

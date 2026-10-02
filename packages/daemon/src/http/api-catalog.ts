@@ -904,8 +904,9 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "preset（内置预设 ID）或 id（slug）与 endpoints（至少一个）；与 preset 同给的字段覆盖预设（endpoints 按协议覆盖，id 默认为预设 ID）；name、kind、auth、headers、models、wire、patches、capabilities、translateOnly 可选；credential（value 或 env/file ref，name 默认 default）添加第一个凭据；未知字段 400。",
     response: "201：ProviderConfig；带 credential 时含该凭据的引用。",
     implementation:
-      "预设由 @harnesshub/gateway 的 presets 加载并经 providerFromPreset 展开；手动时默认 name=id、kind=custom、auth=authorization-bearer、models={manual,[],all}；端点按官方 SDK 基址约定校验（chat/responses 含 /v1，anthropic、gemini 不含版本段）。credential 的值先写入秘密存储，provider 写入失败时删除。",
-    effects: "写入 providers 表；有 credential.value 时写一个托管秘密。",
+      "预设由 @harnesshub/gateway 的 presets 加载并经 providerFromPreset 展开；手动时默认 name=id、kind=custom、auth=authorization-bearer、models={manual,[],all}；端点按官方 SDK 基址约定校验（chat/responses 含 /v1，anthropic、gemini 不含版本段）。每个模型缺的窗口、输出上限、推理、输入模态与价格按 03 第 7 节的优先级（覆盖、预设、models.dev 快照）补齐；请求里给出的值保留。credential 的值先写入秘密存储，provider 写入失败时删除。",
+    effects:
+      "在一个事务内写入 providers 记录与各模型元数据的来源（model_provenance）；有 credential.value 时写一个托管秘密。",
     errors:
       "400 PRESET_NOT_FOUND（/preset）、PROVIDER_INVALID（errors[] 指向 /id、/endpoints 或 /endpoints/<协议>：操作路径、版本段、内嵌凭据、查询串、片段、非 HTTPS 的公网地址）、CREDENTIAL_INVALID、INVALID_SECRET；409 PROVIDER_EXISTS；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/model-plane-routes.ts",
@@ -942,8 +943,9 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "JSON Merge Patch（application/merge-patch+json 或 application/json）：null 删除可选成员；id、credentials、时间戳不可改。",
     response: "200：更新后的 ProviderConfig。",
     implementation:
-      "合并后按创建时的规则整体校验，再整体替换；同一守护进程内的写入串行执行。",
-    effects: "更新 providers 记录与 updatedAt。尚无 ETag/If-Match。",
+      "合并后按创建时的规则整体校验，重新解析各模型的元数据（手工设置的值保留，与记录的推导值不同即视为手工设置），再整体替换；同一守护进程内的写入串行执行。",
+    effects:
+      "在一个事务内更新 providers 记录、updatedAt 与元数据来源。尚无 ETag/If-Match。",
     errors:
       "400 PROVIDER_INVALID 或 INVALID_REQUEST；404 PROVIDER_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/model-plane-routes.ts",
@@ -959,7 +961,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     response: "204。",
     implementation:
       "先检查引用；再删除其托管秘密（store 引用），最后删除记录，失败后重试同一请求即可完成。",
-    effects: "删除记录与托管秘密。",
+    effects: "删除记录、托管秘密，以及该 provider 的模型覆盖与元数据来源。",
     errors:
       "409 PROVIDER_IN_USE（references 列出路由组与未吊销的 Gateway Key）；404；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/model-plane-routes.ts",
@@ -1270,10 +1272,11 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     group: "providers",
     request: "路径参数 id；请求体为空对象。",
     response:
-      "200：更新后的 ProviderConfig，models.source=live、refreshedAt，已有模型的元数据（价格、窗口）保留。",
+      "200：更新后的 ProviderConfig，models.source=live、refreshedAt；各模型元数据按覆盖、手工设置、实时列表、预设、models.dev 快照的顺序解析，手工设置的值保留。",
     implementation:
       "用第一个可用于所选端点的启用凭据（经 SecretStore 解析；没有凭据时不带 Key）请求上游：chat/responses 基址 + listPath（默认 /models）、anthropic 基址 + /v1/models（anthropic-version 头，按 after_id 翻页）或 gemini 基址 + /v1beta/models（只取支持 generateContent 的模型，按 pageToken 翻页）；15 秒超时，至多 20 页。上游请求在写入队列之外执行。",
-    effects: "成功时替换模型列表；失败时保留原列表并标记 models.stale=true。",
+    effects:
+      "成功时在一个事务内替换模型列表与元数据来源；失败时保留原列表并标记 models.stale=true。",
     errors:
       "502 MODELS_REFRESH_FAILED（detail 只含主机与 HTTP 状态，不含 Key、查询串或响应体）；409 CREDENTIAL_UNAVAILABLE（凭据无法读取）；404 PROVIDER_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/model-plane-routes.ts",
@@ -1282,5 +1285,116 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "tests/integration/hh-cli.test.ts",
     ],
     operationId: "hh_api_v1_refresh_provider_models",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/providers/{id}/models",
+    title: "provider 模型元数据",
+    group: "models",
+    request: "路径参数 id。",
+    response:
+      "200：items（每个已列出模型的 ModelMetadata：ref、listed、fields 中每个已知字段的 value、source、at，unknown 列出未知字段，overrides 为适用的覆盖）、nextCursor=null。",
+    implementation:
+      "resolveModelMetadata 逐字段按优先级解析：精确覆盖、provider/* 覆盖、provider 模型上手工设置的值、实时列表、预设（at 为核对日期）、models.dev 快照（先按预设 catalog id，再按 author/model 的作者），都没有则为未知，不回落默认窗口。",
+    effects: "只读；首次调用时读取并校验内置快照。",
+    errors:
+      "404 PROVIDER_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: ["tests/integration/model-metadata.test.ts"],
+    operationId: "hh_api_v1_list_provider_model_metadata",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/models/{ref}",
+    title: "模型元数据",
+    group: "models",
+    request: "路径参数 ref：provider/model，斜杠编码为 %2F（模型名可含斜杠）。",
+    response:
+      "200：ModelMetadata（同 provider 模型元数据的单项；模型不在列表中时 listed=false，仍按覆盖与目录解析）。",
+    implementation: "同 GET /api/v1/providers/{id}/models，只解析一个模型。",
+    effects: "只读。",
+    errors:
+      "400 MODEL_REF_INVALID（provider/* 或 group/ 不是单个模型）；404 PROVIDER_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/model-metadata.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_get_model_metadata",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/models/{ref}/overrides",
+    title: "读取模型覆盖",
+    group: "models",
+    request: "路径参数 ref：provider/model 或 provider/*（%2F 编码）。",
+    response: "200：保存的覆盖（ref、values、updatedAt）。",
+    implementation: "ModelMetadataStore.getModelOverride。",
+    effects: "只读。",
+    errors:
+      "400 MODEL_REF_INVALID；404 PROVIDER_NOT_FOUND 或 MODEL_OVERRIDE_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/model-metadata.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_get_model_override",
+  },
+  {
+    method: "PUT",
+    path: "/api/v1/models/{ref}/overrides",
+    title: "设置模型覆盖",
+    group: "models",
+    request:
+      "路径参数 ref：provider/model 或 provider/*（%2F 编码）；请求体为覆盖值，至少一项：contextWindow、maxOutputTokens（正整数）、reasoning、toolCall（布尔）、inputModalities（text、image、pdf、audio、video，不重复）、price.input/output/cacheRead/cacheWrite（每百万 token 美元，非负）。整体替换该 ref 原有的覆盖。",
+    response: "200：保存的覆盖（ref、values、updatedAt）。",
+    implementation:
+      "按新覆盖重新解析该 provider 全部模型的元数据，与覆盖、provider 记录和元数据来源在同一事务内写入；网关按写入后的价格计算成本。",
+    effects:
+      "写入 model_overrides 记录，更新 provider 的模型元数据、updatedAt 与 model_provenance。",
+    errors:
+      "400 MODEL_REF_INVALID、INVALID_REQUEST（值越界、未知字段、空对象）；404 PROVIDER_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/model-metadata.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_put_model_override",
+  },
+  {
+    method: "DELETE",
+    path: "/api/v1/models/{ref}/overrides",
+    title: "删除模型覆盖",
+    group: "models",
+    request: "路径参数 ref：provider/model 或 provider/*（%2F 编码）。",
+    response: "204。",
+    implementation:
+      "去掉该覆盖后重新解析 provider 全部模型的元数据，覆盖删除与 provider 写入在同一事务内完成；覆盖带来的值回落到下一个来源。",
+    effects: "删除 model_overrides 记录，更新 provider 与 model_provenance。",
+    errors:
+      "400 MODEL_REF_INVALID；404 PROVIDER_NOT_FOUND 或 MODEL_OVERRIDE_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: ["tests/integration/model-metadata.test.ts"],
+    operationId: "hh_api_v1_delete_model_override",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/catalog",
+    title: "模型目录状态",
+    group: "models",
+    request: "无参数。",
+    response:
+      "200：snapshot（source、repository、license、retrievedAt、etag、commit、上游 api.json 的 sha256 与 bytes、providers、models 数）、autoRefresh=false。",
+    implementation:
+      "组合根注入 @harnesshub/gateway 的 modelCatalog：读取并校验包内 catalog/models-dev.json（tools/catalog-snapshot.mjs 生成）。",
+    effects: "只读；不联网，本版本没有后台刷新。",
+    errors:
+      "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/model-metadata.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_get_catalog_status",
   },
 ];

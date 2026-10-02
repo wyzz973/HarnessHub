@@ -5,6 +5,13 @@
  * `@harnesshub/sdk/local`, which needs Node.
  */
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
+import type {
+  CatalogMeta,
+  MetadataField,
+  ModelOverride,
+  OverrideValues,
+  ResolvedField,
+} from "@harnesshub/core/model-metadata";
 import type { ProviderPreset } from "@harnesshub/core/provider-presets";
 import type {
   GatewayKeyQuota,
@@ -35,6 +42,15 @@ export type {
 } from "@harnesshub/core/model-plane";
 export type { SecretReference } from "@harnesshub/core/engine-configuration";
 export type { ProviderPreset } from "@harnesshub/core/provider-presets";
+export type {
+  CatalogMeta,
+  MetadataField,
+  MetadataSource,
+  Modality,
+  ModelOverride,
+  OverrideValues,
+  ResolvedField,
+} from "@harnesshub/core/model-metadata";
 
 /** One `errors[]` entry of a problem: a body member or a query parameter. */
 export interface ProblemItem {
@@ -245,6 +261,28 @@ export interface SystemInfo {
   } | null;
 }
 
+/**
+ * One model's metadata (03-model-plane section 7): each known field with its
+ * value, source and time; fields no source knows are listed in `unknown` and
+ * never defaulted.
+ */
+export interface ModelMetadataView {
+  /** `provider/model`. */
+  ref: string;
+  /** Whether the provider's model list has this model. */
+  listed: boolean;
+  fields: Partial<Record<MetadataField, ResolvedField>>;
+  unknown: MetadataField[];
+  /** The stored `provider/*` override and this model's, if any. */
+  overrides: ModelOverride[];
+}
+
+/** The bundled models.dev snapshot; it is never refreshed in the background. */
+export interface CatalogStatus {
+  snapshot: CatalogMeta;
+  autoRefresh: boolean;
+}
+
 type Query = Record<string, string | number | undefined>;
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -387,6 +425,37 @@ export class HarnessHubClient {
         `providers/${segment(id)}/models/refresh`,
         { body: {} },
       ),
+    /** The metadata of every listed model, with sources. */
+    models: (id: string) =>
+      this.request<Page<ModelMetadataView>>(
+        "GET",
+        `providers/${segment(id)}/models`,
+      ),
+  };
+
+  /** Model metadata and user overrides, by Model Ref (`provider/model`, or `provider/*` for overrides). */
+  readonly models = {
+    get: (ref: string) =>
+      this.request<ModelMetadataView>("GET", `models/${segment(ref)}`),
+    /** The stored override of `ref`; `MODEL_OVERRIDE_NOT_FOUND` (404) when there is none. */
+    getOverride: (ref: string) =>
+      this.request<ModelOverride>("GET", `models/${segment(ref)}/overrides`),
+    /**
+     * Replace the override of `ref` as a whole; the daemon resolves the
+     * provider's models again, so the gateway uses the new values (prices
+     * for costs) from the next call.
+     */
+    setOverride: (ref: string, values: OverrideValues) =>
+      this.request<ModelOverride>("PUT", `models/${segment(ref)}/overrides`, {
+        body: values,
+      }),
+    /** Remove the override; its values fall back to the next source. */
+    removeOverride: (ref: string) =>
+      this.request<void>("DELETE", `models/${segment(ref)}/overrides`),
+  };
+
+  readonly catalog = {
+    status: () => this.request<CatalogStatus>("GET", "catalog"),
   };
 
   readonly presets = {

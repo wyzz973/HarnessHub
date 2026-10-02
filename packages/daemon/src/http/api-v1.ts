@@ -10,6 +10,10 @@ import type {
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import { HubError } from "@harnesshub/core/errors";
 import type { LogSink } from "@harnesshub/core/logging";
+import type {
+  ModelCatalog,
+  ModelMetadataStore,
+} from "@harnesshub/core/model-metadata";
 import type { ModelPlaneStore } from "@harnesshub/core/model-plane";
 import type { ProviderPreset } from "@harnesshub/core/provider-presets";
 import { responses, systemInfoSchema } from "./api-v1-schemas.js";
@@ -87,9 +91,15 @@ export interface SystemInfo {
 export interface ApiV1Options {
   /** SHA-256 of the local admin token (`<dataDir>/admin.token`). */
   adminTokenDigest: Buffer;
-  modelPlane: ModelPlaneStore;
+  /** The model-plane store with model overrides and metadata provenance. */
+  modelPlane: ModelPlaneStore & ModelMetadataStore;
   secrets: ManagedSecrets;
   presets: PresetCatalog;
+  /**
+   * The bundled models.dev snapshot (`@harnesshub/gateway/catalog`,
+   * injected); called when metadata is first resolved, not at startup.
+   */
+  catalog: () => ModelCatalog;
   /** The daemon's environment snapshot, for `env` credential references. */
   environment: Readonly<NodeJS.ProcessEnv>;
   /** Read on every `GET /system/info`. */

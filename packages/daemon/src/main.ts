@@ -49,6 +49,7 @@ import {
 import { ensureAdminToken, ADMIN_TOKEN_FILE } from "./admin-token.js";
 import { registerApiV1 } from "./http/api-v1.js";
 import { getPreset, listPresets } from "@harnesshub/gateway/presets";
+import { modelCatalog } from "@harnesshub/gateway/catalog";
 import {
   createGatewayHandler,
   type GatewayHandler,
@@ -652,6 +653,7 @@ export async function startHub(options: {
       modelPlane,
       secrets,
       presets: { list: listPresets, get: getPreset },
+      catalog: modelCatalog,
       environment,
       system: () => ({
         apiVersion: "v1",
