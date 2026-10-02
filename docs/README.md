@@ -15,6 +15,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [快速上手](quickstart.md) | `hh serve`、从预设添加 provider、签发 Gateway Key，再用 OpenAI 或 Anthropic 客户端经本机网关调用模型 |
 | [使用指南](getting-started.md) | 新克隆、端口、数据目录、真实引擎与排障 |
 | [架构与实现导览](architecture.md) | 模块地图、Run 处理链、配置与秘密、持久化与恢复 |
 | [API 入口](api/README.md) | 共同约定、对象、幂等、流式与维护方法 |

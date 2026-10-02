@@ -22,7 +22,7 @@
 | gateway-keys | `GET`、`POST /gateway-keys`；`GET /gateway-keys/{id}`；`POST /gateway-keys/{id}/revoke` | 只签发 `client:` 作用域，`modelAllow` 必填；默认 90 天后过期，`expiresAt: null` 不过期。Key 文本只出现在创建响应中，列表与详情不含哈希 |
 | model-calls | `GET /model-calls` | 新到旧，`limit` 1–200（默认 50），`cursor` 为上一页的 `nextCursor`；按 `from`（含）、`to`（不含）、`keyId`、`provider`、`model`、`sessionId` 过滤 |
 | usage | `GET /usage` | `groupBy` 为 `day`（UTC）、`provider`、`model`（默认）、`key` 或 `adapter`；状态码不低于 400 记为失败，成本只累加已知价格，未知价格计入 `unpricedCalls`，`missing` 用量按 0 计 |
-| system | `GET /system/info` | 版本、提交、pid、启动时间、数据目录与秘密后端 |
+| system | `GET /system/info` | 版本、提交、pid、启动时间、数据目录、秘密后端，以及 `gateway`：本机客户端使用的模型网关基址（`openaiBaseUrl` 含 `/v1`，`anthropicBaseUrl` 与 `geminiBaseUrl` 不含版本段） |
 
 秘密后端由 `hh serve --secrets-backend auto|keychain|dpapi|file` 选择（默认 `auto`：macOS 钥匙串、Windows DPAPI、其他平台加密文件），加密文件后端的主密钥在 `--config-dir`（默认为平台的 HarnessHub 配置目录）下的 `secrets.key`，见 [secrets](../packages/secrets/README.md)。
 

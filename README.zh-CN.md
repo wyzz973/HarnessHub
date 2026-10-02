@@ -24,12 +24,12 @@
 |---|---|
 | 执行 | SQLite 中的持久 Session 与 Run，同一 Session 串行；SSE 从已提交事件重放；幂等提交；期限与取消；权限请求；声明的输出文件采集为不可变产物；JSONL 导出 |
 | Agent | ACP 与 CLI 驱动；发现本机已安装的 Agent（OpenCode、Codex、Qwen Code、Gemini CLI、Pi、MiMo、DSH、OpenClaw、Kimi、Hermes 等）；每个 Session 使用私有配置，从不修改用户自己的配置文件 |
-| 模型网关 | 一个配置好的上游模型（OpenAI 兼容的流式 Chat Completions）；转换 Responses、Anthropic Messages 与 Gemini 请求；每次调用记录为 `model.call` 事件 |
+| 模型网关 | 守护进程端口上的共享网关，供任意 OpenAI、Anthropic 或 Gemini 客户端使用：从预设或手动添加 provider、路由组、带模型白名单的 Gateway Key、直通原生端点或转换到 Chat，以及记录用量与费用的 `model.call` 账本；执行任务时仍使用每个 Session 的网关与一个配置好的模型 |
 | 工具 | 工具包，含 Skills、MCP 服务与 CLI 工具，按内容哈希存储，按 Agent 绑定 |
 | 进程监督 | 每个 Session 一个 Worker 进程；POSIX 用进程组，Windows 用 Job Object；重启后恢复 |
 | 控制台 | 本地 Web 控制台（Next.js），包含任务、模型、工具、Agent 与观测页面 |
 
-多 provider 路由、全局接线、单文件分发与新控制台计划在 0.1–0.3 实现，目前尚未实现。
+全局接线、单文件分发与新控制台计划在 0.1–0.3 实现，目前尚未实现。本机网关的用法见 [快速上手](docs/quickstart.md)。
 
 ## 从源码快速开始
 
@@ -47,7 +47,7 @@ pnpm start --port 3180 --data-dir ./data/local
 在第二个终端启动控制台，然后打开 <http://127.0.0.1:3330>：
 
 ```sh
-HARNESSHUB_GATEWAY_URL=http://127.0.0.1:3180 pnpm start:console
+HARNESSHUB_GATEWAY_URL=http://127.0.0.1:3180 HARNESSHUB_DATA_DIR="$PWD/data/local" pnpm start:console
 ```
 
 在“模型”页配置模型，在“引擎”页登记已安装的 Agent。发现过程不会安装任何程序；秘密只以引用形式保存（钥匙串、DPAPI、环境变量或文件），配置文件中不出现明文。数据目录、真实 Agent 与排障见 [使用指南](docs/getting-started.md)。

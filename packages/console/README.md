@@ -25,10 +25,10 @@ pnpm start --demo --data-dir data/demo --port 3180
 下面使用 POSIX 环境变量语法；Windows 按 [PowerShell 启动说明](../../docs/windows.md) 设置环境变量。
 
 ```sh
-HARNESSHUB_GATEWAY_URL=http://127.0.0.1:3180 HARNESSHUB_DATA_DIR=data/demo pnpm start:console
+HARNESSHUB_GATEWAY_URL=http://127.0.0.1:3180 HARNESSHUB_DATA_DIR="$PWD/data/demo" pnpm start:console
 ```
 
-页面位于 `http://127.0.0.1:3330`。开发页面使用 `HARNESSHUB_GATEWAY_URL=http://127.0.0.1:3180 HARNESSHUB_DATA_DIR=data/demo pnpm dev:console`。`HARNESSHUB_DATA_DIR` 是守护进程的数据目录：代理在服务端从其中的 `admin.token` 读取管理令牌（经 `@harnesshub/sdk/local` 的 `readAdminToken`，每次请求读取），只为 `/api/v1` 请求加上 `Authorization`，浏览器拿不到令牌；未设置时 Provider、路由组、Gateway Key 与用量页面显示无法读取令牌。`pnpm start:local` 会自动设置。未设置环境变量时代理保留历史兼容默认 `http://127.0.0.1:3182`，新环境应显式指定。真实引擎的自有配置按 [配置说明](../../docs/engine-management.md)准备。
+页面位于 `http://127.0.0.1:3330`。开发页面使用 `HARNESSHUB_GATEWAY_URL=http://127.0.0.1:3180 HARNESSHUB_DATA_DIR="$PWD/data/demo" pnpm dev:console`。`HARNESSHUB_DATA_DIR` 是守护进程的数据目录，须为绝对路径（控制台在 `packages/console` 中运行）：代理在服务端从其中的 `admin.token` 读取管理令牌（经 `@harnesshub/sdk/local` 的 `readAdminToken`，每次请求读取），只为 `/api/v1` 请求加上 `Authorization`，浏览器拿不到令牌；未设置时 Provider、路由组、Gateway Key 与用量页面显示无法读取令牌。`pnpm start:local` 会自动设置。未设置环境变量时代理保留历史兼容默认 `http://127.0.0.1:3182`，新环境应显式指定。真实引擎的自有配置按 [配置说明](../../docs/engine-management.md)准备。
 
 demo 默认“直接执行”，选择 fake 后发送文本即可；“自动规划”会排除 fake，需要另行登记真实引擎。
 
