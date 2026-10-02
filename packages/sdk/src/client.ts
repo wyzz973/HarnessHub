@@ -17,6 +17,23 @@ import type {
   WireProtocol,
 } from "@harnesshub/core/model-plane";
 
+/** Record types of the API, re-exported so clients need no other package. */
+export type {
+  GatewayKeyQuota,
+  GatewayKeyScope,
+  GatewayKeyView,
+  ProviderConfig,
+  ProviderCredential,
+  ProviderKind,
+  ProviderModel,
+  RouteGroup,
+  RouteStrategy,
+  Stickiness,
+  UsageGroupBy,
+  WireProtocol,
+} from "@harnesshub/core/model-plane";
+export type { SecretReference } from "@harnesshub/core/engine-configuration";
+
 /** One `errors[]` entry of a problem: a body member or a query parameter. */
 export interface ProblemItem {
   pointer?: string;
@@ -63,10 +80,17 @@ export class HarnessHubUnavailableError extends Error {
 }
 
 export interface ClientOptions {
-  /** Daemon origin, e.g. `http://127.0.0.1:3180`. */
+  /**
+   * Daemon origin, e.g. `http://127.0.0.1:3180`, or a proxy base whose path
+   * ends with `/`, e.g. `http://127.0.0.1:3330/api/gateway/`: requests go to
+   * `<base>api/v1/...`.
+   */
   url: string | URL;
-  /** The local admin token (`<dataDir>/admin.token`). */
-  token: string;
+  /**
+   * The local admin token (`<dataDir>/admin.token`). Omit it only behind a
+   * proxy that adds the token itself, as the console's does.
+   */
+  token?: string;
   /** Replaces the global `fetch`, e.g. in tests. */
   fetch?: typeof fetch;
 }
@@ -218,7 +242,7 @@ const segment = (value: string) => encodeURIComponent(value);
  */
 export class HarnessHubClient {
   private readonly base: URL;
-  private readonly token: string;
+  private readonly token: string | undefined;
   private readonly send: typeof fetch;
 
   constructor(options: ClientOptions) {
@@ -231,9 +255,14 @@ export class HarnessHubClient {
       throw new TypeError(
         "The daemon URL must be HTTP(S) without embedded credentials",
       );
-    this.base = new URL("/api/v1/", base);
+    if (!base.pathname.endsWith("/")) base.pathname += "/";
+    base.search = "";
+    base.hash = "";
+    this.base = new URL("api/v1/", base);
     this.token = options.token;
-    this.send = options.fetch ?? fetch;
+    // Called unbound: browsers reject a `fetch` invoked with another `this`.
+    this.send =
+      options.fetch ?? ((input, init) => globalThis.fetch(input, init));
   }
 
   /**
@@ -255,7 +284,9 @@ export class HarnessHubClient {
         method,
         headers: {
           accept: "application/json",
-          authorization: `Bearer ${this.token}`,
+          ...(this.token !== undefined
+            ? { authorization: `Bearer ${this.token}` }
+            : {}),
           ...(options.body !== undefined
             ? { "content-type": options.contentType ?? "application/json" }
             : {}),
