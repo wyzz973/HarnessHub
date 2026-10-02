@@ -4,6 +4,6 @@
 
 Worker 宿主不知道 Worker 入口在哪里：`ProcessWorkerHost` 的 `workerEntry` 选项必填，由拥有 Worker 的组合根传入（V5）；租约记录各自的 Worker 路径，恢复时按记录校验，与当前入口无关。
 
-`process/` 是子进程启动的长期归属：按 [02 第 8 节](../../docs/proposals/oss/02-architecture.md#8-模块与依赖规则) 与 [10 第 2 节](../../docs/proposals/oss/10-engineering.md#2-代码规范)，`ProcessLauncher` 的实现在这里，因此 [边界检查](../../tools/check-boundaries.mjs) 永久允许它使用 `node:child_process`，不作为带期限的例外；OSS-010 F08 再把允许范围收窄到启动器实现本身。
+`process/` 是子进程启动的唯一归属：按 [02 第 8 节](../../docs/proposals/oss/02-architecture.md#8-模块与依赖规则) 与 [10 第 2 节](../../docs/proposals/oss/10-engineering.md#2-代码规范)，`@harnesshub/core/process-launcher` 中 `ProcessLauncher` 接口的实现在 [process/launcher.ts](src/process/launcher.ts)（OSS-010 F08），与 Worker 宿主、Job 辅助程序、配置探测和进程表扫描一样留在 `process/`，[边界检查](../../tools/check-boundaries.mjs) 只允许这里使用 `node:child_process`。`createProcessLauncher()` 创建一个有自己所有者的启动器；`sharedProcessLauncher()` 是本进程的启动器，由各组合根注入给 drivers、secrets、store 与 agents，并由停止进程的入口关闭。启动器支持管道与忽略的标准流、超时与 `AbortSignal`、`maxBuffer`、POSIX 上的独立进程组（终止时向整组发信号）和显式环境（只有请求 `"inherit"` 时才继承）；关闭时先发 SIGTERM，宽限期后 SIGKILL，并等待所有仍在运行的进程退出。
 
 Windows Job Object 辅助程序的源码是 [native/windows-job.cs](native/windows-job.cs)，`pnpm build` 在 Windows 上经 [native/build-windows-job.mjs](native/build-windows-job.mjs) 构建到本包的 `dist/native/harnesshub-job.exe`；路径由 [windows-job.ts](src/process/windows-job.ts) 的 `jobHelperPath()` 给出，[test/native-helper.test.ts](test/native-helper.test.ts) 检查它。
