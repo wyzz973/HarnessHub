@@ -330,7 +330,7 @@ HarnessHub 把本机文件分成配置、数据、日志、缓存四类根目录
 |---|---|---|---|
 | provider 上游 | 用户配置后 | 用户的模型请求 | — |
 | 更新检查 | 首次运行时单独询问，默认否 | GET 发布清单，不带标识 | `updates.check` |
-| 模型目录刷新 | 关闭，使用内置快照；首次运行时与更新检查一并询问 | GET models.dev 数据 | `catalog.autoRefresh`；`hh catalog refresh` 手动执行 |
+| 模型目录刷新 | 开启（2026-10-03 所有者决定），每 24 小时一次；离线时使用内置快照 | GET models.dev 数据，不带任何用户信息 | `catalog.autoRefresh: false` 或 `HH_OFFLINE=1` 关闭；`hh catalog refresh` 手动执行 |
 | 插件索引刷新 | 安装过注册表插件后每天一次 | GET 签名索引 | `plugins.indexRefresh`；关闭后 `hh doctor` 提示撤销公告不再更新 |
 | OTLP 导出 | 关闭 | 见 08 第 5 节 | `observability.otel.enabled` |
 | 遥测 | 关闭 | 上表 | `telemetry.enabled` |
