@@ -127,7 +127,7 @@ queued → starting → running ↔ waiting_permission
 
 ## 6. 业务存储与事件
 
-首版表：`sessions`、`runs`、`events`、`permissions`、`artifacts`。Benchmark 已增加 `benchmark_attempts` 与 `evaluations`，附加表由独立 `benchmark_metadata.schema_version=1` 管理；`runtime_metadata` 保存 Gateway owner 与 version 2 引擎目录（兼容读取 version 1）。Workflow另有同库的 workflows / workflow_metadata（schema_version=1），要求当前Gateway进程拥有数据库。外部配置和后端 Store 不能更改这些表的状态权威。
+首版表：`sessions`、`runs`、`events`、`permissions`、`artifacts`。结构由编号的只进迁移定义并记录在 `schema_migrations` 中（[ADR 0018](docs/decisions/0018-schema-migrations-and-managed-secrets.md)）；版本 2 增加模型平面的 `providers`、`route_groups`、`gateway_keys`、`model_calls` 与 `wirings`。Benchmark 已增加 `benchmark_attempts` 与 `evaluations`，附加表由独立 `benchmark_metadata.schema_version=1` 管理；`runtime_metadata` 保存 Gateway owner 与 version 2 引擎目录（兼容读取 version 1）。Workflow另有同库的 workflows / workflow_metadata（schema_version=1），要求当前Gateway进程拥有数据库。外部配置和后端 Store 不能更改这些表的状态权威。
 
 事件信封包含 `schemaVersion / eventId / sessionId / runId / seq / occurredAt / observedAt / type / data`。message、tool、permission 保留独立关联 ID。父进程生成 Run 内递增 seq；Worker 原始序号与 generation 用于去重。日志、后端重复输出及旧 generation 事件不得创造重复公共终态。
 

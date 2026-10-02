@@ -112,6 +112,8 @@ Skills是显式选中的 `SKILL.md` 主指令，上下文注入前校验SHA-256�
 | 后端恢复材料 | Run/Session后端目录里的acpx checkpoint；不能替代公共状态 |
 | 文件产物 | 受控文件目录；登记hash/大小/媒体类型后由API下载 |
 | Keychain秘密 | macOS专属service；数据库只保存不可变引用ID |
+| 模型平面：provider、路由组、Gateway Key（只存哈希）、`model.call` 账本、全局接线记录 | 同一SQLite的版本2迁移表；`SqliteModelPlaneStore`，要求当前Gateway拥有数据库 |
+| 托管秘密（`store` 引用） | `<dataDir>/secrets/v1/<id>.json` 条目；值在系统密钥库或以 `<configDir>/secrets.key` 加密的文件中 |
 | JSONL、观测 | 从提交事件重建；不是第二个业务事实源 |
 
 Store通过owner记录拒绝第二个活Gateway写相同数据库，死owner才会恢复。引擎目录、业务记录、Workflow、Benchmark分别有版本边界，未知版本/坏JSON/内容hash不匹配明确失败。
