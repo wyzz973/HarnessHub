@@ -2,8 +2,8 @@
 import type { EngineCandidate } from "./engines.js";
 /**
  * Secret locations only. Values never belong to a profile, IPC message or public response.
- * `store` names a HarnessHub-managed secret (a UUID) that only `SecretStore` resolves;
- * engine configurations do not accept it yet (`secretReferenceSchema`).
+ * `store` names a HarnessHub-managed secret by its UUID; only `SecretStore`
+ * (`@harnesshub/secrets/secret-store`) resolves it.
  */
 export interface SecretReference {
   kind: "env" | "file" | "keychain" | "store";
@@ -98,7 +98,10 @@ export const secretReferenceSchema = {
   type: "object",
   additionalProperties: false,
   required: ["kind", "value"],
-  properties: { kind: { enum: ["env", "file", "keychain"] }, value: text },
+  properties: {
+    kind: { enum: ["env", "file", "keychain", "store"] },
+    value: text,
+  },
 } as const;
 const map = {
   type: "object",

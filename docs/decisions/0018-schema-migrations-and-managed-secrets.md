@@ -31,7 +31,7 @@ Status: proposed
 - `runtime_metadata`、Workflow 与 Benchmark 的表仍由各自 store 按原方式管理版本，并入编号迁移需要后续迁移。
 - 同时首次打开一个全新的数据库文件时，切换到 WAL 模式的 `PRAGMA journal_mode` 可能直接返回 SQLITE_BUSY（SQLite 不为这一步调用忙等待）；这与迁移框架之前的行为相同。已是 WAL 模式的数据库（旧版本创建的都是）同时打开时迁移只应用一次。
 - 加密文件后端的主密钥文件只在 POSIX 上校验所有者与权限，Windows 上尚未校验 DACL；`HH_SECRETS_KEY`、`secrets.keyFile` 与 `hh secrets rekey` 尚未实现。
-- 引擎配置仍不接受 `store` 引用，`createSecret` 仍返回 `keychain` 引用；改为 `store` 需要 Worker 能解析托管秘密。
+- `SecretReference` 与 `secretReferenceSchema` 已接受 `store`，但 agents 的引擎配置与工具包绑定校验、控制台与 Worker 中的解析尚未支持：在它们改为接受 `store`（守护进程 `/api/v1` 步骤）之前，引擎配置中的 `store` 引用能通过 HTTP schema，却在执行时以 `SECRET_STORE_REQUIRED` 失败。`createSecret` 仍返回 `keychain` 引用。
 
 ## 验证要求
 

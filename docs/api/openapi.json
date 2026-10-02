@@ -277,7 +277,8 @@
                                             "enum": [
                                               "env",
                                               "file",
-                                              "keychain"
+                                              "keychain",
+                                              "store"
                                             ]
                                           },
                                           "value": {
@@ -311,7 +312,8 @@
                                               "enum": [
                                                 "env",
                                                 "file",
-                                                "keychain"
+                                                "keychain",
+                                                "store"
                                               ]
                                             },
                                             "value": {
@@ -400,7 +402,8 @@
                                           "enum": [
                                             "env",
                                             "file",
-                                            "keychain"
+                                            "keychain",
+                                            "store"
                                           ]
                                         },
                                         "value": {
@@ -512,7 +515,8 @@
                                                 "enum": [
                                                   "env",
                                                   "file",
-                                                  "keychain"
+                                                  "keychain",
+                                                  "store"
                                                 ]
                                               },
                                               "value": {
@@ -550,7 +554,8 @@
                                                 "enum": [
                                                   "env",
                                                   "file",
-                                                  "keychain"
+                                                  "keychain",
+                                                  "store"
                                                 ]
                                               },
                                               "value": {
@@ -885,7 +890,8 @@
                                 "enum": [
                                   "env",
                                   "file",
-                                  "keychain"
+                                  "keychain",
+                                  "store"
                                 ]
                               },
                               "value": {
@@ -919,7 +925,8 @@
                                   "enum": [
                                     "env",
                                     "file",
-                                    "keychain"
+                                    "keychain",
+                                    "store"
                                   ]
                                 },
                                 "value": {
@@ -1008,7 +1015,8 @@
                               "enum": [
                                 "env",
                                 "file",
-                                "keychain"
+                                "keychain",
+                                "store"
                               ]
                             },
                             "value": {
@@ -1120,7 +1128,8 @@
                                     "enum": [
                                       "env",
                                       "file",
-                                      "keychain"
+                                      "keychain",
+                                      "store"
                                     ]
                                   },
                                   "value": {
@@ -1158,7 +1167,8 @@
                                     "enum": [
                                       "env",
                                       "file",
-                                      "keychain"
+                                      "keychain",
+                                      "store"
                                     ]
                                   },
                                   "value": {
@@ -1325,7 +1335,8 @@
                                   "enum": [
                                     "env",
                                     "file",
-                                    "keychain"
+                                    "keychain",
+                                    "store"
                                   ]
                                 },
                                 "value": {
@@ -1359,7 +1370,8 @@
                                     "enum": [
                                       "env",
                                       "file",
-                                      "keychain"
+                                      "keychain",
+                                      "store"
                                     ]
                                   },
                                   "value": {
@@ -1448,7 +1460,8 @@
                                 "enum": [
                                   "env",
                                   "file",
-                                  "keychain"
+                                  "keychain",
+                                  "store"
                                 ]
                               },
                               "value": {
@@ -1560,7 +1573,8 @@
                                       "enum": [
                                         "env",
                                         "file",
-                                        "keychain"
+                                        "keychain",
+                                        "store"
                                       ]
                                     },
                                     "value": {
@@ -1598,7 +1612,8 @@
                                       "enum": [
                                         "env",
                                         "file",
-                                        "keychain"
+                                        "keychain",
+                                        "store"
                                       ]
                                     },
                                     "value": {
@@ -1865,7 +1880,8 @@
                           "enum": [
                             "env",
                             "file",
-                            "keychain"
+                            "keychain",
+                            "store"
                           ]
                         },
                         "value": {
@@ -2037,7 +2053,8 @@
                                         "enum": [
                                           "env",
                                           "file",
-                                          "keychain"
+                                          "keychain",
+                                          "store"
                                         ]
                                       },
                                       "value": {
@@ -2071,7 +2088,8 @@
                                           "enum": [
                                             "env",
                                             "file",
-                                            "keychain"
+                                            "keychain",
+                                            "store"
                                           ]
                                         },
                                         "value": {
@@ -2160,7 +2178,8 @@
                                       "enum": [
                                         "env",
                                         "file",
-                                        "keychain"
+                                        "keychain",
+                                        "store"
                                       ]
                                     },
                                     "value": {
@@ -2272,7 +2291,8 @@
                                             "enum": [
                                               "env",
                                               "file",
-                                              "keychain"
+                                              "keychain",
+                                              "store"
                                             ]
                                           },
                                           "value": {
@@ -2310,7 +2330,8 @@
                                             "enum": [
                                               "env",
                                               "file",
-                                              "keychain"
+                                              "keychain",
+                                              "store"
                                             ]
                                           },
                                           "value": {
@@ -2516,7 +2537,8 @@
                                 "enum": [
                                   "env",
                                   "file",
-                                  "keychain"
+                                  "keychain",
+                                  "store"
                                 ]
                               },
                               "value": {
@@ -2550,7 +2572,8 @@
                                   "enum": [
                                     "env",
                                     "file",
-                                    "keychain"
+                                    "keychain",
+                                    "store"
                                   ]
                                 },
                                 "value": {
@@ -2639,7 +2662,8 @@
                               "enum": [
                                 "env",
                                 "file",
-                                "keychain"
+                                "keychain",
+                                "store"
                               ]
                             },
                             "value": {
@@ -2751,7 +2775,8 @@
                                     "enum": [
                                       "env",
                                       "file",
-                                      "keychain"
+                                      "keychain",
+                                      "store"
                                     ]
                                   },
                                   "value": {
@@ -2789,7 +2814,8 @@
                                     "enum": [
                                       "env",
                                       "file",
-                                      "keychain"
+                                      "keychain",
+                                      "store"
                                     ]
                                   },
                                   "value": {
@@ -2956,7 +2982,8 @@
                                   "enum": [
                                     "env",
                                     "file",
-                                    "keychain"
+                                    "keychain",
+                                    "store"
                                   ]
                                 },
                                 "value": {
@@ -2990,7 +3017,8 @@
                                     "enum": [
                                       "env",
                                       "file",
-                                      "keychain"
+                                      "keychain",
+                                      "store"
                                     ]
                                   },
                                   "value": {
@@ -3079,7 +3107,8 @@
                                 "enum": [
                                   "env",
                                   "file",
-                                  "keychain"
+                                  "keychain",
+                                  "store"
                                 ]
                               },
                               "value": {
@@ -3191,7 +3220,8 @@
                                       "enum": [
                                         "env",
                                         "file",
-                                        "keychain"
+                                        "keychain",
+                                        "store"
                                       ]
                                     },
                                     "value": {
@@ -3229,7 +3259,8 @@
                                       "enum": [
                                         "env",
                                         "file",
-                                        "keychain"
+                                        "keychain",
+                                        "store"
                                       ]
                                     },
                                     "value": {
@@ -3477,7 +3508,8 @@
                                             "enum": [
                                               "env",
                                               "file",
-                                              "keychain"
+                                              "keychain",
+                                              "store"
                                             ]
                                           },
                                           "value": {
@@ -3511,7 +3543,8 @@
                                               "enum": [
                                                 "env",
                                                 "file",
-                                                "keychain"
+                                                "keychain",
+                                                "store"
                                               ]
                                             },
                                             "value": {
@@ -3600,7 +3633,8 @@
                                           "enum": [
                                             "env",
                                             "file",
-                                            "keychain"
+                                            "keychain",
+                                            "store"
                                           ]
                                         },
                                         "value": {
@@ -3712,7 +3746,8 @@
                                                 "enum": [
                                                   "env",
                                                   "file",
-                                                  "keychain"
+                                                  "keychain",
+                                                  "store"
                                                 ]
                                               },
                                               "value": {
@@ -3750,7 +3785,8 @@
                                                 "enum": [
                                                   "env",
                                                   "file",
-                                                  "keychain"
+                                                  "keychain",
+                                                  "store"
                                                 ]
                                               },
                                               "value": {
@@ -4072,7 +4108,8 @@
                                 "enum": [
                                   "env",
                                   "file",
-                                  "keychain"
+                                  "keychain",
+                                  "store"
                                 ]
                               },
                               "value": {
@@ -4106,7 +4143,8 @@
                                   "enum": [
                                     "env",
                                     "file",
-                                    "keychain"
+                                    "keychain",
+                                    "store"
                                   ]
                                 },
                                 "value": {
@@ -4195,7 +4233,8 @@
                               "enum": [
                                 "env",
                                 "file",
-                                "keychain"
+                                "keychain",
+                                "store"
                               ]
                             },
                             "value": {
@@ -4307,7 +4346,8 @@
                                     "enum": [
                                       "env",
                                       "file",
-                                      "keychain"
+                                      "keychain",
+                                      "store"
                                     ]
                                   },
                                   "value": {
@@ -4345,7 +4385,8 @@
                                     "enum": [
                                       "env",
                                       "file",
-                                      "keychain"
+                                      "keychain",
+                                      "store"
                                     ]
                                   },
                                   "value": {
@@ -4524,7 +4565,8 @@
                                   "enum": [
                                     "env",
                                     "file",
-                                    "keychain"
+                                    "keychain",
+                                    "store"
                                   ]
                                 },
                                 "value": {
@@ -4558,7 +4600,8 @@
                                     "enum": [
                                       "env",
                                       "file",
-                                      "keychain"
+                                      "keychain",
+                                      "store"
                                     ]
                                   },
                                   "value": {
@@ -4647,7 +4690,8 @@
                                 "enum": [
                                   "env",
                                   "file",
-                                  "keychain"
+                                  "keychain",
+                                  "store"
                                 ]
                               },
                               "value": {
@@ -4759,7 +4803,8 @@
                                       "enum": [
                                         "env",
                                         "file",
-                                        "keychain"
+                                        "keychain",
+                                        "store"
                                       ]
                                     },
                                     "value": {
@@ -4797,7 +4842,8 @@
                                       "enum": [
                                         "env",
                                         "file",
-                                        "keychain"
+                                        "keychain",
+                                        "store"
                                       ]
                                     },
                                     "value": {
@@ -12626,7 +12672,8 @@
                           "enum": [
                             "env",
                             "file",
-                            "keychain"
+                            "keychain",
+                            "store"
                           ]
                         },
                         "value": {
@@ -12938,7 +12985,8 @@
                           "enum": [
                             "env",
                             "file",
-                            "keychain"
+                            "keychain",
+                            "store"
                           ]
                         },
                         "value": {
@@ -13492,7 +13540,8 @@
                               "enum": [
                                 "env",
                                 "file",
-                                "keychain"
+                                "keychain",
+                                "store"
                               ]
                             },
                             "value": {
@@ -13526,7 +13575,8 @@
                                 "enum": [
                                   "env",
                                   "file",
-                                  "keychain"
+                                  "keychain",
+                                  "store"
                                 ]
                               },
                               "value": {
@@ -13720,7 +13770,8 @@
                             "enum": [
                               "env",
                               "file",
-                              "keychain"
+                              "keychain",
+                              "store"
                             ]
                           },
                           "value": {
@@ -13754,7 +13805,8 @@
                               "enum": [
                                 "env",
                                 "file",
-                                "keychain"
+                                "keychain",
+                                "store"
                               ]
                             },
                             "value": {
@@ -13883,7 +13935,8 @@
                               "enum": [
                                 "env",
                                 "file",
-                                "keychain"
+                                "keychain",
+                                "store"
                               ]
                             },
                             "value": {
@@ -13917,7 +13970,8 @@
                                 "enum": [
                                   "env",
                                   "file",
-                                  "keychain"
+                                  "keychain",
+                                  "store"
                                 ]
                               },
                               "value": {
