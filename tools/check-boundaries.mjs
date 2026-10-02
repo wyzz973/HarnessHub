@@ -18,6 +18,9 @@
  *   legacy module whose rules apply to it.
  * - Relative imports and `new URL(..., import.meta.url)` inside a package or
  *   application must stay inside it.
+ * - node:sqlite belongs in the storage module of @harnesshub/store. Inside
+ *   packages, node:child_process is allowed only by CHILD_PROCESS_EXCEPTIONS,
+ *   each of which expires when its TODO.md task is ticked.
  *
  * Exits non-zero for any violation and when no source file is found.
  */
@@ -84,8 +87,30 @@ export const APP_GRAPH = { hh: ["cli", "daemon"] };
 /** Packages whose src/ is one flattened legacy module. */
 export const FLAT_MODULES = { core: "domain" };
 
-/** Packages that src/ may import during the migration, and the legacy module whose rules apply. */
-export const LEGACY_ALIASES = { core: "domain" };
+/**
+ * Packages that src/ may import during the migration, and the legacy module
+ * whose rules apply: a string for a flattened package, or the legacy modules a
+ * package holds as subdirectories, of which the import's first subpath segment
+ * must be one.
+ */
+export const LEGACY_ALIASES = {
+  core: "domain",
+  store: ["storage", "platform"],
+};
+
+/**
+ * Temporary node:child_process exceptions inside packages (ADR 0017, decision
+ * 4): the package and source path each covers, its owner, and the TODO.md task
+ * whose completion ends it. Once that task is ticked the import fails again.
+ */
+export const CHILD_PROCESS_EXCEPTIONS = [
+  {
+    package: "store",
+    path: "platform/",
+    owner: "OSS-010 F08",
+    expiresWith: "OSS-013",
+  },
+];
 
 const domainPackages = new Set(["node:crypto", "node:buffer", "ajv"]);
 
@@ -122,6 +147,7 @@ export function classify(path, root) {
       name,
       known: Object.hasOwn(graph, name),
       container: join(root, top, name),
+      sourcePath: area === "src" ? rest.join("/") : null,
       legacyPath:
         area === "src" ? [...(flat ? [flat] : []), ...rest].join("/") : null,
     };
@@ -160,9 +186,17 @@ function packageName(specifier) {
  * @param {string} filePath Absolute path of the file.
  * @param {string} contents Its source text.
  * @param {string} root Repository root.
+ * @param {{completedTasks?: Set<string> | null}} [options] TODO.md tasks marked
+ *   done, which end CHILD_PROCESS_EXCEPTIONS; null when unknown, in which case
+ *   using an exception fails.
  * @returns {string[]} One message per violation, prefixed with the file and line.
  */
-export function checkSource(filePath, contents, root) {
+export function checkSource(
+  filePath,
+  contents,
+  root,
+  { completedTasks = null } = {},
+) {
   const file = ts.createSourceFile(
     filePath,
     contents,
@@ -231,7 +265,15 @@ export function checkSource(filePath, contents, root) {
         );
         return;
       }
-      const target = LEGACY_ALIASES[name];
+      const alias = LEGACY_ALIASES[name];
+      const target = typeof alias === "string" ? alias : subpath[0];
+      if (Array.isArray(alias) && !alias.includes(target)) {
+        report(
+          node,
+          `@harnesshub/${name} holds no legacy module ${target}: ${specifier}`,
+        );
+        return;
+      }
       if (!moduleAllows(target))
         report(node, `${owner} cannot depend on ${target}: ${specifier}`);
       return;
@@ -282,18 +324,22 @@ export function checkSource(filePath, contents, root) {
       );
     if (
       (specifier === "node:sqlite" || specifier === "sqlite") &&
-      owner !== "storage"
-    ) {
-      report(node, `SQLite belongs in storage: ${specifier}`);
-    }
-    if (
-      (specifier === "node:child_process" || specifier === "child_process") &&
-      !["process", "drivers", "platform", "composition"].includes(owner)
+      (owner !== "storage" ||
+        (where.kind !== "legacy" && where.name !== "store"))
     ) {
       report(
         node,
-        `process creation belongs in ProcessHost or Driver: ${specifier}`,
+        `SQLite belongs in storage of @harnesshub/store: ${specifier}`,
       );
+    }
+    if (specifier === "node:child_process" || specifier === "child_process") {
+      if (where.kind === "legacy") {
+        if (!["process", "drivers", "platform", "composition"].includes(owner))
+          report(
+            node,
+            `process creation belongs in ProcessHost or Driver: ${specifier}`,
+          );
+      } else inspectChildProcess(node, specifier);
     }
     if (owner === "domain" && !domainPackages.has(dependency)) {
       report(node, `domain cannot import concrete dependency: ${specifier}`);
@@ -317,6 +363,32 @@ export function checkSource(filePath, contents, root) {
         `gateway dependency is outside HTTP/schema responsibilities: ${specifier}`,
       );
     }
+  };
+
+  /** Inside packages only an unexpired CHILD_PROCESS_EXCEPTIONS entry allows node:child_process. */
+  const inspectChildProcess = (node, specifier) => {
+    const exception = CHILD_PROCESS_EXCEPTIONS.find(
+      (entry) =>
+        where.kind === "package" &&
+        entry.package === where.name &&
+        where.sourcePath?.startsWith(entry.path),
+    );
+    const scope = exception && `${exception.package}/${exception.path}`;
+    if (!exception)
+      report(
+        node,
+        `process creation belongs in ProcessHost or Driver; ${container} has no child_process exception: ${specifier}`,
+      );
+    else if (completedTasks === null)
+      report(
+        node,
+        `the child_process exception for ${scope} ends with ${exception.expiresWith}; TODO.md is needed to check it: ${specifier}`,
+      );
+    else if (completedTasks.has(exception.expiresWith))
+      report(
+        node,
+        `the child_process exception for ${scope} (owner ${exception.owner}) expired with ${exception.expiresWith}: ${specifier}`,
+      );
   };
 
   /** `new URL(x, import.meta.url)` in a package or application must name its own file. */
@@ -417,6 +489,27 @@ function sourceTrees(root) {
   return trees;
 }
 
+/**
+ * Tasks ticked in TODO.md (`- [x] **OSS-013 ...`), or null without TODO.md.
+ *
+ * @param {string} root Repository root.
+ * @returns {Set<string> | null}
+ */
+export function completedTasks(root) {
+  let text;
+  try {
+    text = readFileSync(join(root, "TODO.md"), "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+  return new Set(
+    [...text.matchAll(/^\s*- \[x\] \*\*([A-Z]+-\d+)\b/gm)].map(
+      (match) => match[1],
+    ),
+  );
+}
+
 /** Check a repository; a repository without source files and any violation are failures. */
 export function checkBoundaries(root) {
   const files = sourceTrees(root).flatMap(sourceFiles);
@@ -424,10 +517,11 @@ export function checkBoundaries(root) {
     throw new Error(
       "No source files found; module boundaries were not verified.",
     );
+  const options = { completedTasks: completedTasks(root) };
   return {
     count: files.length,
     failures: files.flatMap((file) =>
-      checkSource(file, readFileSync(file, "utf8"), root),
+      checkSource(file, readFileSync(file, "utf8"), root, options),
     ),
   };
 }
