@@ -269,3 +269,114 @@ test("the console proxy adds the admin token to /api/v1 only and keeps its local
   assert.equal(seen.length, before);
   assert.equal(typeof proxy.PATCH, "function");
 });
+
+test("the model-plane pages build API requests and read problem details", async () => {
+  const lib = await consoleModule("lib/model-plane.ts");
+  const { HarnessHubError } = await import(
+    new URL("../packages/sdk/dist/src/client.js", import.meta.url).href
+  );
+  const form = {
+    ...lib.emptyProviderForm(),
+    id: " deepseek ",
+    name: "DeepSeek",
+    endpoints: {
+      chat: " https://api.deepseek.com/v1 ",
+      responses: "",
+      anthropic: "https://api.deepseek.com/anthropic",
+      gemini: "",
+    },
+    models: "deepseek-chat\n\n deepseek-reasoner \ndeepseek-chat\n",
+    expose: ["deepseek-reasoner", "gone"],
+  };
+  assert.deepEqual(lib.providerInput(form), {
+    id: "deepseek",
+    name: "DeepSeek",
+    kind: "vendor",
+    auth: { apiKeyHeader: "authorization-bearer" },
+    endpoints: {
+      chat: "https://api.deepseek.com/v1",
+      anthropic: "https://api.deepseek.com/anthropic",
+    },
+    models: {
+      source: "manual",
+      list: [{ id: "deepseek-chat" }, { id: "deepseek-reasoner" }],
+      expose: ["deepseek-reasoner"],
+    },
+  });
+  const previous = {
+    schemaVersion: 1,
+    id: "deepseek",
+    name: "DeepSeek",
+    kind: "vendor",
+    endpoints: { chat: "https://api.deepseek.com/v1", gemini: "https://g.example" },
+    auth: { apiKeyHeader: "authorization-bearer" },
+    credentials: [],
+    models: {
+      source: "live",
+      list: [{ id: "deepseek-chat", contextWindow: 64000 }],
+      expose: "all",
+    },
+    createdAt: "2026-10-02T00:00:00.000Z",
+    updatedAt: "2026-10-02T00:00:00.000Z",
+  };
+  const edited = lib.providerFormOf(previous);
+  const patch = lib.providerPatch(
+    {
+      ...edited,
+      name: "",
+      endpoints: { ...edited.endpoints, gemini: "" },
+      models: "deepseek-chat\nnew-model",
+    },
+    previous,
+  );
+  // A cleared endpoint is removed with null; kept models keep their metadata.
+  assert.deepEqual(patch.endpoints, { chat: "https://api.deepseek.com/v1", gemini: null });
+  assert.equal(patch.name, "deepseek");
+  assert.deepEqual(patch.models, {
+    source: "live",
+    list: [{ id: "deepseek-chat", contextWindow: 64000 }, { id: "new-model" }],
+    expose: "all",
+  });
+
+  const now = Date.parse("2026-10-02T00:00:00.000Z");
+  assert.equal(lib.expiresAtFor("never", now), null);
+  assert.equal(lib.expiresAtFor("30d", now), "2026-11-01T00:00:00.000Z");
+  assert.equal(lib.rangeStart("all", now), undefined);
+  assert.equal(lib.rangeStart("24h", now), "2026-10-01T00:00:00.000Z");
+  assert.equal(lib.addAmounts(["0.1", "0.2", "0.0000001", "3"]), "3.3000001");
+  assert.equal(lib.addAmounts([]), "0");
+
+  const failure = lib.failureOf(
+    new HarnessHubError({
+      type: "https://harnesshub.dev/problems/provider-invalid",
+      title: "Bad Request",
+      status: 400,
+      code: "PROVIDER_INVALID",
+      requestId: "req-1",
+      errors: [
+        { pointer: "/endpoints/chat", detail: "must be the base URL" },
+        { parameter: "limit", detail: "must be <= 200" },
+      ],
+    }),
+  );
+  assert.equal(failure.code, "PROVIDER_INVALID");
+  assert.deepEqual(failure.fields, {
+    "/endpoints/chat": "must be the base URL",
+    limit: "must be <= 200",
+  });
+  const blocked = lib.failureOf(
+    new HarnessHubError({
+      type: "x",
+      title: "Conflict",
+      status: 409,
+      code: "SOMETHING_NEW",
+      requestId: "req-2",
+      detail: "Daemon detail",
+      references: [{ type: "route-group", id: "fast" }],
+    }),
+  );
+  // Unknown codes keep the daemon's detail; references are kept for display.
+  assert.equal(blocked.message, "Daemon detail");
+  assert.deepEqual(blocked.references, [{ type: "route-group", id: "fast" }]);
+  assert.equal(lib.failureOf(new Error("plain")).message, "plain");
+});

@@ -46,4 +46,6 @@ hh key revoke <keyId> --yes
 - `provider remove`、`credential remove`、`group remove` 与 `key revoke` 需要确认；`--yes` 跳过，非交互且没有 `--yes` 时以 4 退出且不做修改。stdin 不是终端、设置了 `CI` 或给出 `--non-interactive` 时为非交互。
 - 退出码（06 第 5 节）：0 成功；1 内部错误；2 用法错误、输入无效或名称不存在；3 守护进程不可达或数据目录中没有令牌；4 需要确认；5 冲突（409、412、422）；6 认证失败；7 达到上限或未就绪（429、503）；130 中断。
 
+控制台的 Provider、路由组、Gateway Key 与用量页面经同源代理调用这些接口；代理在服务端从 `HARNESSHUB_DATA_DIR/admin.token` 读取令牌，浏览器拿不到它（见 [控制台](../packages/console/README.md)）。
+
 测试：[api-v1.test.ts](../tests/integration/api-v1.test.ts) 在进程内启动守护进程，经 SDK 验证认证、校验、凭据值不出现在任何响应、日志与数据目录文件中、Key 的签发与吊销、基于写入账本的用量；[hh-cli.test.ts](../tests/integration/hh-cli.test.ts) 对同一守护进程运行真实的 `hh` 入口。

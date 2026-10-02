@@ -4,11 +4,15 @@ import {
   Activity,
   Blocks,
   BrainCircuit,
+  ChartColumn,
   Cpu,
+  KeyRound,
   Layers2,
   Moon,
   PanelLeft,
+  Route,
   Search,
+  Server,
   SquarePen,
   Sun,
   Workflow as WorkflowIcon,
@@ -25,7 +29,16 @@ import { useIsMac } from "@/lib/platform";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
-export type Page = "tasks" | "model" | "tools" | "engines" | "observability";
+export type Page =
+  | "tasks"
+  | "model"
+  | "tools"
+  | "engines"
+  | "observability"
+  | "providers"
+  | "groups"
+  | "keys"
+  | "usage";
 export interface HistoryItem {
   type: "session" | "workflow";
   id: string;
@@ -33,13 +46,20 @@ export interface HistoryItem {
   busy: boolean;
   time: number;
 }
-const navigation: { page: Exclude<Page, "tasks">; label: string; icon: LucideIcon }[] =
-  [
-    { page: "model", label: "模型", icon: BrainCircuit },
-    { page: "tools", label: "工具", icon: Blocks },
-    { page: "engines", label: "引擎", icon: Cpu },
-    { page: "observability", label: "观测", icon: Activity },
-  ];
+const navigation: {
+  page: Exclude<Page, "tasks">;
+  label: string;
+  icon: LucideIcon;
+}[] = [
+  { page: "model", label: "模型", icon: BrainCircuit },
+  { page: "providers", label: "Provider", icon: Server },
+  { page: "groups", label: "路由组", icon: Route },
+  { page: "keys", label: "Gateway Key", icon: KeyRound },
+  { page: "usage", label: "用量", icon: ChartColumn },
+  { page: "tools", label: "工具", icon: Blocks },
+  { page: "engines", label: "引擎", icon: Cpu },
+  { page: "observability", label: "观测", icon: Activity },
+];
 const healthText: Record<GatewayHealth, string> = {
   ready: "已连接",
   checking: "正在连接",

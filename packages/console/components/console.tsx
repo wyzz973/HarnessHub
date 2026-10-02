@@ -72,6 +72,10 @@ import { ObservabilityPage } from "./observability-page";
 import { ModelPage } from "./model-page";
 import { Sidebar, type HistoryItem, type Page } from "./sidebar";
 import { ToolPacksPage } from "./tool-packs-page";
+import { ProvidersPage } from "./providers-page";
+import { GroupsPage } from "./groups-page";
+import { KeysPage } from "./keys-page";
+import { UsagePage } from "./usage-page";
 
 type ActiveSelection = { type: "session" | "workflow"; id: string } | null;
 const ENGINE_KEY = "harnesshub.engine";
@@ -1042,6 +1046,14 @@ export function Console() {
                 onSaved={saveModel}
                 openRun={openRun}
               />
+            ) : page === "providers" ? (
+              <ProvidersPage key={refreshEpoch} />
+            ) : page === "groups" ? (
+              <GroupsPage key={refreshEpoch} />
+            ) : page === "keys" ? (
+              <KeysPage key={refreshEpoch} />
+            ) : page === "usage" ? (
+              <UsagePage key={refreshEpoch} />
             ) : page === "tools" ? (
               <ToolPacksPage engines={engines} refreshEngines={refresh} />
             ) : page === "engines" ? (

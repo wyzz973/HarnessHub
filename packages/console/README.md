@@ -25,10 +25,10 @@ pnpm start --demo --data-dir data/demo --port 3180
 下面使用 POSIX 环境变量语法；Windows 按 [PowerShell 启动说明](../../docs/windows.md) 设置环境变量。
 
 ```sh
-HARNESSHUB_GATEWAY_URL=http://127.0.0.1:3180 pnpm start:console
+HARNESSHUB_GATEWAY_URL=http://127.0.0.1:3180 HARNESSHUB_DATA_DIR=data/demo pnpm start:console
 ```
 
-页面位于 `http://127.0.0.1:3330`。开发页面使用 `HARNESSHUB_GATEWAY_URL=http://127.0.0.1:3180 pnpm dev:console`。未设置环境变量时代理保留历史兼容默认 `http://127.0.0.1:3182`，新环境应显式指定。真实引擎的自有配置按 [配置说明](../../docs/engine-management.md)准备。
+页面位于 `http://127.0.0.1:3330`。开发页面使用 `HARNESSHUB_GATEWAY_URL=http://127.0.0.1:3180 HARNESSHUB_DATA_DIR=data/demo pnpm dev:console`。`HARNESSHUB_DATA_DIR` 是守护进程的数据目录：代理在服务端从其中的 `admin.token` 读取管理令牌（经 `@harnesshub/sdk/local` 的 `readAdminToken`，每次请求读取），只为 `/api/v1` 请求加上 `Authorization`，浏览器拿不到令牌；未设置时 Provider、路由组、Gateway Key 与用量页面显示无法读取令牌。`pnpm start:local` 会自动设置。未设置环境变量时代理保留历史兼容默认 `http://127.0.0.1:3182`，新环境应显式指定。真实引擎的自有配置按 [配置说明](../../docs/engine-management.md)准备。
 
 demo 默认“直接执行”，选择 fake 后发送文本即可；“自动规划”会排除 fake，需要另行登记真实引擎。
 
@@ -44,6 +44,13 @@ demo 默认“直接执行”，选择 fake 后发送文本即可；“自动规
 - 工具与插件：`GET /v1/tool-packs` 列出安装包，绑定关系由各引擎当前配置中的包内容 digest 推导；导入、应用到全部/所选引擎和解除绑定分别调用 `POST /v1/tool-packs/import`、`POST /v1/tool-packs/apply`（`engineIds`）和 `DELETE /v1/tool-packs/{id}/{version}/bindings`，展示逐引擎结果与 warnings。
 - 引擎管理：进入页面主动发现，可见期间每分钟及重新可见时刷新；注册、启停、默认选择和热加载。识别清单与各引擎接入方式见 [本机发现](../../docs/engine-discovery.md)，安装证据不等于模型可用。每行支持 [独立配置与检查](../../docs/engine-configuration.md)，可编辑模型、Provider、Keychain/环境/文件密钥引用、Skills 和 MCP；配置统一模型后模型与 Provider 只读并原样保存。
 - 运行观测：真实状态计数、负载、p50/p95、已知 token 与样本覆盖、按 Run 追溯。
+- 模型平面（[`/api/v1`](../../docs/model-plane-api.md)，经 `@harnesshub/sdk` 的 `HarnessHubClient` 访问 `/api/gateway/api/v1/*`）：
+  - Provider：列表、添加与编辑（端点按官方 SDK 基址约定，守护进程返回的 `errors[]` 显示在对应字段下）、删除（被路由组或 Key 引用时显示 409 的引用方）；每个 provider 的凭据可添加（密码框，值只发送一次）、轮换与删除，只显示引用；模型列表与是否对外列出。
+  - 路由组：增删改，成员从各 provider 的模型中选择。
+  - Gateway Key：创建 `client:` Key（名称、允许的模型、有效期），Key 文本只显示一次并可复制；列表与吊销。
+  - 用量：按模型、provider 或 UTC 日期汇总所选时间范围，未定价的调用单独标出、不计为 0；最近调用按游标分页，显示状态、模型、provider、token、费用与耗时。
+
+  统一模型、工具、引擎、观测与任务页面仍使用 `lib/api.ts` 与 `/v1/*` 旧接口。
 
 当前任务 ID 保存在 URL 中，刷新从持久数据恢复。SSE 使用真实命名事件与序号，40ms 合并显示更新；流结束（Gateway 已提交终态）时立即刷新该会话，网络断开时以事件游标和持久查询追赶；较早发出的刷新结果不会覆盖较新的视图。关闭页面不取消任务，停止按钮才发出取消请求。没有生成静态伪任务、伪曲线或用零代替未知用量。
 
