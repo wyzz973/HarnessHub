@@ -637,8 +637,25 @@ void test(
       : false,
   },
   async (t) => {
-    const ref = await createSecret("HarnessHub owned synthetic key fixture");
-    t.after(() => deleteSecret(ref));
+    // The login keychain is found through HOME; the test launcher gives tests a
+    // private one. One hook deletes the item and only then restores HOME, since
+    // after hooks run in registration order.
+    const systemHome = process.env.HARNESSHUB_TEST_SYSTEM_HOME;
+    const home = process.env.HOME;
+    const useSystemHome = process.platform === "darwin" && !!systemHome;
+    let ref: Awaited<ReturnType<typeof createSecret>> | undefined;
+    t.after(async () => {
+      try {
+        if (ref) await deleteSecret(ref);
+      } finally {
+        if (useSystemHome) {
+          if (home === undefined) delete process.env.HOME;
+          else process.env.HOME = home;
+        }
+      }
+    });
+    if (useSystemHome) process.env.HOME = systemHome;
+    ref = await createSecret("HarnessHub owned synthetic key fixture");
     assert.equal(ref.kind, "keychain");
     assert.equal(
       await resolveSecret(ref, {}),

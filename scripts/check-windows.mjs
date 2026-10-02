@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 import { readdirSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { runSuite, SUITES } from "./run-tests.mjs";
 
 const required = [
   "unit/windows-launch.test.js",
@@ -39,15 +39,10 @@ if (
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   const root = fileURLToPath(new URL("../", import.meta.url));
-  const result = spawnSync(
-    process.execPath,
-    ["--test", ...windowsTestFiles(root)],
-    {
-      cwd: root,
-      stdio: "inherit",
-      windowsHide: true,
-    },
-  );
-  if (result.error) throw result.error;
-  process.exitCode = result.status ?? 1;
+  const { status, diagnostics } = await runSuite({
+    ...SUITES.integration,
+    files: windowsTestFiles(root),
+  });
+  for (const line of diagnostics) console.error(`test:windows: ${line}`);
+  process.exitCode = status;
 }
