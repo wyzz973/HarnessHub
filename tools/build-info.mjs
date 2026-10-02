@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 /**
  * Write the build identity to dist/build-info.json (F04).
- * Usage: node scripts/build-info.mjs [--out FILE]
+ * Usage: node tools/build-info.mjs [--out FILE]
  *
  * Fields follow docs/proposals/oss/10-engineering.md section 5. CI builds take
  * the commit and ref from GITHUB_SHA and GITHUB_REF and link the workflow run;

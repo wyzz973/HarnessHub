@@ -2,7 +2,7 @@
 import { HubError } from "./errors.js";
 
 /**
- * Identity of the running build, written by `scripts/build-info.mjs` at build
+ * Identity of the running build, written by `tools/build-info.mjs` at build
  * time (fields in docs/proposals/oss/10-engineering.md section 5). Values the
  * build could not determine are the literal "unknown".
  */

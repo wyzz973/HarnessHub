@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 /**
  * Compare two test inventories written by `run-tests.mjs --inventory`.
- * Usage: node scripts/compare-inventory.mjs <before> <after> [--allow FILE]
+ * Usage: node tools/compare-inventory.mjs <before> <after> [--allow FILE]
  *
  * <before> and <after> are inventory files, or directories whose `*.jsonl`
  * files together form the inventory (as CI uploads them). Entries match by
@@ -143,7 +143,7 @@ export function formatDifferences({ missing, added, unusedAllowance }) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const usage = "usage: node scripts/compare-inventory.mjs <before> <after> [--allow FILE]";
+  const usage = "usage: node tools/compare-inventory.mjs <before> <after> [--allow FILE]";
   try {
     let parsed;
     try {

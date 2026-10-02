@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 /**
  * Remove compiled TypeScript output before `tsc` runs.
- * Usage: node scripts/clean-build.mjs
+ * Usage: node tools/clean-build.mjs
  *
  * tsc never deletes the output of a source file that no longer exists, so after
  * a branch switch a stale dist/tests/**.test.js would still run and fail (or

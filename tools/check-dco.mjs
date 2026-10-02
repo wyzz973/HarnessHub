@@ -3,7 +3,7 @@
 /**
  * Check that every non-merge commit in a range carries a Developer Certificate
  * of Origin sign-off by its author.
- * Usage: node scripts/check-dco.mjs <base>..<head>
+ * Usage: node tools/check-dco.mjs <base>..<head>
  *
  * A commit passes when one of its `Signed-off-by` trailers names the author's
  * email (case-insensitive), which is what `git commit -s` writes. Commits
@@ -62,7 +62,7 @@ export function checkSignoffs(commits) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const range = process.argv[2];
   if (!range || !range.includes("..")) {
-    console.error("usage: node scripts/check-dco.mjs <base>..<head>");
+    console.error("usage: node tools/check-dco.mjs <base>..<head>");
     process.exit(1);
   }
   const commits = readCommits(range);

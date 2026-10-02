@@ -14,7 +14,7 @@
  * keep HARNESSHUB_MODEL_API_KEY set to the upstream key in the Gateway environment.
  * Logs contain paths, models, statuses, violations and durations only.
  *
- * Usage: node scripts/strict-chat-proxy.mjs --upstream https://api.deepseek.com/v1
+ * Usage: node tools/strict-chat-proxy.mjs --upstream https://api.deepseek.com/v1
  *   [--host 127.0.0.1] [--port 0] [--expect-model ID] [--log FILE]
  */
 import { once } from "node:events";
@@ -227,7 +227,7 @@ if (
     });
     if (values.help || !values.upstream) {
       console.log(
-        "node scripts/strict-chat-proxy.mjs --upstream https://api.deepseek.com/v1 [--host 127.0.0.1] [--port 0] [--expect-model ID] [--log FILE]",
+        "node tools/strict-chat-proxy.mjs --upstream https://api.deepseek.com/v1 [--host 127.0.0.1] [--port 0] [--expect-model ID] [--log FILE]",
       );
       if (!values.help) process.exitCode = 2;
     } else {

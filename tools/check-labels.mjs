@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 /**
  * Validate .github/labels.yml and, with --sync, apply it to a GitHub repository.
- * Usage: node scripts/check-labels.mjs [--file <path>] [--sync]
+ * Usage: node tools/check-labels.mjs [--file <path>] [--sync]
  *
  * The file is the single source of truth for labels: a YAML list of
  * `{name, color, description}` with unique names (case-insensitive, as GitHub

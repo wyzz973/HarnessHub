@@ -65,7 +65,7 @@ ACP 0.13.2 的 reducer 会把最新 breakdown 直接赋给名称为 `cumulative_
 
 [单元测试](../tests/unit/observability.test.ts)覆盖 ACP 请求归属、累计快照不重复计量、Pi 消息差分、会话不匹配/链接拒绝、字符/工具去重、时间和缺失值。[HTTP 集成测试](../tests/integration/observability.test.ts)通过正式 Gateway、Worker、ACP 本地确定协议端和 SQLite 验证两次运行各自 usage、OpenAPI、范围限制、重启重建一致。
 
-读取接口由 [读取器单元测试](../tests/unit/session-log-reader.test.ts)（尾部、游标、未写完的行、轮转后续读、游标失效、Gateway 过滤、再次脱敏、限额与预算）和 [接口集成测试](../tests/integration/session-logs.test.ts)（两个 Session 经正式 Gateway/Worker 与 ACP fixture 运行后分页读取、非法参数 400、未知 Session 404、不含上游密钥与 Session token）验证；控制台契约见 [控制台契约测试](../scripts/check-console-contracts.test.mjs)。
+读取接口由 [读取器单元测试](../tests/unit/session-log-reader.test.ts)（尾部、游标、未写完的行、轮转后续读、游标失效、Gateway 过滤、再次脱敏、限额与预算）和 [接口集成测试](../tests/integration/session-logs.test.ts)（两个 Session 经正式 Gateway/Worker 与 ACP fixture 运行后分页读取、非法参数 400、未知 Session 404、不含上游密钥与 Session token）验证；控制台契约见 [控制台契约测试](../tools/check-console-contracts.test.mjs)。
 
 诊断日志由 [日志单元测试](../tests/unit/diagnostic-log.test.ts)与 [集成测试](../tests/integration/diagnostic-logs.test.ts) 验证：后者经正式 Gateway/Worker、ACP fixture 和本地上游，以 info 与 debug 各运行一次含工具调用、权限和 stderr 的任务，检查两份日志的必备记录、推理回填计数与 debug 摘录，并确认上游模型密钥与 Session token 都未写入。
 

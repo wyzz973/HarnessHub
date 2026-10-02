@@ -24,4 +24,4 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
-        run: node scripts/check-dco.mjs "$BASE..$HEAD"
+        run: node tools/check-dco.mjs "$BASE..$HEAD"

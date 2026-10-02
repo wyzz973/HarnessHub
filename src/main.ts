@@ -111,7 +111,7 @@ function openGatewayLog(
 }
 
 /**
- * Read the identity written next to the compiled code by `scripts/build-info.mjs`
+ * Read the identity written next to the compiled code by `tools/build-info.mjs`
  * (`dist/build-info.json`).
  *
  * @throws HubError `BUILD_INFO_UNAVAILABLE` when the file is missing or unreadable
@@ -648,7 +648,7 @@ if (
   process.argv[1] &&
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
-  // Not a top-level await: the single-executable spike (scripts/sea) bundles this
+  // Not a top-level await: the single-executable spike (tools/sea) bundles this
   // module as CommonJS, which cannot contain one. The rejection stays unhandled on
   // purpose so the process still exits with code 1 and prints the error.
   void runFromCommandLine();

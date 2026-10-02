@@ -163,7 +163,7 @@ Responses 和 Google 按固定客户端（Codex 0.153.4 的请求结构、@googl
 
 ```sh
 pnpm build
-node scripts/run-tests.mjs unit dist/tests/unit/model-gateway*.test.js dist/tests/unit/chat-completions.test.js
+node tools/run-tests.mjs unit dist/tests/unit/model-gateway*.test.js dist/tests/unit/chat-completions.test.js
 ```
 
 2026-09-19 在 macOS 上做过一次性冒烟：本机已安装的 Codex 0.144.5、Gemini CLI 0.38.2、Claude Code 2.1.278（均非固定版本）以隔离的配置目录连接网关与本地假上游，各完成一次推理、Shell 工具调用与后续回合，后续请求都带回了推理内容。该冒烟发现并修正了 Claude Code 在 `messages` 中发送 system 角色消息的问题；脚本未入库，不代替固定版本引擎的验收。
