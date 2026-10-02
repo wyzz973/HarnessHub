@@ -10,6 +10,14 @@ export interface InstanceLock {
 
 const SQLITE_BUSY = 5;
 const SQLITE_LOCKED = 6;
+/**
+ * How long a contender waits for the lock. Simultaneous starters both hold a
+ * SHARED lock before escalating; SQLite returns BUSY at once to the one that
+ * would deadlock, it closes its connection, and the other one's wait then
+ * succeeds. With no wait at all, both could fail. Against a running Gateway
+ * the wait expires and the start fails with RUNTIME_ALREADY_RUNNING.
+ */
+const LOCK_WAIT_MS = 1_000;
 
 function isBusy(error: unknown): boolean {
   return (
@@ -33,7 +41,7 @@ function isBusy(error: unknown): boolean {
  *   holds the lock; other SQLite or file system errors propagate unchanged.
  */
 export function acquireInstanceLock(file: string): InstanceLock {
-  const db = new DatabaseSync(file, { timeout: 0 });
+  const db = new DatabaseSync(file, { timeout: LOCK_WAIT_MS });
   try {
     db.exec(
       "PRAGMA locking_mode = EXCLUSIVE; PRAGMA journal_mode = MEMORY; BEGIN EXCLUSIVE; CREATE TABLE IF NOT EXISTS holder (pid INTEGER NOT NULL); DELETE FROM holder;",
