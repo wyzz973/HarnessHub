@@ -20,6 +20,7 @@ import {
 } from "./anthropic.js";
 import { chatToChat, ChatSink, openAiErrorResponse } from "./chat.js";
 import { googleErrorResponse, googleToChat, GoogleSink } from "./google.js";
+import { failure, networkFailure, readLimited, Slots } from "./http.js";
 import { Keepalive } from "./keepalive.js";
 import {
   ClientClosed,
@@ -217,9 +218,6 @@ function errorResponse(
       return googleErrorResponse(failure);
   }
 }
-function failure(status: number, code: string, message: string): Failure {
-  return { status, code, message, contextOverflow: false };
-}
 function reply(
   response: ServerResponse,
   protocol: InboundProtocol,
@@ -269,79 +267,6 @@ async function readJson(
     throw new GatewayError("Model request is not valid JSON");
   }
 }
-async function readLimited(response: Response, maxBytes: number) {
-  const chunks: Uint8Array[] = [];
-  let bytes = 0;
-  if (response.body)
-    for await (const chunk of response.body) {
-      chunks.push(chunk);
-      bytes += chunk.byteLength;
-      if (bytes >= maxBytes) break;
-    }
-  return Buffer.concat(chunks).subarray(0, maxBytes).toString("utf8");
-}
-
-/** FIFO admission of upstream requests; a waiting call leaves the queue when aborted. */
-class Slots {
-  #active = 0;
-  #waiting: (() => void)[] = [];
-  constructor(
-    private readonly limit: number,
-    private readonly queue: number,
-  ) {}
-  acquire(signal: AbortSignal): Promise<void> {
-    signal.throwIfAborted();
-    if (this.#active < this.limit) {
-      this.#active++;
-      return Promise.resolve();
-    }
-    if (this.#waiting.length >= this.queue)
-      return Promise.reject(
-        new GatewayError(
-          "Too many concurrent model requests in this Session",
-          429,
-          "busy",
-        ),
-      );
-    return new Promise<void>((resolve, reject) => {
-      const admit = () => {
-        signal.removeEventListener("abort", abort);
-        resolve();
-      };
-      const abort = () => {
-        this.#waiting = this.#waiting.filter((waiter) => waiter !== admit);
-        reject(signal.reason);
-      };
-      signal.addEventListener("abort", abort, { once: true });
-      this.#waiting.push(admit);
-    });
-  }
-  release(): void {
-    const next = this.#waiting.shift();
-    if (next) next();
-    else this.#active--;
-  }
-}
-
-function networkFailure(error: unknown): Failure | undefined {
-  if (!(error instanceof TypeError) || error.cause === undefined)
-    return undefined;
-  const cause = error.cause as { code?: unknown; message?: unknown };
-  const code =
-    typeof cause.code === "string"
-      ? cause.code
-      : typeof cause.message === "string" && /redirect/i.test(cause.message)
-        ? "redirect refused"
-        : "network error";
-  return failure(
-    502,
-    "upstream_unreachable",
-    error.message === "terminated"
-      ? `Upstream connection closed before the response completed (${code})`
-      : `Upstream model request failed (${code})`,
-  );
-}
-
 /**
  * Same as {@link startModelGateway} with explicit resource limits. Throws a
  * `RangeError` before listening when a limit is outside its accepted range.
@@ -398,7 +323,11 @@ export async function createModelGateway(
     limits.reasoningBytes,
   );
   let reasoningField: ReasoningField = "reasoning_content";
-  const slots = new Slots(limits.maxConcurrent, limits.maxQueued);
+  const slots = new Slots(
+    limits.maxConcurrent,
+    limits.maxQueued,
+    "Too many concurrent model requests in this Session",
+  );
   let scope: RunScope | undefined;
   let closing: Promise<void> | undefined;
   let errors: ModelCallRecord[] = [];

@@ -396,7 +396,7 @@ function incomplete(finish: string): string | undefined {
       : undefined;
 }
 /** Responses error code understood by Codex for a failure reported in the stream. */
-function streamCode(failure: Failure): string {
+export function streamCode(failure: Failure): string {
   if (failure.contextOverflow) return "context_length_exceeded";
   if (failure.status === 429) return "rate_limit_exceeded";
   if (failure.status >= 500) return "server_error";

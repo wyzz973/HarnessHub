@@ -115,6 +115,16 @@ function normalizeMessages(
     : messages;
 }
 /**
+ * How much {@link normalizeChatRequest} changes beyond the upstream settings.
+ * The Session gateway removes {@link DEFAULT_DROPPED_PARAMETERS} and turns
+ * JSON Schema output into JSON mode; the shared gateway does neither unless a
+ * provider patch asks for it (03 section 3).
+ */
+export interface NormalizationPolicy {
+  dropDefaults: boolean;
+  jsonSchema: "json-object" | "keep";
+}
+/**
  * Build the upstream Chat body: fixed model, `stream: true`, default and
  * configured parameter removal, tool-choice cleanup without tools, one leading
  * system message, text-only content as strings and a single output-limit field
@@ -124,8 +134,20 @@ export function normalizeRequest(
   input: Record<string, unknown>,
   settings: UpstreamSettings,
 ): Record<string, unknown> {
+  return normalizeChatRequest(input, settings, {
+    dropDefaults: true,
+    jsonSchema: "json-object",
+  });
+}
+/** {@link normalizeRequest} with an explicit {@link NormalizationPolicy}. */
+export function normalizeChatRequest(
+  input: Record<string, unknown>,
+  settings: UpstreamSettings,
+  policy: NormalizationPolicy,
+): Record<string, unknown> {
   const body: Record<string, unknown> = { ...input };
-  for (const key of DEFAULT_DROPPED_PARAMETERS) delete body[key];
+  if (policy.dropDefaults)
+    for (const key of DEFAULT_DROPPED_PARAMETERS) delete body[key];
   delete body.stream_options;
   if (body.n === 1) delete body.n;
   const limit = outputLimit(body);
@@ -142,7 +164,10 @@ export function normalizeRequest(
   }
   // JSON Schema output is widely unsupported; JSON mode keeps the answer
   // machine-readable while the engine still validates the structure.
-  if (record(body.response_format)?.type === "json_schema")
+  if (
+    policy.jsonSchema === "json-object" &&
+    record(body.response_format)?.type === "json_schema"
+  )
     body.response_format = { type: "json_object" };
   body.messages = normalizeMessages(body.messages, settings.images);
   body.model = settings.model;
@@ -367,6 +392,7 @@ class Completion {
   text = "";
   reasoning = "";
   finish = "";
+  model: string | undefined;
   usage: Usage | undefined;
   rawUsage: Record<string, unknown> | undefined;
   field: ReasoningField | undefined;
@@ -387,6 +413,8 @@ class Completion {
       this.started = true;
       await this.handlers.start();
     }
+    if (typeof chunk.model === "string" && chunk.model)
+      this.model ??= chunk.model;
     const usage = record(chunk.usage);
     if (usage) {
       this.rawUsage = usage;
@@ -425,7 +453,7 @@ class Completion {
         this.finish = choice.finish_reason;
     }
   }
-  async result(): Promise<ChatResult> {
+  async result(terminated: boolean): Promise<ChatResult> {
     if (!this.started) {
       this.started = true;
       await this.handlers.start();
@@ -436,6 +464,8 @@ class Completion {
       reasoning: this.reasoning,
       calls,
       finish: normalizeFinish(this.finish, calls),
+      terminated: terminated || this.finish !== "",
+      ...(this.model ? { model: this.model } : {}),
       ...(this.usage ? { usage: this.usage } : {}),
       ...(this.rawUsage ? { rawUsage: this.rawUsage } : {}),
       ...(this.field ? { reasoningField: this.field } : {}),
@@ -452,6 +482,10 @@ class SseParser {
   #pending = "";
   #data: string[] = [];
   #done = false;
+  /** True once `[DONE]` arrived. */
+  get done(): boolean {
+    return this.#done;
+  }
   constructor(
     private readonly dispatch: (data: string) => Promise<void>,
     private readonly received: () => void,
@@ -561,7 +595,7 @@ export async function readCompletion(
   }
   if (json) await completion.chunk(parse(body + tail), false);
   else await sse.feed(tail, true);
-  return completion.result();
+  return completion.result(json || sse.done);
 }
 
 const CONTEXT_PATTERNS = [

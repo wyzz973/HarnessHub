@@ -157,6 +157,13 @@ export interface ChatResult {
   usage?: Usage;
   /** Upstream usage object, returned verbatim to Chat engines. */
   rawUsage?: Record<string, unknown>;
+  /** First `model` the upstream reported in its chunks (the served model). */
+  model?: string;
+  /**
+   * The upstream ended explicitly: `[DONE]`, a finish reason or a complete
+   * JSON body. False means the body simply ended (completion is inferred).
+   */
+  terminated?: boolean;
 }
 /** Parse tool arguments; an empty string is an empty object. */
 export function parseArguments(

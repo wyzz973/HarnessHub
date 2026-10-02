@@ -1,0 +1,245 @@
+// SPDX-License-Identifier: MIT
+import type { IncomingMessage } from "node:http";
+import type { Transform } from "node:stream";
+import {
+  createBrotliDecompress,
+  createGunzip,
+  createInflate,
+  createZstdDecompress,
+} from "node:zlib";
+import type { Failure } from "./output.js";
+import { GatewayError } from "./protocol.js";
+
+/** A classified failure with `contextOverflow` false. */
+export function failure(
+  status: number,
+  code: string,
+  message: string,
+): Failure {
+  return { status, code, message, contextOverflow: false };
+}
+
+/** Up to `maxBytes` of an upstream error body as text; the rest is not read. */
+export async function readLimited(
+  response: Response,
+  maxBytes: number,
+): Promise<string> {
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  if (response.body)
+    for await (const chunk of response.body) {
+      chunks.push(chunk);
+      bytes += chunk.byteLength;
+      if (bytes >= maxBytes) break;
+    }
+  return Buffer.concat(chunks).subarray(0, maxBytes).toString("utf8");
+}
+
+/**
+ * FIFO admission of upstream requests; a waiting call leaves the queue when
+ * aborted. A full queue rejects with 429 `busy` and `busyMessage`.
+ */
+export class Slots {
+  #active = 0;
+  #waiting: (() => void)[] = [];
+  constructor(
+    private readonly limit: number,
+    private readonly queue: number,
+    private readonly busyMessage: string,
+  ) {}
+  /** Calls holding a slot plus calls waiting for one. */
+  get load(): number {
+    return this.#active + this.#waiting.length;
+  }
+  acquire(signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    if (this.#active < this.limit) {
+      this.#active++;
+      return Promise.resolve();
+    }
+    if (this.#waiting.length >= this.queue)
+      return Promise.reject(new GatewayError(this.busyMessage, 429, "busy"));
+    return new Promise<void>((resolve, reject) => {
+      const admit = () => {
+        signal.removeEventListener("abort", abort);
+        resolve();
+      };
+      const abort = () => {
+        this.#waiting = this.#waiting.filter((waiter) => waiter !== admit);
+        reject(signal.reason);
+      };
+      signal.addEventListener("abort", abort, { once: true });
+      this.#waiting.push(admit);
+    });
+  }
+  release(): void {
+    const next = this.#waiting.shift();
+    if (next) next();
+    else this.#active--;
+  }
+}
+
+/** A fetch failure without an HTTP response, or `undefined` for other errors. */
+export function networkFailure(error: unknown): Failure | undefined {
+  if (!(error instanceof TypeError) || error.cause === undefined)
+    return undefined;
+  const cause = error.cause as { code?: unknown; message?: unknown };
+  const code =
+    typeof cause.code === "string"
+      ? cause.code
+      : typeof cause.message === "string" && /redirect/i.test(cause.message)
+        ? "redirect refused"
+        : "network error";
+  return failure(
+    502,
+    "upstream_unreachable",
+    error.message === "terminated"
+      ? `Upstream connection closed before the response completed (${code})`
+      : `Upstream model request failed (${code})`,
+  );
+}
+
+/** Process-wide budget of request body bytes held in memory at once. */
+export class MemoryBudget {
+  #used = 0;
+  constructor(readonly limit: number) {}
+  get used(): number {
+    return this.#used;
+  }
+  /** Reserve `bytes`; false (and nothing reserved) when the budget would be exceeded. */
+  take(bytes: number): boolean {
+    if (this.#used + bytes > this.limit) return false;
+    this.#used += bytes;
+    return true;
+  }
+  give(bytes: number): void {
+    this.#used = Math.max(0, this.#used - bytes);
+  }
+}
+
+/** Limits and ownership of one inbound body read. */
+export interface BodyReadOptions {
+  /** Decompressed bytes accepted. */
+  maxBytes: number;
+  /** Whole-body receive deadline. */
+  timeoutMs: number;
+  signal: AbortSignal;
+  /** Bytes read are reserved here; the caller gives back `bytes` of the result. */
+  memory: MemoryBudget;
+}
+
+function decoder(encoding: string): Transform {
+  switch (encoding) {
+    case "gzip":
+    case "x-gzip":
+      return createGunzip();
+    case "deflate":
+      return createInflate();
+    case "br":
+      return createBrotliDecompress();
+    case "zstd":
+      return createZstdDecompress();
+    default:
+      throw new GatewayError(
+        `Unsupported request content encoding: ${encoding.slice(0, 32)}`,
+        415,
+        "unsupported_encoding",
+      );
+  }
+}
+
+/**
+ * Read an inbound request body, decompressing gzip, deflate, br or zstd. The
+ * decompressed size counts against `maxBytes` (413 `request_too_large`) and
+ * against the shared memory budget (503 `busy`). Rejects with 408
+ * `request_timeout` after `timeoutMs`, and with `signal.reason` when aborted.
+ * On success the caller owns the reservation of `bytes.length` and must give
+ * it back; on failure nothing stays reserved.
+ */
+export async function readBody(
+  request: IncomingMessage,
+  options: BodyReadOptions,
+): Promise<Buffer> {
+  const encoding = (request.headers["content-encoding"] ?? "identity")
+    .trim()
+    .toLowerCase();
+  const tooLarge = () =>
+    new GatewayError(
+      `Model request exceeds the gateway size limit of ${options.maxBytes} bytes`,
+      413,
+      "request_too_large",
+    );
+  if (
+    encoding === "identity" &&
+    Number(request.headers["content-length"]) > options.maxBytes
+  )
+    throw tooLarge();
+  const inflate = encoding === "identity" ? undefined : decoder(encoding);
+  // pipe() does not forward source errors; a reset request must end the read.
+  if (inflate) request.once("error", (error) => inflate.destroy(error));
+  const source: AsyncIterable<unknown> = inflate
+    ? request.pipe(inflate)
+    : request;
+  const timeout = AbortSignal.timeout(options.timeoutMs);
+  const signal = AbortSignal.any([options.signal, timeout]);
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  const stop = () => {
+    inflate?.destroy();
+    request.destroy();
+  };
+  signal.addEventListener("abort", stop, { once: true });
+  try {
+    for await (const value of source) {
+      signal.throwIfAborted();
+      const chunk = Buffer.isBuffer(value) ? value : Buffer.from(String(value));
+      bytes += chunk.length;
+      if (bytes > options.maxBytes) throw tooLarge();
+      if (!options.memory.take(chunk.length)) {
+        bytes -= chunk.length;
+        throw new GatewayError(
+          "The model gateway is holding too many request bodies; retry later",
+          503,
+          "busy",
+        );
+      }
+      chunks.push(chunk);
+    }
+    signal.throwIfAborted();
+    return Buffer.concat(chunks, bytes);
+  } catch (error) {
+    options.memory.give(bytes);
+    if (timeout.aborted && !options.signal.aborted)
+      throw new GatewayError(
+        "Model request body was not received in time",
+        408,
+        "request_timeout",
+      );
+    if (options.signal.aborted) throw options.signal.reason;
+    if (error instanceof GatewayError) throw error;
+    throw new GatewayError(
+      encoding === "identity"
+        ? "Model request body could not be read"
+        : `Model request body is not valid ${encoding} data`,
+      400,
+      "invalid_request",
+    );
+  } finally {
+    signal.removeEventListener("abort", stop);
+  }
+}
+
+/** Parse a UTF-8 JSON request body; 400 for invalid UTF-8 or JSON. */
+export function parseJsonBody(bytes: Buffer): unknown {
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new GatewayError("Model request is not valid UTF-8");
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new GatewayError("Model request is not valid JSON");
+  }
+}

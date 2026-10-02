@@ -24,6 +24,7 @@ export class ClientClosed extends Error {
 export class HttpWriter {
   #writes = 0;
   #lastWrite = performance.now();
+  #firstWrite: number | undefined;
   #pending = 0;
   constructor(private readonly response: ServerResponse) {}
   /** True once the status line was sent; later failures must be in-band. */
@@ -37,6 +38,10 @@ export class HttpWriter {
   /** `performance.now()` of the latest header commit or body write, or of construction. */
   get lastWrite(): number {
     return this.#lastWrite;
+  }
+  /** `performance.now()` of the first header commit or body write, if any. */
+  get firstWrite(): number | undefined {
+    return this.#firstWrite;
   }
   /** True while a body write waits for the socket (backpressure). */
   get busy(): boolean {
@@ -66,7 +71,7 @@ export class HttpWriter {
     this.response.flushHeaders();
     this.#mark();
   }
-  async write(text: string): Promise<void> {
+  async write(text: string | Uint8Array): Promise<void> {
     if (this.closed) throw new ClientClosed();
     this.#mark();
     this.#pending++;
@@ -80,7 +85,7 @@ export class HttpWriter {
       this.#pending--;
     }
   }
-  async end(text = ""): Promise<void> {
+  async end(text: string | Uint8Array = ""): Promise<void> {
     if (this.closed) throw new ClientClosed();
     this.#mark();
     await new Promise<void>((resolve) => this.response.end(text, resolve));
@@ -102,6 +107,7 @@ export class HttpWriter {
   #mark(): void {
     this.#writes++;
     this.#lastWrite = performance.now();
+    this.#firstWrite ??= this.#lastWrite;
   }
 }
 
