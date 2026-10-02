@@ -3,7 +3,7 @@
   "driver": "acp",
   "command": [
     "/absolute/path/to/node24",
-    "/absolute/path/to/HarnessHub/scripts/launch-pi-acp.mjs",
+    "/absolute/path/to/HarnessHub/packages/agents/assets/launch-pi-acp.mjs",
     "/absolute/path/to/HarnessHub/.tools/pi/node_modules/pi-acp/dist/index.js",
     "/absolute/path/to/HarnessHub/.tools/pi/node_modules/.bin/pi",
     "/absolute/path/to/existing/.dsh/settings.yaml",

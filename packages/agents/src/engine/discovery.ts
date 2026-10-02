@@ -10,7 +10,7 @@ import { HubError } from "@harnesshub/core/errors";
 import { normalizeEngine } from "./registry.js";
 import { builtinEngines, type BuiltinEngine } from "./builtins.js";
 import { availableExecutable, locateExecutable } from "./executables.js";
-import { repositoryScript } from "../repository.js";
+import { assetPath } from "../assets.js";
 
 interface DiscoveryOptions {
   cwd: string;
@@ -67,7 +67,7 @@ async function locate(
   );
 }
 
-const portableLauncher = repositoryScript("launch-engine.mjs");
+const portableLauncher = assetPath("launch-engine.mjs");
 
 function envCommand(
   options: DiscoveryOptions,
@@ -168,7 +168,7 @@ async function nativeCandidate(
       [executable, "acp"],
     );
   } else if (id === "openclaw") {
-    const bridge = path.join(options.cwd, "scripts", "launch-openclaw-acp.mjs");
+    const bridge = assetPath("launch-openclaw-acp.mjs");
     const isolatedBridge = await fileExists(bridge);
     command = envCommand(
       options,
@@ -384,7 +384,7 @@ async function dshCandidate(
   const executable =
     installed ?? ((await fileExists(sibling)) ? sibling : undefined);
   if (!executable) return undefined;
-  const launcher = path.join(options.cwd, "scripts", "launch-dsh-acp.mjs");
+  const launcher = assetPath("launch-dsh-acp.mjs");
   const patch = path.join(options.cwd, "engines", "dsh-local.patch.yaml");
   const usePatch =
     !installed && (await fileExists(launcher)) && (await fileExists(patch));

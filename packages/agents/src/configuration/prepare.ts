@@ -15,6 +15,7 @@ import { HubError } from "@harnesshub/core/errors";
 import { WORKER_TREE_ENVIRONMENT } from "@harnesshub/core/environment";
 import { resolveSecret } from "@harnesshub/secrets/secrets";
 import { portableCommand, unwrapEnvironment } from "./launch.js";
+import { currentEngineCommand } from "../assets.js";
 import { codexGatewayCatalog, codexModelCatalog } from "./codex-models.js";
 import { prepareNativeMcp } from "./native-mcp.js";
 import { currentCommandMcpEntry } from "../tool-command/entry.js";
@@ -321,7 +322,11 @@ function fullAccess(
     launch.INITIAL_AGENT_MODE === "agent-full-access"
   );
 }
-/** Prepare one Session's private native configuration without changing global/user configuration. */
+/**
+ * Prepare one Session's private native configuration without changing
+ * global/user configuration. A command stored before the runtime assets moved
+ * into this package is read with their current paths (currentEngineCommand).
+ */
 export async function prepareConfiguration(
   spec: ExecutionSpec,
   environment: Readonly<NodeJS.ProcessEnv>,
@@ -329,7 +334,10 @@ export async function prepareConfiguration(
 ): Promise<PreparedConfiguration> {
   const config = spec.profile.configuration;
   const resolve = sessionSecretResolver(environment, hooks.secrets);
-  const launch = unwrapEnvironment(spec.profile.command ?? []);
+  // A command stored before the runtime assets moved names their old paths.
+  const launch = unwrapEnvironment(
+    currentEngineCommand(spec.profile.command ?? []),
+  );
   const launchEnvironment = { ...launch.env };
   const result: PreparedConfiguration = {
     command: launch.command,

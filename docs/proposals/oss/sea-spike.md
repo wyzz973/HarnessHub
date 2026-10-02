@@ -40,7 +40,7 @@
 | `harnesshub serve [Gateway 参数]` | Gateway（`packages/daemon/dist/src/main.js` 的命令行入口） |
 | `harnesshub version [--json]` | 输出构建身份 |
 | `harnesshub <根目录>/packages/daemon/dist/src/worker/main.js …` | Session Worker；由 `fork()` 产生 |
-| `harnesshub <根目录>/scripts/launch-engine.mjs …` | 可移植引擎启动器 |
+| `harnesshub <根目录>/packages/agents/assets/launch-engine.mjs …` | 可移植引擎启动器 |
 | `harnesshub <根目录>/packages/agents/dist/src/tool-command/command-mcp.js …` | 工具包的 command MCP 服务器 |
 | `harnesshub <其他 .js/.mjs/.cjs 文件> …` | node-compat：用 `Module.runMain()` 像 `node <文件>` 一样运行 |
 
@@ -129,7 +129,7 @@ macos-13 已不再向公开仓库提供（2026-10-02 查阅 GitHub 托管 runner
 | 自有子进程用 `process.execPath` 启动，在 SEA 中会再次运行 SEA | 按角色路径分派；Worker 租约中的命令行仍与 `ps` 一致，崩溃恢复可以识别 | 无 |
 | 第三方 Node 脚本按“随附的 Node”启动：发现的 Claude 与 Codex ACP 适配器（`[node, adapter]`）、DSH、工具包中 `launch: node` 的 MCP 与 CLI 工具 | node-compat 模式，已用 ACP 夹具验证 | `Module.runMain()` 不是文档化的公开接口；不支持 Node 命令行选项（`node -e`、`--inspect` 等），`harnesshub --version` 输出的是 HarnessHub 版本；只按扩展名识别脚本 |
 | `#!/usr/bin/env node` 形式的引擎依赖 PATH 中的 `node`；[发现逻辑](../../../packages/agents/src/engine/discovery.ts) 把 `nodeExecutable` 所在目录加入 PATH，期望那里有 `node` | 未处理：SEA 旁边没有名为 `node` 的文件 | 需要一个 `node` 垫片目录（POSIX 用符号链接指向 SEA；Windows 方案待定） |
-| 持久化的绝对路径：发现的引擎命令把 `<根目录>/scripts/launch-engine.mjs` 与可执行文件路径写进数据库，根目录按构建区分 | 未处理：升级后旧登记指向旧根目录，会运行占位文件并失败 | 持久化符号化的启动器引用；现状中 `dist/` 移动也有同样问题 |
+| 持久化的绝对路径：发现的引擎命令把 `<根目录>/packages/agents/assets/launch-engine.mjs` 与可执行文件路径写进数据库，根目录按构建区分 | 未处理：升级后旧登记指向旧根目录，会运行占位文件并失败 | 持久化符号化的启动器引用；现状中 `dist/` 移动也有同样问题 |
 | acpx 用 `import.meta.url` 找自身的 `package.json` 读版本号 | SEA 中找不到，按 acpx 自身逻辑退回未知版本 | 把 acpx 的 `package.json` 作为资源解包，或改为构建时注入版本 |
 | 解包目录的信任 | 每个用户独立目录、0700、属主检查；用户命令启动时校验 SHA-256；子进程只核对标记 | 校验与执行之间仍有同用户的竞争窗口；Windows 依赖 `%LOCALAPPDATA%` 的默认 ACL，未单独设置 |
 | 签名 | macOS 只做了 ad-hoc 签名；Windows 注入后 node.exe 原有的 Authenticode 签名失效 | 发布需要 Developer ID 签名与公证（含解包出的钥匙串辅助程序）及 Authenticode，签名后重跑端到端检查（[10 第 4.3 节](10-engineering.md#43-发布流水线)） |

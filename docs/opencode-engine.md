@@ -10,7 +10,7 @@
 
 ## 版本、配置与隔离
 
-[启动脚本](../scripts/launch-opencode-acp.mjs)面向本机 OpenCode `1.1.21`，复用已安装的 `@opencode-ai/plugin 1.1.21` 依赖。配置能力由该二进制内嵌源码与本地 SDK 类型核对：
+[启动脚本](../packages/agents/assets/launch-opencode-acp.mjs)面向本机 OpenCode `1.1.21`，复用已安装的 `@opencode-ai/plugin 1.1.21` 依赖。配置能力由该二进制内嵌源码与本地 SDK 类型核对：
 
 - `OPENCODE_CONFIG_CONTENT` 支持进程级配置；`model`、`small_model`、`enabled_providers` 和 `provider.models` 可以独立设置。
 - `@ai-sdk/openai-compatible` 已内置，不需要安装新的 Provider 包。

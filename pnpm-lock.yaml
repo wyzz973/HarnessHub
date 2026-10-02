@@ -12,10 +12,6 @@ patchedDependencies:
 importers:
 
   .:
-    dependencies:
-      cross-spawn:
-        specifier: 7.0.6
-        version: 7.0.6
     devDependencies:
       '@agentclientprotocol/sdk':
         specifier: 1.4.0
@@ -47,9 +43,6 @@ importers:
       '@harnesshub/store':
         specifier: workspace:*
         version: link:packages/store
-      '@types/cross-spawn':
-        specifier: 6.0.6
-        version: 6.0.6
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -110,6 +103,9 @@ importers:
       ajv:
         specifier: 8.20.0
         version: 8.20.0
+      cross-spawn:
+        specifier: 7.0.6
+        version: 7.0.6
       yaml:
         specifier: 2.9.0
         version: 2.9.0
@@ -1653,9 +1649,6 @@ packages:
 
   '@tailwindcss/postcss@4.3.3':
     resolution: {integrity: sha512-JTSZZGQi1AyKirbLN3azmjVzef92tcX7h+iSqPdaeStyFpGpDlKvvpxeOE8njhbUanbRwr3z8DyzhICWnMtQeg==}
-
-  '@types/cross-spawn@6.0.6':
-    resolution: {integrity: sha512-fXRhhUkG4H3TQk5dBhQ7m/JDdSNHKwR2BBia62lhwEIq9xGiQKLxd6LymNhn47SjXhsUEPmxi+PKw2OkW4LLjA==}
 
   '@types/debug@4.1.13':
     resolution: {integrity: sha512-KSVgmQmzMwPlmtljOomayoR89W4FynCAi3E8PPs7vmDVPe84hT+vGPKkJfThkmXs0x0jAaa9U8uW8bbfyS2fWw==}
@@ -4363,10 +4356,6 @@ snapshots:
       '@tailwindcss/oxide': 4.3.3
       postcss: 8.5.28
       tailwindcss: 4.3.3
-
-  '@types/cross-spawn@6.0.6':
-    dependencies:
-      '@types/node': 24.13.3
 
   '@types/debug@4.1.13':
     dependencies:

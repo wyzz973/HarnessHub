@@ -64,8 +64,8 @@ const ROLES = new Map([
     () => import("../../packages/agents/dist/src/tool-command/command-mcp.js"),
   ],
   [
-    "scripts/launch-engine.mjs",
-    () => import("../../scripts/launch-engine.mjs"),
+    "packages/agents/assets/launch-engine.mjs",
+    () => import("../../packages/agents/assets/launch-engine.mjs"),
   ],
   // Linux process-table scanner, started with process.execPath during Worker cleanup.
   [

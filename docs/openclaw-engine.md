@@ -1,6 +1,6 @@
 # OpenClaw ACP 接入
 
-HarnessHub 通过 [OpenClaw launcher](../scripts/launch-openclaw-acp.mjs)连接已经运行的本机 OpenClaw Gateway。launcher 只启动 stdio ACP Bridge；模型与工具由原 OpenClaw Gateway 提供，已有登录和配置继续使用文件路径引用。它不启动、重启或修改用户的 Gateway。
+HarnessHub 通过 [OpenClaw launcher](../packages/agents/assets/launch-openclaw-acp.mjs)连接已经运行的本机 OpenClaw Gateway。launcher 只启动 stdio ACP Bridge；模型与工具由原 OpenClaw Gateway 提供，已有登录和配置继续使用文件路径引用。它不启动、重启或修改用户的 Gateway。
 
 ## 为什么需要 launcher
 

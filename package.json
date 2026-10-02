@@ -40,9 +40,6 @@
     "check:spdx": "node tools/check-spdx.mjs",
     "check:labels": "node tools/check-labels.mjs"
   },
-  "dependencies": {
-    "cross-spawn": "7.0.6"
-  },
   "devDependencies": {
     "@agentclientprotocol/sdk": "1.4.0",
     "@harnesshub/agents": "workspace:*",
@@ -54,7 +51,6 @@
     "@harnesshub/runtime": "workspace:*",
     "@harnesshub/secrets": "workspace:*",
     "@harnesshub/store": "workspace:*",
-    "@types/cross-spawn": "6.0.6",
     "harnesshub": "workspace:*",
     "@types/node": "24.13.3",
     "acpx": "0.13.2",

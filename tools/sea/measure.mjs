@@ -369,7 +369,7 @@ async function endToEnd(binary, build) {
       const result = await capture(
         binary,
         [
-          path.join(root, "scripts", "launch-engine.mjs"),
+          path.join(root, "packages", "agents", "assets", "launch-engine.mjs"),
           "HH_SEA_LAUNCH=launched",
           "--",
           process.execPath,

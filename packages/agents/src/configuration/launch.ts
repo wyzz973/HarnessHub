@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 import path from "node:path";
-import { repositoryScript } from "../repository.js";
+import { assetPath } from "../assets.js";
 import { HubError } from "@harnesshub/core/errors";
 import { existsSync } from "node:fs";
 
-/** This exact repository-owned wrapper is the only script whose env arguments are unpacked. */
-export const portableLauncher = repositoryScript("launch-engine.mjs");
+/** This exact package-owned wrapper is the only script whose env arguments are unpacked. */
+export const portableLauncher = assetPath("launch-engine.mjs");
 
 /** Convert our portable argv environment (or existing simple POSIX env recipe) into Worker-owned values. */
 export function unwrapEnvironment(command: readonly string[]): {
@@ -36,7 +36,7 @@ export function unwrapEnvironment(command: readonly string[]): {
   return result;
 }
 
-/** Route Windows scripts through the repository launcher while leaving argv (including a CLI prompt slot) separate. */
+/** Route Windows scripts through the package launcher while leaving argv (including a CLI prompt slot) separate. */
 export function portableCommand(
   command: readonly string[],
   platform: NodeJS.Platform = process.platform,

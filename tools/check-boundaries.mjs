@@ -19,9 +19,9 @@
  *   legacy module the imported file came from, and only when the package that
  *   the importing file moves to (LEGACY_DESTINATIONS) may depend on it.
  * - Relative imports and `new URL(..., import.meta.url)` inside a package or
- *   application must stay inside it, except for an unexpired URL_EXCEPTIONS
- *   entry. A URL resolves at run time from the compiled file
- *   (`dist/src/...`), so it is checked from there.
+ *   application must stay inside it, without exceptions. A URL resolves at
+ *   run time from the compiled file (`dist/src/...`), so it is checked from
+ *   there.
  * - Inside the daemon (and the src/ files that move to it), only worker/ may
  *   import @harnesshub/drivers.
  * - node:sqlite belongs in the storage module of @harnesshub/store. Inside
@@ -217,22 +217,6 @@ export const CHILD_PROCESS_EXCEPTIONS = [
  * exception and without expiry; OSS-010 F08 narrows it to the launcher itself.
  */
 export const PROCESS_LAUNCHERS = [{ package: "runtime", path: "process/" }];
-
-/**
- * Temporary exceptions to "new URL(..., import.meta.url) stays inside its
- * package": the one file allowed to resolve a path outside its package, which
- * may be nonliteral, its owner and the TODO.md task whose completion ends it.
- * agents' repository.ts locates the runtime assets that stay in scripts/ during
- * OSS-004 (ADR 0017 decision 6, V8).
- */
-export const URL_EXCEPTIONS = [
-  {
-    package: "agents",
-    path: "repository.ts",
-    owner: "OSS-004",
-    expiresWith: "OSS-013",
-  },
-];
 
 /** Inside the daemon, only the Worker loads drivers (02 section 8, 13 section 3). */
 const DRIVER_LOADER = "worker/";
@@ -591,11 +575,6 @@ export function checkSource(
       inside(where.container, resolve(dirname(compiled), first.text))
     )
       return;
-    const exception = exceptionFor(URL_EXCEPTIONS);
-    if (exception) {
-      exceptionHolds(node, "new URL", exception, first?.getText() ?? "");
-      return;
-    }
     if (!literal)
       report(
         node,

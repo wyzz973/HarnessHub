@@ -7,10 +7,7 @@ import { fileURLToPath } from "node:url";
 import { startHub } from "@harnesshub/daemon/main";
 import { SESSION_WORKSPACE_PLACEHOLDER } from "@harnesshub/agents/tool-packages/index";
 import { prepareConfiguration } from "@harnesshub/agents/configuration/prepare";
-import {
-  COMMAND_MCP_ENTRY,
-  LEGACY_COMMAND_MCP_ENTRY,
-} from "@harnesshub/agents/tool-command/entry";
+import { COMMAND_MCP_ENTRY } from "@harnesshub/agents/tool-command/entry";
 import type { RunId, SessionId } from "@harnesshub/core/types";
 import type { EngineMcpServer } from "@harnesshub/core/engine-configuration";
 import {
@@ -18,6 +15,14 @@ import {
   substituteSessionWorkspace,
 } from "../fixtures/tool-pack-mcp-client.js";
 import { temporaryDirectory } from "../support/temporary.js";
+
+/** Where this checkout compiled the command MCP entry before OSS-004 step 7. */
+const LEGACY_COMMAND_MCP_ENTRY = fileURLToPath(
+  new URL(
+    "../../../dist/src/drivers/tool-command/command-mcp.js",
+    import.meta.url,
+  ),
+);
 
 void test(
   "one-click Tool Pack apply publishes a new engine revision and exposes allow-listed CLI through MCP in the Session workspace",

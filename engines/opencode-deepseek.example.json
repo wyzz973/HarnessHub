@@ -3,7 +3,7 @@
   "driver": "acp",
   "command": [
     "/absolute/path/to/node24",
-    "/absolute/path/to/HarnessHub/scripts/launch-opencode-acp.mjs",
+    "/absolute/path/to/HarnessHub/packages/agents/assets/launch-opencode-acp.mjs",
     "/absolute/path/to/installed/opencode-1.1.21",
     "/absolute/path/to/existing/.dsh/settings.yaml",
     "/absolute/path/to/existing/.dsh/.credentials.yaml",

@@ -46,7 +46,7 @@ const ROLE_ENTRIES = [
   "packages/daemon/dist/src/main.js",
   "packages/daemon/dist/src/worker/main.js",
   "packages/agents/dist/src/tool-command/command-mcp.js",
-  "scripts/launch-engine.mjs",
+  "packages/agents/assets/launch-engine.mjs",
   "packages/runtime/dist/src/process/proc-scan-main.js",
 ];
 /**
@@ -213,10 +213,17 @@ export async function buildSea({ out = path.join(ROOT, "dist", "sea") } = {}) {
       },
     ],
     [
-      "scripts/native-mcp/pi-extension.mjs",
+      "packages/agents/assets/native-mcp/pi-extension.mjs",
       {
         bytes: readFileSync(
-          path.join(ROOT, "scripts", "native-mcp", "pi-extension.mjs"),
+          path.join(
+            ROOT,
+            "packages",
+            "agents",
+            "assets",
+            "native-mcp",
+            "pi-extension.mjs",
+          ),
         ),
         executable: false,
       },
