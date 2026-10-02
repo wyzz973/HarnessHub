@@ -23,7 +23,7 @@ test("the test environment keeps system variables and opt-in switches only", () 
       GITHUB_PERSONAL_ACCESS_TOKEN: "developer-token",
       NODE_OPTIONS: "--require evil.js",
       npm_config_registry: "https://registry.example",
-      HARNESSHUB_TEST_NATIVE_MCP: "1",
+      HARNESSHUB_TEST_EXAMPLE: "1",
       HARNESSHUB_TEST_INVENTORY_DIR: "/ci/inventory",
       harnesshub_test_inventory_dir: "/ci/inventory",
       HOME: "/Users/dev",
@@ -35,7 +35,7 @@ test("the test environment keeps system variables and opt-in switches only", () 
   );
   assert.deepEqual(Object.keys(env).sort(), [
     "APPDATA",
-    "HARNESSHUB_TEST_NATIVE_MCP",
+    "HARNESSHUB_TEST_EXAMPLE",
     "HARNESSHUB_TEST_SYSTEM_HOME",
     "HOME",
     "LANG",
