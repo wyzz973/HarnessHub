@@ -51,7 +51,7 @@ reply = client.chat.completions.create(
 print(reply.choices[0].message.content)
 ```
 
-Anthropic 客户端使用不带 `/v1` 的基址：`ANTHROPIC_BASE_URL=http://127.0.0.1:3180`，`ANTHROPIC_API_KEY` 设为 Gateway Key；Gemini 客户端同样使用 `http://127.0.0.1:3180` 为基址。`hh status` 打印这些地址。网关只接受本机回环连接，浏览器页面（带 `Origin`）的请求被拒绝。
+Anthropic 客户端使用不带 `/v1` 的基址：`ANTHROPIC_BASE_URL=http://127.0.0.1:3180`，`ANTHROPIC_API_KEY` 设为 Gateway Key；Gemini 客户端同样使用 `http://127.0.0.1:3180` 为基址。`hh status` 打印这些地址。网关默认只接受本机回环连接，浏览器页面（带 `Origin`）的请求被拒绝；要让局域网中的其他机器使用，见 [局域网共享](model-gateway.md#局域网共享)（`hh gateway share on` 与 `hh key create --lan`）。
 
 ## 4. 查看用量
 

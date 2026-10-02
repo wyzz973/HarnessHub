@@ -202,7 +202,7 @@ Session 的 Run 经守护进程端口上的共享网关使用模型（03 第 10 
 ### 鉴权与拒绝
 
 - Gateway Key 可放在 `Authorization: Bearer`、`x-api-key`、`x-goog-api-key`，Gemini 路径还接受 `?key=`。同一请求中取值不同返回 401。Key 用 `parseGatewayKey` 解析，按 `keyId` 取记录，作用域字母须与记录一致，再用 `gatewayKeyMatches` 常数时间比较；已吊销返回 401 `key_revoked`，已过期返回 401 `key_expired`，其余为 401 `invalid_key`。错误消息从不回显 Key。
-- 非回环来源地址返回 403 `source_not_allowed`；带 `Origin` 头，或 `Host` 不是回环名称（`localhost`、`*.localhost`、`127.x.x.x`、`[::1]`）返回 403 `origin_forbidden`；未知路径 404 `route_not_found`，路径无法解码 400 `route_invalid`；请求的模型不在 `modelAllow` 内 403 `model_not_allowed`。
+- 回环监听器上非回环来源地址返回 403 `source_not_allowed`（局域网来源只能经局域网监听器，见下文“局域网共享”）；带 `Origin` 头（任何源，网关的客户端都不是浏览器）、`Sec-Fetch-Site: cross-site`，或 `Host` 不是回环名称（`localhost`、`*.localhost`、`127.x.x.x`、`[::1]`）也不是 `publicBaseUrl` 的主机时返回 403 `origin_forbidden`；未知路径 404 `route_not_found`，路径无法解码 400 `route_invalid`；请求的模型不在 `modelAllow` 内 403 `model_not_allowed`。
 - 所有拒绝都使用该路径所属协议的错误格式并带 `x-hh-error-source: gateway`，同时提交 `rejected: true`、`rejectReason` 的账本记录；Key 有效（含已吊销、已过期）时记录 `keyId`。同一 Key（无 Key 归为一类）与同一原因每分钟最多 20 条明细，其余计数，在该组合下一次被拒绝时或 `close()` 时写成一条汇总记录。
 - 鉴权通过后调用 `touchGatewayKey`，同一 Key 每分钟最多一次；失败只写日志。
 - **额度**（`GatewayKeyRecord.quota`，[quota.ts](../packages/gateway/src/quota.ts)）在白名单之后、转发之前检查。`tokensPerDay`（五项 token 之和，按 UTC 日）与 `costPerMonthUsd`（已知成本之和，按 UTC 自然月）比较已提交的账本：用 `aggregateUsage` 按 `keyId` 读取，每个 Key 缓存 10 秒，期间本网关提交的调用直接累加。达到阈值之前开始的调用照常完成，所以跨过阈值的那一次会完成，之后的调用被拒绝；同一 Key 并发的调用都按同一合计放行。`requestsPerMinute` 是令牌桶（容量与每分钟补充量都是该值），硬限制；只有通过用量检查的调用才取令牌。超额返回 429 `quota_exceeded`，`retry-after` 指向窗口重置的时刻（不截断：日额度到 UTC 零点，月额度到下月 1 日，请求数到下一个令牌），Gemini 的错误体另带 `RetryInfo`；拒绝写入账本（`rejected: true`），按 Key 与原因节流。账本读失败时返回 503 `store_unavailable`。
@@ -215,7 +215,7 @@ Session 的 Run 经守护进程端口上的共享网关使用模型（03 第 10 
 - 每个启用的 Credential 是一个候选。provider 声明了与入站相同的端点、不是 `translateOnly`、Credential 对该端点有效时直通；否则转换到 provider 的 Chat 端点；没有 Chat 端点时依次转换到它的 Anthropic、Responses 或 Gemini 端点。对 provider 的任何端点都无效的 Credential 被跳过；没有任何候选时返回 400 `unsupported_route`，消息列出被跳过的原因。
 - 端点基址是该厂商官方 SDK 使用的基址，这是对 `ProviderConfig.endpoints` 注释中“不含操作路径”的明确约定，存储的基址校验按同一约定执行：Chat 与 Responses 含版本（OpenAI SDK 的 `baseURL`，如 `https://api.openai.com/v1`，拼接 `/chat/completions`、`/responses`）；Anthropic 不含版本（`ANTHROPIC_BASE_URL` 形式，如 `https://api.deepseek.com/anthropic`，拼接 `/v1/messages`）；Gemini 不含版本（`@google/genai` 的 `baseUrl`，拼接客户端所用的 `v1beta`、`v1` 或 `v1alpha`，再接 `/models/{wire}:{method}`，SSE 时带 `alt=sse`）。基址末尾的斜杠不影响结果。
 - `GET /v1/models`、`GET /v1/models/{ref}`（`{ref}` 可含 `/`）与 `GET /v1beta/models` 只列出 Key 允许、且在 provider `expose` 中的模型，以及 Key 允许的路由组。每项含 `id`、`owned_by`、`context_window`、`max_output_tokens`、`reasoning`、`input_modalities`（已知时）与 `native_endpoints`（`translateOnly` 时为空，路由组没有该字段）；路由组取成员中最小的窗口与输出上限，成员都已知时取推理与模态的交集。列表与计数不访问上游，也不写账本。
-- `count_tokens` 与 Gemini `:countTokens` 返回本地估算，响应头带 `x-hh-token-count: estimated`。
+- Anthropic `count_tokens`（[count.ts](../packages/gateway/src/count.ts)）按调用的规则解析模型（`session:` Key 的别名指向 Run 的目标，模型须在 `modelAllow` 内），取第一个直通 Anthropic 端点、熔断未打开的候选（路由组按配置顺序，不推进轮换），把 `model` 改写为 wire 名、换上该 provider 的 Credential 后转发到 `{anthropic 基址}/v1/messages/count_tokens`，占用该 Credential 的一个并发位，整个往返受上游响应头时限约束；返回上游的 JSON，响应头 `x-hh-token-count: upstream`（上游自己是估算时，例如级联的 HarnessHub，保留 `estimated`）。没有这样的候选、模型不允许、Credential 无法解析、连接失败、非 2xx 或答复中没有非负整数 `input_tokens` 时，返回本地估算，响应头 `x-hh-token-count: estimated`，原因以 `gateway.count.fallback` 写日志（不含请求体与 Key）。Gemini `:countTokens` 总是本地估算。计数不写账本。
 
 ### 直通与转换
 
@@ -249,6 +249,27 @@ Session 的 Run 经守护进程端口上的共享网关使用模型（03 第 10 
 
 **先提交后发布**：流式响应的终止事件（`[DONE]`、`response.completed` 或 `response.incomplete`、`message_stop`、带结束原因的 Gemini 块及其后的内容、数组的 `]`）与非流式响应体在 `appendModelCall` 成功之后才写出。提交失败时，尚未写出响应头则返回 503 `evidence_unavailable`，否则在流内写出该错误且不写终止事件。每个调用至多追加一条记录。
 
+### 局域网共享
+
+守护进程默认只在回环地址监听。开启局域网共享后，它另外在声明的地址上开一个局域网监听器（[lan-share.ts](../packages/daemon/src/lan-share.ts)），只把模型协议路径交给网关的 `lan` 入口；其他路径（`/api/v1`、`/v1` 下的旧管理接口、健康检查、`/openapi.json`、控制台）在它上面都不存在，返回 404 `route_not_found`。
+
+- **设置**：`{lan: {enabled, host, port, names}, publicBaseUrl}`，由 [sharing.ts](../packages/gateway/src/sharing.ts) 的 `resolveGatewaySharing` 解析（默认关闭；开启时 `host` 必填，必须是本机 IP，`0.0.0.0` 或 `::` 表示全部地址，此时需要 `names` 或 `publicBaseUrl`；`port` 缺省为守护进程端口，0 表示由系统选择；`names` 是对端使用的其他主机名，最多 20 个；`publicBaseUrl` 是反向代理后的对外地址，不含凭据、查询与片段）。设置保存在 `<dataDir>/gateway-sharing.json`（`schemaVersion: 1`，原子替换），由 `GET`、`PUT /api/v1/gateway/share` 与 `hh gateway share status|on|off` 读写；文件无效时守护进程以 `INVALID_CONFIG` 拒绝启动。
+- **生效**：`PUT` 先绑定新地址，再写文件，最后关闭旧监听器；绑定失败返回 409 `GATEWAY_SHARE_LISTEN_FAILED`，设置不变。新旧地址重叠时先关闭再开启。关闭后在途请求继续到结束，新请求被拒绝。启动时已开启的设置在守护进程自己的监听器绑定之后才监听；此时绑定失败不阻止启动，原因写入 `gateway.lan.listen_failed` 日志并在状态的 `error` 中显示，仍可以修改或关闭共享。守护进程关闭时先关闭网关（中止在途调用），再关闭局域网监听器。
+- **Key**：局域网监听器上的每个请求都必须带 `allowLan: true` 的 `client:` Key（`hh key create --lan`，`POST /api/v1/gateway-keys` 的 `allowLan`），不论对端地址；其他 Key 返回 403 `source_not_allowed`，共享关闭时（监听器正在关闭）所有请求也是如此。`allowLan` 的 Key 必须有过期时间。`allowLan` 只能出现在 `client` 作用域上（`isGatewayKeyRecord` 校验）。
+- **Host 与 Origin**：局域网监听器接受的 Host 是 `host:端口`（`host` 不是全部地址时）、每个 `names` 加端口，以及 `publicBaseUrl` 的主机；回环监听器接受回环名称与 `publicBaseUrl` 的主机。两个监听器都拒绝任何带 `Origin` 的请求（包括它们自己的源）与 `Sec-Fetch-Site: cross-site`：网关接线的客户端都不是浏览器，接受浏览器源只会扩大攻击面；真有网页客户端需要时，再以默认关闭的单独开关加入。
+- **状态**：`listening`、实际绑定的 `boundPort`，`urls` 是对端使用的基址（每个声明的地址或名称一个，再加 `publicBaseUrl`）。
+
+局域网监听器使用明文 HTTP，Key 以明文传输；只在可信网络中使用，或放在 TLS 反向代理之后。
+
+### 另一台 HarnessHub 作为上游
+
+预设 `harnesshub-remote`（`relay`，Bearer 认证，四种协议的端点都在同一个基址下）把另一台开启了局域网共享的 HarnessHub 当作 provider：基址用对方 `hh gateway share status` 给出的地址（`hh provider add <id> --preset harnesshub-remote --base <URL>`，`--base` 把预设的每个端点路径接到该基址之后，显式给出的端点优先），Credential 是对方签发的 `--lan` Key。
+
+- 四种入站协议都直通到对方的同名端点，只改写 `model`，所以整条链路最多转换一次（在对方，按对方的 provider 决定）。
+- 对方的 Model Ref 成为本机的模型名：对方的 `provider/model` 在本机是 `<本 provider id>/provider/model`，对方的路由组是 `<id>/group/<组名>`，wire 名就是对方的 Model Ref。Gemini 路径中的 `/` 原样保留，对方按最后一个 `:` 拆分。
+- 模型列表由 `POST /api/v1/providers/{id}/models/refresh` 从对方的 `/v1/models` 读取（只包含对方 Key 允许的模型），同时读取 `context_window`、`max_output_tokens`、`reasoning` 与 `input_modalities`（OpenRouter 的 `context_length` 同样读取）。
+- 两端各记一条账本：本机记录 provider 为该 relay、`mode: passthrough`；对方记录它的 Key 与实际路由。用量取对方返回的数值；对方把推理 token 计入 Anthropic 的输出时，本机看到的也是合计。
+
 ### 资源上限
 
 | 项目 | 默认值 |
@@ -267,7 +288,7 @@ Session 的 Run 经守护进程端口上的共享网关使用模型（03 第 10 
 
 ### 验证
 
-[共享网关测试](../packages/gateway/test/shared-gateway.test.ts)、[路由测试](../packages/gateway/test/shared-gateway-routing.test.ts) 与 [协议矩阵测试](../packages/gateway/test/shared-gateway-matrix.test.ts) 与 [粘性与额度测试](../packages/gateway/test/shared-gateway-sticky.test.ts) 把处理函数挂在 `listen(0)` 的回环服务上，使用测试内的内存 `ModelPlaneStore` 与回环假上游，不访问真实模型：每种 Key 拒绝及其账本记录与节流、白名单、模型列表、四种协议的直通（请求体除 `model` 外逐字节相同、鉴权头替换、响应字节相同）、四种入站到 Chat 上游的转换、补丁、压缩请求、503 后转移成功、首字节后不重试、400 不重试、上下文超长不重试、`Retry-After` 超过上限直接返回与上限内等待、扣留期间的流内错误转移、扣留超时释放、熔断打开与半开、认证失败换 Credential、取消后不再尝试、`close()` 中止在途调用、提交前不写终止事件、提交失败时的 `evidence_unavailable`、响应头与空闲超时、转换路径的保活与 Gemini 响应头提交；以及 Chat 入站到仅有 Anthropic 端点的 provider（推理、工具、缓存读写 usage、同一 provider 的签名回传）、Claude Code 到仅有 Responses 或 Gemini 端点的 provider（图片、推理、工具、错误结果、Schema 限制）、Codex 到 Claude、交错的并行工具参数、各协议上游错误的格式映射，以及转换路由上的重试、转移、扣留与熔断。[编解码测试](../packages/gateway/test/matrix-codec.test.ts) 逐项覆盖编码器、解码器、结束原因映射与 `max_tokens` 解析。粘性与额度测试覆盖四种协议的会话键与轮次判断、每种粘性模式与缓存价值规则、熔断打开时粘性被打破、轮换策略下的 `auto` 粘性，以及三种额度（跨过阈值的调用完成、下一次被拒绝、窗口重置后恢复）。
+[共享网关测试](../packages/gateway/test/shared-gateway.test.ts)、[路由测试](../packages/gateway/test/shared-gateway-routing.test.ts) 与 [协议矩阵测试](../packages/gateway/test/shared-gateway-matrix.test.ts) 与 [粘性与额度测试](../packages/gateway/test/shared-gateway-sticky.test.ts) 把处理函数挂在 `listen(0)` 的回环服务上，使用测试内的内存 `ModelPlaneStore` 与回环假上游，不访问真实模型：每种 Key 拒绝及其账本记录与节流、白名单、模型列表、四种协议的直通（请求体除 `model` 外逐字节相同、鉴权头替换、响应字节相同）、四种入站到 Chat 上游的转换、补丁、压缩请求、503 后转移成功、首字节后不重试、400 不重试、上下文超长不重试、`Retry-After` 超过上限直接返回与上限内等待、扣留期间的流内错误转移、扣留超时释放、熔断打开与半开、认证失败换 Credential、取消后不再尝试、`close()` 中止在途调用、提交前不写终止事件、提交失败时的 `evidence_unavailable`、响应头与空闲超时、转换路径的保活与 Gemini 响应头提交；以及 Chat 入站到仅有 Anthropic 端点的 provider（推理、工具、缓存读写 usage、同一 provider 的签名回传）、Claude Code 到仅有 Responses 或 Gemini 端点的 provider（图片、推理、工具、错误结果、Schema 限制）、Codex 到 Claude、交错的并行工具参数、各协议上游错误的格式映射，以及转换路由上的重试、转移、扣留与熔断。[编解码测试](../packages/gateway/test/matrix-codec.test.ts) 逐项覆盖编码器、解码器、结束原因映射与 `max_tokens` 解析。[局域网测试](../packages/gateway/test/shared-gateway-lan.test.ts) 覆盖共享设置的解析与无效样例、局域网入口只接受 `allowLan` 的 `client:` Key（含模拟的非回环对端）、回环入口拒绝非回环对端、Host 规则、两个入口都拒绝浏览器 `Origin`、`publicBaseUrl`，以及 `count_tokens` 的转发与各种回退。[局域网集成测试](../tests/integration/gateway-lan-share.test.ts) 从正式守护进程验证共享的开启、持久化、重启、端口占用与启动时绑定失败、局域网监听器上不存在管理接口，以及两个守护进程的级联：A → B → 白名单模式的[假 provider](../tools/fake-provider/README.md)，四种协议直通、B 转换一次、实时模型列表与 `count_tokens` 转发。粘性与额度测试覆盖四种协议的会话键与轮次判断、每种粘性模式与缓存价值规则、熔断打开时粘性被打破、轮换策略下的 `auto` 粘性，以及三种额度（跨过阈值的调用完成、下一次被拒绝、窗口重置后恢复）。
 
 ```sh
 pnpm build
@@ -279,10 +300,12 @@ node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js
 - 协议矩阵以 Chat 为枢纽，而不是 03 第 3 节的 IR；编码器与解码器按 IR 的边来组织，以后可以替换枢纽。经过 Chat 枢纽会丢失 Chat 表达不了的区别，例如 Anthropic 的 `stop_sequence` 与 `end_turn` 都成为 `stop`。
 - 未迁移：声明了自己 openai-completions provider 的引擎与配置检查仍使用 Worker 内的 Session 网关；迁入模型平面后可删除 Worker 网关。统一模型的登记策略（遗留，见上文）待移除。
 - `/api/v1/model-calls` 的响应 schema 还没有 `generation`，该字段目前只在账本记录与网关内可见。
-- 尚未实现：粘性记录的持久化与账本中的粘性字段（目前写在 `patches[]`）；`route.breaker` 事件（目前只写日志）；provider 声明的请求体上限与 `onUnsupportedMedia`；上游 `count_tokens` 转发；局域网共享与 `publicBaseUrl`；`shape`、`conversationKey` 等账本扩展字段；入站转换器自身丢弃的提示字段尚未记入 `unmapped[]`；转换到 Gemini 的图片 URL 与 Anthropic 的结构化输出（beta）；拒绝记录的定时汇总（目前在下一次同类拒绝或 `close()` 时写出）。
+- 尚未实现：粘性记录的持久化与账本中的粘性字段（目前写在 `patches[]`）；`route.breaker` 事件（目前只写日志）；provider 声明的请求体上限与 `onUnsupportedMedia`；共享设置目前在数据目录的文件中，以后可能移到存储的设置表；局域网监听器的 TLS（07 第 5.4 节要求 TLS 或反向代理，目前只有明文 HTTP）、`allowLan` Key 的额度要求、按来源 IP 的失败锁定，以及 `hh status` 与控制台中的共享状态；`shape`、`conversationKey` 等账本扩展字段；入站转换器自身丢弃的提示字段尚未记入 `unmapped[]`；转换到 Gemini 的图片 URL 与 Anthropic 的结构化输出（beta）；拒绝记录的定时汇总（目前在下一次同类拒绝或 `close()` 时写出）。
 - 直通只给 Gemini 入站注入保活（它在响应头提交期限后已提交头部）；其他协议的直通流保持上游的原样字节，不插入保活。
 - 响应体上限按原始字节而不是解码后的内容计算；`least-used` 与 `latency` 只统计本次启动以来的调用；认证失败的熔断最长 10 分钟后进入半开，而不是一直保持到 Credential 更新。
 
 ## 变更记录
+
+- **2026-10-03：局域网共享与级联**（[ADR 0020](decisions/0021-gateway-lan-sharing.md)）。守护进程可以另开局域网监听器，只服务模型协议路径与 `allowLan` 的 `client:` Key；设置在 `<dataDir>/gateway-sharing.json`，经 `/api/v1/gateway/share` 与 `hh gateway share` 管理。`Host` 另外接受 `publicBaseUrl` 的主机；`Origin` 照旧一律拒绝，另外拒绝 `Sec-Fetch-Site: cross-site`。Anthropic `count_tokens` 在有直通 Anthropic 端点时转发上游（响应头 `x-hh-token-count: upstream`），此前总是本地估算。新预设 `harnesshub-remote`；OpenAI 格式的实时模型列表现在读取窗口、输出上限、推理与模态字段。
 
 - **2026-10-03：Session Run 使用共享网关**（[ADR 0019](decisions/0019-session-runs-on-the-shared-gateway.md)）。应用了统一模型的引擎不再在 Worker 内启动网关，调用经守护进程端口的共享网关进入 `model.call` 账本；Run 的 `model.call` 事件与用量来自账本。可接入网关、没有自己 provider 的引擎在存在 `group/default`（或 Run 指定的 `model`）时也走共享网关，此前它们总是使用自己的登录；没有目标时仍使用自己的账号。Run 可以指定 `model`，目标不存在时以 `MODEL_NOT_CONFIGURED` 失败。旧统一模型在启动时写成 provider `migrated` 与（缺失时的）`group/default`；迁移后的 provider 不再去除 `reasoning_effort`、`prediction`、`modalities`、`audio`、`web_search_options`（不在 `drop-fields` 闭集内）。只在存在旧统一模型来源时，统一模型才覆盖引擎登记、停用无法接入的引擎（遗留，将移除）。没有凭据的 provider 现在可以调用（不带鉴权头）。

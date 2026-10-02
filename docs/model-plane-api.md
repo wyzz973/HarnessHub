@@ -1,6 +1,6 @@
 # 模型平面 API 与 CLI
 
-守护进程在 `/api/v1` 下提供模型平面的管理接口：provider 与凭据、模型元数据与覆盖、路由组、`client:` Gateway Key、`model.call` 账本与用量（设计见 [06 接口与交互面](proposals/oss/06-interfaces.md) 与 [03 模型平面](proposals/oss/03-model-plane.md)）。[`@harnesshub/sdk`](../packages/sdk/README.md) 是它的类型化客户端，`hh provider|credential|model|catalog|key|group|usage|status` 经 SDK 调用它。现有的 `/v1/*` 管理路由暂时保持原样，之后再迁到 `/api/v1`；全局接线（`/agents`，`hh agents|wire|use|unwire`）见 [全局接线](global-wiring.md)。逐接口的输入、返回与错误见 [API 实现参考](api/reference.md)（`/api/v1` 各节）。
+守护进程在 `/api/v1` 下提供模型平面的管理接口：provider 与凭据、模型元数据与覆盖、路由组、`client:` Gateway Key、`model.call` 账本与用量（设计见 [06 接口与交互面](proposals/oss/06-interfaces.md) 与 [03 模型平面](proposals/oss/03-model-plane.md)）。[`@harnesshub/sdk`](../packages/sdk/README.md) 是它的类型化客户端，`hh provider|credential|model|catalog|key|group|usage|status|gateway` 经 SDK 调用它。现有的 `/v1/*` 管理路由暂时保持原样，之后再迁到 `/api/v1`；全局接线（`/agents`，`hh agents|wire|use|unwire`）见 [全局接线](global-wiring.md)。逐接口的输入、返回与错误见 [API 实现参考](api/reference.md)（`/api/v1` 各节）。
 
 ## 认证与错误
 
@@ -21,7 +21,8 @@
 | models | `GET /providers/{id}/models`；`GET /models/{ref}`；`GET`、`PUT`、`DELETE /models/{ref}/overrides` | 见[模型元数据](#模型元数据)。`{ref}` 中的斜杠编码为 `%2F`（模型名本身可含斜杠）；覆盖的 `{ref}` 也可以是 `provider/*` |
 | catalog | `GET /catalog`；`POST /catalog/refresh` | 使用中的 models.dev 目录（`source` 为内置快照 `bundled` 或刷新副本 `refreshed`）及其取得时间、上游提交与 SHA-256、provider 与模型数，刷新地址、是否后台刷新（关闭原因 `setting` 或 `offline`）、上次刷新与下次时间。`POST` 立即刷新，后台刷新关闭时也执行；失败为 502 `CATALOG_REFRESH_FAILED`，原目录继续使用 |
 | route-groups | `GET`、`POST /route-groups`；`GET`、`PATCH`、`DELETE /route-groups/{id}` | 成员必须是已存在 provider 的 Model Ref；被未吊销的 Key 允许时删除返回 409 |
-| gateway-keys | `GET`、`POST /gateway-keys`；`GET /gateway-keys/{id}`；`POST /gateway-keys/{id}/revoke` | 只签发 `client:` 作用域，`modelAllow` 必填；默认 90 天后过期，`expiresAt: null` 不过期。Key 文本只出现在创建响应中，列表与详情不含哈希 |
+| gateway-keys | `GET`、`POST /gateway-keys`；`GET /gateway-keys/{id}`；`POST /gateway-keys/{id}/revoke` | 只签发 `client:` 作用域，`modelAllow` 必填；默认 90 天后过期，`expiresAt: null` 不过期。`allowLan: true` 的 Key 可以在局域网共享监听器上使用，必须有过期时间。Key 文本只出现在创建响应中，列表与详情不含哈希 |
+| gateway/share | `GET`、`PUT /gateway/share` | 局域网共享的设置（`lan.enabled`、`lan.host`、`lan.port`、`lan.names`、`publicBaseUrl`）与监听器状态（`listening`、`boundPort`、`urls`、`error`）；`PUT` 替换整份设置，先绑定再保存，绑定失败 409 `GATEWAY_SHARE_LISTEN_FAILED`、设置无效 400 `GATEWAY_SHARE_INVALID`，均不改变现状。规则见 [局域网共享](model-gateway.md#局域网共享) |
 | model-calls | `GET /model-calls` | 新到旧，`limit` 1–200（默认 50），`cursor` 为上一页的 `nextCursor`；按 `from`（含）、`to`（不含）、`keyId`、`provider`、`model`、`sessionId` 过滤 |
 | usage | `GET /usage` | `groupBy` 为 `day`（UTC）、`provider`、`model`（默认）、`key` 或 `adapter`；状态码不低于 400 记为失败，成本只累加已知价格，未知价格计入 `unpricedCalls`，`missing` 用量按 0 计 |
 | agents | `GET /agents`、`GET /agents/{id}`；`POST /agents/{id}/wiring/plan`、`POST /agents/{id}/wiring`、`POST /agents/{id}/wiring/rotate`、`DELETE /agents/{id}/wiring` | 本机 Agent 的安装、接线与漂移；接线签发 `agent:` Key，Key 文本只写入 Agent 的配置文件。见 [全局接线](global-wiring.md) |
@@ -74,9 +75,18 @@ hh group add fast --member deepseek/deepseek-chat --strategy latency
 hh key create --name ci --allow deepseek/* --allow group/fast   # Key 只打印这一次
 hh usage --by provider --since 7d
 hh key revoke <keyId> --yes
+hh gateway share on --host 192.168.1.5        # 另在局域网地址上监听，端口默认同守护进程
+hh key create --name laptop --allow deepseek/* --lan   # 局域网上只接受这种 Key
+hh gateway share status
+hh gateway share off
+# 另一台机器：把这台 HarnessHub 当作 provider
+printf '%s' "$LAN_KEY" | hh provider add office --preset harnesshub-remote \
+  --base http://192.168.1.5:3180 --credential-from-stdin
+hh provider models office --refresh           # 模型名为 office/<provider>/<model>
 ```
 
 - `hh model set` 的键：`context`、`output`（token 数）、`reasoning`、`toolcall`（yes 或 no）、`modalities`（逗号分隔的 text、image、pdf、audio、video）、`price.input`、`price.output`、`price.cacheRead`、`price.cacheWrite`（美元每百万 token）。新值与已有覆盖合并，`键=` 删除一项，全部删除后覆盖被移除。
+- `hh gateway share on` 的 `--host`（本机 IP，`0.0.0.0` 表示全部地址，此时需要 `--name`）、`--port`、可重复的 `--name` 与 `--public-base-url` 未给出时沿用当前设置；`off` 保留地址只关闭监听器。`hh provider add --preset P --base URL` 把预设的每个端点路径接到 `URL` 之后，`--chat` 等显式端点优先。
 - 秘密从不作为参数：终端中隐藏输入，非交互时必须用 `--from-stdin`、`--from-env <变量>` 或 `--from-file <路径>`，否则以 2 退出。
 - `provider remove`、`credential remove`、`group remove` 与 `key revoke` 需要确认；`--yes` 跳过，非交互且没有 `--yes` 时以 4 退出且不做修改。stdin 不是终端、设置了 `CI` 或给出 `--non-interactive` 时为非交互。
 - 退出码（06 第 5 节）：0 成功；1 内部错误；2 用法错误、输入无效或名称不存在；3 守护进程不可达或数据目录中没有令牌；4 需要确认；5 冲突（409、412、422）；6 认证失败；7 达到上限或未就绪（429、503）；130 中断。

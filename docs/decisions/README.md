@@ -24,6 +24,7 @@ ADR 记录重要且未来可能重新讨论的决定。适用范围见 [文档�
 - [0018：编号迁移、模型平面存储与托管秘密](0018-schema-migrations-and-managed-secrets.md)（proposed）
 - [0019：Session Run 使用共享网关](0019-session-runs-on-the-shared-gateway.md)（proposed）
 - [0020：模型元数据在写入时补齐并记录来源](0020-model-metadata-enrichment.md)（proposed）
+- [0021：局域网共享与级联](0021-gateway-lan-sharing.md)（proposed）
 
 编号 0009、0011、0012、0015 是早期版本的 Windows 便携发行、上游网关适配、离线交付与预装工具包决定，随对应功能一起移除，原文保留在 `archive/competition` 分支；编号不再复用。
 

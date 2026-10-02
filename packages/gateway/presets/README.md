@@ -10,6 +10,7 @@
 - `catalog`：该厂商在 [models.dev 目录快照](../catalog/README.md) 中的 provider id（有中国站与国际站之分时与默认端点一致，如 `moonshotai-cn`、`siliconflow-cn`），用于补齐模型的窗口、输出上限与价格；必须在内置快照中存在（[model-metadata.test.ts](../../../tests/unit/model-metadata.test.ts) 检查）。本机服务不写。
 - `verified`：对照厂商官方文档核对端点基址与 Key 的发送方式的日期（`YYYY-MM-DD`），没有核对时写 `unverified`；`website`、`keysUrl` 与 `notes` 中的链接只是方便，不在核对范围内。修改端点时同步更新它。
 - 一个 provider 只有一种 Key 发送方式。厂商的不同端点要求不同方式时（如 Gemini 的原生端点用 `x-goog-api-key`、OpenAI 兼容端点用 Bearer），预设只收录与认证方式一致的端点，其余写在 `notes` 中。
+- `harnesshub-remote` 指向另一台开启了局域网共享的 HarnessHub，按本仓库的 [模型网关文档](../../../docs/model-gateway.md#另一台-harnesshub-作为上游) 核对；端点是占位的本机地址，用 `hh provider add --preset harnesshub-remote --base <对方地址>` 换成对方的地址。
 - `notes`：展示给用户的简短说明，例如国际站地址或需要修改端点的本机服务。预设格式还没有地域字段，有多个地域的厂商默认收录中国站，其他地域写在这里。
 
 添加预设只需新增一个文件，并在提交说明中给出核对所依据的官方文档链接。
