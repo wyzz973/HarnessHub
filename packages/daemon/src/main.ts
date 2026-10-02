@@ -85,6 +85,12 @@ import { observeStore } from "./logging/observed-store.js";
 import { createSessionLogReader } from "./logging/session-log-reader.js";
 import { createRedactor } from "./worker/diagnostics.js";
 import { ModelSessions, type ModelRouting } from "./model-sessions.js";
+import {
+  exportCommittedCalls,
+  resolveOtlpConfig,
+  startModelCallExport,
+  type ModelCallExporter,
+} from "./otlp-export.js";
 import type { Store } from "@harnesshub/core/ports";
 import type { EngineProfile } from "@harnesshub/core/types";
 
@@ -269,11 +275,17 @@ export async function startHub(options: {
    * off. Invalid values fail the start.
    */
   catalog?: { autoRefresh?: boolean; url?: string };
+  /**
+   * The `otlp` block: OTLP export of committed model calls, off when absent.
+   * Resolved by `resolveOtlpConfig`; an invalid block fails the start.
+   */
+  otlp?: unknown;
 }) {
   // HARNESSHUB_LOG_LEVEL is validated before anything starts; Workers inherit the value.
   const logLevel = parseLogLevel(process.env[LOG_LEVEL_ENVIRONMENT]);
   const gatewayLimits = resolveHandlerLimits(options.gatewayLimits);
   const catalogSettings = resolveCatalogSettings(options.catalog, process.env);
+  const otlpConfig = resolveOtlpConfig(options.otlp);
   // Helper programs (secrets, Windows ACLs) start through this process's
   // launcher; every Gateway of the process shares it, and `main` closes it.
   const launcher = sharedProcessLauncher();
@@ -415,6 +427,8 @@ export async function startHub(options: {
   let workflows: WorkflowService | undefined;
   let modelPlane: SqliteModelPlaneStore | undefined;
   let modelGateway: GatewayHandler | undefined;
+  /** OTLP export of committed model calls; only with an `otlp` block. */
+  let otlp: ModelCallExporter | undefined;
   /** The Runtime's store, where `model.call` Run events are committed. */
   let runStore: Store = store;
   let catalog: CatalogRefresher | undefined;
@@ -481,11 +495,24 @@ export async function startHub(options: {
       bundled: modelCatalog,
       log: gatewayLog,
     });
+    const plane = modelPlane;
+    otlp = otlpConfig
+      ? await startModelCallExport(otlpConfig, {
+          resolveSecret: (ref) => secrets.resolve(ref, environment),
+          serviceVersion: build.version,
+          providerPreset: async (id) => (await plane.getProvider(id))?.preset,
+          log: gatewayLog,
+        })
+      : undefined;
+    const exporter = otlp;
     // The shared model gateway on this listener (03-model-plane); it reads
     // providers, keys and the ledger from the store and resolves credentials
-    // per upstream attempt.
+    // per upstream attempt. With OTLP export, each committed ledger entry
+    // is also queued as a span.
     modelGateway = createGatewayHandler({
-      store: modelPlane,
+      store: exporter
+        ? exportCommittedCalls(modelPlane, (entry) => exporter.record(entry))
+        : modelPlane,
       resolveSecret: (ref) => secrets.resolve(ref, environment),
       clock: Date.now,
       limits: gatewayLimits,
@@ -677,8 +704,13 @@ export async function startHub(options: {
     });
     // Before the stores close (onClose): stop new model calls, abort the
     // upstream requests in flight and wait for their ledger entries.
+    // Then the spans of the last ledger entries are exported within the
+    // exporter's shutdown deadline.
     const gatewayToClose = modelGateway;
-    server.addHook("preClose", async () => gatewayToClose.close());
+    server.addHook("preClose", async () => {
+      await gatewayToClose.close();
+      await exporter?.shutdown();
+    });
     // Before the store closes: a running refresh may still update providers.
     const catalogToClose = catalog;
     server.addHook("preClose", async () => catalogToClose.close());
@@ -783,6 +815,7 @@ export async function startHub(options: {
     }
     await modelGateway?.close();
     await catalog?.close();
+    await otlp?.shutdown();
     workflowStore?.close();
     modelPlane?.close();
     store.close();
@@ -815,6 +848,7 @@ export async function main(argv: string[]): Promise<void> {
       "tool-package-root": { type: "string" },
       "harness-model-file": { type: "string" },
       "console-url": { type: "string" },
+      "otlp-config": { type: "string" },
       help: { type: "boolean" },
       version: { type: "boolean" },
       json: { type: "boolean" },
@@ -855,7 +889,7 @@ export async function main(argv: string[]): Promise<void> {
     process.exitCode = 2;
   } else if (values.help)
     console.log(
-      "HarnessHub: node dist/src/main.js [--engine opencode] [--host localhost] [--port 3180] [--config engines/local.yaml] [--data-dir ./data] [--config-dir DIR] [--secrets-backend auto|keychain|dpapi|file] [--tool-package-root DIR] [--harness-model-file FILE] [--console-url URL] | --version [--json]",
+      "HarnessHub: node dist/src/main.js [--engine opencode] [--host localhost] [--port 3180] [--config engines/local.yaml] [--data-dir ./data] [--config-dir DIR] [--secrets-backend auto|keychain|dpapi|file] [--tool-package-root DIR] [--harness-model-file FILE] [--console-url URL] [--otlp-config FILE] | --version [--json]",
     );
   else {
     const selectedEngine = values.engine ?? process.env.AGENT_ENGINE;
@@ -883,6 +917,14 @@ export async function main(argv: string[]): Promise<void> {
         ? { harnessModelFile: values["harness-model-file"] }
         : {}),
       ...(values["console-url"] ? { consoleUrl: values["console-url"] } : {}),
+      // The `otlp` block as a JSON file; startHub validates it.
+      ...(values["otlp-config"]
+        ? {
+            otlp: JSON.parse(
+              await readFile(values["otlp-config"], "utf8"),
+            ) as unknown,
+          }
+        : {}),
       logEcho: true,
     });
     console.log(
