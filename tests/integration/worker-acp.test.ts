@@ -14,10 +14,7 @@ import {
   ndJsonStream,
   PROTOCOL_VERSION,
 } from "@agentclientprotocol/sdk";
-import {
-  ProcessWorkerHost,
-  windowsHomeEnvironment,
-} from "@harnesshub/runtime/process/worker-host";
+import { ProcessWorkerHost } from "@harnesshub/runtime/process/worker-host";
 import type { ExecutionSpec, WorkerMessage } from "@harnesshub/core/ports";
 import type { RunId, SessionId } from "@harnesshub/core/types";
 
@@ -301,9 +298,18 @@ if (process.argv.includes("--acp-peer")) {
       const actual: unknown = JSON.parse(String(message[0]));
       const home = join(directory, "backend", "home");
       const temporary = join(directory, "backend", "tmp");
-      const windowsHome =
-        process.platform === "win32" ? windowsHomeEnvironment(home) : undefined;
-      assert.deepEqual(actual, {
+      assert.ok(typeof actual === "object" && actual !== null);
+      const { homeDrive, homePath, ...rest } = actual as Record<
+        string,
+        unknown
+      >;
+      // On Windows the two name the private home, not the stand-ins that libuv
+      // would copy (#36); elsewhere they are not inherited at all.
+      if (process.platform === "win32") {
+        assert.notEqual(homeDrive, "Z:");
+        assert.equal(`${String(homeDrive)}${String(homePath)}`, home);
+      } else assert.deepEqual([homeDrive, homePath], [null, null]);
+      assert.deepEqual(rest, {
         ambient: null,
         psModulePath: "fixture-module-path",
         windowsLocations: windowsLocationFixture,
@@ -311,8 +317,6 @@ if (process.argv.includes("--acp-peer")) {
         explicit: "explicit-fixture",
         home,
         userProfile: home,
-        homeDrive: windowsHome?.HOMEDRIVE ?? null,
-        homePath: windowsHome?.HOMEPATH ?? null,
         appData: join(home, "AppData", "Roaming"),
         localAppData: join(home, "AppData", "Local"),
         tmpdir: temporary,

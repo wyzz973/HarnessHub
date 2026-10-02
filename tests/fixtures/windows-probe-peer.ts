@@ -20,6 +20,10 @@ await writeFile(
     programFiles: process.env.ProgramFiles ?? null,
     programData: process.env.ProgramData ?? null,
     allUsersProfile: process.env.ALLUSERSPROFILE ?? null,
+    userProfile: process.env.USERPROFILE ?? null,
+    homeDrive: process.env.HOMEDRIVE ?? null,
+    homePath: process.env.HOMEPATH ?? null,
+    temp: process.env.TEMP ?? null,
   }),
 );
 for await (const line of createInterface({ input: process.stdin })) {

@@ -27,6 +27,7 @@ import {
   recoverWorkerLease,
   WorkerLeaseStore,
 } from "@harnesshub/runtime/process/leases";
+import { windowsHomeEnvironment } from "@harnesshub/core/environment";
 import type { ExecutionSpec } from "@harnesshub/core/ports";
 import type {
   RunId,
@@ -187,6 +188,16 @@ void test(
   async (t) => {
     const directory = await mkdtemp(join(tmpdir(), "hh-probe 中文 "));
     t.after(() => rm(directory, { recursive: true }));
+    // A gateway-routed engine is probed with the private paths that
+    // prepareConfiguration sets (#36); libuv must not replace them.
+    const home = join(directory, "state", "home");
+    const temporary = join(directory, "state", "tmp");
+    const privatePaths = {
+      USERPROFILE: home,
+      TEMP: temporary,
+      TMP: temporary,
+      ...windowsHomeEnvironment(home),
+    };
     for (const mode of ["respond", "silent"]) {
       const marker = join(directory, `${mode}.json`);
       const abort = new AbortController();
@@ -200,7 +211,7 @@ void test(
             marker,
             mode,
           ],
-          env: {},
+          env: privatePaths,
           instructionPrefix: "",
           mcpServers: [],
         },
@@ -226,6 +237,15 @@ void test(
           programData: process.env.ProgramData ?? null,
           allUsersProfile: process.env.ALLUSERSPROFILE ?? null,
         },
+      );
+      const seen = JSON.parse(written) as Record<string, unknown>;
+      assert.deepEqual(
+        [
+          seen.userProfile,
+          `${String(seen.homeDrive)}${String(seen.homePath)}`,
+          seen.temp,
+        ],
+        [home, home, temporary],
       );
       if (mode === "silent") abort.abort();
       const result = await probe;

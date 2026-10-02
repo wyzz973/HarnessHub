@@ -12,7 +12,10 @@ import type {
 } from "@harnesshub/core/engine-configuration";
 import { HARNESS_MODEL_ALIAS } from "@harnesshub/core/harness-model";
 import { HubError } from "@harnesshub/core/errors";
-import { WORKER_TREE_ENVIRONMENT } from "@harnesshub/core/environment";
+import {
+  WORKER_TREE_ENVIRONMENT,
+  windowsHomeEnvironment,
+} from "@harnesshub/core/environment";
 import type { ProcessLauncher } from "@harnesshub/core/process-launcher";
 import { resolveSecret } from "@harnesshub/secrets/secrets";
 import { portableCommand, unwrapEnvironment } from "./launch.js";
@@ -691,15 +694,20 @@ function isolateEnvironment(
 }
 
 /**
- * Point every home/config root at the Session-private home (the same paths the
- * Worker host creates), overriding launch templates that reference the user's
- * real home so native logins, keys and OAuth tokens there are never read.
+ * Point every home/config root and the temporary directory at the
+ * Session-private paths (the same paths the Worker host creates), overriding
+ * launch templates that reference the user's real home so native logins, keys
+ * and OAuth tokens there are never read. On Windows this includes HOMEDRIVE
+ * and HOMEPATH, which libuv would otherwise copy from the launching process
+ * (the configuration probe has no Worker in between).
  */
 async function privateHome(
   spec: ExecutionSpec,
   result: PreparedConfiguration,
 ): Promise<void> {
-  const home = path.join(path.resolve(spec.stateDir), "home");
+  const stateDir = path.resolve(spec.stateDir);
+  const home = path.join(stateDir, "home");
+  const temporary = path.join(stateDir, "tmp");
   const paths = {
     HOME: home,
     USERPROFILE: home,
@@ -709,10 +717,17 @@ async function privateHome(
     XDG_DATA_HOME: path.join(home, ".local", "share"),
     XDG_CACHE_HOME: path.join(home, ".cache"),
     XDG_STATE_HOME: path.join(home, ".local", "state"),
+    TMPDIR: temporary,
+    TEMP: temporary,
+    TMP: temporary,
   };
   for (const directory of new Set(Object.values(paths)))
     await mkdir(directory, { recursive: true, mode: 0o700 });
-  Object.assign(result.env, paths);
+  Object.assign(
+    result.env,
+    paths,
+    process.platform === "win32" ? windowsHomeEnvironment(home) : {},
+  );
   // A proxy inherited from the launch template must not intercept loopback
   // gateway traffic.
   const bypass = new Set(

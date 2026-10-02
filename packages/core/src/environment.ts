@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { HubError } from "./errors.js";
 
 /**
  * Ownership marker of one POSIX Session Worker's process tree.
@@ -52,3 +53,39 @@ export const WINDOWS_SYSTEM_ENVIRONMENT: readonly string[] = [
   // tools start it per command, and Gemini CLI twice (AST parser, command).
   "PSModulePath",
 ];
+
+/**
+ * `HOMEDRIVE` and `HOMEPATH` naming a Windows home directory, so that their
+ * concatenation is `home` (with `/` written as `\`). A drive path C:\a\home
+ * gives C: and \a\home; a UNC path \\server\share\home gives \\server\share
+ * (not a drive letter; `HOMESHARE` is not set) and \home; a \\?\ or \\.\
+ * path keeps its prefix and first component as the "drive".
+ *
+ * Every environment that points `USERPROFILE` at a private home must set
+ * both: when an explicit child environment lacks them, Node's libuv copies the
+ * launching process's values, which name the real profile.
+ *
+ * Throws `WORKER_PRIVATE_PATH_INVALID` for a path without a drive, share or
+ * device root (relative, drive-relative or rooted without a drive).
+ */
+export function windowsHomeEnvironment(home: string): {
+  HOMEDRIVE: string;
+  HOMEPATH: string;
+} {
+  const windows = home.replaceAll("/", "\\");
+  const root =
+    /^\\\\[?.]\\[^\\]+/.exec(windows) ??
+    /^\\\\[^\\]+\\[^\\]+/.exec(windows) ??
+    /^[A-Za-z]:(?=\\)/.exec(windows);
+  if (!root)
+    throw new HubError(
+      "WORKER_PRIVATE_PATH_INVALID",
+      "Private home is not an absolute Windows path with a drive, share or device root",
+      503,
+    );
+  const drive = root[0];
+  return {
+    HOMEDRIVE: drive,
+    HOMEPATH: windows.slice(drive.length) || "\\",
+  };
+}

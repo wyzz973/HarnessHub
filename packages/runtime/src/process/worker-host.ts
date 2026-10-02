@@ -2,12 +2,13 @@
 import {
   WINDOWS_SYSTEM_ENVIRONMENT,
   WORKER_TREE_ENVIRONMENT,
+  windowsHomeEnvironment,
 } from "@harnesshub/core/environment";
 import { configurationEnvironmentNames } from "@harnesshub/core/engine-configuration";
 import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { chmodSync, lstatSync, mkdirSync } from "node:fs";
-import { isAbsolute, join, resolve, win32 } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   WorkerLeaseStore,
@@ -49,33 +50,6 @@ function deferred<T>() {
   void result.promise.catch(() => undefined);
   return result;
 }
-/**
- * `HOMEDRIVE` and `HOMEPATH` naming a Windows home directory; their
- * concatenation is the normalized `home`. A drive path C:\a\home splits into
- * C: and \a\home, a UNC path \\server\share\home into \\server\share and
- * \home. Workers must set both: when an explicit environment lacks them, libuv
- * copies the launching process's values, which name the real profile next to
- * the private `USERPROFILE`. Throws `WORKER_PRIVATE_PATH_INVALID` for a path
- * without a drive or share root.
- */
-export function windowsHomeEnvironment(home: string): {
-  HOMEDRIVE: string;
-  HOMEPATH: string;
-} {
-  const normalized = win32.normalize(home);
-  const root = win32.parse(normalized).root;
-  if (root.length < 2 || !root.endsWith("\\"))
-    throw new HubError(
-      "WORKER_PRIVATE_PATH_INVALID",
-      "Worker private home is not an absolute Windows path with a drive or share",
-      503,
-    );
-  return {
-    HOMEDRIVE: root.slice(0, -1),
-    HOMEPATH: `\\${normalized.slice(root.length)}`,
-  };
-}
-
 interface ActiveRun {
   spec: ExecutionSpec;
   sink: (message: WorkerMessage) => Promise<void>;
