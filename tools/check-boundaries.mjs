@@ -96,6 +96,8 @@ export const FLAT_MODULES = { core: "domain" };
 export const LEGACY_ALIASES = {
   core: "domain",
   store: ["storage", "platform"],
+  // secrets.ts came from drivers/configuration; src/ keeps the drivers rules for it.
+  secrets: "drivers",
 };
 
 /**
@@ -107,6 +109,12 @@ export const CHILD_PROCESS_EXCEPTIONS = [
   {
     package: "store",
     path: "platform/",
+    owner: "OSS-010 F08",
+    expiresWith: "OSS-013",
+  },
+  {
+    package: "secrets",
+    path: "secrets.ts",
     owner: "OSS-010 F08",
     expiresWith: "OSS-013",
   },
