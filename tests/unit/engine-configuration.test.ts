@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { PROCESS_LAUNCHER } from "../support/process-launcher.js";
 import { startModelGateway } from "@harnesshub/gateway/gateway";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -738,7 +739,7 @@ void test(
     let ref: Awaited<ReturnType<typeof createSecret>> | undefined;
     t.after(async () => {
       try {
-        if (ref) await deleteSecret(ref);
+        if (ref) await deleteSecret(ref, PROCESS_LAUNCHER);
       } finally {
         if (useSystemHome) {
           if (home === undefined) delete process.env.HOME;
@@ -747,10 +748,13 @@ void test(
       }
     });
     if (useSystemHome) process.env.HOME = systemHome;
-    ref = await createSecret("HarnessHub owned synthetic key fixture");
+    ref = await createSecret(
+      "HarnessHub owned synthetic key fixture",
+      PROCESS_LAUNCHER,
+    );
     assert.equal(ref.kind, "keychain");
     assert.equal(
-      await resolveSecret(ref, {}),
+      await resolveSecret(ref, {}, PROCESS_LAUNCHER),
       "HarnessHub owned synthetic key fixture",
     );
   },

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { startHub } from "@harnesshub/daemon/main";
 import { SESSION_WORKSPACE_PLACEHOLDER } from "@harnesshub/agents/tool-packages/index";
 import { prepareConfiguration } from "@harnesshub/agents/configuration/prepare";
-import { COMMAND_MCP_ENTRY } from "@harnesshub/agents/tool-command/entry";
+import { COMMAND_MCP_ENTRY } from "@harnesshub/daemon/command-mcp-entry";
 import type { RunId, SessionId } from "@harnesshub/core/types";
 import type { EngineMcpServer } from "@harnesshub/core/engine-configuration";
 import {
@@ -219,6 +219,7 @@ void test(
         input: { text: "", timeoutMs: 1000 },
       },
       {},
+      { commandMcpEntry: COMMAND_MCP_ENTRY },
     );
     const server = prepared.mcpServers.find(
       (entry) => entry.name === "developer-cli-cli",

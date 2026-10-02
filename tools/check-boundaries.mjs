@@ -25,9 +25,9 @@
  * - Inside the daemon (and the src/ files that move to it), only worker/ may
  *   import @harnesshub/drivers.
  * - node:sqlite belongs in the storage module of @harnesshub/store. Inside
- *   packages, node:child_process belongs in PROCESS_LAUNCHERS (runtime's
- *   process/) and is otherwise allowed only by CHILD_PROCESS_EXCEPTIONS, each
- *   of which expires when its TODO.md task is ticked.
+ *   packages, node:child_process belongs only in PROCESS_LAUNCHERS (runtime's
+ *   process/, home of the ProcessLauncher implementation); every other
+ *   package takes an injected ProcessLauncher (OSS-010 F08).
  *
  * Exits non-zero for any violation and when no source file is found.
  */
@@ -51,7 +51,8 @@ const allowed = {
   gateway: ["gateway", "application", "domain"],
   engine: ["engine", "domain"],
   process: ["process", "domain"],
-  worker: ["worker", "drivers", "domain", "logging"],
+  // The Worker entry composes its process: it creates the process launcher.
+  worker: ["worker", "drivers", "domain", "logging", "process"],
   drivers: ["drivers", "domain", "platform"],
   storage: ["storage", "domain"],
   artifacts: ["artifacts", "domain", "platform"],
@@ -180,41 +181,9 @@ export function legacyDestination(legacyPath) {
 }
 
 /**
- * Temporary node:child_process exceptions inside packages (ADR 0017, decision
- * 4): the package and source path each covers, its owner, and the TODO.md task
- * whose completion ends it. Once that task is ticked the import fails again.
- */
-export const CHILD_PROCESS_EXCEPTIONS = [
-  {
-    package: "store",
-    path: "platform/",
-    owner: "OSS-010 F08",
-    expiresWith: "OSS-013",
-  },
-  {
-    package: "secrets",
-    path: "secrets.ts",
-    owner: "OSS-010 F08",
-    expiresWith: "OSS-013",
-  },
-  {
-    package: "drivers",
-    path: "cli/",
-    owner: "OSS-010 F08",
-    expiresWith: "OSS-013",
-  },
-  {
-    package: "agents",
-    path: "tool-command/command-mcp.ts",
-    owner: "OSS-010 F08",
-    expiresWith: "OSS-013",
-  },
-];
-
-/**
- * Where node:child_process belongs for good: runtime's process/, the home of
- * the ProcessLauncher implementation (02 section 8, 10 section 2). Not an
- * exception and without expiry; OSS-010 F08 narrows it to the launcher itself.
+ * Where node:child_process belongs: runtime's process/, the home of the
+ * ProcessLauncher implementation and of the Worker supervision it builds on
+ * (02 section 8, 10 section 2). There are no exceptions elsewhere.
  */
 export const PROCESS_LAUNCHERS = [{ package: "runtime", path: "process/" }];
 
@@ -298,17 +267,9 @@ function packageName(specifier) {
  * @param {string} filePath Absolute path of the file.
  * @param {string} contents Its source text.
  * @param {string} root Repository root.
- * @param {{completedTasks?: Set<string> | null}} [options] TODO.md tasks marked
- *   done, which end CHILD_PROCESS_EXCEPTIONS; null when unknown, in which case
- *   using an exception fails.
  * @returns {string[]} One message per violation, prefixed with the file and line.
  */
-export function checkSource(
-  filePath,
-  contents,
-  root,
-  { completedTasks = null } = {},
-) {
+export function checkSource(filePath, contents, root) {
   const file = ts.createSourceFile(
     filePath,
     contents,
@@ -516,41 +477,19 @@ export function checkSource(
     }
   };
 
-  /** The exception table entry covering this file, if any. */
-  const exceptionFor = (table) =>
-    table.find(
+  /** Inside packages node:child_process belongs only in PROCESS_LAUNCHERS. */
+  const inspectChildProcess = (node, specifier) => {
+    const home = PROCESS_LAUNCHERS.some(
       (entry) =>
         where.kind === "package" &&
         entry.package === where.name &&
         where.sourcePath?.startsWith(entry.path),
     );
-  /** Report why an exception does not apply now; returns whether it applies. */
-  const exceptionHolds = (node, kind, exception, specifier) => {
-    const scope = `${exception.package}/${exception.path}`;
-    if (completedTasks === null)
+    if (!home)
       report(
         node,
-        `the ${kind} exception for ${scope} ends with ${exception.expiresWith}; TODO.md is needed to check it: ${specifier}`,
+        `process creation belongs in runtime's process/; ${container} takes an injected ProcessLauncher: ${specifier}`,
       );
-    else if (completedTasks.has(exception.expiresWith))
-      report(
-        node,
-        `the ${kind} exception for ${scope} (owner ${exception.owner}) expired with ${exception.expiresWith}: ${specifier}`,
-      );
-    else return true;
-    return false;
-  };
-
-  /** Inside packages only an unexpired CHILD_PROCESS_EXCEPTIONS entry allows node:child_process. */
-  const inspectChildProcess = (node, specifier) => {
-    if (exceptionFor(PROCESS_LAUNCHERS)) return;
-    const exception = exceptionFor(CHILD_PROCESS_EXCEPTIONS);
-    if (!exception)
-      report(
-        node,
-        `process creation belongs in ProcessHost or Driver; ${container} has no child_process exception: ${specifier}`,
-      );
-    else exceptionHolds(node, "child_process", exception, specifier);
   };
 
   /** `new URL(x, import.meta.url)` in a package or application must name its own file. */
@@ -658,27 +597,6 @@ function sourceTrees(root) {
   return trees;
 }
 
-/**
- * Tasks ticked in TODO.md (`- [x] **OSS-013 ...`), or null without TODO.md.
- *
- * @param {string} root Repository root.
- * @returns {Set<string> | null}
- */
-export function completedTasks(root) {
-  let text;
-  try {
-    text = readFileSync(join(root, "TODO.md"), "utf8");
-  } catch (error) {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  }
-  return new Set(
-    [...text.matchAll(/^\s*- \[x\] \*\*([A-Z]+-\d+)\b/gm)].map(
-      (match) => match[1],
-    ),
-  );
-}
-
 /** Check a repository; a repository without source files and any violation are failures. */
 export function checkBoundaries(root) {
   const files = sourceTrees(root).flatMap(sourceFiles);
@@ -686,11 +604,10 @@ export function checkBoundaries(root) {
     throw new Error(
       "No source files found; module boundaries were not verified.",
     );
-  const options = { completedTasks: completedTasks(root) };
   return {
     count: files.length,
     failures: files.flatMap((file) =>
-      checkSource(file, readFileSync(file, "utf8"), root, options),
+      checkSource(file, readFileSync(file, "utf8"), root),
     ),
   };
 }

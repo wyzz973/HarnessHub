@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
-import { COMMAND_MCP_ENTRY } from "@harnesshub/agents/tool-command/entry";
+// Sets the process launcher for the Windows filesystem primitives used directly here.
+import "../support/process-launcher.js";
+import { COMMAND_MCP_ENTRY } from "@harnesshub/daemon/command-mcp-entry";
 import assert from "node:assert/strict";
 import {
   appendFile,

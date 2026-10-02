@@ -59,3 +59,27 @@ store 暂时包含与存储无关的 Windows 文件原语，命名与职责不�
 代价：资源没有类型检查，边界检查也不扫描 `assets/`（与原 `scripts/` 相同），它们只导入 Node 内建模块、`cross-spawn`、`yaml` 与同目录文件。F08 引入 `ProcessLauncher` 时重新评估是否改为编译代码。
 
 验证：集成测试在真实 Gateway 中登记一条用旧启动器路径的引擎命令，重启后读回，记录不变，Run 经 Worker 完成、启动器的环境赋值生效，安装证据记录新位置；去掉准备或安装检查中的映射时它失败。包内测试检查每个资源存在、旧路径映射与不映射的情况；Windows 上的 `.cmd` 与 PowerShell 启动由现有 Windows 启动测试经新位置执行。
+
+## 补充：子进程创建收口（F08，2026-10-02）
+
+决定 4 的期限条件在 OSS-013 之前达成，四处临时例外删除：
+
+1. **接口与实现**：`ProcessLauncher` 的类型在 [core/process-launcher.ts](../../packages/core/src/process-launcher.ts)，实现在 runtime 的 [process/launcher.ts](../../packages/runtime/src/process/launcher.ts)（`createProcessLauncher()` 与本进程的 `sharedProcessLauncher()`）。接口按实际调用点归纳：管道或忽略的标准流、超时与 `AbortSignal`、`maxBuffer`（超出时终止进程并报告）、Windows 上不显示窗口、不经 shell、必须显式给出的环境（只有写明 `"inherit"` 才继承）。`launch` 返回由调用方等待的句柄，`run` 运行到结束并收集有界输出。超时、中止与超出 `maxBuffer` 时发送调用方的终止信号（默认 SIGTERM），进程 2 秒后仍未退出则发 SIGKILL，因此忽略 SIGTERM 的进程不会越过期限；启动器的所有者关闭它时同样先 SIGTERM、2 秒后 SIGKILL，等待所有仍在运行的进程退出，此后拒绝启动。启动器只向它启动的进程发信号：进程留在启动方的进程组里（引擎与工具即 Worker 的组），Windows 上留在 Worker 的 Job Object 里，后代由它们和 F07 的回收负责。最初设计的 `processGroup` 选项没有使用者，已删除；它在 POSIX 上经 Node 的 `detached` 实现，实际建立新的会话，会让进程离开 Worker 的组。`windowsVerbatimArguments` 只允许用于 `cmd.exe`，否则 `launch` 报 `INVALID_PROCESS_LAUNCH`。
+   - 环境的例外：Windows 上 Node 的 libuv 会在显式环境缺少时从启动方复制一组系统变量（HOMEDRIVE、HOMEPATH、LOGONSERVER、PATH、SYSTEMDRIVE、SYSTEMROOT、TEMP、USERDOMAIN、USERNAME、USERPROFILE、WINDIR），因为许多 Windows 程序缺少它们无法启动。因此在 Windows 上不能依靠显式环境隐藏这些变量；目前所有调用点都使用 `"inherit"`。启动器测试用只存在于父进程的变量检查隔离，在 Windows 上只允许出现上述变量。
+   - 范围：acpx 自己启动 ACP 引擎，agents 的 `assets/` 中的启动器用 cross-spawn 启动它包装的引擎，二者都不经 `ProcessLauncher`；它们在 Worker 之内运行，与以前一样由 Worker 的进程组或 Job Object 以及 F07 对脱离进程组后代的回收监督。
+2. **注入**：每个进程入口（`startHub`、Worker、command MCP 入口、工具包命令）是本进程的组合根，使用同一个 `sharedProcessLauncher()`，并在停止进程时关闭它；同一进程中的多个 Gateway（测试中常见）共用它。
+   - drivers 的 CLI 驱动经构造参数取得，Worker 传入。
+   - secrets 经调用参数取得：`createSecret` 与 `deleteSecret` 必填，`resolveSecret` 可选，只有 Keychain 引用和 Windows 上的文件引用需要，缺少时报 `PROCESS_LAUNCHER_NOT_INJECTED`（500）；配置准备经 `PreparationHooks.processLauncher` 转交，与决定 3 的网关钩子同一做法。没有采用模块级设置，因为生产调用点只有三处，其中两处已有组合时注入的钩子，显式参数不引入隐藏状态。
+   - store 的 Windows 文件原语（ACL 辅助程序）采用模块级设置：组合根启动时调用一次 `usePlatformLauncher`，未设置时报 `PROCESS_LAUNCHER_NOT_INJECTED`，设置另一个启动器会抛出错误。它们位于 artifacts 与工具包存储的深层调用链，改为显式参数要改动十余个导出函数和约 80 处测试调用。
+   - command MCP 服务器：agents 按依赖图不能依赖 runtime，因此进程入口移到 daemon 的 `command-mcp-main.ts`，agents 只保留 `serveCommandMcp(launcher, onStop)`；`COMMAND_MCP_ENTRY` 改在 daemon 的 `command-mcp-entry.ts`。决定 7 随之扩展：已保存绑定中以前的两个入口（OSS-004 第 7 步之前的 `dist/src/drivers/tool-command/command-mcp.js` 与 F08 之前的 `packages/agents/dist/src/tool-command/command-mcp.js`）由配置准备换成 `PreparationHooks.commandMcpEntry`，缺少时报 `COMMAND_MCP_ENTRY_NOT_INJECTED`，记录不改写；SEA 的 command MCP 角色改为新入口。
+3. **边界检查**：`CHILD_PROCESS_EXCEPTIONS` 与读取 `TODO.md` 的到期机制删除（不再有使用者）；`node:child_process` 只允许在 runtime 的 `process/` 中使用，每个原例外位置保留拒绝样例。Worker 模块可以依赖 `process` 模块，以便创建本进程的启动器。决定 4 原计划把范围再收窄到启动器实现本身，这一步不做：`process/` 中的 Worker 宿主（带 IPC 通道的 fork）、Job 辅助程序、配置探测与进程表扫描是启动器所在的进程监督实现，重写它们会改动 F07 与 Windows Job 已验证的行为，而不减少可以启动进程的位置。
+4. **行为**：各调用点的超时时长、首个终止信号、输出上限与环境继承保持原值，环境继承现在显式写出（引擎、工具与两个辅助程序都继承）。变化如下：
+   - 超时或超出上限后 2 秒仍未退出的进程收到 SIGKILL，涉及 ACL 辅助程序（10 秒）与 command MCP 工具（30 秒）；密钥辅助程序本来就以 SIGKILL 终止（20 秒），CLI 驱动的取消仍由驱动自己处理（SIGTERM，250 ms 后 SIGKILL）。
+   - command MCP 工具超时后，在工具确实退出时返回 `timedOut: true`：30 秒，忽略 SIGTERM 的工具为 32 秒。以前在 30 秒时立即返回，而忽略 SIGTERM 的工具继续运行，不属于任何所有者。
+   - command MCP 服务器收到 SIGINT、SIGTERM 或 stdout 失败时，经启动器终止仍在运行的工具，以前工具会继续运行到结束。
+   - 密钥辅助程序的 stderr 以前被忽略，现在接到管道、上限 32 KiB，但从不读取，不会进入错误、日志或接口。
+
+验证：
+- 启动器测试覆盖超时与中止的终止、忽略 SIGTERM 的进程在超时 2 秒后被 SIGKILL 结束（去掉升级时该测试超时失败）、`maxBuffer`、环境隔离、只对 `cmd.exe` 允许 `windowsVerbatimArguments`、无法启动的程序，以及所有者关闭后不留进程。
+- 用注入的启动器替身测试失败模式：没有启动器时 Keychain 引用与 Windows 文件原语报 `PROCESS_LAUNCHER_NOT_INJECTED`，已保存绑定缺少当前入口时报 `COMMAND_MCP_ENTRY_NOT_INJECTED`；辅助程序的 stdout 与 stderr 即使含有金丝雀值也不出现在抛出的错误中（把 stderr 放进 `cause` 时该测试失败）。密钥辅助程序的测试只在 macOS 与 Windows 上运行，ACL 辅助程序的只在 Windows 上运行。
+- 原有测试只增加启动器接线（`tests/support/process-launcher.ts`、secrets 调用参数、command MCP 入口的导入位置）。Windows 上 DPAPI、ACL、`.cmd` 与 PowerShell 的路径由现有 Windows 测试在 CI 上执行。

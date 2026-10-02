@@ -4,4 +4,4 @@
 
 系统密钥库由本包的原生辅助程序访问：[native/keychain.swift](native/keychain.swift)（macOS）与 [native/windows-secrets.cs](native/windows-secrets.cs)（Windows）。`pnpm build` 经 [native/build-keychain.mjs](native/build-keychain.mjs) 只构建当前平台的那一个，输出到本包的 `dist/native/harnesshub-keychain` 或 `dist/native/harnesshub-secrets.exe`；其他平台不构建，`keychain` 引用返回 `KEYCHAIN_UNSUPPORTED`。运行时路径由 [native-helper.ts](src/native-helper.ts) 的 `secretHelperPath()` 给出，[test/native-helper.test.ts](test/native-helper.test.ts) 在所有平台检查两个路径，并在对应平台检查文件存在。
 
-启动辅助程序的 `node:child_process` 调用是带期限的例外：所有者 OSS-010 F08，在 M0 退出（OSS-013 完成）时到期，登记在 [边界检查](../../tools/check-boundaries.mjs) 的 `CHILD_PROCESS_EXCEPTIONS` 中。
+辅助程序经调用方传入的 `ProcessLauncher` 启动（OSS-010 F08）：`createSecret(value, launcher)`、`deleteSecret(ref, launcher)` 与 `resolveSecret(ref, environment, launcher?)`。只有 Keychain 引用和 Windows 上的文件引用需要启动器，缺少时报 `PROCESS_LAUNCHER_NOT_INJECTED`（500）；环境变量引用与其他平台上的文件引用不启动进程。守护进程与 Worker 传入本进程的启动器。本包不导入 `node:child_process`。

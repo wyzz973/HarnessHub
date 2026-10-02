@@ -379,7 +379,7 @@ test("legacy module and third-party rules apply inside packages", () => {
       "packages/plugin-host/src/index.ts",
       'import { spawn } from "node:child_process";',
     ).join("\n"),
-    /process creation belongs in ProcessHost or Driver/,
+    /process creation belongs in runtime's process\//,
   );
   assert.match(
     checkAt(
@@ -494,66 +494,49 @@ test("SQLite belongs in the storage module of @harnesshub/store", () => {
   );
 });
 
-test("child_process inside a package needs an unexpired exception", () => {
-  const platform = join(root, "packages/store/src/platform/windows-acl.ts");
+test("child_process belongs in runtime's process/, and the files that once used it may not", () => {
   const source = 'import { execFile } from "node:child_process";';
+  const rejected = /takes an injected ProcessLauncher/;
   assert.deepEqual(
-    checkSource(platform, source, root, {
-      completedTasks: new Set(["OSS-012"]),
-    }),
+    checkAt("packages/runtime/src/process/launcher.ts", source),
+    [],
+  );
+  // The four former exceptions (ADR 0017 decision 4) and another store file.
+  for (const file of [
+    "packages/store/src/platform/windows-acl.ts",
+    "packages/store/src/platform/windows-file-session.ts",
+    "packages/secrets/src/secrets.ts",
+    "packages/drivers/src/cli/driver.ts",
+    "packages/agents/src/tool-command/command-mcp.ts",
+    "packages/agents/src/tool-command/server.ts",
+    "packages/store/src/storage/sqlite-store.ts",
+  ])
+    assert.match(checkAt(file, source).join("\n"), rejected, file);
+  // They take the launcher's interface from core; the Worker entry creates it.
+  const port =
+    'import type { ProcessLauncher } from "@harnesshub/core/process-launcher";';
+  assert.deepEqual(
+    checkAt("packages/store/src/platform/windows-acl.ts", port),
+    [],
+  );
+  assert.deepEqual(checkAt("packages/drivers/src/cli/driver.ts", port), []);
+  const implementation =
+    'import { sharedProcessLauncher } from "@harnesshub/runtime/process/launcher";';
+  assert.deepEqual(
+    checkAt("packages/daemon/src/worker/main.ts", implementation),
     [],
   );
   assert.match(
-    checkSource(
-      join(root, "packages/store/src/storage/sqlite-store.ts"),
-      source,
-      root,
-      { completedTasks: new Set() },
-    ).join("\n"),
-    /packages\/store has no child_process exception/,
+    checkAt("packages/drivers/src/cli/driver.ts", implementation).join("\n"),
+    /packages\/drivers cannot depend on @harnesshub\/runtime/,
   );
   assert.match(
-    checkSource(platform, source, root, {
-      completedTasks: new Set(["OSS-013"]),
-    }).join("\n"),
-    /exception for store\/platform\/ \(owner OSS-010 F08\) expired with OSS-013/,
-  );
-  assert.match(
-    checkSource(platform, source, root).join("\n"),
-    /ends with OSS-013; TODO\.md is needed to check it/,
+    checkAt("packages/daemon/src/http/engines.ts", implementation).join("\n"),
+    /gateway cannot depend on process/,
   );
 });
 
-test("CLI ends a child_process exception when its TODO.md task is ticked", (context) => {
-  const directory = mkdtempSync(join(tmpdir(), "harnesshub-boundaries-todo-"));
-  context.after(() => rmSync(directory, { recursive: true, force: true }));
-  const platform = join(directory, "packages", "store", "src", "platform");
-  mkdirSync(platform, { recursive: true });
-  writeFileSync(
-    join(platform, "acl.ts"),
-    'import { execFile } from "node:child_process";',
-  );
-  const run = () =>
-    spawnSync(
-      process.execPath,
-      [
-        fileURLToPath(new URL("./check-boundaries.mjs", import.meta.url)),
-        directory,
-      ],
-      { encoding: "utf8" },
-    );
-  const missing = run();
-  assert.equal(missing.status, 1);
-  assert.match(missing.stderr, /TODO\.md is needed to check it/);
-  writeFileSync(join(directory, "TODO.md"), "- [ ] **OSS-013 M0 组合验收**\n");
-  assert.equal(run().status, 0);
-  writeFileSync(join(directory, "TODO.md"), "- [x] **OSS-013 M0 组合验收**\n");
-  const expired = run();
-  assert.equal(expired.status, 1);
-  assert.match(expired.stderr, /expired with OSS-013/);
-});
-
-test("secrets keeps the drivers rules in src/ and spawns its helper only under its exception", () => {
+test("secrets keeps the drivers rules in src/ and starts its helper through an injected launcher", () => {
   assert.deepEqual(
     check(
       "drivers/configuration/prepare.ts",
@@ -575,32 +558,23 @@ test("secrets keeps the drivers rules in src/ and spawns its helper only under i
     ).join("\n"),
     /packages\/secrets cannot depend on @harnesshub\/store/,
   );
-  const source = 'import { spawn } from "node:child_process";';
-  const open = { completedTasks: new Set() };
   assert.deepEqual(
-    checkSource(
-      join(root, "packages/secrets/src/secrets.ts"),
-      source,
-      root,
-      open,
+    checkAt(
+      "packages/secrets/src/secrets.ts",
+      'import type { ProcessLauncher } from "@harnesshub/core/process-launcher";',
     ),
     [],
   );
-  assert.match(
-    checkSource(
-      join(root, "packages/secrets/src/native-helper.ts"),
-      source,
-      root,
-      open,
-    ).join("\n"),
-    /packages\/secrets has no child_process exception/,
-  );
-  assert.match(
-    checkSource(join(root, "packages/secrets/src/secrets.ts"), source, root, {
-      completedTasks: new Set(["OSS-013"]),
-    }).join("\n"),
-    /exception for secrets\/secrets\.ts \(owner OSS-010 F08\) expired with OSS-013/,
-  );
+  const source = 'import { spawn } from "node:child_process";';
+  for (const file of [
+    "packages/secrets/src/secrets.ts",
+    "packages/secrets/src/native-helper.ts",
+  ])
+    assert.match(
+      checkAt(file, source).join("\n"),
+      /packages\/secrets takes an injected ProcessLauncher/,
+      file,
+    );
 });
 
 test("a src/ file may import only the packages its destination package may depend on", () => {
@@ -674,26 +648,15 @@ test("drivers keep their module rules, and only the Worker loads them inside the
     /packages\/drivers cannot depend on @harnesshub\/secrets/,
   );
   const spawn = 'import { spawn } from "node:child_process";';
-  const cli = join(root, "packages/drivers/src/cli/driver.ts");
-  assert.deepEqual(
-    checkSource(cli, spawn, root, { completedTasks: new Set() }),
-    [],
-  );
-  assert.match(
-    checkSource(
-      join(root, "packages/drivers/src/fake/driver.ts"),
-      spawn,
-      root,
-      { completedTasks: new Set() },
-    ).join("\n"),
-    /packages\/drivers has no child_process exception/,
-  );
-  assert.match(
-    checkSource(cli, spawn, root, {
-      completedTasks: new Set(["OSS-013"]),
-    }).join("\n"),
-    /exception for drivers\/cli\/ \(owner OSS-010 F08\) expired with OSS-013/,
-  );
+  for (const file of [
+    "packages/drivers/src/cli/driver.ts",
+    "packages/drivers/src/fake/driver.ts",
+  ])
+    assert.match(
+      checkAt(file, spawn).join("\n"),
+      /packages\/drivers takes an injected ProcessLauncher/,
+      file,
+    );
 });
 
 test("agents files keep the rules of the legacy modules they came from", () => {
@@ -763,24 +726,21 @@ test("agents files keep the rules of the legacy modules they came from", () => {
 });
 
 test("agents resolves its runtime assets inside the package, and no file may resolve URLs outside it", () => {
-  const open = { completedTasks: new Set() };
   assert.deepEqual(
     checkSource(
       join(root, "packages/agents/src/assets.ts"),
       'const launcher = new URL("../../assets/launch-engine.mjs", import.meta.url);',
       root,
-      open,
     ),
     [],
   );
-  // The former exception for repository.ts is gone, before OSS-013 as well.
+  // The former exception for repository.ts is gone.
   const helper = join(root, "packages/agents/src/repository.ts");
   assert.match(
     checkSource(
       helper,
       "const file = new URL(`../../../../${relative}`, import.meta.url);",
       root,
-      open,
     ).join("\n"),
     /nonliteral new URL\(\.\.\., import\.meta\.url\) cannot be checked/,
   );
@@ -789,7 +749,6 @@ test("agents resolves its runtime assets inside the package, and no file may res
       helper,
       'const launcher = new URL("../../../../scripts/launch-engine.mjs", import.meta.url);',
       root,
-      open,
     ).join("\n"),
     /new URL leaves packages\/agents: \.\.\/\.\.\/\.\.\/\.\.\/scripts\/launch-engine\.mjs/,
   );
@@ -798,52 +757,31 @@ test("agents resolves its runtime assets inside the package, and no file may res
       join(root, "packages/agents/src/configuration/launch.ts"),
       'const launcher = new URL("../../../../scripts/launch-engine.mjs", import.meta.url);',
       root,
-      { completedTasks: new Set() },
     ).join("\n"),
     /new URL leaves packages\/agents: \.\.\/\.\.\/\.\.\/\.\.\/scripts\/launch-engine\.mjs/,
   );
   const spawn = 'import { spawn } from "node:child_process";';
-  assert.deepEqual(
-    checkSource(
-      join(root, "packages/agents/src/tool-command/command-mcp.ts"),
-      spawn,
-      root,
-      { completedTasks: new Set() },
-    ),
-    [],
-  );
-  assert.match(
-    checkSource(
-      join(root, "packages/agents/src/configuration/launch.ts"),
-      spawn,
-      root,
-      { completedTasks: new Set() },
-    ).join("\n"),
-    /packages\/agents has no child_process exception/,
-  );
+  for (const file of [
+    "packages/agents/src/tool-command/server.ts",
+    "packages/agents/src/configuration/launch.ts",
+  ])
+    assert.match(
+      checkAt(file, spawn).join("\n"),
+      /packages\/agents takes an injected ProcessLauncher/,
+      file,
+    );
 });
 
 test("runtime owns process creation for good, and the probe keeps its drivers rules", () => {
   const spawn = 'import { spawn } from "node:child_process";';
-  const done = { completedTasks: new Set(["OSS-013"]) };
-  // A permanent home, not an exception: it does not expire with OSS-013.
+  // A permanent home, not an exception.
   assert.deepEqual(
-    checkSource(
-      join(root, "packages/runtime/src/process/worker-host.ts"),
-      spawn,
-      root,
-      done,
-    ),
+    checkAt("packages/runtime/src/process/worker-host.ts", spawn),
     [],
   );
   assert.match(
-    checkSource(
-      join(root, "packages/runtime/src/application/service.ts"),
-      spawn,
-      root,
-      done,
-    ).join("\n"),
-    /packages\/runtime has no child_process exception/,
+    checkAt("packages/runtime/src/application/service.ts", spawn).join("\n"),
+    /packages\/runtime takes an injected ProcessLauncher/,
   );
   assert.equal(
     legacyPathOf("runtime", "process/probe.ts"),

@@ -13,12 +13,13 @@ import type {
 import { HARNESS_MODEL_ALIAS } from "@harnesshub/core/harness-model";
 import { HubError } from "@harnesshub/core/errors";
 import { WORKER_TREE_ENVIRONMENT } from "@harnesshub/core/environment";
+import type { ProcessLauncher } from "@harnesshub/core/process-launcher";
 import { resolveSecret } from "@harnesshub/secrets/secrets";
 import { portableCommand, unwrapEnvironment } from "./launch.js";
 import { currentEngineCommand } from "../assets.js";
 import { codexGatewayCatalog, codexModelCatalog } from "./codex-models.js";
 import { prepareNativeMcp } from "./native-mcp.js";
-import { currentCommandMcpEntry } from "../tool-command/entry.js";
+import { isFormerCommandMcpEntry } from "../tool-command/entry.js";
 import type {
   ModelCallRecord,
   ModelGateway,
@@ -76,6 +77,19 @@ export interface PreparationHooks {
   onModelPayload?: ModelGatewayOptions["onPayload"];
   /** Collects every secret value resolved for the Session, for redaction only. */
   secrets?: Set<string>;
+  /**
+   * Starts the platform secret helper for Keychain references, and for file
+   * references on Windows. The Worker and the composition root inject their
+   * process's launcher; without it such a reference fails with
+   * PROCESS_LAUNCHER_NOT_INJECTED.
+   */
+  processLauncher?: ProcessLauncher;
+  /**
+   * The current command MCP entry (the daemon's `COMMAND_MCP_ENTRY`). Stored
+   * Tool Pack bindings that name a former entry are started from it; without
+   * it such a binding fails with COMMAND_MCP_ENTRY_NOT_INJECTED.
+   */
+  commandMcpEntry?: string;
 }
 /** Session workspace placeholder in stdio MCP arguments and env values (ADR 0013). */
 export const SESSION_WORKSPACE_PLACEHOLDER = "${HARNESSHUB_SESSION_WORKSPACE}";
@@ -210,6 +224,7 @@ async function settledValues<T>(values: Promise<T>[]): Promise<T[]> {
 function sessionSecretResolver(
   environment: Readonly<NodeJS.ProcessEnv>,
   sink: Set<string> | undefined,
+  launcher: ProcessLauncher | undefined,
 ): Resolver {
   const cache = new Map<string, Promise<string>>();
   let active = 0;
@@ -226,7 +241,7 @@ function sessionSecretResolver(
         } else queue.push(ready);
       });
       try {
-        const value = await resolveSecret(reference, environment);
+        const value = await resolveSecret(reference, environment, launcher);
         sink?.add(value);
         return value;
       } finally {
@@ -263,21 +278,32 @@ function workspaceValue(value: string, workspace: string): string {
  * and plain `env` values receive the Session workspace (ADR 0013) before the
  * portable launcher wraps the command and before any native adapter reads
  * them; `command`, secret values and HTTP/SSE URLs and headers are never
- * rewritten. Stored revisions keep the placeholder. An argument naming the
- * pre-migration command MCP entry, as Tool Pack bindings stored it before
- * OSS-004 step 7, becomes the current entry (removed in M1).
+ * rewritten. Stored revisions keep the placeholder. An argument naming a
+ * former command MCP entry, as Tool Pack bindings stored it before OSS-010 F08,
+ * becomes `commandMcpEntry` (removed in M1).
  */
 async function mcp(
   server: EngineMcpServer,
   resolve: Resolver,
   workspace: string,
   treeMarker: string | undefined,
+  commandMcpEntry: string | undefined,
 ): Promise<RuntimeMcpServer> {
   if (server.type === "stdio") {
+    const current = (arg: string) => {
+      if (!isFormerCommandMcpEntry(arg)) return arg;
+      if (commandMcpEntry === undefined)
+        throw new HubError(
+          "COMMAND_MCP_ENTRY_NOT_INJECTED",
+          "A stored Tool Pack binding needs the current command MCP entry from the composition root",
+          500,
+        );
+      return commandMcpEntry;
+    };
     const command = portableCommand([
       server.command!,
       ...(server.args ?? []).map((arg) =>
-        workspaceValue(currentCommandMcpEntry(arg), workspace),
+        workspaceValue(current(arg), workspace),
       ),
     ]);
     return {
@@ -333,7 +359,11 @@ export async function prepareConfiguration(
   hooks: PreparationHooks = {},
 ): Promise<PreparedConfiguration> {
   const config = spec.profile.configuration;
-  const resolve = sessionSecretResolver(environment, hooks.secrets);
+  const resolve = sessionSecretResolver(
+    environment,
+    hooks.secrets,
+    hooks.processLauncher,
+  );
   // A command stored before the runtime assets moved names their old paths.
   const launch = unwrapEnvironment(
     currentEngineCommand(spec.profile.command ?? []),
@@ -391,7 +421,13 @@ export async function prepareConfiguration(
     (config.mcpServers ?? [])
       .filter((s) => s.enabled)
       .map((s) =>
-        mcp(s, resolve, spec.cwd, environment[WORKER_TREE_ENVIRONMENT]),
+        mcp(
+          s,
+          resolve,
+          spec.cwd,
+          environment[WORKER_TREE_ENVIRONMENT],
+          hooks.commandMcpEntry,
+        ),
       ),
   );
   if (config.adapter === "mimo" && result.mcpServers.length > 0) {

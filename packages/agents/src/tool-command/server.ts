@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
-import { spawn } from "node:child_process";
 import path from "node:path";
+import type { ProcessLauncher } from "@harnesshub/core/process-launcher";
 import {
   MAX_ARG,
   parseCommandConfiguration,
+  type CommandConfiguration,
   type CommandTool,
 } from "./config.js";
 import { isWindowsBatch, windowsBatchLaunch } from "./windows-batch.js";
@@ -22,31 +23,38 @@ function fail(message: string): never {
   throw new Error(message);
 }
 
-const config = parseCommandConfiguration(process.argv.slice(2), process.env);
-const toolMap = new Map(config.tools.map((tool) => [`cli_${tool.name}`, tool]));
-const toolDefinitions = config.tools.map((tool) => ({
-  name: `cli_${tool.name}`,
-  description:
-    tool.description ??
-    `Run the allow-listed ${tool.name} CLI in the current workspace. Shell expressions are not accepted.`,
-  inputSchema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      args: {
-        type: "array",
-        maxItems: MAX_ARGS,
-        items: { type: "string", maxLength: MAX_ARG },
+/** One command MCP server: its validated tools and the launcher that runs them. */
+interface Server {
+  readonly config: CommandConfiguration;
+  readonly tools: ReadonlyMap<string, CommandTool>;
+  readonly definitions: ReturnType<typeof definitions>;
+  readonly launcher: ProcessLauncher;
+}
+
+const definitions = (config: CommandConfiguration) =>
+  config.tools.map((tool) => ({
+    name: `cli_${tool.name}`,
+    description:
+      tool.description ??
+      `Run the allow-listed ${tool.name} CLI in the current workspace. Shell expressions are not accepted.`,
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        args: {
+          type: "array",
+          maxItems: MAX_ARGS,
+          items: { type: "string", maxLength: MAX_ARG },
+        },
       },
     },
-  },
-  annotations: {
-    readOnlyHint: false,
-    destructiveHint: true,
-    idempotentHint: false,
-    openWorldHint: false,
-  },
-}));
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+  }));
 
 function dynamicArgs(value: unknown): string[] {
   if (!object(value)) fail("CLI arguments must be an object");
@@ -98,65 +106,58 @@ function launch(tool: CommandTool, args: string[]) {
   return { file: batch.file, argv: batch.args, windowsVerbatimArguments: true };
 }
 
-async function execute(tool: CommandTool, args: string[]) {
+async function execute(
+  server: Server,
+  tool: CommandTool,
+  args: string[],
+): Promise<{
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+  truncated: boolean;
+}> {
   const command = launch(tool, args);
-  return new Promise<{
-    exitCode: number | null;
-    signal: NodeJS.Signals | null;
-    stdout: string;
-    stderr: string;
-    timedOut: boolean;
-    truncated: boolean;
-  }>((resolve, reject) => {
-    const controller = new AbortController();
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    const output = { size: 0, truncated: false };
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, TIMEOUT_MS);
-    timer.unref();
-    const child = spawn(command.file, command.argv, {
-      cwd: config.workspace,
-      shell: false,
-      windowsHide: true,
-      windowsVerbatimArguments: command.windowsVerbatimArguments,
-      stdio: ["ignore", "pipe", "pipe"],
-      signal: controller.signal,
-    });
-    child.stdout.on("data", (chunk: Buffer) =>
-      boundedAppend(stdout, chunk, output),
-    );
-    child.stderr.on("data", (chunk: Buffer) =>
-      boundedAppend(stderr, chunk, output),
-    );
-    child.once("error", (error) => {
-      clearTimeout(timer);
-      if (timedOut && error.name === "AbortError")
-        resolve({
-          exitCode: null,
-          signal: null,
-          stdout: Buffer.concat(stdout).toString("utf8"),
-          stderr: Buffer.concat(stderr).toString("utf8"),
-          timedOut: true,
-          truncated: output.truncated,
-        });
-      else reject(error);
-    });
-    child.once("close", (code, signal) => {
-      clearTimeout(timer);
-      resolve({
-        exitCode: code,
-        signal,
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: Buffer.concat(stderr).toString("utf8"),
-        timedOut,
-        truncated: output.truncated,
-      });
-    });
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  const output = { size: 0, truncated: false };
+  // The tool stays in this server's process group, which belongs to the
+  // engine's Worker. After TIMEOUT_MS the launcher sends SIGTERM, and SIGKILL
+  // two seconds later if the tool is still running; the call answers once the
+  // tool has exited.
+  const child = server.launcher.launch({
+    file: command.file,
+    args: command.argv,
+    cwd: server.config.workspace,
+    env: "inherit",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeoutMs: TIMEOUT_MS,
+    windowsVerbatimArguments: command.windowsVerbatimArguments,
   });
+  child.stdout?.on("data", (chunk: Buffer) =>
+    boundedAppend(stdout, chunk, output),
+  );
+  child.stderr?.on("data", (chunk: Buffer) =>
+    boundedAppend(stderr, chunk, output),
+  );
+  const collected = () => ({
+    stdout: Buffer.concat(stdout).toString("utf8"),
+    stderr: Buffer.concat(stderr).toString("utf8"),
+    truncated: output.truncated,
+  });
+  const exit = await child.exit;
+  if (exit.error) throw exit.error;
+  // A timed-out tool is reported at once, without waiting for its streams.
+  if (exit.timedOut)
+    return { exitCode: null, signal: null, ...collected(), timedOut: true };
+  const closed = await child.closed;
+  return {
+    exitCode: closed.code,
+    signal: closed.signal,
+    ...collected(),
+    timedOut: closed.timedOut,
+  };
 }
 
 async function output(value: unknown) {
@@ -169,6 +170,7 @@ async function output(value: unknown) {
 }
 
 async function handle(
+  server: Server,
   bytes: Buffer,
   state: { initialized: boolean; ready: boolean },
 ) {
@@ -228,14 +230,15 @@ async function handle(
   }
   if (!state.ready) return error(-32002, "MCP client is not initialized");
   if (request.method === "tools/list")
-    return answer({ tools: toolDefinitions });
+    return answer({ tools: server.definitions });
   if (request.method === "tools/call") {
     if (!object(request.params) || typeof request.params.name !== "string")
       return error(-32602, "Invalid tools/call request");
-    const tool = toolMap.get(request.params.name);
+    const tool = server.tools.get(request.params.name);
     if (!tool) return error(-32602, "Unknown CLI tool");
     try {
       const result = await execute(
+        server,
         tool,
         dynamicArgs(request.params.arguments ?? {}),
       );
@@ -259,40 +262,65 @@ async function handle(
   return error(-32601, "Method not found");
 }
 
-const state = { initialized: false, ready: false };
-let pending = Buffer.alloc(0);
-let stopped = false;
-const stop = () => {
-  stopped = true;
-  process.stdin.destroy();
-};
-process.once("SIGINT", stop);
-process.once("SIGTERM", stop);
-process.stdout.on("error", stop);
-process.stdin.on("data", (chunk: Buffer) => {
-  if (stopped) return;
-  pending = Buffer.concat([pending, chunk]);
-  if (pending.length > MAX_BUFFER) {
+/**
+ * Runs the command MCP server on this process's stdin and stdout, configured
+ * by its command line and environment (`--workspace <dir>` and the managed
+ * CLI declaration). Tools are started with `launcher`. SIGINT, SIGTERM or a
+ * failed stdout stop reading requests and call `onStop`, whose owner
+ * terminates any tool still running.
+ *
+ * @throws Error when the configuration is invalid, before any tool can run.
+ */
+export function serveCommandMcp(
+  launcher: ProcessLauncher,
+  onStop: () => void,
+): void {
+  const config = parseCommandConfiguration(process.argv.slice(2), process.env);
+  const server: Server = {
+    config,
+    tools: new Map(config.tools.map((tool) => [`cli_${tool.name}`, tool])),
+    definitions: definitions(config),
+    launcher,
+  };
+  const state = { initialized: false, ready: false };
+  let pending = Buffer.alloc(0);
+  let stopped = false;
+  const stop = () => {
+    stopped = true;
+    process.stdin.destroy();
+  };
+  const terminate = () => {
     stop();
-    return;
-  }
-  for (;;) {
-    const newline = pending.indexOf(10);
-    if (newline < 0) break;
-    const line = pending.subarray(0, newline);
-    pending = pending.subarray(newline + 1);
-    if (line.length === 0) continue;
-    if (line.length > MAX_MESSAGE) {
-      void output({
-        jsonrpc: "2.0",
-        id: null,
-        error: { code: -32600, message: "Message too large" },
-      });
-      continue;
+    onStop();
+  };
+  process.once("SIGINT", terminate);
+  process.once("SIGTERM", terminate);
+  process.stdout.on("error", terminate);
+  process.stdin.on("data", (chunk: Buffer) => {
+    if (stopped) return;
+    pending = Buffer.concat([pending, chunk]);
+    if (pending.length > MAX_BUFFER) {
+      stop();
+      return;
     }
-    process.stdin.pause();
-    void handle(line, state).finally(() => {
-      if (!stopped) process.stdin.resume();
-    });
-  }
-});
+    for (;;) {
+      const newline = pending.indexOf(10);
+      if (newline < 0) break;
+      const line = pending.subarray(0, newline);
+      pending = pending.subarray(newline + 1);
+      if (line.length === 0) continue;
+      if (line.length > MAX_MESSAGE) {
+        void output({
+          jsonrpc: "2.0",
+          id: null,
+          error: { code: -32600, message: "Message too large" },
+        });
+        continue;
+      }
+      process.stdin.pause();
+      void handle(server, line, state).finally(() => {
+        if (!stopped) process.stdin.resume();
+      });
+    }
+  });
+}

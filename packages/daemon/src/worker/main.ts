@@ -17,6 +17,8 @@ import type { Driver, DriverChannel } from "@harnesshub/drivers/driver";
 import { FakeDriver } from "@harnesshub/drivers/fake/driver";
 import { AcpDriver } from "@harnesshub/drivers/acp/driver";
 import { CliDriver } from "@harnesshub/drivers/cli/driver";
+import { sharedProcessLauncher } from "@harnesshub/runtime/process/launcher";
+import { COMMAND_MCP_ENTRY } from "../command-mcp-entry.js";
 import {
   assertMessageSize,
   matchesIdentity,
@@ -41,6 +43,13 @@ import {
   type LogLevel,
 } from "@harnesshub/core/logging";
 import { JsonLogFile } from "../logging/json-log-file.js";
+
+/**
+ * This Worker's process launcher: it starts CLI engines and the secret helper,
+ * and is closed last when the Worker shuts down, so no process it started
+ * outlives the Worker.
+ */
+const launcher = sharedProcessLauncher();
 
 interface PermissionWaiter {
   options: PermissionOption[];
@@ -384,6 +393,8 @@ async function execute(owned: Active, selected: Driver): Promise<void> {
             }
           : {}),
         secrets,
+        processLauncher: launcher,
+        commandMcpEntry: COMMAND_MCP_ENTRY,
       });
       if (firstPreparation)
         log.info("run.prepared", {
@@ -464,8 +475,12 @@ function shutdown(reason = "shutdown"): Promise<void> {
       try {
         await preparation?.modelBridge?.close();
       } finally {
-        engineLog?.info("worker.stopped", { reason });
-        engineLog?.close();
+        try {
+          await launcher.close();
+        } finally {
+          engineLog?.info("worker.stopped", { reason });
+          engineLog?.close();
+        }
       }
     }
   })();
@@ -516,7 +531,7 @@ process.on("message", (raw: unknown) => {
             driver = new AcpDriver(openEngineLog(command.spec));
             break;
           case "cli":
-            driver = new CliDriver(openEngineLog(command.spec));
+            driver = new CliDriver(launcher, openEngineLog(command.spec));
             break;
         }
       }

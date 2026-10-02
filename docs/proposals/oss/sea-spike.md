@@ -41,7 +41,7 @@
 | `harnesshub version [--json]` | 输出构建身份 |
 | `harnesshub <根目录>/packages/daemon/dist/src/worker/main.js …` | Session Worker；由 `fork()` 产生 |
 | `harnesshub <根目录>/packages/agents/assets/launch-engine.mjs …` | 可移植引擎启动器 |
-| `harnesshub <根目录>/packages/agents/dist/src/tool-command/command-mcp.js …` | 工具包的 command MCP 服务器 |
+| `harnesshub <根目录>/packages/daemon/dist/src/command-mcp-main.js …` | 工具包的 command MCP 服务器 |
 | `harnesshub <其他 .js/.mjs/.cjs 文件> …` | node-compat：用 `Module.runMain()` 像 `node <文件>` 一样运行 |
 
 子进程从自身的角色路径推出根目录，只接受标记文件中构建号与自身一致的根目录。这样即使 Worker 的 HOME 被改成 Session 私有目录，也能找到与 Gateway 相同的文件。

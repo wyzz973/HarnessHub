@@ -147,7 +147,7 @@ node packages/daemon/dist/src/tool-packages-main.js --root C:\HarnessHub\data\to
 
 ## CLI 工具与 Windows 批处理
 
-`cliTools` 由受控 MCP 服务 [command-mcp.ts](../packages/agents/src/tool-command/command-mcp.ts) 暴露为 `cli_<name>` 工具，配置解析在 [config.ts](../packages/agents/src/tool-command/config.ts)。工作目录取自 `--workspace`（Worker 替换后的 Session 目录），旧 revision 取 `HHCAP_CLI_WORKSPACE`；缺失、相对路径或未替换的占位符都会让服务启动失败。模型只能传有界字符串 argv，执行使用 `shell:false`，限制见 [Capability Pack](capability-packs.md#cli-如何统一给不同-harness-使用)。
+`cliTools` 由受控 MCP 服务 [server.ts](../packages/agents/src/tool-command/server.ts)（进程入口 [command-mcp-main.ts](../packages/daemon/src/command-mcp-main.ts)）暴露为 `cli_<name>` 工具，配置解析在 [config.ts](../packages/agents/src/tool-command/config.ts)。工作目录取自 `--workspace`（Worker 替换后的 Session 目录），旧 revision 取 `HHCAP_CLI_WORKSPACE`；缺失、相对路径或未替换的占位符都会让服务启动失败。模型只能传有界字符串 argv，执行使用 `shell:false`，限制见 [Capability Pack](capability-packs.md#cli-如何统一给不同-harness-使用)。
 
 Windows 上 Node 拒绝直接启动 `.cmd`/`.bat`（CVE-2024-27980，报 EINVAL）。受控服务改用绝对路径的 `cmd.exe /d /s /v:off /c "<行>"` 启动这类入口，并以 `windowsVerbatimArguments` 传入整行；`cmd.exe` 取自以 `cmd.exe` 结尾的绝对 `ComSpec`，否则取 `%SystemRoot%\System32\cmd.exe`，不经 PATH 查找。批处理路径和每个参数都用双引号包围，末尾反斜杠加倍，因此 `&|<>()^!`、空格和中文在外层 cmd 解析和批处理的 `%*` 展开中都保持原样。cmd.exe 即使在引号内也会展开或重新切分的 `"`、`%`、CR、LF 和 NUL 无法安全传递，含这些字符的调用返回 `isError`，不会改写参数；需要这类值时请改用原生可执行文件。`/v:off` 只关闭外层解析的延迟展开，批处理自己开启延迟展开时仍可能改写 `!`。`.ps1` 入口明确拒绝，请用 `.cmd` 包装。超时只终止 cmd.exe 本身，批处理启动的子进程由 Worker 的进程树监督回收。
 

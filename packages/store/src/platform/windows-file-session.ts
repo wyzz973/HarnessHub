@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: MIT
-import { spawn } from "node:child_process";
 import { HubError } from "@harnesshub/core/errors";
+import type {
+  LaunchedProcess,
+  ProcessInput,
+} from "@harnesshub/core/process-launcher";
 import { aclHelperPath } from "./native-helper.js";
+import { platformLauncher } from "./process-launcher.js";
 
 /** One bounded collection owns this native helper and must await close in finally. */
 export class WindowsFileSession {
-  private readonly child;
+  private readonly child: LaunchedProcess;
+  private readonly stdin: ProcessInput;
   private readonly closed: Promise<void>;
   private ended = false;
   private pending:
@@ -21,12 +26,17 @@ export class WindowsFileSession {
   };
 
   private constructor(private readonly signal: AbortSignal) {
-    this.child = spawn(aclHelperPath(), ["--session"], {
-      windowsHide: true,
-      stdio: ["pipe", "pipe", "pipe"],
+    this.child = platformLauncher().launch({
+      file: aclHelperPath(),
+      args: ["--session"],
+      env: "inherit",
     });
+    const { stdin, stdout, stderr } = this.child;
+    if (!stdin || !stdout || !stderr)
+      throw new Error("The ACL helper session needs piped standard streams");
+    this.stdin = stdin;
     let output = "";
-    this.child.stdout.on("data", (bytes: Buffer) => {
+    stdout.on("data", (bytes: Buffer) => {
       output += bytes.toString("ascii");
       if (output.length > 1024) this.child.kill();
       for (let newline; (newline = output.indexOf("\n")) >= 0;) {
@@ -41,21 +51,15 @@ export class WindowsFileSession {
         }
       }
     });
-    this.child.stdin.on("error", () => this.child.kill());
+    stdin.on("error", () => this.child.kill());
     // Only a fixed failure marker is emitted; response and exit own the outcome.
-    this.child.stderr.resume();
-    this.closed = new Promise((resolve) => {
-      const reject = () => {
-        this.ended = true;
-        const pending = this.pending;
-        this.pending = undefined;
-        pending?.reject(this.failure(pending.code));
-      };
-      this.child.once("error", reject);
-      this.child.once("close", () => {
-        reject();
-        resolve();
-      });
+    stderr.resume();
+    // Settles after the helper exited and its streams closed, or failed to start.
+    this.closed = this.child.closed.then(() => {
+      this.ended = true;
+      const pending = this.pending;
+      this.pending = undefined;
+      pending?.reject(this.failure(pending.code));
     });
     signal.addEventListener("abort", this.abort, { once: true });
   }
@@ -104,7 +108,7 @@ export class WindowsFileSession {
   ): Promise<void> {
     this.signal.throwIfAborted();
     const response = this.response(expected, code);
-    this.child.stdin.write(JSON.stringify(value) + "\n");
+    this.stdin.write(JSON.stringify(value) + "\n");
     await response;
     this.signal.throwIfAborted();
   }
@@ -138,7 +142,7 @@ export class WindowsFileSession {
 
   /** EOF releases every native file handle; waits for actual exit on every path. */
   async close(): Promise<void> {
-    this.child.stdin.end();
+    this.stdin.end();
     await this.closed;
     this.signal.removeEventListener("abort", this.abort);
   }
