@@ -21,7 +21,12 @@ export type ProcessStdio = "pipe" | "ignore";
 /**
  * The environment of a launched process: exactly these variables, or the
  * launching process's own environment when the caller asks for it with
- * `"inherit"`. Nothing is inherited implicitly.
+ * `"inherit"`. Nothing the caller did not pass is inherited, with one platform
+ * exception: on Windows, Node's libuv copies a fixed set of system variables
+ * from the launching process when they are missing (HOMEDRIVE, HOMEPATH,
+ * LOGONSERVER, PATH, SYSTEMDRIVE, SYSTEMROOT, TEMP, USERDOMAIN, USERNAME,
+ * USERPROFILE, WINDIR), because many Windows programs cannot start without
+ * them. Do not rely on an explicit environment to hide those.
  */
 export type ProcessEnvironment = "inherit" | Readonly<Record<string, string>>;
 

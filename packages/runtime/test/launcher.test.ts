@@ -119,15 +119,46 @@ void test("no variable is inherited unless inheritance is asked for", async (t) 
       name.toUpperCase(),
     );
   };
+  // A variable only this process has: inherited on request, never otherwise.
+  process.env.HH_LAUNCHER_PARENT_CANARY = "parent";
+  t.after(() => {
+    delete process.env.HH_LAUNCHER_PARENT_CANARY;
+  });
   const inherited = await names("inherit");
   const explicit = await names({ HH_LAUNCHER_ONLY: "1" });
   assert.ok(explicit.includes("HH_LAUNCHER_ONLY"));
   assert.equal(inherited.includes("HH_LAUNCHER_ONLY"), false);
-  // The operating system may add variables of its own (SYSTEMROOT on Windows,
-  // __CF_USER_TEXT_ENCODING on macOS), but none is passed on implicitly.
-  for (const name of posix ? ["PATH", "HOME"] : ["PATH"]) {
-    assert.ok(inherited.includes(name), name);
-    assert.equal(explicit.includes(name), false, name);
+  assert.ok(inherited.includes("HH_LAUNCHER_PARENT_CANARY"));
+  assert.equal(explicit.includes("HH_LAUNCHER_PARENT_CANARY"), false);
+  if (posix) {
+    // The operating system may add variables of its own
+    // (__CF_USER_TEXT_ENCODING on macOS), but none is passed on implicitly.
+    for (const name of ["PATH", "HOME"]) {
+      assert.ok(inherited.includes(name), name);
+      assert.equal(explicit.includes(name), false, name);
+    }
+  } else {
+    // libuv copies these Windows system variables from the parent when they
+    // are missing (documented on ProcessEnvironment); nothing else appears.
+    const libuvRequired = new Set([
+      "HOMEDRIVE",
+      "HOMEPATH",
+      "LOGONSERVER",
+      "PATH",
+      "SYSTEMDRIVE",
+      "SYSTEMROOT",
+      "TEMP",
+      "USERDOMAIN",
+      "USERNAME",
+      "USERPROFILE",
+      "WINDIR",
+    ]);
+    assert.deepEqual(
+      explicit.filter(
+        (name) => name !== "HH_LAUNCHER_ONLY" && !libuvRequired.has(name),
+      ),
+      [],
+    );
   }
 });
 
