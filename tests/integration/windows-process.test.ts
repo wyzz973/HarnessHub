@@ -21,6 +21,7 @@ import test from "node:test";
 import { startHub } from "../../src/main.js";
 import { probeConfiguration } from "@harnesshub/runtime/process/probe";
 import { ProcessWorkerHost } from "@harnesshub/runtime/process/worker-host";
+import { jobHelperPath } from "@harnesshub/runtime/process/windows-job";
 import type * as WindowsJobModule from "@harnesshub/runtime/process/windows-job";
 import {
   recoverWorkerLease,
@@ -35,9 +36,8 @@ import type {
 } from "@harnesshub/core/types";
 import { temporaryDirectory } from "../support/temporary.js";
 
-const native = fileURLToPath(
-  new URL("../../native/harnesshub-job.exe", import.meta.url),
-);
+// The helper lives in the runtime package; use its own resolver, never a second path.
+const native = jobHelperPath();
 const cli = fileURLToPath(new URL("../fixtures/cli-peer.js", import.meta.url));
 const windows = {
   skip: process.platform !== "win32" ? "Windows native Job Objects" : false,
