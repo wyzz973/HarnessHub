@@ -396,9 +396,12 @@ async function catalogServer(t: TestContext) {
   };
 }
 
-async function until(condition: () => boolean, what: string): Promise<void> {
+async function until(
+  condition: () => boolean | Promise<boolean>,
+  what: string,
+): Promise<void> {
   const deadline = Date.now() + 10_000;
-  while (!condition()) {
+  while (!(await condition())) {
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
@@ -539,13 +542,16 @@ void test(
       },
     );
     assert.equal(response.status, 200, await response.text());
+    // Done once the status shows it, which is once it is stored.
     await until(
-      () => catalog.state.requests === before + 1,
+      async () =>
+        Date.parse((await client.catalog.status()).lastRefresh!.at) >
+        Date.parse(sevenHoursAgo),
       "the early refresh after an unpriced call",
     );
+    assert.equal(catalog.state.requests, before + 1);
     const early = await client.catalog.status();
     assert.equal(early.lastRefresh?.outcome, "unchanged");
-    assert.ok(Date.parse(early.lastRefresh!.at) > Date.parse(sevenHoursAgo));
 
     // Without a recorded attempt the background refresh runs at start.
     await rm(path.join(dataDir, "catalog", "refresh.json"));

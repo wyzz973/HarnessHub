@@ -383,7 +383,8 @@ export class CatalogRefresher implements CatalogService {
       };
     }
     if (!this.closed) {
-      this.last = outcome;
+      // Stored before the status shows it, so that what the status shows is
+      // what the next start reads.
       try {
         await this.write(STATE_FILE, `${JSON.stringify(outcome)}\n`);
       } catch (error) {
@@ -391,6 +392,7 @@ export class CatalogRefresher implements CatalogService {
           message: error instanceof Error ? error.message : String(error),
         });
       }
+      this.last = outcome;
     }
     this.log.info("catalog.refresh", {
       outcome: outcome.outcome,
