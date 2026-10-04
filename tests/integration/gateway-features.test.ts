@@ -181,6 +181,18 @@ void test(
     assert.equal(upstream.paths.at(-1), "/v1/images/generations");
     assert.ok(!upstream.bodies.at(-1)!.includes(admin));
 
+    // The routing state lists the credential, closed, with no message text.
+    const routing = await client.routing.state();
+    assert.deepEqual(
+      routing.items.map((item) => [
+        item.provider,
+        item.credentialName,
+        item.enabled,
+        item.state,
+      ]),
+      [["up", "default", true, "closed"]],
+    );
+
     // A user rule, then redaction off.
     const ruled = await client.gatewayFeatures.setRedaction({
       rules: [{ name: "codename", pattern: "falcon-[0-9]+" }],

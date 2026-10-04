@@ -1113,6 +1113,40 @@ export class Breakers {
     return { ok: true };
   }
 
+  /**
+   * Every credential's breaker that is not plainly closed, without failure
+   * messages (they may quote an upstream): an open breaker whose time has
+   * passed is reported half-open, as the next request finds it.
+   */
+  snapshot(): {
+    provider: string;
+    credential: string;
+    state: BreakerState["state"];
+    until?: number;
+    last?: { errorClass: string; status: number; at: number };
+  }[] {
+    const now = this.clock();
+    return [...this.#states].map(([key, state]) => {
+      const [provider, credential] = key.split("\u0000") as [string, string];
+      const open = state.state === "open" && now < state.until;
+      return {
+        provider,
+        credential,
+        state: state.state === "open" && !open ? "half-open" : state.state,
+        ...(open ? { until: state.until } : {}),
+        ...(state.last
+          ? {
+              last: {
+                errorClass: state.last.errorClass,
+                status: state.last.failure.status,
+                at: state.last.at,
+              },
+            }
+          : {}),
+      };
+    });
+  }
+
   /** Whether the candidate is open or marked right now; no side effects (unlike {@link admit}). */
   blocked(candidate: Candidate): boolean {
     const now = this.clock();

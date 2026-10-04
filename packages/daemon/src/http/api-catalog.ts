@@ -1405,6 +1405,23 @@ export const apiCatalog: readonly ApiDocumentation[] = [
   },
   {
     method: "GET",
+    path: "/api/v1/routing/state",
+    title: "Credential 路由状态",
+    group: "providers",
+    request: "无参数。",
+    response:
+      "200：items[] 每个 provider 的每个 Credential 一项（provider、credential、credentialName、enabled、state 为 closed/open/half-open、restingUntil（打开的熔断再次放行的时间）、lastFailure（kind 为失败类别如 rate_limited、quota_exhausted、auth_failed，status，at；从不含错误消息）、readings（各额度窗口最新的读数）），nextCursor 为 null。",
+    implementation:
+      "共享网关处理函数的 routingState：Breakers.snapshot 与 Router 的额度读数，与模型平面存储中的 provider 合并；网关不知道的 Credential 为 closed、没有读数。",
+    effects: "只读；状态在守护进程内存中，重启后为空（额度读数会恢复）。",
+    errors:
+      "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/routing-state-routes.ts",
+    tests: ["tests/integration/gateway-features.test.ts"],
+    operationId: "hh_api_v1_get_routing_state",
+  },
+  {
+    method: "GET",
     path: "/api/v1/subscriptions/notices",
     title: "订阅风险告知",
     group: "subscriptions",

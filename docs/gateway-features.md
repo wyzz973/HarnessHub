@@ -2,6 +2,8 @@
 
 共享模型网关的可选能力（对标 Magpie 网关的脱敏、视觉兜底、搜索模拟与画图；取舍见 [ADR 0027](decisions/0027-gateway-features.md)）。设置保存在 `<dataDir>/gateway-features.json`（0600，原子替换），由 `/api/v1/gateway/features/*` 与 `hh gateway …` 修改，网关对每个请求读取当前值，修改对下一个请求生效。文件不是有效设置时守护进程拒绝启动（`GATEWAY_FEATURES_INVALID`），不会因为手工改错而悄悄关闭脱敏。
 
+这些是运行时管理的设置：经管理接口、控制台或命令修改，立即生效，保存在数据目录中，与局域网共享的设置文件一样。启动时读取、改后需重启的设置（例如监听地址）属于统一的启动配置文件 `<configDir>/config.jsonc`（由 `hh config` 编辑，随该文件一起落地）；两者不重叠。
+
 ```sh
 hh gateway features                                  # 当前设置
 hh gateway redaction off                             # 关闭出站脱敏（缺省开启）

@@ -30,6 +30,10 @@ import {
   type GatewayFeaturesControl,
 } from "./gateway-features-routes.js";
 import {
+  registerRoutingStateRoutes,
+  type RoutingStateSource,
+} from "./routing-state-routes.js";
+import {
   registerSubscriptionRoutes,
   type SubscriptionControl,
 } from "./subscription-routes.js";
@@ -152,6 +156,8 @@ export interface ApiV1Options {
   gatewayShare?: GatewayShareControl;
   /** Redaction, vision and search settings; without them `/gateway/features` is absent. */
   gatewayFeatures?: GatewayFeaturesControl;
+  /** The gateway's per-credential routing state; without it `/routing/state` is absent. */
+  routing?: RoutingStateSource;
   /** Backups and sync; without them `/backup`, `/restore` and `/sync` are absent. */
   backup?: { backups: BackupService; sync: SyncService };
   /**
@@ -345,6 +351,8 @@ export function registerApiV1(
         registerGatewayShareRoutes(api, options.gatewayShare);
       if (options.gatewayFeatures)
         registerGatewayFeaturesRoutes(api, options.gatewayFeatures);
+      if (options.routing)
+        registerRoutingStateRoutes(api, options.modelPlane, options.routing);
       if (options.backup)
         registerBackupRoutes(api, options.backup.backups, options.backup.sync);
       if (options.subscriptions)

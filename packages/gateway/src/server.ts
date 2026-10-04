@@ -24,6 +24,7 @@ import {
   modelAllowed,
   parseGatewayKey,
   parseModelRef,
+  type AllowanceReading,
   type GatewayKeyId,
   type GatewayKeyRecord,
   type ModelCallEntry,
@@ -212,6 +213,26 @@ export interface GatewayHandler {
     sessionId: SessionId,
     options?: { abort?: boolean },
   ): Promise<void>;
+  /**
+   * Each credential's routing state as this handler holds it in memory:
+   * breaker state, rest, last failure (class, status and time, never its
+   * message) and allowance readings. Credentials with none are absent
+   * (closed, nothing known). Read-only and cheap.
+   */
+  routingState(): CredentialRoutingState[];
+}
+
+/** One credential's routing state (`GatewayHandler.routingState`). */
+export interface CredentialRoutingState {
+  provider: string;
+  credential: string;
+  state: "closed" | "open" | "half-open";
+  /** ISO time an open breaker admits a probe again. */
+  restingUntil?: string;
+  /** The last counted failure: its class (`rate_limited`, `quota_exhausted`, …), HTTP status and time. */
+  lastFailure?: { kind: string; status: number; at: string };
+  /** The latest reading of each allowance window. */
+  readings: AllowanceReading[];
 }
 
 function normalize(pathname: string): string {
@@ -1856,6 +1877,33 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       track(
         serve(request, response, "lan").catch(() => void response.destroy()),
       );
+    },
+    routingState(): CredentialRoutingState[] {
+      const states = new Map<string, CredentialRoutingState>();
+      const of = (provider: string, credential: string) => {
+        const key = `${provider}\u0000${credential}`;
+        let state = states.get(key);
+        if (!state) {
+          state = { provider, credential, state: "closed", readings: [] };
+          states.set(key, state);
+        }
+        return state;
+      };
+      for (const breaker of services.breakers.snapshot()) {
+        const state = of(breaker.provider, breaker.credential);
+        state.state = breaker.state;
+        if (breaker.until !== undefined)
+          state.restingUntil = new Date(breaker.until).toISOString();
+        if (breaker.last)
+          state.lastFailure = {
+            kind: breaker.last.errorClass,
+            status: breaker.last.status,
+            at: new Date(breaker.last.at).toISOString(),
+          };
+      }
+      for (const stored of services.router.snapshot())
+        of(stored.provider, stored.credential).readings.push(stored.reading);
+      return [...states.values()];
     },
     async awaitSessionIdle(
       sessionId: SessionId,

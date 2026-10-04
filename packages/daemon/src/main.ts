@@ -992,6 +992,7 @@ export async function startHub(options: {
       library,
       gatewayShare: share,
       gatewayFeatures,
+      routing: { state: () => modelGateway?.routingState() ?? [] },
       backup: { backups, sync },
       ...(subscriptions ? { subscriptions } : {}),
       serialize: serializeWrites,

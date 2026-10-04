@@ -15458,7 +15458,9 @@
                                         "json-schema-to-json-object",
                                         "anthropic-beta-allow",
                                         "thinking-off-unless-asked",
-                                        "lift-additional-tools"
+                                        "lift-additional-tools",
+                                        "anthropic-strip-beta-fields",
+                                        "merge-system-messages"
                                       ]
                                     }
                                   },
@@ -15487,6 +15489,12 @@
                                       "minLength": 1,
                                       "maxLength": 200
                                     }
+                                  },
+                                  "maxTokensField": {
+                                    "enum": [
+                                      "max_tokens",
+                                      "max_completion_tokens"
+                                    ]
                                   }
                                 }
                               },
@@ -15508,7 +15516,9 @@
                                         "json-schema-to-json-object",
                                         "anthropic-beta-allow",
                                         "thinking-off-unless-asked",
-                                        "lift-additional-tools"
+                                        "lift-additional-tools",
+                                        "anthropic-strip-beta-fields",
+                                        "merge-system-messages"
                                       ]
                                     }
                                   },
@@ -15537,6 +15547,12 @@
                                       "minLength": 1,
                                       "maxLength": 200
                                     }
+                                  },
+                                  "maxTokensField": {
+                                    "enum": [
+                                      "max_tokens",
+                                      "max_completion_tokens"
+                                    ]
                                   }
                                 }
                               },
@@ -15558,7 +15574,9 @@
                                         "json-schema-to-json-object",
                                         "anthropic-beta-allow",
                                         "thinking-off-unless-asked",
-                                        "lift-additional-tools"
+                                        "lift-additional-tools",
+                                        "anthropic-strip-beta-fields",
+                                        "merge-system-messages"
                                       ]
                                     }
                                   },
@@ -15587,6 +15605,12 @@
                                       "minLength": 1,
                                       "maxLength": 200
                                     }
+                                  },
+                                  "maxTokensField": {
+                                    "enum": [
+                                      "max_tokens",
+                                      "max_completion_tokens"
+                                    ]
                                   }
                                 }
                               },
@@ -15608,7 +15632,9 @@
                                         "json-schema-to-json-object",
                                         "anthropic-beta-allow",
                                         "thinking-off-unless-asked",
-                                        "lift-additional-tools"
+                                        "lift-additional-tools",
+                                        "anthropic-strip-beta-fields",
+                                        "merge-system-messages"
                                       ]
                                     }
                                   },
@@ -15637,6 +15663,12 @@
                                       "minLength": 1,
                                       "maxLength": 200
                                     }
+                                  },
+                                  "maxTokensField": {
+                                    "enum": [
+                                      "max_tokens",
+                                      "max_completion_tokens"
+                                    ]
                                   }
                                 }
                               }
@@ -16076,7 +16108,9 @@
                                 "json-schema-to-json-object",
                                 "anthropic-beta-allow",
                                 "thinking-off-unless-asked",
-                                "lift-additional-tools"
+                                "lift-additional-tools",
+                                "anthropic-strip-beta-fields",
+                                "merge-system-messages"
                               ]
                             }
                           },
@@ -16105,6 +16139,12 @@
                               "minLength": 1,
                               "maxLength": 200
                             }
+                          },
+                          "maxTokensField": {
+                            "enum": [
+                              "max_tokens",
+                              "max_completion_tokens"
+                            ]
                           }
                         }
                       },
@@ -16126,7 +16166,9 @@
                                 "json-schema-to-json-object",
                                 "anthropic-beta-allow",
                                 "thinking-off-unless-asked",
-                                "lift-additional-tools"
+                                "lift-additional-tools",
+                                "anthropic-strip-beta-fields",
+                                "merge-system-messages"
                               ]
                             }
                           },
@@ -16155,6 +16197,12 @@
                               "minLength": 1,
                               "maxLength": 200
                             }
+                          },
+                          "maxTokensField": {
+                            "enum": [
+                              "max_tokens",
+                              "max_completion_tokens"
+                            ]
                           }
                         }
                       },
@@ -16176,7 +16224,9 @@
                                 "json-schema-to-json-object",
                                 "anthropic-beta-allow",
                                 "thinking-off-unless-asked",
-                                "lift-additional-tools"
+                                "lift-additional-tools",
+                                "anthropic-strip-beta-fields",
+                                "merge-system-messages"
                               ]
                             }
                           },
@@ -16205,6 +16255,12 @@
                               "minLength": 1,
                               "maxLength": 200
                             }
+                          },
+                          "maxTokensField": {
+                            "enum": [
+                              "max_tokens",
+                              "max_completion_tokens"
+                            ]
                           }
                         }
                       },
@@ -16226,7 +16282,9 @@
                                 "json-schema-to-json-object",
                                 "anthropic-beta-allow",
                                 "thinking-off-unless-asked",
-                                "lift-additional-tools"
+                                "lift-additional-tools",
+                                "anthropic-strip-beta-fields",
+                                "merge-system-messages"
                               ]
                             }
                           },
@@ -16255,6 +16313,12 @@
                               "minLength": 1,
                               "maxLength": 200
                             }
+                          },
+                          "maxTokensField": {
+                            "enum": [
+                              "max_tokens",
+                              "max_completion_tokens"
+                            ]
                           }
                         }
                       }
@@ -16669,7 +16733,9 @@
                                   "json-schema-to-json-object",
                                   "anthropic-beta-allow",
                                   "thinking-off-unless-asked",
-                                  "lift-additional-tools"
+                                  "lift-additional-tools",
+                                  "anthropic-strip-beta-fields",
+                                  "merge-system-messages"
                                 ]
                               }
                             },
@@ -16698,6 +16764,12 @@
                                 "minLength": 1,
                                 "maxLength": 200
                               }
+                            },
+                            "maxTokensField": {
+                              "enum": [
+                                "max_tokens",
+                                "max_completion_tokens"
+                              ]
                             }
                           }
                         },
@@ -16719,7 +16791,9 @@
                                   "json-schema-to-json-object",
                                   "anthropic-beta-allow",
                                   "thinking-off-unless-asked",
-                                  "lift-additional-tools"
+                                  "lift-additional-tools",
+                                  "anthropic-strip-beta-fields",
+                                  "merge-system-messages"
                                 ]
                               }
                             },
@@ -16748,6 +16822,12 @@
                                 "minLength": 1,
                                 "maxLength": 200
                               }
+                            },
+                            "maxTokensField": {
+                              "enum": [
+                                "max_tokens",
+                                "max_completion_tokens"
+                              ]
                             }
                           }
                         },
@@ -16769,7 +16849,9 @@
                                   "json-schema-to-json-object",
                                   "anthropic-beta-allow",
                                   "thinking-off-unless-asked",
-                                  "lift-additional-tools"
+                                  "lift-additional-tools",
+                                  "anthropic-strip-beta-fields",
+                                  "merge-system-messages"
                                 ]
                               }
                             },
@@ -16798,6 +16880,12 @@
                                 "minLength": 1,
                                 "maxLength": 200
                               }
+                            },
+                            "maxTokensField": {
+                              "enum": [
+                                "max_tokens",
+                                "max_completion_tokens"
+                              ]
                             }
                           }
                         },
@@ -16819,7 +16907,9 @@
                                   "json-schema-to-json-object",
                                   "anthropic-beta-allow",
                                   "thinking-off-unless-asked",
-                                  "lift-additional-tools"
+                                  "lift-additional-tools",
+                                  "anthropic-strip-beta-fields",
+                                  "merge-system-messages"
                                 ]
                               }
                             },
@@ -16848,6 +16938,12 @@
                                 "minLength": 1,
                                 "maxLength": 200
                               }
+                            },
+                            "maxTokensField": {
+                              "enum": [
+                                "max_tokens",
+                                "max_completion_tokens"
+                              ]
                             }
                           }
                         }
@@ -17415,7 +17511,9 @@
                                         "json-schema-to-json-object",
                                         "anthropic-beta-allow",
                                         "thinking-off-unless-asked",
-                                        "lift-additional-tools"
+                                        "lift-additional-tools",
+                                        "anthropic-strip-beta-fields",
+                                        "merge-system-messages"
                                       ]
                                     }
                                   },
@@ -17444,6 +17542,12 @@
                                       "minLength": 1,
                                       "maxLength": 200
                                     }
+                                  },
+                                  "maxTokensField": {
+                                    "enum": [
+                                      "max_tokens",
+                                      "max_completion_tokens"
+                                    ]
                                   }
                                 }
                               },
@@ -17465,7 +17569,9 @@
                                         "json-schema-to-json-object",
                                         "anthropic-beta-allow",
                                         "thinking-off-unless-asked",
-                                        "lift-additional-tools"
+                                        "lift-additional-tools",
+                                        "anthropic-strip-beta-fields",
+                                        "merge-system-messages"
                                       ]
                                     }
                                   },
@@ -17494,6 +17600,12 @@
                                       "minLength": 1,
                                       "maxLength": 200
                                     }
+                                  },
+                                  "maxTokensField": {
+                                    "enum": [
+                                      "max_tokens",
+                                      "max_completion_tokens"
+                                    ]
                                   }
                                 }
                               },
@@ -17515,7 +17627,9 @@
                                         "json-schema-to-json-object",
                                         "anthropic-beta-allow",
                                         "thinking-off-unless-asked",
-                                        "lift-additional-tools"
+                                        "lift-additional-tools",
+                                        "anthropic-strip-beta-fields",
+                                        "merge-system-messages"
                                       ]
                                     }
                                   },
@@ -17544,6 +17658,12 @@
                                       "minLength": 1,
                                       "maxLength": 200
                                     }
+                                  },
+                                  "maxTokensField": {
+                                    "enum": [
+                                      "max_tokens",
+                                      "max_completion_tokens"
+                                    ]
                                   }
                                 }
                               },
@@ -17565,7 +17685,9 @@
                                         "json-schema-to-json-object",
                                         "anthropic-beta-allow",
                                         "thinking-off-unless-asked",
-                                        "lift-additional-tools"
+                                        "lift-additional-tools",
+                                        "anthropic-strip-beta-fields",
+                                        "merge-system-messages"
                                       ]
                                     }
                                   },
@@ -17594,6 +17716,12 @@
                                       "minLength": 1,
                                       "maxLength": 200
                                     }
+                                  },
+                                  "maxTokensField": {
+                                    "enum": [
+                                      "max_tokens",
+                                      "max_completion_tokens"
+                                    ]
                                   }
                                 }
                               }
@@ -18457,7 +18585,9 @@
                                             "json-schema-to-json-object",
                                             "anthropic-beta-allow",
                                             "thinking-off-unless-asked",
-                                            "lift-additional-tools"
+                                            "lift-additional-tools",
+                                            "anthropic-strip-beta-fields",
+                                            "merge-system-messages"
                                           ]
                                         }
                                       },
@@ -18486,6 +18616,12 @@
                                           "minLength": 1,
                                           "maxLength": 200
                                         }
+                                      },
+                                      "maxTokensField": {
+                                        "enum": [
+                                          "max_tokens",
+                                          "max_completion_tokens"
+                                        ]
                                       }
                                     }
                                   },
@@ -18507,7 +18643,9 @@
                                             "json-schema-to-json-object",
                                             "anthropic-beta-allow",
                                             "thinking-off-unless-asked",
-                                            "lift-additional-tools"
+                                            "lift-additional-tools",
+                                            "anthropic-strip-beta-fields",
+                                            "merge-system-messages"
                                           ]
                                         }
                                       },
@@ -18536,6 +18674,12 @@
                                           "minLength": 1,
                                           "maxLength": 200
                                         }
+                                      },
+                                      "maxTokensField": {
+                                        "enum": [
+                                          "max_tokens",
+                                          "max_completion_tokens"
+                                        ]
                                       }
                                     }
                                   },
@@ -18557,7 +18701,9 @@
                                             "json-schema-to-json-object",
                                             "anthropic-beta-allow",
                                             "thinking-off-unless-asked",
-                                            "lift-additional-tools"
+                                            "lift-additional-tools",
+                                            "anthropic-strip-beta-fields",
+                                            "merge-system-messages"
                                           ]
                                         }
                                       },
@@ -18586,6 +18732,12 @@
                                           "minLength": 1,
                                           "maxLength": 200
                                         }
+                                      },
+                                      "maxTokensField": {
+                                        "enum": [
+                                          "max_tokens",
+                                          "max_completion_tokens"
+                                        ]
                                       }
                                     }
                                   },
@@ -18607,7 +18759,9 @@
                                             "json-schema-to-json-object",
                                             "anthropic-beta-allow",
                                             "thinking-off-unless-asked",
-                                            "lift-additional-tools"
+                                            "lift-additional-tools",
+                                            "anthropic-strip-beta-fields",
+                                            "merge-system-messages"
                                           ]
                                         }
                                       },
@@ -18636,6 +18790,12 @@
                                           "minLength": 1,
                                           "maxLength": 200
                                         }
+                                      },
+                                      "maxTokensField": {
+                                        "enum": [
+                                          "max_tokens",
+                                          "max_completion_tokens"
+                                        ]
                                       }
                                     }
                                   }
@@ -19180,7 +19340,9 @@
                                   "json-schema-to-json-object",
                                   "anthropic-beta-allow",
                                   "thinking-off-unless-asked",
-                                  "lift-additional-tools"
+                                  "lift-additional-tools",
+                                  "anthropic-strip-beta-fields",
+                                  "merge-system-messages"
                                 ]
                               }
                             },
@@ -19209,6 +19371,12 @@
                                 "minLength": 1,
                                 "maxLength": 200
                               }
+                            },
+                            "maxTokensField": {
+                              "enum": [
+                                "max_tokens",
+                                "max_completion_tokens"
+                              ]
                             }
                           }
                         },
@@ -19230,7 +19398,9 @@
                                   "json-schema-to-json-object",
                                   "anthropic-beta-allow",
                                   "thinking-off-unless-asked",
-                                  "lift-additional-tools"
+                                  "lift-additional-tools",
+                                  "anthropic-strip-beta-fields",
+                                  "merge-system-messages"
                                 ]
                               }
                             },
@@ -19259,6 +19429,12 @@
                                 "minLength": 1,
                                 "maxLength": 200
                               }
+                            },
+                            "maxTokensField": {
+                              "enum": [
+                                "max_tokens",
+                                "max_completion_tokens"
+                              ]
                             }
                           }
                         },
@@ -19280,7 +19456,9 @@
                                   "json-schema-to-json-object",
                                   "anthropic-beta-allow",
                                   "thinking-off-unless-asked",
-                                  "lift-additional-tools"
+                                  "lift-additional-tools",
+                                  "anthropic-strip-beta-fields",
+                                  "merge-system-messages"
                                 ]
                               }
                             },
@@ -19309,6 +19487,12 @@
                                 "minLength": 1,
                                 "maxLength": 200
                               }
+                            },
+                            "maxTokensField": {
+                              "enum": [
+                                "max_tokens",
+                                "max_completion_tokens"
+                              ]
                             }
                           }
                         },
@@ -19330,7 +19514,9 @@
                                   "json-schema-to-json-object",
                                   "anthropic-beta-allow",
                                   "thinking-off-unless-asked",
-                                  "lift-additional-tools"
+                                  "lift-additional-tools",
+                                  "anthropic-strip-beta-fields",
+                                  "merge-system-messages"
                                 ]
                               }
                             },
@@ -19359,6 +19545,12 @@
                                 "minLength": 1,
                                 "maxLength": 200
                               }
+                            },
+                            "maxTokensField": {
+                              "enum": [
+                                "max_tokens",
+                                "max_completion_tokens"
+                              ]
                             }
                           }
                         }
@@ -19726,7 +19918,9 @@
                                 "json-schema-to-json-object",
                                 "anthropic-beta-allow",
                                 "thinking-off-unless-asked",
-                                "lift-additional-tools"
+                                "lift-additional-tools",
+                                "anthropic-strip-beta-fields",
+                                "merge-system-messages"
                               ]
                             }
                           },
@@ -19755,6 +19949,12 @@
                               "minLength": 1,
                               "maxLength": 200
                             }
+                          },
+                          "maxTokensField": {
+                            "enum": [
+                              "max_tokens",
+                              "max_completion_tokens"
+                            ]
                           }
                         },
                         "nullable": true
@@ -19777,7 +19977,9 @@
                                 "json-schema-to-json-object",
                                 "anthropic-beta-allow",
                                 "thinking-off-unless-asked",
-                                "lift-additional-tools"
+                                "lift-additional-tools",
+                                "anthropic-strip-beta-fields",
+                                "merge-system-messages"
                               ]
                             }
                           },
@@ -19806,6 +20008,12 @@
                               "minLength": 1,
                               "maxLength": 200
                             }
+                          },
+                          "maxTokensField": {
+                            "enum": [
+                              "max_tokens",
+                              "max_completion_tokens"
+                            ]
                           }
                         },
                         "nullable": true
@@ -19828,7 +20036,9 @@
                                 "json-schema-to-json-object",
                                 "anthropic-beta-allow",
                                 "thinking-off-unless-asked",
-                                "lift-additional-tools"
+                                "lift-additional-tools",
+                                "anthropic-strip-beta-fields",
+                                "merge-system-messages"
                               ]
                             }
                           },
@@ -19857,6 +20067,12 @@
                               "minLength": 1,
                               "maxLength": 200
                             }
+                          },
+                          "maxTokensField": {
+                            "enum": [
+                              "max_tokens",
+                              "max_completion_tokens"
+                            ]
                           }
                         },
                         "nullable": true
@@ -19879,7 +20095,9 @@
                                 "json-schema-to-json-object",
                                 "anthropic-beta-allow",
                                 "thinking-off-unless-asked",
-                                "lift-additional-tools"
+                                "lift-additional-tools",
+                                "anthropic-strip-beta-fields",
+                                "merge-system-messages"
                               ]
                             }
                           },
@@ -19908,6 +20126,12 @@
                               "minLength": 1,
                               "maxLength": 200
                             }
+                          },
+                          "maxTokensField": {
+                            "enum": [
+                              "max_tokens",
+                              "max_completion_tokens"
+                            ]
                           }
                         },
                         "nullable": true
@@ -20339,7 +20563,9 @@
                                   "json-schema-to-json-object",
                                   "anthropic-beta-allow",
                                   "thinking-off-unless-asked",
-                                  "lift-additional-tools"
+                                  "lift-additional-tools",
+                                  "anthropic-strip-beta-fields",
+                                  "merge-system-messages"
                                 ]
                               }
                             },
@@ -20368,6 +20594,12 @@
                                 "minLength": 1,
                                 "maxLength": 200
                               }
+                            },
+                            "maxTokensField": {
+                              "enum": [
+                                "max_tokens",
+                                "max_completion_tokens"
+                              ]
                             }
                           }
                         },
@@ -20389,7 +20621,9 @@
                                   "json-schema-to-json-object",
                                   "anthropic-beta-allow",
                                   "thinking-off-unless-asked",
-                                  "lift-additional-tools"
+                                  "lift-additional-tools",
+                                  "anthropic-strip-beta-fields",
+                                  "merge-system-messages"
                                 ]
                               }
                             },
@@ -20418,6 +20652,12 @@
                                 "minLength": 1,
                                 "maxLength": 200
                               }
+                            },
+                            "maxTokensField": {
+                              "enum": [
+                                "max_tokens",
+                                "max_completion_tokens"
+                              ]
                             }
                           }
                         },
@@ -20439,7 +20679,9 @@
                                   "json-schema-to-json-object",
                                   "anthropic-beta-allow",
                                   "thinking-off-unless-asked",
-                                  "lift-additional-tools"
+                                  "lift-additional-tools",
+                                  "anthropic-strip-beta-fields",
+                                  "merge-system-messages"
                                 ]
                               }
                             },
@@ -20468,6 +20710,12 @@
                                 "minLength": 1,
                                 "maxLength": 200
                               }
+                            },
+                            "maxTokensField": {
+                              "enum": [
+                                "max_tokens",
+                                "max_completion_tokens"
+                              ]
                             }
                           }
                         },
@@ -20489,7 +20737,9 @@
                                   "json-schema-to-json-object",
                                   "anthropic-beta-allow",
                                   "thinking-off-unless-asked",
-                                  "lift-additional-tools"
+                                  "lift-additional-tools",
+                                  "anthropic-strip-beta-fields",
+                                  "merge-system-messages"
                                 ]
                               }
                             },
@@ -20518,6 +20768,12 @@
                                 "minLength": 1,
                                 "maxLength": 200
                               }
+                            },
+                            "maxTokensField": {
+                              "enum": [
+                                "max_tokens",
+                                "max_completion_tokens"
+                              ]
                             }
                           }
                         }
@@ -21172,7 +21428,9 @@
                                   "json-schema-to-json-object",
                                   "anthropic-beta-allow",
                                   "thinking-off-unless-asked",
-                                  "lift-additional-tools"
+                                  "lift-additional-tools",
+                                  "anthropic-strip-beta-fields",
+                                  "merge-system-messages"
                                 ]
                               }
                             },
@@ -21201,6 +21459,12 @@
                                 "minLength": 1,
                                 "maxLength": 200
                               }
+                            },
+                            "maxTokensField": {
+                              "enum": [
+                                "max_tokens",
+                                "max_completion_tokens"
+                              ]
                             }
                           }
                         },
@@ -21222,7 +21486,9 @@
                                   "json-schema-to-json-object",
                                   "anthropic-beta-allow",
                                   "thinking-off-unless-asked",
-                                  "lift-additional-tools"
+                                  "lift-additional-tools",
+                                  "anthropic-strip-beta-fields",
+                                  "merge-system-messages"
                                 ]
                               }
                             },
@@ -21251,6 +21517,12 @@
                                 "minLength": 1,
                                 "maxLength": 200
                               }
+                            },
+                            "maxTokensField": {
+                              "enum": [
+                                "max_tokens",
+                                "max_completion_tokens"
+                              ]
                             }
                           }
                         },
@@ -21272,7 +21544,9 @@
                                   "json-schema-to-json-object",
                                   "anthropic-beta-allow",
                                   "thinking-off-unless-asked",
-                                  "lift-additional-tools"
+                                  "lift-additional-tools",
+                                  "anthropic-strip-beta-fields",
+                                  "merge-system-messages"
                                 ]
                               }
                             },
@@ -21301,6 +21575,12 @@
                                 "minLength": 1,
                                 "maxLength": 200
                               }
+                            },
+                            "maxTokensField": {
+                              "enum": [
+                                "max_tokens",
+                                "max_completion_tokens"
+                              ]
                             }
                           }
                         },
@@ -21322,7 +21602,9 @@
                                   "json-schema-to-json-object",
                                   "anthropic-beta-allow",
                                   "thinking-off-unless-asked",
-                                  "lift-additional-tools"
+                                  "lift-additional-tools",
+                                  "anthropic-strip-beta-fields",
+                                  "merge-system-messages"
                                 ]
                               }
                             },
@@ -21351,6 +21633,12 @@
                                 "minLength": 1,
                                 "maxLength": 200
                               }
+                            },
+                            "maxTokensField": {
+                              "enum": [
+                                "max_tokens",
+                                "max_completion_tokens"
+                              ]
                             }
                           }
                         }
@@ -38761,6 +39049,206 @@
                           }
                         }
                       }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/routing/state": {
+      "get": {
+        "operationId": "hh_api_v1_get_routing_state",
+        "summary": "Credential 路由状态",
+        "tags": [
+          "providers"
+        ],
+        "description": "共享网关处理函数的 routingState：Breakers.snapshot 与 Router 的额度读数，与模型平面存储中的 provider 合并；网关不知道的 Credential 为 closed、没有读数。\n\n输入：无参数。\n\n返回：200：items[] 每个 provider 的每个 Credential 一项（provider、credential、credentialName、enabled、state 为 closed/open/half-open、restingUntil（打开的熔断再次放行的时间）、lastFailure（kind 为失败类别如 rate_limited、quota_exhausted、auth_failed，status，at；从不含错误消息）、readings（各额度窗口最新的读数）），nextCursor 为 null。\n\n副作用：只读；状态在守护进程内存中，重启后为空（额度读数会恢复）。\n\n失败与边界：需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "items",
+                    "nextCursor"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "provider",
+                          "credential",
+                          "credentialName",
+                          "enabled",
+                          "state",
+                          "readings"
+                        ],
+                        "properties": {
+                          "provider": {
+                            "type": "string"
+                          },
+                          "credential": {
+                            "type": "string"
+                          },
+                          "credentialName": {
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "closed",
+                              "open",
+                              "half-open"
+                            ]
+                          },
+                          "restingUntil": {
+                            "type": "string"
+                          },
+                          "lastFailure": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "kind",
+                              "status",
+                              "at"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "type": "string"
+                              },
+                              "status": {
+                                "type": "integer"
+                              },
+                              "at": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "readings": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "window",
+                                "usedPercent",
+                                "observedAt"
+                              ],
+                              "properties": {
+                                "window": {
+                                  "type": "string"
+                                },
+                                "usedPercent": {
+                                  "type": "number"
+                                },
+                                "resetsAt": {
+                                  "type": "string"
+                                },
+                                "spanSeconds": {
+                                  "type": "number"
+                                },
+                                "observedAt": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "nextCursor": {
+                      "type": "string",
+                      "nullable": true
                     }
                   }
                 }

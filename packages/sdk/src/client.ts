@@ -30,6 +30,7 @@ import type {
   ImportResult,
 } from "@harnesshub/core/import-links";
 import type {
+  AllowanceReading,
   ConversationSummary,
   GatewayKeyQuota,
   GatewayKeyView,
@@ -48,6 +49,7 @@ import type {
 
 /** Record types of the API, re-exported so clients need no other package. */
 export type {
+  AllowanceReading,
   GatewayKeyQuota,
   GatewayKeyScope,
   GatewayKeyView,
@@ -368,6 +370,24 @@ export interface GatewayFeaturesView {
       hasKey: boolean;
     }[];
   };
+}
+
+/**
+ * `GET /routing/state`: one credential's routing state as the gateway holds
+ * it in memory (it starts empty after a daemon restart; readings persist).
+ */
+export interface CredentialRoutingState {
+  provider: string;
+  credential: string;
+  credentialName: string;
+  enabled: boolean;
+  /** `open`: resting until `restingUntil`; `half-open`: the next request probes it. */
+  state: "closed" | "open" | "half-open";
+  restingUntil?: string;
+  /** The last counted failure: its class (`rate_limited`, `quota_exhausted`, `auth_failed`, …), HTTP status and time. */
+  lastFailure?: { kind: string; status: number; at: string };
+  /** The latest reading of each allowance window (`smart` and `pace` use them). */
+  readings: AllowanceReading[];
 }
 
 /** `POST /gateway-keys`: `key` is the key text, returned only by this call. */
@@ -1336,6 +1356,12 @@ export class HarnessHubClient {
       this.request<GatewayShareStatus>("PUT", "gateway/share", {
         body: settings,
       }),
+  };
+
+  readonly routing = {
+    /** Every credential's breaker state, rest, last failure class and allowance readings. */
+    state: () =>
+      this.request<Page<CredentialRoutingState>>("GET", "routing/state"),
   };
 
   readonly gatewayFeatures = {
