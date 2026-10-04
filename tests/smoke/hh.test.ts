@@ -101,6 +101,101 @@ void test(
 );
 
 void test(
+  "a command's --help and its usage errors show that command's usage, not every command's",
+  { timeout: 60_000 },
+  async (t) => {
+    const { directory } = await temporaryDirectory(t, "harnesshub-help-");
+    const offline = ["--url", "http://127.0.0.1:9"];
+    const cases: {
+      args: string[];
+      code: number;
+      start: string;
+      shows: string[];
+      hides: string[];
+    }[] = [
+      {
+        args: ["provider", "add", "--help"],
+        code: 0,
+        start: "Usage:\n  hh provider list",
+        shows: ["--preset P", "Common options:"],
+        hides: ["hh key", "hh group", "hh gateway"],
+      },
+      // A command shows its subcommands; a subcommand shows only itself.
+      {
+        args: ["group", "--help"],
+        code: 0,
+        start: "Usage:\n  hh group list",
+        shows: ["\n  hh group rule list"],
+        hides: ["hh provider"],
+      },
+      {
+        args: ["group", "rule", "add", "--help"],
+        code: 0,
+        start: "Usage:\n  hh group rule list",
+        shows: ["Common options:"],
+        hides: ["hh group list"],
+      },
+      {
+        args: ["wire", "--help"],
+        code: 0,
+        start: "Usage:\n  hh wire <agent> [model]",
+        shows: ["\n  hh wire <agent> --rotate"],
+        hides: ["hh profile", "hh agents", "hh unwire"],
+      },
+      {
+        args: ["agents", "--help"],
+        code: 0,
+        start: "Usage:\n  hh agents ",
+        shows: ["\n  hh agents models <agent>"],
+        hides: ["hh wire <agent> [model]"],
+      },
+      {
+        args: ["library", "add", "--help"],
+        code: 0,
+        start: "Usage:\n  hh library add instructions",
+        shows: ["\n  hh library add mcp"],
+        hides: ["hh library sync", "hh library list"],
+      },
+      {
+        args: ["restore", "--help"],
+        code: 0,
+        start: "Usage:\n  hh restore",
+        shows: ["passphrase"],
+        hides: ["hh backup", "hh sync"],
+      },
+      {
+        args: ["provider", "add", "x", "--base", "http://a", ...offline],
+        code: 2,
+        start: "Error: --base needs --preset\n\nUsage:\n  hh provider list",
+        shows: [],
+        hides: ["hh key"],
+      },
+      {
+        args: ["wire", ...offline],
+        code: 2,
+        start: "Error: Expected <agent> [model]\n\nUsage:\n  hh wire",
+        shows: [],
+        hides: ["hh profile"],
+      },
+    ];
+    const outcomes = await Promise.all(
+      cases.map((item) => hh(directory, item.args)),
+    );
+    cases.forEach((item, index) => {
+      const outcome = outcomes[index]!;
+      const name = `hh ${item.args.join(" ")}`;
+      const text = item.code === 0 ? outcome.stdout : outcome.stderr;
+      assert.equal(outcome.code, item.code, `${name}: ${outcome.stderr}`);
+      assert.ok(text.startsWith(item.start), `${name}:\n${text}`);
+      for (const shown of item.shows)
+        assert.ok(text.includes(shown), `${name} shows ${shown}`);
+      for (const hidden of item.hides)
+        assert.ok(!text.includes(hidden), `${name} hides ${hidden}`);
+    });
+  },
+);
+
+void test(
   "hh serve listens on 127.0.0.1 by default, where clients, links and wiring point",
   { timeout: 60_000 },
   async (t) => {

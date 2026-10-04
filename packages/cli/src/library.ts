@@ -18,6 +18,7 @@ import type {
   LibrarySecretInput,
 } from "@harnesshub/sdk/client";
 import {
+  commandWords,
   confirm,
   context,
   EXIT,
@@ -27,8 +28,10 @@ import {
   positionals,
   report,
   table,
+  usageFor,
   UsageError,
   write,
+  type CommandUsage,
 } from "./admin.js";
 
 /** The agents the Library writes into. */
@@ -44,27 +47,49 @@ export const AGENTS: readonly LibraryAgent[] = [
   "hermes",
 ];
 
-const USAGE = `Usage:
-  hh library list [instructions|mcp|skills]   list the Library's items
-  hh library show instructions <id> | mcp <name> | skill <name>
-  hh library add instructions <id> --file PATH|- [--name NAME] [--agent A]...
+/** The Library commands' usage, one entry per command, for `hh <command> --help`. */
+const COMMAND_USAGE: readonly CommandUsage[] = [
+  {
+    command: "library list",
+    text: `  hh library list [instructions|mcp|skills]   list the Library's items`,
+  },
+  {
+    command: "library show",
+    text: `  hh library show instructions <id> | mcp <name> | skill <name>`,
+  },
+  {
+    command: "library add",
+    text: `  hh library add instructions <id> --file PATH|- [--name NAME] [--agent A]...
   hh library add mcp <name> --command CMD [--arg ARG]... [--env NAME=VALUE]...
           [--secret-env NAME=SOURCE]... [--agent A]...
   hh library add mcp <name> --http URL | --sse URL [--header NAME=VALUE]...
           [--secret-header NAME=SOURCE]... [--agent A]...
-  hh library add skill <directory> [--agent A]...
-  hh library rm instructions <id> | mcp <name> | skill <name>
-  hh library sync [agent]...            show the changes, confirm, write them
+  hh library add skill <directory> [--agent A]...`,
+  },
+  {
+    command: "library rm",
+    text: `  hh library rm instructions <id> | mcp <name> | skill <name>`,
+  },
+  {
+    command: "library sync",
+    text: `  hh library sync [agent]...            show the changes, confirm, write them
           [--allow-plaintext-secret]    write secret values an agent cannot reference
           [--copy]                      copy skills instead of linking them
-          [--dry-run]                   only show the changes
+          [--dry-run]                   only show the changes`,
+  },
+];
 
-Agents: ${AGENTS.join(", ")}; --agent takes several, comma-separated, or all.
+const USAGE_NOTES = `Agents: ${AGENTS.join(", ")}; --agent takes several, comma-separated, or all.
 An agent gets one instruction set. A secret SOURCE is env:VARIABLE, file:PATH
 or stdin (one value read from standard input); the daemon refuses references
 to HarnessHub's own credentials (SECRET_REF_FORBIDDEN). add --replace replaces
 an item of the same name. sync exits 5 when an item was refused for an agent.
 Common options: --url URL, --data-dir DIR, --json, --yes, --non-interactive.`;
+
+/** The usage of the Library commands command `argv` names, or of all of them. */
+function commandUsage(argv: readonly string[]): string {
+  return usageFor("", COMMAND_USAGE, USAGE_NOTES, commandWords(argv));
+}
 
 /** Some items were refused for an agent; the rest was synced (exit code 5). */
 class Refused extends Error {}
@@ -431,12 +456,14 @@ const COMMANDS: Readonly<Record<string, (args: string[]) => Promise<void>>> = {
 export async function main(argv: string[]): Promise<number> {
   const [, name, ...args] = argv;
   if (name === undefined || name === "--help" || args.includes("--help")) {
-    write(USAGE);
+    write(commandUsage(argv));
     return name === undefined ? EXIT.usage : EXIT.ok;
   }
   const command = Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : undefined;
   if (!command) {
-    process.stderr.write(`Unknown library command: ${name}\n${USAGE}\n`);
+    process.stderr.write(
+      `Unknown library command: ${name}\n${commandUsage([])}\n`,
+    );
     return EXIT.usage;
   }
   try {
@@ -444,7 +471,9 @@ export async function main(argv: string[]): Promise<number> {
     return EXIT.ok;
   } catch (error) {
     if (error instanceof UsageError) {
-      process.stderr.write(`Error: ${error.message}\n\n${USAGE}\n`);
+      process.stderr.write(
+        `Error: ${error.message}\n\n${commandUsage(argv)}\n`,
+      );
       return EXIT.usage;
     }
     if (error instanceof Refused) {

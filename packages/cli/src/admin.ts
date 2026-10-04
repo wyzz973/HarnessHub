@@ -66,9 +66,61 @@ const EXIT = {
   interrupted: 130,
 } as const;
 
-const USAGE = `Usage: hh <command> [options]
+/** One command's lines of a usage text: `group rule` for `hh group rule …`. */
+interface CommandUsage {
+  /** The command's words after `hh`. */
+  command: string;
+  text: string;
+}
 
-  hh provider list | show <id> | presets | models <id> [--refresh]
+/** Whether `words` begin with every word of `prefix`. */
+function begins(prefix: readonly string[], words: readonly string[]): boolean {
+  return prefix.every((part, index) => words[index] === part);
+}
+
+/**
+ * The usage for `words` (the command line's words before its first option):
+ * the entry of the longest command they begin with, the entries of the
+ * subcommands they name the whole of (`hh group` also shows `hh group
+ * rule`), then `notes`. When they begin with no command, every entry under
+ * `title`.
+ */
+function usageFor(
+  title: string,
+  entries: readonly CommandUsage[],
+  notes: string,
+  words: readonly string[],
+): string {
+  const commands = entries.map((entry) => entry.command.split(" "));
+  const best = Math.max(
+    0,
+    ...commands
+      .filter((command) => begins(command, words))
+      .map((command) => command.length),
+  );
+  const shown = best
+    ? entries.filter((_, index) => {
+        const command = commands[index] ?? [];
+        return begins(command, words)
+          ? command.length === best
+          : command.length > words.length && begins(words, command);
+      })
+    : entries;
+  const header = best || !title ? "Usage:\n" : `Usage: ${title}\n\n`;
+  return `${header}${shown.map((entry) => entry.text).join("\n")}\n\n${notes}`;
+}
+
+/** The words of a command line before its first option: what `--help` is about. */
+function commandWords(argv: readonly string[]): string[] {
+  const at = argv.findIndex((arg) => arg.startsWith("-"));
+  return [...(at < 0 ? argv : argv.slice(0, at))];
+}
+
+/** The model-plane commands' usage, one entry per command, for `hh <command> --help`. */
+const COMMAND_USAGE: readonly CommandUsage[] = [
+  {
+    command: "provider",
+    text: `  hh provider list | show <id> | presets | models <id> [--refresh]
               | add <id> --chat URL [--responses URL] [--anthropic URL]
                 [--gemini URL] [--image-endpoint URL] [--name N] [--kind K]
                 [--api-key-header H] [--model ID]...
@@ -78,46 +130,73 @@ const USAGE = `Usage: hh <command> [options]
                  | --credential-from-file PATH]
               | remove <id>
               | test <id> [--model M]
-              | doctor <id> [--model M] [--deep] [--slow-ms N] [--fix]
-  hh import <link> | - (link on stdin) | --from claude-code|codex [--only REF]...
-              shows what would be added, then asks (--yes adds without asking)
-  hh credential list <provider> | add <provider> [--name N] [--id ID]
+              | doctor <id> [--model M] [--deep] [--slow-ms N] [--fix]`,
+  },
+  {
+    command: "import",
+    text: `  hh import <link> | - (link on stdin) | --from claude-code|codex [--only REF]...
+              shows what would be added, then asks (--yes adds without asking)`,
+  },
+  {
+    command: "credential",
+    text: `  hh credential list <provider> | add <provider> [--name N] [--id ID]
               [--protocol P]... | rotate <provider> <credential>
               | remove <provider> <credential>
-              secret from a hidden prompt, --from-stdin, --from-env VAR or --from-file PATH
-  hh key list | create --name N --allow REF... [--expires-at TIME | --no-expiry]
+              secret from a hidden prompt, --from-stdin, --from-env VAR or --from-file PATH`,
+  },
+  {
+    command: "key",
+    text: `  hh key list | create --name N --allow REF... [--expires-at TIME | --no-expiry]
               [--lan] [--rpm N] [--budget PERIOD:tokens=N,cost=USD,cache-reads]...
               | quota <keyId> [--rpm N] [--budget ...]... | quota <keyId> --clear
               | limit <keyId> | revoke <keyId>
               budgets are per calendar day, week or month in the daemon's
               local time; tokens count input, output and cache writes (and
-              cache reads with cache-reads), cost is the ledger's estimate
-  hh gateway features | redaction on|off | redaction rule add NAME PATTERN
+              cache reads with cache-reads), cost is the ledger's estimate`,
+  },
+  {
+    command: "gateway",
+    text: `  hh gateway features | redaction on|off | redaction rule add NAME PATTERN
               [--ignore-case] | redaction rule remove NAME | vision MODEL|off
               | search add tavily|brave|exa|firecrawl|searxng [--base-url URL]
               [--key | --key-from-stdin | --key-from-env VAR
-              | --key-from-file PATH] | search remove ID
-  hh gateway share status | off | on [--host IP] [--port N] [--name HOST]...
-              [--public-base-url URL]
-  hh group list | add <id> --member REF... [--strategy S] [--stickiness S]
+              | --key-from-file PATH] | search remove ID`,
+  },
+  {
+    command: "gateway share",
+    text: `  hh gateway share status | off | on [--host IP] [--port N] [--name HOST]...
+              [--public-base-url URL]`,
+  },
+  {
+    command: "group",
+    text: `  hh group list | add <id> --member REF... [--strategy S] [--stickiness S]
               | remove <id> | auto | hide <auto-id> | restore <auto-id>
               a member is provider/model, fixed at an effort with :none to
               :max (provider/model:high), sent fast with :fast last, or
-              another group (group/<id>, at most 8 deep)
-  hh group rule list <id> | add <id> use=MEMBER [tokens=200k] [images]
+              another group (group/<id>, at most 8 deep)`,
+  },
+  {
+    command: "group rule",
+    text: `  hh group rule list <id> | add <id> use=MEMBER [tokens=200k] [images]
               [effort[=on|low|medium|high|xhigh|max]] [agents=a,b]
               [intent="..."] [compact] [time=HH:MM-HH:MM] [days=mon-fri]
               [classifier=REF] [at=N] | remove <id> <n> | move <id> <n> <to>
               | classifier <id> REF|off | effort <id> auto|off
               the first rule a turn matches puts its member first for the
-              turn; an intent is judged by the group's classifier
-  hh model show <provider/model | provider/*>
+              turn; an intent is judged by the group's classifier`,
+  },
+  {
+    command: "model",
+    text: `  hh model show <provider/model | provider/*>
               | set <provider/model | provider/*> KEY=VALUE... | unset <ref>
               keys: context, output (tokens), reasoning, toolcall (yes|no),
               modalities (text,image,pdf,audio,video), price.input,
               price.output, price.cacheRead, price.cacheWrite (USD per
-              million tokens); KEY= removes one key of the override
-  hh subscription notice | list | login chatgpt [--provider ID] [--account ID]
+              million tokens); KEY= removes one key of the override`,
+  },
+  {
+    command: "subscription",
+    text: `  hh subscription notice | list | login chatgpt [--provider ID] [--account ID]
               [--accept-notice] | login copilot [--provider ID] [--account ID]
               [--token | --token-from-stdin | --token-from-env VAR
               | --token-from-file PATH] [--accept-notice]
@@ -125,16 +204,39 @@ const USAGE = `Usage: hh <command> [options]
               | logout <provider> <account>
               accounts are off until their risk notice is accepted, and serve
               agents on this computer only; Copilot uses the Copilot CLI's own
-              login, or a fine-grained token with Copilot Requests
-  hh catalog status | refresh
-  hh usage [--by model|provider|day|key|adapter|credential|conversation]
+              login, or a fine-grained token with Copilot Requests`,
+  },
+  {
+    command: "catalog",
+    text: `  hh catalog status | refresh`,
+  },
+  {
+    command: "usage",
+    text: `  hh usage [--by model|provider|day|key|adapter|credential|conversation]
               [--since 7d] [--from TIME] [--to TIME] [--provider P]
-              [--model REF] [--key KEY_ID] [--agent A]
-  hh status
+              [--model REF] [--key KEY_ID] [--agent A]`,
+  },
+  {
+    command: "status",
+    text: `  hh status`,
+  },
+];
 
-Common options: --url URL (default ${DEFAULT_DAEMON_URL}), --data-dir DIR
+const USAGE_NOTES = `Common options: --url URL (default ${DEFAULT_DAEMON_URL}), --data-dir DIR
 (the daemon's data directory holding admin.token, default ./data), --json,
 --yes, --non-interactive.`;
+
+/** The usage of the command `argv` names, or of every command when it names none. */
+function commandUsage(argv: readonly string[]): string {
+  return usageFor(
+    "hh <command> [options]",
+    COMMAND_USAGE,
+    USAGE_NOTES,
+    commandWords(argv),
+  );
+}
+
+const USAGE = commandUsage([]);
 
 class UsageError extends Error {}
 /** Some items of an import failed; the others were added (exit code 5). */
@@ -2135,8 +2237,11 @@ function exitCode(status: number): number {
   return EXIT.internal;
 }
 
-/** Print a failure (problem object on stdout with `--json`) and choose the exit code. */
-function report(error: unknown, json: boolean): number {
+/**
+ * Print a failure (problem object on stdout with `--json`) and choose the
+ * exit code; a usage error is followed by `usage`.
+ */
+function report(error: unknown, json: boolean, usage = USAGE): number {
   if (error instanceof HarnessHubError) {
     if (json) write(JSON.stringify(error.problem, null, 2));
     const details = [
@@ -2154,7 +2259,7 @@ function report(error: unknown, json: boolean): number {
   }
   const [code, message] =
     error instanceof UsageError
-      ? [EXIT.usage, `${error.message}\n\n${USAGE}`]
+      ? [EXIT.usage, `${error.message}\n\n${usage}`]
       : error instanceof ConfirmationRequired
         ? [EXIT.confirm, error.message]
         : error instanceof Interrupted
@@ -2189,7 +2294,7 @@ function report(error: unknown, json: boolean): number {
 export async function main(argv: string[]): Promise<number> {
   const [name, ...args] = argv;
   if (name === undefined || name === "--help" || args.includes("--help")) {
-    write(USAGE);
+    write(commandUsage(argv));
     return name === undefined ? EXIT.usage : EXIT.ok;
   }
   const command = Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : undefined;
@@ -2201,12 +2306,13 @@ export async function main(argv: string[]): Promise<number> {
     await command(args);
     return EXIT.ok;
   } catch (error) {
-    return report(error, args.includes("--json"));
+    return report(error, args.includes("--json"), commandUsage(argv));
   }
 }
 
 /** Shared with the agent commands (`agents.ts`), which use the same options, prompts and exit codes. */
 export {
+  commandWords,
   confirm,
   ConfirmationRequired,
   context,
@@ -2224,7 +2330,9 @@ export {
   rebase,
   report,
   table,
+  usageFor,
   UsageError,
   write,
+  type CommandUsage,
   type Context,
 };

@@ -17,6 +17,7 @@ import {
   type SyncStatus,
 } from "@harnesshub/sdk/client";
 import {
+  commandWords,
   confirm,
   ConfirmationRequired,
   context,
@@ -28,32 +29,50 @@ import {
   positionals,
   quotaFlags,
   report,
+  usageFor,
   UsageError,
   write,
+  type CommandUsage,
   type Context,
 } from "./admin.js";
 import { AGENTS as LIBRARY_AGENTS, planText } from "./library.js";
 
 const DEFAULT_FILE = "harnesshub.harnesshub-backup";
 
-const USAGE = `Usage:
-  hh backup [--no-keys] [file]       seal providers, keys, groups, overrides,
+/** The backup and sync commands' usage, one entry per command, for `hh <command> --help`. */
+const COMMAND_USAGE: readonly CommandUsage[] = [
+  {
+    command: "backup",
+    text: `  hh backup [--no-keys] [file]       seal providers, keys, groups, overrides,
                                      agent wirings, the Library and settings
-                                     into file (default ${DEFAULT_FILE})
-  hh restore [--no-agents] [--no-library] <file>
+                                     into file (default ${DEFAULT_FILE})`,
+  },
+  {
+    command: "restore",
+    text: `  hh restore [--no-agents] [--no-library] <file>
                                      show what the backup restores, confirm,
                                      restore; agents installed here are re-wired,
                                      then the Library is synced into them after
-                                     showing the changes
-  hh sync status | now | off
+                                     showing the changes`,
+  },
+  {
+    command: "sync",
+    text: `  hh sync status | now | off
   hh sync webdav on <https://…> [user=NAME] [keys=yes|no] [agents=yes|no]
   hh sync s3 on <s3://bucket[/prefix]> access-key-id=ID [endpoint=URL]
-              [region=R] [path-style=yes|no] [keys=yes|no] [agents=yes|no]
+              [region=R] [path-style=yes|no] [keys=yes|no] [agents=yes|no]`,
+  },
+];
 
-The passphrase (and the WebDAV password or S3 secret key) comes from a hidden
+const USAGE_NOTES = `The passphrase (and the WebDAV password or S3 secret key) comes from a hidden
 prompt, or from the lines of stdin when it is piped: the secret first when one
 is needed, then the passphrase. Common options: --url URL, --data-dir DIR,
 --json, --yes, --non-interactive.`;
+
+/** The usage of the backup and sync commands command `argv` names, or of all of them. */
+function commandUsage(argv: readonly string[]): string {
+  return usageFor("", COMMAND_USAGE, USAGE_NOTES, commandWords(argv));
+}
 
 /** Lines of piped stdin, read once to the end and handed out in order. */
 class PipedLines {
@@ -499,19 +518,21 @@ const COMMANDS: Readonly<Record<string, (args: string[]) => Promise<number>>> =
 export async function main(argv: string[]): Promise<number> {
   const [name, ...args] = argv;
   if (name === undefined || args.includes("--help")) {
-    write(USAGE);
+    write(commandUsage(argv));
     return name === undefined ? EXIT.usage : EXIT.ok;
   }
   const command = Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : undefined;
   if (!command) {
-    process.stderr.write(`Unknown command: ${name}\n${USAGE}\n`);
+    process.stderr.write(`Unknown command: ${name}\n${commandUsage([])}\n`);
     return EXIT.usage;
   }
   try {
     return await command(args);
   } catch (error) {
     if (error instanceof UsageError) {
-      process.stderr.write(`Error: ${error.message}\n\n${USAGE}\n`);
+      process.stderr.write(
+        `Error: ${error.message}\n\n${commandUsage(argv)}\n`,
+      );
       return EXIT.usage;
     }
     return report(error, args.includes("--json"));

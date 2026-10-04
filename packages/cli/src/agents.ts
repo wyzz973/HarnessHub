@@ -17,6 +17,7 @@ import type {
   WiringTier,
 } from "@harnesshub/sdk/client";
 import {
+  commandWords,
   confirm,
   context,
   EXIT,
@@ -27,35 +28,65 @@ import {
   positionals,
   report,
   table,
+  usageFor,
   UsageError,
   write,
+  type CommandUsage,
 } from "./admin.js";
 
-const USAGE = `Usage:
-  hh agents                       list agents: installed, wired, model, drift
-  hh agents models <agent>        show the models the agent lists and hides
-          [--hide REF]... [--show REF]...  hide or show models (others stay as they are)
-  hh wire <agent> [model]         show the changes, confirm, wire to the gateway
+/** The agent commands' usage, one entry per command, for `hh <command> --help`. */
+const COMMAND_USAGE: readonly CommandUsage[] = [
+  {
+    command: "agents",
+    text: `  hh agents                       list agents: installed, wired, model, drift`,
+  },
+  {
+    command: "agents models",
+    text: `  hh agents models <agent>        show the models the agent lists and hides
+          [--hide REF]... [--show REF]...  hide or show models (others stay as they are)`,
+  },
+  {
+    command: "wire",
+    text: `  hh wire <agent> [model]         show the changes, confirm, wire to the gateway
           [--models REF[,REF]]... models the agent may list (default: current, or every model)
           [--tier TIER=REF]...    a tier's model (Claude Code: opus, sonnet, haiku, fable, subagent)
           [--effort LEVEL]        the effort it starts with: none, minimal, low, medium,
                                   high, xhigh or max, as the agent takes them; --no-effort clears it
           [--option NAME=VALUE]...  an adapter option, such as codexAuth=chatgpt
-          [--no-model]            no model: the agent keeps its own (Codex with codexAuth=chatgpt)
-  hh use <agent> <model>          the same as hh wire <agent> <model>
-  hh wire <agent> --rotate        give the agent a new key; the old one stops working
-  hh unwire <agent>               restore the agent's files and revoke its key
-  hh profile list                 list saved profiles
+          [--no-model]            no model: the agent keeps its own (Codex with codexAuth=chatgpt)`,
+  },
+  {
+    command: "use",
+    text: `  hh use <agent> <model>          the same as hh wire <agent> <model>`,
+  },
+  {
+    command: "wire",
+    text: `  hh wire <agent> --rotate        give the agent a new key; the old one stops working`,
+  },
+  {
+    command: "unwire",
+    text: `  hh unwire <agent>               restore the agent's files and revoke its key`,
+  },
+  {
+    command: "profile",
+    text: `  hh profile list                 list saved profiles
   hh profile save <name>          save every wired agent's model choices
   hh profile show <name>          show a profile
   hh profile apply <name>         show the changes, confirm, switch the agents to it
-  hh profile rm <name>            delete a profile
+  hh profile rm <name>            delete a profile`,
+  },
+];
 
-Models are provider/model or group/<id>; --models and --hide also take provider/*
+const USAGE_NOTES = `Models are provider/model or group/<id>; --models and --hide also take provider/*
 and *. With --option codexAuth=chatgpt, Codex keeps its ChatGPT sign-in and its own
 model and lists the gateway's models after ChatGPT's; its key is part of
 openai_base_url, and a model is optional. Common options: --url URL,
 --data-dir DIR, --json, --yes (do not ask), --non-interactive.`;
+
+/** The usage of the agent command `argv` names, or of all of them. */
+function commandUsage(argv: readonly string[]): string {
+  return usageFor("", COMMAND_USAGE, USAGE_NOTES, commandWords(argv));
+}
 
 function drift(agent: Agent): string {
   const wiring = agent.wiring;
@@ -379,12 +410,12 @@ const COMMANDS: Readonly<Record<string, (args: string[]) => Promise<void>>> = {
 export async function main(argv: string[]): Promise<number> {
   const [name, ...args] = argv;
   if (name === undefined || args.includes("--help")) {
-    write(USAGE);
+    write(commandUsage(argv));
     return name === undefined ? EXIT.usage : EXIT.ok;
   }
   const command = Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : undefined;
   if (!command) {
-    process.stderr.write(`Unknown command: ${name}\n${USAGE}\n`);
+    process.stderr.write(`Unknown command: ${name}\n${commandUsage([])}\n`);
     return EXIT.usage;
   }
   try {
@@ -392,7 +423,9 @@ export async function main(argv: string[]): Promise<number> {
     return EXIT.ok;
   } catch (error) {
     if (error instanceof UsageError) {
-      process.stderr.write(`Error: ${error.message}\n\n${USAGE}\n`);
+      process.stderr.write(
+        `Error: ${error.message}\n\n${commandUsage(argv)}\n`,
+      );
       return EXIT.usage;
     }
     return report(error, args.includes("--json"));
