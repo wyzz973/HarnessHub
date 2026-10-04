@@ -31,6 +31,9 @@ function usage(value) {
     prompt_tokens: value.input,
     completion_tokens: value.output,
     total_tokens: value.input + value.output,
+    ...(value.cached
+      ? { prompt_tokens_details: { cached_tokens: value.cached } }
+      : {}),
     completion_tokens_details: { reasoning_tokens: value.reasoning },
   };
 }
@@ -102,10 +105,15 @@ export const chat = {
 
   read(body) {
     const messages = [];
+    let images = 0;
     body.messages.forEach((message, index) => {
       if (!isObject(message)) return;
       const path = `messages[${index}]`;
       const text = contentText(message.content);
+      if (message.role === "user" && Array.isArray(message.content))
+        images += message.content.filter(
+          (part) => isObject(part) && part.type === "image_url",
+        ).length;
       switch (message.role) {
         case "system":
         case "developer":
@@ -152,7 +160,7 @@ export const chat = {
         name: tool.function.name,
         parameters: tool.function.parameters,
       }));
-    return { messages, tools };
+    return { messages, tools, images };
   },
 
   callId: () => `call_${hex(12)}`,
@@ -216,31 +224,43 @@ export const chat = {
       ...rest.map((part) => chunk({ reasoning_content: part })),
       ...answer.text.map((part) => chunk({ content: part })),
     ];
-    answer.toolCalls.forEach((call, index) => {
-      chunks.push(
-        chunk({
-          tool_calls: [
-            {
-              index,
-              id: call.id,
-              type: "function",
-              function: { name: call.name, arguments: "" },
-            },
-          ],
-        }),
+    const start = (call, index) =>
+      chunk({
+        tool_calls: [
+          {
+            index,
+            id: call.id,
+            type: "function",
+            function: { name: call.name, arguments: "" },
+          },
+        ],
+      });
+    const args = (part, index) =>
+      chunk({
+        tool_calls: [
+          {
+            ...(context.quirks.missingToolIndex ? {} : { index }),
+            function: { arguments: part },
+          },
+        ],
+      });
+    if (context.quirks.interleavedToolArgs) {
+      // Every call starts, then the argument halves alternate between calls.
+      const parts = answer.toolCalls.map((call) => halves(call.arguments));
+      answer.toolCalls.forEach((call, index) =>
+        chunks.push(start(call, index)),
       );
-      for (const part of halves(call.arguments))
-        chunks.push(
-          chunk({
-            tool_calls: [
-              {
-                ...(context.quirks.missingToolIndex ? {} : { index }),
-                function: { arguments: part },
-              },
-            ],
-          }),
-        );
-    });
+      for (let round = 0; round < 2; round++)
+        parts.forEach((pieces, index) => {
+          if (pieces[round] !== undefined)
+            chunks.push(args(pieces[round], index));
+        });
+    } else
+      answer.toolCalls.forEach((call, index) => {
+        chunks.push(start(call, index));
+        for (const part of halves(call.arguments))
+          chunks.push(args(part, index));
+      });
     if (context.quirks.duplicateFinish) chunks.push(chunk({}, answer.finish));
     chunks.push(
       chunk(

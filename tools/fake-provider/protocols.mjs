@@ -11,16 +11,19 @@
  *   echo?: {text?: string, signature?: string}, callId?: unknown}} ViewMessage
  *   One conversation entry; `echo` is the reasoning an assistant message sent
  *   back, `callId` the call a tool result answers.
- * @typedef {{messages: ViewMessage[], tools: {name: unknown, parameters: unknown}[]}} View
+ * @typedef {{messages: ViewMessage[], tools: {name: unknown, parameters: unknown}[],
+ *   images: number}} View `images` counts the image parts of user messages.
  *
  * @typedef {object} Answer What one response says, before wire encoding.
  * @property {string[]} reasoning Reasoning chunks (empty for none).
  * @property {string[]} text Text chunks (empty for none).
- * @property {{id: string | undefined, name: string, arguments: string}[]} toolCalls
- *   `arguments` is the JSON text sent; an id is absent for Gemini.
+ * @property {{id: string | undefined, name: string, arguments: string, custom?: true}[]} toolCalls
+ *   `arguments` is the JSON text sent, or the raw input of a custom tool
+ *   call (Responses only); an id is absent for Gemini.
  * @property {string} finish `stop`, `length`, `tool_calls`, `content_filter`
  *   (mapped to each protocol's value) or any other string, sent verbatim.
- * @property {{input: number, output: number, reasoning: number} | null} usage
+ * @property {{input: number, output: number, reasoning: number, cached: number} | null} usage
+ *   `cached` is the part of `input` read from the prompt cache.
  * @property {string} signature Opaque reasoning signature the fake expects back.
  *
  * @typedef {object} Context Per-response values the renderers need.
@@ -29,7 +32,8 @@
  * @property {string} model
  * @property {Record<string, unknown>} request The parsed request body.
  * @property {boolean} sse Gemini only: `alt=sse`.
- * @property {{duplicateFinish: boolean, missingToolIndex: boolean}} quirks
+ * @property {{duplicateFinish: boolean, missingToolIndex: boolean,
+ *   interleavedToolArgs: boolean}} quirks
  *
  * @typedef {object} Protocol
  * @property {string} name

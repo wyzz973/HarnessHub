@@ -30,7 +30,7 @@ const shape = (path, message) => ({ path, rule: "structure", message });
 function usage(value) {
   return {
     input_tokens: value.input,
-    input_tokens_details: { cached_tokens: 0 },
+    input_tokens_details: { cached_tokens: value.cached },
     output_tokens: value.output,
     output_tokens_details: { reasoning_tokens: value.reasoning },
     total_tokens: value.input + value.output,
@@ -88,14 +88,25 @@ function outputItems(answer, context) {
       ],
     });
   for (const call of answer.toolCalls)
-    items.push({
-      id: `fc_${hex(12)}`,
-      type: "function_call",
-      status: "completed",
-      arguments: call.arguments,
-      call_id: call.id,
-      name: call.name,
-    });
+    items.push(
+      call.custom
+        ? {
+            id: `ctc_${hex(12)}`,
+            type: "custom_tool_call",
+            status: "completed",
+            call_id: call.id,
+            name: call.name,
+            input: call.arguments,
+          }
+        : {
+            id: `fc_${hex(12)}`,
+            type: "function_call",
+            status: "completed",
+            arguments: call.arguments,
+            call_id: call.id,
+            name: call.name,
+          },
+    );
   return items;
 }
 
@@ -178,6 +189,7 @@ export const responses = {
 
   read(body) {
     const messages = [];
+    let images = 0;
     if (typeof body.instructions === "string")
       messages.push({
         role: "system",
@@ -192,6 +204,10 @@ export const responses = {
       const path = `input[${index}]`;
       switch (item.type ?? "message") {
         case "message":
+          if (item.role === "user" && Array.isArray(item.content))
+            images += item.content.filter(
+              (part) => isObject(part) && part.type === "input_image",
+            ).length;
           if (item.role === "assistant") {
             messages.push({
               role: "assistant",
@@ -224,7 +240,8 @@ export const responses = {
                 : {}),
           };
           break;
-        case "function_call": {
+        case "function_call":
+        case "custom_tool_call": {
           let last = messages.at(-1);
           if (last?.role !== "assistant") {
             last = {
@@ -240,11 +257,13 @@ export const responses = {
           last.toolCalls.push({
             id: item.call_id,
             name: item.name,
-            arguments: item.arguments,
+            arguments:
+              item.type === "custom_tool_call" ? item.input : item.arguments,
           });
           break;
         }
         case "function_call_output":
+        case "custom_tool_call_output":
           messages.push({
             role: "tool",
             callId: item.call_id,
@@ -258,9 +277,13 @@ export const responses = {
       }
     });
     const tools = (Array.isArray(body.tools) ? body.tools : [])
-      .filter((tool) => isObject(tool) && tool.type === "function")
+      .filter(
+        (tool) =>
+          isObject(tool) &&
+          (tool.type === "function" || tool.type === "custom"),
+      )
       .map((tool) => ({ name: tool.name, parameters: tool.parameters }));
-    return { messages, tools };
+    return { messages, tools, images };
   },
 
   callId: () => `call_${hex(12)}`,
@@ -297,6 +320,12 @@ export const responses = {
         ),
       );
     const items = outputItems(answer, context);
+    const argumentsDelta = (item, output_index, delta) =>
+      emit("response.function_call_arguments.delta", {
+        item_id: item.id,
+        ...(context.quirks.missingToolIndex ? {} : { output_index }),
+        delta,
+      });
     const { status, incomplete } = outcome(answer.finish);
     const started = responseObject(context, "in_progress", [], null, null);
     emit("response.created", { response: started });
@@ -368,17 +397,32 @@ export const responses = {
           content_index: 0,
           part,
         });
+      } else if (item.type === "custom_tool_call") {
+        emit("response.output_item.added", {
+          output_index,
+          item: { ...item, status: "in_progress", input: "" },
+        });
+        for (const delta of halves(item.input))
+          emit("response.custom_tool_call_input.delta", {
+            item_id,
+            output_index,
+            delta,
+          });
+        emit("response.custom_tool_call_input.done", {
+          item_id,
+          output_index,
+          input: item.input,
+        });
+      } else if (context.quirks.interleavedToolArgs) {
+        // Function calls are emitted together below, their deltas alternating.
+        return;
       } else {
         emit("response.output_item.added", {
           output_index,
           item: { ...item, status: "in_progress", arguments: "" },
         });
         for (const delta of halves(item.arguments))
-          emit("response.function_call_arguments.delta", {
-            item_id,
-            ...(context.quirks.missingToolIndex ? {} : { output_index }),
-            delta,
-          });
+          argumentsDelta(item, output_index, delta);
         emit("response.function_call_arguments.done", {
           item_id,
           output_index,
@@ -387,6 +431,30 @@ export const responses = {
       }
       emit("response.output_item.done", { output_index, item });
     });
+    if (context.quirks.interleavedToolArgs) {
+      const calls = items
+        .map((item, output_index) => ({ item, output_index }))
+        .filter(({ item }) => item.type === "function_call");
+      for (const { item, output_index } of calls)
+        emit("response.output_item.added", {
+          output_index,
+          item: { ...item, status: "in_progress", arguments: "" },
+        });
+      const parts = calls.map(({ item }) => halves(item.arguments));
+      for (let round = 0; round < 2; round++)
+        calls.forEach(({ item, output_index }, index) => {
+          if (parts[index][round] !== undefined)
+            argumentsDelta(item, output_index, parts[index][round]);
+        });
+      for (const { item, output_index } of calls) {
+        emit("response.function_call_arguments.done", {
+          item_id: item.id,
+          output_index,
+          arguments: item.arguments,
+        });
+        emit("response.output_item.done", { output_index, item });
+      }
+    }
     const terminal =
       status === "completed" ? "response.completed" : "response.incomplete";
     const final = responseObject(

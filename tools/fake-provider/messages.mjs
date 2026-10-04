@@ -68,6 +68,18 @@ function toolInput(text) {
   }
 }
 
+/**
+ * Input usage fields: Anthropic counts cache reads apart from `input_tokens`
+ * (https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching).
+ */
+function inputUsage(usage) {
+  return {
+    input_tokens: usage.input - usage.cached,
+    cache_creation_input_tokens: 0,
+    cache_read_input_tokens: usage.cached,
+  };
+}
+
 /** Content blocks of an answer, without the streaming split. */
 function blocks(answer, context) {
   const content = [];
@@ -177,6 +189,7 @@ export const messages = {
 
   read(body) {
     const messages = [];
+    let images = 0;
     const system = contentText(body.system);
     if (system) messages.push({ role: "system", text: system, path: "system" });
     body.messages.forEach((message, index) => {
@@ -217,6 +230,8 @@ export const messages = {
         });
         return;
       }
+      if (message.role === "user")
+        images += content.filter((block) => block.type === "image").length;
       for (const block of content)
         if (block.type === "tool_result")
           messages.push({
@@ -242,7 +257,7 @@ export const messages = {
     const tools = (Array.isArray(body.tools) ? body.tools : [])
       .filter((tool) => isObject(tool) && typeof tool.name === "string")
       .map((tool) => ({ name: tool.name, parameters: tool.input_schema }));
-    return { messages, tools };
+    return { messages, tools, images };
   },
 
   callId: () => `toolu_${hex(12)}`,
@@ -269,9 +284,7 @@ export const messages = {
       ...(answer.usage
         ? {
             usage: {
-              input_tokens: answer.usage.input,
-              cache_creation_input_tokens: 0,
-              cache_read_input_tokens: 0,
+              ...inputUsage(answer.usage),
               output_tokens: answer.usage.output,
             },
           }
@@ -294,12 +307,7 @@ export const messages = {
         stop_sequence: null,
         ...(answer.usage
           ? {
-              usage: {
-                input_tokens: answer.usage.input,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
-                output_tokens: 1,
-              },
+              usage: { ...inputUsage(answer.usage), output_tokens: 1 },
             }
           : {}),
       },

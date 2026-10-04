@@ -31,10 +31,15 @@
  *   of that name. Every condition given must hold.
  * - `reasoning`, `text`: a string (split into two chunks, text only when longer
  *   than 8 code points) or an array of chunks sent as given.
- * - `toolCalls`: `[{"name", "arguments": object or raw JSON text, "id"?}]`.
+ * - `toolCalls`: `[{"name", "arguments": object or raw JSON text, "id"?}]`;
+ *   a call with `"input": "raw text"` instead of `arguments` is a custom
+ *   (freeform) tool call, which only OpenAI Responses has: answering one in
+ *   another protocol is a 500 naming the script turn.
  * - `finish`: `stop`, `length`, `tool_calls`, `content_filter`, or any string
  *   sent verbatim; default `tool_calls` with calls, otherwise `stop`.
- * - `usage`: `{"input", "output", "reasoning"?}` token counts, or `false` for none.
+ * - `usage`: `{"input", "output", "reasoning"?, "cached"?}` token counts, or
+ *   `false` for none; `cached` is the part of `input` read from the prompt
+ *   cache, reported in each protocol's own field.
  * - `status` (400–599) with an optional `error` message: an error response in
  *   the protocol's envelope instead of an answer.
  * - `firstByteDelayMs`: wait before the first body byte; streams send their
@@ -323,6 +328,7 @@ export function buildAnswer(
             input: usage.input,
             output: usage.output,
             reasoning: usage.reasoning ?? 0,
+            cached: usage.cached ?? 0,
           }
         : {
             input: inputTokens,
@@ -330,6 +336,7 @@ export function buildAnswer(
               reasoningTokens +
                 (visibleChars ? estimateTokens(visibleChars) : 0) || 1,
             reasoning: reasoningTokens,
+            cached: 0,
           };
   return answer;
 }
@@ -429,7 +436,7 @@ export function parseScript(value) {
           const where = `${at}.toolCalls[${callIndex}]`;
           if (!isObject(call)) throw new Error(`${where} must be an object`);
           for (const key of Object.keys(call))
-            if (!["name", "arguments", "id"].includes(key))
+            if (!["name", "arguments", "input", "id"].includes(key))
               throw new Error(
                 `${where}.${key} is not a known tool call setting`,
               );
@@ -440,6 +447,18 @@ export function parseScript(value) {
             (typeof call.id !== "string" || !call.id)
           )
             throw new Error(`${where}.id must be a non-empty string`);
+          if (call.input !== undefined) {
+            if (call.arguments !== undefined)
+              throw new Error(`${where} cannot have both input and arguments`);
+            if (typeof call.input !== "string")
+              throw new Error(`${where}.input must be a string`);
+            return Object.freeze({
+              name: call.name,
+              arguments: call.input,
+              custom: true,
+              ...(call.id ? { id: call.id } : {}),
+            });
+          }
           const args = call.arguments ?? {};
           if (typeof args !== "string" && !isObject(args))
             throw new Error(
@@ -463,16 +482,20 @@ export function parseScript(value) {
       else if (
         isObject(turn.usage) &&
         Object.keys(turn.usage).every((key) =>
-          ["input", "output", "reasoning"].includes(key),
+          ["input", "output", "reasoning", "cached"].includes(key),
         ) &&
-        [turn.usage.input, turn.usage.output, turn.usage.reasoning ?? 0].every(
-          (count) => Number.isInteger(count) && count >= 0,
-        )
+        [
+          turn.usage.input,
+          turn.usage.output,
+          turn.usage.reasoning ?? 0,
+          turn.usage.cached ?? 0,
+        ].every((count) => Number.isInteger(count) && count >= 0) &&
+        (turn.usage.cached ?? 0) <= turn.usage.input
       )
         result.usage = Object.freeze({ ...turn.usage });
       else
         throw new Error(
-          `${at}.usage must be false or {input, output, reasoning?} token counts`,
+          `${at}.usage must be false or {input, output, reasoning?, cached?} token counts, cached at most input`,
         );
     }
     if (turn.status !== undefined) {
@@ -582,10 +605,24 @@ export function planTurn(view, state, settings) {
         error: { status: turn.status, message: turn.error },
         ...timing,
       };
+    if (
+      protocol.name !== "responses" &&
+      turn.toolCalls?.some((call) => call.custom)
+    )
+      return {
+        turn: "script",
+        script: index,
+        error: {
+          status: 500,
+          message: `Script turn ${index} has a custom tool call, which only OpenAI Responses answers`,
+        },
+        ...timing,
+      };
     const toolCalls = (turn.toolCalls ?? []).map((call) => ({
       id: call.id ?? protocol.callId(),
       name: call.name,
       arguments: call.arguments,
+      ...(call.custom ? { custom: true } : {}),
     }));
     const answer = buildAnswer(
       {

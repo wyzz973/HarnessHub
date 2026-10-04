@@ -364,6 +364,169 @@ test("script usage and finish: explicit counts, no usage, and finish reasons map
       );
 });
 
+test("script cached usage: each protocol reports the cached part of the input in its own field", async (t) => {
+  const fake = await provider(t, {
+    script: {
+      turns: [{ repeat: true, usage: { input: 100, output: 20, cached: 60 } }],
+    },
+  });
+  for (const stream of [false, true]) {
+    const chat = (await send(fake, "chat", { stream })).answer.usage;
+    assert.equal(chat.prompt_tokens, 100);
+    assert.deepEqual(chat.prompt_tokens_details, { cached_tokens: 60 });
+    const responses = (await send(fake, "responses", { stream })).answer.usage;
+    assert.equal(responses.input_tokens, 100);
+    assert.deepEqual(responses.input_tokens_details, { cached_tokens: 60 });
+    const messages = (await send(fake, "messages", { stream })).answer.usage;
+    assert.equal(
+      messages.input_tokens,
+      40,
+      "Anthropic counts cache reads apart",
+    );
+    assert.equal(messages.cache_read_input_tokens, 60);
+    const gemini = (await send(fake, "gemini", { stream })).answer.usage;
+    assert.equal(gemini.promptTokenCount, 100);
+    assert.equal(gemini.cachedContentTokenCount, 60);
+  }
+});
+
+test("script custom tool calls: Responses sends custom_tool_call items and reads them back; other protocols refuse", async (t) => {
+  const input = "*** Begin Patch\n*** End Patch";
+  const fake = await provider(t, {
+    script: {
+      turns: [
+        {
+          when: { toolResultContains: "applied" },
+          repeat: true,
+          text: "patched",
+        },
+        { repeat: true, toolCalls: [{ name: "apply_patch", input }] },
+      ],
+    },
+  });
+  const tools = [
+    {
+      type: "custom",
+      name: "apply_patch",
+      description: "Apply a patch",
+      format: { type: "text" },
+    },
+  ];
+  for (const stream of [false, true]) {
+    const first = await send(fake, "responses", { stream, body: { tools } });
+    assert.equal(first.status, 200);
+    assert.deepEqual(
+      first.answer.toolCalls.map(({ name, arguments: text, custom }) => ({
+        name,
+        text,
+        custom,
+      })),
+      [{ name: "apply_patch", text: input, custom: true }],
+    );
+    const [call] = first.answer.toolCalls;
+    const next = await send(fake, "responses", {
+      stream,
+      body: (body) => ({
+        ...body,
+        tools,
+        input: [
+          ...body.input,
+          {
+            type: "custom_tool_call",
+            call_id: call.id,
+            name: call.name,
+            input: call.arguments,
+          },
+          {
+            type: "custom_tool_call_output",
+            call_id: call.id,
+            output: "applied",
+          },
+        ],
+      }),
+    });
+    assert.equal(next.status, 200);
+    assert.equal(next.answer.text, "patched");
+  }
+  const chat = await send(fake, "chat");
+  assert.equal(chat.status, 500);
+  assert.match(chat.json.error.message, /custom tool call/);
+  const violations = fake.violations();
+  assert.deepEqual(violations, [], "custom tools pass the whitelist");
+});
+
+test("records count the image parts of user messages in every protocol", async (t) => {
+  const fake = await provider(t, { mode: "whitelist" });
+  const png = "iVBORw0KGgo=";
+  const bodies = {
+    chat: (body) => ({
+      ...body,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "look" },
+            {
+              type: "image_url",
+              image_url: { url: `data:image/png;base64,${png}` },
+            },
+          ],
+        },
+      ],
+    }),
+    responses: (body) => ({
+      ...body,
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: [
+            { type: "input_text", text: "look" },
+            { type: "input_image", image_url: `data:image/png;base64,${png}` },
+          ],
+        },
+      ],
+    }),
+    messages: (body) => ({
+      ...body,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "look" },
+            {
+              type: "image",
+              source: { type: "base64", media_type: "image/png", data: png },
+            },
+          ],
+        },
+      ],
+    }),
+    gemini: (body) => ({
+      ...body,
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { text: "look" },
+            { inlineData: { mimeType: "image/png", data: png } },
+          ],
+        },
+      ],
+    }),
+  };
+  for (const protocol of PROTOCOLS)
+    assert.equal(
+      (await send(fake, protocol, { body: bodies[protocol] })).status,
+      200,
+      protocol,
+    );
+  assert.equal((await send(fake, "chat")).status, 200);
+  const counted = (await records(fake)).map((record) => record.images);
+  assert.deepEqual(counted, [1, 1, 1, 1, 0]);
+  assert.deepEqual(fake.violations(), []);
+});
+
 test("scripts are validated with the path of the first invalid setting", async (t) => {
   const invalid = [
     [{ turn: [] }, /only "turns"/],
@@ -392,6 +555,18 @@ test("scripts are validated with the path of the first invalid setting", async (
     [
       { turns: [{ usage: { input: -1, output: 1 } }] },
       /usage must be false or/,
+    ],
+    [
+      { turns: [{ usage: { input: 2, output: 1, cached: 3 } }] },
+      /cached at most input/,
+    ],
+    [
+      { turns: [{ toolCalls: [{ name: "f", input: "x", arguments: {} }] }] },
+      /cannot have both input and arguments/,
+    ],
+    [
+      { turns: [{ toolCalls: [{ name: "f", input: 1 }] }] },
+      /toolCalls\[0\]\.input must be a string/,
     ],
     [
       { turns: [{ firstByteDelayMs: 1.5 }] },

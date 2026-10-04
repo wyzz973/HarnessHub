@@ -10,24 +10,33 @@
  * | `noUsage` | boolean | No usage in the answer. |
  * | `duplicateFinish` | boolean | Streams repeat their finishing event (Chat finish chunk, Responses terminal event, Messages `message_delta`, Gemini final chunk). |
  * | `missingToolIndex` | boolean | Streamed tool-call argument deltas lack their index (Chat `index`, Responses `output_index`, Messages `index`); Gemini sends calls whole. |
+ * | `interleavedToolArgs` | boolean | Parallel tool calls stream their arguments interleaved: every call starts, then argument deltas alternate between calls (Chat by `index`, Responses by `output_index`). Messages blocks are sequential by protocol and Gemini sends calls whole, so they are unchanged. |
  * | `commentKeepalive` | `true`, ms, or `{durationMs, intervalMs}` | Before the first data, only keepalives for `durationMs` (default 1000), one per `intervalMs` (default 100): SSE comments in streams, JSON whitespace otherwise. |
  * | `htmlBody` | boolean | HTTP 200 with an HTML page instead of the answer. |
  * | `abnormalFinish` | `true` or a string | The answer ends with this finish reason, sent verbatim (default `network_error`). |
  * | `slowHeaders` | ms | Wait this long before sending the response headers. |
  * | `midStreamError` | `true`, a frame count, or `{after, message}` | After `after` frames (default 1) the stream reports an error in the protocol's in-stream form and ends; a non-streaming body is cut off and the connection reset. |
+ * | `disconnect` | `true` or a frame count | After that many frames (default 1) the connection is reset without an error or a terminal frame; a non-streaming body is cut off halfway. |
  * | `retryAfter` | `true`, seconds, or `{status, seconds}` | Answer 429 (or 503) with `Retry-After: seconds` (default 1) and the protocol's error body. |
  * | `servedModel` | a model name | Answers name this model instead of the requested one (a relay that swaps models). |
  */
 import { isObject } from "./common.mjs";
 
 const MAX_MS = 2 ** 31 - 1;
-const BOOLEANS = ["noUsage", "duplicateFinish", "missingToolIndex", "htmlBody"];
+const BOOLEANS = [
+  "noUsage",
+  "duplicateFinish",
+  "missingToolIndex",
+  "interleavedToolArgs",
+  "htmlBody",
+];
 export const QUIRKS = Object.freeze([
   ...BOOLEANS,
   "commentKeepalive",
   "abnormalFinish",
   "slowHeaders",
   "midStreamError",
+  "disconnect",
   "retryAfter",
   "servedModel",
 ]);
@@ -37,11 +46,13 @@ export const NO_QUIRKS = Object.freeze({
   noUsage: false,
   duplicateFinish: false,
   missingToolIndex: false,
+  interleavedToolArgs: false,
   htmlBody: false,
   commentKeepalive: null,
   abnormalFinish: null,
   slowHeaders: 0,
   midStreamError: null,
+  disconnect: null,
   retryAfter: null,
   servedModel: null,
 });
@@ -145,6 +156,13 @@ export function resolveQuirks(raw, where = "quirks") {
           );
         break;
       }
+      case "disconnect":
+        if (value === false) result[name] = null;
+        else if (value === true) result[name] = { after: 1 };
+        else if (typeof value === "number")
+          result[name] = { after: integer(value, at, 0, 1_000_000) };
+        else throw new Error(`${at} must be true, false or a frame count`);
+        break;
       case "retryAfter": {
         if (value === false) result[name] = null;
         else if (value === true) result[name] = { status: 429, seconds: 1 };

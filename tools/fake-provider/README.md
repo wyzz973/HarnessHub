@@ -102,6 +102,10 @@ HH_FAKE_KEY=合成的金丝雀值 node tools/fake-provider/index.mjs --port 0 --
 
 `when` 的条件都满足才匹配：`contains`（本轮用户文字包含）、`toolResult`（请求是否以工具结果结尾）、`toolResultContains`（以包含该文字的工具结果结尾）、`offersTool`（请求提供了该名称的工具）。回合字段：`reasoning`、`text`（字符串或分块数组）、`toolCalls`、`finish`（`stop`、`length`、`tool_calls`、`content_filter` 按协议映射，其他值原样发送）、`usage`（或 `false`）、`status` 与 `error`（错误响应）、`firstByteDelayMs`（流式先发响应头，非流式连同响应头一起延迟）、`chunkDelayMs`、`quirks`。脚本在启动前校验，错误信息给出第一个无效设置的路径。
 
+`usage` 的 `cached` 是 `input` 中命中提示缓存的部分，按各协议自己的字段报告：Chat 的 `prompt_tokens_details.cached_tokens`、Responses 的 `input_tokens_details.cached_tokens`、Messages 的 `cache_read_input_tokens`（`input_tokens` 不含它）、Gemini 的 `cachedContentTokenCount`。工具调用写 `"input": "原文"` 而不是 `arguments` 时是 custom（自由格式）工具调用，只有 Responses 有：以 `custom_tool_call` 项与 `response.custom_tool_call_input.*` 事件发送，带回的 `custom_tool_call` 与 `custom_tool_call_output` 被读取；其他协议回答这样的回合时返回 500 并指出脚本回合。
+
+请求记录另含 `images`：本次请求用户消息中的图片片段数。
+
 ## 怪癖
 
 怪癖可以对所有请求打开（`quirks` 选项或 `--quirk`），也可以写在某个脚本回合中，回合中的值覆盖全局值（`false` 关闭）。取值与效果见 [quirks.mjs](quirks.mjs) 的表格：
@@ -115,7 +119,9 @@ HH_FAKE_KEY=合成的金丝雀值 node tools/fake-provider/index.mjs --port 0 --
 | `htmlBody` | HTTP 200 返回 HTML 页面 |
 | `abnormalFinish` | 以非标准结束原因结束（默认 `network_error`） |
 | `slowHeaders` | 延迟发送响应头 |
-| `midStreamError` | 流式在若干帧后以该协议的流内错误结束；非流式发送一半响应体后断开连接 |
+| `interleavedToolArgs` | 并行工具调用先全部开始，参数增量再在各调用之间交替（Chat 按 `index`，Responses 按 `output_index`）；Messages 的块按协议顺序发送，Gemini 整体发送调用，两者不受影响 |
+| `midStreamError` | 流式在若干帧后以该协议的流内错误结束（Gemini 的 `alt=sse` 为事件之后的裸 JSON 错误对象，与 Gemini API 相同，也是 `@google/genai` 识别的形式）；非流式发送一半响应体后断开连接 |
+| `disconnect` | 若干帧（默认 1）后直接断开连接，不发错误也不发结束事件；非流式发送一半响应体后断开 |
 | `retryAfter` | 429 或 503，带 `Retry-After` 头与该协议的错误体 |
 | `servedModel` | 回答中的模型名换成给定值（模拟替换模型的中转） |
 

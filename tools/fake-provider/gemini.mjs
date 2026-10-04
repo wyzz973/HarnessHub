@@ -84,6 +84,7 @@ function usageMetadata(value) {
     promptTokenCount: value.input,
     candidatesTokenCount: Math.max(0, value.output - value.reasoning),
     totalTokenCount: value.input + value.output,
+    ...(value.cached ? { cachedContentTokenCount: value.cached } : {}),
     ...(value.reasoning ? { thoughtsTokenCount: value.reasoning } : {}),
   };
 }
@@ -189,6 +190,7 @@ export const gemini = {
 
   read(body) {
     const messages = [];
+    let images = 0;
     const system = get(body, "systemInstruction", "system_instruction");
     if (isObject(system))
       messages.push({
@@ -240,6 +242,9 @@ export const gemini = {
         });
         return;
       }
+      images += parts.filter((part) =>
+        isObject(get(part, "inlineData", "inline_data")),
+      ).length;
       for (const part of parts) {
         const result = get(part, "functionResponse", "function_response");
         if (isObject(result))
@@ -273,7 +278,7 @@ export const gemini = {
             ),
           });
     }
-    return { messages, tools };
+    return { messages, tools, images };
   },
 
   // The Gemini API does not return call ids; calls are matched by name and arguments.
@@ -331,10 +336,12 @@ export const gemini = {
     };
   },
 
-  // A failure after the stream started is one more element carrying `error`.
+  // A failure after the stream started is the error object itself: bare
+  // JSON after the events of an SSE stream (the chunk @google/genai raises an
+  // ApiError for), one more element of a streamed array.
   streamError(context, message, written) {
     const value = error(500, message);
-    if (context.sse) return sse(value, { newline: "\r\n" });
+    if (context.sse) return `${JSON.stringify(value)}\r\n`;
     return `${written ? ",\r\n" : "["}${JSON.stringify(value)}]`;
   },
   keepalive: (context, streaming) =>

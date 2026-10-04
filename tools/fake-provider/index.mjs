@@ -418,6 +418,7 @@ export async function startFakeProvider(options = {}) {
       const view = protocol.read(body);
       entry.messages = view.messages.length;
       entry.tools = view.tools.length;
+      entry.images = view.images;
       const previous = findIssuedCall(view.messages, state.issued);
       if (previous?.answered && previous.issued.reasoningSent) {
         entry.reasoningEcho = echoStatus(
@@ -523,6 +524,7 @@ export async function startFakeProvider(options = {}) {
         quirks: {
           duplicateFinish: quirks.duplicateFinish,
           missingToolIndex: quirks.missingToolIndex,
+          interleavedToolArgs: quirks.interleavedToolArgs,
         },
       };
       const firstByteDelayMs = plan.firstByteDelayMs ?? 0;
@@ -537,6 +539,7 @@ export async function startFakeProvider(options = {}) {
         }
       };
       const failure = quirks.midStreamError;
+      const disconnect = quirks.disconnect;
       entry.status = 200;
       if (entry.stream) {
         const { contentType, frames } = protocol.frames(answer, context);
@@ -551,10 +554,21 @@ export async function startFakeProvider(options = {}) {
         const chunkDelayMs = plan.chunkDelayMs ?? settings.chunkDelayMs;
         const count = failure
           ? Math.min(failure.after, frames.length - 1)
-          : frames.length;
+          : disconnect
+            ? Math.min(disconnect.after, frames.length - 1)
+            : frames.length;
         for (let index = 0; index < count; index++) {
           if (index > 0) await sleep(chunkDelayMs, signal);
           await write(response, frames[index], signal);
+        }
+        if (disconnect && !failure) {
+          entry.disconnected = true;
+          // Let the frames reach the client, then drop the connection.
+          await new Promise((resolve) => response.write("", resolve));
+          cutOff = true;
+          response.socket?.end();
+          response.destroy();
+          return undefined;
         }
         if (failure) {
           entry.midStreamError = true;
@@ -569,7 +583,7 @@ export async function startFakeProvider(options = {}) {
       }
       const text = JSON.stringify(protocol.render(answer, context));
       await sleep(firstByteDelayMs, signal);
-      if (!quirks.commentKeepalive && !failure) {
+      if (!quirks.commentKeepalive && !failure && !disconnect) {
         response.writeHead(200, {
           "Content-Type": "application/json; charset=utf-8",
           "Content-Length": Buffer.byteLength(text),
@@ -582,8 +596,9 @@ export async function startFakeProvider(options = {}) {
       });
       response.flushHeaders();
       await keepalives(false);
-      if (failure) {
-        entry.midStreamError = true;
+      if (failure || disconnect) {
+        if (failure) entry.midStreamError = true;
+        else entry.disconnected = true;
         await write(
           response,
           text.slice(0, Math.floor(text.length / 2)),

@@ -141,7 +141,8 @@ export const BASE_FIELDS = deepFreeze({
         "include",
         "truncation",
       ],
-      // Input items of the types message, function_call, function_call_output and reasoning.
+      // Input items of the types message, function_call, function_call_output,
+      // custom_tool_call, custom_tool_call_output and reasoning.
       message: [
         "type",
         "role",
@@ -152,6 +153,7 @@ export const BASE_FIELDS = deepFreeze({
         "name",
         "arguments",
         "output",
+        "input",
         "summary",
         "encrypted_content",
       ],
@@ -163,7 +165,8 @@ export const BASE_FIELDS = deepFreeze({
         "file_id",
         "annotations",
       ],
-      tool: ["type", "name", "description", "parameters", "strict"],
+      // Function tools, and custom tools with their input `format`.
+      tool: ["type", "name", "description", "parameters", "strict", "format"],
       role: ["user", "assistant", "system", "developer"],
     },
     forbidden: {

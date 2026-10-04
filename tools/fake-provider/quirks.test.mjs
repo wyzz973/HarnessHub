@@ -100,6 +100,96 @@ test("missingToolIndex: streamed argument deltas lack their index and still carr
   }
 });
 
+test("interleavedToolArgs: Chat and Responses alternate the argument deltas of parallel calls", async (t) => {
+  const calls = [
+    { name: "read", arguments: { path: "alpha.txt" } },
+    { name: "read", arguments: { path: "beta.txt" } },
+  ];
+  const fake = await provider(t, {
+    script: { turns: [{ repeat: true, toolCalls: calls }] },
+    quirks: { interleavedToolArgs: true },
+  });
+  for (const protocol of PROTOCOLS) {
+    const result = await send(fake, protocol, { stream: true });
+    assert.deepEqual(
+      result.answer.toolCalls.map((call) => JSON.parse(call.arguments)),
+      calls.map((call) => call.arguments),
+      protocol,
+    );
+    const values = parseSse(result.text).events.map(({ data }) =>
+      data === "[DONE]" ? {} : JSON.parse(data),
+    );
+    // The call each argument delta belongs to, in arrival order.
+    const owners =
+      protocol === "chat"
+        ? values
+            .flatMap((chunk) => chunk.choices?.[0]?.delta?.tool_calls ?? [])
+            .filter((delta) => !delta.id)
+            .map((delta) => delta.index)
+        : protocol === "responses"
+          ? values
+              .filter(
+                (event) =>
+                  event.type === "response.function_call_arguments.delta",
+              )
+              .map((event) => event.output_index)
+          : undefined;
+    if (owners) assert.deepEqual(owners, [0, 1, 0, 1], protocol);
+  }
+  // Messages blocks stay sequential.
+  const messages = await send(fake, "messages", { stream: true });
+  const indexes = parseSse(messages.text)
+    .events.map(({ data }) => JSON.parse(data))
+    .filter((event) => event.delta?.type === "input_json_delta")
+    .map((event) => event.index);
+  assert.deepEqual(indexes, [...indexes].sort());
+});
+
+test("disconnect: the connection is reset after some frames without an error or a terminal frame", async (t) => {
+  const fake = await provider(t, {
+    script: {
+      turns: [{ repeat: true, text: ["one", "two", "three", "four"] }],
+    },
+    quirks: { disconnect: 2 },
+  });
+  for (const protocol of PROTOCOLS) {
+    const response = await fetch(
+      fake.url + callPath(protocol, { stream: true }),
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "anthropic-version": "2023-06-01",
+          ...authHeaders(protocol, KEY),
+        },
+        body: JSON.stringify(minimalBody(protocol, { stream: true })),
+      },
+    );
+    assert.equal(response.status, 200, protocol);
+    let text = "";
+    const decoder = new TextDecoder();
+    await assert.rejects(async () => {
+      for await (const chunk of response.body) text += decoder.decode(chunk);
+    }, protocol);
+    const events = parseSse(text).events;
+    assert.equal(events.length, 2, protocol);
+    assert.doesNotMatch(
+      text,
+      /\[DONE\]|response\.(?:completed|failed)|message_stop|event: error|"error":\{|finishReason/,
+      protocol,
+    );
+  }
+  await assert.rejects(send(fake, "chat", { stream: false }));
+  await fake.idle();
+  const records = fake.records();
+  assert.equal(records.length, PROTOCOLS.length + 1);
+  for (const record of records) {
+    assert.equal(record.disconnected, true);
+    assert.equal(record.midStreamError, undefined);
+    assert.equal(record.aborted, undefined);
+  }
+});
+
 test("commentKeepalive: only keepalives are sent before the first data, in the form of each body", async (t) => {
   const fake = await provider(t, {
     quirks: { commentKeepalive: { durationMs: 300, intervalMs: 50 } },
@@ -322,8 +412,20 @@ test("quirk switches are validated", () => {
     () => resolveQuirks({ abnormalFinish: "" }),
     /abnormalFinish must be/,
   );
-  assert.deepEqual(resolveQuirks({ retryAfter: 3, midStreamError: false }), {
-    retryAfter: { status: 429, seconds: 3 },
-    midStreamError: null,
-  });
+  assert.throws(
+    () => resolveQuirks({ disconnect: "soon" }),
+    /disconnect must be true, false or a frame count/,
+  );
+  assert.throws(
+    () => resolveQuirks({ interleavedToolArgs: 1 }),
+    /interleavedToolArgs must be true or false/,
+  );
+  assert.deepEqual(
+    resolveQuirks({ retryAfter: 3, midStreamError: false, disconnect: true }),
+    {
+      retryAfter: { status: 429, seconds: 3 },
+      midStreamError: null,
+      disconnect: { after: 1 },
+    },
+  );
 });

@@ -115,6 +115,13 @@ function responsesOutput(result, output) {
         name: item.name,
         arguments: item.arguments,
       });
+    else if (item.type === "custom_tool_call")
+      result.toolCalls.push({
+        id: item.call_id,
+        name: item.name,
+        arguments: item.input,
+        custom: true,
+      });
   }
 }
 
@@ -151,17 +158,22 @@ function decodeResponses(text, streamed) {
         result.text += value.delta;
         break;
       case "response.output_item.added":
-        if (value.item.type === "function_call") {
+        if (
+          value.item.type === "function_call" ||
+          value.item.type === "custom_tool_call"
+        ) {
           const call = {
             id: value.item.call_id,
             name: value.item.name,
             arguments: "",
+            ...(value.item.type === "custom_tool_call" ? { custom: true } : {}),
           };
           calls.set(value.item.id, call);
           result.toolCalls.push(call);
         }
         break;
       case "response.function_call_arguments.delta":
+      case "response.custom_tool_call_input.delta":
         calls.get(value.item_id).arguments += value.delta;
         break;
       case "response.completed":
@@ -285,6 +297,12 @@ function decodeGemini(text, mode) {
     for (const { data } of events) {
       result.events.push("chunk");
       geminiChunk(result, JSON.parse(data));
+    }
+    // A failed stream ends in a bare JSON error object, outside any event.
+    const last = text.trimEnd().split(/\r\n|\r|\n/).at(-1) ?? "";
+    if (last.startsWith("{")) {
+      const value = JSON.parse(last);
+      if (value.error) result.error = value.error;
     }
     return result;
   }
