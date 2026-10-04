@@ -692,7 +692,7 @@ test("the routing state and gateway features pages present the gateway's state a
   assert.deepEqual(features.rulesWith(view, { remove: "ticket" }), [{ name: "codename", pattern: "a" }]);
 });
 
-test("the provider form sends the provider's own proxy, and proxy failures read as words", async () => {
+test("the provider form sends the provider's own proxy, Settings shows the daemon's, and proxy failures read as words", async () => {
   const lib = await consoleModule("lib/model-plane.ts", {
     'import { apiClient } from "./session";': "const apiClient = undefined;",
   });
@@ -750,6 +750,26 @@ test("the provider form sends the provider's own proxy, and proxy failures read 
     }),
   );
   assert.equal(refused.fields["/proxy"], "must not hold credentials", "the daemon's words, on the proxy field");
+
+  // The daemon's own proxy, read-only in Settings, as /system/info gives it.
+  const { systemInfoSchema } = await import(
+    new URL("../packages/daemon/dist/src/http/api-v1-schemas.js", import.meta.url).href
+  );
+  assert.ok(systemInfoSchema.required.includes("network"));
+  assert.deepEqual(systemInfoSchema.properties.network.required, ["proxy", "noProxy", "source"]);
+  assert.deepEqual(
+    lib.outboundProxyView({ proxy: "http://alice:***@proxy.corp:3128", noProxy: [".corp.example", "10.0.0.0/8"], source: "env" }),
+    { proxy: "http://alice:***@proxy.corp:3128", address: true, source: "环境变量（HTTPS_PROXY 等）", noProxy: ".corp.example, 10.0.0.0/8" },
+  );
+  assert.deepEqual(lib.outboundProxyView({ proxy: null, noProxy: [], source: null }), {
+    proxy: "直连，没有代理",
+    address: false,
+    source: "未设置",
+    noProxy: "—",
+  });
+  assert.equal(lib.outboundProxyView({ proxy: null, noProxy: [], source: "flag" }).source, "hh serve 的 --proxy 参数", "--proxy direct");
+  for (const source of systemInfoSchema.properties.network.properties.source.enum.filter(Boolean))
+    assert.notEqual(lib.outboundProxyView({ proxy: null, noProxy: [], source }).source, "未设置", source);
 
   // Every ledger class of an upstream failure has words, proxy_failed included.
   const routing = await consoleModule("lib/routing-state.ts");

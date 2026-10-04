@@ -55,7 +55,7 @@ export const zh = {
   "providers.proxy.url": "这个代理地址",
   "providers.proxy.urlLabel": "代理地址",
   "providers.proxy.hint":
-    "守护进程的代理来自 hh serve 的 --proxy、HTTPS_PROXY 等环境变量或 network.proxy，没有设置时直连。代理地址以 http://、https://、socks5:// 或 socks5h:// 开头，不能含用户名或密码：provider 记录不是秘密，需要密码的代理只能作为守护进程的代理。本机回环地址从不经代理。与 hh provider proxy 相同。",
+    "守护进程的代理来自 hh serve 的 --proxy、HTTPS_PROXY 等环境变量或 network.proxy（见设置 › 通用），没有设置时直连。代理地址以 http://、https://、socks5:// 或 socks5h:// 开头，不能含用户名或密码：provider 记录不是秘密，需要密码的代理只能作为守护进程的代理。本机回环地址从不经代理。与 hh provider proxy 相同。",
   "providers.dialog.exposeAll":
     "全部模型出现在 /v1/models 与 Agent 的模型选择中",
 
@@ -328,7 +328,7 @@ export const en: Translation<typeof zh> = {
   "providers.proxy.url": "This proxy URL",
   "providers.proxy.urlLabel": "Proxy URL",
   "providers.proxy.hint":
-    "The daemon's proxy comes from hh serve's --proxy, the HTTPS_PROXY family of environment variables or network.proxy; without one, requests go direct. A proxy URL starts with http://, https://, socks5:// or socks5h:// and holds no user name or password: provider records are not secret, so a proxy that needs a password can only be the daemon's. Loopback addresses are never proxied. The same as hh provider proxy.",
+    "The daemon's proxy comes from hh serve's --proxy, the HTTPS_PROXY family of environment variables or network.proxy (see Settings › General); without one, requests go direct. A proxy URL starts with http://, https://, socks5:// or socks5h:// and holds no user name or password: provider records are not secret, so a proxy that needs a password can only be the daemon's. Loopback addresses are never proxied. The same as hh provider proxy.",
   "providers.dialog.exposeAll":
     "Every model appears in /v1/models and in agents' model pickers",
 

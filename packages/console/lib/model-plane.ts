@@ -16,6 +16,7 @@ import {
   type ModelMetadataView,
   type ProviderPatch,
   type ResolvedField,
+  type SystemInfo,
   type WireProtocol,
 } from "@harnesshub/sdk/client";
 import {
@@ -190,6 +191,27 @@ function proxyOf(form: ProviderForm): string | undefined {
     case "url":
       return form.proxyUrl.trim();
   }
+}
+
+/** The daemon's outbound proxy as the settings page shows it, read-only. */
+export function outboundProxyView(network: SystemInfo["network"]): {
+  proxy: string;
+  /** Whether `proxy` is an address (shown in a fixed-width font). */
+  address: boolean;
+  source: string;
+  noProxy: string;
+} {
+  return {
+    proxy: network.proxy ?? t("settings.proxy.direct"),
+    address: network.proxy !== null,
+    source:
+      network.source !== null
+        ? t(`settings.proxy.from.${network.source}`)
+        : network.proxy === null
+          ? t("settings.proxy.notSet")
+          : "—",
+    noProxy: network.noProxy.length ? network.noProxy.join(", ") : "—",
+  };
 }
 
 /** How a provider's proxy reads on its page. */

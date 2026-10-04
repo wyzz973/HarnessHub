@@ -72,6 +72,18 @@ export const zh = {
   "settings.catalog.never": "还没有刷新过",
   "settings.catalog.source": "来源",
 
+  "settings.proxy.title": "出站代理",
+  "settings.proxy.lede":
+    "守护进程自己发出的请求经过的代理：模型调用、模型列表、目录刷新、同步与 OTLP 导出等。由 hh serve 的 --proxy、HTTPS_PROXY 等环境变量或 config.jsonc 的 network.proxy 设置，修改后重启守护进程生效；这里只读。provider 可以在自己的设置中改为直连或另一个代理。",
+  "settings.proxy.proxy": "代理",
+  "settings.proxy.direct": "直连，没有代理",
+  "settings.proxy.source": "来源",
+  "settings.proxy.from.flag": "hh serve 的 --proxy 参数",
+  "settings.proxy.from.env": "环境变量（HTTPS_PROXY 等）",
+  "settings.proxy.from.file": "config.jsonc 的 network.proxy",
+  "settings.proxy.notSet": "未设置",
+  "settings.proxy.noProxy": "不经代理的主机",
+  "settings.proxy.always": "本机回环地址与私有网络始终直连。密码显示为 ***。",
   "settings.about.title": "关于",
   "settings.about.version": "版本",
   "settings.about.process": "进程",
@@ -243,6 +255,20 @@ export const en: Translation<typeof zh> = {
   "settings.catalog.never": "Never refreshed yet",
   "settings.catalog.source": "Source",
 
+  "settings.proxy.title": "Outbound proxy",
+  "settings.proxy.lede":
+    "The proxy of the daemon's own requests: model calls, model lists, catalog refresh, sync, OTLP export and more. It is set with hh serve's --proxy, the HTTPS_PROXY family of environment variables or network.proxy in config.jsonc, and a change takes effect when the daemon restarts; it is read-only here. A provider can choose direct or another proxy in its own settings.",
+  "settings.proxy.proxy": "Proxy",
+  "settings.proxy.direct": "Direct, no proxy",
+  "settings.proxy.source": "Set by",
+  "settings.proxy.from.flag": "hh serve's --proxy flag",
+  "settings.proxy.from.env":
+    "An environment variable (HTTPS_PROXY and the like)",
+  "settings.proxy.from.file": "network.proxy in config.jsonc",
+  "settings.proxy.notSet": "Not set",
+  "settings.proxy.noProxy": "Hosts that bypass it",
+  "settings.proxy.always":
+    "Loopback and private network addresses always go direct. A password shows as ***.",
   "settings.about.title": "About",
   "settings.about.version": "Version",
   "settings.about.process": "Process",

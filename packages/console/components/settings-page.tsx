@@ -5,11 +5,17 @@ import type {
   CatalogStatus,
   GatewayShareSettings,
   GatewayShareStatus,
+  SystemInfo,
 } from "@harnesshub/sdk/client";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { failureOf, modelPlane, type Failure } from "@/lib/model-plane";
+import {
+  failureOf,
+  modelPlane,
+  outboundProxyView,
+  type Failure,
+} from "@/lib/model-plane";
 import { t } from "@/lib/i18n";
 import { tr } from "@/lib/i18n-react";
 import type { Page } from "@/lib/router";
@@ -332,6 +338,33 @@ export function SettingsPage({
   );
 }
 
+/** The daemon's outbound proxy, read-only: it is a startup setting. */
+function OutboundProxy({ network }: { network: SystemInfo["network"] }) {
+  const view = outboundProxyView(network);
+  return (
+    <Card title={t("settings.proxy.title")} lede={t("settings.proxy.lede")}>
+      <dl className="text-[13px]">
+        <Row label={t("settings.proxy.proxy")}>
+          <span
+            className={
+              view.address ? "font-mono text-[12px] break-all" : undefined
+            }
+          >
+            {view.proxy}
+          </span>
+        </Row>
+        <Row label={t("settings.proxy.source")}>{view.source}</Row>
+        <Row label={t("settings.proxy.noProxy")}>
+          <span className="font-mono text-[12px] break-all">
+            {view.noProxy}
+          </span>
+        </Row>
+      </dl>
+      <p className="field-hint">{t("settings.proxy.always")}</p>
+    </Card>
+  );
+}
+
 function General({ tabs }: { tabs: React.ReactNode }) {
   const load = useCallback(async () => {
     const client = modelPlane();
@@ -394,6 +427,7 @@ function General({ tabs }: { tabs: React.ReactNode }) {
                   setOverride((current) => ({ ...current, catalog }))
                 }
               />
+              <OutboundProxy network={data.value.system.network} />
               <Card title={t("settings.about.title")}>
                 <dl className="text-[13px]">
                   <Row label={t("settings.about.version")}>
