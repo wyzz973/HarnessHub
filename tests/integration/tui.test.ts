@@ -12,6 +12,7 @@ import { runTui } from "@harnesshub/cli/tui";
 import { startHub } from "@harnesshub/daemon/main";
 import type { HarnessHubClient } from "@harnesshub/sdk/client";
 import { connectLocal } from "@harnesshub/sdk/local";
+import { SqliteModelPlaneStore } from "@harnesshub/store/storage/model-plane-store";
 import { HH_ENTRY } from "../support/entries.js";
 import { startFakeProvider } from "../support/fake-provider.js";
 import { FakeInput, FakeOutput, KEYS } from "../support/terminal.js";
@@ -603,4 +604,217 @@ void test("hh tui refuses without a terminal and without a running daemon", asyn
   assert.match(tui.errors.text, /not running[\s\S]*hh serve/);
   assert.equal(tui.output.written, "");
   assert.equal(tui.input.raw, false);
+});
+
+void test("hh tui keeps Codex's own model in ChatGPT mode and asks for a model when it switches back", async (t) => {
+  const on = await machine(t);
+  // The daemon says with which options an agent may keep its own model.
+  assert.deepEqual(
+    (await on.client.agents.get("codex")).capabilities.ownModel,
+    [{ codexAuth: "chatgpt" }],
+  );
+  assert.deepEqual(
+    (await on.client.agents.get("claude")).capabilities.ownModel,
+    [],
+  );
+  const tui = session(on.client, { env: { NO_COLOR: "1" } });
+  await tui.output.waitFor(listed, "the agents");
+  await select(tui, "Codex CLI");
+  // model, effort, codexAuth: the option is the third field.
+  await tui.press(
+    KEYS.right + KEYS.right,
+    (text) => /codexAuth\[—\]/.test(selected(text)),
+    "the codexAuth field",
+  );
+  await tui.press(KEYS.enter, (text) => text.includes("❯"), "the options");
+  let screen = await tui.press(
+    "chatgpt" + KEYS.enter,
+    (text) => text.includes("Write these changes"),
+    "the plan",
+  );
+  assert.match(screen, /Codex CLI › codexAuth › chatgpt/);
+  assert.match(screen, /^ {2}\+openai_base_url = .*\/backend-api\/codex\//m);
+  screen = await tui.press(
+    "y",
+    (text) => text.includes("✓ Codex CLI: codexAuth chatgpt"),
+    "the wired agent",
+  );
+  // It keeps its own model, so it has no effort to set.
+  assert.match(
+    selected(screen),
+    /Codex CLI +✓ wired +\(its own\) +codexAuth\[chatgpt\]/,
+  );
+  assert.doesNotMatch(selected(screen), /effort/);
+  assert.equal((await on.client.agents.get("codex")).wiring?.model, undefined);
+
+  // The model picker offers its own model first, as the current choice.
+  await tui.press(
+    KEYS.left,
+    (text) => /\[\(its own\)\]/.test(selected(text)),
+    "the model field",
+  );
+  screen = await tui.press(
+    KEYS.enter,
+    (text) => text.includes("❯") && text.includes(LARGE),
+    "the model picker",
+  );
+  assert.match(
+    screen,
+    /▸ \(its own model\) +Codex CLI keeps the model it picks itself · current/,
+  );
+  await tui.press(KEYS.escape, (text) => !text.includes("❯"), "the list");
+
+  // Back to the gateway's key: that mode needs a model, which is asked for.
+  await tui.press(
+    KEYS.right,
+    (text) => /codexAuth\[chatgpt\]/.test(selected(text)),
+    "the codexAuth field",
+  );
+  await tui.press(KEYS.enter, (text) => text.includes("❯"), "the options");
+  screen = await tui.press(
+    "gateway" + KEYS.enter,
+    (text) => text.includes("codexAuth gateway-key › model"),
+    "the model picker for the new mode",
+  );
+  assert.match(screen, /needs a model with codexAuth gateway-key: pick one/);
+  assert.doesNotMatch(screen, /\(its own model\)/);
+  screen = await tui.press(
+    "small" + KEYS.enter,
+    (text) => text.includes("Write these changes"),
+    "the plan",
+  );
+  assert.match(screen, /codexAuth gateway-key › fake\/sim-small/);
+  screen = await tui.press(
+    "y",
+    (text) =>
+      text.includes("✓ Codex CLI: codexAuth gateway-key, model fake/sim-small"),
+    "the wired agent",
+  );
+  assert.match(
+    selected(screen),
+    /Codex CLI +✓ wired +fake\/sim-small +effort — +codexAuth\[gateway-key\]/,
+  );
+  const wiring = (await on.client.agents.get("codex")).wiring;
+  assert.equal(wiring?.model, SMALL);
+  assert.deepEqual(wiring?.options, { codexAuth: "gateway-key" });
+  await tui.press("q", () => true, "quit");
+  assert.equal(await tui.done, 0);
+});
+
+void test("hh tui marks a wiring without a key and gives it one after y", async (t) => {
+  const on = await machine(t);
+  await on.client.agents.wire("codex", {
+    options: { codexAuth: "chatgpt" },
+    expect: await on.client.agents.plan("codex", {
+      options: { codexAuth: "chatgpt" },
+    }),
+  });
+  // As ChatGPT mode wired it before it took a key.
+  const plane = new SqliteModelPlaneStore(
+    path.join(on.dataDir, "harnesshub.sqlite"),
+  );
+  try {
+    const record = (await plane.listWirings()).find(
+      (item) => item.adapterId === "codex",
+    )!;
+    await plane.revokeGatewayKey(record.keyId!, new Date().toISOString());
+    const { keyId: _old, ...legacy } = record;
+    await plane.putWiring(legacy);
+  } finally {
+    plane.close();
+  }
+  const tui = session(on.client, { env: { NO_COLOR: "1" } });
+  await tui.output.waitFor(listed, "the agents");
+  let screen = await select(tui, "Codex CLI");
+  assert.match(selected(screen), /Codex CLI +! no key/);
+  assert.match(screen, /Wired without a Gateway Key .*; R gives it one\./);
+  assert.match(screen, /R new key/);
+  screen = await tui.press(
+    "R",
+    (text) => text.includes("Give Codex CLI a Gateway Key?"),
+    "the question",
+  );
+  assert.match(screen, /Issues Codex CLI its first Gateway Key/);
+  // n leaves it as it was.
+  await tui.press(
+    "n",
+    (text) => text.includes("Cancelled; nothing was changed."),
+    "the cancelled question",
+  );
+  assert.equal((await on.client.agents.get("codex")).wiring?.keyState, "none");
+  await tui.press("R", (text) => text.includes("Gateway Key?"), "the question");
+  screen = await tui.press(
+    "y",
+    (text) => /✓ Codex CLI has key [a-z2-7]{12}\./.test(text),
+    "the new key",
+  );
+  assert.match(selected(screen), /Codex CLI +✓ wired +\[\(its own\)\]/);
+  const wiring = (await on.client.agents.get("codex")).wiring;
+  assert.equal(wiring?.keyState, "active");
+  assert.match(
+    await readFile(path.join(on.home, ".codex", "config.toml"), "utf8"),
+    new RegExp(`/backend-api/codex/hhk_a_${wiring!.keyId}_`),
+  );
+  await tui.press("q", () => true, "quit");
+  assert.equal(await tui.done, 0);
+});
+
+void test("hh tui shows what route groups' rules reach, the automatic groups, and the newer agents as installed or not", async (t) => {
+  const on = await machine(t);
+  // A rule of length alone sends long requests to the larger model.
+  await on.client.routeGroups.create({
+    id: "long",
+    members: [SMALL, LARGE],
+    rules: [{ tokens: 100_000, use: LARGE }],
+  });
+  // A second provider with a model of the same name makes an automatic group.
+  const fake = await startFakeProvider({
+    models: ["sim-small"],
+    keys: { upstream: KEY },
+    chunkDelayMs: 0,
+  });
+  t.after(() => fake.close());
+  await on.client.providers.create({
+    id: "mirror",
+    kind: "custom",
+    endpoints: { chat: `${fake.url}/v1` },
+    models: {
+      source: "manual",
+      list: [{ id: "sim-small", contextWindow: 64_000 }],
+      expose: "all",
+    },
+    credential: { value: KEY },
+  });
+  // OpenCode is set up, which says nothing about OpenChamber; dsh is.
+  await mkdir(path.join(on.home, ".config", "opencode"), { recursive: true });
+  await mkdir(path.join(on.home, ".dsh"), { recursive: true });
+
+  const tui = session(on.client, { env: { NO_COLOR: "1" }, rows: 40 });
+  let screen = await tui.output.waitFor(listed, "the agents");
+  assert.match(screen, /^ {4}DeepSeek Harness +not wired +— +effort —/m);
+  assert.doesNotMatch(screen, /^ {4}OpenChamber/m);
+  screen = await tui.press(
+    "f",
+    (text) => /^ {4}OpenChamber +not installed/m.test(text),
+    "the unfolded agents",
+  );
+  for (const name of ["Command Code", "fx", "Muse Code"])
+    assert.match(screen, new RegExp(`^ {4}${name} +not installed`, "m"));
+  await tui.press("f", (text) => /\d+ not installed:/.test(text), "the fold");
+
+  await select(tui, "Codex CLI");
+  screen = await tui.press(
+    KEYS.enter,
+    (text) => text.includes("❯") && text.includes("Automatic groups"),
+    "the model picker",
+  );
+  assert.match(screen, /group\/fast +order · 2 models · 128K ctx/);
+  assert.match(screen, /group\/long +order · 2 models · 1M ctx/);
+  assert.match(
+    screen,
+    /Automatic groups\n {4}group\/\S+ +order · 2 models · 64K ctx/,
+  );
+  await tui.press(KEYS.escape, (text) => !text.includes("❯"), "the list");
+  await tui.press("q", () => true, "quit");
+  assert.equal(await tui.done, 0);
 });

@@ -606,6 +606,12 @@ export interface Agent {
     tiers: WiringTier[];
     efforts: ReasoningEffort[];
     options: Record<string, string[]>;
+    /**
+     * The option values (one of every option) with which the agent keeps
+     * its own model unless one is named (`model: null`), such as Codex with
+     * `{codexAuth: "chatgpt"}`; empty when it always takes a model.
+     */
+    ownModel: Array<Record<string, string>>;
   };
   installation: AgentInstallation;
   wiring: AgentWiring | null;

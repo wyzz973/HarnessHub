@@ -49,6 +49,7 @@ import {
   type ConfirmedPlan,
   type DriftReport,
   type UnwireResult,
+  type WiringAdapter,
   type WiringContext,
   type WiringModel,
   type WiringPlan,
@@ -145,6 +146,12 @@ export interface AgentView {
     efforts: ReasoningEffort[];
     /** Option values, the default first. */
     options: Record<string, string[]>;
+    /**
+     * The option values (one of every option) with which the agent keeps
+     * its own model unless one is named (`model: null`), such as Codex with
+     * `{codexAuth: "chatgpt"}`; empty when it always takes a model.
+     */
+    ownModel: Array<Record<string, string>>;
   };
   installation: AgentInstallation;
   wiring: AgentWiringView | null;
@@ -881,6 +888,7 @@ export class AgentWiringService {
             [...values],
           ]),
         ),
+        ownModel: ownModelOptions(adapter),
       },
       installation: await detectAgent(adapterId, context),
       wiring: record
@@ -1008,6 +1016,20 @@ export class AgentWiringService {
     this.queue = result.catch(() => undefined);
     return result;
   }
+}
+
+/** Every combination of the adapter's option values with which it keeps its own model. */
+function ownModelOptions(
+  adapter: WiringAdapter,
+): Array<Record<string, string>> {
+  let combinations: Array<Record<string, string>> = [{}];
+  for (const [name, values] of Object.entries(adapter.options ?? {}))
+    combinations = combinations.flatMap((combination) =>
+      values.map((value) => ({ ...combination, [name]: value })),
+    );
+  return combinations.filter((combination) =>
+    isModelOptional(adapter, combination),
+  );
 }
 
 /** A record wired without a key: Codex's ChatGPT mode before it took one. */

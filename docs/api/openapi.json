@@ -30568,7 +30568,8 @@
                             "required": [
                               "tiers",
                               "efforts",
-                              "options"
+                              "options",
+                              "ownModel"
                             ],
                             "properties": {
                               "tiers": {
@@ -30606,6 +30607,16 @@
                                   }
                                 },
                                 "description": "Allowed values per option, the default first"
+                              },
+                              "ownModel": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "type": "string"
+                                  }
+                                },
+                                "description": "The option values (one of every option) with which the agent keeps its own model unless one is named (model: null); empty when it always takes a model"
                               }
                             }
                           },
@@ -30991,7 +31002,8 @@
                       "required": [
                         "tiers",
                         "efforts",
-                        "options"
+                        "options",
+                        "ownModel"
                       ],
                       "properties": {
                         "tiers": {
@@ -31029,6 +31041,16 @@
                             }
                           },
                           "description": "Allowed values per option, the default first"
+                        },
+                        "ownModel": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          },
+                          "description": "The option values (one of every option) with which the agent keeps its own model unless one is named (model: null); empty when it always takes a model"
                         }
                       }
                     },
@@ -31870,7 +31892,8 @@
                       "required": [
                         "tiers",
                         "efforts",
-                        "options"
+                        "options",
+                        "ownModel"
                       ],
                       "properties": {
                         "tiers": {
@@ -31908,6 +31931,16 @@
                             }
                           },
                           "description": "Allowed values per option, the default first"
+                        },
+                        "ownModel": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          },
+                          "description": "The option values (one of every option) with which the agent keeps its own model unless one is named (model: null); empty when it always takes a model"
                         }
                       }
                     },
@@ -32292,7 +32325,8 @@
                           "required": [
                             "tiers",
                             "efforts",
-                            "options"
+                            "options",
+                            "ownModel"
                           ],
                           "properties": {
                             "tiers": {
@@ -32330,6 +32364,16 @@
                                 }
                               },
                               "description": "Allowed values per option, the default first"
+                            },
+                            "ownModel": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "string"
+                                }
+                              },
+                              "description": "The option values (one of every option) with which the agent keeps its own model unless one is named (model: null); empty when it always takes a model"
                             }
                           }
                         },
@@ -32747,7 +32791,8 @@
                       "required": [
                         "tiers",
                         "efforts",
-                        "options"
+                        "options",
+                        "ownModel"
                       ],
                       "properties": {
                         "tiers": {
@@ -32785,6 +32830,16 @@
                             }
                           },
                           "description": "Allowed values per option, the default first"
+                        },
+                        "ownModel": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          },
+                          "description": "The option values (one of every option) with which the agent keeps its own model unless one is named (model: null); empty when it always takes a model"
                         }
                       }
                     },
@@ -33200,7 +33255,8 @@
                       "required": [
                         "tiers",
                         "efforts",
-                        "options"
+                        "options",
+                        "ownModel"
                       ],
                       "properties": {
                         "tiers": {
@@ -33238,6 +33294,16 @@
                             }
                           },
                           "description": "Allowed values per option, the default first"
+                        },
+                        "ownModel": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          },
+                          "description": "The option values (one of every option) with which the agent keeps its own model unless one is named (model: null); empty when it always takes a model"
                         }
                       }
                     },
@@ -34854,7 +34920,8 @@
                                 "required": [
                                   "tiers",
                                   "efforts",
-                                  "options"
+                                  "options",
+                                  "ownModel"
                                 ],
                                 "properties": {
                                   "tiers": {
@@ -34892,6 +34959,16 @@
                                       }
                                     },
                                     "description": "Allowed values per option, the default first"
+                                  },
+                                  "ownModel": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "additionalProperties": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "description": "The option values (one of every option) with which the agent keeps its own model unless one is named (model: null); empty when it always takes a model"
                                   }
                                 }
                               },

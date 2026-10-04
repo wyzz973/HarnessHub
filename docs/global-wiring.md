@@ -36,10 +36,10 @@ pnpm exec hh tui                                      # 终端界面：以上操
     21 not installed: Gemini CLI, Qwen Code, OpenCode, Pi, Crush, Kimi Code, MiMo Code, OmO, Hermes…
 
   ↑↓ agent  ·  ←→ field  ·  ↵ change  ·  s save profile  ·  p profiles  ·  r refresh  ·  u unwire
-  f all agents  ·  q quit
+  R new key  ·  f all agents  ·  q quit
 ```
 
-每个已安装、只有配置目录或已接线的 Agent 一行：接线状态（`✓ wired`；`! files changed`、`! key revoked`、`! drift …` 等需要处理的标记，光标所在行的原因显示在状态行）、模型、Claude Code 的档位（未设置的档位只在光标停留时显示）、effort 与 Adapter 选项，光标所在行的右侧是它的配置文件。没有找到、也未接线的 Agent 折叠为一行，`f` 展开。`↑↓`（`j`/`k`）选 Agent，`←→`（`h`/`l`、Tab）选字段，`↵` 打开选择器：输入文字过滤（每个词须出现在 Model Ref、provider 名称或说明中，或按顺序出现在 Ref 中），模型按 provider 分组并显示上下文窗口与每百万 token 的输入/输出价格，路由组在最后，当前值与对该 Agent 隐藏的模型有标注。选定后取守护进程的接线预览，显示各文件的 diff（Key 已遮蔽），`y` 写入、`n` 或 Esc 放弃；选择当前已有的值且 Agent 状态正常时什么都不写（重新接线只会换一把 Key），有漂移或需要处理时照常预览，以修复它。`s` 输入名称保存 Profile，`p` 列出 Profile，回车预览各 Agent 的 diff 后确认应用；`u` 确认后还原 Agent 的文件并吊销 Key；`r` 重新读取；`q`、Esc 退出，Ctrl+C 任何时候都退出。
+每个已安装、只有配置目录或已接线的 Agent 一行：接线状态（`✓ wired`；`! files changed`、`! key revoked`、`! no key`、`! drift …` 等需要处理的标记，光标所在行的原因显示在状态行）、模型、Claude Code 的档位（未设置的档位只在光标停留时显示）、effort 与 Adapter 选项，光标所在行的右侧是它的配置文件。没有找到、也未接线的 Agent 折叠为一行，`f` 展开。`↑↓`（`j`/`k`）选 Agent，`←→`（`h`/`l`、Tab）选字段，`↵` 打开选择器：输入文字过滤（每个词须出现在 Model Ref、provider 名称或说明中，或按顺序出现在 Ref 中），模型按 provider 分组并显示上下文窗口与每百万 token 的输入/输出价格，其后是路由组与未隐藏的自动路由组（策略、成员数，以及网关为它宣称的窗口与图片输入：组中的组展开，规则能保证的更大窗口计入，与 `/v1/models` 相同；组没有单一价格），当前值与对该 Agent 隐藏的模型有标注。Agent 在当前选项下可以保留自带模型时（ChatGPT 模式的 Codex），模型选择器的第一项是 `(its own model)`（`model: null`），此时没有档位与 effort 字段；把选项换成需要模型的值（如 Codex 回到 `gateway-key`）时，模型不沿用，先打开模型选择器选一个，再一并预览。选定后取守护进程的接线预览，显示各文件的 diff（Key 已遮蔽），`y` 写入、`n` 或 Esc 放弃；选择当前已有的值且 Agent 状态正常时什么都不写（重新接线只会换一把 Key），有漂移或需要处理时照常预览，以修复它。`s` 输入名称保存 Profile，`p` 列出 Profile，回车预览各 Agent 的 diff 后确认应用；`u` 确认后还原 Agent 的文件并吊销 Key；`R` 确认后给已接线的 Agent 换一把新 Key（`hh wire --rotate`），没有 Key 的旧记录（Key 进入 ChatGPT 模式之前接线的 Codex，标为 `! no key`）由此得到第一把；`r` 重新读取；`q`、Esc 退出，Ctrl+C 任何时候都退出。
 
 它只经 SDK 调用运行中的守护进程（与 `hh agents`、`hh wire`、`hh profile` 相同的接口），守护进程拒绝的操作显示在状态行；调用进行中按下的键（Ctrl+C 除外）被丢弃，提前键入的 `y` 不会确认尚未显示的预览。没有终端时以 2 退出并提示改用 `hh agents`，守护进程未运行时提示 `hh serve` 并以 3 退出；`q` 为 0，Ctrl+C 与 SIGINT 为 130，SIGTERM 为 143。界面使用备用屏幕与原始模式，窗口改变尺寸（SIGWINCH）时重绘，窄窗口截断行并把按键提示折成多行，小于 30×8 时只显示尺寸提示；`NO_COLOR` 非空时不输出颜色与样式，光标所在字段以方括号标出。退出、Ctrl+C、SIGINT、SIGTERM 与崩溃时都先恢复终端。不依赖第三方库；尚未在 Windows 终端中验证。
 
@@ -49,7 +49,7 @@ pnpm exec hh tui                                      # 终端界面：以上操
 
 | 接口 | 行为 |
 |---|---|
-| `GET /api/v1/agents`、`GET /api/v1/agents/{id}` | 每个 Adapter 的安装状态（PATH 上有其命令为 `installed`，只有配置目录为 `configured-only`，与其他 Agent 共用的文件所在目录不算，如 OpenChamber 写入的 OpenCode 配置；不执行 Agent）、可设置的 `capabilities`（档位、effort、选项）、接线的选择（模型、档位、effort、选项）、显示与隐藏的模型、Key 状态与漂移 |
+| `GET /api/v1/agents`、`GET /api/v1/agents/{id}` | 每个 Adapter 的安装状态（PATH 上有其命令为 `installed`，只有配置目录为 `configured-only`，与其他 Agent 共用的文件所在目录不算，如 OpenChamber 写入的 OpenCode 配置；不执行 Agent）、可设置的 `capabilities`（档位、effort、选项，以及可以保留自带模型的选项组合 `ownModel`，如 Codex 的 `{codexAuth: "chatgpt"}`）、接线的选择（模型、档位、effort、选项）、显示与隐藏的模型、Key 状态与漂移 |
 | `POST /api/v1/agents/{id}/wiring/plan` | `{model?, models?, tiers?, effort?, options?}`；用一把不保存的临时 Key 计算预览，不写文件、不签发 Key |
 | `POST /api/v1/agents/{id}/wiring` | 同上加 `expect`，`expect` 为确认过的预览 |
 | `POST /api/v1/agents/{id}/wiring/rotate` | 以当前选择与模型列表重新接线；没有 Key 的旧记录（ADR 0030 之前的 ChatGPT 模式）得到第一把 Key |

@@ -86,7 +86,7 @@ const agentSchema = {
     capabilities: {
       type: "object",
       additionalProperties: false,
-      required: ["tiers", "efforts", "options"],
+      required: ["tiers", "efforts", "options", "ownModel"],
       properties: {
         tiers: { type: "array", items: { enum: [...wiringTiers] } },
         efforts: { type: "array", items: effortSchema },
@@ -94,6 +94,15 @@ const agentSchema = {
           type: "object",
           additionalProperties: { type: "array", items: { type: "string" } },
           description: "Allowed values per option, the default first",
+        },
+        ownModel: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: { type: "string" },
+          },
+          description:
+            "The option values (one of every option) with which the agent keeps its own model unless one is named (model: null); empty when it always takes a model",
         },
       },
     },

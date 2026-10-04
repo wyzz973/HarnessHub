@@ -9,11 +9,21 @@
  */
 import os from "node:os";
 import path from "node:path";
+import { autoRouteGroup } from "@harnesshub/core/auto-groups";
+import {
+  parseModelRef,
+  type ModelRef,
+  type ProviderId,
+  type RouteGroupId,
+} from "@harnesshub/core/model-plane";
+import { groupModels } from "@harnesshub/core/route-groups";
+import { ruledCapabilities } from "@harnesshub/core/route-rules";
 import {
   HarnessHubError,
   HarnessHubUnavailableError,
   type Agent,
   type AgentWiringInput,
+  type AutoGroup,
   type HarnessHubClient,
   type ProviderConfig,
   type ProviderModel,
@@ -84,11 +94,50 @@ const ATTENTION: Readonly<Record<string, string>> = {
   AGENT_MODEL_UNAVAILABLE: "model gone",
 };
 
+/**
+ * The agent's option values: its wiring's, else the default (the first),
+ * with `change` over them.
+ */
+function optionsOf(
+  agent: Agent,
+  change: Readonly<Record<string, string>> = {},
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(agent.capabilities.options).map(([name, values]) => [
+      name,
+      change[name] ?? agent.wiring?.options?.[name] ?? values[0] ?? "",
+    ]),
+  );
+}
+
+/** Whether, with these option values, the agent keeps its own model unless one is named. */
+function ownModelAllowed(
+  agent: Agent,
+  options: Readonly<Record<string, string>>,
+): boolean {
+  return (agent.capabilities.ownModel ?? []).some((values) =>
+    Object.entries(values).every(([name, value]) => options[name] === value),
+  );
+}
+
+/** Wired without a model of HarnessHub's: it has no tiers or effort to set either. */
+function keepsOwnModel(agent: Agent): boolean {
+  return agent.wiring !== null && agent.wiring.model === undefined;
+}
+
 function fields(agent: Agent): Field[] {
+  const own = keepsOwnModel(agent);
   return [
     { kind: "model" },
-    ...agent.capabilities.tiers.map((tier): Field => ({ kind: "tier", tier })),
-    ...(agent.capabilities.efforts.length ? [{ kind: "effort" } as const] : []),
+    ...(own
+      ? []
+      : agent.capabilities.tiers.map((tier): Field => ({
+          kind: "tier",
+          tier,
+        }))),
+    ...(agent.capabilities.efforts.length && !own
+      ? [{ kind: "effort" } as const]
+      : []),
     ...Object.keys(agent.capabilities.options).map((name): Field => ({
       kind: "option",
       name,
@@ -125,18 +174,25 @@ function value(agent: Agent, field: Field): string {
   }
 }
 
+/** The field's value to compare a choice with: "" for the agent's own model. */
+function chosen(agent: Agent, field: Field): string {
+  return field.kind === "model"
+    ? (agent.wiring?.model ?? "")
+    : value(agent, field);
+}
+
 /** What an empty choice of the field means. */
 function unset(field: Field): string {
   return field.kind === "tier" ? "(follows model)" : "(not set)";
 }
 
-/** Wired, with an active key (or none needed), no drift and nothing to look at. */
+/** Wired, with an active key, no drift and nothing to look at. */
 function healthy(agent: Agent): boolean {
   const wiring = agent.wiring;
   return (
     wiring !== null &&
     !wiring.attention &&
-    (wiring.keyState === "active" || wiring.keyState === "none") &&
+    wiring.keyState === "active" &&
     wiring.driftError === undefined &&
     !wiring.drift?.drifted
   );
@@ -236,6 +292,7 @@ export class AgentsScreen {
   #agents: Agent[] = [];
   #providers: ProviderConfig[] = [];
   #groups: RouteGroup[] = [];
+  #autoGroups: AutoGroup[] = [];
   #row = 0;
   #column = 0;
   #all = false;
@@ -256,23 +313,39 @@ export class AgentsScreen {
     private readonly changed: () => void,
   ) {}
 
-  /** Read the agents, providers and route groups; rejects when the daemon fails. */
+  /** Read the agents, providers, route groups and automatic groups; rejects when the daemon fails. */
   async load(): Promise<void> {
-    const selected = this.#rows()[this.#row]?.id;
-    const [agents, providers, groups] = await Promise.all([
+    const previous = this.#rows()[this.#row];
+    const selected = previous?.id;
+    // The cursor stays on its field when the agent's fields change (keeping
+    // its own model, Codex has no effort).
+    const field = previous && fields(previous)[this.#column];
+    const [agents, providers, groups, automatic] = await Promise.all([
       this.client.agents.list(),
       this.client.providers.list(),
       this.client.routeGroups.list(),
+      this.client.autoGroups.list(),
     ]);
     this.#agents = agents.items;
     this.#providers = providers.items;
     this.#groups = groups.items;
+    this.#autoGroups = automatic.items;
     const rows = this.#rows();
     const at = rows.findIndex((agent) => agent.id === selected);
     this.#row =
       at >= 0 ? at : Math.max(0, Math.min(this.#row, rows.length - 1));
     const agent = rows[this.#row];
-    this.#column = agent ? Math.min(this.#column, fields(agent).length - 1) : 0;
+    const same = agent
+      ? fields(agent).findIndex(
+          (candidate) =>
+            field !== undefined && label(candidate) === label(field),
+        )
+      : -1;
+    this.#column = agent
+      ? same >= 0
+        ? same
+        : Math.min(this.#column, fields(agent).length - 1)
+      : 0;
   }
 
   async key(key: Key): Promise<KeyResult> {
@@ -379,6 +452,9 @@ export class AgentsScreen {
         return;
       case "u":
         if (agent) this.#askUnwire(agent);
+        return;
+      case "R":
+        if (agent) this.#askRotate(agent);
         return;
       case "f":
         if (this.#agents.some(folded)) {
@@ -500,11 +576,8 @@ export class AgentsScreen {
 
   #modelItems(agent: Agent): Item[] {
     const hidden = new Set(agent.wiring?.hidden ?? []);
-    const known = new Map<string, ProviderModel>();
     const items: Item[] = [];
     for (const provider of this.#providers) {
-      for (const model of provider.models.list)
-        known.set(`${provider.id}/${model.id}`, model);
       const heading =
         provider.name === provider.id
           ? provider.id
@@ -520,37 +593,71 @@ export class AgentsScreen {
         });
       }
     }
-    for (const group of this.#groups) {
-      const ref = `group/${group.id}`;
-      // A group's window is its smallest member's, when every member's is known.
-      const windows = group.members.flatMap((member) => {
-        const size = known.get(member)?.contextWindow;
-        return size === undefined ? [] : [size];
-      });
-      const least =
-        windows.length && windows.length === group.members.length
-          ? Math.min(...windows)
-          : undefined;
-      items.push({
-        value: ref,
-        label: ref,
-        note: [
-          group.strategy,
-          `${group.members.length} ${group.members.length === 1 ? "model" : "models"}`,
-          modelNote(least),
-        ]
-          .filter(Boolean)
-          .join(" · "),
-        group: "Route groups",
-        search: group.members.join(" "),
-      });
-    }
+    const automatic = this.#autoGroups
+      .filter((group) => !group.hidden)
+      .map(autoRouteGroup);
+    for (const [heading, groups] of [
+      ["Route groups", this.#groups],
+      ["Automatic groups", automatic],
+    ] as const)
+      for (const group of groups) {
+        const { contextWindow, inputModalities } = this.#groupCapabilities(
+          group,
+          [...this.#groups, ...automatic],
+        );
+        items.push({
+          value: `group/${group.id}`,
+          label: `group/${group.id}`,
+          note: [
+            group.strategy,
+            `${group.members.length} ${group.members.length === 1 ? "model" : "models"}`,
+            modelNote(contextWindow),
+            inputModalities?.includes("image") ? "images" : "",
+          ]
+            .filter(Boolean)
+            .join(" · "),
+          group: heading,
+          search: group.members.join(" "),
+        });
+      }
     for (const item of items)
       if (hidden.has(item.value))
         item.note = [item.note, "hidden from this agent"]
           .filter(Boolean)
           .join(" · ");
     return items;
+  }
+
+  /**
+   * What a group offers as one model, as the gateway lists it: its models
+   * (groups in it resolved) and what its rules make reachable.
+   */
+  #groupCapabilities(group: RouteGroup, groups: readonly RouteGroup[]) {
+    const providers = new Map<string, ProviderConfig>(
+      this.#providers.map((provider) => [provider.id, provider]),
+    );
+    const byId = new Map<string, RouteGroup>(
+      groups.map((entry) => [entry.id, entry]),
+    );
+    const metadata = (ref: ModelRef): ProviderModel | undefined => {
+      const parsed = parseModelRef(ref);
+      if (parsed?.kind !== "model") return undefined;
+      return providers
+        .get(parsed.provider)
+        ?.models.list.find((model) => model.id === parsed.model);
+    };
+    return ruledCapabilities(
+      group,
+      groupModels(
+        group,
+        (id: RouteGroupId) => byId.get(id),
+        (provider: ProviderId, model: string) =>
+          providers
+            .get(provider)
+            ?.models.list.some((entry) => entry.id === model) ?? false,
+      ),
+      metadata,
+    );
   }
 
   #items(agent: Agent, field: Field): Item[] {
@@ -562,7 +669,19 @@ export class AgentsScreen {
     };
     switch (field.kind) {
       case "model":
-        return this.#modelItems(agent);
+        return [
+          ...(ownModelAllowed(agent, optionsOf(agent))
+            ? [
+                {
+                  value: "",
+                  label: "(its own model)",
+                  note: `${agent.name} keeps the model it picks itself`,
+                  search: "own",
+                },
+              ]
+            : []),
+          ...this.#modelItems(agent),
+        ];
       case "tier":
         return [empty, ...this.#modelItems(agent)];
       case "effort":
@@ -588,7 +707,7 @@ export class AgentsScreen {
   }
 
   #openField(agent: Agent, field: Field): void {
-    const current = value(agent, field);
+    const current = chosen(agent, field);
     const items = this.#items(agent, field);
     for (const item of items)
       if (item.value === current && agent.wiring)
@@ -617,7 +736,7 @@ export class AgentsScreen {
   #input(agent: Agent, field: Field, choice: string): AgentWiringInput {
     switch (field.kind) {
       case "model":
-        return { model: choice };
+        return { model: choice || null };
       case "tier": {
         const tiers = { ...agent.wiring?.tiers };
         if (choice) tiers[field.tier] = choice;
@@ -639,29 +758,80 @@ export class AgentsScreen {
   async #change(agent: Agent, field: Field, item: Item): Promise<void> {
     this.#mode = { kind: "list" };
     // Wiring again would only issue a new key; an agent that drifted is wired again to repair it.
-    if (healthy(agent) && item.value === value(agent, field)) {
+    if (healthy(agent) && item.value === chosen(agent, field)) {
       this.#succeed(
         `${agent.name} already has ${label(field)} ${item.label}; nothing to write.`,
       );
       return;
     }
     const input = this.#input(agent, field, item.value);
+    // A switch of options to ones that need a model, which the agent does
+    // not carry over from keeping its own, asks for the model first.
+    if (field.kind === "option") {
+      const options = optionsOf(agent, input.options);
+      const before = agent.wiring
+        ? ownModelAllowed(agent, optionsOf(agent))
+        : undefined;
+      const needed = !ownModelAllowed(agent, options);
+      const carried =
+        agent.wiring?.model !== undefined &&
+        before === ownModelAllowed(agent, options);
+      if (needed && !carried) {
+        const picker: Picker = {
+          crumbs: [agent.name, `${label(field)} ${item.label}`, "model"],
+          items: this.#modelItems(agent),
+          query: "",
+          matches: [],
+          cursor: 0,
+          empty:
+            "The gateway has no models yet: add a provider with hh provider add or hh init.",
+          verb: "choose",
+          choose: (model) =>
+            this.#plan(
+              agent,
+              { ...input, model: model.value },
+              [agent.name, `${label(field)} ${item.label}`, model.label],
+              `${label(field)} ${item.label}, model ${model.label}`,
+            ),
+        };
+        refilter(picker);
+        this.#mode = { kind: "pick", picker };
+        this.#succeed(
+          `${agent.name} needs a model with ${label(field)} ${item.label}: pick one.`,
+        );
+        return;
+      }
+    }
+    await this.#plan(
+      agent,
+      input,
+      [agent.name, label(field), item.label],
+      `${label(field)} ${item.label}`,
+    );
+  }
+
+  /** Plan `input` for the agent, then ask before writing it; `what` names the change. */
+  async #plan(
+    agent: Agent,
+    input: AgentWiringInput,
+    crumbs: string[],
+    what: string,
+  ): Promise<void> {
+    this.#mode = { kind: "list" };
     const planned = await this.#call(`Planning ${agent.name}…`, () =>
       this.client.agents.plan(agent.id, input),
     );
     if (!planned) return;
     const plan = planned.value;
     if (!plan.changed) {
-      this.#succeed(
-        `${agent.name} already has ${label(field)} ${item.label}; nothing to write.`,
-      );
+      this.#succeed(`${agent.name} already has ${what}; nothing to write.`);
       return;
     }
     const files = plan.files.filter((file) => file.diff).length;
     this.#mode = {
       kind: "confirm",
       question: {
-        crumbs: [agent.name, label(field), item.label],
+        crumbs,
         lines: planText(plan).split("\n"),
         scroll: 0,
         question: `Write these changes to ${files === 1 ? "the file" : `${files} files`} of ${agent.name}?`,
@@ -672,7 +842,46 @@ export class AgentsScreen {
           });
           if (wired)
             this.#succeed(
-              `${agent.name}: ${label(field)} ${item.label}. Restart running ${agent.name} sessions to use it.`,
+              `${agent.name}: ${what}. Restart running ${agent.name} sessions to use it.`,
+            );
+        },
+      },
+    };
+  }
+
+  #askRotate(agent: Agent): void {
+    const wiring = agent.wiring;
+    if (!wiring) {
+      this.#fail(`${agent.name} is not wired.`);
+      return;
+    }
+    const first = wiring.keyId === undefined;
+    this.#mode = {
+      kind: "confirm",
+      question: {
+        crumbs: [agent.name, first ? "key" : "new key"],
+        lines: [
+          first
+            ? `Issues ${agent.name} its first Gateway Key and writes it into its files; it was wired before it took one, so HarnessHub's models refuse it until then:`
+            : `Issues a new Gateway Key for ${agent.name}, writes it into its files and revokes key ${wiring.keyId}:`,
+          ...wiring.files.map((file) => `  ${file}`),
+        ],
+        scroll: 0,
+        question: first
+          ? `Give ${agent.name} a Gateway Key?`
+          : `Give ${agent.name} a new key and revoke ${wiring.keyId}?`,
+        yes: async () => {
+          const rotated = await this.#call(
+            `Writing ${agent.name}…`,
+            async () => {
+              const view = await this.client.agents.rotate(agent.id);
+              await this.load();
+              return view;
+            },
+          );
+          if (rotated)
+            this.#succeed(
+              `${agent.name} has key ${rotated.value.wiring?.keyId ?? "?"}${first ? "" : `; ${wiring.keyId} is revoked`}. Restart running ${agent.name} sessions to use it.`,
             );
         },
       },
@@ -815,6 +1024,7 @@ export class AgentsScreen {
           hint("p", "profiles"),
           hint("r", "refresh"),
           hint("u", "unwire"),
+          hint("R", "new key"),
           ...(this.#agents.some(folded)
             ? [hint("f", this.#all ? "fold" : "all agents")]
             : []),
@@ -890,8 +1100,8 @@ export class AgentsScreen {
       return s.bad(
         `! ${ATTENTION[wiring.attention.code] ?? wiring.attention.code}`,
       );
-    if (wiring.keyState !== "active" && wiring.keyState !== "none")
-      return s.bad(`! key ${wiring.keyState}`);
+    if (wiring.keyState === "none") return s.bad("! no key");
+    if (wiring.keyState !== "active") return s.bad(`! key ${wiring.keyState}`);
     if (wiring.driftError) return s.bad("? drift unknown");
     if (wiring.drift?.drifted)
       return s.bad(`! drift ${wiring.drift.kinds.join(",")}`);
@@ -903,8 +1113,10 @@ export class AgentsScreen {
     const wiring = agent.wiring;
     if (!wiring) return undefined;
     if (wiring.attention) return wiring.attention.message;
-    if (wiring.keyState !== "active" && wiring.keyState !== "none")
-      return `Its Gateway Key is ${wiring.keyState}; hh wire ${agent.id} --rotate issues a new one.`;
+    if (wiring.keyState === "none")
+      return `Wired without a Gateway Key (before ${agent.name} took one), so HarnessHub's models refuse it; R gives it one.`;
+    if (wiring.keyState !== "active")
+      return `Its Gateway Key is ${wiring.keyState}; R issues a new one.`;
     if (wiring.driftError) return `Drift unknown: ${wiring.driftError}`;
     const [first, ...more] = wiring.drift?.drifted ? wiring.drift.findings : [];
     if (!first) return undefined;
