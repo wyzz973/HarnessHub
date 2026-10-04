@@ -32,4 +32,6 @@ pnpm test:protocol      # 也包含在 pnpm test 与 pnpm check 中
 
 所有 Key 都是合成的金丝雀值，进程只在回环地址监听，测试在 `tools/run-tests.mjs` 的私有 HOME 中运行。套件依赖从仓库根目录运行（它按工作目录找到 `apps/hh/bin/hh.mjs` 与 `tools/fake-provider/index.mjs`）。
 
+`conformance/real/matrix.ts` 是同一批客户端对真实上游的矩阵：每种入站协议、流式与非流式各一轮文本与一次工具往返，模型答错时重试并报告；`pnpm test:real` 启动网关后运行它（见[兼容性](../docs/compatibility.md#怎样重复)）。
+
 尚未覆盖：Vercel AI SDK 与 Python SDK；对真实 provider 的在线抽样；直通用例的逐字节黄金语料比较；Open Responses 的验收用例；`count_tokens` 与 `/v1/models`。

@@ -38,7 +38,7 @@
 
 ## 真实 provider（DeepSeek，2026-10-05）
 
-上面的表格只用假上游。2026-10-05 在本机（macOS arm64，`d403c1e`）以所有者提供的 DeepSeek Key 做了一次真实上游的手工验证；用到的脚本不在仓库中，结果不由套件生成。守护进程用临时数据目录、文件秘密后端与临时接线目录（`--wiring-home`），不触及用户真实的 Agent 配置；Key 经 `--credential-from-stdin` 存入，验证结束后删除。
+上面的表格只用假上游。2026-10-05 在本机（macOS arm64，`d403c1e`）以所有者提供的 DeepSeek Key 做了一次真实上游的手工验证；当时的脚本不在仓库中，同样的验证现在可以用 `pnpm test:real` 重复（见下一节）。守护进程用临时数据目录、文件秘密后端与临时接线目录（`--wiring-home`），不触及用户真实的 Agent 配置；Key 经 `--credential-from-stdin` 存入，验证结束后删除。
 
 - **添加与测试**：`hh provider add deepseek --preset deepseek`，在线模型列表为 `deepseek-flash` 与 `deepseek-v4-pro`（上下文 1048576）；`hh provider test` 的 chat、responses、anthropic 三个端点均为 200。
 - **体检**：`hh provider doctor deepseek`（`deepseek-flash`，chat 端点）13 项通过、0 警告、0 失败，`context-overflow` 未加 `--deep` 而跳过；21 次调用，$0.000669。usage 不需要 `stream_options` 也会返回，`max_tokens` 与 `max_completion_tokens` 都接受，推理回传可选，10 个可选字段都接受，首字节约 100 ms、首内容约 520 ms。
@@ -47,6 +47,19 @@
 - **秘密**：在数据目录（数据库、日志）、接线写入的 Agent 文件与秘密目录中搜索 DeepSeek Key 的明文，没有命中；Agent 文件中的 Gateway Key 也不出现在日志中。
 - **用量**：98 次成功调用。`deepseek` 计价 $0.0127；`dschat` 是手工添加、没有价格的 provider，33 次调用记为未计价。另有 16 次以错误的 Key 调用而失败（401），是验证脚本本身的错误造成的。
 - **未验证**：其他真实 provider；用户真实配置中的 Agent（需要所有者亲自执行）；以 ChatGPT 登录的 Codex；取消与流式在真实上游上的表现；Windows。
+
+### 怎样重复
+
+`pnpm test:real`（[tests/real/check.ts](../tests/real/check.ts)）由持有 Key 的人手动运行，不属于 `pnpm check`。Key 只从 `--key-file PATH` 或环境变量 `HH_REAL_KEY` 读取（两者只能给一个），不出现在命令行参数中：
+
+```sh
+HH_REAL_KEY=… pnpm test:real --preset deepseek --model deepseek-flash --agents claude,codex,opencode,pi,gemini --out report.md
+pnpm test:real --chat https://host/v1 --anthropic https://host --api-key-header authorization-bearer --model M --key-file ~/key.txt
+```
+
+它在临时目录中启动 `hh serve`（文件秘密后端、临时 `--wiring-home`、不刷新目录），经 `hh provider add … --credential-from-stdin` 加入 provider；provider 除 Chat 外还有其他端点时，另加一个只有 Chat 端点的副本（`<id>-chat`），让其余三种入站协议转换到 Chat。随后依次运行：`provider test`；体检的计划与预计费用，然后体检；官方 SDK 矩阵（[conformance/real/matrix.ts](../conformance/real/matrix.ts)：两个 provider × 四种入站协议 × 流式与非流式，各一轮文本与一次 `get_weather` 工具往返）；`--agents` 中的每个 Agent 经 `hh wire` 接入临时 home，在上文套件的 Seatbelt 沙箱中运行一次读文件取口令的任务，再取消接线（Codex 用 `--sandbox danger-full-access`，原因见下文）。之后核对账本：每个矩阵组合的上游协议与模式，每个 Agent 的 `agent:` Key 归属与工具调用（`tool_calls`/`tool_use`；Responses 直通的账本只记响应状态，此时写明而不判失败）。最后停止守护进程，在临时目录（数据库、日志、秘密、Agent 文件）、守护进程日志与全部捕获的输出中搜索上游 Key 与矩阵 Gateway Key 的明文，命中即失败，然后删除临时目录。
+
+报告是与本页相同风格的 Markdown 表格，不含任何秘密值；`--out` 另存为文件。模型答错（例如没有调用工具）时同一项最多再试两次（`--attempts`，默认 3 次），每次失误都写进报告，不会悄悄通过。`--dry-run` 只启动守护进程、加入 provider 并给出计划，不发出任何模型调用。全部通过时退出码为 0，有失败为 1，参数错误为 2。脚本自身的逻辑由 [real-provider-check.test.ts](../tests/integration/real-provider-check.test.ts) 对假上游测试：秘密扫描的拒绝样例、丢弃工具的上游被报告、表现正常的上游全部通过、试运行不发出调用。
 
 ## 发现
 
