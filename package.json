@@ -31,6 +31,7 @@
     "check": "pnpm check:runtime && pnpm lint && pnpm format:check && pnpm check:boundaries && pnpm check:docs && pnpm check:spdx && pnpm check:labels && pnpm test && pnpm check:api && pnpm check:console",
     "start": "node packages/daemon/dist/src/main.js",
     "benchmark": "node packages/daemon/dist/src/benchmark-main.js",
+    "bench": "pnpm build && node dist/tests/perf/bench.js",
     "dev:console": "pnpm --filter @harnesshub/console dev",
     "build:console": "pnpm --filter @harnesshub/console build",
     "typecheck:console": "pnpm --filter @harnesshub/console typecheck",
