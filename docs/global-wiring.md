@@ -57,7 +57,7 @@ pnpm exec hh tui                                      # 终端界面：以上操
 | `PUT /api/v1/agents/{id}/models` | `{hidden}`：设置隐藏的模型，见下文 |
 | `GET /api/v1/profiles`、`GET`/`PUT`/`DELETE /api/v1/profiles/{name}`、`POST .../{name}/plan`、`POST .../{name}/apply` | Profile，见下文 |
 
-每次接线签发一把新的 `agent:<id>` Key，不过期：`modelAllow` 为模型列表（未含 `*` 时加上所选模型与各档模型），`modelDeny` 沿用当前的隐藏列表。Key 文本只经库写入 Agent 的配置文件，守护进程不保存（存储中只有哈希）。文件写入并回读校验、`WiringRecord`（含档位、effort 与选项）提交之后才吊销上一把 Key；任何一步失败都吊销新 Key，写入失败时已写文件恢复为写前字节。还原先恢复文件，再吊销 Key、删除记录；还原失败时记录与 Key 保留，可以重试。接线、换 Key、隐藏模型、Profile 与还原在守护进程内串行执行，库的跨进程锁另外阻止两个进程同时改写同一 Agent。
+每次接线签发一把新的 `agent:<id>` Key，不过期：`modelAllow` 为模型列表（未含 `*` 时加上所选模型与各档模型），`modelDeny` 沿用当前的隐藏列表。Key 文本只经库写入 Agent 的配置文件，守护进程不保存（存储中只有哈希）。文件写入并回读校验、`WiringRecord`（含档位、effort 与选项）提交之后才吊销上一把 Key；任何一步失败都吊销新 Key，写入失败时已写文件恢复为写前字节（写入后又被别人改动的文件保持原样，见下）。还原先恢复文件，再吊销 Key、删除记录；还原失败时记录与 Key 保留，可以重试。接线、换 Key、隐藏模型、Profile 与还原在守护进程内串行执行，库的跨进程锁另外阻止两个进程同时改写同一 Agent。
 
 ### 每个 Agent 的模型列表
 
@@ -80,7 +80,7 @@ Profile 保存每个已接线 Agent 的模型选择（模型、档位、effort�
 | 函数 | 行为 |
 |---|---|
 | `planWiring(adapterId, target, ctx, {previous?})` | 只读。返回每个文件的键级变更与统一 diff；Key 显示为 `hhk_a_xxxx…`，被替换的旧 Key 值显示为 `<redacted>`，dotenv 文件不带上下文行。已按同样方式接线时 `changed: false` |
-| `applyWiring(adapterId, target, ctx, {previous?, expect?})` | 在该 Adapter 的跨进程锁内重新计划；`expect` 为用户确认过的计划，文件哈希不一致即 `WIRING_CONCURRENT_MODIFICATION`。先保存原始字节，再逐个文件原子写并回读校验；任一步失败，已写文件恢复为写前字节，错误的 `rollback` 逐个报告。返回待持久化的记录 |
+| `applyWiring(adapterId, target, ctx, {previous?, expect?})` | 在该 Adapter 的跨进程锁内重新计划；`expect` 为用户确认过的计划，文件哈希不一致即 `WIRING_CONCURRENT_MODIFICATION`。先保存原始字节，再逐个文件原子写并回读校验；任一步失败，已写文件恢复为写前字节，错误的 `rollback` 逐个报告；文件在写入后已被改动（不再是写入的字节，如用户正在编辑）时保持原样并报告为未恢复，不覆盖这次改动。返回待持久化的记录 |
 | `unwire(record, ctx)` | 文件哈希等于 `afterHash` 时写回原始字节（接线时新建的文件则删除，连同为它新建且仍为空的目录）；用户之后改过文件时，只把 HarnessHub 写过的键恢复为原值或删除，其余修改保留。可重复执行 |
 | `detectAgent(adapterId, ctx)` | 只看 `ctx.env` 的 PATH 与 Adapter 的配置目录，判断 `installed`、`configured-only` 或 `not-found`；不执行任何程序 |
 | `detectDrift(record, ctx, {baseUrl?})` | 只读。基址字段缺失、Key 字段缺失或换成别的 Key 为 `unwired`；基址指向别处为 `foreign-gateway`；其他写过的字段被改为 `replaced`，接线删除的条目又出现也是 `replaced`。基址按所选模型定位（Grok 每个模型一张表，只有所选模型那张的基址算基址字段）；列表按项、项内按键比较，Key 与基址同在一个列表中时（T3 Code 的 `environment`）换成别的 Key 记为 `unwired`。`bypassed` 与 `stale-key` 需要网关账本，不在本库 |

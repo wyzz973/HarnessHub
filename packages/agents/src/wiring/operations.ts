@@ -300,9 +300,10 @@ export async function applyWiring(
     for (const plan of changed)
       originals.set(plan, await originalOf(plan, context, adapter.id));
     const entries = new Map<FilePlan, WiringRecord["files"][number]>();
-    const written: Array<{ plan: FilePlan; created: string[] }> = [];
+    const written: WrittenFile[] = [];
     for (const plan of changed) {
       const bytes = encodeText(plan.after, plan.bom);
+      const hash = sha256(bytes);
       const inPlace = plan.state.exists && plan.state.links > 1;
       let created: string[] = [];
       try {
@@ -313,14 +314,16 @@ export async function applyWiring(
           manifestOf(adapter, plan, resolved, originals.get(plan)!, created),
         );
         // An in-place write that fails midway must be restored as well.
-        if (inPlace) written.push({ plan, created });
+        const entry: WrittenFile = { plan, created };
+        if (inPlace) written.push(entry);
         await writeAtomic(plan.realPath, bytes, {
           mode: plan.state.exists ? plan.state.mode : 0o600,
           expectedHash: plan.state.exists ? plan.state.hash : undefined,
           inPlace,
         });
-        if (!inPlace) written.push({ plan, created });
-        await verifyWritten(plan, sha256(bytes));
+        entry.hash = hash;
+        if (!inPlace) written.push(entry);
+        await verifyWritten(plan, hash);
         const beforeHash = plan.previous
           ? plan.previous.entry.beforeHash
           : plan.state.exists
@@ -329,7 +332,7 @@ export async function applyWiring(
         entries.set(plan, {
           path: plan.path,
           ...(beforeHash !== undefined ? { beforeHash } : {}),
-          afterHash: sha256(bytes),
+          afterHash: hash,
           backupId,
         });
       } catch (error) {
@@ -1101,12 +1104,41 @@ async function verifyBytes(
   return state;
 }
 
-async function rollBack(
-  written: Array<{ plan: FilePlan; created: string[] }>,
+/** A file a wiring wrote, or began writing in place; `hash` once the write completed. */
+export interface WrittenFile {
+  plan: FilePlan;
+  created: string[];
+  hash?: string;
+}
+
+/**
+ * Puts back the files a failed wiring wrote: the bytes each had before, or
+ * no file where there was none. A file that no longer holds what was
+ * written (someone changed it since) is left as it is and reported as not
+ * restored, so that the change is not lost; a write that failed midway is
+ * restored whatever the file holds.
+ */
+export async function rollBack(
+  written: readonly WrittenFile[],
 ): Promise<WiringRollback[]> {
   const results: WiringRollback[] = [];
-  for (const { plan, created } of [...written].reverse()) {
+  for (const { plan, created, hash } of [...written].reverse()) {
     try {
+      if (hash !== undefined) {
+        const now = await readState(plan.realPath);
+        if (!now.exists || now.hash !== hash) {
+          results.push({
+            path: plan.path,
+            restored: false,
+            error:
+              "The file changed after HarnessHub wrote it, so it was left as it is",
+            ...(plan.previous?.entry.backupId
+              ? { backupId: plan.previous.entry.backupId }
+              : {}),
+          });
+          continue;
+        }
+      }
       if (plan.state.exists) {
         const current = await readState(plan.realPath);
         // A write that failed before changing the file needs no restore.
