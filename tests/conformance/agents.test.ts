@@ -52,6 +52,8 @@ import {
 
 const KEY = "sk-synthetic-conformance-0001";
 const MODEL = "fake/upstream-sim";
+/** The same upstream on its Anthropic endpoint, for agents of that protocol. */
+const ANTHROPIC_MODEL = "fake-anthropic/upstream-sim";
 const RUN_TIMEOUT_MS = 120_000;
 /** How long a run with the proxy variables may take before it counts as stuck. */
 const PROBE_TIMEOUT_MS = 45_000;
@@ -65,15 +67,46 @@ const LEDGER_USAGE = {
   output: 50,
   reasoning: 30,
 };
+/** The same from the Anthropic endpoint, which reports no reasoning count. */
+const ANTHROPIC_LEDGER_USAGE = {
+  input: 1200,
+  cacheRead: 0,
+  cacheWrite: 0,
+  output: 80,
+  reasoning: 0,
+};
 /** The slow answer the cancel run cuts: a word every 400 ms for 40 s. */
 const SLOW_WORDS = Array.from({ length: 100 }, (_, index) => `w${index} `);
 const SLOW_CHUNK_MS = 400;
 /** The answer to a tool result that does not hold the token. */
 const NO_TOKEN = "NO-TOKEN-IN-THE-TOOL-RESULT";
 
+/** How the answered calls reached the Anthropic endpoint: mode and the beta fields stripped. */
+function anthropicPath(calls: ApiModelCall[]): string {
+  const modes = [...new Set(calls.map((call) => call.mode ?? "unknown"))];
+  const stripped = [
+    ...new Set(
+      calls.flatMap((call) =>
+        call.patches
+          .filter((patch) => patch.startsWith("anthropic-strip-beta-fields:"))
+          .map((patch) => patch.slice("anthropic-strip-beta-fields:".length)),
+      ),
+    ),
+  ];
+  const merged = calls.some((call) =>
+    call.patches.includes("merge-system-messages"),
+  );
+  return `${modes.join(", ")}; stripped ${stripped.length ? stripped.join(", ") : "nothing"}${merged ? "; system messages merged" : ""}`;
+}
+
 interface AgentSpec {
   id: string;
   executable: string;
+  /**
+   * `anthropic`: the agent is wired to the upstream's Anthropic endpoint,
+   * which its requests pass through to (Claude Code); otherwise to Chat.
+   */
+  upstream?: "anthropic";
   /** Install directories outside PATH, relative to the account's home. */
   installDirectories?: string[];
   /** The documented non-interactive mode with `prompt`. */
@@ -110,6 +143,7 @@ const AGENTS: AgentSpec[] = [
   {
     id: "claude",
     executable: "claude",
+    upstream: "anthropic",
     args: (prompt) => ["-p", prompt],
     readTool: { name: "Read", args: (file) => ({ file_path: file }) },
     notes: ({ stderr }) =>
@@ -401,6 +435,28 @@ for (const spec of AGENTS)
         },
         credential: { value: KEY },
       });
+      // Anthropic's own auth; beta fields stripped as for strict
+      // Anthropic-compatible relays.
+      await client.providers.create({
+        id: "fake-anthropic",
+        name: "Strict fake upstream, Anthropic",
+        kind: "custom",
+        endpoints: { anthropic: upstream.url },
+        auth: { apiKeyHeader: "x-api-key" },
+        patches: { anthropic: { patches: ["anthropic-strip-beta-fields"] } },
+        models: {
+          source: "manual",
+          list: [
+            {
+              id: "upstream-sim",
+              contextWindow: 128_000,
+              maxOutputTokens: 8192,
+            },
+          ],
+          expose: "all",
+        },
+        credential: { value: KEY },
+      });
       const agent = await client.agents.get(spec.id);
       assert.notEqual(
         agent.installation.status,
@@ -410,7 +466,9 @@ for (const spec of AGENTS)
 
       // Each file wiring writes holds a line of the user's first when its
       // format has comments, so that restoring is more than deleting.
-      const input = { model: MODEL };
+      const input = {
+        model: spec.upstream === "anthropic" ? ANTHROPIC_MODEL : MODEL,
+      };
       const first = await client.agents.plan(spec.id, input);
       const before = new Map<string, Buffer | undefined>();
       for (const file of first.files) {
@@ -526,12 +584,14 @@ for (const spec of AGENTS)
       // summed by `hh usage` for the agent's key.
       let usage: ConformanceItem = skipped;
       if (working) {
+        const ledgerUsage =
+          spec.upstream === "anthropic" ? ANTHROPIC_LEDGER_USAGE : LEDGER_USAGE;
         const normal = (value: unknown) =>
-          JSON.stringify(value, Object.keys(LEDGER_USAGE).sort());
+          JSON.stringify(value, Object.keys(ledgerUsage).sort());
         const wrong = answered.filter(
           (call) =>
             call.usage?.source !== "reported" ||
-            normal(call.usage) !== normal(LEDGER_USAGE),
+            normal(call.usage) !== normal(ledgerUsage),
         );
         const report = (await hhJson([
           "usage",
@@ -547,7 +607,7 @@ for (const spec of AGENTS)
         };
         const bucket = report.items.find((item) => item.key === wiring.keyId);
         const expected = Object.fromEntries(
-          Object.entries(LEDGER_USAGE).map(([name, value]) => [
+          Object.entries(ledgerUsage).map(([name, value]) => [
             name,
             value * answered.length,
           ]),
@@ -557,7 +617,9 @@ for (const spec of AGENTS)
           bucket?.calls === chatCalls.length &&
           normal(bucket.usage) === normal(expected)
             ? pass(
-                `each answer reported input 1200 and output 80 with 30 reasoning; the ledger keeps output 50 and reasoning 30, and hh usage sums ${answered.length} answer${answered.length === 1 ? "" : "s"}`,
+                spec.upstream === "anthropic"
+                  ? `each answer reported input 1200 and output 80 on the Anthropic endpoint (${anthropicPath(answered)}); the ledger keeps them, and hh usage sums ${answered.length} answer${answered.length === 1 ? "" : "s"}`
+                  : `each answer reported input 1200 and output 80 with 30 reasoning; the ledger keeps output 50 and reasoning 30, and hh usage sums ${answered.length} answer${answered.length === 1 ? "" : "s"}`,
               )
             : fail(
                 `ledger ${JSON.stringify(answered.map((call) => call.usage))}; hh usage ${JSON.stringify(bucket)}`,
