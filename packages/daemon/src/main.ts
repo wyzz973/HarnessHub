@@ -74,6 +74,7 @@ import { CopilotHosts } from "./copilot.js";
 import { allowanceFile, SubscriptionService } from "./subscriptions.js";
 import { ProviderDoctor } from "./provider-doctor.js";
 import { GatewayShare } from "./lan-share.js";
+import { Outbound, resolveNetworkSettings } from "./outbound.js";
 import {
   getPreset,
   listPresets,
@@ -323,6 +324,22 @@ export async function startHub(options: {
    */
   otlp?: unknown;
   /**
+   * The `network` settings (`proxy`, `proxyPassword`, `noProxy`): the proxy
+   * of the daemon's own outbound requests, resolved by
+   * `resolveNetworkSettings`; invalid values, or a password that cannot be
+   * read, fail the start. Absent: requests go out directly. `hh serve`
+   * passes them from flags, the environment (HTTPS_PROXY, NO_PROXY) and
+   * config.jsonc; `startHub` itself never reads the environment for them.
+   */
+  network?: unknown;
+  /**
+   * For tests only: certificates the daemon's outbound requests trust besides
+   * the system's, for loopback TLS fakes behind a test proxy. There is no
+   * user setting; a TLS-inspecting proxy's certificate goes in
+   * NODE_EXTRA_CA_CERTS.
+   */
+  outboundCa?: string;
+  /**
    * The home directory whose agent configuration global wiring edits, and
    * the environment agents see there (PATH, CODEX_HOME, ...). Only the
    * `hh serve` entry passes the real home; without it every `/api/v1/agents`
@@ -366,6 +383,7 @@ export async function startHub(options: {
   const catalogSettings = resolveCatalogSettings(options.catalog, process.env);
   const wiringSettings = resolveWiringSettings(options.wiring);
   const otlpConfig = resolveOtlpConfig(options.otlp);
+  const networkSettings = resolveNetworkSettings(options.network);
   // Helper programs (secrets, Windows ACLs) start through this process's
   // launcher; every Gateway of the process shares it, and `main` closes it.
   const launcher = sharedProcessLauncher();
@@ -526,6 +544,8 @@ export async function startHub(options: {
   /** The Runtime's store, where `model.call` Run events are committed. */
   let runStore: Store = store;
   let catalog: CatalogRefresher | undefined;
+  /** The daemon's outbound requests; closed after everything that sends them. */
+  let outbound: Outbound | undefined;
   /** Where local clients reach the model gateway; known once the listener is bound. */
   let gatewayOrigin: string | undefined;
   // env credential references read the environment the daemon started with.
@@ -546,6 +566,32 @@ export async function startHub(options: {
       backend: options.secretsBackend ?? "auto",
       launcher,
     });
+    // Every request the daemon sends out goes through one proxy policy.
+    let proxyPassword: string | undefined;
+    if (networkSettings.proxyPassword)
+      try {
+        proxyPassword = await secrets.resolve(
+          networkSettings.proxyPassword,
+          environment,
+        );
+      } catch (error) {
+        throw new HubError(
+          "CONFIG_INVALID",
+          `network.proxyPassword could not be read: ${error instanceof Error ? error.message : String(error)}`,
+          400,
+        );
+      }
+    outbound = new Outbound(
+      networkSettings,
+      proxyPassword,
+      options.outboundCa ? { ca: options.outboundCa } : {},
+    );
+    const send = outbound.fetch;
+    if (outbound.proxy)
+      gatewayLog.info("network.proxy", {
+        proxy: outbound.proxy,
+        noProxy: [...networkSettings.noProxy],
+      });
     modelPlane = new CallObservingModelPlaneStore(
       path.join(dataDir, "harnesshub.sqlite"),
       (entry) => catalog?.noteCall(entry),
@@ -592,6 +638,7 @@ export async function startHub(options: {
       directory: path.join(dataDir, "catalog"),
       settings: catalogSettings,
       bundled: modelCatalog,
+      fetch: send,
       log: gatewayLog,
     });
     const plane = modelPlane;
@@ -600,6 +647,7 @@ export async function startHub(options: {
           resolveSecret: (ref) => secrets.resolve(ref, environment),
           serviceVersion: build.version,
           providerPreset: async (id) => (await plane.getProvider(id))?.preset,
+          fetch: send,
           log: gatewayLog,
         })
       : undefined;
@@ -608,6 +656,7 @@ export async function startHub(options: {
     // and the API, so each account renews at most once at a time.
     const siwcClient = new SiwcClient({
       ...(options.siwc ? { issuer: options.siwc.issuer } : {}),
+      fetch: send,
     });
     const siwcTokens = new SiwcTokens({
       client: siwcClient,
@@ -621,7 +670,8 @@ export async function startHub(options: {
     copilotHosts = new CopilotHosts({
       launcher,
       secrets,
-      environment,
+      // npm and the Copilot CLI reach the network themselves: the daemon's proxy.
+      environment: outbound.childEnvironment(environment),
       paths: {
         addon:
           options.copilot?.addon ?? path.join(dataDir, "addons", "copilot-sdk"),
@@ -690,6 +740,7 @@ export async function startHub(options: {
       // ChatGPT-mode Codex lists the gateway's models as wiring writes them.
       codexCatalog: (models, first) => codexWiringCatalog(models, first).models,
       ...(options.codexBackend ? { codexBackend: options.codexBackend } : {}),
+      fetch: send,
     });
     manager = new EngineManager({
       config,
@@ -952,6 +1003,7 @@ export async function startHub(options: {
       backups,
       secrets,
       environment,
+      fetch: send,
       log: gatewayLog,
     });
     syncToClose = sync;
@@ -960,6 +1012,7 @@ export async function startHub(options: {
     const doctor = new ProviderDoctor({
       store: modelPlane,
       resolveSecret: (ref) => secrets.resolve(ref, environment),
+      fetch: send,
       log: gatewayLog,
     });
     // Before the stores close: stop doctor runs and wait for their ledger entries.
@@ -1025,6 +1078,7 @@ export async function startHub(options: {
       backup: { backups, sync },
       ...(subscriptions ? { subscriptions } : {}),
       serialize: serializeWrites,
+      outbound: send,
     });
     // Registered after createGateway's hook, so the application has already cancelled
     // Runs; this only stops a pending model test and waits for its Session cleanup.
@@ -1034,8 +1088,11 @@ export async function startHub(options: {
       for (const abort of activeProbes) abort.abort();
       await Promise.allSettled([...probeTasks]);
     });
+    const outboundToClose = outbound;
     server.addHook("onClose", async () => {
       await subscriptions?.close();
+      // Last: everything that sends requests has stopped.
+      await outboundToClose.close();
       workflowStore?.close();
       modelPlane?.close();
       store.close();
@@ -1110,6 +1167,7 @@ export async function startHub(options: {
     await otlp?.shutdown();
     await shareToClose?.close();
     await syncToClose?.close();
+    await outbound?.close();
     workflowStore?.close();
     modelPlane?.close();
     store.close();
@@ -1122,6 +1180,7 @@ const SERVE_USAGE = `Usage:
            [--secrets-backend auto|keychain|dpapi|file] [--wiring-home DIR]
            [--demo] [--engine opencode] [--config engines/local.yaml]
            [--tool-package-root DIR] [--harness-model-file FILE] [--otlp-config FILE]
+           [--proxy http://HOST:PORT|socks5://HOST:PORT|direct]
   hh serve --version [--json]
 
 Flags override <config-dir>/config.jsonc (hh config show).`;
@@ -1143,6 +1202,7 @@ function parseServe(argv: string[]) {
       "harness-model-file": { type: "string" },
       "otlp-config": { type: "string" },
       "wiring-home": { type: "string" },
+      proxy: { type: "string" },
       version: { type: "boolean" },
       json: { type: "boolean" },
     },
@@ -1221,6 +1281,7 @@ export async function main(argv: string[]): Promise<void> {
           "--tool-package-root": values["tool-package-root"],
           "--harness-model-file": values["harness-model-file"],
           "--wiring-home": values["wiring-home"],
+          "--proxy": values.proxy,
           "--otlp-config":
             values["otlp-config"] === undefined
               ? undefined

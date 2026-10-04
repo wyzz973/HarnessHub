@@ -17,7 +17,7 @@
 每个设置的值取自第一个给出它的来源：
 
 1. `hh serve` 的命令行参数；
-2. 已有文档的环境变量（只有下表列出的几个）；
+2. 已有文档的环境变量（只有下表列出的几个；一项设置有几个变量时取第一个非空的）；
 3. `config.jsonc`；
 4. 默认值。
 
@@ -39,6 +39,9 @@
 | `catalog.url` | 目录地址，HTTPS（回环地址可用 HTTP），不含凭据 | models.dev | | |
 | `wiring.autoSync` | 网关模型变化时改写已接线 Agent 的模型清单（[全局接线](global-wiring.md#目录同步)） | `true` | | |
 | `wiring.home` | 全局接线改写其 Agent 配置的主目录，绝对路径；设置后忽略 shell 中的 `CODEX_HOME` 等目录变量 | 当前用户主目录 | `--wiring-home` | |
+| `network.proxy` | 守护进程自己的出站请求经过的代理（[出站代理](#出站代理)）：`http://`、`https://`、`socks5://` 或 `socks5h://` 地址（只写 `主机:端口` 为 HTTP），或 `direct`（不用代理）；文件与参数中不能含密码 | 无 | `--proxy` | `https_proxy`、`HTTPS_PROXY`、`http_proxy`、`HTTP_PROXY`（可含密码） |
+| `network.proxyPassword` | 代理地址写了用户名而没有密码时的密码，秘密引用 `{"kind": "env" \| "file" \| "keychain" \| "store", "value": ...}` | 无 | | |
+| `network.noProxy` | 直连、不经代理的主机：主机名（含子域名）、`.example.com`、`*.example.com`、`主机:端口`、IP 地址、地址范围（`10.0.0.0/8`）或 `*` | 无 | | `no_proxy`、`NO_PROXY`（逗号或空格分隔） |
 | `gateway.limits` | 模型网关上限的覆盖，键与范围见 [`limits.ts`](../packages/gateway/src/limits.ts) | 无覆盖 | | |
 | `otlp` | 模型调用的 OTLP 导出（[观测](observability.md)），缺省关闭 | 无 | `--otlp-config FILE`（文件内容整体代替） | |
 
@@ -67,9 +70,23 @@
 | `CONFIG_UNPARSEABLE` | 不是带注释的 JSON，或根不是对象 |
 | `CONFIG_UNKNOWN_KEY` | 不是上表的键（`gateway.limits` 与 `otlp` 内部由各自的解析器检查） |
 | `CONFIG_INVALID` | 值不合法，包括参数与环境变量给出的值 |
-| `CONFIG_SECRET` | 值看起来是秘密 |
+| `CONFIG_SECRET` | 值看起来是秘密，包括文件或 `--proxy` 中带密码的代理地址 |
 
 配置文件从不保存秘密。以 `sk-`、`hhk_`、`ghp_`、`AIza`、`eyJ` 等开头的值、`Bearer` 令牌、键名像 `token`、`apiKey`、`secret`、`password`、`authorization` 的字符串值，以及 32 字符以上字母与数字混合的串都被拒绝，并提示用 `hh credential` 保存凭据。接受秘密的设置（如 `otlp.headers`）写秘密引用 `{"kind": "env" | "file" | "keychain" | "store", "value": ...}`。
+
+## 出站代理
+
+守护进程自己发出的请求都经过同一个出站策略（[outbound.ts](../packages/daemon/src/outbound.ts)，参照 Magpie `internal/netproxy`）：provider 的模型调用、`count_tokens`、图像、模型列表刷新、`hh provider test` 与 `doctor`、models.dev 目录刷新、ChatGPT 登录与令牌（Sign in with ChatGPT 与 JWKS）、Codex 透传到 chatgpt.com、联网搜索后端、WebDAV 与 S3 同步、OTLP 导出。安装 Copilot SDK 的 npm 与 Copilot CLI 由守护进程启动、自己联网，它们的 `HTTPS_PROXY`、`HTTP_PROXY`、`ALL_PROXY` 与 `NO_PROXY` 被替换为守护进程的代理（含凭据），`NO_PROXY` 列出回环地址与 `network.noProxy`；没有代理时这些变量被删除。
+
+- **取值**：`--proxy` 优先，其次是 `https_proxy`、`HTTPS_PROXY`、`http_proxy`、`HTTP_PROXY`（取第一个非空的；一个代理用于所有请求，只设了 HTTP 代理时 HTTPS 也经过它），再次是 `network.proxy`。`--proxy direct` 在环境中有代理时关闭它。`network.noProxy` 同样由 `no_proxy`/`NO_PROXY` 优先。`startHub` 本身不读这些变量，只有 `hh serve` 按上面的顺序传入。
+- **不经代理**：回环地址（`localhost`、`*.localhost`、`127.0.0.0/8`、`::1`）从不经过代理；私有网络也直连：`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、链路本地地址、`100.64.0.0/10`（运营商 NAT 与 Tailscale）、`fc00::/7`、`fe80::/10`，以及不带点的主机名和 `.local`、`.home.arpa`、`.internal` 下的名称。公网名称解析到私有地址的情形无法在不查询 DNS 的情况下判断，需要写进 `network.noProxy`。
+- **协议**：HTTP 代理以 `CONNECT` 建立隧道，HTTPS 上游的 TLS 在隧道内与上游直接协商（`https://` 代理另有一层到代理的 TLS）；SOCKS5 由代理解析主机名（`socks5` 与 `socks5h` 相同）。代理的凭据：用户名写在地址中，密码来自 `network.proxyPassword` 的秘密引用，或写在环境变量的地址中（`http://user:pass@host:port`，特殊字符按 URL 编码）。HTTP 代理以 `Proxy-Authorization: Basic` 发送，SOCKS5 按 RFC 1929。密码不进入配置文件、日志、账本或 `hh config show`（显示为 `***`）；守护进程启动时读取一次 `proxyPassword`，读不到时以 `CONFIG_INVALID` 拒绝启动。
+- **provider 自己的代理**：provider 的 `proxy` 为 `direct`（不经代理）或不含凭据的代理地址时，它的模型调用、模型列表、测试与体检改用它（Magpie 的按 provider 代理），仍不代理回环地址；`hh provider add … --proxy URL|direct`，`hh provider proxy <id> [URL|direct|default]`（`default` 删除，回到守护进程的代理），API 为 `POST`/`PATCH /api/v1/providers` 的 `proxy`。需要密码的代理只能是守护进程的 `network.proxy`。Copilot provider 没有 `proxy`：它的请求由 Copilot CLI 发出。
+- **失败**：连不上代理、代理拒绝隧道（包括 407 要求凭据）、代理在应答前关闭连接，或 10 秒内没有建立隧道时，请求立即失败，错误指出代理（不含凭据），不会挂起或反复重连。模型调用的账本 `errorClass` 为 `proxy_failed`，响应 502 `proxy_failed`；这次失败不让该凭据休息，也不在同一候选上重试，直接转移到下一个候选。`count_tokens` 转发失败时改用本地估算；搜索后端的失败原因写进工具结果。
+- **TLS 检查型代理**：会替换证书的企业代理，把它的根证书放进 `NODE_EXTRA_CA_CERTS`（Node 的标准变量，启动时读取）。
+- **不经过这里的请求**：引擎自己（Session Run 启动的 Claude Code、Codex 等）按各自的环境联网；Worker 内的 Session 网关（声明了自己 openai-completions provider 的引擎与配置检查，[共享网关](model-gateway.md#session-run-与共享网关)）仍直接连接上游，不读这些设置；网关对自己的内部调用（视觉兜底、分类器）只走回环；`hh` 命令只连接本机守护进程。
+
+与 Magpie 的差异：Magpie 的设置优先于环境变量，HarnessHub 按本页的统一顺序（参数、环境变量、文件）；Magpie 还读取系统代理设置（macOS 网络设置、Windows Internet 选项），HarnessHub 不读；Magpie 只直连回环地址，HarnessHub 另外直连私有网络与 `noProxy`；Magpie 的订阅账号可以各有代理，HarnessHub 只有 provider 级别。实现自己建立隧道而不用 undici 的 `ProxyAgent`：代理收到 `CONNECT` 后不应答就关闭连接时，`ProxyAgent`（undici 7.29.1）会在调用方的期限内不停重连（实测 3 秒约 3.4 万次连接），失败也不说明是代理的问题。
 
 ## `hh config`
 

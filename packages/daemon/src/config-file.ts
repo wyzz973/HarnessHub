@@ -16,7 +16,13 @@ import { editors } from "@harnesshub/agents/wiring/formats/index";
 import { resolveCatalogSettings } from "@harnesshub/gateway/catalog-refresh";
 import { resolveHandlerLimits } from "@harnesshub/gateway/limits";
 import type { SecretBackendSetting } from "@harnesshub/secrets/secret-store";
+import { displayProxy, parseProxyUrl } from "@harnesshub/core/outbound";
 import { resolveWiringSettings } from "./agents-wiring.js";
+import {
+  noProxyProblem,
+  resolveNetworkSettings,
+  splitNoProxy,
+} from "./outbound.js";
 import { resolveOtlpConfig } from "./otlp-export.js";
 
 /**
@@ -70,8 +76,15 @@ interface Setting {
   check(value: unknown): { value: unknown } | { error: string };
   /** The command-line flag of `hh serve` that sets it, and how its text reads. */
   flag?: { name: string; parse(text: string, cwd: string): unknown };
-  /** A documented environment variable that sets it, when set. */
-  env?: { name: string; read(text: string): unknown };
+  /** Documented environment variables that set it, the first one set winning. */
+  env?: readonly { name: string; read(text: string): unknown }[];
+  /**
+   * Why a value in the file or a flag would expose a secret (flags show in
+   * process lists); the environment may carry one.
+   */
+  plain?(value: unknown): string | undefined;
+  /** The value as `hh config` shows it, secrets masked. */
+  display?(value: unknown): unknown;
   /** The value when nothing sets it; absent means unset. */
   fallback?: unknown;
   /** An object whose own keys the setting's resolver checks (`gateway.limits`, `otlp`). */
@@ -139,7 +152,7 @@ const SETTINGS: readonly Setting[] = [
         ? ok(value)
         : fail("must be an engine id"),
     flag: { name: "--engine", parse: (text) => text },
-    env: { name: "AGENT_ENGINE", read: (text) => text },
+    env: [{ name: "AGENT_ENGINE", read: (text) => text }],
   },
   {
     path: "secrets.backend",
@@ -170,10 +183,12 @@ const SETTINGS: readonly Setting[] = [
     description: "Refresh the models.dev catalog in the background",
     check: (value) =>
       typeof value === "boolean" ? ok(value) : fail("must be true or false"),
-    env: {
-      name: "HH_OFFLINE",
-      read: (text) => (text === "1" ? false : undefined),
-    },
+    env: [
+      {
+        name: "HH_OFFLINE",
+        read: (text) => (text === "1" ? false : undefined),
+      },
+    ],
     fallback: true,
   },
   {
@@ -203,6 +218,74 @@ const SETTINGS: readonly Setting[] = [
     description: "Home directory whose agents global wiring edits",
     check: absolutePath,
     flag: { name: "--wiring-home", parse: pathFlag },
+  },
+  {
+    path: "network.proxy",
+    description:
+      "Proxy for outbound requests (http, https, socks5 or direct); loopback and private networks stay direct",
+    check: (value) => {
+      if (value === "direct") return ok(value);
+      if (typeof value !== "string")
+        return fail("must be a proxy address or direct");
+      const parsed = parseProxyUrl(value, "allow");
+      return "problem" in parsed ? fail(parsed.problem) : ok(value.trim());
+    },
+    plain: (value) =>
+      typeof value === "string" &&
+      value !== "direct" &&
+      (() => {
+        const parsed = parseProxyUrl(value, "allow");
+        return "url" in parsed && parsed.url.password !== "";
+      })()
+        ? "holds a password; name the user in the address and give the password as network.proxyPassword, a secret reference, or set HTTPS_PROXY"
+        : undefined,
+    display: (value) =>
+      typeof value === "string" && value !== "direct"
+        ? displayProxy(value)
+        : value,
+    flag: { name: "--proxy", parse: (text) => text },
+    // curl's order: lower case first; an HTTP proxy serves HTTPS too.
+    env: ["https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"].map(
+      (name) => ({ name, read: (text: string) => text }),
+    ),
+  },
+  {
+    path: "network.proxyPassword",
+    description:
+      "The proxy's password, a secret reference, for a proxy address that names a user",
+    check: (value) => {
+      try {
+        resolveNetworkSettings({ proxyPassword: value });
+        return ok(value);
+      } catch (error) {
+        return fail(
+          (error instanceof Error ? error.message : String(error)).replace(
+            /^network\.proxyPassword /,
+            "",
+          ),
+        );
+      }
+    },
+  },
+  {
+    path: "network.noProxy",
+    description: "Hosts, domains (.example.com) and ranges sent directly",
+    check: (value) => {
+      if (
+        !Array.isArray(value) ||
+        !value.every((entry) => typeof entry === "string")
+      )
+        return fail("must be a list of hosts");
+      for (const entry of value as string[]) {
+        const problem = noProxyProblem(entry.trim());
+        if (problem) return fail(problem);
+      }
+      return ok(value.map((entry: string) => entry.trim()));
+    },
+    env: ["no_proxy", "NO_PROXY"].map((name) => ({
+      name,
+      read: (text: string) => splitNoProxy(text),
+    })),
   },
   {
     path: "gateway.limits",
@@ -340,6 +423,9 @@ function checkDocument(file: string, document: Record<string, unknown>): void {
     const dotted = prefix.join(".");
     const setting = SETTINGS.find((item) => item.path === dotted);
     if (setting) {
+      const exposed = setting.plain?.(value);
+      if (exposed)
+        throw invalid("CONFIG_SECRET", `${file}: ${dotted} ${exposed}`);
       const result = setting.check(value);
       if ("error" in result)
         throw invalid(
@@ -435,9 +521,11 @@ export function resolveConfig(input: {
     const base = { path: setting.path, description: setting.description };
     const flagged = setting.flag ? input.flags?.[setting.flag.name] : undefined;
     if (setting.flag && flagged !== undefined) {
-      const result = setting.check(
-        setting.flag.parse(flagged, input.cwd ?? process.cwd()),
-      );
+      const parsed = setting.flag.parse(flagged, input.cwd ?? process.cwd());
+      const exposed = setting.plain?.(parsed);
+      if (exposed)
+        throw invalid("CONFIG_SECRET", `${setting.flag.name} ${exposed}`);
+      const result = setting.check(parsed);
       if ("error" in result)
         throw invalid("CONFIG_INVALID", `${setting.flag.name} ${result.error}`);
       return {
@@ -446,19 +534,18 @@ export function resolveConfig(input: {
         source: { kind: "flag", name: setting.flag.name },
       };
     }
-    const raw = setting.env ? input.env[setting.env.name] : undefined;
-    const fromEnv =
-      setting.env && raw !== undefined && raw !== ""
-        ? setting.env.read(raw)
-        : undefined;
-    if (setting.env && fromEnv !== undefined) {
+    for (const variable of setting.env ?? []) {
+      const raw = input.env[variable.name];
+      const fromEnv =
+        raw !== undefined && raw !== "" ? variable.read(raw) : undefined;
+      if (fromEnv === undefined) continue;
       const result = setting.check(fromEnv);
       if ("error" in result)
-        throw invalid("CONFIG_INVALID", `${setting.env.name} ${result.error}`);
+        throw invalid("CONFIG_INVALID", `${variable.name} ${result.error}`);
       return {
         ...base,
         value: result.value,
-        source: { kind: "env", name: setting.env.name },
+        source: { kind: "env", name: variable.name },
       };
     }
     const filed = valueAt(input.config.document, setting.path);
@@ -484,6 +571,7 @@ export function startOptions(config: ResolvedConfig): {
   wiringHome?: string;
   gatewayLimits?: unknown;
   otlp?: unknown;
+  network: { proxy?: string; proxyPassword?: unknown; noProxy?: unknown };
 } {
   const get = (dotted: string) =>
     config.entries.find((entry) => entry.path === dotted)?.value;
@@ -513,6 +601,11 @@ export function startOptions(config: ResolvedConfig): {
     ...optional("wiringHome", get("wiring.home")),
     ...optional("gatewayLimits", get("gateway.limits")),
     ...optional("otlp", get("otlp")),
+    network: {
+      ...optional("proxy", get("network.proxy")),
+      ...optional("proxyPassword", get("network.proxyPassword")),
+      ...optional("noProxy", get("network.noProxy")),
+    },
   };
 }
 
@@ -626,6 +719,14 @@ export async function editConfigFile(
     throw error;
   }
   return { file: current.file, text, document };
+}
+
+/** An entry's value as `hh config` shows it: secrets in it masked. */
+export function shownValue(entry: ConfigEntry): unknown {
+  const setting = SETTINGS.find((item) => item.path === entry.path);
+  return setting?.display && entry.value !== undefined
+    ? setting.display(entry.value)
+    : entry.value;
 }
 
 /** A value as `hh config show` prints it. */

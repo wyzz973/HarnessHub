@@ -16,6 +16,7 @@ import {
   editConfigFile,
   formatSource,
   formatValue,
+  shownValue,
   readConfigFile,
   resolveConfig,
   runtimeSettings,
@@ -109,11 +110,20 @@ export async function main(argv: string[]): Promise<number> {
       },
     });
     const configDir = path.resolve(values["config-dir"] ?? defaultConfigDir());
-    const resolve = async () =>
-      resolveConfig({
+    // Shown values never include a secret (a proxy password from HTTPS_PROXY).
+    const resolve = async () => {
+      const config = resolveConfig({
         config: await readConfigFile(configDir),
         env: process.env,
       });
+      return {
+        ...config,
+        entries: config.entries.map((entry) => ({
+          ...entry,
+          value: shownValue(entry),
+        })),
+      };
+    };
     switch (command) {
       case "show": {
         if (positionals.length) throw new UsageError("show takes no arguments");

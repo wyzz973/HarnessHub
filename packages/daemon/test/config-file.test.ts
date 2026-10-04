@@ -20,6 +20,7 @@ import {
   readConfigFile,
   resolveConfig,
   runtimeSettings,
+  shownValue,
   startOptions,
   type ConfigDocument,
 } from "../src/config-file.js";
@@ -215,6 +216,146 @@ void test("secrets are refused in the file, secret references are not", async (t
     ),
   );
   assert.ok(references.document.otlp);
+});
+
+void test("the proxy comes from --proxy, then HTTPS_PROXY and the like, then the file; a password only from the environment or a secret", async (t) => {
+  const entry = (config: ReturnType<typeof resolveConfig>, key: string) =>
+    config.entries.find((item) => item.path === key)!;
+  const file = document({
+    network: {
+      proxy: "http://alice@proxy.corp:3128",
+      proxyPassword: { kind: "env", value: "PROXY_PASSWORD" },
+      noProxy: [".corp.example", "10.0.0.0/8"],
+    },
+  });
+  const fromFile = resolveConfig({ config: file, env: {} });
+  assert.deepEqual(startOptions(fromFile).network, {
+    proxy: "http://alice@proxy.corp:3128",
+    proxyPassword: { kind: "env", value: "PROXY_PASSWORD" },
+    noProxy: [".corp.example", "10.0.0.0/8"],
+  });
+  // curl's order: lower case first, and an HTTP proxy serves HTTPS too.
+  for (const [env, name] of [
+    [
+      { HTTPS_PROXY: "http://u:p@a:1", https_proxy: "http://b:2" },
+      "https_proxy",
+    ],
+    [
+      { HTTPS_PROXY: "http://u:p@a:1", HTTP_PROXY: "http://c:3" },
+      "HTTPS_PROXY",
+    ],
+    [{ HTTP_PROXY: "http://c:3" }, "HTTP_PROXY"],
+  ] as const) {
+    const config = resolveConfig({ config: file, env });
+    assert.deepEqual(entry(config, "network.proxy").source, {
+      kind: "env",
+      name,
+    });
+  }
+  const environment = resolveConfig({
+    config: file,
+    env: { HTTPS_PROXY: "http://u:p%40ss@a:1", NO_PROXY: "a.com, .b.com" },
+  });
+  assert.equal(
+    entry(environment, "network.proxy").value,
+    "http://u:p%40ss@a:1",
+  );
+  // hh config shows it masked.
+  assert.equal(
+    shownValue(entry(environment, "network.proxy")),
+    "http://u:***@a:1",
+  );
+  assert.deepEqual(entry(environment, "network.noProxy").value, [
+    "a.com",
+    ".b.com",
+  ]);
+  assert.deepEqual(entry(environment, "network.noProxy").source, {
+    kind: "env",
+    name: "NO_PROXY",
+  });
+  // A flag wins over the environment; direct turns the proxy off.
+  const flagged = resolveConfig({
+    config: file,
+    env: { HTTPS_PROXY: "http://a:1" },
+    flags: { "--proxy": "direct" },
+  });
+  assert.equal(entry(flagged, "network.proxy").value, "direct");
+  assert.deepEqual(entry(flagged, "network.proxy").source, {
+    kind: "flag",
+    name: "--proxy",
+  });
+  assert.throws(
+    () =>
+      resolveConfig({
+        config: document({}),
+        env: {},
+        flags: { "--proxy": "http://u:pw@a:1" },
+      }),
+    code("CONFIG_SECRET", /^--proxy holds a password/),
+  );
+  assert.throws(
+    () =>
+      resolveConfig({
+        config: document({}),
+        env: { HTTPS_PROXY: "ftp://a:1" },
+      }),
+    code(
+      "CONFIG_INVALID",
+      /^HTTPS_PROXY must use http, https, socks5 or socks5h/,
+    ),
+  );
+  for (const [text, expected, message] of [
+    [
+      '{"network": {"proxy": "http://alice:pw@proxy:1"}}',
+      "CONFIG_SECRET",
+      /network\.proxy holds a password.*network\.proxyPassword/,
+    ],
+    [
+      '{"network": {"proxy": "proxy:8080/x"}}',
+      "CONFIG_INVALID",
+      /network\.proxy must be the proxy's address alone/,
+    ],
+    [
+      '{"network": {"proxyPassword": "short"}}',
+      "CONFIG_INVALID",
+      /network\.proxyPassword must be a secret reference/,
+    ],
+    [
+      '{"network": {"proxyPassword": "a-long-plain-password"}}',
+      "CONFIG_SECRET",
+      /network\.proxyPassword looks like a secret/,
+    ],
+    [
+      '{"network": {"noProxy": ["bad host"]}}',
+      "CONFIG_INVALID",
+      /network\.noProxy bad host is not a host/,
+    ],
+    [
+      '{"network": {"noProxy": ".corp.example"}}',
+      "CONFIG_INVALID",
+      /network\.noProxy must be a list of hosts/,
+    ],
+    [
+      '{"network": {"proxie": "http://a:1"}}',
+      "CONFIG_UNKNOWN_KEY",
+      /network\.proxie is not a setting/,
+    ],
+  ] as const)
+    await assert.rejects(
+      readConfigFile(await configDir(t, text)),
+      code(expected, message),
+      text,
+    );
+  const valid = await readConfigFile(
+    await configDir(
+      t,
+      '{"network": {"proxy": "socks5://127.0.0.1:1080", "noProxy": ["*"]}}',
+    ),
+  );
+  assert.deepEqual(valid.document.network, {
+    proxy: "socks5://127.0.0.1:1080",
+    noProxy: ["*"],
+  });
 });
 
 void test("set and unset edit the file in place, keep its comments, and write nothing that does not validate", async (t) => {

@@ -230,7 +230,7 @@ Every row was checked against Magpie's source and against HarnessHub's code or d
 | One `settings.json` for everything | different by design | `config.jsonc` for startup settings (`hh config show\|get\|set\|unset`); everything else in the data directory | The config file refuses secret values ([configuration](configuration.md#启动设置与运行时设置)) |
 | Portable mode, XDG directories | partial | `--data-dir`, `--config-dir`, `XDG_CONFIG_HOME` | No portable marker file |
 | Docker image, `magpie healthcheck` | partial | `GET /health/live` and `GET /health/ready` | No image yet |
-| Outbound proxy (a setting, `*_PROXY`, the system proxy) | not covered | — | |
+| Outbound proxy (a setting, `*_PROXY`, the system proxy) and a proxy per provider | partial | `network.proxy` and `network.noProxy` in `config.jsonc`, `hh serve --proxy URL\|direct`, `HTTPS_PROXY` and `NO_PROXY`; `hh provider proxy <id> URL\|direct\|default` | HTTP, HTTPS and SOCKS5 proxies, the password as a secret reference; loopback and private networks stay direct. The system proxy settings are not read, the environment wins over the file (Magpie's setting wins over the environment), and there is no proxy per subscription account ([outbound proxy](configuration.md#出站代理)) |
 | macOS, Windows and Linux | partial | Node 24 on all three; CI on each | Windows is unverified |
 
 ## Migrating from Magpie
