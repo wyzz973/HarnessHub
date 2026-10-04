@@ -252,6 +252,15 @@ function RestoreSummaryView({
                 items: summary.providers.needKey,
                 tone: "warn",
               },
+              {
+                label: "订阅账号不随备份恢复，在本机重新登录",
+                items: summary.providers.signInAgain,
+                tone: "warn",
+              },
+              {
+                label: "本机同名的订阅 provider，保留",
+                items: summary.providers.signedInHere,
+              },
             ]}
           />
         </Row>
