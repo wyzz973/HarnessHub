@@ -21,6 +21,9 @@
  *   concurrency limit raised to 256, as one credential serves all streams.
  * - Ledger commit: `appendModelCall` of a realistic entry on a file database,
  *   one at a time and in bursts of 200 at once.
+ * - The daemon's memory after a full garbage collection, right after start
+ *   and after the latency rounds: resident, heap in use and committed, and
+ *   the young generation (tests/perf/README.md explains the difference).
  *
  * Results go to `<out>/bench.json` and a summary with the targets to
  * `<out>/bench.md` (default out: dist/bench). Targets are reported, not
@@ -230,7 +233,11 @@ async function startSystem(root: string): Promise<System> {
           maxQueuedPerCredential: 256,
         }),
       ],
-      { env: isolated(root), stdio: ["ignore", "pipe", "pipe", "ipc"] },
+      {
+        env: isolated(root),
+        execArgv: ["--expose-gc"],
+        stdio: ["ignore", "pipe", "pipe", "ipc"],
+      },
     );
     children.push(hub);
     const gateway = String((await ready(hub, "the daemon")).url).replace(
@@ -558,19 +565,39 @@ async function perChunk(count: number) {
   return result;
 }
 
-/** The daemon's CPU time (µs, user + system), resident memory and used heap (bytes). */
-async function usage(
-  hub: ChildProcess,
-): Promise<{ cpu: number; rss: number; heap: number }> {
+interface Usage {
+  /** CPU time in µs, user and system. */
+  cpu: number;
+  /** Resident memory, used and committed V8 heap, young generation; bytes. */
+  rss: number;
+  heap: number;
+  heapTotal: number;
+  newSpace: number;
+}
+
+/** The daemon's CPU time and memory. */
+async function usage(hub: ChildProcess): Promise<Usage> {
   const answer = once(hub, "message");
   hub.send("usage");
   const [value] = (await answer) as [
-    { cpu: { user: number; system: number }; rss: number; heap: number },
+    Omit<Usage, "cpu"> & { cpu: { user: number; system: number } },
   ];
+  return { ...value, cpu: value.cpu.user + value.cpu.system };
+}
+
+/** The daemon's memory in MB after a full garbage collection. */
+async function collected(hub: ChildProcess) {
+  const answer = once(hub, "message");
+  hub.send("gc");
+  const [done] = (await answer) as [{ collected: boolean }];
+  if (!done.collected) throw new Error("the daemon cannot collect garbage");
+  const value = await usage(hub);
+  const mb = (bytes: number) => Math.round(bytes / 1024 / 1024);
   return {
-    cpu: value.cpu.user + value.cpu.system,
-    rss: value.rss,
-    heap: value.heap,
+    rssMB: mb(value.rss),
+    heapUsedMB: mb(value.heap),
+    heapTotalMB: mb(value.heapTotal),
+    youngGenerationMB: mb(value.newSpace),
   };
 }
 
@@ -758,6 +785,15 @@ function summary(results: Record<string, unknown>): string {
       wholeRunCores: number;
     }
   >;
+  const memory = results.memory as {
+    idle: { rssMB: number; heapUsedMB: number };
+    afterLatency: {
+      rssMB: number;
+      heapUsedMB: number;
+      youngGenerationMB: number;
+    };
+    gatewayCalls: number;
+  };
   const commits = results.ledger as {
     serialMs: Distribution;
     burstMs: Distribution;
@@ -833,7 +869,9 @@ function summary(results: Record<string, unknown>): string {
         : `| ${row.join(" | ")} |`,
     ),
     "",
-    `Worst per-chunk p99: ${worstChunk} µs. The daemon's resident memory was ${String(results.idleRssMB)} MB right after it started (V8 heap ${String(results.idleHeapMB)} MB). Distributions, sample counts and the measurement windows are in bench.json.`,
+    `Worst per-chunk p99: ${worstChunk} µs. Distributions, sample counts and the measurement windows are in bench.json.`,
+    "",
+    `Daemon memory after a full GC: ${memory.idle.rssMB} MB resident, ${memory.idle.heapUsedMB} MB heap in use right after start; ${memory.afterLatency.rssMB} MB resident, ${memory.afterLatency.heapUsedMB} MB heap in use (${memory.afterLatency.youngGenerationMB} MB young generation committed) after ${memory.gatewayCalls} gateway calls. Heap in use that grows with the calls is retained memory; the resident growth beside it is the young generation and allocator pages (tests/perf/README.md).`,
     "",
     `Commits are synchronous SQLite writes (synchronous=FULL; how much an fsync costs depends on the platform), so ${commits.burst} commits queued at once complete one after another: the last waits for all the others.`,
     "",
@@ -883,15 +921,16 @@ async function main(): Promise<number> {
       200,
     );
     system = await startSystem(root);
-    const idle = await usage(system.hub);
-    results.idleRssMB = Math.round(idle.rss / 1024 / 1024);
-    results.idleHeapMB = Math.round(idle.heap / 1024 / 1024);
+    const idle = await collected(system.hub);
     console.error("bench: added latency");
-    results.addedLatency = await addedLatency(
-      system,
-      quick ? 200 : 1_000,
-      quick ? 50 : 100,
-    );
+    const rounds = quick ? 200 : 1_000;
+    const warmup = quick ? 50 : 100;
+    results.addedLatency = await addedLatency(system, rounds, warmup);
+    results.memory = {
+      idle,
+      afterLatency: await collected(system.hub),
+      gatewayCalls: (rounds + warmup) * 4,
+    };
     console.error("bench: 200 concurrent streams");
     results.concurrency = {
       translated: await concurrentStreams(system, "translated", 200),
