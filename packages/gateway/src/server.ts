@@ -14,6 +14,7 @@ import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import { NO_LOG, type LogSink } from "@harnesshub/core/logging";
 import {
   gatewayKeyMatches,
+  claudeModelAlias,
   modelAllowed,
   parseGatewayKey,
   parseModelRef,
@@ -296,6 +297,8 @@ type Authentication =
 
 interface ListedModel {
   id: string;
+  /** Shown instead of the id, which is then an alias. */
+  displayName?: string;
   owner: string;
   created: number;
   model?: ProviderModel;
@@ -311,7 +314,7 @@ function modelObject(entry: ListedModel): Record<string, unknown> {
     created: entry.created,
     created_at: new Date(entry.created * 1000).toISOString(),
     owned_by: entry.owner,
-    display_name: entry.id,
+    display_name: entry.displayName ?? entry.id,
     // The names OpenAI-compatible clients read a window from.
     ...(model?.contextWindow === undefined
       ? {}
@@ -336,7 +339,7 @@ function geminiModel(entry: ListedModel): Record<string, unknown> {
   const model = entry.model;
   return {
     name: `models/${entry.id}`,
-    displayName: entry.id,
+    displayName: entry.displayName ?? entry.id,
     ...(model?.contextWindow === undefined
       ? {}
       : { inputTokenLimit: model.contextWindow }),
@@ -728,16 +731,55 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     return listed;
   };
 
+  /**
+   * A key with `modelIdStyle: claude-alias` (a client that keeps only
+   * Anthropic-looking ids) sees each model by its alias and names it so;
+   * the Model Ref is its display name.
+   */
+  const shownAs = (
+    key: GatewayKeyRecord,
+    listed: ListedModel[],
+  ): ListedModel[] =>
+    key.modelIdStyle === "claude-alias"
+      ? listed.map((entry) => ({
+          ...entry,
+          id: claudeModelAlias(entry.id),
+          displayName: entry.id,
+        }))
+      : listed;
+
+  /** The Model Ref an alias of a `claude-alias` key stands for; any other name as it is. */
+  const unaliased = async (
+    key: GatewayKeyRecord,
+    named: unknown,
+  ): Promise<unknown> => {
+    if (
+      key.modelIdStyle !== "claude-alias" ||
+      typeof named !== "string" ||
+      parseModelRef(named)
+    )
+      return named;
+    const alias = named.replace(/\[1m\]$/, "");
+    return (
+      (await visibleModels(key)).find(
+        (entry) => claudeModelAlias(entry.id) === alias,
+      )?.id ?? named
+    );
+  };
+
   const listModels = async (
     response: ServerResponse,
     key: GatewayKeyRecord,
     route: Extract<Route, { kind: "models" }>,
   ) => {
-    const listed = await visibleModels(
+    const listed = shownAs(
       key,
-      key.scope.kind === "session"
-        ? deps.sessions?.activeRun(key.scope.sessionId)
-        : undefined,
+      await visibleModels(
+        key,
+        key.scope.kind === "session"
+          ? deps.sessions?.activeRun(key.scope.sessionId)
+          : undefined,
+      ),
     );
     const writer = new HttpWriter(response);
     if (route.id !== undefined) {
@@ -785,7 +827,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         ? deps.sessions?.activeRun(key.scope.sessionId)
         : undefined;
     if (key.scope.kind === "session" && !session) return undefined;
-    const named = raw.model;
+    const named = await unaliased(key, raw.model);
     const requested =
       session &&
       (typeof named !== "string" ||
@@ -1108,14 +1150,15 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       });
       reserved = bytes.length;
       const raw = object(parseJsonBody(bytes));
-      const named = route.gemini?.model ?? raw.model;
+      const asked = route.gemini?.model ?? raw.model;
       const stream =
         route.gemini !== undefined
           ? route.gemini.method === "streamGenerateContent"
           : raw.stream === true;
       entry.inbound.stream = stream;
-      if (typeof named === "string" && named)
-        entry.requestedModel = named.slice(0, 256);
+      if (typeof asked === "string" && asked)
+        entry.requestedModel = asked.slice(0, 256);
+      const named = await unaliased(key, asked);
       // A Session's engine names the alias, or any model name of its own;
       // both mean the target the Run selected.
       const requested =

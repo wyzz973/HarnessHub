@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   gatewayKeyMatches,
   issueGatewayKey,
+  claudeModelAlias,
   isModelPattern,
   modelAllowed,
   parseGatewayKey,
@@ -94,4 +95,11 @@ void test("* admits every model and group, and a deny list takes back what the a
     assert.equal(isModelPattern(entry), true, entry);
   for (const entry of ["", "**", "a", "group/Bad"])
     assert.equal(isModelPattern(entry), false, entry);
+});
+
+void test("a Claude-style alias is stable per Model Ref, says claude and names no other vendor", () => {
+  const alias = claudeModelAlias("deepseek/deepseek-chat");
+  assert.match(alias, /^claude-hh-\d{10}$/);
+  assert.equal(claudeModelAlias("deepseek/deepseek-chat"), alias);
+  assert.notEqual(claudeModelAlias("deepseek/deepseek-reasoner"), alias);
 });
