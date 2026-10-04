@@ -221,8 +221,9 @@ const planSchema = {
 const requestProperties = {
   model: {
     ...modelRef,
+    type: ["string", "null"],
     description:
-      "Default: the current model; an agent that signs in by itself takes none",
+      "Default: the current model (dropped when the options switch the agent to keep its own); null: none, for an agent that keeps its own model (Codex with codexAuth=chatgpt)",
   },
   models: {
     type: "array",

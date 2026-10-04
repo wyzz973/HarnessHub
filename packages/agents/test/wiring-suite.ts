@@ -99,6 +99,7 @@ async function fields(id: string, context: WiringContext) {
     keyText: TARGET.keyText,
     model: TARGET.model,
     models: TARGET.models,
+    ownModel: false,
     selected: TARGET.models.find((model) => model.ref === TARGET.model),
     tiers: {},
     effort: undefined,

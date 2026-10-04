@@ -10,10 +10,13 @@ import { CODEX_SUMMARY_PREFIX } from "../src/compacting.js";
 import { encodeReasoning } from "../src/reasoning.js";
 import { isGatewayPath } from "../src/server.js";
 import {
+  addKey,
   at,
   json,
   MemoryStore,
   mount,
+  provider,
+  SECRETS,
   send,
   until,
   upstream,
@@ -347,6 +350,180 @@ void test("a HarnessHub model's /responses/compact is refused here, and what the
     "compaction:restored:1",
     "reasoning:dropped:1",
   ]);
+});
+
+void test("ChatGPT-mode Codex with its key in the path: HarnessHub's models are served here, Codex's own go to ChatGPT without the key, and the lists are merged", async (t) => {
+  const answer = {
+    id: "resp_hh",
+    object: "response",
+    status: "completed",
+    model: "model-a",
+    output: [
+      {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "HH", annotations: [] }],
+      },
+    ],
+    usage: { input_tokens: 3, output_tokens: 1, total_tokens: 4 },
+  };
+  const hh = await upstream(t, json(200, answer));
+  const own = [{ slug: "gpt-5.1-codex", priority: 1 }];
+  const chatgpt = await upstream(
+    t,
+    json(200, { models: own }, { etag: 'W/"chatgpt-1"' }),
+    (response) => {
+      response.writeHead(200, {
+        "content-type": "text/event-stream",
+        "x-models-etag": 'W/"chatgpt-1"',
+      });
+      response.end(EVENTS);
+    },
+  );
+  const store = new MemoryStore();
+  store.providers.set("hh", provider("hh", { responses: `${hh.base}/v1` }));
+  const key = await addKey(store, ["hh/*"], {
+    scope: { kind: "agent", adapterId: "codex" },
+  });
+  const log = capture();
+  const gw = await mount(
+    t,
+    store,
+    {},
+    {
+      log,
+      codexBackend: `${chatgpt.base}/chatgpt/backend-api/codex`,
+      codexCatalog: (models, first) =>
+        models.map((model, index) => ({ ...model, priority: first + index })),
+    },
+  );
+  const base = `/backend-api/codex/${key.text}`;
+
+  const listed = await send(gw.port, `${base}/models?client_version=0.150.0`, {
+    headers: HEADERS,
+  });
+  assert.equal(listed.status, 200);
+  assert.deepEqual(listed.json().models, [
+    ...own,
+    {
+      slug: "hh/model-a",
+      contextWindow: 128_000,
+      efforts: ["low", "medium", "high"],
+      images: false,
+      priority: 2,
+    },
+    { slug: "hh/model-b", efforts: [], images: false, priority: 3 },
+  ]);
+  const etag = String(listed.headers.etag);
+  assert.match(etag, /^W\/"chatgpt-1\+hh-[0-9a-f]{12}"$/);
+  assert.equal(
+    chatgpt.seen[0]!.url,
+    "/chatgpt/backend-api/codex/models?client_version=0.150.0",
+  );
+  assert.equal(chatgpt.seen[0]!.headers.authorization, `Bearer ${TOKEN}`);
+
+  // Codex's own model: relayed without the key, its models tag the same.
+  const relayed = await send(gw.port, `${base}/responses`, {
+    headers: HEADERS,
+    body: BODY,
+  });
+  assert.equal(relayed.status, 200);
+  assert.equal(relayed.text, EVENTS);
+  assert.equal(relayed.headers["x-models-etag"], etag);
+  assert.equal(chatgpt.seen[1]!.url, "/chatgpt/backend-api/codex/responses");
+  assert.deepEqual(chatgpt.seen[1]!.json(), BODY);
+
+  // HarnessHub's model: served here; the ChatGPT sign-in goes nowhere.
+  const served = await send(gw.port, `${base}/responses`, {
+    headers: HEADERS,
+    body: { ...BODY, model: "hh/model-a", stream: false },
+  });
+  assert.equal(served.status, 200, served.text);
+  assert.equal(at(served.json(), "output", 0, "content", 0, "text"), "HH");
+  assert.equal(chatgpt.seen.length, 2);
+  const upstreamSeen = hh.seen[0]!;
+  assert.equal(upstreamSeen.json().model, "model-a");
+  assert.equal(
+    upstreamSeen.headers.authorization,
+    `Bearer ${SECRETS["key-a"]}`,
+  );
+  assert.equal(upstreamSeen.headers["chatgpt-account-id"], undefined);
+  assert.ok(!JSON.stringify(upstreamSeen.headers).includes(TOKEN));
+  const entry = store.entries.at(-1)!;
+  assert.ok(isModelCallEntry(entry));
+  assert.deepEqual(
+    [
+      entry.keyId,
+      entry.inbound.path,
+      entry.provider,
+      entry.modelRef,
+      entry.status,
+      entry.agent,
+    ],
+    [
+      key.keyId,
+      "/backend-api/codex/responses",
+      "hh",
+      "hh/model-a",
+      200,
+      { id: "codex", source: "key" },
+    ],
+  );
+
+  // Without its key, a HarnessHub model fails here and never goes to ChatGPT.
+  const keyless = await send(gw.port, "/backend-api/codex/responses", {
+    headers: HEADERS,
+    body: { ...BODY, model: "hh/model-a" },
+  });
+  assert.equal(keyless.status, 401);
+  assert.equal(at(keyless.json(), "error", "code"), "invalid_key");
+  assert.match(
+    String(at(keyless.json(), "error", "message")),
+    /wire Codex again/,
+  );
+  assert.equal(chatgpt.seen.length, 2);
+  assert.equal(hh.seen.length, 1);
+  for (const text of [JSON.stringify(store.entries), log.text()]) {
+    assert.ok(!text.includes(key.text), "the key is never kept");
+    assert.ok(!text.includes(TOKEN), "the sign-in token is never kept");
+  }
+});
+
+void test("a key that is no longer valid in the path still lets Codex's own models through, and lists only ChatGPT's", async (t) => {
+  const models = { models: [{ slug: "gpt-5.1-codex" }] };
+  const chatgpt = await upstream(t, json(200, models, { etag: '"e1"' }));
+  const store = new MemoryStore();
+  const key = await addKey(store, ["*"], {
+    scope: { kind: "agent", adapterId: "codex" },
+    revokedAt: "2026-10-01T00:00:00.000Z",
+  });
+  const gw = await mount(
+    t,
+    store,
+    {},
+    {
+      codexBackend: `${chatgpt.base}/chatgpt/backend-api/codex`,
+      codexCatalog: () => [{ slug: "never" }],
+    },
+  );
+  const listed = await send(gw.port, `/backend-api/codex/${key.text}/models`, {
+    headers: HEADERS,
+  });
+  assert.equal(listed.status, 200);
+  assert.deepEqual(listed.json(), models);
+  assert.equal(listed.headers.etag, '"e1"');
+  assert.equal(chatgpt.seen[0]!.url, "/chatgpt/backend-api/codex/models");
+  const refused = await send(
+    gw.port,
+    `/backend-api/codex/${key.text}/responses`,
+    {
+      headers: HEADERS,
+      body: { ...BODY, model: "group/default" },
+    },
+  );
+  assert.equal(refused.status, 401);
+  assert.equal(at(refused.json(), "error", "code"), "key_revoked");
+  assert.equal(chatgpt.seen.length, 1);
 });
 
 void test("only loopback peers without a browser origin may use the passthrough", async (t) => {

@@ -1,6 +1,6 @@
 # ADR 0022：Agent 的模型列表、无 Key 接线与接线 Profile
 
-Status: proposed
+Status: proposed（Codex 的 ChatGPT 模式不签发 Key 的部分由 [ADR 0030](0030-codex-chatgpt-mode-models.md) 取代）
 
 日期：2026-10-04
 关联决定：[04 Agent 平面](../proposals/oss/04-agent-plane.md)（第 4、5 节）、[03 模型平面](../proposals/oss/03-model-plane.md)（第 2 节 Gateway Key）、[ADR 0018](0018-schema-migrations-and-managed-secrets.md)、[全局接线](../global-wiring.md)

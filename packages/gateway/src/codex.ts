@@ -19,6 +19,7 @@ import type {
   ServerResponse,
 } from "node:http";
 import {
+  parseGatewayKey,
   parseModelRef,
   type ModelCallEntry,
   type ModelRef,
@@ -63,6 +64,52 @@ export const CODEX_PROVIDER = "chatgpt-subscription" as ProviderId;
 /** Whether a normalized path belongs to the Codex passthrough. */
 export function isCodexPath(path: string): boolean {
   return path === CODEX_PATH || path.startsWith(`${CODEX_PATH}/`);
+}
+
+/**
+ * A Codex passthrough path without the Gateway Key that ChatGPT-mode wiring
+ * puts in `openai_base_url` (`/backend-api/codex/<key>/responses`): Codex's
+ * own provider takes no other header, and its ChatGPT sign-in stays as it
+ * is. The key is only for HarnessHub's models and goes nowhere else: not to
+ * ChatGPT, the ledger or the log. A first segment that is no Gateway Key is
+ * part of the path.
+ */
+export function codexRoute(path: string): { path: string; key?: string } {
+  const rest = path.slice(CODEX_PATH.length + 1);
+  const end = rest.indexOf("/");
+  const segment = end < 0 ? rest : rest.slice(0, end);
+  if (!parseGatewayKey(segment)) return { path };
+  return {
+    path: CODEX_PATH + (end < 0 ? "" : rest.slice(end)),
+    key: segment,
+  };
+}
+
+/** One of the gateway's models as Codex's model list describes it. */
+export interface CodexListedModel {
+  slug: string;
+  contextWindow?: number;
+  /** Reasoning levels, lowest first; empty when the model has none or they are unknown. */
+  efforts: readonly string[];
+  images: boolean;
+}
+
+/** What a ChatGPT-mode Codex lists besides ChatGPT's own models. */
+export interface CodexListing {
+  /** The gateway's models for the key, in Codex's model-list format, priorities from `first`. */
+  entries(first: number): unknown[];
+  /** Changes with the listed models: Codex asks for the list again when it does. */
+  tag: string;
+}
+
+/**
+ * An ETag of ChatGPT's (or none) with the gateway's list tag in it, as Magpie
+ * marks it: `W/"abc"` becomes `W/"abc+hh-<tag>"`.
+ */
+export function taggedEtag(etag: string, tag: string): string {
+  return etag.length > 1 && etag.endsWith('"')
+    ? `${etag.slice(0, -1)}+hh-${tag}"`
+    : `${etag}+hh-${tag}`;
 }
 
 /**
@@ -134,6 +181,10 @@ export interface CodexRequest {
   shutdown: AbortSignal;
   /** A fresh ledger entry of an inbound Responses call at `path`, without a key. */
   entry(stream: boolean): ModelCallEntry;
+  /** The request body, read already with its memory reserved; it is given back here. */
+  body?: Buffer;
+  /** The gateway's list tag ({@link CodexListing}), added to the answer's `X-Models-Etag`. */
+  modelsTag?: string;
 }
 
 /** The ledger fields a forwarded Responses call gets from its body. */
@@ -215,9 +266,10 @@ export async function codexPassthrough(context: CodexRequest): Promise<void> {
     const { status, body } = openAiErrorResponse(value);
     await writer.json(status, body);
   };
+  reserved = context.body?.length ?? 0;
   try {
-    let body: Buffer | undefined;
-    if (method !== "GET" && method !== "HEAD") {
+    let body: Buffer | undefined = context.body;
+    if (!body && method !== "GET" && method !== "HEAD") {
       body = await readBody(request, {
         maxBytes: limits.maxRequestBytes,
         timeoutMs: limits.requestBodyTimeoutMs,
@@ -318,7 +370,13 @@ export async function codexPassthrough(context: CodexRequest): Promise<void> {
     const contentType = answer.headers.get("content-type") ?? "";
     const pass = () => {
       for (const [name, value] of answer.headers)
-        if (!DROPPED_RESPONSE.has(name)) response.setHeader(name, value);
+        if (!DROPPED_RESPONSE.has(name))
+          response.setHeader(
+            name,
+            name === "x-models-etag" && context.modelsTag
+              ? taggedEtag(value, context.modelsTag)
+              : value,
+          );
       writer.begin(answer.status, contentType || "application/octet-stream");
     };
     if (entry && !answer.ok) {
@@ -504,6 +562,103 @@ export async function codexPassthrough(context: CodexRequest): Promise<void> {
     for (const timer of timers) clearTimeout(timer);
     timers.clear();
     services.memory.give(reserved);
+    response.removeListener("close", onClose);
+  }
+}
+
+/**
+ * Codex's model list in ChatGPT mode: ChatGPT's own list for this sign-in,
+ * asked for as the passthrough forwards (the client's headers, never logged),
+ * then the gateway's models for the request's key in Codex's format, after
+ * ChatGPT's in priority. The answer's `ETag` carries the listing's tag, as
+ * the `X-Models-Etag` of relayed answers does, so that a change to either
+ * list has Codex ask again (Magpie's codexModels). A refusal of ChatGPT's or
+ * a body that is no model list passes on as it came, and Codex keeps the
+ * list it has; no ledger entry is written. Never throws.
+ */
+export async function codexModels(
+  context: CodexRequest,
+  listing: CodexListing,
+): Promise<void> {
+  const { request, response, services } = context;
+  const { limits } = services;
+  const abort = new AbortController();
+  const onClose = () => {
+    if (!response.writableFinished) abort.abort();
+  };
+  response.once("close", onClose);
+  const signal = AbortSignal.any([context.shutdown, abort.signal]);
+  const timer = setTimeout(
+    () => abort.abort(),
+    limits.upstreamHeaderTimeoutMs + limits.idleTimeoutMs,
+  );
+  const writer = new HttpWriter(response);
+  const secrets = clientSecrets(request.headers);
+  try {
+    const answer = await fetch(
+      `${context.backend.replace(/\/+$/, "")}/models${context.search}`,
+      {
+        method: "GET",
+        redirect: "manual",
+        signal,
+        headers: forwardedHeaders(request.headers),
+      },
+    );
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    if (answer.body)
+      for await (const chunk of answer.body) {
+        bytes += chunk.byteLength;
+        if (bytes > limits.maxResponseBytes)
+          throw new GatewayError(
+            "ChatGPT's model list exceeds the gateway size limit",
+            502,
+            "response_too_large",
+          );
+        chunks.push(Buffer.from(chunk));
+      }
+    const body = Buffer.concat(chunks);
+    let list: Record<string, unknown> | undefined;
+    try {
+      list = answer.ok ? record(JSON.parse(body.toString("utf8"))) : undefined;
+    } catch {
+      list = undefined;
+    }
+    for (const [name, value] of answer.headers)
+      if (!DROPPED_RESPONSE.has(name)) response.setHeader(name, value);
+    if (!list || !Array.isArray(list.models)) {
+      writer.begin(
+        answer.status,
+        answer.headers.get("content-type") ?? "application/octet-stream",
+      );
+      await writer.end(body);
+      return;
+    }
+    response.setHeader(
+      "etag",
+      taggedEtag(answer.headers.get("etag") ?? "", listing.tag),
+    );
+    await writer.json(answer.status, {
+      ...list,
+      models: [...list.models, ...listing.entries(list.models.length + 1)],
+    });
+  } catch (error) {
+    if (abort.signal.aborted || context.shutdown.aborted || writer.sent) {
+      response.destroy();
+      return;
+    }
+    const network = networkFailure(error);
+    const value =
+      error instanceof GatewayError
+        ? failure(error.status, error.code, sanitize(error.message, secrets))
+        : network
+          ? { ...network, message: sanitize(network.message, secrets) }
+          : failure(500, "gateway_error", "Model gateway internal error");
+    response.setHeader("x-hh-error-source", "upstream");
+    const { status, body } = openAiErrorResponse(value);
+    await writer.json(status, body).catch(() => response.destroy());
+  } finally {
+    clearTimeout(timer);
     response.removeListener("close", onClose);
   }
 }

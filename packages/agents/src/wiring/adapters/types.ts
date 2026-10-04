@@ -36,6 +36,12 @@ export interface AdapterTarget {
   baseUrl: string;
   keyText: string;
   model: string;
+  /**
+   * No model was named for an agent that keeps its own (`modelOptional`):
+   * `model` is a placeholder that must not be written, and there are no
+   * tiers or effort.
+   */
+  ownModel: boolean;
   models: readonly WiringModel[];
   /** The metadata of `model`, when the gateway knows it. */
   selected: WiringModel | undefined;
@@ -177,11 +183,12 @@ export interface WiringAdapter {
   /** Adapter options and their allowed values; the first value is the default. */
   readonly options?: Readonly<Record<string, readonly string[]>>;
   /**
-   * Whether the agent, configured with these options, authenticates by
-   * itself: it is then wired without a Gateway Key and without a model, and
-   * its settings must not use `keyText` or `model`. Never when absent.
+   * Whether the agent, configured with these options, keeps its own model
+   * choice (Codex signed in with ChatGPT): it is wired with a key all the
+   * same, and with a model, tiers and an effort only when one is named;
+   * settings without a model must not use `model`. Never when absent.
    */
-  keyless?(options: Readonly<Record<string, string>>): boolean;
+  modelOptional?(options: Readonly<Record<string, string>>): boolean;
   settings(target: AdapterTarget, files: LocatedFiles): AdapterSetting[];
 }
 

@@ -74,8 +74,13 @@ export interface CodexWiringModel {
  * lists, in the shape of the isolated catalog above (which the pinned Codex
  * reads), with each model's window, levels and image input. The default
  * level is medium, else high, else the first (as Magpie's codexcat picks it).
+ * Priorities count from `first`: the gateway lists these after the models of
+ * a ChatGPT-mode Codex's own sign-in.
  */
-export function codexWiringCatalog(models: readonly CodexWiringModel[]) {
+export function codexWiringCatalog(
+  models: readonly CodexWiringModel[],
+  first = 1,
+) {
   return {
     models: models.map((model, index) => {
       const reasoning = model.efforts.length > 0;
@@ -96,7 +101,7 @@ export function codexWiringCatalog(models: readonly CodexWiringModel[]) {
         shell_type: "shell_command",
         visibility: "list",
         supported_in_api: true,
-        priority: index + 1,
+        priority: first + index,
         support_verbosity: false,
         apply_patch_tool_type: "freeform",
         web_search_tool_type: "text",

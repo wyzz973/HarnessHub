@@ -624,7 +624,8 @@ export interface AgentWiringPlan {
  * no model, models, tiers or effort.
  */
 export interface AgentWiringInput {
-  model?: string;
+  /** null: none, for an agent that keeps its own model (Codex with `codexAuth: chatgpt`). */
+  model?: string | null;
   /** Models the agent may list: `provider/model`, `provider/*`, `group/<id>` or `*`; default: the current list, else `*`. */
   models?: string[];
   /** A model per tier in `capabilities.tiers`; `{}` clears them. */

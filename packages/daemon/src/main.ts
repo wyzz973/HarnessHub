@@ -14,6 +14,7 @@ import {
 import { fullAccessEnabled } from "@harnesshub/agents/engine/full-access";
 import { registerHarnessModelRoutes } from "./http/harness-model-routes.js";
 import { providerProtocols } from "@harnesshub/agents/engine/configuration";
+import { codexWiringCatalog } from "@harnesshub/agents/configuration/codex-models";
 import { configurationAdapters } from "@harnesshub/core/engine-configuration";
 import { createSecret } from "@harnesshub/secrets/secrets";
 import {
@@ -679,6 +680,8 @@ export async function startHub(options: {
       allowances: allowanceFile(dataDir),
       features: () => gatewayFeatures.current(),
       ...(adminToken ? { secrets: [adminToken] } : {}),
+      // ChatGPT-mode Codex lists the gateway's models as wiring writes them.
+      codexCatalog: (models, first) => codexWiringCatalog(models, first).models,
     });
     manager = new EngineManager({
       config,

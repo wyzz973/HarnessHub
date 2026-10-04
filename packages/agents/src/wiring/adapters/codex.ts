@@ -24,9 +24,14 @@ export const CODEX_BACKEND_PATH = "/backend-api/codex";
  *   upstream).
  * - `chatgpt`: the user's ChatGPT sign-in stays as it is and only
  *   `openai_base_url` points Codex's built-in OpenAI provider at
- *   `<gateway>/backend-api/codex`, which forwards Codex's requests, signed in
- *   by Codex itself, to ChatGPT. No key is written and Codex keeps its own
- *   models. A `model_provider` of the user's other than OpenAI bypasses it.
+ *   `<gateway>/backend-api/codex/<key>`, which forwards Codex's requests for
+ *   its own models, signed in by Codex itself, to ChatGPT, and serves
+ *   HarnessHub's models, which it lists after ChatGPT's (Magpie's ChatGPT
+ *   mode). That provider takes no header of HarnessHub's, so the key is a
+ *   path segment, which the gateway takes out before anything is forwarded
+ *   or recorded. Codex keeps its own model unless one is named; a named
+ *   model (and effort) goes to `model` (and `model_reasoning_effort`). A
+ *   `model_provider` of the user's other than OpenAI bypasses it.
  */
 export const codex: WiringAdapter = {
   id: "codex",
@@ -64,15 +69,27 @@ export const codex: WiringAdapter = {
       : codex.baseUrlField,
   efforts: ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
   options: { codexAuth: ["gateway-key", "chatgpt"] },
-  keyless: (options) => options.codexAuth === "chatgpt",
+  modelOptional: (options) => options.codexAuth === "chatgpt",
   settings(target, files) {
     if (target.options.codexAuth === "chatgpt")
       return [
         {
           file: "config",
           path: ["openai_base_url"],
-          value: `${target.baseUrl}${CODEX_BACKEND_PATH}`,
+          value: `${target.baseUrl}${CODEX_BACKEND_PATH}/${target.keyText}`,
         },
+        ...(target.ownModel
+          ? []
+          : [{ file: "config", path: ["model"], value: target.model }]),
+        ...(target.effort !== undefined
+          ? [
+              {
+                file: "config",
+                path: ["model_reasoning_effort"],
+                value: target.effort,
+              },
+            ]
+          : []),
       ];
     const catalog = codexWiringCatalog(
       withSelected(target.models, target.model).map((model) => ({

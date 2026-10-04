@@ -77,10 +77,10 @@ import {
 } from "./formats/values.js";
 
 /**
- * Where the gateway is and which key and models an agent gets. An adapter
- * that authenticates by itself with these options (`WiringAdapter.keyless`)
- * takes no key, model, tiers or effort; every other one needs `keyText`,
- * `keyId` and `model`.
+ * Where the gateway is and which key and models an agent gets. Every
+ * adapter needs `keyText` and `keyId`; `model` too, unless the adapter
+ * keeps its own model with these options (`WiringAdapter.modelOptional`),
+ * which then takes tiers and an effort only with a model.
  */
 export interface WiringTarget {
   /** The gateway origin as agents reach it (`http://127.0.0.1:3180`); `/v1` is appended per protocol. */
@@ -150,9 +150,9 @@ export interface WiringPlan {
   adapterId: string;
   protocol: WireProtocol;
   keyDelivery: WiringAdapter["keyDelivery"];
-  /** Absent for an agent that keeps its own model choice (keyless). */
+  /** Absent for an agent that keeps its own model choice (`modelOptional`). */
   model?: string;
-  /** Absent for an agent wired without a key. */
+  /** Absent only for the plan of a record wired without a key before keys were required. */
   keyId?: GatewayKeyId;
   /** False when the agent is already wired exactly so; applying then writes nothing. */
   changed: boolean;
@@ -230,13 +230,12 @@ type Operation =
   | { op: "set"; path: KeyPath; value: ConfigValue }
   | { op: "remove"; path: KeyPath };
 
-/** Stands for the model of a keyless wiring in the target handed to the adapter; it must not reach a file. */
+/** Stands for the model of a wiring without one in the target handed to the adapter; it must not reach a file. */
 const MODEL_PLACEHOLDER = "{{harnesshub:model}}";
 
 /** An adapter target with what the operations need besides it. */
 interface ResolvedTarget extends AdapterTarget {
-  keyId: GatewayKeyId | undefined;
-  keyless: boolean;
+  keyId: GatewayKeyId;
 }
 
 interface FilePlan {
@@ -664,7 +663,7 @@ async function planFiles(
   };
   const settings = adapter.settings(target, paths);
   checkElements(adapter, settings);
-  if (target.keyless) checkKeyless(adapter, settings);
+  if (target.ownModel) checkOwnModel(adapter, settings);
   const plans: FilePlan[] = [];
   for (const { spec, file, location, realPath, state, before } of located) {
     if (!state.exists)
@@ -758,8 +757,8 @@ function preview(
     adapterId: adapter.id,
     protocol: adapter.protocol,
     keyDelivery: adapter.keyDelivery,
-    ...(resolved.keyless ? {} : { model: resolved.model }),
-    ...(resolved.keyId !== undefined ? { keyId: resolved.keyId } : {}),
+    ...(resolved.ownModel ? {} : { model: resolved.model }),
+    keyId: resolved.keyId,
     changed: plans.some((plan) => plan.changed),
     files: plans.map((plan) => {
       const before =
@@ -1367,31 +1366,6 @@ function resolveTarget(
     )
       throw invalid(`The metadata of ${model.ref} is invalid`);
   }
-  if (adapter.keyless?.(options)) {
-    if (
-      target.keyText !== undefined ||
-      target.keyId !== undefined ||
-      target.model !== undefined ||
-      Object.keys(target.tiers ?? {}).length ||
-      target.effort !== undefined
-    )
-      throw invalid(
-        `${adapter.name} signs in by itself with these options; it takes no key, model, tiers or effort`,
-      );
-    return {
-      baseUrl,
-      keyText: KEY_PLACEHOLDER,
-      keyId: undefined,
-      model: MODEL_PLACEHOLDER,
-      models: [],
-      selected: undefined,
-      tiers: {},
-      effort: undefined,
-      options,
-      gatewaySearch,
-      keyless: true,
-    };
-  }
   const key =
     target.keyText === undefined ? undefined : parseGatewayKey(target.keyText);
   if (
@@ -1404,7 +1378,14 @@ function resolveTarget(
     throw invalid(
       "The key must be an agent-scoped Gateway Key whose id is keyId",
     );
-  if (target.model === undefined || !parseModelRef(target.model))
+  const ownModel =
+    target.model === undefined && adapter.modelOptional?.(options) === true;
+  if (ownModel) {
+    if (Object.keys(target.tiers ?? {}).length || target.effort !== undefined)
+      throw invalid(
+        `${adapter.name} keeps its own model with these options; name a model to set tiers or an effort`,
+      );
+  } else if (target.model === undefined || !parseModelRef(target.model))
     throw invalid(
       "The model must be a Model Ref (provider/model) or group/<id>",
     );
@@ -1429,14 +1410,16 @@ function resolveTarget(
     baseUrl,
     keyText: target.keyText!,
     keyId: target.keyId,
-    model: target.model,
+    model: target.model ?? MODEL_PLACEHOLDER,
+    ownModel,
     models: target.models,
-    selected: target.models.find((model) => model.ref === target.model),
+    selected: ownModel
+      ? undefined
+      : target.models.find((model) => model.ref === target.model),
     tiers,
     effort: target.effort,
     options,
     gatewaySearch,
-    keyless: false,
   };
 }
 
@@ -1465,21 +1448,21 @@ export function resolveOptions(
   );
 }
 
-/** Whether the adapter, configured with `options`, is wired without a key and a model. */
-export function isKeyless(
+/** Whether the adapter, configured with `options`, may be wired without a model. */
+export function isModelOptional(
   adapter: WiringAdapter,
   options: Readonly<Record<string, string>> | undefined,
 ): boolean {
-  return adapter.keyless?.(resolveOptions(adapter, options)) ?? false;
+  return adapter.modelOptional?.(resolveOptions(adapter, options)) ?? false;
 }
 
-/** The choices a record keeps: the model, tiers and effort unless keyless, and the options. */
+/** The choices a record keeps: the model when named, tiers, effort and the options. */
 function choiceOf(
   adapter: WiringAdapter,
   target: ResolvedTarget,
 ): Pick<WiringRecord, "model" | "tiers" | "effort" | "options"> {
   return {
-    ...(target.keyless ? {} : { model: target.model }),
+    ...(target.ownModel ? {} : { model: target.model }),
     ...(Object.keys(target.tiers).length ? { tiers: { ...target.tiers } } : {}),
     ...(target.effort !== undefined ? { effort: target.effort } : {}),
     ...(Object.keys(adapter.options ?? {}).length
@@ -1515,20 +1498,19 @@ function checkElements(
   }
 }
 
-/** A keyless wiring's settings must use neither the key nor the model. */
-function checkKeyless(
+/** The settings of a wiring without a model must not use the model. */
+function checkOwnModel(
   adapter: WiringAdapter,
   settings: readonly AdapterSetting[],
 ): void {
   for (const setting of settings)
     if (
       !("remove" in setting) &&
-      (containsPlaceholder(setting.value, KEY_PLACEHOLDER) ||
-        containsPlaceholder(setting.value, MODEL_PLACEHOLDER))
+      containsPlaceholder(setting.value, MODEL_PLACEHOLDER)
     )
       throw new WiringError(
         "WIRING_TARGET_INVALID",
-        `${adapter.name} writes a key or a model at ${formatPath(setting.path)}, so it cannot be wired without them`,
+        `${adapter.name} writes a model at ${formatPath(setting.path)}, so it cannot be wired without one`,
       );
 }
 

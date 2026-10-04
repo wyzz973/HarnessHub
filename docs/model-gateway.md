@@ -293,10 +293,11 @@ Session 的 Run 经守护进程端口上的共享网关使用模型（03 第 10 
 - 守护进程的回环监听器把 `/backend-api/codex` 及其下路径交给网关，网关转发到 `https://chatgpt.com/backend-api/codex` 下的同一路径与查询串。方法、请求体（压缩的请求体解压后发送，不带 `content-encoding`；`/responses` 中网关自己做的压缩与编码的推理除外，见下）与客户端的请求头原样转发，`Authorization` 与 `ChatGPT-Account-Id` 逐字节不变；不转发逐跳头、`host`、`content-length`、`accept-encoding` 与所有 `x-hh-*` 头（包括 `X-HH-Credential`）。不使用 Gateway Key，不改写任何客户端身份，不注入提示词。答复的状态码、响应头（逐跳头、`content-length`、`content-encoding` 与 `set-cookie` 除外）与响应体原样返回，上游的错误也是。
 - 只服务回环监听器上的回环对端，`Host` 必须是回环名称，带 `Origin` 或 `Sec-Fetch-Site: cross-site` 的请求一律拒绝：403 `source_not_allowed` 或 `origin_forbidden`，写拒绝记录。局域网监听器不提供这条路径（404）。
 - 请求体为带 `model` 的 JSON 的 POST（`/responses` 与 `/responses/compact`）是一次模型调用，写一条账本：provider 为虚拟的 `chatgpt-subscription`（不对应任何已配置的 provider），Model Ref `chatgpt-subscription/<model>`，`mode: passthrough`，没有 Key 与作用域，`agent` 为 `{id: codex, source: route}`，会话键取 `prompt_cache_key` 等（按 `chatgpt-subscription` 隔离），用量从 Responses 流的 `response.completed`（或 JSON 答复）解析，`cost` 为 null。流式答复的终止事件与非流式答复的响应体在提交之后才写出；提交失败时返回 503 `evidence_unavailable`，流已开始则写一个 `response.failed` 事件。上游错误按失败类别记 `errorClass`，消息去掉客户端的 Authorization 值并脱敏。`GET /models` 等其他请求只转发，不写账本。
+- **ChatGPT 模式的 HarnessHub 模型**（[ADR 0030](decisions/0030-codex-chatgpt-mode-models.md)）：接线把 agent Key 写在基址路径中（`/backend-api/codex/<Key>/…`），网关在一切处理之前去掉这一段，转发的 URL、账本路径与日志都不含它。`/responses` 的 `model` 带 `/` 时用这把 Key 鉴权，按 `/v1/responses` 的正常路径服务（账本 `inbound.path` 为 `/backend-api/codex/responses`，带 Key 与作用域），进入前删掉 `Authorization` 与 `ChatGPT-Account-Id`；没有 Key 或 Key 无效时本地 401，不转发。`GET /models` 带有效 Key 时，ChatGPT 的列表后面接着该 Key 可用的模型（条目由守护进程注入的 `codexCatalog` 生成，与 API 模式目录相同），优先级排在 ChatGPT 的之后，`ETag` 与转发答复的 `X-Models-Etag` 加上 `+hh-<列表标记>`；ChatGPT 拒绝或答复不是模型列表时原样返回。这份列表不写账本。
 - `/responses/compact` 的 `model` 带 `/`（HarnessHub 的模型，ChatGPT 没有这样的模型）时不转发，答复 400 `compact_unsupported`（“/responses/compact is not supported for HarnessHub models; use a compaction_trigger on /responses”）。`/responses` 的输入中网关做的压缩项（`hh1:`）换成摘要的用户消息，网关编码的推理项（`hh-r1.`）删去，ChatGPT 读不了二者；账本记 `compaction:restored:<n>` 与 `reasoning:dropped:<n>`（[上下文压缩](gateway-features.md#上下文压缩)）。
 - Authorization 的值从不写入日志或账本；转发失败的日志只有脱敏后的错误消息。
 - 等待上游响应头与上游空闲的时限、响应体上限与请求体上限同其他调用（见“资源上限”）；不提供保活。
-- 上游基址只能由测试经 `deps.codexBackend` 指向回环假服务。未实现：Codex 的 WebSocket 传输；Magpie 在这条路径上用自己的 provider 回答 Codex 的请求（本网关只转发）。
+- 上游基址只能由测试经 `deps.codexBackend` 指向回环假服务。未实现：Codex 的 WebSocket 传输；ChatGPT 的列表取不到时退回 Codex 缓存的列表（Magpie 读 Codex 的目录，本网关不读）。
 
 ### 资源上限
 
@@ -336,6 +337,8 @@ node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js
 - 响应体上限按原始字节而不是解码后的内容计算；`latency` 只统计本次启动以来的调用，`least-used` 另从账本取最近 8 小时的初值；认证失败的熔断最长 10 分钟后进入半开，而不是一直保持到 Credential 更新。
 
 ## 变更记录
+
+- **2026-10-05：ChatGPT 模式的 Codex 使用 HarnessHub 的模型**（[ADR 0030](decisions/0030-codex-chatgpt-mode-models.md)）。ChatGPT 模式接线签发 agent Key，写在 `openai_base_url` 的路径中；Codex 透传在本地服务带 `/` 的模型、合并 `/models` 列表，ChatGPT 的令牌不离开转发路径。压缩：模型没有写出摘要时，账本与客户端一致为 502 `compaction_empty`（[上下文压缩](gateway-features.md#上下文压缩)）。
 
 - **2026-10-04：工具搜索与上下文压缩**（[网关功能](gateway-features.md#工具搜索)）。Codex 的 `tool_search` 发往 Responses 直通上游与转换的上游时是普通函数 `tool_search`，搜索结果说明找到的工具并把它们加入工具列表（去掉 `defer_loading`），模型对它的调用以 `tool_search_call` 交回 Codex；Claude Code 的 `tool_reference` 结果在转换时成为“Tool X is loaded and can be called now.”，不提供 `DeferredToolPlaceholder`。Codex 的 `compaction_trigger` 由网关请模型写摘要，答复为 `encrypted_content` 以 `hh1:` 开头的 `compaction` 项，之后的请求中换回摘要；`/v1/responses/compact` 答复 400 `compact_unsupported`。上游以 `invalid_encrypted_content` 等拒绝别的账号封存的推理或压缩时，去掉推理（再拒绝时去掉压缩）在同一候选上重发，账本记 `sealed:*`；网关自己编码的推理不再直通到 Responses 上游。新增纯函数 `isCompactionRequest`，识别七种 Agent 的压缩请求，供以后的路由规则使用。
 

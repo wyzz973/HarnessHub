@@ -41,6 +41,8 @@ async function setup(t: TestContext) {
   const upstream = await startFakeProvider({
     models: ["big", "small", "other", "later"],
     keys: { upstream: UPSTREAM_KEY },
+    // Translated calls (ChatGPT-mode Codex's Responses) ask for streamed usage.
+    fields: { chat: { allowed: { topLevel: ["stream_options"] } } },
     chunkDelayMs: 0,
   });
   defer(() => upstream.close());
@@ -113,6 +115,38 @@ async function listed(v1: string, key: string): Promise<string[]> {
   assert.equal(response.status, 200);
   const body = (await response.json()) as { data: Array<{ id: string }> };
   return body.data.map((model) => model.id).sort();
+}
+
+/** A Responses call on the Codex passthrough, as ChatGPT-mode Codex sends one; `key` goes in the path. */
+async function codexResponses(
+  origin: string,
+  key: string | undefined,
+  model: string,
+): Promise<{ status: number; text: string }> {
+  const response = await fetch(
+    `${origin}/backend-api/codex${key ? `/${key}` : ""}/responses`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        // Codex's own ChatGPT sign-in, which never leaves for a HarnessHub model.
+        authorization: "Bearer synthetic-chatgpt-token",
+        "chatgpt-account-id": "acct-synthetic",
+      },
+      body: JSON.stringify({
+        model,
+        stream: false,
+        input: [
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "hello" }],
+          },
+        ],
+      }),
+    },
+  );
+  return { status: response.status, text: await response.text() };
 }
 
 async function chat(v1: string, key: string, model: string): Promise<number> {
@@ -203,47 +237,68 @@ void test("Claude Code gets its tiers, the [1m] mark for a 1M model, the window 
   assert.equal(await exists(settings), false);
 });
 
-void test("Codex in API mode lists a generated catalog; in ChatGPT mode it keeps its sign-in, gets only openai_base_url and no key", async (t) => {
+void test("Codex in API mode lists a generated catalog; in ChatGPT mode it keeps its sign-in and gets openai_base_url with its key, and a model only when named", async (t) => {
   const { client, codex, home, origin, v1 } = await setup(t);
   const catalog = path.join(home, ".codex", "harnesshub-models.json");
 
-  // ChatGPT mode from scratch: one line and no key.
+  // ChatGPT mode from scratch: one line, the key in its path, Codex's own model.
   const chatgptPlan = await client.agents.plan("codex", {
     options: { codexAuth: "chatgpt" },
   });
-  assert.equal(chatgptPlan.keyId, undefined);
   assert.equal(chatgptPlan.model, undefined);
   const signedIn = await client.agents.wire("codex", {
     options: { codexAuth: "chatgpt" },
     expect: chatgptPlan,
   });
-  assert.equal(
-    await readFile(codex, "utf8"),
-    `${CODEX_ORIGINAL}openai_base_url = "${origin}/backend-api/codex"\n`,
-  );
+  const wired = await readFile(codex, "utf8");
+  const base = new RegExp(
+    `^${CODEX_ORIGINAL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}openai_base_url = "${origin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/backend-api/codex/(hhk_a_[a-z2-7]{12}_[A-Za-z0-9_-]{43})"\n$`,
+  ).exec(wired);
+  assert.ok(base, wired);
+  const chatgptKey = base[1]!;
   assert.equal(await exists(catalog), false);
-  assert.equal(signedIn.wiring?.keyState, "none");
-  assert.equal(signedIn.wiring?.keyId, undefined);
+  assert.equal(signedIn.wiring?.keyState, "active");
   assert.equal(signedIn.wiring?.model, undefined);
   assert.deepEqual(signedIn.wiring?.options, { codexAuth: "chatgpt" });
   assert.equal(signedIn.wiring?.drift?.drifted, false);
-  assert.deepEqual(
-    (await client.gatewayKeys.list()).items.filter(
-      (key) => key.scope.kind === "agent",
-    ),
-    [],
+  // The key serves HarnessHub's models on the Codex path, never on its own.
+  const served = await codexResponses(origin, chatgptKey, SMALL);
+  assert.equal(served.status, 200, served.text);
+  assert.equal(
+    (await codexResponses(origin, undefined, SMALL)).status,
+    401,
+    "without the key a HarnessHub model fails here",
   );
+  // Tiers or an effort need a model; a named one becomes Codex's default.
   await assert.rejects(
-    client.agents.plan("codex", { model: BIG }),
+    client.agents.plan("codex", { effort: "high" }),
     problem("AGENT_WIRING_INVALID", 400),
   );
-  await assert.rejects(
-    client.agents.rotate("codex"),
-    problem("AGENT_KEYLESS", 409),
+  const named = await client.agents.wire("codex", {
+    model: BIG,
+    effort: "high",
+    expect: await client.agents.plan("codex", { model: BIG, effort: "high" }),
+  });
+  assert.equal(named.wiring?.model, BIG);
+  assert.match(await readFile(codex, "utf8"), /^model = "fake\/big"/m);
+  assert.match(
+    await readFile(codex, "utf8"),
+    /^model_reasoning_effort = "high"$/m,
   );
-  await assert.rejects(
-    client.agents.setHidden("codex", [OTHER]),
-    problem("AGENT_KEYLESS", 409),
+  // The key changed with the wiring: the old one is revoked.
+  assert.equal((await codexResponses(origin, chatgptKey, SMALL)).status, 401);
+  const own = await client.agents.wire("codex", {
+    model: null,
+    expect: await client.agents.plan("codex", { model: null }),
+  });
+  assert.equal(own.wiring?.model, undefined);
+  assert.doesNotMatch(
+    await readFile(codex, "utf8"),
+    /^model_reasoning_effort/m,
+  );
+  assert.match(
+    await readFile(codex, "utf8"),
+    /^model = "gpt-5.5-codex" # mine$/m,
   );
 
   // API mode: a key, the provider, the catalog with each model's metadata.
@@ -289,16 +344,20 @@ void test("Codex in API mode lists a generated catalog; in ChatGPT mode it keeps
   )![1]!;
   assert.equal(await chat(v1, key, SMALL), 200);
 
-  // Back to ChatGPT mode: the provider entries go, the key is revoked.
-  await client.agents.wire("codex", {
+  // Back to ChatGPT mode: the provider entries go, the model with them, and
+  // the API mode's key is revoked.
+  const back = await client.agents.wire("codex", {
     options: { codexAuth: "chatgpt" },
     expect: await client.agents.plan("codex", {
       options: { codexAuth: "chatgpt" },
     }),
   });
-  assert.equal(
+  assert.equal(back.wiring?.model, undefined);
+  assert.match(
     await readFile(codex, "utf8"),
-    `${CODEX_ORIGINAL}openai_base_url = "${origin}/backend-api/codex"\n`,
+    new RegExp(
+      `^model = "gpt-5\\.5-codex" # mine\nopenai_base_url = ".+/backend-api/codex/hhk_a_[^"]+"\n$`,
+    ),
   );
   assert.equal(await chat(v1, key, SMALL), 401);
   const unwired = await client.agents.unwire("codex");
@@ -488,9 +547,12 @@ void test("a profile saves every wired agent's choices and applying it switches 
   const cliApply = await run("profile", "apply", "chatgpt", "--yes");
   assert.equal(cliApply.code, 0, cliApply.stderr);
   assert.match(cliApply.stdout, /^applied\s+codex$/m);
-  assert.equal(
-    await readFile(codex, "utf8"),
-    `${CODEX_ORIGINAL}openai_base_url = "${origin}/backend-api/codex"\n`,
+  const cliWired = await readFile(codex, "utf8");
+  assert.ok(
+    cliWired.startsWith(
+      `${CODEX_ORIGINAL}openai_base_url = "${origin}/backend-api/codex/hhk_a_`,
+    ),
+    cliWired,
   );
   assert.doesNotMatch(cliApply.stdout + cliApply.stderr, /hhk_a_\w{12}_/);
   assert.equal((await run("profile", "rm", "chatgpt")).code, 0);

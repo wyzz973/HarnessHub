@@ -37,7 +37,7 @@ import {
   applyWiring,
   detectAgent,
   detectDrift,
-  isKeyless,
+  isModelOptional,
   planWiring,
   resolveOptions,
   unwire,
@@ -153,12 +153,13 @@ export interface AgentView {
 /**
  * What to wire an agent to. Absent fields keep the current wiring's value:
  * the model, tiers, effort, options and the listed models; `tiers: {}`
- * clears the tiers and `effort: null` the effort. An agent that signs in by
- * itself with its options (Codex with `codexAuth: chatgpt`) takes none of
- * model, models, tiers and effort.
+ * clears the tiers and `effort: null` the effort. An agent that keeps its own
+ * model with its options (Codex with `codexAuth: chatgpt`) is wired without
+ * one unless one is named, and then without tiers or effort.
  */
 export interface WiringRequest {
-  model?: string;
+  /** null: none, for an agent that keeps its own model (Codex with `codexAuth: chatgpt`). */
+  model?: string | null;
   /** The models the agent may list (`provider/model`, `provider/*`, `group/<id>`, `*`); default: the current list, else every model. */
   models?: string[];
   tiers?: Partial<Record<WiringTier, string>>;
@@ -190,7 +191,7 @@ export interface ProfileApplied {
 /** What one wiring will write, worked out from a request and the current state. */
 interface Prepared {
   options: Record<string, string>;
-  keyless: boolean;
+  /** Absent when the agent keeps its own model. */
   model?: string;
   tiers: Partial<Record<WiringTier, string>>;
   effort?: ReasoningEffort;
@@ -385,15 +386,10 @@ export class AgentWiringService {
     const context = this.context();
     const previous = await this.wiringOf(adapterId);
     const prepared = await this.prepare(adapterId, request, previous);
-    const issued = prepared.keyless
-      ? undefined
-      : issueGatewayKey({ kind: "agent", adapterId });
+    const issued = issueGatewayKey({ kind: "agent", adapterId });
     return planWiring(
       adapterId,
-      this.target(
-        prepared,
-        issued ? { text: issued.text, keyId: issued.keyId } : undefined,
-      ),
+      this.target(prepared, { text: issued.text, keyId: issued.keyId }),
       context,
       previous ? { previous } : {},
     );
@@ -409,12 +405,15 @@ export class AgentWiringService {
     return this.serial(() => this.wireNow(adapterId, request, expect));
   }
 
-  /** Re-wires the agent with the same choices and a new key; the old key is revoked. */
+  /**
+   * Re-wires the agent with the same choices and a new key; the old key is
+   * revoked. A record wired without a key (Codex's ChatGPT mode before it
+   * took one) gets its first.
+   */
   async rotate(adapterId: string): Promise<AgentView> {
     wiringAdapter(adapterId);
     return this.serial(async () => {
-      const previous = await this.required(adapterId);
-      if (previous.keyId === undefined) throw keyless(adapterId);
+      await this.required(adapterId);
       return this.wireNow(adapterId, {}, undefined);
     });
   }
@@ -684,34 +683,24 @@ export class AgentWiringService {
     expect: ConfirmedPlan | undefined,
   ): Promise<void> {
     const store = this.options.store;
-    let key: { record: GatewayKeyRecord; text: string } | undefined;
-    if (!prepared.keyless) {
-      const style = wiringAdapter(adapterId).modelIdStyle;
-      const issued = issueGatewayKey({ kind: "agent", adapterId });
-      key = {
-        record: {
-          keyId: issued.keyId,
-          name: `agent:${adapterId}`,
-          scope: { kind: "agent", adapterId },
-          modelAllow: prepared.allow,
-          ...(prepared.deny.length ? { modelDeny: prepared.deny } : {}),
-          ...(style ? { modelIdStyle: style } : {}),
-          secretHash: issued.secretHash,
-          createdAt: this.now(),
-        },
-        text: issued.text,
-      };
-      await store.createGatewayKey(key.record);
-    }
-    const keyId = key?.record.keyId;
+    const style = wiringAdapter(adapterId).modelIdStyle;
+    const issued = issueGatewayKey({ kind: "agent", adapterId });
+    const keyId = issued.keyId;
+    await store.createGatewayKey({
+      keyId,
+      name: `agent:${adapterId}`,
+      scope: { kind: "agent", adapterId },
+      modelAllow: prepared.allow,
+      ...(prepared.deny.length ? { modelDeny: prepared.deny } : {}),
+      ...(style ? { modelIdStyle: style } : {}),
+      secretHash: issued.secretHash,
+      createdAt: this.now(),
+    });
     let record: WiringRecord;
     try {
       ({ record } = await applyWiring(
         adapterId,
-        this.target(
-          prepared,
-          key ? { text: key.text, keyId: key.record.keyId } : undefined,
-        ),
+        this.target(prepared, { text: issued.text, keyId }),
         context,
         {
           ...(previous ? { previous } : {}),
@@ -719,7 +708,7 @@ export class AgentWiringService {
         },
       ));
     } catch (error) {
-      if (keyId) await this.revoke(keyId, "wiring.failed");
+      await this.revoke(keyId, "wiring.failed");
       throw summarized(error);
     }
     try {
@@ -732,14 +721,14 @@ export class AgentWiringService {
           error: cleanup instanceof Error ? cleanup.message : String(cleanup),
         });
       });
-      if (keyId) await this.revoke(keyId, "wiring.failed");
+      await this.revoke(keyId, "wiring.failed");
       throw error;
     }
     if (previous?.keyId !== undefined && previous.keyId !== keyId)
       await this.revoke(previous.keyId, "wiring.replaced");
     this.log.info("wiring.applied", {
       adapterId,
-      ...(keyId ? { keyId } : {}),
+      keyId,
       ...(prepared.model ? { model: prepared.model } : {}),
       files: record.files.length,
     });
@@ -774,43 +763,45 @@ export class AgentWiringService {
       ...previous?.options,
       ...request.options,
     });
-    if (isKeyless(adapter, options)) {
-      if (
-        request.model !== undefined ||
-        request.models !== undefined ||
-        Object.keys(request.tiers ?? {}).length ||
-        (request.effort !== undefined && request.effort !== null)
-      )
-        throw new HubError(
-          "AGENT_WIRING_INVALID",
-          `${adapter.name} signs in by itself with these options and keeps its own models; it takes no model, models, tiers or effort`,
-          400,
-        );
-      return {
-        options,
-        keyless: true,
-        tiers: {},
-        allow: [],
-        deny: [],
-        models: [],
-      };
-    }
-    // A keyless wiring has no model, tiers, effort or key to carry over.
-    const keyed = previous?.keyId !== undefined ? previous : undefined;
-    const model = request.model ?? keyed?.model;
-    if (model === undefined)
+    const optional = isModelOptional(adapter, options);
+    // Choices carry over within a mode: switched to keep its own model, the
+    // agent does, unless one is named.
+    const carried =
+      previous && isModelOptional(adapter, previous.options) === optional
+        ? previous
+        : undefined;
+    const model =
+      request.model === null ? undefined : (request.model ?? carried?.model);
+    if (model === undefined && !optional)
       throw new HubError(
         "AGENT_WIRING_INVALID",
         `Name a model for ${adapter.name}: provider/model or group/<id>`,
         400,
       );
-    const tiers = request.tiers ?? keyed?.tiers ?? {};
+    // Without a model the agent keeps its own: no tiers or effort either.
+    if (
+      model === undefined &&
+      (Object.keys(request.tiers ?? {}).length ||
+        (request.effort !== undefined && request.effort !== null))
+    )
+      throw new HubError(
+        "AGENT_WIRING_INVALID",
+        `${adapter.name} keeps its own model with these options; name a model to set tiers or an effort`,
+        400,
+      );
+    const tiers =
+      model === undefined ? {} : (request.tiers ?? carried?.tiers ?? {});
     const effort =
-      request.effort === null ? undefined : (request.effort ?? keyed?.effort);
-    const key = keyed?.keyId
-      ? await this.options.store.getGatewayKey(keyed.keyId)
+      model === undefined || request.effort === null
+        ? undefined
+        : (request.effort ?? carried?.effort);
+    const key = previous?.keyId
+      ? await this.options.store.getGatewayKey(previous.keyId)
       : undefined;
-    const chosen = [model, ...Object.values(tiers)];
+    const chosen = [
+      ...(model === undefined ? [] : [model]),
+      ...Object.values(tiers),
+    ];
     const listed = request.models ?? key?.modelAllow ?? ["*"];
     const allow = listed.includes("*")
       ? ["*"]
@@ -842,8 +833,7 @@ export class AgentWiringService {
       );
     return {
       options,
-      keyless: false,
-      model,
+      ...(model !== undefined ? { model } : {}),
       tiers,
       ...(effort !== undefined ? { effort } : {}),
       allow,
@@ -1020,10 +1010,11 @@ export class AgentWiringService {
   }
 }
 
+/** A record wired without a key: Codex's ChatGPT mode before it took one. */
 function keyless(adapterId: string): HubError {
   return new HubError(
     "AGENT_KEYLESS",
-    `${adapterId} signs in by itself and has no Gateway Key`,
+    `${adapterId} was wired without a Gateway Key; give it one with hh wire ${adapterId} --rotate`,
     409,
   );
 }
@@ -1050,10 +1041,13 @@ function choiceOf(record: WiringChoice): WiringChoice {
   };
 }
 
-/** The request that wires an agent to a profile's choice exactly: unset tiers and effort are cleared. */
+/**
+ * The request that wires an agent to a profile's choice exactly: unset tiers
+ * and effort are cleared, and so is the model of an agent that keeps its own.
+ */
 function requestOf(choice: WiringChoice): WiringRequest {
   return {
-    ...(choice.model !== undefined ? { model: choice.model } : {}),
+    model: choice.model ?? null,
     ...(choice.model !== undefined
       ? { tiers: choice.tiers ?? {}, effort: choice.effort ?? null }
       : {}),

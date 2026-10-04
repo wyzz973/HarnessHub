@@ -7,7 +7,12 @@
  * routes each call over provider credentials and commits one `model.call`
  * entry per call, rejected or not, before the answer's terminal event.
  */
-import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import {
+  createHash,
+  randomBytes,
+  randomUUID,
+  timingSafeEqual,
+} from "node:crypto";
 import { once } from "node:events";
 import {
   createServer,
@@ -74,14 +79,23 @@ import {
 } from "./http.js";
 import { RejectionThrottle } from "./ledger.js";
 import { Quotas, type Admission, type QuotaRefusal } from "./quota.js";
-import { CODEX_BACKEND, codexPassthrough, isCodexPath } from "./codex.js";
+import {
+  CODEX_BACKEND,
+  CODEX_PATH,
+  codexModels,
+  codexPassthrough,
+  codexRoute,
+  isCodexPath,
+  type CodexListedModel,
+  type CodexListing,
+} from "./codex.js";
 import { COMPACT_UNSUPPORTED } from "./compacting.js";
 import { conversationOf, StickyRoutes } from "./sticky.js";
 import { canonicalHost, LOOPBACK_ONLY, type GatewayAccess } from "./sharing.js";
 import { forwardCountTokens } from "./count.js";
 import type { HandlerLimits } from "./limits.js";
 import { HttpWriter, type Failure } from "./output.js";
-import { GatewayError, estimateTokens, object } from "./protocol.js";
+import { GatewayError, estimateTokens, object, record } from "./protocol.js";
 import {
   Breakers,
   modelCandidates,
@@ -190,6 +204,13 @@ export interface GatewayHandlerDeps {
    * requests go to ChatGPT's Codex backend.
    */
   codexBackend?: string;
+  /**
+   * Codex's model-list entries for the gateway's models, in order, with
+   * priorities from `first` (the agents package's catalog, which global
+   * wiring writes for Codex too). ChatGPT-mode Codex lists them after
+   * ChatGPT's own; without it its list is ChatGPT's alone.
+   */
+  codexCatalog?(models: CodexListedModel[], first: number): unknown[];
 }
 
 /**
@@ -713,7 +734,12 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         reason: "invalid_key",
         message: "The request carries different credentials",
       };
-    const parsed = parseGatewayKey(presented[0]!);
+    return verifyKey(presented[0]!);
+  };
+
+  /** The Gateway Key `text` names, when it is valid, active and unexpired. */
+  const verifyKey = async (text: string): Promise<Authentication> => {
+    const parsed = parseGatewayKey(text);
     if (!parsed)
       return {
         ok: false,
@@ -1213,6 +1239,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     abort: AbortController,
     session: ActiveSessionRun | undefined,
     internal?: "vision" | "search",
+    preread?: Buffer,
   ) => {
     let disconnected = false;
     const closed = new Promise<void>((resolve) =>
@@ -1276,13 +1303,17 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         phase: "local",
       });
     };
+    // A body read already comes with its memory reserved.
+    reserved = preread?.length ?? 0;
     try {
-      const bytes = await readBody(request, {
-        maxBytes: limits.maxRequestBytes,
-        timeoutMs: limits.requestBodyTimeoutMs,
-        signal: abort.signal,
-        memory: services.memory,
-      });
+      const bytes =
+        preread ??
+        (await readBody(request, {
+          maxBytes: limits.maxRequestBytes,
+          timeoutMs: limits.requestBodyTimeoutMs,
+          signal: abort.signal,
+          memory: services.memory,
+        }));
       reserved = bytes.length;
       const raw = object(parseJsonBody(bytes));
       const asked = route.gemini?.model ?? raw.model;
@@ -1467,15 +1498,109 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
    * Host and send no Origin; anything else is refused with 403 and a
    * rejection record, as for keyed routes.
    */
+  /**
+   * A model call with an authenticated key: a `session:` key's only while
+   * its Session has an active Run (409 `no_active_run` otherwise), and then
+   * cancelled with that Run. `preread` is the body, already read with its
+   * memory reserved.
+   */
+  const callRoute = async (
+    request: IncomingMessage,
+    response: ServerResponse,
+    route: CallRoute,
+    key: GatewayKeyRecord,
+    entry: ModelCallEntry,
+    started: number,
+    preread?: Buffer,
+  ) => {
+    entry.inbound.protocol = route.protocol;
+    let session: ActiveSessionRun | undefined;
+    if (key.scope.kind === "session") {
+      session = deps.sessions?.activeRun(key.scope.sessionId);
+      if (!session) {
+        if (preread) services.memory.give(preread.length);
+        await reject(
+          response,
+          entry,
+          "no_active_run",
+          failure(
+            409,
+            "no_active_run",
+            "No active Run owns this Session's model request",
+          ),
+          started,
+        );
+        return;
+      }
+      entry.runId = session.runId;
+      entry.generation = session.generation;
+    }
+    const abort = new AbortController();
+    const task = modelCall(
+      request,
+      response,
+      route,
+      key,
+      entry,
+      started,
+      abort,
+      session,
+      undefined,
+      preread,
+    );
+    if (key.scope.kind === "session") {
+      const id = key.scope.sessionId;
+      const calls = sessionCalls.get(id) ?? new Map();
+      sessionCalls.set(id, calls);
+      calls.set(task, abort);
+      void task.finally(() => {
+        calls.delete(task);
+        if (!calls.size) sessionCalls.delete(id);
+      });
+    }
+    await task;
+  };
+
+  /**
+   * What a ChatGPT-mode Codex with this key lists besides ChatGPT's models:
+   * the models the key may use, as `/v1/models` lists them.
+   */
+  const codexListing = async (
+    key: GatewayKeyRecord,
+  ): Promise<CodexListing | undefined> => {
+    const catalog = deps.codexCatalog;
+    if (!catalog) return undefined;
+    const models: CodexListedModel[] = shownAs(
+      key,
+      await visibleModels(key),
+    ).map((entry) => ({
+      slug: entry.id,
+      ...(entry.model?.contextWindow === undefined
+        ? {}
+        : { contextWindow: entry.model.contextWindow }),
+      efforts: entry.efforts ?? [],
+      images: entry.model?.inputModalities?.includes("image") === true,
+    }));
+    return {
+      entries: (first) => catalog(models, first),
+      tag: createHash("sha256")
+        .update(JSON.stringify(models))
+        .digest("hex")
+        .slice(0, 12),
+    };
+  };
+
   const codex = async (
     request: IncomingMessage,
     response: ServerResponse,
     url: URL,
-    path: string,
+    target: string,
     listener: "loopback" | "lan",
     occurredAt: number,
     started: number,
   ) => {
+    // ChatGPT-mode wiring's Gateway Key is no part of the path from here on.
+    const { path, key: keyText } = codexRoute(target);
     const refuse = (reason: string, message: string) =>
       reject(
         response,
@@ -1505,7 +1630,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         "origin_forbidden",
         "The Host header must name a loopback address",
       );
-    await codexPassthrough({
+    const relay = (extra: { body?: Buffer; modelsTag?: string } = {}) => ({
       request,
       response,
       path,
@@ -1513,7 +1638,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       backend: deps.codexBackend ?? CODEX_BACKEND,
       services,
       shutdown: shutdown.signal,
-      entry: (stream) => {
+      entry: (stream: boolean) => {
         const entry = baseEntry(
           "responses",
           path,
@@ -1524,7 +1649,106 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         entry.inbound.stream = stream;
         return entry;
       },
+      ...extra,
     });
+    let auth: Authentication | undefined;
+    let listing: CodexListing | undefined;
+    let bytes: Buffer | undefined;
+    let local:
+      | { key: GatewayKeyRecord; entry: ModelCallEntry; body: Buffer }
+      | undefined;
+    try {
+      auth = keyText === undefined ? undefined : await verifyKey(keyText);
+      const key = auth?.ok ? auth.key : undefined;
+      listing = key ? await codexListing(key) : undefined;
+      const method = request.method ?? "GET";
+      if (method === "GET" && path === `${CODEX_PATH}/models` && listing) {
+        touch(key!);
+        await codexModels(relay(), listing);
+        return;
+      }
+      if (method === "POST" && path === `${CODEX_PATH}/responses`) {
+        bytes = await readBody(request, {
+          maxBytes: limits.maxRequestBytes,
+          timeoutMs: limits.requestBodyTimeoutMs,
+          signal: shutdown.signal,
+          memory: services.memory,
+        });
+        let model: unknown;
+        try {
+          model = record(JSON.parse(bytes.toString("utf8")))?.model;
+        } catch {
+          model = undefined;
+        }
+        // HarnessHub's models are served here and never go to ChatGPT, nor
+        // does the client's ChatGPT sign-in go anywhere with them (Magpie:
+        // the namespace owns the route).
+        if (typeof model === "string" && model.includes("/")) {
+          const entry = baseEntry(
+            "responses",
+            path,
+            occurredAt,
+            auth?.key,
+            request.headers["user-agent"],
+          );
+          if (!key) {
+            services.memory.give(bytes.length);
+            await reject(
+              response,
+              entry,
+              auth?.ok === false ? auth.reason : "invalid_key",
+              failure(
+                401,
+                auth?.ok === false ? auth.reason : "invalid_key",
+                `${auth?.ok === false ? `${auth.message}. ` : ""}HarnessHub models need the Gateway Key that wiring Codex in ChatGPT mode puts in openai_base_url; wire Codex again`,
+              ),
+              started,
+            );
+            return;
+          }
+          local = { key, entry, body: bytes };
+          bytes = undefined;
+        }
+      }
+    } catch (error) {
+      if (bytes) services.memory.give(bytes.length);
+      if (!(error instanceof GatewayError))
+        log.info("gateway.store.unavailable", {
+          error:
+            error instanceof Error ? error.message.slice(0, 200) : "unknown",
+        });
+      await reply(
+        response,
+        "responses",
+        error instanceof GatewayError
+          ? failure(error.status, error.code, error.message)
+          : failure(503, "store_unavailable", "Gateway Keys cannot be read"),
+      );
+      return;
+    }
+    if (local) {
+      delete request.headers.authorization;
+      delete request.headers["chatgpt-account-id"];
+      touch(local.key);
+      await callRoute(
+        request,
+        response,
+        { protocol: "responses" },
+        local.key,
+        local.entry,
+        started,
+        local.body,
+      );
+      return;
+    }
+    const body = bytes;
+    bytes = undefined;
+    await codexPassthrough(
+      relay({
+        ...(body ? { body } : {}),
+        ...(listing ? { modelsTag: listing.tag } : {}),
+      }),
+    );
   };
 
   const serve = async (
@@ -1749,52 +1973,9 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
           }
           return;
         }
-        case "call": {
-          entry.inbound.protocol = route.call.protocol;
-          let session: ActiveSessionRun | undefined;
-          if (key.scope.kind === "session") {
-            session = deps.sessions?.activeRun(key.scope.sessionId);
-            if (!session) {
-              await reject(
-                response,
-                entry,
-                "no_active_run",
-                failure(
-                  409,
-                  "no_active_run",
-                  "No active Run owns this Session's model request",
-                ),
-                started,
-              );
-              return;
-            }
-            entry.runId = session.runId;
-            entry.generation = session.generation;
-          }
-          const abort = new AbortController();
-          const task = modelCall(
-            request,
-            response,
-            route.call,
-            key,
-            entry,
-            started,
-            abort,
-            session,
-          );
-          if (key.scope.kind === "session") {
-            const id = key.scope.sessionId;
-            const calls = sessionCalls.get(id) ?? new Map();
-            sessionCalls.set(id, calls);
-            calls.set(task, abort);
-            void task.finally(() => {
-              calls.delete(task);
-              if (!calls.size) sessionCalls.delete(id);
-            });
-          }
-          await task;
+        case "call":
+          await callRoute(request, response, route.call, key, entry, started);
           return;
-        }
       }
     } catch (error) {
       if (!(error instanceof GatewayError))

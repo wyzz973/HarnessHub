@@ -9,7 +9,7 @@
 export {
   applyWiring,
   detectDrift,
-  isKeyless,
+  isModelOptional,
   maskGatewayKeys,
   planWiring,
   resolveOptions,

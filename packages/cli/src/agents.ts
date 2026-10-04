@@ -41,6 +41,7 @@ const USAGE = `Usage:
           [--effort LEVEL]        the effort it starts with: none, minimal, low, medium,
                                   high, xhigh or max, as the agent takes them; --no-effort clears it
           [--option NAME=VALUE]...  an adapter option, such as codexAuth=chatgpt
+          [--no-model]            no model: the agent keeps its own (Codex with codexAuth=chatgpt)
   hh use <agent> <model>          the same as hh wire <agent> <model>
   hh wire <agent> --rotate        give the agent a new key; the old one stops working
   hh unwire <agent>               restore the agent's files and revoke its key
@@ -52,8 +53,9 @@ const USAGE = `Usage:
 
 Models are provider/model or group/<id>; --models and --hide also take provider/*
 and *. With --option codexAuth=chatgpt, Codex keeps its ChatGPT sign-in and its own
-models and only reaches ChatGPT through the gateway: no key, no model. Common
-options: --url URL, --data-dir DIR, --json, --yes (do not ask), --non-interactive.`;
+model and lists the gateway's models after ChatGPT's; its key is part of
+openai_base_url, and a model is optional. Common options: --url URL,
+--data-dir DIR, --json, --yes (do not ask), --non-interactive.`;
 
 function drift(agent: Agent): string {
   const wiring = agent.wiring;
@@ -146,6 +148,7 @@ async function wireCommand(args: string[], alias: boolean): Promise<void> {
     tier: { type: "string", multiple: true },
     effort: { type: "string" },
     "no-effort": { type: "boolean" },
+    "no-model": { type: "boolean" },
     option: { type: "string", multiple: true },
     rotate: { type: "boolean" },
   });
@@ -167,13 +170,19 @@ async function wireCommand(args: string[], alias: boolean): Promise<void> {
   const [id, model] = given as [string, string | undefined];
   if (values.effort !== undefined && values["no-effort"])
     throw new UsageError("Give --effort or --no-effort, not both");
+  if (model !== undefined && values["no-model"])
+    throw new UsageError("Give a model or --no-model, not both");
   const client = await ctx.client();
   const models = refs(values.models);
   const tiers = pairs(values.tier, "--tier");
   const options = pairs(values.option, "--option");
   // Absent choices keep the current wiring's; the daemon asks for a model when there is none.
   const input: AgentWiringInput = {
-    ...(model !== undefined ? { model } : {}),
+    ...(model !== undefined
+      ? { model }
+      : values["no-model"]
+        ? { model: null }
+        : {}),
     ...(models.length ? { models } : {}),
     ...(Object.keys(tiers).length
       ? { tiers: tiers as Partial<Record<WiringTier, string>> }

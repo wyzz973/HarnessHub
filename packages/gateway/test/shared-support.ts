@@ -408,6 +408,7 @@ export async function mount(
     | "features"
     | "secrets"
     | "timeZone"
+    | "codexCatalog"
   > = {},
 ): Promise<Mounted> {
   const clock = { now: Date.parse("2026-10-02T12:00:00.000Z") };

@@ -2016,7 +2016,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     group: "agents",
     request: "无参数。",
     response:
-      "200：items（Agent：id、name、protocol、keyDelivery、capabilities{tiers、efforts、options（各选项可取值，默认值在前）}、installation{status=installed|configured-only|not-found、executable、configDirectories}、wiring{model?、tiers?、effort?、options?、models（Agent 列出且 Key 可用的模型）、hidden（隐藏的模型）、keyId?、keyState=active|revoked|expired|missing|none、wiredAt、files、drift、driftError、attention?{code、message、at}（上次目录同步没有改写它的文件的原因）}|null）、nextCursor=null。自己登录的 Agent（Codex 的 codexAuth=chatgpt）没有 model 与 keyId，keyState 为 none。",
+      "200：items（Agent：id、name、protocol、keyDelivery、capabilities{tiers、efforts、options（各选项可取值，默认值在前）}、installation{status=installed|configured-only|not-found、executable、configDirectories}、wiring{model?、tiers?、effort?、options?、models（Agent 列出且 Key 可用的模型）、hidden（隐藏的模型）、keyId?、keyState=active|revoked|expired|missing|none、wiredAt、files、drift、driftError、attention?{code、message、at}（上次目录同步没有改写它的文件的原因）}|null）、nextCursor=null。保留自己模型的 Agent（Codex 的 codexAuth=chatgpt 且未指定模型）没有 model；在 Codex 的 ChatGPT 模式开始签发 Key 之前接线的记录没有 keyId，keyState 为 none。",
     implementation:
       "AgentWiringService.list：对每个支持的 Adapter 调用 detectAgent（只查 PATH 与配置目录，不执行 Agent）、读取 WiringRecord 与其 Key，并以当前网关地址调用 detectDrift。",
     effects: "只读；不读取 Agent 的认证文件，不返回 Key 文本。",
@@ -2047,14 +2047,14 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     title: "预览接线",
     group: "agents",
     request:
-      "路径参数 id；model（provider/model 或 group/<id>，缺省沿用当前模型）；models 为 Agent 可列出的模型（provider/model、provider/*、group/<id> 或 *，缺省沿用当前列表，首次为 *，即网关的全部模型、包括之后新增的）；tiers（capabilities.tiers 中各档的模型，缺省沿用当前，{} 清除）；effort（capabilities.efforts 之一，缺省沿用当前，null 清除）；options（capabilities.options，如 codexAuth=gateway-key|chatgpt，缺省沿用当前）。codexAuth=chatgpt 时不接受 model、models、tiers、effort。",
+      "路径参数 id；model（provider/model 或 group/<id>，缺省沿用当前模型，options 把 Agent 切换为保留自己模型时不沿用；null 表示不指定模型，只用于保留自己模型的 Agent）；models 为 Agent 可列出的模型（provider/model、provider/*、group/<id> 或 *，缺省沿用当前列表，首次为 *，即网关的全部模型、包括之后新增的）；tiers（capabilities.tiers 中各档的模型，缺省沿用当前，{} 清除）；effort（capabilities.efforts 之一，缺省沿用当前，null 清除）；options（capabilities.options，如 codexAuth=gateway-key|chatgpt，缺省沿用当前）。codexAuth=chatgpt 时模型可以不指定（Codex 保留自己的模型），这时不接受 tiers 与 effort。",
     response:
       "200：AgentWiringPlan：adapterId、protocol、keyDelivery、model?、keyId?、changed、files[]（id、path、format、exists、hash、changes[]、diff）；diff 中 Gateway Key 显示为 hhk_a_xxxx…，被替换的旧 Key 值为 <redacted>；HarnessHub 生成的整个文件（Codex 的模型目录）只显示大小，changes 中超过 2000 字符的值被截断。",
     implementation:
-      "AgentWiringService.plan：按网关的 provider 与路由组核对模型与各档模型（须由网关提供且未被隐藏），取窗口、输出上限、推理档位（reasoning 模型为 low/medium/high）、图像输入与原生协议，用一把不保存的临时 Key 调用 planWiring；自己登录的 Agent 不用 Key。",
+      "AgentWiringService.plan：按网关的 provider 与路由组核对模型与各档模型（须由网关提供且未被隐藏），取窗口、输出上限、推理档位（reasoning 模型为 low/medium/high）、图像输入与原生协议，用一把不保存的临时 Key 调用 planWiring。",
     effects: "只读；不写文件，不签发 Key。",
     errors:
-      "404 WIRING_ADAPTER_UNKNOWN；400 AGENT_MODEL_UNAVAILABLE（网关不提供的模型）、AGENT_WIRING_INVALID（缺模型，或自己登录的 Agent 收到模型等）、WIRING_TARGET_INVALID（Agent 没有的档位、effort 或选项）；409 AGENT_MODEL_IN_USE（所选模型被隐藏）、WIRING_CONFIG_UNPARSEABLE、WIRING_SYMLINK_ESCAPE、WIRING_PATH_CONFLICT、WIRING_UNSUPPORTED_STRUCTURE；503 GATEWAY_NOT_LISTENING；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+      "404 WIRING_ADAPTER_UNKNOWN；400 AGENT_MODEL_UNAVAILABLE（网关不提供的模型）、AGENT_WIRING_INVALID（缺模型，或保留自己模型的 Agent 没有模型却收到 tiers、effort）、WIRING_TARGET_INVALID（Agent 没有的档位、effort 或选项）；409 AGENT_MODEL_IN_USE（所选模型被隐藏）、WIRING_CONFIG_UNPARSEABLE、WIRING_SYMLINK_ESCAPE、WIRING_PATH_CONFLICT、WIRING_UNSUPPORTED_STRUCTURE；503 GATEWAY_NOT_LISTENING；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/agents-routes.ts",
     tests: ["tests/integration/agents-wiring.test.ts"],
     operationId: "hh_api_v1_plan_agent_wiring",
@@ -2068,7 +2068,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "路径参数 id；model、models、tiers、effort、options 同预览；expect 必填，为用户确认的计划（预览响应即可），按 files[].path、exists、hash 核对。",
     response: "200：接线后的 Agent。",
     implementation:
-      "AgentWiringService.wire：签发 agent:<id> 作用域、不过期的新 Key（modelAllow 为 models，未含 * 时加上 model 与各档模型；modelDeny 沿用当前隐藏列表），applyWiring 备份、原子写并回读校验，提交 WiringRecord（含 tiers、effort、options）后吊销旧 Key；任何失败都吊销新 Key。Key 文本只写入 Agent 的配置文件，守护进程不保存。codexAuth=chatgpt 时不签发 Key，只写 openai_base_url，并吊销之前的 Key。",
+      "AgentWiringService.wire：签发 agent:<id> 作用域、不过期的新 Key（modelAllow 为 models，未含 * 时加上 model 与各档模型；modelDeny 沿用当前隐藏列表），applyWiring 备份、原子写并回读校验，提交 WiringRecord（含 tiers、effort、options）后吊销旧 Key；任何失败都吊销新 Key。Key 文本只写入 Agent 的配置文件，守护进程不保存。codexAuth=chatgpt 时只写 openai_base_url（`<网关>/backend-api/codex/<Key>`）与指定的 model、model_reasoning_effort：Key 在路径中，Codex 自己的 ChatGPT 登录不变。",
     effects:
       "改写 Agent 的配置文件（备份在 <dataDir>/backups/wiring/）；写入 gateway_keys 与 wirings 表。",
     errors:
@@ -2088,7 +2088,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "AgentWiringService.rotate：以当前 model、tiers、effort、options 与 Key 的 modelAllow、modelDeny 重新接线，流程同接线（不核对预览）。",
     effects: "改写配置文件中的 Key；旧 Key 立即吊销。",
     errors:
-      "409 AGENT_NOT_WIRED、AGENT_KEYLESS（自己登录、没有 Key 的 Agent）；其余同接线；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+      "409 AGENT_NOT_WIRED；没有 Key 的旧记录（Codex 的 ChatGPT 模式开始签发 Key 之前接线）在轮换时得到第一把 Key；其余同接线；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/agents-routes.ts",
     tests: ["tests/integration/agents-wiring.test.ts"],
     operationId: "hh_api_v1_rotate_agent_key",
@@ -2125,7 +2125,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     effects:
       "改写 gateway_keys 中该 Key 的 modelDeny；按需改写 Agent 的配置文件（备份同接线）并更新 wirings 记录。",
     errors:
-      "400 AGENT_MODELS_INVALID；409 AGENT_NOT_WIRED、AGENT_KEYLESS、AGENT_KEY_INACTIVE（Key 已吊销或丢失）、AGENT_MODEL_IN_USE（隐藏了 Agent 正在用的模型或档位模型）、AGENT_KEY_NOT_IN_FILES（Agent 文件中已没有它的 Key，需 rotate）；其余同接线；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+      "400 AGENT_MODELS_INVALID；409 AGENT_NOT_WIRED、AGENT_KEYLESS（没有 Key 的旧记录，先轮换）、AGENT_KEY_INACTIVE（Key 已吊销或丢失）、AGENT_MODEL_IN_USE（隐藏了 Agent 正在用的模型或档位模型）、AGENT_KEY_NOT_IN_FILES（Agent 文件中已没有它的 Key，需 rotate）；其余同接线；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/agents-routes.ts",
     tests: ["tests/integration/agents-wiring.test.ts"],
     operationId: "hh_api_v1_set_agent_models",
