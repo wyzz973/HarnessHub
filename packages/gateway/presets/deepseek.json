@@ -29,7 +29,14 @@
   "patches": {
     "chat": {
       "patches": [
-        "developer-to-system"
+        "developer-to-system",
+        "max-tokens-field"
+      ],
+      "maxTokensField": "max_tokens"
+    },
+    "anthropic": {
+      "patches": [
+        "anthropic-strip-beta-fields"
       ]
     }
   }

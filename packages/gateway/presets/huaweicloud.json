@@ -46,5 +46,12 @@
   "models": {
     "source": "live"
   },
-  "notes": "Token Plan 面向西南-贵阳一的个人账号，额度只能在套餐端点使用；没有 Responses。"
+  "notes": "Token Plan 面向西南-贵阳一的个人账号，额度只能在套餐端点使用；没有 Responses。",
+  "patches": {
+    "anthropic": {
+      "patches": [
+        "anthropic-strip-beta-fields"
+      ]
+    }
+  }
 }

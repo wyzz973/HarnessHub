@@ -52,5 +52,18 @@
       "region": "cn"
     }
   ],
-  "notes": "Kimi 会员（Kimi Code）的编程端点，Key 在 Kimi Code 控制台创建；与 Moonshot 开放平台的 Key 不通用。"
+  "notes": "Kimi 会员（Kimi Code）的编程端点，Key 在 Kimi Code 控制台创建；与 Moonshot 开放平台的 Key 不通用。",
+  "patches": {
+    "anthropic": {
+      "patches": [
+        "anthropic-strip-beta-fields"
+      ]
+    },
+    "chat": {
+      "patches": [
+        "max-tokens-field"
+      ],
+      "maxTokensField": "max_tokens"
+    }
+  }
 }

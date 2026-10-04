@@ -22,5 +22,12 @@
   "models": {
     "source": "live"
   },
-  "notes": "在 LM Studio 中启动本机服务器（默认端口 1234）；默认不需要 Key，开启认证后再添加凭据。"
+  "notes": "在 LM Studio 中启动本机服务器（默认端口 1234）；默认不需要 Key，开启认证后再添加凭据。",
+  "patches": {
+    "anthropic": {
+      "patches": [
+        "anthropic-strip-beta-fields"
+      ]
+    }
+  }
 }

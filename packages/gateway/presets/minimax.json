@@ -53,5 +53,18 @@
       "region": "cn"
     }
   ],
-  "notes": "中国站的文档域名已从 minimaxi.com 改为 minimax.cn（Magpie 2e340f7 仍用 api.minimaxi.com）；国际站与中国站的 Key 不通用。"
+  "notes": "中国站的文档域名已从 minimaxi.com 改为 minimax.cn（Magpie 2e340f7 仍用 api.minimaxi.com）；国际站与中国站的 Key 不通用。",
+  "patches": {
+    "anthropic": {
+      "patches": [
+        "anthropic-strip-beta-fields"
+      ]
+    },
+    "chat": {
+      "patches": [
+        "max-tokens-field"
+      ],
+      "maxTokensField": "max_tokens"
+    }
+  }
 }

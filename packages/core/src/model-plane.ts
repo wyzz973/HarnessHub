@@ -56,8 +56,14 @@ export const providerPatches = [
   "anthropic-beta-allow",
   "thinking-off-unless-asked",
   "lift-additional-tools",
+  "anthropic-strip-beta-fields",
+  "merge-system-messages",
 ] as const;
 export type ProviderPatch = (typeof providerPatches)[number];
+
+/** The output-limit fields of Chat; `max-tokens-field` writes the one a provider takes. */
+export const maxTokensFields = ["max_tokens", "max_completion_tokens"] as const;
+export type MaxTokensField = (typeof maxTokensFields)[number];
 
 /** Optional request fields that the `drop-fields` patch may remove (03 section 5). */
 export const droppableFields = [
@@ -80,6 +86,11 @@ export interface ProviderPatchSet {
   dropFields?: DroppableField[];
   /** `anthropic-beta` values forwarded by `anthropic-beta-allow`. */
   anthropicBetaAllow?: string[];
+  /**
+   * The output-limit field `max-tokens-field` renames to (the other one is
+   * renamed); default `max_completion_tokens`.
+   */
+  maxTokensField?: MaxTokensField;
 }
 
 /** One upstream credential: an independent routing candidate and breaker unit. */

@@ -11,6 +11,7 @@ import {
   isModelPattern,
   isProviderId,
   parseModelRef,
+  maxTokensFields,
   providerPatches,
   reasoningEfforts,
   wireProtocols,
@@ -239,7 +240,8 @@ const patchSet: Check = (value) =>
   object(value) &&
   list(member(providerPatches))(value.patches) &&
   optional(value.dropFields, list(member(droppableFields))) &&
-  optional(value.anthropicBetaAllow, list(text(200)));
+  optional(value.anthropicBetaAllow, list(text(200))) &&
+  optional(value.maxTokensField, member(maxTokensFields));
 
 const record =
   (check: Check, keys: Check = text(512)): Check =>

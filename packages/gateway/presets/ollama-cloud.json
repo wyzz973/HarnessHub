@@ -22,5 +22,12 @@
   "models": {
     "source": "live"
   },
-  "notes": "Ollama 托管的云端模型，需要 API Key。"
+  "notes": "Ollama 托管的云端模型，需要 API Key。",
+  "patches": {
+    "anthropic": {
+      "patches": [
+        "anthropic-strip-beta-fields"
+      ]
+    }
+  }
 }

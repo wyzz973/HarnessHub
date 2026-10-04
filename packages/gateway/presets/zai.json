@@ -42,5 +42,18 @@
   "models": {
     "source": "live"
   },
-  "notes": "智谱的国际站。Coding Plan 的 Key 只能用于套餐自己的端点（--plan coding）。"
+  "notes": "智谱的国际站。Coding Plan 的 Key 只能用于套餐自己的端点（--plan coding）。",
+  "patches": {
+    "anthropic": {
+      "patches": [
+        "anthropic-strip-beta-fields"
+      ]
+    },
+    "chat": {
+      "patches": [
+        "max-tokens-field"
+      ],
+      "maxTokensField": "max_tokens"
+    }
+  }
 }

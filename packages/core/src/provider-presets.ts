@@ -9,6 +9,7 @@
 import { Ajv } from "ajv";
 import {
   droppableFields,
+  maxTokensFields,
   providerPatches,
   wireProtocols,
   type ApiKeyHeader,
@@ -350,6 +351,7 @@ export const providerPresetSchema = {
                 type: "array",
                 items: text(200),
               },
+              maxTokensField: { enum: [...maxTokensFields] },
             },
           },
         ]),

@@ -1027,7 +1027,7 @@ function prepare(call: Call, candidate: Candidate): Prepared {
       : { maxOutputTokens: candidate.model.maxOutputTokens }),
     includeUsage: true,
     maxTokensField: patches.has("max-tokens-field")
-      ? "max_completion_tokens"
+      ? (set?.maxTokensField ?? "max_completion_tokens")
       : "max_tokens",
     // Other protocols drop their fields from the encoded body below.
     dropParameters: chatUpstream ? drops : [],
@@ -1063,8 +1063,16 @@ function prepare(call: Call, candidate: Candidate): Prepared {
       },
     };
   }
-  if (patches.has("max-tokens-field") && "max_completion_tokens" in body)
+  if (patches.has("max-tokens-field") && settings.maxTokensField in body)
     applied.push("max-tokens-field");
+  // Normalization puts every system and developer message into the first.
+  if (
+    patches.has("merge-system-messages") &&
+    translation.body.messages.filter(
+      (message) => message.role === "system" || message.role === "developer",
+    ).length > 1
+  )
+    applied.push("merge-system-messages");
   const { upstream, unmapped } = encodeUpstream(
     call,
     candidate,

@@ -54,5 +54,12 @@
       "region": "cn"
     }
   ],
-  "notes": "按量付费，使用 TokenHub 自己的 API Key（不是 Token Plan 的 sk-tp- Key）；也提供其他厂商的模型。"
+  "notes": "按量付费，使用 TokenHub 自己的 API Key（不是 Token Plan 的 sk-tp- Key）；也提供其他厂商的模型。",
+  "patches": {
+    "anthropic": {
+      "patches": [
+        "anthropic-strip-beta-fields"
+      ]
+    }
+  }
 }

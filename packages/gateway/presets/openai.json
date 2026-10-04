@@ -21,5 +21,13 @@
   },
   "models": {
     "source": "live"
+  },
+  "patches": {
+    "chat": {
+      "patches": [
+        "max-tokens-field"
+      ],
+      "maxTokensField": "max_completion_tokens"
+    }
   }
 }

@@ -100,5 +100,12 @@
       "id": "qianfan-token-plan"
     }
   ],
-  "notes": "个人版与企业版 Token Plan 各用自己的 Key；套餐端点没有模型列表（/models 返回 404），模型为各套餐文档列出的名称。qianfan-code-latest 是控制台当前选定的模型。"
+  "notes": "个人版与企业版 Token Plan 各用自己的 Key；套餐端点没有模型列表（/models 返回 404），模型为各套餐文档列出的名称。qianfan-code-latest 是控制台当前选定的模型。",
+  "patches": {
+    "anthropic": {
+      "patches": [
+        "anthropic-strip-beta-fields"
+      ]
+    }
+  }
 }

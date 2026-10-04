@@ -88,11 +88,126 @@ const BODY_PATCHES: Readonly<Record<WireProtocol, readonly string[]>> = {
     "drop-fields",
     "include-usage",
     "json-schema-to-json-object",
+    "merge-system-messages",
   ],
-  responses: ["drop-fields"],
-  anthropic: ["drop-fields", "anthropic-beta-allow"],
+  responses: ["drop-fields", "merge-system-messages"],
+  anthropic: [
+    "drop-fields",
+    "anthropic-beta-allow",
+    "anthropic-strip-beta-fields",
+    "merge-system-messages",
+  ],
   gemini: ["drop-fields"],
 };
+
+/**
+ * The Anthropic Messages request fields of the generally available API;
+ * `anthropic-strip-beta-fields` removes every other top-level field.
+ */
+export const ANTHROPIC_STANDARD_FIELDS: ReadonlySet<string> = new Set([
+  "model",
+  "messages",
+  "max_tokens",
+  "system",
+  "metadata",
+  "stop_sequences",
+  "stream",
+  "temperature",
+  "top_k",
+  "top_p",
+  "tools",
+  "tool_choice",
+  "thinking",
+]);
+
+/** The text of a message's content: a string, or its text parts and blocks joined. */
+function contentText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      const value = record(part);
+      return typeof value?.text === "string" ? value.text : "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
+ * Chat: every system and developer message as one system message first.
+ * True when the messages changed.
+ */
+function mergeChatSystem(body: Record<string, unknown>): boolean {
+  if (!Array.isArray(body.messages)) return false;
+  const system: string[] = [];
+  const rest: unknown[] = [];
+  let count = 0;
+  for (const message of body.messages) {
+    const value = record(message);
+    if (value?.role === "system" || value?.role === "developer") {
+      count++;
+      const text = contentText(value.content);
+      if (text) system.push(text);
+    } else rest.push(message);
+  }
+  const first = record(body.messages[0]);
+  if (count === 0 || (count === 1 && first?.role === "system")) return false;
+  body.messages = [{ role: "system", content: system.join("\n\n") }, ...rest];
+  return true;
+}
+
+/** Responses: system and developer input messages appended to `instructions`. */
+function mergeResponsesSystem(body: Record<string, unknown>): boolean {
+  if (!Array.isArray(body.input)) return false;
+  const system: string[] = [];
+  const rest = body.input.filter((item) => {
+    const value = record(item);
+    if (
+      (value?.type === undefined || value.type === "message") &&
+      (value?.role === "system" || value?.role === "developer")
+    ) {
+      const text = contentText(value.content);
+      if (text) system.push(text);
+      return false;
+    }
+    return true;
+  });
+  if (rest.length === body.input.length) return false;
+  const instructions =
+    typeof body.instructions === "string" && body.instructions
+      ? [body.instructions]
+      : [];
+  body.input = rest;
+  body.instructions = [...instructions, ...system].join("\n\n");
+  return true;
+}
+
+/** Anthropic: `system` messages inside `messages` appended to the top-level `system`. */
+function mergeAnthropicSystem(body: Record<string, unknown>): boolean {
+  if (!Array.isArray(body.messages)) return false;
+  const system: string[] = [];
+  const rest = body.messages.filter((message) => {
+    const value = record(message);
+    if (value?.role !== "system") return true;
+    const text = contentText(value.content);
+    if (text) system.push(text);
+    return false;
+  });
+  if (rest.length === body.messages.length) return false;
+  body.messages = rest;
+  if (!system.length) return true;
+  if (Array.isArray(body.system))
+    body.system = [
+      ...body.system,
+      ...system.map((text) => ({ type: "text", text })),
+    ];
+  else
+    body.system = [
+      ...(typeof body.system === "string" && body.system ? [body.system] : []),
+      ...system,
+    ].join("\n\n");
+  return true;
+}
 
 /** A provider declares a patch this build does not implement for the endpoint. */
 export function unsupportedPatches(
@@ -137,15 +252,19 @@ export function passthroughBody(
       });
       if (changed) applied.push("developer-to-system");
     }
-    if (
-      patches.has("max-tokens-field") &&
-      patched.max_tokens !== undefined &&
-      patched.max_completion_tokens === undefined
-    ) {
-      patched.max_completion_tokens = patched.max_tokens;
-      delete patched.max_tokens;
-      applied.push("max-tokens-field");
+    if (patches.has("max-tokens-field")) {
+      // Either way: the provider takes one of the two fields.
+      const target = set?.maxTokensField ?? "max_completion_tokens";
+      const other =
+        target === "max_tokens" ? "max_completion_tokens" : "max_tokens";
+      if (patched[other] !== undefined && patched[target] === undefined) {
+        patched[target] = patched[other];
+        delete patched[other];
+        applied.push("max-tokens-field");
+      }
     }
+    if (patches.has("merge-system-messages") && mergeChatSystem(patched))
+      applied.push("merge-system-messages");
     if (
       patches.has("include-usage") &&
       patched.stream === true &&
@@ -164,6 +283,28 @@ export function passthroughBody(
       patched.response_format = { type: "json_object" };
       applied.push("json-schema-to-json-object");
     }
+  }
+  if (
+    protocol === "responses" &&
+    patches.has("merge-system-messages") &&
+    mergeResponsesSystem(patched)
+  )
+    applied.push("merge-system-messages");
+  if (protocol === "anthropic") {
+    if (patches.has("anthropic-strip-beta-fields")) {
+      // Strict Anthropic-compatible upstreams take the GA request only.
+      for (const field of Object.keys(patched))
+        if (!ANTHROPIC_STANDARD_FIELDS.has(field)) {
+          delete patched[field];
+          applied.push(`anthropic-strip-beta-fields:${field}`);
+        }
+    }
+    if (
+      (patches.has("anthropic-strip-beta-fields") ||
+        patches.has("merge-system-messages")) &&
+      mergeAnthropicSystem(patched)
+    )
+      applied.push("merge-system-messages");
   }
   if (applied.length) {
     if (protocol !== "gemini") patched.model = wireModel;

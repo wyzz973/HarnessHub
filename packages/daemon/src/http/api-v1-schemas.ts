@@ -8,6 +8,7 @@
 import { metadataFields } from "@harnesshub/core/model-metadata";
 import {
   droppableFields,
+  maxTokensFields,
   providerPatches,
   wireProtocols,
 } from "@harnesshub/core/model-plane";
@@ -176,6 +177,7 @@ const patchSet = {
     patches: { type: "array", items: { enum: [...providerPatches] } },
     dropFields: { type: "array", items: { enum: [...droppableFields] } },
     anthropicBetaAllow: strings(200, 100),
+    maxTokensField: { enum: [...maxTokensFields] },
   },
 } as const;
 const patches = {

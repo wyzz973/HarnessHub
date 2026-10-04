@@ -43,5 +43,18 @@
   "models": {
     "source": "live"
   },
-  "notes": "中国站与国际站的账号和 Key 不通用，按账号所在站点选择地域（--region cn|global）。"
+  "notes": "中国站与国际站的账号和 Key 不通用，按账号所在站点选择地域（--region cn|global）。",
+  "patches": {
+    "anthropic": {
+      "patches": [
+        "anthropic-strip-beta-fields"
+      ]
+    },
+    "chat": {
+      "patches": [
+        "max-tokens-field"
+      ],
+      "maxTokensField": "max_tokens"
+    }
+  }
 }

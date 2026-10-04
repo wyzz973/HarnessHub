@@ -373,13 +373,19 @@ for (const spec of AGENTS)
         name: "Strict fake upstream",
         kind: "custom",
         endpoints: { chat: `${upstream.url}/v1` },
-        // The strict upstream refuses OpenAI-only fields: the gateway asks
-        // for usage with stream_options, Codex sends parallel_tool_calls
-        // and Pi store.
+        // The strict upstream refuses OpenAI-only fields (the gateway asks
+        // for usage with stream_options, Codex sends parallel_tool_calls,
+        // Pi store and max_completion_tokens) and system messages after
+        // the first (MiMo), as strict Chat-compatible relays do.
         patches: {
           chat: {
-            patches: ["drop-fields"],
+            patches: [
+              "drop-fields",
+              "max-tokens-field",
+              "merge-system-messages",
+            ],
             dropFields: ["stream_options", "parallel_tool_calls", "store"],
+            maxTokensField: "max_tokens",
           },
         },
         models: {

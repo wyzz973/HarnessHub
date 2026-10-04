@@ -21,5 +21,12 @@
   "models": {
     "source": "live"
   },
-  "notes": "本机 Ollama 的默认地址；不需要 API Key。Responses 只支持无状态调用。"
+  "notes": "本机 Ollama 的默认地址；不需要 API Key。Responses 只支持无状态调用。",
+  "patches": {
+    "anthropic": {
+      "patches": [
+        "anthropic-strip-beta-fields"
+      ]
+    }
+  }
 }

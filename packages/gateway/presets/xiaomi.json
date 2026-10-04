@@ -65,5 +65,18 @@
   "models": {
     "source": "live"
   },
-  "notes": "Token Plan 的 tp- Key 只能用于所属地域的套餐域名；按量付费在 api.xiaomimimo.com。"
+  "notes": "Token Plan 的 tp- Key 只能用于所属地域的套餐域名；按量付费在 api.xiaomimimo.com。",
+  "patches": {
+    "anthropic": {
+      "patches": [
+        "anthropic-strip-beta-fields"
+      ]
+    },
+    "chat": {
+      "patches": [
+        "max-tokens-field"
+      ],
+      "maxTokensField": "max_tokens"
+    }
+  }
 }

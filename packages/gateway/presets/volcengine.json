@@ -86,5 +86,18 @@
   "models": {
     "source": "live"
   },
-  "notes": "Coding Plan 与 Agent Plan 的额度只能在各自的端点使用，按量付费端点单独计费。ark-code-latest 是控制台当前选定的模型。"
+  "notes": "Coding Plan 与 Agent Plan 的额度只能在各自的端点使用，按量付费端点单独计费。ark-code-latest 是控制台当前选定的模型。",
+  "patches": {
+    "anthropic": {
+      "patches": [
+        "anthropic-strip-beta-fields"
+      ]
+    },
+    "chat": {
+      "patches": [
+        "max-tokens-field"
+      ],
+      "maxTokensField": "max_tokens"
+    }
+  }
 }

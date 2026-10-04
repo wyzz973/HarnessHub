@@ -38,5 +38,12 @@
     "hy4-preview",
     "hy3"
   ],
-  "notes": "TokenHub 订阅套餐，一个 sk-tp- Key 用于通用与混元两个套餐；只有 Chat Completions 与 Anthropic Messages。"
+  "notes": "TokenHub 订阅套餐，一个 sk-tp- Key 用于通用与混元两个套餐；只有 Chat Completions 与 Anthropic Messages。",
+  "patches": {
+    "anthropic": {
+      "patches": [
+        "anthropic-strip-beta-fields"
+      ]
+    }
+  }
 }

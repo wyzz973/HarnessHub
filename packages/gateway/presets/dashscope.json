@@ -62,5 +62,18 @@
       "region": "cn"
     }
   ],
-  "notes": "北京地域的共享域名（阿里云称为旧式域名，仍可用，推荐改用 https://<WorkspaceId>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1）。Key 按地域区分，按 Key 所属地域选择 --region cn|intl|us；美国地域的 Anthropic 兼容端点未核对，未收录。兼容模式的 /models 接口未核对，刷新模型可能失败，届时请手动填写。"
+  "notes": "北京地域的共享域名（阿里云称为旧式域名，仍可用，推荐改用 https://<WorkspaceId>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1）。Key 按地域区分，按 Key 所属地域选择 --region cn|intl|us；美国地域的 Anthropic 兼容端点未核对，未收录。兼容模式的 /models 接口未核对，刷新模型可能失败，届时请手动填写。",
+  "patches": {
+    "anthropic": {
+      "patches": [
+        "anthropic-strip-beta-fields"
+      ]
+    },
+    "chat": {
+      "patches": [
+        "max-tokens-field"
+      ],
+      "maxTokensField": "max_tokens"
+    }
+  }
 }

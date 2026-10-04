@@ -42,5 +42,18 @@
   "models": {
     "source": "live"
   },
-  "notes": "Step Plan 的 Key 只能用于 step_plan 下的端点，按量付费端点会拒绝它。"
+  "notes": "Step Plan 的 Key 只能用于 step_plan 下的端点，按量付费端点会拒绝它。",
+  "patches": {
+    "anthropic": {
+      "patches": [
+        "anthropic-strip-beta-fields"
+      ]
+    },
+    "chat": {
+      "patches": [
+        "max-tokens-field"
+      ],
+      "maxTokensField": "max_tokens"
+    }
+  }
 }
