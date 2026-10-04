@@ -77,7 +77,7 @@ pnpm exec hh init --preset deepseek --credential-from-env DEEPSEEK_API_KEY \
   --agents claude,codex --model deepseek/<model> --yes
 ```
 
-`pnpm exec hh provider presets` 列出预设（厂商、中转与本地服务），`pnpm exec hh provider models <provider>` 列出某个 provider 的模型，写作 `provider/model`。向导使用预设的地址；本地服务（vLLM、LM Studio、Ollama）在其他地址时用 `--base` 给出。
+`pnpm exec hh provider presets` 列出预设（厂商、中转与本地服务），`pnpm exec hh provider models <provider>` 列出某个 provider 的模型，写作 `provider/model`。本地服务（vLLM、LM Studio、Ollama）向导会询问地址，回车沿用预设的地址；没有终端时用 `--base` 给出其他地址。同 id 的 provider 已存在时按原样使用，与它不同的选项会列出，在终端中询问怎样处理。
 
 **没有 API Key 时**，仓库自带的假 provider（[tools/fake-provider](tools/fake-provider/README.md)）可以代替。它不调用任何真实模型，只在回环地址监听，对每个请求回答固定的文字，足以试用这里的每一步。在另一个终端运行：
 

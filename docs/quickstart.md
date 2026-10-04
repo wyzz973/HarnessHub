@@ -15,7 +15,7 @@ Node、pnpm 的版本与克隆见 [README](../README.md#install-from-source)。`
 
 ## 向导：`hh init`
 
-另开一个终端运行 `pnpm exec hh init`，它把下面第 2 步与第 5 步[接入 Agent](#5-接入本机的编码-agent)合成一个流程：确认守护进程在运行（没有时提示先运行 `hh serve`，以 3 退出）；从按厂商、中转与本地分组的预设中选择（输入文字即搜索），再选区域与套餐，以隐藏输入读取 API Key（本地预设不需要）；刷新模型并显示数量；列出本机已安装的 Agent 供多选；选择默认模型，选了 Claude Code 时可为各档位另选模型；最后把所有 Agent 的改动合在一份预览中，确认后逐个接线，并提示 `hh usage`、`hh console` 等下一步。交互式向导使用预设的地址；本地服务（vLLM、LM Studio、Ollama）在其他地址时，用下面的非交互形式加 `--base`。同 id 的 provider 已存在时直接使用（不改它的地址）；已按相同选择接线、Key 有效且没有漂移的 Agent 不重新接线（重新接线会换一把新 Key）。还没有 provider 时，控制台首页显示同样的流程（Claude Code 的各档位跟随默认模型，之后在 Agent 详情中分别设置）。
+另开一个终端运行 `pnpm exec hh init`，它把下面第 2 步与第 5 步[接入 Agent](#5-接入本机的编码-agent)合成一个流程：确认守护进程在运行（没有时提示先运行 `hh serve`，以 3 退出）；从按厂商、中转与本地分组的预设中选择（输入文字即搜索），再选区域与套餐，以隐藏输入读取 API Key（本地预设不需要）；刷新模型并显示数量；列出本机已安装的 Agent 供多选；选择默认模型，选了 Claude Code 时可为各档位另选模型；最后把所有 Agent 的改动合在一份预览中，确认后逐个接线，并提示 `hh usage`、`hh console` 等下一步。本地预设（vLLM、LM Studio、Ollama）询问服务的基址，回车沿用预设的地址；“+base URL” 预设（Azure、另一台 HarnessHub 或 Magpie）必须给出基址，提示中的地址只是格式示例。同 id 的 provider 已存在时直接使用，不再询问区域、套餐与基址；预设、`--region`、`--plan` 或 `--base` 与它不同时，向导列出差异（现有 → 要求），只有地址不同时可以更新它的地址，也可以按原样使用或停止（以 4 退出，什么都不改）；区域、套餐与预设在添加时确定，要改它们须先 `hh provider remove` 再重新运行。它已有 Key 时不使用给出的 Key，并在结果中说明（更换 Key 用 `hh credential rotate`）。已按相同选择接线、Key 有效且没有漂移的 Agent 不重新接线（重新接线会换一把新 Key）。还没有 provider 时，控制台首页显示同样的流程（Claude Code 的各档位跟随默认模型，之后在 Agent 详情中分别设置）。
 
 没有终端时（stdin 不是 TTY、设置了 `CI` 或加 `--non-interactive`）由选项给出全部答案，缺少的以 2 退出，且在添加任何东西之前检查：
 
@@ -24,7 +24,7 @@ pnpm exec hh init --preset deepseek --credential-from-env DEEPSEEK_API_KEY \
   --agents claude,codex --model deepseek/deepseek-chat --tier haiku=deepseek/deepseek-chat --yes
 ```
 
-`--region`、`--plan` 默认取预设的第一个；`--base URL` 把预设的地址移到另一个基址（需要用户自填地址的预设，如另一台 HarnessHub，必须给出）；`--agents` 也接受 `all`（已安装的全部）与 `none`；没有 `--yes` 时只显示改动并以 4 退出，provider 已添加、Agent 不变；某个 Agent 接线失败时其余照常，命令以 1 退出。`--json` 输出 `{provider: {id, created, models}, agents: [{agent, model, tiers, outcome}]}`。每一步都经 SDK 调用 `/api/v1` 的现有接口（预设、provider、模型刷新、Agent 预览与接线），与 `hh provider add` 和 `hh wire` 相同。
+`--region`、`--plan` 默认取预设的第一个；`--base URL` 把预设的地址移到另一个基址（需要用户自填地址的预设，如另一台 HarnessHub，必须给出，同 id 的 provider 已存在时除外）；同 id 的 provider 已存在且这些选项与它不同时，以 2 退出并列出差异，不做任何改动；`--agents` 也接受 `all`（已安装的全部）与 `none`；没有 `--yes` 时只显示改动并以 4 退出，provider 已添加、Agent 不变；某个 Agent 接线失败时其余照常，命令以 1 退出。`--json` 输出 `{provider: {id, created, updated, keyUnused, models}, agents: [{agent, model, tiers, outcome}]}`（`updated` 表示已有的 provider 改到了给出的基址，`keyUnused` 表示它已有 Key、没有使用给出的 Key，两者只在为真时出现）。每一步都经 SDK 调用 `/api/v1` 的现有接口（预设、provider、模型刷新、Agent 预览与接线），与 `hh provider add` 和 `hh wire` 相同。
 
 ## 没有 API Key 时
 

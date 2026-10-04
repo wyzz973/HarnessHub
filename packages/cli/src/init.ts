@@ -49,7 +49,11 @@ Sets HarnessHub up in six steps: checks that the daemon runs (start it with
 hh serve), adds a provider from a preset with its key, refreshes its models,
 picks the agents installed here, picks a default model (and Claude Code's
 tiers), then shows every agent's changes together and wires them once you
-confirm. In a terminal it asks for what the options leave out.
+confirm. In a terminal it asks for what the options leave out, and for
+the address of a local server (Enter keeps the preset's) or of a +base URL
+preset. A provider of the preset's id that is here already is used as it is;
+options that differ from it are shown and asked about in a terminal, and
+fail without one.
 
 Options:
   --preset ID            the provider preset (hh provider presets lists them)
@@ -111,6 +115,10 @@ export interface InitResult {
     id: string;
     /** False when a provider of that id was there already and was used. */
     created: boolean;
+    /** It was there already, and its endpoints were moved to the given base URL. */
+    updated?: true;
+    /** It was there already with a key, which it keeps: the given key was not used. */
+    keyUnused?: true;
     models: number;
     /** Why refreshing the models failed; the preset's list was kept. */
     refreshError?: string;
@@ -253,6 +261,36 @@ async function askOption<T extends { id: string; name: string }>(
   );
 }
 
+/**
+ * The base URL of the server a local or `userEndpoint` preset's provider
+ * calls, or undefined (Enter) to keep a local preset's own address. A
+ * `userEndpoint` preset's endpoints only show their shape, so it needs an
+ * answer.
+ */
+async function askBase(
+  prompter: Prompter,
+  preset: ProviderPreset,
+  endpoints: Partial<Record<string, string>>,
+): Promise<string | undefined> {
+  const url = Object.values(endpoints).find((item) => item !== undefined);
+  const origin = url === undefined ? "" : new URL(url).origin;
+  const answer = await until(
+    prompter,
+    `Base URL of the server${origin ? (preset.userEndpoint ? ` (like ${origin})` : ` (Enter for ${origin})`) : ""}: `,
+    (text) => {
+      if (!text && !preset.userEndpoint) return "";
+      try {
+        rebase({}, text);
+        return text;
+      } catch (error) {
+        prompter.note(error instanceof Error ? error.message : String(error));
+        return undefined;
+      }
+    },
+  );
+  return answer || undefined;
+}
+
 /** The models a provider exposes, as Model Refs. */
 function exposed(provider: ProviderConfig): string[] {
   const { models } = provider;
@@ -313,8 +351,15 @@ function chosenAgents(
  * shown; agents are wired only after confirmation (or `answers.yes`), each
  * through its plan, and one that fails leaves the others wired.
  *
- * @throws UsageError for a missing or unknown answer without a terminal.
- * @throws ConfirmationRequired when the changes are declined or need `--yes`.
+ * A provider of the preset's id that is here already is used; options
+ * that differ from it (another preset, `--region`, `--plan`, `--base`) are
+ * shown and, in a terminal, the person updates its endpoints, keeps it as
+ * it is, or stops. A key given for it while it has one is not used.
+ *
+ * @throws UsageError for a missing or unknown answer, or an option that
+ *   differs from the provider that is here, without a terminal.
+ * @throws ConfirmationRequired when the changes are declined or need
+ *   `--yes`, or the person stops at a provider that differs.
  */
 export async function runInit(
   client: HarnessHubClient,
@@ -341,15 +386,22 @@ export async function runInit(
     throw new UsageError(
       "Name a preset with --preset (hh provider presets lists them)",
     );
+  // A provider of the preset's id is used as it is: its region, plan and
+  // address are not asked for, and options that differ from it are asked
+  // about below.
+  const existing = (await client.providers.list()).items.find(
+    (item) => item.id === preset.id,
+  );
+  const asking = existing ? undefined : prompter;
   const region =
     answers.region ??
-    (prompter && preset.regions
-      ? (await askOption(prompter, "Region", preset.regions)).id
+    (asking && preset.regions
+      ? (await askOption(asking, "Region", preset.regions)).id
       : undefined);
   const plan =
     answers.plan ??
-    (prompter && preset.plans
-      ? (await askOption(prompter, "Plan", preset.plans)).id
+    (asking && preset.plans
+      ? (await askOption(asking, "Plan", preset.plans)).id
       : undefined);
   let chosen: ReturnType<typeof choosePreset>;
   try {
@@ -360,20 +412,86 @@ export async function runInit(
     );
   }
   let base = answers.base;
-  if (base === undefined && preset.userEndpoint) {
-    if (!prompter)
-      throw new UsageError(
-        `The preset ${preset.id} needs its base URL: give --base URL`,
+  if (
+    base === undefined &&
+    asking &&
+    (preset.userEndpoint || preset.kind === "local")
+  )
+    base = await askBase(asking, preset, chosen.preset.endpoints);
+  else if (base === undefined && !existing && preset.userEndpoint)
+    throw new UsageError(
+      `The preset ${preset.id} needs its base URL: give --base URL`,
+    );
+
+  // Options that differ from the provider that is here are shown, then
+  // asked about; without a terminal they fail before anything changes.
+  let moveTo: Record<string, string> | undefined;
+  if (existing) {
+    const here: Partial<Record<string, string>> = existing.endpoints;
+    const moved = Object.fromEntries(
+      Object.entries(
+        base === undefined ? {} : rebase(chosen.preset.endpoints, base),
+      ).filter(
+        ([protocol, url]) => here[protocol]?.replace(/\/+$/, "") !== url,
+      ),
+    );
+    const fixed = [
+      ...(existing.preset !== preset.id
+        ? [`  preset     ${existing.preset ?? "(none)"} → ${preset.id}`]
+        : []),
+      ...(answers.region !== undefined && answers.region !== existing.region
+        ? [`  region     ${existing.region ?? "(none)"} → ${answers.region}`]
+        : []),
+      ...(answers.plan !== undefined && answers.plan !== existing.plan
+        ? [`  plan       ${existing.plan ?? "(none)"} → ${answers.plan}`]
+        : []),
+    ];
+    const lines = [
+      ...fixed,
+      ...Object.entries(moved).map(
+        ([protocol, url]) =>
+          `  ${protocol.padEnd(10)} ${here[protocol] ?? "(none)"} → ${url}`,
+      ),
+    ];
+    if (lines.length) {
+      const text = `The provider ${existing.id} is already here and differs from what was asked (here → asked):\n${lines.join("\n")}`;
+      const remove = `remove it with hh provider remove ${existing.id}, then run hh init again`;
+      if (!prompter)
+        throw new UsageError(
+          `${text}\nLeave out the options that differ to use it as it is, or ${remove}.`,
+        );
+      prompter.note(
+        fixed.length
+          ? `${text}\nIts preset, region and plan are those it was added with; to change them, ${remove}.`
+          : text,
       );
-    base = await until(prompter, "Base URL of the server: ", (answer) => {
-      try {
-        rebase({}, answer);
-        return answer;
-      } catch (error) {
-        prompter.note(error instanceof Error ? error.message : String(error));
-        return undefined;
-      }
-    });
+      const choice = await until(
+        prompter,
+        fixed.length
+          ? "Use it as it is (k), or stop (s)? "
+          : "Update its endpoints (u), use it as it is (k), or stop (s)? ",
+        (answer) => {
+          const picked =
+            /^u(pdate)?$/i.test(answer) && !fixed.length
+              ? "update"
+              : /^k(eep)?$/i.test(answer)
+                ? "keep"
+                : /^s(top)?$/i.test(answer)
+                  ? "stop"
+                  : undefined;
+          if (!picked)
+            prompter.note(
+              fixed.length ? "Answer k or s." : "Answer u, k or s.",
+            );
+          return picked;
+        },
+      );
+      if (choice === "stop")
+        throw new ConfirmationRequired(
+          `Stopped; the provider ${existing.id} and the agents were not changed.`,
+        );
+      if (choice === "update") moveTo = moved;
+    }
   }
   if (!prompter && answers.agents !== undefined && answers.agents !== "none") {
     // Without a terminal, every answer is checked before anything is added.
@@ -393,8 +511,6 @@ export async function runInit(
         "Give the agents' default model with --model PROVIDER/MODEL",
       );
   }
-  const providers = (await client.providers.list()).items;
-  const existing = providers.find((item) => item.id === preset.id);
   const methods = preset.auth.methods;
   let credential = answers.credential;
   const needsKey = !existing?.credentials.length && methods.includes("api-key");
@@ -417,14 +533,26 @@ export async function runInit(
   // The provider: added, or the one of that id used.
   let provider: ProviderConfig;
   let created = false;
+  let keyUnused = false;
   if (existing) {
-    note(`Using the provider ${existing.id} that is already here.`);
     provider = existing;
+    if (moveTo) {
+      provider = await client.providers.update(existing.id, {
+        endpoints: moveTo,
+      });
+      note(`Moved the endpoints of ${existing.id} to ${base}.`);
+    } else note(`Using the provider ${existing.id} that is already here.`);
     if (credential !== undefined && !existing.credentials.length)
       await client.credentials.add(existing.id, {
         name: "default",
         value: credential,
       });
+    else if (credential !== undefined) {
+      keyUnused = true;
+      note(
+        `${existing.id} keeps its key; the given one is not used (hh credential rotate ${existing.id} <credential> replaces it).`,
+      );
+    }
   } else {
     provider = await client.providers.create({
       preset: preset.id,
@@ -463,6 +591,8 @@ export async function runInit(
     provider: {
       id: provider.id,
       created,
+      ...(moveTo ? { updated: true as const } : {}),
+      ...(keyUnused ? { keyUnused: true as const } : {}),
       models: models.length,
       ...(refreshError ? { refreshError } : {}),
     },
@@ -678,7 +808,7 @@ function sameWiring(agent: Agent, input: AgentWiringInput): boolean {
 function summary(result: InitResult): string {
   const { provider } = result;
   return [
-    `Provider ${provider.id}: ${provider.models} model${provider.models === 1 ? "" : "s"}${provider.created ? "" : " (it was here already)"}${provider.refreshError ? `; refreshing them failed: ${provider.refreshError}` : ""}.`,
+    `Provider ${provider.id}: ${provider.models} model${provider.models === 1 ? "" : "s"}${provider.created ? "" : ` (it was here already${provider.updated ? ", its endpoints moved" : ""}${provider.keyUnused ? "; it keeps its key, the given one was not used" : ""})`}${provider.refreshError ? `; refreshing them failed: ${provider.refreshError}` : ""}.`,
     ...result.agents.map((item) =>
       item.outcome === "failed"
         ? `Not wired: ${item.agent}: ${item.error}`

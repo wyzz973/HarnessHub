@@ -197,13 +197,14 @@ void test("hh init without a terminal: preset, key from the environment, agents 
   assert.match(unconfirmed.stderr, /pass --yes/);
   assert.equal((await on.client.agents.get("claude")).wiring, null);
 
-  // With --yes: the provider is reused, its models are refreshed, both
-  // agents are wired, and Claude Code's call reaches the upstream with the key.
+  // With --yes: the provider is reused (it keeps the key it was added
+  // with, which it says), its models are refreshed, both agents are wired,
+  // and Claude Code's call reaches the upstream with the key.
   const done = await hh(on.directory, [...options, "--yes"], env);
   assert.equal(done.code, 0, done.stderr);
   assert.match(
     done.stdout,
-    /Provider harnesshub-remote: 1 model \(it was here already\)\./,
+    /Provider harnesshub-remote: 1 model \(it was here already; it keeps its key, the given one was not used\)\./,
   );
   assert.match(
     done.stdout,
@@ -231,7 +232,12 @@ void test("hh init without a terminal: preset, key from the environment, agents 
     provider: { id: string; created: boolean; models: number };
     agents: Array<{ agent: string; outcome: string }>;
   };
-  assert.deepEqual(result.provider, { id: PRESET, created: false, models: 1 });
+  assert.deepEqual(result.provider, {
+    id: PRESET,
+    created: false,
+    keyUnused: true,
+    models: 1,
+  });
   assert.deepEqual(
     result.agents.map((item) => [item.agent, item.outcome]),
     [
@@ -282,6 +288,8 @@ void test("hh init in a terminal: search a preset, give its base URL and key, pi
     [/^Preset/, "remote"],
     [/^Preset/, "nothing-like-this"],
     [/^Preset/, PRESET],
+    // Its endpoints only show the shape, so Enter takes no default.
+    [/^Base URL of the server \(like http:\/\/127\.0\.0\.1:3180\): $/, ""],
     [/^Base URL/, "not a url"],
     [/^Base URL/, on.fake.url],
     [/^API key for HarnessHub/, KEY],
@@ -359,5 +367,241 @@ void test("hh init in a terminal: declining leaves the agents as they were; a lo
   assert.equal(
     local.asked.some((question) => /API key/.test(question)),
     false,
+  );
+});
+
+void test("hh init without a terminal: options that differ from the provider that is here fail and say what differs", async (t) => {
+  const on = await machine(t);
+  const common = [
+    "--agents",
+    "none",
+    "--url",
+    on.url,
+    "--data-dir",
+    on.dataDir,
+  ];
+  const env = { INIT_UPSTREAM_KEY: KEY };
+  const added = await hh(
+    on.directory,
+    [
+      "init",
+      "--preset",
+      PRESET,
+      "--base",
+      on.fake.url,
+      "--credential-from-env",
+      "INIT_UPSTREAM_KEY",
+      ...common,
+    ],
+    env,
+  );
+  assert.equal(added.code, 0, added.stderr);
+
+  // Another --base: nothing changes, and the message names both addresses.
+  const moved = await hh(on.directory, [
+    "init",
+    "--preset",
+    PRESET,
+    "--base",
+    "http://127.0.0.1:9",
+    ...common,
+  ]);
+  assert.equal(moved.code, 2, moved.stderr);
+  assert.match(
+    moved.stderr,
+    /^Error: The provider harnesshub-remote is already here and differs from what was asked \(here → asked\):\n/,
+  );
+  assert.ok(
+    moved.stderr.includes(
+      `  chat       ${on.fake.url}/v1 → http://127.0.0.1:9/v1\n`,
+    ),
+    moved.stderr,
+  );
+  assert.match(
+    moved.stderr,
+    /Leave out the options that differ to use it as it is, or remove it with hh provider remove harnesshub-remote/,
+  );
+  assert.equal(
+    (await on.client.providers.get(PRESET)).endpoints.chat,
+    `${on.fake.url}/v1`,
+  );
+  // Without --base the provider that is here is used; this preset otherwise
+  // needs one.
+  const reused = await hh(on.directory, [
+    "init",
+    "--preset",
+    PRESET,
+    ...common,
+  ]);
+  assert.equal(reused.code, 0, reused.stderr);
+  assert.match(
+    reused.stdout,
+    /Provider harnesshub-remote: 1 model \(it was here already\)\./,
+  );
+
+  // A region other than the one it was added with, and a provider of the
+  // preset's id that was not added from it. (Neither calls an upstream.)
+  await on.client.providers.create({
+    preset: "moonshot",
+    region: "cn",
+    endpoints: { chat: `${on.fake.url}/v1` },
+    credential: { value: KEY },
+  });
+  const region = await hh(on.directory, [
+    "init",
+    "--preset",
+    "moonshot",
+    "--region",
+    "global",
+    ...common,
+  ]);
+  assert.equal(region.code, 2, region.stderr);
+  assert.match(region.stderr, /\n {2}region {5}cn → global\n/);
+  assert.equal((await on.client.providers.get("moonshot")).region, "cn");
+  await on.client.providers.create({
+    id: "ollama",
+    endpoints: { chat: `${on.fake.url}/v1` },
+  });
+  const custom = await hh(on.directory, [
+    "init",
+    "--preset",
+    "ollama",
+    ...common,
+  ]);
+  assert.equal(custom.code, 2, custom.stderr);
+  assert.match(custom.stderr, /\n {2}preset {5}\(none\) → ollama\n/);
+});
+
+void test("hh init in a terminal: a local preset's address defaults to its own; a provider that is here is used, moved or left on request", async (t) => {
+  const on = await machine(t);
+  const first = await startFakeProvider({
+    models: ["local-sim"],
+    chunkDelayMs: 0,
+  });
+  t.after(() => first.close());
+  const second = await startFakeProvider({
+    models: ["moved-sim"],
+    chunkDelayMs: 0,
+  });
+  t.after(() => second.close());
+
+  // A new local provider: the question offers the preset's address.
+  const fresh = scripted([
+    [/^Preset/, "ollama"],
+    [
+      /^Base URL of the server \(Enter for http:\/\/127\.0\.0\.1:11434\): $/,
+      first.url,
+    ],
+    [/^Agents to wire/, "none"],
+  ]);
+  const added = await runInit(
+    on.client,
+    { yes: false },
+    fresh,
+    () => undefined,
+  );
+  assert.deepEqual(added.provider, { id: "ollama", created: true, models: 1 });
+  assert.equal(
+    (await on.client.providers.get("ollama")).endpoints.chat,
+    `${first.url}/v1`,
+  );
+
+  // Here already, nothing differs: no address question, the provider is used.
+  const same = scripted([[/^Agents to wire/, "none"]]);
+  const used = await runInit(
+    on.client,
+    { preset: "ollama", yes: false },
+    same,
+    () => undefined,
+  );
+  assert.deepEqual(used.provider, { id: "ollama", created: false, models: 1 });
+  assert.match(
+    same.notes.join("\n"),
+    /Using the provider ollama that is already here/,
+  );
+
+  // Another --base: what differs is shown, then stop, keep or update.
+  const differs = `  chat       ${first.url}/v1 → ${second.url}/v1`;
+  const stop = scripted([
+    [
+      /^Update its endpoints \(u\), use it as it is \(k\), or stop \(s\)\? $/,
+      "x",
+    ],
+    [/^Update its endpoints/, "s"],
+  ]);
+  await assert.rejects(
+    runInit(
+      on.client,
+      { preset: "ollama", base: second.url, yes: false },
+      stop,
+      () => undefined,
+    ),
+    /Stopped; the provider ollama and the agents were not changed/,
+  );
+  assert.ok(
+    stop.notes.some((note) => note.includes(differs)),
+    stop.notes.join("\n"),
+  );
+  assert.ok(stop.notes.includes("Answer u, k or s."));
+  const keep = scripted([
+    [/^Update its endpoints/, "k"],
+    [/^Agents to wire/, "none"],
+  ]);
+  const kept = await runInit(
+    on.client,
+    { preset: "ollama", base: second.url, yes: false },
+    keep,
+    () => undefined,
+  );
+  assert.deepEqual(kept.provider, { id: "ollama", created: false, models: 1 });
+  assert.equal(
+    (await on.client.providers.get("ollama")).endpoints.chat,
+    `${first.url}/v1`,
+  );
+  const update = scripted([
+    [/^Update its endpoints/, "u"],
+    [/^Agents to wire/, "none"],
+  ]);
+  const updated = await runInit(
+    on.client,
+    { preset: "ollama", base: second.url, yes: false },
+    update,
+    () => undefined,
+  );
+  assert.deepEqual(updated.provider, {
+    id: "ollama",
+    created: false,
+    updated: true,
+    models: 1,
+  });
+  // Every endpoint moved, and the models are the moved server's.
+  const provider = await on.client.providers.get("ollama");
+  assert.equal(provider.endpoints.chat, `${second.url}/v1`);
+  assert.equal(provider.endpoints.anthropic, second.url);
+  assert.deepEqual(
+    provider.models.list.map((model) => model.id),
+    ["moved-sim"],
+  );
+
+  // Enter keeps the preset's own address. Nothing listens there in a test,
+  // so the model refresh (an upstream call) is left out.
+  const offline = Object.create(on.client) as HarnessHubClient;
+  Object.defineProperty(offline, "providers", {
+    value: {
+      ...on.client.providers,
+      refreshModels: (id: string) => on.client.providers.get(id),
+    },
+  });
+  const enter = scripted([
+    [/^Preset/, "lmstudio"],
+    [/^Base URL of the server \(Enter for http:\/\/127\.0\.0\.1:1234\): $/, ""],
+    [/^API key for LM Studio.*Enter for none/, ""],
+    [/^Agents to wire/, "none"],
+  ]);
+  const local = await runInit(offline, { yes: false }, enter, () => undefined);
+  assert.equal(local.provider.created, true);
+  assert.equal(
+    (await on.client.providers.get("lmstudio")).endpoints.chat,
+    "http://127.0.0.1:1234/v1",
   );
 });

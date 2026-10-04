@@ -75,7 +75,7 @@ pnpm exec hh init --preset deepseek --credential-from-env DEEPSEEK_API_KEY \
   --agents claude,codex --model deepseek/<model> --yes
 ```
 
-`pnpm exec hh provider presets` lists the presets (vendors, relays and local servers) and `pnpm exec hh provider models <provider>` the models of one, as `provider/model`. The wizard keeps a preset's address; for a local server elsewhere (vLLM, LM Studio or Ollama), give it with `--base`.
+`pnpm exec hh provider presets` lists the presets (vendors, relays and local servers) and `pnpm exec hh provider models <provider>` the models of one, as `provider/model`. For a local server (vLLM, LM Studio or Ollama) the wizard asks for its address, and Enter keeps the preset's; without a terminal, give another one with `--base`. A provider of the preset's id that is here already is used as it is; options that differ from it are listed, and asked about in a terminal.
 
 **Without an API key**, the repository's fake provider ([tools/fake-provider](tools/fake-provider/README.md), in Chinese) stands in for one. It calls no real model, listens on loopback only and answers every request with fixed text, which is enough to try every step here. In another terminal:
 
