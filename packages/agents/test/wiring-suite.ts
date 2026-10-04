@@ -63,6 +63,12 @@ export interface AdapterFixture {
     empty: Readonly<Record<string, string>>;
     existing: Readonly<Record<string, string>>;
   };
+  /**
+   * Files in which wiring replaces an object of the user's own (a provider
+   * slot it takes over): a key-level unwire writes that object back by value,
+   * so the file is compared parsed rather than byte for byte.
+   */
+  restoresByValue?: readonly string[];
 }
 
 async function rejectsWith(
@@ -257,7 +263,18 @@ export function adapterSuite(id: string, fixture: AdapterFixture): void {
     }
     const result = await unwire(record, context);
     assert.ok(result.files.every((file) => file.action === "reverse-patched"));
-    assert.deepEqual(await snapshot(context.home), expected);
+    const after = await snapshot(context.home);
+    assert.deepEqual(Object.keys(after).sort(), Object.keys(expected).sort());
+    for (const file of plan.files) {
+      const relative = path.relative(context.home, file.path);
+      if (fixture.restoresByValue?.includes(relative))
+        assert.deepEqual(
+          editors[file.format].parse(after[relative]!),
+          editors[file.format].parse(expected[relative]!),
+          relative,
+        );
+      else assert.equal(after[relative], expected[relative], relative);
+    }
     assert.doesNotMatch(await allText(context.home), /hhk_/);
   });
 

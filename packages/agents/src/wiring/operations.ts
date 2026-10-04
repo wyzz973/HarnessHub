@@ -589,7 +589,7 @@ async function planFiles(
         )
       : undefined;
     const after = inFileSync(file, () => {
-      const current = before.text ?? "";
+      const current = before.text ?? spec.initial ?? "";
       const document = editor.parse(current);
       // Entries owned by the previous wiring that the new one no longer sets.
       const stale = (prior?.manifest.owned ?? []).filter(
@@ -894,7 +894,7 @@ async function verifyWritten(plan: FilePlan, hash: string): Promise<void> {
   inFileSync(plan.path, () =>
     verifyText(
       plan.editor,
-      plan.before ?? "",
+      plan.before ?? plan.spec.initial ?? "",
       decodeText(state.bytes, plan.path).text,
       plan.operations,
       plan.pruned,

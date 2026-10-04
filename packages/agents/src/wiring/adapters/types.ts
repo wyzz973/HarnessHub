@@ -47,6 +47,13 @@ export interface AdapterFile {
   readonly id: string;
   readonly format: ConfigFormat;
   locate(environment: AdapterEnvironment): FileLocation;
+  /**
+   * The text a missing file starts from before the settings are applied,
+   * for an agent that refuses a file without some entry of its own (such as
+   * a schema version); default: empty. Unwire of an unchanged file still
+   * deletes it.
+   */
+  readonly initial?: string;
 }
 
 export interface AdapterSetting {
