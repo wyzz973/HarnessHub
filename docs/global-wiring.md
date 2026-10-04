@@ -41,7 +41,7 @@ pnpm exec hh unwire codex                             # 还原配置并吊销 Ke
 | `applyWiring(adapterId, target, ctx, {previous?, expect?})` | 在该 Adapter 的跨进程锁内重新计划；`expect` 为用户确认过的计划，文件哈希不一致即 `WIRING_CONCURRENT_MODIFICATION`。先保存原始字节，再逐个文件原子写并回读校验；任一步失败，已写文件恢复为写前字节，错误的 `rollback` 逐个报告。返回待持久化的记录 |
 | `unwire(record, ctx)` | 文件哈希等于 `afterHash` 时写回原始字节（接线时新建的文件则删除，连同为它新建且仍为空的目录）；用户之后改过文件时，只把 HarnessHub 写过的键恢复为原值或删除，其余修改保留。可重复执行 |
 | `detectAgent(adapterId, ctx)` | 只看 `ctx.env` 的 PATH 与 Adapter 的配置目录，判断 `installed`、`configured-only` 或 `not-found`；不执行任何程序 |
-| `detectDrift(record, ctx, {baseUrl?})` | 只读。基址字段缺失、Key 字段缺失或换成别的 Key 为 `unwired`；基址指向别处为 `foreign-gateway`；其他写过的字段被改为 `replaced`。基址按所选模型定位（Grok 每个模型一张表，只有所选模型那张的基址算基址字段）。`bypassed` 与 `stale-key` 需要网关账本，不在本库 |
+| `detectDrift(record, ctx, {baseUrl?})` | 只读。基址字段缺失、Key 字段缺失或换成别的 Key 为 `unwired`；基址指向别处为 `foreign-gateway`；其他写过的字段被改为 `replaced`。基址按所选模型定位（Grok 每个模型一张表，只有所选模型那张的基址算基址字段）；列表按项、项内按键比较，Key 与基址同在一个列表中时（T3 Code 的 `environment`）换成别的 Key 记为 `unwired`。`bypassed` 与 `stale-key` 需要网关账本，不在本库 |
 
 `target` 为 `{baseUrl, keyText, keyId, model, models[]}`：`baseUrl` 是网关根地址（如 `http://127.0.0.1:3180`），各 Adapter 按协议自行追加 `/v1`；`keyText` 必须是 `agent` 作用域且与 `keyId` 一致的 Gateway Key；`models` 带 `/v1/models` 的窗口与输出上限。`ctx` 为 `{home, dataDir, env?, clock?}`：`home` 必填，库从不读取 `os.homedir()` 或 `process.env`，Agent 的目录变量只来自显式的 `env`。
 
@@ -92,6 +92,8 @@ BOM 与换行风格（LF/CRLF）保持原样。回读校验用真实解析器确
 | `grok` Grok Build | `config.toml`（`${GROK_HOME:-~/.grok}`） | 每个模型一张 `[model."harnesshub/<ref>"]`（`model`、`name`、`base_url`、`api_key`、`api_backend = "chat_completions"`、已知的 `context_window`）；`[models] default`；`[features] campaigns = false`，防止 xAI 的远程 campaign 改掉默认模型 | Chat | 漂移按所选模型那张表的 `base_url` 判断 `foreign-gateway` |
 | `qoder` Qoder、`qoder-cn` Qoder CN | `settings.json`（`${QODER_CONFIG_DIR:-~/.qoder}`；`${QODERCN_CONFIG_DIR:-~/.qoder-cn}`） | `providers.harnesshub`（`protocol: openai`、`baseUrl`、`apiKey`、`model`、`models[]` 含 `capabilities`、`contextWindow`、`maxOutputTokens`）、`model.name = "harnesshub/<ref>"` | Chat | Qoder 只对已登录且套餐含 BYOK 的账号启用自定义 provider，否则接线不生效 |
 | `cline` Cline CLI | `settings/providers.json` 与 `settings/models.json`（`$CLINE_DATA_DIR`，否则 `${CLINE_DIR:-~/.cline}/data`） | 接管内置的 `providers.openai-compatible`（Cline 拒绝自定义 provider，cline/cline#14180）：`settings` 的 `provider`、`apiKey`、`model`、`baseUrl`，`tokenSource: manual`；`lastUsedProvider`；`models.json` 同名条目的 `provider` 与 `models` | Chat | 新建的文件从 `{"version": 1}` 开始；原槽位在还原时按值写回；Magpie 写的 `updatedAt` 与 VS Code 扩展状态（`globalState.json`、`secrets.json`）不写 |
+| `pencil` Pencil | `~/.pencil/models.json` | `providers.harnesshub`（Pi 格式，`api: openai-completions`、`apiKey`、每个模型带 Pencil 写的字段，窗口与输出未知时取 Pi 的默认值 128000 与 16384） | Chat | 只让模型出现在 Pencil 的选择器中，不写所选模型；没有命令，按 `~/.pencil` 判断安装 |
+| `t3code` T3 Code | `userdata/settings.json`（`${T3CODE_HOME:-~/.t3}`） | `providerInstances.harnesshub`（`driver: claudeAgent`、`environment` 列表中的 `ANTHROPIC_BASE_URL`（网关根）与 `ANTHROPIC_AUTH_TOKEN`，均 `sensitive: false`；`config.customModels[]`） | Anthropic（经 Claude Code） | 只让模型出现在 T3 的选择器中；Claude Code 自己 `settings.json` 的 `env` 若指向别处仍然优先；没有命令，按 `~/.t3/userdata` 判断安装 |
 
 Shell 环境中已有的同名变量优先于 dotenv 文件（Gemini、Qwen），OpenCode 的 `OPENCODE_CONFIG_DIR` 与 Kimi 的 `OPENAI_*` 变量也会覆盖全局文件；这类绕过由漂移检测的网关证据（`bypassed`，尚未实现）发现。
 

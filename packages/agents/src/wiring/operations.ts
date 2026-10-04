@@ -507,13 +507,15 @@ export async function detectDrift(
         if (result === "ok") continue;
         const isBase =
           baseField !== undefined && pathKey(leaf) === pathKey(baseField);
-        const kind: DriftKind = isBase
-          ? result === "missing"
-            ? "unwired"
-            : "foreign-gateway"
-          : containsPlaceholder(template, KEY_PLACEHOLDER)
-            ? "unwired"
-            : "replaced";
+        // Another key wins over the base URL for an entry holding both.
+        const kind: DriftKind =
+          isBase && result !== "other-key"
+            ? result === "missing"
+              ? "unwired"
+              : "foreign-gateway"
+            : containsPlaceholder(template, KEY_PLACEHOLDER)
+              ? "unwired"
+              : "replaced";
         findings.push({
           path: entry.path,
           keyPath: [...leaf],
@@ -1077,21 +1079,29 @@ function matchTemplate(
 ): "ok" | "missing" | "changed" | "other-key" {
   if (actual === undefined) return "missing";
   if (typeof expected !== "string") {
+    // Arrays are leaves, so placeholders inside their items (an entry of an
+    // environment list) are matched item by item and key by key.
     if (
       Array.isArray(expected) &&
       Array.isArray(actual) &&
       actual.length === expected.length
-    ) {
-      const results = expected.map((item, index) =>
-        matchTemplate(actual[index], item, baseUrl, keyId),
+    )
+      return combineMatches(
+        expected.map((item, index) =>
+          matchTemplate(actual[index], item, baseUrl, keyId),
+        ),
       );
-      return results.find((result) => result !== "ok") === undefined
-        ? "ok"
-        : results.includes("other-key") &&
-            results.every((r) => r === "ok" || r === "other-key")
-          ? "other-key"
-          : "changed";
-    }
+    if (
+      typeof expected === "object" &&
+      !Array.isArray(expected) &&
+      isRecord(actual) &&
+      deepEqual(Object.keys(actual).sort(), Object.keys(expected).sort())
+    )
+      return combineMatches(
+        Object.entries(expected).map(([key, item]) =>
+          matchTemplate(actual[key], item, baseUrl, keyId),
+        ),
+      );
     return deepEqual(actual, expected) ? "ok" : "changed";
   }
   if (typeof actual !== "string") return "changed";
@@ -1111,6 +1121,16 @@ function matchTemplate(
   return keys.every((key) => parseGatewayKey(key!)?.keyId === keyId)
     ? "ok"
     : "other-key";
+}
+
+/** The match of a whole from its parts: another key only when nothing else differs. */
+function combineMatches(
+  results: ReadonlyArray<ReturnType<typeof matchTemplate>>,
+): "ok" | "changed" | "other-key" {
+  if (results.every((result) => result === "ok")) return "ok";
+  return results.every((result) => result === "ok" || result === "other-key")
+    ? "other-key"
+    : "changed";
 }
 
 function escapeRegExp(text: string): string {

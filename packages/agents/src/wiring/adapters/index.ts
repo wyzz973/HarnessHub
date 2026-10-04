@@ -17,7 +17,9 @@ import { mimocode } from "./mimocode.js";
 import { minimaxCode } from "./minimax-code.js";
 import { omo } from "./omo.js";
 import { omp } from "./omp.js";
+import { pencil } from "./pencil.js";
 import { qoder, qoderCn } from "./qoder.js";
+import { t3code } from "./t3code.js";
 
 export type * from "./types.js";
 
@@ -26,7 +28,19 @@ export const wiringAdapters: ReadonlyMap<string, WiringAdapter> = new Map(
   [
     ...[claude, codex, gemini, qwen, opencode, pi, crush, kimi],
     // Following Magpie (MIT) @2e340f7.
-    ...[mimocode, omo, hermes, minimaxCode, grok, qoder, qoderCn, cline, omp],
+    ...[
+      mimocode,
+      omo,
+      hermes,
+      minimaxCode,
+      grok,
+      qoder,
+      qoderCn,
+      cline,
+      omp,
+      pencil,
+      t3code,
+    ],
   ].map((adapter) => [adapter.id, adapter]),
 );
 
