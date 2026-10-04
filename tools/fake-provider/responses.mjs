@@ -148,6 +148,27 @@ function responseObject(
   };
 }
 
+/**
+ * The first input item whose `encrypted_content` is not one of `seals` (the
+ * signatures this provider issued), with its path; undefined when none.
+ *
+ * @param {Record<string, unknown>} body
+ * @param {Set<string>} seals
+ * @returns {{id: string, path: string} | undefined}
+ */
+export function foreignSeal(body, seals) {
+  const input = Array.isArray(body.input) ? body.input : [];
+  for (const [index, item] of input.entries()) {
+    const sealed = isObject(item) ? item.encrypted_content : undefined;
+    if (typeof sealed === "string" && sealed && !seals.has(sealed))
+      return {
+        id: typeof item.id === "string" ? item.id : `input[${index}]`,
+        path: `input[${index}]`,
+      };
+  }
+  return undefined;
+}
+
 /** @type {import("./protocols.mjs").Protocol} */
 export const responses = {
   name: "responses",

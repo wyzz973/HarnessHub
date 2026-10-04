@@ -46,6 +46,7 @@ import { countTokensBody } from "./messages.mjs";
 import { isLoopback, resolveOptions } from "./options.mjs";
 import { PROTOCOL_MODULES } from "./protocols.mjs";
 import { activeQuirks } from "./quirks.mjs";
+import { foreignSeal } from "./responses.mjs";
 import {
   createState,
   echoStatus,
@@ -445,6 +446,23 @@ export async function startFakeProvider(options = {}) {
         }
       }
 
+      if (protocolName === "responses" && settings.quirks.foreignSeals) {
+        const foreign = foreignSeal(body, state.seals);
+        if (foreign) {
+          entry.turn = "foreign-seal";
+          entry.quirks = activeQuirks(settings.quirks);
+          // OpenAI's answer to reasoning another organization sealed.
+          return reply(
+            400,
+            protocol.error(
+              400,
+              `The encrypted content for item ${clip(foreign.id, 64)} could not be verified.`,
+              { code: "invalid_encrypted_content", param: foreign.path },
+            ),
+          );
+        }
+      }
+
       const plan = planTurn(view, state, {
         protocol,
         streaming: entry.stream,
@@ -505,6 +523,7 @@ export async function startFakeProvider(options = {}) {
       if (quirks.abnormalFinish) answer.finish = quirks.abnormalFinish;
       const reasoningSent =
         answer.reasoning.length > 0 && protocol.reasoningShown(body);
+      if (answer.reasoning.length) state.seals.add(answer.signature);
       for (const call of answer.toolCalls)
         state.issued.set(call.id ?? `unnamed-${hex(8)}`, {
           name: call.name,

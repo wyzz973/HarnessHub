@@ -124,6 +124,7 @@ HH_FAKE_KEY=合成的金丝雀值 node tools/fake-provider/index.mjs --port 0 --
 | `disconnect` | 若干帧（默认 1）后直接断开连接，不发错误也不发结束事件；非流式发送一半响应体后断开 |
 | `retryAfter` | 429 或 503，带 `Retry-After` 头与该协议的错误体 |
 | `servedModel` | 回答中的模型名换成给定值（模拟替换模型的中转） |
+| `foreignSeals` | 只用于 Responses、只能全局打开：输入项带有不是本 provider 签发的 `encrypted_content` 时，在安排回合之前按 OpenAI 的方式返回 400 `invalid_encrypted_content`（模拟拒绝别的账号封存的推理或压缩） |
 
 ## 观测
 

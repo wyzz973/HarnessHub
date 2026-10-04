@@ -362,6 +362,63 @@ test("servedModel: answers in every protocol and form name another model", async
     assert.deepEqual(record.quirks, ["servedModel"]);
 });
 
+test("foreignSeals: Responses input sealed by someone else is refused as OpenAI refuses it, the provider's own seal passes", async (t) => {
+  const fake = await provider(t, {
+    quirks: { foreignSeals: true },
+    script: { turns: [{ repeat: true, reasoning: "Think.", text: "OK" }] },
+  });
+  const first = await send(fake, "responses", {
+    body: { include: ["reasoning.encrypted_content"] },
+  });
+  assert.equal(first.status, 200);
+  const own = first.json.output.find((item) => item.type === "reasoning");
+  assert.ok(own.encrypted_content);
+  const history = (sealed) => (base) => ({
+    ...base,
+    input: [
+      base.input[0],
+      { type: "reasoning", id: "rs_1", summary: [], encrypted_content: sealed },
+      {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "OK" }],
+      },
+      {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "again" }],
+      },
+    ],
+  });
+  const kept = await send(fake, "responses", {
+    body: history(own.encrypted_content),
+  });
+  assert.equal(kept.status, 200);
+  const refused = await send(fake, "responses", {
+    body: history("gAAAA-another-organization"),
+  });
+  assert.equal(refused.status, 400);
+  assert.equal(refused.json.error.code, "invalid_encrypted_content");
+  assert.equal(refused.json.error.param, "input[1]");
+  assert.match(
+    refused.json.error.message,
+    /^The encrypted content for item rs_1 could not be verified\.$/,
+  );
+  // Other protocols carry no such seal.
+  assert.equal((await send(fake, "chat")).status, 200);
+  await fake.idle();
+  assert.deepEqual(
+    fake.records().map((record) => [record.status, record.turn ?? null]),
+    [
+      [200, "script"],
+      [200, "script"],
+      [400, "foreign-seal"],
+      [200, "script"],
+    ],
+  );
+  assert.deepEqual(fake.violations(), []);
+});
+
 test("a script turn's quirks replace the global ones for that turn", async (t) => {
   const fake = await provider(t, {
     quirks: { noUsage: true },
@@ -419,6 +476,10 @@ test("quirk switches are validated", () => {
   assert.throws(
     () => resolveQuirks({ interleavedToolArgs: 1 }),
     /interleavedToolArgs must be true or false/,
+  );
+  assert.throws(
+    () => resolveQuirks({ foreignSeals: 1 }),
+    /quirks.foreignSeals must be true or false/,
   );
   assert.deepEqual(
     resolveQuirks({ retryAfter: 3, midStreamError: false, disconnect: true }),

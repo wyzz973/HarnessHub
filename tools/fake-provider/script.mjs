@@ -528,8 +528,14 @@ export function parseScript(value) {
       );
     if (turn.chunkDelayMs !== undefined)
       result.chunkDelayMs = delay(turn.chunkDelayMs, `${at}.chunkDelayMs`);
-    if (turn.quirks !== undefined)
+    if (turn.quirks !== undefined) {
       result.quirks = resolveQuirks(turn.quirks, `${at}.quirks`);
+      // Checked before a request is planned, so a turn cannot set it.
+      if (Object.hasOwn(result.quirks, "foreignSeals"))
+        throw new Error(
+          `${at}.quirks.foreignSeals applies to every request only`,
+        );
+    }
     return Object.freeze(result);
   });
   return Object.freeze({ turns: Object.freeze(turns) });
@@ -546,6 +552,8 @@ export function createState(script) {
     /** @type {Map<string, {name: string, arguments: string, reasoning: string, signature: string, reasoningSent: boolean}>} */
     issued: new Map(),
     issuesPerTurn: new Map(),
+    /** Signatures of every answer with reasoning: the seals this provider issued. */
+    seals: new Set(),
   };
 }
 

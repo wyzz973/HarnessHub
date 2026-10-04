@@ -19,6 +19,7 @@
  * | `disconnect` | `true` or a frame count | After that many frames (default 1) the connection is reset without an error or a terminal frame; a non-streaming body is cut off halfway. |
  * | `retryAfter` | `true`, seconds, or `{status, seconds}` | Answer 429 (or 503) with `Retry-After: seconds` (default 1) and the protocol's error body. |
  * | `servedModel` | a model name | Answers name this model instead of the requested one (a relay that swaps models). |
+ * | `foreignSeals` | boolean | Responses only, for every request (not in a script turn): an input item whose `encrypted_content` this provider did not issue is answered 400 `invalid_encrypted_content` before the request is planned, as OpenAI refuses reasoning or a compaction another account sealed. |
  */
 import { isObject } from "./common.mjs";
 
@@ -29,6 +30,7 @@ const BOOLEANS = [
   "missingToolIndex",
   "interleavedToolArgs",
   "htmlBody",
+  "foreignSeals",
 ];
 export const QUIRKS = Object.freeze([
   ...BOOLEANS,
@@ -48,6 +50,7 @@ export const NO_QUIRKS = Object.freeze({
   missingToolIndex: false,
   interleavedToolArgs: false,
   htmlBody: false,
+  foreignSeals: false,
   commentKeepalive: null,
   abnormalFinish: null,
   slowHeaders: 0,

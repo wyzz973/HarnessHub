@@ -592,6 +592,10 @@ test("scripts are validated with the path of the first invalid setting", async (
       { turns: [{ quirks: { noUsage: 1 } }] },
       /turns\[0\]\.quirks\.noUsage must be true or false/,
     ],
+    [
+      { turns: [{ quirks: { foreignSeals: true } }] },
+      /turns\[0\]\.quirks\.foreignSeals applies to every request only/,
+    ],
   ];
   for (const [script, pattern] of invalid)
     assert.throws(() => parseScript(script), pattern);
