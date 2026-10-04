@@ -5,8 +5,9 @@
  * Usage: node dist/tests/perf/hub.js <data directory> <gateway limits JSON>
  *
  * It prints `{"event":"ready","url"}` on stdout once listening, answers each
- * IPC message `"usage"` with `{cpu: process.cpuUsage(), rss}` (microseconds,
- * bytes) and closes its server on SIGTERM. The catalog never refreshes and
+ * IPC message `"usage"` with `{cpu: process.cpuUsage(), rss, heap}`
+ * (microseconds; resident memory and used V8 heap in bytes) and closes its
+ * server on SIGTERM. The catalog never refreshes and
  * the agent wiring sees only the data directory as its home.
  */
 import path from "node:path";
@@ -34,6 +35,7 @@ process.on("message", (message) => {
     process.send?.({
       cpu: process.cpuUsage(),
       rss: process.memoryUsage().rss,
+      heap: process.memoryUsage().heapUsed,
     });
 });
 process.once("SIGTERM", () => {

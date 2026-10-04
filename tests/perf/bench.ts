@@ -558,14 +558,20 @@ async function perChunk(count: number) {
   return result;
 }
 
-/** The daemon's CPU time (µs, user + system) and resident memory (bytes). */
-async function usage(hub: ChildProcess): Promise<{ cpu: number; rss: number }> {
+/** The daemon's CPU time (µs, user + system), resident memory and used heap (bytes). */
+async function usage(
+  hub: ChildProcess,
+): Promise<{ cpu: number; rss: number; heap: number }> {
   const answer = once(hub, "message");
   hub.send("usage");
   const [value] = (await answer) as [
-    { cpu: { user: number; system: number }; rss: number },
+    { cpu: { user: number; system: number }; rss: number; heap: number },
   ];
-  return { cpu: value.cpu.user + value.cpu.system, rss: value.rss };
+  return {
+    cpu: value.cpu.user + value.cpu.system,
+    rss: value.rss,
+    heap: value.heap,
+  };
 }
 
 async function concurrentStreams(
@@ -641,6 +647,7 @@ async function concurrentStreams(
     wholeRunCores:
       Math.round(((after.cpu - before.cpu) / 1000 / total) * 1000) / 1000,
     rssBeforeMB: Math.round(before.rss / 1024 / 1024),
+    heapBeforeMB: Math.round(before.heap / 1024 / 1024),
     rssPeakMB: Math.round(peak / 1024 / 1024),
     totalMs: Math.round(total),
   };
@@ -826,7 +833,7 @@ function summary(results: Record<string, unknown>): string {
         : `| ${row.join(" | ")} |`,
     ),
     "",
-    `Worst per-chunk p99: ${worstChunk} µs. The daemon's resident memory was ${String(results.idleRssMB)} MB right after it started. Distributions, sample counts and the measurement windows are in bench.json.`,
+    `Worst per-chunk p99: ${worstChunk} µs. The daemon's resident memory was ${String(results.idleRssMB)} MB right after it started (V8 heap ${String(results.idleHeapMB)} MB). Distributions, sample counts and the measurement windows are in bench.json.`,
     "",
     `Commits are synchronous SQLite writes (synchronous=FULL; how much an fsync costs depends on the platform), so ${commits.burst} commits queued at once complete one after another: the last waits for all the others.`,
     "",
@@ -876,7 +883,9 @@ async function main(): Promise<number> {
       200,
     );
     system = await startSystem(root);
-    results.idleRssMB = Math.round((await usage(system.hub)).rss / 1024 / 1024);
+    const idle = await usage(system.hub);
+    results.idleRssMB = Math.round(idle.rss / 1024 / 1024);
+    results.idleHeapMB = Math.round(idle.heap / 1024 / 1024);
     console.error("bench: added latency");
     results.addedLatency = await addedLatency(
       system,
