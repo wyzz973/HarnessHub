@@ -288,6 +288,8 @@ node tools/sea/commands.mjs --runs 5          # hh 命令经可执行文件运�
 | `hh console`（打印 `/#login=` 链接） | 0 | 77 | 84 |
 | 可执行文件提供的控制台 `GET /` | 200 | 3 | 2 |
 | 假 provider 收到 2 次鉴权通过的调用，无字段违规 | 2 次 | – | – |
+| `hh provider test fake`（另一组 5 次，负载约 7–10） | 0 | 82 | 97 |
+| `hh provider doctor fake`（同上；它们自己发请求，所以排在上一行之后） | 0 | 137 | 137 |
 | SIGTERM 停止 `hh serve` | 0 | – | – |
 
 构建时每个命令的 `--help` 约 36–64 ms，`serve`、`version` 与 `benchmark` 加载 Gateway 模块，约 118–128 ms。macOS 上新签名的可执行文件第一次执行时多出约 1.2 s（构建中排在第一个的 `serve --help` 为 1341 ms，此后同一命令约 120 ms），推测是系统对新签名的评估，安装后的第一次运行会遇到同样的开销；`measure.mjs` 的预热启动吸收了它，没有单独研究。

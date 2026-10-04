@@ -22,8 +22,10 @@
  * opencode --yes` and a gateway call with the key written into OpenCode's
  * configuration, `usage`, `unwire opencode --yes` and the same call refused,
  * `tui` without a terminal (exit 2), `console` (a sign-in link), the console
- * page at `/`, and SIGTERM stopping `serve` with exit code 0 (not on Windows,
- * where kill() terminates).
+ * page at `/`, the fake provider's record of those two calls, `provider test`
+ * and `provider doctor` against it (they send their own requests, so they come
+ * after that record), and SIGTERM stopping `serve` with exit code 0 (not on
+ * Windows, where kill() terminates).
  *
  * `--node` runs the same steps with `node apps/hh/bin/hh.mjs` instead, for
  * comparison. `--runs N` repeats the whole sequence, each time in a new
@@ -388,6 +390,20 @@ export async function runCommands({ binary, node = false }) {
         ...(violations.length ? { detail: JSON.stringify(violations) } : {}),
       };
     });
+    await command("hh provider test fake", ["provider", "test", "fake"], (result) =>
+      result.code !== 0
+        ? `exit ${result.code}`
+        : /^Test: fake, model sim/m.test(result.stdout)
+          ? undefined
+          : "no test report",
+    );
+    await command("hh provider doctor fake", ["provider", "doctor", "fake"], (result) =>
+      result.code !== 0
+        ? `exit ${result.code}`
+        : /\d+ pass, \d+ warn, \d+ fail, \d+ skip/.test(result.stdout)
+          ? undefined
+          : "no doctor summary",
+    );
     if (!windows)
       await step("hh serve stops on SIGTERM", async () => {
         const exited = once(serve, "exit");
