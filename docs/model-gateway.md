@@ -186,7 +186,7 @@ Session 的 Run 经守护进程端口上的共享网关使用模型（03 第 10 
 
 ## 共享网关
 
-`createGatewayHandler(deps)`（[server.ts](../packages/gateway/src/server.ts)）返回一个不带监听器的 Node `(request, response)` 处理函数，由守护进程挂载到自己的端口上；`isGatewayPath(pathname)` 判断某条路径是否交给它（`/v1/*`、`/v1beta/*`、`/v1alpha/*`，省略 `/v1` 的 `/chat/completions`、`/responses`、`/messages`、`/messages/count_tokens`、`/models`，以及 Codex 透传的 `/backend-api/codex` 与其下路径）。守护进程在 `startHub` 中用 `SqliteModelPlaneStore`、`SecretStore.resolve`（`env` 引用读取守护进程启动时的环境快照）与 `resolveHandlerLimits(gatewayLimits)` 构造它，经 Fastify 的 `serverFactory` 挂在同一个监听器上、先于 Fastify 处理：交给它的是 `/v1beta/*`、`/v1alpha/*`、`/v1` 下的 `chat/completions`、`responses`、`messages`、`messages/count_tokens`、`models`、`models/…` 与 `images/generations`，以及这些路径省略 `/v1` 的形式（[model-gateway-mount.ts](../packages/daemon/src/http/model-gateway-mount.ts) 的 `isModelGatewayPath`），回环监听器另外交给它 `/backend-api/codex` 及其下路径（`isCodexPassthroughPath`，见下文“Codex 透传”），局域网监听器不交。`/v1` 下的其他路径仍是现有管理接口，由 Fastify 处理，直到它们迁到 `/api/v1`；这些请求不经过 Fastify 的 2 MiB 请求体上限、JSON 解析与钩子。监听器的 `headersTimeout` 取 `requestHeadersTimeoutMs`；关闭时先在 `preClose` 中 `await close()`，再关闭存储。`GET /api/v1/system/info` 的 `gateway` 给出本机客户端使用的基址，见 [快速上手](quickstart.md)。本节描述已实现的行为；目标设计与本节不同之处列在最后。
+`createGatewayHandler(deps)`（[server.ts](../packages/gateway/src/server.ts)）返回一个不带监听器的 Node `(request, response)` 处理函数，由守护进程挂载到自己的端口上；`isGatewayPath(pathname)` 判断某条路径是否交给它（`/v1/*`、`/v1beta/*`、`/v1alpha/*`，省略 `/v1` 的 `/chat/completions`、`/responses`、`/responses/compact`、`/messages`、`/messages/count_tokens`、`/models`，以及 Codex 透传的 `/backend-api/codex` 与其下路径）。守护进程在 `startHub` 中用 `SqliteModelPlaneStore`、`SecretStore.resolve`（`env` 引用读取守护进程启动时的环境快照）与 `resolveHandlerLimits(gatewayLimits)` 构造它，经 Fastify 的 `serverFactory` 挂在同一个监听器上、先于 Fastify 处理：交给它的是 `/v1beta/*`、`/v1alpha/*`、`/v1` 下的 `chat/completions`、`responses`、`responses/compact`（答复 400，见[上下文压缩](gateway-features.md#上下文压缩)）、`messages`、`messages/count_tokens`、`models`、`models/…` 与 `images/generations`，以及这些路径省略 `/v1` 的形式（[model-gateway-mount.ts](../packages/daemon/src/http/model-gateway-mount.ts) 的 `isModelGatewayPath`），回环监听器另外交给它 `/backend-api/codex` 及其下路径（`isCodexPassthroughPath`，见下文“Codex 透传”），局域网监听器不交。`/v1` 下的其他路径仍是现有管理接口，由 Fastify 处理，直到它们迁到 `/api/v1`；这些请求不经过 Fastify 的 2 MiB 请求体上限、JSON 解析与钩子。监听器的 `headersTimeout` 取 `requestHeadersTimeoutMs`；关闭时先在 `preClose` 中 `await close()`，再关闭存储。`GET /api/v1/system/info` 的 `gateway` 给出本机客户端使用的基址，见 [快速上手](quickstart.md)。本节描述已实现的行为；目标设计与本节不同之处列在最后。
 
 ### 依赖与所有权
 
@@ -289,9 +289,10 @@ Session 的 Run 经守护进程端口上的共享网关使用模型（03 第 10 
 
 以 ChatGPT 登录的 Codex 把 `openai_base_url` 设为 `<网关>/backend-api/codex` 后，它自己的请求经网关原样到达 ChatGPT 的 Codex 后端（[codex.ts](../packages/gateway/src/codex.ts)，Magpie `gw/codex_backend.go` 中转发的部分）。网关不持有、也不复用这份登录。
 
-- 守护进程的回环监听器把 `/backend-api/codex` 及其下路径交给网关，网关转发到 `https://chatgpt.com/backend-api/codex` 下的同一路径与查询串。方法、请求体（压缩的请求体解压后发送，不带 `content-encoding`）与客户端的请求头原样转发，`Authorization` 与 `ChatGPT-Account-Id` 逐字节不变；不转发逐跳头、`host`、`content-length`、`accept-encoding` 与所有 `x-hh-*` 头（包括 `X-HH-Credential`）。不使用 Gateway Key，不改写任何客户端身份，不注入提示词。答复的状态码、响应头（逐跳头、`content-length`、`content-encoding` 与 `set-cookie` 除外）与响应体原样返回，上游的错误也是。
+- 守护进程的回环监听器把 `/backend-api/codex` 及其下路径交给网关，网关转发到 `https://chatgpt.com/backend-api/codex` 下的同一路径与查询串。方法、请求体（压缩的请求体解压后发送，不带 `content-encoding`；`/responses` 中网关自己做的压缩与编码的推理除外，见下）与客户端的请求头原样转发，`Authorization` 与 `ChatGPT-Account-Id` 逐字节不变；不转发逐跳头、`host`、`content-length`、`accept-encoding` 与所有 `x-hh-*` 头（包括 `X-HH-Credential`）。不使用 Gateway Key，不改写任何客户端身份，不注入提示词。答复的状态码、响应头（逐跳头、`content-length`、`content-encoding` 与 `set-cookie` 除外）与响应体原样返回，上游的错误也是。
 - 只服务回环监听器上的回环对端，`Host` 必须是回环名称，带 `Origin` 或 `Sec-Fetch-Site: cross-site` 的请求一律拒绝：403 `source_not_allowed` 或 `origin_forbidden`，写拒绝记录。局域网监听器不提供这条路径（404）。
 - 请求体为带 `model` 的 JSON 的 POST（`/responses` 与 `/responses/compact`）是一次模型调用，写一条账本：provider 为虚拟的 `chatgpt-subscription`（不对应任何已配置的 provider），Model Ref `chatgpt-subscription/<model>`，`mode: passthrough`，没有 Key 与作用域，`agent` 为 `{id: codex, source: route}`，会话键取 `prompt_cache_key` 等（按 `chatgpt-subscription` 隔离），用量从 Responses 流的 `response.completed`（或 JSON 答复）解析，`cost` 为 null。流式答复的终止事件与非流式答复的响应体在提交之后才写出；提交失败时返回 503 `evidence_unavailable`，流已开始则写一个 `response.failed` 事件。上游错误按失败类别记 `errorClass`，消息去掉客户端的 Authorization 值并脱敏。`GET /models` 等其他请求只转发，不写账本。
+- `/responses/compact` 的 `model` 带 `/`（HarnessHub 的模型，ChatGPT 没有这样的模型）时不转发，答复 400 `compact_unsupported`（“/responses/compact is not supported for HarnessHub models; use a compaction_trigger on /responses”）。`/responses` 的输入中网关做的压缩项（`hh1:`）换成摘要的用户消息，网关编码的推理项（`hh-r1.`）删去，ChatGPT 读不了二者；账本记 `compaction:restored:<n>` 与 `reasoning:dropped:<n>`（[上下文压缩](gateway-features.md#上下文压缩)）。
 - Authorization 的值从不写入日志或账本；转发失败的日志只有脱敏后的错误消息。
 - 等待上游响应头与上游空闲的时限、响应体上限与请求体上限同其他调用（见“资源上限”）；不提供保活。
 - 上游基址只能由测试经 `deps.codexBackend` 指向回环假服务。未实现：Codex 的 WebSocket 传输；Magpie 在这条路径上用自己的 provider 回答 Codex 的请求（本网关只转发）。
@@ -328,12 +329,14 @@ node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js
 - `/api/v1/model-calls` 的响应 schema 还没有 `generation`，该字段目前只在账本记录与网关内可见。
 - 重试只在最后一个还能尝试的候选上进行，没有 Retry-After 的限流 429 也会在那里重试；03 第 5 节原定的“先同候选重试再转移”与 ADR-P05 的相应部分由 [ADR 0025](decisions/0025-magpie-routing-parity.md) 修订。
 - 转换到 Responses 上游时，第一次请求既没有推理请求、模型元数据也没有声明推理时，不请求 `reasoning.encrypted_content`，放回的推理项只有 `id` 与摘要；`store: false` 的真实 OpenAI 可能拒绝这样的推理项（假 provider 接受）。
-- 尚未对齐 Magpie 的：安全拒答时换同一成员的其他账号、另一账号签发的加密推理被拒时去掉重发、`max_tokens` 过小时抬高重发、400 与 422 的请求形状措辞（未知字段等）转移、OpenRouter 免费模型共享池只休息该模型、最后的失败是额度类时返回更早的其他失败；自动组的 `modelSameAs` 手工合并与全局关闭开关。
+- 尚未对齐 Magpie 的：安全拒答时换同一成员的其他账号、`max_tokens` 过小时抬高重发、400 与 422 的请求形状措辞（未知字段等）转移、OpenRouter 免费模型共享池只休息该模型、最后的失败是额度类时返回更早的其他失败；自动组的 `modelSameAs` 手工合并与全局关闭开关。
 - 尚未实现：粘性记录的持久化与账本中的粘性字段（目前写在 `patches[]`）；`route.breaker` 事件（目前只写日志）；provider 声明的请求体上限与 `onUnsupportedMedia`；共享设置目前在数据目录的文件中，以后可能移到存储的设置表；局域网监听器的 TLS（07 第 5.4 节要求 TLS 或反向代理，目前只有明文 HTTP）、`allowLan` Key 的额度要求、按来源 IP 的失败锁定，以及 `hh status` 与控制台中的共享状态；`shape` 等账本扩展字段；入站转换器自身丢弃的提示字段尚未记入 `unmapped[]`；转换到 Gemini 的图片 URL 与 Anthropic 的结构化输出（beta）；拒绝记录的定时汇总（目前在下一次同类拒绝或 `close()` 时写出）。
 - 直通流可能含网关合成的保活事件（见“共享网关的保活”），不再是上游字节的严格子序列；直通用例的逐字节黄金语料比较尚未建立。
 - 响应体上限按原始字节而不是解码后的内容计算；`latency` 只统计本次启动以来的调用，`least-used` 另从账本取最近 8 小时的初值；认证失败的熔断最长 10 分钟后进入半开，而不是一直保持到 Credential 更新。
 
 ## 变更记录
+
+- **2026-10-04：工具搜索与上下文压缩**（[网关功能](gateway-features.md#工具搜索)）。Codex 的 `tool_search` 发往 Responses 直通上游与转换的上游时是普通函数 `tool_search`，搜索结果说明找到的工具并把它们加入工具列表（去掉 `defer_loading`），模型对它的调用以 `tool_search_call` 交回 Codex；Claude Code 的 `tool_reference` 结果在转换时成为“Tool X is loaded and can be called now.”，不提供 `DeferredToolPlaceholder`。Codex 的 `compaction_trigger` 由网关请模型写摘要，答复为 `encrypted_content` 以 `hh1:` 开头的 `compaction` 项，之后的请求中换回摘要；`/v1/responses/compact` 答复 400 `compact_unsupported`。上游以 `invalid_encrypted_content` 等拒绝别的账号封存的推理或压缩时，去掉推理（再拒绝时去掉压缩）在同一候选上重发，账本记 `sealed:*`；网关自己编码的推理不再直通到 Responses 上游。新增纯函数 `isCompactionRequest`，识别七种 Agent 的压缩请求，供以后的路由规则使用。
 
 - **2026-10-04：协议一致性套件的发现**（[ADR 0029](decisions/0029-protocol-suite.md)、[一致性套件](../conformance/README.md)）。官方 SDK 经网关在 16 个方向上运行后修正了四处：只发注释的上游在没有扣留输出时也得到保活，直通流改写入网关合成的保活，Gemini 客户端收不到 SSE 注释；Gemini 的流内错误改为裸 JSON 对象，Gemini 上游的同样形式被识别为流内错误；Anthropic 客户端收到交错的并行工具参数时不再报错，而是逐个整块发出；上下文超长的数值也从 OpenAI 与 Gemini 的措辞中读取。
 

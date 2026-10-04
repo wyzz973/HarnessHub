@@ -27,17 +27,23 @@ export class HttpWriter {
   #lastWrite = performance.now();
   #firstWrite: number | undefined;
   #pending = 0;
-  #transform: OutputTransform | undefined;
+  #transforms: OutputTransform[] = [];
   constructor(private readonly response: ServerResponse) {}
   /**
-   * Rewrite the body from now on (redacted secrets restored in tool
-   * arguments, ./restore.js). Set before the first body write.
+   * Rewrite the body from now on, after the rewrites added before, each
+   * taking the output of the one before it: redacted secrets restored in
+   * tool arguments (./restore.js), Codex's tool search calls
+   * (./toolsearch.js), a Codex compaction's summary (./compacting.js).
+   * Added before the first body write.
    */
-  set transform(transform: OutputTransform) {
-    this.#transform = transform;
+  addTransform(transform: OutputTransform): void {
+    this.#transforms.push(transform);
   }
-  get transformed(): boolean {
-    return this.#transform !== undefined;
+  /** Whether a rewrite of this class was added. */
+  transformedBy(
+    kind: abstract new (...args: never[]) => OutputTransform,
+  ): boolean {
+    return this.#transforms.some((transform) => transform instanceof kind);
   }
   /** True once the status line was sent; later failures must be in-band. */
   get sent(): boolean {
@@ -86,8 +92,9 @@ export class HttpWriter {
   async write(chunk: string | Uint8Array): Promise<void> {
     if (this.closed) throw new ClientClosed();
     this.#mark();
-    const text = this.#transform ? this.#transform.push(chunk) : chunk;
-    if (this.#transform && text.length === 0) return;
+    let text = chunk;
+    for (const transform of this.#transforms) text = transform.push(text);
+    if (this.#transforms.length && text.length === 0) return;
     this.#pending++;
     try {
       await new Promise<void>((resolve, reject) =>
@@ -102,9 +109,9 @@ export class HttpWriter {
   async end(chunk: string | Uint8Array = ""): Promise<void> {
     if (this.closed) throw new ClientClosed();
     this.#mark();
-    const text = this.#transform
-      ? this.#transform.push(chunk) + this.#transform.end()
-      : chunk;
+    let text = chunk;
+    for (const transform of this.#transforms)
+      text = transform.push(text) + transform.end();
     await new Promise<void>((resolve) => this.response.end(text, resolve));
   }
   /**

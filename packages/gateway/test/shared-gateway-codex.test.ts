@@ -6,6 +6,8 @@ import { once } from "node:events";
 import { createServer } from "node:http";
 import type { LogFields, LogSink } from "@harnesshub/core/logging";
 import { isModelCallEntry } from "@harnesshub/core/model-plane-records";
+import { CODEX_SUMMARY_PREFIX } from "../src/compacting.js";
+import { encodeReasoning } from "../src/reasoning.js";
 import { isGatewayPath } from "../src/server.js";
 import {
   at,
@@ -279,6 +281,72 @@ void test("non-streamed calls are recorded too, and requests that are no model c
   );
   assert.equal(chatgpt.seen[1]!.headers.authorization, `Bearer ${TOKEN}`);
   assert.equal(store.entries.length, 1, "no ledger entry for a model list");
+});
+
+void test("a HarnessHub model's /responses/compact is refused here, and what the gateway summarized or encoded reaches ChatGPT as text or not at all", async (t) => {
+  const { chatgpt, store, gw } = await setup(t, streamed);
+  const compact = await send(gw.port, "/backend-api/codex/responses/compact", {
+    headers: HEADERS,
+    body: { ...BODY, model: "deepseek/deepseek-chat", stream: false },
+  });
+  assert.equal(compact.status, 400);
+  assert.equal(at(compact.json(), "error", "code"), "compact_unsupported");
+  assert.equal(
+    at(compact.json(), "error", "message"),
+    "/responses/compact is not supported for HarnessHub models; use a compaction_trigger on /responses",
+  );
+  assert.equal(chatgpt.seen.length, 0, "nothing went to ChatGPT");
+  assert.deepEqual(
+    [store.entries[0]!.status, store.entries[0]!.errorClass],
+    [400, "compact_unsupported"],
+  );
+  const summary = "SUMMARY: the work so far.";
+  const sealed = {
+    type: "reasoning",
+    id: "rs_up",
+    summary: [],
+    encrypted_content: "gAAAA-chatgpt",
+  };
+  const answer = await send(gw.port, "/backend-api/codex/responses", {
+    headers: HEADERS,
+    body: {
+      ...BODY,
+      input: [
+        {
+          type: "compaction",
+          id: "cmp_hh",
+          encrypted_content: `hh1:${Buffer.from(summary).toString("base64")}`,
+        },
+        {
+          type: "reasoning",
+          id: "rs_hh",
+          summary: [],
+          encrypted_content: encodeReasoning("translated"),
+        },
+        sealed,
+        ...BODY.input,
+      ],
+    },
+  });
+  assert.equal(answer.status, 200);
+  assert.deepEqual(chatgpt.seen[0]!.json().input, [
+    {
+      type: "message",
+      role: "user",
+      content: [
+        {
+          type: "input_text",
+          text: `${CODEX_SUMMARY_PREFIX}\n${summary}`,
+        },
+      ],
+    },
+    sealed,
+    ...BODY.input,
+  ]);
+  assert.deepEqual(store.entries[1]!.patches, [
+    "compaction:restored:1",
+    "reasoning:dropped:1",
+  ]);
 });
 
 void test("only loopback peers without a browser origin may use the passthrough", async (t) => {

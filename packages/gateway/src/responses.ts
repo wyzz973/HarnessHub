@@ -8,6 +8,7 @@ import {
   omittedMedia,
   nativeTool,
   object,
+  parseArguments,
   record,
   searchedText,
   string,
@@ -29,6 +30,12 @@ import {
   type SinkContext,
 } from "./output.js";
 import { decodeReasoning, encodeReasoning } from "./reasoning.js";
+import {
+  TOOL_SEARCH,
+  foundNames,
+  isClientSearch,
+  searchFound,
+} from "./toolsearch.js";
 
 /**
  * Every top-level field the pinned Codex 0.153.4 request type can send, plus
@@ -125,10 +132,45 @@ function reasoningText(item: Record<string, unknown>): string {
     .join("\n");
 }
 
+/** A function, custom tool or tool search call item as a Chat tool call. */
+function chatCall(
+  item: Record<string, unknown>,
+  type: "function_call" | "custom_tool_call" | "tool_search_call",
+): Record<string, unknown> {
+  if (type === "tool_search_call")
+    return {
+      id: string(item.call_id),
+      type: "function",
+      function: {
+        name: TOOL_SEARCH,
+        arguments: JSON.stringify(item.arguments ?? {}),
+      },
+    };
+  const name = string(item.name),
+    namespace =
+      item.namespace === undefined || item.namespace === null
+        ? undefined
+        : string(item.namespace);
+  return {
+    id: string(item.call_id),
+    type: "function",
+    function: {
+      name: toolAlias(name, namespace),
+      arguments:
+        type === "custom_tool_call"
+          ? JSON.stringify({ input: string(item.input) })
+          : string(item.arguments),
+    },
+  };
+}
+
 /**
  * Translate a complete, stateless Responses request (Codex) to Chat.
- * Function, custom (freeform) and namespace tools map to Chat functions;
- * reasoning items become `reasoning_content` of the next assistant message.
+ * Function, custom (freeform) and namespace tools map to Chat functions, and
+ * so does Codex's client-run tool search: its calls are calls of the function
+ * `tool_search`, its outputs say which tools were found, and those tools are
+ * offered from then on (./toolsearch.js). Reasoning items become
+ * `reasoning_content` of the next assistant message.
  * Server state (`previous_response_id`, `conversation`, stored prompts,
  * background) and hosted tools fail explicitly. Image input becomes Chat image
  * parts with `options.images`; other media become text placeholders.
@@ -163,11 +205,12 @@ export function responsesToChat(
   const bindings = new Map<string, ToolBinding>();
   const tools: Record<string, unknown>[] = [];
   let search = false;
-  const addTools = (values: unknown[], namespace?: string) => {
+  /** `found`: tools a Codex tool search found, which may be known already. */
+  const addTools = (values: unknown[], namespace?: string, found = false) => {
     for (const rawTool of values) {
       const tool = object(rawTool);
       if (tool.type === "namespace" && !namespace) {
-        addTools(array(tool.tools), string(tool.name));
+        addTools(array(tool.tools), string(tool.name), found);
         continue;
       }
       if (
@@ -178,18 +221,24 @@ export function responsesToChat(
         search = true;
         continue;
       }
-      if (tool.type !== "function" && tool.type !== "custom")
+      // Codex's tool search, which Codex runs, as a function (./toolsearch.js).
+      const searching = !namespace && isClientSearch(tool);
+      if (tool.type !== "function" && tool.type !== "custom" && !searching)
         throw new GatewayError(
           `Hosted Responses tool ${typeof tool.type === "string" ? tool.type.slice(0, 64) : "unknown"} is unsupported; use function tools`,
         );
-      const name = string(tool.name),
+      const name = searching ? TOOL_SEARCH : string(tool.name),
         mapped = toolAlias(name, namespace),
         custom = tool.type === "custom";
-      if (bindings.has(mapped)) throw new GatewayError("Duplicate tool names");
+      if (bindings.has(mapped)) {
+        if (found) continue;
+        throw new GatewayError("Duplicate tool names");
+      }
       bindings.set(mapped, {
         name,
         custom,
         ...(namespace ? { namespace } : {}),
+        ...(searching ? { search: true as const } : {}),
       });
       tools.push({
         type: "function",
@@ -265,23 +314,12 @@ export function responsesToChat(
       )
         withReasoning(last).content = content;
       else messages.push(withReasoning({ role: "assistant", content }));
-    } else if (type === "function_call" || type === "custom_tool_call") {
-      const name = string(item.name),
-        namespace =
-          item.namespace === undefined || item.namespace === null
-            ? undefined
-            : string(item.namespace);
-      const call = {
-        id: string(item.call_id),
-        type: "function",
-        function: {
-          name: toolAlias(name, namespace),
-          arguments:
-            type === "custom_tool_call"
-              ? JSON.stringify({ input: string(item.input) })
-              : string(item.arguments),
-        },
-      };
+    } else if (
+      type === "function_call" ||
+      type === "custom_tool_call" ||
+      type === "tool_search_call"
+    ) {
+      const call = chatCall(item, type);
       const last = messages.at(-1);
       if (last?.role === "assistant") {
         withReasoning(last);
@@ -304,7 +342,16 @@ export function responsesToChat(
         tool_call_id: string(item.call_id),
         content: text(item.output, "tool output"),
       });
-    else if (type === "reasoning") {
+    else if (type === "tool_search_output") {
+      // The tools Codex's search found, offered from now on.
+      const found = item.tools === undefined ? [] : array(item.tools);
+      addTools(found, undefined, true);
+      messages.push({
+        role: "tool",
+        tool_call_id: string(item.call_id),
+        content: searchFound(foundNames(found, toolAlias)),
+      });
+    } else if (type === "reasoning") {
       const value = reasoningText(item);
       if (value) reasoning = reasoning ? `${reasoning}\n${value}` : value;
     } else if (type === "additional_tools") addTools(array(item.tools));
@@ -425,11 +472,24 @@ function messageItem(id: string, text: string): Record<string, unknown> {
     content: [{ type: "output_text", text, annotations: [] }],
   };
 }
-/** Restore the native tool identity; custom tools unwrap their `input` string. */
+/**
+ * Restore the native tool identity; custom tools unwrap their `input` string
+ * and a tool search call is Codex's `tool_search_call`.
+ */
 function callItem(
   call: ToolCall,
   binding: ToolBinding,
 ): Record<string, unknown> {
+  if (binding.search)
+    // Codex runs its search from this item; OpenAI takes only `tsc_` ids for it.
+    return {
+      id: `tsc_${call.id}`,
+      type: "tool_search_call",
+      call_id: call.id,
+      status: "completed",
+      execution: "client",
+      arguments: parseArguments(call.arguments) ?? {},
+    };
   const base = {
     call_id: call.id,
     name: binding.name,
@@ -648,7 +708,8 @@ export class ResponsesSink implements OutputSink {
     const index = this.#reserve();
     this.#calls.set(call.id, { index, binding });
     this.#byIndex.set(call.index, call.id);
-    if (binding.custom) return;
+    // Custom and tool search calls are written whole when they end.
+    if (binding.custom || binding.search) return;
     await this.#event("response.output_item.added", {
       output_index: index,
       item: {
@@ -665,7 +726,13 @@ export class ResponsesSink implements OutputSink {
   async toolArgs(index: number, text: string): Promise<void> {
     const id = this.#byIndex.get(index);
     const state = id === undefined ? undefined : this.#calls.get(id);
-    if (!this.translation.stream || !state || state.binding.custom) return;
+    if (
+      !this.translation.stream ||
+      !state ||
+      state.binding.custom ||
+      state.binding.search
+    )
+      return;
     await this.#event("response.function_call_arguments.delta", {
       item_id: `fc_${id}`,
       output_index: state.index,
@@ -753,7 +820,12 @@ export class ResponsesSink implements OutputSink {
           output_index: state.index,
           delta: item.input,
         });
-      } else
+      } else if (state.binding.search)
+        await this.#event("response.output_item.added", {
+          output_index: state.index,
+          item: { ...item, status: "in_progress" },
+        });
+      else
         await this.#event("response.function_call_arguments.done", {
           item_id: item.id,
           output_index: state.index,

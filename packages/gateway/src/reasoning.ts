@@ -17,6 +17,10 @@ const ENCODED = "hh-r1.";
 export function encodeReasoning(text: string): string {
   return ENCODED + Buffer.from(text, "utf8").toString("base64url");
 }
+/** Whether a value was produced by {@link encodeReasoning}: no upstream sealed it. */
+export function isEncodedReasoning(value: unknown): boolean {
+  return typeof value === "string" && value.startsWith(ENCODED);
+}
 /** Decode a value produced by {@link encodeReasoning}; foreign values are ignored. */
 export function decodeReasoning(value: unknown): string | undefined {
   if (typeof value !== "string" || !value.startsWith(ENCODED)) return undefined;

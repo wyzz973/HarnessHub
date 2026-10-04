@@ -94,6 +94,8 @@ export interface ToolBinding {
   name: string;
   namespace?: string;
   custom: boolean;
+  /** Codex's client-run tool search, offered as a function (./toolsearch.js). */
+  search?: true;
 }
 /**
  * Chat function names must match `^[a-zA-Z0-9_-]{1,64}$`. Other native names

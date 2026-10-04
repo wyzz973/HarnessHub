@@ -121,6 +121,7 @@ void test("the gateway paths are the model protocol paths and never a management
   for (const pathname of [
     "/v1/chat/completions",
     "/v1/responses",
+    "/v1/responses/compact",
     "/v1/messages",
     "/v1/messages/count_tokens",
     "/v1/models",
@@ -144,6 +145,7 @@ void test("the gateway paths are the model protocol paths and never a management
     "/v1",
     "/v1/chat",
     "/v1/responsesx",
+    "/v1/responses/compactx",
     "/v1/engines",
     "/v1bet/models",
     // The Codex passthrough is mounted on the loopback listener only.

@@ -86,6 +86,14 @@ import type { GatewayFeatures } from "@harnesshub/core/gateway-features";
 import { maskBody, type Redactor } from "./redaction.js";
 import { ToolArgumentRestorer } from "./restore.js";
 import {
+  codexInput,
+  CompactionReply,
+  refusesSeal,
+  unsealed,
+  withoutOwnReasoning,
+} from "./compacting.js";
+import { searchAsFunction, SearchCallRestorer } from "./toolsearch.js";
+import {
   SEARCH_MARKERS,
   SEARCH_ROUNDS,
   SearchRelay,
@@ -319,7 +327,11 @@ export interface Call {
   stream: boolean;
   /** The conversation for stickiness; absent before the request was read. */
   conversation?: Conversation;
-  /** Routing decisions recorded before any attempt (`sticky:…`). */
+  /**
+   * Patches of the whole call, kept in every attempt's entry: routing
+   * decisions (`sticky:…`) and rewrites of the client's request
+   * (`compaction:…`, `sealed:…`).
+   */
   routePatches: string[];
   /** Set on a call the gateway makes for itself; such a call gets no vision fallback. */
   internal?: "vision" | "search";
@@ -1051,7 +1063,11 @@ function prepare(call: Call, candidate: Candidate): Prepared {
       candidate.wireModel,
       set,
     );
-    const { body, patches } = redact(call, built.body, built.patches);
+    const masked = redact(call, built.body, built.patches);
+    const { body, patches } =
+      candidate.upstream === "responses"
+        ? relayResponses(call, masked.body, masked.patches)
+        : masked;
     return tooLarge(body.length) ?? { kind: "passthrough", body, patches };
   }
   const images = takesImages(candidate);
@@ -1250,17 +1266,49 @@ function redact<T extends Buffer | Record<string, unknown>>(
     masked = result.value as T;
   }
   if (!count) return { body, patches };
-  if (!call.writer.transformed)
-    call.writer.transform = new ToolArgumentRestorer(
-      call.services.redactor,
-      call.route.protocol,
-      !call.stream
-        ? "json"
-        : call.route.protocol === "gemini" && !call.route.gemini?.sse
-          ? "array"
-          : "sse",
+  if (!call.writer.transformedBy(ToolArgumentRestorer))
+    call.writer.addTransform(
+      new ToolArgumentRestorer(
+        call.services.redactor,
+        call.route.protocol,
+        !call.stream
+          ? "json"
+          : call.route.protocol === "gemini" && !call.route.gemini?.sse
+            ? "array"
+            : "sse",
+      ),
     );
   return { body: masked, patches: [...patches, `redact:${count}`] };
+}
+
+/**
+ * A Responses body passed through, as an upstream other than ChatGPT's Codex
+ * backend (subscriptions are translated) can take it: without the reasoning
+ * the gateway encoded itself (./compacting.js), and with Codex's tool search
+ * as a function, whose calls the client then gets back as `tool_search_call`
+ * items (./toolsearch.js).
+ */
+function relayResponses(
+  call: Call,
+  body: Buffer,
+  patches: string[],
+): { body: Buffer; patches: string[] } {
+  const applied = [...patches];
+  const own = withoutOwnReasoning(body);
+  if (own) {
+    body = own.body;
+    applied.push(`reasoning:dropped:${own.dropped}`);
+  }
+  const searched = searchAsFunction(body);
+  if (searched) {
+    body = searched;
+    applied.push("tool-search:function");
+    if (!call.writer.transformedBy(SearchCallRestorer))
+      call.writer.addTransform(
+        new SearchCallRestorer(call.stream ? "sse" : "json"),
+      );
+  }
+  return { body, patches: applied };
 }
 
 /** The parts every attempt shares: slot, credential, request and response headers. */
@@ -2152,6 +2200,24 @@ async function passthroughAttempt(
  */
 export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
   const { services, entry } = call;
+  // Codex's compaction served here, and the summaries of earlier ones.
+  if (call.route.protocol === "responses") {
+    const codex = codexInput(call.raw, true);
+    if (codex) {
+      call.raw = codex.raw;
+      call.bytes = Buffer.from(JSON.stringify(codex.raw));
+      if (codex.restored)
+        call.routePatches.push(`compaction:restored:${codex.restored}`);
+      if (codex.summary) {
+        call.routePatches.push("compaction:summary");
+        call.writer.addTransform(
+          new CompactionReply(call.stream ? "sse" : "json"),
+        );
+      }
+    }
+  }
+  /** How far sealed items were taken out of the request (`unsealed`). */
+  let unsealStep = 0;
   const policy = retryPolicy(plan.group?.retry);
   const began = performance.now();
   let last: AttemptError | undefined;
@@ -2282,6 +2348,25 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
       if (error.phase === "cancelled") {
         services.breakers.release(candidate);
         return publishFailure(call, error);
+      }
+      // The conversation brought reasoning or a compaction that another
+      // account or vendor sealed, which this one refused: the same
+      // candidate is asked again without it (Magpie's `resealed`).
+      const resealed =
+        call.route.protocol === "responses" &&
+        error.source === "upstream" &&
+        refusesSeal(error.failure.message)
+          ? unsealed(call.raw, unsealStep)
+          : undefined;
+      if (resealed && entry.attempts.length < policy.totalAttempts) {
+        unsealStep = resealed.step;
+        call.raw = resealed.raw;
+        call.bytes = Buffer.from(JSON.stringify(resealed.raw));
+        call.routePatches.push(`sealed:${resealed.kind}`);
+        services.breakers.release(candidate);
+        attempt.decision = "retry";
+        retries = 0;
+        continue;
       }
       const verdict = classify(error);
       services.breakers.failure(

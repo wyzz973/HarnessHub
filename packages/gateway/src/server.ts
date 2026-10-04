@@ -68,6 +68,7 @@ import {
 import { RejectionThrottle } from "./ledger.js";
 import { Quotas, type QuotaRefusal } from "./quota.js";
 import { CODEX_BACKEND, codexPassthrough, isCodexPath } from "./codex.js";
+import { COMPACT_UNSUPPORTED } from "./compacting.js";
 import { conversationOf, StickyRoutes } from "./sticky.js";
 import { canonicalHost, LOOPBACK_ONLY, type GatewayAccess } from "./sharing.js";
 import { forwardCountTokens } from "./count.js";
@@ -249,7 +250,7 @@ export function isGatewayPath(pathname: string): boolean {
   return (
     isCodexPath(path) ||
     /^\/v1(?:beta|alpha)?(?:\/|$)/.test(path) ||
-    /^\/(?:chat\/completions|responses|messages(?:\/count_tokens)?|models(?:\/.*)?)$/.test(
+    /^\/(?:chat\/completions|responses(?:\/compact)?|messages(?:\/count_tokens)?|models(?:\/.*)?)$/.test(
       path,
     )
   );
@@ -259,7 +260,8 @@ type Route =
   | { kind: "models"; format: "openai" | "gemini"; id?: string }
   | { kind: "count"; protocol: "anthropic" | "gemini" }
   | { kind: "call"; call: CallRoute }
-  | { kind: "images" };
+  | { kind: "images" }
+  | { kind: "compact" };
 
 function decode(value: string): string {
   try {
@@ -322,6 +324,8 @@ function matchRoute(method: string | undefined, url: URL): Route | undefined {
       return { kind: "call", call: { protocol: "chat" } };
     case "/responses":
       return { kind: "call", call: { protocol: "responses" } };
+    case "/responses/compact":
+      return { kind: "compact" };
     case "/messages":
       return { kind: "call", call: { protocol: "anthropic" } };
     case "/messages/count_tokens":
@@ -335,7 +339,7 @@ function guessProtocol(pathname: string): WireProtocol {
   if (/\/messages(?:\/|$)/.test(pathname)) return "anthropic";
   if (/^\/+v1(?:beta|alpha)?\/models\/.+:/.test(pathname)) return "gemini";
   if (/^\/+v1(?:beta|alpha)\//.test(pathname)) return "gemini";
-  if (/\/responses\/?$/.test(pathname)) return "responses";
+  if (/\/responses(?:\/compact)?\/?$/.test(pathname)) return "responses";
   return "chat";
 }
 
@@ -1678,6 +1682,17 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
           return;
         case "count":
           await countTokens(request, response, route.protocol, key);
+          return;
+        case "compact":
+          // Every model here is HarnessHub's (./compacting.js).
+          entry.inbound.protocol = "responses";
+          await reject(
+            response,
+            entry,
+            "compact_unsupported",
+            failure(400, "compact_unsupported", COMPACT_UNSUPPORTED),
+            started,
+          );
           return;
         case "images": {
           const abort = new AbortController();

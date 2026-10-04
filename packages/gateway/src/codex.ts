@@ -8,7 +8,10 @@
  * no client identity is altered. The Authorization value is never logged,
  * stored or echoed. Each Responses call is recorded in the ledger under the
  * virtual provider `chatgpt-subscription`, committed before the client gets
- * its terminal event.
+ * its terminal event. Only what the gateway itself sealed is changed on the
+ * way (./compacting.js): its compactions go as their summary, its encoded
+ * reasoning not at all, and a HarnessHub model's `/responses/compact` is
+ * refused with 400 `compact_unsupported` instead of being relayed.
  */
 import type {
   IncomingHttpHeaders,
@@ -43,6 +46,11 @@ import {
 import { GatewayError, record } from "./protocol.js";
 import { failureClass, failureKind } from "./routing.js";
 import { conversationOf } from "./sticky.js";
+import {
+  codexInput,
+  COMPACT_UNSUPPORTED,
+  withoutOwnReasoning,
+} from "./compacting.js";
 import { isContextOverflow, sanitize, upstreamError } from "./upstream.js";
 
 /** The gateway path Codex's `openai_base_url` points at. */
@@ -229,6 +237,33 @@ export async function codexPassthrough(context: CodexRequest): Promise<void> {
       if (raw && typeof model === "string" && model) {
         entry = context.entry(raw.stream === true);
         attribute(entry, model, raw, request.headers);
+        // A HarnessHub model compacts with a compaction_trigger on
+        // /v1/responses; ChatGPT has no such model (Magpie: a 400).
+        if (
+          context.path === `${CODEX_PATH}/responses/compact` &&
+          model.includes("/")
+        ) {
+          await fail(
+            failure(400, "compact_unsupported", COMPACT_UNSUPPORTED),
+            "compact_unsupported",
+            "gateway",
+          );
+          return;
+        }
+      }
+      // What the gateway summarized or encoded is no seal ChatGPT reads:
+      // its compactions go as their summary, its reasoning not at all.
+      if (raw && context.path === `${CODEX_PATH}/responses`) {
+        const codex = codexInput(raw, false);
+        if (codex) {
+          body = Buffer.from(JSON.stringify(codex.raw));
+          entry?.patches.push(`compaction:restored:${codex.restored}`);
+        }
+        const own = withoutOwnReasoning(body);
+        if (own) {
+          body = own.body;
+          entry?.patches.push(`reasoning:dropped:${own.dropped}`);
+        }
       }
       // Known secrets stay here; tool arguments get them back.
       const masked = maskBody(
@@ -239,10 +274,12 @@ export async function codexPassthrough(context: CodexRequest): Promise<void> {
       if (masked.count) {
         body = masked.body;
         entry?.patches.push(`redact:${masked.count}`);
-        writer.transform = new ToolArgumentRestorer(
-          services.redactor,
-          "responses",
-          raw?.stream === true ? "sse" : "json",
+        writer.addTransform(
+          new ToolArgumentRestorer(
+            services.redactor,
+            "responses",
+            raw?.stream === true ? "sse" : "json",
+          ),
         );
       }
     }

@@ -28,6 +28,7 @@ import {
   type SinkContext,
 } from "./output.js";
 import { thinkingSignature } from "./reasoning.js";
+import { DEFERRED_TOOL_PLACEHOLDER, toolLoaded } from "./toolsearch.js";
 import { contextNumbers, truncateText } from "./upstream.js";
 
 function blocks(value: unknown): Record<string, unknown>[] {
@@ -52,6 +53,10 @@ function resultText(value: unknown): string {
       if (block.type === "text") return string(block.text);
       if (block.type === "image" || block.type === "document")
         return omittedMedia(`Tool result ${block.type}`);
+      // Claude Code's ToolSearch loads a deferred tool by naming it; every
+      // tool is offered already, so the model reads that it can call it.
+      if (block.type === "tool_reference")
+        return toolLoaded(string(block.tool_name));
       throw new GatewayError("Unsupported Anthropic tool_result content");
     })
     .join("\n");
@@ -82,7 +87,9 @@ function thinkingRequest(value: unknown): ReasoningRequest | undefined {
 /**
  * Translate an Anthropic Messages request (Claude Code) to Chat: system text,
  * text/tool_use/tool_result/thinking blocks, client tools, tool_choice,
- * max_tokens, stop_sequences and sampling. Thinking text becomes
+ * max_tokens, stop_sequences and sampling. Claude Code's ToolSearch results
+ * (`tool_reference` blocks) say in text that each tool is loaded, and its
+ * `DeferredToolPlaceholder` tool is left out. Thinking text becomes
  * `reasoning_content`, the `thinking` setting the reasoning request, and
  * `is_error` results the translation's tool errors. Images become Chat image
  * parts with `options.images`, otherwise text placeholders like documents;
@@ -128,6 +135,8 @@ export function anthropicToChat(
       );
     const name = string(tool.name),
       mapped = toolAlias(name);
+    // It only keeps Anthropic's deferred loading on and is never called.
+    if (name === DEFERRED_TOOL_PLACEHOLDER) continue;
     if (bindings.has(mapped)) throw new GatewayError("Duplicate tool names");
     bindings.set(mapped, { name, custom: false });
     tools.push({

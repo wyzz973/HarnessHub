@@ -1,6 +1,6 @@
-# 网关功能：脱敏、视觉兜底、联网搜索与图像
+# 网关功能：脱敏、视觉兜底、联网搜索、图像、工具搜索与压缩
 
-共享模型网关的可选能力（对标 Magpie 网关的脱敏、视觉兜底、搜索模拟与画图；取舍见 [ADR 0027](decisions/0027-gateway-features.md)）。设置保存在 `<dataDir>/gateway-features.json`（0600，原子替换），由 `/api/v1/gateway/features/*` 与 `hh gateway …` 修改，网关对每个请求读取当前值，修改对下一个请求生效。文件不是有效设置时守护进程拒绝启动（`GATEWAY_FEATURES_INVALID`），不会因为手工改错而悄悄关闭脱敏。
+共享模型网关的可选能力（对标 Magpie 网关的脱敏、视觉兜底、搜索模拟与画图；取舍见 [ADR 0027](decisions/0027-gateway-features.md)），以及总是生效、没有设置的[工具搜索](#工具搜索)与[上下文压缩](#上下文压缩)。设置保存在 `<dataDir>/gateway-features.json`（0600，原子替换），由 `/api/v1/gateway/features/*` 与 `hh gateway …` 修改，网关对每个请求读取当前值，修改对下一个请求生效。文件不是有效设置时守护进程拒绝启动（`GATEWAY_FEATURES_INVALID`），不会因为手工改错而悄悄关闭脱敏。
 
 这些是运行时管理的设置：经管理接口、控制台或命令修改，立即生效，保存在数据目录中，与局域网共享的设置文件一样。启动时读取、改后需重启的设置（例如监听地址）属于统一的启动配置文件 `<configDir>/config.jsonc`（由 `hh config` 编辑，随该文件一起落地）；两者不重叠。
 
@@ -65,3 +65,22 @@ hh provider add openai --chat https://api.openai.com/v1 --image-endpoint https:/
 - **请求与答复**：`model` 改为 wire 名，Credential 按 provider 的方式附加，提示词经过出站脱敏，其余字段原样转发。JSON 答复与 `stream: true` 的事件（`image_generation.partial_image`、`image_generation.completed`）原样返回；上游最多等 5 分钟。
 - **记录**：每次调用一个账本条目（`inbound.path` 为 `/v1/images/generations`），用量取答复或完成事件中的 `usage`（`gpt-image-*` 按 token 报告），模型有价格时按输入与输出价格计费，没有用量的上游（如 DALL·E）费用为空。
 - 不在范围内：`/v1/images/edits`（multipart 上传）、为没有图像端点的模型选择画图模型（Magpie 的自动选择）。
+
+## 工具搜索
+
+Agent 可以先不把全部工具发给模型，让模型按需搜索（对标 Magpie `gw/toolsearch.go`，实现在 [toolsearch.ts](../packages/gateway/src/toolsearch.ts)）。只有厂商自己的后端认识这类工具，网关为其他上游改写。
+
+- **Codex**：`tool_search` 工具（`execution: "client"`，由 Codex 自己执行搜索）发往上游时是普通函数 `tool_search`，描述与参数不变；历史中的 `tool_search_call` 是对它的 `function_call`（不带项 ID），`tool_search_output` 是 `function_call_output`，内容为 “These tools are now available to call: a, b”（没有结果时为 “No tools matched the search.”），找到的工具去掉 `defer_loading` 后加入工具列表，每个只加一次，同一命名空间再次找到时只补上缺少的工具。模型调用 `tool_search` 函数（不带命名空间）时，答复中的该项改回 Codex 执行的 `tool_search_call`（`execution: "client"`，`arguments` 为对象），流式事件与 JSON 答复都改。直通到 Responses 上游时改写请求体，账本记 `tool-search:function`；转换的请求（Chat 等上游）在转换中完成，命名空间中的工具按转换时提供给模型的名称列出，`tool_search_call` 的 ID 以 `tsc_` 开头。`execution` 不是 `client` 的托管搜索仍按托管工具拒绝。订阅账号的请求总是转换，不直通。
+- **Claude Code**：ToolSearch 的工具结果中的 `tool_reference` 块在转换时成为 “Tool X is loaded and can be called now.”（每个一行，接在结果文字之后），`DeferredToolPlaceholder` 工具不提供给模型；工具定义上的 `defer_loading` 在转换中不发送。直通到 Anthropic 端点时原样发送。
+- **验证**：[工具搜索测试](../packages/gateway/test/gateway-tool-search.test.ts) 覆盖请求改写、命名空间合并、空结果、长名称、流式（任意切分）与 JSON 答复的改回、带命名空间的同名调用不改，以及两种转换；[集成测试](../tests/integration/shared-gateway-tool-search-compaction.test.ts) 经正式守护进程连接白名单模式的[假 provider](../tools/fake-provider/README.md)（`execution`、`tools`、`defer_loading` 在那里都是违规字段），对 Responses 直通与 Chat 转换、流式与非流式各做一次搜索往返与调用找到的工具，以及 Anthropic 到 Chat 的 `tool_reference`。尚未用真实 Codex 与 Claude Code 对真实上游验证。
+
+## 上下文压缩
+
+Agent 在上下文将满时请模型把对话写成摘要（对标 Magpie `gw/compacting.go` 与 `gw/codex_backend.go` 的压缩部分，实现在 [compacting.ts](../packages/gateway/src/compacting.ts)）。
+
+- **识别**：`isCompactionRequest(protocol, body)` 是纯函数，按各 Agent 发布版本中的压缩提示词识别压缩请求：system 是（或以之开头）Claude Code 2.1、OpenCode、Pi、Gemini CLI 或 Qwen Code 的压缩提示词，或最后一条用户消息含有 Claude Code `/compact`、Codex 或 Kimi Code 的压缩要求，或 Responses 输入中有 `compaction_trigger`。目前只提供函数，供以后路由组的压缩规则使用；账本没有对应字段，不记录识别结果。
+- **Codex 的 `compaction_trigger`**：发到 `/v1/responses` 的请求（模型都是 HarnessHub 的）中，这一项换成 Codex 自己的压缩提示词（openai/codex，Apache-2.0）的用户消息，请求去掉 `tools`、`tool_choice` 与 `parallel_tool_calls`，按普通调用路由（直通或转换都可以）。答复改写为 ChatGPT 的 Codex 后端的形式：模型的消息文字是摘要，成为一个 `compaction` 项，`id` 为 `cmp_<响应 ID>`，`encrypted_content` 为 `hh1:` 加摘要的 base64；流式时 `response.created`、`response.in_progress`、失败事件与注释立即转发，模型自己的项扣下，最后写出该项的 `response.output_item.added`、`response.output_item.done` 与带模型用量的 `response.completed`；非流式时该项成为 `output` 的唯一一项。错误答复原样返回；模型没有写出摘要时以 `response.failed`（“compaction: the model wrote no summary”）结束，这时账本仍记该次调用成功，因为模型调用本身已完成。账本记 `compaction:summary`。
+- **之后的请求**：输入中 `encrypted_content` 以 `hh1:` 开头的 `compaction` 或 `compaction_summary` 项换成用户消息：Codex 的摘要前言（“Another language model started to solve this problem…”）、换行与摘要，账本记 `compaction:restored:<n>`；其他压缩项（OpenAI 封存的）不变。Codex 透传（`/backend-api/codex/responses`）同样换回，但其中的 `compaction_trigger` 属于 ChatGPT 自己的模型，原样转发。
+- **`/responses/compact`**：`/v1/responses/compact` 答复 400 `compact_unsupported`：“/responses/compact is not supported for HarnessHub models; use a compaction_trigger on /responses”，写拒绝记录；Codex 透传中模型带 `/` 的同一路径也如此，不转发给 ChatGPT。
+- **封存的推理与压缩**：一个账号或厂商封存的 `encrypted_content` 另一个读不了。网关自己编码的推理（转换答复中的推理项，`hh-r1.`）不直通到 Responses 上游，也不经 Codex 透传发给 ChatGPT，账本记 `reasoning:dropped:<n>`。路由粘性让会话留在答复它的 Credential 上；会话仍被换到别处、上游以 `invalid_encrypted_content` 或“encrypted content … could not be verified/decrypted”拒绝时，网关去掉请求中的推理项在同一候选上重发，再被拒绝（或没有推理项）时去掉封存的压缩项再重发，每次调用至多两次，账本的尝试记为 `retry`、`patches[]` 记 `sealed:reasoning` 或 `sealed:compaction`，不计入熔断。只用于 Responses 入站。Magpie 另外按会话记住被拒绝的封存项、之后的请求预先去掉，本网关每轮重新被拒绝一次。
+- **验证**：[压缩测试](../packages/gateway/test/gateway-compaction.test.ts) 覆盖七种 Agent 的压缩请求与不应识别的样例、请求改写、流式（任意切分）与 JSON 的摘要改写、失败与错误答复、没有摘要、封存项的去除顺序与网关自己的推理；[Codex 透传测试](../packages/gateway/test/shared-gateway-codex.test.ts) 覆盖 `/responses/compact` 的 400 与摘要、推理的换回；[集成测试](../tests/integration/shared-gateway-tool-search-compaction.test.ts) 经正式守护进程对 Responses 直通与 Chat 转换、流式与非流式各做一次压缩与恢复（工具若随压缩请求发出，假 provider 的脚本会答出别的内容），并以假 provider 的 `foreignSeals` 怪癖验证推理与压缩被拒绝后的重发、网关推理的预先删除与 `/v1/responses/compact` 的 400。尚未用真实 Codex 对真实上游验证 `compaction_trigger`。
