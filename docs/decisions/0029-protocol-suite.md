@@ -27,6 +27,7 @@ M1 的验收要求协议套件用固定版本的官方 SDK 作为客户端，经
 ## 后果
 
 - 根 `package.json` 新增三个只供套件使用的开发依赖及其传递依赖（许可证为 MIT、Apache-2.0、BSD-3-Clause；`fast-sha256` 为 Unlicense，属于需审阅的许可证，经 `@anthropic-ai/sdk` → `standardwebhooks` 引入，只在开发中使用）。
+- 许可证审查（维护者，2026-10-04）：按 [07 第 9 节](../proposals/oss/07-data-security.md#9-许可证合规与第三方声明)，Unlicense 需审查后登记。`fast-sha256` 1.3.0 接受：Unlicense 是 OSI 批准的公有领域贡献声明，没有署名或回馈义务；它只是开发依赖，不进入构建产物与单可执行文件。07 所说的许可证扫描与例外清单尚未实现，在它们落地前，这条记录就是登记；扫描落地时把它迁入例外清单。
 - 直通流在上游只发注释时可能先收到网关合成的事件；有替代路径时扣留窗口（默认 15 秒）内仍收不到任何字节。
 - Anthropic 客户端收到并行工具调用时，第二个及之后的调用在其参数可能与前一个交错时整块发送，不再逐片流式。
 - Gemini 客户端的流内错误只有作为单独的网络块到达时才被 `@google/genai` 识别为 `ApiError`；与前一个事件合并读取时 SDK 报“Incomplete JSON segment at the end”，仍是失败而不是成功。
