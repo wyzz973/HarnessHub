@@ -10,7 +10,8 @@
  * .tsbuildinfo: with the outputs gone but the .tsbuildinfo kept, it reports the
  * project as up to date and emits nothing. Every output directory is therefore
  * removed together with its .tsbuildinfo: `dist/{src,tests,.tsbuildinfo}` at
- * the root (the tests project, and src/ until OSS-004 step 9 removed it), and
+ * the root (the tests project, and src/ until OSS-004 step 9 removed it),
+ * `dist/conformance` (the conformance project, its .tsbuildinfo inside), and
  * `dist/{src,test,.tsbuildinfo}` of every
  * workspace package under packages/ and apps/. `dist/native` is left to the
  * native helper scripts, which rebuild it on every `pnpm build`; `dist/sea` and
@@ -47,7 +48,7 @@ async function workspaceProjects(root) {
  */
 export async function cleanBuild(root = fileURLToPath(new URL("../", import.meta.url))) {
   const targets = [
-    ...["src", "tests", ".tsbuildinfo"].map((name) => path.join(root, "dist", name)),
+    ...["src", "tests", "conformance", ".tsbuildinfo"].map((name) => path.join(root, "dist", name)),
     ...(await workspaceProjects(root)).flatMap((project) =>
       ["src", "test", ".tsbuildinfo"].map((name) => path.join(project, "dist", name)),
     ),

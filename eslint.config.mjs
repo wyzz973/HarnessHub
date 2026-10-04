@@ -17,6 +17,7 @@ export default tseslint.config(
     // @harnesshub/source condition), so linting needs no prior build.
     files: [
       "tests/**/*.ts",
+      "conformance/**/*.ts",
       "packages/*/src/**/*.ts",
       "packages/*/test/**/*.ts",
       "apps/*/src/**/*.ts",

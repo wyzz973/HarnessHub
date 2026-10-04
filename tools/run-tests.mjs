@@ -54,6 +54,8 @@ export const SUITES = {
   },
   integration: { files: ["dist/tests/integration/*.test.js"], testTimeoutMs: 120_000, deadlineMs: 25 * 60_000 },
   smoke: { files: ["dist/tests/smoke/*.test.js"], testTimeoutMs: 120_000, deadlineMs: 10 * 60_000 },
+  // The protocol suite: official SDK clients against `hh serve` and the strict fake upstream (conformance/).
+  protocol: { files: ["dist/conformance/protocols/*.test.js"], testTimeoutMs: 120_000, deadlineMs: 10 * 60_000 },
   // Opt-in, not part of `pnpm test`: real agents run offline in a sandbox (tools/conformance.mjs).
   conformance: { files: ["dist/tests/conformance/*.test.js"], testTimeoutMs: 300_000, deadlineMs: 45 * 60_000 },
 };

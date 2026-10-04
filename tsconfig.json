@@ -39,6 +39,9 @@
     },
     {
       "path": "./tests"
+    },
+    {
+      "path": "./conformance"
     }
   ]
 }

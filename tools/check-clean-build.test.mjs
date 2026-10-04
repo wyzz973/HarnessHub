@@ -15,6 +15,8 @@ test("removes every project's outputs together with its .tsbuildinfo and keeps o
       "dist/src/main.js",
       "dist/tests/unit/a.test.js",
       "dist/.tsbuildinfo",
+      "dist/conformance/protocols/chat.test.js",
+      "dist/conformance/.tsbuildinfo",
       "packages/core/dist/src/types.js",
       "packages/core/dist/test/types.test.js",
       "packages/core/dist/.tsbuildinfo",
@@ -44,5 +46,5 @@ test("removes every project's outputs together with its .tsbuildinfo and keeps o
   await cleanBuild(root);
   const bare = await mkdtemp(path.join(os.tmpdir(), "hh-clean-build-bare-"));
   t.after(() => rm(bare, { recursive: true, force: true }));
-  assert.deepEqual(await cleanBuild(bare), ["dist/src", "dist/tests", "dist/.tsbuildinfo"]);
+  assert.deepEqual(await cleanBuild(bare), ["dist/src", "dist/tests", "dist/conformance", "dist/.tsbuildinfo"]);
 });
