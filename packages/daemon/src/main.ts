@@ -881,6 +881,16 @@ export async function startHub(options: {
     });
     modelPlane.catalogChanged = () => agents.catalogChanged();
     server.addHook("preClose", async () => agents.close());
+    const library = new LibraryService({
+      dataDir,
+      configDir,
+      providers: modelPlane,
+      secrets,
+      environment,
+      adminTokenDigest,
+      home: options.wiringHome,
+      log: gatewayLog,
+    });
     // Backups and sync (off until configured); a sync in flight is aborted
     // and awaited before the stores close.
     const backups = new BackupService({
@@ -889,6 +899,7 @@ export async function startHub(options: {
       environment,
       agents,
       share,
+      library,
       // As configured: HH_OFFLINE is this process's environment, not a setting.
       catalog: {
         autoRefresh: options.catalog?.autoRefresh !== false,
@@ -937,16 +948,7 @@ export async function startHub(options: {
       log: gatewayLog,
       ...(options.wiringHome ? { importHome: options.wiringHome } : {}),
       agents,
-      library: new LibraryService({
-        dataDir,
-        configDir,
-        providers: modelPlane,
-        secrets,
-        environment,
-        adminTokenDigest,
-        home: options.wiringHome,
-        log: gatewayLog,
-      }),
+      library,
       gatewayShare: share,
       backup: { backups, sync },
       ...(subscriptions ? { subscriptions } : {}),

@@ -31,7 +31,8 @@ import {
   write,
 } from "./admin.js";
 
-const AGENTS: readonly LibraryAgent[] = [
+/** The agents the Library writes into. */
+export const AGENTS: readonly LibraryAgent[] = [
   "claude",
   "codex",
   "gemini",
@@ -341,7 +342,8 @@ async function rmCommand(args: string[]): Promise<void> {
   );
 }
 
-function planText(plan: LibraryPlan): string {
+/** A sync plan as `hh library sync` prints it: each changed agent's diffs, refusals and warnings. */
+export function planText(plan: LibraryPlan): string {
   const lines: string[] = [];
   for (const agent of plan.agents) {
     if (!agent.changed && !agent.refused.length && !agent.warnings.length)

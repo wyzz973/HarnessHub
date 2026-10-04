@@ -7,14 +7,18 @@
  * command line, where other users of the machine can see it.
  */
 import { readFile, writeFile } from "node:fs/promises";
-import type {
-  BackupEnvelope,
-  RestoreSummary,
-  SyncSettings,
-  SyncStatus,
+import {
+  HarnessHubError,
+  type BackupEnvelope,
+  type HarnessHubClient,
+  type LibraryPlan,
+  type RestoreSummary,
+  type SyncSettings,
+  type SyncStatus,
 } from "@harnesshub/sdk/client";
 import {
   confirm,
+  ConfirmationRequired,
   context,
   EXIT,
   hiddenPrompt,
@@ -27,15 +31,19 @@ import {
   write,
   type Context,
 } from "./admin.js";
+import { AGENTS as LIBRARY_AGENTS, planText } from "./library.js";
 
 const DEFAULT_FILE = "harnesshub.harnesshub-backup";
 
 const USAGE = `Usage:
   hh backup [--no-keys] [file]       seal providers, keys, groups, overrides,
-                                     agent wirings and settings into file
-                                     (default ${DEFAULT_FILE})
-  hh restore [--no-agents] <file>    show what the backup restores, confirm,
-                                     restore; agents installed here are re-wired
+                                     agent wirings, the Library and settings
+                                     into file (default ${DEFAULT_FILE})
+  hh restore [--no-agents] [--no-library] <file>
+                                     show what the backup restores, confirm,
+                                     restore; agents installed here are re-wired,
+                                     then the Library is synced into them after
+                                     showing the changes
   hh sync status | now | off
   hh sync webdav on <https://…> [user=NAME] [keys=yes|no] [agents=yes|no]
   hh sync s3 on <s3://bucket[/prefix]> access-key-id=ID [endpoint=URL]
@@ -172,6 +180,36 @@ function summaryText(summary: RestoreSummary, done: boolean): string {
         .filter(Boolean)
         .join("; ")} (apply one with hh profile apply)`,
     );
+  const library = summary.library;
+  if (library) {
+    const kinds = [
+      ["instructions", "instruction sets", library.instructions],
+      ["mcp", "MCP servers", library.mcp],
+      ["skills", "skills", library.skills],
+    ] as const;
+    const parts = kinds.flatMap(([, label, change]) => {
+      const done = [
+        change.added.length
+          ? `${verb("add", "added")} ${list(change.added)}`
+          : "",
+        change.replaced.length
+          ? `${verb("replace", "replaced")} ${list(change.replaced)}`
+          : "",
+      ].filter(Boolean);
+      return done.length ? [`${label}: ${done.join(", ")}`] : [];
+    });
+    lines.push(`Library: ${parts.join("; ") || "nothing to bring in"}`);
+    if (library.mcp.needSecret.length)
+      lines.push(
+        `  Secrets with no value in the backup or here, left out (set them with hh library add mcp --replace): ${list(library.mcp.needSecret)}`,
+      );
+    if (library.skills.incomplete.length)
+      lines.push(
+        `  Skills without their files over 2 MiB, which backups leave out: ${list(library.skills.incomplete)}`,
+      );
+    for (const item of library.refused)
+      lines.push(`  Not restored: ${item.kind} ${item.name}: ${item.reason}`);
+  }
   const share = summary.gatewayShare;
   if (share.action === "apply" && share.settings)
     lines.push(
@@ -228,9 +266,49 @@ function summaryText(summary: RestoreSummary, done: boolean): string {
   return lines.join("\n");
 }
 
+/**
+ * After a restore that brought Library items in: the Library synced into
+ * the agents installed here, after showing the plan and asking. Resolves
+ * to the plan applied (undefined when there was nothing to do or it was
+ * declined), or rejects with the daemon's error.
+ */
+async function syncRestoredLibrary(
+  ctx: Context,
+  client: HarnessHubClient,
+): Promise<LibraryPlan | undefined> {
+  const agents = (await client.agents.list()).items
+    .filter(
+      (agent) =>
+        agent.installation.status !== "not-found" &&
+        (LIBRARY_AGENTS as readonly string[]).includes(agent.id),
+    )
+    .map((agent) => agent.id) as (typeof LIBRARY_AGENTS)[number][];
+  if (!agents.length) return undefined;
+  const plan = await client.library.sync.plan({ agents });
+  if (!plan.changed) return undefined;
+  if (!ctx.json) write(planText(plan));
+  try {
+    await confirm(
+      ctx,
+      `Sync the restored Library into ${plan.agents
+        .filter((agent) => agent.changed)
+        .map((agent) => agent.agent)
+        .join(", ")}?`,
+    );
+  } catch (error) {
+    if (!(error instanceof ConfirmationRequired)) throw error;
+    process.stderr.write(
+      "The Library was not synced into the agents; run hh library sync to do it later.\n",
+    );
+    return undefined;
+  }
+  return client.library.sync.apply({ agents, expect: plan });
+}
+
 async function restoreCommand(args: string[]): Promise<number> {
   const { values, positionals: given } = parse(args, {
     "no-agents": { type: "boolean" },
+    "no-library": { type: "boolean" },
   });
   const ctx = context(values);
   const [file] = positionals(given, ["file"]) as [string];
@@ -244,14 +322,43 @@ async function restoreCommand(args: string[]): Promise<number> {
   }
   const passphrase = await secret(ctx, "passphrase");
   const client = await ctx.client();
-  const input = { backup, passphrase, agents: values["no-agents"] !== true };
+  const input = {
+    backup,
+    passphrase,
+    agents: values["no-agents"] !== true,
+    library: values["no-library"] !== true,
+  };
   const plan = await client.backup.restore({ ...input, dryRun: true });
   if (!ctx.json) write(summaryText(plan, false));
   await confirm(ctx, "Restore this backup?");
   const result = await client.backup.restore({ ...input, dryRun: false });
-  output(ctx, result, () => summaryText(result, true));
+  if (!ctx.json) write(summaryText(result, true));
+  let librarySync: LibraryPlan | undefined;
+  let libraryError: string | undefined;
+  if (result.library)
+    try {
+      librarySync = await syncRestoredLibrary(ctx, client);
+    } catch (error) {
+      if (!(error instanceof HarnessHubError)) throw error;
+      libraryError = `${error.code}: ${error.message}`;
+      process.stderr.write(
+        `The Library was not synced into the agents: ${libraryError}\n`,
+      );
+    }
+  if (ctx.json)
+    write(
+      JSON.stringify({ ...result, librarySync: librarySync ?? null }, null, 2),
+    );
+  else if (librarySync)
+    write(
+      librarySync.agents
+        .filter((agent) => agent.changed)
+        .map((agent) => `Library synced into ${agent.agent}`)
+        .join("\n"),
+    );
   return result.agents.some((agent) => agent.outcome === "failed") ||
-    result.gatewayShare.error !== undefined
+    result.gatewayShare.error !== undefined ||
+    libraryError !== undefined
     ? EXIT.internal
     : EXIT.ok;
 }

@@ -24,9 +24,13 @@ export {
 } from "./sync.js";
 export { libraryCapabilities, libraryTarget } from "./targets.js";
 export {
+  INSTRUCTION_SET_ID,
+  MCP_SERVER_NAME,
   parseAgents,
   parseInstructionSet,
   parseMcpServer,
+  SKILL_NAME,
+  type SkillFile,
 } from "./validate.js";
 export {
   libraryAgents,

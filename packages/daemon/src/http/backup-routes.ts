@@ -62,6 +62,12 @@ const restoreBodySchema = {
       default: true,
       description: "Re-wire the agents installed here",
     },
+    library: {
+      type: "boolean",
+      default: true,
+      description:
+        "Bring the Library's items in (agents' files are synced separately, through /library/sync)",
+    },
     dryRun: {
       type: "boolean",
       default: false,
@@ -96,6 +102,13 @@ const catalogSettings = {
   properties: { autoRefresh: { type: "boolean" }, url: { type: "string" } },
 } as const;
 
+const changes = {
+  type: "object",
+  additionalProperties: false,
+  required: ["added", "replaced", "removed"],
+  properties: { added: strings, replaced: strings, removed: strings },
+} as const;
+
 const restoreSummarySchema = {
   type: "object",
   additionalProperties: false,
@@ -107,6 +120,7 @@ const restoreSummarySchema = {
     "groups",
     "overrides",
     "profiles",
+    "library",
     "gatewayShare",
     "catalog",
     "agents",
@@ -134,6 +148,56 @@ const restoreSummarySchema = {
       additionalProperties: false,
       required: ["added", "replaced"],
       properties: { added: strings, replaced: strings },
+    },
+    library: {
+      type: "object",
+      nullable: true,
+      description:
+        "The Library's items brought in; null when the backup has none or library is false",
+      additionalProperties: false,
+      required: ["instructions", "mcp", "skills", "refused"],
+      properties: {
+        instructions: changes,
+        mcp: {
+          type: "object",
+          additionalProperties: false,
+          required: ["added", "replaced", "removed", "needSecret"],
+          properties: {
+            ...changes.properties,
+            needSecret: {
+              ...strings,
+              description:
+                "server: NAME of stored secrets with no value in the backup or here; left out",
+            },
+          },
+        },
+        skills: {
+          type: "object",
+          additionalProperties: false,
+          required: ["added", "replaced", "removed", "incomplete"],
+          properties: {
+            ...changes.properties,
+            incomplete: {
+              ...strings,
+              description:
+                "Skills brought in without files left out of the backup (over 2 MiB)",
+            },
+          },
+        },
+        refused: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "name", "reason"],
+            properties: {
+              kind: { type: "string", enum: ["instructions", "mcp", "skills"] },
+              name: { type: "string" },
+              reason: { type: "string" },
+            },
+          },
+        },
+      },
     },
     gatewayShare: {
       type: "object",
@@ -226,7 +290,7 @@ const restoreSummarySchema = {
 
 const parts = {
   type: "array",
-  items: { enum: ["providers", "agents", "profiles"] },
+  items: { enum: ["providers", "agents", "profiles", "library"] },
 } as const;
 const syncStatusSchema = {
   type: "object",
@@ -327,6 +391,7 @@ export function registerBackupRoutes(
       backup: unknown;
       passphrase: string;
       agents: boolean;
+      library: boolean;
       dryRun: boolean;
     };
   }>(

@@ -26,6 +26,7 @@ import {
   parseInstructionSet,
   readSkill,
   SKILL_NAME,
+  type SkillFile,
 } from "./validate.js";
 import {
   libraryAgents,
@@ -260,44 +261,12 @@ export class LibraryStore {
     agents: LibraryAgent[],
   ): Promise<SkillItem> {
     const skill = await readSkill(source);
-    const target = path.join(this.directory, "skills", skill.sha256);
-    if (!(await exists(target))) {
-      const staging = path.join(
-        this.directory,
-        "skills",
-        `.staging-${randomBytes(6).toString("hex")}`,
-      );
-      try {
-        for (const file of skill.files) {
-          const destination = path.join(
-            staging,
-            skill.name,
-            ...file.path.split("/"),
-          );
-          await mkdir(path.dirname(destination), {
-            recursive: true,
-            mode: 0o700,
-          });
-          await writeFile(destination, file.bytes, {
-            flag: "wx",
-            mode: file.executable ? 0o700 : 0o600,
-          });
-        }
-        await rename(staging, target);
-      } catch (error) {
-        await rm(staging, { recursive: true, force: true });
-        if (!(await exists(target))) throw error;
-      }
-    }
+    await this.storeVersion(skill);
     const index = await this.index();
     const previous = index.skills.find((item) => item.name === skill.name);
     const now = this.now();
     const item: SkillItem = {
-      name: skill.name,
-      description: skill.description,
-      sha256: skill.sha256,
-      files: skill.files.length,
-      size: skill.files.reduce((total, file) => total + file.bytes.length, 0),
+      ...versionOf(skill),
       agents,
       createdAt: previous?.createdAt ?? now,
       updatedAt: now,
@@ -308,6 +277,170 @@ export class LibraryStore {
     ].sort((a, b) => a.name.localeCompare(b.name));
     await this.saveIndex(index);
     return item;
+  }
+
+  /**
+   * Stores a skill version from its files (paths with `/` below the skill
+   * directory), validated as `readSkill` validates a directory named
+   * `name`; the index is not changed. A path that leaves the directory, or
+   * that a skill directory cannot hold, fails with LIBRARY_SKILL_INVALID.
+   *
+   * @returns The version's fields.
+   */
+  async storeSkillFiles(
+    name: string,
+    files: ReadonlyArray<{ path: string; bytes: Buffer; executable: boolean }>,
+  ): Promise<Omit<SkillItem, "agents" | "createdAt" | "updatedAt">> {
+    if (!SKILL_NAME.test(name))
+      throw new LibraryError(
+        "LIBRARY_SKILL_INVALID",
+        `${JSON.stringify(name.slice(0, 64))} is not a skill name`,
+      );
+    const incoming = path.join(
+      this.directory,
+      "skills",
+      `.staging-${randomBytes(6).toString("hex")}`,
+    );
+    try {
+      for (const file of files) {
+        const segments = file.path.split("/");
+        if (
+          segments.some(
+            (segment) =>
+              !segment ||
+              segment === "." ||
+              segment === ".." ||
+              /[\\:\0]/.test(segment),
+          )
+        )
+          throw new LibraryError(
+            "LIBRARY_SKILL_INVALID",
+            `${JSON.stringify(file.path.slice(0, 200))} is not a file inside a skill`,
+          );
+        const destination = path.join(incoming, name, ...segments);
+        await mkdir(path.dirname(destination), {
+          recursive: true,
+          mode: 0o700,
+        });
+        await writeFile(destination, file.bytes, {
+          flag: "wx",
+          mode: file.executable ? 0o700 : 0o600,
+        });
+      }
+      const skill = await readSkill(path.join(incoming, name));
+      const read = skill.files.map((file) => file.path).sort();
+      const given = files.map((file) => file.path).sort();
+      if (read.join("\0") !== given.join("\0"))
+        throw new LibraryError(
+          "LIBRARY_SKILL_INVALID",
+          `The files of ${name} include some that a skill does not hold`,
+        );
+      await this.storeVersion(skill);
+      return versionOf(skill);
+    } finally {
+      await rm(incoming, { recursive: true, force: true });
+    }
+  }
+
+  /** A stored version's files, as `readSkill` reads them. */
+  async skillFiles(sha256: string, name: string): Promise<SkillFile[]> {
+    return (await readSkill(this.skillDirectory(sha256, name))).files;
+  }
+
+  /**
+   * Writes items brought from a backup or another machine with their own
+   * timestamps: an item of the same id or name is replaced and the others
+   * are added; with `mirror`, items not given are removed. Skills name
+   * versions already stored (`storeSkillFiles`). An agent keeps one
+   * instruction set: a set kept from here gives up the agents a given set
+   * takes. Instruction texts are written before the index, which is
+   * written once.
+   *
+   * @returns The items removed or replaced, for their owners to release
+   *   (an MCP server's store secrets).
+   */
+  async restore(
+    items: {
+      instructions: ReadonlyArray<InstructionSet & { text: string }>;
+      mcp: readonly McpServerItem[];
+      skills: readonly SkillItem[];
+    },
+    mirror: boolean,
+  ): Promise<{
+    removed: { instructions: string[]; mcp: McpServerItem[]; skills: string[] };
+    replaced: { mcp: McpServerItem[] };
+  }> {
+    const index = await this.index();
+    const given = {
+      instructions: new Set(items.instructions.map((item) => item.id)),
+      mcp: new Set(items.mcp.map((item) => item.name)),
+      skills: new Set(items.skills.map((item) => item.name)),
+    };
+    const taken = new Set(items.instructions.flatMap((item) => item.agents));
+    const keptSets = mirror
+      ? []
+      : index.instructions
+          .filter((item) => !given.instructions.has(item.id))
+          .map((item) => ({
+            ...item,
+            agents: item.agents.filter((agent) => !taken.has(agent)),
+          }));
+    for (const item of items.instructions)
+      await writePrivate(
+        path.join(this.directory, "instructions", `${item.id}.md`),
+        `${item.text}\n`,
+      );
+    const removed = {
+      instructions: mirror
+        ? index.instructions
+            .filter((item) => !given.instructions.has(item.id))
+            .map((item) => item.id)
+        : [],
+      mcp: mirror ? index.mcp.filter((item) => !given.mcp.has(item.name)) : [],
+      skills: mirror
+        ? index.skills
+            .filter((item) => !given.skills.has(item.name))
+            .map((item) => item.name)
+        : [],
+    };
+    const replaced = {
+      mcp: index.mcp.filter((item) => given.mcp.has(item.name)),
+    };
+    const byId = <T>(list: T[], key: (item: T) => string) =>
+      list.sort((a, b) => key(a).localeCompare(key(b)));
+    await this.saveIndex({
+      schemaVersion: 1,
+      instructions: byId(
+        [
+          ...keptSets,
+          ...items.instructions.map(({ text: _text, ...item }) => item),
+        ],
+        (item) => item.id,
+      ),
+      mcp: byId(
+        [
+          ...(mirror
+            ? []
+            : index.mcp.filter((item) => !given.mcp.has(item.name))),
+          ...items.mcp,
+        ],
+        (item) => item.name,
+      ),
+      skills: byId(
+        [
+          ...(mirror
+            ? []
+            : index.skills.filter((item) => !given.skills.has(item.name))),
+          ...items.skills,
+        ],
+        (item) => item.name,
+      ),
+    });
+    for (const id of removed.instructions)
+      await rm(path.join(this.directory, "instructions", `${id}.md`), {
+        force: true,
+      });
+    return { removed, replaced };
   }
 
   /** Replaces the agents of a stored skill. */
@@ -359,7 +492,7 @@ export class LibraryStore {
 
   /**
    * Removes stored skill versions that neither the index nor any agent
-   * (`applied`) refers to.
+   * (`applied`) refers to, and what an interrupted import left.
    */
   async collect(): Promise<void> {
     const referenced = new Set<string>();
@@ -375,12 +508,48 @@ export class LibraryStore {
       throw error;
     }
     for (const name of names)
-      if (/^[0-9a-f]{64}$/.test(name) && !referenced.has(name)) {
+      if (
+        (/^[0-9a-f]{64}$/.test(name) && !referenced.has(name)) ||
+        // Left by an import that was interrupted; operations are serialized.
+        name.startsWith(".staging-")
+      ) {
         await rm(path.join(this.directory, "skills", name), {
           recursive: true,
           force: true,
         });
       }
+  }
+
+  /** Stores a read skill under `skills/<sha256>/<name>/` unless that version is there. */
+  private async storeVersion(skill: ReadSkill): Promise<void> {
+    const target = path.join(this.directory, "skills", skill.sha256);
+    if (await exists(target)) return;
+    const staging = path.join(
+      this.directory,
+      "skills",
+      `.staging-${randomBytes(6).toString("hex")}`,
+    );
+    try {
+      for (const file of skill.files) {
+        const destination = path.join(
+          staging,
+          skill.name,
+          ...file.path.split("/"),
+        );
+        await mkdir(path.dirname(destination), {
+          recursive: true,
+          mode: 0o700,
+        });
+        await writeFile(destination, file.bytes, {
+          flag: "wx",
+          mode: file.executable ? 0o700 : 0o600,
+        });
+      }
+      await rename(staging, target);
+    } catch (error) {
+      await rm(staging, { recursive: true, force: true });
+      if (!(await exists(target))) throw error;
+    }
   }
 
   private async saveIndex(index: LibraryIndex): Promise<void> {
@@ -393,6 +562,20 @@ export class LibraryStore {
   private now(): string {
     return this.clock().toISOString();
   }
+}
+
+type ReadSkill = Awaited<ReturnType<typeof readSkill>>;
+
+function versionOf(
+  skill: ReadSkill,
+): Omit<SkillItem, "agents" | "createdAt" | "updatedAt"> {
+  return {
+    name: skill.name,
+    description: skill.description,
+    sha256: skill.sha256,
+    files: skill.files.length,
+    size: skill.files.reduce((total, file) => total + file.bytes.length, 0),
+  };
 }
 
 function notFound(kind: string, key: string): LibraryError {

@@ -52,6 +52,8 @@ pnpm exec hh console --data-dir ./data/local
 
 `pnpm start --port 3180 --data-dir ./data/local` starts the same daemon without the `hh` command, which also runs `benchmark`, `tools` and `rollout` ([apps/hh](apps/hh/README.md)).
 
+In a second terminal, `pnpm exec hh init --data-dir ./data/local` sets up the rest: it adds a provider from a preset with its key, refreshes its models, and wires the agents installed here to a default model after showing every change together.
+
 To use the model gateway from any OpenAI or Anthropic client: add a provider from a preset (`hh provider add --preset deepseek --credential-from-stdin`), create a Gateway Key (`hh key create --name me --allow 'deepseek/*'`) and point the client at `http://127.0.0.1:3180/v1` (Anthropic: `http://127.0.0.1:3180`). The [quickstart](docs/quickstart.md) walks through it.
 
 In the console, configure a model on the **Model** page and register installed agents on the **Engines** page. Discovery never installs anything. Secrets are stored as references (Keychain, DPAPI, environment variable or file), never as plain values in configuration files. The [getting started guide](docs/getting-started.md) covers data directories, real agents and troubleshooting.

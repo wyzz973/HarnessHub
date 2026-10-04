@@ -3,8 +3,9 @@
  * Backups of this machine's model plane (docs/backup-sync.md): providers with
  * their credentials (the values only with keys), route groups, model
  * overrides, the agents' wirings as intents (model, tiers, effort, options
- * and the models they list and hide), wiring profiles, settings, and the
- * client keys that would need re-issuing. Gateway Key text is never stored
+ * and the models they list and hide), wiring profiles, the Library
+ * (`library-backup.ts`), settings, and the client keys that would need
+ * re-issuing. Gateway Key text is never stored
  * anywhere, so no key is in a backup: restoring re-wires agents with new
  * `agent:` keys and lists the client keys to issue again. Restore is
  * additive and goes record by record: a provider or profile with the same id
@@ -13,6 +14,10 @@
  * holds. The bundle follows Magpie's backup
  * (yetone/magpie, MIT, internal/backup).
  */
+import {
+  libraryAgents,
+  type LibraryAgent,
+} from "@harnesshub/agents/library/index";
 import { HubError } from "@harnesshub/core/errors";
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import {
@@ -54,6 +59,12 @@ import {
   type BackupEnvelope,
 } from "./backup-envelope.js";
 import type { WiringRequest } from "./agents-wiring.js";
+import {
+  isBackupLibrary,
+  type BackupLibrary,
+  type LibraryRestore,
+} from "./library-backup.js";
+import type { LibraryService } from "./library-service.js";
 import type { ManagedSecrets } from "./http/api-v1.js";
 import type {
   GatewayShareControl,
@@ -136,8 +147,16 @@ export interface BackupBundle {
   agents: AgentIntent[];
   /** Wiring profiles; absent in a backup from before them, which restores none. */
   profiles?: WiringProfile[];
+  /** The Library; absent in a backup from before it, which restores none. */
+  library?: BackupLibrary;
   clientKeys: ClientKeyIntent[];
 }
+
+/** The Library's part of backups and sync (`LibraryService`). */
+export type LibraryBackups = Pick<
+  LibraryService,
+  "carry" | "bring" | "lastChange" | "plan" | "apply"
+>;
 
 /** The parts of the agent wiring service a restore uses (AgentWiringService). */
 export interface AgentWirings {
@@ -170,6 +189,8 @@ export interface BackupServiceOptions {
   agents: AgentWirings;
   /** LAN sharing; absent, its settings are neither saved nor restored. */
   share?: GatewayShareControl;
+  /** The Library; absent, it is neither saved nor restored. */
+  library?: LibraryBackups;
   /** The catalog settings this daemon was started with (from its configuration). */
   catalog: CatalogSettingsBackup;
   /** `HarnessHub <version>`. */
@@ -204,6 +225,12 @@ export interface RestoreSummary {
   };
   overrides: number;
   profiles: { added: string[]; replaced: string[] };
+  /**
+   * What of the Library is (or was) brought in; null when the backup has
+   * none or it was left out. Agents' files are not touched: syncing the
+   * Library into them is the Library's plan and apply.
+   */
+  library: LibraryRestore | null;
   gatewayShare: {
     action: "apply" | "unchanged" | "absent" | "unavailable";
     settings?: GatewayShareSettings;
@@ -274,12 +301,15 @@ export class BackupService {
     backup: unknown;
     passphrase: string;
     agents: boolean;
+    /** Bring the Library in; default true. */
+    library?: boolean;
     dryRun: boolean;
   }): Promise<RestoreSummary> {
     const bundle = decodeBundle(await open(input.backup, input.passphrase));
+    const library = input.library !== false;
     return this.serial(async () => {
-      const summary = await this.summarize(bundle, input.agents);
-      return input.dryRun ? summary : this.apply(bundle, summary);
+      const summary = await this.summarize(bundle, input.agents, library);
+      return input.dryRun ? summary : this.apply(bundle, summary, library);
     });
   }
 
@@ -347,6 +377,9 @@ export class BackupService {
       },
       agents: agents.sort((a, b) => a.agent.localeCompare(b.agent)),
       profiles: await store.listWiringProfiles(),
+      ...(this.options.library
+        ? { library: await this.options.library.carry(options.keys) }
+        : {}),
       clientKeys: active.flatMap((key): ClientKeyIntent[] =>
         key.scope.kind === "client"
           ? [
@@ -445,14 +478,50 @@ export class BackupService {
   }
 
   /**
+   * Mirrors the server's Library here (sync): items replaced, added and
+   * removed as `library` has them. With `agents`, the Library is then
+   * synced into the agents installed here through its plan and apply,
+   * without writing secret values; a failure there leaves the agents' files
+   * as they were and is returned, the items staying brought in.
+   */
+  async bringLibrary(
+    library: BackupLibrary,
+    agents: boolean,
+  ): Promise<{ restore: LibraryRestore; agentsError?: string }> {
+    if (!this.options.library)
+      return {
+        restore: {
+          instructions: { added: [], replaced: [], removed: [] },
+          mcp: { added: [], replaced: [], removed: [], needSecret: [] },
+          skills: { added: [], replaced: [], removed: [], incomplete: [] },
+          refused: [],
+        },
+      };
+    const restore = await this.options.library.bring(library, {
+      mirror: true,
+      dryRun: false,
+    });
+    if (!agents) return { restore };
+    try {
+      await this.syncLibrary(await this.installedLibraryAgents());
+      return { restore };
+    } catch (error) {
+      if (!(error instanceof HubError)) throw error;
+      return { restore, agentsError: `${error.code}: ${error.message}` };
+    }
+  }
+
+  /**
    * When a sync part was last changed here, as its records tell: the newest
-   * `updatedAt` of providers, groups and overrides, of profiles, or
-   * `wiredAt` of the wirings. A deletion leaves no time, so it does not count.
+   * `updatedAt` of providers, groups and overrides, of profiles or of the
+   * Library's items, or `wiredAt` of the wirings. A deletion leaves no time,
+   * so it does not count.
    */
   async lastChange(
-    part: "providers" | "agents" | "profiles",
+    part: "providers" | "agents" | "profiles" | "library",
   ): Promise<string | undefined> {
     const { store } = this.options;
+    if (part === "library") return this.options.library?.lastChange();
     const times: string[] = [];
     if (part === "agents")
       for (const wiring of await store.listWirings())
@@ -483,6 +552,7 @@ export class BackupService {
   private async summarize(
     bundle: BackupBundle,
     agents: boolean,
+    library: boolean,
   ): Promise<RestoreSummary> {
     const { store } = this.options;
     const here = new Map(
@@ -541,6 +611,13 @@ export class BackupService {
         0,
       ),
       profiles,
+      library:
+        library && bundle.library && this.options.library
+          ? await this.options.library.bring(bundle.library, {
+              mirror: false,
+              dryRun: true,
+            })
+          : null,
       gatewayShare: this.planShare(bundle.settings.gatewayShare),
       catalog: bundle.settings.catalog
         ? {
@@ -560,9 +637,17 @@ export class BackupService {
   private async apply(
     bundle: BackupBundle,
     summary: RestoreSummary,
+    library: boolean,
   ): Promise<RestoreSummary> {
     await this.bringProviders(bundle, false);
     await this.bringProfiles(bundle.profiles ?? [], false);
+    const brought =
+      library && bundle.library && this.options.library
+        ? await this.options.library.bring(bundle.library, {
+            mirror: false,
+            dryRun: false,
+          })
+        : null;
     const gatewayShare = { ...summary.gatewayShare };
     if (gatewayShare.action === "apply" && this.options.share)
       try {
@@ -573,9 +658,31 @@ export class BackupService {
       }
     return {
       ...summary,
+      library: brought,
       gatewayShare,
       agents: await this.applyAgents(summary.agents),
     };
+  }
+
+  /** The Library's agents installed here (detected or configured). */
+  private async installedLibraryAgents(): Promise<LibraryAgent[]> {
+    const installed: LibraryAgent[] = [];
+    for (const agent of libraryAgents)
+      try {
+        const view = await this.options.agents.get(agent);
+        if (view.installation.status !== "not-found") installed.push(agent);
+      } catch (error) {
+        if (!(error instanceof HubError)) throw error;
+      }
+    return installed;
+  }
+
+  /** Syncs the Library into `agents` through its plan and apply. */
+  private async syncLibrary(agents: LibraryAgent[]): Promise<void> {
+    const library = this.options.library;
+    if (!library || !agents.length) return;
+    const plan = await library.plan({ agents });
+    if (plan.changed) await library.apply({ agents, expect: plan });
   }
 
   private planShare(
@@ -965,6 +1072,8 @@ export function decodeBundle(bytes: Buffer): BackupBundle {
     )
   )
     throw invalidBundle("has an invalid wiring profile");
+  if (value.library !== undefined && !isBackupLibrary(value.library))
+    throw invalidBundle("has an invalid Library");
   if (!Array.isArray(value.clientKeys) || !value.clientKeys.every(isClientKey))
     throw invalidBundle("has an invalid client key");
   return value as unknown as BackupBundle;

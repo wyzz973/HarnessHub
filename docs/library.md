@@ -81,6 +81,10 @@ Library 不保存秘密值。MCP 的 `secretEnv` 与 `secretHeaders` 是三种�
 - **还原**：HarnessHub 在每个文件第一次改动前把原始字节存入 `<dataDir>/backups/wiring/library-<agent>/`，并在 `<dataDir>/library/applied.json` 记录写入了哪些条目、写后的哈希与为此创建的目录。某个文件中不再有 HarnessHub 的内容时：文件仍是上次写入的样子就写回原始字节（原本不存在的文件被删除），否则只取出自己的区块与条目，保留用户之后的改动；为放置而创建、已经为空的目录被删除。
 - **并发**：同步与全局接线共用每个 Agent 的锁（`<dataDir>/backups/wiring/<agent>/.lock`）；应用时按预览核对每个要改的文件，文件在预览后被改动则返回 409 `LIBRARY_CONCURRENT_MODIFICATION`，该 Agent 什么都不写。逐个 Agent 写入，每个 Agent 写完即提交状态；写入、回读或提交失败时，该 Agent 已写的内容恢复为写前字节。
 
+## 备份与同步
+
+Library 的条目随[备份](backup-sync.md)保存与恢复，并作为同步的第四部分在多台机器间保持一致：MCP 的 `store` 秘密只在带 Key 时以值的形式携带，Skill 文件超过 2 MiB 的不带；恢复与带入时按本页的规则重新检查（包括 `SECRET_REF_FORBIDDEN`）。`hh restore` 带入 Library 后提示把它同步到本机已安装的 Agent；开启了 Agent 接线同步时，同步带入后直接写入已安装的 Agent（不写秘密值）。
+
 ## 接口
 
 守护进程以 `hh serve` 的接线目录（主目录，或 `--wiring-home`）为 Agent 文件所在；未设置接线目录时条目照常增删，同步返回 503 `AGENT_WIRING_UNAVAILABLE`。接口见 [API 实现参考](api/reference.md) 的 `library` 各节：

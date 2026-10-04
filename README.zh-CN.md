@@ -52,6 +52,8 @@ pnpm exec hh console --data-dir ./data/local
 
 `pnpm start --port 3180 --data-dir ./data/local` 不经 `hh` 命令启动同一个守护进程。
 
+在第二个终端运行 `pnpm exec hh init --data-dir ./data/local` 完成其余设置：从预设添加 provider 与 API Key、刷新模型，把所有改动合在一份预览中确认后，把本机已安装的 Agent 接到默认模型（见 [快速上手](docs/quickstart.md#向导hh-init)）。
+
 在控制台的“模型”页配置模型，在“引擎”页登记已安装的 Agent。发现过程不会安装任何程序；秘密只以引用形式保存（钥匙串、DPAPI、环境变量或文件），配置文件中不出现明文。数据目录、真实 Agent 与排障见 [使用指南](docs/getting-started.md)。
 
 ```sh

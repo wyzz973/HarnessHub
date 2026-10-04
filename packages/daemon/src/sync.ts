@@ -3,9 +3,11 @@
  * Multi-machine sync through a WebDAV folder or an S3-compatible bucket
  * (docs/backup-sync.md), off by default. What goes to the server is a backup
  * sealed with the sync passphrase, so the server only ever holds ciphertext.
- * The setup is taken in three parts: `providers` (providers with their
+ * The setup is taken in four parts: `providers` (providers with their
  * credentials and overrides, and route groups), `agents` (the wirings as
- * intents) and `profiles` (wiring profiles). A part changed only here is pushed, one changed only on the
+ * intents), `profiles` (wiring profiles) and `library` (the Library's
+ * items; with agent wirings synced, also written into the agents installed
+ * here). A part changed only here is pushed, one changed only on the
  * server is brought in, and one changed on both since the last sync keeps
  * the side changed last; the side it replaced is saved under
  * `<dataDir>/sync/conflicts/` and named in a notice. Each machine writes only
@@ -36,6 +38,11 @@ import {
 } from "./backup.js";
 import type { ManagedSecrets } from "./http/api-v1.js";
 import {
+  emptyLibrary,
+  libraryView,
+  withLibraryValues,
+} from "./library-backup.js";
+import {
   RateLimited,
   RemoteChanged,
   S3Remote,
@@ -55,7 +62,12 @@ const MAX_BACKOFF_MS = 30 * 60_000;
 /** The longest Retry-After honoured. */
 const MAX_RETRY_AFTER_MS = 6 * 60 * 60_000;
 
-export const SYNC_PARTS = ["providers", "agents", "profiles"] as const;
+export const SYNC_PARTS = [
+  "providers",
+  "agents",
+  "profiles",
+  "library",
+] as const;
 export type SyncPart = (typeof SYNC_PARTS)[number];
 
 /** `<dataDir>/sync/config.json`: the target, with its secrets as references. */
@@ -134,6 +146,7 @@ export type SyncBackups = Pick<
   | "bringProviders"
   | "bringAgents"
   | "bringProfiles"
+  | "bringLibrary"
   | "serial"
 >;
 
@@ -602,8 +615,11 @@ export class SyncService {
     for (const part of SYNC_PARTS) {
       if (L[part] === R[part] || (part === "agents" && !config.agents))
         continue;
-      // From a HarnessHub before profiles: this machine's go up.
-      if (part === "profiles" && remoteBundle.profiles === undefined) {
+      // From a HarnessHub before profiles or the Library: this machine's go up.
+      if (
+        (part === "profiles" && remoteBundle.profiles === undefined) ||
+        (part === "library" && remoteBundle.library === undefined)
+      ) {
         take(merged, local, part);
         continue;
       }
@@ -648,7 +664,24 @@ export class SyncService {
         kept.push(...(await backups.bringProviders(remoteBundle, true)).kept);
       else if (part === "agents")
         await backups.bringAgents(remoteBundle.agents, config.agents);
-      else await backups.bringProfiles(remoteBundle.profiles ?? [], true);
+      else if (part === "profiles")
+        await backups.bringProfiles(remoteBundle.profiles ?? [], true);
+      else if (remoteBundle.library) {
+        const brought = await backups.bringLibrary(
+          remoteBundle.library,
+          config.agents,
+        );
+        if (brought.agentsError)
+          this.log.info("sync.library_agents_failed", {
+            error: brought.agentsError,
+          });
+        if (brought.restore.refused.length)
+          this.log.info("sync.library_refused", {
+            items: brought.restore.refused
+              .map((item) => `${item.kind}:${item.name}`)
+              .join(","),
+          });
+      }
     // The server's parts are in; until the push below is done, what it
     // carries counts as changed here.
     let now = L;
@@ -690,6 +723,7 @@ export class SyncService {
       providers: hash({ providers: bundle.providers, groups: bundle.groups }),
       agents: hash(bundle.agents),
       profiles: hash(bundle.profiles ?? []),
+      library: hash(libraryView(bundle.library)),
     };
   }
 
@@ -799,6 +833,11 @@ function take(to: BackupBundle, from: BackupBundle, part: SyncPart): void {
     to.profiles = from.profiles ?? [];
     return;
   }
+  if (part === "library") {
+    if (from.library) to.library = withLibraryValues(from.library, to.library);
+    else delete to.library;
+    return;
+  }
   const values = new Map<string, string>();
   for (const provider of to.providers)
     for (const credential of provider.credentials)
@@ -828,6 +867,8 @@ function emptyPart(bundle: BackupBundle, part: SyncPart): boolean {
       return bundle.agents.length === 0;
     case "profiles":
       return (bundle.profiles ?? []).length === 0;
+    case "library":
+      return emptyLibrary(bundle.library);
     case "providers":
       return bundle.providers.length === 0 && bundle.groups.length === 0;
   }

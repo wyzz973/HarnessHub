@@ -566,6 +566,29 @@ export interface RestoreSummary {
   groups: { added: string[]; replaced: string[]; skipped: string[] };
   overrides: number;
   profiles: { added: string[]; replaced: string[] };
+  /** The Library's items brought in; null when the backup has none or `library` is false. */
+  library: {
+    instructions: { added: string[]; replaced: string[]; removed: string[] };
+    mcp: {
+      added: string[];
+      replaced: string[];
+      removed: string[];
+      /** `server: NAME`: stored secrets with no value in the backup or here; left out. */
+      needSecret: string[];
+    };
+    skills: {
+      added: string[];
+      replaced: string[];
+      removed: string[];
+      /** Brought in without files left out of the backup (over 2 MiB). */
+      incomplete: string[];
+    };
+    refused: Array<{
+      kind: "instructions" | "mcp" | "skills";
+      name: string;
+      reason: string;
+    }>;
+  } | null;
   gatewayShare: {
     action: "apply" | "unchanged" | "absent" | "unavailable";
     settings?: GatewayShareSettings;
@@ -642,8 +665,8 @@ export interface SyncStatus {
   nextSyncAt?: string;
   notice?: {
     at: string;
-    here: Array<"providers" | "agents" | "profiles">;
-    there: Array<"providers" | "agents" | "profiles">;
+    here: Array<"providers" | "agents" | "profiles" | "library">;
+    there: Array<"providers" | "agents" | "profiles" | "library">;
     saved?: string;
     kept?: string[];
   };
@@ -1279,6 +1302,8 @@ export class HarnessHubClient {
       backup: BackupEnvelope;
       passphrase: string;
       agents?: boolean;
+      /** Bring the Library's items in (default true); agents' files are synced with `library.sync`. */
+      library?: boolean;
       dryRun?: boolean;
     }) => this.request<RestoreSummary>("POST", "restore", { body: input }),
   };

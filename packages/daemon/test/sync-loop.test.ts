@@ -63,6 +63,14 @@ const backups: SyncBackups = {
   bringProviders: async () => ({ kept: [] }),
   bringAgents: async () => [],
   bringProfiles: async () => undefined,
+  bringLibrary: async () => ({
+    restore: {
+      instructions: { added: [], replaced: [], removed: [] },
+      mcp: { added: [], replaced: [], removed: [], needSecret: [] },
+      skills: { added: [], replaced: [], removed: [], incomplete: [] },
+      refused: [],
+    },
+  }),
   serial: (action) => action(),
 };
 

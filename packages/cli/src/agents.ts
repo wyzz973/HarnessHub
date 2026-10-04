@@ -93,7 +93,8 @@ async function agentsCommand(args: string[]): Promise<void> {
   );
 }
 
-function planText(plan: AgentWiringPlan): string {
+/** A wiring plan as `hh wire` prints it: each changed file and its diff. */
+export function planText(plan: AgentWiringPlan): string {
   return plan.files
     .filter((file) => file.diff)
     .map(

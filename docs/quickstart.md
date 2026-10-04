@@ -12,6 +12,19 @@ pnpm exec hh serve
 
 `hh serve` 默认监听 `127.0.0.1:3180`（`--port` 修改），数据目录为当前目录下的 `./data`（`--data-dir` 修改），首次启动时在其中生成本机管理令牌 `admin.token`。API Key 默认存入系统密钥库（macOS 钥匙串、Windows DPAPI，其他平台为加密文件）；加 `--secrets-backend file` 改用加密文件，主密钥在 `--config-dir`（默认是平台的 HarnessHub 配置目录）下的 `secrets.key`。
 
+## 向导：`hh init`
+
+另开一个终端运行 `pnpm exec hh init`，它把下面第 2 步与第 5 步[接入 Agent](#5-接入本机的编码-agent)合成一个流程：确认守护进程在运行（没有时提示先运行 `hh serve`，以 3 退出）；从按厂商、中转与本地分组的预设中选择（输入文字即搜索），再选区域与套餐，以隐藏输入读取 API Key（本地预设不需要）；刷新模型并显示数量；列出本机已安装的 Agent 供多选；选择默认模型，选了 Claude Code 时可为各档位另选模型；最后把所有 Agent 的改动合在一份预览中，确认后逐个接线，并提示 `hh usage`、`hh console` 等下一步。同 id 的 provider 已存在时直接使用；已按相同选择接线、Key 有效且没有漂移的 Agent 不重新接线（重新接线会换一把新 Key）。
+
+没有终端时（stdin 不是 TTY、设置了 `CI` 或加 `--non-interactive`）由选项给出全部答案，缺少的以 2 退出，且在添加任何东西之前检查：
+
+```sh
+pnpm exec hh init --preset deepseek --credential-from-env DEEPSEEK_API_KEY \
+  --agents claude,codex --model deepseek/deepseek-chat --tier haiku=deepseek/deepseek-chat --yes
+```
+
+`--region`、`--plan` 默认取预设的第一个；`--base URL` 把预设的地址移到另一个基址（需要用户自填地址的预设，如另一台 HarnessHub，必须给出）；`--agents` 也接受 `all`（已安装的全部）与 `none`；没有 `--yes` 时只显示改动并以 4 退出，provider 已添加、Agent 不变；某个 Agent 接线失败时其余照常，命令以 1 退出。`--json` 输出 `{provider: {id, created, models}, agents: [{agent, model, tiers, outcome}]}`。每一步都经 SDK 调用 `/api/v1` 的现有接口（预设、provider、模型刷新、Agent 预览与接线），与 `hh provider add` 和 `hh wire` 相同。
+
 ## 2. 添加 provider 与 Key
 
 另开一个终端。`hh` 默认连接 `http://127.0.0.1:3180`，并从 `./data/admin.token` 读取管理令牌；守护进程用了其他端口或数据目录时，给每个命令加上 `--url` 与 `--data-dir`。
