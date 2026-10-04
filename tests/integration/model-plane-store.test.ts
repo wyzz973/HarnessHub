@@ -585,6 +585,84 @@ void test("wirings refer to stored keys and are replaced per adapter", async (t)
   assert.deepEqual(await plane.listWirings(), []);
 });
 
+void test("a wiring may have no key, a key's model lists change in place, and profiles are stored by name", async (t) => {
+  const { plane, raw } = fixture(t);
+  const signedIn: WiringRecord = {
+    adapterId: "codex",
+    options: { codexAuth: "chatgpt" },
+    files: [
+      {
+        path: "/home/user/.codex/config.toml",
+        afterHash: "b".repeat(64),
+        backupId: "backup-1",
+      },
+    ],
+    wiredAt: AT,
+  };
+  await plane.putWiring(signedIn);
+  assert.deepEqual(await plane.listWirings(), [signedIn]);
+  assert.equal(raw().prepare("SELECT key_id FROM wirings").get()?.key_id, null);
+  await assert.rejects(
+    plane.putWiring({ ...signedIn, effort: "extreme" as "high" }),
+    code("MODEL_PLANE_RECORD_INVALID"),
+  );
+  await assert.rejects(
+    plane.putWiring({ ...signedIn, tiers: { large: "a/b" } as never }),
+    code("MODEL_PLANE_RECORD_INVALID"),
+  );
+
+  const agent = key({ kind: "agent", adapterId: "claude" });
+  await plane.createGatewayKey({ ...agent.record, modelAllow: ["*"] });
+  assert.equal(
+    await plane.setGatewayKeyModels(agent.record.keyId, ["*"], ["alpha/*"]),
+    true,
+  );
+  const stored = await plane.getGatewayKey(agent.record.keyId);
+  assert.deepEqual(stored?.modelAllow, ["*"]);
+  assert.deepEqual(stored?.modelDeny, ["alpha/*"]);
+  await plane.setGatewayKeyModels(agent.record.keyId, ["*"], []);
+  assert.equal(
+    "modelDeny" in (await plane.getGatewayKey(agent.record.keyId))!,
+    false,
+  );
+  await assert.rejects(
+    plane.setGatewayKeyModels(agent.record.keyId, ["*"], ["not a ref"]),
+    code("MODEL_PLANE_RECORD_INVALID"),
+  );
+  assert.equal(
+    await plane.setGatewayKeyModels("zzzzzzzzzzzz" as GatewayKeyId, [], []),
+    false,
+  );
+
+  const profile = {
+    name: "work",
+    agents: {
+      claude: {
+        model: "alpha/chat-1",
+        tiers: { haiku: "group/fast" },
+        effort: "high" as const,
+      },
+      codex: { options: { codexAuth: "chatgpt" } },
+    },
+    createdAt: AT,
+    updatedAt: AT,
+  };
+  await plane.putWiringProfile(profile);
+  await plane.putWiringProfile({ ...profile, name: "home", agents: {} });
+  assert.deepEqual(
+    (await plane.listWiringProfiles()).map((item) => item.name),
+    ["home", "work"],
+  );
+  assert.deepEqual(await plane.getWiringProfile("work"), profile);
+  await assert.rejects(
+    plane.putWiringProfile({ ...profile, name: "bad name" }),
+    code("MODEL_PLANE_RECORD_INVALID"),
+  );
+  assert.equal(await plane.deleteWiringProfile("home"), true);
+  assert.equal(await plane.deleteWiringProfile("home"), false);
+  assert.equal(await plane.getWiringProfile("home"), undefined);
+});
+
 void test("ledger entries are committed when append resolves and survive a reopen", async (t) => {
   const { plane, store, raw, open } = fixture(t);
   const entry = call();

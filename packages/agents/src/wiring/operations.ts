@@ -170,8 +170,8 @@ export type UnwireAction =
 
 export interface UnwireResult {
   adapterId: string;
-  /** The key that the caller now revokes. */
-  keyId: GatewayKeyId;
+  /** The key that the caller now revokes; absent for a wiring without a key. */
+  keyId?: GatewayKeyId;
   files: Array<{ path: string; action: UnwireAction }>;
 }
 
@@ -187,7 +187,7 @@ export interface DriftFinding {
 
 export interface DriftReport {
   adapterId: string;
-  keyId: GatewayKeyId;
+  keyId?: GatewayKeyId;
   drifted: boolean;
   kinds: DriftKind[];
   files: Array<{
@@ -420,7 +420,7 @@ export async function unwire(
     }
     return {
       adapterId: adapter.id,
-      keyId: record.keyId,
+      ...(record.keyId !== undefined ? { keyId: record.keyId } : {}),
       files: files.reverse(),
     };
   });
@@ -490,12 +490,15 @@ export async function detectDrift(
     }
     files.push({ path: entry.path, state: "modified" });
     const { file: baseFile, path: basePath } = adapter.baseUrlField;
+    // A field per model has none for a wiring without a model.
     const baseField =
-      baseFile === manifest.fileId
-        ? typeof basePath === "function"
-          ? basePath(record.model)
-          : basePath
-        : undefined;
+      baseFile !== manifest.fileId
+        ? undefined
+        : typeof basePath !== "function"
+          ? basePath
+          : record.model !== undefined
+            ? basePath(record.model)
+            : undefined;
     for (const expected of manifest.expected)
       for (const [leaf, template] of leaves(expected.value, expected.path)) {
         const result = matchTemplate(
@@ -527,7 +530,7 @@ export async function detectDrift(
   const kinds = [...new Set(findings.map((finding) => finding.kind))].sort();
   return {
     adapterId: adapter.id,
-    keyId: record.keyId,
+    ...(record.keyId !== undefined ? { keyId: record.keyId } : {}),
     drifted: findings.length > 0,
     kinds,
     files,
@@ -1075,7 +1078,7 @@ function matchTemplate(
   actual: unknown,
   expected: ConfigValue,
   baseUrl: string,
-  keyId: GatewayKeyId,
+  keyId: GatewayKeyId | undefined,
 ): "ok" | "missing" | "changed" | "other-key" {
   if (actual === undefined) return "missing";
   if (typeof expected !== "string") {
@@ -1259,7 +1262,7 @@ function checkRecord(record: WiringRecord): void {
   const hash = /^[0-9a-f]{64}$/;
   if (
     typeof record.adapterId !== "string" ||
-    !isGatewayKeyId(record.keyId) ||
+    (record.keyId !== undefined && !isGatewayKeyId(record.keyId)) ||
     !Array.isArray(record.files) ||
     !record.files.every(
       (file) =>

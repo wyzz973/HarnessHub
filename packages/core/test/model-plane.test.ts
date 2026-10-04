@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   gatewayKeyMatches,
   issueGatewayKey,
+  isModelPattern,
   modelAllowed,
   parseGatewayKey,
   parseModelRef,
@@ -76,4 +77,21 @@ void test("model allowlists admit exact refs, provider wildcards and named group
   assert.equal(modelAllowed(allow, "group/slow"), false);
   assert.equal(modelAllowed([], "deepseek/deepseek-chat"), false);
   assert.equal(modelAllowed(allow, "not-a-ref"), false);
+});
+
+void test("* admits every model and group, and a deny list takes back what the allowlist admits", () => {
+  assert.equal(modelAllowed(["*"], "deepseek/deepseek-chat"), true);
+  assert.equal(modelAllowed(["*"], "group/fast"), true);
+  assert.equal(modelAllowed(["*"], "not-a-ref"), false);
+  const deny = ["openai/*", "group/slow", "deepseek/deepseek-reasoner"];
+  assert.equal(modelAllowed(["*"], "openai/gpt-5", deny), false);
+  assert.equal(modelAllowed(["*"], "group/slow", deny), false);
+  assert.equal(modelAllowed(["*"], "group/fast", deny), true);
+  assert.equal(modelAllowed(["*"], "deepseek/deepseek-reasoner", deny), false);
+  assert.equal(modelAllowed(["*"], "deepseek/deepseek-chat", deny), true);
+  assert.equal(modelAllowed(["deepseek/*"], "deepseek/x", ["*"]), false);
+  for (const entry of ["*", "a/b", "a/*", "group/x"])
+    assert.equal(isModelPattern(entry), true, entry);
+  for (const entry of ["", "**", "a", "group/Bad"])
+    assert.equal(isModelPattern(entry), false, entry);
 });

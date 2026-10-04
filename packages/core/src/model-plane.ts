@@ -194,8 +194,14 @@ export interface GatewayKeyRecord {
   keyId: GatewayKeyId;
   name: string;
   scope: GatewayKeyScope;
-  /** Model Refs, `provider/*` and `group/<id>`; empty allows nothing. */
+  /** Model Refs, `provider/*`, `group/<id>` and `*` (every model, including ones added later); empty allows nothing. */
   modelAllow: string[];
+  /**
+   * Entries of the same forms that `modelAllow` would admit but the key may
+   * not use: the models hidden from a wired agent (04 section 4). Absent or
+   * empty hides nothing.
+   */
+  modelDeny?: string[];
   quota?: GatewayKeyQuota;
   /**
    * The key may be presented on the LAN listener of gateway sharing
@@ -301,18 +307,28 @@ export function parseModelRef(
   return { kind: "model", ref: text as ModelRef, provider: head, model: rest };
 }
 
-/** Whether `modelAllow` admits a Model Ref or a group (exact, `provider/*`, `group/<id>`). */
+/**
+ * Whether a key may use a Model Ref or a group: some entry of `modelAllow`
+ * admits it (exact, `provider/*`, `group/<id>` or `*`) and no entry of
+ * `modelDeny` does.
+ */
 export function modelAllowed(
   modelAllow: readonly string[],
   target: string,
+  modelDeny: readonly string[] = [],
 ): boolean {
   const parsed = parseModelRef(target);
   if (!parsed) return false;
-  return modelAllow.some(
-    (entry) =>
-      entry === target ||
-      (parsed.kind === "model" && entry === `${parsed.provider}/*`),
-  );
+  const admits = (entry: string) =>
+    entry === "*" ||
+    entry === target ||
+    (parsed.kind === "model" && entry === `${parsed.provider}/*`);
+  return modelAllow.some(admits) && !modelDeny.some(admits);
+}
+
+/** Whether `entry` is an allow or deny entry: a Model Ref, `provider/*`, `group/<id>` or `*`. */
+export function isModelPattern(entry: string): boolean {
+  return entry === "*" || parseModelRef(entry) !== undefined;
 }
 
 export type UsageSource = "reported" | "estimated" | "missing";
@@ -407,11 +423,50 @@ export interface UsageBucket {
   unpricedCalls: number;
 }
 
+/** Claude Code's model tiers and its subagents' model, which wiring can set apart from the main model. */
+export const wiringTiers = [
+  "opus",
+  "sonnet",
+  "haiku",
+  "fable",
+  "subagent",
+] as const;
+export type WiringTier = (typeof wiringTiers)[number];
+
+/** Reasoning levels an agent can start with, lowest first. */
+export const reasoningEfforts = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+export type ReasoningEffort = (typeof reasoningEfforts)[number];
+
+/**
+ * The model choices of one wired agent: what a profile keeps and applies.
+ * `model` is absent when the agent keeps choosing its own models (Codex
+ * signed in with ChatGPT); a tier that is absent follows `model`; `options`
+ * are adapter settings such as `codexAuth`, with the adapter's defaults
+ * filled in.
+ */
+export interface WiringChoice {
+  model?: string;
+  tiers?: Partial<Record<WiringTier, string>>;
+  effort?: ReasoningEffort;
+  options?: Record<string, string>;
+}
+
 /** A global wiring of one agent on this machine (04 section 4). */
-export interface WiringRecord {
+export interface WiringRecord extends WiringChoice {
   adapterId: string;
-  keyId: GatewayKeyId;
-  model: string;
+  /**
+   * The `agent:` key written into the agent's files. Absent when the agent
+   * authenticates by itself (Codex with a ChatGPT login): no key was issued.
+   */
+  keyId?: GatewayKeyId;
   files: Array<{
     path: string;
     /** SHA-256 of the file before wiring; absent when wiring created it. */
@@ -420,6 +475,36 @@ export interface WiringRecord {
     backupId?: string;
   }>;
   wiredAt: string;
+}
+
+/** Named snapshot of the model choices of every wired agent, applied in one move. */
+export interface WiringProfile {
+  /** 1 to 64 of `A-Z a-z 0-9 . _ -`, starting with a letter or digit. */
+  name: string;
+  /** By adapter id. */
+  agents: Record<string, WiringChoice>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Persistence that global wiring needs beyond `ModelPlaneStore`: replacing a
+ * key's model lists in place (an agent's hidden models change without a new
+ * key) and wiring profiles. Writes are committed when the promise resolves.
+ */
+export interface AgentWiringStore {
+  /** Replaces `modelAllow` and `modelDeny` (empty removes it); false when the key does not exist. */
+  setGatewayKeyModels(
+    keyId: GatewayKeyId,
+    modelAllow: string[],
+    modelDeny: string[],
+  ): Promise<boolean>;
+  /** By name. */
+  listWiringProfiles(): Promise<WiringProfile[]>;
+  getWiringProfile(name: string): Promise<WiringProfile | undefined>;
+  /** Inserts or replaces by name. */
+  putWiringProfile(profile: WiringProfile): Promise<void>;
+  deleteWiringProfile(name: string): Promise<boolean>;
 }
 
 /** Persistence of providers, groups, keys, ledger and wirings. Writes are committed when the promise resolves. */

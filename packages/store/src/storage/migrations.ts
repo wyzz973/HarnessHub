@@ -66,6 +66,20 @@ CREATE TABLE model_provenance (ref TEXT PRIMARY KEY, provider TEXT NOT NULL REFE
 CREATE INDEX model_provenance_provider ON model_provenance(provider, ref);
 `,
   },
+  {
+    version: 4,
+    name: "wiring_profiles",
+    // An agent that signs in by itself (Codex with a ChatGPT login) is wired
+    // without a key, so key_id becomes nullable; SQLite changes a column
+    // constraint only by rebuilding the table. Nothing refers to wirings.
+    sql: `
+CREATE TABLE wirings_v4 (adapter_id TEXT PRIMARY KEY, key_id TEXT REFERENCES gateway_keys(key_id), record TEXT NOT NULL CHECK(json_valid(record)));
+INSERT INTO wirings_v4 (adapter_id, key_id, record) SELECT adapter_id, key_id, record FROM wirings;
+DROP TABLE wirings;
+ALTER TABLE wirings_v4 RENAME TO wirings;
+CREATE TABLE wiring_profiles (name TEXT PRIMARY KEY, record TEXT NOT NULL CHECK(json_valid(record)));
+`,
+  },
 ]);
 
 /** The schema version this build creates and requires. */

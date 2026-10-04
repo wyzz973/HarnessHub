@@ -100,7 +100,7 @@ export class AgentWiringService {
   /** Every supported agent with installation, wiring and drift. */
   async list(): Promise<AgentView[]> {
     const context = this.context();
-    const wirings = await this.options.store.listWirings();
+    const wirings = (await this.options.store.listWirings()).map(keyed);
     const views: AgentView[] = [];
     for (const adapter of wiringAdapters.values())
       views.push(
@@ -215,7 +215,7 @@ export class AgentWiringService {
     model: string,
     models: WiringModel[],
     context: WiringContext,
-    previous: WiringRecord | undefined,
+    previous: KeyedWiring | undefined,
     expect: ConfirmedPlan | undefined,
   ): Promise<void> {
     const baseUrl = this.origin();
@@ -285,7 +285,7 @@ export class AgentWiringService {
   private async models(
     adapterId: string,
     request: WiringRequest,
-    previous: WiringRecord | undefined,
+    previous: KeyedWiring | undefined,
   ): Promise<WiringModel[]> {
     let listed = request.models;
     if (listed === undefined && previous) {
@@ -312,7 +312,7 @@ export class AgentWiringService {
   private async view(
     adapterId: string,
     context: WiringContext,
-    record: WiringRecord | undefined,
+    record: KeyedWiring | undefined,
   ): Promise<AgentView> {
     const adapter = wiringAdapter(adapterId);
     return {
@@ -326,7 +326,7 @@ export class AgentWiringService {
   }
 
   private async wiringView(
-    record: WiringRecord,
+    record: KeyedWiring,
     context: WiringContext,
   ): Promise<AgentWiringView> {
     const key = await this.options.store.getGatewayKey(record.keyId);
@@ -368,13 +368,14 @@ export class AgentWiringService {
     };
   }
 
-  private async wiringOf(adapterId: string): Promise<WiringRecord | undefined> {
-    return (await this.options.store.listWirings()).find(
-      (record) => record.adapterId === adapterId,
+  private async wiringOf(adapterId: string): Promise<KeyedWiring | undefined> {
+    const record = (await this.options.store.listWirings()).find(
+      (candidate) => candidate.adapterId === adapterId,
     );
+    return record ? keyed(record) : undefined;
   }
 
-  private async required(adapterId: string): Promise<WiringRecord> {
+  private async required(adapterId: string): Promise<KeyedWiring> {
     const record = await this.wiringOf(adapterId);
     if (!record)
       throw new HubError(
@@ -425,6 +426,19 @@ export class AgentWiringService {
     this.queue = result.catch(() => undefined);
     return result;
   }
+}
+
+/** A wiring this daemon made: with a key and a model. */
+type KeyedWiring = WiringRecord & { keyId: GatewayKeyId; model: string };
+
+function keyed(record: WiringRecord): KeyedWiring {
+  if (record.keyId === undefined || record.model === undefined)
+    throw new HubError(
+      "AGENT_WIRING_UNSUPPORTED",
+      `The wiring of ${record.adapterId} has no key or model, which this daemon cannot manage`,
+      500,
+    );
+  return record as KeyedWiring;
 }
 
 /**

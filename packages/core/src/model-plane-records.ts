@@ -8,15 +8,19 @@
 import {
   droppableFields,
   isGatewayKeyId,
+  isModelPattern,
   isProviderId,
   parseModelRef,
   providerPatches,
+  reasoningEfforts,
   wireProtocols,
+  wiringTiers,
   type GatewayKeyRecord,
   type ModelCallEntry,
   type ProviderConfig,
   type RouteGroup,
   type WireProtocol,
+  type WiringProfile,
   type WiringRecord,
 } from "./model-plane.js";
 
@@ -303,17 +307,22 @@ const quota: Check = (value) =>
   optional(value.tokensPerDay, positive) &&
   optional(value.costPerMonthUsd, amount);
 
+const modelPattern: Check = (value) =>
+  typeof value === "string" && isModelPattern(value);
+
+/** Whether `value` is a key's `modelAllow` or `modelDeny`: at most 1000 Model Refs, `provider/*`, `group/<id>` or `*`. */
+export function isModelPatternList(value: unknown): value is string[] {
+  return list(modelPattern, 1000)(value);
+}
+
 export function isGatewayKeyRecord(value: unknown): value is GatewayKeyRecord {
   return (
     object(value) &&
     keyId(value.keyId) &&
     text(200)(value.name) &&
     scope(value.scope) &&
-    list(
-      (entry) =>
-        typeof entry === "string" && parseModelRef(entry) !== undefined,
-      1000,
-    )(value.modelAllow) &&
+    list(modelPattern, 1000)(value.modelAllow) &&
+    optional(value.modelDeny, list(modelPattern, 1000)) &&
     optional(value.quota, quota) &&
     optional(
       value.allowLan,
@@ -413,13 +422,65 @@ const wiredFile: Check = (value) =>
   sha256(value.afterHash) &&
   optional(value.backupId, text(200));
 
+const wiringModel: Check = (value) =>
+  typeof value === "string" &&
+  value.length <= 1024 &&
+  parseModelRef(value) !== undefined;
+
+/** The fields of a `WiringChoice`, on a record or a profile entry. */
+function wiringChoice(value: Record<string, unknown>): boolean {
+  return (
+    optional(value.model, wiringModel) &&
+    optional(
+      value.tiers,
+      (tiers) =>
+        object(tiers) &&
+        Object.entries(tiers).every(
+          ([tier, model]) => member(wiringTiers)(tier) && wiringModel(model),
+        ),
+    ) &&
+    optional(value.effort, member(reasoningEfforts)) &&
+    optional(
+      value.options,
+      (options) =>
+        object(options) &&
+        Object.keys(options).length <= 20 &&
+        Object.entries(options).every(
+          ([name, item]) => text(64)(name) && text(200)(item),
+        ),
+    )
+  );
+}
+
 export function isWiringRecord(value: unknown): value is WiringRecord {
   return (
     object(value) &&
     text(200)(value.adapterId) &&
-    keyId(value.keyId) &&
-    text(1024)(value.model) &&
+    optional(value.keyId, keyId) &&
+    wiringChoice(value) &&
     list(wiredFile, 100)(value.files) &&
     isTimestamp(value.wiredAt)
+  );
+}
+
+const PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+/** Whether `name` can name a wiring profile. */
+export function isWiringProfileName(name: unknown): name is string {
+  return typeof name === "string" && PROFILE_NAME.test(name);
+}
+
+export function isWiringProfile(value: unknown): value is WiringProfile {
+  return (
+    object(value) &&
+    isWiringProfileName(value.name) &&
+    object(value.agents) &&
+    Object.keys(value.agents).length <= 200 &&
+    Object.entries(value.agents).every(
+      ([adapterId, choice]) =>
+        text(200)(adapterId) && object(choice) && wiringChoice(choice),
+    ) &&
+    isTimestamp(value.createdAt) &&
+    isTimestamp(value.updatedAt)
   );
 }

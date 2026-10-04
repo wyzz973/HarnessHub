@@ -114,9 +114,14 @@ void test("migration checksums are pinned: an applied migration is never edited"
         "model_metadata",
         "69f0a38b6306bd1daa53145c8a47d0cdd876c748a9d0cf688cc320d5737014d2",
       ],
+      [
+        4,
+        "wiring_profiles",
+        "3e25a337b4937a751d0552eb0216b7aa7aeed79880ef105fb4794a742de0d41d",
+      ],
     ],
   );
-  assert.equal(LATEST_SCHEMA_VERSION, 3);
+  assert.equal(LATEST_SCHEMA_VERSION, 4);
   assert.deepEqual(
     MIGRATIONS.map((migration) => migration.version),
     MIGRATIONS.map((_, index) => index + 1),
@@ -151,6 +156,7 @@ void test("a new database applies every migration in order and records them", (t
     "wirings",
     "model_overrides",
     "model_provenance",
+    "wiring_profiles",
   ])
     assert.ok(tables.includes(table), table);
   // Reopening applies nothing.
@@ -183,6 +189,7 @@ void test("a user_version 1 database from the previous build migrates forward wi
       [1, "runtime_core", "adopted from user_version 1"],
       [2, "model_plane", null],
       [3, "model_metadata", null],
+      [4, "wiring_profiles", null],
     ],
   );
   assert.equal(applied[0]?.checksum_sha256, migrationChecksum(MIGRATIONS[0]!));
@@ -264,13 +271,14 @@ void test("a version 2 database gains the model metadata tables and keeps its pr
 
   const store = open("9.9.9-test");
   const db = inspector();
-  assert.equal(userVersion(db), 3);
+  assert.equal(userVersion(db), 4);
   assert.deepEqual(
     migrations(db).map((row) => [row.version, row.name, row.hh_version]),
     [
       [1, "runtime_core", null],
       [2, "model_plane", null],
       [3, "model_metadata", "9.9.9-test"],
+      [4, "wiring_profiles", "9.9.9-test"],
     ],
   );
   store.acquireOwner();
@@ -279,6 +287,74 @@ void test("a version 2 database gains the model metadata tables and keeps its pr
   assert.deepEqual(await plane.listProviders(), [record]);
   assert.deepEqual(await plane.listModelOverrides("alpha"), []);
   assert.deepEqual(await plane.listModelProvenance("alpha"), []);
+});
+
+void test("a version 3 database keeps its wirings, which may then have no key, and gains profiles", async (t) => {
+  const { path, open, inspector } = fixture(t);
+  const v3 = new DatabaseSync(path);
+  v3.exec(
+    "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, checksum_sha256 TEXT NOT NULL, applied_at TEXT NOT NULL, hh_version TEXT, note TEXT)",
+  );
+  for (const migration of MIGRATIONS.slice(0, 3)) {
+    v3.exec(migration.sql);
+    v3.prepare(
+      "INSERT INTO schema_migrations (version, name, checksum_sha256, applied_at) VALUES (?, ?, ?, '2026-10-01T00:00:00.000Z')",
+    ).run(migration.version, migration.name, migrationChecksum(migration));
+  }
+  v3.exec("PRAGMA user_version = 3");
+  const key = {
+    keyId: "abcdefghijkl",
+    name: "agent:codex",
+    scope: { kind: "agent", adapterId: "codex" },
+    modelAllow: ["alpha/chat-1"],
+    secretHash: "0".repeat(64),
+    createdAt: "2026-10-01T00:00:00.000Z",
+  };
+  const wiring = {
+    adapterId: "codex",
+    keyId: "abcdefghijkl",
+    model: "alpha/chat-1",
+    files: [
+      {
+        path: "/home/me/.codex/config.toml",
+        afterHash: "1".repeat(64),
+        backupId: "2".repeat(64),
+      },
+    ],
+    wiredAt: "2026-10-01T00:00:00.000Z",
+  };
+  v3.prepare("INSERT INTO gateway_keys (key_id, record) VALUES (?, ?)").run(
+    key.keyId,
+    JSON.stringify(key),
+  );
+  v3.prepare(
+    "INSERT INTO wirings (adapter_id, key_id, record) VALUES (?, ?, ?)",
+  ).run("codex", key.keyId, JSON.stringify(wiring));
+  // Before the migration a wiring without a key cannot be stored.
+  assert.throws(() =>
+    v3
+      .prepare(
+        "INSERT INTO wirings (adapter_id, key_id, record) VALUES ('claude', NULL, '{}')",
+      )
+      .run(),
+  );
+  v3.close();
+
+  const store = open("9.9.9-test");
+  assert.equal(userVersion(inspector()), 4);
+  store.acquireOwner();
+  const plane = new SqliteModelPlaneStore(path);
+  t.after(() => plane.close());
+  assert.deepEqual(await plane.listWirings(), [wiring]);
+  const signedIn = {
+    adapterId: "claude",
+    options: { auth: "own" },
+    files: wiring.files,
+    wiredAt: wiring.wiredAt,
+  };
+  await plane.putWiring(signedIn);
+  assert.deepEqual(await plane.listWirings(), [signedIn, wiring]);
+  assert.deepEqual(await plane.listWiringProfiles(), []);
 });
 
 void test("a database newer than this build is refused without modification", (t) => {
@@ -426,6 +502,7 @@ void test("simultaneous opens of a version 1 database apply each migration exact
       [1, "adopted from user_version 1"],
       [2, null],
       [3, null],
+      [4, null],
     ],
   );
   assert.equal(userVersion(db), LATEST_SCHEMA_VERSION);

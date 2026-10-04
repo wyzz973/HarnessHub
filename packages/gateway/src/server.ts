@@ -659,7 +659,10 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
             );
       for (const model of exposed) {
         const id = `${provider.id}/${model.id}`;
-        if (!modelAllowed(key.modelAllow, id) && id !== session?.target)
+        if (
+          !modelAllowed(key.modelAllow, id, key.modelDeny) &&
+          id !== session?.target
+        )
           continue;
         listed.push({
           id,
@@ -674,7 +677,11 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     }
     for (const group of groups) {
       const id = `group/${group.id}`;
-      if (!modelAllowed(key.modelAllow, id) && id !== session?.target) continue;
+      if (
+        !modelAllowed(key.modelAllow, id, key.modelDeny) &&
+        id !== session?.target
+      )
+        continue;
       listed.push({
         id,
         owner: "harnesshub",
@@ -753,7 +760,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     if (typeof requested !== "string" || !parseModelRef(requested))
       return undefined;
     if (
-      !modelAllowed(key.modelAllow, requested) &&
+      !modelAllowed(key.modelAllow, requested, key.modelDeny) &&
       requested !== session?.target
     )
       return undefined;
@@ -993,7 +1000,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
           "model_invalid",
         );
       if (
-        !modelAllowed(key.modelAllow, requested) &&
+        !modelAllowed(key.modelAllow, requested, key.modelDeny) &&
         requested !== session?.target
       ) {
         await reject(

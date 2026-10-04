@@ -2,6 +2,7 @@
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { HubError } from "@harnesshub/core/errors";
 import type {
+  AgentWiringStore,
   GatewayKeyId,
   GatewayKeyRecord,
   ModelCallEntry,
@@ -13,6 +14,7 @@ import type {
   UsageBucket,
   UsageFilter,
   UsageGroupBy,
+  WiringProfile,
   WiringRecord,
 } from "@harnesshub/core/model-plane";
 import {
@@ -29,7 +31,9 @@ import {
   isModelCallEntry,
   isProviderConfig,
   isRouteGroup,
+  isModelPatternList,
   isTimestamp,
+  isWiringProfile,
   isWiringRecord,
 } from "@harnesshub/core/model-plane-records";
 import { decodeRecord } from "./records.js";
@@ -181,7 +185,7 @@ function bucketExpression(groupBy: UsageGroupBy): string {
  * Buckets are ordered by key.
  */
 export class SqliteModelPlaneStore
-  implements ModelPlaneStore, ModelMetadataStore
+  implements ModelPlaneStore, ModelMetadataStore, AgentWiringStore
 {
   private readonly db: DatabaseSync;
   private closed = false;
@@ -467,6 +471,25 @@ export class SqliteModelPlaneStore
     });
   }
 
+  /** @throws HubError `MODEL_PLANE_RECORD_INVALID` (400) when an entry is not a Model Ref, `provider/*`, `group/<id>` or `*`. */
+  async setGatewayKeyModels(
+    keyId: GatewayKeyId,
+    modelAllow: string[],
+    modelDeny: string[],
+  ): Promise<boolean> {
+    if (!isModelPatternList(modelAllow) || !isModelPatternList(modelDeny))
+      throw invalid(
+        "MODEL_PLANE_RECORD_INVALID",
+        "The model lists of the Gateway Key are invalid",
+      );
+    return this.updateKey(keyId, (record) => {
+      const next: GatewayKeyRecord = { ...record, modelAllow: [...modelAllow] };
+      if (modelDeny.length) next.modelDeny = [...modelDeny];
+      else delete next.modelDeny;
+      return next;
+    });
+  }
+
   /**
    * Idempotent: an already revoked key keeps its first `revokedAt`. Returns
    * false only when the key does not exist. `at` must be an ISO 8601
@@ -632,7 +655,8 @@ export class SqliteModelPlaneStore
   }
 
   /**
-   * Inserts or replaces the wiring of `record.adapterId`.
+   * Inserts or replaces the wiring of `record.adapterId`. A record without
+   * `keyId` (an agent that signs in by itself) refers to no key.
    *
    * @throws HubError `WIRING_KEY_UNKNOWN` (409) when `record.keyId` is not a
    *   stored Gateway Key.
@@ -641,6 +665,7 @@ export class SqliteModelPlaneStore
     const json = checked(record, isWiringRecord, "wiring");
     this.transaction((db) => {
       if (
+        record.keyId !== undefined &&
         !db
           .prepare("SELECT 1 FROM gateway_keys WHERE key_id = ?")
           .get(record.keyId)
@@ -652,12 +677,40 @@ export class SqliteModelPlaneStore
         );
       db.prepare(
         "INSERT INTO wirings (adapter_id, key_id, record) VALUES (?, ?, ?) ON CONFLICT(adapter_id) DO UPDATE SET key_id = excluded.key_id, record = excluded.record",
-      ).run(record.adapterId, record.keyId, json);
+      ).run(record.adapterId, record.keyId ?? null, json);
     });
   }
 
   async deleteWiring(adapterId: string): Promise<boolean> {
     return this.remove("DELETE FROM wirings WHERE adapter_id = ?", adapterId);
+  }
+
+  async listWiringProfiles(): Promise<WiringProfile[]> {
+    return this.readAll(
+      "SELECT record FROM wiring_profiles ORDER BY name",
+      isWiringProfile,
+    );
+  }
+
+  async getWiringProfile(name: string): Promise<WiringProfile | undefined> {
+    return this.readOne(
+      "SELECT record FROM wiring_profiles WHERE name = ?",
+      name,
+      isWiringProfile,
+    );
+  }
+
+  async putWiringProfile(profile: WiringProfile): Promise<void> {
+    const json = checked(profile, isWiringProfile, "wiring profile");
+    this.open()
+      .prepare(
+        "INSERT INTO wiring_profiles (name, record) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET record = excluded.record",
+      )
+      .run(profile.name, json);
+  }
+
+  async deleteWiringProfile(name: string): Promise<boolean> {
+    return this.remove("DELETE FROM wiring_profiles WHERE name = ?", name);
   }
 
   /** Idempotent. */
