@@ -13,6 +13,7 @@ import { failureOf, modelPlane, type Failure } from "@/lib/model-plane";
 import type { Page } from "@/lib/router";
 import { notify } from "@/lib/toast";
 import { BackupPage } from "./backup-page";
+import { GatewayFeaturesPage } from "./gateway-features-page";
 import {
   Card,
   ConfirmDialog,
@@ -299,59 +300,30 @@ function Catalog({
   );
 }
 
-/** Gateway features that are coming: shown so their place is known, not settable yet. */
-function GatewayFeatures() {
-  const features = [
-    { name: "脱敏", text: "请求发往上游之前替换其中的敏感内容" },
-    { name: "图片理解", text: "让不支持图片输入的模型也能处理图片" },
-    { name: "联网搜索", text: "为模型调用提供搜索" },
-  ];
-  return (
-    <Card
-      title="网关功能"
-      lede="守护进程提供对应接口后，在这里为网关开启。"
-      aside={<span className="tag neutral">即将推出</span>}
-    >
-      <ul className="divide-y rounded-xl border">
-        {features.map((feature) => (
-          <li
-            key={feature.name}
-            className="flex items-center justify-between gap-3 px-4 py-3"
-          >
-            <span className="min-w-0">
-              <span className="block text-[13.5px]">{feature.name}</span>
-              <span className="block text-[12.5px] text-muted-foreground">
-                {feature.text}
-              </span>
-            </span>
-            <Switch
-              checked={false}
-              disabled
-              aria-label={`${feature.name}（即将推出）`}
-            />
-          </li>
-        ))}
-      </ul>
-    </Card>
-  );
-}
-
 const tabs = [
   { page: "settings", label: "通用" },
+  { page: "features", label: "网关功能" },
   { page: "backup", label: "备份与同步" },
 ] as const;
 
 /**
- * Settings of the daemon: LAN sharing, the model catalog, gateway features
- * and what is running; backup, restore and sync are the second tab.
+ * Settings of the daemon: LAN sharing, the model catalog and what is
+ * running; the gateway features, and backup, restore and sync, are tabs
+ * of their own.
  */
 export function SettingsPage({
   tab,
 }: {
-  tab: Extract<Page, "settings" | "backup">;
+  tab: Extract<Page, "settings" | "features" | "backup">;
 }) {
   const nav = <PageTabs label="设置" current={tab} tabs={tabs} />;
-  return tab === "backup" ? <BackupPage tabs={nav} /> : <General tabs={nav} />;
+  return tab === "backup" ? (
+    <BackupPage tabs={nav} />
+  ) : tab === "features" ? (
+    <GatewayFeaturesPage tabs={nav} />
+  ) : (
+    <General tabs={nav} />
+  );
 }
 
 function General({ tabs }: { tabs: React.ReactNode }) {
@@ -375,7 +347,7 @@ function General({ tabs }: { tabs: React.ReactNode }) {
         {tabs}
         <PageHeader
           title="设置"
-          lede="局域网共享、模型目录、网关功能与这个守护进程的信息。"
+          lede="局域网共享、模型目录与这个守护进程的信息。"
         >
           <Button
             size="icon-sm"
@@ -416,7 +388,6 @@ function General({ tabs }: { tabs: React.ReactNode }) {
                   setOverride((current) => ({ ...current, catalog }))
                 }
               />
-              <GatewayFeatures />
               <Card title="关于">
                 <dl className="text-[13px]">
                   <Row label="版本">

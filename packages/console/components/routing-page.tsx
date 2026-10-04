@@ -17,6 +17,7 @@ import {
   useLoaded,
 } from "./model-plane-ui";
 import { PageTabs } from "./page-tabs";
+import { CredentialStatesPage } from "./routing-state";
 
 /**
  * Groups of models that two or more providers serve under one name
@@ -146,19 +147,22 @@ const tabs = [
   { page: "routing", label: "路由组" },
   { page: "auto-groups", label: "自动路由组" },
   { page: "keys", label: "Gateway Key" },
+  { page: "credential-state", label: "凭据状态" },
 ] as const;
 
-/** Route groups, automatic groups and Gateway Keys, one tab each. */
+/** Route groups, automatic groups, Gateway Keys and the credentials' routing state, one tab each. */
 export function RoutingPage({
   tab,
 }: {
-  tab: Extract<Page, "routing" | "auto-groups" | "keys">;
+  tab: Extract<Page, "routing" | "auto-groups" | "keys" | "credential-state">;
 }) {
   const nav = <PageTabs label="路由与 Key" current={tab} tabs={tabs} />;
   return tab === "routing" ? (
     <GroupsPage tabs={nav} />
   ) : tab === "auto-groups" ? (
     <AutoGroupsPage tabs={nav} />
+  ) : tab === "credential-state" ? (
+    <CredentialStatesPage tabs={nav} />
   ) : (
     <KeysPage tabs={nav} />
   );

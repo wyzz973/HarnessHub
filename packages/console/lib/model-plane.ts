@@ -145,6 +145,8 @@ export interface ProviderForm {
   kind: ProviderConfig["kind"];
   apiKeyHeader: string;
   endpoints: Record<WireProtocol, string>;
+  /** Base URL of an OpenAI-compatible Images API; empty for none. */
+  imageEndpoint: string;
   /** One model ID per line. */
   models: string;
   /** "all", or the model IDs that appear in /v1/models and agent pickers. */
@@ -158,6 +160,7 @@ export function emptyProviderForm(): ProviderForm {
     kind: "vendor",
     apiKeyHeader: "authorization-bearer",
     endpoints: { chat: "", responses: "", anthropic: "", gemini: "" },
+    imageEndpoint: "",
     models: "",
     expose: "all",
   };
@@ -175,6 +178,7 @@ export function providerFormOf(provider: ProviderConfig): ProviderForm {
       anthropic: provider.endpoints.anthropic ?? "",
       gemini: provider.endpoints.gemini ?? "",
     },
+    imageEndpoint: provider.imageEndpoint ?? "",
     models: provider.models.list.map((model) => model.id).join("\n"),
     expose: provider.models.expose,
   };
@@ -222,6 +226,9 @@ export function providerInput(form: ProviderForm): ProviderInput {
     kind: form.kind,
     auth: { apiKeyHeader: form.apiKeyHeader as "authorization-bearer" },
     endpoints,
+    ...(form.imageEndpoint.trim()
+      ? { imageEndpoint: form.imageEndpoint.trim() }
+      : {}),
     ...(models.list.length ? { models } : {}),
   };
 }
@@ -243,6 +250,11 @@ export function providerPatch(
     kind: form.kind,
     auth: { apiKeyHeader: form.apiKeyHeader as "authorization-bearer" },
     endpoints: endpoints as ProviderPatch["endpoints"],
+    ...(form.imageEndpoint.trim()
+      ? { imageEndpoint: form.imageEndpoint.trim() }
+      : previous.imageEndpoint !== undefined
+        ? { imageEndpoint: null }
+        : {}),
     models: modelsOf(form, previous),
   };
 }

@@ -4,6 +4,8 @@
 
 这些是运行时管理的设置：经管理接口、控制台或命令修改，立即生效，保存在数据目录中，与局域网共享的设置文件一样。启动时读取、改后需重启的设置（例如监听地址）属于统一的启动配置文件 `<configDir>/config.jsonc`（由 `hh config` 编辑，随该文件一起落地）；两者不重叠。
 
+控制台的“设置 → 网关功能”页（`/settings/features`）提供同样的设置：脱敏开关与规则、视觉模型、搜索后端，以及设置了图像端点的 provider（图像端点在 Provider 的编辑中填写）。
+
 ```sh
 hh gateway features                                  # 当前设置
 hh gateway redaction off                             # 关闭出站脱敏（缺省开启）

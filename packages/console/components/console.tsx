@@ -1091,7 +1091,8 @@ export function Console() {
               <ProvidersPage key={refreshEpoch} />
             ) : page === "routing" ||
               page === "auto-groups" ||
-              page === "keys" ? (
+              page === "keys" ||
+              page === "credential-state" ? (
               <RoutingPage key={refreshEpoch} tab={page} />
             ) : page === "usage" || page === "conversations" ? (
               <UsagePage key={refreshEpoch} tab={page} />
@@ -1099,7 +1100,9 @@ export function Console() {
               <SubscriptionsPage key={refreshEpoch} />
             ) : page === "library" ? (
               <LibraryPage key={refreshEpoch} />
-            ) : page === "settings" || page === "backup" ? (
+            ) : page === "settings" ||
+              page === "backup" ||
+              page === "features" ? (
               <SettingsPage key={refreshEpoch} tab={page} />
             ) : page === "tools" ? (
               <ToolPacksPage engines={engines} refreshEngines={refresh} />

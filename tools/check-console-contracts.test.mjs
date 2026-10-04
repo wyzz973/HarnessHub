@@ -267,6 +267,15 @@ test("the model-plane pages build API requests and read problem details", async 
     list: [{ id: "deepseek-chat", contextWindow: 64000 }, { id: "new-model" }],
     expose: "all",
   });
+  assert.equal("imageEndpoint" in patch, false, "no image endpoint before or after: none sent");
+  // The image endpoint: sent trimmed, and removed with null once cleared.
+  assert.equal(
+    lib.providerInput({ ...form, imageEndpoint: " https://api.openai.com/v1 " }).imageEndpoint,
+    "https://api.openai.com/v1",
+  );
+  const withImages = { ...previous, imageEndpoint: "https://api.openai.com/v1" };
+  assert.equal(lib.providerFormOf(withImages).imageEndpoint, "https://api.openai.com/v1");
+  assert.equal(lib.providerPatch({ ...lib.providerFormOf(withImages), imageEndpoint: " " }, withImages).imageEndpoint, null);
 
   // Model metadata cells show the resolved values; tooltips name the source.
   const cells = lib.modelMetadataCells({
@@ -559,4 +568,36 @@ test("the subscription page explains account states and the first run mirrors hh
   assert.equal(firstRun.sameWiring({ wiring: { ...wired.wiring, keyState: "revoked" } }, { model: "lab/b", tiers: { haiku: "lab/a" } }), false);
   assert.equal(firstRun.sameWiring({ wiring: { ...wired.wiring, drift: { drifted: true, kinds: ["replaced"], findings: [] } } }, { model: "lab/b", tiers: { haiku: "lab/a" } }), false);
   assert.equal(firstRun.sameWiring({ wiring: null }, { model: "lab/b" }), false);
+});
+
+test("the routing state and gateway features pages present the gateway's state and send its settings", async () => {
+  const routing = await consoleModule("lib/routing-state.ts");
+  const now = Date.parse("2026-10-04T12:00:00.000Z");
+  assert.deepEqual(
+    routing.readingView({ window: "premium_interactions", usedPercent: 91.6, resetsAt: "2026-11-01T00:00:00.000Z", observedAt: "2026-10-04T11:00:00.000Z" }, now),
+    { name: "高级请求", percent: 92, tone: "warn", renewed: false },
+  );
+  assert.deepEqual(
+    routing.readingView({ window: "requests", usedPercent: 99, resetsAt: "2026-10-04T11:59:00.000Z", observedAt: "2026-10-04T11:00:00.000Z" }, now),
+    { name: "请求数", percent: 0, tone: "good", renewed: true },
+    "a window past its reset counts as unused, as the router counts it",
+  );
+  assert.equal(routing.readingView({ window: "x-custom", usedPercent: 98, observedAt: "2026-10-04T11:00:00.000Z" }, now).tone, "error");
+  assert.equal(routing.readingView({ window: "x-custom", usedPercent: 140, observedAt: "2026-10-04T11:00:00.000Z" }, now).percent, 100);
+  assert.equal(routing.failureText({ kind: "rate_limited", status: 429, at: "2026-10-04T11:00:00.000Z" }), "被限流（HTTP 429）");
+  assert.equal(routing.failureText({ kind: "something_new", status: 500, at: "2026-10-04T11:00:00.000Z" }), "something_new（HTTP 500）");
+  const byCredential = routing.statesByCredential([{ provider: "lab", credential: "default", state: "open", readings: [] }]);
+  assert.equal(byCredential.get(routing.stateKey("lab", "default")).state, "open");
+
+  const features = await consoleModule("lib/gateway-features.ts");
+  assert.deepEqual(Object.keys(features.searchKinds), ["tavily", "brave", "exa", "firecrawl", "searxng"]);
+  assert.deepEqual(features.ruleOf({ name: " codename ", pattern: "falcon-[0-9]+", ignoreCase: true }), { name: "codename", pattern: "falcon-[0-9]+", flags: "i" });
+  assert.deepEqual(features.ruleOf({ name: "ticket", pattern: "T-\\d+", ignoreCase: false }), { name: "ticket", pattern: "T-\\d+" });
+  const view = { schemaVersion: 1, redaction: { enabled: true, rules: [{ name: "codename", pattern: "a" }, { name: "ticket", pattern: "b" }] } };
+  assert.deepEqual(
+    features.rulesWith(view, { add: { name: "CodeName", pattern: "c" } }),
+    [{ name: "ticket", pattern: "b" }, { name: "CodeName", pattern: "c" }],
+    "a rule of the same name, case aside, is replaced and the new one goes last, as hh gateway does",
+  );
+  assert.deepEqual(features.rulesWith(view, { remove: "ticket" }), [{ name: "codename", pattern: "a" }]);
 });

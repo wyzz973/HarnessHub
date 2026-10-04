@@ -47,6 +47,7 @@ import {
   type ProviderForm,
 } from "@/lib/model-plane";
 import { providerIcon } from "@/lib/gateway-models";
+import { stateKey } from "@/lib/routing-state";
 import { navigate } from "@/lib/router";
 import { BrandIcon } from "./brand-icon";
 import { ImportDialog } from "./import-dialog";
@@ -63,6 +64,12 @@ import {
   useLoaded,
 } from "./model-plane-ui";
 import { PresetPane } from "./preset-pane";
+import {
+  CredentialState,
+  Readings,
+  useRoutingStates,
+  type RoutingStates,
+} from "./routing-state";
 
 const kindName = (kind: ProviderConfig["kind"]) =>
   providerKinds.find((item) => item.id === kind)?.label ?? kind;
@@ -184,6 +191,7 @@ function ProviderDialog({
     "/id",
     "/name",
     "/endpoints",
+    "/imageEndpoint",
     ...protocols.map((protocol) => `/endpoints/${protocol}`),
   ];
   return (
@@ -329,6 +337,23 @@ function ProviderDialog({
                 </label>
               ))}
             </fieldset>
+            <label className="field-label">
+              图像端点（可选）
+              <input
+                className="field font-mono text-[13px]"
+                value={form.imageEndpoint}
+                aria-invalid={!!failure?.fields["/imageEndpoint"]}
+                placeholder="https://api.openai.com/v1"
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => set({ imageEndpoint: event.target.value })}
+              />
+              <span className="field-hint block">
+                OpenAI 兼容 Images API 的基址，不含 /images/generations；网关的
+                /v1/images/generations 直通到这里。
+              </span>
+              <FieldError failure={failure} pointer="/imageEndpoint" />
+            </label>
             <label className="field-label">
               模型
               <textarea
@@ -543,6 +568,7 @@ function ProviderDetail({
   edit,
   remove,
   reload,
+  states,
 }: {
   provider: ProviderConfig;
   /** Lobehub slug of the provider's preset. */
@@ -551,6 +577,8 @@ function ProviderDetail({
   edit: () => void;
   remove: () => void;
   reload: () => void;
+  /** The gateway's routing state of the credentials. */
+  states: RoutingStates;
 }) {
   const [secret, setSecret] = useState<{
     rotating: ProviderCredential | undefined;
@@ -569,7 +597,13 @@ function ProviderDetail({
         全部 provider
       </button>
       <PageHeader
-        icon={<BrandIcon slug={icon} name={provider.name} className="mt-0.5 size-9" />}
+        icon={
+          <BrandIcon
+            slug={icon}
+            name={provider.name}
+            className="mt-0.5 size-9"
+          />
+        }
         title={provider.name}
         lede={[
           provider.id,
@@ -610,6 +644,14 @@ function ProviderDetail({
                 </dd>
               </div>
             ))}
+          {provider.imageEndpoint ? (
+            <div className="metric-row">
+              <dt>图像（Images API）</dt>
+              <dd className="font-mono text-[12.5px]">
+                {provider.imageEndpoint}
+              </dd>
+            </div>
+          ) : null}
           <div className="metric-row">
             <dt>Key 的发送方式</dt>
             <dd className="font-mono text-[12.5px]">
@@ -643,13 +685,14 @@ function ProviderDetail({
         )}
       </div>
       <div className="panel overflow-x-auto">
-        <table className="data-table min-w-[560px]">
+        <table className="data-table min-w-[760px]">
           <thead>
             <tr>
               <th>ID</th>
               <th>名称</th>
               <th>引用</th>
               <th>端点</th>
+              <th>路由状态</th>
               <th />
             </tr>
           </thead>
@@ -673,6 +716,27 @@ function ProviderDetail({
                   {credential.protocols
                     ?.map((p) => protocolNames[p])
                     .join("、") ?? "全部"}
+                </td>
+                <td className="min-w-[200px]">
+                  {states.state === "ready" ? (
+                    <>
+                      <CredentialState
+                        state={states.byCredential.get(
+                          stateKey(provider.id, credential.id),
+                        )}
+                      />
+                      <Readings
+                        className="mt-1.5"
+                        readings={
+                          states.byCredential.get(
+                            stateKey(provider.id, credential.id),
+                          )?.readings ?? []
+                        }
+                      />
+                    </>
+                  ) : (
+                    <span className="text-subtle">—</span>
+                  )}
                 </td>
                 <td className="w-[132px] text-right">
                   {credential.ref.kind === "store" && !provider.subscription ? (
@@ -782,6 +846,7 @@ export function ProvidersPage() {
     [],
   );
   const [providers, reload] = useLoaded(load);
+  const [states] = useRoutingStates();
   // Only for the marks: a provider is shown without one while they load.
   const loadPresets = useCallback(
     async () => (await modelPlane().presets.list()).items,
@@ -816,6 +881,7 @@ export function ProvidersPage() {
             edit={() => setEditing({ provider: current })}
             remove={() => setRemoving(current)}
             reload={reload}
+            states={states}
           />
         ) : (
           <>
@@ -899,7 +965,9 @@ export function ProvidersPage() {
                               </div>
                             </div>
                           </td>
-                          <td className="whitespace-nowrap">{kindName(provider.kind)}</td>
+                          <td className="whitespace-nowrap">
+                            {kindName(provider.kind)}
+                          </td>
                           <td className="text-[12.5px]">
                             {protocols
                               .filter(
@@ -914,6 +982,15 @@ export function ProvidersPage() {
                             ) : (
                               <span className="tag warn">无</span>
                             )}
+                            {states.state === "ready" &&
+                            provider.credentials.some(
+                              (credential) =>
+                                states.byCredential.get(
+                                  stateKey(provider.id, credential.id),
+                                )?.state === "open",
+                            ) ? (
+                              <span className="tag warn ml-1.5">休息中</span>
+                            ) : null}
                           </td>
                           <td className="tabular">
                             {provider.models.list.length}

@@ -57,7 +57,7 @@ const gatewayNavigation: NavItem[] = [
     page: "routing",
     label: "路由与 Key",
     icon: Route,
-    also: ["auto-groups", "keys"],
+    also: ["auto-groups", "keys", "credential-state"],
   },
   {
     page: "usage",
@@ -67,7 +67,12 @@ const gatewayNavigation: NavItem[] = [
   },
   { page: "profiles", label: "Profile", icon: Layers },
   { page: "library", label: "Library", icon: LibraryBig },
-  { page: "settings", label: "设置", icon: Settings, also: ["backup"] },
+  {
+    page: "settings",
+    label: "设置",
+    icon: Settings,
+    also: ["backup", "features"],
+  },
 ];
 /** Tasks run by HarnessHub itself, and their engines and tools. */
 const taskNavigation: NavItem[] = [

@@ -33,6 +33,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { BrandIcon } from "@/components/brand-icon";
 import { failureOf, modelPlane, type Failure } from "@/lib/model-plane";
 import { subscriptionIcons } from "@/lib/gateway-models";
+import { stateKey } from "@/lib/routing-state";
 import {
   accountState,
   backendNames,
@@ -52,6 +53,12 @@ import {
   Row,
   useLoaded,
 } from "./model-plane-ui";
+import {
+  CredentialState,
+  Readings,
+  useRoutingStates,
+  type RoutingStates,
+} from "./routing-state";
 
 type Setup =
   | { state: "ready"; value: CopilotSetupView }
@@ -576,17 +583,24 @@ function CopilotCard({
 
 function AccountRow({
   account,
+  states,
   onSignIn,
   onSignOut,
   onDelete,
 }: {
   account: SubscriptionAccountView;
+  /** The gateway's routing state: the breaker and the allowance readings. */
+  states: RoutingStates;
   onSignIn: () => void;
   onSignOut: () => void;
   onDelete: () => void;
 }) {
   const state = accountState(account);
   const who = account.email ?? account.login ?? account.credential;
+  const routing =
+    states.state === "ready"
+      ? states.byCredential.get(stateKey(account.provider, account.credential))
+      : undefined;
   return (
     <li className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-3.5 last:border-b-0 sm:px-5">
       <span className="flex min-w-0 flex-1 basis-[240px] items-center gap-3">
@@ -612,6 +626,12 @@ function AccountRow({
           </span>
         </span>
       </span>
+      {routing && routing.state !== "closed" ? (
+        <CredentialState state={routing} />
+      ) : null}
+      {routing?.readings.length ? (
+        <Readings readings={routing.readings} className="w-[200px]" />
+      ) : null}
       <span className="text-[12px] text-subtle">
         接受告知于 <LocalTime value={account.acceptedAt} />
       </span>
@@ -668,6 +688,7 @@ export function SubscriptionsPage() {
     return { notices: notices.items, accounts: accounts.items, copilot };
   }, []);
   const [data, reload] = useLoaded(load);
+  const [states] = useRoutingStates();
   const [setup, setSetup] = useState<CopilotSetupView | null>(null);
   const [signIn, setSignIn] = useState<SignInTarget | null>(null);
   const [signingOut, setSigningOut] = useState<SubscriptionAccountView | null>(
@@ -719,6 +740,7 @@ export function SubscriptionsPage() {
                     <AccountRow
                       key={`${account.provider}/${account.credential}`}
                       account={account}
+                      states={states}
                       onSignIn={() =>
                         setSignIn({
                           backend: account.backend,
