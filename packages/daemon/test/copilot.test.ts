@@ -1,17 +1,27 @@
 // SPDX-License-Identifier: MIT
-/** Copilot accounts on the daemon side: the CLI lookup, quota readings and the stored secret. */
+/** Copilot accounts on the daemon side: the CLI lookup, quota readings, the stored secret and a host that goes away. */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough, Writable } from "node:stream";
+import { NO_LOG } from "@harnesshub/core/logging";
+import type {
+  LaunchedProcess,
+  ProcessExit,
+  ProcessLauncher,
+} from "@harnesshub/core/process-launcher";
+import { CopilotError } from "@harnesshub/gateway/copilot";
 import {
   copilotReadings,
+  CopilotHosts,
   decodeCopilotSecret,
   encodeCopilotSecret,
   findCopilotCli,
   isFineGrainedToken,
 } from "../src/copilot.js";
+import type { ManagedSecrets } from "../src/http/api-v1.js";
 
 void test("the Copilot CLI is the first executable copilot on PATH", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "hh-copilot-path-"));
@@ -91,4 +101,93 @@ void test("the stored secret holds a token account's token, and nothing else rea
   assert.ok(!isFineGrainedToken(`ghp_${"a".repeat(36)}`));
   assert.ok(!isFineGrainedToken("github_pat_short"));
   assert.ok(!isFineGrainedToken(`github_pat_${"a".repeat(40)} trailing`));
+});
+
+/**
+ * A Copilot host process as the injected launcher hands it out: `stdin`
+ * and `stdout` given by the test, an exit that comes only once it is
+ * killed (as an exit event not yet processed).
+ */
+function fakeHost(stdin: Writable, stdout = new PassThrough()) {
+  const exit = Promise.withResolvers<ProcessExit>();
+  let killed = 0;
+  const child: LaunchedProcess = {
+    pid: 4242,
+    stdin,
+    stdout,
+    stderr: new PassThrough(),
+    exit: exit.promise,
+    closed: exit.promise,
+    kill: (signal = "SIGTERM") => {
+      killed++;
+      exit.resolve({ code: null, signal, timedOut: false, aborted: false });
+    },
+  };
+  return { child, killed: () => killed };
+}
+
+async function hosts(t: test.TestContext, child: LaunchedProcess) {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "hh-copilot-host-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const launcher: ProcessLauncher = {
+    launch: () => child,
+    run: () => Promise.reject(new Error("not used")),
+  };
+  const copilot = new CopilotHosts({
+    launcher,
+    secrets: {} as ManagedSecrets,
+    environment: {},
+    paths: {
+      addon: path.join(directory, "addon"),
+      directory,
+      cli: path.join(directory, "copilot"),
+    },
+    clock: () => Date.parse("2026-10-05T12:00:00.000Z"),
+    log: NO_LOG,
+  });
+  t.after(() => copilot.close());
+  return copilot;
+}
+
+void test("a host whose stdin closed before its exit is seen is gone: its requests fail, the daemon goes on", async (t) => {
+  // The host exited and closed its end of the pipe: the next write is EPIPE.
+  const { child, killed } = fakeHost(
+    new Writable({
+      write: (_chunk, _encoding, callback) =>
+        callback(Object.assign(new Error("write EPIPE"), { code: "EPIPE" })),
+    }),
+  );
+  const copilot = await hosts(t, child);
+  await assert.rejects(
+    copilot.identify("login", undefined),
+    (error: unknown) =>
+      error instanceof CopilotError &&
+      error.code === "unavailable" &&
+      /stopped taking requests \(EPIPE\)/.test(error.message),
+  );
+  assert.ok(killed() >= 1, "the host was stopped");
+});
+
+void test("a host whose output fails is gone too, and its stderr's failure is ignored", async (t) => {
+  const stdout = new PassThrough();
+  const stdin = new Writable({
+    write: (_chunk, _encoding, callback) => {
+      callback();
+      // The request was written; the host's output fails before it answers.
+      setImmediate(() => {
+        child.stderr?.destroy(new Error("read ECONNRESET"));
+        stdout.destroy(new Error("read ECONNRESET"));
+      });
+    },
+  });
+  const { child, killed } = fakeHost(stdin, stdout);
+  const copilot = await hosts(t, child);
+  await assert.rejects(
+    copilot.identify("login", undefined),
+    (error: unknown) =>
+      error instanceof CopilotError &&
+      error.code === "unavailable" &&
+      /output failed/.test(error.message),
+  );
+  assert.ok(killed() >= 1);
 });

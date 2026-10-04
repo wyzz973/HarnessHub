@@ -68,7 +68,7 @@ hh subscription logout copilot account-1
 
 ### 调用
 
-- 每个账号一个宿主进程（[copilot-host.mjs](../packages/daemon/assets/copilot-host.mjs)），由守护进程经 `ProcessLauncher` 以 HarnessHub 自己的 Node 启动（单可执行文件中以 node 兼容方式运行）。宿主从附加组件目录导入 SDK，以 `RuntimeConnection.forStdio({path})` 驱动用户的 CLI；`login` 账号用 `mode: "copilot-cli"`（CLI 自己的配置与登录），`token` 账号用 `mode: "empty"`。宿主在第一次使用时启动，没有会话 15 分钟后停止，守护进程关闭时全部停止。宿主与守护进程之间的 JSON 行协议见 [copilot.ts](../packages/daemon/src/copilot.ts)。
+- 每个账号一个宿主进程（[copilot-host.mjs](../packages/daemon/assets/copilot-host.mjs)），由守护进程经 `ProcessLauncher` 以 HarnessHub 自己的 Node 启动（单可执行文件中以 node 兼容方式运行）。宿主从附加组件目录导入 SDK，以 `RuntimeConnection.forStdio({path})` 驱动用户的 CLI；`login` 账号用 `mode: "copilot-cli"`（CLI 自己的配置与登录），`token` 账号用 `mode: "empty"`。宿主在第一次使用时启动，没有会话 15 分钟后停止，守护进程关闭时全部停止。宿主与守护进程之间的 JSON 行协议见 [copilot.ts](../packages/daemon/src/copilot.ts)。宿主的管道出错时（例如宿主刚退出、退出事件还没处理时写入它的 stdin 得到 `EPIPE`，或读取它的输出失败），按宿主已经退出处理：进行中的请求与会话以 `unavailable` 失败，宿主被结束，下一次使用重新启动；守护进程不受影响（[测试](../packages/daemon/test/copilot.test.ts)以注入的启动器模拟这两种情况）。
 - 模型列表来自 SDK 的 `listModels`，只保留策略为 enabled 的模型，带上下文窗口、输出上限、推理与图片输入。
 - 网关把对 `copilot/<model>` 的调用交给 Copilot 会话（[copilot.ts](../packages/gateway/src/copilot.ts) 的 `CopilotBridge`）：
   - 会话以 `clientName: "HarnessHub"` 标识自己；`systemMessage` 用 SDK 文档中的 `replace` 模式，内容就是调用方自己的 system 提示词，不改写也不添加。工具只有调用方的函数（没有处理器的声明，`skipPermission`；`availableTools: ["custom:*"]` 只放行会话自己声明的工具），CLI 的内置 shell 与文件工具不可用，其他权限请求一律拒绝。会话不读取工作区的自定义指令（工作目录是空目录 `<dataDir>/subscriptions/copilot/work`，状态在 `…/state`），不开会话存储与无限会话压缩。

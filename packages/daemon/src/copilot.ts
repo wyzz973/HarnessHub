@@ -327,12 +327,29 @@ class Host {
     /** Removed from every message the host sends back. */
     private readonly token: string | undefined,
   ) {
-    if (child.stdout)
-      createInterface({ input: child.stdout, crlfDelay: Infinity }).on(
-        "line",
-        (line) => this.#line(line),
+    // A stream of a host that is gone reports an error (a write to its
+    // closed stdin is EPIPE before its exit is seen): the host is gone and
+    // its calls fail, the daemon goes on. An unheard 'error' would end the
+    // daemon.
+    child.stdin?.on("error", (error: NodeJS.ErrnoException) => {
+      this.#end(
+        `The Copilot host stopped taking requests (${error.code ?? "stdin failed"})`,
       );
+      child.kill();
+    });
+    if (child.stdout) {
+      const failed = () => {
+        this.#end("The Copilot host's output failed");
+        child.kill();
+      };
+      child.stdout.on("error", failed);
+      // readline passes its input's error on as its own.
+      createInterface({ input: child.stdout, crlfDelay: Infinity })
+        .on("line", (line) => this.#line(line))
+        .on("error", failed);
+    }
     // Host diagnostics are not kept: they may quote the CLI.
+    child.stderr?.on("error", () => undefined);
     child.stderr?.resume();
     void child.exit.then((exit) =>
       this.#end(
