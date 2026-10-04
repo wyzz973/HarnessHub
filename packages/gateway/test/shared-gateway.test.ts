@@ -565,7 +565,8 @@ void test("Responses, Anthropic and Gemini passthrough keep the body and respons
     reasoning: 0,
     source: "reported",
   });
-  assert.equal(aEntry!.finishReason, "end_turn");
+  // In the vocabulary the translated path records.
+  assert.equal(aEntry!.finishReason, "stop");
   assert.deepEqual(gEntry!.usage, {
     input: 7,
     cacheRead: 4,
@@ -576,6 +577,157 @@ void test("Responses, Anthropic and Gemini passthrough keep the body and respons
   });
   assert.equal(gEntry!.servedModel, "gemini-x");
   assert.equal(gEntry!.inbound.stream, false);
+});
+
+void test("passthrough ledger entries name a tool turn tool_calls in every protocol, as translated ones do", async (t) => {
+  const sse = (type: string, value: Record<string, unknown>) =>
+    `event: ${type}\ndata: ${JSON.stringify({ type, ...value })}\n\n`;
+  const call = {
+    type: "function_call",
+    id: "fc_1",
+    call_id: "call_1",
+    name: "read",
+    arguments: '{"path":"a"}',
+  };
+  // Responses: the completed event lists the call; a relay may also leave
+  // its output empty, so the call is seen in the item events.
+  const responsesStream = (output: unknown[]) =>
+    sse("response.created", { response: { status: "in_progress" } }) +
+    sse("response.output_item.added", {
+      output_index: 0,
+      item: { ...call, arguments: "" },
+    }) +
+    sse("response.output_item.done", { output_index: 0, item: call }) +
+    sse("response.completed", { response: { status: "completed", output } });
+  const responsesBody = { id: "resp_1", status: "completed", output: [call] };
+  const cut = sse("response.incomplete", {
+    response: {
+      status: "incomplete",
+      incomplete_details: { reason: "max_output_tokens" },
+    },
+  });
+  const anthropicStream =
+    sse("message_start", {
+      message: { model: "claude-x", usage: { input_tokens: 3 } },
+    }) +
+    sse("content_block_start", {
+      index: 0,
+      content_block: {
+        type: "tool_use",
+        id: "toolu_1",
+        name: "read",
+        input: {},
+      },
+    }) +
+    sse("content_block_delta", {
+      index: 0,
+      delta: { type: "input_json_delta", partial_json: '{"path":"a"}' },
+    }) +
+    sse("content_block_stop", { index: 0 }) +
+    sse("message_delta", {
+      delta: { stop_reason: "tool_use" },
+      usage: { output_tokens: 4 },
+    }) +
+    sse("message_stop", {});
+  const geminiCall = { functionCall: { name: "read", args: { path: "a" } } };
+  // Gemini ends a function call with STOP; here the call comes a chunk
+  // before the finish reason.
+  const geminiStream =
+    `data: ${JSON.stringify({ candidates: [{ content: { role: "model", parts: [geminiCall] } }] })}\n\n` +
+    `data: ${JSON.stringify({ candidates: [{ content: { role: "model", parts: [] }, finishReason: "STOP" }] })}\n\n`;
+  const geminiBody = {
+    candidates: [
+      { content: { role: "model", parts: [geminiCall] }, finishReason: "STOP" },
+    ],
+  };
+  // A Chat relay that ends tool calls with "stop".
+  const chatStream =
+    `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "read", arguments: '{"path":"a"}' } }] } }] })}\n\n` +
+    `data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`;
+  const up = await upstream(
+    t,
+    events(responsesStream([call])),
+    events(responsesStream([])),
+    json(200, responsesBody),
+    events(cut),
+    events(anthropicStream),
+    events(geminiStream),
+    json(200, geminiBody),
+    events(chatStream),
+  );
+  const memory = new MemoryStore();
+  await memory.putProvider(provider("oai", { responses: `${up.base}/v1` }));
+  await memory.putProvider(
+    provider(
+      "ant",
+      { anthropic: `${up.base}/` },
+      { auth: { apiKeyHeader: "x-api-key" } },
+    ),
+  );
+  await memory.putProvider(
+    provider(
+      "gem",
+      { gemini: `${up.base}/` },
+      { auth: { apiKeyHeader: "x-goog-api-key" } },
+    ),
+  );
+  await memory.putProvider(provider("chat", { chat: `${up.base}/v1` }));
+  const key = await addKey(memory, ["oai/*", "ant/*", "gem/*", "chat/*"]);
+  const gw = await mount(t, memory);
+  const bearer = { authorization: `Bearer ${key.text}` };
+  for (const stream of [true, true, false, true])
+    await send(gw.port, "/v1/responses", {
+      headers: bearer,
+      body: { model: "oai/model-a", input: "read a", stream },
+    });
+  await send(gw.port, "/v1/messages", {
+    headers: { "x-api-key": key.text },
+    body: {
+      model: "ant/model-a",
+      max_tokens: 10,
+      stream: true,
+      messages: [{ role: "user", content: "read a" }],
+    },
+  });
+  await send(
+    gw.port,
+    `/v1beta/models/gem/model-a:streamGenerateContent?alt=sse&key=${key.text}`,
+    {
+      body: { contents: [{ role: "user", parts: [{ text: "read a" }] }] },
+    },
+  );
+  await send(
+    gw.port,
+    `/v1beta/models/gem/model-a:generateContent?key=${key.text}`,
+    {
+      body: { contents: [{ role: "user", parts: [{ text: "read a" }] }] },
+    },
+  );
+  await send(gw.port, "/v1/chat/completions", {
+    headers: bearer,
+    body: {
+      model: "chat/model-a",
+      stream: true,
+      messages: [{ role: "user", content: "read a" }],
+    },
+  });
+  assert.deepEqual(
+    memory.entries.map((entry) => [
+      entry.provider,
+      entry.mode,
+      entry.finishReason,
+    ]),
+    [
+      ["oai", "passthrough", "tool_calls"],
+      ["oai", "passthrough", "tool_calls"],
+      ["oai", "passthrough", "tool_calls"],
+      ["oai", "passthrough", "length"],
+      ["ant", "passthrough", "tool_calls"],
+      ["gem", "passthrough", "tool_calls"],
+      ["gem", "passthrough", "tool_calls"],
+      ["chat", "passthrough", "tool_calls"],
+    ],
+  );
 });
 
 void test("Gemini streamed JSON-array passthrough forwards the array and puts the model in the path", async (t) => {

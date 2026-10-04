@@ -53,6 +53,7 @@ import {
   observeEvent,
   observeJson,
   passthroughBody,
+  settleFinish,
   SseSegmenter,
   unsupportedPatches,
   upstreamHeaders,
@@ -732,6 +733,8 @@ class Forwarder {
   usage: UsageParts = {};
   model: string | undefined;
   finishReason: string | undefined;
+  /** An event held a tool call: a `stop` finish is then `tool_calls`. */
+  toolCall = false;
   sequence: number | undefined;
   error: GatewayError | undefined;
   constructor(
@@ -761,6 +764,7 @@ class Forwarder {
     Object.assign(this.usage, observation.usage);
     if (observation.model) this.model ??= observation.model;
     if (observation.finish) this.finishReason = observation.finish;
+    if (observation.toolCall) this.toolCall = true;
     if (observation.sequence !== undefined)
       this.sequence = observation.sequence;
     if (this.error) return observation;
@@ -2172,7 +2176,7 @@ async function passthroughAttempt(
         );
       parts = forwarder.usage;
       served = forwarder.model;
-      finish = forwarder.finishReason;
+      finish = settleFinish(forwarder.finishReason, forwarder.toolCall);
       terminated = forwarder.terminal;
     } else {
       body = Buffer.concat(chunks);
@@ -2203,7 +2207,7 @@ async function passthroughAttempt(
       if (observation.content) firstContent();
       parts = observation.usage ?? {};
       served = observation.model;
-      finish = observation.finish;
+      finish = settleFinish(observation.finish, observation.toolCall === true);
       terminated = true;
       summary?.read(body.toString("utf8"));
     }

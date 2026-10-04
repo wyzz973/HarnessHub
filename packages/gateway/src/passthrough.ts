@@ -449,10 +449,96 @@ export interface Observation {
   error?: GatewayError;
   model?: string;
   usage?: UsageParts;
+  /**
+   * The finish reason as the translated path records it: `stop`, `length`,
+   * `tool_calls`, `content_filter`, or the upstream's own value. An answer
+   * whose events showed a tool call ends in `tool_calls` (`settleFinish`).
+   */
   finish?: string;
+  /**
+   * A tool call for the client to run: Chat `tool_calls`, a Responses call
+   * item, an Anthropic `tool_use` block or a Gemini `functionCall` part.
+   */
+  toolCall?: boolean;
   /** Responses `sequence_number`. */
   sequence?: number;
 }
+
+/** Anthropic `stop_reason` as a Chat finish reason; unknown values pass through. */
+export function anthropicFinish(reason: string): string {
+  switch (reason) {
+    case "end_turn":
+    case "stop_sequence":
+      return "stop";
+    case "max_tokens":
+    case "model_context_window_exceeded":
+      return "length";
+    case "tool_use":
+      return "tool_calls";
+    case "refusal":
+      return "content_filter";
+    default:
+      return reason;
+  }
+}
+
+/** Gemini `finishReason` as a Chat finish reason; other values in lower case. */
+export function geminiFinishReason(reason: string): string {
+  switch (reason) {
+    case "STOP":
+      return "stop";
+    case "MAX_TOKENS":
+      return "length";
+    case "SAFETY":
+    case "RECITATION":
+    case "BLOCKLIST":
+    case "PROHIBITED_CONTENT":
+    case "SPII":
+    case "IMAGE_SAFETY":
+      return "content_filter";
+    default:
+      return reason.toLowerCase();
+  }
+}
+
+/** Responses status and incomplete reason as a Chat finish reason. */
+export function responsesFinish(status: string, reason?: string): string {
+  if (status !== "incomplete") return "stop";
+  if (reason === "max_output_tokens") return "length";
+  if (reason === "content_filter") return "content_filter";
+  return reason ?? "incomplete";
+}
+
+/**
+ * The finish of a whole answer from its last finish reason and whether any
+ * of its events held a tool call: `stop` becomes `tool_calls`, as the
+ * translated path records an answer with calls (Responses ends one in
+ * `completed`, Gemini in `STOP`, some Chat relays in `stop`).
+ */
+export function settleFinish(finish: string, toolCall: boolean): string;
+export function settleFinish(
+  finish: string | undefined,
+  toolCall: boolean,
+): string | undefined;
+export function settleFinish(
+  finish: string | undefined,
+  toolCall: boolean,
+): string | undefined {
+  return toolCall && (finish === "stop" || finish === undefined)
+    ? "tool_calls"
+    : finish;
+}
+
+/** Responses output items the client runs: tool calls. */
+const RESPONSES_CALLS = new Set([
+  "function_call",
+  "custom_tool_call",
+  "tool_search_call",
+  "local_shell_call",
+  "shell_call",
+  "apply_patch_call",
+  "computer_call",
+]);
 
 const ANTHROPIC_STATUS: Readonly<Record<string, number>> = {
   invalid_request_error: 400,
@@ -527,6 +613,7 @@ function chatObservation(value: Record<string, unknown>): Observation {
       ].some(nonEmpty)
     )
       observation.content = true;
+    if (nonEmpty(delta.tool_calls)) observation.toolCall = true;
     if (typeof choice.finish_reason === "string" && choice.finish_reason)
       observation.finish = choice.finish_reason;
   }
@@ -549,10 +636,18 @@ function responsesObservation(
   if (typeof response?.model === "string" && response.model)
     observation.model = response.model;
   if (type.endsWith(".delta")) observation.content = true;
-  if (type === "response.output_item.added") {
+  if (
+    type === "response.output_item.added" ||
+    type === "response.output_item.done"
+  ) {
     const item = record(value.item);
-    if (item?.type !== "message" && item?.type !== "reasoning")
+    if (
+      type === "response.output_item.added" &&
+      item?.type !== "message" &&
+      item?.type !== "reasoning"
+    )
       observation.content = true;
+    if (RESPONSES_CALLS.has(String(item?.type))) observation.toolCall = true;
   }
   const failed =
     type === "error"
@@ -580,10 +675,17 @@ function responsesObservation(
     if (record(response?.usage))
       observation.usage = usageParts("responses", response?.usage);
     const reason = record(response?.incomplete_details)?.reason;
-    observation.finish =
-      typeof reason === "string" ? reason : String(response?.status ?? "");
-    if (!type && Array.isArray(response?.output) && response.output.length)
-      observation.content = true;
+    const output = Array.isArray(response?.output) ? response.output : [];
+    if (output.some((item) => RESPONSES_CALLS.has(String(record(item)?.type))))
+      observation.toolCall = true;
+    observation.finish = settleFinish(
+      responsesFinish(
+        String(response?.status ?? ""),
+        typeof reason === "string" ? reason : undefined,
+      ),
+      observation.toolCall === true,
+    );
+    if (!type && output.length) observation.content = true;
   }
   return observation;
 }
@@ -620,6 +722,7 @@ function anthropicObservation(value: Record<string, unknown>): Observation {
         block?.type === "tool_use" ||
         block?.type === "server_tool_use" ||
         nonEmpty(block?.text);
+      if (block?.type === "tool_use") observation.toolCall = true;
       return observation;
     }
     case "content_block_delta": {
@@ -634,7 +737,8 @@ function anthropicObservation(value: Record<string, unknown>): Observation {
       if (record(value.usage))
         observation.usage = usageParts("anthropic", value.usage);
       const reason = record(value.delta)?.stop_reason;
-      if (typeof reason === "string") observation.finish = reason;
+      if (typeof reason === "string")
+        observation.finish = anthropicFinish(reason);
       return observation;
     }
     case "message_stop":
@@ -645,8 +749,16 @@ function anthropicObservation(value: Record<string, unknown>): Observation {
       if (typeof value.model === "string") observation.model = value.model;
       if (record(value.usage))
         observation.usage = usageParts("anthropic", value.usage);
+      if (
+        Array.isArray(value.content) &&
+        value.content.some((block) => record(block)?.type === "tool_use")
+      )
+        observation.toolCall = true;
       if (typeof value.stop_reason === "string")
-        observation.finish = value.stop_reason;
+        observation.finish = settleFinish(
+          anthropicFinish(value.stop_reason),
+          observation.toolCall === true,
+        );
       observation.content = nonEmpty(value.content);
       observation.terminal = true;
       return observation;
@@ -689,10 +801,18 @@ function geminiObservation(value: Record<string, unknown>): Observation {
     })
   )
     observation.content = true;
+  if (
+    Array.isArray(parts) &&
+    parts.some((raw) => record(raw)?.functionCall !== undefined)
+  )
+    observation.toolCall = true;
   const finish =
     candidate?.finishReason ?? record(value.promptFeedback)?.blockReason;
   if (typeof finish === "string" && finish) {
-    observation.finish = finish;
+    observation.finish = settleFinish(
+      geminiFinishReason(finish),
+      observation.toolCall === true,
+    );
     observation.terminal = true;
   }
   return observation;

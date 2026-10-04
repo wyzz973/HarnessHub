@@ -9,7 +9,14 @@
  * never forwarded to clients. Shaped as the decode edges of the future IR.
  */
 import type { EncodedProtocol } from "./encode.js";
-import { observeJson } from "./passthrough.js";
+import {
+  anthropicFinish,
+  geminiFinishReason,
+  observeJson,
+  responsesFinish,
+} from "./passthrough.js";
+
+export { anthropicFinish, responsesFinish };
 import { GatewayError, record } from "./protocol.js";
 import type { ChunkDecoder } from "./upstream.js";
 
@@ -44,54 +51,15 @@ function upstreamError(value: Chunk, protocol: EncodedProtocol): void {
   if (observed.error) throw observed.error;
 }
 
-/** Anthropic `stop_reason` as a Chat finish reason; unknown values pass through. */
-export function anthropicFinish(reason: string): string {
-  switch (reason) {
-    case "end_turn":
-    case "stop_sequence":
-      return "stop";
-    case "max_tokens":
-    case "model_context_window_exceeded":
-      return "length";
-    case "tool_use":
-      return "tool_calls";
-    case "refusal":
-      return "content_filter";
-    default:
-      return reason;
-  }
-}
 /** Gemini `finishReason` as a Chat finish reason; malformed function calls are an upstream error. */
 export function geminiFinish(reason: string): string {
-  switch (reason) {
-    case "STOP":
-      return "stop";
-    case "MAX_TOKENS":
-      return "length";
-    case "SAFETY":
-    case "RECITATION":
-    case "BLOCKLIST":
-    case "PROHIBITED_CONTENT":
-    case "SPII":
-    case "IMAGE_SAFETY":
-      return "content_filter";
-    case "MALFORMED_FUNCTION_CALL":
-    case "UNEXPECTED_TOOL_CALL":
-      throw new GatewayError(
-        `Upstream model produced an invalid function call (${reason})`,
-        502,
-        "upstream_protocol_error",
-      );
-    default:
-      return reason.toLowerCase();
-  }
-}
-/** Responses status and incomplete reason as a Chat finish reason. */
-export function responsesFinish(status: string, reason?: string): string {
-  if (status !== "incomplete") return "stop";
-  if (reason === "max_output_tokens") return "length";
-  if (reason === "content_filter") return "content_filter";
-  return reason ?? "incomplete";
+  if (reason === "MALFORMED_FUNCTION_CALL" || reason === "UNEXPECTED_TOOL_CALL")
+    throw new GatewayError(
+      `Upstream model produced an invalid function call (${reason})`,
+      502,
+      "upstream_protocol_error",
+    );
+  return geminiFinishReason(reason);
 }
 
 class AnthropicDecoder implements UpstreamDecoder {

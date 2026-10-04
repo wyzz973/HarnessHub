@@ -257,7 +257,7 @@ Session 的 Run 经守护进程端口上的共享网关使用模型（03 第 10 
 
 ### 账本
 
-每个进入网关的模型调用提交一条 `ModelCallEntry`：`attempts[]`（候选、开始时间、上游首字节、状态、错误类别、`Retry-After`、决定与退避）、按协议规范化的五项 usage（无上报时 `source: missing` 且各项为 0）、`timing`（`durationMs`；已写出字节时的 `firstByteMs`；首内容时的 `firstContentMs`）、`status`、`errorClass`、`errorSource`、脱敏后的 `error`、`patches[]`、`mode`、`servedModel`、`finishReason`、`completion`（`explicit` 或 `inferred`）。`cost` 只在 provider 模型声明了价格、且每个用到的 token 类别都有价格时计算（推理按输出价格），否则为 null。`unmapped[]` 列出转换到其他协议时丢弃的请求字段与内容（如 `reasoning`、`stop`、`schema.additionalProperties`）以及无法转给客户端的响应块（如 `response.redacted_thinking`）；直通与转换到 Chat 上游时为空。
+每个进入网关的模型调用提交一条 `ModelCallEntry`：`attempts[]`（候选、开始时间、上游首字节、状态、错误类别、`Retry-After`、决定与退避）、按协议规范化的五项 usage（无上报时 `source: missing` 且各项为 0）、`timing`（`durationMs`；已写出字节时的 `firstByteMs`；首内容时的 `firstContentMs`）、`status`、`errorClass`、`errorSource`、脱敏后的 `error`、`patches[]`、`mode`、`servedModel`、`finishReason`（直通与转换用同一套取值：`stop`、`length`、`tool_calls`、`content_filter` 或上游自己的值；回答中有供客户端执行的工具调用时为 `tool_calls`，即使上游以 Responses 的 `completed`、Gemini 的 `STOP` 或 Chat 中转的 `stop` 结束）、`completion`（`explicit` 或 `inferred`）。`cost` 只在 provider 模型声明了价格、且每个用到的 token 类别都有价格时计算（推理按输出价格），否则为 null。`unmapped[]` 列出转换到其他协议时丢弃的请求字段与内容（如 `reasoning`、`stop`、`schema.additionalProperties`）以及无法转给客户端的响应块（如 `response.redacted_thinking`）；直通与转换到 Chat 上游时为空。
 
 **先提交后发布**：流式响应的终止事件（`[DONE]`、`response.completed` 或 `response.incomplete`、`message_stop`、带结束原因的 Gemini 块及其后的内容、数组的 `]`）与非流式响应体在 `appendModelCall` 成功之后才写出。提交失败时，尚未写出响应头则返回 503 `evidence_unavailable`，否则在流内写出该错误且不写终止事件。每个调用至多追加一条记录。
 
@@ -337,6 +337,8 @@ node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js
 - 响应体上限按原始字节而不是解码后的内容计算；`latency` 只统计本次启动以来的调用，`least-used` 另从账本取最近 8 小时的初值；认证失败的熔断最长 10 分钟后进入半开，而不是一直保持到 Credential 更新。
 
 ## 变更记录
+
+- **2026-10-05：直通调用的结束原因**。直通调用的账本 `finishReason` 改用转换路径的取值：Anthropic 的 `tool_use`、`end_turn` 与 `max_tokens` 记为 `tool_calls`、`stop` 与 `length`，Gemini 的 `STOP` 等记为小写的对应值，Responses 的 `completed` 与 `incomplete` 按原因记；回答中有工具调用时（Responses 的调用项、Anthropic 的 `tool_use` 块、Gemini 的 `functionCall`、Chat 的 `tool_calls`）记为 `tool_calls`。此前 Responses 直通的工具轮次在账本中看不出来。
 
 - **2026-10-05：ChatGPT 模式的 Codex 使用 HarnessHub 的模型**（[ADR 0030](decisions/0030-codex-chatgpt-mode-models.md)）。ChatGPT 模式接线签发 agent Key，写在 `openai_base_url` 的路径中；Codex 透传在本地服务带 `/` 的模型、合并 `/models` 列表，ChatGPT 的令牌不离开转发路径。压缩：模型没有写出摘要时，账本与客户端一致为 502 `compaction_empty`（[上下文压缩](gateway-features.md#上下文压缩)）。
 
