@@ -44,7 +44,11 @@ import {
   listingProtocol,
   ModelListError,
 } from "./model-list.js";
-import { providerFromPreset } from "@harnesshub/core/provider-presets";
+import {
+  PresetChoiceError,
+  providerFromPreset,
+} from "@harnesshub/core/provider-presets";
+import { registerImportRoutes, type ProviderBody } from "./import-routes.js";
 import {
   catalogStatusSchema,
   credentialCreateSchema,
@@ -283,7 +287,13 @@ export function registerModelPlaneRoutes(
   api: FastifyInstance,
   options: Pick<
     ApiV1Options,
-    "modelPlane" | "secrets" | "presets" | "catalog" | "environment"
+    | "modelPlane"
+    | "secrets"
+    | "presets"
+    | "catalog"
+    | "environment"
+    | "system"
+    | "importHome"
   >,
 ): void {
   const store: ModelPlaneStore = options.modelPlane;
@@ -371,6 +381,134 @@ export function registerModelPlaneRoutes(
       (key) => key.revokedAt === undefined,
     );
 
+  /**
+   * The provider a `POST /providers` body describes, checked but not
+   * stored: a preset expanded with its region and plan (the body's other
+   * fields override it, endpoints by protocol), or the body's own fields.
+   */
+  const buildProvider = (body: ProviderBody, now: string): ProviderConfig => {
+    const {
+      preset: presetId,
+      region,
+      plan,
+      credential: _credential,
+      ...fields
+    } = body;
+    let base: Json;
+    if (presetId !== undefined) {
+      const preset = options.presets.get(presetId);
+      if (!preset)
+        throw invalid("PRESET_NOT_FOUND", "There is no such preset", [
+          { pointer: "/preset", detail: "is not a known preset ID" },
+        ]);
+      const { id, name, endpoints, headers, ...rest } = fields;
+      let expanded: ProviderConfig;
+      try {
+        expanded = providerFromPreset(preset, {
+          ...(id !== undefined ? { id } : {}),
+          ...(name !== undefined ? { name } : {}),
+          ...(region !== undefined ? { region } : {}),
+          ...(plan !== undefined ? { plan } : {}),
+          ...(endpoints !== undefined ? { endpoints } : {}),
+          ...(headers !== undefined ? { headers } : {}),
+          now,
+        });
+      } catch (error) {
+        if (!(error instanceof PresetChoiceError)) throw error;
+        const detail =
+          error.code === "PRESET_REGION_NOT_FOUND" ||
+          error.code === "PRESET_PLAN_NOT_FOUND"
+            ? `is not a ${error.pointer.slice(1)} of the preset`
+            : "is required by this preset";
+        throw invalid(
+          error.code.endsWith("_NOT_FOUND") ? error.code : "PROVIDER_INVALID",
+          error.message,
+          [{ pointer: error.pointer, detail }],
+        );
+      }
+      base = {
+        ...expanded,
+        models: {
+          ...expanded.models,
+          // The preset's values are resolved below with their source.
+          list: expanded.models.list.map((model) => ({
+            id: model.id,
+            ...(model.wire !== undefined ? { wire: model.wire } : {}),
+          })),
+        },
+        ...rest,
+      };
+    } else {
+      const missing = (["id", "endpoints"] as const).filter(
+        (field) => fields[field] === undefined,
+      );
+      if (region !== undefined || plan !== undefined)
+        throw invalid("PROVIDER_INVALID", "A region or plan needs a preset", [
+          {
+            pointer: region !== undefined ? "/region" : "/plan",
+            detail: "is only allowed with a preset",
+          },
+        ]);
+      if (missing.length)
+        throw invalid(
+          "PROVIDER_INVALID",
+          "Give a preset, or an id and endpoints",
+          missing.map((field) => ({
+            pointer: `/${field}`,
+            detail: "is required without a preset",
+          })),
+        );
+      base = {
+        schemaVersion: 1,
+        name: fields.id,
+        kind: "custom",
+        auth: { apiKeyHeader: "authorization-bearer" },
+        models: { source: "manual", list: [], expose: "all" },
+        ...fields,
+      };
+    }
+    return checkProvider({
+      ...base,
+      credentials: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+  };
+  /**
+   * Create the provider `body` describes, with metadata resolved and its
+   * first credential (whose value goes to the secret store first, and is
+   * removed again when the provider write fails).
+   */
+  const createProvider = (body: ProviderBody): Promise<ProviderConfig> =>
+    serialized(async () => {
+      const valid = buildProvider(body, new Date().toISOString());
+      if (await store.getProvider(valid.id))
+        throw new ApiProblem(
+          "PROVIDER_EXISTS",
+          "A provider with this ID exists",
+          409,
+        );
+      const { provider: enriched, provenance } = await enrichment.enrich(valid);
+      const created = checkProvider(enriched);
+      const credentialBody = body.credential;
+      if (credentialBody === undefined) {
+        await metadata.putProviderMetadata(created, provenance);
+        return created;
+      }
+      const named = {
+        ...credentialBody,
+        name: credentialBody.name ?? "default",
+      };
+      checkCredentialBody(named, "/credential");
+      const credential = await writeWithCredential(
+        named,
+        credentialId([], credentialBody.id),
+        (item) => ({ ...created, credentials: [item] }),
+        provenance,
+      );
+      return { ...created, credentials: [credential] };
+    });
+
   api.get(
     "/providers",
     { schema: { response: responses(listOf(providerSchema)) } },
@@ -381,15 +519,7 @@ export function registerModelPlaneRoutes(
     { schema: { response: responses(listOf(presetSchema)) } },
     async () => ({ items: options.presets.list(), nextCursor: null }),
   );
-  api.post<{
-    Body: Json & {
-      preset?: string;
-      id?: string;
-      name?: string;
-      endpoints?: Partial<Record<WireProtocol, string>>;
-      credential?: Omit<CredentialBody, "name"> & { name?: string };
-    };
-  }>(
+  api.post<{ Body: ProviderBody }>(
     "/providers",
     {
       schema: {
@@ -398,96 +528,20 @@ export function registerModelPlaneRoutes(
       },
     },
     async (request, reply) =>
-      serialized(async () => {
-        const {
-          preset: presetId,
-          credential: credentialBody,
-          ...fields
-        } = request.body;
-        const now = new Date().toISOString();
-        let base: Json;
-        if (presetId !== undefined) {
-          const preset = options.presets.get(presetId);
-          if (!preset)
-            throw invalid("PRESET_NOT_FOUND", "There is no such preset", [
-              { pointer: "/preset", detail: "is not a known preset ID" },
-            ]);
-          // Fields given with the preset override it, endpoints by protocol.
-          const { id, name, endpoints, ...rest } = fields;
-          const expanded = providerFromPreset(preset, {
-            ...(id !== undefined ? { id } : {}),
-            ...(name !== undefined ? { name } : {}),
-            ...(endpoints !== undefined ? { endpoints } : {}),
-            now,
-          });
-          base = {
-            ...expanded,
-            models: {
-              ...expanded.models,
-              // The preset's values are resolved below with their source.
-              list: expanded.models.list.map((model) => ({
-                id: model.id,
-                ...(model.wire !== undefined ? { wire: model.wire } : {}),
-              })),
-            },
-            ...rest,
-          };
-        } else {
-          const missing = (["id", "endpoints"] as const).filter(
-            (field) => fields[field] === undefined,
-          );
-          if (missing.length)
-            throw invalid(
-              "PROVIDER_INVALID",
-              "Give a preset, or an id and endpoints",
-              missing.map((field) => ({
-                pointer: `/${field}`,
-                detail: "is required without a preset",
-              })),
-            );
-          base = {
-            schemaVersion: 1,
-            name: fields.id,
-            kind: "custom",
-            auth: { apiKeyHeader: "authorization-bearer" },
-            models: { source: "manual", list: [], expose: "all" },
-            ...fields,
-          };
-        }
-        const candidate = {
-          ...base,
-          credentials: [],
-          createdAt: now,
-          updatedAt: now,
-        };
-        const valid = checkProvider(candidate);
-        if (await store.getProvider(valid.id))
-          throw new ApiProblem(
-            "PROVIDER_EXISTS",
-            "A provider with this ID exists",
-            409,
-          );
-        const { provider: enriched, provenance } =
-          await enrichment.enrich(valid);
-        const created = checkProvider(enriched);
-        if (credentialBody === undefined) {
-          await metadata.putProviderMetadata(created, provenance);
-          return reply.code(201).send(created);
-        }
-        const named = {
-          ...credentialBody,
-          name: credentialBody.name ?? "default",
-        };
-        checkCredentialBody(named, "/credential");
-        const credential = await writeWithCredential(
-          named,
-          credentialId([], credentialBody.id),
-          (item) => ({ ...created, credentials: [item] }),
-          provenance,
-        );
-        return reply.code(201).send({ ...created, credentials: [credential] });
-      }),
+      reply.code(201).send(await createProvider(request.body)),
   );
+  registerImportRoutes(api, {
+    presets: options.presets,
+    home: options.importHome,
+    gatewayOrigin: () => {
+      const gateway = options.system().gateway;
+      return gateway ? new URL(gateway.anthropicBaseUrl).origin : undefined;
+    },
+    build: buildProvider,
+    exists: async (id) =>
+      (await store.getProvider(id as ProviderId)) !== undefined,
+    create: createProvider,
+  });
   api.get<{ Params: { id: string } }>(
     "/providers/:id",
     { schema: { params: idParams, response: responses(providerSchema) } },
@@ -505,8 +559,13 @@ export function registerModelPlaneRoutes(
     async (request) =>
       serialized(async () => {
         const current = await provider(request.params.id);
+        // Detached from its preset, a provider has no region or plan either.
+        const patch =
+          request.body.preset === null
+            ? { ...request.body, region: null, plan: null }
+            : request.body;
         const updated = checkProvider({
-          ...(mergePatch(current, request.body) as Json),
+          ...(mergePatch(current, patch) as Json),
           id: current.id,
           schemaVersion: 1,
           credentials: current.credentials,

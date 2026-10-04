@@ -50,7 +50,11 @@ import { ensureAdminToken, ADMIN_TOKEN_FILE } from "./admin-token.js";
 import { registerApiV1 } from "./http/api-v1.js";
 import { AgentWiringService } from "./agents-wiring.js";
 import { GatewayShare } from "./lan-share.js";
-import { getPreset, listPresets } from "@harnesshub/gateway/presets";
+import {
+  getPreset,
+  listPresets,
+  resolveMagpiePreset,
+} from "@harnesshub/gateway/presets";
 import { modelCatalog } from "@harnesshub/gateway/catalog";
 import {
   CatalogRefresher,
@@ -761,7 +765,11 @@ export async function startHub(options: {
       adminTokenDigest,
       modelPlane,
       secrets,
-      presets: { list: listPresets, get: getPreset },
+      presets: {
+        list: listPresets,
+        get: getPreset,
+        magpie: resolveMagpiePreset,
+      },
       catalog,
       environment,
       system: () => ({
@@ -781,6 +789,7 @@ export async function startHub(options: {
           : null,
       }),
       log: gatewayLog,
+      ...(options.wiringHome ? { importHome: options.wiringHome } : {}),
       agents: new AgentWiringService({
         store: modelPlane,
         dataDir,

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 /**
  * The model-plane commands of `hh` (06-interfaces section 5): `provider`,
- * `credential`, `key`, `group`, `model`, `catalog`, `usage`, `status` and `gateway share`. They talk to the
+ * `credential`, `key`, `group`, `model`, `catalog`, `usage`, `status`,
+ * `gateway share` and `import`. They talk to the
  * running daemon through `@harnesshub/sdk` with the admin token found in the
  * data directory, print a table (or `--json`, the API response), and exit
  * with the codes of 06 section 5. Secrets are read from a hidden prompt,
@@ -24,6 +25,8 @@ import {
   DEFAULT_DAEMON_URL,
 } from "@harnesshub/sdk/local";
 import type { UsageGroupBy, WireProtocol } from "@harnesshub/core/model-plane";
+import { choosePreset } from "@harnesshub/core/provider-presets";
+import type { ImportPreview } from "@harnesshub/core/import-links";
 
 const EXIT = {
   ok: 0,
@@ -43,10 +46,13 @@ const USAGE = `Usage: hh <command> [options]
               | add <id> --chat URL [--responses URL] [--anthropic URL]
                 [--gemini URL] [--name N] [--kind K] [--api-key-header H]
                 [--model ID]...
-              | add [<id>] --preset P [--name N] [--base URL | --chat URL ...]
+              | add [<id>] --preset P [--region R] [--plan P] [--name N]
+                [--base URL | --chat URL ...]
                 [--credential-from-stdin | --credential-from-env VAR
                  | --credential-from-file PATH]
               | remove <id>
+  hh import <link> | - (link on stdin) | --from claude-code|codex [--only REF]...
+              shows what would be added, then asks (--yes adds without asking)
   hh credential list <provider> | add <provider> [--name N] [--id ID]
               [--protocol P]... | rotate <provider> <credential>
               | remove <provider> <credential>
@@ -73,6 +79,8 @@ Common options: --url URL (default ${DEFAULT_DAEMON_URL}), --data-dir DIR
 --yes, --non-interactive.`;
 
 class UsageError extends Error {}
+/** Some items of an import failed; the others were added (exit code 5). */
+class ImportFailed extends Error {}
 class ConfirmationRequired extends Error {}
 class Interrupted extends Error {}
 
@@ -339,6 +347,8 @@ async function providerCommand(args: string[]): Promise<void> {
     "api-key-header": { type: "string" },
     model: { type: "string", multiple: true },
     preset: { type: "string" },
+    region: { type: "string" },
+    plan: { type: "string" },
     base: { type: "string" },
     refresh: { type: "boolean" },
     "credential-from-stdin": { type: "boolean" },
@@ -350,18 +360,52 @@ async function providerCommand(args: string[]): Promise<void> {
     case "presets": {
       positionals(given, []);
       const page = await (await ctx.client()).presets.list();
+      // Grouped like `magpie presets`: vendors, relays, then local servers.
+      const groups = [
+        ["vendor", "Vendors"],
+        ["relay", "Relays"],
+        ["local", "Local"],
+        ["custom", "Custom"],
+      ] as const;
       return output(ctx, page, () =>
-        table(
-          ["PRESET", "NAME", "KIND", "ENDPOINTS", "KEY", "VERIFIED"],
-          page.items.map((item) => [
-            item.id,
-            item.name,
-            item.kind,
-            Object.keys(item.endpoints).join(","),
-            item.auth.methods.includes("api-key") ? "required" : "none",
-            item.verified,
-          ]),
-        ),
+        groups
+          .map(
+            ([kind, title]) =>
+              [title, page.items.filter((item) => item.kind === kind)] as const,
+          )
+          .filter(([, items]) => items.length)
+          .map(([title, items]) =>
+            [
+              `${title} (${items.length})`,
+              table(
+                [
+                  "PRESET",
+                  "NAME",
+                  "ENDPOINTS",
+                  "REGIONS",
+                  "PLANS",
+                  "KEY",
+                  "VERIFIED",
+                ],
+                items.map((item) => [
+                  item.id,
+                  item.name,
+                  Object.keys(item.endpoints).join(","),
+                  item.regions?.map((region) => region.id).join(",") ?? "-",
+                  item.plans?.map((plan) => plan.id).join(",") ?? "-",
+                  item.userEndpoint
+                    ? "+base URL"
+                    : item.auth.methods.includes("api-key")
+                      ? item.auth.methods.includes("none")
+                        ? "optional"
+                        : "required"
+                      : "none",
+                  item.verified,
+                ]),
+              ),
+            ].join("\n"),
+          )
+          .join("\n\n"),
       );
     }
     case "models": {
@@ -413,6 +457,12 @@ async function providerCommand(args: string[]): Promise<void> {
           `ID:       ${item.id}`,
           `Name:     ${item.name}`,
           `Kind:     ${item.kind}`,
+          ...(item.preset !== undefined
+            ? [
+                `Preset:   ${item.preset}${item.region !== undefined ? `, region ${item.region}` : ""}${item.plan !== undefined ? `, plan ${item.plan}` : ""}`,
+              ]
+            : []),
+          ...(item.catalog !== undefined ? [`Catalog:  ${item.catalog}`] : []),
           `Auth:     ${item.auth.apiKeyHeader}`,
           ...Object.entries(item.endpoints).map(
             ([protocol, url]) => `Endpoint: ${protocol} ${url}`,
@@ -446,8 +496,13 @@ async function providerCommand(args: string[]): Promise<void> {
           .filter((protocol) => typeof values[protocol] === "string")
           .map((protocol) => [protocol, values[protocol] as string]),
       );
+      const region =
+        typeof values.region === "string" ? values.region : undefined;
+      const plan = typeof values.plan === "string" ? values.plan : undefined;
       if (typeof values.base === "string" && !preset)
         throw new UsageError("--base needs --preset");
+      if ((region !== undefined || plan !== undefined) && !preset)
+        throw new UsageError("--region and --plan need --preset");
       if (!preset && !Object.keys(endpoints).length)
         throw new UsageError(
           "Give at least one of --chat, --responses, --anthropic, --gemini",
@@ -458,8 +513,14 @@ async function providerCommand(args: string[]): Promise<void> {
           (item) => item.id === preset,
         );
         if (!found) throw new UsageError(`There is no preset ${preset}`);
+        let chosen: Partial<Record<string, string>>;
+        try {
+          chosen = choosePreset(found, { region, plan }).preset.endpoints;
+        } catch (error) {
+          throw new UsageError((error as Error).message);
+        }
         for (const [protocol, url] of Object.entries(
-          rebase(found.endpoints, values.base),
+          rebase(chosen, values.base),
         ))
           endpoints[protocol] ??= url;
       }
@@ -472,6 +533,8 @@ async function providerCommand(args: string[]): Promise<void> {
           ? {
               preset,
               ...(id !== undefined ? { id } : {}),
+              ...(region !== undefined ? { region } : {}),
+              ...(plan !== undefined ? { plan } : {}),
               ...(Object.keys(endpoints).length ? { endpoints } : {}),
             }
           : { id: id!, endpoints }),
@@ -501,7 +564,7 @@ async function providerCommand(args: string[]): Promise<void> {
         ctx,
         created,
         () =>
-          `Added provider ${created.id}${created.preset ? ` from preset ${created.preset}` : ""}${created.credentials.length ? " with a stored credential" : ""}`,
+          `Added provider ${created.id}${created.preset ? ` from preset ${created.preset}` : ""}${created.region ? `, region ${created.region}` : ""}${created.plan ? `, plan ${created.plan}` : ""}${created.credentials.length ? " with a stored credential" : ""}`,
       );
     }
     case "remove":
@@ -1151,7 +1214,114 @@ async function gatewayCommand(args: string[]): Promise<void> {
   }
 }
 
+/** The preview as lines: each provider, where its key and prompts go, and warnings. */
+function previewText(preview: ImportPreview): string {
+  const lines: string[] = [];
+  if (preview.file) lines.push(`Read ${preview.file}`);
+  for (const item of preview.items) {
+    const provider = item.provider;
+    const label =
+      item.status === "new"
+        ? "Add"
+        : item.status === "exists"
+          ? "Exists"
+          : "Skip";
+    lines.push(
+      `${label}: ${provider ? `${provider.id} (${provider.name})` : item.ref}${item.reason ? ` — ${item.reason}` : ""}`,
+    );
+    if (!provider || item.status === "skipped") continue;
+    if (provider.preset !== undefined)
+      lines.push(
+        `  Preset:    ${provider.preset}${provider.region !== undefined ? `, region ${provider.region}` : ""}${provider.plan !== undefined ? `, plan ${provider.plan}` : ""}`,
+      );
+    for (const [protocol, url] of Object.entries(provider.endpoints))
+      lines.push(`  Endpoint:  ${protocol} ${url}`);
+    lines.push(`  Sends to:  ${item.hosts.join(", ")}`);
+    lines.push(
+      `  Key:       ${
+        item.key.kind === "value"
+          ? `from the ${preview.source === "link" ? "link" : "file"}${item.key.last4 ? ` (…${item.key.last4})` : ""}, stored in the secret store`
+          : item.key.kind === "env"
+            ? `read from the environment variable ${item.key.variable}`
+            : "none (add one with hh credential add)"
+      }`,
+    );
+    lines.push(
+      `  Models:    ${provider.models.length ? provider.models.join(", ") : "listed when refreshed"}`,
+    );
+    if (provider.headers.length)
+      lines.push(`  Headers:   ${provider.headers.join(", ")}`);
+    if (item.keysUrl) lines.push(`  Keys page: ${item.keysUrl}`);
+  }
+  for (const warning of preview.warnings) lines.push(`Warning: ${warning}`);
+  return lines.join("\n");
+}
+
+async function importCommand(args: string[]): Promise<void> {
+  const { values, positionals: given } = parse(args, {
+    from: { type: "string" },
+    only: { type: "string", multiple: true },
+  });
+  const ctx = context(values);
+  const from = typeof values.from === "string" ? values.from : undefined;
+  if ((from === undefined) === (given.length !== 1) || given.length > 1)
+    throw new UsageError(
+      "import takes one link (or - to read it from stdin), or --from claude-code|codex",
+    );
+  if (from !== undefined && from !== "claude-code" && from !== "codex")
+    throw new UsageError("--from takes claude-code or codex");
+  let link = given[0];
+  if (link === "-") link = (await readStdin()).trim();
+  else if (link !== undefined && ctx.interactive && /[?#&]key=/.test(link))
+    process.stderr.write(
+      "Note: the key in this link is now in your shell history; hh import - reads a link from stdin.\n",
+    );
+  const client = await ctx.client();
+  const preview = await client.imports.preview(
+    link !== undefined ? { link } : { app: from as "claude-code" | "codex" },
+  );
+  const only = list(values.only);
+  const unknown = only.filter(
+    (ref) => !preview.items.some((item) => item.ref === ref),
+  );
+  if (unknown.length)
+    throw new UsageError(`The import has no item ${unknown.join(", ")}`);
+  const chosen = preview.items.filter(
+    (item) =>
+      item.status === "new" && (!only.length || only.includes(item.ref)),
+  );
+  if (!ctx.json) write(previewText(preview));
+  if (!chosen.length) {
+    if (ctx.json) write(JSON.stringify({ preview, result: null }, null, 2));
+    else write("Nothing to add.");
+    return;
+  }
+  await confirm(
+    ctx,
+    `Add ${chosen.length === 1 ? `provider ${chosen[0]!.provider!.id}` : `${chosen.length} providers`}?`,
+  );
+  const result = await client.imports.apply(
+    preview.previewId,
+    chosen.map((item) => item.ref),
+  );
+  const failed = result.items.filter((item) => item.status === "failed");
+  output(ctx, { preview, result }, () =>
+    result.items
+      .map((item) =>
+        item.status === "created"
+          ? `Added provider ${item.provider!.id}${item.provider!.credentials.length ? " with a stored credential" : ""}`
+          : `${item.status === "failed" ? "Failed" : "Skipped"} ${item.ref}: ${item.reason ?? ""}${item.code ? ` (${item.code})` : ""}`,
+      )
+      .join("\n"),
+  );
+  if (failed.length)
+    throw new ImportFailed(
+      `${failed.length} of ${result.items.length} providers could not be added`,
+    );
+}
+
 const COMMANDS: Readonly<Record<string, (args: string[]) => Promise<void>>> = {
+  import: importCommand,
   provider: providerCommand,
   credential: credentialCommand,
   key: keyCommand,
@@ -1195,13 +1365,15 @@ function report(error: unknown, json: boolean): number {
         ? [EXIT.confirm, error.message]
         : error instanceof Interrupted
           ? [EXIT.interrupted, "Interrupted"]
-          : error instanceof HarnessHubUnavailableError ||
-              error instanceof AdminTokenUnavailableError
-            ? [EXIT.unavailable, `${error.message}. Start it with hh serve.`]
-            : [
-                EXIT.internal,
-                error instanceof Error ? error.message : String(error),
-              ];
+          : error instanceof ImportFailed
+            ? [EXIT.conflict, error.message]
+            : error instanceof HarnessHubUnavailableError ||
+                error instanceof AdminTokenUnavailableError
+              ? [EXIT.unavailable, `${error.message}. Start it with hh serve.`]
+              : [
+                  EXIT.internal,
+                  error instanceof Error ? error.message : String(error),
+                ];
   if (json)
     write(
       JSON.stringify({

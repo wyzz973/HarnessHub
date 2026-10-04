@@ -26,6 +26,7 @@ ADR 记录重要且未来可能重新讨论的决定。适用范围见 [文档�
 - [0020：模型元数据在写入时补齐并记录来源](0020-model-metadata-enrichment.md)（proposed）
 - [0021：局域网共享与级联](0021-gateway-lan-sharing.md)（proposed）
 - [0022：Agent 的模型列表、无 Key 接线与接线 Profile](0022-agent-wiring-semantics.md)（proposed）
+- [0022：预设的地域与套餐，以及 provider 的导入](0022-provider-presets-and-imports.md)（proposed）
 
 编号 0009、0011、0012、0015 是早期版本的 Windows 便携发行、上游网关适配、离线交付与预装工具包决定，随对应功能一起移除，原文保留在 `archive/competition` 分支；编号不再复用。
 

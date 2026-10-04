@@ -4,7 +4,8 @@ const USAGE = `Usage: hh <command> [arguments]
 Commands:
   serve       Start the Gateway (hh serve --help)
   status      Show the running daemon and its model plane
-  provider    Manage model providers (list, show, add, remove)
+  provider    Manage model providers (list, show, presets, add, remove)
+  import      Add providers from an import link or from Claude Code / Codex
   credential  Manage provider credentials (list, add, rotate, remove)
   key         Manage Gateway Keys (list, create, revoke)
   gateway     Share the model gateway on the local network (gateway share on|off|status)
@@ -63,6 +64,7 @@ const COMMANDS: Readonly<Record<string, Command>> = {
     [
       "status",
       "provider",
+      "import",
       "credential",
       "key",
       "group",

@@ -14,6 +14,11 @@ import type {
 } from "@harnesshub/core/model-metadata";
 import type { ProviderPreset } from "@harnesshub/core/provider-presets";
 import type {
+  ImportApp,
+  ImportPreview,
+  ImportResult,
+} from "@harnesshub/core/import-links";
+import type {
   GatewayKeyQuota,
   GatewayKeyView,
   ModelCallEntry,
@@ -49,7 +54,18 @@ export type {
   WiringTier,
 } from "@harnesshub/core/model-plane";
 export type { SecretReference } from "@harnesshub/core/engine-configuration";
-export type { ProviderPreset } from "@harnesshub/core/provider-presets";
+export type {
+  PresetHeaderHint,
+  PresetPlan,
+  PresetRegion,
+  ProviderPreset,
+} from "@harnesshub/core/provider-presets";
+export type {
+  ImportApp,
+  ImportItem,
+  ImportPreview,
+  ImportResult,
+} from "@harnesshub/core/import-links";
 export type {
   CatalogMeta,
   CatalogStatus,
@@ -126,6 +142,8 @@ export interface ClientOptions {
 /** Provider fields a client may set; the daemon fills the rest. */
 export interface ProviderFields {
   name?: string;
+  /** models.dev provider ID for metadata, replacing the preset's. */
+  catalog?: string;
   kind?: ProviderConfig["kind"];
   endpoints?: ProviderConfig["endpoints"];
   auth?: ProviderConfig["auth"];
@@ -151,14 +169,15 @@ export type CredentialInput = {
 } & CredentialSource;
 
 /**
- * `POST /providers`: from a preset (`id` defaults to the preset's; other
- * fields override it, endpoints by protocol) or from scratch (`id` and
- * `endpoints`). `credential` adds the first credential (name `default`).
+ * `POST /providers`: from a preset (`id` defaults to the preset's; `region`
+ * and `plan` default to its first; other fields override it, endpoints by
+ * protocol) or from scratch (`id` and `endpoints`). `credential` adds the
+ * first credential (name `default`).
  */
 export type ProviderInput = ProviderFields & {
   credential?: Omit<CredentialInput, "name"> & { name?: string };
 } & (
-    | { preset: string; id?: string }
+    | { preset: string; id?: string; region?: string; plan?: string }
     | {
         preset?: never;
         id: string;
@@ -626,6 +645,29 @@ export class HarnessHubClient {
 
   readonly presets = {
     list: () => this.request<Page<ProviderPreset>>("GET", "presets"),
+  };
+
+  /** Import providers from a link or from another app's configuration (06 section 8). */
+  readonly imports = {
+    /**
+     * Read an import link (`harnesshub://import?…`, `magpie://import?…` or
+     * their web forms) or an app's configuration and describe the providers
+     * it would create. Nothing is written; the daemon keeps the result for
+     * 10 minutes under `previewId`, for one `apply`. Rejects with
+     * `IMPORT_LINK_INVALID` (400) for a bad link, `IMPORT_SOURCE_UNAVAILABLE`
+     * (409) when the daemon reads no home.
+     */
+    preview: (input: { link: string } | { app: ImportApp }) =>
+      this.request<ImportPreview>("POST", "import/preview", { body: input }),
+    /**
+     * Create the preview's `new` providers (or those of `refs`), each as
+     * `POST /providers` would; the preview cannot be used again.
+     * `IMPORT_PREVIEW_NOT_FOUND` (404) once used or expired.
+     */
+    apply: (previewId: string, refs?: string[]) =>
+      this.request<ImportResult>("POST", "import/apply", {
+        body: { previewId, ...(refs ? { refs } : {}) },
+      }),
   };
 
   readonly credentials = {

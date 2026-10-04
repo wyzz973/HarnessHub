@@ -18,7 +18,7 @@ import type { ModelPlaneStore } from "@harnesshub/core/model-plane";
 import type { ProviderPreset } from "@harnesshub/core/provider-presets";
 import { responses, systemInfoSchema } from "./api-v1-schemas.js";
 import { registerModelPlaneRoutes } from "./model-plane-routes.js";
-import type { AgentWiringService } from "../agents-wiring.js";
+import type { AgentWiringService, WiringHome } from "../agents-wiring.js";
 import { registerAgentRoutes } from "./agents-routes.js";
 import {
   registerGatewayShareRoutes,
@@ -72,6 +72,14 @@ export interface ManagedSecrets {
 export interface PresetCatalog {
   list(): ProviderPreset[];
   get(id: string): ProviderPreset | undefined;
+  /**
+   * The preset, region and plan that a Magpie import link's `preset` and
+   * `region` name (`resolveMagpiePreset`); undefined when none answers.
+   */
+  magpie(
+    id: string,
+    region?: string,
+  ): { preset: ProviderPreset; region?: string; plan?: string } | undefined;
 }
 
 /** `GET /api/v1/system/info`. */
@@ -114,6 +122,11 @@ export interface ApiV1Options {
   log?: LogSink;
   /** Global wiring of local agents (`/agents`). */
   agents: AgentWiringService;
+  /**
+   * The home whose apps' configuration `/import/preview` may read (the
+   * wiring home); absent, imports from other apps are refused.
+   */
+  importHome?: WiringHome;
   /** LAN sharing of the model gateway; without it `/gateway/share` is absent. */
   gatewayShare?: GatewayShareControl;
 }

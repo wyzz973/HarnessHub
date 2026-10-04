@@ -224,6 +224,9 @@ export const providerSchema = {
     name: text(200),
     kind: { enum: ["vendor", "relay", "local", "custom"] },
     preset: text(200),
+    region: slug,
+    plan: slug,
+    catalog: slug,
     endpoints,
     auth: {
       type: "object",
@@ -244,14 +247,18 @@ export const providerSchema = {
 } as const;
 
 /**
- * `POST /providers`: either `preset` (fields given with it override the
- * preset) or `id` and `endpoints`; `credential` adds the first credential.
+ * `POST /providers`: either `preset` (with its `region` and `plan`; fields
+ * given with it override the preset) or `id` and `endpoints`; `credential`
+ * adds the first credential.
  */
 export const providerCreateSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
     preset: slug,
+    region: slug,
+    plan: slug,
+    catalog: slug,
     credential: {
       type: "object",
       additionalProperties: false,
@@ -288,6 +295,11 @@ export const providerCreateSchema = {
   },
 } as const;
 
+const presetModelSource = {
+  type: "string",
+  enum: ["live", "static", "catalog"],
+} as const;
+
 /** A shipped provider preset (`GET /presets`). */
 export const presetSchema = {
   type: "object",
@@ -307,12 +319,18 @@ export const presetSchema = {
     id: slug,
     name: text(200),
     kind: providerSchema.properties.kind,
+    icon: { type: "string", description: "lobehub icon slug" },
     website: { type: "string" },
     keysUrl: { type: "string" },
     catalog: { type: "string" },
     verified: {
       type: "string",
       description: "YYYY-MM-DD the endpoints were checked, or unverified",
+    },
+    source: {
+      type: "string",
+      description:
+        "Where the data came from when not from the vendor, <project>@<commit>",
     },
     auth: {
       type: "object",
@@ -327,14 +345,72 @@ export const presetSchema = {
       },
     },
     endpoints,
+    userEndpoint: { type: "boolean", enum: [true] },
+    regions: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "name", "endpoints"],
+        properties: {
+          id: slug,
+          name: { type: "string" },
+          endpoints,
+          keysUrl: { type: "string" },
+          catalog: { type: "string" },
+          notes: { type: "string" },
+        },
+      },
+    },
+    plans: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "name"],
+        properties: {
+          id: slug,
+          name: { type: "string" },
+          endpoints,
+          models: { type: "array", items: { type: "string" } },
+          modelSource: presetModelSource,
+          keysUrl: { type: "string" },
+          catalog: { type: "string" },
+          notes: { type: "string" },
+        },
+      },
+    },
+    headerHints: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "required"],
+        properties: {
+          name: { type: "string" },
+          required: { type: "boolean" },
+          notes: { type: "string" },
+        },
+      },
+    },
     models: {
       type: "object",
       additionalProperties: false,
       required: ["source"],
       properties: {
-        source: { type: "string", enum: ["live", "static", "catalog"] },
+        source: presetModelSource,
         listPath: { type: "string" },
         list: { type: "array", items: providerModel },
+      },
+    },
+    fallbackModels: { type: "array", items: { type: "string" } },
+    magpie: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id"],
+        properties: { id: slug, region: slug, plan: slug },
       },
     },
     capabilities,
@@ -351,8 +427,9 @@ export const providerPatchSchema = {
   properties: {
     name: text(200),
     kind: providerSchema.properties.kind,
-    /** Only null: detaches the provider from its preset. */
+    /** Only null: detaches the provider from its preset, region and plan. */
     preset: { type: "null" },
+    catalog: { type: ["string", "null"], pattern: slug.pattern },
     endpoints: {
       type: "object",
       additionalProperties: false,
@@ -1046,5 +1123,118 @@ export const gatewayShareSchema = {
     boundPort: { type: "integer" },
     urls: { type: "array", items: { type: "string" } },
     error: { type: "string" },
+  },
+} as const;
+
+/** `POST /import/preview`: an import link, or an app whose configuration is read. */
+export const importPreviewRequestSchema = {
+  type: "object",
+  additionalProperties: false,
+  minProperties: 1,
+  maxProperties: 1,
+  properties: {
+    link: { type: "string", minLength: 1, maxLength: 16_384 },
+    app: { enum: ["claude-code", "codex"] },
+  },
+} as const;
+
+const importKey = {
+  type: "object",
+  additionalProperties: false,
+  required: ["kind"],
+  properties: {
+    kind: { enum: ["none", "value", "env"] },
+    last4: { type: "string" },
+    variable: { type: "string" },
+  },
+} as const;
+
+/** One provider of an import preview; a key is shown by its last four characters at most. */
+const importItem = {
+  type: "object",
+  additionalProperties: false,
+  required: ["ref", "status", "hosts", "key"],
+  properties: {
+    ref: { type: "string" },
+    status: { enum: ["new", "exists", "skipped"] },
+    reason: { type: "string" },
+    provider: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "id",
+        "name",
+        "kind",
+        "endpoints",
+        "apiKeyHeader",
+        "models",
+        "headers",
+      ],
+      properties: {
+        id: slug,
+        name: { type: "string" },
+        kind: providerSchema.properties.kind,
+        preset: { type: "string" },
+        region: { type: "string" },
+        plan: { type: "string" },
+        catalog: { type: "string" },
+        endpoints,
+        apiKeyHeader: { type: "string" },
+        models: { type: "array", items: { type: "string" } },
+        headers: { type: "array", items: { type: "string" } },
+      },
+    },
+    hosts: { type: "array", items: { type: "string" } },
+    key: importKey,
+    website: { type: "string" },
+    keysUrl: { type: "string" },
+  },
+} as const;
+
+export const importPreviewSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["previewId", "expiresAt", "source", "items", "warnings"],
+  properties: {
+    previewId: { type: "string" },
+    expiresAt: timestamp,
+    source: { enum: ["link", "claude-code", "codex"] },
+    file: { type: "string" },
+    items: { type: "array", items: importItem },
+    warnings: { type: "array", items: { type: "string" } },
+  },
+} as const;
+
+/** `POST /import/apply`: a preview, and optionally which of its items. */
+export const importApplySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["previewId"],
+  properties: {
+    previewId: { type: "string", pattern: "^[A-Za-z0-9_-]{22}$" },
+    refs: strings(200, 100),
+  },
+} as const;
+
+export const importAppliedSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["items"],
+  properties: {
+    items: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["ref", "status"],
+        properties: {
+          ref: { type: "string" },
+          status: { enum: ["created", "skipped", "failed"] },
+          reason: { type: "string" },
+          code: { type: "string" },
+          provider: providerSchema,
+        },
+      },
+    },
   },
 } as const;

@@ -14,6 +14,7 @@ import type {
   ProviderConfig,
   ProviderModel,
 } from "@harnesshub/core/model-plane";
+import { presetForProvider } from "@harnesshub/core/provider-presets";
 import type { PresetCatalog } from "./api-v1.js";
 
 /** Values a live model list just returned, by model id, with the refresh time. */
@@ -82,11 +83,26 @@ export function createModelEnrichment(options: {
         item,
       ]),
     );
-    const preset =
+    const stored =
       config.preset === undefined
         ? undefined
         : options.presets.get(config.preset);
-    const catalog = options.catalog();
+    // The preset as the provider's region and plan see it (their catalog
+    // and model list), with the provider's own catalog ID first.
+    const chosen = stored ? presetForProvider(stored, config) : undefined;
+    const preset =
+      chosen && config.catalog !== undefined
+        ? { ...chosen, catalog: config.catalog }
+        : chosen;
+    const inUse = options.catalog();
+    const catalog: ModelCatalog =
+      !chosen && config.catalog !== undefined
+        ? {
+            meta: inUse.meta,
+            lookup: (catalogId, modelId) =>
+              inUse.lookup(catalogId ?? config.catalog, modelId),
+          }
+        : inUse;
     const wildcard = overrides.get(`${config.id}/*`);
     return (modelId: string, live?: LiveModels): MetadataSources => {
       const ref = `${config.id}/${modelId}`;

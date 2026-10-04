@@ -8,6 +8,7 @@ import type { TestContext } from "node:test";
 import { startHub } from "@harnesshub/daemon/main";
 import { HarnessHubError } from "@harnesshub/sdk/client";
 import { connectLocal } from "@harnesshub/sdk/local";
+import type { ProviderConfig } from "@harnesshub/sdk/client";
 import { temporaryDirectory } from "../support/temporary.js";
 
 const KEY = "sk-synthetic-preset-key-0001";
@@ -402,5 +403,153 @@ void test("live model lists are fetched with the provider's key and kept when a 
   );
 
   await stop();
+  assert.equal(bodies.join("\n").includes(KEY), false);
+});
+
+void test("a region and a plan pick a preset's endpoints, key page and catalog", async (t) => {
+  const { client, bodies } = await daemon(t);
+  const presets = (await client.presets.list()).items;
+  assert.ok(presets.length >= 46, `${presets.length} presets`);
+  const moonshot = presets.find((preset) => preset.id === "moonshot")!;
+  assert.deepEqual(
+    moonshot.regions?.map((region) => region.id),
+    ["cn", "global"],
+  );
+  assert.equal(moonshot.icon, "kimi");
+  assert.equal(moonshot.source, "magpie@2e340f7");
+  assert.deepEqual(
+    presets.find((preset) => preset.id === "anthropic")?.headerHints?.[0]?.name,
+    "anthropic-workspace-id",
+  );
+  assert.equal(
+    presets.find((preset) => preset.id === "azure")?.userEndpoint,
+    true,
+  );
+
+  // The default region is the first; another one changes every endpoint.
+  const china = await client.providers.create({ preset: "moonshot" });
+  assert.equal(china.region, "cn");
+  assert.deepEqual(china.endpoints, moonshot.endpoints);
+  const global = await client.providers.create({
+    preset: "moonshot",
+    id: "kimi-global",
+    region: "global",
+    credential: { value: KEY },
+  });
+  assert.equal(global.region, "global");
+  assert.equal(global.endpoints.chat, "https://api.moonshot.ai/v1");
+  assert.equal(global.credentials.length, 1);
+
+  // A plan with its own endpoints and models; the plan's catalog fills metadata.
+  const plan = await client.providers.create({
+    preset: "volcengine",
+    plan: "agent",
+  });
+  assert.equal(plan.plan, "agent");
+  assert.equal(
+    plan.endpoints.chat,
+    "https://ark.cn-beijing.volces.com/api/plan/v3",
+  );
+  assert.ok(plan.models.list.some((model) => model.id === "ark-code-latest"));
+  // The plan's catalog prices its models: a coding plan's tokens cost nothing.
+  const glm = (): ProviderConfig["models"] => ({
+    source: "manual",
+    list: [{ id: "glm-5.3" }],
+    expose: "all",
+  });
+  const coding = await client.providers.create({
+    preset: "zhipu",
+    id: "glm-coding",
+    plan: "coding",
+    models: glm(),
+  });
+  assert.equal(
+    coding.endpoints.chat,
+    "https://open.bigmodel.cn/api/coding/paas/v4",
+  );
+  assert.equal(coding.models.list[0]?.price?.input, 0);
+  const metered = await client.providers.create({
+    preset: "zhipu",
+    id: "glm-api",
+    plan: "api",
+    models: glm(),
+  });
+  assert.ok((metered.models.list[0]?.price?.input ?? 0) > 0);
+  // Pay-as-you-go Qianfan has a list endpoint; the plans do not.
+  const qianfan = await client.providers.create({
+    preset: "baidu-qianfan",
+    plan: "api",
+  });
+  assert.equal(qianfan.models.source, "live");
+  assert.equal(
+    (
+      await client.providers.create({
+        preset: "baidu-qianfan",
+        id: "qianfan-personal",
+      })
+    ).models.source,
+    "static",
+  );
+
+  for (const [input, code, pointer] of [
+    [
+      { preset: "moonshot", id: "x1", region: "mars" },
+      "PRESET_REGION_NOT_FOUND",
+      "/region",
+    ],
+    [
+      { preset: "zhipu", id: "x2", plan: "gold" },
+      "PRESET_PLAN_NOT_FOUND",
+      "/plan",
+    ],
+    [
+      { preset: "openai", id: "x3", region: "cn" },
+      "PRESET_REGION_NOT_FOUND",
+      "/region",
+    ],
+    // The user's own resource is required.
+    [{ preset: "azure" }, "PROVIDER_INVALID", "/endpoints"],
+    [
+      {
+        id: "x4",
+        region: "cn",
+        endpoints: { chat: "https://a.example.test/v1" },
+      },
+      "PROVIDER_INVALID",
+      "/region",
+    ],
+  ] as const)
+    await assert.rejects(
+      client.providers.create(input as never),
+      (error: unknown) => {
+        problem(code, 400)(error);
+        assert.equal(
+          (error as HarnessHubError).problem.errors?.[0]?.pointer,
+          pointer,
+        );
+        return true;
+      },
+    );
+  const azure = await client.providers.create({
+    preset: "azure",
+    endpoints: {
+      chat: "https://team.openai.azure.com/openai/v1",
+      responses: "https://team.openai.azure.com/openai/v1",
+    },
+  });
+  assert.equal(azure.auth.apiKeyHeader, "api-key");
+
+  // Detached from its preset, a provider loses its region too; a catalog may be set.
+  const detached = await client.providers.update("kimi-global", {
+    preset: null,
+    catalog: "moonshotai",
+  });
+  assert.equal(detached.preset, undefined);
+  assert.equal(detached.region, undefined);
+  assert.equal(detached.catalog, "moonshotai");
+  assert.equal(
+    (await client.providers.update("kimi-global", { catalog: null })).catalog,
+    undefined,
+  );
   assert.equal(bodies.join("\n").includes(KEY), false);
 });

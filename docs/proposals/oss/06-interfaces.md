@@ -322,4 +322,6 @@ hh users list|remove                     团队服务器用户管理（1.x）
 
 **安全限制**：链接最长 8 KiB；参数名必须属于上表，出现未知参数或重复参数时整体拒绝并列出问题；不发起任何远程请求，Magpie 支持的 `icon` 参数会被忽略并提示，图标只来自内置预设；含 `key=` 的链接在日志与事件中一律脱敏；CLI 无法清除 shell 历史，因此在 TTY 中发现命令参数里带 Key 时提示改用 `hh import -`；控制台的预览接口要求控制台会话，并受 07 第 5.3 节的 Origin 与 `Sec-Fetch-Site` 校验。
 
+**实现**（2026-10-04，[ADR 0022](../../decisions/0022-provider-presets-and-imports.md)）：接口为 `POST /api/v1/import/preview` 与 `POST /api/v1/import/apply`（保留一次性 `previewId`），`v` 与 `kind` 可省略，并支持从 Claude Code 与 Codex 导入；行为以 [导入 provider](../../provider-import.md) 为准。
+
 **Magpie 兼容**：`hh import` 也接受 `magpie://import?…`，按 `yetone/magpie@d874adb` 的 `internal/provider/importurl.go` 映射 `preset`、`region`、`name`、`id`、`key`、`chat`、`responses`、`anthropic`、`models`、`catalog`、`website`、`keys`，并补上 `v=1&kind=provider`；之后执行与原生链接相同的校验与预览。Magpie 的格式变化不会自动跟进，映射表随 Magpie 的固定版本更新并有测试。

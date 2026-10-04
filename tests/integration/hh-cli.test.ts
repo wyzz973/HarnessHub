@@ -510,17 +510,32 @@ void test(
 
     const presets = await run(["provider", "presets"]);
     assert.equal(presets.code, 0, presets.stderr);
+    // Grouped like `magpie presets`: vendors, relays, local servers.
     assert.match(
       presets.stdout,
-      /^PRESET +NAME +KIND +ENDPOINTS +KEY +VERIFIED\n/,
+      /^Vendors \(\d+\)\nPRESET +NAME +ENDPOINTS +REGIONS +PLANS +KEY +VERIFIED\n/,
+    );
+    assert.match(presets.stdout, /\n\nRelays \(\d+\)\nPRESET /);
+    assert.match(presets.stdout, /\n\nLocal \(3\)\nPRESET /);
+    assert.match(
+      presets.stdout,
+      /\ndeepseek +DeepSeek +chat,responses,anthropic +- +- +required +2026-10-02\n/,
     );
     assert.match(
       presets.stdout,
-      /\ndeepseek +DeepSeek +vendor +chat,responses,anthropic +required +2026-10-02\n/,
+      /\nmoonshot +Moonshot AI \(Kimi\) +chat,responses,anthropic +cn,global +- +required +2026-10-02\n/,
     );
     assert.match(
       presets.stdout,
-      /\nollama +Ollama +local +chat,responses,anthropic +none +2026-10-02\n/,
+      /\nzhipu +.+ +- +api,coding +required +2026-10-02\n/,
+    );
+    assert.match(
+      presets.stdout,
+      /\nazure +Azure OpenAI +.+ \+base URL +unverified\n/,
+    );
+    assert.match(
+      presets.stdout,
+      /\nollama +Ollama +chat,responses,anthropic +- +- +none +2026-10-02\n/,
     );
 
     const added = await run(
@@ -540,6 +555,94 @@ void test(
       added.stdout,
       "Added provider deepseek from preset deepseek with a stored credential\n",
     );
+    // A region; a region that the preset lacks is a usage error.
+    const regional = await run([
+      "provider",
+      "add",
+      "kimi",
+      "--preset",
+      "moonshot",
+      "--region",
+      "global",
+    ]);
+    assert.equal(regional.code, 0, regional.stderr);
+    assert.equal(
+      regional.stdout,
+      "Added provider kimi from preset moonshot, region global\n",
+    );
+    assert.match(
+      (await run(["provider", "show", "kimi"])).stdout,
+      /\nPreset: +moonshot, region global\n(.|\n)*Endpoint: chat https:\/\/api\.moonshot\.ai\/v1\n/,
+    );
+    const mars = await run([
+      "provider",
+      "add",
+      "x",
+      "--preset",
+      "moonshot",
+      "--region",
+      "mars",
+    ]);
+    assert.equal(mars.code, 2);
+    assert.match(mars.stderr, /PRESET_REGION_NOT_FOUND/);
+    // --base moves the chosen plan's endpoints.
+    const planned = await run([
+      "provider",
+      "add",
+      "ark",
+      "--preset",
+      "volcengine",
+      "--plan",
+      "api",
+      "--base",
+      "http://10.0.0.2:8080",
+      "--json",
+    ]);
+    assert.equal(planned.code, 0, planned.stderr);
+    assert.deepEqual(
+      (JSON.parse(planned.stdout) as { endpoints: object }).endpoints,
+      {
+        chat: "http://10.0.0.2:8080/api/v3",
+        responses: "http://10.0.0.2:8080/api/v3",
+      },
+    );
+
+    // An import link: previewed, refused without a terminal or --yes, then added.
+    const link = `harnesshub://import?preset=openai&models=gpt-6-sol&key=${key}`;
+    const unconfirmed = await run(["import", link]);
+    assert.equal(unconfirmed.code, 4, unconfirmed.stderr);
+    assert.match(unconfirmed.stdout, /^Add: openai \(OpenAI\)\n/);
+    assert.match(unconfirmed.stdout, /\n {2}Sends to: +api\.openai\.com\n/);
+    assert.match(unconfirmed.stdout, /\n {2}Models: +gpt-6-sol\n/);
+    assert.match(
+      unconfirmed.stdout,
+      new RegExp(`\\n {2}Key: +from the link \\(…${key.slice(-4)}\\)`),
+    );
+    assert.match(unconfirmed.stderr, /pass --yes/);
+    assert.equal((await run(["provider", "show", "openai"])).code, 2);
+    const imported = await run(["import", "-", "--yes"], `${link}\n`);
+    assert.equal(imported.code, 0, imported.stderr);
+    assert.match(
+      imported.stdout,
+      /\nAdded provider openai with a stored credential\n$/,
+    );
+    const repeated = await run(["import", link, "--yes"]);
+    assert.equal(repeated.code, 0, repeated.stderr);
+    assert.match(repeated.stdout, /^Exists: openai \(OpenAI\) — A provider/);
+    assert.match(repeated.stdout, /\nNothing to add\.\n$/);
+    const badLink = await run([
+      "import",
+      "harnesshub://import?preset=openai&x=1",
+    ]);
+    assert.equal(badLink.code, 2);
+    assert.match(badLink.stderr, /IMPORT_LINK_INVALID/);
+    // This daemon reads no home, so other apps cannot be imported.
+    const noHome = await run(["import", "--from", "codex"]);
+    assert.equal(noHome.code, 5);
+    assert.match(noHome.stderr, /IMPORT_SOURCE_UNAVAILABLE/);
+    assert.equal((await run(["import"])).code, 2);
+    assert.equal((await run(["import", link, "--from", "codex"])).code, 2);
+
     const refreshed = await run([
       "provider",
       "models",
@@ -732,7 +835,16 @@ void test(
       ["provider", "add", "--preset", "ollama", "--base", "http://a.test?q=1"],
     ])
       assert.equal((await run(args)).code, 2, args.join(" "));
-    for (const outcome of [presets, added, refreshed, shown, failed])
+    for (const outcome of [
+      presets,
+      added,
+      refreshed,
+      shown,
+      failed,
+      unconfirmed,
+      imported,
+      repeated,
+    ])
       assert.equal(`${outcome.stdout}${outcome.stderr}`.includes(key), false);
   },
 );

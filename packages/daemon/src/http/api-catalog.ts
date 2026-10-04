@@ -901,14 +901,15 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     title: "添加 provider",
     group: "providers",
     request:
-      "preset（内置预设 ID）或 id（slug）与 endpoints（至少一个）；与 preset 同给的字段覆盖预设（endpoints 按协议覆盖，id 默认为预设 ID）；name、kind、auth、headers、models、wire、patches、capabilities、translateOnly 可选；credential（value 或 env/file ref，name 默认 default）添加第一个凭据；未知字段 400。",
-    response: "201：ProviderConfig；带 credential 时含该凭据的引用。",
+      "preset（内置预设 ID，可加 region 与 plan，缺省为预设列出的第一个）或 id（slug）与 endpoints（至少一个）；与 preset 同给的字段覆盖预设（endpoints 按协议覆盖，id 默认为预设 ID）；name、kind、auth、headers、models、wire、patches、capabilities、translateOnly、catalog（models.dev provider id）可选；credential（value 或 env/file ref，name 默认 default）添加第一个凭据；未知字段 400。",
+    response:
+      "201：ProviderConfig（来自预设时含 preset、region、plan）；带 credential 时含该凭据的引用。",
     implementation:
-      "预设由 @harnesshub/gateway 的 presets 加载并经 providerFromPreset 展开；手动时默认 name=id、kind=custom、auth=authorization-bearer、models={manual,[],all}；端点按官方 SDK 基址约定校验（chat/responses 含 /v1，anthropic、gemini 不含版本段）。每个模型缺的窗口、输出上限、推理、输入模态与价格按 03 第 7 节的优先级（覆盖、预设、models.dev 快照）补齐；请求里给出的值保留。credential 的值先写入秘密存储，provider 写入失败时删除。",
+      "预设由 @harnesshub/gateway 的 presets 加载并经 providerFromPreset 展开：端点依次取 plan、region、预设自己的，初始模型依次取 plan 的 models、预设的 models.list 与 fallbackModels，userEndpoint 预设必须给出 endpoints，required 的 headerHints 必须在 headers 中；手动时默认 name=id、kind=custom、auth=authorization-bearer、models={manual,[],all}；端点按官方 SDK 基址约定校验（chat/responses 含 /v1，anthropic、gemini 不含版本段）。每个模型缺的窗口、输出上限、推理、输入模态与价格按 03 第 7 节的优先级（覆盖、预设、models.dev 快照）补齐；请求里给出的值保留。credential 的值先写入秘密存储，provider 写入失败时删除。",
     effects:
       "在一个事务内写入 providers 记录与各模型元数据的来源（model_provenance）；有 credential.value 时写一个托管秘密。",
     errors:
-      "400 PRESET_NOT_FOUND（/preset）、PROVIDER_INVALID（errors[] 指向 /id、/endpoints 或 /endpoints/<协议>：操作路径、版本段、内嵌凭据、查询串、片段、非 HTTPS 的公网地址）、CREDENTIAL_INVALID、INVALID_SECRET；409 PROVIDER_EXISTS；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+      "400 PRESET_NOT_FOUND（/preset）、PRESET_REGION_NOT_FOUND（/region）、PRESET_PLAN_NOT_FOUND（/plan）、PROVIDER_INVALID（errors[] 指向 /id、/endpoints、/endpoints/<协议>、/headers/<名称> 或没有 preset 时的 /region、/plan：操作路径、版本段、内嵌凭据、查询串、片段、非 HTTPS 的公网地址、userEndpoint 预设缺少端点、缺少必需的 header）、CREDENTIAL_INVALID、INVALID_SECRET；409 PROVIDER_EXISTS；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/model-plane-routes.ts",
     tests: [
       "tests/integration/api-v1.test.ts",
@@ -1293,10 +1294,11 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     group: "providers",
     request: "无参数。",
     response:
-      "200：items（ProviderPreset：id、name、kind、website、keysUrl、catalog、verified、auth.methods 与 apiKeyHeader、endpoints、models、capabilities、patches、notes）、nextCursor=null。",
+      "200：items（ProviderPreset：id、name、kind、icon、website、keysUrl、catalog、verified、source、auth.methods 与 apiKeyHeader、endpoints、userEndpoint、regions、plans、headerHints、models、fallbackModels、magpie、capabilities、patches、notes），按 id 排序；nextCursor=null。",
     implementation:
-      "组合根注入 @harnesshub/gateway 的 listPresets：读取并校验包内 presets/*.json（JSON Schema、文件名、基址约定）。",
-    effects: "只读。verified 为对照厂商文档核对的日期或 unverified。",
+      "组合根注入 @harnesshub/gateway 的 listPresets：读取并校验包内 presets/*.json（JSON Schema、文件名、基址约定、region/plan/Magpie ID 唯一且存在、顶层端点等于默认选择的端点、每个 region 与 plan 都能展开为有效 provider）。",
+    effects:
+      "只读。verified 为对照厂商文档核对端点与 Key 发送方式的日期或 unverified；source 记录取自 Magpie 的数据（magpie@2e340f7）。",
     errors:
       "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/model-plane-routes.ts",
@@ -1305,6 +1307,49 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "tests/integration/hh-cli.test.ts",
     ],
     operationId: "hh_api_v1_list_presets",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/import/preview",
+    title: "预览导入",
+    group: "providers",
+    request:
+      "link（harnesshub://import?…、https://harnesshub.dev/import#…、magpie://import?…、https://usemagpie.ai/import#…，最长 8 KiB）或 app（claude-code、codex），二者只给一个。",
+    response:
+      "200：previewId（10 分钟内用于一次 apply）、expiresAt、source、file（读取的配置文件）、items（ref、status=new/exists/skipped、reason、provider{id、name、kind、preset、region、plan、catalog、endpoints、apiKeyHeader、models、headers 只含名称}、hosts、key{kind=none/value/env，长度不少于 16 的 Key 只给后四位}、website、keysUrl）、warnings。",
+    implementation:
+      "链接由 @harnesshub/core/import-links 的 parseImportLink 解析：参数只能出现一次，未知参数拒绝，端点按 provider 基址约定校验（HTTPS，回环与私网地址可用 HTTP 并给出警告），icon 只校验不下载；Magpie 链接的预设 ID 与 region 经 resolveMagpiePreset 映射。app 只在组合根给出的接线 home 下按全局接线的位置读取 Claude Code 的 settings.json（env.ANTHROPIC_BASE_URL 与令牌）或 Codex 的 config.toml（每个 [model_providers.*]）；指向本机网关或带 hhk_ Key 的条目跳过；端点与某个预设一致时按该预设导入。每一项按 POST /providers 的规则构造并检查。",
+    effects:
+      "不写入任何记录或文件；解析结果（含 Key）只保存在守护进程内存中，至多 32 份，过期或 apply 后删除。",
+    errors:
+      "400 IMPORT_LINK_INVALID（errors[].detail 指出参数名，消息不含参数值）、PRESET_NOT_FOUND、PRESET_REGION_NOT_FOUND、PRESET_PLAN_NOT_FOUND、PROVIDER_INVALID、INVALID_REQUEST；409 IMPORT_SOURCE_UNAVAILABLE（守护进程没有接线 home）、WIRING_CONFIG_UNPARSEABLE、WIRING_SYMLINK_ESCAPE、WIRING_NOT_REGULAR_FILE、WIRING_UNSUPPORTED_STRUCTURE（文件超过 1 MiB）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/import-routes.ts",
+    tests: [
+      "tests/integration/provider-import.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_preview_import",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/import/apply",
+    title: "确认导入",
+    group: "providers",
+    request: "previewId；refs 可选，只导入这些项（必须是预览中的 ref）。",
+    response:
+      "200：items（ref、status=created/skipped/failed、reason、失败时的 code、创建的 ProviderConfig）。",
+    implementation:
+      "取出并删除预览（无论结果如何只能使用一次），对 status=new 的项依次按 POST /providers 的路径创建：Key 先写入秘密存储，provider 写入失败时删除。",
+    effects:
+      "每个创建的 provider 与 POST /providers 相同：写入 providers 记录、模型元数据来源与托管秘密；不签发 Gateway Key，不改接线。",
+    errors:
+      "404 IMPORT_PREVIEW_NOT_FOUND（已使用、超过 10 分钟或守护进程重启）；400 INVALID_REQUEST（refs 不在预览中）；单项的 4xx（如 409 PROVIDER_EXISTS）记为该项 failed；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/import-routes.ts",
+    tests: [
+      "tests/integration/provider-import.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_apply_import",
   },
   {
     method: "POST",

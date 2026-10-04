@@ -1,6 +1,6 @@
 # 模型平面 API 与 CLI
 
-守护进程在 `/api/v1` 下提供模型平面的管理接口：provider 与凭据、模型元数据与覆盖、路由组、`client:` Gateway Key、`model.call` 账本与用量（设计见 [06 接口与交互面](proposals/oss/06-interfaces.md) 与 [03 模型平面](proposals/oss/03-model-plane.md)）。[`@harnesshub/sdk`](../packages/sdk/README.md) 是它的类型化客户端，`hh provider|credential|model|catalog|key|group|usage|status|gateway` 经 SDK 调用它。现有的 `/v1/*` 管理路由暂时保持原样，之后再迁到 `/api/v1`；全局接线（`/agents`，`hh agents|wire|use|unwire`）见 [全局接线](global-wiring.md)。逐接口的输入、返回与错误见 [API 实现参考](api/reference.md)（`/api/v1` 各节）。
+守护进程在 `/api/v1` 下提供模型平面的管理接口：provider 与凭据、模型元数据与覆盖、路由组、`client:` Gateway Key、`model.call` 账本与用量（设计见 [06 接口与交互面](proposals/oss/06-interfaces.md) 与 [03 模型平面](proposals/oss/03-model-plane.md)）。[`@harnesshub/sdk`](../packages/sdk/README.md) 是它的类型化客户端，`hh provider|credential|model|catalog|key|group|usage|status|gateway|import` 经 SDK 调用它。现有的 `/v1/*` 管理路由暂时保持原样，之后再迁到 `/api/v1`；全局接线（`/agents`，`hh agents|wire|use|unwire`）见 [全局接线](global-wiring.md)。逐接口的输入、返回与错误见 [API 实现参考](api/reference.md)（`/api/v1` 各节）。
 
 ## 认证与错误
 
@@ -15,8 +15,9 @@
 
 | 资源 | 操作 | 要点 |
 |---|---|---|
-| presets | `GET /presets` | 内置的 provider 预设（[presets](../packages/gateway/presets/README.md)）：端点、Key 的发送方式、获取 Key 的页面与核对日期 `verified` |
-| providers | `GET`、`POST /providers`；`GET`、`PATCH`、`DELETE /providers/{id}`；`POST /providers/{id}/models/refresh` | `POST` 可以只给 `preset`（可加 `id`、`name`、按协议覆盖的 `endpoints` 与第一个 `credential`）。刷新用第一个启用的凭据从上游列出模型（chat 基址 + `/models`、anthropic 基址 + `/v1/models`、gemini 基址 + `/v1beta/models`），按[模型元数据](#模型元数据)补齐每个模型的窗口与价格，手工填写的值保留；失败时保留原列表并标记 `stale`，错误只含主机与 HTTP 状态。端点是厂商官方 SDK 的基址：chat 与 responses 含 `/v1`，anthropic 与 gemini 不含版本段；以操作路径或版本段结尾、内嵌凭据、带查询串或片段、公网 HTTP 的基址被拒绝，`errors[]` 指向 `/endpoints/<协议>`。`PATCH` 是 JSON Merge Patch。被路由组或未吊销的 Key 引用时删除返回 409 |
+| presets | `GET /presets` | 内置的 provider 预设（[Provider 预设](provider-presets.md)，格式见 [presets](../packages/gateway/presets/README.md)）：端点、地域 `regions`、套餐 `plans`、图标、header 提示、Key 的发送方式、获取 Key 的页面、核对日期 `verified` 与数据出处 `source` |
+| providers | `GET`、`POST /providers`；`GET`、`PATCH`、`DELETE /providers/{id}`；`POST /providers/{id}/models/refresh` | `POST` 可以只给 `preset`（可加 `region`、`plan`、`id`、`name`、按协议覆盖的 `endpoints` 与第一个 `credential`）；provider 记录所选的 `region` 与 `plan`，元数据按该组合的目录 ID 补齐，`catalog` 可以另行指定。刷新用第一个启用的凭据从上游列出模型（chat 基址 + `/models`、anthropic 基址 + `/v1/models`、gemini 基址 + `/v1beta/models`），按[模型元数据](#模型元数据)补齐每个模型的窗口与价格，手工填写的值保留；失败时保留原列表并标记 `stale`，错误只含主机与 HTTP 状态。端点是厂商官方 SDK 的基址：chat 与 responses 含 `/v1`，anthropic 与 gemini 不含版本段；以操作路径或版本段结尾、内嵌凭据、带查询串或片段、公网 HTTP 的基址被拒绝，`errors[]` 指向 `/endpoints/<协议>`。`PATCH` 是 JSON Merge Patch。被路由组或未吊销的 Key 引用时删除返回 409 |
+| import | `POST /import/preview`；`POST /import/apply` | 导入链接或其他应用（Claude Code、Codex）的配置先预览为一次性的 `previewId`，确认后按 `POST /providers` 创建；见 [导入 provider](provider-import.md) |
 | credentials | `GET`、`POST /providers/{id}/credentials`；`PUT .../{credentialId}/secret`；`DELETE .../{credentialId}` | `value` 存入秘密后端，响应只含 `{kind:"store", value:<UUID>}` 引用；也可以给 `env` 或 `file` 引用。轮换保持引用不变；删除凭据或 provider 时同时删除托管秘密。06 第 3 节的 `/credentials` 顶层资源改为挂在 provider 下 |
 | models | `GET /providers/{id}/models`；`GET /models/{ref}`；`GET`、`PUT`、`DELETE /models/{ref}/overrides` | 见[模型元数据](#模型元数据)。`{ref}` 中的斜杠编码为 `%2F`（模型名本身可含斜杠）；覆盖的 `{ref}` 也可以是 `provider/*` |
 | catalog | `GET /catalog`；`POST /catalog/refresh` | 使用中的 models.dev 目录（`source` 为内置快照 `bundled` 或刷新副本 `refreshed`）及其取得时间、上游提交与 SHA-256、provider 与模型数，刷新地址、是否后台刷新（关闭原因 `setting` 或 `offline`）、上次刷新与下次时间。`POST` 立即刷新，后台刷新关闭时也执行；失败为 502 `CATALOG_REFRESH_FAILED`，原目录继续使用 |
@@ -59,7 +60,11 @@
 hh status
 hh provider presets
 printf '%s' "$KEY" | hh provider add --preset deepseek --credential-from-stdin
+printf '%s' "$KEY" | hh provider add --preset moonshot --region global --credential-from-stdin
+hh provider add glm --preset zhipu --plan coding
 hh provider models deepseek --refresh
+hh import - < link.txt                       # 导入链接：先预览，再确认
+hh import --from codex                        # 导入 Codex 已配置的上游
 hh provider add local-llm --chat http://127.0.0.1:8000/v1 --model my-model
 hh credential add deepseek --name main          # 在终端中隐藏输入
 printf '%s' "$KEY" | hh credential add deepseek --from-stdin
@@ -86,9 +91,9 @@ hh provider models office --refresh           # 模型名为 office/<provider>/<
 ```
 
 - `hh model set` 的键：`context`、`output`（token 数）、`reasoning`、`toolcall`（yes 或 no）、`modalities`（逗号分隔的 text、image、pdf、audio、video）、`price.input`、`price.output`、`price.cacheRead`、`price.cacheWrite`（美元每百万 token）。新值与已有覆盖合并，`键=` 删除一项，全部删除后覆盖被移除。
-- `hh gateway share on` 的 `--host`（本机 IP，`0.0.0.0` 表示全部地址，此时需要 `--name`）、`--port`、可重复的 `--name` 与 `--public-base-url` 未给出时沿用当前设置；`off` 保留地址只关闭监听器。`hh provider add --preset P --base URL` 把预设的每个端点路径接到 `URL` 之后，`--chat` 等显式端点优先。
+- `hh gateway share on` 的 `--host`（本机 IP，`0.0.0.0` 表示全部地址，此时需要 `--name`）、`--port`、可重复的 `--name` 与 `--public-base-url` 未给出时沿用当前设置；`off` 保留地址只关闭监听器。`hh provider add --preset P [--region R] [--plan P] --base URL` 把所选组合的每个端点路径接到 `URL` 之后，`--chat` 等显式端点优先。
 - 秘密从不作为参数：终端中隐藏输入，非交互时必须用 `--from-stdin`、`--from-env <变量>` 或 `--from-file <路径>`，否则以 2 退出。
-- `provider remove`、`credential remove`、`group remove` 与 `key revoke` 需要确认；`--yes` 跳过，非交互且没有 `--yes` 时以 4 退出且不做修改。stdin 不是终端、设置了 `CI` 或给出 `--non-interactive` 时为非交互。
+- `provider remove`、`credential remove`、`group remove`、`key revoke` 与 `import` 需要确认；`--yes` 跳过，非交互且没有 `--yes` 时以 4 退出且不做修改。stdin 不是终端、设置了 `CI` 或给出 `--non-interactive` 时为非交互。
 - 退出码（06 第 5 节）：0 成功；1 内部错误；2 用法错误、输入无效或名称不存在；3 守护进程不可达或数据目录中没有令牌；4 需要确认；5 冲突（409、412、422）；6 认证失败；7 达到上限或未就绪（429、503）；130 中断。
 
 控制台的 Provider、路由组、Gateway Key 与用量页面经同源代理调用这些接口；代理在服务端从 `HARNESSHUB_DATA_DIR/admin.token` 读取令牌，浏览器拿不到它（见 [控制台](../packages/console/README.md)）。
