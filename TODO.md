@@ -62,6 +62,7 @@
 - [x] **全局接线**：格式保真编辑器与 8 个 Adapter（`ebbc647`）；`/api/v1/agents`、`hh agents|wire|use|unwire` 与控制台 Agents 页（`37aa0bb`、`614939c`）；新增 11 个 Agent（`a26e485`）；Claude 档位与 `[1m]`、Codex 的 Key 与 ChatGPT 登录两种模式、各 Agent 模型元数据、每个 Agent 的模型清单（隐藏）、Profile（`702c4c3`–`f8833d1`，ADR 0022）。
 - [x] **路由对齐 Magpie**：失败分类与按类别休息、自动路由组、`X-HH-Credential` 钉选、least-used、会话与凭据维度的用量、Codex ChatGPT 透传（`b82f64c`，ADR 0025）。
 - [x] **其他**：OTLP 导出（`16897dd`）；局域网共享与级联另一台 HarnessHub（`57f8b1e`，ADR 0021）；控制台内嵌（见上，W4）；`hh serve` 默认监听 `127.0.0.1`（`a8bb06d`，首次真实实测发现）；加密备份、恢复与 WebDAV/S3 同步（`a757fe9`）。
+- [ ] **终端界面 `hh tui`**（[ADR 0028](docs/decisions/0028-terminal-ui.md)，所有者 2026-10-04 决定对标 Magpie 的终端主界面，原定“TUI 不做”）：每个已安装或已接线的 Agent 一行（模型、Claude 档位、effort、选项、漂移与需要处理的标记，未安装的折叠），可搜索、按 provider 分组并显示窗口与价格的模型选择器，预览遮蔽 Key 的 diff 后 `y` 写入，`s`/`p` 保存与预览应用 Profile，`u` 还原，`r` 刷新；只经 SDK 访问守护进程，没有终端时以 2、守护进程未运行时以 3 退出；不依赖第三方库，处理 SIGWINCH、`NO_COLOR` 与窄窗口，退出、Ctrl+C、SIGINT、SIGTERM 与崩溃时恢复终端。进展（2026-10-04，分支 `feat/tui`）：`tests/integration/tui.test.ts`（8 项，注入终端对 `startHub`）与 `packages/cli/test/tui-terminal.test.ts`（6 项）通过；macOS 真实伪终端中走查一次（退出码 0，退出前后 `stty -a` 相同）。待合入后勾选；Windows 未验证。
 - [ ] **进行中**：控制台补齐新功能界面并以 Agents 为首页；接线的数组元素归属与 Droid、WorkBuddy、ZCode、Claude Desktop，模型变化自动同步到各 Agent；`hh provider test|doctor`；订阅 provider（只用厂商支持的途径：ChatGPT 官方第三方登录、Copilot；Claude 订阅因 Anthropic 条款明确禁止第三方代为转发而不实现，见 ADR-P09）；Library（指令、MCP、Skills 同步到各 Agent）。
 - [ ] **未验证**：真实 provider 与真实 Agent 的端到端（首次实测因改写用户真实配置需所有者亲自执行而待做）；Windows；单可执行文件的实际构建。
 

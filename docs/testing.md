@@ -33,6 +33,8 @@
 
 需要模型上游的测试使用 [假 provider](../tools/fake-provider/README.md)（TypeScript 测试经 [`tests/support/fake-provider.ts`](../tests/support/fake-provider.ts) 加载）：它只在回环地址监听，按协议检查字段并记录违规，记录中只有 Key 的标识与指纹；测试中的 Key 一律是合成的金丝雀值，断言零违规与预期的 Key 标识，而不只是回答能解码。
 
+终端界面（`hh tui`）的测试经 [`tests/support/terminal.ts`](../tests/support/terminal.ts) 注入终端：输入记录原始模式，输出可以改变尺寸并发出 `resize`，屏幕按写入的转义序列重建，测试读到的就是用户看到的内容；未知的转义序列使测试失败而不是被忽略。
+
 `pnpm test:*` 与 `test:windows` 都经 [`tools/run-tests.mjs`](../tools/run-tests.mjs) 运行，它负责测试环境的隔离与期限：
 
 - 测试进程只继承白名单中的系统变量与 `HARNESSHUB_TEST_*` 显式开关；开发者 shell 中的 `HARNESSHUB_MODEL*`、`AGENT_ENGINE`、各家 API Key 与令牌一律不可见，测试需要时自行设置。

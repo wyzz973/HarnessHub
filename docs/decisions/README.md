@@ -31,6 +31,7 @@ ADR 记录重要且未来可能重新讨论的决定。适用范围见 [文档�
 - [0025：对齐 Magpie 的路由、失败休息与 Codex 透传](0025-magpie-routing-parity.md)（proposed）
 - [0026：订阅账号的接入方式](0026-subscription-accounts.md)（proposed）
 - [0027：网关的脱敏、视觉兜底、搜索模拟与图像端点](0027-gateway-features.md)（proposed）
+- [0028：终端界面 `hh tui`](0028-terminal-ui.md)（proposed）
 
 编号 0009、0011、0012、0015 是早期版本的 Windows 便携发行、上游网关适配、离线交付与预装工具包决定，随对应功能一起移除，原文保留在 `archive/competition` 分支；编号不再复用。
 

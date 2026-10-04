@@ -2,7 +2,7 @@
 
 全局接线把本机已安装的 Agent 改为经 HarnessHub 网关调用模型：直接改写 Agent 自己的用户配置，并提供预览、备份、原子写、回读校验、逐字节还原与漂移检测。目标设计见 [04 Agent 平面第 4、5 节](proposals/oss/04-agent-plane.md#4-全局接线)；隔离接线（只为 Session 生成私有配置）仍由 [引擎独立配置](engine-configuration.md) 与 [统一模型下的引擎接线](model-gateway-engines.md) 描述，两者互不调用。
 
-现状：库（`packages/agents/src/wiring/`）、守护进程的 `/api/v1/agents` 与 `/api/v1/profiles`、`hh agents|wire|use|unwire|profile` 与控制台的 Agent 页面已实现，并经正式守护进程入口与假上游端到端验证（写入的 Key 能调用网关，轮换与还原后旧 Key 被拒绝，隐藏的模型从该 Key 的 `/v1/models` 与 Agent 文件中消失）。各 Agent 的接线语义（Claude Code 的档位与 `[1m]`、Codex 的模型目录与 ChatGPT 模式、各 Agent 的模型元数据）按 Magpie（`yetone/magpie` `2e340f7`，`internal/agent/`）的写法实现；没有用真实 Agent 读取接线后的配置，也没有在 Windows 上运行过。控制台的 Agent 首页与详情提供模型、档位、effort、选项、隐藏模型、换 Key 与还原，Profile 页面提供保存、预览应用与删除（[控制台](../packages/console/README.md)）。
+现状：库（`packages/agents/src/wiring/`）、守护进程的 `/api/v1/agents` 与 `/api/v1/profiles`、`hh agents|wire|use|unwire|profile`、终端界面 `hh tui` 与控制台的 Agent 页面已实现，并经正式守护进程入口与假上游端到端验证（写入的 Key 能调用网关，轮换与还原后旧 Key 被拒绝，隐藏的模型从该 Key 的 `/v1/models` 与 Agent 文件中消失）。各 Agent 的接线语义（Claude Code 的档位与 `[1m]`、Codex 的模型目录与 ChatGPT 模式、各 Agent 的模型元数据）按 Magpie（`yetone/magpie` `2e340f7`，`internal/agent/`）的写法实现；没有用真实 Agent 读取接线后的配置，也没有在 Windows 上运行过。控制台的 Agent 首页与详情提供模型、档位、effort、选项、隐藏模型、换 Key 与还原，Profile 页面提供保存、预览应用与删除（[控制台](../packages/console/README.md)）。
 
 ## 使用
 
@@ -18,9 +18,30 @@ pnpm exec hh wire codex --rotate                      # 换一把新 Key，旧 K
 pnpm exec hh unwire codex                             # 还原配置并吊销 Key
 pnpm exec hh profile save work                        # 保存所有已接线 Agent 的模型选择
 pnpm exec hh profile apply work                       # 显示改动，确认后一次切换
+pnpm exec hh tui                                      # 终端界面：以上操作的交互版
 ```
 
 `hh wire <agent> [model]` 先打印各文件的统一 diff（Key 显示为 `hhk_a_xxxx…`；HarnessHub 生成的整个文件只显示大小），确认后按这份预览写入：预览之后文件又被改动则以 5 退出、什么都不写；`--yes` 跳过确认，非交互且没有 `--yes` 时以 4 退出。省略的选择沿用当前接线：模型、`--tier NAME=REF`（Claude Code 的 `opus`、`sonnet`、`haiku`、`fable`、`subagent`）、`--effort LEVEL`（`--no-effort` 清除）、`--option NAME=VALUE` 与 `--models`。`--models` 给出 Agent 可列出的模型（`provider/model`、`provider/*`、`group/<id>` 或 `*`），缺省沿用当前列表，首次接线为 `*`：网关的全部模型，包括之后新增的。模型必须是网关提供的 Model Ref（provider 的公开模型）或 `group/<id>`。Agent 只在启动时读取配置，写入后需要重启正在运行的实例。控制台的 Agent 首页提供选择模型、预览改动、确认写入与还原，详情中另有档位、effort、选项、显示的模型与换 Key，并显示漂移与需要处理的标记。
+
+### 终端界面
+
+`hh tui` 是 Magpie 主界面的终端版（[ADR 0028](decisions/0028-terminal-ui.md)）：
+
+```
+  ◉ HarnessHub › agents
+
+  ▸ Claude Code  ✓ wired     fake/sim-large  haiku fake/sim-small  effort high  ~/.claude/settings.json
+    Codex CLI    not wired   —               effort —  codexAuth —
+
+    21 not installed: Gemini CLI, Qwen Code, OpenCode, Pi, Crush, Kimi Code, MiMo Code, OmO, Hermes…
+
+  ↑↓ agent  ·  ←→ field  ·  ↵ change  ·  s save profile  ·  p profiles  ·  r refresh  ·  u unwire
+  f all agents  ·  q quit
+```
+
+每个已安装、只有配置目录或已接线的 Agent 一行：接线状态（`✓ wired`；`! files changed`、`! key revoked`、`! drift …` 等需要处理的标记，光标所在行的原因显示在状态行）、模型、Claude Code 的档位（未设置的档位只在光标停留时显示）、effort 与 Adapter 选项，光标所在行的右侧是它的配置文件。没有找到、也未接线的 Agent 折叠为一行，`f` 展开。`↑↓`（`j`/`k`）选 Agent，`←→`（`h`/`l`、Tab）选字段，`↵` 打开选择器：输入文字过滤（每个词须出现在 Model Ref、provider 名称或说明中，或按顺序出现在 Ref 中），模型按 provider 分组并显示上下文窗口与每百万 token 的输入/输出价格，路由组在最后，当前值与对该 Agent 隐藏的模型有标注。选定后取守护进程的接线预览，显示各文件的 diff（Key 已遮蔽），`y` 写入、`n` 或 Esc 放弃；选择当前已有的值且 Agent 状态正常时什么都不写（重新接线只会换一把 Key），有漂移或需要处理时照常预览，以修复它。`s` 输入名称保存 Profile，`p` 列出 Profile，回车预览各 Agent 的 diff 后确认应用；`u` 确认后还原 Agent 的文件并吊销 Key；`r` 重新读取；`q`、Esc 退出，Ctrl+C 任何时候都退出。
+
+它只经 SDK 调用运行中的守护进程（与 `hh agents`、`hh wire`、`hh profile` 相同的接口），守护进程拒绝的操作显示在状态行；调用进行中按下的键（Ctrl+C 除外）被丢弃，提前键入的 `y` 不会确认尚未显示的预览。没有终端时以 2 退出并提示改用 `hh agents`，守护进程未运行时提示 `hh serve` 并以 3 退出；`q` 为 0，Ctrl+C 与 SIGINT 为 130，SIGTERM 为 143。界面使用备用屏幕与原始模式，窗口改变尺寸（SIGWINCH）时重绘，窄窗口截断行并把按键提示折成多行，小于 30×8 时只显示尺寸提示；`NO_COLOR` 非空时不输出颜色与样式，光标所在字段以方括号标出。退出、Ctrl+C、SIGINT、SIGTERM 与崩溃时都先恢复终端。不依赖第三方库；尚未在 Windows 终端中验证。
 
 ## 守护进程与 Key
 
@@ -174,6 +195,8 @@ Shell 环境中已有的同名变量优先于 dotenv 文件（Gemini、Qwen）�
 - 未实现：OpenClaw（JSON5）、Copilot（env-launch）Adapter 与上文未收录的 Magpie Agent；备份保留数清理；接线前检查 Agent 是否在运行；`bypassed` 与 `stale-key` 漂移（需要网关账本）；“rename 前被并发修改”之外的写后篡改注入测试（04 第 9 节第 6 项）；Windows 验证；真实 Agent 的接线生效测试（第 5 项）。
 
 ## 验证
+
+[tui.test.ts](../tests/integration/tui.test.ts) 经注入的终端（[tests/support/terminal.ts](../tests/support/terminal.ts)：记录原始模式的输入、可改变尺寸并发出 `resize` 的输出、按写入的转义序列重建的屏幕，未知序列使测试失败）对 `startHub`（临时 `wiringHome`、严格假上游、文件秘密后端）运行 `hh tui`：在字段间移动、选择器的分组、窗口与价格、过滤，预览期间文件不变，`y` 后 Codex 已接线且写入的 Key 从未出现在输出中；`n`、关闭选择器与预览生成期间提前键入的 `y` 都不写入：`home` 下的文件逐字节不变、不签发 Key，未接线时 `u` 被拒绝；Profile 保存、在界面中切走、再次选择当前值不写入也不签发 Key、预览并应用后模型与档位恢复，再次应用提示无需改动；`f` 展开未安装的 Agent、列表随光标滚动、折叠后光标回到第一行；改变尺寸后重绘、窄窗口不越界且提示折行、过小窗口的提示与恢复；`NO_COLOR` 下没有 SGR；`q`、Ctrl+C、SIGINT、SIGTERM、`exit` 与崩溃后终端恢复（原始模式关闭、离开备用屏幕、光标可见、监听器移除）；真实 `hh tui` 入口在没有终端时以 2 退出；守护进程未监听时 `runTui` 以 3 退出且不打开界面。`packages/cli/test/tui-terminal.test.ts` 覆盖按键解码、列宽、截断与样式。另在 macOS 的真实伪终端中运行过 `hh tui`（选择、预览、写入、SIGWINCH、退出码 0、退出前后 `stty -a` 相同），未写成自动测试。
 
 [agents-wiring-sync.test.ts](../tests/integration/agents-wiring-sync.test.ts) 经 `startHub`（临时 `wiringHome`）与严格假上游：provider 增删模型与改窗口后，OpenCode 与 Droid 文件中的清单随之改写（Droid 用户自己的 `customModels` 保持在前），Key 不变且 `/v1/models` 一致；用户改过的 Pi 文件不被改写并标出 `AGENT_FILES_CHANGED`，所选模型离开网关的 Crush 标出 `AGENT_MODEL_UNAVAILABLE`，重新接线后清除；`wiring.autoSync: false` 时不改写；无效设置启动失败；Claude Desktop 的 Key 以别名列出模型、显示名为 Ref，别名（含 `[1m]`）与 Ref 都能调用。`packages/agents/test/wiring-arrays.test.ts` 用种子随机序列覆盖数组元素：JSON（多行、内联、CRLF 与尾逗号、空数组）与 YAML 中设置、替换、删除元素，与用户在任意位置增删自己的元素交错，每步核对整个数组与其他内容；只增删 HarnessHub 的元素后 JSON 字节与原文相同；以及 Droid 的接线、多轮重新接线（模型集合与 Key 变化）、用户在其间的增删与还原，核对用户元素与顺序、HarnessHub 元素的位置与漂移。Droid、WorkBuddy、ZCode、Claude Desktop 各有 `wiring-agent-<id>.test.ts`。
 

@@ -78,7 +78,7 @@ Magpie（[yetone/magpie](https://github.com/yetone/magpie)，Go，MIT）证明�
 | Library | 指令、MCP、Skills 同步到各 Agent | 持平 | 内容寻址存储，变更可回滚 |
 | Library | 在线市场与更新检查 | 1.x | 通过插件与 Library 注册表 |
 | 备份 | 加密备份与恢复、WebDAV/S3 同步 | 1.0 导出与导入；同步 1.x | 导出默认不含秘密，可选口令加密 |
-| 交互面 | 菜单栏 GUI（Wails）、TUI、CLI、Web、Docker | CLI、Web 控制台、Docker 持平；托盘 1.x；TUI 不做 | 交互式选择由 CLI 提供 |
+| 交互面 | 菜单栏 GUI（Wails）、TUI、CLI、Web、Docker | CLI、Web 控制台、Docker 持平；TUI 持平（`hh tui`）；托盘 1.x | 原定 TUI 不做，所有者 2026-10-04 改为对标 Magpie 的终端主界面（[ADR 0028](../../decisions/0028-terminal-ui.md)） |
 | 分发 | 签名与公证、自动更新 | 超越 | 签名、SBOM、构建溯源证明；更新前校验签名并可回滚 |
 | 遥测 | 每天一次匿名计数，默认开启 | 不做默认开启 | 只做显式同意的匿名统计 |
 | — | 无 | 超越：执行平面 | Session/Run API、SDK、权限往返、产物、工作区隔离、并行比较、评测、MCP Server |
