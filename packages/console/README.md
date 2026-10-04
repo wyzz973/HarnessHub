@@ -35,7 +35,7 @@ pnpm exec hh console --url http://127.0.0.1:3330 --data-dir ./data/local
 
 Cookie 按主机名而不按端口区分，所以在 3180 或 3330 登录的会话两边都能用。`pnpm check:console` 依次运行控制台的 lint、`tsc --noEmit` 与构建。
 
-`--demo` 登记的 fake 引擎只用于测试，不出现在任务页的引擎选择器中；用 HTTP 在 fake 上创建的会话（见 [HTTP 接口自测](../../docs/getting-started.md#http-接口自测开发用)）会出现在历史中，可以在页面中查看和继续对话。真实引擎的自有配置按 [配置说明](../../docs/engine-management.md)准备。macOS 的 Keychain helper 需要 Xcode Command Line Tools；通用前置条件见 [快速开始](../../README.md#quick-start-from-source)。守护进程只绑定 loopback。
+`--demo` 登记的 fake 引擎只用于测试，不出现在任务页的引擎选择器中；用 HTTP 在 fake 上创建的会话（见 [HTTP 接口自测](../../docs/getting-started.md#http-接口自测开发用)）会出现在历史中，可以在页面中查看和继续对话。真实引擎的自有配置按 [配置说明](../../docs/engine-management.md)准备。macOS 的 Keychain helper 需要 Xcode Command Line Tools；通用前置条件见 [快速开始](../../README.md#install-from-source)。守护进程只绑定 loopback。
 
 ## 页面与状态
 

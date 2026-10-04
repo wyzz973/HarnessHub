@@ -11,7 +11,7 @@ pnpm build:console
 pnpm exec hh serve
 ```
 
-Node、pnpm 的版本与克隆见 [README](../README.md#quick-start-from-source)。`hh serve` 默认监听 `127.0.0.1:3180`（`--port` 修改），数据目录为当前目录下的 `./data`（`--data-dir` 修改），首次启动时在其中生成本机管理令牌 `admin.token`。它输出 JSON 日志，其中 `Console: http://127.0.0.1:3180/#login=…` 一行是控制台的一次性登录链接（60 秒内可用一次，`pnpm exec hh console` 生成新的）；没有运行 `pnpm build:console` 时控制台页面答复 503。API Key 默认存入系统密钥库（macOS 钥匙串、Windows DPAPI，其他平台为加密文件）；加 `--secrets-backend file` 改用加密文件，主密钥在 `--config-dir`（默认是平台的 HarnessHub 配置目录）下的 `secrets.key`。
+Node、pnpm 的版本与克隆见 [README](../README.md#install-from-source)。`hh serve` 默认监听 `127.0.0.1:3180`（`--port` 修改），数据目录为当前目录下的 `./data`（`--data-dir` 修改），首次启动时在其中生成本机管理令牌 `admin.token`。它输出 JSON 日志，其中 `Console: http://127.0.0.1:3180/#login=…` 一行是控制台的一次性登录链接（60 秒内可用一次，`pnpm exec hh console` 生成新的）；没有运行 `pnpm build:console` 时控制台页面答复 503。API Key 默认存入系统密钥库（macOS 钥匙串、Windows DPAPI，其他平台为加密文件）；加 `--secrets-backend file` 改用加密文件，主密钥在 `--config-dir`（默认是平台的 HarnessHub 配置目录）下的 `secrets.key`。
 
 ## 向导：`hh init`
 

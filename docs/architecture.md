@@ -132,4 +132,4 @@ SSE只读已提交事件，按Run内seq重放，慢客户端等drain；断开不
 
 默认只支持本机单用户控制面；没有公网认证、分布式调度、租户隔离或统一OS沙箱。POSIX进程组与Windows监督分别验证，macOS测试不证明Windows原生清理正确。
 
-自动测试保留真实数据库、HTTP、IPC与Worker，只替换不可控的外部模型/引擎。真实Harness、本地模拟模型、真实远端模型、权限/文件任务、恢复、Windows是独立证据层次，详见 [测试要求](testing.md)和 [验收索引](README.md#验收与历史资料)。
+自动测试保留真实数据库、HTTP、IPC与Worker，只替换不可控的外部模型/引擎。真实Harness、本地模拟模型、真实远端模型、权限/文件任务、恢复、Windows是独立证据层次，详见 [测试要求](testing.md)和 [验收索引](README.md#history)。

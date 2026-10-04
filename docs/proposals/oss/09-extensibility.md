@@ -1,6 +1,6 @@
 # 09 扩展
 
-状态：提案（草案），2026-10-02。术语与进程模型以 [02 系统架构](02-architecture.md) 为准；插件运行在独立进程、经 stdio 使用 JSON-RPC 2.0 的决定见 [ADR-P07](adr-drafts.md#adr-p07-插件协议)；订阅复用只能以社区插件存在的决定见 [ADR-P09](adr-drafts.md#adr-p09-订阅复用不进核心)。插件与工具包的信任分级见 [07 第 7 节](07-data-security.md#7-插件与工具包的信任模型)，插件故障时的降级见 [08 第 3 节](08-reliability-observability.md#3-失败域与降级)。文中的命令名与包名表示所需的能力，最终命名以 [06 接口与交互面](06-interfaces.md) 与 [10 工程体系](10-engineering.md) 为准。
+状态：提案（草案），2026-10-02。术语与进程模型以 [02 系统架构](02-architecture.md) 为准；插件运行在独立进程、经 stdio 使用 JSON-RPC 2.0 的决定见 [ADR-P07](adr-drafts.md#adr-p07-插件协议)；订阅复用原定只以社区插件存在，后改为进入核心，见 [ADR-P09](adr-drafts.md#adr-p09-订阅复用进核心) 与 [ADR 0026](../../decisions/0026-subscription-accounts.md)。插件与工具包的信任分级见 [07 第 7 节](07-data-security.md#7-插件与工具包的信任模型)，插件故障时的降级见 [08 第 3 节](08-reliability-observability.md#3-失败域与降级)。文中的命令名与包名表示所需的能力，最终命名以 [06 接口与交互面](06-interfaces.md) 与 [10 工程体系](10-engineering.md) 为准。
 
 依据：现有工具包的内容寻址存储与路径校验（[`packages/agents/src/tool-packages/store.ts`](../../../packages/agents/src/tool-packages/store.ts)）；`yetone/magpie@d874adb` 的 `internal/plugin`（`host.go`、`host.js`、`store.go`、`market.json`）；OpenCode 插件 API `@opencode-ai/plugin` v1；[MCP](https://modelcontextprotocol.io) 的 stdio 传输与 [LSP](https://microsoft.github.io/language-server-protocol/) 的取消约定。
 
