@@ -64,6 +64,7 @@ import {
   useLoaded,
 } from "./model-plane-ui";
 import { PresetPane } from "./preset-pane";
+import { ProviderDoctorDialog } from "./provider-doctor";
 import {
   CredentialState,
   Readings,
@@ -586,6 +587,7 @@ function ProviderDetail({
   const [deleting, setDeleting] = useState<ProviderCredential | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshFailure, setRefreshFailure] = useState<Failure | null>(null);
+  const [checking, setChecking] = useState(false);
   return (
     <>
       <button
@@ -616,12 +618,19 @@ function ProviderDetail({
           `更新于 ${new Date(provider.updatedAt).toLocaleString()}`,
         ].join(" · ")}
       >
-        <span title="即将推出：检查端点、Key 与模型列表">
-          <Button size="sm" variant="outline" disabled>
+        {provider.subscription ? (
+          <span title="订阅 provider 不经检测；账号状态见“订阅账号”页">
+            <Button size="sm" variant="outline" disabled>
+              <Stethoscope />
+              检测
+            </Button>
+          </span>
+        ) : (
+          <Button size="sm" variant="outline" onClick={() => setChecking(true)}>
             <Stethoscope />
             检测
           </Button>
-        </span>
+        )}
         <Button size="sm" variant="outline" onClick={edit}>
           <Pencil />
           编辑
@@ -821,6 +830,13 @@ function ProviderDetail({
             setSecret(null);
             reload();
           }}
+        />
+      ) : null}
+      {checking ? (
+        <ProviderDoctorDialog
+          provider={provider}
+          onClose={() => setChecking(false)}
+          onPatched={reload}
         />
       ) : null}
       <ConfirmDialog

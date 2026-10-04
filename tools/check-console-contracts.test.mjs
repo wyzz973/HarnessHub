@@ -601,3 +601,18 @@ test("the routing state and gateway features pages present the gateway's state a
   );
   assert.deepEqual(features.rulesWith(view, { remove: "ticket" }), [{ name: "codename", pattern: "a" }]);
 });
+
+test("the provider check dialog names every doctor check and states the plan's cost", async () => {
+  const doctor = await consoleModule("lib/provider-doctor.ts");
+  const { doctorChecks } = await import(
+    new URL("../packages/core/dist/src/provider-doctor.js", import.meta.url).href
+  );
+  assert.deepEqual(Object.keys(doctor.doctorCheckNames), [...doctorChecks], "every check the daemon runs has a name, in its order");
+  const plan = { estimatedCostUsd: null, estimatedTokens: { input: 980, output: 480 } };
+  assert.equal(doctor.planCost(plan), "价格未知，约 980 输入与 480 输出 token");
+  assert.equal(doctor.planCost({ ...plan, estimatedCostUsd: 0.00213 }), "预计 $0.0021");
+  assert.deepEqual(
+    doctor.statusCounts([{ status: "pass" }, { status: "fail" }, { status: "pass" }, { status: "skip" }]),
+    { pass: 2, warn: 0, fail: 1, skip: 1 },
+  );
+});

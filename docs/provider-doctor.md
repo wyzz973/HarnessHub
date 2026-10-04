@@ -2,6 +2,8 @@
 
 `hh provider test` 与 `hh provider doctor` 向 provider 的上游发送真实请求，回答两个问题：每个声明的端点能不能用；这个上游需要哪些设置（Key 的发送方式、输出上限字段、usage、可选字段、推理回传、模型元数据）。设计见 [03 第 9 节](proposals/oss/03-model-plane.md#9-能力体检)；API 与其他 provider 操作见 [模型平面 API 与 CLI](model-plane-api.md)。
 
+控制台的 Provider 详情页“检测”提供同样的两项：测试端点，以及先显示计划、点击后运行的体检，建议的修改确认后应用（订阅 provider 不可用）。
+
 两者都会消耗上游额度：每个请求在发出下一个之前写入 `model.call` 账本，作用域为 `client:doctor`（`GET /api/v1/model-calls` 中可见，`inbound.path` 为 `/doctor/<检查>`），成本按模型价格计算。它们从不修改 provider。
 
 ## 测试
