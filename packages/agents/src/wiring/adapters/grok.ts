@@ -1,10 +1,22 @@
 // SPDX-License-Identifier: MIT
+import type { ReasoningEffort } from "@harnesshub/core/model-plane";
 import {
   overridable,
   withSelected,
   type AdapterSetting,
   type WiringAdapter,
 } from "./types.js";
+
+/** The reasoning efforts Grok knows, in its order. */
+const GROK_EFFORTS: readonly ReasoningEffort[] = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
 
 /**
  * Grok Build (xAI's `grok` CLI) reads `config.toml` in
@@ -13,7 +25,9 @@ import {
  * each with the key: a model without a key of its own would be sent the
  * user's xAI sign-in. `[models] default` selects the chosen one, and
  * `[features] campaigns = false` stops xAI's remote campaigns from replacing
- * that default (Magpie's `grok.go`).
+ * that default (Magpie's `grok.go`). A model's known reasoning levels are its
+ * `reasoning_efforts`, and the effort sessions start with is
+ * `[models] default_reasoning_effort`.
  */
 export const grok: WiringAdapter = {
   id: "grok",
@@ -32,6 +46,7 @@ export const grok: WiringAdapter = {
     file: "config",
     path: (model) => ["model", `harnesshub/${model}`, "base_url"],
   },
+  efforts: GROK_EFFORTS,
   settings(target) {
     const tables = withSelected(target.models, target.model).map(
       (model): AdapterSetting => ({
@@ -46,6 +61,13 @@ export const grok: WiringAdapter = {
           ...(model.contextWindow
             ? { context_window: model.contextWindow }
             : {}),
+          ...(model.efforts?.length
+            ? {
+                reasoning_efforts: GROK_EFFORTS.filter((effort) =>
+                  model.efforts!.includes(effort),
+                ),
+              }
+            : {}),
         },
       }),
     );
@@ -56,6 +78,16 @@ export const grok: WiringAdapter = {
         value: `harnesshub/${target.model}`,
       },
       { file: "config", path: ["features", "campaigns"], value: false },
+      // The effort new sessions start with.
+      ...(target.effort !== undefined
+        ? [
+            {
+              file: "config",
+              path: ["models", "default_reasoning_effort"],
+              value: target.effort,
+            },
+          ]
+        : []),
       ...tables,
     ];
   },

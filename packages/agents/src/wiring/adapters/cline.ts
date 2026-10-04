@@ -2,6 +2,7 @@
 import path from "node:path";
 import type { ConfigValue } from "../formats/index.js";
 import {
+  outputLimit,
   withSelected,
   type AdapterEnvironment,
   type FileLocation,
@@ -25,8 +26,10 @@ const INITIAL = `{
  * `<gateway>/v1` with the key, the chosen model, and `lastUsedProvider`
  * selecting it. That provider lists only one model of its own, so the
  * gateway's models go to its entry in `models.json`, in the shape Cline's
- * own migration writes. Unwire restores the slot the user had (Magpie's
- * `cline.go`). The VS Code extension's own state (`globalState.json`,
+ * own migration writes, with `images` and `reasoning` among a model's
+ * capabilities when it has them; the effort is the slot's `reasoning`
+ * (`{enabled: false}` for none). Unwire restores the slot the user had
+ * (Magpie's `cline.go`). The VS Code extension's own state (`globalState.json`,
  * `secrets.json`), which it reads before these files, is not wired.
  */
 export const cline: WiringAdapter = {
@@ -53,6 +56,7 @@ export const cline: WiringAdapter = {
     file: "providers",
     path: ["providers", SLOT, "settings", "baseUrl"],
   },
+  efforts: ["none", "low", "medium", "high", "xhigh"],
   settings(target) {
     const baseUrl = `${target.baseUrl}/v1`;
     const models: Record<string, ConfigValue> = {};
@@ -60,9 +64,14 @@ export const cline: WiringAdapter = {
       models[model.ref] = {
         id: model.ref,
         name: model.ref,
-        capabilities: ["streaming", "tools"],
+        capabilities: [
+          "streaming",
+          "tools",
+          ...(model.images ? ["images"] : []),
+          ...(model.efforts?.length ? ["reasoning"] : []),
+        ],
         ...(model.contextWindow ? { contextWindow: model.contextWindow } : {}),
-        ...(model.maxOutputTokens ? { maxTokens: model.maxOutputTokens } : {}),
+        ...(outputLimit(model) ? { maxTokens: outputLimit(model)! } : {}),
       };
     return [
       {
@@ -74,6 +83,16 @@ export const cline: WiringAdapter = {
             apiKey: target.keyText,
             model: target.model,
             baseUrl,
+            // Cline's own pickers write no thinking as enabled: false, and
+            // drop an effort beside it.
+            ...(target.effort !== undefined
+              ? {
+                  reasoning:
+                    target.effort === "none"
+                      ? { enabled: false }
+                      : { enabled: true, effort: target.effort },
+                }
+              : {}),
           },
           tokenSource: "manual",
         },

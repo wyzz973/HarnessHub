@@ -4,6 +4,7 @@ const USAGE = `Usage: hh <command> [arguments]
 Commands:
   serve       Start the Gateway (hh serve --help)
   init        Set up: add a provider from a preset, wire the agents installed here
+  config      Show or edit config.jsonc (show, get, set, unset)
   status      Show the running daemon and its model plane
   console     Print a one-time link that signs a browser in to the console
   provider    Manage model providers (list, show, presets, add, remove, test, doctor)
@@ -51,6 +52,10 @@ const COMMANDS: Readonly<Record<string, Command>> = {
   tools: async (argv) => {
     const { main } = await import("@harnesshub/daemon/tool-packages-main");
     return main(argv.slice(1));
+  },
+  config: async (argv) => {
+    const { main } = await import("@harnesshub/daemon/config-main");
+    return main(argv);
   },
   console: async (argv) => {
     const { main } = await import("@harnesshub/cli/console");
@@ -117,8 +122,8 @@ const COMMANDS: Readonly<Record<string, Command>> = {
 };
 
 /**
- * Run one `hh` command: `serve`, `benchmark` and `tools` go to the daemon's
- * entries; `console`, `rollout` and the model-plane commands (`status`, `provider`,
+ * Run one `hh` command: `serve`, `config`, `benchmark` and `tools` go to the
+ * daemon's entries; `console`, `rollout` and the model-plane commands (`status`, `provider`,
  * `credential`, `key`, `group`, `model`, `catalog`, `usage`, `gateway`,
  * `subscription`), the agent commands (`agents`, `wire`, `use`, `unwire`,
  * `profile`, `library`, `tui`) and `init` to the CLI's, which

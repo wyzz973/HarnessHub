@@ -103,6 +103,7 @@ async function fields(id: string, context: WiringContext) {
     tiers: {},
     effort: undefined,
     options: resolveOptions(adapter, {}),
+    gatewaySearch: false,
   };
   const located = {
     path: (fileId: string) => files.get(fileId)!.path,
@@ -120,7 +121,9 @@ async function fields(id: string, context: WiringContext) {
   );
   const field = adapter.baseUrlField;
   const basePath =
-    typeof field.path === "function" ? field.path(TARGET.model) : field.path;
+    typeof field.path === "function"
+      ? field.path(TARGET.model, {})
+      : field.path;
   const base = all.find(
     (candidate) =>
       files.get(field.file)!.path === candidate.file &&

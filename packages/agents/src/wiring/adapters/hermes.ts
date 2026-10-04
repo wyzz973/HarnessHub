@@ -27,6 +27,7 @@ export const hermes: WiringAdapter = {
     file: "config",
     path: ["providers", "harnesshub", "base_url"],
   },
+  efforts: ["none", "minimal", "low", "medium", "high", "xhigh"],
   settings(target) {
     return [
       {
@@ -44,6 +45,16 @@ export const hermes: WiringAdapter = {
       },
       { file: "config", path: ["model", "provider"], value: "harnesshub" },
       { file: "config", path: ["model", "default"], value: target.model },
+      // What Hermes's /reasoning saves; none turns reasoning off.
+      ...(target.effort !== undefined
+        ? [
+            {
+              file: "config",
+              path: ["agent", "reasoning_effort"],
+              value: target.effort,
+            },
+          ]
+        : []),
     ];
   },
 };

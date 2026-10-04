@@ -189,7 +189,7 @@ function modelRule(model: WiringModel): Record<string, ConfigValue> {
 
 /** HarnessHub's provider rule as the file holds it now, if any. */
 function ruleOf(
-  rules: Record<string, unknown>,
+  rules: unknown,
   list: string[],
 ): Record<string, unknown> | undefined {
   const items = getPath(rules, list);

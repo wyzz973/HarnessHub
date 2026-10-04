@@ -129,7 +129,7 @@ function piModel(model: WiringModel, gateway: string): ConfigValue {
  * mapped, are mapped only when the model has them. (Magpie hides the other
  * levels with null, which HarnessHub's editors do not write.)
  */
-function thinkingLevels(
+export function thinkingLevels(
   efforts: readonly ReasoningEffort[],
 ): Record<string, string> {
   const order: readonly string[] = PI_LEVELS;

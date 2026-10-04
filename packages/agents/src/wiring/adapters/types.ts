@@ -6,7 +6,12 @@ import type {
   WireProtocol,
   WiringTier,
 } from "@harnesshub/core/model-plane";
-import type { ConfigFormat, ConfigValue, KeyPath } from "../formats/index.js";
+import type {
+  ConfigDocument,
+  ConfigFormat,
+  ConfigValue,
+  KeyPath,
+} from "../formats/index.js";
 
 /** Metadata of one model the gateway exposes, as `/v1/models` reports it. */
 export interface WiringModel {
@@ -40,6 +45,8 @@ export interface AdapterTarget {
   effort: ReasoningEffort | undefined;
   /** Every option the adapter declares, the default where none was given. */
   options: Readonly<Record<string, string>>;
+  /** Whether the gateway answers hosted web search tools itself, for any model. */
+  gatewaySearch: boolean;
 }
 
 /** The adapter's files as located for this wiring. */
@@ -49,10 +56,11 @@ export interface LocatedFiles {
   /**
    * The file's current content, parsed (its `initial` text, or empty, when
    * missing), for a setting that depends on what the user has, such as a
-   * list of the user's own that wiring adds to only when it exists. A file
-   * that does not parse fails as it would when planned.
+   * list of the user's own that wiring adds to only when it exists. A list
+   * only for a file with `arrayRoot`. A file that does not parse fails as it
+   * would when planned.
    */
-  current(fileId: string): Record<string, unknown>;
+  current(fileId: string): ConfigDocument;
 }
 
 /** Where an adapter's files live on this machine. */
@@ -104,6 +112,12 @@ export interface AdapterFile {
    * deletes it.
    */
   readonly initial?: string;
+  /**
+   * The file's root may be a list instead of an object (JSON only): its
+   * elements are then addressed with an element selector as the first path
+   * segment. A missing file is still created as an object.
+   */
+  readonly arrayRoot?: boolean;
 }
 
 /**
@@ -122,7 +136,8 @@ export type AdapterSetting =
 /** Where an adapter keeps the gateway URL: a fixed path, or one per wired model. */
 export interface BaseUrlField {
   readonly file: string;
-  readonly path: KeyPath | ((model: string) => KeyPath);
+  readonly path:
+    KeyPath | ((model: string, document: ConfigDocument) => KeyPath);
 }
 
 /**
@@ -143,8 +158,8 @@ export interface WiringAdapter {
   readonly files: readonly AdapterFile[];
   /**
    * The setting that holds the gateway URL, for drift classification; a
-   * function gives it for the wired model, for an agent that keeps the URL
-   * in each model's own entry.
+   * function gives it for the wired model and the file as it is now, for an
+   * agent that keeps the URL in each model's own entry.
    */
   readonly baseUrlField: BaseUrlField;
   /** The setting that holds the gateway URL with these options, when it is not `baseUrlField`. */

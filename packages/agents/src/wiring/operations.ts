@@ -56,6 +56,7 @@ import {
   editors,
   type ConfigFormat,
   type ConfigValue,
+  type ConfigDocument,
   type FormatEditor,
   type KeyPath,
   type PathSegment,
@@ -97,6 +98,11 @@ export interface WiringTarget {
   effort?: ReasoningEffort;
   /** Values of the adapter's options; an absent one takes its default. */
   options?: Record<string, string>;
+  /**
+   * Whether the gateway answers hosted web search tools itself, for any
+   * model (a search backend is configured); absent is false.
+   */
+  gatewaySearch?: boolean;
 }
 
 /**
@@ -235,7 +241,7 @@ interface ResolvedTarget extends AdapterTarget {
 
 interface FilePlan {
   spec: AdapterFile;
-  editor: FormatEditor;
+  editor: FileEditor;
   path: string;
   realPath: string;
   root: string;
@@ -387,7 +393,7 @@ export async function unwire(
         adapter.id,
         entry.backupId!,
       );
-      const editor = editors[manifest.format];
+      const editor = fileEditor(adapter, manifest);
       const { realPath } = await resolveFile(entry.path, [
         context.home,
         manifest.root,
@@ -508,9 +514,9 @@ export async function detectDrift(
       files.push({ path: entry.path, state: "unchanged" });
       continue;
     }
-    let document: Record<string, unknown>;
+    let document: ConfigDocument;
     try {
-      document = editors[manifest.format].parse(
+      document = fileEditor(adapter, manifest).parse(
         decodeText(state.bytes, entry.path).text,
       );
     } catch (error) {
@@ -533,7 +539,7 @@ export async function detectDrift(
         : typeof basePath !== "function"
           ? basePath
           : record.model !== undefined
-            ? basePath(record.model)
+            ? basePath(record.model, document)
             : undefined;
     for (const expected of manifest.expected)
       for (const [leaf, template] of leaves(expected.value, expected.path)) {
@@ -652,7 +658,7 @@ async function planFiles(
     current(fileId) {
       const { spec, file, before } = find(fileId);
       return inFileSync(file, () =>
-        editors[spec.format].parse(before.text ?? spec.initial ?? ""),
+        fileEditor(adapter, spec).parse(before.text ?? spec.initial ?? ""),
       );
     },
   };
@@ -669,7 +675,7 @@ async function planFiles(
             `The agent has not moved ${path.basename(older)} into ${path.basename(file)} yet; start it once so it does, then wire again`,
             { path: older },
           );
-    const editor = editors[spec.format];
+    const editor = fileEditor(adapter, spec);
     const own = settings.filter((setting) => setting.file === spec.id);
     const entry = previous?.files.find((candidate) => candidate.path === file);
     const prior = entry
@@ -852,10 +858,32 @@ function masker(secrets: string[]): (text: string) => string {
   };
 }
 
+/** A format editor as one file needs it: one whose root may be a list reads it so. */
+type FileEditor = Omit<FormatEditor, "parse"> & {
+  parse(text: string): ConfigDocument;
+};
+
+/**
+ * The editor of an adapter's file, by its spec or by the id and format a
+ * backup manifest records.
+ */
+function fileEditor(
+  adapter: WiringAdapter,
+  file: { id?: string; fileId?: string; format: ConfigFormat },
+): FileEditor {
+  const editor = editors[file.format];
+  const spec = adapter.files.find(
+    (candidate) => candidate.id === (file.id ?? file.fileId),
+  );
+  return spec?.arrayRoot && editor.parseRoot
+    ? { ...editor, parse: (text) => editor.parseRoot!(text) }
+    : editor;
+}
+
 /** Restores each owned entry to its original value, or removes it if it had none. */
 function revertOperations(
   owned: readonly KeyPath[],
-  original: Record<string, unknown>,
+  original: ConfigDocument,
 ): Operation[] {
   const top = owned.filter(
     (candidate) =>
@@ -899,7 +927,7 @@ function configValue(value: unknown): ConfigValue | undefined {
 }
 
 function applyOperations(
-  editor: FormatEditor,
+  editor: FileEditor,
   text: string,
   operations: readonly Operation[],
 ): string {
@@ -934,10 +962,10 @@ function isEmptyContainer(value: unknown): boolean {
 
 /** Removes objects and arrays left empty by removals that did not exist in the original. */
 function pruneEmpty(
-  editor: FormatEditor,
+  editor: FileEditor,
   text: string,
   operations: readonly Operation[],
-  original: Record<string, unknown>,
+  original: ConfigDocument,
 ): { text: string; paths: KeyPath[] } {
   let result = text;
   const paths: KeyPath[] = [];
@@ -963,13 +991,13 @@ function pruneEmpty(
  * equal the original with the same entries taken out.
  */
 function verifyText(
-  editor: FormatEditor,
+  editor: FileEditor,
   before: string,
   after: string,
   operations: readonly Operation[],
   pruned: readonly KeyPath[],
 ): void {
-  let document: Record<string, unknown>;
+  let document: ConfigDocument;
   try {
     document = editor.parse(after);
   } catch {
@@ -1009,7 +1037,7 @@ function verifyText(
 }
 
 function without(
-  document: Record<string, unknown>,
+  document: ConfigDocument,
   touched: readonly KeyPath[],
 ): unknown {
   const copy = clone(document);
@@ -1294,8 +1322,8 @@ async function originalDocument(
   dataDir: string,
   adapterId: string,
   manifest: BackupManifest,
-  editor: FormatEditor,
-): Promise<Record<string, unknown>> {
+  editor: FileEditor,
+): Promise<ConfigDocument> {
   if (!manifest.original.existed) return {};
   const bytes = await readOriginal(
     dataDir,
@@ -1315,6 +1343,12 @@ function resolveTarget(
     new WiringError("WIRING_TARGET_INVALID", detail);
   const baseUrl = resolveBaseUrl(target.baseUrl);
   const options = resolveOptions(adapter, target.options);
+  if (
+    target.gatewaySearch !== undefined &&
+    typeof target.gatewaySearch !== "boolean"
+  )
+    throw invalid("gatewaySearch must be true or false");
+  const gatewaySearch = target.gatewaySearch ?? false;
   const seen = new Set<string>();
   for (const model of target.models) {
     if (!parseModelRef(model.ref) || seen.has(model.ref))
@@ -1354,6 +1388,7 @@ function resolveTarget(
       tiers: {},
       effort: undefined,
       options,
+      gatewaySearch,
       keyless: true,
     };
   }
@@ -1400,6 +1435,7 @@ function resolveTarget(
     tiers,
     effort: target.effort,
     options,
+    gatewaySearch,
     keyless: false,
   };
 }
@@ -1522,9 +1558,9 @@ export async function wiredKeyText(
     ]);
     const state = await readState(realPath);
     if (!state.exists) continue;
-    let document: Record<string, unknown>;
+    let document: ConfigDocument;
     try {
-      document = editors[manifest.format].parse(
+      document = fileEditor(adapter, manifest).parse(
         decodeText(state.bytes, entry.path).text,
       );
     } catch (error) {

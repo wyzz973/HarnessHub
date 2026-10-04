@@ -38,7 +38,7 @@
 
 ## 发现
 
-- **Codex 的托管 web_search 工具**：Codex 0.144.5 每轮都附带托管的 `web_search` 工具，网关只能在原样转发到有该工具的 Responses provider 时服务它，转换到 Chat 等协议时整轮以 `unsupported_feature` 失败。接线因此在所选模型的 provider 不原生接收 Responses 时写入 `web_search = "disabled"`（[全局接线](global-wiring.md#codex-的两种模式)）。
+- **Codex 的托管 web_search 工具**：Codex 0.144.5 每轮都附带托管的 `web_search` 工具，网关只能在原样转发到有该工具的 Responses provider 时服务它，转换到 Chat 等协议时整轮以 `unsupported_feature` 失败。接线因此在所选模型的 provider 不原生接收 Responses、且网关没有登记搜索后端时写入 `web_search = "disabled"`；登记了搜索后端时网关自己完成搜索（[联网搜索模拟](gateway-features.md#联网搜索模拟)），接线不再关闭它（[全局接线](global-wiring.md#codex-的两种模式)）。
 - **Claude Code 2.1.289 直通 Anthropic 兼容上游**：同协议直通时，请求带有 Anthropic 的 beta 字段 `context_management`、`safeguards`、`output_config` 与对话中间的 `system` 角色消息（`anthropic-beta: mid-conversation-system-2026-04-07` 等），严格的 Anthropic 兼容上游拒绝它们（`context_management: Extra inputs are not permitted`）。网关的直通不去掉这些字段；套件因此让 Claude Code 经 Chat 上游（网关转换协议）运行。这是网关问题，不是接线问题。
 - **Pi 经 Chat 直通**：Pi 对未知地址按 OpenAI 发送 `max_completion_tokens`（与 `store`）。Chat 直通原样转发，`max-tokens-field` 补丁只做相反方向的改名，严格上游拒绝 `max_completion_tokens`。可由网关在直通时规范化（或给 Pi 写 `compat.maxTokensField`，但 OpenAI 的推理模型需要 `max_completion_tokens`，而 OpenAI 预设没有这个补丁）。
 - **MiMo Code**：请求中第二条消息也是 `system`，严格上游要求 system 只出现在第一条。OpenCode 1.1.21 的同类请求没有这个问题。

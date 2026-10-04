@@ -51,6 +51,7 @@ hh gateway search remove search-1
 - **过程**：网关把客户端的搜索工具换成函数工具 `web_search(query)`（客户端已有同名工具时为 `hh_web_search`），模型调用它时并行执行查询，把结果作为工具结果再问模型一轮；至多 6 轮，第 7 次要搜索时回答“No more searches”，模型据此作答。只调用搜索的回合对客户端不可见；模型同时调用客户端自己的工具时，这些调用交给客户端，搜索调用被丢弃。各轮的文本连成一个答复，用量合计。
 - **客户端看到的**：Anthropic 为 `server_tool_use`（id 为 `srvtoolu_hh_…`）与 `web_search_tool_result`（标题与 URL，`encrypted_content` 为空）块；Responses 为 `web_search_call` 项（id 为 `ws_hh_…`，`action` 带 `query` 与 `sources`）。这两种标记的块在之后的请求中转成给模型看的文字。Chat 的 `web_search_options` 与 Gemini 的 `googleSearch` 不在范围内。
 - **记录**：`patches[]` 记 `search:emulated` 与 `search:rounds:<n>`；搜索 API 的调用不进账本。
+- **接线的 Codex**：没有搜索后端时，全局接线为不原生接收 Responses 的模型写入 `web_search = "disabled"`；登记第一个后端或删除最后一个后，目录同步随之改写已接线 Codex 的文件（[全局接线](global-wiring.md#codex-的两种模式)）。
 
 ## 图像生成
 

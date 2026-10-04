@@ -95,6 +95,11 @@ export interface AgentWiringOptions {
   home: WiringHome | undefined;
   /** The gateway origin agents are pointed at; undefined until the listener is bound. */
   origin: () => string | undefined;
+  /**
+   * Whether the gateway answers hosted web search tools itself (a search
+   * backend is configured), read for every plan; false when absent.
+   */
+  gatewaySearch?: () => boolean;
   settings?: WiringSettings;
   clock?: () => Date;
   log?: LogSink;
@@ -214,7 +219,9 @@ export class AgentWiringService {
 
   /**
    * Notes that the gateway's models may have changed (a provider saved or
-   * removed, its models refreshed or enriched, a route group changed). After
+   * removed, its models refreshed or enriched, a route group changed), or
+   * whether it answers web search itself (search backends added or all
+   * removed). After
    * changes settle, every wired agent's files are rewritten with the models
    * now visible to its key, through the normal plan and apply path with
    * backups, one agent at a time and in turn with other wiring operations.
@@ -853,6 +860,7 @@ export class AgentWiringService {
       ...(prepared.model !== undefined ? { model: prepared.model } : {}),
       ...(Object.keys(prepared.tiers).length ? { tiers: prepared.tiers } : {}),
       ...(prepared.effort !== undefined ? { effort: prepared.effort } : {}),
+      gatewaySearch: this.options.gatewaySearch?.() ?? false,
     };
   }
 

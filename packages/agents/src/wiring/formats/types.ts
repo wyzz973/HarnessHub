@@ -17,6 +17,9 @@ export type PathSegment = string | ElementSelector;
 /** A key path from the document root. */
 export type KeyPath = readonly PathSegment[];
 
+/** A parsed configuration document: an object, or a list for a file whose root may be one. */
+export type ConfigDocument = Record<string, unknown> | unknown[];
+
 /** A value wiring writes. There is no null: TOML and dotenv cannot express it. */
 export type ConfigValue =
   string | number | boolean | ConfigValue[] | { [key: string]: ConfigValue };
@@ -35,6 +38,12 @@ export interface FormatEditor {
   readonly format: ConfigFormat;
   /** Parses the whole document; an empty text is an empty document. */
   parse(text: string): Record<string, unknown>;
+  /**
+   * Parses a document whose root may also be a list (JSON only); `set` and
+   * `remove` address such a root with an element selector as the first
+   * segment.
+   */
+  parseRoot?(text: string): ConfigDocument;
   /**
    * Sets the value at `path`, creating missing parent objects. An object value
    * replaces the entry entirely. A last segment that selects an array element

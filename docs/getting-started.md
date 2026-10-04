@@ -10,6 +10,7 @@
 | `pnpm start --config <file>` | 读取 YAML/JSON 文件；运行中只热更新引擎目录和默认项 |
 | `--port` | Gateway 默认3180；0由系统分配，ready日志中返回实际URL |
 | `--data-dir` | 默认`./data`；不同Gateway必须使用不同数据目录 |
+| `config.jsonc` | 端口、数据目录、密钥后端、目录与接线设置等也可写在配置根目录的 `config.jsonc` 中，命令行参数优先；见 [配置参考](configuration.md) 与 `hh config show` |
 | 控制台 | 由 Gateway 在自己的端口提供（`/`），先 `pnpm build:console`；未构建时页面返回 503 并说明构建命令。启动时在 stderr 打印一次性登录链接，`hh console` 生成新链接；见 [控制台](../packages/console/README.md) |
 | `--otlp-config <file>` | 可选；JSON 文件中的 `otlp` 配置块，开启模型调用的 OTLP 导出，见 [OTLP 导出](observability.md#otlp-导出) |
 | `--version [--json]` | 打印构建身份（版本、提交、是否有未提交改动）后退出；`--json` 输出 `packages/daemon/dist/build-info.json` 的全部字段。同一身份出现在 `GET /v1/runtime/info` 的 `build` 与 `gateway.log` 的 `gateway.start` 记录中；`pnpm build` 生成该文件，缺失或损坏时 Gateway 拒绝启动 |

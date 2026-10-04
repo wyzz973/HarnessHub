@@ -38,6 +38,8 @@ export const GATEWAY_FEATURES_FILE = "gateway-features.json";
 export class GatewayFeaturesFile implements GatewayFeaturesControl {
   #current: GatewayFeatures = structuredClone(DEFAULT_GATEWAY_FEATURES);
   #writes: Promise<unknown> = Promise.resolve();
+  /** Called after a change is saved and in force; must not throw. */
+  changed: () => void = () => undefined;
 
   constructor(
     private readonly options: { dataDir: string; secrets: ManagedSecrets },
@@ -125,6 +127,7 @@ export class GatewayFeaturesFile implements GatewayFeaturesControl {
       });
       await rename(temporary, this.#file);
       this.#current = draft;
+      this.changed();
       return this.view();
     };
     const result = this.#writes.then(run, run);

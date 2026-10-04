@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import path from "node:path";
+import { getPath } from "../formats/values.js";
 import type {
   AdapterEnvironment,
   FileLocation,
@@ -70,8 +71,8 @@ export const claudeDesktop: WiringAdapter = {
   settings(target, files) {
     // Policies seeded once: what the user set in Desktop since is kept.
     const profile = files.current("profile");
-    const chooser = profile.disableDeploymentModeChooser;
-    const egress = profile.coworkEgressAllowedHosts;
+    const chooser = getPath(profile, ["disableDeploymentModeChooser"]);
+    const egress = getPath(profile, ["coworkEgressAllowedHosts"]);
     return [
       { file: "profile", path: ["inferenceProvider"], value: "gateway" },
       {

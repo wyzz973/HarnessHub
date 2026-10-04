@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: MIT
 import path from "node:path";
 import { WiringError } from "../errors.js";
+import type { ReasoningEffort } from "@harnesshub/core/model-plane";
+import type { ConfigValue } from "../formats/index.js";
 import {
+  outputLimit,
   withSelected,
   type AdapterEnvironment,
   type FileLocation,
   type WiringAdapter,
+  type WiringModel,
 } from "./types.js";
 
 /** A profile name omp accepts (pi-utils dirs.ts, normalizeProfileName). */
@@ -20,7 +24,9 @@ const PROFILE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
  * `harnesshub` provider in `models.yml` speaks Chat Completions to
  * `<gateway>/v1` with the key as `apiKey` (as a user's own provider does;
  * Magpie's keyless gateway writes `auth: none` instead) and lists the
- * gateway's models; `modelRoles.default` selects `harnesshub/<ref>`. omp
+ * gateway's models with their protocol, image input and thinking levels
+ * (`ompModel`); `modelRoles.default` selects `harnesshub/<ref>` and the
+ * effort is `defaultThinkingLevel` (`none` is omp's `off`). omp
  * moves an older `models.json` into `models.yml` only while there is none,
  * so wiring refuses to create `models.yml` while that migration is pending.
  */
@@ -38,6 +44,7 @@ export const omp: WiringAdapter = {
     file: "models",
     path: ["providers", "harnesshub", "baseUrl"],
   },
+  efforts: ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
   settings(target) {
     return [
       {
@@ -45,6 +52,15 @@ export const omp: WiringAdapter = {
         path: ["modelRoles", "default"],
         value: `harnesshub/${target.model}`,
       },
+      ...(target.effort !== undefined
+        ? [
+            {
+              file: "config",
+              path: ["defaultThinkingLevel"],
+              value: target.effort === "none" ? "off" : target.effort,
+            },
+          ]
+        : []),
       {
         file: "models",
         path: ["providers", "harnesshub"],
@@ -52,22 +68,66 @@ export const omp: WiringAdapter = {
           baseUrl: `${target.baseUrl}/v1`,
           api: "openai-completions",
           apiKey: target.keyText,
-          models: withSelected(target.models, target.model).map((model) => ({
-            id: model.ref,
-            name: model.ref,
-            reasoning: false,
-            ...(model.contextWindow
-              ? { contextWindow: model.contextWindow }
-              : {}),
-            ...(model.maxOutputTokens
-              ? { maxTokens: model.maxOutputTokens }
-              : {}),
-          })),
+          models: withSelected(target.models, target.model).map((model) =>
+            ompModel(model, target.baseUrl),
+          ),
         },
       },
     ];
   },
 };
+
+/** The thinking levels omp offers for a model, in its order. */
+const OMP_EFFORTS: readonly ReasoningEffort[] = [
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+];
+
+/**
+ * One gateway model in `models.yml`, as Magpie's `ompProviderAt` writes it:
+ * on the protocol its provider serves natively (Responses, or Anthropic
+ * Messages at the gateway root, where omp thinks on a budget), with image
+ * input when the model takes images, and its thinking levels. Which omp is
+ * installed is not known, and omp before 16.4.0 refuses the whole file over
+ * a `max` level, so `max` is never listed: a model whose top level is `max`
+ * offers `xhigh` in its place, which the gateway fits to the model.
+ */
+function ompModel(model: WiringModel, gateway: string): ConfigValue {
+  const native = model.nativeProtocols ?? [];
+  const api = native.includes("chat")
+    ? undefined
+    : native.includes("responses")
+      ? { api: "openai-responses" }
+      : native.includes("anthropic")
+        ? { api: "anthropic-messages", baseUrl: gateway }
+        : undefined;
+  const own = model.efforts ?? [];
+  const efforts = OMP_EFFORTS.filter(
+    (effort) =>
+      own.includes(effort) || (effort === "xhigh" && own.includes("max")),
+  );
+  const output = outputLimit(model);
+  return {
+    id: model.ref,
+    name: model.ref,
+    ...api,
+    reasoning: efforts.length > 0,
+    ...(model.images ? { input: ["text", "image"] } : {}),
+    ...(efforts.length
+      ? {
+          thinking: {
+            mode: api?.api === "anthropic-messages" ? "budget" : "effort",
+            efforts,
+          },
+        }
+      : {}),
+    ...(model.contextWindow ? { contextWindow: model.contextWindow } : {}),
+    ...(output ? { maxTokens: output } : {}),
+  };
+}
 
 function ompFile(environment: AdapterEnvironment, name: string): FileLocation {
   const { directory, root } = ompDirectory(environment);

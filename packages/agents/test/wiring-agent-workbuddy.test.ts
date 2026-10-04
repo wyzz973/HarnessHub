@@ -3,12 +3,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import {
-  applyWiring,
-  planWiring,
-  unwire,
-  WiringError,
-} from "../src/wiring/index.js";
+import { jsonEditor } from "../src/wiring/formats/json.js";
+import { applyWiring, detectDrift, unwire } from "../src/wiring/index.js";
 import { sandbox, TARGET, writeFiles } from "./wiring-support.js";
 import { adapterSuite } from "./wiring-suite.js";
 
@@ -109,23 +105,53 @@ adapterSuite("workbuddy", {
   },
 });
 
-void test("workbuddy: a models.json that is a bare list is refused and left as it is", async (t) => {
+void test("workbuddy: a models.json that is a bare list keeps its form, the user's models and their order", async (t) => {
   const context = await sandbox(t);
-  const bare = '[{"id": "local-qwen", "vendor": "ollama"}]\n';
+  const file = path.join(context.home, ".workbuddy", "models.json");
+  const bare = `[
+  // my local model
+  {"id": "local-qwen", "vendor": "ollama"},
+  {"id": "deepseek/deepseek-chat", "vendor": "ollama"}
+]
+`;
   await writeFiles(context.home, { ".workbuddy/models.json": bare });
-  await assert.rejects(
-    planWiring("workbuddy", TARGET, context),
-    (error: unknown) =>
-      error instanceof WiringError &&
-      error.code === "WIRING_UNSUPPORTED_STRUCTURE",
+  const { record } = await applyWiring("workbuddy", TARGET, context);
+  const wired = await readFile(file, "utf8");
+  assert.ok(wired.startsWith(bare.slice(0, bare.lastIndexOf("}") + 1)));
+  const list = jsonEditor.parseRoot!(wired) as Array<Record<string, unknown>>;
+  assert.deepEqual(
+    list.map((item) => [item.id, item.vendor, item.url]),
+    [
+      ["local-qwen", "ollama", undefined],
+      ["deepseek/deepseek-chat", "ollama", undefined],
+      [
+        "deepseek/deepseek-chat",
+        "harnesshub",
+        "http://127.0.0.1:3180/v1/chat/completions",
+      ],
+      [
+        "openai/gpt-5",
+        "harnesshub",
+        "http://127.0.0.1:3180/v1/chat/completions",
+      ],
+    ],
   );
-  assert.equal(
-    await readFile(
-      path.join(context.home, ".workbuddy", "models.json"),
-      "utf8",
+  assert.equal((await detectDrift(record, context)).drifted, false);
+  // The wired model's URL changed is a foreign gateway, as in the object form.
+  await writeFile(
+    file,
+    jsonEditor.set(
+      wired,
+      [{ match: { id: TARGET.model, vendor: "harnesshub" } }, "url"],
+      "http://127.0.0.1:9999/v1/chat/completions",
     ),
-    bare,
   );
+  assert.deepEqual((await detectDrift(record, context)).kinds, [
+    "foreign-gateway",
+  ]);
+  await writeFile(file, wired);
+  await unwire(record, context);
+  assert.equal(await readFile(file, "utf8"), bare);
 });
 
 void test("workbuddy: reasoning levels become its efforts, none its switch to turn thinking off", async (t) => {

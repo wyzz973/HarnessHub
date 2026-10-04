@@ -6,6 +6,7 @@ import type { ConfigFormat, FormatEditor } from "./types.js";
 import { yamlEditor } from "./yaml.js";
 
 export type {
+  ConfigDocument,
   ConfigFormat,
   ConfigValue,
   ElementSelector,

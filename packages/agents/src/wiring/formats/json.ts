@@ -31,15 +31,19 @@ const parseOptions = {
  * it is, appended after the last element in the same way as a property, or
  * removed with its own lines, so the other elements keep their bytes and
  * order; before the last segment it leads into the element, which must be
- * there.
+ * there. A document whose root is a list is addressed with a selector as
+ * the first segment (`parseRoot` reads it; `parse` refuses it).
  */
 export const jsonEditor: FormatEditor = {
   format: "json",
   parse(text) {
     return parseObject(text);
   },
+  parseRoot(text) {
+    return parseRoot(text);
+  },
   set(text, path, value) {
-    parseObject(text);
+    parseRoot(text);
     const style = styleOf(text);
     const root = parseTree(text, [], parseOptions);
     if (!root) {
@@ -95,7 +99,7 @@ export const jsonEditor: FormatEditor = {
     );
   },
   remove(text, path) {
-    parseObject(text);
+    parseRoot(text);
     let node = parseTree(text, [], parseOptions);
     for (let depth = 0; node && depth < path.length; depth++) {
       const segment = path[depth]!;
@@ -155,6 +159,17 @@ interface Style {
 }
 
 function parseObject(text: string): Record<string, unknown> {
+  const value = parseRoot(text);
+  if (Array.isArray(value))
+    throw new WiringError(
+      "WIRING_UNSUPPORTED_STRUCTURE",
+      "The JSON document is not an object",
+    );
+  return value;
+}
+
+/** An object or a list; anything else is refused. */
+function parseRoot(text: string): Record<string, unknown> | unknown[] {
   const errors: ParseError[] = [];
   const value: unknown = parse(text, errors, parseOptions);
   const first = errors[0];
@@ -166,12 +181,12 @@ function parseObject(text: string): Record<string, unknown> {
     );
   }
   if (value === undefined) return {};
-  if (!isRecord(value))
+  if (!isRecord(value) && !Array.isArray(value))
     throw new WiringError(
       "WIRING_UNSUPPORTED_STRUCTURE",
       "The JSON document is not an object",
     );
-  return value;
+  return value as Record<string, unknown> | unknown[];
 }
 
 /** The property named `path[depth]`; a duplicated name makes the effective value reader-dependent and is refused. */

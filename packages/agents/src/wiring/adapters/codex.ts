@@ -17,9 +17,11 @@ export const CODEX_BACKEND_PATH = "/backend-api/codex";
  *   model's window, reasoning levels and image input (Codex reads its model
  *   metadata from there, as Magpie's codexcat writes it), and the effort goes
  *   to `model_reasoning_effort`. Unless the chosen model's provider takes
- *   Responses natively, `web_search = "disabled"` keeps Codex from sending
- *   its hosted web search tool, which the gateway cannot translate (found by
- *   running Codex 0.144.5 against a Chat Completions upstream).
+ *   Responses natively or the gateway answers web search itself (a search
+ *   backend is configured), `web_search = "disabled"` keeps Codex from
+ *   sending its hosted web search tool, which the gateway could not
+ *   translate (found by running Codex 0.144.5 against a Chat Completions
+ *   upstream).
  * - `chatgpt`: the user's ChatGPT sign-in stays as it is and only
  *   `openai_base_url` points Codex's built-in OpenAI provider at
  *   `<gateway>/backend-api/codex`, which forwards Codex's requests, signed in
@@ -99,12 +101,14 @@ export const codex: WiringAdapter = {
             },
           ]
         : []),
-      // Codex offers its hosted `web_search` tool to every model, and the
-      // gateway can serve a hosted tool only by passing Responses through to
-      // a provider that has it; translated to another protocol, every turn
-      // would fail. Web search stays on only for a model whose provider
-      // takes Responses natively.
-      ...(target.selected?.nativeProtocols?.includes("responses")
+      // Codex offers its hosted `web_search` tool to every model. Without
+      // a search backend of its own, the gateway can serve it only by
+      // passing Responses through to a provider that has it; translated to
+      // another protocol, every turn would fail. Web search stays on when
+      // the gateway searches itself or the model's provider takes Responses
+      // natively.
+      ...(target.gatewaySearch ||
+      target.selected?.nativeProtocols?.includes("responses")
         ? []
         : [{ file: "config", path: ["web_search"], value: "disabled" }]),
       {

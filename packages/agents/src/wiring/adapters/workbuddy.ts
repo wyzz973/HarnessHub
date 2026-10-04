@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: MIT
-import type { ConfigValue } from "../formats/index.js";
+import type {
+  ConfigDocument,
+  ConfigValue,
+  PathSegment,
+} from "../formats/index.js";
+import { getPath } from "../formats/values.js";
 import { appOutput, defaultLevel, thinkingLevels } from "./app-levels.js";
 import {
   overridable,
@@ -15,16 +20,16 @@ const VENDOR = "harnesshub";
 /**
  * WorkBuddy (Tencent's CodeBuddy desktop app) reads models of the user's own
  * from `models.json` in `${WORKBUDDY_CONFIG_DIR:-~/.workbuddy}`, in the
- * object form `{models: [...], availableModels: [...]}`, and picks a change
- * up without a restart. HarnessHub adds one element of `models` per gateway
- * model, `{id: <ref>, vendor: "harnesshub"}` with the gateway's Chat
- * Completions URL, the key, the window and output limit (at most 128000) and
- * the reasoning levels, and owns only those. When the user keeps an
- * `availableModels` list (which limits the picker), HarnessHub's ids are
- * added to it as elements too. The model is picked per task in WorkBuddy's
- * window, so no selection is written. A `models.json` that is a bare list,
- * the other form WorkBuddy reads, is refused: HarnessHub edits documents
- * whose root is an object. Follows Magpie's `workbuddy.go`.
+ * object form `{models: [...], availableModels: [...]}` or as a bare list of
+ * models, and picks a change up without a restart. HarnessHub adds one
+ * element per gateway model, `{id: <ref>, vendor: "harnesshub"}` with the
+ * gateway's Chat Completions URL, the key, the window and output limit (at
+ * most 128000) and the reasoning levels, to `models` or to the bare list,
+ * keeping the form the file has (a new file takes the object form), and
+ * owns only those. When the user keeps an `availableModels` list (which
+ * limits the picker), HarnessHub's ids are added to it as elements too. The
+ * model is picked per task in WorkBuddy's window, so no selection is
+ * written. Follows Magpie's `workbuddy.go`.
  */
 export const workbuddy: WiringAdapter = {
   id: "workbuddy",
@@ -36,6 +41,7 @@ export const workbuddy: WiringAdapter = {
     {
       id: "models",
       format: "json",
+      arrayRoot: true,
       locate: (environment) =>
         overridable(
           environment,
@@ -47,15 +53,12 @@ export const workbuddy: WiringAdapter = {
   ],
   baseUrlField: {
     file: "models",
-    path: (model) => [
-      "models",
-      { match: { id: model, vendor: VENDOR } },
-      "url",
-    ],
+    path: (model, document) => [...entryPath(model, document), "url"],
   },
   settings(target, files) {
     const models = withSelected(target.models, target.model);
-    const available = files.current("models").availableModels;
+    const document = files.current("models");
+    const available = getPath(document, ["availableModels"]);
     const restricted =
       Array.isArray(available) &&
       available.length > 0 &&
@@ -63,7 +66,7 @@ export const workbuddy: WiringAdapter = {
     return [
       ...models.map((model): AdapterSetting => ({
         file: "models",
-        path: ["models", { match: { id: model.ref, vendor: VENDOR } }],
+        path: entryPath(model.ref, document),
         value: entry(model, target.baseUrl, target.keyText),
       })),
       ...(restricted
@@ -76,6 +79,12 @@ export const workbuddy: WiringAdapter = {
     ];
   },
 };
+
+/** HarnessHub's element for `model` in `models`, or in the file itself when it is a bare list. */
+function entryPath(model: string, document: ConfigDocument): PathSegment[] {
+  const element = { match: { id: model, vendor: VENDOR } };
+  return Array.isArray(document) ? [element] : ["models", element];
+}
 
 function entry(
   model: WiringModel,

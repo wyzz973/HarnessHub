@@ -228,6 +228,29 @@ void test("a sync leaves files the user changed alone and marks the agent; one w
   assert.match(await readFile(pi, "utf8"), /fake\/later/);
 });
 
+void test("Codex keeps its web search while the gateway has a search backend, and its file follows backends coming and going", async (t) => {
+  const { client, home } = await setup(t, [{ id: "big" }, { id: "small" }]);
+  const config = path.join(home, ".codex", "config.toml");
+  const webSearch = async () =>
+    /^web_search = "disabled"$/m.test(await readFile(config, "utf8"));
+  // The fake provider speaks Chat only: Codex's hosted tool would fail.
+  await wire(client, "codex", "fake/small");
+  assert.equal(await webSearch(), true);
+  // The backend is never contacted here; registering it is enough.
+  const { search } = await client.gatewayFeatures.addSearch({
+    kind: "searxng",
+    baseUrl: "http://127.0.0.1:9/search",
+  });
+  await eventually(async () => !(await webSearch()), "web search on");
+  assert.equal(
+    (await client.agents.get("codex")).wiring?.drift?.drifted,
+    false,
+  );
+  await client.gatewayFeatures.removeSearch(search!.backends[0]!.id);
+  await eventually(webSearch, "web search off again");
+  assert.equal((await client.agents.get("codex")).wiring?.attention, undefined);
+});
+
 void test("wiring.autoSync false leaves the agents' files as they were written", async (t) => {
   const { client, home, setModels } = await setup(
     t,

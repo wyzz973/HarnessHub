@@ -298,7 +298,7 @@ void test("codex: the API mode generates a model catalog with windows, levels an
   assert.deepEqual(await snapshot(context.home), {});
 });
 
-void test("codex: web search stays on only for a model whose provider takes Responses natively", async (t) => {
+void test("codex: without the gateway's own search, web search stays on only for a model whose provider takes Responses natively", async (t) => {
   // Codex 0.144.5 sends its hosted web_search tool on every turn; the
   // gateway cannot translate it, so Codex failed against a Chat upstream.
   const settings = async (model: string) => {
@@ -325,6 +325,36 @@ void test("codex: web search stays on only for a model whose provider takes Resp
     await readFile(path.join(context.home, ".codex", "config.toml"), "utf8"),
     /^web_search = "disabled"$/m,
   );
+});
+
+void test("codex: web search stays on whatever the model when the gateway searches itself, and follows a change of that", async (t) => {
+  const context = await sandbox(t);
+  const file = path.join(context.home, ".codex", "config.toml");
+  const original = 'web_search = "cached"\n';
+  await writeFiles(context.home, { ".codex/config.toml": original });
+  const chat = { ...TARGET, model: "deepseek/deepseek-chat" };
+  const searchOf = async () =>
+    parseToml(await readFile(file, "utf8")).web_search;
+  let { record } = await applyWiring("codex", chat, context);
+  assert.equal(await searchOf(), "disabled");
+  // A search backend is configured: the user's own setting is back.
+  ({ record } = await applyWiring(
+    "codex",
+    { ...chat, gatewaySearch: true },
+    context,
+    { previous: record },
+  ));
+  assert.equal(await searchOf(), "cached");
+  assert.equal((await detectDrift(record, context)).drifted, false);
+  ({ record } = await applyWiring(
+    "codex",
+    { ...chat, gatewaySearch: false },
+    context,
+    { previous: record },
+  ));
+  assert.equal(await searchOf(), "disabled");
+  await unwire(record, context);
+  assert.equal(await readFile(file, "utf8"), original);
 });
 
 void test("codex: the ChatGPT mode writes only openai_base_url, takes no key or model, and switching modes restores what the other wrote", async (t) => {

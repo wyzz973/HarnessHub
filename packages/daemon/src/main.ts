@@ -51,6 +51,14 @@ import {
   readAdminToken,
   ADMIN_TOKEN_FILE,
 } from "./admin-token.js";
+import {
+  defaultConfigDir,
+  formatSource,
+  readConfigFile,
+  resolveConfig,
+  startOptions,
+  type ResolvedConfig,
+} from "./config-file.js";
 import { GatewayFeaturesFile } from "./gateway-features.js";
 import { registerApiV1 } from "./http/api-v1.js";
 import { ConsoleSessions } from "./http/console-session.js";
@@ -199,40 +207,6 @@ export async function loadBuildInfo(
   return parseBuildInfo(raw);
 }
 
-const secretBackends: readonly string[] = ["auto", "keychain", "dpapi", "file"];
-
-/**
- * The platform's HarnessHub config root (07-data-security section 1): macOS
- * `~/Library/Application Support/HarnessHub/config`, Windows
- * `%LOCALAPPDATA%\HarnessHub\config`, elsewhere `$XDG_CONFIG_HOME/harnesshub`
- * (an absolute XDG value only) or `~/.config/harnesshub`.
- */
-export function defaultConfigDir(
-  environment: Readonly<NodeJS.ProcessEnv> = process.env,
-  platform: NodeJS.Platform = process.platform,
-  home: string = homedir(),
-): string {
-  if (platform === "darwin")
-    return path.join(
-      home,
-      "Library",
-      "Application Support",
-      "HarnessHub",
-      "config",
-    );
-  if (platform === "win32")
-    return path.win32.join(
-      environment.LOCALAPPDATA ?? path.win32.join(home, "AppData", "Local"),
-      "HarnessHub",
-      "config",
-    );
-  const xdg = environment.XDG_CONFIG_HOME;
-  return path.join(
-    xdg && path.isAbsolute(xdg) ? xdg : path.join(home, ".config"),
-    "harnesshub",
-  );
-}
-
 /**
  * The model-plane store whose ledger reports each committed call, so the
  * catalog can refresh early when a served model had no price.
@@ -291,6 +265,8 @@ class CallObservingModelPlaneStore extends SqliteModelPlaneStore {
     return deleted;
   }
 }
+
+export { defaultConfigDir } from "./config-file.js";
 
 /** Composition root: concrete implementations are assembled only here. */
 export async function startHub(options: {
@@ -681,6 +657,8 @@ export async function startHub(options: {
     // Redaction, vision and search settings (Magpie parity §11).
     const gatewayFeatures = new GatewayFeaturesFile({ dataDir, secrets });
     await gatewayFeatures.load();
+    const gatewaySearch = () =>
+      (gatewayFeatures.current().search?.backends.length ?? 0) > 0;
     const adminToken = await readAdminToken(dataDir);
     // The shared model gateway on this listener (03-model-plane); it reads
     // providers, keys and the ledger from the store and resolves credentials
@@ -918,10 +896,19 @@ export async function startHub(options: {
       dataDir,
       home: options.wiringHome,
       origin: () => gatewayOrigin,
+      gatewaySearch,
       settings: wiringSettings,
       log: gatewayLog,
     });
     modelPlane.catalogChanged = () => agents.catalogChanged();
+    // Codex keeps its hosted web search only while the gateway can answer
+    // it, so wired agents follow search backends coming and going.
+    let searching = gatewaySearch();
+    gatewayFeatures.changed = () => {
+      if (gatewaySearch() === searching) return;
+      searching = !searching;
+      agents.catalogChanged();
+    };
     server.addHook("preClose", async () => agents.close());
     const library = new LibraryService({
       dataDir,
@@ -1114,9 +1101,9 @@ export async function main(argv: string[]): Promise<void> {
       demo: { type: "boolean", default: false },
       config: { type: "string" },
       engine: { type: "string" },
-      host: { type: "string", default: "127.0.0.1" },
+      host: { type: "string" },
       port: { type: "string" },
-      "data-dir": { type: "string", default: "./data" },
+      "data-dir": { type: "string" },
       "config-dir": { type: "string" },
       "secrets-backend": { type: "string" },
       "tool-package-root": { type: "string" },
@@ -1153,57 +1140,56 @@ export async function main(argv: string[]): Promise<void> {
       );
       process.exitCode = 1;
     }
-  } else if (
-    values["secrets-backend"] !== undefined &&
-    !secretBackends.includes(values["secrets-backend"])
-  ) {
-    console.error(
-      `--secrets-backend must be one of ${secretBackends.join(", ")}`,
-    );
-    process.exitCode = 2;
   } else if (values.help)
     console.log(
-      "HarnessHub: node dist/src/main.js [--engine opencode] [--host 127.0.0.1] [--port 3180] [--config engines/local.yaml] [--data-dir ./data] [--config-dir DIR] [--secrets-backend auto|keychain|dpapi|file] [--tool-package-root DIR] [--harness-model-file FILE] [--otlp-config FILE] [--wiring-home DIR] | --version [--json]",
+      "HarnessHub: node dist/src/main.js [--engine opencode] [--host 127.0.0.1] [--port 3180] [--config engines/local.yaml] [--data-dir ./data] [--config-dir DIR] [--secrets-backend auto|keychain|dpapi|file] [--tool-package-root DIR] [--harness-model-file FILE] [--otlp-config FILE] [--wiring-home DIR] | --version [--json]\nFlags override <config-dir>/config.jsonc (hh config show).",
     );
   else {
-    const selectedEngine = values.engine ?? process.env.AGENT_ENGINE;
-    const port = Number(values.port ?? "3180");
-    if (!Number.isInteger(port) || port < 0 || port > 65535)
-      throw new Error("Invalid port");
+    // Flags, then documented variables, then <configDir>/config.jsonc, then
+    // defaults (config-file.ts); --otlp-config passes its file's text.
+    const configDir = path.resolve(values["config-dir"] ?? defaultConfigDir());
+    let config: ResolvedConfig;
+    try {
+      config = resolveConfig({
+        config: await readConfigFile(configDir),
+        env: process.env,
+        flags: {
+          "--host": values.host,
+          "--port": values.port,
+          "--data-dir": values["data-dir"],
+          "--config": values.config,
+          "--engine": values.engine,
+          "--secrets-backend": values["secrets-backend"],
+          "--tool-package-root": values["tool-package-root"],
+          "--harness-model-file": values["harness-model-file"],
+          "--wiring-home": values["wiring-home"],
+          "--otlp-config":
+            values["otlp-config"] === undefined
+              ? undefined
+              : await readFile(values["otlp-config"], "utf8"),
+        },
+        cwd: process.cwd(),
+      });
+    } catch (error) {
+      if (!(error instanceof HubError) || !error.code.startsWith("CONFIG_"))
+        throw error;
+      console.error(`${error.code}: ${error.message}`);
+      process.exitCode = 2;
+      return;
+    }
+    const settings = startOptions(config);
+    const { wiringHome, ...rest } = settings;
     const hub = await startHub({
-      dataDir: values["data-dir"],
-      ...(values["config-dir"] ? { configDir: values["config-dir"] } : {}),
-      ...(values["secrets-backend"]
-        ? {
-            secretsBackend: values["secrets-backend"] as SecretBackendSetting,
-          }
-        : {}),
+      ...rest,
+      configDir,
       demo: values.demo,
-      port,
-      host: values.host,
       cwd: process.cwd(),
-      ...(values.config ? { configFile: values.config } : {}),
-      ...(selectedEngine ? { defaultEngine: selectedEngine } : {}),
-      ...(values["tool-package-root"]
-        ? { toolPackageRoot: values["tool-package-root"] }
-        : {}),
-      ...(values["harness-model-file"]
-        ? { harnessModelFile: values["harness-model-file"] }
-        : {}),
-      // The `otlp` block as a JSON file; startHub validates it.
-      ...(values["otlp-config"]
-        ? {
-            otlp: JSON.parse(
-              await readFile(values["otlp-config"], "utf8"),
-            ) as unknown,
-          }
-        : {}),
-      // Global wiring edits the agents of this account. --wiring-home points
+      // Global wiring edits the agents of this account. wiring.home points
       // it at another directory and then ignores the shell's agent directory
       // variables (CODEX_HOME, ...), which name directories of the real home.
-      wiringHome: values["wiring-home"]
+      wiringHome: wiringHome
         ? {
-            home: path.resolve(values["wiring-home"]),
+            home: wiringHome,
             env: {
               PATH: process.env.PATH,
               PATHEXT: process.env.PATHEXT,
@@ -1212,6 +1198,21 @@ export async function main(argv: string[]): Promise<void> {
         : { home: homedir(), env: Object.freeze({ ...process.env }) },
       logEcho: true,
     });
+    const selectedEngine = settings.defaultEngine;
+    const configured = config.entries.filter(
+      (entry) => entry.source.kind !== "default",
+    );
+    process.stderr.write(
+      `Config: ${config.file}${
+        configured.length
+          ? ` (${configured
+              .map(
+                (entry) => `${entry.path} from ${formatSource(entry.source)}`,
+              )
+              .join(", ")})`
+          : " (defaults)"
+      }\n`,
+    );
     console.log(
       JSON.stringify({
         event: "ready",

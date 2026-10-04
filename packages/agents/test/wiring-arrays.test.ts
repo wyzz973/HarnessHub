@@ -269,6 +269,46 @@ void test("selectors match on several fields or a scalar, lead into an existing 
   );
 });
 
+void test("a JSON document whose root is a list takes a selector first, only through parseRoot", () => {
+  const json = editors.json;
+  const text = `[
+  // mine
+  {"id": "a"},
+  {"id": "b"}
+]
+`;
+  assert.throws(
+    () => json.parse(text),
+    (error: unknown) =>
+      error instanceof WiringError &&
+      error.code === "WIRING_UNSUPPORTED_STRUCTURE",
+  );
+  const added = json.set(text, [{ match: { id: "h" } }], { id: "h", v: 1 });
+  assert.deepEqual(json.parseRoot!(added), [
+    { id: "a" },
+    { id: "b" },
+    { id: "h", v: 1 },
+  ]);
+  const changed = json.set(added, [{ match: { id: "h" } }, "v"], 2);
+  assert.deepEqual(
+    getPath(json.parseRoot!(changed), [{ match: { id: "h" } }]),
+    {
+      id: "h",
+      v: 2,
+    },
+  );
+  assert.equal(json.remove(changed, [{ match: { id: "h" } }]), text);
+  for (const [document, segment] of [
+    [text, "key"],
+    ["", { equals: "x" }],
+  ] as const)
+    assert.throws(
+      () => json.set(document, [segment], "x"),
+      (error: unknown) =>
+        error instanceof WiringError && error.code === "WIRING_PATH_CONFLICT",
+    );
+});
+
 const POOL: WiringModel[] = [
   { ref: "alpha/one", contextWindow: 100_000, nativeProtocols: ["chat"] },
   { ref: "beta/two", nativeProtocols: ["responses"] },

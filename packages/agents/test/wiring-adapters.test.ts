@@ -81,6 +81,7 @@ async function fields(id: string, context: WiringContext) {
     tiers: {},
     effort: undefined,
     options: resolveOptions(adapter, {}),
+    gatewaySearch: false,
   };
   const located = {
     path: (fileId: string) => files.get(fileId)!.path,
