@@ -77,6 +77,7 @@ Windows 用原生环境验证中文/空格路径、env 大小写、cmd/PowerShel
 | `test:unit` / `test:integration` | 纯行为与真实 DB/IPC/API 组合，必需组为空时失败 |
 | `build` / `test:smoke` | Gateway/Worker 入口建立时验证编译产物启动 |
 | `check:docs` | 包装已有文档检查；建立可运行示例后纳入 typecheck，随后补锚点检查 |
+| `check:conflicts` | 已接入，`pnpm check` 的第一步：git 跟踪的文件与未被忽略的未跟踪文件中不得有合并冲突标记（行首七个 `<`、`|` 或 `>`，或其后的七个 `=`），停在冲突上的变基或合并不能被当作完成来检查；拒绝样例见 `tools/check-conflicts.test.mjs` |
 | `test:engine` | 首个真实引擎接入时运行；缺凭证明确未验证 |
 | `test:protocol` | 已接入，属于 `pnpm test` 与 `pnpm check`：`conformance/protocols/` 以固定版本的官方 SDK（openai、Anthropic、Google）为客户端，经 `hh serve` 访问白名单模式的假上游，覆盖 16 个协议方向的对话、工具、失败与保活，严格上游零违规，见[一致性套件](../conformance/README.md) |
 | `bench` | 已接入，不属于 `pnpm check`：网关附加延迟、转换路径单块开销、200 个并发流的 CPU 与内存、账本提交，对照 03 第 11 节的目标写出 `dist/bench/bench.{json,md}`，只报告不设门槛；尚未与 main 的历史结果比较 |

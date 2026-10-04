@@ -29,7 +29,7 @@
     "test:real": "pnpm build && node dist/tests/real/check.js",
     "test:sea": "pnpm build && pnpm build:console && node tools/sea/build.mjs && node tools/sea/commands.mjs",
     "test": "pnpm build && pnpm test:tooling && pnpm test:unit && pnpm test:integration && pnpm test:smoke && pnpm test:protocol",
-    "check": "pnpm check:runtime && pnpm lint && pnpm format:check && pnpm check:boundaries && pnpm check:docs && pnpm check:spdx && pnpm check:labels && pnpm test && pnpm check:api && pnpm check:console",
+    "check": "pnpm check:conflicts && pnpm check:runtime && pnpm lint && pnpm format:check && pnpm check:boundaries && pnpm check:docs && pnpm check:spdx && pnpm check:labels && pnpm test && pnpm check:api && pnpm check:console",
     "start": "node packages/daemon/dist/src/main.js",
     "benchmark": "node packages/daemon/dist/src/benchmark-main.js",
     "bench": "pnpm build && node dist/tests/perf/bench.js",
@@ -41,6 +41,7 @@
     "start:local": "node tools/start-local.mjs",
     "test:windows": "pnpm build && node tools/check-windows.mjs",
     "tools": "node packages/daemon/dist/src/tool-packages-main.js",
+    "check:conflicts": "node tools/check-conflicts.mjs",
     "check:spdx": "node tools/check-spdx.mjs",
     "check:labels": "node tools/check-labels.mjs"
   },
