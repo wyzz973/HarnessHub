@@ -15,6 +15,7 @@ import {
   HarnessHubUnavailableError,
   type SubscriptionAccountView,
   type SubscriptionBackend,
+  type SubscriptionNoticeView,
   type GatewayShareStatus,
   type HarnessHubClient,
   type MetadataField,
@@ -72,9 +73,13 @@ const USAGE = `Usage: hh <command> [options]
               price.output, price.cacheRead, price.cacheWrite (USD per
               million tokens); KEY= removes one key of the override
   hh subscription notice | list | login chatgpt [--provider ID] [--account ID]
-              [--accept-notice] | logout <provider> <account>
+              [--accept-notice] | login copilot [--provider ID] [--account ID]
+              [--token | --token-from-stdin | --token-from-env VAR
+              | --token-from-file PATH] [--accept-notice] | setup copilot
+              | logout <provider> <account>
               accounts are off until their risk notice is accepted, and serve
-              agents on this computer only
+              agents on this computer only; Copilot uses the Copilot CLI's own
+              login, or a fine-grained token with Copilot Requests
   hh catalog status | refresh
   hh usage [--by model|provider|day|key|adapter|credential|conversation]
               [--since 7d] [--from TIME] [--to TIME] [--provider P]
@@ -1414,6 +1419,7 @@ async function importCommand(args: string[]): Promise<void> {
 /** Subscription backends by the name people use on the command line. */
 const SUBSCRIPTION_NAMES: Readonly<Record<string, SubscriptionBackend>> = {
   chatgpt: "siwc",
+  copilot: "copilot",
 };
 
 function accountStatus(account: SubscriptionAccountView): string {
@@ -1423,10 +1429,12 @@ function accountStatus(account: SubscriptionAccountView): string {
 }
 
 /**
- * `hh subscription notice | list | login chatgpt | logout <provider>
- * <account>` (ADR-P09). Login shows the risk notice and asks before it
- * starts OpenAI's own sign-in in the browser; the account is used only
- * after that acceptance.
+ * `hh subscription notice | list | login chatgpt | login copilot | setup
+ * copilot | logout <provider> <account>` (ADR-P09). Login shows the risk
+ * notice and asks before it starts; the account is used only after that
+ * acceptance. ChatGPT continues in the browser with OpenAI's own sign-in;
+ * Copilot uses the Copilot CLI's own login, or a fine-grained token read
+ * like a credential secret (never from the command line itself).
  */
 async function subscriptionCommand(args: string[]): Promise<void> {
   const [action = "", ...rest] = args;
@@ -1434,6 +1442,10 @@ async function subscriptionCommand(args: string[]): Promise<void> {
     provider: { type: "string" },
     account: { type: "string" },
     "accept-notice": { type: "boolean" },
+    token: { type: "boolean" },
+    "token-from-stdin": { type: "boolean" },
+    "token-from-env": { type: "string" },
+    "token-from-file": { type: "string" },
   });
   const ctx = context(values);
   const client = await ctx.client();
@@ -1455,11 +1467,14 @@ async function subscriptionCommand(args: string[]): Promise<void> {
       const accounts = await client.subscriptions.accounts();
       return output(ctx, accounts, () =>
         table(
-          ["PROVIDER", "ACCOUNT", "EMAIL", "STATUS", "ACCEPTED"],
+          ["PROVIDER", "ACCOUNT", "NAME", "STATUS", "ACCEPTED"],
           accounts.items.map((account) => [
             account.provider,
             account.credential,
-            account.email ?? "-",
+            account.email ??
+              (account.login
+                ? `${account.login} (${account.auth === "token" ? "token" : "Copilot CLI login"})`
+                : "-"),
             accountStatus(account),
             localTime(account.acceptedAt),
           ]),
@@ -1477,6 +1492,8 @@ async function subscriptionCommand(args: string[]): Promise<void> {
         (item) => item.backend === backend,
       );
       if (!notice) throw new Error(`The daemon has no notice for ${name}`);
+      if (backend === "copilot")
+        return copilotLogin(ctx, client, notice, values);
       process.stderr.write(
         `Use your ChatGPT plan\nComplete eligible AI requests in HarnessHub with usage included in your ChatGPT plan or credits balance.\n\n${notice.title} (notice ${notice.version})\n${notice.text}\nManage usage: ${notice.manageUsageUrl}\n\n`,
       );
@@ -1493,7 +1510,7 @@ async function subscriptionCommand(args: string[]): Promise<void> {
           : {}),
       });
       process.stderr.write(
-        `Continue with ChatGPT in your browser:\n  ${view.authorizeUrl}\nWaiting for the sign-in to finish (until ${localTime(view.expiresAt)})...\n`,
+        `Continue with ChatGPT in your browser:\n  ${view.authorizeUrl ?? ""}\nWaiting for the sign-in to finish (until ${localTime(view.expiresAt ?? "")})...\n`,
       );
       while (view.status === "pending") {
         await new Promise((resolve) => setTimeout(resolve, 500));
@@ -1501,13 +1518,7 @@ async function subscriptionCommand(args: string[]): Promise<void> {
       }
       if (view.status === "failed")
         throw new Error(`The sign-in failed: ${view.error ?? "unknown"}`);
-      let models = "";
-      try {
-        const provider = await client.providers.refreshModels(view.provider);
-        models = `${provider.models.list.length} models listed for ${view.provider}.`;
-      } catch (error) {
-        models = `The model list of ${view.provider} could not be read yet (${error instanceof Error ? error.message : "unknown"}); retry with hh provider models ${view.provider} --refresh.`;
-      }
+      const models = await refreshSubscriptionModels(client, view.provider);
       return output(ctx, view, () =>
         [
           view.firstSignIn
@@ -1518,17 +1529,45 @@ async function subscriptionCommand(args: string[]): Promise<void> {
         ].join("\n"),
       );
     }
+    case "setup": {
+      const [name] = positionals(given, ["subscription"]);
+      if (name !== "copilot")
+        throw new UsageError(
+          "Only copilot needs a setup: hh subscription setup copilot",
+        );
+      const setup = await client.subscriptions.copilotSetup();
+      return output(ctx, setup, () =>
+        [
+          setup.sdkVersion
+            ? `Copilot SDK ${setup.sdkVersion} is installed in ${setup.sdkDirectory}${setup.sdkVersion === setup.supportedSdkVersion ? "." : ` (HarnessHub was written for ${setup.supportedSdkVersion}).`}`
+            : `The Copilot SDK is not installed. It is an optional add-on; install it with npm:\n  ${setup.installCommand}`,
+          setup.cliPath
+            ? `Copilot CLI: ${setup.cliPath}`
+            : "The Copilot CLI was not found on PATH; install GitHub Copilot CLI, then sign in to it or create a fine-grained token with Copilot Requests.",
+          ...(setup.sdkVersion && setup.cliPath
+            ? ["Next: hh subscription login copilot"]
+            : []),
+        ].join("\n"),
+      );
+    }
     case "logout": {
       const [provider, account] = positionals(given, ["provider", "account"]);
+      const found = (await client.subscriptions.accounts()).items.find(
+        (item) => item.provider === provider && item.credential === account,
+      );
       await confirm(
         ctx,
         `Sign account ${account} of ${provider} out and clear its tokens?`,
       );
       const result = await client.subscriptions.signOut(provider!, account!);
       return output(ctx, result, () =>
-        result.revoked
-          ? `Signed out; OpenAI ended the session. Sign in again with hh subscription login chatgpt --provider ${provider} --account ${account}.`
-          : `Signed out locally, but OpenAI did not confirm ending the session; you can disconnect HarnessHub in ChatGPT settings.`,
+        found?.backend === "copilot"
+          ? found.auth === "token"
+            ? `Signed out; HarnessHub no longer holds the token. It stays valid at GitHub until you revoke it there. Sign in again with hh subscription login copilot --provider ${provider} --account ${account} --token.`
+            : `Signed out; the Copilot CLI's own sign-in is unchanged. Sign in again with hh subscription login copilot --provider ${provider} --account ${account}.`
+          : result.revoked
+            ? `Signed out; OpenAI ended the session. Sign in again with hh subscription login chatgpt --provider ${provider} --account ${account}.`
+            : `Signed out locally, but OpenAI did not confirm ending the session; you can disconnect HarnessHub in ChatGPT settings.`,
       );
     }
     default:
@@ -1536,6 +1575,70 @@ async function subscriptionCommand(args: string[]): Promise<void> {
         `Unknown subscription command: ${action || "(none)"}`,
       );
   }
+}
+
+/** Refresh a subscription provider's models after a sign-in; the outcome as a line. */
+async function refreshSubscriptionModels(
+  client: HarnessHubClient,
+  provider: string,
+): Promise<string> {
+  try {
+    const refreshed = await client.providers.refreshModels(provider);
+    return `${refreshed.models.list.length} models listed for ${provider}.`;
+  } catch (error) {
+    return `The model list of ${provider} could not be read yet (${error instanceof Error ? error.message : "unknown"}); retry with hh provider models ${provider} --refresh.`;
+  }
+}
+
+/**
+ * `hh subscription login copilot`: the notice, then Copilot reports who
+ * the Copilot CLI's own login (or the given token) is; nothing opens in a
+ * browser.
+ */
+async function copilotLogin(
+  ctx: Context,
+  client: HarnessHubClient,
+  notice: SubscriptionNoticeView,
+  values: Record<string, unknown>,
+): Promise<void> {
+  const tokenGiven = [
+    "token",
+    "token-from-stdin",
+    "token-from-env",
+    "token-from-file",
+  ].some((name) => values[name] !== undefined && values[name] !== false);
+  process.stderr.write(
+    `Use your GitHub Copilot plan\nHarnessHub answers your agents' model requests with GitHub Copilot through the Copilot CLI installed on this computer${tokenGiven ? ", signed in with your fine-grained token" : ", signed in with the Copilot CLI's own login"}.\n\n${notice.title} (notice ${notice.version})\n${notice.text}\nManage usage: ${notice.manageUsageUrl}\n\n`,
+  );
+  if (!values["accept-notice"])
+    await confirm(ctx, "Accept this notice and use your Copilot plan?");
+  const token = tokenGiven
+    ? await readSecret(ctx, values, "token-")
+    : undefined;
+  const view = await client.subscriptions.startSignIn({
+    backend: "copilot",
+    acceptNotice: notice.version,
+    auth: token === undefined ? "login" : "token",
+    ...(token === undefined ? {} : { token }),
+    ...(typeof values.provider === "string"
+      ? { provider: values.provider }
+      : {}),
+    ...(typeof values.account === "string"
+      ? { credential: values.account }
+      : {}),
+  });
+  if (view.status !== "succeeded")
+    throw new Error(`The sign-in failed: ${view.error ?? "unknown"}`);
+  const models = await refreshSubscriptionModels(client, view.provider);
+  return output(ctx, view, () =>
+    [
+      view.firstSignIn
+        ? `You're using your GitHub Copilot plan as ${view.login ?? "-"}. Requests count against your Copilot plan; review usage in GitHub settings: ${notice.manageUsageUrl}`
+        : `Signed in again as ${view.login ?? "-"}.`,
+      `Account ${view.credential ?? "-"} of provider ${view.provider}; it serves agents on this computer only.`,
+      models,
+    ].join("\n"),
+  );
 }
 
 const COMMANDS: Readonly<Record<string, (args: string[]) => Promise<void>>> = {

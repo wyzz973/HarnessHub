@@ -234,10 +234,10 @@ void test(
 
     /** The browser's part: OpenAI sends it back to the loopback callback. */
     const complete = async (
-      view: { authorizeUrl: string },
+      view: { authorizeUrl?: string },
       issued: string | undefined,
     ) => {
-      const authorize = new URL(view.authorizeUrl);
+      const authorize = new URL(view.authorizeUrl!);
       const params = authorize.searchParams;
       const code = `code-${openai.state.codes.size + openai.state.issued}`;
       openai.state.codes.set(code, {
@@ -284,7 +284,10 @@ void test(
     const provider = await client.providers.get("chatgpt");
     assert.deepEqual(provider.subscription, { backend: "siwc" });
     const account = provider.credentials[0]!;
-    assert.equal(account.account?.clientId, CLIENT_ID);
+    assert.equal(
+      account.account?.backend === "siwc" && account.account.clientId,
+      CLIENT_ID,
+    );
     assert.equal(account.account?.consent.notice, notice.version);
     assert.ok(
       !/synthetic-(access|refresh)/.test(JSON.stringify(provider)),

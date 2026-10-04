@@ -1326,14 +1326,17 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     group: "subscriptions",
     request: "无参数。",
     response:
-      "200：items[]（provider、credential、backend、email、enabled、signedIn、noticeAccepted、acceptedAt、usable），不含任何令牌。",
+      "200：items[]（provider、credential、backend、email（ChatGPT）、login 与 auth（Copilot：GitHub 登录名，login 或 token）、enabled、signedIn、noticeAccepted、acceptedAt、usable），不含任何令牌。",
     implementation:
       "SubscriptionService.accounts 遍历带 subscription 的 provider 中带 account 的 Credential；usable 要求启用、已登录且接受了当前告知版本。",
     effects: "只读。",
     errors:
       "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/subscription-routes.ts",
-    tests: ["tests/integration/subscriptions.test.ts"],
+    tests: [
+      "tests/integration/subscriptions.test.ts",
+      "tests/integration/subscriptions-copilot.test.ts",
+    ],
     operationId: "hh_api_v1_list_subscription_accounts",
   },
   {
@@ -1342,17 +1345,20 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     title: "开始订阅登录",
     group: "subscriptions",
     request:
-      "backend（siwc）、acceptNotice（必须等于该后端当前告知的 version）；可选 provider（缺省 chatgpt）与 credential（让已有账号重新登录）。",
+      "backend（siwc 或 copilot）、acceptNotice（必须等于该后端当前告知的 version）；可选 provider（缺省 chatgpt 或 copilot）与 credential（让已有账号重新登录）；copilot 另可给 auth（login 缺省：Copilot CLI 自己的登录；token）与 token（以 github_pat_ 开头的细粒度个人访问令牌）。",
     response:
-      "202：id、backend、status=pending、provider、authorizeUrl（在系统浏览器中打开）、expiresAt（10 分钟）。",
+      "202：id、backend、status、provider。siwc：status=pending、authorizeUrl（在系统浏览器中打开）、expiresAt（10 分钟）；copilot：在返回前完成，status 为 succeeded（credential、login、firstSignIn）或 failed（error）。",
     implementation:
-      "SubscriptionService.startSignIn：在 127.0.0.1 随机端口开回调监听（/auth/callback），生成 state、nonce 与 PKCE S256；新账号以 client_id=dynamic_agent_client、agent_name_hint=HarnessHub 注册，已有账号用其签发的 client_id 与 login_hint、id_token_hint；ext_agent_host_id 持久在 <dataDir>/subscriptions/siwc-host.json。回调校验 state，换取令牌（无客户端密钥），按 JWKS 校验 ID token 的签名、iss、aud、exp 与 nonce，要求授予 chatgpt.tokens.use.direct。",
+      "SubscriptionService.startSignIn。siwc：在 127.0.0.1 随机端口开回调监听（/auth/callback），生成 state、nonce 与 PKCE S256；新账号以 client_id=dynamic_agent_client、agent_name_hint=HarnessHub 注册，已有账号用其签发的 client_id 与 login_hint、id_token_hint；ext_agent_host_id 持久在 <dataDir>/subscriptions/siwc-host.json。回调校验 state，换取令牌（无客户端密钥），按 JWKS 校验 ID token 的签名、iss、aud、exp 与 nonce，要求授予 chatgpt.tokens.use.direct。copilot：CopilotHosts.identify 启动一个临时宿主进程（Copilot SDK 驱动用户安装的 Copilot CLI），以 getAuthStatus 读出 GitHub 登录名后停止；HarnessHub 从不读取 CLI 的登录。",
     effects:
-      "成功后：令牌写入秘密存储；缺省创建 provider chatgpt（subscription siwc，Responses 端点 https://api.openai.com/v1），新增或更新带 account（subject、email、clientId、consent）的 Credential。",
+      "成功后：令牌（copilot token 账号的令牌）写入秘密存储；缺省创建 provider chatgpt（subscription siwc，Responses 端点 https://api.openai.com/v1）或 copilot（subscription copilot，没有端点），新增或更新带 account 的 Credential（siwc：subject、email、clientId、consent；copilot：subject 为 GitHub 登录名、host、auth、consent）。",
     errors:
-      "409 SUBSCRIPTION_NOTICE_NOT_ACCEPTED（acceptNotice 不是当前版本）、PROVIDER_NOT_SUBSCRIPTION；404 CREDENTIAL_NOT_FOUND；回调中的失败（拒绝授权、ID token 无效、未授予套餐用量）记在登录状态的 error 中；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+      "409 SUBSCRIPTION_NOTICE_NOT_ACCEPTED（acceptNotice 不是当前版本）、PROVIDER_NOT_SUBSCRIPTION；404 CREDENTIAL_NOT_FOUND；400 SIGN_IN_INVALID（auth、token 用于 siwc，或 login 带 token）、COPILOT_TOKEN_INVALID（不是细粒度令牌）；503 COPILOT_UNAVAILABLE；siwc 回调中的失败（拒绝授权、ID token 无效、未授予套餐用量）与 copilot 的失败（SDK 未安装、找不到 CLI、未登录或令牌不被接受）记在登录状态的 error 中；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/subscription-routes.ts",
-    tests: ["tests/integration/subscriptions.test.ts"],
+    tests: [
+      "tests/integration/subscriptions.test.ts",
+      "tests/integration/subscriptions-copilot.test.ts",
+    ],
     operationId: "hh_api_v1_start_subscription_sign_in",
   },
   {
@@ -1362,7 +1368,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     group: "subscriptions",
     request: "路径参数 id。",
     response:
-      "200：与开始时相同的字段；status 为 pending、succeeded（另有 credential、email、firstSignIn）或 failed（另有 error）。",
+      "200：与开始时相同的字段；status 为 pending、succeeded（另有 credential、email 或 login、firstSignIn）或 failed（另有 error）。",
     implementation: "SubscriptionService.signIn；结束的尝试保留 10 分钟。",
     effects: "只读。",
     errors:
@@ -1372,20 +1378,41 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     operationId: "hh_api_v1_get_subscription_sign_in",
   },
   {
+    method: "GET",
+    path: "/api/v1/subscriptions/copilot/setup",
+    title: "Copilot 安装状态",
+    group: "subscriptions",
+    request: "无参数。",
+    response:
+      "200：sdkDirectory（附加组件的 npm prefix，<dataDir>/addons/copilot-sdk）、sdkVersion（已安装时）、supportedSdkVersion、cliPath（找到 Copilot CLI 时）、installCommand（安装受支持 SDK 且不装平台运行时的 npm 命令）。",
+    implementation:
+      "CopilotHosts.setup：读取附加组件中 @github/copilot-sdk 的 package.json 版本，在 PATH 中查找 copilot；不启动任何进程，不安装任何东西。",
+    effects: "只读。",
+    errors:
+      "503 COPILOT_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/subscription-routes.ts",
+    tests: ["tests/integration/subscriptions-copilot.test.ts"],
+    operationId: "hh_api_v1_get_copilot_setup",
+  },
+  {
     method: "POST",
     path: "/api/v1/providers/{id}/credentials/{credentialId}/sign-out",
     title: "订阅账号登出",
     group: "subscriptions",
     request: "路径参数 id、credentialId；空 JSON 对象。",
-    response: "200：revoked（厂商是否确认结束了可续期会话）。",
+    response:
+      "200：revoked（siwc：厂商是否确认结束了可续期会话；copilot 总是 false：CLI 的登录属于用户，令牌在 GitHub 撤销之前仍有效）。",
     implementation:
-      "SubscriptionService.signOut：向撤销端点提交 refresh token（token_type_hint=refresh_token 与签发的 client_id），清空秘密存储中的令牌，保留账号登记以便再次登录。",
+      "SubscriptionService.signOut。siwc：向撤销端点提交 refresh token（token_type_hint=refresh_token 与签发的 client_id）；copilot：停止该账号的宿主进程。两者都清空秘密存储中的令牌，保留账号登记以便再次登录。",
     effects:
-      "Credential 停用并记 account.signedOutAt；网关不再使用该账号，令牌缓存清除。",
+      "Credential 停用并记 account.signedOutAt；网关不再使用该账号，令牌缓存或宿主进程清除。",
     errors:
       "404 CREDENTIAL_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/subscription-routes.ts",
-    tests: ["tests/integration/subscriptions.test.ts"],
+    tests: [
+      "tests/integration/subscriptions.test.ts",
+      "tests/integration/subscriptions-copilot.test.ts",
+    ],
     operationId: "hh_api_v1_sign_out_subscription_account",
   },
   {

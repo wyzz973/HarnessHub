@@ -3,9 +3,12 @@ import type { FastifyInstance } from "fastify";
 import type {
   ProviderConfig,
   ProviderCredential,
+  ProviderModel,
 } from "@harnesshub/core/model-plane";
 import {
+  copilotAuthModes,
   subscriptionBackends,
+  type CopilotAuth,
   type SubscriptionBackend,
   type SubscriptionNotice,
 } from "@harnesshub/core/subscriptions";
@@ -17,22 +20,49 @@ import {
   responses,
 } from "./api-v1-schemas.js";
 
+/** What `/subscriptions/sign-in` takes. */
+export interface SignInInput {
+  backend: SubscriptionBackend;
+  provider?: string;
+  credential?: string;
+  acceptNotice: string;
+  /** Copilot only: the CLI's own login (default) or a token. */
+  auth?: CopilotAuth;
+  /** Copilot only: a fine-grained personal access token with Copilot Requests. */
+  token?: string;
+}
+
 /** A sign-in attempt as `/subscriptions/sign-in` reports it. */
 export interface SignInView {
   id: string;
   backend: SubscriptionBackend;
   status: "pending" | "succeeded" | "failed";
   provider: string;
-  /** Open in the system browser to continue with the vendor. */
-  authorizeUrl: string;
-  expiresAt: string;
+  /** ChatGPT: open in the system browser to continue with the vendor. */
+  authorizeUrl?: string;
+  /** ChatGPT: when the attempt stops waiting. */
+  expiresAt?: string;
   /** Set once it succeeded. */
   credential?: string;
   email?: string;
+  /** Copilot: the GitHub login. */
+  login?: string;
   /** The account was new to this provider (not a returning sign-in). */
   firstSignIn?: boolean;
   /** Why it failed. */
   error?: string;
+}
+
+/** The add-on and CLI as `hh subscription setup copilot` reports them. */
+export interface CopilotSetup {
+  sdkDirectory: string;
+  /** The installed SDK's version; absent when it is not installed. */
+  sdkVersion?: string;
+  supportedSdkVersion: string;
+  /** The Copilot CLI found; absent when there is none. */
+  cliPath?: string;
+  /** The npm command that installs the supported SDK, without its platform runtimes. */
+  installCommand: string;
 }
 
 /** One subscription account, without its tokens. */
@@ -41,6 +71,9 @@ export interface SubscriptionAccountView {
   credential: string;
   backend: SubscriptionBackend;
   email?: string;
+  /** Copilot: the GitHub login and how the account signs in. */
+  login?: string;
+  auth?: CopilotAuth;
   enabled: boolean;
   signedIn: boolean;
   /** The account accepted the backend's current notice. */
@@ -55,20 +88,18 @@ export interface SubscriptionControl {
   notices(): ({ backend: SubscriptionBackend } & SubscriptionNotice)[];
   accounts(): Promise<SubscriptionAccountView[]>;
   /**
-   * Start a sign-in: a loopback callback listener and the vendor's
-   * authorization URL. `acceptNotice` must be the backend's current notice
-   * version. A new account registers; `credential` signs an existing
-   * account in again.
+   * Start a sign-in. ChatGPT: a loopback callback listener and the
+   * vendor's authorization URL; the attempt stays pending until the browser
+   * comes back. Copilot: finished before it returns, succeeded or failed.
+   * `acceptNotice` must be the backend's current notice version. A new
+   * account registers; `credential` signs an existing account in again.
    *
    * @throws HubError `SUBSCRIPTION_NOTICE_NOT_ACCEPTED` (409),
-   *   `PROVIDER_NOT_SUBSCRIPTION` (409), `CREDENTIAL_NOT_FOUND` (404).
+   *   `PROVIDER_NOT_SUBSCRIPTION` (409), `CREDENTIAL_NOT_FOUND` (404),
+   *   `SIGN_IN_INVALID` (400), `COPILOT_TOKEN_INVALID` (400),
+   *   `COPILOT_UNAVAILABLE` (503).
    */
-  startSignIn(input: {
-    backend: SubscriptionBackend;
-    provider?: string;
-    credential?: string;
-    acceptNotice: string;
-  }): Promise<SignInView>;
+  startSignIn(input: SignInInput): Promise<SignInView>;
   /** A sign-in started in the last ten minutes, or undefined. */
   signIn(id: string): SignInView | undefined;
   /**
@@ -85,11 +116,22 @@ export interface SubscriptionControl {
    * Never rejects.
    */
   revoke(credential: ProviderCredential): Promise<boolean>;
-  /** A valid access token of an account, renewed if needed (for the model list). */
+  /** A valid access token of a ChatGPT account, renewed if needed (for the model list). */
   accessToken(
     provider: ProviderConfig,
     credential: ProviderCredential,
   ): Promise<string>;
+  /** The models of a Copilot account, from its Copilot client; rejects with ModelListError. */
+  listModels(
+    provider: ProviderConfig,
+    credential: ProviderCredential,
+  ): Promise<ProviderModel[]>;
+  /**
+   * Whether the Copilot SDK add-on and the Copilot CLI are installed.
+   *
+   * @throws HubError `COPILOT_UNAVAILABLE` (503).
+   */
+  copilotSetup(): Promise<CopilotSetup>;
 }
 
 const backend = { type: "string", enum: [...subscriptionBackends] } as const;
@@ -123,6 +165,8 @@ const accountSchema = {
     credential: { type: "string" },
     backend,
     email: { type: "string" },
+    login: { type: "string" },
+    auth: { type: "string", enum: [...copilotAuthModes] },
     enabled: { type: "boolean" },
     signedIn: { type: "boolean" },
     noticeAccepted: { type: "boolean" },
@@ -133,14 +177,7 @@ const accountSchema = {
 const signInSchema = {
   type: "object",
   additionalProperties: false,
-  required: [
-    "id",
-    "backend",
-    "status",
-    "provider",
-    "authorizeUrl",
-    "expiresAt",
-  ],
+  required: ["id", "backend", "status", "provider"],
   properties: {
     id: { type: "string" },
     backend,
@@ -150,8 +187,21 @@ const signInSchema = {
     expiresAt: { type: "string" },
     credential: { type: "string" },
     email: { type: "string" },
+    login: { type: "string" },
     firstSignIn: { type: "boolean" },
     error: { type: "string" },
+  },
+} as const;
+const setupSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["sdkDirectory", "supportedSdkVersion", "installCommand"],
+  properties: {
+    sdkDirectory: { type: "string" },
+    sdkVersion: { type: "string" },
+    supportedSdkVersion: { type: "string" },
+    cliPath: { type: "string" },
+    installCommand: { type: "string" },
   },
 } as const;
 
@@ -174,14 +224,12 @@ export function registerSubscriptionRoutes(
     { schema: { response: responses(listOf(accountSchema)) } },
     async () => ({ items: await subscriptions.accounts(), nextCursor: null }),
   );
-  api.post<{
-    Body: {
-      backend: SubscriptionBackend;
-      provider?: string;
-      credential?: string;
-      acceptNotice: string;
-    };
-  }>(
+  api.get(
+    "/subscriptions/copilot/setup",
+    { schema: { response: responses(setupSchema) } },
+    async () => subscriptions.copilotSetup(),
+  );
+  api.post<{ Body: SignInInput }>(
     "/subscriptions/sign-in",
     {
       schema: {
@@ -194,6 +242,8 @@ export function registerSubscriptionRoutes(
             provider: { type: "string", minLength: 1, maxLength: 63 },
             credential: { type: "string", minLength: 1, maxLength: 200 },
             acceptNotice: { type: "string", minLength: 1, maxLength: 200 },
+            auth: { type: "string", enum: [...copilotAuthModes] },
+            token: { type: "string", minLength: 1, maxLength: 1024 },
           },
         },
         response: responses(signInSchema, 202),

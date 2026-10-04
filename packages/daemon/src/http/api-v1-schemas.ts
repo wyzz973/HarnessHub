@@ -11,7 +11,10 @@ import {
   providerPatches,
   wireProtocols,
 } from "@harnesshub/core/model-plane";
-import { subscriptionBackends } from "@harnesshub/core/subscriptions";
+import {
+  copilotAuthModes,
+  subscriptionBackends,
+} from "@harnesshub/core/subscriptions";
 
 const text = (maxLength: number) =>
   ({ type: "string", minLength: 1, maxLength }) as const;
@@ -204,12 +207,15 @@ export const credentialSchema = {
     account: {
       type: "object",
       additionalProperties: false,
-      required: ["backend", "subject", "clientId", "consent"],
+      // ChatGPT accounts carry `clientId`; Copilot accounts `auth` and `host`.
+      required: ["backend", "subject", "consent"],
       properties: {
         backend: { type: "string", enum: [...subscriptionBackends] },
         subject: text(512),
         email: text(320),
         clientId: text(512),
+        auth: { type: "string", enum: [...copilotAuthModes] },
+        host: text(512),
         consent: {
           type: "object",
           additionalProperties: false,
@@ -246,7 +252,8 @@ export const providerSchema = {
     region: slug,
     plan: slug,
     catalog: slug,
-    endpoints,
+    // A Copilot provider has none: the user's installed client answers.
+    endpoints: { ...endpoints, minProperties: 0 },
     auth: {
       type: "object",
       additionalProperties: false,

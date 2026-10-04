@@ -162,7 +162,8 @@ export interface ProviderConfig {
    * The credentials are accounts of a subscription, used through this
    * backend (ADR-P09). Its requests are always translated, its accounts serve
    * loopback calls only, and an account is used only after the user accepted
-   * the backend's current notice.
+   * the backend's current notice. A `copilot` provider has no endpoints: the
+   * user's installed Copilot client answers.
    */
   subscription?: { backend: SubscriptionBackend };
   createdAt: string;

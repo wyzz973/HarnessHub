@@ -15,7 +15,7 @@ Commands:
   model       Show model metadata with its sources; set overrides
   catalog     Show or refresh the models.dev catalog (status, refresh)
   usage       Summarize model-call usage by model, provider or day
-  subscription  Sign in a subscription account (login chatgpt, list, logout, notice)
+  subscription  Sign in a subscription account (login chatgpt|copilot, setup copilot, list, logout, notice)
   agents      List local agents: installed, wired, model and drift
   wire        Point an agent at the gateway (hh wire codex deepseek/deepseek-chat)
   use         The same as wire: hh use <agent> <model>

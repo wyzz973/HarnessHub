@@ -20,6 +20,7 @@ import {
   type WireProtocol,
 } from "@harnesshub/core/model-plane";
 import { accountUsable } from "@harnesshub/core/subscriptions";
+import { COPILOT_ENDPOINT } from "./copilot.js";
 import type { Failure } from "./output.js";
 
 /** One routing candidate: a Model Ref served through one credential and one upstream endpoint. */
@@ -104,6 +105,18 @@ export function modelCandidates(
         skipped.push(
           `${ref} via ${credential.id}: the account is signed out or has not accepted the current risk notice`,
         );
+      else if (provider.subscription.backend === "copilot")
+        // The Copilot bridge takes the Chat request.
+        candidates.push({
+          provider,
+          credential,
+          model,
+          ref,
+          wireModel,
+          mode: "translated",
+          upstream: "chat",
+          endpoint: COPILOT_ENDPOINT,
+        });
       else if (!responses)
         skipped.push(
           `${ref}: the subscription provider has no Responses endpoint`,

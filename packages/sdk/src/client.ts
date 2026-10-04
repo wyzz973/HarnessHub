@@ -15,6 +15,7 @@ import type {
 import type { ProviderPreset } from "@harnesshub/core/provider-presets";
 import type { AutoGroup } from "@harnesshub/core/auto-groups";
 import type {
+  CopilotAuth,
   SubscriptionBackend,
   SubscriptionNotice,
 } from "@harnesshub/core/subscriptions";
@@ -74,6 +75,9 @@ export type {
 } from "@harnesshub/core/import-links";
 export type { AutoGroup } from "@harnesshub/core/auto-groups";
 export type {
+  CopilotAccount,
+  CopilotAuth,
+  SiwcAccount,
   SubscriptionAccount,
   SubscriptionBackend,
   SubscriptionNotice,
@@ -90,11 +94,14 @@ export interface SignInView {
   backend: SubscriptionBackend;
   status: "pending" | "succeeded" | "failed";
   provider: string;
-  /** Open in the system browser to continue with the vendor. */
-  authorizeUrl: string;
-  expiresAt: string;
+  /** ChatGPT: open in the system browser to continue with the vendor. */
+  authorizeUrl?: string;
+  /** ChatGPT: when the attempt stops waiting. */
+  expiresAt?: string;
   credential?: string;
   email?: string;
+  /** Copilot: the GitHub login. */
+  login?: string;
   firstSignIn?: boolean;
   error?: string;
 }
@@ -105,11 +112,26 @@ export interface SubscriptionAccountView {
   credential: string;
   backend: SubscriptionBackend;
   email?: string;
+  /** Copilot: the GitHub login and how the account signs in. */
+  login?: string;
+  auth?: CopilotAuth;
   enabled: boolean;
   signedIn: boolean;
   noticeAccepted: boolean;
   acceptedAt: string;
   usable: boolean;
+}
+
+/** `GET /subscriptions/copilot/setup`: the Copilot SDK add-on and CLI. */
+export interface CopilotSetupView {
+  sdkDirectory: string;
+  /** Absent when the SDK is not installed. */
+  sdkVersion?: string;
+  supportedSdkVersion: string;
+  /** Absent when no Copilot CLI was found. */
+  cliPath?: string;
+  /** Installs the supported SDK without its platform runtimes. */
+  installCommand: string;
 }
 export type {
   CatalogMeta,
@@ -1373,8 +1395,10 @@ export class HarnessHubClient {
         "subscriptions/accounts",
       ),
     /**
-     * Start a sign-in: open `authorizeUrl` in the browser and poll
-     * {@link signIn} until it is no longer pending. `acceptNotice` is the
+     * Start a sign-in. ChatGPT: open `authorizeUrl` in the browser and poll
+     * {@link signIn} until it is no longer pending. Copilot: finished when
+     * it returns; `auth` is the Copilot CLI's own login (default) or `token`
+     * with a fine-grained personal access token. `acceptNotice` is the
      * notice version the user accepted; `credential` signs an account in again.
      */
     startSignIn: (input: {
@@ -1382,12 +1406,17 @@ export class HarnessHubClient {
       acceptNotice: string;
       provider?: string;
       credential?: string;
+      auth?: CopilotAuth;
+      token?: string;
     }) =>
       this.request<SignInView>("POST", "subscriptions/sign-in", {
         body: input,
       }),
     signIn: (id: string) =>
       this.request<SignInView>("GET", `subscriptions/sign-in/${segment(id)}`),
+    /** Whether the Copilot SDK add-on and the Copilot CLI are installed, and how to install the SDK. */
+    copilotSetup: () =>
+      this.request<CopilotSetupView>("GET", "subscriptions/copilot/setup"),
     /** End the account's session with the vendor and clear its tokens; the registration stays. */
     signOut: (provider: string, credential: string) =>
       this.request<{ revoked: boolean }>(

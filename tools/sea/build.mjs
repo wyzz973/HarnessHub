@@ -302,6 +302,17 @@ export async function buildSea({ out = path.join(ROOT, "dist", "sea") } = {}) {
         executable: false,
       },
     ],
+    [
+      // Run by path with this executable as Node: it imports the optional
+      // Copilot SDK add-on, which cannot be bundled.
+      "packages/daemon/assets/copilot-host.mjs",
+      {
+        bytes: readFileSync(
+          path.join(ROOT, "packages", "daemon", "assets", "copilot-host.mjs"),
+        ),
+        executable: false,
+      },
+    ],
   ]);
   for (const helper of nativeAssets(ROOT))
     assets.set(helper.path, {

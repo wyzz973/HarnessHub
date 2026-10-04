@@ -56,6 +56,7 @@ import { BackupService } from "./backup.js";
 import { SyncService } from "./sync.js";
 import { LibraryService } from "./library-service.js";
 import { SIWC, SiwcClient, SiwcTokens } from "@harnesshub/gateway/siwc";
+import { CopilotHosts } from "./copilot.js";
 import { allowanceFile, SubscriptionService } from "./subscriptions.js";
 import { GatewayShare } from "./lan-share.js";
 import {
@@ -362,6 +363,12 @@ export async function startHub(options: {
    * `https://api.openai.com/v1`); there is no user setting.
    */
   siwc?: { issuer: string; responsesBase: string };
+  /**
+   * For tests only: the Copilot CLI and the Copilot SDK add-on directory,
+   * pointed at fakes. Unset, the CLI is `copilot` on PATH and the add-on is
+   * `<dataDir>/addons/copilot-sdk`; there is no user setting.
+   */
+  copilot?: { cli: string; addon: string };
 }) {
   // HARNESSHUB_LOG_LEVEL is validated before anything starts; Workers inherit the value.
   const logLevel = parseLogLevel(process.env[LOG_LEVEL_ENVIRONMENT]);
@@ -510,6 +517,7 @@ export async function startHub(options: {
   let modelPlane: CallObservingModelPlaneStore | undefined;
   let modelGateway: GatewayHandler | undefined;
   let subscriptions: SubscriptionService | undefined;
+  let copilotHosts: CopilotHosts | undefined;
   // Every model-plane write of the API and of subscription sign-ins, in order.
   let writes: Promise<unknown> = Promise.resolve();
   const serializeWrites = <T>(operation: () => Promise<T>): Promise<T> => {
@@ -618,6 +626,21 @@ export async function startHub(options: {
       clock: Date.now,
       log: gatewayLog,
     });
+    // Copilot accounts: a host per account drives the user's Copilot CLI
+    // with the Copilot SDK add-on; the gateway's bridge owns the sessions.
+    copilotHosts = new CopilotHosts({
+      launcher,
+      secrets,
+      environment,
+      paths: {
+        addon:
+          options.copilot?.addon ?? path.join(dataDir, "addons", "copilot-sdk"),
+        directory: path.join(dataDir, "subscriptions", "copilot"),
+        ...(options.copilot ? { cli: options.copilot.cli } : {}),
+      },
+      clock: Date.now,
+      log: gatewayLog,
+    });
     subscriptions = new SubscriptionService({
       store: modelPlane,
       secrets,
@@ -626,6 +649,7 @@ export async function startHub(options: {
       tokens: siwcTokens,
       directory: path.join(dataDir, "subscriptions"),
       responsesBase: options.siwc?.responsesBase ?? SIWC.resource,
+      copilot: copilotHosts,
       serialize: serializeWrites,
       clock: Date.now,
       log: gatewayLog,
@@ -661,6 +685,7 @@ export async function startHub(options: {
       sessions,
       access: () => share.access(),
       subscriptions: siwcTokens,
+      copilot: copilotHosts,
       allowances: allowanceFile(dataDir),
     });
     manager = new EngineManager({
@@ -851,8 +876,11 @@ export async function startHub(options: {
     // Then the spans of the last ledger entries are exported within the
     // exporter's shutdown deadline.
     const gatewayToClose = modelGateway;
+    const copilotToClose = copilotHosts;
     server.addHook("preClose", async () => {
       await gatewayToClose.close();
+      // The bridge closed its sessions; the hosts and their CLIs stop.
+      await copilotToClose.close();
       await exporter?.shutdown();
       await share.close();
     });
@@ -1033,6 +1061,7 @@ export async function startHub(options: {
       /* Unconfirmed process leases remain available to the next startup. */
     }
     await modelGateway?.close();
+    await copilotHosts?.close();
     await catalog?.close();
     await otlp?.shutdown();
     await shareToClose?.close();

@@ -133,11 +133,18 @@ function checkProvider(candidate: unknown): ProviderConfig {
       if (problem)
         errors.push({ pointer: `/endpoints/${name}`, detail: problem });
     }
+  // A Copilot provider has none: the user's installed client answers.
+  const copilot =
+    object(candidate) &&
+    object(candidate.subscription) &&
+    candidate.subscription.backend === "copilot";
   if (object(candidate) && object(candidate.endpoints))
-    if (Object.keys(candidate.endpoints).length === 0)
+    if (copilot !== (Object.keys(candidate.endpoints).length === 0))
       errors.push({
         pointer: "/endpoints",
-        detail: "must name at least one endpoint",
+        detail: copilot
+          ? "must be empty for a Copilot provider"
+          : "must name at least one endpoint",
       });
   if (errors.length || !isProviderConfig(candidate))
     throw invalid(
@@ -658,21 +665,23 @@ export function registerModelPlaneRoutes(
       let models: ProviderModel[] | undefined;
       let failure: ApiProblem | undefined;
       let key: string | undefined;
+      // A subscription account lists only when it may be used: ChatGPT with
+      // its access token, Copilot through its own client.
+      const account = listed.subscription
+        ? listed.credentials.find(
+            (item) => item.enabled && accountUsable(item.account),
+          )
+        : undefined;
+      const copilot = listed.subscription?.backend === "copilot";
       try {
-        // A subscription account lists with its access token, and only
-        // when it may be used.
-        const account = listed.subscription
-          ? listed.credentials.find(
-              (item) => item.enabled && accountUsable(item.account),
-            )
-          : undefined;
         if (listed.subscription && (!account || !options.subscriptions))
           throw new Error("no usable account");
-        key = account
-          ? await options.subscriptions!.accessToken(listed, account)
-          : credential
-            ? await secrets.resolve(credential.ref, options.environment)
-            : undefined;
+        key =
+          account && !copilot
+            ? await options.subscriptions!.accessToken(listed, account)
+            : credential && !listed.subscription
+              ? await secrets.resolve(credential.ref, options.environment)
+              : undefined;
       } catch {
         failure = new ApiProblem(
           "CREDENTIAL_UNAVAILABLE",
@@ -684,7 +693,10 @@ export function registerModelPlaneRoutes(
       }
       if (!failure)
         try {
-          models = await fetchModelList(listed, key);
+          models =
+            copilot && account
+              ? await options.subscriptions!.listModels(listed, account)
+              : await fetchModelList(listed, key);
         } catch (error) {
           if (!(error instanceof ModelListError)) throw error;
           failure = new ApiProblem(

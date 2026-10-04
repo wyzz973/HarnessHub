@@ -197,6 +197,7 @@ Session 的 Run 经守护进程端口上的共享网关使用模型（03 第 10 
 | `limits` | `resolveHandlerLimits(input)`（[limits.ts](../packages/gateway/src/limits.ts)）的结果；它是默认值的唯一来源，未知字段或越界值抛出 `RangeError` |
 | `log` | 可选的 `LogSink`：账本写入失败、touch 失败、熔断状态变化、`least-used` 初值读取失败与内部错误 |
 | `subscriptions` | 订阅账号的令牌管理器（[siwc.ts](../packages/gateway/src/siwc.ts) 的 `SiwcTokens`）：每个账号同一时间至多一次续期；没有它时订阅账号的调用以 `credential_unavailable` 失败 |
+| `copilot` | Copilot 账号的客户端（[copilot.ts](../packages/gateway/src/copilot.ts) 的 `CopilotRuntime`，守护进程以每个账号一个宿主进程实现）；处理函数的 `CopilotBridge` 拥有会话并在 `close()` 中关闭它们；没有它时 Copilot 账号的调用以 `subscription_unavailable` 失败 |
 | `allowances` | 额度读数的保存位置（守护进程：`<dataDir>/allowance-readings.json`）：启动时读回，变化后一分钟内与 `close()` 时保存，失败只写日志；没有它时读数只在内存中 |
 | `codexBackend` | 只供测试：Codex 透传转发到的基址，测试把它指向回环假服务；守护进程不设置，即 `https://chatgpt.com/backend-api/codex`，没有对应的用户配置项 |
 
@@ -238,7 +239,7 @@ Session 的 Run 经守护进程端口上的共享网关使用模型（03 第 10 
 ### 路由、重试与熔断
 
 - 单个 Model Ref 的候选是该 provider 的 Credential；路由组按策略排列：`order` 按配置；`rotate` 每次调用从下一个成员开始；`latency` 取首内容时间指数平均最小的成员，样本少于 5 次的成员优先，只统计本处理函数启动以来的调用；`least-used`（Magpie 的 `usage`）把所有成员的 Credential 放在一起排序：先按上游最近一次答复的限流头中已用的比例（取尚未到重置时间的窗口中最满的一个，取整到百分点；OpenAI 的 `x-ratelimit-{limit,remaining,reset}-*` 与 Anthropic 的 `anthropic-ratelimit-*-{limit,remaining,reset}` 都按此读取，没有读数时为 0），再按该 Credential 服务的 token 数（五项之和，成功的调用至少计 1，每小时减半），都相同时保持配置顺序。处理函数启动时从账本读取最近 8 小时、至多 5000 条成功调用作为初值；`least-used` 的组在初值读完之前等待，读取失败写日志 `gateway.usage.seed_failed`，初值为空。`smart` 与 `pace`（Magpie 的同名路由）按 Credential 的额度读数排序，规则与读数来源见 [订阅账号](subscriptions.md#额度读数与-smartpace)；读数（含上述限流头）由 `deps.allowances` 保存与读回。
-- **订阅 provider**（`ProviderConfig.subscription`，[订阅账号](subscriptions.md)）：每个 Credential 是一个账号，只有接受了当前风险告知且已登录的账号成为候选（否则跳过并说明），总是转换到该后端的端点（ChatGPT 套餐：Responses，按 `siwc` 编码），令牌经 `deps.subscriptions` 取得。带 `allowLan` 的 Key 看不到、也用不到订阅 provider 的模型。
+- **订阅 provider**（`ProviderConfig.subscription`，[订阅账号](subscriptions.md)）：每个 Credential 是一个账号，只有接受了当前风险告知且已登录的账号成为候选（否则跳过并说明），总是转换到该后端的端点（ChatGPT 套餐：Responses，按 `siwc` 编码，令牌经 `deps.subscriptions` 取得；Copilot：没有端点，Chat 请求交给 `deps.copilot` 的会话，见 [订阅账号](subscriptions.md#github-copilot)）。带 `allowLan` 的 Key 看不到、也用不到订阅 provider 的模型。
 - **粘性**（[sticky.ts](../packages/gateway/src/sticky.ts)）让同一会话留在上次应答的 Credential，以保持上游提示缓存与推理签名有效。会话键依次取 `x-hh-conversation` 请求头、客户端自带的标识（Chat 与 Responses 的 `prompt_cache_key`，Anthropic `metadata.user_id` 中的 `session_…` 部分），否则为 system 文本加第一条用户消息的哈希；所有会话键都按 Gateway Key 隔离。请求以工具结果结尾（Chat 的 `tool` 消息、Responses 的 `function_call_output`、Anthropic 的 `tool_result`、Gemini 的 `functionResponse`）时视为同一轮之内。模式取路由组的 `stickiness`，单个 Model Ref 为 `auto`；`session:` Key 在 `auto` 时改为 `session`：
   - `auto`：同一轮内总是留下；跨轮只有上次调用读取了至少 1024 个缓存 token、且距今不到 5 分钟才留下。
   - `session`：总是留下；`turn`：只在同一轮内留下；`off`：不粘。
@@ -330,7 +331,7 @@ node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js
 
 ## 变更记录
 
-- **2026-10-04：订阅账号**（[ADR 0026](decisions/0026-subscription-accounts.md)）。provider 可以是订阅（`subscription: {backend: "siwc"}`），Credential 是账号（`account`）；ChatGPT 套餐经 Sign in with ChatGPT 登录与调用，请求按预览要求整形，`subscription_sharing_*` 错误按 OpenAI 的说明映射；账号接受当前风险告知前不可用，只服务本机。新增路由策略 `smart` 与 `pace` 及额度读数的保存。
+- **2026-10-04：订阅账号**（[ADR 0026](decisions/0026-subscription-accounts.md)）。provider 可以是订阅（`subscription: {backend: "siwc"}`），Credential 是账号（`account`）；ChatGPT 套餐经 Sign in with ChatGPT 登录与调用，请求按预览要求整形，`subscription_sharing_*` 错误按 OpenAI 的说明映射；账号接受当前风险告知前不可用，只服务本机。新增路由策略 `smart` 与 `pace` 及额度读数的保存。GitHub Copilot 账号（`subscription: {backend: "copilot"}`）经 Copilot SDK 驱动用户安装的 Copilot CLI：网关的 `CopilotBridge` 把 Chat 请求交给按对话延续的会话，工具调用交回调用方，额度报告成为读数。
 
 - **2026-10-04：对齐 Magpie 的路由**（[ADR 0025](decisions/0025-magpie-routing-parity.md)）。上游失败按 Magpie 的类别判定，各类别休息不同时长（余额 30 分钟、额度到厂商说明的重置或 15 分钟、最长 8 天、限流按响应头或 1 分钟、其他失败三次后 1 分钟起翻倍）；尝试的 `errorClass` 随类别取值，402 与余额措辞为 `insufficient_balance`，`insufficient_quota` 不再记为 `quota_exhausted`。失败在还有其他可尝试的候选时立即转移，只在最后一个候选上重试，默认等待 1、2、4 秒、超过 8 秒不等，取消了抖动；`DEFAULT_RETRY_POLICY` 改为 `perCandidate: 3`、`baseBackoffMs: 1000`。`least-used` 改为按 Credential 排序：限流窗口已用比例，其次是每小时减半的 token 数，并从账本取初值。新增自动路由组 `group/auto-<slug>`、`X-HH-Credential` 钉选、账本的 `conversationKey` 与 `agent`、会话视图与按 Credential 的用量、Codex 透传 `/backend-api/codex/*`；转换到 Responses 上游时回传工具调用之前的推理项。
 

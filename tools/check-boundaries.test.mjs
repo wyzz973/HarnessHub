@@ -1211,6 +1211,25 @@ test("agents' assets/ and applications' bin/ import only declared packages and s
     ).join("\n"),
     /nonliteral import\/require cannot be checked/,
   );
+  // The Copilot host loads the optional SDK add-on; other daemon assets may not.
+  const daemon = new Set(["@harnesshub/core"]);
+  const addon = "const sdk = await import(pathToFileURL(entry).href);";
+  assert.deepEqual(
+    checkAt("packages/daemon/assets/copilot-host.mjs", addon, daemon),
+    [],
+  );
+  assert.match(
+    checkAt("packages/daemon/assets/other-host.mjs", addon, daemon).join("\n"),
+    /nonliteral import\/require cannot be checked/,
+  );
+  assert.match(
+    checkAt(
+      "packages/daemon/assets/copilot-host.mjs",
+      'import { CopilotClient } from "@github/copilot-sdk";',
+      daemon,
+    ).join("\n"),
+    /packages\/daemon imports @github\/copilot-sdk without declaring it/,
+  );
   const hh = new Set(["@harnesshub/cli", "@harnesshub/daemon"]);
   assert.deepEqual(
     checkAt(

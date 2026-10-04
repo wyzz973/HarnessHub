@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 /**
  * Subscription accounts (ADR-P09): signing in to ChatGPT with Sign in with
- * ChatGPT for open-source apps, signing out, and the allowance readings file.
- * The daemon owns the loopback callback listener of each sign-in attempt and
- * the account records; tokens go to the secret store only.
+ * ChatGPT for open-source apps and to GitHub Copilot with the user's
+ * installed Copilot CLI, signing out, and the allowance readings file. The
+ * daemon owns the loopback callback listener of each ChatGPT sign-in attempt
+ * and the account records; tokens go to the secret store only.
  */
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
@@ -17,15 +18,19 @@ import type {
   ProviderConfig,
   ProviderCredential,
   ProviderId,
+  ProviderModel,
 } from "@harnesshub/core/model-plane";
 import { isProviderId } from "@harnesshub/core/model-plane";
 import { isTimestamp } from "@harnesshub/core/model-plane-records";
 import {
   SUBSCRIPTION_NOTICES,
-  type SubscriptionAccount,
+  type CopilotAccount,
+  type CopilotAuth,
+  type SiwcAccount,
   type SubscriptionBackend,
   type SubscriptionNotice,
 } from "@harnesshub/core/subscriptions";
+import { CopilotError } from "@harnesshub/gateway/copilot";
 import {
   decodeBundle,
   encodeBundle,
@@ -37,15 +42,29 @@ import {
   type SubscriptionTokens,
 } from "@harnesshub/gateway/siwc";
 import type { StoredReading } from "@harnesshub/gateway/routing";
+import {
+  encodeCopilotSecret,
+  isFineGrainedToken,
+  type CopilotHosts,
+} from "./copilot.js";
 import type { ManagedSecrets } from "./http/api-v1.js";
+import { ModelListError } from "./http/model-list.js";
 import type {
+  CopilotSetup,
+  SignInInput,
   SignInView,
   SubscriptionAccountView,
   SubscriptionControl,
 } from "./http/subscription-routes.js";
 
-/** The provider a first ChatGPT sign-in creates when none is named. */
-export const DEFAULT_SIWC_PROVIDER = "chatgpt" as ProviderId;
+/** The provider a first sign-in creates when none is named, by backend. */
+export const DEFAULT_SUBSCRIPTION_PROVIDERS: Readonly<
+  Record<SubscriptionBackend, ProviderId>
+> = { siwc: "chatgpt" as ProviderId, copilot: "copilot" as ProviderId };
+const PROVIDER_NAMES: Readonly<Record<SubscriptionBackend, string>> = {
+  siwc: "ChatGPT plan",
+  copilot: "GitHub Copilot",
+};
 /** How long a sign-in attempt waits for the browser to come back. */
 const ATTEMPT_MS = 10 * 60_000;
 /** Finished attempts stay readable this long. */
@@ -76,6 +95,8 @@ function page(title: string, text: string): string {
  */
 export class SubscriptionService implements SubscriptionControl {
   #attempts = new Map<string, Attempt>();
+  /** Finished Copilot sign-ins, which complete within their request. */
+  #finished = new Map<string, SignInView>();
   #closed = false;
   constructor(
     private readonly options: {
@@ -88,6 +109,8 @@ export class SubscriptionService implements SubscriptionControl {
       directory: string;
       /** The Responses base of a provider a first sign-in creates. */
       responsesBase: string;
+      /** Copilot accounts' clients; without it Copilot sign-ins fail as unavailable. */
+      copilot?: CopilotHosts;
       serialize: <T>(operation: () => Promise<T>) => Promise<T>;
       clock: () => number;
       log: LogSink;
@@ -116,6 +139,9 @@ export class SubscriptionService implements SubscriptionControl {
           credential: credential.id,
           backend: account.backend,
           ...(account.email ? { email: account.email } : {}),
+          ...(account.backend === "copilot"
+            ? { login: account.subject, auth: account.auth }
+            : {}),
           enabled: credential.enabled,
           signedIn: account.signedOutAt === undefined,
           noticeAccepted: current,
@@ -126,6 +152,32 @@ export class SubscriptionService implements SubscriptionControl {
       }
     }
     return views;
+  }
+
+  async listModels(
+    _provider: ProviderConfig,
+    credential: ProviderCredential,
+  ): Promise<ProviderModel[]> {
+    if (!this.options.copilot)
+      throw new ModelListError(
+        "Copilot accounts are not available in this daemon",
+      );
+    try {
+      return await this.options.copilot.models(credential);
+    } catch (error) {
+      if (!(error instanceof CopilotError)) throw error;
+      throw new ModelListError(error.message);
+    }
+  }
+
+  async copilotSetup(): Promise<CopilotSetup> {
+    if (!this.options.copilot)
+      throw new HubError(
+        "COPILOT_UNAVAILABLE",
+        "Copilot accounts are not available in this daemon",
+        503,
+      );
+    return this.options.copilot.setup();
   }
 
   accessToken(
@@ -166,12 +218,7 @@ export class SubscriptionService implements SubscriptionControl {
     return id;
   }
 
-  async startSignIn(input: {
-    backend: SubscriptionBackend;
-    provider?: string;
-    credential?: string;
-    acceptNotice: string;
-  }): Promise<SignInView> {
+  async startSignIn(input: SignInInput): Promise<SignInView> {
     if (this.#closed)
       throw new HubError("SUBSCRIPTIONS_CLOSED", "The daemon is stopping", 503);
     const notice = SUBSCRIPTION_NOTICES[input.backend];
@@ -181,27 +228,47 @@ export class SubscriptionService implements SubscriptionControl {
         `Accept the current notice (${notice.version}) to sign in; read it with hh subscription notice`,
         409,
       );
-    const providerId = (input.provider ?? DEFAULT_SIWC_PROVIDER) as ProviderId;
+    if (
+      input.backend !== "copilot" &&
+      (input.auth ?? input.token) !== undefined
+    )
+      throw new HubError(
+        "SIGN_IN_INVALID",
+        "auth and token apply to Copilot sign-ins only",
+        400,
+      );
+    const providerId = (input.provider ??
+      DEFAULT_SUBSCRIPTION_PROVIDERS[input.backend]) as ProviderId;
     if (!isProviderId(providerId))
       throw new HubError("PROVIDER_ID_INVALID", "Not a provider ID", 400);
     const existing = await this.options.store.getProvider(providerId);
     if (existing && existing.subscription?.backend !== input.backend)
       throw new HubError(
         "PROVIDER_NOT_SUBSCRIPTION",
-        `Provider ${providerId} is not a ChatGPT subscription provider`,
+        `Provider ${providerId} is not a ${PROVIDER_NAMES[input.backend]} subscription provider`,
         409,
       );
+    const returningCredential =
+      input.credential === undefined
+        ? undefined
+        : existing?.credentials.find((item) => item.id === input.credential);
+    if (input.credential !== undefined && !returningCredential?.account)
+      throw new HubError(
+        "CREDENTIAL_NOT_FOUND",
+        `Provider ${providerId} has no account ${JSON.stringify(input.credential).slice(0, 120)}`,
+        404,
+      );
+    if (input.backend === "copilot")
+      return this.#copilotSignIn(input, providerId, returningCredential);
     let returning: Attempt["returning"];
     let loginHint: string | undefined;
     let idTokenHint: string | undefined;
-    if (input.credential !== undefined) {
-      const credential = existing?.credentials.find(
-        (item) => item.id === input.credential,
-      );
-      if (!credential?.account)
+    if (returningCredential) {
+      const credential = returningCredential;
+      if (credential.account?.backend !== "siwc")
         throw new HubError(
           "CREDENTIAL_NOT_FOUND",
-          `Provider ${providerId} has no account ${JSON.stringify(input.credential).slice(0, 120)}`,
+          `Provider ${providerId} has no ChatGPT account ${credential.id}`,
           404,
         );
       returning = {
@@ -295,7 +362,112 @@ export class SubscriptionService implements SubscriptionControl {
 
   signIn(id: string): SignInView | undefined {
     const attempt = this.#attempts.get(id);
-    return attempt && { ...attempt.view };
+    const view = attempt?.view ?? this.#finished.get(id);
+    return view && { ...view };
+  }
+
+  /**
+   * A Copilot sign-in, finished within the request: Copilot reports who the
+   * user's CLI login or the given token signs in as, and the account is
+   * saved. A token must be a fine-grained personal access token.
+   */
+  async #copilotSignIn(
+    input: SignInInput,
+    providerId: ProviderId,
+    returning: ProviderCredential | undefined,
+  ): Promise<SignInView> {
+    const copilot = this.options.copilot;
+    if (!copilot)
+      throw new HubError(
+        "COPILOT_UNAVAILABLE",
+        "Copilot accounts are not available in this daemon",
+        503,
+      );
+    const auth: CopilotAuth =
+      input.auth ?? (input.token !== undefined ? "token" : "login");
+    if (auth === "token" && !isFineGrainedToken(input.token ?? ""))
+      throw new HubError(
+        "COPILOT_TOKEN_INVALID",
+        "Use a fine-grained personal access token (github_pat_...) with the Copilot Requests permission",
+        400,
+      );
+    if (auth === "login" && input.token !== undefined)
+      throw new HubError(
+        "SIGN_IN_INVALID",
+        "A token signs in with auth token, not login",
+        400,
+      );
+    const previous = returning?.account;
+    if (
+      returning &&
+      (previous?.backend !== "copilot" || previous.auth !== auth)
+    )
+      throw new HubError(
+        "CREDENTIAL_NOT_FOUND",
+        `Provider ${providerId} has no Copilot ${auth} account ${returning.id}`,
+        404,
+      );
+    const now = this.options.clock();
+    let view: SignInView = {
+      id: randomUUID(),
+      backend: "copilot",
+      status: "pending",
+      provider: providerId,
+    };
+    try {
+      const identity = await copilot.identify(auth, input.token);
+      if (previous && previous.subject !== identity.login)
+        throw new CopilotError(
+          "That is another GitHub account than the one signing in",
+          "signed_out",
+        );
+      const account: CopilotAccount = {
+        backend: "copilot",
+        subject: identity.login,
+        host: identity.host,
+        auth,
+        consent: {
+          notice: SUBSCRIPTION_NOTICES.copilot.version,
+          acceptedAt: new Date(now).toISOString(),
+        },
+      };
+      const saved = await this.#store(
+        providerId,
+        "copilot",
+        account,
+        (item) =>
+          item.account?.backend === "copilot" &&
+          item.account.subject === account.subject &&
+          item.account.host === account.host &&
+          item.account.auth === auth,
+        encodeCopilotSecret({
+          v: 1,
+          ...(auth === "token" ? { token: input.token! } : {}),
+        }),
+        identity.login,
+      );
+      view = {
+        ...view,
+        status: "succeeded",
+        credential: saved.credential,
+        login: identity.login,
+        firstSignIn: saved.first,
+      };
+    } catch (error) {
+      if (!(error instanceof CopilotError)) throw error;
+      this.options.log.info("subscriptions.sign_in_failed", {
+        backend: "copilot",
+        code: error.code,
+      });
+      view = { ...view, status: "failed", error: error.message };
+    }
+    this.#finished.set(view.id, view);
+    const expire = setTimeout(
+      () => this.#finished.delete(view.id),
+      KEEP_FINISHED_MS,
+    );
+    expire.unref();
+    return { ...view };
   }
 
   async #callback(
@@ -380,54 +552,74 @@ export class SubscriptionService implements SubscriptionControl {
     }
   }
 
-  /** Store the account: a new credential, or the returning one with new tokens and consent. */
-  async #save(
+  /** Store a ChatGPT account. */
+  #save(
     attempt: Attempt,
     clientId: string,
     identity: { subject: string; email?: string },
     bundle: string,
   ): Promise<{ credential: CredentialId; first: boolean }> {
+    const account: SiwcAccount = {
+      backend: "siwc",
+      subject: identity.subject,
+      ...(identity.email ? { email: identity.email } : {}),
+      clientId,
+      consent: {
+        notice: SUBSCRIPTION_NOTICES.siwc.version,
+        acceptedAt: attempt.consentAt,
+      },
+    };
+    return this.#store(
+      attempt.view.provider as ProviderId,
+      "siwc",
+      account,
+      (item) =>
+        item.account?.backend === "siwc" &&
+        item.account.subject === identity.subject &&
+        item.account.clientId === clientId,
+      bundle,
+      identity.email ?? identity.subject,
+    );
+  }
+
+  /**
+   * Store an account: a new credential, or the known one with its new
+   * secret and consent. Creates the provider on a first sign-in.
+   */
+  async #store(
+    providerId: ProviderId,
+    backend: SubscriptionBackend,
+    account: SiwcAccount | CopilotAccount,
+    known: (credential: ProviderCredential) => boolean,
+    secret: string,
+    name: string,
+  ): Promise<{ credential: CredentialId; first: boolean }> {
     const { store, secrets, serialize } = this.options;
     return serialize(async () => {
       const now = new Date(this.options.clock()).toISOString();
-      const providerId = attempt.view.provider as ProviderId;
       const current =
         (await store.getProvider(providerId)) ??
-        this.#newProvider(providerId, now);
-      const account: SubscriptionAccount = {
-        backend: attempt.view.backend,
-        subject: identity.subject,
-        ...(identity.email ? { email: identity.email } : {}),
-        clientId,
-        consent: {
-          notice: SUBSCRIPTION_NOTICES[attempt.view.backend].version,
-          acceptedAt: attempt.consentAt,
-        },
-      };
-      const known = current.credentials.find(
-        (item) =>
-          item.account?.subject === identity.subject &&
-          item.account.clientId === clientId,
-      );
-      if (known) {
-        await secrets.rotate(known.ref, bundle);
-        this.options.tokens.forget(known);
+        this.#newProvider(providerId, backend, now);
+      const found = current.credentials.find(known);
+      if (found) {
+        await secrets.rotate(found.ref, secret);
+        await this.#forget(found);
         await store.putProvider({
           ...current,
           credentials: current.credentials.map((item) =>
-            item === known ? { ...item, enabled: true, account } : item,
+            item === found ? { ...item, enabled: true, account } : item,
           ),
           updatedAt: now,
         });
-        return { credential: known.id, first: false };
+        return { credential: found.id, first: false };
       }
-      const ref = await secrets.create(bundle);
+      const ref = await secrets.create(secret);
       let index = current.credentials.length + 1;
       while (current.credentials.some((item) => item.id === `account-${index}`))
         index++;
       const credential: ProviderCredential = {
         id: `account-${index}` as CredentialId,
-        name: identity.email ?? identity.subject.slice(0, 200),
+        name: name.slice(0, 200),
         ref,
         enabled: true,
         account,
@@ -446,20 +638,33 @@ export class SubscriptionService implements SubscriptionControl {
     });
   }
 
-  #newProvider(id: ProviderId, now: string): ProviderConfig {
+  #newProvider(
+    id: ProviderId,
+    backend: SubscriptionBackend,
+    now: string,
+  ): ProviderConfig {
     return {
       schemaVersion: 1,
       id,
-      name: "ChatGPT plan",
+      name: PROVIDER_NAMES[backend],
       kind: "vendor",
-      endpoints: { responses: this.options.responsesBase },
+      // Copilot answers through the user's installed client.
+      endpoints:
+        backend === "siwc" ? { responses: this.options.responsesBase } : {},
       auth: { apiKeyHeader: "authorization-bearer" },
       credentials: [],
       models: { source: "live", list: [], expose: "all" },
-      subscription: { backend: "siwc" },
+      subscription: { backend },
       createdAt: now,
       updatedAt: now,
     };
+  }
+
+  /** Drop what is cached for an account: SIWC tokens, or its Copilot host. */
+  async #forget(credential: ProviderCredential): Promise<void> {
+    if (credential.account?.backend === "copilot")
+      await this.options.copilot?.stop(credential);
+    else this.options.tokens.forget(credential);
   }
 
   #finish(
@@ -491,17 +696,20 @@ export class SubscriptionService implements SubscriptionControl {
   }
 
   async revoke(credential: ProviderCredential): Promise<boolean> {
-    this.options.tokens.forget(credential);
+    const account = credential.account;
     try {
+      await this.#forget(credential);
+      // Copilot holds no session of HarnessHub's own to end.
+      if (account?.backend !== "siwc") return true;
       const bundle = decodeBundle(
         await this.options.secrets.resolve(
           credential.ref,
           this.options.environment,
         ),
       );
-      return bundle.refreshToken && credential.account
+      return bundle.refreshToken
         ? await this.options.client.revoke({
-            clientId: credential.account.clientId,
+            clientId: account.clientId,
             refreshToken: bundle.refreshToken,
           })
         : true;
@@ -526,22 +734,31 @@ export class SubscriptionService implements SubscriptionControl {
           `No subscription account ${JSON.stringify(credentialId).slice(0, 120)} of provider ${JSON.stringify(providerId).slice(0, 120)}`,
           404,
         );
-      let revoked = true;
-      try {
-        const bundle = decodeBundle(
-          await secrets.resolve(credential.ref, this.options.environment),
-        );
-        if (bundle.refreshToken)
-          revoked = await this.options.client.revoke({
-            clientId: credential.account.clientId,
-            refreshToken: bundle.refreshToken,
-          });
-      } catch {
-        revoked = false;
-      }
+      const account = credential.account;
+      // Copilot: the CLI's own login is the user's; a token stays valid at
+      // GitHub until the user revokes it there.
+      let revoked = account.backend === "siwc";
+      if (account.backend === "siwc")
+        try {
+          const bundle = decodeBundle(
+            await secrets.resolve(credential.ref, this.options.environment),
+          );
+          if (bundle.refreshToken)
+            revoked = await this.options.client.revoke({
+              clientId: account.clientId,
+              refreshToken: bundle.refreshToken,
+            });
+        } catch {
+          revoked = false;
+        }
       // The tokens go; the registration (client ID, account) stays for a later sign-in.
-      await secrets.rotate(credential.ref, encodeBundle({ v: 1 }));
-      this.options.tokens.forget(credential);
+      await secrets.rotate(
+        credential.ref,
+        account.backend === "siwc"
+          ? encodeBundle({ v: 1 })
+          : encodeCopilotSecret({ v: 1 }),
+      );
+      await this.#forget(credential);
       await store.putProvider({
         ...provider,
         credentials: provider.credentials.map((item) =>

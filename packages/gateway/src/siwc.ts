@@ -22,6 +22,7 @@ import type {
   ProviderCredential,
 } from "@harnesshub/core/model-plane";
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
+import type { SiwcAccount } from "@harnesshub/core/subscriptions";
 
 /** The fixed values of the flow, from OpenAI's SIWC documentation. */
 export const SIWC = Object.freeze({
@@ -517,7 +518,7 @@ export class SiwcTokens implements SubscriptionTokens {
     signal: AbortSignal,
   ): Promise<string> {
     const account = credential.account;
-    if (!account || account.signedOutAt !== undefined)
+    if (account?.backend !== "siwc" || account.signedOutAt !== undefined)
       throw new SiwcError(
         `The ChatGPT account of credential ${credential.id} is signed out`,
         "signed_out",
@@ -529,8 +530,8 @@ export class SiwcTokens implements SubscriptionTokens {
     if (cached && cached.expiresAt - now > RENEW_BEFORE_MS) return cached.token;
     let pending = this.#pending.get(key);
     if (!pending) {
-      pending = this.#renew(key, provider, credential).finally(() =>
-        this.#pending.delete(key),
+      pending = this.#renew(key, provider, { ...credential, account }).finally(
+        () => this.#pending.delete(key),
       );
       this.#pending.set(key, pending);
     }
@@ -547,9 +548,9 @@ export class SiwcTokens implements SubscriptionTokens {
   async #renew(
     key: string,
     provider: ProviderConfig,
-    credential: ProviderCredential,
+    credential: ProviderCredential & { account: SiwcAccount },
   ): Promise<string> {
-    const account = credential.account!;
+    const { account } = credential;
     const bundle = decodeBundle(await this.options.read(credential.ref));
     const now = this.options.clock();
     if (

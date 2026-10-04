@@ -76,6 +76,7 @@ import {
   type StoredReading,
 } from "./routing.js";
 import type { SubscriptionTokens } from "./siwc.js";
+import { CopilotBridge, type CopilotRuntime } from "./copilot.js";
 
 /** The Run a `session:` key's calls belong to, and the model target it selected. */
 export interface ActiveSessionRun {
@@ -129,6 +130,12 @@ export interface GatewayHandlerDeps {
    * ./siwc.js). Without it their calls fail as `credential_unavailable`.
    */
   subscriptions?: SubscriptionTokens;
+  /**
+   * The Copilot client of each Copilot account (./copilot.js); the handler's
+   * bridge owns the sessions and closes them in `close()`. Without it those
+   * calls fail as `subscription_unavailable`.
+   */
+  copilot?: CopilotRuntime;
   /**
    * Where the last allowance readings persist between runs (`smart` and
    * `pace`): loaded once at start, saved within a minute of a change and on
@@ -470,6 +477,9 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     sticky: new StickyRoutes(clock),
     quotas: new Quotas(store, clock),
     ...(deps.subscriptions ? { subscriptions: deps.subscriptions } : {}),
+    ...(deps.copilot
+      ? { copilot: new CopilotBridge(deps.copilot, clock) }
+      : {}),
     makeId: () => `call_${nonce}${(generated++).toString(36)}`,
     async commit(entry: ModelCallEntry): Promise<boolean> {
       try {
@@ -1701,6 +1711,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         shutdown.abort();
         clearInterval(saver);
         while (tasks.size) await Promise.allSettled([...tasks]);
+        await services.copilot?.close();
         for (const record of throttle.drain()) await services.commit(record);
         await saveReadings();
       })();

@@ -389,7 +389,7 @@ export async function mount(
   limits: Record<string, number> = {},
   deps: Pick<
     GatewayHandlerDeps,
-    "log" | "codexBackend" | "subscriptions" | "allowances"
+    "log" | "codexBackend" | "subscriptions" | "allowances" | "copilot"
   > = {},
 ): Promise<Mounted> {
   const clock = { now: Date.parse("2026-10-02T12:00:00.000Z") };

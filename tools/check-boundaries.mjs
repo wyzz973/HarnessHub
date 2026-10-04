@@ -32,7 +32,7 @@
  *   @harnesshub/store and node:child_process in runtime's process/
  *   (PROCESS_LAUNCHERS); everything else takes an injected ProcessLauncher.
  *
- * agents' assets/ and applications' bin/ ship inside their packages as
+ * Packages' assets/ and applications' bin/ ship inside their packages as
  * programs run by path: they get the declared-dependency rule and stay
  * inside their package, but not the module-placement rules, because the
  * assets launchers start the engine they wrap themselves and are documented
@@ -149,11 +149,15 @@ const PROGRAM_AREAS = { packages: ["assets"], apps: ["bin"] };
 /**
  * The only files allowed a computed dynamic import, each with its reason:
  * the Pi extension imports the MCP SDK from the engine's own installation,
- * whose location it receives at run time.
+ * whose location it receives at run time; the Copilot host imports the
+ * Copilot SDK, an optional add-on, from the add-on directory the daemon
+ * names (ADR 0026).
  */
 export const COMPUTED_IMPORTS = {
   "packages/agents/assets/native-mcp/pi-extension.mjs":
     "loads the MCP SDK from the engine's own installation",
+  "packages/daemon/assets/copilot-host.mjs":
+    "loads the optional Copilot SDK add-on from its directory",
 };
 
 /** Dependency fields whose packages a file may import, by package area. */

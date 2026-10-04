@@ -23,7 +23,7 @@ import {
   type WiringProfile,
   type WiringRecord,
 } from "./model-plane.js";
-import { subscriptionBackends } from "./subscriptions.js";
+import { copilotAuthModes, subscriptionBackends } from "./subscriptions.js";
 
 type Check = (value: unknown) => boolean;
 
@@ -181,7 +181,9 @@ const subscriptionAccount: Check = (value) =>
   member(subscriptionBackends)(value.backend) &&
   text(512)(value.subject) &&
   optional(value.email, text(320)) &&
-  text(512)(value.clientId) &&
+  (value.backend === "siwc"
+    ? text(512)(value.clientId)
+    : member(copilotAuthModes)(value.auth) && text(512)(value.host)) &&
   object(value.consent) &&
   text(200)(value.consent.notice) &&
   isTimestamp(value.consent.acceptedAt) &&
@@ -259,7 +261,10 @@ export function isProviderConfig(value: unknown): value is ProviderConfig {
     (value.preset !== undefined ||
       (value.region === undefined && value.plan === undefined)) &&
     optional(value.catalog, slug) &&
-    endpoints(value.endpoints) &&
+    // Copilot answers through the user's installed client, not an endpoint.
+    (object(value.subscription) && value.subscription.backend === "copilot"
+      ? object(value.endpoints) && Object.keys(value.endpoints).length === 0
+      : endpoints(value.endpoints)) &&
     object(value.auth) &&
     apiKeyHeader(value.auth.apiKeyHeader) &&
     optional(value.headers, record(anyText(8192))) &&

@@ -78,6 +78,11 @@ import {
 import { responsesToChat, ResponsesSink, streamCode } from "./responses.js";
 import { SiwcError, type SubscriptionTokens } from "./siwc.js";
 import {
+  CopilotError,
+  copilotUnmapped,
+  type CopilotBridge,
+} from "./copilot.js";
+import {
   backoff,
   classify,
   failureClass,
@@ -246,6 +251,8 @@ export interface CallServices {
   commit(entry: ModelCallEntry): Promise<boolean>;
   /** Access tokens of subscription accounts; without it their candidates fail as unavailable. */
   subscriptions?: SubscriptionTokens;
+  /** Answers Copilot accounts' calls; without it their candidates fail as unavailable. */
+  copilot?: CopilotBridge;
 }
 
 /** Route parts of a model call. */
@@ -330,11 +337,6 @@ function localError(
 }
 
 /**
- * An upstream refusal or an in-stream error as an attempt error. Its kind
- * comes from the status and `body`, the whole error body when there is one
- * (read for routing only, never stored), else the message.
- */
-/**
  * A subscription's used-up plan, worded as its vendor asks: where the user
  * reviews the plan's or this app's limit (SIWC UI/UX guidelines).
  */
@@ -342,10 +344,14 @@ function usageHint(candidate: Candidate, error: AttemptError): AttemptError {
   const backend = candidate.provider.subscription?.backend;
   if (!backend || error.kind !== "quota") return error;
   const notice = SUBSCRIPTION_NOTICES[backend];
+  const where =
+    backend === "siwc"
+      ? "Review your plan or this app's limit in ChatGPT settings"
+      : "Review your Copilot plan and premium request budget in GitHub billing settings";
   error.failure = {
     ...error.failure,
     message:
-      `Usage limit reached. Review your plan or this app's limit in ChatGPT settings: ${notice.manageUsageUrl} (${error.failure.message})`.slice(
+      `Usage limit reached. ${where}: ${notice.manageUsageUrl} (${error.failure.message})`.slice(
         0,
         500,
       ),
@@ -353,6 +359,36 @@ function usageHint(candidate: Candidate, error: AttemptError): AttemptError {
   return error;
 }
 
+/** A Copilot account that cannot serve: sign in again, or its client is unavailable. */
+function copilotFailure(
+  candidate: Candidate,
+  error: CopilotError,
+): AttemptError {
+  const account = candidate.credential.account;
+  return error.terminal
+    ? localError(
+        401,
+        "subscription_sign_in_needed",
+        `The Copilot account ${account?.subject ?? candidate.credential.name} of provider ${candidate.provider.id} must sign in again (hh subscription login copilot --provider ${candidate.provider.id}): ${error.message}`.slice(
+          0,
+          500,
+        ),
+      )
+    : localError(
+        503,
+        "subscription_unavailable",
+        `The Copilot client of provider ${candidate.provider.id} is not available: ${error.message}`.slice(
+          0,
+          500,
+        ),
+      );
+}
+
+/**
+ * An upstream refusal or an in-stream error as an attempt error. Its kind
+ * comes from the status and `body`, the whole error body when there is one
+ * (read for routing only, never stored), else the message.
+ */
 function upstreamFailure(
   error: GatewayError,
   secrets: readonly string[],
@@ -897,7 +933,11 @@ function prepare(call: Call, candidate: Candidate): Prepared {
   if (patches.has("max-tokens-field") && "max_completion_tokens" in body)
     applied.push("max-tokens-field");
   let upstream = body;
-  let unmapped: string[] = [];
+  // A Copilot session takes the messages, tools and reasoning effort only.
+  let unmapped: string[] =
+    candidate.provider.subscription?.backend === "copilot"
+      ? copilotUnmapped(body)
+      : [];
   if (candidate.upstream !== "chat") {
     const { reasoning } = call.services;
     const encoded = encodeRequest(candidate.upstream, body, {
@@ -964,9 +1004,20 @@ async function send(
     };
   }
   const release = () => slots.release();
+  const copilot =
+    candidate.provider.subscription?.backend === "copilot"
+      ? (services.copilot ??
+        new CopilotError(
+          "Copilot is not available in this gateway",
+          "unavailable",
+        ))
+      : undefined;
   let secret = "";
   try {
-    if (candidate.provider.subscription) {
+    if (copilot instanceof CopilotError) throw copilot;
+    if (copilot) {
+      // The bridge's runtime holds the account's sign-in.
+    } else if (candidate.provider.subscription) {
       if (!services.subscriptions)
         throw new SiwcError("No subscription tokens", "unavailable", false);
       secret = await services.subscriptions.accessToken(
@@ -984,6 +1035,8 @@ async function send(
       credential: candidate.credential.id,
       ...(error instanceof SiwcError ? { code: error.code } : {}),
     });
+    if (error instanceof CopilotError)
+      return { ok: false, error: copilotFailure(candidate, error), release };
     const account = candidate.credential.account;
     return {
       ok: false,
@@ -1014,13 +1067,26 @@ async function send(
   }, services.limits.upstreamHeaderTimeoutMs);
   const attemptStarted = performance.now();
   try {
-    const response = await fetch(url, {
-      method: "POST",
-      redirect: "error",
-      signal: AbortSignal.any([call.signal, abort.signal]),
-      headers,
-      body,
-    });
+    const signal = AbortSignal.any([call.signal, abort.signal]);
+    const response = copilot
+      ? await copilot.complete({
+          provider: candidate.provider,
+          credential: candidate.credential,
+          body: String(body),
+          signal,
+          report: (readings) => services.router.report(candidate, readings),
+          patch: (name) => {
+            if (!call.entry.patches.includes(name))
+              call.entry.patches.push(name);
+          },
+        })
+      : await fetch(url, {
+          method: "POST",
+          redirect: "error",
+          signal,
+          headers,
+          body,
+        });
     services.router.observe(candidate, response.headers);
     if (response.ok) {
       timers.clear(timer);
@@ -1069,6 +1135,8 @@ async function send(
         },
         release,
       };
+    if (error instanceof CopilotError)
+      return { ok: false, error: copilotFailure(candidate, error), release };
     const network = networkFailure(error);
     if (network)
       return {
