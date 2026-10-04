@@ -123,11 +123,13 @@ const COMMAND_USAGE: readonly CommandUsage[] = [
     text: `  hh provider list | show <id> | presets | models <id> [--refresh]
               | add <id> --chat URL [--responses URL] [--anthropic URL]
                 [--gemini URL] [--image-endpoint URL] [--name N] [--kind K]
-                [--api-key-header H] [--model ID]...
+                [--api-key-header H] [--model ID]... [--proxy URL|direct]
               | add [<id>] --preset P [--region R] [--plan P] [--name N]
-                [--base URL | --chat URL ...]
+                [--base URL | --chat URL ...] [--proxy URL|direct]
                 [--credential-from-stdin | --credential-from-env VAR
                  | --credential-from-file PATH]
+              | proxy <id> [URL|direct|default]   its own proxy; default
+                follows the daemon's (network.proxy)
               | remove <id>
               | test <id> [--model M]
               | doctor <id> [--model M] [--deep] [--slow-ms N] [--fix]`,
@@ -513,6 +515,7 @@ async function providerCommand(args: string[]): Promise<void> {
     anthropic: { type: "string" },
     gemini: { type: "string" },
     "image-endpoint": { type: "string" },
+    proxy: { type: "string" },
     "api-key-header": { type: "string" },
     model: { type: "string", multiple: true },
     preset: { type: "string" },
@@ -632,6 +635,7 @@ async function providerCommand(args: string[]): Promise<void> {
               ]
             : []),
           ...(item.catalog !== undefined ? [`Catalog:  ${item.catalog}`] : []),
+          ...(item.proxy !== undefined ? [`Proxy:    ${item.proxy}`] : []),
           `Auth:     ${item.auth.apiKeyHeader}`,
           ...Object.entries(item.endpoints).map(
             ([protocol, url]) => `Endpoint: ${protocol} ${url}`,
@@ -712,6 +716,7 @@ async function providerCommand(args: string[]): Promise<void> {
         ...(typeof values["image-endpoint"] === "string"
           ? { imageEndpoint: values["image-endpoint"] }
           : {}),
+        ...(typeof values.proxy === "string" ? { proxy: values.proxy } : {}),
         ...(typeof values.kind === "string"
           ? { kind: values.kind as "vendor" | "relay" | "local" | "custom" }
           : {}),
@@ -737,6 +742,25 @@ async function providerCommand(args: string[]): Promise<void> {
         created,
         () =>
           `Added provider ${created.id}${created.preset ? ` from preset ${created.preset}` : ""}${created.region ? `, region ${created.region}` : ""}${created.plan ? `, plan ${created.plan}` : ""}${created.credentials.length ? " with a stored credential" : ""}`,
+      );
+    }
+    case "proxy": {
+      if (given.length < 1 || given.length > 2)
+        throw new UsageError(
+          "Expected provider proxy <id> [URL|direct|default]",
+        );
+      const [id, choice] = given as [string, string | undefined];
+      const client = await ctx.client();
+      const item =
+        choice === undefined
+          ? await client.providers.get(id)
+          : await client.providers.update(id, {
+              proxy: choice === "default" ? null : choice,
+            });
+      return output(ctx, item, () =>
+        item.proxy === undefined
+          ? `${item.id} follows the daemon's proxy (network.proxy)`
+          : `${item.id} uses ${item.proxy === "direct" ? "no proxy (direct)" : `the proxy ${item.proxy}`}`,
       );
     }
     case "remove":

@@ -31,6 +31,7 @@ import {
   type RouteGroupId,
   wireName,
 } from "@harnesshub/core/model-plane";
+import { providerProxy } from "@harnesshub/core/outbound";
 import { groupModels } from "@harnesshub/core/route-groups";
 import { errorResponse, type CallServices } from "./call.js";
 import { deadline, failure, readBody, readLimited } from "./http.js";
@@ -545,13 +546,17 @@ export async function imagesCall(options: {
             const timeout = deadline(signal, IMAGE_MS);
             deadlines.push(timeout);
             try {
-              const answer = await fetch(url, {
-                method: "POST",
-                redirect: "error",
-                headers,
-                body,
-                signal: timeout.signal,
-              });
+              const answer = await services.fetch(
+                url,
+                {
+                  method: "POST",
+                  redirect: "error",
+                  headers,
+                  body,
+                  signal: timeout.signal,
+                },
+                providerProxy(candidate.provider),
+              );
               current.firstByteMs ??= Math.round(performance.now() - asked);
               current.status = answer.status;
               return answer;

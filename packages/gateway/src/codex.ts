@@ -24,6 +24,7 @@ import {
   type ModelRef,
   type ProviderId,
 } from "@harnesshub/core/model-plane";
+import { proxyFailure } from "@harnesshub/core/outbound";
 import type { CallServices } from "./call.js";
 import { maskBody } from "./redaction.js";
 import { ToolArgumentRestorer } from "./restore.js";
@@ -351,7 +352,7 @@ export async function codexPassthrough(context: CodexRequest): Promise<void> {
     const headerTimer = arm("headers", limits.upstreamHeaderTimeoutMs);
     let answer: Response;
     try {
-      answer = await fetch(url, {
+      answer = await services.fetch(url, {
         method,
         redirect: "manual",
         signal: linked,
@@ -520,7 +521,11 @@ export async function codexPassthrough(context: CodexRequest): Promise<void> {
     let value: Failure;
     let source: "gateway" | "upstream" = "upstream";
     const network = networkFailure(error);
-    if (timedOut)
+    const proxied = proxyFailure(error);
+    if (proxied) {
+      value = failure(502, "proxy_failed", proxied.message);
+      source = "gateway";
+    } else if (timedOut)
       value = failure(
         504,
         "upstream_timeout",
@@ -589,7 +594,7 @@ export async function codexModels(
   const writer = new HttpWriter(response);
   const secrets = clientSecrets(request.headers);
   try {
-    const answer = await fetch(
+    const answer = await services.fetch(
       `${context.backend.replace(/\/+$/, "")}/models${context.search}`,
       {
         method: "GET",
@@ -642,13 +647,16 @@ export async function codexModels(
       return;
     }
     const network = networkFailure(error);
+    const proxied = proxyFailure(error);
     const value =
       error instanceof GatewayError
         ? failure(error.status, error.code, sanitize(error.message, secrets))
-        : network
-          ? { ...network, message: sanitize(network.message, secrets) }
-          : failure(500, "gateway_error", "Model gateway internal error");
-    response.setHeader("x-hh-error-source", "upstream");
+        : proxied
+          ? failure(502, "proxy_failed", proxied.message)
+          : network
+            ? { ...network, message: sanitize(network.message, secrets) }
+            : failure(500, "gateway_error", "Model gateway internal error");
+    response.setHeader("x-hh-error-source", proxied ? "gateway" : "upstream");
     const { status, body } = openAiErrorResponse(value);
     await writer.json(status, body).catch(() => response.destroy());
   } finally {

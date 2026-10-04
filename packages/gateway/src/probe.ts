@@ -21,6 +21,11 @@ import {
   type ProviderModel,
   type WireProtocol,
 } from "@harnesshub/core/model-plane";
+import {
+  providerProxy,
+  proxyFailure,
+  type OutboundFetch,
+} from "@harnesshub/core/outbound";
 import { deadline, networkFailure, readLimited } from "./http.js";
 import { callCost, callUsage, type UsageParts } from "./ledger.js";
 import {
@@ -66,6 +71,8 @@ export interface ProbeRequest {
   label: string;
   timeoutMs: number;
   signal?: AbortSignal;
+  /** Sends the probe through the daemon's proxy policy; global `fetch` without it. */
+  send?: OutboundFetch;
 }
 
 /** What one probe observed. Texts are redacted and at most 500 characters. */
@@ -77,6 +84,8 @@ export interface ProbeResult {
   ok: boolean;
   /** No complete response: the connection failed, the probe timed out or was cancelled. */
   networkError?: string;
+  /** The daemon's proxy, not the upstream, failed (`networkError` says how). */
+  proxyFailed?: boolean;
   /** Aborted through the request's `signal`. */
   cancelled?: boolean;
   timing: { firstByteMs?: number; firstContentMs?: number; durationMs: number };
@@ -166,13 +175,18 @@ export async function probeUpstream(
   );
   const signal = timeout.signal;
   try {
-    const response = await fetch(url, {
-      method: "POST",
-      redirect: "error",
-      signal,
-      headers,
-      body: JSON.stringify(request.body),
-    });
+    const send = request.send ?? ((input, init) => fetch(input, init));
+    const response = await send(
+      url,
+      {
+        method: "POST",
+        redirect: "error",
+        signal,
+        headers,
+        body: JSON.stringify(request.body),
+      },
+      providerProxy(provider),
+    );
     result.status = response.status;
     result.timing.firstByteMs = since();
     const contentType = response.headers.get("content-type");
@@ -261,7 +275,10 @@ export async function probeUpstream(
     } else if (error instanceof GatewayError) result.error = failureOf(error);
     else if (timeout.expired())
       result.networkError = `No complete answer within ${request.timeoutMs} ms`;
-    else
+    else if (proxyFailure(error)) {
+      result.networkError = proxyFailure(error)!.message;
+      result.proxyFailed = true;
+    } else
       result.networkError = sanitize(
         networkFailure(error)?.message ??
           (error instanceof Error ? error.message : String(error)),
@@ -290,7 +307,9 @@ function probeEntry(
   const errorClass = result.cancelled
     ? "client_cancelled"
     : result.networkError
-      ? "upstream_unreachable"
+      ? result.proxyFailed
+        ? "proxy_failed"
+        : "upstream_unreachable"
       : result.status && !result.status.toString().startsWith("2")
         ? failureClass(
             failureKind(result.status, result.error?.message ?? ""),

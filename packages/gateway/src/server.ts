@@ -23,6 +23,7 @@ import {
 import { isIP } from "node:net";
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import { NO_LOG, type LogSink } from "@harnesshub/core/logging";
+import type { OutboundFetch } from "@harnesshub/core/outbound";
 import {
   gatewayKeyMatches,
   claudeModelAlias,
@@ -217,6 +218,12 @@ export interface GatewayHandlerDeps {
    * ChatGPT's own; without it its list is ChatGPT's alone.
    */
   codexCatalog?(models: CodexListedModel[], first: number): unknown[];
+  /**
+   * Every request the gateway sends out (providers, search backends,
+   * ChatGPT's Codex backend), through the daemon's proxy policy; global
+   * `fetch` without it. The gateway's calls to itself stay on loopback.
+   */
+  fetch?: OutboundFetch;
 }
 
 /**
@@ -582,6 +589,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     features: deps.features ?? (() => DEFAULT_GATEWAY_FEATURES),
     vision: new VisionDescriber(),
     makeId: () => `call_${nonce}${(generated++).toString(36)}`,
+    fetch: deps.fetch ?? ((input, init) => fetch(input, init)),
     async commit(entry: ModelCallEntry): Promise<boolean> {
       try {
         await store.appendModelCall(entry);

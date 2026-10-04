@@ -6,6 +6,7 @@
  */
 import type { IncomingHttpHeaders } from "node:http";
 import { NO_LOG, type LogSink } from "@harnesshub/core/logging";
+import { providerProxy, proxyFailure } from "@harnesshub/core/outbound";
 import type { CallServices } from "./call.js";
 import { deadline, readLimited } from "./http.js";
 import {
@@ -40,7 +41,7 @@ export async function forwardCountTokens(options: {
   headers: IncomingHttpHeaders;
   services: Pick<
     CallServices,
-    "resolveSecret" | "limits" | "slots" | "redactor" | "features"
+    "resolveSecret" | "limits" | "slots" | "redactor" | "features" | "fetch"
   > & {
     log?: LogSink;
   };
@@ -102,16 +103,20 @@ export async function forwardCountTokens(options: {
     let response: Response;
     let text: string;
     try {
-      response = await fetch(url, {
-        method: "POST",
-        redirect: "error",
-        signal,
-        headers,
-        body,
-      });
+      response = await services.fetch(
+        url,
+        { method: "POST", redirect: "error", signal, headers, body },
+        providerProxy(candidate.provider),
+      );
       text = await readLimited(response, MAX_ANSWER_BYTES + 1);
-    } catch {
-      return fallback(signal.aborted ? "timeout_or_cancelled" : "unreachable");
+    } catch (error) {
+      return fallback(
+        signal.aborted
+          ? "timeout_or_cancelled"
+          : proxyFailure(error)
+            ? "proxy_failed"
+            : "unreachable",
+      );
     }
     if (!response.ok) return fallback("upstream_status", response.status);
     let answer: unknown;

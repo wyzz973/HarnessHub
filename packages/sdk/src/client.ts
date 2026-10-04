@@ -299,6 +299,8 @@ export interface ProviderFields {
   translateOnly?: boolean;
   /** Base URL of the provider's OpenAI-compatible Images API (`/v1/images/generations` goes there). */
   imageEndpoint?: string;
+  /** This provider's own proxy: `direct`, or a proxy address without credentials; absent follows the daemon's. */
+  proxy?: string;
 }
 
 /** A value to store, or an `env` or `file` reference. */

@@ -12,6 +12,7 @@
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import { HubError } from "@harnesshub/core/errors";
 import type { LogSink } from "@harnesshub/core/logging";
+import { viaProvider, type OutboundFetch } from "@harnesshub/core/outbound";
 import {
   type ApiKeyHeader,
   type DroppableField,
@@ -77,6 +78,8 @@ export interface ProviderDoctorDeps {
   log?: LogSink;
   /** Per-request limit; tests shorten it. */
   timeoutMs?: number;
+  /** Requests to the provider through the daemon's proxy policy; global `fetch` without it. */
+  fetch?: OutboundFetch;
 }
 
 type Json = Record<string, unknown>;
@@ -601,6 +604,7 @@ class DoctorRun {
       label,
       timeoutMs: extra.timeoutMs ?? this.deps.timeoutMs ?? REQUEST_TIMEOUT_MS,
       signal: this.signal,
+      ...(this.deps.fetch ? { send: this.deps.fetch } : {}),
     });
     try {
       await this.deps.store.appendModelCall(entry);
@@ -1089,6 +1093,7 @@ class DoctorRun {
             ? { ...provider, auth: { apiKeyHeader: this.#authOverride } }
             : provider,
           context.keys.get(protocol)?.secret || undefined,
+          this.deps.fetch && viaProvider(this.deps.fetch, provider),
         )
       ).map((model) => model.id);
     } catch (error) {

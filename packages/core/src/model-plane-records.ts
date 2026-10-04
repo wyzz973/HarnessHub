@@ -27,6 +27,7 @@ import {
   type WiringProfile,
   type WiringRecord,
 } from "./model-plane.js";
+import { proxyChoiceProblem } from "./outbound.js";
 import { parseGroupMember } from "./route-groups.js";
 import { cleanGroupRules } from "./route-rules.js";
 import { copilotAuthModes, subscriptionBackends } from "./subscriptions.js";
@@ -299,6 +300,15 @@ export function isProviderConfig(value: unknown): value is ProviderConfig {
       (subscription) =>
         object(subscription) &&
         member(subscriptionBackends)(subscription.backend),
+    ) &&
+    optional(
+      value.proxy,
+      (proxy) =>
+        proxyChoiceProblem(proxy) === undefined &&
+        // The Copilot CLI makes a Copilot provider's requests itself.
+        !(
+          object(value.subscription) && value.subscription.backend === "copilot"
+        ),
     ) &&
     // Accounts belong to subscription providers, and only of their backend.
     Array.isArray(value.credentials) &&

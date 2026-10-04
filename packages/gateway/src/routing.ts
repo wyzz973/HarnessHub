@@ -827,7 +827,8 @@ export type BreakerEffect =
 
 /**
  * Why an upstream refused, as it bears on routing (Magpie `failure`):
- * `proxy` — a proxy in front of the upstream refused the connection;
+ * `proxy` — a proxy in front of the upstream refused the connection (a
+ * relay's, from its error text, or the daemon's own, `proxy_failed`);
  * `verify` — the vendor wants the account verified; `auth` — the credential
  * is not accepted; `credit` — no money left; `quota` — the plan's allowance
  * is used up; `rate` — a short rate limit; `model` — this credential or
@@ -990,8 +991,9 @@ const OPEN_MAX_MS = 600_000;
  * rests until the vendor's stated reset, else 15 minutes, at most 8 days;
  * `credit` and `verify` rest 30 minutes; `auth` rests until the credential
  * changes or 10 minutes pass; `model` marks the credential and model for 10
- * minutes; `proxy` rests nothing. All of these fail over; a `request` failure
- * is returned as it is. Retries apply only to the last candidate left.
+ * minutes; `proxy` rests nothing and, when the daemon's own proxy failed to
+ * connect, is not retried. All of these fail over; a `request` failure is
+ * returned as it is. Retries apply only to the last candidate left.
  */
 export function classify(error: AttemptError): Classification {
   switch (error.phase) {
@@ -1000,7 +1002,10 @@ export function classify(error: AttemptError): Classification {
     case "local":
       return { retry: "no", failover: true, breaker: { kind: "none" } };
     case "connect":
-      return { retry: "yes", failover: true, breaker: { kind: "count" } };
+      // A failed proxy is not the credential's fault, and retrying it is no use.
+      return error.kind === "proxy"
+        ? { retry: "no", failover: true, breaker: { kind: "none" } }
+        : { retry: "yes", failover: true, breaker: { kind: "count" } };
     case "headers":
       return { retry: "once", failover: true, breaker: { kind: "count" } };
     case "response":

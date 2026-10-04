@@ -9,6 +9,7 @@ import type {
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import { HubError } from "@harnesshub/core/errors";
 import type { LogSink } from "@harnesshub/core/logging";
+import type { OutboundFetch } from "@harnesshub/core/outbound";
 import type {
   CatalogService,
   ModelMetadataStore,
@@ -186,6 +187,11 @@ export interface ApiV1Options {
   serialize?: <T>(operation: () => Promise<T>) => Promise<T>;
   /** Provider test and doctor; without it their routes are absent. */
   doctor?: DoctorService;
+  /**
+   * Requests to providers (live model lists) through the daemon's proxy
+   * policy; global `fetch` without it.
+   */
+  outbound?: OutboundFetch;
 }
 
 const LOOPBACK =

@@ -9,6 +9,7 @@
  */
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { SecretReference } from "./engine-configuration.js";
+import type { ProxyChoice } from "./outbound.js";
 import type {
   SubscriptionAccount,
   SubscriptionBackend,
@@ -194,6 +195,13 @@ export interface ProviderConfig {
    * `/v1/images/generations` passes calls through to it. Absent: no images.
    */
   imageEndpoint?: string;
+  /**
+   * This provider's own proxy (Magpie's per-provider proxy): `direct` for
+   * none, or a proxy address without credentials. Absent, the daemon's
+   * `network.proxy` applies. Loopback is never proxied; a Copilot provider
+   * has none, since the Copilot CLI makes its requests.
+   */
+  proxy?: ProxyChoice;
   /**
    * The credentials are accounts of a subscription, used through this
    * backend (ADR-P09). Its requests are always translated, its accounts serve

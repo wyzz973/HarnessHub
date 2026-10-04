@@ -18,6 +18,7 @@ import type {
   SearchBackendKind,
 } from "@harnesshub/core/gateway-features";
 import type { WireProtocol } from "@harnesshub/core/model-plane";
+import { proxyFailure, type OutboundFetch } from "@harnesshub/core/outbound";
 import { deadline, readLimited } from "./http.js";
 import type {
   ChatResult,
@@ -234,13 +235,15 @@ function searchRequest(
 
 /**
  * Search with the backends in their order until one finds something; the
- * text for the model and the pages, or the reasons each failed.
+ * text for the model and the pages, or the reasons each failed. Requests go
+ * out through `send`, the daemon's proxy policy.
  */
 export async function webSearch(
   query: string,
   backends: readonly SearchBackend[],
   resolveSecret: (ref: SecretReference) => Promise<string>,
   signal: AbortSignal,
+  send: OutboundFetch,
 ): Promise<{ text: string; hits: Hit[] } | { error: string }> {
   const errors: string[] = [];
   for (const backend of backends) {
@@ -256,7 +259,7 @@ export async function webSearch(
     const { url, init } = searchRequest(backend, key, query);
     const timeout = deadline(signal, SEARCH_MS);
     try {
-      const response = await fetch(url, {
+      const response = await send(url, {
         ...init,
         redirect: "error",
         signal: timeout.signal,
@@ -289,7 +292,10 @@ export async function webSearch(
       };
     } catch (error) {
       if (signal.aborted) throw error;
-      errors.push(`${backend.kind}: no answer`);
+      const proxied = proxyFailure(error);
+      errors.push(
+        `${backend.kind}: ${proxied ? proxied.message : "no answer"}`,
+      );
     } finally {
       timeout.dispose();
     }

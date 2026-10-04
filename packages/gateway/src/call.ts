@@ -12,6 +12,11 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import { SUBSCRIPTION_NOTICES } from "@harnesshub/core/subscriptions";
 import type { LogSink } from "@harnesshub/core/logging";
+import {
+  providerProxy,
+  proxyFailure,
+  type OutboundFetch,
+} from "@harnesshub/core/outbound";
 import type {
   CallAttempt,
   CallPurpose,
@@ -298,6 +303,8 @@ export interface CallServices {
   features(): GatewayFeatures;
   /** Describes images for models without image input; absent where the gateway cannot call itself. */
   vision?: VisionDescriber;
+  /** Every request to a provider, a search backend or ChatGPT: the daemon's proxy policy. */
+  fetch: OutboundFetch;
 }
 
 /** Route parts of a model call. */
@@ -1471,13 +1478,11 @@ async function send(
               call.entry.patches.push(name);
           },
         })
-      : await fetch(url, {
-          method: "POST",
-          redirect: "error",
-          signal,
-          headers,
-          body,
-        });
+      : await services.fetch(
+          url,
+          { method: "POST", redirect: "error", signal, headers, body },
+          providerProxy(candidate.provider),
+        );
     services.router.observe(candidate, response.headers);
     if (response.ok) {
       timers.clear(timer);
@@ -1528,6 +1533,20 @@ async function send(
       };
     if (error instanceof CopilotError)
       return { ok: false, error: copilotFailure(candidate, error), release };
+    // The proxy, not the upstream, failed: no rest for the credential.
+    const proxied = proxyFailure(error);
+    if (proxied)
+      return {
+        ok: false,
+        error: {
+          failure: failure(502, "proxy_failed", proxied.message),
+          errorClass: "proxy_failed",
+          source: "gateway",
+          phase: "connect",
+          kind: "proxy",
+        },
+        release,
+      };
     const network = networkFailure(error);
     if (network)
       return {
@@ -1834,6 +1853,7 @@ async function translatedAttempt(
               backends,
               services.resolveSecret,
               call.signal,
+              services.fetch,
             );
           }),
         );

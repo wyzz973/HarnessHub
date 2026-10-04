@@ -39,6 +39,7 @@ import {
   nestingProblems,
   parseGroupMember,
 } from "@harnesshub/core/route-groups";
+import { proxyChoiceProblem, viaProvider } from "@harnesshub/core/outbound";
 import { cleanGroupRules } from "@harnesshub/core/route-rules";
 import { accountUsable } from "@harnesshub/core/subscriptions";
 import {
@@ -153,6 +154,14 @@ function checkProvider(candidate: unknown): ProviderConfig {
     object(candidate) &&
     object(candidate.subscription) &&
     candidate.subscription.backend === "copilot";
+  if (object(candidate) && candidate.proxy !== undefined) {
+    const problem =
+      proxyChoiceProblem(candidate.proxy) ??
+      (copilot
+        ? "must be absent for a Copilot provider: the Copilot CLI makes its requests"
+        : undefined);
+    if (problem) errors.push({ pointer: "/proxy", detail: problem });
+  }
   if (object(candidate) && object(candidate.endpoints))
     if (copilot !== (Object.keys(candidate.endpoints).length === 0))
       errors.push({
@@ -336,6 +345,7 @@ export function registerModelPlaneRoutes(
     | "subscriptions"
     | "serialize"
     | "keyLimits"
+    | "outbound"
   >,
 ): void {
   const store: ModelPlaneStore = options.modelPlane;
@@ -712,7 +722,11 @@ export function registerModelPlaneRoutes(
           models =
             copilot && account
               ? await options.subscriptions!.listModels(listed, account)
-              : await fetchModelList(listed, key);
+              : await fetchModelList(
+                  listed,
+                  key,
+                  options.outbound && viaProvider(options.outbound, listed),
+                );
         } catch (error) {
           if (!(error instanceof ModelListError)) throw error;
           failure = new ApiProblem(
