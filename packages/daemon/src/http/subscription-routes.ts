@@ -132,6 +132,14 @@ export interface SubscriptionControl {
    * @throws HubError `COPILOT_UNAVAILABLE` (503).
    */
   copilotSetup(): Promise<CopilotSetup>;
+  /**
+   * Install the supported Copilot SDK into the add-on directory with the
+   * user's npm, then report the setup.
+   *
+   * @throws HubError `COPILOT_UNAVAILABLE` (503), `NPM_NOT_FOUND` (409),
+   *   `COPILOT_SDK_INSTALL_FAILED` (502).
+   */
+  installCopilot(): Promise<CopilotSetup>;
 }
 
 const backend = { type: "string", enum: [...subscriptionBackends] } as const;
@@ -228,6 +236,11 @@ export function registerSubscriptionRoutes(
     "/subscriptions/copilot/setup",
     { schema: { response: responses(setupSchema) } },
     async () => subscriptions.copilotSetup(),
+  );
+  api.post(
+    "/subscriptions/copilot/setup",
+    { schema: { body: emptyBodySchema, response: responses(setupSchema) } },
+    async () => subscriptions.installCopilot(),
   );
   api.post<{ Body: SignInInput }>(
     "/subscriptions/sign-in",

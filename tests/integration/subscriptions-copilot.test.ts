@@ -174,13 +174,16 @@ export class CopilotClient {
 }
 `;
 
-/** The fake add-on and a placeholder CLI below `directory`. */
+/**
+ * The fake add-on's package, a fake npm that installs it into `--prefix`
+ * (failing once after `failNextInstall`), and a placeholder CLI below
+ * `directory`.
+ */
 async function fakeCopilot(directory: string) {
-  const addon = path.join(directory, "addon");
-  const root = path.join(addon, "node_modules", "@github", "copilot-sdk");
-  await mkdir(path.join(root, "dist"), { recursive: true });
+  const source = path.join(directory, "sdk-source");
+  await mkdir(path.join(source, "dist"), { recursive: true });
   await writeFile(
-    path.join(root, "package.json"),
+    path.join(source, "package.json"),
     JSON.stringify({
       name: "@github/copilot-sdk",
       version: "1.0.16",
@@ -188,21 +191,58 @@ async function fakeCopilot(directory: string) {
       exports: { ".": { import: { default: "./dist/index.js" } } },
     }),
   );
-  await writeFile(path.join(root, "dist", "index.js"), FAKE_SDK);
-  const cli = path.join(directory, "bin", "copilot");
-  await mkdir(path.dirname(cli), { recursive: true });
+  await writeFile(path.join(source, "dist", "index.js"), FAKE_SDK);
+  const bin = path.join(directory, "bin");
+  await mkdir(bin, { recursive: true });
+  const cli = path.join(bin, "copilot");
   await writeFile(cli, "#!/bin/sh\nexit 1\n");
   await chmod(cli, 0o755);
-  const calls = async () =>
-    (await readFile(path.join(root, "calls.jsonl"), "utf8").catch(() => ""))
+  const npmLog = path.join(directory, "npm.jsonl");
+  const failOnce = path.join(directory, "npm-fails-once");
+  const npm = path.join(bin, "npm");
+  await writeFile(
+    npm,
+    [
+      `#!${process.execPath}`,
+      `const { appendFileSync, cpSync, existsSync, rmSync } = require("node:fs");`,
+      `const path = require("node:path");`,
+      `const [source, log, failOnce] = ${JSON.stringify([source, npmLog, failOnce])};`,
+      `const args = process.argv.slice(2);`,
+      `appendFileSync(log, JSON.stringify(args) + "\\n");`,
+      `if (existsSync(failOnce)) {`,
+      `  rmSync(failOnce);`,
+      `  process.stderr.write("npm error code ENETUNREACH\\nnpm error network unreachable\\n");`,
+      `  process.exit(1);`,
+      `}`,
+      `const prefix = args[args.indexOf("--prefix") + 1];`,
+      `cpSync(source, path.join(prefix, "node_modules", "@github", "copilot-sdk"), { recursive: true });`,
+      ``,
+    ].join("\n"),
+  );
+  await chmod(npm, 0o755);
+  const addon = path.join(directory, "addon");
+  const root = path.join(addon, "node_modules", "@github", "copilot-sdk");
+  const lines = async (file: string) =>
+    (await readFile(file, "utf8").catch(() => ""))
       .split("\n")
       .filter(Boolean)
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
-  return { addon, cli, calls };
+      .map((line) => JSON.parse(line) as unknown);
+  return {
+    addon,
+    cli,
+    npm,
+    calls: async () =>
+      (await lines(path.join(root, "calls.jsonl"))) as Record<
+        string,
+        unknown
+      >[],
+    npmCalls: () => lines(npmLog),
+    failNextInstall: () => writeFile(failOnce, ""),
+  };
 }
 
 void test(
-  "a Copilot account signs in with the CLI's login or a token, lists models, answers with tools, and signs out",
+  "the Copilot SDK installs with npm; an account signs in with the CLI's login or a token, lists models, answers with tools, and signs out",
   { timeout: 120_000 },
   async (t) => {
     const { directory, defer } = await temporaryDirectory(t, "hh-copilot-");
@@ -216,19 +256,40 @@ void test(
       cwd: directory,
       port: 0,
       host: "127.0.0.1",
-      copilot: { cli: fake.cli, addon: fake.addon },
+      copilot: { cli: fake.cli, addon: fake.addon, npm: fake.npm },
     });
     let closed = false;
     defer(() => (closed ? undefined : hub.server.close()));
     const client = await connectLocal({ dataDir, url: hub.url });
 
-    const setup = await client.subscriptions.copilotSetup();
-    assert.equal(setup.sdkVersion, "1.0.16");
-    assert.equal(setup.cliPath, fake.cli);
+    // The SDK add-on is installed with npm, through the daemon.
+    const before = await client.subscriptions.copilotSetup();
+    assert.equal(before.sdkVersion, undefined);
+    assert.equal(before.cliPath, fake.cli);
     assert.match(
-      setup.installCommand,
-      /^npm install --prefix \S+ --omit=optional --no-audit --no-fund @github\/copilot-sdk@1\.0\.16$/,
+      before.installCommand,
+      /^npm install --prefix \S+ --omit=optional --ignore-scripts --no-audit --no-fund @github\/copilot-sdk@1\.0\.16$/,
     );
+    await fake.failNextInstall();
+    await assert.rejects(
+      client.subscriptions.installCopilot(),
+      (error: unknown) =>
+        error instanceof HarnessHubError &&
+        error.code === "COPILOT_SDK_INSTALL_FAILED" &&
+        /exit code 1.*network unreachable/.test(error.message),
+    );
+    const setup = await client.subscriptions.installCopilot();
+    assert.equal(setup.sdkVersion, "1.0.16");
+    assert.deepEqual((await fake.npmCalls()).at(-1), [
+      "install",
+      "--prefix",
+      fake.addon,
+      "--omit=optional",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      "@github/copilot-sdk@1.0.16",
+    ]);
     const notice = (await client.subscriptions.notices()).items.find(
       (item) => item.backend === "copilot",
     )!;
@@ -412,7 +473,7 @@ void test(
       clientName: "HarnessHub",
       model: "gpt-5",
       systemMessage: { mode: "replace", content: "Be brief." },
-      availableTools: ["get_weather"],
+      availableTools: ["custom:*"],
       tools: [{ name: "get_weather", skipPermission: true }],
       permission: "denied-no-approval-rule-and-could-not-request-from-user",
     });
@@ -525,7 +586,7 @@ function hh(
 }
 
 void test(
-  "hh subscription setup and login copilot report the add-on and sign in with the CLI's login or a token file",
+  "hh subscription setup copilot installs the add-on after asking; login copilot signs in with the CLI's login or a token file",
   { timeout: 120_000 },
   async (t) => {
     const { directory, defer } = await temporaryDirectory(t, "hh-copilot-cli-");
@@ -539,14 +600,35 @@ void test(
       cwd: directory,
       port: 0,
       host: "127.0.0.1",
-      copilot: { cli: fake.cli, addon: fake.addon },
+      copilot: { cli: fake.cli, addon: fake.addon, npm: fake.npm },
     });
     defer(() => hub.server.close());
     const daemon = ["--url", hub.url, "--data-dir", dataDir];
+    const missing = await hh(directory, [
+      "subscription",
+      "setup",
+      "copilot",
+      ...daemon,
+    ]);
+    assert.equal(missing.code, 0, missing.stderr);
+    assert.match(missing.stdout, /The Copilot SDK is not installed/);
+    assert.match(missing.stdout, /npm install --prefix/);
+    // Installing asks first; without a terminal it needs --yes.
+    const asked = await hh(directory, [
+      "subscription",
+      "setup",
+      "copilot",
+      "--install",
+      ...daemon,
+    ]);
+    assert.equal(asked.code, 4, asked.stderr);
+    assert.deepEqual(await fake.npmCalls(), []);
     const setup = await hh(directory, [
       "subscription",
       "setup",
       "copilot",
+      "--install",
+      "--yes",
       ...daemon,
     ]);
     assert.equal(setup.code, 0, setup.stderr);

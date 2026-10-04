@@ -75,7 +75,8 @@ const USAGE = `Usage: hh <command> [options]
   hh subscription notice | list | login chatgpt [--provider ID] [--account ID]
               [--accept-notice] | login copilot [--provider ID] [--account ID]
               [--token | --token-from-stdin | --token-from-env VAR
-              | --token-from-file PATH] [--accept-notice] | setup copilot
+              | --token-from-file PATH] [--accept-notice]
+              | setup copilot [--install]
               | logout <provider> <account>
               accounts are off until their risk notice is accepted, and serve
               agents on this computer only; Copilot uses the Copilot CLI's own
@@ -1446,6 +1447,7 @@ async function subscriptionCommand(args: string[]): Promise<void> {
     "token-from-stdin": { type: "boolean" },
     "token-from-env": { type: "string" },
     "token-from-file": { type: "string" },
+    install: { type: "boolean" },
   });
   const ctx = context(values);
   const client = await ctx.client();
@@ -1535,12 +1537,20 @@ async function subscriptionCommand(args: string[]): Promise<void> {
         throw new UsageError(
           "Only copilot needs a setup: hh subscription setup copilot",
         );
-      const setup = await client.subscriptions.copilotSetup();
+      let setup = await client.subscriptions.copilotSetup();
+      if (values.install && setup.sdkVersion !== setup.supportedSdkVersion) {
+        await confirm(
+          ctx,
+          `Install @github/copilot-sdk@${setup.supportedSdkVersion} with npm into ${setup.sdkDirectory}?`,
+        );
+        process.stderr.write("Installing the Copilot SDK with npm...\n");
+        setup = await client.subscriptions.installCopilot();
+      }
       return output(ctx, setup, () =>
         [
           setup.sdkVersion
-            ? `Copilot SDK ${setup.sdkVersion} is installed in ${setup.sdkDirectory}${setup.sdkVersion === setup.supportedSdkVersion ? "." : ` (HarnessHub was written for ${setup.supportedSdkVersion}).`}`
-            : `The Copilot SDK is not installed. It is an optional add-on; install it with npm:\n  ${setup.installCommand}`,
+            ? `Copilot SDK ${setup.sdkVersion} is installed in ${setup.sdkDirectory}${setup.sdkVersion === setup.supportedSdkVersion ? "." : ` (HarnessHub was written for ${setup.supportedSdkVersion}; hh subscription setup copilot --install installs it).`}`
+            : `The Copilot SDK is not installed. It is an optional add-on: hh subscription setup copilot --install installs it with npm, which runs\n  ${setup.installCommand}`,
           setup.cliPath
             ? `Copilot CLI: ${setup.cliPath}`
             : "The Copilot CLI was not found on PATH; install GitHub Copilot CLI, then sign in to it or create a fine-grained token with Copilot Requests.",

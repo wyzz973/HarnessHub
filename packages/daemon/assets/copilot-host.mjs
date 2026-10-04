@@ -113,7 +113,7 @@ async function importSdk(directory) {
   } catch {
     throw new HostError(
       "sdk_missing",
-      "The Copilot SDK is not installed; run hh subscription setup copilot",
+      "The Copilot SDK is not installed; run hh subscription setup copilot --install",
     );
   }
   const main = manifest.exports?.["."];
@@ -253,7 +253,8 @@ const METHODS = {
         skipPermission: true,
         defer: "never",
       })),
-      availableTools: params.tools.map((tool) => tool.name),
+      // Only tools this session declared: no built-in or MCP tools.
+      availableTools: ["custom:*"],
       workingDirectory: start.workDirectory,
       configDirectory: start.stateDirectory,
       enableConfigDiscovery: false,

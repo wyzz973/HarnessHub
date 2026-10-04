@@ -1384,7 +1384,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     group: "subscriptions",
     request: "无参数。",
     response:
-      "200：sdkDirectory（附加组件的 npm prefix，<dataDir>/addons/copilot-sdk）、sdkVersion（已安装时）、supportedSdkVersion、cliPath（找到 Copilot CLI 时）、installCommand（安装受支持 SDK 且不装平台运行时的 npm 命令）。",
+      "200：sdkDirectory（附加组件的 npm prefix，<dataDir>/addons/copilot-sdk）、sdkVersion（已安装时）、supportedSdkVersion、cliPath（找到 Copilot CLI 时）、installCommand（安装受支持 SDK 的 npm 命令：不装平台运行时，不运行安装脚本）。",
     implementation:
       "CopilotHosts.setup：读取附加组件中 @github/copilot-sdk 的 package.json 版本，在 PATH 中查找 copilot；不启动任何进程，不安装任何东西。",
     effects: "只读。",
@@ -1393,6 +1393,23 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     source: "packages/daemon/src/http/subscription-routes.ts",
     tests: ["tests/integration/subscriptions-copilot.test.ts"],
     operationId: "hh_api_v1_get_copilot_setup",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/subscriptions/copilot/setup",
+    title: "安装 Copilot SDK",
+    group: "subscriptions",
+    request: "空 JSON 对象。",
+    response: "200：安装之后的状态，字段同 GET（sdkVersion 为安装的版本）。",
+    implementation:
+      "CopilotHosts.install：在 PATH 上查找 npm（Windows 的 npm.cmd 经 cmd.exe），经 ProcessLauncher 运行 npm install --prefix <dataDir>/addons/copilot-sdk --omit=optional --ignore-scripts --no-audit --no-fund @github/copilot-sdk@<受支持版本>，期限 4 分钟；同一时间只有一次安装。",
+    effects:
+      "写入附加组件目录（不在 HarnessHub 的依赖中）；不改变任何账号或 provider。",
+    errors:
+      "409 NPM_NOT_FOUND（消息中给出可以自己运行的命令）；502 COPILOT_SDK_INSTALL_FAILED（退出码或超时，带 npm 最后几行输出）；503 COPILOT_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/subscription-routes.ts",
+    tests: ["tests/integration/subscriptions-copilot.test.ts"],
+    operationId: "hh_api_v1_install_copilot_sdk",
   },
   {
     method: "POST",

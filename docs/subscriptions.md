@@ -49,13 +49,14 @@ hh subscription logout chatgpt account-1
 ### 安装与登录
 
 ```sh
-hh subscription setup copilot          # SDK 附加组件与 Copilot CLI 是否就绪；缺 SDK 时给出 npm 命令
+hh subscription setup copilot          # SDK 附加组件与 Copilot CLI 是否就绪
+hh subscription setup copilot --install   # 确认后用用户的 npm 安装受支持的 SDK
 hh subscription login copilot          # 告知；确认后用 Copilot CLI 自己的登录
 hh subscription login copilot --token  # 改用细粒度 PAT（隐藏输入；或 --token-from-stdin、--token-from-env VAR、--token-from-file PATH）
 hh subscription logout copilot account-1
 ```
 
-- **两个前提**，都由用户自己安装：GitHub 的 Copilot CLI（`copilot`，在 PATH 上），以及 Copilot SDK `@github/copilot-sdk`。SDK 是可选附加组件，不在 HarnessHub 的依赖与单可执行文件中；`setup` 给出的命令把受支持的版本（当前 1.0.16）装到 `<dataDir>/addons/copilot-sdk`，带 `--omit=optional`，不装 SDK 自带的平台运行时（约 110 MB），因为 HarnessHub 驱动的是用户已装的 CLI。
+- **两个前提**：GitHub 的 Copilot CLI（`copilot`，在 PATH 上，由用户自己安装），以及 Copilot SDK `@github/copilot-sdk`。SDK 是可选附加组件，不在 HarnessHub 的依赖与单可执行文件中：`setup copilot --install`（`POST /api/v1/subscriptions/copilot/setup`）在确认后由守护进程经 `ProcessLauncher` 运行用户 PATH 上的 npm（Windows 上的 `npm.cmd` 经 `cmd.exe`），把受支持的版本（当前 1.0.16）装到 `<dataDir>/addons/copilot-sdk`：`--omit=optional` 不装 SDK 自带的平台运行时（约 110 MB），因为 HarnessHub 驱动的是用户已装的 CLI；`--ignore-scripts` 不运行依赖的安装脚本（标准输入输出传输不需要它们）。npm 4 分钟内没有完成即失败（`COPILOT_SDK_INSTALL_FAILED`，带 npm 最后几行输出）；没有 npm 时（`NPM_NOT_FOUND`）给出可以自己运行的命令，`setup` 也总是显示它。
 - **登录方式**：缺省用 Copilot CLI 自己的登录（用户先在 `copilot` 中用 `/login` 登录）；HarnessHub 从不读取这份登录，只经 SDK 的 `getAuthStatus` 得到 GitHub 登录名。或者用用户在 GitHub 创建的、带 “Copilot Requests” 权限的细粒度个人访问令牌（`github_pat_…`；其他形式的令牌被拒绝，`COPILOT_TOKEN_INVALID`）：令牌只在秘密存储中，经宿主进程的 `start` 请求交给 SDK，再由 SDK 以环境变量交给 CLI；这种账号的 CLI 使用 `<dataDir>/subscriptions/copilot/homes/` 下自己的目录（`COPILOT_HOME`），环境中的 `GH_TOKEN`、`GITHUB_TOKEN`、`COPILOT_GITHUB_TOKEN` 等不传给它。HarnessHub 自己的 GitHub OAuth App 暂不注册。
 - `login` 先显示“Use your GitHub Copilot plan”与风险告知（非交互且没有 `--accept-notice` 时退出码 4，什么也不开始），然后在返回前完成：成功时给出 GitHub 登录名并读取模型列表。第一次登录创建 provider `copilot`（名称 “GitHub Copilot”，`subscription: {backend: "copilot"}`，没有端点），账号是 Credential `account-<n>`，`account` 记 `subject`（GitHub 登录名）、`host`、`auth`（`login` 或 `token`）与接受的告知。
 - `logout` 停止该账号的宿主进程、清空令牌、停用 Credential 并记 `signedOutAt`，返回 `revoked: false`：CLI 的登录属于用户，不受影响；令牌在用户于 GitHub 撤销之前仍然有效，命令如实说明。
@@ -66,7 +67,7 @@ hh subscription logout copilot account-1
 - 每个账号一个宿主进程（[copilot-host.mjs](../packages/daemon/assets/copilot-host.mjs)），由守护进程经 `ProcessLauncher` 以 HarnessHub 自己的 Node 启动（单可执行文件中以 node 兼容方式运行）。宿主从附加组件目录导入 SDK，以 `RuntimeConnection.forStdio({path})` 驱动用户的 CLI；`login` 账号用 `mode: "copilot-cli"`（CLI 自己的配置与登录），`token` 账号用 `mode: "empty"`。宿主在第一次使用时启动，没有会话 15 分钟后停止，守护进程关闭时全部停止。宿主与守护进程之间的 JSON 行协议见 [copilot.ts](../packages/daemon/src/copilot.ts)。
 - 模型列表来自 SDK 的 `listModels`，只保留策略为 enabled 的模型，带上下文窗口、输出上限、推理与图片输入。
 - 网关把对 `copilot/<model>` 的调用交给 Copilot 会话（[copilot.ts](../packages/gateway/src/copilot.ts) 的 `CopilotBridge`）：
-  - 会话以 `clientName: "HarnessHub"` 标识自己；`systemMessage` 用 SDK 文档中的 `replace` 模式，内容就是调用方自己的 system 提示词，不改写也不添加。工具只有调用方的函数（`availableTools` 限定为它们，没有处理器的声明，`skipPermission`），CLI 的内置 shell 与文件工具不可用，其他权限请求一律拒绝。会话不读取工作区的自定义指令（工作目录是空目录 `<dataDir>/subscriptions/copilot/work`，状态在 `…/state`），不开会话存储与无限会话压缩。
+  - 会话以 `clientName: "HarnessHub"` 标识自己；`systemMessage` 用 SDK 文档中的 `replace` 模式，内容就是调用方自己的 system 提示词，不改写也不添加。工具只有调用方的函数（没有处理器的声明，`skipPermission`；`availableTools: ["custom:*"]` 只放行会话自己声明的工具），CLI 的内置 shell 与文件工具不可用，其他权限请求一律拒绝。会话不读取工作区的自定义指令（工作目录是空目录 `<dataDir>/subscriptions/copilot/work`，状态在 `…/state`），不开会话存储与无限会话压缩。
   - 模型请求工具时，答复以 `finish_reason: "tool_calls"` 结束，交给调用方执行；调用方下一次请求带回的结果经 SDK 的 `handlePendingToolCall` 交还同一会话，会话继续。之后的新用户消息也继续同一会话。会话按“它持有的消息在调用方回传时的样子”的散列索引，不依赖会话 ID；工具参数 JSON 的空白与键序不影响匹配。
   - 请求的历史不是某个会话的延续时（第一次请求、调用方压缩或编辑了历史、HarnessHub 重启之后），新会话的第一个提示词以 `<transcript>` 给出之前的消息，再接最新的用户消息；账本记补丁 `copilot:transcript`。早先消息中的图片不进入转录；最新用户消息中的 base64 data URL 图片作为附件发送。
   - 会话只接受消息、工具与 `reasoning_effort`；`temperature`、`max_tokens`、`stop`、`response_format`、非 `auto` 的 `tool_choice` 等不发送，记入账本的 `unmapped[]`。

@@ -364,11 +364,11 @@ export async function startHub(options: {
    */
   siwc?: { issuer: string; responsesBase: string };
   /**
-   * For tests only: the Copilot CLI and the Copilot SDK add-on directory,
-   * pointed at fakes. Unset, the CLI is `copilot` on PATH and the add-on is
-   * `<dataDir>/addons/copilot-sdk`; there is no user setting.
+   * For tests only: the Copilot CLI, the Copilot SDK add-on directory and
+   * npm, pointed at fakes. Unset, the CLI and npm are found on PATH and the
+   * add-on is `<dataDir>/addons/copilot-sdk`; there is no user setting.
    */
-  copilot?: { cli: string; addon: string };
+  copilot?: { cli: string; addon: string; npm: string };
 }) {
   // HARNESSHUB_LOG_LEVEL is validated before anything starts; Workers inherit the value.
   const logLevel = parseLogLevel(process.env[LOG_LEVEL_ENVIRONMENT]);
@@ -636,7 +636,9 @@ export async function startHub(options: {
         addon:
           options.copilot?.addon ?? path.join(dataDir, "addons", "copilot-sdk"),
         directory: path.join(dataDir, "subscriptions", "copilot"),
-        ...(options.copilot ? { cli: options.copilot.cli } : {}),
+        ...(options.copilot
+          ? { cli: options.copilot.cli, npm: options.copilot.npm }
+          : {}),
       },
       clock: Date.now,
       log: gatewayLog,

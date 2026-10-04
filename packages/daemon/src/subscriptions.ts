@@ -171,13 +171,21 @@ export class SubscriptionService implements SubscriptionControl {
   }
 
   async copilotSetup(): Promise<CopilotSetup> {
+    return this.#copilot().setup();
+  }
+
+  async installCopilot(): Promise<CopilotSetup> {
+    return this.#copilot().install();
+  }
+
+  #copilot(): CopilotHosts {
     if (!this.options.copilot)
       throw new HubError(
         "COPILOT_UNAVAILABLE",
         "Copilot accounts are not available in this daemon",
         503,
       );
-    return this.options.copilot.setup();
+    return this.options.copilot;
   }
 
   accessToken(

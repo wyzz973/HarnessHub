@@ -1417,6 +1417,11 @@ export class HarnessHubClient {
     /** Whether the Copilot SDK add-on and the Copilot CLI are installed, and how to install the SDK. */
     copilotSetup: () =>
       this.request<CopilotSetupView>("GET", "subscriptions/copilot/setup"),
+    /** Install the supported Copilot SDK with the user's npm (may take minutes), then report the setup. */
+    installCopilot: () =>
+      this.request<CopilotSetupView>("POST", "subscriptions/copilot/setup", {
+        body: {},
+      }),
     /** End the account's session with the vendor and clear its tokens; the registration stays. */
     signOut: (provider: string, credential: string) =>
       this.request<{ revoked: boolean }>(

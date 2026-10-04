@@ -3,7 +3,8 @@
  * GitHub Copilot accounts on the daemon side ([ADR 0026](../../../docs/decisions/0026-subscription-accounts.md)):
  * one host process per account runs GitHub's Copilot SDK (an optional
  * add-on the user installs under `<dataDir>/addons/copilot-sdk`), which
- * drives the Copilot CLI the user installed. {@link CopilotHosts} is the
+ * drives the Copilot CLI the user installed; `install` puts the SDK there
+ * with the user's npm. {@link CopilotHosts} is the
  * gateway's {@link CopilotRuntime} and also reads accounts' identities and
  * model lists for sign-in and model refresh.
  *
@@ -28,6 +29,7 @@ import { access, mkdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { HubError } from "@harnesshub/core/errors";
 import type { LogSink } from "@harnesshub/core/logging";
 import type {
   AllowanceReading,
@@ -65,6 +67,8 @@ const HOST_IDLE_MS = 15 * 60_000;
 const REQUEST_MS = 120_000;
 /** How long a stopping host gets before it is killed. */
 const STOP_MS = 5_000;
+/** How long npm may take to install the SDK. */
+const INSTALL_MS = 4 * 60_000;
 /** Environment variables the Copilot CLI would take a token from instead of the account's. */
 const TOKEN_VARIABLES = [
   "COPILOT_GITHUB_TOKEN",
@@ -116,10 +120,11 @@ export function isFineGrainedToken(value: string): boolean {
 }
 
 /**
- * The Copilot CLI on PATH (`copilot`, with PATHEXT on Windows), or
- * undefined. Only regular files count; on POSIX they must be executable.
+ * A program on PATH (with PATHEXT on Windows), or undefined. Only regular
+ * files count; on POSIX they must be executable.
  */
-export async function findCopilotCli(
+export async function findProgram(
+  program: string,
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform = process.platform,
 ): Promise<string | undefined> {
@@ -128,8 +133,8 @@ export async function findCopilotCli(
     ? (environment.PATHEXT ?? ".EXE;.CMD;.BAT")
         .split(";")
         .filter(Boolean)
-        .map((ext) => `copilot${ext.toLowerCase()}`)
-    : ["copilot"];
+        .map((ext) => `${program}${ext.toLowerCase()}`)
+    : [program];
   const variable = windows
     ? (Object.keys(environment).find((key) => key.toUpperCase() === "PATH") ??
       "PATH")
@@ -150,6 +155,32 @@ export async function findCopilotCli(
     }
   }
   return undefined;
+}
+
+/** The Copilot CLI on PATH (`copilot`), or undefined. */
+export function findCopilotCli(
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform = process.platform,
+): Promise<string | undefined> {
+  return findProgram("copilot", environment, platform);
+}
+
+/**
+ * The npm arguments that install the supported SDK into `prefix`: without
+ * its platform runtimes (HarnessHub drives the user's CLI) and without
+ * install scripts, which the stdio transport does not need.
+ */
+export function copilotInstallArguments(prefix: string): string[] {
+  return [
+    "install",
+    "--prefix",
+    prefix,
+    "--omit=optional",
+    "--ignore-scripts",
+    "--no-audit",
+    "--no-fund",
+    `@github/copilot-sdk@${COPILOT_SDK_VERSION}`,
+  ];
 }
 
 /** One quota window as the host reports it. */
@@ -459,6 +490,8 @@ export interface CopilotPaths {
   directory: string;
   /** The Copilot CLI; undefined looks it up on PATH when a host starts. */
   cli?: string;
+  /** npm for installing the SDK; undefined looks it up on PATH. */
+  npm?: string;
 }
 
 /**
@@ -468,6 +501,7 @@ export interface CopilotPaths {
  */
 export class CopilotHosts implements CopilotRuntime {
   #hosts = new Map<string, Promise<Host>>();
+  #installing: Promise<CopilotSetup> | undefined;
   #closed = false;
 
   constructor(
@@ -504,16 +538,107 @@ export class CopilotHosts implements CopilotRuntime {
       // Not installed.
     }
     const cliPath = await this.#cli();
-    const quoted = /[\s"']/.test(sdkDirectory)
-      ? JSON.stringify(sdkDirectory)
-      : sdkDirectory;
     return {
       sdkDirectory,
       ...(sdkVersion ? { sdkVersion } : {}),
       supportedSdkVersion: COPILOT_SDK_VERSION,
       ...(cliPath ? { cliPath } : {}),
-      installCommand: `npm install --prefix ${quoted} --omit=optional --no-audit --no-fund @github/copilot-sdk@${COPILOT_SDK_VERSION}`,
+      installCommand: [
+        "npm",
+        ...copilotInstallArguments(sdkDirectory).map((arg) =>
+          /[\s"']/.test(arg) ? JSON.stringify(arg) : arg,
+        ),
+      ].join(" "),
     };
+  }
+
+  /**
+   * Install the supported SDK into the add-on directory with the user's npm
+   * (through the ProcessLauncher; one install at a time), then report the
+   * setup again.
+   *
+   * @throws HubError `NPM_NOT_FOUND` (409) without npm on PATH,
+   *   `COPILOT_SDK_INSTALL_FAILED` (502) when npm fails or times out.
+   */
+  install(): Promise<CopilotSetup> {
+    this.#installing ??= this.#install().finally(() => {
+      this.#installing = undefined;
+    });
+    return this.#installing;
+  }
+
+  async #install(): Promise<CopilotSetup> {
+    const prefix = this.options.paths.addon;
+    const args = copilotInstallArguments(prefix);
+    const npm =
+      this.options.paths.npm ??
+      (await findProgram("npm", this.options.environment));
+    if (!npm)
+      throw new HubError(
+        "NPM_NOT_FOUND",
+        `npm was not found on PATH; install Node.js with npm, or run: ${(await this.setup()).installCommand}`,
+        409,
+      );
+    await mkdir(prefix, { recursive: true, mode: 0o700 });
+    // A Windows npm is a batch file, which only runs through cmd.exe.
+    const shell = process.platform === "win32" && /\.(cmd|bat)$/i.test(npm);
+    if (shell && [npm, ...args].some((arg) => arg.includes('"')))
+      throw new HubError(
+        "COPILOT_SDK_INSTALL_FAILED",
+        "The npm or add-on path contains a quotation mark",
+        502,
+      );
+    const result = await this.options.launcher.run({
+      ...(shell
+        ? {
+            file: "cmd.exe",
+            args: [
+              "/d",
+              "/s",
+              "/c",
+              `"${[npm, ...args].map((arg) => `"${arg}"`).join(" ")}"`,
+            ],
+            windowsVerbatimArguments: true,
+          }
+        : { file: npm, args }),
+      env: this.#environment(false),
+      cwd: prefix,
+      timeoutMs: INSTALL_MS,
+      maxBuffer: 1024 * 1024,
+    });
+    if (result.error || result.timedOut || result.code !== 0) {
+      const reason = result.error
+        ? "could not start"
+        : result.timedOut
+          ? "timed out"
+          : `exit code ${result.code ?? result.signal ?? "unknown"}`;
+      const output = result.stderr
+        .toString("utf8")
+        .trim()
+        .split("\n")
+        .slice(-5);
+      throw new HubError(
+        "COPILOT_SDK_INSTALL_FAILED",
+        `npm install of @github/copilot-sdk@${COPILOT_SDK_VERSION} failed (${reason})${output.length && output[0] ? `: ${output.join(" | ")}` : ""}`.slice(
+          0,
+          1000,
+        ),
+        502,
+      );
+    }
+    this.options.log.info("subscriptions.copilot_sdk_installed", {
+      version: COPILOT_SDK_VERSION,
+    });
+    return this.setup();
+  }
+
+  /** The daemon's environment for a child; without token variables for a token account. */
+  #environment(token: boolean): Record<string, string> {
+    const environment: Record<string, string> = {};
+    for (const [key, value] of Object.entries(this.options.environment))
+      if (value !== undefined && !(token && TOKEN_VARIABLES.includes(key)))
+        environment[key] = value;
+    return environment;
   }
 
   #cli(): Promise<string | undefined> {
@@ -538,14 +663,10 @@ export class CopilotHosts implements CopilotRuntime {
       : undefined;
     for (const dir of [work, state, ...(home ? [home] : [])])
       await mkdir(dir, { recursive: true, mode: 0o700 });
-    const environment: Record<string, string> = {};
-    for (const [key, value] of Object.entries(this.options.environment))
-      if (value !== undefined && !(token && TOKEN_VARIABLES.includes(key)))
-        environment[key] = value;
     const child = this.options.launcher.launch({
       file: process.execPath,
       args: [HOST_SCRIPT],
-      env: environment,
+      env: this.#environment(token !== undefined),
       cwd: work,
     });
     const host = new Host(child, token);
