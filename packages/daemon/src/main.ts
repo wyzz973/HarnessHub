@@ -352,6 +352,13 @@ export async function startHub(options: {
    * add-on is `<dataDir>/addons/copilot-sdk`; there is no user setting.
    */
   copilot?: { cli: string; addon: string; npm: string };
+  /**
+   * For tests only: where the gateway's Codex passthrough forwards
+   * `/backend-api/codex/*`, pointed at a loopback stub so that no test can
+   * reach ChatGPT. Unset, it is ChatGPT's Codex backend
+   * (`https://chatgpt.com/backend-api/codex`); there is no user setting.
+   */
+  codexBackend?: string;
 }) {
   // HARNESSHUB_LOG_LEVEL is validated before anything starts; Workers inherit the value.
   const logLevel = parseLogLevel(process.env[LOG_LEVEL_ENVIRONMENT]);
@@ -682,6 +689,7 @@ export async function startHub(options: {
       ...(adminToken ? { secrets: [adminToken] } : {}),
       // ChatGPT-mode Codex lists the gateway's models as wiring writes them.
       codexCatalog: (models, first) => codexWiringCatalog(models, first).models,
+      ...(options.codexBackend ? { codexBackend: options.codexBackend } : {}),
     });
     manager = new EngineManager({
       config,

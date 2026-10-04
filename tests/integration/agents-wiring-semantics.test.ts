@@ -10,6 +10,7 @@ import { startHub } from "@harnesshub/daemon/main";
 import { HarnessHubError } from "@harnesshub/sdk/client";
 import { connectLocal } from "@harnesshub/sdk/local";
 import { HH_ENTRY } from "../support/entries.js";
+import { startCodexStub } from "../support/codex-stub.js";
 import { startFakeProvider } from "../support/fake-provider.js";
 import { temporaryDirectory } from "../support/temporary.js";
 
@@ -47,6 +48,7 @@ async function setup(t: TestContext) {
   });
   defer(() => upstream.close());
   const dataDir = path.join(directory, "data");
+  const chatgpt = await startCodexStub(t);
   const hub = await startHub({
     dataDir,
     configDir: path.join(directory, "config"),
@@ -56,6 +58,8 @@ async function setup(t: TestContext) {
     port: 0,
     host: "127.0.0.1",
     wiringHome: { home, env: { PATH: path.join(directory, "bin") } },
+    // The Codex passthrough never reaches ChatGPT from a test.
+    codexBackend: chatgpt.url,
   });
   defer(() => hub.server.close());
   const client = await connectLocal({ dataDir, url: hub.url });
@@ -90,6 +94,7 @@ async function setup(t: TestContext) {
     origin: info.gateway!.anthropicBaseUrl,
     v1: info.gateway!.openaiBaseUrl,
     codex: path.join(home, ".codex", "config.toml"),
+    chatgpt,
   };
 }
 
@@ -238,7 +243,7 @@ void test("Claude Code gets its tiers, the [1m] mark for a 1M model, the window 
 });
 
 void test("Codex in API mode lists a generated catalog; in ChatGPT mode it keeps its sign-in and gets openai_base_url with its key, and a model only when named", async (t) => {
-  const { client, codex, home, origin, v1 } = await setup(t);
+  const { client, codex, home, origin, v1, chatgpt } = await setup(t);
   const catalog = path.join(home, ".codex", "harnesshub-models.json");
 
   // ChatGPT mode from scratch: one line, the key in its path, Codex's own model.
@@ -364,6 +369,8 @@ void test("Codex in API mode lists a generated catalog; in ChatGPT mode it keeps
   assert.equal(unwired.agent.wiring, null);
   assert.equal(await readFile(codex, "utf8"), CODEX_ORIGINAL);
   assert.equal(await exists(catalog), false);
+  // Only HarnessHub's models were asked for: nothing went to ChatGPT.
+  assert.deepEqual(chatgpt.requests, []);
 });
 
 void test("hiding and showing models changes the agent's written list and what its key may list and call, without a new key", async (t) => {

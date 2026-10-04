@@ -13,6 +13,7 @@ import {
 } from "@harnesshub/daemon/http/model-gateway-mount";
 import { startHub } from "@harnesshub/daemon/main";
 import { connectLocal } from "@harnesshub/sdk/local";
+import { startCodexStub } from "../support/codex-stub.js";
 import { temporaryDirectory } from "../support/temporary.js";
 
 const CHAT_KEY = "sk-synthetic-mount-chat-0001";
@@ -188,6 +189,7 @@ void test(
       "harnesshub-mount-",
     );
     const dataDir = path.join(directory, "data");
+    const chatgpt = await startCodexStub(t);
     const hub = await startHub({
       dataDir,
       configDir: path.join(directory, "config"),
@@ -196,6 +198,8 @@ void test(
       cwd: directory,
       port: 0,
       host: "127.0.0.1",
+      // The Codex passthrough never reaches ChatGPT from a test.
+      codexBackend: chatgpt.url,
     });
     let running = true;
     defer(() => (running ? hub.server.close() : undefined));
@@ -395,6 +399,7 @@ void test(
     assert.equal(codex.status, 403, codex.text);
     assert.equal(codex.headers.get("x-hh-error-source"), "gateway");
     assert.match(codex.text, /origin_forbidden/);
+    assert.deepEqual(chatgpt.requests, [], "nothing was forwarded");
 
     // Management routes on the same port still answer from Fastify.
     const engines = await fetch(`${hub.url}/v1/engines`);

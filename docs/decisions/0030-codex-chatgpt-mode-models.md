@@ -40,7 +40,7 @@ Magpie 的回环网关不鉴权；HarnessHub 的模型调用都要求 Gateway Ke
 ## 验证
 
 - 网关 HTTP（回环假 ChatGPT 与假上游、合成密钥）：路径中的 Key 不转发、不入账、不进日志；HarnessHub 的模型在本地服务，上游收到的是 provider 的凭据，没有 ChatGPT 的令牌与账号头；合并列表的顺序、优先级与 `ETag`，转发答复的 `X-Models-Etag` 与之相同；没有 Key 时 HarnessHub 的模型本地 401；错误、未知或已吊销的 Key 对列表、调用与压缩一律本地 401，答复不含 Key 与路径；局域网入口拒绝带 Key 的形式。
-- 正式守护进程（白名单之外拒绝 `ChatGPT-Account-Id` 与 `originator` 请求头的假 provider、OTLP 收集器、debug 日志级别）：接线写入的 Key 能调用，错误的或没有 Key 时 401，轮换后旧 Key 401，还原后 Key 被吊销；上游只收到 provider 的凭据；结束后在数据目录（SQLite 与 WAL、日志、接线备份）、配置目录、Agent 的 home 与 OTLP 导出中逐字节查找每把 Key、ChatGPT 令牌与账号 ID，都不存在。
+- 正式守护进程（白名单之外拒绝 `ChatGPT-Account-Id` 与 `originator` 请求头的假 provider、OTLP 收集器、debug 日志级别，ChatGPT 是记录请求的回环替身，测试不会访问 chatgpt.com）：Codex 自己的模型转发到替身时带着它的登录、不带 Key；接线写入的 Key 能调用，错误的或没有 Key 时 401，轮换后旧 Key 401，还原后 Key 被吊销；上游只收到 provider 的凭据；结束后在数据目录（SQLite 与 WAL、日志、接线备份）、配置目录、Agent 的 home 与 OTLP 导出中逐字节查找每把 Key、ChatGPT 令牌与账号 ID，都不存在。
 - 没有 Key 的旧记录重新接线时，预览显示 `openai_base_url` 从不带 Key 到带 Key（掩码）的改动与新 Key 的 ID。
 - 接线（库层与正式守护进程入口）：ChatGPT 模式写入带 Key 的基址并通过漂移检测与 `wiredKeyText`；写入的 Key 能经 Codex 路径调用网关的模型，没有 Key 时 401；指定模型与 effort、`model: null` 还原用户原来的模型；与 API 模式互相切换；Profile 应用。
 - 尚未用真实的 Codex（ChatGPT 登录）验证模型选择器中的合并列表与 HarnessHub 模型的调用。

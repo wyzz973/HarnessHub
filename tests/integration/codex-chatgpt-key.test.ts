@@ -20,6 +20,7 @@ import {
   credentialFingerprint,
   startFakeProvider,
 } from "../support/fake-provider.js";
+import { startCodexStub } from "../support/codex-stub.js";
 import { temporaryDirectory } from "../support/temporary.js";
 
 const UPSTREAM_KEY = "sk-synthetic-codex-key-path-upstream-5e1b";
@@ -69,6 +70,7 @@ async function codex(
   origin: string,
   key: string | undefined,
   stream: boolean,
+  model = MODEL,
 ): Promise<{ status: number; text: string }> {
   const response = await fetch(
     `${origin}/backend-api/codex${key ? `/${key}` : ""}/responses`,
@@ -82,7 +84,7 @@ async function codex(
         "user-agent": "codex_cli_rs/0.150.0 (Mac OS 15.6.1; arm64)",
       },
       body: JSON.stringify({
-        model: MODEL,
+        model,
         stream,
         instructions: "You are Codex.",
         input: [
@@ -124,6 +126,7 @@ void test(
     await writeFile(config, ORIGINAL);
     const dataDir = path.join(directory, "data");
     const configDir = path.join(directory, "config");
+    const chatgpt = await startCodexStub(t);
     const hub = await startHub({
       dataDir,
       configDir,
@@ -134,6 +137,8 @@ void test(
       host: "127.0.0.1",
       wiringHome: { home, env: { PATH: path.join(directory, "bin") } },
       otlp: { endpoint: stub.endpoint },
+      // ChatGPT is a loopback stand-in: no test reaches chatgpt.com.
+      codexBackend: chatgpt.url,
     });
     let running = true;
     defer(() => (running ? hub.server.close() : undefined));
@@ -165,6 +170,19 @@ void test(
       const answer = await codex(origin, first, stream);
       assert.equal(answer.status, 200, answer.text);
     }
+    assert.equal(chatgpt.requests.length, 0, "HarnessHub's model stays here");
+    // Codex's own model goes to ChatGPT: its sign-in as it came, the key out.
+    const own = await codex(origin, first, true, "gpt-5.1-codex");
+    assert.equal(own.status, 200, own.text);
+    assert.equal(chatgpt.requests.length, 1);
+    const relayed = chatgpt.requests[0]!;
+    assert.equal(relayed.url, "/backend-api/codex/responses");
+    assert.equal(relayed.headers.authorization, `Bearer ${CHATGPT_TOKEN}`);
+    assert.equal(relayed.headers["chatgpt-account-id"], ACCOUNT);
+    assert.equal(
+      (JSON.parse(relayed.body) as { model: string }).model,
+      "gpt-5.1-codex",
+    );
     // A wrong key, or none, is refused here; neither is echoed.
     const wrong = first.replace(/_[A-Za-z0-9_-]{43}$/, `_${"B".repeat(43)}`);
     for (const key of [wrong, undefined]) {
@@ -193,7 +211,12 @@ void test(
     // The ledger names the key by id only, and the path without it.
     const calls = (await client.modelCalls.list({ limit: 50 })).items;
     const served = calls.filter((call) => call.status === 200);
-    assert.equal(served.length, 3);
+    assert.deepEqual(served.map((call) => call.provider).sort(), [
+      "chatgpt-subscription",
+      "fake",
+      "fake",
+      "fake",
+    ]);
     for (const call of calls) {
       assert.equal(call.inbound.path, "/backend-api/codex/responses");
       assert.ok(!JSON.stringify(call).includes("hhk_"));
@@ -237,5 +260,9 @@ void test(
     }
     for (const body of stub.received)
       for (const secret of secrets) assert.ok(!body.includes(secret));
+    // ChatGPT got the one call for its own model, and no key.
+    assert.equal(chatgpt.requests.length, 1);
+    for (const key of [first, second, wrong])
+      assert.ok(!JSON.stringify(chatgpt.requests).includes(key));
   },
 );

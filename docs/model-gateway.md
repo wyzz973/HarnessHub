@@ -202,7 +202,7 @@ Session 的 Run 经守护进程端口上的共享网关使用模型（03 第 10 
 | `allowances` | 额度读数的保存位置（守护进程：`<dataDir>/allowance-readings.json`）：启动时读回，变化后一分钟内与 `close()` 时保存，失败只写日志；没有它时读数只在内存中 |
 | `features` | 用户的网关功能设置（[网关功能](gateway-features.md)：出站脱敏、视觉模型、搜索后端），每个请求读取；没有它时脱敏开启、没有用户规则，其余关闭 |
 | `secrets` | 处理函数自己不解析、但绝不能发往上游的值（守护进程的管理令牌）；脱敏像凭据一样替换它们 |
-| `codexBackend` | 只供测试：Codex 透传转发到的基址，测试把它指向回环假服务；守护进程不设置，即 `https://chatgpt.com/backend-api/codex`，没有对应的用户配置项 |
+| `codexBackend` | 只供测试：Codex 透传转发到的基址，测试把它指向回环假服务；守护进程只在 `startHub({codexBackend})`（同样只供测试，不在配置文件中）给出时设置，否则为 `https://chatgpt.com/backend-api/codex`，没有对应的用户配置项。经守护进程访问 `/backend-api/codex` 的测试都指向记录请求的回环替身（`tests/support/codex-stub.ts`），不会访问 chatgpt.com |
 
 监听器的所有者把 `limits.requestHeadersTimeoutMs` 设为 `server.headersTimeout`，并在关闭存储之前 `await handler.close()`。`close()` 幂等：之后的新请求返回 503 `gateway_closing`；在途调用被中止（账本记 499 `client_cancelled`），等待所有请求结束，再提交被节流的拒绝计数。
 
