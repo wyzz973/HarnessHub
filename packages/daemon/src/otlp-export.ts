@@ -19,6 +19,7 @@
 import { randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
+import { deadline } from "@harnesshub/gateway/http";
 import { HubError } from "@harnesshub/core/errors";
 import { NO_LOG, type LogSink } from "@harnesshub/core/logging";
 import type {
@@ -500,15 +501,13 @@ export async function startModelCallExport(
       }
       let status: number | undefined;
       let retryAfterMs: number | undefined;
+      const timeout = deadline(stop.signal, limits.exportTimeoutMs);
       try {
         const response = await send(target, {
           method: "POST",
           headers,
           body,
-          signal: AbortSignal.any([
-            stop.signal,
-            AbortSignal.timeout(limits.exportTimeoutMs),
-          ]),
+          signal: timeout.signal,
         });
         status = response.status;
         const seconds = Number(response.headers.get("retry-after"));
@@ -525,6 +524,8 @@ export async function startModelCallExport(
         log.debug("otlp.export_error", {
           error: error instanceof Error ? error.name : "unknown",
         });
+      } finally {
+        timeout.dispose();
       }
       if (status !== undefined && status >= 200 && status < 300) {
         counters.exported += batch.length;

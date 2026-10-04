@@ -4,6 +4,7 @@ import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type IncomingHttpHeaders } from "node:http";
 import type { AddressInfo } from "node:net";
+import v8 from "node:v8";
 import type {
   GatewayKeyId,
   ModelCallEntry,
@@ -459,6 +460,32 @@ void test("429 and 5xx answers are retried after Retry-After; other statuses fai
     failed: 1,
     retries: 0,
   });
+});
+
+void test("an exported batch keeps no signal or timer alive once its request ended", async () => {
+  // Node 24 keeps every AbortSignal.timeout() passed to AbortSignal.any()
+  // alive, with its timer, until the timeout fires: each batch used to hold
+  // its signals for the whole export timeout.
+  const answered: typeof fetch = () =>
+    Promise.resolve(new Response(null, { status: 200 }));
+  const exporter = await startModelCallExport(
+    config("http://127.0.0.1:9"),
+    deps({ fetch: answered, limits: { maxBatch: 1, exportTimeoutMs: 60_000 } }),
+  );
+  // A WeakRef keeps its target until the current job ends, so the signals
+  // are counted after a turn of the event loop.
+  const live = async () => {
+    await new Promise((resolve) => setImmediate(resolve));
+    return v8.queryObjects(AbortSignal, { format: "count" }) as number;
+  };
+  exporter.record(fullEntry());
+  await exporter.flush();
+  const before = await live();
+  for (let index = 0; index < 500; index++) exporter.record(fullEntry());
+  await exporter.flush();
+  const retained = (await live()) - before;
+  assert.equal((await exporter.shutdown()).exported, 501);
+  assert.ok(retained < 50, `${retained} signals outlived their batches`);
 });
 
 void test("shutdown exports the queued spans before the periodic flush would", async (t) => {
