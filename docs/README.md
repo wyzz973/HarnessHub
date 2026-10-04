@@ -43,6 +43,7 @@
 | [统一模型下的引擎接线](model-gateway-engines.md) | 各引擎的私有配置、缺省值与已知限制 |
 | [全局接线](global-wiring.md) | 把本机 Agent 的用户配置接到网关：预览、备份、原子写、还原、漂移与各 Adapter 写入的键 |
 | [备份、恢复与同步](backup-sync.md) | 口令加密的备份文件、逐条恢复与 Agent 重新接线、经 WebDAV 或 S3 的多机同步与冲突合并 |
+| [Library](library.md) | 指令集、MCP 服务与 Skills 同步到各 Agent：归属、还原、秘密引用与禁止引用 HarnessHub 凭据 |
 | [CLI Driver](cli-driver.md) | stdin/argv、文本输出、退出、取消与进程清理 |
 | [安装快照](engine-installation.md) | 文件 hash 与版本元数据的只读采集 |
 | [Pi](pi-engine.md) | 固定 Adapter、配置与限制 |
