@@ -19,6 +19,9 @@ Commands:
   use         The same as wire: hh use <agent> <model>
   unwire      Restore an agent's configuration and revoke its key
   profile     Save and apply every wired agent's model choices (save, list, apply, rm)
+  backup      Seal providers, keys, groups and agent wirings into a file
+  restore     Restore a backup (hh restore --help)
+  sync        Sync with other machines through WebDAV or S3 (hh sync --help)
   benchmark   Run, regrade or report a benchmark (hh benchmark --help)
   tools       Manage Tool Packs (hh tools --root <directory> <command>)
   rollout     Export a run's rollout (hh rollout --help)`;
@@ -64,6 +67,15 @@ const COMMANDS: Readonly<Record<string, Command>> = {
         },
       ],
     ),
+  ),
+  ...Object.fromEntries(
+    ["backup", "restore", "sync"].map((name): [string, Command] => [
+      name,
+      async (argv) => {
+        const { main } = await import("@harnesshub/cli/backup");
+        return main(argv);
+      },
+    ]),
   ),
   ...Object.fromEntries(
     [

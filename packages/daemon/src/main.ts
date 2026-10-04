@@ -52,6 +52,8 @@ import { ConsoleSessions } from "./http/console-session.js";
 import { loadConsole, registerConsole } from "./http/console-static.js";
 import { consoleAssets } from "@harnesshub/console/assets";
 import { AgentWiringService } from "./agents-wiring.js";
+import { BackupService } from "./backup.js";
+import { SyncService } from "./sync.js";
 import { GatewayShare } from "./lan-share.js";
 import {
   getPreset,
@@ -452,6 +454,7 @@ export async function startHub(options: {
   /** OTLP export of committed model calls; only with an `otlp` block. */
   let otlp: ModelCallExporter | undefined;
   let shareToClose: GatewayShare | undefined;
+  let syncToClose: SyncService | undefined;
   let server: Awaited<ReturnType<typeof createGateway>> | undefined;
   /** The Runtime's store, where `model.call` Run events are committed. */
   let runStore: Store = store;
@@ -770,6 +773,38 @@ export async function startHub(options: {
     });
     registerToolPackageRoutes(server, toolPackages);
     registerHarnessModelRoutes(server, harnessModel, () => runtimeInfo);
+    const agents = new AgentWiringService({
+      store: modelPlane,
+      dataDir,
+      home: options.wiringHome,
+      origin: () => gatewayOrigin,
+      log: gatewayLog,
+    });
+    // Backups and sync (off until configured); a sync in flight is aborted
+    // and awaited before the stores close.
+    const backups = new BackupService({
+      store: modelPlane,
+      secrets,
+      environment,
+      agents,
+      share,
+      // As configured: HH_OFFLINE is this process's environment, not a setting.
+      catalog: {
+        autoRefresh: options.catalog?.autoRefresh !== false,
+        url: catalogSettings.url,
+      },
+      app: `HarnessHub ${build.version}`,
+    });
+    const sync = new SyncService({
+      dataDir,
+      backups,
+      secrets,
+      environment,
+      log: gatewayLog,
+    });
+    syncToClose = sync;
+    await sync.load();
+    server.addHook("preClose", async () => sync.close());
     registerApiV1(server, {
       adminTokenDigest,
       consoleSessions,
@@ -800,14 +835,9 @@ export async function startHub(options: {
       }),
       log: gatewayLog,
       ...(options.wiringHome ? { importHome: options.wiringHome } : {}),
-      agents: new AgentWiringService({
-        store: modelPlane,
-        dataDir,
-        home: options.wiringHome,
-        origin: () => gatewayOrigin,
-        log: gatewayLog,
-      }),
+      agents,
       gatewayShare: share,
+      backup: { backups, sync },
     });
     // Registered after createGateway's hook, so the application has already cancelled
     // Runs; this only stops a pending model test and waits for its Session cleanup.
@@ -839,6 +869,7 @@ export async function startHub(options: {
     if (bound && typeof bound === "object")
       gatewayOrigin = `http://127.0.0.1:${bound.port}`;
     await share.listen();
+    sync.start();
     gatewayLog.info("gateway.listen", {
       url,
       host: bindHost,
@@ -889,6 +920,7 @@ export async function startHub(options: {
     await catalog?.close();
     await otlp?.shutdown();
     await shareToClose?.close();
+    await syncToClose?.close();
     workflowStore?.close();
     modelPlane?.close();
     store.close();

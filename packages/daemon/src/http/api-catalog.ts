@@ -1892,4 +1892,108 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     tests: ["tests/integration/agents-wiring.test.ts"],
     operationId: "hh_api_v1_apply_profile",
   },
+  {
+    method: "POST",
+    path: "/api/v1/backup",
+    title: "生成加密备份",
+    group: "backup",
+    request:
+      "passphrase（必填，1–1024 字符）；keys 缺省 true，false 时不带凭证值。",
+    response:
+      "200：加密信封 format=harnesshub-backup、version=1、kdf=pbkdf2-sha256、iterations=600000、salt、nonce、data（base64，AES-256-GCM 密文加 16 字节标签）；即备份文件的内容。",
+    implementation:
+      "BackupService.create：收集 provider（store 凭证按 keys 解析出值，env/file/keychain 引用原样保留）、覆盖值与来源、路由组、接线意图（Agent、model、models）、client Key 的名称与允许范围、局域网共享与目录设置，再以口令派生的密钥（PBKDF2-SHA256 600,000 次）用 AES-256-GCM 加密，信封字段作为附加认证数据。",
+    effects: "只读；口令不保存；Gateway Key 文本从不进入备份。",
+    errors:
+      "400 INVALID_REQUEST（口令为空等）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json。",
+    source: "packages/daemon/src/http/backup-routes.ts",
+    tests: ["tests/integration/backup-restore.test.ts"],
+    operationId: "hh_api_v1_create_backup",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/restore",
+    title: "恢复备份",
+    group: "backup",
+    request:
+      "backup（备份文件的 JSON）、passphrase；agents 缺省 true，false 时不重新接线；dryRun 缺省 false，true 时只返回摘要。请求体上限 64 MiB。",
+    response:
+      "200：摘要 providers（added、replaced、needKey）、groups（added、replaced、skipped）、overrides、profiles（added、replaced）、gatewayShare（action、settings、error）、catalog（backup、current、differs）、agents[]（agent、model、tiers、effort、options、models、deny 与 action=wire|unchanged|skip-*，恢复后 outcome=wired|failed 与 error）、clientKeys（需重新签发）。",
+    implementation:
+      "BackupService.restore：解密并校验内容后逐条写入：同 id 的 provider 与同名 profile 替换、其余新增（不带 Key 的备份保留本机凭证；新凭证先写入密钥存储，provider 写失败则删除），路由组，局域网共享设置（GatewayShare.update），再对本机已安装的 Agent 经 AgentWiringService 的 plan 与 wire（expect 为该预览）按 model、models、tiers、effort 与 options 以新的 agent: Key 接线，隐藏的模型不同时经 setHidden 设置。",
+    effects:
+      "非 dryRun 时写入 providers、模型覆盖与来源、路由组、接线 profile 与密钥存储，可能改写 gateway-sharing.json 与 Agent 配置文件；不删除任何本机记录；单条失败的 Agent 接线不影响其余项。",
+    errors:
+      "400 BACKUP_PASSPHRASE（口令错误或文件被改）、BACKUP_INVALID、BACKUP_UNSUPPORTED（更新版本的备份）；413 PAYLOAD_TOO_LARGE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json。",
+    source: "packages/daemon/src/http/backup-routes.ts",
+    tests: ["tests/integration/backup-restore.test.ts"],
+    operationId: "hh_api_v1_restore_backup",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/sync",
+    title: "同步状态",
+    group: "backup",
+    request: "无参数。",
+    response:
+      "200：enabled、kind=webdav|s3、url、user、endpoint、region、pathStyle、keys、agents、intervalMs、lastSyncAt、lastError、nextSyncAt、notice（两边都改过时被替换的部分与副本目录）、secretBackend。",
+    implementation:
+      "SyncService.status 读取 <dataDir>/sync/config.json 与 state.json 的内存副本。",
+    effects: "只读；不返回口令或目标凭证。",
+    errors:
+      "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json。",
+    source: "packages/daemon/src/http/backup-routes.ts",
+    tests: ["tests/integration/sync.test.ts"],
+    operationId: "hh_api_v1_get_sync",
+  },
+  {
+    method: "PUT",
+    path: "/api/v1/sync",
+    title: "开启或修改同步",
+    group: "backup",
+    request:
+      "kind=webdav|s3、url 必填；user（WebDAV 用户名或 S3 access key ID，S3 必填）、secret（WebDAV 密码或 S3 secret key）、passphrase、endpoint、region、pathStyle（仅 S3）、keys 与 agents（缺省 true）。省略 secret 或 passphrase 时沿用已保存的（secret 只对同一目标与用户）。",
+    response: "200：同步状态，warnings 说明口令保存在密钥存储中。",
+    implementation:
+      "SyncService.configure：校验地址后把 secret 与 passphrase 写入密钥存储，原子写入 config.json（0600），删除被替换的旧密钥，并安排后台同步（之后每 3 分钟一次）。",
+    effects: "写入密钥存储与 <dataDir>/sync/config.json；不立即同步。",
+    errors:
+      "400 SYNC_CONFIG_INVALID 或 INVALID_REQUEST；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json。",
+    source: "packages/daemon/src/http/backup-routes.ts",
+    tests: ["tests/integration/sync.test.ts"],
+    operationId: "hh_api_v1_configure_sync",
+  },
+  {
+    method: "DELETE",
+    path: "/api/v1/sync",
+    title: "关闭同步",
+    group: "backup",
+    request: "无参数。",
+    response: "200：enabled=false 的同步状态。",
+    implementation:
+      "SyncService.disable：停止后台循环并中止进行中的同步，删除 config.json、state.json、服务器副本缓存与两项密钥。",
+    effects: "冲突副本（<dataDir>/sync/conflicts/）保留；服务器上的文件不动。",
+    errors:
+      "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json。",
+    source: "packages/daemon/src/http/backup-routes.ts",
+    tests: ["tests/integration/sync.test.ts"],
+    operationId: "hh_api_v1_disable_sync",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/sync/now",
+    title: "立即同步",
+    group: "backup",
+    request: "请求体为空对象。",
+    response: "200：同步后的状态。",
+    implementation:
+      "SyncService.now：条件读取服务器文件（If-None-Match），按 providers、agents 与 profiles 三部分三方比较，只改了一边的取该边，两边都改的取最后修改的一边并保存被替换的副本，带入的部分逐条写入本机，合并结果只在服务器仍是读到的版本时写回（WebDAV If-Match；S3 If-Match，或不支持时先比较 ETag 并在有版本时核对前一版本），被抢先写入时读入对方版本重来一次。",
+    effects:
+      "可能写入 providers、路由组、密钥存储与 Agent 配置文件，删除服务器上已没有的 provider、路由组（Gateway Key 仍允许的保留并列入 notice.kept）与 profile；服务器只收到加密文件。",
+    errors:
+      "409 SYNC_DISABLED、SYNC_PASSPHRASE（服务器文件不是用此口令加密的）、SYNC_CONFLICT（重试后仍被抢先写入）；502 SYNC_REMOTE_FAILED；503 SYNC_RATE_LIMITED；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json。",
+    source: "packages/daemon/src/http/backup-routes.ts",
+    tests: ["tests/integration/sync.test.ts"],
+    operationId: "hh_api_v1_sync_now",
+  },
 ];

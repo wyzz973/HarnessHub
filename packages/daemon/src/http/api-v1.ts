@@ -28,6 +28,9 @@ import {
   registerConsoleSessionRoutes,
   type ConsoleSessions,
 } from "./console-session.js";
+import type { BackupService } from "../backup.js";
+import type { SyncService } from "../sync.js";
+import { registerBackupRoutes } from "./backup-routes.js";
 
 /** Where a problem's `errors[]` entry points: a body member or a query parameter. */
 export type ProblemItem =
@@ -135,6 +138,8 @@ export interface ApiV1Options {
   importHome?: WiringHome;
   /** LAN sharing of the model gateway; without it `/gateway/share` is absent. */
   gatewayShare?: GatewayShareControl;
+  /** Backups and sync; without them `/backup`, `/restore` and `/sync` are absent. */
+  backup?: { backups: BackupService; sync: SyncService };
 }
 
 const LOOPBACK =
@@ -312,6 +317,8 @@ export function registerApiV1(
       registerAgentRoutes(api, options.agents);
       if (options.gatewayShare)
         registerGatewayShareRoutes(api, options.gatewayShare);
+      if (options.backup)
+        registerBackupRoutes(api, options.backup.backups, options.backup.sync);
     },
     { prefix: "/api/v1" },
   );

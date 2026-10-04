@@ -501,6 +501,112 @@ export interface AgentUnwired {
   }>;
 }
 
+/** `POST /backup`: the sealed file as JSON; write it out as it is. */
+export interface BackupEnvelope {
+  format: "harnesshub-backup";
+  version: number;
+  kdf: string;
+  iterations: number;
+  salt: string;
+  nonce: string;
+  data: string;
+}
+
+/** `POST /restore`: what the restore does (`dryRun`) or did. */
+export interface RestoreSummary {
+  createdAt: string;
+  app: string;
+  /** The backup carries credential values. */
+  keys: boolean;
+  providers: { added: string[]; replaced: string[]; needKey: string[] };
+  groups: { added: string[]; replaced: string[]; skipped: string[] };
+  overrides: number;
+  profiles: { added: string[]; replaced: string[] };
+  gatewayShare: {
+    action: "apply" | "unchanged" | "absent" | "unavailable";
+    settings?: GatewayShareSettings;
+    error?: string;
+  };
+  catalog: {
+    backup: { autoRefresh: boolean; url: string };
+    current: { autoRefresh: boolean; url: string };
+    differs: boolean;
+  } | null;
+  agents: Array<{
+    agent: string;
+    /** Absent for an agent that signs in by itself (Codex with ChatGPT). */
+    model?: string;
+    /** The models it may list (`*` for every model). */
+    models: string[];
+    /** The models hidden from it. */
+    deny?: string[];
+    tiers?: Record<string, string>;
+    effort?: string;
+    options?: Record<string, string>;
+    action:
+      | "wire"
+      | "unchanged"
+      | "skip-disabled"
+      | "skip-not-installed"
+      | "skip-unknown"
+      | "skip-unavailable";
+    outcome?: "wired" | "failed";
+    error?: string;
+  }>;
+  /** Client keys to issue again: key text is never in a backup. */
+  clientKeys: Array<{
+    name: string;
+    modelAllow: string[];
+    allowLan: boolean;
+    quota?: GatewayKeyQuota;
+    expiresAt?: string;
+  }>;
+}
+
+/** The body of `PUT /sync`. */
+export interface SyncSettings {
+  kind: "webdav" | "s3";
+  /** `https://…` for WebDAV; `s3://bucket` or `s3://bucket/prefix` for S3. */
+  url: string;
+  /** The WebDAV user, or the S3 access key ID. */
+  user?: string;
+  /** The WebDAV password or the S3 secret access key; omitted keeps the stored one for the same target. */
+  secret?: string;
+  /** Seals the server copy; omitted keeps the stored one. */
+  passphrase?: string;
+  endpoint?: string;
+  region?: string;
+  pathStyle?: boolean;
+  keys?: boolean;
+  agents?: boolean;
+}
+
+/** `GET /sync`. */
+export interface SyncStatus {
+  enabled: boolean;
+  kind?: "webdav" | "s3";
+  url?: string;
+  user?: string;
+  endpoint?: string;
+  region?: string;
+  pathStyle?: boolean;
+  keys?: boolean;
+  agents?: boolean;
+  intervalMs: number;
+  lastSyncAt?: string;
+  lastError?: string;
+  nextSyncAt?: string;
+  notice?: {
+    at: string;
+    here: Array<"providers" | "agents" | "profiles">;
+    there: Array<"providers" | "agents" | "profiles">;
+    saved?: string;
+    kept?: string[];
+  };
+  secretBackend: "keychain" | "dpapi" | "file";
+  warnings?: string[];
+}
+
 type Query = Record<string, string | number | undefined>;
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -895,6 +1001,34 @@ export class HarnessHubClient {
       this.request<GatewayShareStatus>("PUT", "gateway/share", {
         body: settings,
       }),
+  };
+
+  readonly backup = {
+    /** Seals a backup; with `keys: false` it carries no credential values. */
+    create: (input: { passphrase: string; keys?: boolean }) =>
+      this.request<BackupEnvelope>("POST", "backup", { body: input }),
+    /**
+     * Opens `backup` and restores it, or with `dryRun` only says what it
+     * would do. Rejects with `BACKUP_PASSPHRASE` (400) for a wrong passphrase
+     * or a changed file.
+     */
+    restore: (input: {
+      backup: BackupEnvelope;
+      passphrase: string;
+      agents?: boolean;
+      dryRun?: boolean;
+    }) => this.request<RestoreSummary>("POST", "restore", { body: input }),
+  };
+
+  readonly sync = {
+    status: () => this.request<SyncStatus>("GET", "sync"),
+    /** Turns sync on or changes it; does not sync. */
+    configure: (settings: SyncSettings) =>
+      this.request<SyncStatus>("PUT", "sync", { body: settings }),
+    /** Turns sync off and forgets its secrets. */
+    disable: () => this.request<SyncStatus>("DELETE", "sync"),
+    /** Syncs once; rejects with the sync's failure. */
+    now: () => this.request<SyncStatus>("POST", "sync/now", { body: {} }),
   };
 
   readonly modelCalls = {

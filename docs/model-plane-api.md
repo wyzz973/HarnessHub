@@ -32,6 +32,7 @@
 | usage | `GET /usage` | `groupBy` 为 `day`（UTC）、`provider`、`model`（默认）、`key`、`adapter` 或 `credential`（键为 `<provider>/<credentialId>`，凭据 ID 只在 provider 内唯一）；状态码不低于 400 记为失败，成本只累加已知价格，未知价格计入 `unpricedCalls`，`missing` 用量按 0 计 |
 | conversations | `GET /conversations`；`GET /conversations/{key}` | 列表按会话汇总有 `conversationKey` 的调用：`calls`、`failedCalls`、`usage`、`cost`、`unpricedCalls`、`firstAt`、`lastAt`，以及用到的 `models`、`credentials`（`<provider>/<credentialId>`）与 `agents`，最后活动的会话在前；`limit`、`cursor` 与过滤同 `/model-calls`，过滤先作用于调用再汇总。`/{key}` 返回该会话的调用（与 `/model-calls` 相同的项与分页），首页没有调用时 404 `CONVERSATION_NOT_FOUND`，`key` 不是 64 位小写十六进制时 400 |
 | agents | `GET /agents`、`GET /agents/{id}`；`POST /agents/{id}/wiring/plan`、`POST /agents/{id}/wiring`、`POST /agents/{id}/wiring/rotate`、`DELETE /agents/{id}/wiring` | 本机 Agent 的安装、接线与漂移；接线签发 `agent:` Key，Key 文本只写入 Agent 的配置文件。见 [全局接线](global-wiring.md) |
+| backup、sync | `POST /backup`、`POST /restore`；`GET`、`PUT`、`DELETE /sync`、`POST /sync/now` | 口令加密的备份与恢复、经 WebDAV 或 S3 的多机同步。见 [备份、恢复与同步](backup-sync.md) |
 | system | `GET /system/info` | 版本、提交、pid、启动时间、数据目录、秘密后端，以及 `gateway`：本机客户端使用的模型网关基址（`openaiBaseUrl` 含 `/v1`，`anthropicBaseUrl` 与 `geminiBaseUrl` 不含版本段） |
 
 秘密后端由 `hh serve --secrets-backend auto|keychain|dpapi|file` 选择（默认 `auto`：macOS 钥匙串、Windows DPAPI、其他平台加密文件），加密文件后端的主密钥在 `--config-dir`（默认为平台的 HarnessHub 配置目录）下的 `secrets.key`，见 [secrets](../packages/secrets/README.md)。

@@ -1501,6 +1501,7 @@ export {
   confirm,
   context,
   EXIT,
+  hiddenPrompt,
   list,
   localTime,
   output,
