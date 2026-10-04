@@ -9,6 +9,10 @@
  */
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { SecretReference } from "./engine-configuration.js";
+import type {
+  SubscriptionAccount,
+  SubscriptionBackend,
+} from "./subscriptions.js";
 import type { Brand, RunId, SessionId } from "./types.js";
 
 export type ProviderId = Brand<string, "ProviderId">;
@@ -87,6 +91,11 @@ export interface ProviderCredential {
   /** Endpoints this credential is valid for; absent means all of the provider's. */
   protocols?: WireProtocol[];
   enabled: boolean;
+  /**
+   * The subscription account this credential is, on a provider with
+   * `subscription`; its reference then holds the account's tokens.
+   */
+  account?: SubscriptionAccount;
 }
 
 /** Metadata of one model as the provider exposes it; unknown values stay absent. */
@@ -149,11 +158,40 @@ export interface ProviderConfig {
   capabilities?: { requiresReasoningReplay?: boolean };
   /** Never pass requests through byte for byte, even on a matching endpoint. */
   translateOnly?: boolean;
+  /**
+   * The credentials are accounts of a subscription, used through this
+   * backend (ADR-P09). Its requests are always translated, its accounts serve
+   * loopback calls only, and an account is used only after the user accepted
+   * the backend's current notice.
+   */
+  subscription?: { backend: SubscriptionBackend };
   createdAt: string;
   updatedAt: string;
 }
 
-export type RouteStrategy = "order" | "rotate" | "least-used" | "latency";
+/**
+ * `smart` and `pace` order credentials by their allowance readings (Magpie's
+ * routings of the same names); without readings they keep the configured order.
+ */
+export type RouteStrategy =
+  "order" | "rotate" | "least-used" | "latency" | "smart" | "pace";
+
+/**
+ * One allowance window of a credential as its upstream reported it: how
+ * much of it is used and when it renews.
+ */
+export interface AllowanceReading {
+  /** The window's name as its source calls it (`requests`, `premium_interactions`). */
+  window: string;
+  /** Percent used, 0 to 100. */
+  usedPercent: number;
+  /** When the window renews (ISO 8601), when known. */
+  resetsAt?: string;
+  /** The window's length in seconds, when known; windows of a day or more set the pace. */
+  spanSeconds?: number;
+  /** When the reading was taken (ISO 8601). */
+  observedAt: string;
+}
 export type Stickiness = "auto" | "session" | "turn" | "off";
 
 export interface RetryPolicy {

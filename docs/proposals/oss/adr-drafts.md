@@ -136,6 +136,8 @@ Status: accepted（2026-10-03 修订；原决定“订阅复用不进核心”�
 
 **验证要求**：每种订阅 provider 有使用假令牌与本机回环假上游的测试；测试与开发过程不读取开发者本机真实的登录凭据。
 
+**后续（2026-10-04）**：ChatGPT 经 OpenAI 的 Sign in with ChatGPT for open-source apps 实现；Copilot 计划经官方 Copilot SDK（用户自己的 `copilot` 登录或细粒度 PAT）。Claude 订阅标为不可用、不实现：Anthropic 的 [Legal and compliance](https://code.claude.com/docs/en/legal-and-compliance) 写明不允许第三方开发者“route requests through Free, Pro, or Max plan credentials on behalf of their users”，把其他 Agent 的请求经用户的 `claude` 发出属于这种情形，终端用户的例外只覆盖使用未修改的 Claude Code 本身。见 [ADR 0026](../../decisions/0026-subscription-accounts.md) 与 [订阅账号](../../subscriptions.md)。
+
 ## ADR-P10 控制台改为内嵌静态单页
 
 Status: accepted（2026-10-02）

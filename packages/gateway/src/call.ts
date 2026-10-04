@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
+import { SUBSCRIPTION_NOTICES } from "@harnesshub/core/subscriptions";
 import type { LogSink } from "@harnesshub/core/logging";
 import type {
   CallAttempt,
@@ -75,6 +76,7 @@ import {
   resultKeys,
 } from "./reasoning.js";
 import { responsesToChat, ResponsesSink, streamCode } from "./responses.js";
+import { SiwcError, type SubscriptionTokens } from "./siwc.js";
 import {
   backoff,
   classify,
@@ -242,6 +244,8 @@ export interface CallServices {
   makeId(): string;
   /** Append to the ledger; false when the store rejected it (the failure is logged). */
   commit(entry: ModelCallEntry): Promise<boolean>;
+  /** Access tokens of subscription accounts; without it their candidates fail as unavailable. */
+  subscriptions?: SubscriptionTokens;
 }
 
 /** Route parts of a model call. */
@@ -330,6 +334,25 @@ function localError(
  * comes from the status and `body`, the whole error body when there is one
  * (read for routing only, never stored), else the message.
  */
+/**
+ * A subscription's used-up plan, worded as its vendor asks: where the user
+ * reviews the plan's or this app's limit (SIWC UI/UX guidelines).
+ */
+function usageHint(candidate: Candidate, error: AttemptError): AttemptError {
+  const backend = candidate.provider.subscription?.backend;
+  if (!backend || error.kind !== "quota") return error;
+  const notice = SUBSCRIPTION_NOTICES[backend];
+  error.failure = {
+    ...error.failure,
+    message:
+      `Usage limit reached. Review your plan or this app's limit in ChatGPT settings: ${notice.manageUsageUrl} (${error.failure.message})`.slice(
+        0,
+        500,
+      ),
+  };
+  return error;
+}
+
 function upstreamFailure(
   error: GatewayError,
   secrets: readonly string[],
@@ -339,7 +362,7 @@ function upstreamFailure(
   const message = sanitize(error.message, secrets);
   const kind: FailureKind = overflow
     ? "request"
-    : failureKind(error.status, body ?? error.message);
+    : failureKind(error.status, body ?? `${error.code} ${error.message}`);
   const errorClass =
     error.code === "upstream_invalid_response" ||
     error.code === "upstream_protocol_error" ||
@@ -880,6 +903,9 @@ function prepare(call: Call, candidate: Candidate): Prepared {
     const encoded = encodeRequest(candidate.upstream, body, {
       translation,
       model: candidate.model,
+      ...(candidate.provider.subscription?.backend === "siwc"
+        ? { profile: "siwc" as const }
+        : {}),
       signature: (kind, key) =>
         reasoning.signature(call.key.keyId, candidate.provider.id, kind, key),
     });
@@ -940,20 +966,39 @@ async function send(
   const release = () => slots.release();
   let secret = "";
   try {
-    if (candidate.credential !== KEYLESS_CREDENTIAL)
+    if (candidate.provider.subscription) {
+      if (!services.subscriptions)
+        throw new SiwcError("No subscription tokens", "unavailable", false);
+      secret = await services.subscriptions.accessToken(
+        candidate.provider,
+        candidate.credential,
+        call.signal,
+      );
+    } else if (candidate.credential !== KEYLESS_CREDENTIAL)
       secret = await services.resolveSecret(candidate.credential.ref);
-  } catch {
+  } catch (error) {
+    if (call.signal.aborted)
+      return { ok: false, error: cancelled(call), release };
     services.log.info("gateway.credential.unresolved", {
       provider: candidate.provider.id,
       credential: candidate.credential.id,
+      ...(error instanceof SiwcError ? { code: error.code } : {}),
     });
+    const account = candidate.credential.account;
     return {
       ok: false,
-      error: localError(
-        502,
-        "credential_unavailable",
-        `Credential ${candidate.credential.id} of provider ${candidate.provider.id} could not be resolved`,
-      ),
+      error:
+        error instanceof SiwcError && error.terminal
+          ? localError(
+              401,
+              "subscription_sign_in_needed",
+              `The ChatGPT account ${account?.email ?? candidate.credential.name} of provider ${candidate.provider.id} must sign in again (hh subscription login chatgpt --provider ${candidate.provider.id})`,
+            )
+          : localError(
+              502,
+              "credential_unavailable",
+              `Credential ${candidate.credential.id} of provider ${candidate.provider.id} could not be resolved`,
+            ),
       release,
     };
   }
@@ -1003,7 +1048,7 @@ async function send(
     if (wait !== undefined) error.retryAfterMs = wait;
     const reset = resetIn(text, now);
     if (reset !== undefined) error.resetMs = reset;
-    return { ok: false, error, release };
+    return { ok: false, error: usageHint(candidate, error), release };
   } catch (error) {
     timers.clear(timer);
     if (call.signal.aborted)
@@ -1304,7 +1349,10 @@ async function translatedAttempt(
     return { kind: "published", tokens: tokens(call.entry.usage) };
   } catch (error) {
     await timers.stop(call.closed);
-    const reported = readError(call, error, idle, secrets);
+    const reported = usageHint(
+      candidate,
+      readError(call, error, idle, secrets),
+    );
     if (reported.phase === "cancelled" || !writer.sent)
       return { kind: "failed", error: reported };
     attempt.decision = "stop";
@@ -1576,7 +1624,10 @@ async function passthroughAttempt(
     await timers.stop(call.closed);
     // A write failure surfaces from the queue; the client is gone.
     await forwarder?.drain().catch(() => undefined);
-    const reported = readError(call, error, idle, secrets);
+    const reported = usageHint(
+      candidate,
+      readError(call, error, idle, secrets),
+    );
     if (reported.phase === "cancelled" || !writer.sent)
       return { kind: "failed", error: reported };
     attempt.decision = "stop";

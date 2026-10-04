@@ -23,6 +23,7 @@ import {
   type WiringProfile,
   type WiringRecord,
 } from "./model-plane.js";
+import { subscriptionBackends } from "./subscriptions.js";
 
 type Check = (value: unknown) => boolean;
 
@@ -175,13 +176,25 @@ const endpoints: Check = (value) =>
       endpointProblem(name, url) === undefined,
   );
 
+const subscriptionAccount: Check = (value) =>
+  object(value) &&
+  member(subscriptionBackends)(value.backend) &&
+  text(512)(value.subject) &&
+  optional(value.email, text(320)) &&
+  text(512)(value.clientId) &&
+  object(value.consent) &&
+  text(200)(value.consent.notice) &&
+  isTimestamp(value.consent.acceptedAt) &&
+  optional(value.signedOutAt, isTimestamp);
+
 const credential: Check = (value) =>
   object(value) &&
   text(200)(value.id) &&
   text(200)(value.name) &&
   secretReference(value.ref) &&
   optional(value.protocols, list(protocol)) &&
-  bool(value.enabled);
+  bool(value.enabled) &&
+  optional(value.account, subscriptionAccount);
 
 const credentials: Check = (value) =>
   list(credential, 100)(value) &&
@@ -261,6 +274,20 @@ export function isProviderConfig(value: unknown): value is ProviderConfig {
         optional(capabilities.requiresReasoningReplay, bool),
     ) &&
     optional(value.translateOnly, bool) &&
+    optional(
+      value.subscription,
+      (subscription) =>
+        object(subscription) &&
+        member(subscriptionBackends)(subscription.backend),
+    ) &&
+    // Accounts belong to subscription providers, and only of their backend.
+    Array.isArray(value.credentials) &&
+    value.credentials.every((item: unknown) => {
+      const account = object(item) ? item.account : undefined;
+      return object(value.subscription)
+        ? object(account) && account.backend === value.subscription.backend
+        : account === undefined;
+    }) &&
     isTimestamp(value.createdAt) &&
     isTimestamp(value.updatedAt)
   );
@@ -283,7 +310,9 @@ export function isRouteGroup(value: unknown): value is RouteGroup {
   return (
     object(value) &&
     groupId(value.id) &&
-    member(["order", "rotate", "least-used", "latency"])(value.strategy) &&
+    member(["order", "rotate", "least-used", "latency", "smart", "pace"])(
+      value.strategy,
+    ) &&
     member(["auto", "session", "turn", "off"])(value.stickiness) &&
     list(modelRef, 100)(value.members) &&
     Array.isArray(value.members) &&

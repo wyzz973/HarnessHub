@@ -131,7 +131,9 @@ function listedMetadata(item: Json): Omit<ProviderModel, "id"> {
 }
 
 /**
- * List the provider's models from its upstream: `GET {chat base}{listPath}`
+ * List the provider's models from its upstream: for a ChatGPT plan
+ * (`subscription.backend: "siwc"`) `GET {responses base}/models`, keeping
+ * the `slug` of each model with `visibility: "list"`; otherwise `GET {chat base}{listPath}`
  * (default `/models`, OpenAI format, with the window, output and modality
  * fields that HarnessHub and OpenRouter add), `GET {anthropic base}/v1/models` with
  * `anthropic-version`, or `GET {gemini base}/v1beta/models` (models that
@@ -154,7 +156,20 @@ export async function fetchModelList(
   const add = (model: ProviderModel) => {
     if (!models.has(model.id)) models.set(model.id, model);
   };
-  if (protocol === "chat" || protocol === "responses") {
+  if (provider.subscription?.backend === "siwc") {
+    // ChatGPT plan models (SIWC "Models and inference"): `models[]` with a
+    // `slug` to send and `visibility: "list"` for those to show.
+    const url = new URL(`${base}/models`);
+    const body = await getJson(url, authenticate(provider, url, key), send);
+    const list = object(body) ? body.models : undefined;
+    if (!Array.isArray(list))
+      throw new ModelListError(`${url.host} sent no models array`);
+    for (const item of list)
+      if (object(item) && item.visibility === "list") {
+        const id = idOf(item.slug);
+        if (id) add({ id });
+      }
+  } else if (protocol === "chat" || protocol === "responses") {
     const url = new URL(`${base}${provider.models.listPath ?? "/models"}`);
     const body = await getJson(url, authenticate(provider, url, key), send);
     const data = object(body) ? body.data : undefined;

@@ -21,6 +21,7 @@
 | [API 入口](api/README.md) | 共同约定、对象、幂等、流式与维护方法 |
 | [模型平面 API 与 CLI](model-plane-api.md) | `/api/v1` 的管理令牌、problem 错误、provider/凭据/路由组/Key/用量，SDK 与 `hh` 命令 |
 | [Provider 预设](provider-presets.md) | 46 个厂商、中转与本机服务预设，地域与套餐的选择，核对状态与 Magpie 来源 |
+| [订阅账号](subscriptions.md) | ChatGPT 套餐经 Sign in with ChatGPT 登录与调用、风险告知、只服务本机、Claude 订阅为何不可用，以及额度读数与 `smart`、`pace` |
 | [导入 provider](provider-import.md) | 导入链接（含 Magpie 链接）与从 Claude Code、Codex 导入：参数、预览确认、安全限制 |
 | [逐接口实现参考](api/reference.md) | 全部 HTTP 操作的输入/输出、调用链、副作用、错误与测试 |
 | [OpenAPI](api/openapi.json) | 从正式路由生成的可机读 API 契约 |

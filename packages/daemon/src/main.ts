@@ -55,6 +55,8 @@ import { AgentWiringService, resolveWiringSettings } from "./agents-wiring.js";
 import { BackupService } from "./backup.js";
 import { SyncService } from "./sync.js";
 import { LibraryService } from "./library-service.js";
+import { SIWC, SiwcClient, SiwcTokens } from "@harnesshub/gateway/siwc";
+import { allowanceFile, SubscriptionService } from "./subscriptions.js";
 import { GatewayShare } from "./lan-share.js";
 import {
   getPreset,
@@ -353,6 +355,13 @@ export async function startHub(options: {
    * by `resolveWiringSettings`; invalid values fail the start.
    */
   wiring?: unknown;
+  /**
+   * For tests only: the Sign in with ChatGPT issuer and the Responses base a
+   * first ChatGPT sign-in gives its provider, pointed at loopback fakes.
+   * Unset, they are OpenAI's (`https://auth.openai.com`,
+   * `https://api.openai.com/v1`); there is no user setting.
+   */
+  siwc?: { issuer: string; responsesBase: string };
 }) {
   // HARNESSHUB_LOG_LEVEL is validated before anything starts; Workers inherit the value.
   const logLevel = parseLogLevel(process.env[LOG_LEVEL_ENVIRONMENT]);
@@ -500,6 +509,17 @@ export async function startHub(options: {
   let workflows: WorkflowService | undefined;
   let modelPlane: CallObservingModelPlaneStore | undefined;
   let modelGateway: GatewayHandler | undefined;
+  let subscriptions: SubscriptionService | undefined;
+  // Every model-plane write of the API and of subscription sign-ins, in order.
+  let writes: Promise<unknown> = Promise.resolve();
+  const serializeWrites = <T>(operation: () => Promise<T>): Promise<T> => {
+    const result = writes.then(operation, operation);
+    writes = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  };
   /** OTLP export of committed model calls; only with an `otlp` block. */
   let otlp: ModelCallExporter | undefined;
   let shareToClose: GatewayShare | undefined;
@@ -586,6 +606,30 @@ export async function startHub(options: {
         })
       : undefined;
     const exporter = otlp;
+    // Subscription accounts (ADR-P09): one token keeper shared by the gateway
+    // and the API, so each account renews at most once at a time.
+    const siwcClient = new SiwcClient({
+      ...(options.siwc ? { issuer: options.siwc.issuer } : {}),
+    });
+    const siwcTokens = new SiwcTokens({
+      client: siwcClient,
+      read: (ref) => secrets.resolve(ref, environment),
+      write: (ref, value) => secrets.rotate(ref, value),
+      clock: Date.now,
+      log: gatewayLog,
+    });
+    subscriptions = new SubscriptionService({
+      store: modelPlane,
+      secrets,
+      environment,
+      client: siwcClient,
+      tokens: siwcTokens,
+      directory: path.join(dataDir, "subscriptions"),
+      responsesBase: options.siwc?.responsesBase ?? SIWC.resource,
+      serialize: serializeWrites,
+      clock: Date.now,
+      log: gatewayLog,
+    });
     // LAN sharing (03 section 1): settings now, the LAN listener once the
     // daemon's own listener is bound.
     const share = new GatewayShare({
@@ -616,6 +660,8 @@ export async function startHub(options: {
       log: gatewayLog,
       sessions,
       access: () => share.access(),
+      subscriptions: siwcTokens,
+      allowances: allowanceFile(dataDir),
     });
     manager = new EngineManager({
       config,
@@ -903,6 +949,8 @@ export async function startHub(options: {
       }),
       gatewayShare: share,
       backup: { backups, sync },
+      ...(subscriptions ? { subscriptions } : {}),
+      serialize: serializeWrites,
     });
     // Registered after createGateway's hook, so the application has already cancelled
     // Runs; this only stops a pending model test and waits for its Session cleanup.
@@ -913,6 +961,7 @@ export async function startHub(options: {
       await Promise.allSettled([...probeTasks]);
     });
     server.addHook("onClose", async () => {
+      await subscriptions?.close();
       workflowStore?.close();
       modelPlane?.close();
       store.close();

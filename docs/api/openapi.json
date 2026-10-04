@@ -15238,6 +15238,62 @@
                                 },
                                 "enabled": {
                                   "type": "boolean"
+                                },
+                                "account": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "backend",
+                                    "subject",
+                                    "clientId",
+                                    "consent"
+                                  ],
+                                  "properties": {
+                                    "backend": {
+                                      "type": "string",
+                                      "enum": [
+                                        "siwc"
+                                      ]
+                                    },
+                                    "subject": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 512
+                                    },
+                                    "email": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 320
+                                    },
+                                    "clientId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 512
+                                    },
+                                    "consent": {
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "required": [
+                                        "notice",
+                                        "acceptedAt"
+                                      ],
+                                      "properties": {
+                                        "notice": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 200
+                                        },
+                                        "acceptedAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        }
+                                      }
+                                    },
+                                    "signedOutAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    }
+                                  }
                                 }
                               }
                             }
@@ -15585,6 +15641,21 @@
                           },
                           "translateOnly": {
                             "type": "boolean"
+                          },
+                          "subscription": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "backend"
+                            ],
+                            "properties": {
+                              "backend": {
+                                "type": "string",
+                                "enum": [
+                                  "siwc"
+                                ]
+                              }
+                            }
                           },
                           "createdAt": {
                             "type": "string",
@@ -16355,6 +16426,62 @@
                           },
                           "enabled": {
                             "type": "boolean"
+                          },
+                          "account": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "backend",
+                              "subject",
+                              "clientId",
+                              "consent"
+                            ],
+                            "properties": {
+                              "backend": {
+                                "type": "string",
+                                "enum": [
+                                  "siwc"
+                                ]
+                              },
+                              "subject": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 512
+                              },
+                              "email": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 320
+                              },
+                              "clientId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 512
+                              },
+                              "consent": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "notice",
+                                  "acceptedAt"
+                                ],
+                                "properties": {
+                                  "notice": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "acceptedAt": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              },
+                              "signedOutAt": {
+                                "type": "string",
+                                "format": "date-time"
+                              }
+                            }
                           }
                         }
                       }
@@ -16702,6 +16829,21 @@
                     },
                     "translateOnly": {
                       "type": "boolean"
+                    },
+                    "subscription": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "backend"
+                      ],
+                      "properties": {
+                        "backend": {
+                          "type": "string",
+                          "enum": [
+                            "siwc"
+                          ]
+                        }
+                      }
                     },
                     "createdAt": {
                       "type": "string",
@@ -18054,6 +18196,62 @@
                                     },
                                     "enabled": {
                                       "type": "boolean"
+                                    },
+                                    "account": {
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "required": [
+                                        "backend",
+                                        "subject",
+                                        "clientId",
+                                        "consent"
+                                      ],
+                                      "properties": {
+                                        "backend": {
+                                          "type": "string",
+                                          "enum": [
+                                            "siwc"
+                                          ]
+                                        },
+                                        "subject": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 512
+                                        },
+                                        "email": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 320
+                                        },
+                                        "clientId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 512
+                                        },
+                                        "consent": {
+                                          "type": "object",
+                                          "additionalProperties": false,
+                                          "required": [
+                                            "notice",
+                                            "acceptedAt"
+                                          ],
+                                          "properties": {
+                                            "notice": {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "maxLength": 200
+                                            },
+                                            "acceptedAt": {
+                                              "type": "string",
+                                              "format": "date-time"
+                                            }
+                                          }
+                                        },
+                                        "signedOutAt": {
+                                          "type": "string",
+                                          "format": "date-time"
+                                        }
+                                      }
                                     }
                                   }
                                 }
@@ -18402,6 +18600,21 @@
                               "translateOnly": {
                                 "type": "boolean"
                               },
+                              "subscription": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "backend"
+                                ],
+                                "properties": {
+                                  "backend": {
+                                    "type": "string",
+                                    "enum": [
+                                      "siwc"
+                                    ]
+                                  }
+                                }
+                              },
                               "createdAt": {
                                 "type": "string",
                                 "format": "date-time"
@@ -18688,6 +18901,62 @@
                           },
                           "enabled": {
                             "type": "boolean"
+                          },
+                          "account": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "backend",
+                              "subject",
+                              "clientId",
+                              "consent"
+                            ],
+                            "properties": {
+                              "backend": {
+                                "type": "string",
+                                "enum": [
+                                  "siwc"
+                                ]
+                              },
+                              "subject": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 512
+                              },
+                              "email": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 320
+                              },
+                              "clientId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 512
+                              },
+                              "consent": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "notice",
+                                  "acceptedAt"
+                                ],
+                                "properties": {
+                                  "notice": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "acceptedAt": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              },
+                              "signedOutAt": {
+                                "type": "string",
+                                "format": "date-time"
+                              }
+                            }
                           }
                         }
                       }
@@ -19035,6 +19304,21 @@
                     },
                     "translateOnly": {
                       "type": "boolean"
+                    },
+                    "subscription": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "backend"
+                      ],
+                      "properties": {
+                        "backend": {
+                          "type": "string",
+                          "enum": [
+                            "siwc"
+                          ]
+                        }
+                      }
                     },
                     "createdAt": {
                       "type": "string",
@@ -19752,6 +20036,62 @@
                           },
                           "enabled": {
                             "type": "boolean"
+                          },
+                          "account": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "backend",
+                              "subject",
+                              "clientId",
+                              "consent"
+                            ],
+                            "properties": {
+                              "backend": {
+                                "type": "string",
+                                "enum": [
+                                  "siwc"
+                                ]
+                              },
+                              "subject": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 512
+                              },
+                              "email": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 320
+                              },
+                              "clientId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 512
+                              },
+                              "consent": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "notice",
+                                  "acceptedAt"
+                                ],
+                                "properties": {
+                                  "notice": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "acceptedAt": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              },
+                              "signedOutAt": {
+                                "type": "string",
+                                "format": "date-time"
+                              }
+                            }
                           }
                         }
                       }
@@ -20099,6 +20439,21 @@
                     },
                     "translateOnly": {
                       "type": "boolean"
+                    },
+                    "subscription": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "backend"
+                      ],
+                      "properties": {
+                        "backend": {
+                          "type": "string",
+                          "enum": [
+                            "siwc"
+                          ]
+                        }
+                      }
                     },
                     "createdAt": {
                       "type": "string",
@@ -20496,6 +20851,62 @@
                           },
                           "enabled": {
                             "type": "boolean"
+                          },
+                          "account": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "backend",
+                              "subject",
+                              "clientId",
+                              "consent"
+                            ],
+                            "properties": {
+                              "backend": {
+                                "type": "string",
+                                "enum": [
+                                  "siwc"
+                                ]
+                              },
+                              "subject": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 512
+                              },
+                              "email": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 320
+                              },
+                              "clientId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 512
+                              },
+                              "consent": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "notice",
+                                  "acceptedAt"
+                                ],
+                                "properties": {
+                                  "notice": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "acceptedAt": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              },
+                              "signedOutAt": {
+                                "type": "string",
+                                "format": "date-time"
+                              }
+                            }
                           }
                         }
                       }
@@ -20843,6 +21254,21 @@
                     },
                     "translateOnly": {
                       "type": "boolean"
+                    },
+                    "subscription": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "backend"
+                      ],
+                      "properties": {
+                        "backend": {
+                          "type": "string",
+                          "enum": [
+                            "siwc"
+                          ]
+                        }
+                      }
                     },
                     "createdAt": {
                       "type": "string",
@@ -23369,6 +23795,62 @@
                           },
                           "enabled": {
                             "type": "boolean"
+                          },
+                          "account": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "backend",
+                              "subject",
+                              "clientId",
+                              "consent"
+                            ],
+                            "properties": {
+                              "backend": {
+                                "type": "string",
+                                "enum": [
+                                  "siwc"
+                                ]
+                              },
+                              "subject": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 512
+                              },
+                              "email": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 320
+                              },
+                              "clientId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 512
+                              },
+                              "consent": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "notice",
+                                  "acceptedAt"
+                                ],
+                                "properties": {
+                                  "notice": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "acceptedAt": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              },
+                              "signedOutAt": {
+                                "type": "string",
+                                "format": "date-time"
+                              }
+                            }
                           }
                         }
                       }
@@ -23609,6 +24091,62 @@
                     },
                     "enabled": {
                       "type": "boolean"
+                    },
+                    "account": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "backend",
+                        "subject",
+                        "clientId",
+                        "consent"
+                      ],
+                      "properties": {
+                        "backend": {
+                          "type": "string",
+                          "enum": [
+                            "siwc"
+                          ]
+                        },
+                        "subject": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512
+                        },
+                        "email": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 320
+                        },
+                        "clientId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512
+                        },
+                        "consent": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "notice",
+                            "acceptedAt"
+                          ],
+                          "properties": {
+                            "notice": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "acceptedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "signedOutAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
                     }
                   }
                 }
@@ -23808,6 +24346,62 @@
                     },
                     "enabled": {
                       "type": "boolean"
+                    },
+                    "account": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "backend",
+                        "subject",
+                        "clientId",
+                        "consent"
+                      ],
+                      "properties": {
+                        "backend": {
+                          "type": "string",
+                          "enum": [
+                            "siwc"
+                          ]
+                        },
+                        "subject": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512
+                        },
+                        "email": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 320
+                        },
+                        "clientId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512
+                        },
+                        "consent": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "notice",
+                            "acceptedAt"
+                          ],
+                          "properties": {
+                            "notice": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "acceptedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "signedOutAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
                     }
                   }
                 }
@@ -24054,7 +24648,9 @@
                               "order",
                               "rotate",
                               "least-used",
-                              "latency"
+                              "latency",
+                              "smart",
+                              "pace"
                             ]
                           },
                           "stickiness": {
@@ -24231,7 +24827,9 @@
                       "order",
                       "rotate",
                       "least-used",
-                      "latency"
+                      "latency",
+                      "smart",
+                      "pace"
                     ]
                   },
                   "stickiness": {
@@ -24311,7 +24909,9 @@
                         "order",
                         "rotate",
                         "least-used",
-                        "latency"
+                        "latency",
+                        "smart",
+                        "pace"
                       ]
                     },
                     "stickiness": {
@@ -24500,7 +25100,9 @@
                         "order",
                         "rotate",
                         "least-used",
-                        "latency"
+                        "latency",
+                        "smart",
+                        "pace"
                       ]
                     },
                     "stickiness": {
@@ -24663,7 +25265,9 @@
                       "order",
                       "rotate",
                       "least-used",
-                      "latency"
+                      "latency",
+                      "smart",
+                      "pace"
                     ]
                   },
                   "stickiness": {
@@ -24756,7 +25360,9 @@
                         "order",
                         "rotate",
                         "least-used",
-                        "latency"
+                        "latency",
+                        "smart",
+                        "pace"
                       ]
                     },
                     "stickiness": {
@@ -38167,6 +38773,802 @@
                       "items": {
                         "type": "string"
                       }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/subscriptions/notices": {
+      "get": {
+        "operationId": "hh_api_v1_list_subscription_notices",
+        "summary": "订阅风险告知",
+        "tags": [
+          "subscriptions"
+        ],
+        "description": "SubscriptionService.notices 读取 core SUBSCRIPTION_NOTICES；告知文本只在那里维护，变更即换 version。\n\n输入：无参数。\n\n返回：200：items[] 每个后端一项（backend、version、title、text、manageUsageUrl），nextCursor 为 null。\n\n副作用：只读。\n\n失败与边界：需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "items",
+                    "nextCursor"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "backend",
+                          "version",
+                          "title",
+                          "text",
+                          "manageUsageUrl"
+                        ],
+                        "properties": {
+                          "backend": {
+                            "type": "string",
+                            "enum": [
+                              "siwc"
+                            ]
+                          },
+                          "version": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "text": {
+                            "type": "string"
+                          },
+                          "manageUsageUrl": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "nextCursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/subscriptions/accounts": {
+      "get": {
+        "operationId": "hh_api_v1_list_subscription_accounts",
+        "summary": "订阅账号列表",
+        "tags": [
+          "subscriptions"
+        ],
+        "description": "SubscriptionService.accounts 遍历带 subscription 的 provider 中带 account 的 Credential；usable 要求启用、已登录且接受了当前告知版本。\n\n输入：无参数。\n\n返回：200：items[]（provider、credential、backend、email、enabled、signedIn、noticeAccepted、acceptedAt、usable），不含任何令牌。\n\n副作用：只读。\n\n失败与边界：需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "items",
+                    "nextCursor"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "provider",
+                          "credential",
+                          "backend",
+                          "enabled",
+                          "signedIn",
+                          "noticeAccepted",
+                          "acceptedAt",
+                          "usable"
+                        ],
+                        "properties": {
+                          "provider": {
+                            "type": "string"
+                          },
+                          "credential": {
+                            "type": "string"
+                          },
+                          "backend": {
+                            "type": "string",
+                            "enum": [
+                              "siwc"
+                            ]
+                          },
+                          "email": {
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "signedIn": {
+                            "type": "boolean"
+                          },
+                          "noticeAccepted": {
+                            "type": "boolean"
+                          },
+                          "acceptedAt": {
+                            "type": "string"
+                          },
+                          "usable": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "nextCursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/subscriptions/sign-in": {
+      "post": {
+        "operationId": "hh_api_v1_start_subscription_sign_in",
+        "summary": "开始订阅登录",
+        "tags": [
+          "subscriptions"
+        ],
+        "description": "SubscriptionService.startSignIn：在 127.0.0.1 随机端口开回调监听（/auth/callback），生成 state、nonce 与 PKCE S256；新账号以 client_id=dynamic_agent_client、agent_name_hint=HarnessHub 注册，已有账号用其签发的 client_id 与 login_hint、id_token_hint；ext_agent_host_id 持久在 <dataDir>/subscriptions/siwc-host.json。回调校验 state，换取令牌（无客户端密钥），按 JWKS 校验 ID token 的签名、iss、aud、exp 与 nonce，要求授予 chatgpt.tokens.use.direct。\n\n输入：backend（siwc）、acceptNotice（必须等于该后端当前告知的 version）；可选 provider（缺省 chatgpt）与 credential（让已有账号重新登录）。\n\n返回：202：id、backend、status=pending、provider、authorizeUrl（在系统浏览器中打开）、expiresAt（10 分钟）。\n\n副作用：成功后：令牌写入秘密存储；缺省创建 provider chatgpt（subscription siwc，Responses 端点 https://api.openai.com/v1），新增或更新带 account（subject、email、clientId、consent）的 Credential。\n\n失败与边界：409 SUBSCRIPTION_NOTICE_NOT_ACCEPTED（acceptNotice 不是当前版本）、PROVIDER_NOT_SUBSCRIPTION；404 CREDENTIAL_NOT_FOUND；回调中的失败（拒绝授权、ID token 无效、未授予套餐用量）记在登录状态的 error 中；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "backend",
+                  "acceptNotice"
+                ],
+                "properties": {
+                  "backend": {
+                    "type": "string",
+                    "enum": [
+                      "siwc"
+                    ]
+                  },
+                  "provider": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 63
+                  },
+                  "credential": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "acceptNotice": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "backend",
+                    "status",
+                    "provider",
+                    "authorizeUrl",
+                    "expiresAt"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "backend": {
+                      "type": "string",
+                      "enum": [
+                        "siwc"
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "pending",
+                        "succeeded",
+                        "failed"
+                      ]
+                    },
+                    "provider": {
+                      "type": "string"
+                    },
+                    "authorizeUrl": {
+                      "type": "string"
+                    },
+                    "expiresAt": {
+                      "type": "string"
+                    },
+                    "credential": {
+                      "type": "string"
+                    },
+                    "email": {
+                      "type": "string"
+                    },
+                    "firstSignIn": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/subscriptions/sign-in/{id}": {
+      "get": {
+        "operationId": "hh_api_v1_get_subscription_sign_in",
+        "summary": "订阅登录状态",
+        "tags": [
+          "subscriptions"
+        ],
+        "description": "SubscriptionService.signIn；结束的尝试保留 10 分钟。\n\n输入：路径参数 id。\n\n返回：200：与开始时相同的字段；status 为 pending、succeeded（另有 credential、email、firstSignIn）或 failed（另有 error）。\n\n副作用：只读。\n\n失败与边界：404 SIGN_IN_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "backend",
+                    "status",
+                    "provider",
+                    "authorizeUrl",
+                    "expiresAt"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "backend": {
+                      "type": "string",
+                      "enum": [
+                        "siwc"
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "pending",
+                        "succeeded",
+                        "failed"
+                      ]
+                    },
+                    "provider": {
+                      "type": "string"
+                    },
+                    "authorizeUrl": {
+                      "type": "string"
+                    },
+                    "expiresAt": {
+                      "type": "string"
+                    },
+                    "credential": {
+                      "type": "string"
+                    },
+                    "email": {
+                      "type": "string"
+                    },
+                    "firstSignIn": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers/{id}/credentials/{credentialId}/sign-out": {
+      "post": {
+        "operationId": "hh_api_v1_sign_out_subscription_account",
+        "summary": "订阅账号登出",
+        "tags": [
+          "subscriptions"
+        ],
+        "description": "SubscriptionService.signOut：向撤销端点提交 refresh token（token_type_hint=refresh_token 与签发的 client_id），清空秘密存储中的令牌，保留账号登记以便再次登录。\n\n输入：路径参数 id、credentialId；空 JSON 对象。\n\n返回：200：revoked（厂商是否确认结束了可续期会话）。\n\n副作用：Credential 停用并记 account.signedOutAt；网关不再使用该账号，令牌缓存清除。\n\n失败与边界：404 CREDENTIAL_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {}
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "in": "path",
+            "name": "credentialId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "revoked"
+                  ],
+                  "properties": {
+                    "revoked": {
+                      "type": "boolean"
                     }
                   }
                 }

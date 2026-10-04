@@ -14,6 +14,7 @@ Commands:
   model       Show model metadata with its sources; set overrides
   catalog     Show or refresh the models.dev catalog (status, refresh)
   usage       Summarize model-call usage by model, provider or day
+  subscription  Sign in a subscription account (login chatgpt, list, logout, notice)
   agents      List local agents: installed, wired, model and drift
   wire        Point an agent at the gateway (hh wire codex deepseek/deepseek-chat)
   use         The same as wire: hh use <agent> <model>
@@ -94,6 +95,7 @@ const COMMANDS: Readonly<Record<string, Command>> = {
       "catalog",
       "usage",
       "gateway",
+      "subscription",
     ].map((name): [string, Command] => [
       name,
       async (argv) => {
@@ -107,8 +109,9 @@ const COMMANDS: Readonly<Record<string, Command>> = {
 /**
  * Run one `hh` command: `serve`, `benchmark` and `tools` go to the daemon's
  * entries; `console`, `rollout` and the model-plane commands (`status`, `provider`,
- * `credential`, `key`, `group`, `model`, `catalog`, `usage`, `gateway`) and
- * the agent commands (`agents`, `wire`, `use`, `unwire`, `profile`, `library`) to the CLI's, which
+ * `credential`, `key`, `group`, `model`, `catalog`, `usage`, `gateway`,
+ * `subscription`) and the agent commands (`agents`, `wire`, `use`, `unwire`,
+ * `profile`, `library`) to the CLI's, which
  * reach the running daemon over HTTP. `--help` prints the commands on stdout;
  * a missing or unknown command prints them on stderr and fails with exit code 2.
  * A command's own failures keep that command's output and exit code; a

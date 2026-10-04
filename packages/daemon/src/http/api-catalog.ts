@@ -1304,6 +1304,92 @@ export const apiCatalog: readonly ApiDocumentation[] = [
   },
   {
     method: "GET",
+    path: "/api/v1/subscriptions/notices",
+    title: "订阅风险告知",
+    group: "subscriptions",
+    request: "无参数。",
+    response:
+      "200：items[] 每个后端一项（backend、version、title、text、manageUsageUrl），nextCursor 为 null。",
+    implementation:
+      "SubscriptionService.notices 读取 core SUBSCRIPTION_NOTICES；告知文本只在那里维护，变更即换 version。",
+    effects: "只读。",
+    errors:
+      "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/subscription-routes.ts",
+    tests: ["tests/integration/subscriptions.test.ts"],
+    operationId: "hh_api_v1_list_subscription_notices",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/subscriptions/accounts",
+    title: "订阅账号列表",
+    group: "subscriptions",
+    request: "无参数。",
+    response:
+      "200：items[]（provider、credential、backend、email、enabled、signedIn、noticeAccepted、acceptedAt、usable），不含任何令牌。",
+    implementation:
+      "SubscriptionService.accounts 遍历带 subscription 的 provider 中带 account 的 Credential；usable 要求启用、已登录且接受了当前告知版本。",
+    effects: "只读。",
+    errors:
+      "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/subscription-routes.ts",
+    tests: ["tests/integration/subscriptions.test.ts"],
+    operationId: "hh_api_v1_list_subscription_accounts",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/subscriptions/sign-in",
+    title: "开始订阅登录",
+    group: "subscriptions",
+    request:
+      "backend（siwc）、acceptNotice（必须等于该后端当前告知的 version）；可选 provider（缺省 chatgpt）与 credential（让已有账号重新登录）。",
+    response:
+      "202：id、backend、status=pending、provider、authorizeUrl（在系统浏览器中打开）、expiresAt（10 分钟）。",
+    implementation:
+      "SubscriptionService.startSignIn：在 127.0.0.1 随机端口开回调监听（/auth/callback），生成 state、nonce 与 PKCE S256；新账号以 client_id=dynamic_agent_client、agent_name_hint=HarnessHub 注册，已有账号用其签发的 client_id 与 login_hint、id_token_hint；ext_agent_host_id 持久在 <dataDir>/subscriptions/siwc-host.json。回调校验 state，换取令牌（无客户端密钥），按 JWKS 校验 ID token 的签名、iss、aud、exp 与 nonce，要求授予 chatgpt.tokens.use.direct。",
+    effects:
+      "成功后：令牌写入秘密存储；缺省创建 provider chatgpt（subscription siwc，Responses 端点 https://api.openai.com/v1），新增或更新带 account（subject、email、clientId、consent）的 Credential。",
+    errors:
+      "409 SUBSCRIPTION_NOTICE_NOT_ACCEPTED（acceptNotice 不是当前版本）、PROVIDER_NOT_SUBSCRIPTION；404 CREDENTIAL_NOT_FOUND；回调中的失败（拒绝授权、ID token 无效、未授予套餐用量）记在登录状态的 error 中；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/subscription-routes.ts",
+    tests: ["tests/integration/subscriptions.test.ts"],
+    operationId: "hh_api_v1_start_subscription_sign_in",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/subscriptions/sign-in/{id}",
+    title: "订阅登录状态",
+    group: "subscriptions",
+    request: "路径参数 id。",
+    response:
+      "200：与开始时相同的字段；status 为 pending、succeeded（另有 credential、email、firstSignIn）或 failed（另有 error）。",
+    implementation: "SubscriptionService.signIn；结束的尝试保留 10 分钟。",
+    effects: "只读。",
+    errors:
+      "404 SIGN_IN_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/subscription-routes.ts",
+    tests: ["tests/integration/subscriptions.test.ts"],
+    operationId: "hh_api_v1_get_subscription_sign_in",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/providers/{id}/credentials/{credentialId}/sign-out",
+    title: "订阅账号登出",
+    group: "subscriptions",
+    request: "路径参数 id、credentialId；空 JSON 对象。",
+    response: "200：revoked（厂商是否确认结束了可续期会话）。",
+    implementation:
+      "SubscriptionService.signOut：向撤销端点提交 refresh token（token_type_hint=refresh_token 与签发的 client_id），清空秘密存储中的令牌，保留账号登记以便再次登录。",
+    effects:
+      "Credential 停用并记 account.signedOutAt；网关不再使用该账号，令牌缓存清除。",
+    errors:
+      "404 CREDENTIAL_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/subscription-routes.ts",
+    tests: ["tests/integration/subscriptions.test.ts"],
+    operationId: "hh_api_v1_sign_out_subscription_account",
+  },
+  {
+    method: "GET",
     path: "/api/v1/gateway-keys",
     title: "Gateway Key 列表",
     group: "gateway-keys",

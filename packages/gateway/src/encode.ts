@@ -15,6 +15,7 @@ import {
   type ReasoningRequest,
 } from "./protocol.js";
 import { reasoningItemKeys } from "./reasoning.js";
+import { SIWC_TOOL_NAMESPACE } from "./siwc.js";
 
 export type EncodedProtocol = "anthropic" | "responses" | "gemini";
 
@@ -30,6 +31,12 @@ export interface EncodeContext {
    * tool call followed (Responses, under `reasoningItemKeys`), when one is known.
    */
   signature?(kind: "thinking" | "call", key: string): string | undefined;
+  /**
+   * `siwc`: the Responses shape that ChatGPT plan usage accepts (Sign in
+   * with ChatGPT preview): function tools grouped in one namespace, and no
+   * `max_output_tokens`, `temperature`, `top_p` or `user`.
+   */
+  profile?: "siwc";
 }
 
 /** An upstream request body with the record of what changed on the way. */
@@ -443,6 +450,7 @@ function toResponses(
   const unmapped = new Set<string>();
   const patches: string[] = [];
   const input: Record<string, unknown>[] = [];
+  const siwc = context.profile === "siwc";
   let replayed = false;
   for (const message of messages(chat)) {
     if (message.role === "user") {
@@ -474,6 +482,7 @@ function toResponses(
           type: "function_call",
           call_id: call.id,
           name: call.name,
+          ...(siwc ? { namespace: SIWC_TOOL_NAMESPACE } : {}),
           arguments: call.arguments || "{}",
         });
     } else if (message.role === "tool") {
@@ -497,24 +506,41 @@ function toResponses(
   const instructions = system(chat);
   if (instructions) body.instructions = instructions;
   const limit = outputLimit(chat);
-  if (limit !== undefined) body.max_output_tokens = limit;
+  if (limit !== undefined) {
+    if (siwc) unmapped.add("max_tokens");
+    else body.max_output_tokens = limit;
+  }
   for (const key of ["temperature", "top_p", "parallel_tool_calls", "user"])
-    if (chat[key] !== undefined && chat[key] !== null) body[key] = chat[key];
-  const tools = chatTools(chat);
+    if (chat[key] !== undefined && chat[key] !== null) {
+      if (siwc && key !== "parallel_tool_calls") unmapped.add(key);
+      else body[key] = chat[key];
+    }
+  const tools = chatTools(chat).map((tool) => ({
+    type: "function",
+    name: tool.name,
+    ...(tool.description ? { description: tool.description } : {}),
+    parameters: tool.parameters,
+    strict: tool.strict === true,
+  }));
   if (tools.length)
-    body.tools = tools.map((tool) => ({
-      type: "function",
-      name: tool.name,
-      ...(tool.description ? { description: tool.description } : {}),
-      parameters: tool.parameters,
-      strict: tool.strict === true,
-    }));
+    body.tools = siwc
+      ? [
+          {
+            type: "namespace",
+            name: SIWC_TOOL_NAMESPACE,
+            description: "The tools the client provides.",
+            tools,
+          },
+        ]
+      : tools;
   const choice = toolChoice(chat.tool_choice);
-  if (choice !== undefined)
-    body.tool_choice =
-      typeof choice === "string"
-        ? choice
-        : { type: "function", name: choice.name };
+  if (typeof choice === "string") body.tool_choice = choice;
+  else if (choice !== undefined && siwc) {
+    // A function inside a namespace cannot be named here: any tool, then.
+    body.tool_choice = "required";
+    patches.push("tool_choice:required");
+  } else if (choice !== undefined)
+    body.tool_choice = { type: "function", name: choice.name };
   const format = record(chat.response_format);
   if (format?.type === "json_object")
     body.text = { format: { type: "json_object" } };

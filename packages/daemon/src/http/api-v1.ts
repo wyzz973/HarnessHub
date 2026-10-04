@@ -26,6 +26,10 @@ import {
   type GatewayShareControl,
 } from "./gateway-share-routes.js";
 import {
+  registerSubscriptionRoutes,
+  type SubscriptionControl,
+} from "./subscription-routes.js";
+import {
   authenticateApiRequest,
   registerConsoleSessionRoutes,
   type ConsoleSessions,
@@ -144,6 +148,17 @@ export interface ApiV1Options {
   gatewayShare?: GatewayShareControl;
   /** Backups and sync; without them `/backup`, `/restore` and `/sync` are absent. */
   backup?: { backups: BackupService; sync: SyncService };
+  /**
+   * Subscription accounts (`/subscriptions/*` and account sign-out); without
+   * it those routes are absent and subscription providers list no models.
+   */
+  subscriptions?: SubscriptionControl;
+  /**
+   * The daemon's queue of model-plane writes, shared with whatever else
+   * writes providers (subscription sign-ins); without it the routes keep
+   * their own.
+   */
+  serialize?: <T>(operation: () => Promise<T>) => Promise<T>;
 }
 
 const LOOPBACK =
@@ -324,6 +339,8 @@ export function registerApiV1(
         registerGatewayShareRoutes(api, options.gatewayShare);
       if (options.backup)
         registerBackupRoutes(api, options.backup.backups, options.backup.sync);
+      if (options.subscriptions)
+        registerSubscriptionRoutes(api, options.subscriptions);
     },
     { prefix: "/api/v1" },
   );

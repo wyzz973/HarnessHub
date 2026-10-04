@@ -73,7 +73,9 @@ import {
   Router,
   type AttemptError,
   type Candidate,
+  type StoredReading,
 } from "./routing.js";
+import type { SubscriptionTokens } from "./siwc.js";
 
 /** The Run a `session:` key's calls belong to, and the model target it selected. */
 export interface ActiveSessionRun {
@@ -122,6 +124,20 @@ export interface GatewayHandlerDeps {
    * request (`sharingAccess` of ./sharing.js). Absent: {@link LOOPBACK_ONLY}.
    */
   access?: () => GatewayAccess;
+  /**
+   * Access tokens of subscription accounts (`ProviderConfig.subscription`,
+   * ./siwc.js). Without it their calls fail as `credential_unavailable`.
+   */
+  subscriptions?: SubscriptionTokens;
+  /**
+   * Where the last allowance readings persist between runs (`smart` and
+   * `pace`): loaded once at start, saved within a minute of a change and on
+   * `close()`. Failures are logged. Without it readings live in memory only.
+   */
+  allowances?: {
+    load(): Promise<StoredReading[]>;
+    save(readings: StoredReading[]): Promise<void>;
+  };
   /**
    * Where the Codex passthrough forwards `/backend-api/codex/*`. For tests
    * only, which point it at a loopback fake; the daemon leaves it unset and
@@ -453,6 +469,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     reasoning: new ReasoningCaches(limits),
     sticky: new StickyRoutes(clock),
     quotas: new Quotas(store, clock),
+    ...(deps.subscriptions ? { subscriptions: deps.subscriptions } : {}),
     makeId: () => `call_${nonce}${(generated++).toString(36)}`,
     async commit(entry: ModelCallEntry): Promise<boolean> {
       try {
@@ -488,6 +505,28 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
   };
   // `least-used` starts from the ledger's recent calls (bounded).
   track(services.router.seed(store, log));
+  const allowances = deps.allowances;
+  const failed = (event: string) => (error: unknown) =>
+    log.info(event, {
+      error: error instanceof Error ? error.message.slice(0, 200) : "unknown",
+    });
+  const saveReadings = () =>
+    allowances && services.router.takeChanges()
+      ? allowances
+          .save(services.router.snapshot())
+          .catch(failed("gateway.allowances.save_failed"))
+      : Promise.resolve();
+  let saver: NodeJS.Timeout | undefined;
+  if (allowances) {
+    track(
+      allowances
+        .load()
+        .then((stored) => services.router.restore(stored))
+        .catch(failed("gateway.allowances.load_failed")),
+    );
+    saver = setInterval(() => track(saveReadings()), 60_000);
+    saver.unref();
+  }
 
   const baseEntry = (
     protocol: WireProtocol,
@@ -690,6 +729,8 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       });
     }
     for (const provider of providers) {
+      // Subscription accounts serve agents on this computer only.
+      if (provider.subscription && key.allowLan === true) continue;
       const exposed =
         provider.models.expose === "all"
           ? provider.models.list
@@ -1228,6 +1269,17 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         return;
       }
       const resolved = await plan(requested, route.protocol);
+      if (key.allowLan === true) {
+        // Subscription accounts serve agents on this computer only (ADR-P09).
+        const local = resolved.candidates.filter(
+          (candidate) => !candidate.provider.subscription,
+        );
+        if (local.length < resolved.candidates.length)
+          resolved.skipped.push(
+            "subscription accounts serve agents on this computer only, not keys usable from the local network",
+          );
+        resolved.candidates = local;
+      }
       const parsed = parseModelRef(requested);
       if (parsed?.kind === "group") entry.group = parsed.group;
       const conversation = conversationOf(
@@ -1647,8 +1699,10 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     close(): Promise<void> {
       closing ??= (async () => {
         shutdown.abort();
+        clearInterval(saver);
         while (tasks.size) await Promise.allSettled([...tasks]);
         for (const record of throttle.drain()) await services.commit(record);
+        await saveReadings();
       })();
       return closing;
     },

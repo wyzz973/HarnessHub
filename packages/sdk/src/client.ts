@@ -15,6 +15,10 @@ import type {
 import type { ProviderPreset } from "@harnesshub/core/provider-presets";
 import type { AutoGroup } from "@harnesshub/core/auto-groups";
 import type {
+  SubscriptionBackend,
+  SubscriptionNotice,
+} from "@harnesshub/core/subscriptions";
+import type {
   ImportApp,
   ImportPreview,
   ImportResult,
@@ -69,6 +73,44 @@ export type {
   ImportResult,
 } from "@harnesshub/core/import-links";
 export type { AutoGroup } from "@harnesshub/core/auto-groups";
+export type {
+  SubscriptionAccount,
+  SubscriptionBackend,
+  SubscriptionNotice,
+} from "@harnesshub/core/subscriptions";
+
+/** `GET /subscriptions/notices`: the risk notice an account must accept, per backend. */
+export interface SubscriptionNoticeView extends SubscriptionNotice {
+  backend: SubscriptionBackend;
+}
+
+/** `/subscriptions/sign-in`: one sign-in attempt. */
+export interface SignInView {
+  id: string;
+  backend: SubscriptionBackend;
+  status: "pending" | "succeeded" | "failed";
+  provider: string;
+  /** Open in the system browser to continue with the vendor. */
+  authorizeUrl: string;
+  expiresAt: string;
+  credential?: string;
+  email?: string;
+  firstSignIn?: boolean;
+  error?: string;
+}
+
+/** `GET /subscriptions/accounts`: one account, without its tokens. */
+export interface SubscriptionAccountView {
+  provider: string;
+  credential: string;
+  backend: SubscriptionBackend;
+  email?: string;
+  enabled: boolean;
+  signedIn: boolean;
+  noticeAccepted: boolean;
+  acceptedAt: string;
+  usable: boolean;
+}
 export type {
   CatalogMeta,
   CatalogStatus,
@@ -1290,5 +1332,43 @@ export class HarnessHubClient {
       this.request<void>("POST", `auto-groups/${segment(id)}/restore`, {
         body: {},
       }),
+  };
+
+  readonly subscriptions = {
+    /** The current risk notice of each backend; an account must accept it to be used. */
+    notices: () =>
+      this.request<Page<SubscriptionNoticeView>>(
+        "GET",
+        "subscriptions/notices",
+      ),
+    /** Every subscription account, usable or not. */
+    accounts: () =>
+      this.request<Page<SubscriptionAccountView>>(
+        "GET",
+        "subscriptions/accounts",
+      ),
+    /**
+     * Start a sign-in: open `authorizeUrl` in the browser and poll
+     * {@link signIn} until it is no longer pending. `acceptNotice` is the
+     * notice version the user accepted; `credential` signs an account in again.
+     */
+    startSignIn: (input: {
+      backend: SubscriptionBackend;
+      acceptNotice: string;
+      provider?: string;
+      credential?: string;
+    }) =>
+      this.request<SignInView>("POST", "subscriptions/sign-in", {
+        body: input,
+      }),
+    signIn: (id: string) =>
+      this.request<SignInView>("GET", `subscriptions/sign-in/${segment(id)}`),
+    /** End the account's session with the vendor and clear its tokens; the registration stays. */
+    signOut: (provider: string, credential: string) =>
+      this.request<{ revoked: boolean }>(
+        "POST",
+        `providers/${segment(provider)}/credentials/${segment(credential)}/sign-out`,
+        { body: {} },
+      ),
   };
 }

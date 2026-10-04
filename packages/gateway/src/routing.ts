@@ -8,6 +8,7 @@
 import type { LogSink } from "@harnesshub/core/logging";
 import {
   DEFAULT_RETRY_POLICY,
+  type AllowanceReading,
   type ModelPlaneStore,
   type ModelRef,
   type ProviderConfig,
@@ -18,6 +19,7 @@ import {
   type RouteGroupId,
   type WireProtocol,
 } from "@harnesshub/core/model-plane";
+import { accountUsable } from "@harnesshub/core/subscriptions";
 import type { Failure } from "./output.js";
 
 /** One routing candidate: a Model Ref served through one credential and one upstream endpoint. */
@@ -94,6 +96,31 @@ export function modelCandidates(
     : [KEYLESS_CREDENTIAL];
   for (const credential of credentials) {
     if (!credential.enabled) continue;
+    if (provider.subscription) {
+      // An account serves only after its notice was accepted, signed in, and
+      // always translated: its backend takes a constrained request shape.
+      const responses = provider.endpoints.responses;
+      if (!accountUsable(credential.account))
+        skipped.push(
+          `${ref} via ${credential.id}: the account is signed out or has not accepted the current risk notice`,
+        );
+      else if (!responses)
+        skipped.push(
+          `${ref}: the subscription provider has no Responses endpoint`,
+        );
+      else
+        candidates.push({
+          provider,
+          credential,
+          model,
+          ref,
+          wireModel,
+          mode: "translated",
+          upstream: "responses",
+          endpoint: responses,
+        });
+      continue;
+    }
     const native = provider.endpoints[inbound];
     const chat = provider.endpoints.chat;
     const base = { provider, credential, model, ref, wireModel };
@@ -199,7 +226,10 @@ function resetAt(value: string, now: number): number | undefined {
  * with its `remaining` and `reset` (OpenAI), `anthropic-ratelimit-tokens-limit`
  * and so on. A window counts only with a limit, a remainder and a reset.
  */
-function rateWindows(headers: Headers, now: number): RateWindow[] {
+function rateWindows(
+  headers: Headers,
+  now: number,
+): (RateWindow & { name: string })[] {
   const parts = new Map<string, Partial<RateWindow>>();
   for (const [name, value] of headers) {
     const at = name.indexOf("ratelimit-");
@@ -216,13 +246,31 @@ function rateWindows(headers: Headers, now: number): RateWindow[] {
     if (number !== undefined && Number.isFinite(number)) entry[role] = number;
     parts.set(window, entry);
   }
-  return [...parts.values()].filter(
-    (window): window is RateWindow =>
-      window.limit !== undefined &&
-      window.limit > 0 &&
-      window.remaining !== undefined &&
-      window.reset !== undefined,
-  );
+  return [...parts.entries()]
+    .map(([name, window]) => ({ ...window, name: name || "requests" }))
+    .filter(
+      (window): window is RateWindow & { name: string } =>
+        window.limit !== undefined &&
+        window.limit > 0 &&
+        window.remaining !== undefined &&
+        window.reset !== undefined,
+    );
+}
+
+/** A reading without a renewal time counts for this long after it was taken. */
+const READING_TTL_MS = 24 * 3_600_000;
+/** Allowance shares: below `low` an account is fine, from `spent` on it is all but used up (Magpie). */
+export const SHARE_LOW = 90;
+export const SHARE_SPENT = 98;
+/** Windows of at least this span set the pace; an hour-long pace without one spreads over a week. */
+const BUDGET_SPAN_S = 86_400;
+const WEEK_HOURS = 168;
+
+/** A reading as the router keeps it: whose it is, and its window. */
+export interface StoredReading {
+  provider: string;
+  credential: string;
+  reading: AllowanceReading;
 }
 
 /**
@@ -237,8 +285,10 @@ export class Router {
   #rotation = new Map<RouteGroupId, number>();
   /** Credential → decayed tokens at a time. */
   #served = new Map<string, { tokens: number; at: number }>();
-  /** Credential → the rate-limit windows of its last answer. */
-  #windows = new Map<string, RateWindow[]>();
+  /** Credential → window name → its latest allowance reading. */
+  #readings = new Map<string, Map<string, AllowanceReading>>();
+  /** Readings changed since the last {@link takeChanges}. */
+  #changed = false;
   #latency = new Map<string, { average: number; samples: number }>();
   #seeding: Promise<void> | undefined;
   constructor(private readonly clock: () => number) {}
@@ -249,6 +299,8 @@ export class Router {
     switch (group.strategy) {
       case "order":
       case "least-used":
+      case "smart":
+      case "pace":
         return members;
       case "rotate": {
         const turn = this.#rotation.get(group.id) ?? 0;
@@ -270,42 +322,225 @@ export class Router {
   }
 
   /**
-   * The candidates of a `least-used` group, every member's credentials
-   * together: the least share of a rate-limit window used first (whole
-   * percent, as the upstream last reported it; a passed reset counts as
-   * unused), then the fewest tokens served, each halving per hour; ties keep
-   * the configured order. Other strategies are returned unchanged.
+   * The candidates of a `least-used`, `smart` or `pace` group, every member's
+   * credentials together; other strategies are returned unchanged.
+   * - `least-used` (Magpie `usage`): the least share of an allowance used
+   *   first, then the fewest tokens served, each halving per hour.
+   * - `smart`: by share, fine (below {@link SHARE_LOW}), low, then spent
+   *   (from {@link SHARE_SPENT}); among the fine, a subscription account with
+   *   no reading yet first (it learns its allowance by answering), then the
+   *   one whose windows renew soonest, the longest window first, compared to
+   *   the hour, an unknown renewal after the known; low and spent by share.
+   * - `pace`: by the same tiers; among the fine, learning accounts first, then
+   *   the most allowance left per hour until its renewal, over windows of a
+   *   day or more (an account without one: what it has left over a week; a
+   *   key: 0), in bands of 90% of each band's best, then the fewest tokens.
+   * Ties keep the configured order, which keeps prompt caches warm.
    */
   weigh(group: RouteGroup | undefined, candidates: Candidate[]): Candidate[] {
-    if (group?.strategy !== "least-used" || candidates.length < 2)
+    const strategy = group?.strategy;
+    if (
+      (strategy !== "least-used" &&
+        strategy !== "smart" &&
+        strategy !== "pace") ||
+      candidates.length < 2
+    )
       return candidates;
+    const now = this.clock();
     const ranked = candidates.map((candidate, index) => ({
       candidate,
       index,
       share: this.share(candidate),
       tokens: this.tokens(candidate),
+      learns:
+        candidate.provider.subscription !== undefined &&
+        this.readings(candidate).length === 0,
     }));
-    return ranked
-      .sort(
-        (a, b) => a.share - b.share || a.tokens - b.tokens || a.index - b.index,
-      )
-      .map(({ candidate }) => candidate);
+    type Ranked = (typeof ranked)[number];
+    const order = (list: Ranked[]) => list.map(({ candidate }) => candidate);
+    if (strategy === "least-used")
+      return order(
+        ranked.sort(
+          (a, b) =>
+            a.share - b.share || a.tokens - b.tokens || a.index - b.index,
+        ),
+      );
+    const fine = ranked.filter((entry) => entry.share < SHARE_LOW);
+    const low = ranked.filter(
+      (entry) => entry.share >= SHARE_LOW && entry.share < SHARE_SPENT,
+    );
+    const spent = ranked.filter((entry) => entry.share >= SHARE_SPENT);
+    const byShare = (a: Ranked, b: Ranked) =>
+      a.share - b.share || a.index - b.index;
+    low.sort(byShare);
+    spent.sort(byShare);
+    if (strategy === "smart") {
+      const renewals = new Map(
+        fine.map((entry) => [entry, this.#renewals(entry.candidate, now)]),
+      );
+      fine.sort((a, b) => {
+        if (a.learns !== b.learns) return a.learns ? -1 : 1;
+        const ra = renewals.get(a)!;
+        const rb = renewals.get(b)!;
+        for (let k = 0; k < Math.max(ra.length, rb.length); k++) {
+          const x = ra[k] ?? 0;
+          const y = rb[k] ?? 0;
+          if (x === y) continue;
+          if (x === 0 || y === 0) return x === 0 ? 1 : -1;
+          return x - y;
+        }
+        return a.index - b.index;
+      });
+      return order([...fine, ...low, ...spent]);
+    }
+    const paces = new Map(
+      fine.map((entry) => [entry, this.#pace(entry.candidate, now)]),
+    );
+    const learning = fine.filter((entry) => entry.learns);
+    const rest = fine
+      .filter((entry) => !entry.learns)
+      .sort((a, b) => paces.get(b)! - paces.get(a)! || a.index - b.index);
+    const banded: Ranked[] = [];
+    let band: Ranked[] = [];
+    let top = Infinity;
+    const close = () =>
+      banded.push(
+        ...band.sort((a, b) => a.tokens - b.tokens || a.index - b.index),
+      );
+    for (const entry of rest) {
+      const pace = paces.get(entry)!;
+      if (band.length && pace < top * 0.9) {
+        close();
+        band = [];
+      }
+      if (!band.length) top = pace;
+      band.push(entry);
+    }
+    close();
+    return order([
+      ...learning.sort((a, b) => a.index - b.index),
+      ...banded,
+      ...low,
+      ...spent,
+    ]);
   }
 
-  /** Whole percent of the fullest unexpired window the candidate's last answer reported. */
-  share(candidate: Candidate): number {
+  /**
+   * The candidate's current readings: windows not yet renewed, and readings
+   * without a renewal time for a day after they were taken.
+   */
+  readings(candidate: Candidate): AllowanceReading[] {
     const now = this.clock();
+    return [
+      ...(this.#readings.get(credentialKey(candidate))?.values() ?? []),
+    ].filter((reading) =>
+      reading.resetsAt !== undefined
+        ? Date.parse(reading.resetsAt) > now
+        : Date.parse(reading.observedAt) + READING_TTL_MS > now,
+    );
+  }
+
+  /** Whole percent of the fullest current allowance window; 0 without readings. */
+  share(candidate: Candidate): number {
     let used = 0;
-    for (const window of this.#windows.get(credentialKey(candidate)) ?? [])
-      if (window.reset > now)
-        used = Math.max(
-          used,
-          Math.floor(
-            ((window.limit - Math.max(0, window.remaining)) / window.limit) *
-              100,
-          ),
-        );
+    for (const reading of this.readings(candidate))
+      used = Math.max(used, Math.floor(reading.usedPercent));
     return Math.min(100, Math.max(0, used));
+  }
+
+  /** Renewal times per window, longest window first, to the hour; 0 when unknown. */
+  #renewals(candidate: Candidate, now: number): number[] {
+    return [...(this.#readings.get(credentialKey(candidate))?.values() ?? [])]
+      .sort((a, b) => (b.spanSeconds ?? 0) - (a.spanSeconds ?? 0))
+      .map((reading) => {
+        const at =
+          reading.resetsAt !== undefined ? Date.parse(reading.resetsAt) : NaN;
+        const renews =
+          at > now
+            ? at
+            : reading.spanSeconds !== undefined
+              ? now + reading.spanSeconds * 1000
+              : 0;
+        return renews && Math.floor(renews / 3_600_000) * 3_600_000;
+      });
+  }
+
+  /**
+   * Allowance left per hour until it renews (Magpie `Pace`): the tightest of
+   * the windows of a day or more, a passed or unknown renewal counting a full
+   * span from now; without such a window, what the account has left over a
+   * week; a credential that is no subscription account, 0.
+   */
+  #pace(candidate: Candidate, now: number): number {
+    if (!candidate.provider.subscription) return 0;
+    const all = [
+      ...(this.#readings.get(credentialKey(candidate))?.values() ?? []),
+    ];
+    const budget = all.filter(
+      (reading) => (reading.spanSeconds ?? 0) >= BUDGET_SPAN_S,
+    );
+    if (!budget.length) return (100 - this.share(candidate)) / WEEK_HOURS;
+    let pace = Infinity;
+    for (const reading of budget) {
+      const at =
+        reading.resetsAt !== undefined ? Date.parse(reading.resetsAt) : NaN;
+      const current = at > now;
+      const hours = current
+        ? (at - now) / 3_600_000
+        : reading.spanSeconds! / 3600;
+      const left = 100 - (current ? reading.usedPercent : 0);
+      pace = Math.min(pace, left / Math.max(hours, 1));
+    }
+    return pace;
+  }
+
+  /**
+   * Readings from a source other than the answer's headers, such as an
+   * official client's quota events; each replaces the reading of its window.
+   */
+  report(
+    candidate: Pick<Candidate, "provider" | "credential">,
+    readings: readonly AllowanceReading[],
+  ): void {
+    if (!readings.length) return;
+    const key = credentialKey(candidate as Candidate);
+    const windows = this.#readings.get(key) ?? new Map();
+    for (const reading of readings) windows.set(reading.window, reading);
+    this.#readings.set(key, windows);
+    this.#changed = true;
+  }
+
+  /** Every reading, for persisting the last values. */
+  snapshot(): StoredReading[] {
+    const stored: StoredReading[] = [];
+    for (const [key, windows] of this.#readings) {
+      const [provider, credential] = key.split("\u0000") as [string, string];
+      for (const reading of windows.values())
+        stored.push({ provider, credential, reading });
+    }
+    return stored;
+  }
+
+  /** Readings persisted earlier; newer readings already taken win. */
+  restore(stored: readonly StoredReading[]): void {
+    for (const { provider, credential, reading } of stored) {
+      const key = `${provider}\u0000${credential}`;
+      const windows = this.#readings.get(key) ?? new Map();
+      const known = windows.get(reading.window);
+      if (
+        !known ||
+        Date.parse(known.observedAt) < Date.parse(reading.observedAt)
+      )
+        windows.set(reading.window, reading);
+      this.#readings.set(key, windows);
+    }
+  }
+
+  /** Whether readings changed since the last call. */
+  takeChanges(): boolean {
+    const changed = this.#changed;
+    this.#changed = false;
+    return changed;
   }
 
   /** Tokens the candidate's credential served, halving per {@link USAGE_HALF_LIFE_MS}. */
@@ -330,10 +565,25 @@ export class Router {
     });
   }
 
-  /** The rate-limit headers of any answer from the candidate's upstream. */
+  /** The rate-limit headers of any answer from the candidate's upstream, as readings of their windows. */
   observe(candidate: Candidate, headers: Headers): void {
-    const windows = rateWindows(headers, this.clock());
-    if (windows.length) this.#windows.set(credentialKey(candidate), windows);
+    const now = this.clock();
+    this.report(
+      candidate,
+      rateWindows(headers, now).map((window) => ({
+        window: window.name,
+        usedPercent: Math.min(
+          100,
+          Math.max(
+            0,
+            ((window.limit - Math.max(0, window.remaining)) / window.limit) *
+              100,
+          ),
+        ),
+        resetsAt: new Date(window.reset).toISOString(),
+        observedAt: new Date(now).toISOString(),
+      })),
+    );
   }
 
   /**

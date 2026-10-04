@@ -2,7 +2,7 @@
 /**
  * The model-plane commands of `hh` (06-interfaces section 5): `provider`,
  * `credential`, `key`, `group`, `model`, `catalog`, `usage`, `status`,
- * `gateway share` and `import`. They talk to the
+ * `gateway share`, `import` and `subscription`. They talk to the
  * running daemon through `@harnesshub/sdk` with the admin token found in the
  * data directory, print a table (or `--json`, the API response), and exit
  * with the codes of 06 section 5. Secrets are read from a hidden prompt,
@@ -13,6 +13,8 @@ import { parseArgs, type ParseArgsConfig } from "node:util";
 import {
   HarnessHubError,
   HarnessHubUnavailableError,
+  type SubscriptionAccountView,
+  type SubscriptionBackend,
   type GatewayShareStatus,
   type HarnessHubClient,
   type MetadataField,
@@ -69,6 +71,10 @@ const USAGE = `Usage: hh <command> [options]
               modalities (text,image,pdf,audio,video), price.input,
               price.output, price.cacheRead, price.cacheWrite (USD per
               million tokens); KEY= removes one key of the override
+  hh subscription notice | list | login chatgpt [--provider ID] [--account ID]
+              [--accept-notice] | logout <provider> <account>
+              accounts are off until their risk notice is accepted, and serve
+              agents on this computer only
   hh catalog status | refresh
   hh usage [--by model|provider|day|key|adapter|credential|conversation]
               [--since 7d] [--from TIME] [--to TIME] [--provider P]
@@ -1405,7 +1411,135 @@ async function importCommand(args: string[]): Promise<void> {
     );
 }
 
+/** Subscription backends by the name people use on the command line. */
+const SUBSCRIPTION_NAMES: Readonly<Record<string, SubscriptionBackend>> = {
+  chatgpt: "siwc",
+};
+
+function accountStatus(account: SubscriptionAccountView): string {
+  if (!account.signedIn) return "signed out";
+  if (!account.noticeAccepted) return "notice not accepted";
+  return account.enabled ? "usable" : "disabled";
+}
+
+/**
+ * `hh subscription notice | list | login chatgpt | logout <provider>
+ * <account>` (ADR-P09). Login shows the risk notice and asks before it
+ * starts OpenAI's own sign-in in the browser; the account is used only
+ * after that acceptance.
+ */
+async function subscriptionCommand(args: string[]): Promise<void> {
+  const [action = "", ...rest] = args;
+  const { values, positionals: given } = parse(rest, {
+    provider: { type: "string" },
+    account: { type: "string" },
+    "accept-notice": { type: "boolean" },
+  });
+  const ctx = context(values);
+  const client = await ctx.client();
+  switch (action) {
+    case "notice": {
+      positionals(given, []);
+      const notices = await client.subscriptions.notices();
+      return output(ctx, notices, () =>
+        notices.items
+          .map(
+            (notice) =>
+              `${notice.title} (${notice.backend}, notice ${notice.version})\n\n${notice.text}\n\nManage usage: ${notice.manageUsageUrl}`,
+          )
+          .join("\n\n"),
+      );
+    }
+    case "list": {
+      positionals(given, []);
+      const accounts = await client.subscriptions.accounts();
+      return output(ctx, accounts, () =>
+        table(
+          ["PROVIDER", "ACCOUNT", "EMAIL", "STATUS", "ACCEPTED"],
+          accounts.items.map((account) => [
+            account.provider,
+            account.credential,
+            account.email ?? "-",
+            accountStatus(account),
+            localTime(account.acceptedAt),
+          ]),
+        ),
+      );
+    }
+    case "login": {
+      const [name] = positionals(given, ["subscription"]);
+      const backend = SUBSCRIPTION_NAMES[name!];
+      if (!backend)
+        throw new UsageError(
+          `Unknown subscription ${name}; known: ${Object.keys(SUBSCRIPTION_NAMES).join(", ")}`,
+        );
+      const notice = (await client.subscriptions.notices()).items.find(
+        (item) => item.backend === backend,
+      );
+      if (!notice) throw new Error(`The daemon has no notice for ${name}`);
+      process.stderr.write(
+        `Use your ChatGPT plan\nComplete eligible AI requests in HarnessHub with usage included in your ChatGPT plan or credits balance.\n\n${notice.title} (notice ${notice.version})\n${notice.text}\nManage usage: ${notice.manageUsageUrl}\n\n`,
+      );
+      if (!values["accept-notice"])
+        await confirm(ctx, "Accept this notice and Continue with ChatGPT?");
+      let view = await client.subscriptions.startSignIn({
+        backend,
+        acceptNotice: notice.version,
+        ...(typeof values.provider === "string"
+          ? { provider: values.provider }
+          : {}),
+        ...(typeof values.account === "string"
+          ? { credential: values.account }
+          : {}),
+      });
+      process.stderr.write(
+        `Continue with ChatGPT in your browser:\n  ${view.authorizeUrl}\nWaiting for the sign-in to finish (until ${localTime(view.expiresAt)})...\n`,
+      );
+      while (view.status === "pending") {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        view = await client.subscriptions.signIn(view.id);
+      }
+      if (view.status === "failed")
+        throw new Error(`The sign-in failed: ${view.error ?? "unknown"}`);
+      let models = "";
+      try {
+        const provider = await client.providers.refreshModels(view.provider);
+        models = `${provider.models.list.length} models listed for ${view.provider}.`;
+      } catch (error) {
+        models = `The model list of ${view.provider} could not be read yet (${error instanceof Error ? error.message : "unknown"}); retry with hh provider models ${view.provider} --refresh.`;
+      }
+      return output(ctx, view, () =>
+        [
+          view.firstSignIn
+            ? `You're using your ChatGPT plan. Eligible usage in HarnessHub uses your ChatGPT plan. Manage usage in your ChatGPT settings: ${notice.manageUsageUrl}`
+            : `Signed in again${view.email ? ` as ${view.email}` : ""}.`,
+          `Account ${view.credential ?? "-"} of provider ${view.provider}${view.email ? ` (${view.email})` : ""}; it serves agents on this computer only.`,
+          models,
+        ].join("\n"),
+      );
+    }
+    case "logout": {
+      const [provider, account] = positionals(given, ["provider", "account"]);
+      await confirm(
+        ctx,
+        `Sign account ${account} of ${provider} out and clear its tokens?`,
+      );
+      const result = await client.subscriptions.signOut(provider!, account!);
+      return output(ctx, result, () =>
+        result.revoked
+          ? `Signed out; OpenAI ended the session. Sign in again with hh subscription login chatgpt --provider ${provider} --account ${account}.`
+          : `Signed out locally, but OpenAI did not confirm ending the session; you can disconnect HarnessHub in ChatGPT settings.`,
+      );
+    }
+    default:
+      throw new UsageError(
+        `Unknown subscription command: ${action || "(none)"}`,
+      );
+  }
+}
+
 const COMMANDS: Readonly<Record<string, (args: string[]) => Promise<void>>> = {
+  subscription: subscriptionCommand,
   import: importCommand,
   provider: providerCommand,
   credential: credentialCommand,

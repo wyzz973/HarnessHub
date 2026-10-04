@@ -27,6 +27,7 @@ import {
   type WireProtocol,
 } from "@harnesshub/core/model-plane";
 import { autoGroups, type AutoGroup } from "@harnesshub/core/auto-groups";
+import { accountUsable } from "@harnesshub/core/subscriptions";
 import {
   endpointProblem,
   isProviderConfig,
@@ -310,6 +311,8 @@ export function registerModelPlaneRoutes(
     | "environment"
     | "system"
     | "importHome"
+    | "subscriptions"
+    | "serialize"
   >,
 ): void {
   const store: ModelPlaneStore = options.modelPlane;
@@ -374,14 +377,16 @@ export function registerModelPlaneRoutes(
   };
   let queue: Promise<unknown> = Promise.resolve();
   /** Run one mutation after the previous one settled. */
-  const serialized = <T>(operation: () => Promise<T>): Promise<T> => {
-    const result = queue.then(operation, operation);
-    queue = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
-  };
+  const serialized =
+    options.serialize ??
+    (<T>(operation: () => Promise<T>): Promise<T> => {
+      const result = queue.then(operation, operation);
+      queue = result.then(
+        () => undefined,
+        () => undefined,
+      );
+      return result;
+    });
   const provider = async (id: string): Promise<ProviderConfig> => {
     const found = await store.getProvider(id as ProviderId);
     if (!found) throw notFound("provider", id);
@@ -620,8 +625,11 @@ export function registerModelPlaneRoutes(
           );
         // Secrets first: a failure leaves the provider, and repeating the
         // delete finishes the job (an already deleted secret is skipped).
-        for (const item of current.credentials)
+        // A subscription account's session with its vendor ends first.
+        for (const item of current.credentials) {
+          if (item.account) await options.subscriptions?.revoke(item);
           if (item.ref.kind === "store") await secrets.delete(item.ref);
+        }
         await store.deleteProvider(current.id);
         return reply.code(204).send();
       }),
@@ -651,13 +659,26 @@ export function registerModelPlaneRoutes(
       let failure: ApiProblem | undefined;
       let key: string | undefined;
       try {
-        key = credential
-          ? await secrets.resolve(credential.ref, options.environment)
+        // A subscription account lists with its access token, and only
+        // when it may be used.
+        const account = listed.subscription
+          ? listed.credentials.find(
+              (item) => item.enabled && accountUsable(item.account),
+            )
           : undefined;
+        if (listed.subscription && (!account || !options.subscriptions))
+          throw new Error("no usable account");
+        key = account
+          ? await options.subscriptions!.accessToken(listed, account)
+          : credential
+            ? await secrets.resolve(credential.ref, options.environment)
+            : undefined;
       } catch {
         failure = new ApiProblem(
           "CREDENTIAL_UNAVAILABLE",
-          `The credential ${credential?.id ?? ""} could not be read`,
+          listed.subscription
+            ? "No signed-in subscription account could get an access token; sign in again"
+            : `The credential ${credential?.id ?? ""} could not be read`,
           409,
         );
       }
@@ -917,6 +938,12 @@ export function registerModelPlaneRoutes(
             "Only credentials stored by HarnessHub can be rotated here",
             409,
           );
+        if (found.account)
+          throw new ApiProblem(
+            "SUBSCRIPTION_ACCOUNT",
+            "A subscription account's tokens come from its sign-in; sign in again instead (hh subscription login)",
+            409,
+          );
         await secrets.rotate(found.ref, request.body.value);
         return found;
       }),
@@ -929,6 +956,8 @@ export function registerModelPlaneRoutes(
         const current = await provider(request.params.id);
         const found = credential(current, request.params.credentialId);
         // Secret first, as for providers: a retry completes a partial delete.
+        // A subscription account's session with its vendor ends first.
+        if (found.account) await options.subscriptions?.revoke(found);
         if (found.ref.kind === "store") await secrets.delete(found.ref);
         await store.putProvider(
           checkProvider({

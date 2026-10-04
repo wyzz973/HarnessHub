@@ -29,6 +29,7 @@ ADR 记录重要且未来可能重新讨论的决定。适用范围见 [文档�
 - [0023：预设的地域与套餐，以及 provider 的导入](0023-provider-presets-and-imports.md)（proposed）
 - [0024：控制台内嵌守护进程与控制台会话](0024-embedded-console.md)（proposed）
 - [0025：对齐 Magpie 的路由、失败休息与 Codex 透传](0025-magpie-routing-parity.md)（proposed）
+- [0026：订阅账号的接入方式](0026-subscription-accounts.md)（proposed）
 
 编号 0009、0011、0012、0015 是早期版本的 Windows 便携发行、上游网关适配、离线交付与预装工具包决定，随对应功能一起移除，原文保留在 `archive/competition` 分支；编号不再复用。
 

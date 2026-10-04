@@ -11,6 +11,7 @@ import {
   providerPatches,
   wireProtocols,
 } from "@harnesshub/core/model-plane";
+import { subscriptionBackends } from "@harnesshub/core/subscriptions";
 
 const text = (maxLength: number) =>
   ({ type: "string", minLength: 1, maxLength }) as const;
@@ -200,6 +201,24 @@ export const credentialSchema = {
     ref: secretReference,
     protocols: { type: "array", items: protocol },
     enabled: { type: "boolean" },
+    account: {
+      type: "object",
+      additionalProperties: false,
+      required: ["backend", "subject", "clientId", "consent"],
+      properties: {
+        backend: { type: "string", enum: [...subscriptionBackends] },
+        subject: text(512),
+        email: text(320),
+        clientId: text(512),
+        consent: {
+          type: "object",
+          additionalProperties: false,
+          required: ["notice", "acceptedAt"],
+          properties: { notice: text(200), acceptedAt: timestamp },
+        },
+        signedOutAt: timestamp,
+      },
+    },
   },
 } as const;
 
@@ -241,6 +260,14 @@ export const providerSchema = {
     patches,
     capabilities,
     translateOnly: { type: "boolean" },
+    subscription: {
+      type: "object",
+      additionalProperties: false,
+      required: ["backend"],
+      properties: {
+        backend: { type: "string", enum: [...subscriptionBackends] },
+      },
+    },
     createdAt: timestamp,
     updatedAt: timestamp,
   },
@@ -520,7 +547,7 @@ const retry = {
   },
 } as const;
 const strategy = {
-  enum: ["order", "rotate", "least-used", "latency"],
+  enum: ["order", "rotate", "least-used", "latency", "smart", "pace"],
 } as const;
 const stickiness = { enum: ["auto", "session", "turn", "off"] } as const;
 const members = {

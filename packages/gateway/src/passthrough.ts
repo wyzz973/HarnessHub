@@ -331,6 +331,16 @@ const RESPONSES_STATUS: Readonly<Record<string, number>> = {
   server_error: 500,
   context_length_exceeded: 400,
   invalid_prompt: 400,
+  // ChatGPT plan usage through Sign in with ChatGPT ("Errors and recovery").
+  subscription_sharing_usage_limit_exceeded: 429,
+  subscription_sharing_usage_unavailable: 503,
+  subscription_sharing_user_unavailable: 503,
+  subscription_sharing_user_not_eligible: 403,
+  subscription_sharing_route_not_supported: 403,
+  subscription_sharing_invalid_user: 401,
+  subscription_sharing_unsupported_capability: 400,
+  chatpass_v2_scope_not_authorized: 403,
+  chatpass_v2_invalid_authorization_context: 403,
 };
 
 function failureMessage(error: Record<string, unknown> | undefined): string {
