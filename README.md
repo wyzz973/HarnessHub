@@ -24,6 +24,8 @@ HarnessHub's model and agent planes reimplement, in TypeScript, what [Magpie](ht
 - **Different by design:** every agent gets its own Gateway Key (Magpie's loopback gateway takes any token), and a file the user changed is reported as drift rather than rewritten.
 - **Not covered:** agents Magpie switches only to their own models (Goose, Cursor, Copilot CLI, Devin), and Antigravity CLI, OpenHanako, Alma and Cindy ([why](docs/global-wiring.md), in Chinese); agents inside WSL; Magpie's desktop app (HarnessHub has a web console and `hh tui` instead).
 
+[HarnessHub for Magpie users](docs/magpie-parity.md) compares the two area by area, with the gaps, and explains how to migrate.
+
 HarnessHub's own code is MIT licensed; code and data taken from other projects keep their licenses, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## What works today

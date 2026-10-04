@@ -1,6 +1,6 @@
 # 文档规范
 
-文档服务于实现、使用与验证，中文为主要语言。例外：项目入口 [README.md](../README.md) 以英文为准、内容完整，[README.zh-CN.md](../README.zh-CN.md) 是它的译文，改动两者同时进行；[文档索引](README.md) 用英文写每份文档的说明，并标出哪些是英文。这两条靠审查保证，`check:docs` 只检查链接与锚点。规则来源与裁剪理由见 [治理决策](decisions/0001-development-governance.md)。不为尚不存在的功能编写看似可用的运行说明。
+文档服务于实现、使用与验证，中文为主要语言。例外：项目入口 [README.md](../README.md) 以英文为准、内容完整，[README.zh-CN.md](../README.zh-CN.md) 是它的译文，改动两者同时进行；[文档索引](README.md) 用英文写每份文档的说明，并标出哪些是英文；面向 Magpie 用户的 [对照与迁移](magpie-parity.md) 以英文写。这两条靠审查保证，`check:docs` 只检查链接与锚点。规则来源与裁剪理由见 [治理决策](decisions/0001-development-governance.md)。不为尚不存在的功能编写看似可用的运行说明。
 
 ## 文档归属
 

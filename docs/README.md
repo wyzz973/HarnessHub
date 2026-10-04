@@ -26,6 +26,7 @@ The documents below are in Chinese unless marked **(English)**; English becomes 
 | [Provider presets](provider-presets.md) | The 46 vendor, relay and local presets, choosing regions and plans, verification status and the Magpie source |
 | [Subscription accounts](subscriptions.md) | ChatGPT plans through Sign in with ChatGPT, Copilot, the risk notice, loopback-only use, why Claude subscriptions are not offered, allowance readings and the `smart` and `pace` strategies |
 | [Provider test and doctor](provider-doctor.md) | `hh provider test` and `hh provider doctor`: per-endpoint tests, 14 checks, plan and cost, proposed patches and `--fix` |
+| [HarnessHub for Magpie users](magpie-parity.md) **(English)** | Area-by-area comparison with Magpie `2e340f7` (same, different by design, partial, not covered), and migrating: import links, what does not carry over, one key per agent, and a command map |
 | [Importing providers](provider-import.md) | Import links (including Magpie's) and importing from Claude Code and Codex: options, preview and confirmation, safety limits |
 | [API reference](api/reference.md) | Every HTTP operation: input and output, call chain, side effects, errors and tests |
 | [OpenAPI](api/openapi.json) | The machine-readable API contract generated from the routes |

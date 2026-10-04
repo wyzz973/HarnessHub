@@ -26,6 +26,8 @@ HarnessHub 的模型平面与 Agent 平面用 TypeScript 重新实现了 yetone 
 - **有意不同**：每个 Agent 有自己的 Gateway Key（Magpie 的回环网关接受任意令牌）；用户改过的文件按漂移报告，而不是被重写。
 - **未覆盖**：Magpie 只切换其自带模型的 Agent（Goose、Cursor、Copilot CLI、Devin），以及 Antigravity CLI、OpenHanako、Alma 与 Cindy（[原因](docs/global-wiring.md)）；WSL 中的 Agent；Magpie 的桌面应用（HarnessHub 提供 Web 控制台与 `hh tui`）。
 
+[HarnessHub for Magpie users](docs/magpie-parity.md)（英文）逐个领域对比两者，列出差距，并说明如何迁移。
+
 HarnessHub 自己的代码使用 MIT 许可证；取自其他项目的代码与数据保留原许可证，列在 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ## 目前已有的能力
