@@ -159,7 +159,8 @@ export const zh = {
   "agents.picker.searchPlaceholder": "搜索模型或 provider",
   "agents.picker.search": "搜索模型",
 
-  "agents.profiles.chatgpt": "ChatGPT 登录",
+  "agents.profiles.ownModel": "自己的模型",
+  "agents.profiles.option": "{name}：{value}",
   "agents.profiles.saved": "已保存 Profile {name}（{n} 个 Agent）",
   "agents.profiles.save": "保存当前接线",
   "agents.profiles.saveDescription":
@@ -406,7 +407,8 @@ export const en: Translation<typeof zh> = {
   "agents.picker.searchPlaceholder": "Search models or providers",
   "agents.picker.search": "Search models",
 
-  "agents.profiles.chatgpt": "ChatGPT login",
+  "agents.profiles.ownModel": "Its own model",
+  "agents.profiles.option": "{name}: {value}",
   "agents.profiles.saved":
     "Saved the profile {name} ({n, plural, one {# agent} other {# agents}})",
   "agents.profiles.save": "Save the current wiring",

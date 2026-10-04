@@ -12,7 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { effortText, modelOptional, tierLabel } from "@/lib/agents";
+import { effortText, optionLabel, tierLabel } from "@/lib/agents";
 import { t } from "@/lib/i18n";
 import { tr } from "@/lib/i18n-react";
 import { failureOf, modelPlane, type Failure } from "@/lib/model-plane";
@@ -32,9 +32,10 @@ const PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 /** One agent's choice in a profile, as a line of text. */
 function choiceText(choice: WiringProfile["agents"][string]): string {
-  const parts = modelOptional(choice.options)
-    ? [t("agents.profiles.chatgpt"), ...(choice.model ? [choice.model] : [])]
-    : [choice.model ?? "—"];
+  // No model: the agent keeps its own, which its options allow.
+  const parts = [choice.model ?? t("agents.profiles.ownModel")];
+  for (const [name, value] of Object.entries(choice.options ?? {}))
+    parts.push(t("agents.profiles.option", { name: optionLabel(name), value }));
   for (const [tier, ref] of Object.entries(choice.tiers ?? {}))
     parts.push(`${tierLabel(tier)} ${ref}`);
   if (choice.effort) parts.push(`effort ${effortText(choice.effort)}`);

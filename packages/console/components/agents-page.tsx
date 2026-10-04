@@ -86,7 +86,7 @@ function AgentRow({
 }) {
   const wiring = agent.wiring;
   const install = installationText(agent.installation.status);
-  const ownModel = modelOptional(wiring?.options);
+  const ownModel = modelOptional(agent, wiring?.options);
   const legacy = legacyKeyless(agent);
   const visibility = wiring ? modelVisibility(agent, models) : undefined;
   return (

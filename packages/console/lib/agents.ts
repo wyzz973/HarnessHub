@@ -59,13 +59,20 @@ export function optionValueText(name: string, value: string): string {
 }
 
 /**
- * Whether these options let the agent keep its own model: it signs in by
- * itself and a HarnessHub model is optional (Codex with `codexAuth:
- * chatgpt`, ADR 0030). It still gets a key; without a model it takes no
- * tiers or effort.
+ * Whether these options let the agent keep its own model, as its
+ * `capabilities.ownModel` lists them (Codex with `codexAuth: chatgpt`,
+ * ADR 0030): a HarnessHub model is then optional. It still gets a key;
+ * without a model it takes no tiers or effort.
  */
-export function modelOptional(options: Record<string, string> | undefined) {
-  return options?.codexAuth === "chatgpt";
+export function modelOptional(
+  agent: Pick<Agent, "capabilities">,
+  options: Readonly<Record<string, string>> | undefined,
+): boolean {
+  return agent.capabilities.ownModel.some((combination) =>
+    Object.entries(combination).every(
+      ([name, value]) => options?.[name] === value,
+    ),
+  );
 }
 
 /**
@@ -77,7 +84,7 @@ export function legacyKeyless(agent: Agent): boolean {
   const wiring = agent.wiring;
   return (
     wiring !== null &&
-    modelOptional(wiring.options) &&
+    modelOptional(agent, wiring.options) &&
     wiring.keyId === undefined
   );
 }
@@ -177,7 +184,7 @@ export function wiringInput(
   const options = Object.keys(draft.options).length
     ? { options: draft.options }
     : {};
-  if (modelOptional(draft.options) && !draft.model)
+  if (modelOptional(agent, draft.options) && !draft.model)
     return { model: null, ...options };
   const tiers = Object.fromEntries(
     Object.entries(draft.tiers).filter(([, ref]) => ref),

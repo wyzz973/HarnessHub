@@ -87,7 +87,7 @@ export function WirePlanDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
             {t("agents.wire.description", { name: agent.name })}{" "}
-            {modelOptional(input.options)
+            {modelOptional(agent, input.options)
               ? t("agents.wire.chatgpt", { name: agent.name })
               : ""}
           </DialogDescription>

@@ -385,7 +385,7 @@ test("the agent pages derive wiring requests, shown models and attention from th
     id: "claude",
     name: "Claude Code",
     installation: { status: "installed", configDirectories: [] },
-    capabilities: { tiers: ["opus", "haiku"], efforts: ["low", "high"], options: {} },
+    capabilities: { tiers: ["opus", "haiku"], efforts: ["low", "high"], options: {}, ownModel: [] },
     wiring: {
       model: "deepseek/chat",
       tiers: { haiku: "lab/fast" },
@@ -448,7 +448,12 @@ test("the agent pages derive wiring requests, shown models and attention from th
 
   const codex = {
     id: "codex",
-    capabilities: { tiers: [], efforts: ["low"], options: { codexAuth: ["gateway-key", "chatgpt"] } },
+    capabilities: {
+      tiers: [],
+      efforts: ["low"],
+      options: { codexAuth: ["gateway-key", "chatgpt"] },
+      ownModel: [{ codexAuth: "chatgpt" }],
+    },
     wiring: null,
   };
   const codexDraft = agents.draftOf(codex);
@@ -463,10 +468,32 @@ test("the agent pages derive wiring requests, shown models and attention from th
     { model: null, options: { codexAuth: "chatgpt" } },
     "without a model the agent keeps its own, and takes no effort",
   );
-  assert.equal(agents.legacyKeyless({ wiring: { options: { codexAuth: "chatgpt" } } }), true, "a ChatGPT wiring from before keys has none");
-  assert.equal(agents.legacyKeyless({ wiring: { options: { codexAuth: "chatgpt" }, keyId: "hhk_a_1" } }), false);
-  assert.equal(agents.legacyKeyless({ wiring: { options: { codexAuth: "gateway-key" } } }), false);
-  assert.equal(agents.legacyKeyless({ wiring: null }), false);
+  // Which options keep the agent's own model comes from the daemon's capabilities, not from the console.
+  assert.equal(agents.modelOptional(codex, { codexAuth: "chatgpt" }), true);
+  assert.equal(agents.modelOptional(codex, { codexAuth: "gateway-key" }), false);
+  assert.equal(agents.modelOptional(codex, undefined), false);
+  const several = { capabilities: { ownModel: [{ auth: "login", mode: "own" }, { auth: "none" }] } };
+  assert.equal(agents.modelOptional(several, { auth: "login", mode: "own" }), true, "every option of a combination must match");
+  assert.equal(agents.modelOptional(several, { auth: "login", mode: "gateway" }), false);
+  assert.equal(agents.modelOptional(several, { auth: "none", mode: "gateway" }), true);
+  assert.equal(
+    agents.modelOptional({ capabilities: { ownModel: [] } }, { codexAuth: "chatgpt" }),
+    false,
+    "an agent without ownModel combinations always takes a model, whatever its options are called",
+  );
+  assert.deepEqual(
+    agents.wiringInput(
+      { ...codex, capabilities: { ...codex.capabilities, ownModel: [] } },
+      { ...codexDraft, model: undefined, options: { codexAuth: "chatgpt" } },
+    ),
+    { effort: null, options: { codexAuth: "chatgpt" } },
+    "without the capability no null model is sent",
+  );
+  const chatgpt = { ...codex, wiring: { options: { codexAuth: "chatgpt" } } };
+  assert.equal(agents.legacyKeyless(chatgpt), true, "a ChatGPT wiring from before keys has none");
+  assert.equal(agents.legacyKeyless({ ...codex, wiring: { options: { codexAuth: "chatgpt" }, keyId: "hhk_a_1" } }), false);
+  assert.equal(agents.legacyKeyless({ ...codex, wiring: { options: { codexAuth: "gateway-key" } } }), false);
+  assert.equal(agents.legacyKeyless({ ...codex, wiring: null }), false);
 });
 
 test("the backup page reads backup files and builds sync settings without dropping secrets it must send", async () => {

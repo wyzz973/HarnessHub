@@ -78,7 +78,7 @@ function WiringForm({
   onPreview: (input: AgentWiringInput) => void;
 }) {
   const [draft, setDraft] = useState<WiringDraft>(() => draftOf(agent));
-  const ownModel = modelOptional(draft.options);
+  const ownModel = modelOptional(agent, draft.options);
   const capabilities = agent.capabilities;
   const set = (patch: Partial<WiringDraft>) =>
     setDraft((current) => ({ ...current, ...patch }));
@@ -87,7 +87,7 @@ function WiringForm({
   const setOption = (name: string, value: string) => {
     const options = { ...draft.options, [name]: value };
     set(
-      modelOptional(options) && !modelOptional(draft.options)
+      modelOptional(agent, options) && !modelOptional(agent, draft.options)
         ? { options, model: undefined, effort: undefined, tiers: {} }
         : { options },
     );
