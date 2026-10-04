@@ -307,6 +307,6 @@ node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js
 
 ## 变更记录
 
-- **2026-10-03：局域网共享与级联**（[ADR 0020](decisions/0021-gateway-lan-sharing.md)）。守护进程可以另开局域网监听器，只服务模型协议路径与 `allowLan` 的 `client:` Key；设置在 `<dataDir>/gateway-sharing.json`，经 `/api/v1/gateway/share` 与 `hh gateway share` 管理。`Host` 另外接受 `publicBaseUrl` 的主机；`Origin` 照旧一律拒绝，另外拒绝 `Sec-Fetch-Site: cross-site`。Anthropic `count_tokens` 在有直通 Anthropic 端点时转发上游（响应头 `x-hh-token-count: upstream`），此前总是本地估算。新预设 `harnesshub-remote`；OpenAI 格式的实时模型列表现在读取窗口、输出上限、推理与模态字段。
+- **2026-10-03：局域网共享与级联**（[ADR 0021](decisions/0021-gateway-lan-sharing.md)）。守护进程可以另开局域网监听器，只服务模型协议路径与 `allowLan` 的 `client:` Key；设置在 `<dataDir>/gateway-sharing.json`，经 `/api/v1/gateway/share` 与 `hh gateway share` 管理。`Host` 另外接受 `publicBaseUrl` 的主机；`Origin` 照旧一律拒绝，另外拒绝 `Sec-Fetch-Site: cross-site`。Anthropic `count_tokens` 在有直通 Anthropic 端点时转发上游（响应头 `x-hh-token-count: upstream`），此前总是本地估算。新预设 `harnesshub-remote`；OpenAI 格式的实时模型列表现在读取窗口、输出上限、推理与模态字段。
 
 - **2026-10-03：Session Run 使用共享网关**（[ADR 0019](decisions/0019-session-runs-on-the-shared-gateway.md)）。应用了统一模型的引擎不再在 Worker 内启动网关，调用经守护进程端口的共享网关进入 `model.call` 账本；Run 的 `model.call` 事件与用量来自账本。可接入网关、没有自己 provider 的引擎在存在 `group/default`（或 Run 指定的 `model`）时也走共享网关，此前它们总是使用自己的登录；没有目标时仍使用自己的账号。Run 可以指定 `model`，目标不存在时以 `MODEL_NOT_CONFIGURED` 失败。旧统一模型在启动时写成 provider `migrated` 与（缺失时的）`group/default`；迁移后的 provider 不再去除 `reasoning_effort`、`prediction`、`modalities`、`audio`、`web_search_options`（不在 `drop-fields` 闭集内）。只在存在旧统一模型来源时，统一模型才覆盖引擎登记、停用无法接入的引擎（遗留，将移除）。没有凭据的 provider 现在可以调用（不带鉴权头）。
