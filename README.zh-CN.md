@@ -42,7 +42,7 @@ HarnessHub 自己的代码使用 MIT 许可证；取自其他项目的代码与�
 | 执行 | SQLite 中的持久 Session 与 Run，同一 Session 串行；SSE 从已提交事件重放；幂等提交；期限与取消；权限请求；声明的输出文件采集为不可变产物；JSONL 导出；ACP 与 CLI 驱动，每个 Session 使用私有配置 |
 | 工具 | 工具包，含 Skills、MCP 服务与 CLI 工具，按内容哈希存储，按 Agent 绑定 |
 | 运维 | `config.jsonc` 与 `hh config`；加密备份、恢复与 WebDAV/S3 同步；模型调用的 OTLP 导出；每个 Session 一个 Worker 进程，POSIX 用进程组、Windows 用 Job Object，重启后恢复 |
-| 控制台 | 由守护进程在同一端口提供的 Web 控制台（React + Vite，目前只有中文界面）。用一次性链接登录，浏览器拿不到管理令牌 |
+| 控制台 | 由守护进程在同一端口提供的 Web 控制台（React + Vite），有中文与英文界面。用一次性链接登录，浏览器拿不到管理令牌 |
 
 `hh` 的单可执行文件构建（`pnpm test:sea`）可在 macOS arm64 上运行；其他平台尚未构建，也还没有发布版本。Windows 支持已经实现，但尚未在 Windows 上验证。
 
@@ -119,7 +119,7 @@ pnpm exec hh unwire codex                   # 还原它的文件并吊销它的 
 
 ### 5. 控制台
 
-打开 `hh serve` 打印的登录链接，或用 `pnpm exec hh console` 生成新的；每个链接只能在本机浏览器中使用一次，60 秒内有效。控制台目前只有中文界面，首页是 **Agent**：本机的每个 Agent 与它的模型，点模型即可预览并接线。**Provider**、**订阅账号**、**路由与 Key**、**用量**、**Profile**、**Library** 与 **设置**（网关功能、备份与同步）管理其余部分。无人值守运行在 **任务** 下，包括统一模型、引擎、工具与观测；这些页面、数据目录与排障见 [使用指南](docs/getting-started.md)。
+打开 `hh serve` 打印的登录链接，或用 `pnpm exec hh console` 生成新的；每个链接只能在本机浏览器中使用一次，60 秒内有效。控制台有中文与英文界面：在“设置 → 语言”中选择之前跟随浏览器的语言，选择后保存在这个浏览器中。首页是 **Agent**：本机的每个 Agent 与它的模型，点模型即可预览并接线。**Provider**、**订阅账号**、**路由与 Key**、**用量**、**Profile**、**Library** 与 **设置**（语言、网关功能、备份与同步）管理其余部分。无人值守运行在 **任务** 下，包括统一模型、引擎、工具与观测；这些页面、数据目录与排障见 [使用指南](docs/getting-started.md)。
 
 `pnpm start` 不经 `hh` 命令启动同一个守护进程。
 

@@ -40,7 +40,7 @@ The code base comes from an earlier, single-model edition of HarnessHub and is b
 | Execution | Durable Sessions and Runs in SQLite, serialized per Session; SSE replay from committed events; idempotent submission; deadlines and cancellation; permission requests; declared file outputs as immutable artifacts; JSONL export; ACP and CLI drivers with per-Session private configuration |
 | Tools | Tool packs with Skills, MCP servers and CLI tools, stored by content hash and bound per agent |
 | Operations | `config.jsonc` with `hh config`; encrypted backups, restore and WebDAV/S3 sync; OTLP export of model calls; one Worker process per Session, with process groups on POSIX and Job Objects on Windows, and restart recovery |
-| Console | A web console served by the daemon itself on the same port (React + Vite, in Chinese for now). Sign-in uses one-time links; the browser never holds the admin token |
+| Console | A web console served by the daemon itself on the same port (React + Vite), in English and Chinese. Sign-in uses one-time links; the browser never holds the admin token |
 
 A single-executable build of `hh` (`pnpm test:sea`) runs on macOS arm64; other platforms are not built yet, and no release is published. Windows support is implemented but not yet verified on Windows.
 
@@ -117,7 +117,7 @@ Wiring backs up the agent's own configuration files, writes a key that belongs t
 
 ### 5. The console
 
-Open the sign-in link that `hh serve` printed, or get a new one with `pnpm exec hh console`; each link works once, for 60 seconds, in a browser on the same computer. The console is in Chinese for now. It opens on the **Agent** page: every agent installed here with its model; pick a model to preview and apply the wiring. **Provider**, **订阅账号** (subscription accounts), **路由与 Key** (routing and keys), **用量** (usage), **Profile**, **Library** and **设置** (settings: gateway features, backup and sync) cover the rest. Headless runs live under **任务** (tasks), with the unified model (统一模型), engines (引擎), tools (工具) and observability (观测); the [getting started guide](docs/getting-started.md) (in Chinese) covers them, data directories and troubleshooting.
+Open the sign-in link that `hh serve` printed, or get a new one with `pnpm exec hh console`; each link works once, for 60 seconds, in a browser on the same computer. The console is in English and Chinese: it follows the browser's language until you choose one under **Settings → Language**, which this browser then keeps. It opens on the **Agents** page: every agent installed here with its model; pick a model to preview and apply the wiring. **Providers**, **Subscriptions**, **Routing and keys**, **Usage**, **Profiles**, **Library** and **Settings** (language, gateway features, backup and sync) cover the rest. Headless runs live under **Tasks**, with the unified model, engines, tools and observability; the [getting started guide](docs/getting-started.md) (in Chinese) covers them, data directories and troubleshooting.
 
 `pnpm start` starts the same daemon without the `hh` command.
 
