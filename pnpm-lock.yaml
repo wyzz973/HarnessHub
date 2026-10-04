@@ -254,6 +254,9 @@ importers:
       fastify:
         specifier: 5.12.5
         version: 5.12.5
+      undici:
+        specifier: 7.29.1
+        version: 7.29.1
 
   packages/drivers:
     dependencies:

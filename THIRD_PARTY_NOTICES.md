@@ -17,7 +17,7 @@ The UI components were adapted to this project's import paths, state and interfa
 
 ## Package dependencies
 
-Runtime and development dependencies (Fastify, @fastify/swagger, Ajv, YAML, acpx, the Agent Client Protocol SDK, cross-spawn, Next.js, React, assistant-ui, Streamdown and others) are pinned in [package.json](package.json), [packages/console/package.json](packages/console/package.json) and [pnpm-lock.yaml](pnpm-lock.yaml). They are not copied into the repository and keep their own licenses.
+Runtime and development dependencies (Fastify, @fastify/swagger, undici, Ajv, YAML, acpx, the Agent Client Protocol SDK, cross-spawn, Next.js, React, assistant-ui, Streamdown and others) are pinned in [package.json](package.json), [packages/console/package.json](packages/console/package.json) and [pnpm-lock.yaml](pnpm-lock.yaml). They are not copied into the repository and keep their own licenses.
 
 ## Agents and models
 
