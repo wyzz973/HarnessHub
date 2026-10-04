@@ -2,7 +2,8 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
-import { request as httpRequest } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 import test from "node:test";
 import type { TestContext } from "node:test";
@@ -245,7 +246,7 @@ void test("without a console build the page answers 503 and the API works", asyn
   assert.equal(info.status, 200);
 });
 
-void test("a one-time console link becomes an HttpOnly SameSite=Strict session that needs the CSRF header to change state", async (t) => {
+void test("a one-time console link becomes a session of a browser cookie and a tab token, both needed on every request", async (t) => {
   const { url, token, hub } = await daemon(t);
   const admin = new HarnessHubClient({ url, token });
   const exchange = (body: unknown, headers: Record<string, string> = {}) =>
@@ -297,6 +298,7 @@ void test("a one-time console link becomes an HttpOnly SameSite=Strict session t
     expiresAt: string;
     idleExpiresAt: string;
   };
+  assert.match(session.csrfToken, /^[A-Za-z0-9_-]{43}$/);
   const cookie = sessionCookie(signedIn);
   assert.match(cookie.pair, /^hh_console=[A-Za-z0-9_-]{43}$/);
   for (const attribute of [
@@ -315,21 +317,41 @@ void test("a one-time console link becomes an HttpOnly SameSite=Strict session t
   const garbled = await exchange({ code: "not a code" });
   assert.equal(garbled.status, 400);
 
-  const withCookie = (extra: Record<string, string> = {}) =>
-    page(url, { cookie: cookie.pair, ...extra });
-  // Reads need the cookie only; the page recovers its CSRF value after a reload.
-  const providers = await fetch(`${url}/api/v1/providers`, {
-    headers: withCookie(),
-  });
-  assert.equal(providers.status, 200);
+  const tab = (extra: Record<string, string> = {}) =>
+    page(url, {
+      cookie: cookie.pair,
+      "x-hh-csrf": session.csrfToken,
+      ...extra,
+    });
+  // Every request needs both parts, reads included.
+  for (const headers of [
+    page(url, { cookie: cookie.pair }),
+    page(url, { "x-hh-csrf": session.csrfToken }),
+    page(url, { cookie: cookie.pair, "x-hh-csrf": "x".repeat(43) }),
+    page(url, { cookie: cookie.pair, "x-hh-csrf": `${session.csrfToken}x` }),
+  ]) {
+    const refused = await fetch(`${url}/api/v1/providers`, { headers });
+    assert.equal(refused.status, 401);
+    assert.equal(await code(refused), "CONSOLE_SESSION_INVALID");
+    assert.equal(
+      refused.headers.getSetCookie().length,
+      0,
+      "the cookie is kept: other tabs may use it",
+    );
+  }
+  assert.equal(
+    (await fetch(`${url}/api/v1/providers`, { headers: tab() })).status,
+    200,
+  );
+  // A reloaded tab checks its stored token; the token is never sent back.
   const current = await fetch(`${url}/api/v1/auth/console-sessions/current`, {
-    headers: withCookie(),
+    headers: tab(),
   });
   assert.equal(current.status, 200);
-  assert.equal(
-    ((await current.json()) as { csrfToken: string }).csrfToken,
-    session.csrfToken,
-  );
+  assert.deepEqual(Object.keys((await current.json()) as object).sort(), [
+    "expiresAt",
+    "idleExpiresAt",
+  ]);
   const create = (headers: Record<string, string>) =>
     fetch(`${url}/api/v1/providers`, {
       method: "POST",
@@ -339,42 +361,34 @@ void test("a one-time console link becomes an HttpOnly SameSite=Strict session t
         endpoints: { chat: "https://api.example.test/v1" },
       }),
     });
-  // Changes without, or with another, CSRF value are refused before the route runs.
   for (const headers of [
-    withCookie(),
-    withCookie({ "x-hh-csrf": "x".repeat(43) }),
-    withCookie({ "x-hh-csrf": `${session.csrfToken}x` }),
+    page(url, { cookie: cookie.pair }),
+    page(url, { cookie: cookie.pair, "x-hh-csrf": "x".repeat(43) }),
   ]) {
     const refused = await create(headers);
-    assert.equal(refused.status, 403);
-    assert.equal(await code(refused), "CSRF_TOKEN_INVALID");
+    assert.equal(refused.status, 401);
+    assert.equal(await code(refused), "CONSOLE_SESSION_INVALID");
   }
   assert.deepEqual((await admin.providers.list()).items, []);
   // Another origin, another site of this host, or a cross-site page: refused.
   for (const headers of [
-    withCookie({
-      "x-hh-csrf": session.csrfToken,
-      origin: "http://evil.example",
-    }),
-    withCookie({
-      "x-hh-csrf": session.csrfToken,
-      "sec-fetch-site": "same-site",
-    }),
-    withCookie({
-      "x-hh-csrf": session.csrfToken,
-      "sec-fetch-site": "cross-site",
-    }),
-    withCookie({ "x-hh-csrf": session.csrfToken, "sec-fetch-site": "none" }),
+    tab({ origin: "http://evil.example" }),
+    tab({ "sec-fetch-site": "same-site" }),
+    tab({ "sec-fetch-site": "cross-site" }),
+    tab({ "sec-fetch-site": "none" }),
   ]) {
     const refused = await create(headers);
     assert.equal(refused.status, 403);
     assert.equal(await code(refused), "LOCAL_ACCESS_REQUIRED");
   }
-  // The SDK as the console page uses it: cookie credentials plus the CSRF header.
+  // The SDK as the console page uses it: the cookie plus the tab's token.
   const browser: typeof fetch = (input, init) =>
     fetch(input, {
       ...init,
-      headers: withCookie(Object.fromEntries(new Headers(init?.headers))),
+      headers: page(url, {
+        cookie: cookie.pair,
+        ...Object.fromEntries(new Headers(init?.headers)),
+      }),
     });
   const pageClient = new HarnessHubClient({
     url,
@@ -391,8 +405,8 @@ void test("a one-time console link becomes an HttpOnly SameSite=Strict session t
     "alpha",
   );
   assert.equal(
-    (await pageClient.auth.currentConsoleSession()).csrfToken,
-    session.csrfToken,
+    (await pageClient.auth.currentConsoleSession()).expiresAt,
+    session.expiresAt,
   );
   // A console session cannot mint links, and the admin token has no session.
   await assert.rejects(
@@ -421,38 +435,56 @@ void test("a one-time console link becomes an HttpOnly SameSite=Strict session t
     403,
   );
 
-  // Signing out ends the session at once and clears the cookie.
-  const signOut = await fetch(`${url}/api/v1/auth/console-sessions/current`, {
-    method: "DELETE",
-    headers: withCookie({ "x-hh-csrf": session.csrfToken }),
-  });
-  assert.equal(signOut.status, 204);
-  assert.ok(sessionCookie(signOut).attributes.includes("Max-Age=0"));
-  const ended = await fetch(`${url}/api/v1/providers`, {
-    headers: withCookie(),
-  });
-  assert.equal(ended.status, 401);
-  assert.equal(await code(ended), "CONSOLE_SESSION_INVALID");
-  assert.ok(sessionCookie(ended).attributes.includes("Max-Age=0"));
-
-  // A new sign-in from a browser that still holds a session ends that one.
-  const first = await exchange({
-    code: (await admin.auth.createConsoleLink()).code,
-  });
-  const firstCookie = sessionCookie(first).pair;
+  // A second tab of the same browser signs in with its own link: the
+  // browser keeps its cookie, and neither tab ends the other's session.
   const second = await exchange(
     { code: (await admin.auth.createConsoleLink()).code },
-    { cookie: firstCookie },
+    { cookie: cookie.pair },
   );
   assert.equal(second.status, 201);
-  const old = await fetch(`${url}/api/v1/providers`, {
-    headers: page(url, { cookie: firstCookie }),
+  assert.equal(sessionCookie(second).pair, cookie.pair, "the same cookie");
+  const secondToken = ((await second.json()) as { csrfToken: string })
+    .csrfToken;
+  assert.notEqual(secondToken, session.csrfToken);
+  const secondTab = (extra: Record<string, string> = {}) =>
+    page(url, { cookie: cookie.pair, "x-hh-csrf": secondToken, ...extra });
+  for (const headers of [tab(), secondTab()])
+    assert.equal(
+      (await fetch(`${url}/api/v1/providers`, { headers })).status,
+      200,
+    );
+  // Another browser's sign-in gets its own cookie; tokens do not cross browsers.
+  const elsewhere = await exchange({
+    code: (await admin.auth.createConsoleLink()).code,
   });
-  assert.equal(old.status, 401);
-  const renewed = await fetch(`${url}/api/v1/providers`, {
-    headers: page(url, { cookie: sessionCookie(second).pair }),
+  const otherCookie = sessionCookie(elsewhere).pair;
+  assert.notEqual(otherCookie, cookie.pair);
+  const crossed = await fetch(`${url}/api/v1/providers`, {
+    headers: page(url, { cookie: otherCookie, "x-hh-csrf": secondToken }),
   });
-  assert.equal(renewed.status, 200);
+  assert.equal(crossed.status, 401);
+
+  // Signing a tab out ends its session only; the cookie stays while another tab uses it.
+  const signOut = await fetch(`${url}/api/v1/auth/console-sessions/current`, {
+    method: "DELETE",
+    headers: tab(),
+  });
+  assert.equal(signOut.status, 204);
+  assert.equal(signOut.headers.getSetCookie().length, 0);
+  const ended = await fetch(`${url}/api/v1/providers`, { headers: tab() });
+  assert.equal(ended.status, 401);
+  assert.equal(await code(ended), "CONSOLE_SESSION_INVALID");
+  assert.equal(
+    (await fetch(`${url}/api/v1/providers`, { headers: secondTab() })).status,
+    200,
+  );
+  // The last tab's sign-out clears the cookie.
+  const lastOut = await fetch(`${url}/api/v1/auth/console-sessions/current`, {
+    method: "DELETE",
+    headers: secondTab(),
+  });
+  assert.equal(lastOut.status, 204);
+  assert.ok(sessionCookie(lastOut).attributes.includes("Max-Age=0"));
 
   // The link printed for the terminal signs in the same way.
   const printed = new URL(hub.consoleLink());
@@ -461,6 +493,109 @@ void test("a one-time console link becomes an HttpOnly SameSite=Strict session t
     code: printed.hash.replace(/^#login=/, ""),
   });
   assert.equal(fromTerminal.status, 201);
+});
+
+void test("a console cookie that reaches another loopback port opens nothing when replayed outside the browser", async (t) => {
+  const { url, token } = await daemon(t);
+  const admin = new HarnessHubClient({ url, token });
+  const daemonUrl = new URL(url);
+
+  // A browser's cookie jar as RFC 6265 has it: cookies are scoped to the
+  // host, not the port, so every port of 127.0.0.1 gets them.
+  const jar = new Map<string, string>();
+  const browserFetch = async (target: string, init: RequestInit = {}) => {
+    const host = new URL(target).hostname;
+    const headers = new Headers(init.headers);
+    const cookies = [...jar].map(([name, value]) => `${name}=${value}`);
+    if (cookies.length && host === daemonUrl.hostname)
+      headers.set("cookie", cookies.join("; "));
+    const response = await fetch(target, { ...init, headers });
+    for (const header of response.headers.getSetCookie()) {
+      const [pair] = header.split(";");
+      const at = pair!.indexOf("=");
+      jar.set(pair!.slice(0, at), pair!.slice(at + 1));
+    }
+    return response;
+  };
+
+  // The console page signs in; its tab keeps the token, the jar the cookie.
+  const signedIn = await browserFetch(`${url}/api/v1/auth/console-sessions`, {
+    method: "POST",
+    headers: page(url, { "content-type": "application/json" }),
+    body: JSON.stringify({ code: (await admin.auth.createConsoleLink()).code }),
+  });
+  assert.equal(signedIn.status, 201);
+  const tabToken = ((await signedIn.json()) as { csrfToken: string }).csrfToken;
+
+  // The person then opens another local web app on another port.
+  const received: string[] = [];
+  const other = createServer((request, response) => {
+    received.push(request.headers.cookie ?? "");
+    response.end("another local service");
+  });
+  await new Promise<void>((resolve) => other.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise<void>((resolve) => other.close(() => resolve())));
+  const { port } = other.address() as AddressInfo;
+  await browserFetch(`http://127.0.0.1:${port}/`);
+  const stolen = /hh_console=[^;]+/.exec(received.join(";"))?.[0];
+  assert.ok(stolen, "the other port received the console cookie");
+
+  // That service replays the cookie outside a browser: no Origin, no
+  // Sec-Fetch-Site, and any token it can guess. Every operation of the
+  // API refuses it, before its route runs.
+  const document = (await (await fetch(`${url}/openapi.json`)).json()) as {
+    paths: Record<string, Record<string, unknown>>;
+  };
+  const operations = Object.entries(document.paths)
+    .filter(([path]) => path.startsWith("/api/v1/"))
+    .flatMap(([path, methods]) =>
+      Object.keys(methods)
+        .filter((method) =>
+          ["get", "post", "put", "patch", "delete"].includes(method),
+        )
+        .map((method) => ({
+          method: method.toUpperCase(),
+          path: path.replace(/\{[^}]+\}/g, "x"),
+        })),
+    );
+  assert.ok(operations.length >= 60, `${operations.length} operations`);
+  const replays: Array<Record<string, string>> = [
+    { cookie: stolen },
+    { cookie: stolen, "x-hh-csrf": "x".repeat(43) },
+  ];
+  for (const { method, path } of operations)
+    for (const headers of replays) {
+      const response = await fetch(`${url}${path}`, {
+        method,
+        headers: {
+          ...headers,
+          ...(method === "GET" || method === "DELETE"
+            ? {}
+            : { "content-type": "application/json" }),
+        },
+        ...(method === "GET" || method === "DELETE" ? {} : { body: "{}" }),
+      });
+      const label = `${method} ${path} with ${Object.keys(headers).join("+")}`;
+      if (path === "/api/v1/auth/console-sessions")
+        // Signing in needs a login code, never a cookie.
+        assert.equal(response.status, 400, label);
+      else {
+        assert.equal(response.status, 401, label);
+        assert.equal(await code(response), "CONSOLE_SESSION_INVALID", label);
+      }
+      if (!response.bodyUsed) await response.body?.cancel();
+    }
+  // The repro of the review: the cookie alone no longer reads the session.
+  const current = await fetch(`${url}/api/v1/auth/console-sessions/current`, {
+    headers: { cookie: stolen },
+  });
+  assert.equal(current.status, 401);
+  assert.equal((await current.text()).includes(tabToken), false);
+  // The tab that holds the token still works.
+  const own = await fetch(`${url}/api/v1/providers`, {
+    headers: page(url, { cookie: stolen, "x-hh-csrf": tabToken }),
+  });
+  assert.equal(own.status, 200);
 });
 
 void test("hh console prints a one-time sign-in link made with the admin token", async (t) => {

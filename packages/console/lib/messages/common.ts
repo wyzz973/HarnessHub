@@ -45,7 +45,6 @@ export const zh = {
     "控制台会话已结束，请运行 hh console 重新登录",
   "common.code.ADMIN_TOKEN_REQUIRED":
     "控制台尚未登录，请运行 hh console 打开登录链接",
-  "common.code.CSRF_TOKEN_INVALID": "会话已在其他标签页更新，请重试",
   "common.code.BACKUP_PASSPHRASE": "口令不对，或者文件被改动过",
   "common.code.BACKUP_UNSUPPORTED":
     "这个备份来自更新版本的 HarnessHub，请先升级",
@@ -141,7 +140,7 @@ export const zh = {
   "common.history.earlier": "更早",
 
   "common.signIn.none":
-    "控制台需要登录。登录链接由本机的 hh 命令生成，不需要口令。",
+    "控制台需要登录。登录链接由本机的 hh 命令生成，不需要口令。每个浏览器标签页分别登录，刷新页面后仍保持登录。",
   "common.signIn.invalid-link":
     "这个登录链接已使用、已过期或不完整。每个链接只能用一次，60 秒内有效。",
   "common.signIn.ended":
@@ -221,8 +220,6 @@ export const en: Translation<typeof zh> = {
     "The console session has ended; run hh console to sign in again",
   "common.code.ADMIN_TOKEN_REQUIRED":
     "The console is not signed in; run hh console to open a sign-in link",
-  "common.code.CSRF_TOKEN_INVALID":
-    "The session was renewed in another tab; please try again",
   "common.code.BACKUP_PASSPHRASE":
     "The passphrase is wrong, or the file has been changed",
   "common.code.BACKUP_UNSUPPORTED":
@@ -323,7 +320,7 @@ export const en: Translation<typeof zh> = {
   "common.history.earlier": "Earlier",
 
   "common.signIn.none":
-    "The console needs you to sign in. Sign-in links come from the hh command on this computer; there is no password.",
+    "The console needs you to sign in. Sign-in links come from the hh command on this computer; there is no password. Each browser tab signs in on its own and stays signed in when reloaded.",
   "common.signIn.invalid-link":
     "This sign-in link has been used, has expired or is incomplete. Each link works once, within 60 seconds.",
   "common.signIn.ended":

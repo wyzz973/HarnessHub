@@ -244,11 +244,11 @@ export interface ClientOptions {
    */
   token?: string;
   /**
-   * The CSRF value of a console session (`auth.createConsoleSession`,
-   * `auth.currentConsoleSession`), sent as `X-HH-CSRF`. The session itself
-   * is the HttpOnly `hh_console` cookie, which a page served by the daemon
-   * sends with every same-origin request; the daemon rejects requests that
-   * change state with 403 `CSRF_TOKEN_INVALID` when the value does not match.
+   * The token of a console session (`auth.createConsoleSession` returns
+   * it, once), sent as `X-HH-CSRF` with every request. The daemon also
+   * needs the browser's HttpOnly `hh_console` cookie, which a page served
+   * by the daemon sends with every same-origin request; either part alone
+   * is refused with 401 `CONSOLE_SESSION_INVALID`.
    */
   csrfToken?: string;
   /** Replaces the global `fetch`, e.g. in tests. */
@@ -262,18 +262,24 @@ export interface ConsoleLink {
   expiresAt: string;
 }
 
-/**
- * A console session (`POST /auth/console-sessions`,
- * `GET /auth/console-sessions/current`). The session value is the HttpOnly
- * cookie and never appears here.
- */
-export interface ConsoleSession {
-  /** Sent as `X-HH-CSRF` on requests that change state (`csrfToken` option). */
-  csrfToken: string;
+/** A console session's times (`GET /auth/console-sessions/current`). */
+export interface ConsoleSessionStatus {
   /** The session ends at this time whatever its use (7 days after creation). */
   expiresAt: string;
   /** The session ends at this time unless it is used before (12 hours idle). */
   idleExpiresAt: string;
+}
+
+/**
+ * A new console session for one tab (`POST /auth/console-sessions`). The
+ * browser's part is the HttpOnly cookie and never appears here.
+ */
+export interface ConsoleSession extends ConsoleSessionStatus {
+  /**
+   * The tab's token, sent as `X-HH-CSRF` with every request (`csrfToken`
+   * option); returned only by this call, so keep it with the tab.
+   */
+  csrfToken: string;
 }
 
 /** `POST /providers`; credentials are added with `credentials.add`. */
@@ -1099,9 +1105,13 @@ export class HarnessHubClient {
       this.request<ConsoleSession>("POST", "auth/console-sessions", {
         body: { code },
       }),
+    /** The session of this client's token and cookie; it never returns the token. */
     currentConsoleSession: () =>
-      this.request<ConsoleSession>("GET", "auth/console-sessions/current"),
-    /** Signs out: the session ends at once and its cookie is cleared. */
+      this.request<ConsoleSessionStatus>(
+        "GET",
+        "auth/console-sessions/current",
+      ),
+    /** Signs this tab out: its session ends at once; the cookie is cleared when no other tab's session uses it. */
     deleteConsoleSession: () =>
       this.request<void>("DELETE", "auth/console-sessions/current"),
   };

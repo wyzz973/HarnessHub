@@ -797,8 +797,8 @@
 **POST `/api/v1/auth/console-sessions` — 以登录码换取控制台会话**
 
 - 输入：code：console-links 返回的 22 字符登录码。不需要凭据；必须是 application/json。
-- 返回：201：csrfToken、expiresAt（创建后 7 天）与 idleExpiresAt（空闲 12 小时）；Set-Cookie `hh_console=<256 位随机值>; Path=/; HttpOnly; SameSite=Strict; Max-Age=604800`（经 TLS 时另加 Secure）；Cache-Control: no-store。
-- 实现链路：登录码无论是否有效都在这次尝试中作废；请求自带的旧会话 Cookie 在换取成功后被吊销。会话值与 CSRF 值各 256 位随机数，会话只保存 SHA-256。
+- 返回：201：csrfToken（这个标签页的会话令牌，只在这里返回一次）、expiresAt（创建后 7 天）与 idleExpiresAt（空闲 12 小时）；Set-Cookie `hh_console=<浏览器密钥，256 位随机值>; Path=/; HttpOnly; SameSite=Strict; Max-Age=604800`（经 TLS 时另加 Secure；请求已带格式正确的 hh_console 时沿用它）；Cache-Control: no-store。
+- 实现链路：登录码无论是否有效都在这次尝试中作废。会话由浏览器的 Cookie 与标签页的令牌两部分组成（ADR 0024 补充）：同一浏览器的多个标签页共用 Cookie、各有自己的令牌，新的登录不结束其他标签页的会话。令牌与浏览器密钥各 256 位随机数，只保存 SHA-256。
 - 持久化与副作用：只在内存中，最多 64 个会话，超出时丢弃最早的；守护进程重启后全部失效。
 - 失败与边界：登录码未知、已用或过期 401 CONSOLE_LINK_INVALID；格式不符 400 INVALID_REQUEST；非 JSON 415；跨源或 Sec-Fetch-Site 不是 same-origin 时 403 LOCAL_ACCESS_REQUIRED。
 
@@ -808,11 +808,11 @@
 
 **GET `/api/v1/auth/console-sessions/current` — 当前控制台会话**
 
-- 输入：hh_console Cookie。
-- 返回：200：csrfToken、expiresAt、idleExpiresAt；Cache-Control: no-store。重新加载的页面用它取回 CSRF 值。
-- 实现链路：按 Cookie 查找会话并重新开始空闲计时。
+- 输入：hh_console Cookie 与 X-HH-CSRF 头（标签页的令牌）。
+- 返回：200：expiresAt、idleExpiresAt（不返回令牌）；Cache-Control: no-store。重新加载的标签页用它确认保存的令牌仍然有效。
+- 实现链路：按令牌查找会话，核对它绑定的 Cookie，并重新开始空闲计时。
 - 持久化与副作用：更新会话的最近使用时间（内存）。
-- 失败与边界：会话已结束 401 CONSOLE_SESSION_INVALID 并清除 Cookie；以管理令牌调用 404 CONSOLE_SESSION_NOT_FOUND。
+- 失败与边界：只有 Cookie、只有令牌、两者不属于同一会话或会话已结束 401 CONSOLE_SESSION_INVALID（Cookie 保留：它可能属于其他标签页）；以管理令牌调用 404 CONSOLE_SESSION_NOT_FOUND。
 
 实现入口：[packages/daemon/src/http/console-session.ts](../../packages/daemon/src/http/console-session.ts)。验证依据：[tests/integration/console.test.ts](../../tests/integration/console.test.ts)。
 
@@ -820,11 +820,11 @@
 
 **DELETE `/api/v1/auth/console-sessions/current` — 退出控制台**
 
-- 输入：hh_console Cookie 与 X-HH-CSRF 头。
-- 返回：204；Set-Cookie 以 Max-Age=0 清除 hh_console。
-- 实现链路：立即吊销会话，之后同一 Cookie 的请求得到 401。
+- 输入：hh_console Cookie 与 X-HH-CSRF 头（标签页的令牌）。
+- 返回：204；没有其他标签页的会话使用这个 Cookie 时，Set-Cookie 以 Max-Age=0 清除 hh_console。
+- 实现链路：立即吊销这个标签页的会话，之后它的令牌得到 401；同一浏览器其他标签页的会话不受影响。
 - 持久化与副作用：从内存中删除会话。
-- 失败与边界：缺少或不符的 X-HH-CSRF 403 CSRF_TOKEN_INVALID；会话已结束 401 CONSOLE_SESSION_INVALID；以管理令牌调用 404 CONSOLE_SESSION_NOT_FOUND。
+- 失败与边界：缺少或不符的 Cookie 或令牌、会话已结束 401 CONSOLE_SESSION_INVALID；以管理令牌调用 404 CONSOLE_SESSION_NOT_FOUND。
 
 实现入口：[packages/daemon/src/http/console-session.ts](../../packages/daemon/src/http/console-session.ts)。验证依据：[tests/integration/console.test.ts](../../tests/integration/console.test.ts)。
 

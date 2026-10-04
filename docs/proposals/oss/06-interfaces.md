@@ -162,7 +162,7 @@
 | | `POST /system/doctor` | 运行环境检查，结果为检查列表，HTTP 200 不代表全部通过 |
 | | `GET`、`PATCH /system/settings` | 全局设置，带 ETag |
 | | `GET`、`POST /system/tokens`；`DELETE /system/tokens/{id}` | MCP 委派令牌（05 第 9 节）；管理令牌只能用 `hh admin-token rotate` 轮换 |
-| | `POST /auth/console-links`、`POST /auth/console-sessions`、`GET`、`DELETE /auth/console-sessions/current` | 控制台一次性登录码、换取会话、读取当前会话的 CSRF 值、登出（07 第 5.2 节，[ADR 0024](../../decisions/0024-embedded-console.md)） |
+| | `POST /auth/console-links`、`POST /auth/console-sessions`、`GET`、`DELETE /auth/console-sessions/current` | 控制台一次性登录码、换取会话（唯一返回标签页令牌的调用）、读取当前会话的期限、登出本标签页（07 第 5.2 节，[ADR 0024](../../decisions/0024-embedded-console.md)） |
 | | `POST /system/import-links`、`POST /system/import-links/{previewId}/apply` | 导入链接的预览与确认（第 8 节） |
 | | `POST /system/exports`、`POST /system/backups`；`POST /system/imports`、`POST /system/imports/{previewId}/apply` | 配置或运行证据的导出与备份、导出归档的预览与导入（[07 第 3 节](07-data-security.md#3-导出导入与备份)）；恢复要求守护进程停止，只能用 `hh restore` |
 | | `POST /system/gc` | 按 07 第 2.3 节的保留规则回收，默认只返回计划 |

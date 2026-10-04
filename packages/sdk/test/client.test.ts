@@ -69,15 +69,19 @@ void test("requests go below the base path, with the token only when one is give
   );
 });
 
-void test("a console session sends its CSRF value and signs in and out under /auth", async () => {
+void test("a console session sends its tab's token with every request and signs in and out under /auth", async () => {
   const session = {
     csrfToken: "c".repeat(43),
     expiresAt: "2026-10-11T00:00:00.000Z",
     idleExpiresAt: "2026-10-04T12:00:00.000Z",
   };
+  const status = {
+    expiresAt: session.expiresAt,
+    idleExpiresAt: session.idleExpiresAt,
+  };
   const page = recorder(
     Response.json(session, { status: 201 }),
-    Response.json(session),
+    Response.json(status),
     Response.json({ items: [], nextCursor: null }),
     new Response(null, { status: 204 }),
   );
@@ -89,12 +93,12 @@ void test("a console session sends its CSRF value and signs in and out under /au
     await anonymous.auth.createConsoleSession("k".repeat(22)),
     session,
   );
-  assert.deepEqual(await anonymous.auth.currentConsoleSession(), session);
   const client = new HarnessHubClient({
     url: "http://127.0.0.1:3180",
     csrfToken: session.csrfToken,
     fetch: page.send,
   });
+  assert.deepEqual(await client.auth.currentConsoleSession(), status);
   await client.providers.list();
   assert.equal(await client.auth.deleteConsoleSession(), undefined);
   assert.deepEqual(
@@ -114,7 +118,7 @@ void test("a console session sends its CSRF value and signs in and out under /au
       [
         "GET",
         "http://127.0.0.1:3180/api/v1/auth/console-sessions/current",
-        null,
+        session.csrfToken,
         null,
       ],
       [

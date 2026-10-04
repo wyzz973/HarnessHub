@@ -1,31 +1,44 @@
 // SPDX-License-Identifier: MIT
 /**
- * The console session (07-data-security section 5.2). `hh console` opens
- * `/#login=<code>`; the page removes the code from the address bar at once
- * and exchanges it for an HttpOnly session cookie. A reloaded page asks the
- * daemon for the session of its cookie. The CSRF value of the session goes
- * with every `/api/v1` request; the admin token never reaches the browser.
+ * The console session (07-data-security section 5.2, ADR 0024). `hh
+ * console` opens `/#login=<code>`; the page removes the code from the
+ * address bar at once and exchanges it for a session: the browser keeps an
+ * HttpOnly cookie, and this tab keeps the session's token in
+ * `sessionStorage` (this origin and port only, this tab only, kept across
+ * reloads) and sends it as `X-HH-CSRF` with every `/api/v1` request. The
+ * daemon needs both, so a cookie that reaches another port of this host
+ * opens nothing. Each tab signs in with its own link; tabs do not end each
+ * other's sessions. The admin token never reaches the browser.
  */
 import { useSyncExternalStore } from "react";
 import {
   HarnessHubClient,
   HarnessHubError,
-  type ConsoleSession,
+  type ConsoleSessionStatus,
 } from "@harnesshub/sdk/client";
 import { t } from "./i18n";
 
+/** The signed-in tab's session: its token and the session's times. */
+export interface TabSession extends ConsoleSessionStatus {
+  token: string;
+}
+
 export type SessionState =
   | { status: "checking" }
-  | { status: "signed-in"; session: ConsoleSession }
+  | { status: "signed-in"; session: TabSession }
   | {
       status: "signed-out";
-      /** Why: no session yet, an unusable link, an ended session, or sign-out. */
+      /** Why: no session in this tab, an unusable link, an ended session, or sign-out. */
       reason: "none" | "invalid-link" | "ended" | "signed-out";
     }
   | { status: "failed"; message: string };
 
+const TOKEN_KEY = "harnesshub.console.session";
+
 let state: SessionState = { status: "checking" };
 let client: HarnessHubClient | undefined;
+/** The token when this browser keeps no session storage: this page only. */
+let unstored: string | undefined;
 const listeners = new Set<() => void>();
 
 function set(next: SessionState) {
@@ -38,49 +51,44 @@ function subscribe(listener: () => void) {
   return () => listeners.delete(listener);
 }
 
-/** A client without a session, for signing in. */
-function anonymous() {
-  return new HarnessHubClient({ url: window.location.origin });
+function storedToken(): string | undefined {
+  try {
+    return window.sessionStorage.getItem(TOKEN_KEY) ?? unstored;
+  } catch {
+    return unstored;
+  }
+}
+function storeToken(token: string | undefined) {
+  unstored = token;
+  try {
+    if (token === undefined) window.sessionStorage.removeItem(TOKEN_KEY);
+    else window.sessionStorage.setItem(TOKEN_KEY, token);
+  } catch {
+    // Without session storage the token lasts for this page only.
+  }
 }
 
-/** Whether a failed response is the daemon refusing this request's CSRF value. */
-async function csrfRefused(response: Response) {
-  if (response.status !== 403) return false;
-  try {
-    const body: unknown = await response.clone().json();
-    return (
-      typeof body === "object" &&
-      body !== null &&
-      "code" in body &&
-      body.code === "CSRF_TOKEN_INVALID"
-    );
-  } catch {
-    return false;
-  }
+/** A client of `token`'s session, or without one for signing in. */
+function sessionClient(token?: string) {
+  return new HarnessHubClient({
+    url: window.location.origin,
+    ...(token !== undefined ? { csrfToken: token } : {}),
+    fetch: transport,
+  });
 }
 
 /**
- * The SDK's transport. A 401 means the cookie no longer names a session
- * (ended, signed out, or the daemon restarted): the page shows how to sign
- * in again. A 403 `CSRF_TOKEN_INVALID` means another tab signed in and
- * replaced the cookie: the CSRF value of the new session is read once and
- * the request, which the daemon refused before running it, is sent again.
+ * The SDK's transport. A 401 means this tab's session is gone (ended,
+ * signed out elsewhere, or the daemon restarted): the token is dropped and
+ * the page shows how to sign in again.
  */
 const transport: typeof fetch = async (input, init) => {
   const response = await fetch(input, init);
-  if (response.status === 401 && state.status === "signed-in")
+  if (response.status === 401 && state.status === "signed-in") {
+    storeToken(undefined);
     set({ status: "signed-out", reason: "ended" });
-  if (!(await csrfRefused(response))) return response;
-  let session: ConsoleSession;
-  try {
-    session = await anonymous().auth.currentConsoleSession();
-  } catch {
-    return response;
   }
-  set({ status: "signed-in", session });
-  const headers = new Headers(init?.headers);
-  headers.set("x-hh-csrf", session.csrfToken);
-  return fetch(input, { ...init, headers });
+  return response;
 };
 
 /**
@@ -92,19 +100,15 @@ const transport: typeof fetch = async (input, init) => {
 export function apiClient(): HarnessHubClient {
   if (state.status !== "signed-in")
     throw new Error(t("common.signIn.notSignedIn"));
-  client ??= new HarnessHubClient({
-    url: window.location.origin,
-    csrfToken: state.session.csrfToken,
-    fetch: transport,
-  });
+  client ??= sessionClient(state.session.token);
   return client;
 }
 
 /**
  * Sign in once when the page loads: with the `#login=` code when the URL
  * has one (removed from the address bar before anything else), otherwise
- * with the session of the page's cookie. Never rejects; the outcome is the
- * session state.
+ * with the token this tab kept. Never rejects; the outcome is the session
+ * state.
  */
 export async function startSession(): Promise<void> {
   const hash = window.location.hash;
@@ -116,34 +120,40 @@ export async function startSession(): Promise<void> {
       `${window.location.pathname}${window.location.search}`,
     );
   set({ status: "checking" });
-  const signIn = anonymous();
   try {
     if (code !== undefined)
       try {
-        set({
-          status: "signed-in",
-          session: await signIn.auth.createConsoleSession(code),
-        });
+        const { csrfToken, ...times } =
+          await sessionClient().auth.createConsoleSession(code);
+        storeToken(csrfToken);
+        set({ status: "signed-in", session: { token: csrfToken, ...times } });
         return;
       } catch (error) {
-        // A used, expired or garbled link still leaves an earlier session usable.
+        // A used, expired or garbled link still leaves this tab's session usable.
         if (!(
           error instanceof HarnessHubError &&
           (error.status === 401 || error.status === 400)
         ))
           throw error;
       }
-    set({
-      status: "signed-in",
-      session: await signIn.auth.currentConsoleSession(),
-    });
-  } catch (error) {
-    if (error instanceof HarnessHubError && error.status === 401)
+    const token = storedToken();
+    if (token === undefined) {
       set({
         status: "signed-out",
         reason: code !== undefined ? "invalid-link" : "none",
       });
-    else
+      return;
+    }
+    const times = await sessionClient(token).auth.currentConsoleSession();
+    set({ status: "signed-in", session: { token, ...times } });
+  } catch (error) {
+    if (error instanceof HarnessHubError && error.status === 401) {
+      storeToken(undefined);
+      set({
+        status: "signed-out",
+        reason: code !== undefined ? "invalid-link" : "ended",
+      });
+    } else
       set({
         status: "failed",
         message:
@@ -154,11 +164,12 @@ export async function startSession(): Promise<void> {
   }
 }
 
-/** End the session on the daemon; the page then shows how to sign in again. */
+/** End this tab's session on the daemon; the page then shows how to sign in again. */
 export async function signOut(): Promise<void> {
   try {
     await apiClient().auth.deleteConsoleSession();
   } finally {
+    storeToken(undefined);
     set({ status: "signed-out", reason: "signed-out" });
   }
 }
