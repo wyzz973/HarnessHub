@@ -564,6 +564,14 @@ async function planFiles(
     const file = await firstExisting(location.candidates, location.create);
     const { realPath } = await resolveFile(file, [location.root]);
     const state = await readState(realPath);
+    if (!state.exists)
+      for (const older of location.migratedFrom ?? [])
+        if ((await firstExisting([older], file)) === older)
+          throw new WiringError(
+            "WIRING_UNSUPPORTED_STRUCTURE",
+            `The agent has not moved ${path.basename(older)} into ${path.basename(file)} yet; start it once so it does, then wire again`,
+            { path: older },
+          );
     const editor = editors[spec.format];
     const before = state.exists
       ? decodeText(state.bytes, file)
@@ -1263,6 +1271,9 @@ export function adapterEnvironment(context: WiringContext): AdapterEnvironment {
           `${name} must be an absolute path to be used as a configuration directory`,
         );
       return path.resolve(value);
+    },
+    variable(name) {
+      return context.env?.[name];
     },
   };
 }

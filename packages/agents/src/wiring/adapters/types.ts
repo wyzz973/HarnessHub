@@ -32,6 +32,11 @@ export interface AdapterEnvironment {
    * WIRING_CONTEXT_INVALID.
    */
   directory(name: string): string | undefined;
+  /**
+   * A variable of the explicit environment map that is not a directory (a
+   * profile name), exactly as given: "" when set empty, undefined when unset.
+   */
+  variable(name: string): string | undefined;
 }
 
 export interface FileLocation {
@@ -41,6 +46,13 @@ export interface FileLocation {
   create: string;
   /** The directory a symlink must not leave: the home, or the override directory. */
   root: string;
+  /**
+   * Older files the agent moves into `create` only while no candidate
+   * exists. While one of them is there and no candidate is, wiring fails with
+   * WIRING_UNSUPPORTED_STRUCTURE instead of creating the file, which would
+   * stop that migration and hide the older file's entries from the agent.
+   */
+  migratedFrom?: readonly string[];
 }
 
 export interface AdapterFile {

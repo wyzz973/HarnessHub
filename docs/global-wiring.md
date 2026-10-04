@@ -51,7 +51,7 @@ pnpm exec hh unwire codex                             # 还原配置并吊销 Ke
 
 - 备份在 `<dataDir>/backups/wiring/<adapterId>/`：`objects/<sha256>` 是原始字节，`manifests/<id>.json` 的 id 是清单内容的 SHA-256，记录原始文件是否存在、哈希、权限、为它新建的目录、HarnessHub 拥有的键，以及写入值的模板（Key 与基址以占位符表示，清单中没有 Key）。均为 0600，读取时校验哈希。首次版本永久保留，尚未实现“其余保留 20 份”的清理。
 - 原子写：同目录临时文件、fsync、保留原权限、rename 前再核对哈希、目录 fsync；新文件为 0600，新目录为 0700。符号链接写其目标并保留链接；有多个硬链接时原地写。中断留下的临时文件在下次写入前清理。Windows 上 rename 遇共享冲突重试 5 次、间隔 100 ms（未在 Windows 上验证）。
-- 拒绝写入：文件无法解析或不是 UTF-8、配置路径经符号链接离开 `home`（或该 Agent 的目录变量所指目录）、悬空或循环链接、目标键的上级是非对象值，以及下文格式规则中的结构。错误信息只含文件路径、键路径与行列号，不含文件内容。
+- 拒绝写入：文件无法解析或不是 UTF-8、配置路径经符号链接离开 `home`（或该 Agent 的目录变量所指目录）、悬空或循环链接、目标键的上级是非对象值、Agent 尚未把旧文件迁入要新建的文件（omp 的 `models.json`），以及下文格式规则中的结构。错误信息只含文件路径、键路径与行列号，不含文件内容。
 - 同一 Adapter 的接线与还原由 `.lock` 目录串行化；持有者崩溃留下的锁需在确认 `owner.json` 中的进程已退出后手工删除。
 
 ## 格式保真编辑
@@ -86,6 +86,7 @@ BOM 与换行风格（LF/CRLF）保持原样。回读校验用真实解析器确
 |---|---|---|---|---|
 | `mimocode` MiMo Code | 已有的 `mimocode.jsonc`、`mimocode.json` 或 `config.json`，否则新建 `mimocode.json`（`$MIMOCODE_HOME/config`，否则 `${XDG_CONFIG_HOME:-~/.config}/mimocode`） | 与 `opencode` 相同 | Chat | OpenCode 的 fork，复用 `opencode` 的写入 |
 | `omo` OmO | `settings.json` 与 `models.json`（`${OMO_CODING_AGENT_DIR:-${SENPI_CODING_AGENT_DIR:-~/.omo/agent}}`） | 与 `pi` 相同 | Chat | Pi 的 fork，复用 `pi` 的写入；与 Pi 共用 `PI_CODING_AGENT_DIR` 的目录由 `pi` 接线 |
+| `omp` oh-my-pi | 已有的 `config.yml`/`config.yaml` 与 `models.yml`/`models.yaml`，否则新建 `.yml`；目录按 omp 的规则：`~/.omp`（`PI_CONFIG_DIR` 为相对主目录的替代）下 `profiles/<OMP_PROFILE 或 PI_PROFILE>/agent`，否则 `$PI_CODING_AGENT_DIR`，否则 `agent` | `models.yml` 的 `providers.harnesshub`（`baseUrl`、`api: openai-completions`、`apiKey`、`models[]` 含 `contextWindow`、`maxTokens`）；`config.yml` 的 `modelRoles.default = "harnesshub/<ref>"` | Chat | Magpie 写 `auth: none`，这里按用户自有 provider 的写法写 `apiKey`；omp 尚未把旧 `models.json` 迁入 `models.yml` 时拒绝新建（`WIRING_UNSUPPORTED_STRUCTURE`） |
 | `hermes` Hermes Agent | `config.yaml`（`${HERMES_HOME:-~/.hermes}`） | `providers.harnesshub`（`base_url`、`api_key`、`api_mode: chat_completions`、`models` 为 Ref 列表）、`model.provider`、`model.default` | Chat | |
 | `minimax-code` MiniMax Code | `config.yaml`（`${MINIMAX_DATA_DIR:-~/.minimax}`） | `custom_provider.harnesshub`（`kind: custom`、`enabled`、`api: anthropic-messages`、`options.apiKey`、`options.baseURL`（网关根）、`options.authMode: api-key`、每个模型的 `name`、已知的 `limit`、`reasoning: false`）、`defaultModel = "custom_provider:harnesshub/<ref>"` | Anthropic | 原有的 `defaultModelVariant` 不清除 |
 | `grok` Grok Build | `config.toml`（`${GROK_HOME:-~/.grok}`） | 每个模型一张 `[model."harnesshub/<ref>"]`（`model`、`name`、`base_url`、`api_key`、`api_backend = "chat_completions"`、已知的 `context_window`）；`[models] default`；`[features] campaigns = false`，防止 xAI 的远程 campaign 改掉默认模型 | Chat | 漂移按所选模型那张表的 `base_url` 判断 `foreign-gateway` |
