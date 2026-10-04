@@ -18,7 +18,7 @@ import type {
   SearchBackendKind,
 } from "@harnesshub/core/gateway-features";
 import type { WireProtocol } from "@harnesshub/core/model-plane";
-import { readLimited } from "./http.js";
+import { deadline, readLimited } from "./http.js";
 import type {
   ChatResult,
   ReasoningField,
@@ -254,11 +254,12 @@ export async function webSearch(
       continue;
     }
     const { url, init } = searchRequest(backend, key, query);
+    const timeout = deadline(signal, SEARCH_MS);
     try {
       const response = await fetch(url, {
         ...init,
         redirect: "error",
-        signal: AbortSignal.any([signal, AbortSignal.timeout(SEARCH_MS)]),
+        signal: timeout.signal,
       });
       const text = await readLimited(response, 4 * 1024 * 1024);
       if (!response.ok) {
@@ -289,6 +290,8 @@ export async function webSearch(
     } catch (error) {
       if (signal.aborted) throw error;
       errors.push(`${backend.kind}: no answer`);
+    } finally {
+      timeout.dispose();
     }
   }
   return { error: errors.join("; ") || "no search backend is set" };

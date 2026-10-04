@@ -99,6 +99,37 @@ export function networkFailure(error: unknown): Failure | undefined {
   );
 }
 
+/**
+ * `signal`, aborted as well after `ms`, with a cleanup the caller runs when
+ * the guarded work ends. Use it instead of `AbortSignal.any` over
+ * `AbortSignal.timeout`: Node 24 keeps every timeout signal passed to
+ * `AbortSignal.any` alive, with its timer, until it fires, so a per-request
+ * deadline held each request's signals for the whole deadline. The timer
+ * does not keep the process alive.
+ */
+export function deadline(
+  signal: AbortSignal,
+  ms: number,
+): { signal: AbortSignal; expired(): boolean; dispose(): void } {
+  const controller = new AbortController();
+  let expired = false;
+  const timer = setTimeout(() => {
+    expired = true;
+    controller.abort(
+      new DOMException(
+        "The operation was aborted due to timeout",
+        "TimeoutError",
+      ),
+    );
+  }, ms);
+  timer.unref();
+  return {
+    signal: AbortSignal.any([signal, controller.signal]),
+    expired: () => expired,
+    dispose: () => clearTimeout(timer),
+  };
+}
+
 /** Process-wide budget of request body bytes held in memory at once. */
 export class MemoryBudget {
   #used = 0;
@@ -180,8 +211,8 @@ export async function readBody(
   const source: AsyncIterable<unknown> = inflate
     ? request.pipe(inflate)
     : request;
-  const timeout = AbortSignal.timeout(options.timeoutMs);
-  const signal = AbortSignal.any([options.signal, timeout]);
+  const timeout = deadline(options.signal, options.timeoutMs);
+  const signal = timeout.signal;
   const chunks: Buffer[] = [];
   let bytes = 0;
   const stop = () => {
@@ -209,7 +240,7 @@ export async function readBody(
     return Buffer.concat(chunks, bytes);
   } catch (error) {
     options.memory.give(bytes);
-    if (timeout.aborted && !options.signal.aborted)
+    if (timeout.expired() && !options.signal.aborted)
       throw new GatewayError(
         "Model request body was not received in time",
         408,
@@ -225,6 +256,7 @@ export async function readBody(
       "invalid_request",
     );
   } finally {
+    timeout.dispose();
     signal.removeEventListener("abort", stop);
   }
 }

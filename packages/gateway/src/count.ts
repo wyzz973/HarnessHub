@@ -7,7 +7,7 @@
 import type { IncomingHttpHeaders } from "node:http";
 import { NO_LOG, type LogSink } from "@harnesshub/core/logging";
 import type { CallServices } from "./call.js";
-import { readLimited } from "./http.js";
+import { deadline, readLimited } from "./http.js";
 import {
   countTokensUrl,
   passthroughBody,
@@ -66,6 +66,7 @@ export async function forwardCountTokens(options: {
   } catch {
     return fallback(options.signal.aborted ? "cancelled" : "busy");
   }
+  let timeout: ReturnType<typeof deadline> | undefined;
   try {
     let secret = "";
     if (candidate.credential !== KEYLESS_CREDENTIAL)
@@ -96,10 +97,8 @@ export async function forwardCountTokens(options: {
       url,
       set,
     );
-    const signal = AbortSignal.any([
-      options.signal,
-      AbortSignal.timeout(services.limits.upstreamHeaderTimeoutMs),
-    ]);
+    timeout = deadline(options.signal, services.limits.upstreamHeaderTimeoutMs);
+    const signal = timeout.signal;
     let response: Response;
     let text: string;
     try {
@@ -136,6 +135,7 @@ export async function forwardCountTokens(options: {
       estimated: response.headers.get("x-hh-token-count") === "estimated",
     };
   } finally {
+    timeout?.dispose();
     slots.release();
   }
 }
