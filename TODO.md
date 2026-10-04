@@ -74,7 +74,8 @@
 - [x] **单可执行文件运行 `hh` 的全部命令**（ADR-P01）：SEA 入口把角色与脚本以外的命令行交给 `apps/hh` 的 `main`（新增 `hh version`）；四个固定引擎启动器成为角色，资源目录的脚本由 `SCRIPT_ASSETS` 归类，未归类即构建失败；守护进程的 `package.json` 解包供 `hh benchmark` 读取版本；jsonc-parser 改用 ESM 构建（此前 `main` 上的可执行文件构建成功，但 `serve` 与 `version` 启动即失败）；构建最后要求每个 `hh` 命令在可执行文件中回答 `--help`；`pnpm test:sea`（不属于 `pnpm check`）构建后经可执行文件运行命令序列。进展（2026-10-04，分支 `feat/sea-full-cli`）：macOS arm64 本机 `pnpm test:sea` 与 `measure.mjs`（11 项端到端检查）通过，29 个命令全部在可执行文件中运行，体积 130.9 MB，首次运行/已解包 p95 309.6/319.5 ms（node 基线 378.4 ms），数字见 [SEA 可行性验证第 10 节](docs/proposals/oss/sea-spike.md#10-hh-的全部命令2026-10-04)。已合入 main（`5567543`、`7c89cf6`，集成后本机完整 `pnpm check` 通过）；其他平台与 CI 未运行。
 - [x] **工具搜索与上下文压缩**（Magpie §11.6，[网关功能](docs/gateway-features.md#工具搜索)）：Codex 的 `tool_search` 对 ChatGPT 以外的上游改为普通函数，答复（含流式）中改回 `tool_search_call`；Claude Code 的 `tool_reference` 在转换时成为文字；Codex 的 `compaction_trigger` 由网关生成 `hh1:` 摘要，`/v1/responses/compact` 与透传中 HarnessHub 模型的 compact 答复 400；封存的推理或压缩被拒绝时去掉后在同一候选重发，网关编码的推理不再直通；`isCompactionRequest` 识别七种 Agent 的压缩请求（只提供，尚未接路由规则）。进展（2026-10-04，分支 `feat/toolsearch-compact`）：网关单元 13 项、Codex 透传 1 项、正式守护进程到白名单假 provider 的集成 12 项（新怪癖 `foreignSeals`）通过；完整 `pnpm check` 通过（协议 508/508），已合入 main（`84d2521`）。未做：Magpie 的 refusedSeals 记忆（换账号后每轮先被拒一次再重发）；模型没写摘要时客户端收到 `response.failed`，但账本记成功。未验证：真实 Codex 与 Claude Code 对真实上游；Windows。
 - [ ] **进行中**：控制台的 provider 检测与网关功能页面；协议一致性矩阵与网关基准。
-- [ ] **未验证**：真实 provider 与真实 Agent 的端到端（首次实测因改写用户真实配置需所有者亲自执行而待做）；Windows；单可执行文件在 macOS arm64 以外平台的构建与运行。
+- [x] **真实 provider 端到端（DeepSeek，2026-10-05）**：在临时数据目录与接线目录中手工验证 `hh provider add|test|doctor`（体检 13 项通过），三种官方 SDK 经网关在四种入站协议、直通与转换两条路径上 16 种组合，以及 5 个真实 Agent 在沙箱中经网关完成工具往返；DeepSeek Key 的明文没有出现在数据目录与 Agent 文件中。结果见 [真实 Agent 兼容性](docs/compatibility.md#真实-providerdeepseek2026-10-05)。验证脚本尚未入库，因此还不能重复运行。
+- [ ] **未验证**：其他真实 provider；用户真实配置中的 Agent 端到端（改写用户真实配置，需所有者亲自执行）；以 ChatGPT 登录的 Codex；Windows；单可执行文件在 macOS arm64 以外平台的构建与运行。
 
 ## M1–M5
 

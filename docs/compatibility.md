@@ -36,6 +36,18 @@
 
 <!-- conformance:end -->
 
+## 真实 provider（DeepSeek，2026-10-05）
+
+上面的表格只用假上游。2026-10-05 在本机（macOS arm64，`d403c1e`）以所有者提供的 DeepSeek Key 做了一次真实上游的手工验证；用到的脚本不在仓库中，结果不由套件生成。守护进程用临时数据目录、文件秘密后端与临时接线目录（`--wiring-home`），不触及用户真实的 Agent 配置；Key 经 `--credential-from-stdin` 存入，验证结束后删除。
+
+- **添加与测试**：`hh provider add deepseek --preset deepseek`，在线模型列表为 `deepseek-flash` 与 `deepseek-v4-pro`（上下文 1048576）；`hh provider test` 的 chat、responses、anthropic 三个端点均为 200。
+- **体检**：`hh provider doctor deepseek`（`deepseek-flash`，chat 端点）13 项通过、0 警告、0 失败，`context-overflow` 未加 `--deep` 而跳过；21 次调用，$0.000669。usage 不需要 `stream_options` 也会返回，`max_tokens` 与 `max_completion_tokens` 都接受，推理回传可选，10 个可选字段都接受，首字节约 100 ms、首内容约 520 ms。
+- **官方 SDK 经网关**：`openai`、`@anthropic-ai/sdk`、`@google/genai` 以 `client:` Key 调用，四种入站协议 × 流式与非流式 × 两条路径。两条路径分别是 `deepseek/deepseek-flash`（chat、responses、anthropic 同协议直通，Gemini 转换到 Chat），以及只有 chat 端点的 `dschat/deepseek-flash`（其余三种入站都转换到 Chat）。16 种组合都正确回答，并完成一次 `get_weather` 工具往返。只有一次例外：转换路径的 Responses 流式，模型没有调用工具而直接回答。这个组合与相邻两个组合各重跑 5 次，15 次都调用了工具，因此判断为模型的随机行为。
+- **真实 Agent**：Claude Code 2.1.289、Codex 0.144.5、OpenCode 1.1.21、Pi 0.85.1 与 Gemini CLI 0.38.2 经 `hh wire <agent> deepseek/deepseek-flash` 接线后，在本页套件的 Seatbelt 沙箱中各运行一次。任务是读取工作目录中的文件并只回答其中的口令，5 个都答对。账本中每个 Agent 都有一次工具调用（`tool_use`/`tool_calls`）和随后的回答，由各自的 `agent:` Key 归属。路径为：Claude Code 经 Anthropic 直通（带 `anthropic-strip-beta-fields` 补丁），Codex 经 Responses 直通，OpenCode 与 Pi 经 Chat 直通（Pi 带 `developer-to-system` 与 `max-tokens-field`），Gemini CLI 转换到 Chat。Codex 用了 `--sandbox danger-full-access`，否则它的命令沙箱不能嵌套在本套件的沙箱中（见下文）；网络与文件写入仍受外层沙箱限制。
+- **秘密**：在数据目录（数据库、日志）、接线写入的 Agent 文件与秘密目录中搜索 DeepSeek Key 的明文，没有命中；Agent 文件中的 Gateway Key 也不出现在日志中。
+- **用量**：98 次成功调用。`deepseek` 计价 $0.0127；`dschat` 是手工添加、没有价格的 provider，33 次调用记为未计价。另有 16 次以错误的 Key 调用而失败（401），是验证脚本本身的错误造成的。
+- **未验证**：其他真实 provider；用户真实配置中的 Agent（需要所有者亲自执行）；以 ChatGPT 登录的 Codex；取消与流式在真实上游上的表现；Windows。
+
 ## 发现
 
 - **Codex 的托管 web_search 工具**：Codex 0.144.5 每轮都附带托管的 `web_search` 工具，网关只能在原样转发到有该工具的 Responses provider 时服务它，转换到 Chat 等协议时整轮以 `unsupported_feature` 失败。接线因此在所选模型的 provider 不原生接收 Responses、且网关没有登记搜索后端时写入 `web_search = "disabled"`；登记了搜索后端时网关自己完成搜索（[联网搜索模拟](gateway-features.md#联网搜索模拟)），接线不再关闭它（[全局接线](global-wiring.md#codex-的两种模式)）。
