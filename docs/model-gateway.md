@@ -208,7 +208,7 @@ Session 的 Run 经守护进程端口上的共享网关使用模型（03 第 10 
 
 ### 鉴权与拒绝
 
-- Gateway Key 可放在 `Authorization: Bearer`、`x-api-key`、`x-goog-api-key`，Gemini 路径还接受 `?key=`。同一请求中取值不同返回 401。Key 用 `parseGatewayKey` 解析，按 `keyId` 取记录，作用域字母须与记录一致，再用 `gatewayKeyMatches` 常数时间比较；已吊销返回 401 `key_revoked`，已过期返回 401 `key_expired`，其余为 401 `invalid_key`。错误消息从不回显 Key。
+- Gateway Key 可放在 `Authorization: Bearer`、`x-api-key`、`x-goog-api-key`，Gemini 路径还接受 `?key=`；回环上的 agent Key 还可以放在路径中（见下文“路径中的 Key”）。同一请求中取值不同返回 401。Key 用 `parseGatewayKey` 解析，按 `keyId` 取记录，作用域字母须与记录一致，再用 `gatewayKeyMatches` 常数时间比较；已吊销返回 401 `key_revoked`，已过期返回 401 `key_expired`，其余为 401 `invalid_key`。错误消息从不回显 Key。
 - 回环监听器上非回环来源地址返回 403 `source_not_allowed`（局域网来源只能经局域网监听器，见下文“局域网共享”）；带 `Origin` 头（任何源，网关的客户端都不是浏览器）、`Sec-Fetch-Site: cross-site`，或 `Host` 不是回环名称（`localhost`、`*.localhost`、`127.x.x.x`、`[::1]`）也不是 `publicBaseUrl` 的主机时返回 403 `origin_forbidden`；未知路径 404 `route_not_found`，路径无法解码 400 `route_invalid`；请求的模型不在 `modelAllow` 内 403 `model_not_allowed`。
 - 所有拒绝都使用该路径所属协议的错误格式并带 `x-hh-error-source: gateway`，同时提交 `rejected: true`、`rejectReason` 的账本记录；Key 有效（含已吊销、已过期）时记录 `keyId`。同一 Key（无 Key 归为一类）与同一原因每分钟最多 20 条明细，其余计数，在该组合下一次被拒绝时或 `close()` 时写成一条汇总记录。
 - 鉴权通过后调用 `touchGatewayKey`，同一 Key 每分钟最多一次；失败只写日志。
@@ -307,6 +307,14 @@ Session 的 Run 经守护进程端口上的共享网关使用模型（03 第 10 
 - 等待上游响应头与上游空闲的时限、响应体上限与请求体上限同其他调用（见“资源上限”）；不提供保活。
 - 上游基址只能由测试经 `deps.codexBackend` 指向回环假服务。未实现：Codex 的 WebSocket 传输；ChatGPT 的列表取不到时退回 Codex 缓存的列表（Magpie 读 Codex 的目录，本网关不读）。
 
+### 路径中的 Key
+
+不能发送请求头的 Agent（Command Code、fx、Muse Code）把 agent Key 放在基址的路径中：`<网关>/k/<Key>/v1`（[ADR 0033](decisions/0033-gateway-key-in-path.md)，[key-path.ts](../packages/gateway/src/key-path.ts)）。
+
+- 守护进程只在回环监听器上把 `/k/` 下的路径交给网关；局域网监听器答复 404。网关在一切处理之前去掉 `/k/<段>`（与 Codex 透传的 `codexRoute` 同一个切分），账本的 `inbound.path`、日志、OTLP 导出与上游请求都不含它；其余处理与请求头中的 Key 相同。
+- 来自局域网监听器或非回环来源时 403 `source_not_allowed`；这一段不是 Key 的格式、Key 未知、已吊销或已过期，或者是 `client:`、`session:` Key 时本地 401（后两者照旧放在请求头中）；请求头中另带一把不同的 Key 时 401；`/k/<Key>` 之后不是模型协议路径（包括 Codex 透传）时 404。错误都不回显路径。
+- **Muse 的模型列表**：`GET /muse-code/models`（[muse.ts](../packages/gateway/src/muse.ts)，Magpie 的 `gw/muse.go`）。Muse 在基址所在主机上读它，不带基址的路径与凭据，所以列出最新一把有效的 `agent:muse` Key 可用的模型，每项带 `metadata["muse-code"]`（名称、图片输入、是否推理、窗口与输出上限，未知时 128000 与 32000）；没有这样的 Key 时 404。只读，不写账本；只在回环、只接受 GET，带 `Origin`、`Sec-Fetch-Site: cross-site` 或非回环 `Host` 时 403。
+
 ### 资源上限
 
 | 项目 | 默认值 |
@@ -345,6 +353,8 @@ node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js
 - 响应体上限按原始字节而不是解码后的内容计算；`latency` 只统计本次启动以来的调用，`least-used` 另从账本取最近 8 小时的初值；认证失败的熔断最长 10 分钟后进入半开，而不是一直保持到 Credential 更新。
 
 ## 变更记录
+
+- **2026-10-05：路径中的 Key 与 Muse 的模型列表**（[ADR 0033](decisions/0033-gateway-key-in-path.md)）。回环上的 `/k/<agent Key>/…` 在一切处理之前去掉 Key 段，按其后的模型协议路径服务；`GET /muse-code/models` 列出最新的 `agent:muse` Key 可用的模型。
 
 - **2026-10-05：直通调用的结束原因**。直通调用的账本 `finishReason` 改用转换路径的取值：Anthropic 的 `tool_use`、`end_turn` 与 `max_tokens` 记为 `tool_calls`、`stop` 与 `length`，Gemini 的 `STOP` 等记为小写的对应值，Responses 的 `completed` 与 `incomplete` 按原因记；回答中有工具调用时（Responses 的调用项、Anthropic 的 `tool_use` 块、Gemini 的 `functionCall`、Chat 的 `tool_calls`）记为 `tool_calls`。此前 Responses 直通的工具轮次在账本中看不出来。
 

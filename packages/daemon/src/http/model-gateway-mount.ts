@@ -50,6 +50,19 @@ export function isCodexPassthroughPath(pathname: string): boolean {
   );
 }
 
+/**
+ * Whether a request path is one the gateway serves to agents on this
+ * computer only (ADR 0033): anything under `/k/` (a model protocol path
+ * behind a Gateway Key segment, `/k/<key>/v1/...`; the gateway answers 404
+ * for the rest without repeating the path, which may hold a key) and Muse
+ * Code's model list, `/muse-code/models`. Only the loopback listener mounts
+ * them; the LAN listener of gateway sharing answers 404 for them.
+ */
+export function isLocalAgentPath(pathname: string): boolean {
+  const path = pathname.replace(/\/{2,}/g, "/").replace(/(.)\/$/, "$1");
+  return path === "/muse-code/models" || path.startsWith("/k/");
+}
+
 /** The path of a raw request target, without query; "" when it is not origin-form. */
 export function requestPath(target: string | undefined): string {
   if (!target?.startsWith("/")) return "";

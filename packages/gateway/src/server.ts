@@ -89,6 +89,8 @@ import {
   type CodexListing,
 } from "./codex.js";
 import { COMPACT_UNSUPPORTED } from "./compacting.js";
+import { keyPathRoute } from "./key-path.js";
+import { MUSE_MODELS_PATH, museModelList } from "./muse.js";
 import { Classifier } from "./classify.js";
 import { applyRules, GroupRules } from "./rules.js";
 import { DecisionTrace } from "./trace.js";
@@ -733,12 +735,27 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       ?.price?.input;
   };
 
+  /**
+   * The Gateway Key a request presents: in its headers, Gemini's `?key=`,
+   * or `keyed`, the key segment of a path under `/k/` (ADR 0033), which
+   * must have a key's form.
+   */
   const authenticate = async (
     request: IncomingMessage,
     url: URL,
     gemini: boolean,
+    keyed?: { key?: string },
   ): Promise<Authentication> => {
     const presented: string[] = [];
+    if (keyed) {
+      if (keyed.key === undefined)
+        return {
+          ok: false,
+          reason: "invalid_key",
+          message: "The path does not hold a HarnessHub Gateway Key",
+        };
+      presented.push(keyed.key);
+    }
     const authorization = request.headers.authorization;
     if (typeof authorization === "string" && /^Bearer\s+/i.test(authorization))
       presented.push(authorization.replace(/^Bearer\s+/i, "").trim());
@@ -1011,6 +1028,62 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
             first_id: listed[0]?.id ?? null,
             last_id: listed.at(-1)?.id ?? null,
           },
+    );
+  };
+
+  /**
+   * Muse Code's model list (./muse.js). Muse asks for it on its endpoint's
+   * host, without the endpoint's path and so without the key in it, and
+   * sends no credential: it lists the models of the newest active
+   * `agent:muse` key, to loopback connections only. Calls still need the
+   * key (ADR 0033).
+   */
+  const museModels = async (
+    request: IncomingMessage,
+    response: ServerResponse,
+    listener: "loopback" | "lan",
+  ) => {
+    request.resume();
+    const refuse = (status: number, reason: string, message: string) =>
+      reply(response, "chat", failure(status, reason, message));
+    if (listener === "lan" || !loopbackAddress(request.socket.remoteAddress))
+      return refuse(
+        403,
+        "source_not_allowed",
+        "Muse Code's model list is served to loopback connections only",
+      );
+    if (
+      request.headers.origin !== undefined ||
+      request.headers["sec-fetch-site"] === "cross-site" ||
+      !loopbackHost(request.headers.host)
+    )
+      return refuse(
+        403,
+        "origin_forbidden",
+        "Browser requests are not accepted",
+      );
+    if (request.method !== "GET")
+      return refuse(404, "route_not_found", "Unsupported model gateway route");
+    const now = clock();
+    const key = (await store.listGatewayKeys())
+      .filter(
+        (candidate) =>
+          candidate.scope.kind === "agent" &&
+          candidate.scope.adapterId === "muse" &&
+          candidate.revokedAt === undefined &&
+          (candidate.expiresAt === undefined ||
+            Date.parse(candidate.expiresAt) > now),
+      )
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+    if (!key)
+      return refuse(
+        404,
+        "route_not_found",
+        "Muse Code is not wired to this gateway",
+      );
+    await new HttpWriter(response).json(
+      200,
+      museModelList(shownAs(key, await visibleModels(key))),
     );
   };
 
@@ -1884,7 +1957,14 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       );
       return;
     }
-    const path = normalize(url.pathname);
+    let path = normalize(url.pathname);
+    // A Gateway Key in the path (ADR 0033) is taken out before anything else
+    // sees the path: no ledger entry, log line or export holds it.
+    const keyed = keyPathRoute(path);
+    if (keyed) {
+      path = keyed.path;
+      url = new URL(`${path}${url.search}`, url);
+    }
     const protocol = guessProtocol(path);
     if (closing) {
       await reply(
@@ -1894,7 +1974,11 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       );
       return;
     }
-    if (!isGatewayPath(path)) {
+    if (path === MUSE_MODELS_PATH && !keyed) {
+      await museModels(request, response, listener);
+      return;
+    }
+    if (!isGatewayPath(path) || (keyed && isCodexPath(path))) {
       await reply(
         response,
         protocol,
@@ -1908,7 +1992,14 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     }
     const access = deps.access?.() ?? LOOPBACK_ONLY;
     const viaLan = listener === "lan";
-    if (viaLan ? !access.lan : !loopbackAddress(request.socket.remoteAddress)) {
+    // A key in the path is taken from loopback connections only.
+    if (
+      keyed
+        ? viaLan || !loopbackAddress(request.socket.remoteAddress)
+        : viaLan
+          ? !access.lan
+          : !loopbackAddress(request.socket.remoteAddress)
+    ) {
       await reject(
         response,
         baseEntry(
@@ -1922,9 +2013,11 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         failure(
           403,
           "source_not_allowed",
-          viaLan
-            ? "Gateway sharing on the local network is off"
-            : "The model gateway accepts loopback connections only",
+          keyed
+            ? "A Gateway Key in the path is taken on loopback connections only"
+            : viaLan
+              ? "Gateway sharing on the local network is off"
+              : "The model gateway accepts loopback connections only",
         ),
         started,
       );
@@ -1932,7 +2025,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     }
     let auth: Authentication;
     try {
-      auth = await authenticate(request, url, protocol === "gemini");
+      auth = await authenticate(request, url, protocol === "gemini", keyed);
     } catch (error) {
       log.info("gateway.store.unavailable", {
         error: error instanceof Error ? error.message.slice(0, 200) : "unknown",
@@ -1962,6 +2055,16 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       return;
     }
     const key = auth.key;
+    if (keyed && key.scope.kind !== "agent") {
+      await reject(
+        response,
+        entry,
+        "invalid_key",
+        failure(401, "invalid_key", "Only an agent key may go in the path"),
+        started,
+      );
+      return;
+    }
     if (viaLan && !(key.scope.kind === "client" && key.allowLan === true)) {
       await reject(
         response,

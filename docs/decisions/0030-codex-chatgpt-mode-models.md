@@ -3,7 +3,7 @@
 Status: proposed
 
 日期：2026-10-05
-关联决定：[ADR 0022](0022-agent-wiring-semantics.md)（本记录取代其中 ChatGPT 模式不签发 Key 的部分）、[ADR 0025](0025-magpie-routing-parity.md)（本记录扩展其 Codex 透传）、[全局接线](../global-wiring.md#codex-的两种模式)、[模型网关](../model-gateway.md#codex-透传)
+关联决定：[ADR 0022](0022-agent-wiring-semantics.md)（本记录取代其中 ChatGPT 模式不签发 Key 的部分）、[ADR 0025](0025-magpie-routing-parity.md)（本记录扩展其 Codex 透传）、[全局接线](../global-wiring.md#codex-的两种模式)、[模型网关](../model-gateway.md#codex-透传)；[ADR 0033](0033-gateway-key-in-path.md) 把路径中的 Key 扩展到模型协议路径（`/k/<Key>/…`）
 
 ## 问题
 

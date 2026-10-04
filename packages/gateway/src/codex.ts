@@ -19,7 +19,6 @@ import type {
   ServerResponse,
 } from "node:http";
 import {
-  parseGatewayKey,
   parseModelRef,
   type ModelCallEntry,
   type ModelRef,
@@ -53,6 +52,7 @@ import {
   withoutOwnReasoning,
 } from "./compacting.js";
 import { isContextOverflow, sanitize, upstreamError } from "./upstream.js";
+import { pathKey } from "./key-path.js";
 
 /** The gateway path Codex's `openai_base_url` points at. */
 export const CODEX_PATH = "/backend-api/codex";
@@ -75,14 +75,8 @@ export function isCodexPath(path: string): boolean {
  * part of the path.
  */
 export function codexRoute(path: string): { path: string; key?: string } {
-  const rest = path.slice(CODEX_PATH.length + 1);
-  const end = rest.indexOf("/");
-  const segment = end < 0 ? rest : rest.slice(0, end);
-  if (!parseGatewayKey(segment)) return { path };
-  return {
-    path: CODEX_PATH + (end < 0 ? "" : rest.slice(end)),
-    key: segment,
-  };
+  const { rest, key } = pathKey(path, CODEX_PATH);
+  return key === undefined ? { path } : { path: CODEX_PATH + rest, key };
 }
 
 /** One of the gateway's models as Codex's model list describes it. */

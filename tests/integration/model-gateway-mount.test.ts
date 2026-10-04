@@ -9,6 +9,7 @@ import type { TestContext } from "node:test";
 import { apiCatalog } from "@harnesshub/daemon/http/api-catalog";
 import {
   isCodexPassthroughPath,
+  isLocalAgentPath,
   isModelGatewayPath,
 } from "@harnesshub/daemon/http/model-gateway-mount";
 import { startHub } from "@harnesshub/daemon/main";
@@ -169,6 +170,18 @@ void test("the gateway paths are the model protocol paths and never a management
     assert.equal(isCodexPassthroughPath(pathname), true, pathname);
   for (const pathname of ["/backend-api/codexx", "/backend-api", "/codex"])
     assert.equal(isCodexPassthroughPath(pathname), false, pathname);
+  // A key in the path and Muse's model list (ADR 0033): loopback only, and
+  // never one of the LAN listener's model gateway paths.
+  for (const pathname of [
+    "/k/hhk_a_abcdefghijkl_x/v1/chat/completions",
+    "/k/anything",
+    "//muse-code/models/",
+  ]) {
+    assert.equal(isLocalAgentPath(pathname), true, pathname);
+    assert.equal(isModelGatewayPath(pathname), false, pathname);
+  }
+  for (const pathname of ["/k", "/kk/x/v1/models", "/muse-code", "/v1/models"])
+    assert.equal(isLocalAgentPath(pathname), false, pathname);
   // Every documented management operation stays with Fastify.
   const management = apiCatalog.filter((entry) => entry.path.startsWith("/v1"));
   assert.ok(management.length > 30);
