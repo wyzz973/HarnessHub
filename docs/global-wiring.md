@@ -142,6 +142,8 @@ BOM 与换行风格（LF/CRLF）保持原样。回读校验用真实解析器确
 
 Shell 环境中已有的同名变量优先于 dotenv 文件（Gemini、Qwen），OpenCode 的 `OPENCODE_CONFIG_DIR` 与 Kimi 的 `OPENAI_*` 变量也会覆盖全局文件；这类绕过由漂移检测的网关证据（`bypassed`，尚未实现）发现。
 
+**Gemini CLI 与代理**：设置了 `HTTPS_PROXY`（或 `https_proxy`、`HTTP_PROXY`、`http_proxy`）时，Gemini CLI 0.38.2 把全部请求交给这个代理，包括发往本机网关的请求，不理会 `NO_PROXY`（它以 undici 的 `ProxyAgent` 作为全局分发器，代理只取自这四个环境变量）。接线无法改变这一点：`settings.json` 没有代理设置，`~/.gemini/.env` 中的变量不覆盖已有的环境变量（[兼容性](compatibility.md)中的一致性套件实测：代理端口拒绝连接时，没有任何请求到达网关）。代理能够把 `127.0.0.1` 的请求转回本机时（多数本地代理会这样做）Gemini 仍可用；否则只对 Gemini 去掉代理变量启动，例如 `env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy gemini`，或在 shell 中为它定义同样的别名。
+
 所有 Adapter 交给 Agent 的输出上限都不超过模型窗口（有的目录把输出写得比窗口大）。推理档位来自模型平面：它只记录模型是否推理（`reasoning`），推理模型按 `low`、`medium`、`high` 写出；provider 与 models.dev 尚未提供逐模型的档位。
 
 ### Claude Code

@@ -36,6 +36,8 @@ export interface FakeProvider {
   } & FakeProviderRecord["violations"][number])[];
   /** Resolves once every request received so far has closed and been recorded. */
   idle(): Promise<void>;
+  /** Responses in progress, pending delay timers and open sockets. */
+  activity(): { responses: number; timers: number; sockets: number };
   close(): Promise<void>;
 }
 

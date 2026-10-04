@@ -181,12 +181,20 @@ export interface AgentRun {
   stderr: string;
 }
 
+/** A run in progress: its output so far, a kill switch and its end. */
+export interface SandboxedRun {
+  stdout(): string;
+  /** Kills the whole process group now. */
+  kill(): void;
+  done: Promise<AgentRun>;
+}
+
 /**
- * Runs `file` with `args` in the Seatbelt sandbox, its own process group,
+ * Starts `file` with `args` in the Seatbelt sandbox, its own process group,
  * no stdin and a hard timeout; the whole group is killed when it ends, so
  * no helper the agent started outlives the run.
  */
-export async function runSandboxed(
+export async function startSandboxed(
   sandbox: Sandbox,
   file: string,
   args: readonly string[],
@@ -195,7 +203,7 @@ export async function runSandboxed(
     gatewayPort?: number;
     timeoutMs: number;
   },
-): Promise<AgentRun> {
+): Promise<SandboxedRun> {
   const profile = path.join(sandbox.root, "seatbelt.sb");
   await writeFile(profile, seatbelt(sandbox.root, options.gatewayPort));
   const child = spawn("/usr/bin/sandbox-exec", ["-f", profile, file, ...args], {
@@ -229,15 +237,31 @@ export async function runSandboxed(
     timedOut = true;
     killGroup();
   }, options.timeoutMs);
-  const [code, signal] = await new Promise<
-    [number | null, NodeJS.Signals | null]
-  >((resolve, reject) => {
-    child.once("error", reject);
-    child.once("close", (exit, by) => resolve([exit, by]));
+  const done = new Promise<[number | null, NodeJS.Signals | null]>(
+    (resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", (exit, by) => resolve([exit, by]));
+    },
+  ).then(([code, signal]): AgentRun => {
+    clearTimeout(timer);
+    killGroup();
+    return { code, signal, timedOut, stdout, stderr };
   });
-  clearTimeout(timer);
-  killGroup();
-  return { code, signal, timedOut, stdout, stderr };
+  return { stdout: () => stdout, kill: killGroup, done };
+}
+
+/** Runs `file` with `args` to its end in the sandbox (see `startSandboxed`). */
+export async function runSandboxed(
+  sandbox: Sandbox,
+  file: string,
+  args: readonly string[],
+  options: {
+    env: Record<string, string>;
+    gatewayPort?: number;
+    timeoutMs: number;
+  },
+): Promise<AgentRun> {
+  return (await startSandboxed(sandbox, file, args, options)).done;
 }
 
 /** A file's bytes, or undefined when it does not exist. */
@@ -251,14 +275,28 @@ export async function bytesOf(file: string): Promise<Buffer | undefined> {
   }
 }
 
+/** The outcome of one item of an agent's run. */
+export interface ConformanceItem {
+  /** `partial`: what the item checks ran, but a known limitation of the run stopped it short. */
+  result: "pass" | "partial" | "fail" | "not run";
+  detail?: string;
+}
+
 /** One agent's row of the compatibility table. */
 export interface ConformanceResult {
   agent: string;
   name: string;
   version: string;
+  /** The chat item: whether the wiring works at all. */
   status:
     "wiring verified" | "partially verified" | "blocked" | "not installed";
   reason?: string;
+  items?: {
+    tools: ConformanceItem;
+    stream: ConformanceItem;
+    cancel: ConformanceItem;
+    usage: ConformanceItem;
+  };
   notes: string[];
   date: string;
   platform: string;

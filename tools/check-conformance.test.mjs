@@ -14,14 +14,23 @@ const row = {
   platform: "darwin-arm64",
 };
 
-test("the compatibility table has a row per agent with its reason and notes, pipes escaped", () => {
+test("the compatibility table has a column per item and the observations, pipes escaped", () => {
+  const items = {
+    tools: { result: "partial", detail: "no | token" },
+    stream: { result: "pass", detail: "streamed" },
+    cancel: { result: "fail", detail: "no 499" },
+    usage: { result: "not run", detail: "rejected" },
+  };
   assert.equal(
-    renderTable([row, { ...row, agent: "pi", name: "Pi", reason: undefined, notes: [] }]),
+    renderTable([
+      { ...row, items },
+      { ...row, agent: "pi", name: "Pi", status: "not installed", reason: undefined, notes: [] },
+    ]),
     [
-      "| Agent | Version | Status | Date | Platform | Observed |",
-      "|---|---|---|---|---|---|",
-      "| Codex CLI (`codex`) | codex-cli 0.144.5 | partially verified | 2026-10-04 | darwin-arm64 | rejected \\| upstream; a note |",
-      "| Pi (`pi`) | codex-cli 0.144.5 | partially verified | 2026-10-04 | darwin-arm64 | - |",
+      "| Agent | Version | Chat | Tools | Stream | Cancel | Usage | Date | Platform | Observed |",
+      "|---|---|---|---|---|---|---|---|---|---|",
+      "| Codex CLI (`codex`) | codex-cli 0.144.5 | partial | partial | ✓ | ✗ | not run | 2026-10-04 | darwin-arm64 | chat: rejected \\| upstream; tools: no \\| token; stream: streamed; cancel: no 499; usage: rejected; a note |",
+      "| Pi (`pi`) | codex-cli 0.144.5 | not installed | - | - | - | - | 2026-10-04 | darwin-arm64 | - |",
     ].join("\n"),
   );
 });
