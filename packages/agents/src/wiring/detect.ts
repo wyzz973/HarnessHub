@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { stat } from "node:fs/promises";
 import path from "node:path";
-import { locateExecutable } from "../engine/executables.js";
+import { isWrapperDirectory, locateExecutable } from "../engine/executables.js";
 import { wiringAdapter } from "./adapters/index.js";
 import { isCode } from "./files.js";
 import {
@@ -28,7 +28,8 @@ export interface AgentInstallation {
  * from `context.env` (never `process.env`) and directories from the adapter's
  * own file locations under `context.home` (not the files it shares with
  * another agent). Nothing is executed and no file is
- * read; a command counts when it is an executable regular file. Unknown
+ * read; a command counts when it is an executable regular file outside a
+ * wrapper directory (`isWrapperDirectory`: cmux's shims). Unknown
  * adapters fail with WIRING_ADAPTER_UNKNOWN.
  */
 export async function detectAgent(
@@ -55,7 +56,10 @@ export async function detectAgent(
     }
   const searchPath = (context.env?.PATH ?? context.env?.Path ?? "")
     .split(path.delimiter)
-    .filter((entry) => entry !== "" && path.isAbsolute(entry));
+    .filter(
+      (entry) =>
+        entry !== "" && path.isAbsolute(entry) && !isWrapperDirectory(entry),
+    );
   const executable = await locateExecutable(
     adapter.executables,
     searchPath,

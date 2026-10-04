@@ -49,6 +49,21 @@ export async function availableExecutable(
   }
 }
 
+/**
+ * Whether a PATH directory holds wrappers that run something else than the
+ * command they are named after: cmux's shims (`…/cmux-cli-shims/…`, and
+ * those inside `cmux.app`) re-launch an agent through the developer's
+ * cmux session, so an agent found only there is not installed. Agent
+ * detection and the real-agent suites skip these directories.
+ */
+export function isWrapperDirectory(directory: string): boolean {
+  const normal = directory.replaceAll("\\", "/");
+  return (
+    normal.split("/").includes("cmux-cli-shims") ||
+    /(^|\/)cmux\.app(\/|$)/.test(normal)
+  );
+}
+
 /** Directory order wins over extension order; no empty PATH entry searches the current directory. */
 export async function locateExecutable(
   names: readonly string[],

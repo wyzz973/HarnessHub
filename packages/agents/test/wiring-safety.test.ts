@@ -22,6 +22,7 @@ import {
   unwire,
   WiringError,
 } from "../src/wiring/index.js";
+import { isWrapperDirectory } from "../src/engine/executables.js";
 import {
   EXISTING,
   sandbox,
@@ -430,4 +431,42 @@ void test("detection uses only the explicit PATH and the adapter's directories a
   );
   await assert.rejects(readFile(marker), /ENOENT/);
   await rejectsWith(detectAgent("nobody", context), "WIRING_ADAPTER_UNKNOWN");
+});
+
+void test("a command found only in a wrapper directory (cmux's shims) does not make an agent installed", async (t) => {
+  const context = await sandbox(t);
+  const name = process.platform === "win32" ? "grok.cmd" : "grok";
+  const shims = path.join(context.root, "T", "cmux-cli-shims", "ED45");
+  const bundle = path.join(
+    context.root,
+    "Applications",
+    "cmux.app",
+    "Contents",
+    "Resources",
+    "bin",
+  );
+  const own = path.join(context.root, "bin");
+  for (const directory of [shims, bundle, own]) {
+    await mkdir(directory, { recursive: true });
+    await writeFile(path.join(directory, name), "#!/bin/sh\n");
+    await chmod(path.join(directory, name), 0o755);
+  }
+  const detect = (...directories: string[]) =>
+    detectAgent("grok", {
+      ...context,
+      env: { PATH: directories.join(path.delimiter) },
+    });
+  assert.equal((await detect(shims, bundle)).status, "not-found");
+  const found = await detect(shims, bundle, own);
+  assert.equal(found.status, "installed");
+  assert.equal(found.executable, path.join(own, name));
+  for (const [directory, wrapper] of [
+    [shims, true],
+    [bundle, true],
+    ["C:\\Users\\me\\cmux-cli-shims\\x", true],
+    [own, false],
+    [path.join(context.root, "cmux-cli-shims-not"), false],
+    [path.join(context.root, "my.cmux.app.d"), false],
+  ] as const)
+    assert.equal(isWrapperDirectory(directory), wrapper, directory);
 });

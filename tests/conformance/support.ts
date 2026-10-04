@@ -25,6 +25,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import type { TestContext } from "node:test";
+import { isWrapperDirectory } from "@harnesshub/agents/engine/executables";
 import { temporaryDirectory } from "../support/temporary.js";
 
 /** Why real agents cannot run here, or undefined when they can. */
@@ -37,13 +38,6 @@ export async function sandboxUnavailable(): Promise<string | undefined> {
   } catch {
     return "/usr/bin/sandbox-exec is missing";
   }
-}
-
-/** PATH entries of wrappers that would run something else than the agent itself. */
-function wrapperDirectory(directory: string): boolean {
-  return (
-    directory.includes("cmux-cli-shims") || directory.includes("/cmux.app/")
-  );
 }
 
 /**
@@ -63,7 +57,7 @@ export async function findAgent(
     ...extra,
   ];
   for (const directory of directories) {
-    if (wrapperDirectory(directory)) continue;
+    if (isWrapperDirectory(directory)) continue;
     const file = path.join(directory, name);
     try {
       const info = await stat(file);
