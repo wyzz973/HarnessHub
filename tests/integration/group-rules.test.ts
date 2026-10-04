@@ -51,9 +51,16 @@ async function hub(t: TestContext): Promise<Hub> {
         answer("QUICK", "1"),
         answer("HARD", "2"),
         {
-          when: { contains: "<message>\nBROKEN" },
+          when: { contains: "<message>\nREFUSED" },
           status: 400,
           error: "the judge refused",
+          repeat: true,
+        },
+        {
+          // Not retried, and one failure opens no breaker.
+          when: { contains: "<message>\nBROKEN" },
+          status: 501,
+          error: "the judge is down",
           repeat: true,
         },
       ],
@@ -287,7 +294,7 @@ void test("each rule field, through the daemon, sends what it matches to its mem
   assert.deepEqual(fake.violations(), []);
 });
 
-void test("the classifier through the daemon: asked once per message, its call in the ledger, rested after a failure", async (t) => {
+void test("the classifier through the daemon: asked once per message as the key's call, rested only when it cannot answer", async (t) => {
   const on = await hub(t);
   const { client, fake } = on;
   await client.routeGroups.create({
@@ -329,14 +336,27 @@ void test("the classifier through the daemon: asked once per message, its call i
   // The same message again: the answer kept, the classifier not asked.
   assert.equal(await ask("QUICK what is 2 + 2"), "big");
   assert.equal(judged(), 2);
-  // Its calls are the gateway's own in the ledger, with their cost visible.
+  // Its calls are the key's own in the ledger, for the classifier, with
+  // their cost visible; the key may use the group, so it may ask its classifier.
   const own = await client.modelCalls.list({ agent: "harnesshub-classify" });
   assert.equal(own.items.length, 2);
-  assert.ok(own.items.every((call) => call.modelRef === "judge/judge"));
+  assert.ok(
+    own.items.every(
+      (call) =>
+        call.modelRef === "judge/judge" &&
+        call.keyId === created.gatewayKey.keyId &&
+        call.purpose === "classify",
+    ),
+  );
   const routed = await client.modelCalls.list({ limit: 1 });
   assert.ok(routed.items[0]!.patches.includes("classifier:cached"));
-  // A failure: no intent matches, the group's order serves; within 30
-  // seconds the classifier is left alone.
+  // A refused question: no intent matches, and the next turn asks again.
+  assert.equal(await ask("REFUSED now"), "small");
+  const refused = judged();
+  assert.equal(await ask("QUICK and again"), "big");
+  assert.equal(judged(), refused + 1);
+  // A failure to answer: no intent matches, the group's order serves;
+  // within 30 seconds the classifier is left alone.
   assert.equal(await ask("BROKEN now"), "small");
   const after = judged();
   assert.equal(await ask("HARD and new"), "small");

@@ -7,6 +7,7 @@
  */
 import {
   budgetPeriods,
+  callPurposes,
   droppableFields,
   isGatewayKeyId,
   isModelPattern,
@@ -531,6 +532,7 @@ export function isModelCallEntry(value: unknown): value is ModelCallEntry {
     optional(value.generation, amount) &&
     optional(value.conversationKey, sha256) &&
     optional(value.agent, agent) &&
+    optional(value.purpose, member(callPurposes)) &&
     object(value.inbound) &&
     protocol(value.inbound.protocol) &&
     text(2048)(value.inbound.path) &&

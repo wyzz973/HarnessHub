@@ -3,19 +3,15 @@
  * Vision fallback (Magpie `gw/vision.go`): when a request with images goes to
  * a model whose metadata says it takes no image input, a configured
  * vision-capable model describes each image, and the image becomes
- * `[image: <description>]`. Each describing call is a model call of the
- * gateway's own, with its own ledger entry (agent `harnesshub-vision`).
- * Descriptions are cached by the image's hash. Without a configured model
- * the images become placeholder text, as before.
+ * `[image: <description>]`. Each describing call is an internal call of the
+ * request's Gateway Key (./internal.js), with its own ledger entry (agent
+ * `harnesshub-vision`, purpose `vision`). Descriptions are cached by the
+ * image's hash; a request describes at most `gateway.limits.maxDescribedImages`
+ * images that are not cached, newest first. Without a configured model the
+ * images become placeholder text, as before.
  */
 import { createHash } from "node:crypto";
-
-/** A model call the gateway makes for itself; see `InternalCalls` of ./server.js. */
-export type InternalCall = (
-  purpose: "vision" | "search",
-  body: Record<string, unknown>,
-  signal: AbortSignal,
-) => Promise<{ status: number; body: unknown; callId?: string }>;
+import type { InternalAnswer, InternalCalls } from "./internal.js";
 
 /** Images described at once. */
 const CONCURRENCY = 4;
@@ -80,17 +76,21 @@ export function describeImages(
 /** What describing a request's images gave. */
 export interface VisionResult {
   descriptions: Map<string, string>;
-  /** Ledger patches: `vision:<callId>` per describing call, `vision:cached:<n>`, `vision:failed:<n>`. */
+  /**
+   * Ledger patches, counts only: `vision:described:<n>`,
+   * `vision:cached:<n>`, `vision:failed:<n>`, and `vision:skipped:<n>` for
+   * images over the request's limits, which stay placeholders.
+   */
   patches: string[];
   /** An image of the newest user turn could not be described. */
   currentFailed: boolean;
+  /** Its describing call was refused by the key's budget or requests per minute (429). */
+  refused?: boolean;
 }
 
 /** Describes images with the configured model, with a cache by image hash. */
 export class VisionDescriber {
   #cache = new Map<string, string>();
-
-  constructor(private readonly internal: InternalCall) {}
 
   #remember(hash: string, text: string): void {
     this.#cache.delete(hash);
@@ -99,9 +99,17 @@ export class VisionDescriber {
       this.#cache.delete(this.#cache.keys().next().value!);
   }
 
+  /**
+   * Describe `images` (in message order) with `model` through `internal`,
+   * the request's own internal calls: at most `limit` images without a
+   * cached description, the newest first, and no more than `internal`
+   * still allows. Never rejects but when `signal` aborts.
+   */
   async describe(
     model: string,
     images: { url: string; current: boolean }[],
+    internal: InternalCalls,
+    limit: number,
     signal: AbortSignal,
   ): Promise<VisionResult> {
     const result: VisionResult = {
@@ -110,51 +118,70 @@ export class VisionDescriber {
       currentFailed: false,
     };
     let cached = 0;
+    let described = 0;
     let failed = 0;
+    let skipped = 0;
     const pending: { url: string; current: boolean; hash: string }[] = [];
-    for (const image of images) {
+    // Newest first: the images of this turn, then back through the history.
+    for (const image of [...images].reverse()) {
       const hash = createHash("sha256").update(image.url).digest("hex");
       const known = this.#cache.get(hash);
-      if (known === undefined) pending.push({ ...image, hash });
-      else {
+      if (known !== undefined) {
         this.#remember(hash, known);
         result.descriptions.set(image.url, known);
         cached++;
-      }
+      } else if (pending.length < limit) pending.push({ ...image, hash });
+      else skipped++;
     }
     let next = 0;
     const worker = async () => {
       while (next < pending.length) {
         const image = pending[next++]!;
         signal.throwIfAborted();
-        const text = await this.#one(model, image.url, signal, result);
-        if (text === undefined) {
-          failed++;
-          if (image.current) result.currentFailed = true;
+        const answer = await this.#one(model, image.url, internal, signal);
+        if (answer === "spent") {
+          skipped++;
           continue;
         }
-        this.#remember(image.hash, text);
-        result.descriptions.set(image.url, text);
+        if (typeof answer !== "string") {
+          failed++;
+          if (image.current) {
+            result.currentFailed = true;
+            if (answer.status === 429) result.refused = true;
+          }
+          continue;
+        }
+        described++;
+        this.#remember(image.hash, answer);
+        result.descriptions.set(image.url, answer);
       }
     };
     await Promise.all(
       Array.from({ length: Math.min(CONCURRENCY, pending.length) }, worker),
     );
-    if (cached) result.patches.push(`vision:cached:${cached}`);
-    if (failed) result.patches.push(`vision:failed:${failed}`);
+    for (const [name, count] of [
+      ["described", described],
+      ["cached", cached],
+      ["failed", failed],
+      ["skipped", skipped],
+    ] as const)
+      if (count) result.patches.push(`vision:${name}:${count}`);
     return result;
   }
 
-  /** One description, or undefined when the describing call failed. */
+  /**
+   * One description; `spent` when the request may make no more internal
+   * calls; else the failed call's status (0 when it was not answered).
+   */
   async #one(
     model: string,
     url: string,
+    internal: InternalCalls,
     signal: AbortSignal,
-    result: VisionResult,
-  ): Promise<string | undefined> {
-    let answer: Awaited<ReturnType<InternalCall>>;
+  ): Promise<string | "spent" | { status: number }> {
+    let answer: InternalAnswer | undefined;
     try {
-      answer = await this.internal(
+      answer = await internal.call(
         "vision",
         {
           model,
@@ -173,10 +200,11 @@ export class VisionDescriber {
       );
     } catch (error) {
       if (signal.aborted) throw error;
-      return undefined;
+      return { status: 0 };
     }
-    if (answer.callId) result.patches.push(`vision:${answer.callId}`);
-    if (answer.status !== 200 || !object(answer.body)) return undefined;
+    if (!answer) return "spent";
+    if (answer.status !== 200 || !object(answer.body))
+      return { status: answer.status };
     const choice = Array.isArray(answer.body.choices)
       ? answer.body.choices[0]
       : undefined;
@@ -195,6 +223,6 @@ export class VisionDescriber {
               .join("")
           : "";
     const trimmed = text.trim();
-    return trimmed ? trimmed.slice(0, MAX_DESCRIPTION) : undefined;
+    return trimmed ? trimmed.slice(0, MAX_DESCRIPTION) : { status: 200 };
   }
 }

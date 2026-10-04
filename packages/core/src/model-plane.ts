@@ -654,6 +654,10 @@ export interface CallAttempt {
   backoffMs?: number;
 }
 
+/** Why the gateway made a call of its own: see {@link ModelCallEntry.purpose}. */
+export const callPurposes = ["vision", "classify"] as const;
+export type CallPurpose = (typeof callPurposes)[number];
+
 /** The agent behind a call, and how the gateway knows it. */
 export interface CallAgent {
   /** Adapter id, such as `claude` or `codex`. */
@@ -686,6 +690,13 @@ export interface ModelCallEntry {
    */
   conversationKey?: string;
   agent?: CallAgent;
+  /**
+   * A call the gateway made for itself while serving a call of `keyId`:
+   * describing an image for a model without image input (`vision`), or
+   * asking a route group's classifier (`classify`). It counts as that
+   * key's call, within its allowlist, budgets and requests per minute.
+   */
+  purpose?: CallPurpose;
   inbound: { protocol: WireProtocol; path: string; stream: boolean };
   requestedModel?: string;
   modelRef?: ModelRef;

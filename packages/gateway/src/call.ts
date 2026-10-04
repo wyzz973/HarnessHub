@@ -14,6 +14,7 @@ import { SUBSCRIPTION_NOTICES } from "@harnesshub/core/subscriptions";
 import type { LogSink } from "@harnesshub/core/logging";
 import type {
   CallAttempt,
+  CallPurpose,
   GatewayKeyRecord,
   ModelCallEntry,
   ModelPlaneStore,
@@ -119,6 +120,7 @@ import {
   type VisionDescriber,
   type VisionResult,
 } from "./vision.js";
+import type { InternalCalls } from "./internal.js";
 import {
   backoff,
   classify,
@@ -346,8 +348,10 @@ export interface Call {
    * (`compaction:…`, `sealed:…`).
    */
   routePatches: string[];
-  /** Set on a call the gateway makes for itself; such a call gets no vision fallback. */
-  internal?: "vision" | "search" | "classify";
+  /** Set on a call the gateway makes for itself; such a call gets no vision fallback or search. */
+  internal?: CallPurpose;
+  /** The calls the gateway may make for this one, as its key; absent on an internal call. */
+  internals?: InternalCalls;
   /**
    * What a route group's rules decided (./rules.js): a compaction they
    * routed leaves the conversation's stickiness record alone, and an
@@ -358,6 +362,8 @@ export interface Call {
   vision?: VisionResult;
   /** The current attempt answers the client's web search itself (./search.js). */
   searching?: boolean;
+  /** The web searches of this call, over all its attempts: run, and not run for a limit. */
+  searched?: { ran: number; refused: number };
   /** The gateway serves Codex's compaction: an answer without a summary fails (./compacting.js). */
   compaction?: boolean;
 }
@@ -550,27 +556,40 @@ function visionNeeded(call: Call, candidate: Candidate): boolean {
   )
     return false;
   if (call.vision) return true;
-  const { services } = call;
-  if (call.internal || !services.vision || !services.features().vision)
-    return false;
+  const { services, internals } = call;
+  const vision = services.features().vision;
+  if (!internals || !services.vision || !vision) return false;
+  let images: boolean;
   try {
-    return (
+    images =
       imagesOf(translate(call, { images: true, search: true }).body.messages)
-        .length > 0
-    );
+        .length > 0;
   } catch {
     return false;
   }
+  // The key's allowlist holds for the descriptions too: its images stay placeholders.
+  if (images && !internals.allows(vision.model)) {
+    if (!call.routePatches.includes("vision:not-allowed"))
+      call.routePatches.push("vision:not-allowed");
+    return false;
+  }
+  return images;
 }
 
-/** Describe the call's images with the vision model (cached by image). */
+/** Describe the call's images with the vision model (cached by image), as the call's key. */
 async function describeCall(call: Call): Promise<VisionResult> {
   const { services } = call;
   const model = services.features().vision!.model;
   const images = imagesOf(
     translate(call, { images: true, search: true }).body.messages,
   );
-  return services.vision!.describe(model, images, call.signal);
+  return services.vision!.describe(
+    model,
+    images,
+    call.internals!,
+    services.limits.maxDescribedImages,
+    call.signal,
+  );
 }
 
 function translate(call: Call, options: TranslateOptions): ChatTranslation {
@@ -1774,7 +1793,16 @@ async function translatedAttempt(
         ...(prepared.chat.messages as Record<string, unknown>[]),
       ];
       const backends = services.features().search?.backends ?? [];
+      const perRound = limits.maxSearchesPerRound;
+      const perRequest = limits.maxSearchesPerRequest;
       let rounds = 0;
+      // Each search run takes a request of the key's per-minute bucket; the
+      // counts hold over the call's attempts.
+      const searched = (call.searched ??= { ran: 0, refused: 0 });
+      const notRun = (why: string) => {
+        searched.refused++;
+        return { error: why };
+      };
       for (;;) {
         const searches = relay.round(result);
         if (!searches.length || rounds > SEARCH_ROUNDS) {
@@ -1783,23 +1811,31 @@ async function translatedAttempt(
         }
         rounds++;
         const found = await Promise.all(
-          searches.map((search) =>
-            rounds > SEARCH_ROUNDS
-              ? { error: "No more searches: answer with what was found." }
-              : search.query
-                ? webSearch(
-                    services.redactor.mask(
-                      search.query,
-                      services.features().redaction.enabled
-                        ? services.features().redaction.rules
-                        : [],
-                    ).text,
-                    backends,
-                    services.resolveSecret,
-                    call.signal,
-                  )
-                : { error: "The query is empty." },
-          ),
+          searches.map((search, index) => {
+            if (rounds > SEARCH_ROUNDS)
+              return { error: "No more searches: answer with what was found." };
+            if (!search.query) return { error: "The query is empty." };
+            if (index >= perRound)
+              return notRun(
+                `Not run: at most ${perRound} searches at once; search again for what is still missing.`,
+              );
+            if (searched.ran >= perRequest)
+              return notRun("No more searches: answer with what was found.");
+            const limited = services.quotas.take(call.key);
+            if (limited) return notRun(`Not run: ${limited.message}.`);
+            searched.ran++;
+            return webSearch(
+              services.redactor.mask(
+                search.query,
+                services.features().redaction.enabled
+                  ? services.features().redaction.rules
+                  : [],
+              ).text,
+              backends,
+              services.resolveSecret,
+              call.signal,
+            );
+          }),
         );
         for (const [index, outcome] of found.entries())
           if ("hits" in outcome)
@@ -1858,7 +1894,11 @@ async function translatedAttempt(
         result = await read(again.response);
         usageOf(result);
       }
-      call.entry.patches.push(`search:rounds:${rounds}`);
+      call.entry.patches.push(
+        `search:rounds:${rounds}`,
+        `search:queries:${searched.ran}`,
+        ...(searched.refused ? [`search:refused:${searched.refused}`] : []),
+      );
     }
     await timers.stop(call.closed);
     if (data === 0)
@@ -2346,11 +2386,17 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
         call.vision ??= await describeCall(call);
         if (call.vision.currentFailed) {
           services.breakers.release(candidate);
-          skip ??= localError(
-            502,
-            "vision_failed",
-            `The image of this turn could not be described by ${services.features().vision?.model ?? "the vision model"} for ${candidate.ref}, which takes no image input`,
-          );
+          skip ??= call.vision.refused
+            ? localError(
+                429,
+                "quota_exceeded",
+                `The image of this turn could not be described by ${services.features().vision?.model ?? "the vision model"}: this Gateway Key reached a limit`,
+              )
+            : localError(
+                502,
+                "vision_failed",
+                `The image of this turn could not be described by ${services.features().vision?.model ?? "the vision model"} for ${candidate.ref}, which takes no image input`,
+              );
           break;
         }
       }

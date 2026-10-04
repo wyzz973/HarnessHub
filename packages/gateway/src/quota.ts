@@ -19,6 +19,11 @@
  *   bucket; it is told when the window resets.
  * - A cap of 0 refuses every call in its window: the key is kept but
  *   blocked, as a cap of 0 was before budgets.
+ * - A call whose ledger entry could not be committed still counts: its
+ *   usage is kept in memory, on top of the ledger, until its window
+ *   resets, so a failed commit is no way around a budget.
+ * - A web search the gateway runs for a call takes one request of the
+ *   key's per-minute bucket ({@link Quotas.take}).
  */
 import type {
   BudgetPeriod,
@@ -186,6 +191,8 @@ interface Bucket {
   tokens: number;
   at: number;
 }
+/** What calls the ledger could not take used, per key and window. */
+type Unrecorded = Omit<Sums, "fetchedAt">;
 
 function counted(sums: Sums, budget: GatewayKeyBudget): number {
   return (
@@ -213,6 +220,7 @@ export class Quotas {
   #sums = new Map<string, Sums>();
   #held = new Map<string, Held>();
   #buckets = new Map<GatewayKeyId, Bucket>();
+  #unrecorded = new Map<string, Unrecorded>();
   constructor(
     private readonly store: ModelPlaneStore,
     private readonly clock: () => number,
@@ -279,26 +287,8 @@ export class Quotas {
         },
       };
     }
-    const perMinute = quota.requestsPerMinute;
-    if (perMinute !== undefined) {
-      const rate = perMinute / 60_000;
-      const previous = this.#buckets.get(key.keyId);
-      const tokens = Math.min(
-        perMinute,
-        previous ? previous.tokens + (now - previous.at) * rate : perMinute,
-      );
-      if (tokens < 1)
-        return {
-          ok: false,
-          refusal: {
-            limit: "requestsPerMinute",
-            retryAfterMs: rate > 0 ? Math.ceil((1 - tokens) / rate) : 60_000,
-            message: `This Gateway Key is limited to ${perMinute} requests per minute`,
-          },
-        };
-      this.#buckets.set(key.keyId, { tokens: tokens - 1, at: now });
-      if (this.#buckets.size > 10_000) this.#buckets.clear();
-    }
+    const refused = this.#perMinute(key, now);
+    if (refused) return { ok: false, refusal: refused };
     const holds: { slot: string; tokens: number; cost: number }[] = [];
     for (const { budget, sums } of loaded) {
       const used = counted(sums, budget);
@@ -341,24 +331,45 @@ export class Quotas {
     };
   }
 
+  /**
+   * Take one request from the key's per-minute bucket for something the
+   * gateway does on a call's behalf (a web search); the refusal when the
+   * bucket is empty, which takes nothing.
+   */
+  take(key: GatewayKeyRecord): QuotaRefusal | undefined {
+    return this.#perMinute(key, this.clock());
+  }
+
   /** Add a committed entry to the cached sums of its key's windows. */
   record(entry: ModelCallEntry): void {
     if (!entry.keyId) return;
     const at = Date.parse(entry.occurredAt);
     for (const period of ["day", "week", "month"] as const) {
       const sums = this.#sums.get(this.#slot(entry.keyId, period));
-      if (!sums || at < sums.start || at >= sums.reset) continue;
-      const usage = entry.usage;
-      if (usage) {
-        sums.input += usage.input;
-        sums.cacheRead += usage.cacheRead;
-        sums.cacheWrite += usage.cacheWrite;
-        sums.output += usage.output;
-        sums.reasoning += usage.reasoning;
-      }
-      if (entry.status < 400) sums.calls += 1;
-      sums.cost += entry.cost?.amountUsd ?? 0;
+      if (sums && at >= sums.start && at < sums.reset) add(sums, entry);
     }
+  }
+
+  /**
+   * Count an entry the ledger could not take: in the cached sums as
+   * {@link record} does, and kept apart until its windows reset, since
+   * reading the ledger again would not find it.
+   */
+  unrecorded(entry: ModelCallEntry): void {
+    if (!entry.keyId) return;
+    const at = Date.parse(entry.occurredAt);
+    for (const period of ["day", "week", "month"] as const) {
+      const slot = this.#slot(entry.keyId, period);
+      const { start, reset } = budgetWindow(period, at, this.timeZone);
+      let kept = this.#unrecorded.get(slot);
+      if (!kept || kept.start !== start) {
+        kept = { ...EMPTY, start, reset };
+        this.#unrecorded.set(slot, kept);
+        if (this.#unrecorded.size > 30_000) this.#unrecorded.clear();
+      }
+      add(kept, entry);
+    }
+    this.record(entry);
   }
 
   /**
@@ -414,6 +425,27 @@ export class Quotas {
     return `${keyId}\u0000${period}`;
   }
 
+  /** Take one request from the key's per-minute bucket, or say why not. */
+  #perMinute(key: GatewayKeyRecord, now: number): QuotaRefusal | undefined {
+    const perMinute = key.quota?.requestsPerMinute;
+    if (perMinute === undefined) return undefined;
+    const rate = perMinute / 60_000;
+    const previous = this.#buckets.get(key.keyId);
+    const tokens = Math.min(
+      perMinute,
+      previous ? previous.tokens + (now - previous.at) * rate : perMinute,
+    );
+    if (tokens < 1)
+      return {
+        limit: "requestsPerMinute",
+        retryAfterMs: rate > 0 ? Math.ceil((1 - tokens) / rate) : 60_000,
+        message: `This Gateway Key is limited to ${perMinute} requests per minute`,
+      };
+    this.#buckets.set(key.keyId, { tokens: tokens - 1, at: now });
+    if (this.#buckets.size > 10_000) this.#buckets.clear();
+    return undefined;
+  }
+
   async #load(
     keyId: GatewayKeyId,
     period: BudgetPeriod,
@@ -444,17 +476,45 @@ export class Quotas {
       { keyId, from: new Date(start).toISOString() },
       "key",
     );
+    const kept = this.#unrecorded.get(this.#slot(keyId, period));
+    const extra = kept?.start === start ? kept : EMPTY;
     return {
       start,
       reset,
-      calls: bucket ? bucket.calls - bucket.failedCalls : 0,
-      input: bucket?.usage.input ?? 0,
-      cacheRead: bucket?.usage.cacheRead ?? 0,
-      cacheWrite: bucket?.usage.cacheWrite ?? 0,
-      output: bucket?.usage.output ?? 0,
-      reasoning: bucket?.usage.reasoning ?? 0,
-      cost: bucket?.costUsd ?? 0,
+      calls: (bucket ? bucket.calls - bucket.failedCalls : 0) + extra.calls,
+      input: (bucket?.usage.input ?? 0) + extra.input,
+      cacheRead: (bucket?.usage.cacheRead ?? 0) + extra.cacheRead,
+      cacheWrite: (bucket?.usage.cacheWrite ?? 0) + extra.cacheWrite,
+      output: (bucket?.usage.output ?? 0) + extra.output,
+      reasoning: (bucket?.usage.reasoning ?? 0) + extra.reasoning,
+      cost: (bucket?.costUsd ?? 0) + extra.cost,
       fetchedAt: now,
     };
   }
+}
+
+const EMPTY: Readonly<Unrecorded> = Object.freeze({
+  start: 0,
+  reset: 0,
+  calls: 0,
+  input: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  output: 0,
+  reasoning: 0,
+  cost: 0,
+});
+
+/** Add an entry's usage, answered call and cost to `sums`. */
+function add(sums: Unrecorded, entry: ModelCallEntry): void {
+  const usage = entry.usage;
+  if (usage) {
+    sums.input += usage.input;
+    sums.cacheRead += usage.cacheRead;
+    sums.cacheWrite += usage.cacheWrite;
+    sums.output += usage.output;
+    sums.reasoning += usage.reasoning;
+  }
+  if (entry.status < 400) sums.calls += 1;
+  sums.cost += entry.cost?.amountUsd ?? 0;
 }

@@ -46,6 +46,21 @@ export interface HandlerLimits {
   reasoningBytes: number;
   /** Reasoning replay caches of all keys together. */
   reasoningTotalBytes: number;
+  /**
+   * Images the vision model describes for one request, newest first;
+   * images with a cached description do not count, the others beyond it
+   * reach the model as placeholders.
+   */
+  maxDescribedImages: number;
+  /**
+   * Model calls the gateway makes for one request on its key's behalf
+   * (image descriptions, classifier questions); beyond it they are not made.
+   */
+  maxInternalCalls: number;
+  /** Web searches the gateway runs for one answer of the model (one round)… */
+  maxSearchesPerRound: number;
+  /** …and for the whole request; the model is told when a search is not run. */
+  maxSearchesPerRequest: number;
 }
 
 const MiB = 1024 * 1024;
@@ -69,6 +84,10 @@ export const DEFAULT_HANDLER_LIMITS: Readonly<HandlerLimits> = Object.freeze({
   reasoningEntries: 256,
   reasoningBytes: 4 * MiB,
   reasoningTotalBytes: 64 * MiB,
+  maxDescribedImages: 16,
+  maxInternalCalls: 20,
+  maxSearchesPerRound: 5,
+  maxSearchesPerRequest: 20,
 });
 
 /** Longest delay Node timers accept. */
@@ -97,6 +116,10 @@ const RANGES: Readonly<Record<keyof HandlerLimits, readonly [number, number]>> =
     reasoningEntries: [0, MAX],
     reasoningBytes: [0, MAX],
     reasoningTotalBytes: [0, MAX],
+    maxDescribedImages: [0, MAX],
+    maxInternalCalls: [0, MAX],
+    maxSearchesPerRound: [0, MAX],
+    maxSearchesPerRequest: [0, MAX],
   };
 
 /**

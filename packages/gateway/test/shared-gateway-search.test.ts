@@ -110,12 +110,23 @@ const answer: Reply = (response) => {
   );
 };
 
-async function setup(t: test.TestContext, ...replies: Reply[]) {
+function setup(t: test.TestContext, ...replies: Reply[]) {
+  return setupWith(t, {}, ...replies);
+}
+
+async function setupWith(
+  t: test.TestContext,
+  options: {
+    key?: Parameters<typeof addKey>[2];
+    limits?: Record<string, number>;
+  },
+  ...replies: Reply[]
+) {
   const search = await fakeTavily(t);
   const up = await upstream(t, ...replies);
   const store = new MemoryStore();
   await store.putProvider(provider("chat", { chat: `${up.base}/v1` }));
-  const key = await addKey(store, ["chat/*"]);
+  const key = await addKey(store, ["chat/*"], options.key);
   const features: GatewayFeatures = {
     schemaVersion: 1,
     redaction: { enabled: true, rules: [] },
@@ -131,15 +142,10 @@ async function setup(t: test.TestContext, ...replies: Reply[]) {
     },
   };
   let on = true;
-  const gw = await mount(
-    t,
-    store,
-    {},
-    {
-      features: () =>
-        on ? features : { schemaVersion: 1, redaction: features.redaction },
-    },
-  );
+  const gw = await mount(t, store, options.limits ?? {}, {
+    features: () =>
+      on ? features : { schemaVersion: 1, redaction: features.redaction },
+  });
   return { search, up, store, key, gw, off: () => (on = false) };
 }
 
@@ -294,6 +300,76 @@ void test("searches stop after six rounds: the model is told so and answers", as
   assert.match(String(last.at(-1)!.content), /No more searches/);
   await until(() => store.entries.length === 1);
   assert.ok(store.entries[0]!.patches.includes("search:rounds:7"));
+});
+
+/** A Chat answer that calls the search tool `n` times at once. */
+const searchCalls =
+  (n: number): Reply =>
+  (response) => {
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.end(
+      chatChunks([
+        delta({
+          role: "assistant",
+          tool_calls: Array.from({ length: n }, (_, index) => ({
+            index,
+            id: `call_s${index}`,
+            type: "function",
+            function: {
+              name: "web_search",
+              arguments: JSON.stringify({ query: `query ${index}` }),
+            },
+          })),
+        }),
+        delta({}, "tool_calls"),
+      ]),
+    );
+  };
+
+const searchForever = (gw: { port: number }, key: { text: string }) =>
+  send(gw.port, "/v1/messages", {
+    headers: { "x-api-key": key.text, "anthropic-version": "2023-06-01" },
+    body: {
+      model: "chat/model-a",
+      max_tokens: 100,
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      messages: [{ role: "user", content: "Search everything" }],
+    },
+  });
+
+void test("at most maxSearchesPerRound searches a round and maxSearchesPerRequest a request run; the model is told, the ledger counts them", async (t) => {
+  const { search, up, store, key, gw } = await setup(t, searchCalls(8));
+  const reply = await searchForever(gw, key);
+  assert.equal(reply.status, 200, reply.text);
+  // 5 of the 8 in each of the first four rounds, then none: 20 in all.
+  assert.equal(search.seen.length, 20);
+  const second = up.seen[2]!.json().messages as Record<string, unknown>[];
+  assert.match(String(second.at(-1)!.content), /at most 5 searches at once/);
+  const fifth = up.seen[5]!.json().messages as Record<string, unknown>[];
+  assert.match(String(fifth.at(-8)!.content), /No more searches/);
+  await until(() => store.entries.length === 1);
+  const patches = store.entries[0]!.patches;
+  assert.ok(patches.includes("search:queries:20"), patches.join());
+  assert.ok(patches.includes("search:refused:28"), patches.join());
+});
+
+void test("each search takes a request of the key's per-minute bucket; without one it is not run", async (t) => {
+  const { search, up, store, key, gw } = await setupWith(
+    t,
+    { key: { quota: { requestsPerMinute: 3 } } },
+    searchCalls(4),
+  );
+  const reply = await searchForever(gw, key);
+  assert.equal(reply.status, 200, reply.text);
+  // The call took one request; two searches took the others.
+  assert.equal(search.seen.length, 2);
+  const second = up.seen[1]!.json().messages as Record<string, unknown>[];
+  assert.match(
+    String(second.at(-1)!.content),
+    /Not run: This Gateway Key is limited to 3 requests per minute/,
+  );
+  await until(() => store.entries.length === 1);
+  assert.ok(store.entries[0]!.patches.includes("search:queries:2"));
 });
 
 void test("search APIs' answers are read per vendor, and only some hosts search themselves", () => {

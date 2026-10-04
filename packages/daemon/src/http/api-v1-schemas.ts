@@ -1103,6 +1103,7 @@ export const modelCallSchema = {
         source: { enum: ["key", "user-agent", "route"] },
       },
     },
+    purpose: { enum: ["vision", "classify"] },
     inbound: {
       type: "object",
       additionalProperties: false,

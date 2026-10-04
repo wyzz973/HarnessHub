@@ -145,6 +145,34 @@ void test("a request in flight holds its reservation: a second one is refused un
   assert.equal(rejection.rejectReason, "quota_exceeded");
 });
 
+void test("a call the ledger could not take still counts against the key's budgets, also once the ledger is read again", async (t) => {
+  const { up, store, gw, key, chat, release } = await held(t, {
+    budgets: [{ period: "day", tokens: 150 }],
+  });
+  release();
+  store.failAppend = true;
+  const lost = await chat();
+  assert.equal(lost.status, 503, lost.text);
+  assert.equal(up.seen.length, 1, "the upstream answered");
+  store.failAppend = false;
+  const counted = async () =>
+    (await gw.handler.keyLimit(key.keyId))!.budgets[0]!;
+  assert.deepEqual(
+    [(await counted()).tokens, (await counted()).calls],
+    [120, 1],
+  );
+  // The cached sums are read from the ledger again after 10 seconds.
+  gw.clock.now += 11_000;
+  assert.equal((await chat()).status, 200, "120 + the next reservation < 150");
+  assert.equal((await counted()).tokens, 240);
+  const refused = await chat();
+  assert.equal(refused.status, 429);
+  assert.match(
+    String(at(refused.json(), "error", "message")),
+    /used 240 of its 150/,
+  );
+});
+
 void test("a cost cap reserves at the model's input price before any priced call", async (t) => {
   // model-a costs 1 USD per million input tokens: ~150 tokens hold ~0.00015 USD.
   const { up, chat, release } = await held(t, {

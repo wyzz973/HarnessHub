@@ -33,10 +33,12 @@ hh gateway vision off
 ```
 
 - **何时生效**：翻译的请求在模型元数据没有声明图片输入时（与原来换成占位文字的条件相同）；直通的请求只在元数据明确不含图片输入时，这时请求改为翻译（账本照常记录模式）。没有设置视觉模型时行为不变：翻译的请求中图片是占位文字，直通的请求原样发送。
-- **描述调用**：每张图片一次 Chat 调用，提示词要求完整描述并逐字转写图中文字。调用经网关自己的完整路径（路由组、熔断、失败转移、凭据、脱敏），在一个只监听 127.0.0.1、只接受本进程随机令牌的内部监听器上发出；它是独立的账本条目，没有 Gateway Key，`agent` 为 `harnesshub-vision`（来源 `route`），按视觉模型的价格计费。内部调用不再做视觉兜底。同时至多描述 4 张。
+- **描述调用**：每张图片一次 Chat 调用，提示词要求完整描述并逐字转写图中文字。调用经网关自己的完整路径（路由组、熔断、失败转移、凭据、脱敏），在一个只监听 127.0.0.1、只接受本进程随机令牌的内部监听器上发出。它以发出请求的 Gateway Key 进行：是这把 Key 的独立账本条目（`keyId` 与 `scope` 同原调用，`agent` 为 `harnesshub-vision`、来源 `route`，`purpose` 为 `vision`），按视觉模型的价格计入它的预算，每次占用它的一个每分钟请求；允许局域网使用的 Key 的描述不使用订阅账号。内部调用不再做视觉兜底。同时至多描述 4 张。
+- **Key 的白名单**：视觉模型（Model Ref 或组）必须在 Key 的白名单中，因为描述就是视觉模型的输出。否则不描述，行为与没有设置视觉模型时相同，账本记 `vision:not-allowed`。
+- **上限**：每个请求至多描述 `gateway.limits.maxDescribedImages`（默认 16）张没有缓存的图片，从最新的开始（本轮的，然后从近到远的历史），已缓存的不计；每个请求的内部调用（描述与分类器）合计至多 `maxInternalCalls`（默认 20）次。其余图片按没有描述处理（翻译时为占位文字），账本记 `vision:skipped:<n>`。
 - **缓存**：按图片内容（URL 或 data URL 的 SHA-256）缓存最近 256 条描述。
-- **失败**：本轮新图片（最后一条 assistant 消息之后的）描述失败时，该候选以 502 `vision_failed` 跳过（能看图的其他候选仍可服务）；历史中的图片描述失败时保留占位文字。
-- **记录**：原调用的 `patches[]` 记每个描述调用的 `vision:<callId>`，以及 `vision:cached:<n>`、`vision:failed:<n>`。
+- **失败**：本轮新图片（最后一条 assistant 消息之后的）描述失败时，该候选以 502 `vision_failed` 跳过（能看图的其他候选仍可服务）；描述因 Key 的预算或每分钟请求数被拒时为 429 `quota_exceeded`。历史中的图片描述失败时保留占位文字。
+- **记录**：原调用的 `patches[]` 只记计数：`vision:described:<n>`、`vision:cached:<n>`、`vision:failed:<n>` 与 `vision:skipped:<n>`；描述调用本身按 `purpose: vision` 与 `keyId` 在账本中查找。
 
 ## 联网搜索模拟
 
@@ -50,9 +52,9 @@ hh gateway search remove search-1
 
 - **后端**：Tavily、Brave、Exa、Firecrawl 与 SearXNG，按登记顺序使用，前一个失败或没有结果时用下一个。密钥只在秘密存储中，设置文件记引用；HarnessHub 从不隐式读取环境变量，`--key-from-env` 只读取命令中指名的那一个。`--base-url` 用于 SearXNG（必填）或替换厂商的 API 地址。每个后端至多 30 秒、取 6 个结果，每个结果至多 1500 个字符。查询发出之前同样经过出站脱敏。没有后端时功能关闭：翻译时这类工具仍被拒绝（`Hosted Responses tool web_search is unsupported`），直通时原样发送。
 - **何时生效**：请求带这类工具、且候选的上游不会自己执行它时。直通到 `api.anthropic.com`（Anthropic）或 `api.openai.com`、`api.x.ai`、`api.deepseek.com`（Responses）的请求保留厂商自己的搜索；其他直通请求改为翻译。历史中有网关自己的搜索（下文的标记）时，请求总是由网关处理，不会把厂商不认识的块发给厂商。
-- **过程**：网关把客户端的搜索工具换成函数工具 `web_search(query)`（客户端已有同名工具时为 `hh_web_search`），模型调用它时并行执行查询，把结果作为工具结果再问模型一轮；至多 6 轮，第 7 次要搜索时回答“No more searches”，模型据此作答。只调用搜索的回合对客户端不可见；模型同时调用客户端自己的工具时，这些调用交给客户端，搜索调用被丢弃。各轮的文本连成一个答复，用量合计。
+- **过程**：网关把客户端的搜索工具换成函数工具 `web_search(query)`（客户端已有同名工具时为 `hh_web_search`），模型调用它时并行执行查询，把结果作为工具结果再问模型一轮；至多 6 轮，第 7 次要搜索时回答“No more searches”，模型据此作答。每轮至多执行 `gateway.limits.maxSearchesPerRound`（默认 5）次、每个请求至多 `maxSearchesPerRequest`（默认 20）次查询，每次查询占用发出请求的 Key 的一个每分钟请求；超出或 Key 的每分钟请求已用完时这次查询不执行，工具结果告诉模型原因（“Not run: …”）。只调用搜索的回合对客户端不可见；模型同时调用客户端自己的工具时，这些调用交给客户端，搜索调用被丢弃。各轮的文本连成一个答复，用量合计。
 - **客户端看到的**：Anthropic 为 `server_tool_use`（id 为 `srvtoolu_hh_…`）与 `web_search_tool_result`（标题与 URL，`encrypted_content` 为空）块；Responses 为 `web_search_call` 项（id 为 `ws_hh_…`，`action` 带 `query` 与 `sources`）。这两种标记的块在之后的请求中转成给模型看的文字。Chat 的 `web_search_options` 与 Gemini 的 `googleSearch` 不在范围内。
-- **记录**：`patches[]` 记 `search:emulated` 与 `search:rounds:<n>`；搜索 API 的调用不进账本。
+- **记录**：`patches[]` 记 `search:emulated`、`search:rounds:<n>`、`search:queries:<n>`（执行的查询数），以及有查询未执行时的 `search:refused:<n>`；搜索 API 的调用本身不是单独的账本条目，其费用不计入 Key 的预算（HarnessHub 不知道各搜索 API 的价格）。
 - **接线的 Codex**：没有搜索后端时，全局接线为不原生接收 Responses 的模型写入 `web_search = "disabled"`；登记第一个后端或删除最后一个后，目录同步随之改写已接线 Codex 的文件（[全局接线](global-wiring.md#codex-的两种模式)）。
 
 ## 图像生成

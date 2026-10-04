@@ -28666,6 +28666,12 @@
                               }
                             }
                           },
+                          "purpose": {
+                            "enum": [
+                              "vision",
+                              "classify"
+                            ]
+                          },
                           "inbound": {
                             "type": "object",
                             "additionalProperties": false,
@@ -29765,6 +29771,12 @@
                                 ]
                               }
                             }
+                          },
+                          "purpose": {
+                            "enum": [
+                              "vision",
+                              "classify"
+                            ]
                           },
                           "inbound": {
                             "type": "object",

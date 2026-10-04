@@ -30,6 +30,7 @@ import {
   parseGatewayKey,
   parseModelRef,
   type AllowanceReading,
+  type CallPurpose,
   type GatewayKeyId,
   type GatewayKeyRecord,
   type KeyLimitStatus,
@@ -117,6 +118,7 @@ import {
 } from "@harnesshub/core/gateway-features";
 import { Redactor } from "./redaction.js";
 import { VisionDescriber } from "./vision.js";
+import type { InternalAnswer, InternalCalls } from "./internal.js";
 import { imagesCall } from "./images.js";
 
 /** The Run a `session:` key's calls belong to, and the model target it selected. */
@@ -578,9 +580,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       : {}),
     redactor,
     features: deps.features ?? (() => DEFAULT_GATEWAY_FEATURES),
-    vision: new VisionDescriber((purpose, body, signal) =>
-      internalCall(purpose, body, signal),
-    ),
+    vision: new VisionDescriber(),
     makeId: () => `call_${nonce}${(generated++).toString(36)}`,
     async commit(entry: ModelCallEntry): Promise<boolean> {
       try {
@@ -605,6 +605,8 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
           error:
             error instanceof Error ? error.message.slice(0, 200) : "unknown",
         });
+        // The upstream may have answered (and billed): the key's budgets count it anyway.
+        services.quotas.unrecorded(entry);
         return false;
       }
     },
@@ -617,13 +619,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
   // The latest routing decisions, for the console to show why a turn went where it did.
   const trace = new DecisionTrace(clock);
   // Route group rules and their classifier, which asks through this gateway.
-  const groupRules = new GroupRules(
-    clock,
-    new Classifier(
-      (body, signal) => internalCall("classify", body, signal),
-      clock,
-    ),
-  );
+  const groupRules = new GroupRules(clock, new Classifier(clock));
   // `least-used` starts from the ledger's recent calls (bounded).
   track(services.router.seed(store, log));
   const allowances = deps.allowances;
@@ -1337,7 +1333,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     started: number,
     abort: AbortController,
     session: ActiveSessionRun | undefined,
-    internal?: "vision" | "search" | "classify",
+    internal?: CallPurpose,
     preread?: Buffer,
   ) => {
     let disconnected = false;
@@ -1519,6 +1515,8 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       );
       entry.conversationKey = conversation.key;
       const routePatches: string[] = [];
+      // A call the gateway makes for itself makes none in turn.
+      const internals = internal ? undefined : internalCalls(key, entry);
       call = {
         services,
         request,
@@ -1539,6 +1537,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         conversation,
         routePatches,
         ...(internal ? { internal } : {}),
+        ...(internals ? { internals } : {}),
       };
       // The pin header is read here only; no header of the client but a
       // fixed few is ever sent upstream (upstreamHeaders).
@@ -1575,8 +1574,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
             conversation: conversation.key,
             ...(entry.agent ? { agent: entry.agent.id } : {}),
             timeZone: services.quotas.timeZone,
-            // A classifier's own call asks no classifier in turn.
-            ask: internal !== "classify",
+            ...(internals ? { internal: internals } : {}),
             signal: abort.signal,
             stuck: sticky.patch === "sticky:hit",
             blocked: (candidate) => services.breakers.blocked(candidate),
@@ -2231,54 +2229,59 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
   };
 
   /**
-   * Calls the gateway makes for itself (vision descriptions, web search
-   * rounds): Chat requests on a private listener on 127.0.0.1, started on
-   * first use, that answers only requests carrying this handler's random
-   * token. They take the normal path (routing, failover, ledger) with a key
-   * that may use any model and has no quota, and each is its own ledger
-   * entry with the agent `harnesshub-<purpose>`.
+   * Calls the gateway makes for itself on behalf of a client's request
+   * (image descriptions, classifier questions; ./internal.js): Chat
+   * requests on a private listener on 127.0.0.1, started on first use, that
+   * answers only requests carrying this handler's random token and the id
+   * of a call in `pending`. They take the normal path (routing, failover,
+   * ledger) as the request's own Gateway Key: its allowlist, budgets,
+   * requests per minute and local-network rules hold, and each is a ledger
+   * entry of that key with the agent `harnesshub-<purpose>` and its
+   * `purpose`.
    */
   const internalToken = randomBytes(32).toString("base64url");
-  const internalKey: GatewayKeyRecord = {
-    keyId: "internal0000" as GatewayKeyId,
-    name: "HarnessHub internal",
-    scope: { kind: "client", name: "harnesshub" },
-    modelAllow: ["*"],
-    secretHash: "",
-    createdAt: new Date(0).toISOString(),
-  };
+  const pending = new Map<
+    string,
+    { purpose: CallPurpose; key: GatewayKeyRecord; entry: ModelCallEntry }
+  >();
   let internalServer: Promise<{ server: Server; url: string }> | undefined;
   const internalServe = async (
     request: IncomingMessage,
     response: ServerResponse,
   ) => {
     const presented = request.headers["x-hh-internal"];
-    const purpose = request.headers["x-hh-internal-purpose"];
+    const id = request.headers["x-hh-internal-call"];
     const valid =
       typeof presented === "string" &&
       presented.length === internalToken.length &&
       timingSafeEqual(Buffer.from(presented), Buffer.from(internalToken)) &&
       request.method === "POST" &&
-      request.url === "/v1/chat/completions" &&
-      (purpose === "vision" || purpose === "search" || purpose === "classify");
-    if (!valid) {
+      request.url === "/v1/chat/completions";
+    const trigger =
+      valid && typeof id === "string" ? pending.get(id) : undefined;
+    if (!trigger) {
       response.writeHead(404).end();
       return;
     }
+    const { purpose, key } = trigger;
     const entry = baseEntry(
       "chat",
       "/v1/chat/completions",
       clock(),
-      undefined,
+      key,
       undefined,
     );
     entry.agent = { id: `harnesshub-${purpose}`, source: "route" };
+    entry.purpose = purpose;
+    if (trigger.entry.runId !== undefined) entry.runId = trigger.entry.runId;
+    if (trigger.entry.generation !== undefined)
+      entry.generation = trigger.entry.generation;
     response.setHeader("x-hh-call-id", entry.callId);
     await modelCall(
       request,
       response,
       { protocol: "chat" },
-      internalKey,
+      key,
       entry,
       performance.now(),
       new AbortController(),
@@ -2287,10 +2290,11 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     );
   };
   const internalCall = async (
-    purpose: "vision" | "search" | "classify",
+    purpose: CallPurpose,
+    trigger: { key: GatewayKeyRecord; entry: ModelCallEntry },
     body: Record<string, unknown>,
     signal: AbortSignal,
-  ): Promise<{ status: number; body: unknown; callId?: string }> => {
+  ): Promise<InternalAnswer> => {
     if (closing) throw new GatewayError("The gateway is stopping", 503);
     internalServer ??= (async () => {
       const server = createServer((request, response) => {
@@ -2306,28 +2310,55 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       return { server, url: `http://127.0.0.1:${address.port}` };
     })();
     const { url } = await internalServer;
-    const answer = await fetch(`${url}/v1/chat/completions`, {
-      method: "POST",
-      signal,
-      headers: {
-        "content-type": "application/json",
-        "x-hh-internal": internalToken,
-        "x-hh-internal-purpose": purpose,
-      },
-      body: JSON.stringify(body),
-    });
-    const text = await answer.text();
-    let value: unknown;
+    const id = randomBytes(16).toString("base64url");
+    pending.set(id, { purpose, ...trigger });
     try {
-      value = JSON.parse(text);
-    } catch {
-      value = undefined;
+      const answer = await fetch(`${url}/v1/chat/completions`, {
+        method: "POST",
+        signal,
+        headers: {
+          "content-type": "application/json",
+          "x-hh-internal": internalToken,
+          "x-hh-internal-call": id,
+        },
+        body: JSON.stringify(body),
+      });
+      const text = await answer.text();
+      let value: unknown;
+      try {
+        value = JSON.parse(text);
+      } catch {
+        value = undefined;
+      }
+      const callId = answer.headers.get("x-hh-call-id");
+      return {
+        status: answer.status,
+        body: value,
+        ...(callId ? { callId } : {}),
+      };
+    } finally {
+      pending.delete(id);
     }
-    const callId = answer.headers.get("x-hh-call-id");
+  };
+  /** The internal calls of one request of `key`, at most `limits.maxInternalCalls`. */
+  const internalCalls = (
+    key: GatewayKeyRecord,
+    entry: ModelCallEntry,
+  ): InternalCalls => {
+    let made = 0;
     return {
-      status: answer.status,
-      body: value,
-      ...(callId ? { callId } : {}),
+      allows: (model) => modelAllowed(key.modelAllow, model, key.modelDeny),
+      call: async (purpose, body, signal) => {
+        if (made >= limits.maxInternalCalls) return undefined;
+        made++;
+        // A group's classifier comes with the group, as its members do: a
+        // key that may use the group may ask it, unless it denies that model.
+        const as =
+          purpose === "classify" && typeof body.model === "string"
+            ? { ...key, modelAllow: [...key.modelAllow, body.model] }
+            : key;
+        return internalCall(purpose, { key: as, entry }, body, signal);
+      },
     };
   };
 

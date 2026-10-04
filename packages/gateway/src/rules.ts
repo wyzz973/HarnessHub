@@ -31,6 +31,7 @@ import {
 } from "@harnesshub/core/route-rules";
 import type { Classifier } from "./classify.js";
 import { isCompactionRequest } from "./compacting.js";
+import type { InternalCalls } from "./internal.js";
 import { record } from "./protocol.js";
 import type { Candidate } from "./routing.js";
 import { STICKY_ENTRIES, STICKY_TTL_MS } from "./sticky.js";
@@ -337,8 +338,9 @@ export class GroupRules {
    * effort and the agent asked for reasoning; within the turn, what was
    * decided when it began, unless it outgrew its model; a compaction, the
    * first `compact` rule whose member can take it. `contexts` are the
-   * members' windows where known; `ask` is false for a classifier's own
-   * call, which asks no classifier in turn.
+   * members' windows where known; `internal` the request's internal calls
+   * the classifier is asked with, absent for a call the gateway makes for
+   * itself, which asks no classifier in turn.
    */
   async decide(input: {
     key: string;
@@ -348,7 +350,7 @@ export class GroupRules {
     agent?: string;
     compact: boolean;
     timeZone: string;
-    ask: boolean;
+    internal?: InternalCalls;
     signal: AbortSignal;
   }): Promise<RuleHit> {
     const { key, group, contexts, view } = input;
@@ -441,10 +443,11 @@ export class GroupRules {
           : {}),
         ...(had?.effort && effort ? { effort: had.effort } : {}),
       };
+      const internal = input.internal;
       if (!group.classifier) classified.error = "the group has no classifier";
-      else if (!input.ask)
+      else if (!internal)
         classified.error =
-          "this is a classifier's own call, which asks no classifier";
+          "this is a call of the gateway's own, which asks no classifier";
       else if (!view.text) classified.error = "the message has no words";
       else {
         const said = await this.classifier.classify(
@@ -453,6 +456,12 @@ export class GroupRules {
           before,
           effort,
           view.text,
+          async (body, signal) =>
+            (await internal.call("classify", body, signal)) ?? {
+              // The request made all the internal calls it may.
+              status: 429,
+              body: undefined,
+            },
           input.signal,
         );
         if (said.verdict.intent) classified.intent = said.verdict.intent;
@@ -659,7 +668,8 @@ export async function applyRules(input: {
   conversation: string;
   agent?: string;
   timeZone: string;
-  ask: boolean;
+  /** The request's internal calls; absent for a call the gateway makes for itself. */
+  internal?: InternalCalls;
   signal: AbortSignal;
   /** Stickiness put the conversation's last candidate first. */
   stuck: boolean;
@@ -693,7 +703,7 @@ export async function applyRules(input: {
       ...(input.agent ? { agent: input.agent } : {}),
       compact,
       timeZone: input.timeZone,
-      ask: input.ask,
+      ...(input.internal ? { internal: input.internal } : {}),
       signal: input.signal,
     });
     patches.push(...hitPatches(hit, prefix, Boolean(group.rules?.length)));

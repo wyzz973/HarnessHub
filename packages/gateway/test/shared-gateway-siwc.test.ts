@@ -30,6 +30,7 @@ import {
   mount,
   provider,
   send,
+  until,
   upstream,
   type Reply,
   type Seen,
@@ -542,6 +543,103 @@ void test("subscription accounts serve this computer only: keys usable from the 
     /this computer only/,
   );
   assert.equal(up.seen.length, 0);
+});
+
+void test("an image described for a key usable from the network never uses a subscription account; for a local key it may", async (t) => {
+  const up = await upstream(t, (response, seen, request) =>
+    seen.url.startsWith("/keyed/")
+      ? json(200, {
+          id: "c",
+          object: "chat.completion",
+          model: "text-only",
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: "ok" },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 5, completion_tokens: 1, total_tokens: 6 },
+        })(response, seen, request)
+      : streamed(response, seen, request),
+  );
+  const store = new MemoryStore();
+  await store.putProvider({
+    ...provider("chatgpt", { responses: `${up.base}/v1` }),
+    credentials: [account()],
+    subscription: { backend: "siwc" },
+  });
+  await store.putProvider(
+    provider(
+      "keyed",
+      { chat: `${up.base}/keyed/v1` },
+      {
+        secrets: ["key-b"],
+        models: {
+          source: "manual",
+          expose: "all",
+          list: [{ id: "text-only", inputModalities: ["text"] }],
+        },
+      },
+    ),
+  );
+  const local = await addKey(store, ["*"]);
+  const lan = await addKey(store, ["*"], {
+    allowLan: true,
+    expiresAt: "2027-01-01T00:00:00.000Z",
+  });
+  const gw = await mount(
+    t,
+    store,
+    {},
+    {
+      subscriptions: {
+        accessToken: async () => ACCESS,
+        forget: () => undefined,
+      },
+      features: () => ({
+        schemaVersion: 1,
+        redaction: { enabled: true, rules: [] },
+        vision: { model: "chatgpt/model-a" },
+      }),
+    },
+  );
+  const look = (key: { text: string }, image: string) =>
+    send(gw.port, "/v1/chat/completions", {
+      headers: { authorization: `Bearer ${key.text}` },
+      body: {
+        model: "keyed/text-only",
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "What is this?" },
+              { type: "image_url", image_url: { url: image } },
+            ],
+          },
+        ],
+      },
+    });
+  const plan = () => up.seen.filter((seen) => !seen.url.startsWith("/keyed/"));
+  const described = (keyId: string) =>
+    store.entries.filter(
+      (entry) => entry.purpose === "vision" && entry.keyId === keyId,
+    );
+  // A local key: the account describes the image.
+  assert.equal((await look(local, "data:image/png;base64,AAAA")).status, 200);
+  assert.equal(plan().length, 1);
+  await until(() => described(local.keyId).length === 1);
+  assert.equal(described(local.keyId)[0]!.provider, "chatgpt");
+  // A key usable from the network: the account is no candidate for its description.
+  const refused = await look(lan, "data:image/png;base64,BBBB");
+  assert.equal(refused.status, 502);
+  assert.equal(at(refused.json(), "error", "code"), "vision_failed");
+  assert.equal(plan().length, 1, "the account was not called again");
+  await until(() => described(lan.keyId).length === 1);
+  const own = described(lan.keyId)[0]!;
+  assert.equal(own.provider, undefined);
+  assert.equal(own.status, 400);
+  assert.match(String(own.error), /this computer only/);
 });
 
 void test("a used-up plan rests the account and points at ChatGPT's usage settings", async (t) => {
