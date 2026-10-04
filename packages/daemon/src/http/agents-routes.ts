@@ -153,6 +153,18 @@ const agentSchema = {
           },
         },
         driftError: { type: "string" },
+        attention: {
+          type: "object",
+          additionalProperties: false,
+          required: ["code", "message", "at"],
+          description:
+            "Why the last catalog sync left the agent's files as they were (they changed since HarnessHub wrote them, the key is gone, the model left the gateway)",
+          properties: {
+            code: { type: "string" },
+            message: { type: "string" },
+            at: { type: "string", format: "date-time" },
+          },
+        },
       },
     },
   },

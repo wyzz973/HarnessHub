@@ -399,6 +399,8 @@ export interface AgentWiring extends WiringChoice {
   hidden: string[];
   /** Absent for an agent that signs in by itself (Codex with `codexAuth: chatgpt`). */
   keyId?: string;
+  /** Why the last catalog sync left the agent's files as they were. */
+  attention?: { code: string; message: string; at: string };
   keyState: "active" | "revoked" | "expired" | "missing" | "none";
   wiredAt: string;
   files: string[];

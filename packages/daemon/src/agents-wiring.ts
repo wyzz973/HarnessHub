@@ -57,12 +57,45 @@ export interface WiringHome {
   env: Readonly<Record<string, string | undefined>>;
 }
 
+/** Settings of global wiring, resolved by `resolveWiringSettings`. */
+export interface WiringSettings {
+  /** Rewrite the model lists in wired agents' files when the gateway's models change. */
+  autoSync: boolean;
+}
+
+/**
+ * The `wiring` settings: `autoSync` (default true). Anything else, or a
+ * value of the wrong type, fails with a HubError (startup fails).
+ */
+export function resolveWiringSettings(raw: unknown): WiringSettings {
+  if (raw === undefined) return { autoSync: true };
+  const invalid = () =>
+    new HubError(
+      "WIRING_SETTINGS_INVALID",
+      "wiring takes only autoSync, a boolean",
+      400,
+    );
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+    throw invalid();
+  const { autoSync, ...rest } = raw as Record<string, unknown>;
+  if (
+    Object.keys(rest).length ||
+    (autoSync !== undefined && typeof autoSync !== "boolean")
+  )
+    throw invalid();
+  return { autoSync: autoSync ?? true };
+}
+
+/** How long catalog changes settle before the agents' model lists are rewritten. */
+const SYNC_DELAY_MS = 500;
+
 export interface AgentWiringOptions {
   store: ModelPlaneStore & AgentWiringStore;
   dataDir: string;
   home: WiringHome | undefined;
   /** The gateway origin agents are pointed at; undefined until the listener is bound. */
   origin: () => string | undefined;
+  settings?: WiringSettings;
   clock?: () => Date;
   log?: LogSink;
 }
@@ -81,6 +114,12 @@ export interface AgentWiringView extends WiringChoice {
   drift: Pick<DriftReport, "drifted" | "kinds" | "findings"> | null;
   /** Why drift could not be checked (for example a missing backup). */
   driftError?: string;
+  /**
+   * Why the last catalog sync left this agent's files as they were (the
+   * user changed them, its key is gone or its model left the gateway), until
+   * a sync or a wiring operation succeeds.
+   */
+  attention?: { code: string; message: string; at: string };
 }
 
 /** One agent as `GET /api/v1/agents` shows it. */
@@ -162,8 +201,130 @@ interface Prepared {
  */
 export class AgentWiringService {
   private queue: Promise<unknown> = Promise.resolve();
+  /** Agents the last catalog sync could not bring up to date, by adapter id. */
+  private readonly attention = new Map<
+    string,
+    { code: string; message: string; at: string }
+  >();
+  private syncTimer: NodeJS.Timeout | undefined;
+  private syncing: Promise<void> = Promise.resolve();
+  private closed = false;
 
   constructor(private readonly options: AgentWiringOptions) {}
+
+  /**
+   * Notes that the gateway's models may have changed (a provider saved or
+   * removed, its models refreshed or enriched, a route group changed). After
+   * changes settle, every wired agent's files are rewritten with the models
+   * now visible to its key, through the normal plan and apply path with
+   * backups, one agent at a time and in turn with other wiring operations.
+   * An agent whose files the user changed since HarnessHub last wrote them
+   * (drift), whose key is gone or not in its files, or whose model left the
+   * gateway is left alone and marked `attention`. Does nothing when
+   * `wiring.autoSync` is false, without a wiring home, or after `close`.
+   */
+  catalogChanged(): void {
+    if (
+      this.closed ||
+      this.options.settings?.autoSync === false ||
+      !this.options.home
+    )
+      return;
+    clearTimeout(this.syncTimer);
+    this.syncTimer = setTimeout(() => {
+      this.syncTimer = undefined;
+      this.syncing = this.serial(() => this.syncCatalog()).catch(
+        (error: unknown) => {
+          this.log.info("wiring.sync_failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        },
+      );
+    }, SYNC_DELAY_MS);
+  }
+
+  /** Stops scheduling catalog syncs and waits for one that is running. */
+  async close(): Promise<void> {
+    this.closed = true;
+    clearTimeout(this.syncTimer);
+    this.syncTimer = undefined;
+    await this.syncing;
+  }
+
+  /** One sync round over every wired agent with a key; failures are per agent. */
+  private async syncCatalog(): Promise<void> {
+    if (this.closed) return;
+    const context = this.context();
+    const origin = this.options.origin();
+    if (!origin) return;
+    for (const record of await this.options.store.listWirings()) {
+      if (record.keyId === undefined || !wiringAdapters.has(record.adapterId))
+        continue;
+      try {
+        const written = await this.syncOne(record, context, origin);
+        this.attention.delete(record.adapterId);
+        if (written)
+          this.log.info("wiring.synced", { adapterId: record.adapterId });
+      } catch (error) {
+        const code =
+          error instanceof HubError ? error.code : "WIRING_SYNC_FAILED";
+        const message = error instanceof Error ? error.message : String(error);
+        this.attention.set(record.adapterId, { code, message, at: this.now() });
+        this.log.info("wiring.sync_skipped", {
+          adapterId: record.adapterId,
+          code,
+        });
+      }
+    }
+  }
+
+  /** Rewrites one agent's files for the current catalog; false when nothing changed. */
+  private async syncOne(
+    record: WiringRecord,
+    context: WiringContext,
+    origin: string,
+  ): Promise<boolean> {
+    const adapterId = record.adapterId;
+    const drift = await detectDrift(record, context, { baseUrl: origin });
+    if (drift.drifted)
+      throw new HubError(
+        "AGENT_FILES_CHANGED",
+        `${adapterId}'s configuration changed since HarnessHub wrote it (${drift.kinds.join(", ")}); its model list was not rewritten. Wire it again to take the change over or unwire it`,
+        409,
+      );
+    const store = this.options.store;
+    const key = await store.getGatewayKey(record.keyId!);
+    if (!key || key.revokedAt)
+      throw new HubError(
+        "AGENT_KEY_INACTIVE",
+        `The key of ${adapterId} is revoked or missing; rotate it with hh wire ${adapterId} --rotate`,
+        409,
+      );
+    const keyText = await wiredKeyText(record, context);
+    if (keyText === undefined)
+      throw new HubError(
+        "AGENT_KEY_NOT_IN_FILES",
+        `The configuration of ${adapterId} no longer holds its key; rotate it with hh wire ${adapterId} --rotate`,
+        409,
+      );
+    const prepared = await this.prepare(
+      adapterId,
+      { models: key.modelAllow },
+      record,
+      key.modelDeny ?? [],
+    );
+    const target = this.target(prepared, { text: keyText, keyId: key.keyId });
+    const plan = await planWiring(adapterId, target, context, {
+      previous: record,
+    });
+    if (!plan.changed) return false;
+    const { record: next } = await applyWiring(adapterId, target, context, {
+      previous: record,
+      expect: plan,
+    });
+    await store.putWiring(next);
+    return true;
+  }
 
   /** Every supported agent with installation, wiring and drift. */
   async list(): Promise<AgentView[]> {
@@ -244,6 +405,7 @@ export class AgentWiringService {
       if (record.keyId !== undefined)
         await this.options.store.revokeGatewayKey(record.keyId, this.now());
       await this.options.store.deleteWiring(adapterId);
+      this.attention.delete(adapterId);
       return {
         agent: await this.view(adapterId, context, undefined),
         files: result.files,
@@ -310,6 +472,7 @@ export class AgentWiringService {
           { previous: record },
         );
         await store.putWiring(next);
+        this.attention.delete(adapterId);
       } catch (error) {
         await store
           .setGatewayKeyModels(key.keyId, key.modelAllow, previousDeny)
@@ -483,6 +646,7 @@ export class AgentWiringService {
     const previous = await this.wiringOf(adapterId);
     const prepared = await this.prepare(adapterId, request, previous);
     await this.apply(adapterId, prepared, context, previous, expect);
+    this.attention.delete(adapterId);
     return this.view(adapterId, context, await this.wiringOf(adapterId));
   }
 
@@ -496,6 +660,7 @@ export class AgentWiringService {
     const store = this.options.store;
     let key: { record: GatewayKeyRecord; text: string } | undefined;
     if (!prepared.keyless) {
+      const style = wiringAdapter(adapterId).modelIdStyle;
       const issued = issueGatewayKey({ kind: "agent", adapterId });
       key = {
         record: {
@@ -504,6 +669,7 @@ export class AgentWiringService {
           scope: { kind: "agent", adapterId },
           modelAllow: prepared.allow,
           ...(prepared.deny.length ? { modelDeny: prepared.deny } : {}),
+          ...(style ? { modelIdStyle: style } : {}),
           secretHash: issued.secretHash,
           createdAt: this.now(),
         },
@@ -762,6 +928,9 @@ export class AgentWiringService {
       files: record.files.map((file) => file.path),
       drift,
       ...(driftError ? { driftError } : {}),
+      ...(this.attention.has(record.adapterId)
+        ? { attention: this.attention.get(record.adapterId)! }
+        : {}),
     };
   }
 

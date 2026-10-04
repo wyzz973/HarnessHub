@@ -58,6 +58,7 @@ options: --url URL, --data-dir DIR, --json, --yes (do not ask), --non-interactiv
 function drift(agent: Agent): string {
   const wiring = agent.wiring;
   if (!wiring) return "-";
+  if (wiring.attention) return `attention (${wiring.attention.code})`;
   if (wiring.driftError) return "unknown";
   if (!wiring.drift?.drifted) return "ok";
   return wiring.drift.kinds.join(",");

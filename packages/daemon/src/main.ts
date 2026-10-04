@@ -51,7 +51,7 @@ import { registerApiV1 } from "./http/api-v1.js";
 import { ConsoleSessions } from "./http/console-session.js";
 import { loadConsole, registerConsole } from "./http/console-static.js";
 import { consoleAssets } from "@harnesshub/console/assets";
-import { AgentWiringService } from "./agents-wiring.js";
+import { AgentWiringService, resolveWiringSettings } from "./agents-wiring.js";
 import { BackupService } from "./backup.js";
 import { SyncService } from "./sync.js";
 import { GatewayShare } from "./lan-share.js";
@@ -228,6 +228,9 @@ export function defaultConfigDir(
  * catalog can refresh early when a served model had no price.
  */
 class CallObservingModelPlaneStore extends SqliteModelPlaneStore {
+  /** Called after a committed write that can change the models the gateway offers. */
+  catalogChanged: () => void = () => undefined;
+
   constructor(
     file: string,
     private readonly observe: (entry: ModelCallEntry) => void,
@@ -238,6 +241,44 @@ class CallObservingModelPlaneStore extends SqliteModelPlaneStore {
   override async appendModelCall(entry: ModelCallEntry): Promise<void> {
     await super.appendModelCall(entry);
     this.observe(entry);
+  }
+
+  override async putProvider(
+    ...args: Parameters<SqliteModelPlaneStore["putProvider"]>
+  ): Promise<void> {
+    await super.putProvider(...args);
+    this.catalogChanged();
+  }
+
+  override async deleteProvider(
+    ...args: Parameters<SqliteModelPlaneStore["deleteProvider"]>
+  ): Promise<boolean> {
+    const deleted = await super.deleteProvider(...args);
+    if (deleted) this.catalogChanged();
+    return deleted;
+  }
+
+  override async putProviderMetadata(
+    ...args: Parameters<SqliteModelPlaneStore["putProviderMetadata"]>
+  ): ReturnType<SqliteModelPlaneStore["putProviderMetadata"]> {
+    const result = await super.putProviderMetadata(...args);
+    this.catalogChanged();
+    return result;
+  }
+
+  override async putRouteGroup(
+    ...args: Parameters<SqliteModelPlaneStore["putRouteGroup"]>
+  ): Promise<void> {
+    await super.putRouteGroup(...args);
+    this.catalogChanged();
+  }
+
+  override async deleteRouteGroup(
+    ...args: Parameters<SqliteModelPlaneStore["deleteRouteGroup"]>
+  ): Promise<boolean> {
+    const deleted = await super.deleteRouteGroup(...args);
+    if (deleted) this.catalogChanged();
+    return deleted;
   }
 }
 
@@ -305,11 +346,18 @@ export async function startHub(options: {
     home: string;
     env: Readonly<Record<string, string | undefined>>;
   };
+  /**
+   * The `wiring` settings: `autoSync` (default true) rewrites the model
+   * lists in wired agents' files when the gateway's models change. Resolved
+   * by `resolveWiringSettings`; invalid values fail the start.
+   */
+  wiring?: unknown;
 }) {
   // HARNESSHUB_LOG_LEVEL is validated before anything starts; Workers inherit the value.
   const logLevel = parseLogLevel(process.env[LOG_LEVEL_ENVIRONMENT]);
   const gatewayLimits = resolveHandlerLimits(options.gatewayLimits);
   const catalogSettings = resolveCatalogSettings(options.catalog, process.env);
+  const wiringSettings = resolveWiringSettings(options.wiring);
   const otlpConfig = resolveOtlpConfig(options.otlp);
   // Helper programs (secrets, Windows ACLs) start through this process's
   // launcher; every Gateway of the process shares it, and `main` closes it.
@@ -449,7 +497,7 @@ export async function startHub(options: {
   let manager: EngineManager | undefined;
   let workflowStore: SqliteWorkflowStore | undefined;
   let workflows: WorkflowService | undefined;
-  let modelPlane: SqliteModelPlaneStore | undefined;
+  let modelPlane: CallObservingModelPlaneStore | undefined;
   let modelGateway: GatewayHandler | undefined;
   /** OTLP export of committed model calls; only with an `otlp` block. */
   let otlp: ModelCallExporter | undefined;
@@ -773,13 +821,18 @@ export async function startHub(options: {
     });
     registerToolPackageRoutes(server, toolPackages);
     registerHarnessModelRoutes(server, harnessModel, () => runtimeInfo);
+    // Global wiring: catalog changes committed to the store reach the
+    // agents' model lists; a sync in progress finishes before the store closes.
     const agents = new AgentWiringService({
       store: modelPlane,
       dataDir,
       home: options.wiringHome,
       origin: () => gatewayOrigin,
+      settings: wiringSettings,
       log: gatewayLog,
     });
+    modelPlane.catalogChanged = () => agents.catalogChanged();
+    server.addHook("preClose", async () => agents.close());
     // Backups and sync (off until configured); a sync in flight is aborted
     // and awaited before the stores close.
     const backups = new BackupService({

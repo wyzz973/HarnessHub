@@ -1678,7 +1678,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     group: "agents",
     request: "无参数。",
     response:
-      "200：items（Agent：id、name、protocol、keyDelivery、capabilities{tiers、efforts、options（各选项可取值，默认值在前）}、installation{status=installed|configured-only|not-found、executable、configDirectories}、wiring{model?、tiers?、effort?、options?、models（Agent 列出且 Key 可用的模型）、hidden（隐藏的模型）、keyId?、keyState=active|revoked|expired|missing|none、wiredAt、files、drift、driftError}|null）、nextCursor=null。自己登录的 Agent（Codex 的 codexAuth=chatgpt）没有 model 与 keyId，keyState 为 none。",
+      "200：items（Agent：id、name、protocol、keyDelivery、capabilities{tiers、efforts、options（各选项可取值，默认值在前）}、installation{status=installed|configured-only|not-found、executable、configDirectories}、wiring{model?、tiers?、effort?、options?、models（Agent 列出且 Key 可用的模型）、hidden（隐藏的模型）、keyId?、keyState=active|revoked|expired|missing|none、wiredAt、files、drift、driftError、attention?{code、message、at}（上次目录同步没有改写它的文件的原因）}|null）、nextCursor=null。自己登录的 Agent（Codex 的 codexAuth=chatgpt）没有 model 与 keyId，keyState 为 none。",
     implementation:
       "AgentWiringService.list：对每个支持的 Adapter 调用 detectAgent（只查 PATH 与配置目录，不执行 Agent）、读取 WiringRecord 与其 Key，并以当前网关地址调用 detectDrift。",
     effects: "只读；不读取 Agent 的认证文件，不返回 Key 文本。",

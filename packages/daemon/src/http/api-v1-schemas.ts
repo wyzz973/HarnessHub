@@ -605,6 +605,11 @@ export const gatewayKeySchema = {
       description:
         "Entries the key may not use although modelAllow admits them: the models hidden from a wired agent",
     },
+    modelIdStyle: {
+      enum: ["claude-alias"],
+      description:
+        "The key lists and takes models by Claude-style aliases (claude-hh-<digits>), for a client that keeps only Anthropic-looking ids",
+    },
     quota,
     allowLan: { type: "boolean" },
     createdAt: timestamp,
