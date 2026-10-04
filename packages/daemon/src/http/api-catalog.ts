@@ -1996,4 +1996,294 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     tests: ["tests/integration/sync.test.ts"],
     operationId: "hh_api_v1_sync_now",
   },
+  {
+    method: "GET",
+    path: "/api/v1/library/instructions",
+    title: "指令集列表",
+    group: "library",
+    request: "无参数。",
+    response:
+      "200：items（id、name、sha256、size、agents、createdAt、updatedAt，不含正文）按 id 排序、nextCursor=null。",
+    implementation:
+      "LibraryService.index：读取 <dataDir>/library/library.json。",
+    effects: "只读。",
+    errors:
+      "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/library-routes.ts",
+    tests: ["tests/integration/library.test.ts"],
+    operationId: "hh_api_v1_list_library_instructions",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/library/instructions",
+    title: "新建指令集",
+    group: "library",
+    request:
+      "id（小写字母、数字、连字符，1 到 63 个字符）、text（Markdown，最多 256 KiB，CRLF 转为 LF，首尾空白去掉）必填；name、agents（有用户级指令文件的 Agent，可选）。",
+    response: "201：指令集，含 text。",
+    implementation:
+      "LibraryService.putInstructions → LibraryStore.putInstructionSet：校验后写 instructions/<id>.md 与 library.json（0600，临时文件加 rename）。",
+    effects: "写 <dataDir>/library；不改 Agent 文件，同步时才写入。",
+    errors:
+      "409 LIBRARY_EXISTS（id 已存在）、LIBRARY_CONFLICT（某个 Agent 已有别的指令集，一个 Agent 只能有一套）；400 LIBRARY_INVALID、LIBRARY_UNSUPPORTED（Kimi、Hermes 没有用户级指令文件）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/library-routes.ts",
+    tests: ["tests/integration/library.test.ts"],
+    operationId: "hh_api_v1_create_library_instructions",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/library/instructions/{id}",
+    title: "单个指令集",
+    group: "library",
+    request: "路径参数 id。",
+    response: "200：指令集，含 text。",
+    implementation: "LibraryService.instructions。",
+    effects: "只读。",
+    errors:
+      "404 LIBRARY_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/library-routes.ts",
+    tests: ["tests/integration/library.test.ts"],
+    operationId: "hh_api_v1_get_library_instructions",
+  },
+  {
+    method: "PUT",
+    path: "/api/v1/library/instructions/{id}",
+    title: "替换指令集",
+    group: "library",
+    request:
+      "路径参数 id；text 必填，name、agents 可选（整体替换，不存在时新建）。",
+    response: "200：指令集，含 text。",
+    implementation:
+      "LibraryService.putInstructions（create=false）。尚无 ETag/If-Match。",
+    effects: "写 <dataDir>/library；Agent 文件在下一次同步时更新。",
+    errors:
+      "409 LIBRARY_CONFLICT；400 LIBRARY_INVALID、LIBRARY_UNSUPPORTED；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/library-routes.ts",
+    tests: ["tests/integration/library.test.ts"],
+    operationId: "hh_api_v1_replace_library_instructions",
+  },
+  {
+    method: "DELETE",
+    path: "/api/v1/library/instructions/{id}",
+    title: "删除指令集",
+    group: "library",
+    request: "路径参数 id。",
+    response: "204。",
+    implementation: "LibraryService.remove → LibraryStore.remove。",
+    effects: "从 Library 删除；Agent 文件中的区块保留到下一次同步把它移除。",
+    errors:
+      "404 LIBRARY_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/library-routes.ts",
+    tests: ["tests/integration/library.test.ts"],
+    operationId: "hh_api_v1_delete_library_instructions",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/library/mcp",
+    title: "MCP 服务列表",
+    group: "library",
+    request: "无参数。",
+    response:
+      "200：items（name、transport、command、args、url、env、secretEnv、headers、secretHeaders、agents、时间戳）按名称排序；秘密只以引用 {kind: env|file|store, value} 出现，从不返回值。",
+    implementation: "LibraryService.index。",
+    effects: "只读。",
+    errors:
+      "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/library-routes.ts",
+    tests: ["tests/integration/library.test.ts"],
+    operationId: "hh_api_v1_list_library_mcp",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/library/mcp",
+    title: "新建 MCP 服务",
+    group: "library",
+    request:
+      "name、transport（stdio|http|sse）必填；stdio 用 command、args、env、secretEnv，http/sse 用 url（不得含账号密码或密钥类查询参数）、headers、secretHeaders；秘密为引用 {kind: env|file, value}，或值 {secret}（存入秘密库，条目只保留 store 引用）；env/headers 中 …_TOKEN、…_API_KEY、Authorization 等名称必须放进 secret*；agents 只能是支持该传输的 Agent。",
+    response: "201：MCP 服务（秘密为引用）。",
+    implementation:
+      "LibraryService.putMcp：parseMcpServer 校验；逐个引用做 07 第 4.6 节的登记检查（HH_/HARNESSHUB_ 变量、数据目录与配置目录中的文件、与任一 provider Credential 相同的 env 名、文件或 store ID），值与 Gateway Key、管理令牌及各 provider Credential 的值按 SHA-256 摘要比对；通过后才写秘密库与 library.json。",
+    effects: "写秘密库与 <dataDir>/library；不改 Agent 文件。",
+    errors:
+      "400 SECRET_REF_FORBIDDEN（引用或值是 HarnessHub 自身凭据，未保存任何内容）、LIBRARY_INVALID（含引用了本服务未持有的 store 秘密）、LIBRARY_UNSUPPORTED（如 Codex、Pi 不支持 sse）；409 LIBRARY_EXISTS；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/library-routes.ts",
+    tests: [
+      "tests/integration/library.test.ts",
+      "packages/agents/test/library.test.ts",
+    ],
+    operationId: "hh_api_v1_create_library_mcp",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/library/mcp/{name}",
+    title: "单个 MCP 服务",
+    group: "library",
+    request: "路径参数 name（字母、数字、_、-，最多 64 个字符）。",
+    response: "200：MCP 服务（秘密为引用）。",
+    implementation: "LibraryService.mcp。",
+    effects: "只读。",
+    errors:
+      "404 LIBRARY_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/library-routes.ts",
+    tests: ["tests/integration/library.test.ts"],
+    operationId: "hh_api_v1_get_library_mcp",
+  },
+  {
+    method: "PUT",
+    path: "/api/v1/library/mcp/{name}",
+    title: "替换 MCP 服务",
+    group: "library",
+    request:
+      "路径参数 name；字段同新建（不含 name）；{kind: store} 只能是本服务已持有的秘密。",
+    response: "200：MCP 服务。",
+    implementation:
+      "LibraryService.putMcp（create=false）：检查同新建；保存后删除本服务不再使用的 store 秘密（删除失败记日志，只含秘密 ID）。尚无 ETag/If-Match。",
+    effects: "写秘密库与 <dataDir>/library。",
+    errors:
+      "400 SECRET_REF_FORBIDDEN、LIBRARY_INVALID、LIBRARY_UNSUPPORTED；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/library-routes.ts",
+    tests: ["tests/integration/library.test.ts"],
+    operationId: "hh_api_v1_replace_library_mcp",
+  },
+  {
+    method: "DELETE",
+    path: "/api/v1/library/mcp/{name}",
+    title: "删除 MCP 服务",
+    group: "library",
+    request: "路径参数 name。",
+    response: "204。",
+    implementation: "LibraryService.remove：删除条目后删除它的 store 秘密。",
+    effects:
+      "从 Library 与秘密库删除；Agent 文件中的条目保留到下一次同步把它移除。",
+    errors:
+      "404 LIBRARY_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/library-routes.ts",
+    tests: ["tests/integration/library.test.ts"],
+    operationId: "hh_api_v1_delete_library_mcp",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/library/skills",
+    title: "Skill 列表",
+    group: "library",
+    request: "无参数。",
+    response:
+      "200：items（name、description、sha256（保存的版本）、files、size、agents、时间戳）。",
+    implementation: "LibraryService.index。",
+    effects: "只读。",
+    errors:
+      "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/library-routes.ts",
+    tests: ["tests/integration/library.test.ts"],
+    operationId: "hh_api_v1_list_library_skills",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/library/skills",
+    title: "导入 Skill",
+    group: "library",
+    request:
+      "source（守护进程所在机器上 Skill 目录的绝对路径）必填，agents 可选。",
+    response: "201：Skill。",
+    implementation:
+      "LibraryService.importSkill → LibraryStore.importSkill：按 Agent Skills 规范校验（SKILL.md 的 YAML front matter 有 name 与 description，name 为小写字母、数字、单个连字符且等于目录名；不含链接；最多 500 个文件、20 MiB），按内容哈希保存到 library/skills/<sha256>/<name>/（已有版本不重复保存）；同名 Skill 指向新版本。",
+    effects: "写 <dataDir>/library；回收没有被引用的旧版本。",
+    errors:
+      "400 LIBRARY_SKILL_INVALID、LIBRARY_INVALID；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/library-routes.ts",
+    tests: [
+      "tests/integration/library.test.ts",
+      "packages/agents/test/library.test.ts",
+    ],
+    operationId: "hh_api_v1_import_library_skill",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/library/skills/{name}",
+    title: "单个 Skill",
+    group: "library",
+    request: "路径参数 name。",
+    response: "200：Skill。",
+    implementation: "LibraryService.skill。",
+    effects: "只读。",
+    errors:
+      "404 LIBRARY_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/library-routes.ts",
+    tests: ["tests/integration/library.test.ts"],
+    operationId: "hh_api_v1_get_library_skill",
+  },
+  {
+    method: "PATCH",
+    path: "/api/v1/library/skills/{name}",
+    title: "修改 Skill 的 Agent",
+    group: "library",
+    request: "路径参数 name；agents 必填（JSON 或 merge-patch+json）。",
+    response: "200：Skill。",
+    implementation: "LibraryService.setSkillAgents。",
+    effects: "写 library.json。",
+    errors:
+      "404 LIBRARY_NOT_FOUND；400 LIBRARY_INVALID；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/library-routes.ts",
+    tests: ["tests/integration/library.test.ts"],
+    operationId: "hh_api_v1_patch_library_skill",
+  },
+  {
+    method: "DELETE",
+    path: "/api/v1/library/skills/{name}",
+    title: "删除 Skill",
+    group: "library",
+    request: "路径参数 name。",
+    response: "204。",
+    implementation:
+      "LibraryService.remove：删除条目，回收不再被 Library 或任一 Agent 引用的版本。",
+    effects:
+      "Agent 中的链接或副本保留到下一次同步把它移除（链接指向的版本在此之前保留）。",
+    errors:
+      "404 LIBRARY_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/library-routes.ts",
+    tests: ["tests/integration/library.test.ts"],
+    operationId: "hh_api_v1_delete_library_skill",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/library/sync/plan",
+    title: "Library 同步预览",
+    group: "library",
+    request:
+      "agents（默认全部 Library Agent）、allowPlaintextSecret（把 Agent 无法引用的秘密值写入其文件）、placement（auto 链接，copy 复制 Skill）均可选。",
+    response:
+      "200：changed 与 agents[]（agent、name、changed、files[]（kind=instructions|mcp、path、exists、hash、action=write|restore|delete|unchanged、diff，明文写入的秘密值显示为 <secret>）、skills[]（name、path、action=place|replace|remove|unchanged）、refused[]（kind、name、reason）、warnings[]）。",
+    implementation:
+      "LibraryService.plan → planLibrarySync：按各 Agent 的原生位置与格式（Magpie internal/library/targets.go）计算标记区块、MCP 条目与 Skill 链接；同名的用户条目、无法引用的秘密（Kimi 一律、Pi/Crush/Hermes 待核）、不支持的传输与禁止的秘密引用列入 refused。",
+    effects: "只读，不写任何文件。",
+    errors:
+      "409 WIRING_CONFIG_UNPARSEABLE、WIRING_UNSUPPORTED_STRUCTURE、WIRING_SYMLINK_ESCAPE、LIBRARY_CONFLICT（MCP 容器不是对象）；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/library-routes.ts",
+    tests: [
+      "tests/integration/library.test.ts",
+      "packages/agents/test/library.test.ts",
+    ],
+    operationId: "hh_api_v1_plan_library_sync",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/library/sync/apply",
+    title: "Library 同步应用",
+    group: "library",
+    request:
+      "字段同预览；expect 必填，为用户确认的计划（预览响应即可），按 agents[].files[].path、exists、hash 核对。",
+    response: "200：已应用的计划，结构同预览。",
+    implementation:
+      "LibraryService.apply → applyLibrarySync：逐个 Agent 持有与全局接线共用的锁，重新计划并核对 expect，首次改动前把原始字节存入 <dataDir>/backups/wiring/library-<agent>/，原子写并回读校验，写完一个 Agent 就提交 applied.json；只删除 HarnessHub 写入的条目，文件仍是上次写入的样子时写回原始字节或删除新建的文件。",
+    effects:
+      "改写 Agent 的指令文件、MCP 配置与 Skills 目录；写 <dataDir>/library/applied.json；回收不再引用的 Skill 版本。",
+    errors:
+      "409 LIBRARY_CONCURRENT_MODIFICATION（文件在预览后被改动，该 Agent 未写入）、WIRING_BUSY；写入或提交失败时该 Agent 已写的内容恢复为写前字节；其余同预览；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/library-routes.ts",
+    tests: [
+      "tests/integration/library.test.ts",
+      "packages/agents/test/library.test.ts",
+    ],
+    operationId: "hh_api_v1_apply_library_sync",
+  },
 ];

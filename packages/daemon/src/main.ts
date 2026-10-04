@@ -54,6 +54,7 @@ import { consoleAssets } from "@harnesshub/console/assets";
 import { AgentWiringService, resolveWiringSettings } from "./agents-wiring.js";
 import { BackupService } from "./backup.js";
 import { SyncService } from "./sync.js";
+import { LibraryService } from "./library-service.js";
 import { GatewayShare } from "./lan-share.js";
 import {
   getPreset,
@@ -520,9 +521,10 @@ export async function startHub(options: {
     const consoleBundle = await loadConsole(
       path.resolve(options.consoleDir ?? fileURLToPath(consoleAssets)),
     );
+    const configDir = path.resolve(options.configDir ?? defaultConfigDir());
     const secrets = await SecretStore.open({
       dataDir,
-      configDir: path.resolve(options.configDir ?? defaultConfigDir()),
+      configDir,
       backend: options.secretsBackend ?? "auto",
       launcher,
     });
@@ -889,6 +891,16 @@ export async function startHub(options: {
       log: gatewayLog,
       ...(options.wiringHome ? { importHome: options.wiringHome } : {}),
       agents,
+      library: new LibraryService({
+        dataDir,
+        configDir,
+        providers: modelPlane,
+        secrets,
+        environment,
+        adminTokenDigest,
+        home: options.wiringHome,
+        log: gatewayLog,
+      }),
       gatewayShare: share,
       backup: { backups, sync },
     });

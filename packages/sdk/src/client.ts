@@ -609,6 +609,130 @@ export interface SyncStatus {
   warnings?: string[];
 }
 
+/** The agents the Library writes into. */
+export type LibraryAgent =
+  | "claude"
+  | "codex"
+  | "gemini"
+  | "qwen"
+  | "opencode"
+  | "pi"
+  | "crush"
+  | "kimi"
+  | "hermes";
+
+/** `GET /library/instructions/{id}`: a Markdown instruction set; an agent gets one. */
+export interface LibraryInstructionSet {
+  id: string;
+  name: string;
+  sha256: string;
+  size: number;
+  agents: LibraryAgent[];
+  /** On single-item responses. */
+  text?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LibraryInstructionInput {
+  name?: string;
+  text: string;
+  agents?: LibraryAgent[];
+}
+
+/** A secret of an MCP server as stored: a reference, never a value. */
+export interface LibrarySecretRef {
+  kind: "env" | "file" | "store";
+  value: string;
+}
+
+/**
+ * A secret as given: a reference (`store` only for one the server already
+ * holds), or `{secret}`, a value the daemon puts in its secret store.
+ */
+export type LibrarySecretInput = LibrarySecretRef | { secret: string };
+
+/** `GET /library/mcp/{name}`. */
+export interface LibraryMcpServer {
+  name: string;
+  transport: "stdio" | "http" | "sse";
+  command?: string;
+  args?: string[];
+  url?: string;
+  env?: Record<string, string>;
+  secretEnv?: Record<string, LibrarySecretRef>;
+  headers?: Record<string, string>;
+  secretHeaders?: Record<string, LibrarySecretRef>;
+  agents: LibraryAgent[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LibraryMcpInput {
+  transport: "stdio" | "http" | "sse";
+  command?: string;
+  args?: string[];
+  url?: string;
+  env?: Record<string, string>;
+  secretEnv?: Record<string, LibrarySecretInput>;
+  headers?: Record<string, string>;
+  secretHeaders?: Record<string, LibrarySecretInput>;
+  agents?: LibraryAgent[];
+}
+
+/** `GET /library/skills/{name}`: an Agent Skill, kept by content. */
+export interface LibrarySkill {
+  name: string;
+  description: string;
+  /** The stored version. */
+  sha256: string;
+  files: number;
+  size: number;
+  agents: LibraryAgent[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** What to sync; `agents` default to every Library agent. */
+export interface LibrarySyncInput {
+  agents?: LibraryAgent[];
+  /** Write values of secrets an agent cannot reference into its file. */
+  allowPlaintextSecret?: boolean;
+  /** `copy` copies skills instead of linking them. */
+  placement?: "auto" | "copy";
+}
+
+/** `POST /library/sync/plan`. Pass it back as `expect` to apply exactly what was shown. */
+export interface LibraryPlan {
+  changed: boolean;
+  agents: Array<{
+    agent: LibraryAgent;
+    name: string;
+    changed: boolean;
+    files: Array<{
+      kind: "instructions" | "mcp";
+      path: string;
+      exists: boolean;
+      hash?: string;
+      action: "write" | "restore" | "delete" | "unchanged";
+      /** Secret values written as plain text show as `<secret>`. */
+      diff: string;
+    }>;
+    skills: Array<{
+      name: string;
+      path: string;
+      action: "place" | "replace" | "remove" | "unchanged";
+    }>;
+    /** Items assigned to the agent that are not written, and why. */
+    refused: Array<{
+      kind: "instructions" | "mcp" | "skills";
+      name: string;
+      reason: string;
+    }>;
+    warnings: string[];
+  }>;
+}
+
 type Query = Record<string, string | number | undefined>;
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -991,6 +1115,101 @@ export class HarnessHubClient {
           ),
         },
       }),
+  };
+
+  /**
+   * The Library (04 section 8): items are stored by the daemon and reach
+   * agents only through `sync.apply`. A secret reference to one of
+   * HarnessHub's own credentials is 400 `SECRET_REF_FORBIDDEN`.
+   */
+  readonly library = {
+    instructions: {
+      list: () =>
+        this.request<Page<LibraryInstructionSet>>(
+          "GET",
+          "library/instructions",
+        ),
+      get: (id: string) =>
+        this.request<LibraryInstructionSet>(
+          "GET",
+          `library/instructions/${segment(id)}`,
+        ),
+      /** 409 `LIBRARY_EXISTS` when the id is taken. */
+      create: (id: string, input: LibraryInstructionInput) =>
+        this.request<LibraryInstructionSet>("POST", "library/instructions", {
+          body: { id, ...input },
+        }),
+      replace: (id: string, input: LibraryInstructionInput) =>
+        this.request<LibraryInstructionSet>(
+          "PUT",
+          `library/instructions/${segment(id)}`,
+          { body: input },
+        ),
+      remove: (id: string) =>
+        this.request<void>("DELETE", `library/instructions/${segment(id)}`),
+    },
+    mcp: {
+      list: () => this.request<Page<LibraryMcpServer>>("GET", "library/mcp"),
+      get: (name: string) =>
+        this.request<LibraryMcpServer>("GET", `library/mcp/${segment(name)}`),
+      /** 409 `LIBRARY_EXISTS` when the name is taken. */
+      create: (name: string, input: LibraryMcpInput) =>
+        this.request<LibraryMcpServer>("POST", "library/mcp", {
+          body: { name, ...input },
+        }),
+      replace: (name: string, input: LibraryMcpInput) =>
+        this.request<LibraryMcpServer>("PUT", `library/mcp/${segment(name)}`, {
+          body: input,
+        }),
+      /** Its store secrets are deleted with it. */
+      remove: (name: string) =>
+        this.request<void>("DELETE", `library/mcp/${segment(name)}`),
+    },
+    skills: {
+      list: () => this.request<Page<LibrarySkill>>("GET", "library/skills"),
+      get: (name: string) =>
+        this.request<LibrarySkill>("GET", `library/skills/${segment(name)}`),
+      /** Imports a skill directory on the daemon's machine (an absolute path). */
+      import: (source: string, agents?: LibraryAgent[]) =>
+        this.request<LibrarySkill>("POST", "library/skills", {
+          body: { source, ...(agents ? { agents } : {}) },
+        }),
+      setAgents: (name: string, agents: LibraryAgent[]) =>
+        this.request<LibrarySkill>("PATCH", `library/skills/${segment(name)}`, {
+          body: { agents },
+        }),
+      remove: (name: string) =>
+        this.request<void>("DELETE", `library/skills/${segment(name)}`),
+    },
+    sync: {
+      /** What syncing would change in agents' files; nothing is written. */
+      plan: (input: LibrarySyncInput = {}) =>
+        this.request<LibraryPlan>("POST", "library/sync/plan", {
+          body: input,
+        }),
+      /**
+       * Syncs after checking that each changed file is as in `expect`
+       * (409 `LIBRARY_CONCURRENT_MODIFICATION` otherwise).
+       */
+      apply: (
+        input: LibrarySyncInput & { expect: Pick<LibraryPlan, "agents"> },
+      ) =>
+        this.request<LibraryPlan>("POST", "library/sync/apply", {
+          body: {
+            ...input,
+            expect: {
+              agents: input.expect.agents.map((agent) => ({
+                agent: agent.agent,
+                files: agent.files.map((file) => ({
+                  path: file.path,
+                  exists: file.exists,
+                  ...(file.hash !== undefined ? { hash: file.hash } : {}),
+                })),
+              })),
+            },
+          },
+        }),
+    },
   };
 
   readonly gatewayShare = {

@@ -19,6 +19,8 @@ import { responses, systemInfoSchema } from "./api-v1-schemas.js";
 import { registerModelPlaneRoutes } from "./model-plane-routes.js";
 import type { AgentWiringService, WiringHome } from "../agents-wiring.js";
 import { registerAgentRoutes } from "./agents-routes.js";
+import type { LibraryService } from "../library-service.js";
+import { registerLibraryRoutes } from "./library-routes.js";
 import {
   registerGatewayShareRoutes,
   type GatewayShareControl,
@@ -131,6 +133,8 @@ export interface ApiV1Options {
   log?: LogSink;
   /** Global wiring of local agents (`/agents`). */
   agents: AgentWiringService;
+  /** Instruction sets, MCP servers and skills synced into agents (`/library`). */
+  library: LibraryService;
   /**
    * The home whose apps' configuration `/import/preview` may read (the
    * wiring home); absent, imports from other apps are refused.
@@ -315,6 +319,7 @@ export function registerApiV1(
       registerConsoleSessionRoutes(api, options.consoleSessions);
       registerModelPlaneRoutes(api, options);
       registerAgentRoutes(api, options.agents);
+      registerLibraryRoutes(api, options.library);
       if (options.gatewayShare)
         registerGatewayShareRoutes(api, options.gatewayShare);
       if (options.backup)

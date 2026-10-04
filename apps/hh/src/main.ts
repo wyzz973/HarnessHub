@@ -22,6 +22,7 @@ Commands:
   backup      Seal providers, keys, groups and agent wirings into a file
   restore     Restore a backup (hh restore --help)
   sync        Sync with other machines through WebDAV or S3 (hh sync --help)
+  library     Keep instructions, MCP servers and skills; sync them into agents (list, add, rm, sync)
   benchmark   Run, regrade or report a benchmark (hh benchmark --help)
   tools       Manage Tool Packs (hh tools --root <directory> <command>)
   rollout     Export a run's rollout (hh rollout --help)`;
@@ -50,6 +51,10 @@ const COMMANDS: Readonly<Record<string, Command>> = {
   },
   console: async (argv) => {
     const { main } = await import("@harnesshub/cli/console");
+    return main(argv);
+  },
+  library: async (argv) => {
+    const { main } = await import("@harnesshub/cli/library");
     return main(argv);
   },
   // The rollout command line parses its subcommand itself.
@@ -103,7 +108,7 @@ const COMMANDS: Readonly<Record<string, Command>> = {
  * Run one `hh` command: `serve`, `benchmark` and `tools` go to the daemon's
  * entries; `console`, `rollout` and the model-plane commands (`status`, `provider`,
  * `credential`, `key`, `group`, `model`, `catalog`, `usage`, `gateway`) and
- * the agent commands (`agents`, `wire`, `use`, `unwire`, `profile`) to the CLI's, which
+ * the agent commands (`agents`, `wire`, `use`, `unwire`, `profile`, `library`) to the CLI's, which
  * reach the running daemon over HTTP. `--help` prints the commands on stdout;
  * a missing or unknown command prints them on stderr and fails with exit code 2.
  * A command's own failures keep that command's output and exit code; a
