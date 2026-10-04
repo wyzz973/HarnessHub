@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "aihubmix",
+  "name": "AiHubMix",
+  "kind": "relay",
+  "icon": "aihubmix-color",
+  "website": "https://aihubmix.com",
+  "keysUrl": "https://console.aihubmix.com/token",
+  "catalog": "aihubmix",
+  "verified": "unverified",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://aihubmix.com/v1",
+    "anthropic": "https://aihubmix.com"
+  },
+  "models": {
+    "source": "live"
+  }
+}

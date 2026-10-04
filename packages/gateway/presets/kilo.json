@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "kilo",
+  "name": "Kilo Gateway",
+  "kind": "relay",
+  "icon": "kilo",
+  "website": "https://kilo.ai/docs/gateway",
+  "keysUrl": "https://app.kilo.ai",
+  "catalog": "kilo",
+  "verified": "unverified",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key",
+      "none"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://api.kilo.ai/api/openrouter"
+  },
+  "models": {
+    "source": "live"
+  },
+  "notes": "OpenRouter 风格的接口；免费模型不需要 Key，其他模型需要 Kilo Key。"
+}

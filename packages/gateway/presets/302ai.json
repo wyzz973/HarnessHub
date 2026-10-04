@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "302ai",
+  "name": "302.AI",
+  "kind": "relay",
+  "icon": "ai302-color",
+  "website": "https://302.ai",
+  "keysUrl": "https://302.ai/api-keys/list",
+  "catalog": "302ai",
+  "verified": "unverified",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://api.302.ai/v1",
+    "anthropic": "https://api.302.ai"
+  },
+  "models": {
+    "source": "live"
+  }
+}

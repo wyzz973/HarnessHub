@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "gemini-openai",
+  "name": "Google Gemini (OpenAI 兼容)",
+  "kind": "vendor",
+  "icon": "gemini-color",
+  "website": "https://aistudio.google.com",
+  "keysUrl": "https://aistudio.google.com/apikey",
+  "catalog": "google",
+  "verified": "2026-10-04",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://generativelanguage.googleapis.com/v1beta/openai"
+  },
+  "models": {
+    "source": "live"
+  },
+  "magpie": [
+    {
+      "id": "google"
+    }
+  ],
+  "notes": "Gemini Developer API 的 OpenAI 兼容端点，Key 以 Bearer 发送；原生协议见预设 gemini。"
+}

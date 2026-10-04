@@ -3,6 +3,7 @@
   "id": "vllm",
   "name": "vLLM",
   "kind": "local",
+  "icon": "vllm",
   "website": "https://docs.vllm.ai",
   "verified": "2026-10-02",
   "auth": {

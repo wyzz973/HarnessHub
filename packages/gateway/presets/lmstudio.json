@@ -3,8 +3,10 @@
   "id": "lmstudio",
   "name": "LM Studio",
   "kind": "local",
+  "icon": "lmstudio",
   "website": "https://lmstudio.ai",
   "verified": "2026-10-02",
+  "source": "magpie@2e340f7",
   "auth": {
     "methods": [
       "none",

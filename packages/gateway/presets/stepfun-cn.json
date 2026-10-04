@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "id": "stepfun-cn",
+  "name": "阶跃星辰 StepFun（中国站）",
+  "kind": "vendor",
+  "icon": "stepfun-color",
+  "website": "https://platform.stepfun.com",
+  "keysUrl": "https://platform.stepfun.com/interface-key",
+  "catalog": "stepfun-step-plan",
+  "verified": "unverified",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://api.stepfun.com/step_plan/v1",
+    "anthropic": "https://api.stepfun.com/step_plan"
+  },
+  "plans": [
+    {
+      "id": "plan",
+      "name": "Step Plan",
+      "endpoints": {
+        "chat": "https://api.stepfun.com/step_plan/v1",
+        "anthropic": "https://api.stepfun.com/step_plan"
+      },
+      "catalog": "stepfun-step-plan"
+    },
+    {
+      "id": "api",
+      "name": "按量付费",
+      "endpoints": {
+        "chat": "https://api.stepfun.com/v1",
+        "anthropic": "https://api.stepfun.com"
+      },
+      "catalog": "stepfun"
+    }
+  ],
+  "models": {
+    "source": "live"
+  },
+  "notes": "Step Plan 的 Key 只能用于 step_plan 下的端点，按量付费端点会拒绝它。"
+}

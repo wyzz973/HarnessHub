@@ -3,10 +3,12 @@
   "id": "mistral",
   "name": "Mistral AI",
   "kind": "vendor",
+  "icon": "mistral-color",
   "website": "https://mistral.ai",
   "keysUrl": "https://console.mistral.ai/api-keys",
   "catalog": "mistral",
   "verified": "2026-10-02",
+  "source": "magpie@2e340f7",
   "auth": {
     "methods": [
       "api-key"

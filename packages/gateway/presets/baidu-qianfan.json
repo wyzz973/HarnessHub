@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "id": "baidu-qianfan",
+  "name": "百度千帆 Qianfan",
+  "kind": "vendor",
+  "icon": "baiducloud-color",
+  "website": "https://cloud.baidu.com/doc/qianfan/s/Dmrabu8b6",
+  "keysUrl": "https://console.bce.baidu.com/qianfan/resource/token-plan",
+  "verified": "unverified",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://qianfan.baidubce.com/v2/tokenplan/personal",
+    "responses": "https://qianfan.baidubce.com/v2/tokenplan/personal",
+    "anthropic": "https://qianfan.baidubce.com/anthropic/tokenplan/personal"
+  },
+  "plans": [
+    {
+      "id": "personal",
+      "name": "Token Plan 个人版",
+      "endpoints": {
+        "chat": "https://qianfan.baidubce.com/v2/tokenplan/personal",
+        "responses": "https://qianfan.baidubce.com/v2/tokenplan/personal",
+        "anthropic": "https://qianfan.baidubce.com/anthropic/tokenplan/personal"
+      },
+      "models": [
+        "qianfan-code-latest",
+        "deepseek-v4.1-flash",
+        "deepseek-v4-pro",
+        "deepseek-v4-pro-0813",
+        "deepseek-v4-flash-0731",
+        "glm-5.3",
+        "glm-5.3-flash",
+        "glm-5.2",
+        "glm-5.1"
+      ]
+    },
+    {
+      "id": "team",
+      "name": "Token Plan 企业版",
+      "endpoints": {
+        "chat": "https://qianfan.baidubce.com/v2/tokenplan/team",
+        "responses": "https://qianfan.baidubce.com/v2/tokenplan/team",
+        "anthropic": "https://qianfan.baidubce.com/anthropic/tokenplan/team"
+      },
+      "models": [
+        "qianfan-code-latest",
+        "deepseek-v4.1-flash",
+        "deepseek-v4-pro",
+        "deepseek-v4-pro-0813",
+        "deepseek-v4-flash",
+        "deepseek-v4-flash-0731",
+        "deepseek-v3.2",
+        "glm-5.3",
+        "glm-5.3-flash",
+        "glm-5.2",
+        "glm-5.1",
+        "glm-5"
+      ]
+    },
+    {
+      "id": "api",
+      "name": "按量付费",
+      "endpoints": {
+        "chat": "https://qianfan.baidubce.com/v2",
+        "responses": "https://qianfan.baidubce.com/v2",
+        "anthropic": "https://qianfan.baidubce.com/anthropic"
+      },
+      "modelSource": "live",
+      "keysUrl": "https://console.bce.baidu.com/iam/#/iam/apikey/list"
+    }
+  ],
+  "models": {
+    "source": "static"
+  },
+  "fallbackModels": [
+    "qianfan-code-latest",
+    "deepseek-v4.1-flash",
+    "deepseek-v4-pro",
+    "deepseek-v4-pro-0813",
+    "deepseek-v4-flash",
+    "deepseek-v4-flash-0731",
+    "deepseek-v3.2",
+    "glm-5.3",
+    "glm-5.3-flash",
+    "glm-5.2",
+    "glm-5.1",
+    "glm-5"
+  ],
+  "magpie": [
+    {
+      "id": "baidu-qianfan"
+    },
+    {
+      "id": "qianfan-token-plan"
+    }
+  ],
+  "notes": "个人版与企业版 Token Plan 各用自己的 Key；套餐端点没有模型列表（/models 返回 404），模型为各套餐文档列出的名称。qianfan-code-latest 是控制台当前选定的模型。"
+}

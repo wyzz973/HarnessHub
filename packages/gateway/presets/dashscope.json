@@ -3,10 +3,12 @@
   "id": "dashscope",
   "name": "阿里云百炼 (Qwen)",
   "kind": "vendor",
+  "icon": "qwen-color",
   "website": "https://bailian.console.aliyun.com",
   "keysUrl": "https://bailian.console.aliyun.com/cn-beijing/model/settings/api-key",
   "catalog": "alibaba-cn",
   "verified": "2026-10-02",
+  "source": "magpie@2e340f7",
   "auth": {
     "methods": [
       "api-key"
@@ -17,8 +19,48 @@
     "chat": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "anthropic": "https://dashscope.aliyuncs.com/apps/anthropic"
   },
+  "regions": [
+    {
+      "id": "cn",
+      "name": "中国（北京）",
+      "endpoints": {
+        "chat": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "anthropic": "https://dashscope.aliyuncs.com/apps/anthropic"
+      },
+      "catalog": "alibaba-cn"
+    },
+    {
+      "id": "intl",
+      "name": "国际（新加坡）",
+      "endpoints": {
+        "chat": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        "anthropic": "https://dashscope-intl.aliyuncs.com/apps/anthropic"
+      },
+      "keysUrl": "https://modelstudio.console.alibabacloud.com/?tab=playground#/api-key",
+      "catalog": "alibaba"
+    },
+    {
+      "id": "us",
+      "name": "美国（弗吉尼亚）",
+      "endpoints": {
+        "chat": "https://dashscope-us.aliyuncs.com/compatible-mode/v1"
+      },
+      "keysUrl": "https://modelstudio.console.alibabacloud.com/?tab=playground#/api-key",
+      "catalog": "alibaba"
+    }
+  ],
   "models": {
     "source": "live"
   },
-  "notes": "北京地域的共享域名（阿里云称为旧式域名，仍可用，推荐改用 https://<WorkspaceId>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1）。Key 按地域区分：新加坡用 dashscope-intl.aliyuncs.com，美国用 dashscope-us.aliyuncs.com。兼容模式的 /models 接口未核对，刷新模型可能失败，届时请手动填写。"
+  "magpie": [
+    {
+      "id": "qwen",
+      "region": "intl"
+    },
+    {
+      "id": "qwen-cn",
+      "region": "cn"
+    }
+  ],
+  "notes": "北京地域的共享域名（阿里云称为旧式域名，仍可用，推荐改用 https://<WorkspaceId>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1）。Key 按地域区分，按 Key 所属地域选择 --region cn|intl|us；美国地域的 Anthropic 兼容端点未核对，未收录。兼容模式的 /models 接口未核对，刷新模型可能失败，届时请手动填写。"
 }

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "id": "tencent-token-plan",
+  "name": "腾讯云 Token Plan",
+  "kind": "vendor",
+  "icon": "tencentcloud-color",
+  "website": "https://cloud.tencent.com/document/product/1823/130060",
+  "keysUrl": "https://console.cloud.tencent.com/tokenhub/tokenplan",
+  "catalog": "tencent-token-plan",
+  "verified": "unverified",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://api.lkeap.cloud.tencent.com/plan/v3",
+    "anthropic": "https://api.lkeap.cloud.tencent.com/plan/anthropic"
+  },
+  "models": {
+    "source": "live"
+  },
+  "fallbackModels": [
+    "tc-code-latest",
+    "glm-5.3",
+    "glm-5.3-flash",
+    "glm-5.2",
+    "glm-5.1",
+    "glm-5",
+    "kimi-k3",
+    "kimi-k2.7-code",
+    "deepseek-v4-pro-202606",
+    "deepseek-v4-flash-202605",
+    "minimax-m3",
+    "minimax-m2.7",
+    "hy4-preview",
+    "hy3"
+  ],
+  "notes": "TokenHub 订阅套餐，一个 sk-tp- Key 用于通用与混元两个套餐；只有 Chat Completions 与 Anthropic Messages。"
+}

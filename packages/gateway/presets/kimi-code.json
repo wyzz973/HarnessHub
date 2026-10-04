@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "id": "kimi-code",
+  "name": "Kimi Code",
+  "kind": "vendor",
+  "icon": "kimi",
+  "website": "https://www.kimi.com/code",
+  "keysUrl": "https://www.kimi.com/code/console",
+  "catalog": "kimi-code-plan-global",
+  "verified": "unverified",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://api.kimi.ai/coding/v1",
+    "anthropic": "https://api.kimi.ai/coding"
+  },
+  "regions": [
+    {
+      "id": "global",
+      "name": "国际",
+      "endpoints": {
+        "chat": "https://api.kimi.ai/coding/v1",
+        "anthropic": "https://api.kimi.ai/coding"
+      },
+      "catalog": "kimi-code-plan-global"
+    },
+    {
+      "id": "cn",
+      "name": "中国",
+      "endpoints": {
+        "chat": "https://api.kimi.com/coding/v1",
+        "anthropic": "https://api.kimi.com/coding"
+      },
+      "catalog": "kimi-code-plan-cn"
+    }
+  ],
+  "models": {
+    "source": "live"
+  },
+  "magpie": [
+    {
+      "id": "kimi-code",
+      "region": "global"
+    },
+    {
+      "id": "kimi-code-cn",
+      "region": "cn"
+    }
+  ],
+  "notes": "Kimi 会员（Kimi Code）的编程端点，Key 在 Kimi Code 控制台创建；与 Moonshot 开放平台的 Key 不通用。"
+}

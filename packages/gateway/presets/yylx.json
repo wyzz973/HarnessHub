@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "id": "yylx",
+  "name": "鱼鱼连线",
+  "kind": "relay",
+  "icon": "yylx",
+  "website": "https://yylx.io",
+  "keysUrl": "https://app.yylx.io/keys",
+  "verified": "unverified",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://app.yylx.io/v1",
+    "anthropic": "https://app.yylx.io"
+  },
+  "regions": [
+    {
+      "id": "auto",
+      "name": "自动",
+      "endpoints": {
+        "chat": "https://app.yylx.io/v1",
+        "anthropic": "https://app.yylx.io"
+      }
+    },
+    {
+      "id": "global",
+      "name": "全球",
+      "endpoints": {
+        "chat": "https://global.yylx.io/v1",
+        "anthropic": "https://global.yylx.io"
+      }
+    },
+    {
+      "id": "cn",
+      "name": "中国大陆",
+      "endpoints": {
+        "chat": "https://cn.yylx.io/v1",
+        "anthropic": "https://cn.yylx.io"
+      }
+    }
+  ],
+  "models": {
+    "source": "live"
+  }
+}

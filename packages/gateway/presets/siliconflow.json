@@ -3,10 +3,12 @@
   "id": "siliconflow",
   "name": "硅基流动 SiliconFlow",
   "kind": "relay",
+  "icon": "siliconcloud-color",
   "website": "https://siliconflow.cn",
   "keysUrl": "https://cloud.siliconflow.cn/account/ak",
   "catalog": "siliconflow-cn",
   "verified": "2026-10-02",
+  "source": "magpie@2e340f7",
   "auth": {
     "methods": [
       "api-key"
@@ -17,8 +19,29 @@
     "chat": "https://api.siliconflow.cn/v1",
     "anthropic": "https://api.siliconflow.cn"
   },
+  "regions": [
+    {
+      "id": "cn",
+      "name": "中国站",
+      "endpoints": {
+        "chat": "https://api.siliconflow.cn/v1",
+        "anthropic": "https://api.siliconflow.cn"
+      },
+      "catalog": "siliconflow-cn"
+    },
+    {
+      "id": "global",
+      "name": "国际站",
+      "endpoints": {
+        "chat": "https://api.siliconflow.com/v1",
+        "anthropic": "https://api.siliconflow.com"
+      },
+      "keysUrl": "https://cloud.siliconflow.com/account/ak",
+      "catalog": "siliconflow"
+    }
+  ],
   "models": {
     "source": "live"
   },
-  "notes": "中国站。国际站账号请把端点改为 https://api.siliconflow.com/v1 与 https://api.siliconflow.com，Key 在 https://cloud.siliconflow.com/account/ak。"
+  "notes": "中国站与国际站的账号和 Key 不通用，按账号所在站点选择地域（--region cn|global）。"
 }

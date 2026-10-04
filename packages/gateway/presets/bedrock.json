@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "id": "bedrock",
+  "name": "Amazon Bedrock",
+  "kind": "vendor",
+  "icon": "bedrock-color",
+  "website": "https://aws.amazon.com/bedrock/",
+  "keysUrl": "https://console.aws.amazon.com/bedrock/home#/api-keys",
+  "catalog": "amazon-bedrock",
+  "verified": "2026-10-04",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1",
+    "responses": "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1"
+  },
+  "regions": [
+    {
+      "id": "us-east-1",
+      "name": "us-east-1",
+      "endpoints": {
+        "chat": "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1",
+        "responses": "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1"
+      }
+    },
+    {
+      "id": "us-east-2",
+      "name": "us-east-2",
+      "endpoints": {
+        "chat": "https://bedrock-runtime.us-east-2.amazonaws.com/openai/v1",
+        "responses": "https://bedrock-runtime.us-east-2.amazonaws.com/openai/v1"
+      }
+    },
+    {
+      "id": "us-west-2",
+      "name": "us-west-2",
+      "endpoints": {
+        "chat": "https://bedrock-runtime.us-west-2.amazonaws.com/openai/v1",
+        "responses": "https://bedrock-runtime.us-west-2.amazonaws.com/openai/v1"
+      }
+    },
+    {
+      "id": "eu-central-1",
+      "name": "eu-central-1",
+      "endpoints": {
+        "chat": "https://bedrock-runtime.eu-central-1.amazonaws.com/openai/v1",
+        "responses": "https://bedrock-runtime.eu-central-1.amazonaws.com/openai/v1"
+      }
+    },
+    {
+      "id": "eu-west-1",
+      "name": "eu-west-1",
+      "endpoints": {
+        "chat": "https://bedrock-runtime.eu-west-1.amazonaws.com/openai/v1",
+        "responses": "https://bedrock-runtime.eu-west-1.amazonaws.com/openai/v1"
+      }
+    },
+    {
+      "id": "eu-west-3",
+      "name": "eu-west-3",
+      "endpoints": {
+        "chat": "https://bedrock-runtime.eu-west-3.amazonaws.com/openai/v1",
+        "responses": "https://bedrock-runtime.eu-west-3.amazonaws.com/openai/v1"
+      }
+    },
+    {
+      "id": "ap-northeast-1",
+      "name": "ap-northeast-1",
+      "endpoints": {
+        "chat": "https://bedrock-runtime.ap-northeast-1.amazonaws.com/openai/v1",
+        "responses": "https://bedrock-runtime.ap-northeast-1.amazonaws.com/openai/v1"
+      }
+    },
+    {
+      "id": "ap-southeast-1",
+      "name": "ap-southeast-1",
+      "endpoints": {
+        "chat": "https://bedrock-runtime.ap-southeast-1.amazonaws.com/openai/v1",
+        "responses": "https://bedrock-runtime.ap-southeast-1.amazonaws.com/openai/v1"
+      }
+    },
+    {
+      "id": "ap-southeast-2",
+      "name": "ap-southeast-2",
+      "endpoints": {
+        "chat": "https://bedrock-runtime.ap-southeast-2.amazonaws.com/openai/v1",
+        "responses": "https://bedrock-runtime.ap-southeast-2.amazonaws.com/openai/v1"
+      }
+    },
+    {
+      "id": "ap-south-1",
+      "name": "ap-south-1",
+      "endpoints": {
+        "chat": "https://bedrock-runtime.ap-south-1.amazonaws.com/openai/v1",
+        "responses": "https://bedrock-runtime.ap-south-1.amazonaws.com/openai/v1"
+      }
+    }
+  ],
+  "models": {
+    "source": "static"
+  },
+  "fallbackModels": [
+    "global.openai.gpt-6-astra",
+    "global.openai.gpt-6-sol",
+    "global.openai.gpt-6-luna",
+    "openai.gpt-oss-120b-1:0",
+    "openai.gpt-oss-20b-1:0",
+    "qwen.qwen3-coder-480b-a35b-v1:0",
+    "deepseek.v3.2",
+    "moonshotai.kimi-k2.5",
+    "zai.glm-5",
+    "minimax.minimax-m2.5"
+  ],
+  "notes": "使用 Bedrock API Key（AWS_BEARER_TOKEN_BEDROCK，以 Bearer 发送），不支持 AWS SigV4 签名。bedrock-runtime 的 OpenAI 兼容端点没有 /models，模型 ID 需与区域可用的模型一致；Responses 只服务模型卡列出它的模型。Claude 在 Bedrock 上经 Anthropic Messages（https://bedrock-runtime.<区域>.amazonaws.com/anthropic，Magpie 只发 x-api-key），需要时另建 provider。"
+}

@@ -394,13 +394,24 @@ void test("every preset's catalog id names a provider of the bundled snapshot", 
       "utf8",
     ),
   ) as { providers: Record<string, { models: Record<string, object> }> };
+  // The catalog of the preset itself and of each of its regions and plans.
   for (const preset of listPresets())
-    if (preset.catalog !== undefined) {
-      const models = document.providers[preset.catalog]?.models;
-      assert.ok(models, `${preset.id}: ${preset.catalog}`);
-      const [first] = Object.keys(models);
-      assert.ok(snapshot.lookup(preset.catalog, first!), preset.id);
-    }
+    for (const [where, catalog] of [
+      [preset.id, preset.catalog],
+      ...(preset.regions ?? []).map(
+        (region) =>
+          [`${preset.id} region ${region.id}`, region.catalog] as const,
+      ),
+      ...(preset.plans ?? []).map(
+        (plan) => [`${preset.id} plan ${plan.id}`, plan.catalog] as const,
+      ),
+    ] as const)
+      if (catalog !== undefined) {
+        const models = document.providers[catalog]?.models;
+        assert.ok(models, `${where}: ${catalog}`);
+        const [first] = Object.keys(models);
+        assert.ok(snapshot.lookup(catalog, first!), where);
+      }
 });
 
 void test("a models.dev model keeps only limits, reasoning, input modalities, tool calling and prices", () => {

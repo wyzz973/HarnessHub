@@ -3,10 +3,12 @@
   "id": "zhipu",
   "name": "智谱 GLM (BigModel)",
   "kind": "vendor",
+  "icon": "zhipu-color",
   "website": "https://bigmodel.cn",
   "keysUrl": "https://bigmodel.cn/usercenter/proj-mgmt/apikeys",
   "catalog": "zhipuai",
   "verified": "2026-10-02",
+  "source": "magpie@2e340f7",
   "auth": {
     "methods": [
       "api-key"
@@ -18,8 +20,30 @@
     "responses": "https://open.bigmodel.cn/api/v1",
     "anthropic": "https://open.bigmodel.cn/api/anthropic"
   },
+  "plans": [
+    {
+      "id": "api",
+      "name": "按量付费",
+      "endpoints": {
+        "chat": "https://open.bigmodel.cn/api/paas/v4",
+        "responses": "https://open.bigmodel.cn/api/v1",
+        "anthropic": "https://open.bigmodel.cn/api/anthropic"
+      }
+    },
+    {
+      "id": "coding",
+      "name": "GLM Coding Plan",
+      "endpoints": {
+        "chat": "https://open.bigmodel.cn/api/coding/paas/v4",
+        "responses": "https://open.bigmodel.cn/api/v1",
+        "anthropic": "https://open.bigmodel.cn/api/anthropic"
+      },
+      "catalog": "zhipuai-coding-plan",
+      "notes": "Coding Plan 的 Key 只能用于套餐自己的对话端点，发往按量付费端点会被告知余额不足。"
+    }
+  ],
   "models": {
     "source": "static"
   },
-  "notes": "智谱没有公开的模型列表接口，请在编辑 provider 时手动填写模型（如 GLM 系列的模型 ID）。Coding Plan 的对话端点是 https://open.bigmodel.cn/api/coding/paas/v4。"
+  "notes": "智谱没有公开的模型列表接口，请在编辑 provider 时手动填写模型（如 GLM 系列的模型 ID）。Coding Plan 用 --plan coding。"
 }

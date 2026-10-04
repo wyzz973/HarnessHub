@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "id": "volcengine",
+  "name": "火山方舟 Volcengine Ark",
+  "kind": "vendor",
+  "icon": "volcengine-color",
+  "website": "https://www.volcengine.com/docs/82379/1925114",
+  "keysUrl": "https://ark.volcengine.com/region:cn-beijing/apikey",
+  "catalog": "volcengine-coding-plan",
+  "verified": "unverified",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://ark.cn-beijing.volces.com/api/coding/v3",
+    "responses": "https://ark.cn-beijing.volces.com/api/coding/v3",
+    "anthropic": "https://ark.cn-beijing.volces.com/api/coding"
+  },
+  "plans": [
+    {
+      "id": "coding",
+      "name": "Coding Plan",
+      "endpoints": {
+        "chat": "https://ark.cn-beijing.volces.com/api/coding/v3",
+        "responses": "https://ark.cn-beijing.volces.com/api/coding/v3",
+        "anthropic": "https://ark.cn-beijing.volces.com/api/coding"
+      },
+      "models": [
+        "ark-code-latest",
+        "doubao-seed-evolving",
+        "doubao-seed-2.1-pro",
+        "doubao-seed-2.1-lite",
+        "doubao-seed-2.0-mini",
+        "minimax-m3",
+        "glm-5.3",
+        "glm-5.3-flash",
+        "deepseek-v4.1-flash",
+        "deepseek-v4-flash",
+        "deepseek-v4-pro",
+        "kimi-k2.7-code",
+        "kimi-k2.8-preview",
+        "kimi-k3"
+      ],
+      "catalog": "volcengine-coding-plan"
+    },
+    {
+      "id": "agent",
+      "name": "Agent Plan",
+      "endpoints": {
+        "chat": "https://ark.cn-beijing.volces.com/api/plan/v3",
+        "responses": "https://ark.cn-beijing.volces.com/api/plan/v3",
+        "anthropic": "https://ark.cn-beijing.volces.com/api/plan"
+      },
+      "models": [
+        "ark-code-latest",
+        "doubao-seed-evolving",
+        "doubao-seed-2.1-pro",
+        "doubao-seed-2.1-lite",
+        "doubao-seed-2.0-mini",
+        "minimax-m3",
+        "glm-5.3",
+        "glm-5.3-flash",
+        "deepseek-v4.1-flash",
+        "deepseek-v4-flash",
+        "deepseek-v4-pro",
+        "kimi-k2.7-code",
+        "kimi-k2.8-preview",
+        "kimi-k3"
+      ],
+      "catalog": "volcengine"
+    },
+    {
+      "id": "api",
+      "name": "按量付费",
+      "endpoints": {
+        "chat": "https://ark.cn-beijing.volces.com/api/v3",
+        "responses": "https://ark.cn-beijing.volces.com/api/v3"
+      },
+      "catalog": "volcengine"
+    }
+  ],
+  "models": {
+    "source": "live"
+  },
+  "notes": "Coding Plan 与 Agent Plan 的额度只能在各自的端点使用，按量付费端点单独计费。ark-code-latest 是控制台当前选定的模型。"
+}

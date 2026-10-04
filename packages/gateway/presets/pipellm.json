@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "pipellm",
+  "name": "PipeLLM",
+  "kind": "relay",
+  "icon": "pipellm-color",
+  "website": "https://www.pipellm.ai",
+  "keysUrl": "https://console.pipellm.ai",
+  "verified": "unverified",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://api.pipellm.ai/openai/v1",
+    "responses": "https://api.pipellm.ai/v1",
+    "anthropic": "https://api.pipellm.ai"
+  },
+  "models": {
+    "source": "live"
+  },
+  "notes": "Chat 端点服务全部模型；Responses 只服务 GPT，Anthropic Messages 只服务 Claude。"
+}

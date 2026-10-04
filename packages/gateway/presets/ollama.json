@@ -3,8 +3,10 @@
   "id": "ollama",
   "name": "Ollama",
   "kind": "local",
+  "icon": "ollama",
   "website": "https://ollama.com",
   "verified": "2026-10-02",
+  "source": "magpie@2e340f7",
   "auth": {
     "methods": [
       "none"

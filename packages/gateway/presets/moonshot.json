@@ -3,10 +3,12 @@
   "id": "moonshot",
   "name": "Moonshot AI (Kimi)",
   "kind": "vendor",
+  "icon": "kimi",
   "website": "https://platform.kimi.com",
   "keysUrl": "https://platform.kimi.com/console/api-keys",
   "catalog": "moonshotai-cn",
   "verified": "2026-10-02",
+  "source": "magpie@2e340f7",
   "auth": {
     "methods": [
       "api-key"
@@ -18,8 +20,41 @@
     "responses": "https://api.moonshot.cn/v1",
     "anthropic": "https://api.moonshot.cn/anthropic"
   },
+  "regions": [
+    {
+      "id": "cn",
+      "name": "中国站",
+      "endpoints": {
+        "chat": "https://api.moonshot.cn/v1",
+        "responses": "https://api.moonshot.cn/v1",
+        "anthropic": "https://api.moonshot.cn/anthropic"
+      },
+      "catalog": "moonshotai-cn"
+    },
+    {
+      "id": "global",
+      "name": "国际站",
+      "endpoints": {
+        "chat": "https://api.moonshot.ai/v1",
+        "responses": "https://api.moonshot.ai/v1",
+        "anthropic": "https://api.moonshot.ai/anthropic"
+      },
+      "keysUrl": "https://platform.kimi.ai/console/api-keys",
+      "catalog": "moonshotai"
+    }
+  ],
   "models": {
     "source": "live"
   },
-  "notes": "中国站。国际站账号请把端点改为 https://api.moonshot.ai/v1 与 https://api.moonshot.ai/anthropic，Key 在 https://platform.kimi.ai/console/api-keys。"
+  "magpie": [
+    {
+      "id": "moonshot",
+      "region": "global"
+    },
+    {
+      "id": "moonshot-cn",
+      "region": "cn"
+    }
+  ],
+  "notes": "中国站与国际站的账号和 Key 不通用，按账号所在站点选择地域（--region cn|global）。"
 }

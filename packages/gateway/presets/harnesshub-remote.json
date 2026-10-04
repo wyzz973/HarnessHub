@@ -16,8 +16,9 @@
     "anthropic": "http://127.0.0.1:3180",
     "gemini": "http://127.0.0.1:3180"
   },
+  "userEndpoint": true,
   "models": {
     "source": "live"
   },
-  "notes": "另一台 HarnessHub 的模型网关：用 --base 填对方 hh gateway share status 显示的地址，凭据为对方 hh key create --lan 签发的 Key。四种协议都直通，对方的 provider/model 在本机为 <本 provider ID>/provider/model。"
+  "notes": "另一台 HarnessHub 的模型网关：用 --base 填对方 hh gateway share status 显示的地址（必填），凭据为对方 hh key create --lan 签发的 Key。四种协议都直通，对方的 provider/model 在本机为 <本 provider ID>/provider/model。"
 }

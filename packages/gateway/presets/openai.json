@@ -3,10 +3,12 @@
   "id": "openai",
   "name": "OpenAI",
   "kind": "vendor",
+  "icon": "openai",
   "website": "https://platform.openai.com",
   "keysUrl": "https://platform.openai.com/settings/organization/api-keys",
   "catalog": "openai",
   "verified": "2026-10-02",
+  "source": "magpie@2e340f7",
   "auth": {
     "methods": [
       "api-key"

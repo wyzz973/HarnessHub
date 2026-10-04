@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "opencode-go",
+  "name": "OpenCode Go",
+  "kind": "relay",
+  "icon": "opencode",
+  "website": "https://opencode.ai/docs/go",
+  "keysUrl": "https://opencode.ai/auth",
+  "catalog": "opencode-go",
+  "verified": "unverified",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://opencode.ai/zen/go/v1",
+    "responses": "https://opencode.ai/zen/go/v1",
+    "anthropic": "https://opencode.ai/zen/go"
+  },
+  "models": {
+    "source": "live"
+  },
+  "notes": "OpenCode 的开放编程模型订阅。"
+}

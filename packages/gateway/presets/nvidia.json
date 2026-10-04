@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "nvidia",
+  "name": "NVIDIA NIM",
+  "kind": "relay",
+  "icon": "nvidia-color",
+  "website": "https://build.nvidia.com",
+  "keysUrl": "https://build.nvidia.com/settings/api-keys",
+  "catalog": "nvidia",
+  "verified": "unverified",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://integrate.api.nvidia.com/v1"
+  },
+  "models": {
+    "source": "live"
+  },
+  "notes": "只收录 Chat Completions：它的 /v1/responses 只对少数模型可用。"
+}

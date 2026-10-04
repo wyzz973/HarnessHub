@@ -57,11 +57,15 @@ test("the single executable carries every provider preset at its repository path
   assert.deepEqual(presetAssets(root), []);
   const directory = path.join(root, "packages", "gateway", "presets");
   await mkdir(directory, { recursive: true });
-  for (const name of ["openai.json", "deepseek.json", "README.md"])
+  for (const name of ["openai.json", "deepseek.json", "README.md", "magpie.LICENSE", "other.LICENSE"])
     await writeFile(path.join(directory, name), "{}");
   assert.deepEqual(
     presetAssets(root).map((asset) => asset.path),
-    ["packages/gateway/presets/deepseek.json", "packages/gateway/presets/openai.json"],
+    [
+      "packages/gateway/presets/deepseek.json",
+      "packages/gateway/presets/magpie.LICENSE",
+      "packages/gateway/presets/openai.json",
+    ],
   );
 });
 

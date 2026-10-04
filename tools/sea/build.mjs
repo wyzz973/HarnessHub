@@ -123,8 +123,9 @@ export function nativeAssets(root) {
 
 /**
  * The provider presets the gateway reads from disk next to its compiled module
- * (packages/gateway/src/presets.ts): every packages/gateway/presets/*.json, at
- * its repository-relative path under the extraction root.
+ * (packages/gateway/src/presets.ts): every packages/gateway/presets/*.json and
+ * the license of the Magpie data in them, at its repository-relative path
+ * under the extraction root.
  *
  * @param {string} root Repository root.
  * @returns {{path: string, file: string}[]} Sorted by path.
@@ -134,7 +135,8 @@ export function presetAssets(root) {
   const directory = path.join(root, ...relative.split("/"));
   if (!existsSync(directory)) return [];
   return readdirSync(directory)
-    .filter((name) => name.endsWith(".json"))
+    // magpie.LICENSE: the presets carry data taken from Magpie (MIT).
+    .filter((name) => name.endsWith(".json") || name === "magpie.LICENSE")
     .sort()
     .map((name) => ({
       path: `${relative}/${name}`,

@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "id": "minimax",
+  "name": "MiniMax",
+  "kind": "vendor",
+  "icon": "minimax-color",
+  "website": "https://platform.minimax.io",
+  "keysUrl": "https://platform.minimax.io/user-center/basic-information/interface-key",
+  "catalog": "minimax",
+  "verified": "2026-10-04",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://api.minimax.io/v1",
+    "anthropic": "https://api.minimax.io/anthropic"
+  },
+  "regions": [
+    {
+      "id": "global",
+      "name": "国际",
+      "endpoints": {
+        "chat": "https://api.minimax.io/v1",
+        "anthropic": "https://api.minimax.io/anthropic"
+      },
+      "catalog": "minimax"
+    },
+    {
+      "id": "cn",
+      "name": "中国",
+      "endpoints": {
+        "chat": "https://api.minimax.cn/v1",
+        "anthropic": "https://api.minimax.cn/anthropic"
+      },
+      "keysUrl": "https://platform.minimax.cn/user-center/basic-information/interface-key",
+      "catalog": "minimax-cn"
+    }
+  ],
+  "models": {
+    "source": "live"
+  },
+  "magpie": [
+    {
+      "id": "minimax",
+      "region": "global"
+    },
+    {
+      "id": "minimax-cn",
+      "region": "cn"
+    }
+  ],
+  "notes": "中国站的文档域名已从 minimaxi.com 改为 minimax.cn（Magpie 2e340f7 仍用 api.minimaxi.com）；国际站与中国站的 Key 不通用。"
+}

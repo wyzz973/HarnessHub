@@ -79,6 +79,8 @@ const providerId: Check = (value) =>
   typeof value === "string" && isProviderId(value);
 const keyId: Check = (value) =>
   typeof value === "string" && isGatewayKeyId(value);
+const slug: Check = (value) =>
+  typeof value === "string" && /^[a-z0-9][a-z0-9-]{0,62}$/.test(value);
 
 const secretReference: Check = (value) =>
   object(value) &&
@@ -238,6 +240,12 @@ export function isProviderConfig(value: unknown): value is ProviderConfig {
     text(200)(value.name) &&
     member(["vendor", "relay", "local", "custom"])(value.kind) &&
     optional(value.preset, text(200)) &&
+    optional(value.region, slug) &&
+    optional(value.plan, slug) &&
+    // A region or plan names a choice of the preset, so it needs one.
+    (value.preset !== undefined ||
+      (value.region === undefined && value.plan === undefined)) &&
+    optional(value.catalog, slug) &&
     endpoints(value.endpoints) &&
     object(value.auth) &&
     apiKeyHeader(value.auth.apiKeyHeader) &&

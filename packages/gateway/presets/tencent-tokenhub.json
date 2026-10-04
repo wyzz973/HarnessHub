@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "id": "tencent-tokenhub",
+  "name": "腾讯云 TokenHub",
+  "kind": "vendor",
+  "icon": "tencentcloud-color",
+  "website": "https://www.tencentcloud.com/document/product/1300/78939",
+  "keysUrl": "https://console.tencentcloud.com/tokenhub/apikey",
+  "catalog": "tencent-tokenhub",
+  "verified": "unverified",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://tokenhub-intl.tencentmaas.com/v1",
+    "responses": "https://tokenhub-intl.tencentmaas.com/v1",
+    "anthropic": "https://tokenhub-intl.tencentmaas.com"
+  },
+  "regions": [
+    {
+      "id": "intl",
+      "name": "国际（新加坡）",
+      "endpoints": {
+        "chat": "https://tokenhub-intl.tencentmaas.com/v1",
+        "responses": "https://tokenhub-intl.tencentmaas.com/v1",
+        "anthropic": "https://tokenhub-intl.tencentmaas.com"
+      }
+    },
+    {
+      "id": "cn",
+      "name": "中国（广州）",
+      "endpoints": {
+        "chat": "https://tokenhub.tencentmaas.com/v1",
+        "responses": "https://tokenhub.tencentmaas.com/v1",
+        "anthropic": "https://tokenhub.tencentmaas.com"
+      },
+      "keysUrl": "https://console.cloud.tencent.com/tokenhub/apikey"
+    }
+  ],
+  "models": {
+    "source": "live"
+  },
+  "magpie": [
+    {
+      "id": "tencent-tokenhub",
+      "region": "intl"
+    },
+    {
+      "id": "tencent-tokenhub-cn",
+      "region": "cn"
+    }
+  ],
+  "notes": "按量付费，使用 TokenHub 自己的 API Key（不是 Token Plan 的 sk-tp- Key）；也提供其他厂商的模型。"
+}

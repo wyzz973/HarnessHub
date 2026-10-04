@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "ollama-cloud",
+  "name": "Ollama Cloud",
+  "kind": "vendor",
+  "icon": "ollama",
+  "website": "https://docs.ollama.com/cloud",
+  "keysUrl": "https://ollama.com/settings/keys",
+  "catalog": "ollama-cloud",
+  "verified": "unverified",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://ollama.com/v1",
+    "anthropic": "https://ollama.com"
+  },
+  "models": {
+    "source": "live"
+  },
+  "notes": "Ollama 托管的云端模型，需要 API Key。"
+}

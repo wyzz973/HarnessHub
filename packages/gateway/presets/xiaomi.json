@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "id": "xiaomi",
+  "name": "小米 MiMo",
+  "kind": "vendor",
+  "icon": "mimocode",
+  "website": "https://platform.xiaomimimo.com",
+  "keysUrl": "https://platform.xiaomimimo.com/token-plan",
+  "catalog": "xiaomi-token-plan-cn",
+  "verified": "unverified",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://token-plan-cn.xiaomimimo.com/v1",
+    "responses": "https://token-plan-cn.xiaomimimo.com/v1",
+    "anthropic": "https://token-plan-cn.xiaomimimo.com/anthropic"
+  },
+  "regions": [
+    {
+      "id": "plan-cn",
+      "name": "Token Plan · 中国",
+      "endpoints": {
+        "chat": "https://token-plan-cn.xiaomimimo.com/v1",
+        "responses": "https://token-plan-cn.xiaomimimo.com/v1",
+        "anthropic": "https://token-plan-cn.xiaomimimo.com/anthropic"
+      },
+      "catalog": "xiaomi-token-plan-cn"
+    },
+    {
+      "id": "plan-sgp",
+      "name": "Token Plan · 新加坡",
+      "endpoints": {
+        "chat": "https://token-plan-sgp.xiaomimimo.com/v1",
+        "responses": "https://token-plan-sgp.xiaomimimo.com/v1",
+        "anthropic": "https://token-plan-sgp.xiaomimimo.com/anthropic"
+      },
+      "catalog": "xiaomi-token-plan-sgp"
+    },
+    {
+      "id": "plan-ams",
+      "name": "Token Plan · 欧洲",
+      "endpoints": {
+        "chat": "https://token-plan-ams.xiaomimimo.com/v1",
+        "responses": "https://token-plan-ams.xiaomimimo.com/v1",
+        "anthropic": "https://token-plan-ams.xiaomimimo.com/anthropic"
+      },
+      "catalog": "xiaomi-token-plan-ams"
+    },
+    {
+      "id": "api",
+      "name": "按量付费",
+      "endpoints": {
+        "chat": "https://api.xiaomimimo.com/v1",
+        "responses": "https://api.xiaomimimo.com/v1",
+        "anthropic": "https://api.xiaomimimo.com/anthropic"
+      },
+      "catalog": "xiaomi"
+    }
+  ],
+  "models": {
+    "source": "live"
+  },
+  "notes": "Token Plan 的 tp- Key 只能用于所属地域的套餐域名；按量付费在 api.xiaomimimo.com。"
+}

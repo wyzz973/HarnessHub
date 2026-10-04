@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "opencode-zen",
+  "name": "OpenCode Zen",
+  "kind": "relay",
+  "icon": "opencode",
+  "website": "https://opencode.ai/docs/zen",
+  "keysUrl": "https://opencode.ai/auth",
+  "catalog": "opencode",
+  "verified": "unverified",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://opencode.ai/zen/v1",
+    "responses": "https://opencode.ai/zen/v1",
+    "anthropic": "https://opencode.ai/zen"
+  },
+  "models": {
+    "source": "live"
+  },
+  "notes": "免费模型可以用匿名 Key public（Magpie 的做法）；-free 模型只服务 OpenCode 客户端发出的请求。"
+}

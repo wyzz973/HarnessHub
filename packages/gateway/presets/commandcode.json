@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "commandcode",
+  "name": "Command Code",
+  "kind": "relay",
+  "icon": "commandcode",
+  "website": "https://commandcode.ai/docs/provider",
+  "keysUrl": "https://commandcode.ai/settings/keys",
+  "verified": "unverified",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://api.commandcode.ai/provider/v1",
+    "responses": "https://api.commandcode.ai/provider/v1",
+    "anthropic": "https://api.commandcode.ai/provider"
+  },
+  "models": {
+    "source": "live"
+  },
+  "notes": "Claude 模型只在 Anthropic Messages 端点提供，其余模型走 Chat 与 Responses。"
+}

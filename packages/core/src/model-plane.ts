@@ -127,6 +127,15 @@ export interface ProviderConfig {
   kind: ProviderKind;
   /** Preset this provider was created from, if any. */
   preset?: string;
+  /** The preset's region chosen at creation (`regions[].id`); only with `preset`. */
+  region?: string;
+  /** The preset's plan chosen at creation (`plans[].id`); only with `preset`. */
+  plan?: string;
+  /**
+   * models.dev provider ID for model metadata, replacing the one the preset
+   * (with its region and plan) names; set for providers imported without one.
+   */
+  catalog?: string;
   /** Base URL per native endpoint, without the operation path (`/chat/completions`, `/messages`, ...). */
   endpoints: Partial<Record<WireProtocol, string>>;
   auth: { apiKeyHeader: ApiKeyHeader };

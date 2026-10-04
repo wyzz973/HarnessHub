@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "together",
+  "name": "Together AI",
+  "kind": "relay",
+  "icon": "together-color",
+  "website": "https://www.together.ai",
+  "keysUrl": "https://api.together.ai/settings/api-keys",
+  "catalog": "togetherai",
+  "verified": "unverified",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://api.together.xyz/v1"
+  },
+  "models": {
+    "source": "live"
+  }
+}

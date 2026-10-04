@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "cherryin",
+  "name": "CherryIN",
+  "kind": "relay",
+  "icon": "cherryin-color",
+  "website": "https://open.cherryin.ai",
+  "keysUrl": "https://open.cherryin.ai/console/token",
+  "verified": "unverified",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://open.cherryin.ai/v1",
+    "responses": "https://open.cherryin.ai/v1",
+    "anthropic": "https://open.cherryin.ai"
+  },
+  "models": {
+    "source": "live"
+  }
+}

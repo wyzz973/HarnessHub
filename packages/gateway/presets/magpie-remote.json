@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "magpie-remote",
+  "name": "Magpie (remote)",
+  "kind": "relay",
+  "icon": "magpie",
+  "website": "https://github.com/yetone/magpie",
+  "verified": "2026-10-04",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "http://127.0.0.1:3425/v1",
+    "responses": "http://127.0.0.1:3425/v1",
+    "anthropic": "http://127.0.0.1:3425"
+  },
+  "userEndpoint": true,
+  "models": {
+    "source": "live"
+  },
+  "magpie": [
+    {
+      "id": "remote-magpie"
+    }
+  ],
+  "notes": "另一台电脑上开启了局域网共享的 Magpie：用 --base 填它在“Share on local network”中显示的地址（如 http://192.168.1.20:3425），凭据为它显示的 API Key。端点按 Magpie 2e340f7 的 remote_magpie.go 核对。"
+}

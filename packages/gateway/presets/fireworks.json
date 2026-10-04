@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "fireworks",
+  "name": "Fireworks AI",
+  "kind": "relay",
+  "icon": "fireworks-color",
+  "website": "https://fireworks.ai",
+  "keysUrl": "https://app.fireworks.ai/settings/users/api-keys",
+  "catalog": "fireworks-ai",
+  "verified": "unverified",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://api.fireworks.ai/inference/v1"
+  },
+  "models": {
+    "source": "live"
+  }
+}

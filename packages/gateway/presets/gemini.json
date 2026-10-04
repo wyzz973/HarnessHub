@@ -3,10 +3,12 @@
   "id": "gemini",
   "name": "Google Gemini (AI Studio)",
   "kind": "vendor",
+  "icon": "gemini-color",
   "website": "https://ai.google.dev",
   "keysUrl": "https://aistudio.google.com/apikey",
   "catalog": "google",
   "verified": "2026-10-02",
+  "source": "magpie@2e340f7",
   "auth": {
     "methods": [
       "api-key"
@@ -19,5 +21,5 @@
   "models": {
     "source": "live"
   },
-  "notes": "Gemini 另有 OpenAI 兼容端点 https://generativelanguage.googleapis.com/v1beta/openai，但它用 Bearer 发送 Key，与原生端点的 x-goog-api-key 不同；需要时另建一个 provider。"
+  "notes": "Gemini 另有 OpenAI 兼容端点（预设 gemini-openai），它用 Bearer 发送 Key，与原生端点的 x-goog-api-key 不同。"
 }

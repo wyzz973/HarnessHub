@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "id": "zai",
+  "name": "Z.ai (GLM)",
+  "kind": "vendor",
+  "icon": "zai",
+  "website": "https://z.ai",
+  "keysUrl": "https://z.ai/manage-apikey/apikey-list",
+  "catalog": "zai",
+  "verified": "unverified",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://api.z.ai/api/paas/v4",
+    "anthropic": "https://api.z.ai/api/anthropic"
+  },
+  "plans": [
+    {
+      "id": "api",
+      "name": "按量付费",
+      "endpoints": {
+        "chat": "https://api.z.ai/api/paas/v4",
+        "anthropic": "https://api.z.ai/api/anthropic"
+      }
+    },
+    {
+      "id": "coding",
+      "name": "GLM Coding Plan",
+      "endpoints": {
+        "chat": "https://api.z.ai/api/coding/paas/v4",
+        "responses": "https://api.z.ai/api/v1",
+        "anthropic": "https://api.z.ai/api/anthropic"
+      },
+      "catalog": "zai-coding-plan"
+    }
+  ],
+  "models": {
+    "source": "live"
+  },
+  "notes": "智谱的国际站。Coding Plan 的 Key 只能用于套餐自己的端点（--plan coding）。"
+}

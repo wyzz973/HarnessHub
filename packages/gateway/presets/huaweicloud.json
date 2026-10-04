@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "id": "huaweicloud",
+  "name": "华为云 MaaS",
+  "kind": "vendor",
+  "icon": "huaweicloud-color",
+  "website": "https://support.huaweicloud.com/Token-plan-maas/tokenplan-maas-0001.html",
+  "keysUrl": "https://console.huaweicloud.com/modelarts/?#/model-studio/authmanage",
+  "verified": "unverified",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "authorization-bearer"
+  },
+  "endpoints": {
+    "chat": "https://api.modelarts-maas.com/plan/v2",
+    "anthropic": "https://api.modelarts-maas.com/plan/anthropic"
+  },
+  "plans": [
+    {
+      "id": "plan",
+      "name": "Token Plan",
+      "endpoints": {
+        "chat": "https://api.modelarts-maas.com/plan/v2",
+        "anthropic": "https://api.modelarts-maas.com/plan/anthropic"
+      },
+      "models": [
+        "glm-5.3",
+        "glm-5.1",
+        "kimi-k2.6",
+        "deepseek-v4.1-flash",
+        "deepseek-v4-flash"
+      ]
+    },
+    {
+      "id": "api",
+      "name": "按量付费",
+      "endpoints": {
+        "chat": "https://api.modelarts-maas.com/openai/v1",
+        "anthropic": "https://api.modelarts-maas.com/anthropic"
+      }
+    }
+  ],
+  "models": {
+    "source": "live"
+  },
+  "notes": "Token Plan 面向西南-贵阳一的个人账号，额度只能在套餐端点使用；没有 Responses。"
+}

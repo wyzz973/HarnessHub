@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "azure",
+  "name": "Azure OpenAI",
+  "kind": "vendor",
+  "icon": "azure-color",
+  "website": "https://ai.azure.com",
+  "keysUrl": "https://portal.azure.com/#view/Microsoft_Azure_ProjectOxford/CognitiveServicesHub/~/OpenAI",
+  "catalog": "azure",
+  "verified": "unverified",
+  "source": "magpie@2e340f7",
+  "auth": {
+    "methods": [
+      "api-key"
+    ],
+    "apiKeyHeader": "api-key"
+  },
+  "endpoints": {
+    "chat": "https://your-resource.openai.azure.com/openai/v1",
+    "responses": "https://your-resource.openai.azure.com/openai/v1"
+  },
+  "userEndpoint": true,
+  "models": {
+    "source": "static"
+  },
+  "notes": "用 --base 填资源的终结点 https://<资源名>.openai.azure.com（Azure 门户“密钥和终结点”），端点为其下的 /openai/v1。模型 ID 是部署名，请在编辑 provider 时手动添加。"
+}
