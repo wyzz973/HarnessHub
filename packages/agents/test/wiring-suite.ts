@@ -103,7 +103,8 @@ async function fields(id: string, context: WiringContext) {
     })),
   );
   const field = adapter.baseUrlField;
-  const basePath = field.path;
+  const basePath =
+    typeof field.path === "function" ? field.path(TARGET.model) : field.path;
   const base = all.find(
     (candidate) =>
       files.get(field.file)!.path === candidate.file &&

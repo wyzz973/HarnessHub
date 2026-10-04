@@ -71,8 +71,15 @@ export interface WiringAdapter {
   /** Command names looked up on PATH to tell whether the agent is installed; never run. */
   readonly executables: readonly string[];
   readonly files: readonly AdapterFile[];
-  /** The setting that holds the gateway URL, for drift classification. */
-  readonly baseUrlField: { readonly file: string; readonly path: KeyPath };
+  /**
+   * The setting that holds the gateway URL, for drift classification; a
+   * function gives it for the wired model, for an agent that keeps the URL
+   * in each model's own entry.
+   */
+  readonly baseUrlField: {
+    readonly file: string;
+    readonly path: KeyPath | ((model: string) => KeyPath);
+  };
   settings(target: AdapterTarget): AdapterSetting[];
 }
 

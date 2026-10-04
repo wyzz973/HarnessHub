@@ -489,9 +489,12 @@ export async function detectDrift(
       continue;
     }
     files.push({ path: entry.path, state: "modified" });
+    const { file: baseFile, path: basePath } = adapter.baseUrlField;
     const baseField =
-      adapter.baseUrlField.file === manifest.fileId
-        ? adapter.baseUrlField.path
+      baseFile === manifest.fileId
+        ? typeof basePath === "function"
+          ? basePath(record.model)
+          : basePath
         : undefined;
     for (const expected of manifest.expected)
       for (const [leaf, template] of leaves(expected.value, expected.path)) {

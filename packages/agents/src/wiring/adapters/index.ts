@@ -10,10 +10,12 @@ import { pi } from "./pi.js";
 import { qwen } from "./qwen.js";
 import type { WiringAdapter } from "./types.js";
 // Adapters following Magpie (MIT) @2e340f7.
+import { grok } from "./grok.js";
 import { hermes } from "./hermes.js";
 import { mimocode } from "./mimocode.js";
 import { minimaxCode } from "./minimax-code.js";
 import { omo } from "./omo.js";
+import { qoder, qoderCn } from "./qoder.js";
 
 export type * from "./types.js";
 
@@ -22,7 +24,7 @@ export const wiringAdapters: ReadonlyMap<string, WiringAdapter> = new Map(
   [
     ...[claude, codex, gemini, qwen, opencode, pi, crush, kimi],
     // Following Magpie (MIT) @2e340f7.
-    ...[mimocode, omo, hermes, minimaxCode],
+    ...[mimocode, omo, hermes, minimaxCode, grok, qoder, qoderCn],
   ].map((adapter) => [adapter.id, adapter]),
 );
 
