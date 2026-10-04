@@ -55,16 +55,18 @@ hh gateway search remove search-1
 
 ## 图像生成
 
-`POST /v1/images/generations` 接受 OpenAI Images 的请求，直通到声明了图像端点的 provider：
+`POST /v1/images/generations` 与 `POST /v1/images/edits` 接受 OpenAI Images 的请求：JSON，或（编辑多用的）`multipart/form-data` 表单（`image`、`image[]` 与 `mask` 文件）。实现见 [images.ts](../packages/gateway/src/images.ts)。
 
 ```sh
 hh provider add openai --chat https://api.openai.com/v1 --image-endpoint https://api.openai.com/v1 --credential-from-env OPENAI_API_KEY
 ```
 
-- **路由**：`model` 是 Model Ref，或 `group/<id>`（按成员顺序）；只有设置了 `imageEndpoint`（不含操作路径，网关追加 `/images/generations`）的 provider 参与，订阅 provider 不参与。没有这样的 provider 时 404 `images_unavailable`。Gateway Key 的 `modelAllow`、配额与熔断照常适用；上游失败时按模型调用的规则转移到下一个 Credential。
-- **请求与答复**：`model` 改为 wire 名，Credential 按 provider 的方式附加，提示词经过出站脱敏，其余字段原样转发。JSON 答复与 `stream: true` 的事件（`image_generation.partial_image`、`image_generation.completed`）原样返回；上游最多等 5 分钟。
-- **记录**：每次调用一个账本条目（`inbound.path` 为 `/v1/images/generations`），用量取答复或完成事件中的 `usage`（`gpt-image-*` 按 token 报告），模型有价格时按输入与输出价格计费，没有用量的上游（如 DALL·E）费用为空。
-- 不在范围内：`/v1/images/edits`（multipart 上传）、为没有图像端点的模型选择画图模型（Magpie 的自动选择）。
+- **路由**：`model` 是 Model Ref，或 `group/<id>`（按成员顺序，组中的组展开在其位置上）。设置了 `imageEndpoint`（不含操作路径，网关追加 `/images/generations` 或 `/images/edits`）的 provider 先经图像端点请求；没有图像端点但有 Chat 端点的 provider 经 chat completions 请求（Magpie 对非 Images API 模型的做法）。订阅 provider 不参与。两种方式都没有时 404 `images_unavailable`。Gateway Key 的 `modelAllow`、配额与熔断照常适用；上游失败时按模型调用的规则转移到下一个 Credential。
+- **图像端点**：JSON 请求只把 `model` 改为 wire 名，提示词经过出站脱敏，其余字段原样转发；multipart 编辑重新组成表单发出（字段与文件原样，`model` 为 wire 名，`prompt` 经脱敏）。JSON 答复与 `stream: true` 的事件（`image_generation.partial_image`、`image_generation.completed` 等）原样返回；上游最多等 5 分钟。
+- **经 Chat 画图**：请求为 `modalities: ["image", "text"]`、非流式的 chat completions，用户消息是提示词（`size` 换算成“Aspect ratio: 3:2.”一类的说明，`background: "transparent"` 加上“Transparent background.”）与要编辑的图片（`image_url`，data URL 或 http(s) URL），并带 `image_config.aspect_ratio`。每张图一次调用，`n` 至多 4（更多时不走这种方式）。答复中的图片取自 `message.images[].image_url`、内容中的 `image_url` 部分、AIHubMix 的 `multi_mod_content` 或文本中 markdown 形式的 data URL，以 Images 的形式返回（`data[]` 的 `b64_json` 与 `mime_type`，或 `url`；`usage` 为各次的 `prompt_tokens`、`completion_tokens` 之和；模型说的话放在 `text`）；请求了 `stream: true` 时，每张图一个 `image_generation.completed`（编辑为 `image_edit.completed`）事件。没有画出图片时 502，转移到下一个 Credential。
+- **回退**：图像端点答复 404 或 405 时，在同一个 Credential 上改经 Chat 再请求一次（provider 有 Chat 端点时）；这次成功则采用它的结果，否则返回图像端点的错误。账本的 `patches[]` 记 `images:chat-after-images`，经 Chat 画出的另记 `images:via-chat`，两次尝试都在 `attempts[]` 中（第一次的 `decision` 为 `retry`）。
+- **记录**：每次调用一个账本条目（`inbound.path` 为 `/v1/images/generations` 或 `/v1/images/edits`），用量取答复或完成事件中的 `usage`（`gpt-image-*` 按 token 报告），模型有价格时按输入与输出价格计费，没有用量的上游（如 DALL·E）费用为空。
+- 不在范围内：为没有指定模型的请求自动选择画图模型（Magpie 的 `imageGen` 设置与自动选择）、Gemini 原生 `generateContent` 画图、视频、图像 MCP；`multipart` 表单中的图片只取上传的文件，不下载 URL。
 
 ## 工具搜索
 

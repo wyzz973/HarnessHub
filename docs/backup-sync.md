@@ -63,7 +63,7 @@ pnpm exec hh sync off
 - **profile**：同名替换，其余新增；应用 profile 仍由用户执行（`hh profile apply`）。
 - **Library**：`--no-library`（API 的 `library: false`）跳过；否则指令集、MCP 服务与 Skill 同 id 或同名替换，其余新增，保留原时间，不删除本机条目；本机保留的指令集让出被备份中指令集占用的 Agent（一个 Agent 只有一套）。每个条目按 Library API 的规则重新检查，不合格的或秘密引用 HarnessHub 自身凭据的（`SECRET_REF_FORBIDDEN`）不写入，列入 `library.refused`，本机同名条目保持不变。没有值的 `store` 秘密沿用本机同名服务的同名秘密，本机没有时去掉并列入 `needSecret`。Skill 携带的文件与本机同名 Skill 相同时保留本机版本（包括本机有而备份未带的大文件）；否则以携带的文件导入为新版本，缺了大文件的列入 `incomplete`。恢复不改 Agent 的文件，见上文的同步提示。
 - **Agent**：`--no-agents` 跳过；否则对本机已安装（PATH 上有命令，或有配置目录）的 Agent，经 `AgentWiringService` 先预览再以该预览为 `expect` 接线：请求带 model、models、tiers 与 effort（备份中没有的 tiers 与 effort 被清除）以及 options，签发新的 `agent:` Key；之后隐藏的模型与备份不同则经 `setHidden` 设置（保留该 Key）。本机隐藏了备份选中的模型时，先取消隐藏再接线，否则接线会被拒绝。未安装、未知或本守护进程没有接线目录的 Agent 跳过；选择、models 与隐藏的模型都已相同的不动。一个 Agent 失败不影响其他。
-- **client Key**：只列出，`hh key create` 重新签发。
+- **client Key**：只列出，`hh key create` 重新签发；有限额的附上给出同样限额的 `--rpm` 与 `--budget` 选项。旧备份中的 `tokensPerDay` 与 `costPerMonthUsd` 按存储迁移 6 的方式转换为预算（值为 0 的上限保留，仍拒绝每次调用），转换后不是有效限额的备份以 `BACKUP_INVALID` 拒绝。
 
 恢复与同步在同一队列中依次执行；模型平面 API 的写入可能落在两条记录之间，每条记录本身是原子的。
 
