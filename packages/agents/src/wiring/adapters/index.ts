@@ -9,15 +9,19 @@ import { opencode } from "./opencode.js";
 import { pi } from "./pi.js";
 import { qwen } from "./qwen.js";
 import type { WiringAdapter } from "./types.js";
+// Adapters following Magpie (MIT) @2e340f7.
+import { mimocode } from "./mimocode.js";
+import { omo } from "./omo.js";
 
 export type * from "./types.js";
 
 /** Every agent global wiring supports, by id. */
 export const wiringAdapters: ReadonlyMap<string, WiringAdapter> = new Map(
-  [claude, codex, gemini, qwen, opencode, pi, crush, kimi].map((adapter) => [
-    adapter.id,
-    adapter,
-  ]),
+  [
+    ...[claude, codex, gemini, qwen, opencode, pi, crush, kimi],
+    // Following Magpie (MIT) @2e340f7.
+    ...[mimocode, omo],
+  ].map((adapter) => [adapter.id, adapter]),
 );
 
 /** The adapter with this id; an unknown id fails with WIRING_ADAPTER_UNKNOWN. */

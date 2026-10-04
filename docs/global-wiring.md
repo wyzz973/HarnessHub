@@ -67,7 +67,7 @@ BOM 与换行风格（LF/CRLF）保持原样。回读校验用真实解析器确
 
 ## 支持的 Agent
 
-“核实”表示配置位置或键名来自 HarnessHub 隔离接线或 04 的记录，尚未以固定版本的真实 Agent 验证全局接线。
+“核实”表示配置位置或键名来自 HarnessHub 隔离接线或 04 的记录，尚未以固定版本的真实 Agent 验证全局接线。第二张表的 Adapter 依照 Magpie @2e340f7（MIT，[yetone/magpie](https://github.com/yetone/magpie)）的 `internal/agent/<agent>.go` 记录的配置位置与键名，同样未以真实 Agent 验证。
 
 | Adapter | 文件（目录变量） | 写入的键 | 协议 | Key 落点 |
 |---|---|---|---|---|
@@ -79,6 +79,13 @@ BOM 与换行风格（LF/CRLF）保持原样。回读校验用真实解析器确
 | `pi` Pi | `settings.json` 与 `models.json`（`${PI_CODING_AGENT_DIR:-~/.pi/agent}`） | `defaultProvider`、`defaultModel`；`providers.harnesshub`（`baseUrl`、`api: openai-completions`、`apiKey`、`models[]` 含 `contextWindow`、`maxTokens`） | Chat | 配置文件（字面 `apiKey` 的解析方式核实） |
 | `crush` Crush | `crush.json`（`${XDG_CONFIG_HOME:-~/.config}/crush`，Windows 为 `%LOCALAPPDATA%\crush`） | `providers.harnesshub`（`type: openai-compat`、`base_url`、`api_key`、`models[]` 含 `context_window`、`default_max_tokens`）、`models.large`、`models.small` | Chat | 配置文件 |
 | `kimi` Kimi Code | `config.toml`（`${KIMI_SHARE_DIR:-~/.kimi}`，核实） | `default_model`；`[providers.harnesshub]`（`type = "openai_legacy"`、`base_url`、`api_key`）；窗口已知的每个模型一个 `[models."<ref>"]`（`provider`、`model`、`max_context_size`）。所选模型必须有窗口 | Chat | 配置文件 |
+
+以下 Adapter 依照 Magpie @2e340f7，未以真实 Agent 验证；Key 一律写入配置文件。Magpie 的网关不校验 Key（`magpie` 或 `magpie-<agent>`），HarnessHub 的网关要求 Agent 作用域的 Key，因此只收录能把 Key 写进配置的 Agent，且不写 Magpie 仅用于识别调用方的 `User-Agent` 头（Key 已标明 Agent）。`WiringModel` 只有窗口与输出上限，Magpie 按模型写入的推理档位、图片输入与按原生 API 逐模型选择协议（Pi、omp 的 `openai-responses`/`anthropic-messages`）一律不写，所有模型走表中的协议。
+
+| Adapter | 文件（目录变量） | 写入的键 | 协议 | 说明 |
+|---|---|---|---|---|
+| `mimocode` MiMo Code | 已有的 `mimocode.jsonc`、`mimocode.json` 或 `config.json`，否则新建 `mimocode.json`（`$MIMOCODE_HOME/config`，否则 `${XDG_CONFIG_HOME:-~/.config}/mimocode`） | 与 `opencode` 相同 | Chat | OpenCode 的 fork，复用 `opencode` 的写入 |
+| `omo` OmO | `settings.json` 与 `models.json`（`${OMO_CODING_AGENT_DIR:-${SENPI_CODING_AGENT_DIR:-~/.omo/agent}}`） | 与 `pi` 相同 | Chat | Pi 的 fork，复用 `pi` 的写入；与 Pi 共用 `PI_CODING_AGENT_DIR` 的目录由 `pi` 接线 |
 
 Shell 环境中已有的同名变量优先于 dotenv 文件（Gemini、Qwen），OpenCode 的 `OPENCODE_CONFIG_DIR` 与 Kimi 的 `OPENAI_*` 变量也会覆盖全局文件；这类绕过由漂移检测的网关证据（`bypassed`，尚未实现）发现。
 
