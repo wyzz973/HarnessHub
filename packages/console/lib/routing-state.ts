@@ -29,16 +29,24 @@ export function breakerState(state: CredentialRoutingState["state"]): {
 }
 
 /**
+ * A ledger error class in words, as `代理连接失败` for `proxy_failed`; a
+ * class without a name here shows as the daemon names it.
+ */
+export function errorClassText(errorClass: string): string {
+  const key = `providers.failure.${errorClass}`;
+  return isMessageKey(key) ? translate(key) : errorClass;
+}
+
+/**
  * The class of the last failure (the ledger's error classes of upstream
  * failures, gateway `failureClass`) with its status, as
- * `被限流（HTTP 429）`; an unknown class shows as the daemon names it.
+ * `被限流（HTTP 429）`.
  */
 export function failureText(
   failure: NonNullable<CredentialRoutingState["lastFailure"]>,
 ): string {
-  const key = `providers.failure.${failure.kind}`;
   return t("providers.failure.text", {
-    kind: isMessageKey(key) ? translate(key) : failure.kind,
+    kind: errorClassText(failure.kind),
     status: String(failure.status),
   });
 }

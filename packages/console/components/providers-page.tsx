@@ -44,8 +44,11 @@ import {
   kindName,
   providerKinds,
   providerPatch,
+  proxyModes,
+  proxyText,
   type Failure,
   type ProviderForm,
+  type ProxyMode,
 } from "@/lib/model-plane";
 import { providerIcon } from "@/lib/gateway-models";
 import { formatDateTime, t } from "@/lib/i18n";
@@ -192,6 +195,7 @@ function ProviderDialog({
     "/name",
     "/endpoints",
     "/imageEndpoint",
+    "/proxy",
     ...protocols.map((protocol) => `/endpoints/${protocol}`),
   ];
   return (
@@ -361,6 +365,46 @@ function ProviderDialog({
               </span>
               <FieldError failure={failure} pointer="/imageEndpoint" />
             </label>
+            {provider?.subscription?.backend === "copilot" ? null : (
+              <div className="space-y-2">
+                <label className="field-label">
+                  {t("providers.proxy.label")}
+                  <select
+                    className="field"
+                    value={form.proxy}
+                    onChange={(event) =>
+                      set({ proxy: event.target.value as ProxyMode })
+                    }
+                  >
+                    {proxyModes.map((mode) => (
+                      <option key={mode} value={mode}>
+                        {t(`providers.proxy.${mode}`)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {form.proxy === "url" ? (
+                  <label className="field-label">
+                    {t("providers.proxy.urlLabel")}
+                    <input
+                      className="field font-mono text-[13px]"
+                      value={form.proxyUrl}
+                      aria-invalid={!!failure?.fields["/proxy"]}
+                      placeholder="http://127.0.0.1:7890"
+                      autoComplete="off"
+                      spellCheck={false}
+                      onChange={(event) =>
+                        set({ proxyUrl: event.target.value })
+                      }
+                    />
+                  </label>
+                ) : null}
+                <span className="field-hint block">
+                  {t("providers.proxy.hint")}
+                </span>
+                <FieldError failure={failure} pointer="/proxy" />
+              </div>
+            )}
             <label className="field-label">
               {t("providers.models")}
               <textarea
@@ -668,6 +712,20 @@ function ProviderDetail({
               </dd>
             </div>
           ) : null}
+          {provider.subscription?.backend === "copilot" ? null : (
+            <div className="metric-row">
+              <dt>{t("providers.proxy.label")}</dt>
+              <dd
+                className={
+                  provider.proxy !== undefined && provider.proxy !== "direct"
+                    ? "font-mono text-[12.5px]"
+                    : undefined
+                }
+              >
+                {proxyText(provider)}
+              </dd>
+            </div>
+          )}
           <div className="metric-row">
             <dt>{t("providers.apiKeyHeader")}</dt>
             <dd className="font-mono text-[12.5px]">

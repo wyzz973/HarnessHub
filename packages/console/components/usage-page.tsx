@@ -21,6 +21,7 @@ import {
 } from "@/lib/model-plane";
 import { t } from "@/lib/i18n";
 import { duration, finishReasonText, quantity } from "@/lib/presentation";
+import { errorClassText } from "@/lib/routing-state";
 import { cn } from "@/lib/utils";
 import type { Page } from "@/lib/router";
 import {
@@ -109,6 +110,14 @@ function CallsTable({ calls }: { calls: readonly ApiModelCall[] }) {
                   {call.status}
                   {call.rejected ? t("usage.calls.rejected") : ""}
                 </span>
+                {call.status >= 400 && call.errorClass ? (
+                  <span
+                    className="mt-1 block text-[12px] text-muted-foreground"
+                    title={`errorClass: ${call.errorClass}`}
+                  >
+                    {errorClassText(call.errorClass)}
+                  </span>
+                ) : null}
                 {call.finishReason ? (
                   <span
                     className="mt-1 block text-[12px] text-muted-foreground"

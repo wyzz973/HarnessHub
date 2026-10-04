@@ -49,6 +49,13 @@ export const zh = {
   "providers.dialog.imageEndpointHint":
     "OpenAI 兼容 Images API 的基址，不含 /images/generations；网关的 /v1/images/generations 直通到这里。",
   "providers.dialog.modelsPlaceholder": "每行一个模型 ID，例如\ndeepseek-chat",
+  "providers.proxy.label": "代理",
+  "providers.proxy.daemon": "使用守护进程的代理",
+  "providers.proxy.direct": "直连，不经代理",
+  "providers.proxy.url": "这个代理地址",
+  "providers.proxy.urlLabel": "代理地址",
+  "providers.proxy.hint":
+    "守护进程的代理来自 hh serve 的 --proxy、HTTPS_PROXY 等环境变量或 network.proxy，没有设置时直连。代理地址以 http://、https://、socks5:// 或 socks5h:// 开头，不能含用户名或密码：provider 记录不是秘密，需要密码的代理只能作为守护进程的代理。本机回环地址从不经代理。与 hh provider proxy 相同。",
   "providers.dialog.exposeAll":
     "全部模型出现在 /v1/models 与 Agent 的模型选择中",
 
@@ -232,6 +239,7 @@ export const zh = {
   "providers.failure.model_not_found": "不提供这个模型",
   "providers.failure.upstream_timeout": "上游超时",
   "providers.failure.upstream_unavailable": "上游不可用",
+  "providers.failure.upstream_unreachable": "无法连接上游",
   "providers.failure.context_length_exceeded": "上下文超长",
   "providers.failure.upstream_rejected": "上游拒绝了请求",
   "providers.failure.text": "{kind}（HTTP {status}）",
@@ -314,6 +322,13 @@ export const en: Translation<typeof zh> = {
     "The base URL of an OpenAI-compatible Images API, without /images/generations; the gateway's /v1/images/generations passes through to it.",
   "providers.dialog.modelsPlaceholder":
     "One model ID per line, such as\ndeepseek-chat",
+  "providers.proxy.label": "Proxy",
+  "providers.proxy.daemon": "Use the daemon's proxy",
+  "providers.proxy.direct": "Direct, no proxy",
+  "providers.proxy.url": "This proxy URL",
+  "providers.proxy.urlLabel": "Proxy URL",
+  "providers.proxy.hint":
+    "The daemon's proxy comes from hh serve's --proxy, the HTTPS_PROXY family of environment variables or network.proxy; without one, requests go direct. A proxy URL starts with http://, https://, socks5:// or socks5h:// and holds no user name or password: provider records are not secret, so a proxy that needs a password can only be the daemon's. Loopback addresses are never proxied. The same as hh provider proxy.",
   "providers.dialog.exposeAll":
     "Every model appears in /v1/models and in agents' model pickers",
 
@@ -504,6 +519,7 @@ export const en: Translation<typeof zh> = {
   "providers.failure.model_not_found": "Does not serve this model",
   "providers.failure.upstream_timeout": "Upstream timed out",
   "providers.failure.upstream_unavailable": "Upstream unavailable",
+  "providers.failure.upstream_unreachable": "Upstream unreachable",
   "providers.failure.context_length_exceeded": "Context too long",
   "providers.failure.upstream_rejected": "The upstream rejected the request",
   "providers.failure.text": "{kind} (HTTP {status})",

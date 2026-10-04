@@ -115,6 +115,10 @@ export function referenceName(type: string): string {
   return isMessageKey(key) ? translate(key) : type;
 }
 
+/** Whose proxy a provider's requests take: the daemon's (`network.proxy`), none, or its own. */
+export type ProxyMode = "daemon" | "direct" | "url";
+export const proxyModes: readonly ProxyMode[] = ["daemon", "direct", "url"];
+
 /** The editable fields of a provider form. */
 export interface ProviderForm {
   id: string;
@@ -128,6 +132,9 @@ export interface ProviderForm {
   models: string;
   /** "all", or the model IDs that appear in /v1/models and agent pickers. */
   expose: "all" | string[];
+  proxy: ProxyMode;
+  /** The provider's own proxy address, sent as typed when `proxy` is "url". */
+  proxyUrl: string;
 }
 
 export function emptyProviderForm(): ProviderForm {
@@ -140,6 +147,8 @@ export function emptyProviderForm(): ProviderForm {
     imageEndpoint: "",
     models: "",
     expose: "all",
+    proxy: "daemon",
+    proxyUrl: "",
   };
 }
 
@@ -158,7 +167,36 @@ export function providerFormOf(provider: ProviderConfig): ProviderForm {
     imageEndpoint: provider.imageEndpoint ?? "",
     models: provider.models.list.map((model) => model.id).join("\n"),
     expose: provider.models.expose,
+    proxy:
+      provider.proxy === undefined
+        ? "daemon"
+        : provider.proxy === "direct"
+          ? "direct"
+          : "url",
+    proxyUrl:
+      provider.proxy === undefined || provider.proxy === "direct"
+        ? ""
+        : provider.proxy,
   };
+}
+
+/** The `proxy` field of a form: absent for the daemon's; the daemon checks an address. */
+function proxyOf(form: ProviderForm): string | undefined {
+  switch (form.proxy) {
+    case "daemon":
+      return undefined;
+    case "direct":
+      return "direct";
+    case "url":
+      return form.proxyUrl.trim();
+  }
+}
+
+/** How a provider's proxy reads on its page. */
+export function proxyText(provider: ProviderConfig): string {
+  if (provider.proxy === undefined) return t("providers.proxy.daemon");
+  if (provider.proxy === "direct") return t("providers.proxy.direct");
+  return provider.proxy;
 }
 
 /** Unique, trimmed model IDs, one per line. */
@@ -197,6 +235,7 @@ export function providerInput(form: ProviderForm): ProviderInput {
       .filter(([, url]) => url),
   );
   const models = modelsOf(form);
+  const proxy = proxyOf(form);
   return {
     id: form.id.trim(),
     ...(form.name.trim() ? { name: form.name.trim() } : {}),
@@ -207,6 +246,7 @@ export function providerInput(form: ProviderForm): ProviderInput {
       ? { imageEndpoint: form.imageEndpoint.trim() }
       : {}),
     ...(models.list.length ? { models } : {}),
+    ...(proxy !== undefined ? { proxy } : {}),
   };
 }
 
@@ -222,6 +262,7 @@ export function providerPatch(
     else if (previous.endpoints[protocol] !== undefined)
       endpoints[protocol] = null;
   }
+  const proxy = proxyOf(form);
   return {
     name: form.name.trim() || previous.id,
     kind: form.kind,
@@ -233,6 +274,11 @@ export function providerPatch(
         ? { imageEndpoint: null }
         : {}),
     models: modelsOf(form, previous),
+    ...(proxy !== undefined
+      ? { proxy }
+      : previous.proxy !== undefined
+        ? { proxy: null }
+        : {}),
   };
 }
 

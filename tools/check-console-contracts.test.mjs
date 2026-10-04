@@ -692,6 +692,81 @@ test("the routing state and gateway features pages present the gateway's state a
   assert.deepEqual(features.rulesWith(view, { remove: "ticket" }), [{ name: "codename", pattern: "a" }]);
 });
 
+test("the provider form sends the provider's own proxy, and proxy failures read as words", async () => {
+  const lib = await consoleModule("lib/model-plane.ts", {
+    'import { apiClient } from "./session";': "const apiClient = undefined;",
+  });
+  const { providerCreateSchema, providerPatchSchema } = await import(
+    new URL("../packages/daemon/dist/src/http/api-v1-schemas.js", import.meta.url).href
+  );
+  const { HarnessHubError } = await import(new URL("../packages/sdk/dist/src/client.js", import.meta.url).href);
+  const form = {
+    ...lib.emptyProviderForm(),
+    id: "lab",
+    endpoints: { chat: "https://lab.example/v1", responses: "", anthropic: "", gemini: "" },
+  };
+  assert.equal("proxy" in lib.providerInput(form), false, "the daemon's proxy is the absent field");
+  assert.equal(lib.providerInput({ ...form, proxy: "direct" }).proxy, "direct");
+  assert.equal(lib.providerInput({ ...form, proxy: "url", proxyUrl: " socks5://127.0.0.1:1080 " }).proxy, "socks5://127.0.0.1:1080");
+  assert.equal(
+    lib.providerInput({ ...form, proxy: "url", proxyUrl: "  " }).proxy,
+    "",
+    "an empty address is sent, so the daemon's refusal names the field",
+  );
+  assert.ok("proxy" in providerCreateSchema.properties);
+  assert.deepEqual(providerPatchSchema.properties.proxy.type, ["string", "null"], "null returns a provider to the daemon's proxy");
+
+  const previous = {
+    schemaVersion: 1,
+    id: "lab",
+    name: "Lab",
+    kind: "relay",
+    endpoints: { chat: "https://lab.example/v1" },
+    auth: { apiKeyHeader: "authorization-bearer" },
+    credentials: [],
+    models: { source: "manual", list: [], expose: "all" },
+    proxy: "http://127.0.0.1:7890",
+  };
+  const { proxy: _ignored, ...noProxy } = previous;
+  const edited = lib.providerFormOf(previous);
+  assert.deepEqual([edited.proxy, edited.proxyUrl], ["url", "http://127.0.0.1:7890"]);
+  assert.deepEqual([lib.providerFormOf({ ...previous, proxy: "direct" }).proxy, lib.providerFormOf(noProxy).proxy], ["direct", "daemon"]);
+  assert.equal(lib.providerPatch(edited, previous).proxy, "http://127.0.0.1:7890");
+  assert.equal(lib.providerPatch({ ...edited, proxy: "direct" }, previous).proxy, "direct");
+  assert.equal(lib.providerPatch({ ...edited, proxy: "daemon" }, previous).proxy, null, "back to the daemon's proxy");
+  assert.equal("proxy" in lib.providerPatch({ ...edited, proxy: "daemon" }, noProxy), false);
+  assert.deepEqual(
+    [lib.proxyText(noProxy), lib.proxyText({ ...previous, proxy: "direct" }), lib.proxyText(previous)],
+    ["使用守护进程的代理", "直连，不经代理", "http://127.0.0.1:7890"],
+  );
+  const refused = lib.failureOf(
+    new HarnessHubError({
+      type: "x",
+      title: "Bad Request",
+      status: 400,
+      code: "PROVIDER_INVALID",
+      requestId: "r",
+      errors: [{ pointer: "/proxy", detail: "must not hold credentials" }],
+    }),
+  );
+  assert.equal(refused.fields["/proxy"], "must not hold credentials", "the daemon's words, on the proxy field");
+
+  // Every ledger class of an upstream failure has words, proxy_failed included.
+  const routing = await consoleModule("lib/routing-state.ts");
+  const { failureClass } = await import(new URL("../packages/gateway/dist/src/routing.js", import.meta.url).href);
+  const classes = new Set(
+    ["proxy", "verify", "auth", "credit", "quota", "rate", "model", "other", "request"].flatMap((kind) => [
+      failureClass(kind, 500, false),
+      failureClass(kind, 504, true),
+    ]),
+  );
+  classes.add("upstream_unreachable");
+  for (const errorClass of classes) assert.notEqual(routing.errorClassText(errorClass), errorClass, errorClass);
+  assert.equal(routing.errorClassText("proxy_failed"), "代理连接失败");
+  assert.equal(routing.errorClassText("something_new"), "something_new");
+  assert.equal(routing.failureText({ kind: "proxy_failed", status: 502, at: "2026-10-05T00:00:00.000Z" }), "代理连接失败（HTTP 502）");
+});
+
 test("the provider check dialog names every doctor check and states the plan's cost", async () => {
   const doctor = await consoleModule("lib/provider-doctor.ts");
   const { doctorChecks } = await import(
