@@ -111,7 +111,7 @@ pnpm exec hh tui                            # the same in the terminal: models, 
 pnpm exec hh unwire codex                   # restore its files and revoke its key
 ```
 
-Wiring backs up the agent's own configuration files, writes a key that belongs to that agent alone, and reads the files back. Running agent sessions pick the change up when they restart. Which files and keys each of the 28 agents gets, and the safety rules, are in [global wiring](docs/global-wiring.md) (in Chinese).
+Wiring backs up the agent's own configuration files, writes a key that belongs to that agent alone, and reads the files back. Running agent sessions pick the change up when they restart. In a terminal, `wire`, `unwire` and every other command that changes files or settings ask first; without one (a script, CI or another agent's shell) they show the changes, stop with "No terminal to confirm; pass --yes" (exit 4) and change nothing, so add `--yes` there, as the `hh init` examples above do. Which files and keys each of the 28 agents gets, and the safety rules, are in [global wiring](docs/global-wiring.md) (in Chinese).
 
 ### 5. The console
 

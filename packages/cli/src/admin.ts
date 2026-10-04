@@ -327,12 +327,17 @@ function localTime(value: string | undefined): string {
 }
 
 /** Ask `[y/N]` on stderr unless `--yes`; refuse without a terminal. */
+/**
+ * What every command that asks before a change says when it cannot ask (no
+ * terminal, `CI`, or `--non-interactive`) and `--yes` was not given; it
+ * then exits 4 and changes nothing.
+ */
+const NO_TERMINAL = "No terminal to confirm; pass --yes.";
+
 async function confirm(ctx: Context, question: string): Promise<void> {
   if (ctx.yes) return;
   if (!ctx.interactive)
-    throw new ConfirmationRequired(
-      `${question} Confirmation needed; pass --yes to proceed without a prompt.`,
-    );
+    throw new ConfirmationRequired(`${question} ${NO_TERMINAL}`);
   process.stderr.write(`${question} [y/N] `);
   const answer = await readLine();
   if (!/^y(es)?$/i.test(answer.trim()))
@@ -2322,6 +2327,7 @@ export {
   Interrupted,
   list,
   localTime,
+  NO_TERMINAL,
   output,
   parse,
   positionals,

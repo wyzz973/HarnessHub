@@ -572,7 +572,10 @@ void test(
       refused.stdout,
       /\nProposed change to provider cli \(PATCH \/api\/v1\/providers\/cli\):\n\{/,
     );
-    assert.match(refused.stderr, /pass --yes/);
+    assert.match(
+      refused.stderr,
+      /^Error: Apply this change to provider cli\? No terminal to confirm; pass --yes\.\n$/,
+    );
     assert.equal((await client.providers.get("cli")).patches, undefined);
     const fixed = await run(["provider", "doctor", "cli", "--fix", "--yes"]);
     assert.equal(fixed.code, 0, fixed.stderr);

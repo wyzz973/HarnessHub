@@ -351,7 +351,10 @@ void test(
       unconfirmed.stdout,
       /^\+experimental_bearer_token = "hhk_a_[a-z2-7]{4}…"$/m,
     );
-    assert.match(unconfirmed.stderr, /--yes/);
+    assert.match(
+      unconfirmed.stderr,
+      /^Error: Write these changes to 2 files of codex\? No terminal to confirm; pass --yes\.\n$/,
+    );
     assert.equal(await readFile(config, "utf8"), ORIGINAL);
 
     const used = await ok("use", "codex", MODEL, "--yes");
@@ -372,6 +375,16 @@ void test(
     // Re-wiring without a model keeps the current one.
     await ok("wire", "codex", "--yes");
     const third = await wired(config);
+
+    // Without a terminal unwire asks for --yes, in the words every
+    // confirming command uses, and changes nothing.
+    const unasked = await run("unwire", "codex");
+    assert.equal(unasked.code, 4, unasked.stderr);
+    assert.match(
+      unasked.stderr,
+      /^Error: Restore the configuration of Codex CLI from before wiring \(.+\) and revoke its key\? No terminal to confirm; pass --yes\.\n$/,
+    );
+    assert.equal((await wired(config)).key, third.key);
 
     const unwired = await ok("unwire", "codex", "--yes");
     assert.match(unwired.stdout, /^restored\s+.*config\.toml$/m);

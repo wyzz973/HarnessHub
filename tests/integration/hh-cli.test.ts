@@ -188,7 +188,11 @@ void test(
     const shown = (await ok(["provider", "show", "alpha"])).stdout;
     assert.match(shown, /key-1 +main +store:[0-9a-f-]{36} +all +yes/);
     // Removal needs confirmation; without a terminal it stops with 4 and changes nothing.
-    await fails(["credential", "remove", "alpha", "backup"], 4);
+    const kept = await fails(["credential", "remove", "alpha", "backup"], 4);
+    assert.equal(
+      kept.stderr,
+      "Error: Remove credential backup of alpha? No terminal to confirm; pass --yes.\n",
+    );
     await ok(["credential", "remove", "alpha", "backup", "--yes"]);
     assert.doesNotMatch(
       (await ok(["credential", "list", "alpha"])).stdout,
@@ -677,7 +681,10 @@ void test(
       unconfirmed.stdout,
       new RegExp(`\\n {2}Key: +from the link \\(…${key.slice(-4)}\\)`),
     );
-    assert.match(unconfirmed.stderr, /pass --yes/);
+    assert.match(
+      unconfirmed.stderr,
+      /\? No terminal to confirm; pass --yes\.\n$/,
+    );
     assert.equal((await run(["provider", "show", "openai"])).code, 2);
     const imported = await run(["import", "-", "--yes"], `${link}\n`);
     assert.equal(imported.code, 0, imported.stderr);

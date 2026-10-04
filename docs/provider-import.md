@@ -40,7 +40,7 @@
 
 ```sh
 hh import 'harnesshub://import?preset=moonshot&region=global&key=…'
-hh import - < link.txt         # 从 stdin 读取链接，Key 不留在 shell 历史中
+hh import - < link.txt         # 从 stdin 读取链接，Key 不留在 shell 历史中；stdin 不是终端，只预览并以 4 退出
 hh import - --yes < link.txt   # 不询问，直接添加
 ```
 

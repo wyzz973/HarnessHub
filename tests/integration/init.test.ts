@@ -194,7 +194,10 @@ void test("hh init without a terminal: preset, key from the environment, agents 
   const unconfirmed = await hh(on.directory, options, env);
   assert.equal(unconfirmed.code, 4, unconfirmed.stderr);
   assert.match(unconfirmed.stdout, /Claude Code \(claude\):/);
-  assert.match(unconfirmed.stderr, /pass --yes/);
+  assert.match(
+    unconfirmed.stderr,
+    /^Error: Write these changes to claude, codex\? No terminal to confirm; pass --yes\. The provider was added\.\n$/,
+  );
   assert.equal((await on.client.agents.get("claude")).wiring, null);
 
   // With --yes: the provider is reused (it keeps the key it was added

@@ -73,7 +73,7 @@ hh provider add glm --preset zhipu --plan coding
 hh provider models deepseek --refresh
 hh provider test deepseek                     # 每个端点一个最小请求
 hh provider doctor deepseek [--deep] [--fix]  # 先打印计划与预计成本，再逐项检查
-hh import - < link.txt                       # 导入链接：先预览，再确认
+hh import - --yes < link.txt                 # 从 stdin 读导入链接，不询问（stdin 不是终端，没有 --yes 时只预览并以 4 退出）
 hh import --from codex                        # 导入 Codex 已配置的上游
 hh provider add local-llm --chat http://127.0.0.1:8000/v1 --model my-model
 hh credential add deepseek --name main          # 在终端中隐藏输入
@@ -126,7 +126,7 @@ hh provider models office --refresh           # 模型名为 office/<provider>/<
 - `hh gateway share on` 的 `--host`（本机 IP，`0.0.0.0` 表示全部地址，此时需要 `--name`）、`--port`、可重复的 `--name` 与 `--public-base-url` 未给出时沿用当前设置；`off` 保留地址只关闭监听器。`hh provider add --preset P [--region R] [--plan P] --base URL` 把所选组合的每个端点路径接到 `URL` 之后，`--chat` 等显式端点优先。
 - 秘密从不作为参数：终端中隐藏输入，非交互时必须用 `--from-stdin`、`--from-env <变量>` 或 `--from-file <路径>`，否则以 2 退出。
 - `hh usage --by conversation` 经 `GET /conversations` 列出最后活动的 200 个会话（会话键只显示前 12 位，`--json` 输出完整的 API 响应），可用 `--since`、`--from`、`--to`、`--agent` 等缩小范围；其他 `--by` 取值经 `GET /usage` 汇总。`hh group hide` 与 `restore` 只接受自动路由组，可以随时恢复，因此不需要确认。
-- `provider remove`、`credential remove`、`group remove`、`key revoke` 与 `import` 需要确认；`--yes` 跳过，非交互且没有 `--yes` 时以 4 退出且不做修改。stdin 不是终端、设置了 `CI` 或给出 `--non-interactive` 时为非交互。
+- `provider remove`、`credential remove`、`group remove`、`key revoke` 与 `import` 需要确认；`--yes` 跳过，非交互且没有 `--yes` 时以 4 退出且不做修改，错误为确认问题加上 “No terminal to confirm; pass --yes.”（接线、Profile、Library 同步、备份与恢复、同步、体检、订阅登录与 `hh init` 的接线确认措辞相同）。stdin 不是终端、设置了 `CI` 或给出 `--non-interactive` 时为非交互。
 - 退出码（06 第 5 节）：0 成功；1 内部错误；2 用法错误、输入无效或名称不存在；3 守护进程不可达或数据目录中没有令牌；4 需要确认；5 冲突（409、412、422）；6 认证失败；7 达到上限或未就绪（429、503）；130 中断。
 
 控制台由守护进程在同一端口提供，它的 Agent、Profile、Provider、路由与 Key、用量与设置页面以控制台会话经 SDK 调用这些接口，浏览器拿不到管理令牌（见 [控制台](../packages/console/README.md)）。`hh console [--url URL] [--data-dir DIR] [--json]` 打印登录链接，退出码同上。

@@ -97,6 +97,11 @@ void test(
     const help = await hh(directory, ["--help"]);
     assert.equal(help.code, 0);
     assert.match(help.stdout, /^Usage: hh <command>/);
+    // A command's line names its subcommands, gateway's features too.
+    assert.match(
+      help.stdout,
+      /\n {2}gateway +.*\(features, redaction, vision, search, share on\|off\|status\)\n/,
+    );
   },
 );
 

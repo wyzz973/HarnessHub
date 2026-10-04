@@ -33,6 +33,7 @@ import {
   EXIT,
   hiddenPrompt,
   list,
+  NO_TERMINAL,
   parse,
   readLine,
   readSecret,
@@ -753,13 +754,12 @@ export async function runInit(
   );
   const changing = planned.filter(({ plan }) => plan?.changed);
   if (changing.length && !answers.yes) {
+    const question = `Write these changes to ${changing.map(({ agent }) => agent.id).join(", ")}?`;
     if (!prompter)
       throw new ConfirmationRequired(
-        "Wiring the agents needs confirmation; pass --yes to proceed without a prompt. The provider was added.",
+        `${question} ${NO_TERMINAL} The provider was added.`,
       );
-    const answer = await prompter.ask(
-      `Write these changes to ${changing.map(({ agent }) => agent.id).join(", ")}? [y/N] `,
-    );
+    const answer = await prompter.ask(`${question} [y/N] `);
     if (!/^y(es)?$/i.test(answer.trim()))
       throw new ConfirmationRequired(
         "Cancelled; no agent was changed. The provider stays; wire later with hh wire.",

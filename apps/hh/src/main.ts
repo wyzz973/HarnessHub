@@ -8,12 +8,12 @@ Commands:
   config      Show or edit config.jsonc (show, get, set, unset)
   status      Show the running daemon and its model plane
   console     Print a one-time link that signs a browser in to the console
-  provider    Manage model providers (list, show, presets, add, remove, test, doctor)
+  provider    Manage model providers (list, show, presets, models, add, remove, test, doctor)
   import      Add providers from an import link or from Claude Code / Codex
   credential  Manage provider credentials (list, add, rotate, remove)
-  key         Manage Gateway Keys (list, create, revoke)
-  gateway     Share the model gateway on the local network (gateway share on|off|status)
-  group       Manage route groups (list, add, remove)
+  key         Manage Gateway Keys and their limits (list, create, quota, limit, revoke)
+  gateway     Gateway features and LAN sharing (features, redaction, vision, search, share on|off|status)
+  group       Manage route groups and their rules (list, add, remove, auto, hide, restore, rule)
   model       Show model metadata with its sources; set overrides
   catalog     Show or refresh the models.dev catalog (status, refresh)
   usage       Summarize model-call usage by model, provider or day

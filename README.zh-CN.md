@@ -113,7 +113,7 @@ pnpm exec hh tui                            # 终端界面：模型、档位、e
 pnpm exec hh unwire codex                   # 还原它的文件并吊销它的 Key
 ```
 
-接线先备份 Agent 自己的配置文件，写入只属于这个 Agent 的 Key，再回读校验。正在运行的 Agent 会话重启后生效。28 个 Agent 各自写入哪些文件与键、以及安全规则，见 [全局接线](docs/global-wiring.md)。
+接线先备份 Agent 自己的配置文件，写入只属于这个 Agent 的 Key，再回读校验。正在运行的 Agent 会话重启后生效。在终端中，`wire`、`unwire` 以及其他会改动文件或设置的命令都先询问；没有终端时（脚本、CI 或另一个 Agent 的 shell）它们显示改动后以 “No terminal to confirm; pass --yes” 停止（退出码 4），什么都不改，这时加 `--yes`，如上面 `hh init` 的示例。28 个 Agent 各自写入哪些文件与键、以及安全规则，见 [全局接线](docs/global-wiring.md)。
 
 ### 5. 控制台
 
