@@ -16,7 +16,10 @@ export const CODEX_BACKEND_PATH = "/backend-api/codex";
  *   next to the configuration, which HarnessHub generates with every listed
  *   model's window, reasoning levels and image input (Codex reads its model
  *   metadata from there, as Magpie's codexcat writes it), and the effort goes
- *   to `model_reasoning_effort`.
+ *   to `model_reasoning_effort`. Unless the chosen model's provider takes
+ *   Responses natively, `web_search = "disabled"` keeps Codex from sending
+ *   its hosted web search tool, which the gateway cannot translate (found by
+ *   running Codex 0.144.5 against a Chat Completions upstream).
  * - `chatgpt`: the user's ChatGPT sign-in stays as it is and only
  *   `openai_base_url` points Codex's built-in OpenAI provider at
  *   `<gateway>/backend-api/codex`, which forwards Codex's requests, signed in
@@ -96,6 +99,14 @@ export const codex: WiringAdapter = {
             },
           ]
         : []),
+      // Codex offers its hosted `web_search` tool to every model, and the
+      // gateway can serve a hosted tool only by passing Responses through to
+      // a provider that has it; translated to another protocol, every turn
+      // would fail. Web search stays on only for a model whose provider
+      // takes Responses natively.
+      ...(target.selected?.nativeProtocols?.includes("responses")
+        ? []
+        : [{ file: "config", path: ["web_search"], value: "disabled" }]),
       {
         file: "config",
         path: ["model_providers", "harnesshub"],

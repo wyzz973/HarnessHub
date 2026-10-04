@@ -62,6 +62,7 @@ export const GOLDEN: Readonly<
       ".codex/config.toml": `model_provider = "harnesshub"
 model = "deepseek/deepseek-chat"
 model_catalog_json = "<home>/.codex/harnesshub-models.json"
+web_search = "disabled"
 
 [model_providers.harnesshub]
 name = "HarnessHub"
@@ -147,6 +148,7 @@ model = "deepseek/deepseek-chat" # my default
 approval_policy = "on-request"
 model_provider = "harnesshub"
 model_catalog_json = "<home>/.codex/harnesshub-models.json"
+web_search = "disabled"
 
 [projects."/Users/me/work"]
 trust_level = "trusted"

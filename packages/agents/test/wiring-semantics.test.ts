@@ -298,6 +298,35 @@ void test("codex: the API mode generates a model catalog with windows, levels an
   assert.deepEqual(await snapshot(context.home), {});
 });
 
+void test("codex: web search stays on only for a model whose provider takes Responses natively", async (t) => {
+  // Codex 0.144.5 sends its hosted web_search tool on every turn; the
+  // gateway cannot translate it, so Codex failed against a Chat upstream.
+  const settings = async (model: string) => {
+    const context = await sandbox(t);
+    await applyWiring("codex", { ...TARGET, model }, context);
+    return parseToml(
+      await readFile(path.join(context.home, ".codex", "config.toml"), "utf8"),
+    );
+  };
+  assert.equal(
+    (await settings("deepseek/deepseek-chat")).web_search,
+    "disabled",
+  );
+  assert.equal((await settings("group/fast")).web_search, "disabled");
+  assert.equal((await settings("openai/gpt-5")).web_search, undefined);
+  // An unknown model (no metadata) has no native protocols either.
+  const context = await sandbox(t);
+  await applyWiring(
+    "codex",
+    { baseUrl: BASE, ...KEY, model: "other/m", models: [] },
+    context,
+  );
+  assert.match(
+    await readFile(path.join(context.home, ".codex", "config.toml"), "utf8"),
+    /^web_search = "disabled"$/m,
+  );
+});
+
 void test("codex: the ChatGPT mode writes only openai_base_url, takes no key or model, and switching modes restores what the other wrote", async (t) => {
   const context = await sandbox(t);
   const original = `model = "gpt-5.5-codex"\n`;
