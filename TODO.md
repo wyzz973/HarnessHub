@@ -48,7 +48,21 @@
 
 所有者决定先把 Web 控制台做强：控制台内嵌在守护进程中，打开一个地址就是完整界面（对标 Magpie 的单一应用）。原计划属于 M2 的控制台重写（[12 第 2 节](docs/proposals/oss/12-roadmap-migration.md#2-里程碑)）因此提前。
 
-- [ ] **W4 控制台内嵌守护进程**（[ADR-P10](docs/proposals/oss/adr-drafts.md#adr-p10-控制台改为内嵌静态单页)、[ADR 0024](docs/decisions/0024-embedded-console.md)）：Next.js 控制台迁为 React + Vite 静态单页（`packages/console/dist`），由守护进程在同一端口提供：`/` 与 HTML 页面回退、带哈希且长期缓存的 `/assets/*`、CSP（无内联脚本、`frame-ancestors 'none'`）与安全头，不遮蔽 `/api/v1`、`/v1*`、`/health*`、`/openapi.json` 与模型网关路径；单文件构建嵌入 `dist`。控制台会话按 07 第 5.2 节：`hh console` 与 `hh serve` 启动输出打印 `/#login=<code>` 一次性链接（60 秒），换取 HttpOnly、`SameSite=Strict` 的 Cookie，GET 之外的请求另需 `X-HH-CSRF`；浏览器不再持有管理令牌，服务端代理与 `--console-url` 移除。旧 `/v1/*` 管理路由保持回环规则（ADR 0022 第 4 条）。进展（2026-10-04，分支 `feat/console-vite`）：macOS arm64 本机 `pnpm check` 通过（工具 183、单元 414 通过 14 跳过、集成 234 通过 11 跳过 6 todo、smoke 5；含 `check:api` 与 `check:console`），新增 `tests/integration/console.test.ts`（5 项）与 `packages/daemon/test/console-session.test.ts`（3 项）；从 `hh serve`（临时数据目录、文件秘密后端、`--wiring-home` 临时目录）在 Chromium 中走完全部页面并截图，无 CSP 违例或脚本错误。待合入与三平台 CI 后勾选；Windows 未验证，控制台浏览器回归测试（10 第 3.6 节）尚未接入。
+- [x] **W4 控制台内嵌守护进程**（[ADR-P10](docs/proposals/oss/adr-drafts.md#adr-p10-控制台改为内嵌静态单页)、[ADR 0024](docs/decisions/0024-embedded-console.md)）：Next.js 控制台迁为 React + Vite 静态单页（`packages/console/dist`），由守护进程在同一端口提供：`/` 与 HTML 页面回退、带哈希且长期缓存的 `/assets/*`、CSP（无内联脚本、`frame-ancestors 'none'`）与安全头，不遮蔽 `/api/v1`、`/v1*`、`/health*`、`/openapi.json` 与模型网关路径；单文件构建嵌入 `dist`。控制台会话按 07 第 5.2 节：`hh console` 与 `hh serve` 启动输出打印 `/#login=<code>` 一次性链接（60 秒），换取 HttpOnly、`SameSite=Strict` 的 Cookie，GET 之外的请求另需 `X-HH-CSRF`；浏览器不再持有管理令牌，服务端代理与 `--console-url` 移除。旧 `/v1/*` 管理路由保持回环规则（[ADR 0024](docs/decisions/0024-embedded-console.md) 第 4 条）。进展（2026-10-04，分支 `feat/console-vite`）：macOS arm64 本机 `pnpm check` 通过（工具 183、单元 414 通过 14 跳过、集成 234 通过 11 跳过 6 todo、smoke 5；含 `check:api` 与 `check:console`），新增 `tests/integration/console.test.ts`（5 项）与 `packages/daemon/test/console-session.test.ts`（3 项）；从 `hh serve`（临时数据目录、文件秘密后端、`--wiring-home` 临时目录）在 Chromium 中走完全部页面并截图，无 CSP 违例或脚本错误。已合入 main（`c423c4b`，集成后本机完整 `pnpm check` 通过：集成 255 通过 11 跳过）；按所有者 2026-10-02 的决定 CI 只作参考，不再等三平台 CI。Windows 未验证，控制台浏览器回归测试（10 第 3.6 节）尚未接入。
+
+## 对标 Magpie（所有者 2026-10-02/03 决定）
+
+目标是把 Magpie（`yetone/magpie`，MIT）的能力用 TypeScript 重写并结合 HarnessHub 的执行平面与证据链；逐项对标清单来自 2026-10-03 的源码调研（Magpie `2e340f7`）。以下各项都在本机（macOS arm64）以完整 `pnpm check` 验证后合入 `main`；没有用真实 provider 与真实 Agent 验证的项目单独注明。
+
+- [x] **模型平面契约与存储**：`@harnesshub/core/model-plane`（`d6f655f`）；编号迁移框架与 provider、路由组、Gateway Key（只存哈希）、账本、接线记录表，`store` 秘密引用与加密文件后端（`23fd7a9`–`6ac065e`，ADR 0018）。
+- [x] **`/api/v1`、SDK 与 CLI**：管理令牌、provider/凭据/路由组/Key/调用记录/用量路由，`hh provider|credential|key|group|usage|status`（`b5d3f93`–`03bef6b`）；控制台模型平面页面（`ff44e7e`）。
+- [x] **共享网关**：守护进程端口上的多 provider 网关，Key 鉴权与白名单、同协议直通、四协议任意互转、首字节前故障转移与熔断、先提交后发布的账本（`c68f08e`–`166c0e3`）；粘性与 Key 额度（`2303cee`）；挂载与快速上手（`ee47f17`）；Session 的 Run 改走共享网关，统一模型迁入模型平面（`070debc`，ADR 0019）。
+- [x] **预设与目录**：内置预设与模型列表在线刷新（`bc86dbe`、`5b4a6f3`）；扩到 46 个预设（覆盖 Magpie 51 个中的 48 个），区域、套餐、图标，导入链接与从 Claude Code/Codex 导入（`5fe4daf`–`6ca83d5`，ADR 0023）；models.dev 目录、元数据来源与覆盖，默认后台刷新（`37cb5c8` 起，ADR 0020）。
+- [x] **全局接线**：格式保真编辑器与 8 个 Adapter（`ebbc647`）；`/api/v1/agents`、`hh agents|wire|use|unwire` 与控制台 Agents 页（`37aa0bb`、`614939c`）；新增 11 个 Agent（`a26e485`）；Claude 档位与 `[1m]`、Codex 的 Key 与 ChatGPT 登录两种模式、各 Agent 模型元数据、每个 Agent 的模型清单（隐藏）、Profile（`702c4c3`–`f8833d1`，ADR 0022）。
+- [x] **路由对齐 Magpie**：失败分类与按类别休息、自动路由组、`X-HH-Credential` 钉选、least-used、会话与凭据维度的用量、Codex ChatGPT 透传（`b82f64c`，ADR 0025）。
+- [x] **其他**：OTLP 导出（`16897dd`）；局域网共享与级联另一台 HarnessHub（`57f8b1e`，ADR 0021）；控制台内嵌（见上，W4）；`hh serve` 默认监听 `127.0.0.1`（`a8bb06d`，首次真实实测发现）；加密备份、恢复与 WebDAV/S3 同步（`a757fe9`）。
+- [ ] **进行中**：控制台补齐新功能界面并以 Agents 为首页；接线的数组元素归属与 Droid、WorkBuddy、ZCode、Claude Desktop，模型变化自动同步到各 Agent；`hh provider test|doctor`；订阅 provider（只用厂商支持的途径：ChatGPT 官方第三方登录、Copilot；Claude 订阅因 Anthropic 条款明确禁止第三方代为转发而不实现，见 ADR-P09）；Library（指令、MCP、Skills 同步到各 Agent）。
+- [ ] **未验证**：真实 provider 与真实 Agent 的端到端（首次实测因改写用户真实配置需所有者亲自执行而待做）；Windows；单可执行文件的实际构建。
 
 ## M1–M5
 
