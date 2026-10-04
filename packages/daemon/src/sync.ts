@@ -3,11 +3,12 @@
  * Multi-machine sync through a WebDAV folder or an S3-compatible bucket
  * (docs/backup-sync.md), off by default. What goes to the server is a backup
  * sealed with the sync passphrase, so the server only ever holds ciphertext.
- * The setup is taken in four parts: `providers` (providers with their
+ * The setup is taken in five parts: `providers` (providers with their
  * credentials and overrides, and route groups), `agents` (the wirings as
- * intents), `profiles` (wiring profiles) and `library` (the Library's
- * items; with agent wirings synced, also written into the agents installed
- * here). A part changed only here is pushed, one changed only on the
+ * intents), `profiles` (wiring profiles), `library` (the Library's items;
+ * with agent wirings synced, also written into the agents installed here)
+ * and `features` (the gateway's redaction, vision model and search
+ * backends; redaction turned off by the server is named in the notice). A part changed only here is pushed, one changed only on the
  * server is brought in, and one changed on both since the last sync keeps
  * the side changed last; the side it replaced is saved under
  * `<dataDir>/sync/conflicts/` and named in a notice. Each machine writes only
@@ -36,6 +37,11 @@ import {
   type BackupBundle,
   type BackupService,
 } from "./backup.js";
+import {
+  emptyFeatures,
+  featuresView,
+  withFeaturesValues,
+} from "./features-backup.js";
 import type { ManagedSecrets } from "./http/api-v1.js";
 import {
   emptyLibrary,
@@ -67,6 +73,7 @@ export const SYNC_PARTS = [
   "agents",
   "profiles",
   "library",
+  "features",
 ] as const;
 export type SyncPart = (typeof SYNC_PARTS)[number];
 
@@ -100,6 +107,13 @@ export interface SyncNotice {
   saved?: string;
   /** Providers and groups the server no longer has, kept because Gateway Keys still allow them. */
   kept?: string[];
+  /**
+   * The server's gateway features turned outbound redaction off here: a
+   * security change, shown until the next notice.
+   */
+  redactionOff?: true;
+  /** Search backends the server carries without a key and this machine has none for: not brought in. */
+  needKey?: string[];
 }
 
 /** `<dataDir>/sync/state.json`: what the last sync saw. */
@@ -147,6 +161,7 @@ export type SyncBackups = Pick<
   | "bringAgents"
   | "bringProfiles"
   | "bringLibrary"
+  | "bringFeatures"
   | "serial"
 >;
 
@@ -615,10 +630,12 @@ export class SyncService {
     for (const part of SYNC_PARTS) {
       if (L[part] === R[part] || (part === "agents" && !config.agents))
         continue;
-      // From a HarnessHub before profiles or the Library: this machine's go up.
+      // From a HarnessHub before profiles, the Library or the gateway
+      // features: this machine's go up.
       if (
         (part === "profiles" && remoteBundle.profiles === undefined) ||
-        (part === "library" && remoteBundle.library === undefined)
+        (part === "library" && remoteBundle.library === undefined) ||
+        (part === "features" && remoteBundle.gatewayFeatures === undefined)
       ) {
         take(merged, local, part);
         continue;
@@ -659,8 +676,20 @@ export class SyncService {
         );
     }
     const kept: string[] = [];
+    let redactionOff = false;
+    const needKey: string[] = [];
     for (const part of bring)
-      if (part === "providers")
+      if (part === "features") {
+        if (!remoteBundle.gatewayFeatures) continue;
+        const brought = await backups.bringFeatures(
+          remoteBundle.gatewayFeatures,
+        );
+        if (brought.redaction.turnsOff) {
+          redactionOff = true;
+          this.log.info("sync.redaction_off", {});
+        }
+        needKey.push(...brought.search.needKey);
+      } else if (part === "providers")
         kept.push(...(await backups.bringProviders(remoteBundle, true)).kept);
       else if (part === "agents")
         await backups.bringAgents(remoteBundle.agents, config.agents);
@@ -704,13 +733,21 @@ export class SyncService {
     state.server = version;
     state.remote = R;
     await this.remember(data);
-    if (here.length || there.length || kept.length)
+    if (
+      here.length ||
+      there.length ||
+      kept.length ||
+      redactionOff ||
+      needKey.length
+    )
       state.notice = {
         at: new Date(this.now_()).toISOString(),
         here,
         there,
         ...(saved ? { saved } : {}),
         ...(kept.length ? { kept } : {}),
+        ...(redactionOff ? { redactionOff: true as const } : {}),
+        ...(needKey.length ? { needKey } : {}),
       };
     if (!same(M, R)) await push(merged, version.etag);
     state.local = now;
@@ -724,6 +761,7 @@ export class SyncService {
       agents: hash(bundle.agents),
       profiles: hash(bundle.profiles ?? []),
       library: hash(libraryView(bundle.library)),
+      features: hash(featuresView(bundle.gatewayFeatures)),
     };
   }
 
@@ -838,6 +876,15 @@ function take(to: BackupBundle, from: BackupBundle, part: SyncPart): void {
     else delete to.library;
     return;
   }
+  if (part === "features") {
+    if (from.gatewayFeatures)
+      to.gatewayFeatures = withFeaturesValues(
+        from.gatewayFeatures,
+        to.gatewayFeatures,
+      );
+    else delete to.gatewayFeatures;
+    return;
+  }
   const values = new Map<string, string>();
   for (const provider of to.providers)
     for (const credential of provider.credentials)
@@ -869,6 +916,8 @@ function emptyPart(bundle: BackupBundle, part: SyncPart): boolean {
       return (bundle.profiles ?? []).length === 0;
     case "library":
       return emptyLibrary(bundle.library);
+    case "features":
+      return emptyFeatures(bundle.gatewayFeatures);
     case "providers":
       return bundle.providers.length === 0 && bundle.groups.length === 0;
   }

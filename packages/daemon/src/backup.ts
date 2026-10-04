@@ -4,8 +4,8 @@
  * their credentials (the values only with keys), route groups, model
  * overrides, the agents' wirings as intents (model, tiers, effort, options
  * and the models they list and hide), wiring profiles, the Library
- * (`library-backup.ts`), settings, and the client keys that would need
- * re-issuing. Subscription providers (ChatGPT, Copilot) are left out: their
+ * (`library-backup.ts`), the gateway's features (`features-backup.ts`),
+ * settings, and the client keys that would need re-issuing. Subscription providers (ChatGPT, Copilot) are left out: their
  * accounts are sign-ins of this machine (an OAuth grant, a CLI login), to
  * be signed in again on each machine, so a backup never carries them and a
  * restore or sync never writes, replaces or removes them. Gateway Key text
@@ -21,6 +21,7 @@ import {
   libraryAgents,
   type LibraryAgent,
 } from "@harnesshub/agents/library/index";
+import { autoGroups } from "@harnesshub/core/auto-groups";
 import { HubError } from "@harnesshub/core/errors";
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import {
@@ -64,6 +65,13 @@ import {
   type BackupEnvelope,
 } from "./backup-envelope.js";
 import type { WiringRequest } from "./agents-wiring.js";
+import {
+  FeaturesBackup,
+  isBackupGatewayFeatures,
+  type BackupGatewayFeatures,
+  type FeaturesRestore,
+  type GatewayFeaturesBackups,
+} from "./features-backup.js";
 import {
   isBackupLibrary,
   type BackupLibrary,
@@ -154,6 +162,11 @@ export interface BackupBundle {
   profiles?: WiringProfile[];
   /** The Library; absent in a backup from before it, which restores none. */
   library?: BackupLibrary;
+  /**
+   * Redaction, the vision model and the search backends; absent in a backup
+   * from before them, which leaves this machine's as they are.
+   */
+  gatewayFeatures?: BackupGatewayFeatures;
   clientKeys: ClientKeyIntent[];
 }
 
@@ -196,6 +209,8 @@ export interface BackupServiceOptions {
   share?: GatewayShareControl;
   /** The Library; absent, it is neither saved nor restored. */
   library?: LibraryBackups;
+  /** The gateway's features file; absent, they are neither saved nor restored. */
+  features?: GatewayFeaturesBackups;
   /** The catalog settings this daemon was started with (from its configuration). */
   catalog: CatalogSettingsBackup;
   /** `HarnessHub <version>`. */
@@ -246,6 +261,12 @@ export interface RestoreSummary {
    * Library into them is the Library's plan and apply.
    */
   library: LibraryRestore | null;
+  /**
+   * What of the gateway's features is (or was) brought in; null when the
+   * backup has none (an older HarnessHub) or this daemon keeps none.
+   * `redaction.turnsOff` is a security change that must be shown.
+   */
+  gatewayFeatures: FeaturesRestore | null;
   gatewayShare: {
     action: "apply" | "unchanged" | "absent" | "unavailable";
     settings?: GatewayShareSettings;
@@ -283,8 +304,18 @@ export interface MirrorResult {
  */
 export class BackupService {
   private queue: Promise<unknown> = Promise.resolve();
+  private readonly features: FeaturesBackup | undefined;
 
-  constructor(private readonly options: BackupServiceOptions) {}
+  constructor(private readonly options: BackupServiceOptions) {
+    this.features = options.features
+      ? new FeaturesBackup({
+          features: options.features,
+          secrets: options.secrets,
+          environment: options.environment,
+          ...(options.clock ? { clock: options.clock } : {}),
+        })
+      : undefined;
+  }
 
   /**
    * Collects and seals a backup. With `keys`, the values of stored
@@ -396,6 +427,9 @@ export class BackupService {
       profiles: await store.listWiringProfiles(),
       ...(this.options.library
         ? { library: await this.options.library.carry(options.keys) }
+        : {}),
+      ...(this.features
+        ? { gatewayFeatures: await this.features.carry(options.keys) }
         : {}),
       clientKeys: active.flatMap((key): ClientKeyIntent[] =>
         key.scope.kind === "client"
@@ -540,16 +574,42 @@ export class BackupService {
   }
 
   /**
+   * Mirrors the server's gateway features here (sync): its redaction switch
+   * and rules, vision model and search backends exactly, keeping this
+   * machine's key of a backend the server carries without a value. The
+   * result says whether redaction was turned off.
+   */
+  async bringFeatures(part: BackupGatewayFeatures): Promise<FeaturesRestore> {
+    if (!this.features)
+      return {
+        redaction: {
+          enabled: part.redaction.enabled,
+          turnsOff: false,
+          turnsOn: false,
+        },
+        rules: { added: [], replaced: [], removed: [] },
+        vision: null,
+        search: { added: [], replaced: [], removed: [], needKey: [] },
+      };
+    return this.features.bring(part, {
+      mirror: true,
+      dryRun: false,
+      unresolved: (model) => this.unresolved(model),
+    });
+  }
+
+  /**
    * When a sync part was last changed here, as its records tell: the newest
    * `updatedAt` of providers, groups and overrides, of profiles or of the
-   * Library's items, or `wiredAt` of the wirings. A deletion leaves no time,
-   * so it does not count.
+   * Library's items, `wiredAt` of the wirings, or the gateway features'
+   * `updatedAt`. A deletion leaves no time, so it does not count.
    */
   async lastChange(
-    part: "providers" | "agents" | "profiles" | "library",
+    part: "providers" | "agents" | "profiles" | "library" | "features",
   ): Promise<string | undefined> {
     const { store } = this.options;
     if (part === "library") return this.options.library?.lastChange();
+    if (part === "features") return this.features?.lastChange();
     const times: string[] = [];
     if (part === "agents")
       for (const wiring of await store.listWirings())
@@ -665,6 +725,33 @@ export class BackupService {
               dryRun: true,
             })
           : null,
+      gatewayFeatures:
+        bundle.gatewayFeatures && this.features
+          ? await this.features.bring(bundle.gatewayFeatures, {
+              mirror: false,
+              dryRun: true,
+              // As things will be once the backup's providers and groups are in.
+              unresolved: (model) =>
+                this.unresolved(model, {
+                  providers: [
+                    ...[...here.values()].filter(
+                      (item) =>
+                        !bundle.providers.some(
+                          (entry) => entry.config.id === item.id,
+                        ),
+                    ),
+                    ...bundle.providers
+                      .filter(
+                        (item) =>
+                          !item.config.subscription &&
+                          !here.get(item.config.id)?.subscription,
+                      )
+                      .map((item) => ({ ...item.config, credentials: [] })),
+                  ],
+                  groups: [...groupsHere, ...groups.added, ...groups.replaced],
+                }),
+            })
+          : null,
       gatewayShare: this.planShare(bundle.settings.gatewayShare),
       catalog: bundle.settings.catalog
         ? {
@@ -697,6 +784,14 @@ export class BackupService {
             dryRun: false,
           })
         : null;
+    const features =
+      bundle.gatewayFeatures && this.features
+        ? await this.features.bring(bundle.gatewayFeatures, {
+            mirror: false,
+            dryRun: false,
+            unresolved: (model) => this.unresolved(model),
+          })
+        : null;
     const gatewayShare = { ...summary.gatewayShare };
     if (gatewayShare.action === "apply" && this.options.share)
       try {
@@ -708,9 +803,40 @@ export class BackupService {
     return {
       ...summary,
       library: brought,
+      gatewayFeatures: features,
       gatewayShare,
       agents: await this.applyAgents(summary.agents),
     };
+  }
+
+  /**
+   * Why `model` (a Model Ref or `group/<id>`) is not served here, or
+   * undefined when it is: its provider or group is missing, or its provider
+   * lists models and not this one. `projected` stands for this machine as
+   * a restore would leave it; without it, as it is.
+   */
+  private async unresolved(
+    model: string,
+    projected?: { providers: ProviderConfig[]; groups: string[] },
+  ): Promise<string | undefined> {
+    const { store } = this.options;
+    const providers = projected?.providers ?? (await store.listProviders());
+    const groups =
+      projected?.groups ??
+      (await store.listRouteGroups()).map((group) => group.id as string);
+    const parsed = parseModelRef(model);
+    if (!parsed) return `${model} is not a Model Ref`;
+    if (parsed.kind === "group")
+      return groups.includes(parsed.group) ||
+        autoGroups(providers).some((group) => group.id === parsed.group)
+        ? undefined
+        : `there is no route group ${parsed.group}`;
+    const provider = providers.find((item) => item.id === parsed.provider);
+    if (!provider) return `there is no provider ${parsed.provider}`;
+    const listed = provider.models.list;
+    return listed.length && !listed.some((item) => item.id === parsed.model)
+      ? `${parsed.provider} does not list ${parsed.model}`
+      : undefined;
   }
 
   /** The Library's agents installed here (detected or configured). */
@@ -1123,6 +1249,11 @@ export function decodeBundle(bytes: Buffer): BackupBundle {
     throw invalidBundle("has an invalid wiring profile");
   if (value.library !== undefined && !isBackupLibrary(value.library))
     throw invalidBundle("has an invalid Library");
+  if (
+    value.gatewayFeatures !== undefined &&
+    !isBackupGatewayFeatures(value.gatewayFeatures)
+  )
+    throw invalidBundle("has invalid gateway features");
   if (!Array.isArray(value.clientKeys) || !value.clientKeys.every(isClientKey))
     throw invalidBundle("has an invalid client key");
   return value as unknown as BackupBundle;

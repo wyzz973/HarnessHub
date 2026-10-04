@@ -10,7 +10,10 @@ import {
 import { idParams, responses } from "./api-v1-schemas.js";
 
 /** The gateway features without secret references: a search backend says whether it has a key. */
-export interface GatewayFeaturesView extends Omit<GatewayFeatures, "search"> {
+export interface GatewayFeaturesView extends Omit<
+  GatewayFeatures,
+  "search" | "updatedAt"
+> {
   search?: {
     backends: (Omit<SearchBackend, "credential"> & { hasKey: boolean })[];
   };

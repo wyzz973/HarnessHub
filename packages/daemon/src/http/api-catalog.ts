@@ -2266,7 +2266,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     response:
       "200：加密信封 format=harnesshub-backup、version=1、kdf=pbkdf2-sha256、iterations=600000、salt、nonce、data（base64，AES-256-GCM 密文加 16 字节标签）；即备份文件的内容。",
     implementation:
-      "BackupService.create：收集 provider（store 凭证按 keys 解析出值，env/file/keychain 引用原样保留）、覆盖值与来源、路由组、接线意图（Agent、model、models）、client Key 的名称与允许范围、Library（LibraryService.carry：MCP 的 store 秘密按 keys 带值、引用原样，Skill 文件超过 2 MiB 或累计超过 32 MiB 的不带）、局域网共享与目录设置，再以口令派生的密钥（PBKDF2-SHA256 600,000 次）用 AES-256-GCM 加密，信封字段作为附加认证数据。",
+      "BackupService.create：收集 provider（store 凭证按 keys 解析出值，env/file/keychain 引用原样保留）、覆盖值与来源、路由组、接线意图（Agent、model、models）、client Key 的名称与允许范围、Library（LibraryService.carry：MCP 的 store 秘密按 keys 带值、引用原样，Skill 文件超过 2 MiB 或累计超过 32 MiB 的不带）、网关功能（出站脱敏的开关与规则、视觉兜底模型、搜索后端，搜索 Key 同凭证按 keys 带值）、局域网共享与目录设置，再以口令派生的密钥（PBKDF2-SHA256 600,000 次）用 AES-256-GCM 加密，信封字段作为附加认证数据。",
     effects: "只读；口令不保存；Gateway Key 文本从不进入备份。",
     errors:
       "400 INVALID_REQUEST（口令为空等）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json。",
@@ -2282,11 +2282,11 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     request:
       "backup（备份文件的 JSON）、passphrase；agents 缺省 true，false 时不重新接线；library 缺省 true，false 时不带入 Library；dryRun 缺省 false，true 时只返回摘要。请求体上限 64 MiB。",
     response:
-      "200：摘要 providers（added、replaced、needKey）、groups（added、replaced、skipped）、overrides、profiles（added、replaced）、library（instructions、mcp、skills 各 added、replaced、removed，mcp.needSecret、skills.incomplete、refused[]；备份没有或 library=false 时为 null）、gatewayShare（action、settings、error）、catalog（backup、current、differs）、agents[]（agent、model、tiers、effort、options、models、deny 与 action=wire|unchanged|skip-*，恢复后 outcome=wired|failed 与 error）、clientKeys（需重新签发；旧备份的 tokensPerDay 与 costPerMonthUsd 转换为 budgets，值为 0 的上限保留）。",
+      "200：摘要 providers（added、replaced、needKey）、groups（added、replaced、skipped）、overrides、profiles（added、replaced）、library（instructions、mcp、skills 各 added、replaced、removed，mcp.needSecret、skills.incomplete、refused[]；备份没有或 library=false 时为 null）、gatewayFeatures（redaction 的 enabled、turnsOff（关闭本机开着的出站脱敏，须提示）与 turnsOn，rules 与 search 各 added、replaced、removed，search.needKey，vision 的 model、changed 与 unresolved（恢复后本机没有的模型或路由组，仍设置）；备份没有时为 null）、gatewayShare（action、settings、error）、catalog（backup、current、differs）、agents[]（agent、model、tiers、effort、options、models、deny 与 action=wire|unchanged|skip-*，恢复后 outcome=wired|failed 与 error）、clientKeys（需重新签发；旧备份的 tokensPerDay 与 costPerMonthUsd 转换为 budgets，值为 0 的上限保留）。",
     implementation:
-      "BackupService.restore：解密并校验内容后逐条写入：同 id 的 provider 与同名 profile 替换、其余新增（不带 Key 的备份保留本机凭证；新凭证先写入密钥存储，provider 写失败则删除），路由组，Library 的条目（LibraryService.bring：逐条按 Library API 的规则与 SECRET_REF_FORBIDDEN 检查，被拒的不写入，没有值的 store 秘密沿用本机同名服务的，保留原时间），局域网共享设置（GatewayShare.update），再对本机已安装的 Agent 经 AgentWiringService 的 plan 与 wire（expect 为该预览）按 model、models、tiers、effort 与 options 以新的 agent: Key 接线，隐藏的模型不同时经 setHidden 设置。",
+      "BackupService.restore：解密并校验内容后逐条写入：同 id 的 provider 与同名 profile 替换、其余新增（不带 Key 的备份保留本机凭证；新凭证先写入密钥存储，provider 写失败则删除），路由组，Library 的条目（LibraryService.bring：逐条按 Library API 的规则与 SECRET_REF_FORBIDDEN 检查，被拒的不写入，没有值的 store 秘密沿用本机同名服务的，保留原时间），网关功能（GatewayFeaturesFile.replace：出站脱敏的开关取备份的，规则按名称、搜索后端按种类与地址替换或新增，搜索 Key 同 provider 凭证的规则，没有值且本机没有的后端不写入并列入 needKey），局域网共享设置（GatewayShare.update），再对本机已安装的 Agent 经 AgentWiringService 的 plan 与 wire（expect 为该预览）按 model、models、tiers、effort 与 options 以新的 agent: Key 接线，隐藏的模型不同时经 setHidden 设置。",
     effects:
-      "非 dryRun 时写入 providers、模型覆盖与来源、路由组、接线 profile、<dataDir>/library 与密钥存储，可能改写 gateway-sharing.json 与 Agent 配置文件（Library 不写入 Agent，另经 /library/sync）；不删除任何本机记录；单条失败的 Agent 接线不影响其余项。",
+      "非 dryRun 时写入 providers、模型覆盖与来源、路由组、接线 profile、<dataDir>/library 与密钥存储，可能改写 gateway-features.json、gateway-sharing.json 与 Agent 配置文件（Library 不写入 Agent，另经 /library/sync）；不删除任何本机记录；单条失败的 Agent 接线不影响其余项。",
     errors:
       "400 BACKUP_PASSPHRASE（口令错误或文件被改）、BACKUP_INVALID、BACKUP_UNSUPPORTED（更新版本的备份）；413 PAYLOAD_TOO_LARGE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json。",
     source: "packages/daemon/src/http/backup-routes.ts",
@@ -2355,9 +2355,9 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     request: "请求体为空对象。",
     response: "200：同步后的状态。",
     implementation:
-      "SyncService.now：条件读取服务器文件（If-None-Match），按 providers、agents、profiles 与 library 四部分三方比较，只改了一边的取该边，两边都改的取最后修改的一边并保存被替换的副本，带入的部分逐条写入本机（library 带入后在 agents=yes 时同步到已安装的 Agent），合并结果只在服务器仍是读到的版本时写回（WebDAV If-Match；S3 If-Match，或不支持时先比较 ETag 并在有版本时核对前一版本），被抢先写入时读入对方版本重来一次。",
+      "SyncService.now：条件读取服务器文件（If-None-Match），按 providers、agents、profiles、library 与 features（网关功能）五部分三方比较，只改了一边的取该边，两边都改的取最后修改的一边并保存被替换的副本，带入的部分逐条写入本机（library 带入后在 agents=yes 时同步到已安装的 Agent），合并结果只在服务器仍是读到的版本时写回（WebDAV If-Match；S3 If-Match，或不支持时先比较 ETag 并在有版本时核对前一版本），被抢先写入时读入对方版本重来一次。",
     effects:
-      "可能写入 providers、路由组、密钥存储与 Agent 配置文件，删除服务器上已没有的 provider、路由组（Gateway Key 仍允许的保留并列入 notice.kept）与 profile；服务器只收到加密文件。",
+      "可能写入 providers、路由组、密钥存储与 Agent 配置文件，删除服务器上已没有的 provider、路由组（Gateway Key 仍允许的保留并列入 notice.kept）与 profile；按服务器替换网关功能（gateway-features.json），因此关闭出站脱敏时 notice.redactionOff 为 true；服务器只收到加密文件。",
     errors:
       "409 SYNC_DISABLED、SYNC_PASSPHRASE（服务器文件不是用此口令加密的）、SYNC_CONFLICT（重试后仍被抢先写入）；502 SYNC_REMOTE_FAILED；503 SYNC_RATE_LIMITED；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json。",
     source: "packages/daemon/src/http/backup-routes.ts",

@@ -42,7 +42,12 @@ export class GatewayFeaturesFile implements GatewayFeaturesControl {
   changed: () => void = () => undefined;
 
   constructor(
-    private readonly options: { dataDir: string; secrets: ManagedSecrets },
+    private readonly options: {
+      dataDir: string;
+      secrets: ManagedSecrets;
+      /** Stamps `updatedAt` on each change; the system clock by default. */
+      clock?: () => Date;
+    },
   ) {}
 
   get #file(): string {
@@ -89,7 +94,7 @@ export class GatewayFeaturesFile implements GatewayFeaturesControl {
   }
 
   view(): GatewayFeaturesView {
-    const { search, ...rest } = this.#current;
+    const { search, updatedAt: _updatedAt, ...rest } = this.#current;
     return {
       ...rest,
       ...(search
@@ -105,13 +110,36 @@ export class GatewayFeaturesFile implements GatewayFeaturesControl {
     };
   }
 
+  /**
+   * Replace the settings as a whole (restore and sync), `updatedAt`
+   * included as given. Search keys are the caller's: their references must
+   * already be in the secret store, and keys the old settings referred to
+   * are not removed here.
+   *
+   * @throws ApiProblem `GATEWAY_FEATURES_INVALID` for invalid settings,
+   *   which leave the current ones in force.
+   */
+  async replace(next: GatewayFeatures): Promise<void> {
+    await this.#change(
+      (draft) => {
+        for (const key of Object.keys(draft) as (keyof GatewayFeatures)[])
+          delete draft[key];
+        Object.assign(draft, structuredClone(next));
+      },
+      { stamp: false },
+    );
+  }
+
   /** Apply `change` to a copy, validate, save, then make it current. */
   #change(
     change: (draft: GatewayFeatures) => void | Promise<void>,
+    options: { stamp: boolean } = { stamp: true },
   ): Promise<GatewayFeaturesView> {
     const run = async () => {
       const draft = structuredClone(this.#current);
       await change(draft);
+      if (options.stamp)
+        draft.updatedAt = (this.options.clock?.() ?? new Date()).toISOString();
       const problems = gatewayFeaturesProblems(draft);
       if (problems.length)
         throw new ApiProblem(

@@ -71,6 +71,12 @@ const backups: SyncBackups = {
       refused: [],
     },
   }),
+  bringFeatures: async () => ({
+    redaction: { enabled: true, turnsOff: false, turnsOn: false },
+    rules: { added: [], replaced: [], removed: [] },
+    vision: null,
+    search: { added: [], replaced: [], removed: [], needKey: [] },
+  }),
   serial: (action) => action(),
 };
 

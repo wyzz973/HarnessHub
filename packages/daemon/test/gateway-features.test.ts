@@ -83,3 +83,46 @@ void test("the features file starts at the defaults, keeps keys out and refuses 
       error instanceof HubError && error.code === "GATEWAY_FEATURES_INVALID",
   );
 });
+
+void test("each change stamps updatedAt, which the view leaves out; replace keeps the time given and refuses invalid settings", async (t) => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "hh-features-time-"));
+  t.after(() => rm(dataDir, { recursive: true, force: true }));
+  const { secrets } = memorySecrets();
+  let now = Date.parse("2026-10-05T08:00:00.000Z");
+  const file = new GatewayFeaturesFile({
+    dataDir,
+    secrets,
+    clock: () => new Date(now),
+  });
+  await file.load();
+  await file.setRedaction({ enabled: false });
+  assert.equal(file.current().updatedAt, "2026-10-05T08:00:00.000Z");
+  assert.ok(!("updatedAt" in file.view()));
+  now += 60_000;
+  await file.setVision("p/eyes");
+  assert.equal(file.current().updatedAt, "2026-10-05T08:01:00.000Z");
+  await file.replace({
+    schemaVersion: 1,
+    redaction: { enabled: true, rules: [] },
+    updatedAt: "2026-10-01T00:00:00.000Z",
+  });
+  assert.deepEqual(file.current(), {
+    schemaVersion: 1,
+    redaction: { enabled: true, rules: [] },
+    updatedAt: "2026-10-01T00:00:00.000Z",
+  });
+  for (const updatedAt of ["yesterday", "2026-13-45", 7])
+    await assert.rejects(
+      file.replace({
+        schemaVersion: 1,
+        redaction: { enabled: true, rules: [] },
+        updatedAt: updatedAt as string,
+      }),
+      (error: unknown) =>
+        error instanceof HubError &&
+        error.code === "GATEWAY_FEATURES_INVALID" &&
+        JSON.stringify(error).includes("/updatedAt"),
+      String(updatedAt),
+    );
+  assert.equal(file.current().updatedAt, "2026-10-01T00:00:00.000Z");
+});

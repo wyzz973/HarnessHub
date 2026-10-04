@@ -753,6 +753,32 @@ export interface RestoreSummary {
       reason: string;
     }>;
   } | null;
+  /** Redaction, the vision model and the search backends; null when the backup has none. */
+  gatewayFeatures: {
+    redaction: {
+      /** Outbound redaction after the restore. */
+      enabled: boolean;
+      /** On here and the backup turns it off: a security change to show. */
+      turnsOff: boolean;
+      turnsOn: boolean;
+    };
+    /** Redaction rules by name. */
+    rules: { added: string[]; replaced: string[]; removed: string[] };
+    vision: {
+      model: string;
+      changed: boolean;
+      /** Why the model or group is not here after the restore; it is set all the same. */
+      unresolved?: string;
+    } | null;
+    /** Search backends as `kind` or `kind baseUrl`. */
+    search: {
+      added: string[];
+      replaced: string[];
+      removed: string[];
+      /** No key in the backup or here: not brought in. */
+      needKey: string[];
+    };
+  } | null;
   gatewayShare: {
     action: "apply" | "unchanged" | "absent" | "unavailable";
     settings?: GatewayShareSettings;
@@ -829,10 +855,14 @@ export interface SyncStatus {
   nextSyncAt?: string;
   notice?: {
     at: string;
-    here: Array<"providers" | "agents" | "profiles" | "library">;
-    there: Array<"providers" | "agents" | "profiles" | "library">;
+    here: Array<"providers" | "agents" | "profiles" | "library" | "features">;
+    there: Array<"providers" | "agents" | "profiles" | "library" | "features">;
     saved?: string;
     kept?: string[];
+    /** The server's gateway features turned outbound redaction off here. */
+    redactionOff?: true;
+    /** Search backends the server carries without a key and this machine has none for. */
+    needKey?: string[];
   };
   secretBackend: "keychain" | "dpapi" | "file";
   warnings?: string[];

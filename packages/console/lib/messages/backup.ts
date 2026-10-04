@@ -132,6 +132,7 @@ export const zh = {
   "backup.sync.part.agents": "Agent 接线",
   "backup.sync.part.profiles": "Profile",
   "backup.sync.part.library": "Library",
+  "backup.sync.part.features": "网关功能",
 
   "backup.syncDialog.edit": "修改同步",
   "backup.syncDialog.on": "开启同步",
@@ -308,6 +309,7 @@ export const en: Translation<typeof zh> = {
   "backup.sync.part.agents": "agent wiring",
   "backup.sync.part.profiles": "profiles",
   "backup.sync.part.library": "the Library",
+  "backup.sync.part.features": "gateway features",
 
   "backup.syncDialog.edit": "Edit sync",
   "backup.syncDialog.on": "Turn on sync",

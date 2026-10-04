@@ -121,6 +121,7 @@ const restoreSummarySchema = {
     "overrides",
     "profiles",
     "library",
+    "gatewayFeatures",
     "gatewayShare",
     "catalog",
     "agents",
@@ -200,6 +201,62 @@ const restoreSummarySchema = {
               kind: { type: "string", enum: ["instructions", "mcp", "skills"] },
               name: { type: "string" },
               reason: { type: "string" },
+            },
+          },
+        },
+      },
+    },
+    gatewayFeatures: {
+      type: "object",
+      nullable: true,
+      description:
+        "Redaction, the vision model and the search backends brought in; null when the backup has none (an older HarnessHub)",
+      additionalProperties: false,
+      required: ["redaction", "rules", "vision", "search"],
+      properties: {
+        redaction: {
+          type: "object",
+          additionalProperties: false,
+          required: ["enabled", "turnsOff", "turnsOn"],
+          properties: {
+            enabled: {
+              type: "boolean",
+              description: "Outbound redaction after the restore",
+            },
+            turnsOff: {
+              type: "boolean",
+              description:
+                "Redaction is on here and the backup turns it off: a security change to show",
+            },
+            turnsOn: { type: "boolean" },
+          },
+        },
+        rules: { ...changes, description: "Redaction rules by name" },
+        vision: {
+          type: "object",
+          nullable: true,
+          additionalProperties: false,
+          required: ["model", "changed"],
+          properties: {
+            model: { type: "string" },
+            changed: { type: "boolean" },
+            unresolved: {
+              type: "string",
+              description:
+                "Why the model or group is not here after the restore; it is set all the same",
+            },
+          },
+        },
+        search: {
+          type: "object",
+          additionalProperties: false,
+          required: ["added", "replaced", "removed", "needKey"],
+          properties: {
+            ...changes.properties,
+            needKey: {
+              ...strings,
+              description:
+                "Backends whose stored key the backup has no value for and this machine lacks: not brought in",
             },
           },
         },
@@ -288,7 +345,7 @@ const restoreSummarySchema = {
 
 const parts = {
   type: "array",
-  items: { enum: ["providers", "agents", "profiles", "library"] },
+  items: { enum: ["providers", "agents", "profiles", "library", "features"] },
 } as const;
 const syncStatusSchema = {
   type: "object",
@@ -318,6 +375,17 @@ const syncStatusSchema = {
         there: parts,
         saved: { type: "string" },
         kept: strings,
+        redactionOff: {
+          type: "boolean",
+          enum: [true],
+          description:
+            "The server's gateway features turned outbound redaction off here",
+        },
+        needKey: {
+          ...strings,
+          description:
+            "Search backends the server carries without a key and this machine has none for: not brought in",
+        },
       },
     },
     secretBackend: { type: "string", enum: ["keychain", "dpapi", "file"] },

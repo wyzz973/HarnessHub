@@ -238,6 +238,44 @@ function summaryText(summary: RestoreSummary, done: boolean): string {
     for (const item of library.refused)
       lines.push(`  Not restored: ${item.kind} ${item.name}: ${item.reason}`);
   }
+  const features = summary.gatewayFeatures;
+  if (features) {
+    // A security change: said before anything else about the features.
+    if (features.redaction.turnsOff)
+      lines.push(
+        `WARNING: outbound redaction ${verb("will be turned OFF", "was turned OFF")} by this backup: credentials and keys in prompts go to providers unmasked. Turn it on again with hh gateway redaction on.`,
+      );
+    else if (features.redaction.turnsOn)
+      lines.push(`Outbound redaction: ${verb("turn on", "turned on")}`);
+    const changes = [
+      ["redaction rules", features.rules],
+      ["search backends", features.search],
+    ] as const;
+    const parts = changes.flatMap(([label, change]) => {
+      const items = [
+        change.added.length
+          ? `${verb("add", "added")} ${list(change.added)}`
+          : "",
+        change.replaced.length
+          ? `${verb("replace", "replaced")} ${list(change.replaced)}`
+          : "",
+      ].filter(Boolean);
+      return items.length ? [`${label}: ${items.join(", ")}`] : [];
+    });
+    if (features.vision?.changed)
+      parts.push(
+        `vision model: ${verb("set", "set")} ${features.vision.model}`,
+      );
+    lines.push(`Gateway features: ${parts.join("; ") || "nothing to change"}`);
+    if (features.vision?.unresolved)
+      lines.push(
+        `  The vision model ${features.vision.model} is not served here (${features.vision.unresolved}); it is set all the same.`,
+      );
+    if (features.search.needKey.length)
+      lines.push(
+        `  Search backends without a key in the backup or here, not restored (add them with hh gateway search add): ${list(features.search.needKey)}`,
+      );
+  }
   const share = summary.gatewayShare;
   if (share.action === "apply" && share.settings)
     lines.push(
@@ -412,6 +450,14 @@ function statusText(status: SyncStatus): string {
     if (notice.kept?.length)
       lines.push(
         `Kept although the server no longer has them (Gateway Keys allow them): ${notice.kept.join(", ")}`,
+      );
+    if (notice.redactionOff)
+      lines.push(
+        "WARNING: the server's gateway features turned outbound redaction OFF here. Turn it on again with hh gateway redaction on.",
+      );
+    if (notice.needKey?.length)
+      lines.push(
+        `Search backends without a key here, not brought in (add them with hh gateway search add): ${notice.needKey.join(", ")}`,
       );
   }
   for (const warning of status.warnings ?? []) lines.push(`Note: ${warning}`);

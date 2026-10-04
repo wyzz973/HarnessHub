@@ -57,6 +57,11 @@ export interface GatewayFeatures {
   vision?: { model: string };
   /** Web search emulation; absent or without backends: off. */
   search?: { backends: SearchBackend[] };
+  /**
+   * When the settings were last changed (ISO 8601); absent until the first
+   * change. Sync compares it when both sides changed them.
+   */
+  updatedAt?: string;
 }
 
 export const DEFAULT_GATEWAY_FEATURES: Readonly<GatewayFeatures> =
@@ -186,8 +191,21 @@ export function gatewayFeaturesProblems(
       });
     }
   }
+  if (
+    features.updatedAt !== undefined &&
+    !(
+      typeof features.updatedAt === "string" &&
+      !Number.isNaN(Date.parse(features.updatedAt)) &&
+      /^\d{4}-\d{2}-\d{2}T/.test(features.updatedAt)
+    )
+  )
+    add("/updatedAt", "must be an ISO 8601 time");
   for (const key of Object.keys(features))
-    if (!["schemaVersion", "redaction", "vision", "search"].includes(key))
+    if (
+      !["schemaVersion", "redaction", "vision", "search", "updatedAt"].includes(
+        key,
+      )
+    )
       add(`/${key}`, "is not a setting");
   return problems;
 }

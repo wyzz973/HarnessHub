@@ -991,6 +991,7 @@ export async function startHub(options: {
       agents,
       share,
       library,
+      features: gatewayFeatures,
       // As configured: HH_OFFLINE is this process's environment, not a setting.
       catalog: {
         autoRefresh: options.catalog?.autoRefresh !== false,
