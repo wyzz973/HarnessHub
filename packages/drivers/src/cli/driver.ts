@@ -17,6 +17,13 @@ interface Exit {
   signal: NodeJS.Signals | null;
 }
 
+/**
+ * The errors of a write to a pipe the engine already closed (it exited, or
+ * does not read its stdin), or to a stdin destroyed with it: they end the
+ * writing, not the Run.
+ */
+const CLOSED_PIPE = new Set(["EPIPE", "ECONNRESET", "ERR_STREAM_DESTROYED"]);
+
 function failed(code: string, message: string): DriverResult {
   return {
     status: "failed",
@@ -196,20 +203,35 @@ export class CliDriver implements Driver {
         if (!exited) child.kill("SIGKILL");
       }, 250);
     };
-    const inputError = () => {
-      failure ??= failed(
-        "CLI_INPUT_ERROR",
-        "Engine process did not accept input",
-      );
-      stop();
-    };
-    stdin.on("error", inputError);
     signal.addEventListener("abort", stop, { once: true });
     if (signal.aborted) stop();
+    // The input is written once and the pipe closed. An engine that closes
+    // its end first only ends the writing: stdout is still read to its end
+    // and the exit decides the outcome. Any other write error fails the Run.
+    // Settled on close and error too: a stream destroyed before its end
+    // finished never calls the end callback.
     const input = new Promise<void>((resolve) => {
-      if (configuration.inputMode === "stdin")
-        stdin.end(spec.input.text, "utf8", () => resolve());
-      else stdin.end(() => resolve());
+      const settle = () => resolve();
+      stdin.once("close", settle);
+      stdin.on("error", (error: NodeJS.ErrnoException) => {
+        if (CLOSED_PIPE.has(error.code ?? ""))
+          this.log.info("engine.input_closed", {
+            pid: child.pid ?? null,
+            code: error.code ?? null,
+          });
+        else {
+          failure ??= failed(
+            "CLI_INPUT_ERROR",
+            "Engine process did not accept input",
+          );
+          stop();
+        }
+        settle();
+      });
+      if ((stdin as { destroyed?: boolean }).destroyed) settle();
+      else if (configuration.inputMode === "stdin")
+        stdin.end(spec.input.text, "utf8", settle);
+      else stdin.end(settle);
     });
     const decoder = new StringDecoder("utf8");
     const output: string[] = [];

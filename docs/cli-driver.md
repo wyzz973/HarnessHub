@@ -20,7 +20,7 @@ engines:
     maxConcurrency: 1
 ```
 
-`inputMode: stdin` 将 Run 的 `text` 以 UTF-8 原样写入 stdin，随后发送 EOF；不额外增加换行。`inputMode: argv` 则要求命令参数中有独立的 `{prompt}` 项，以完整的 Run 文本替换该项。例如：
+`inputMode: stdin` 将 Run 的 `text` 以 UTF-8 原样写入 stdin，随后发送 EOF；不额外增加换行。命令在读完输入之前就关闭了 stdin（已经退出，或根本不读 stdin）时，只是停止写入：写入遇到的 `EPIPE`、`ECONNRESET` 或已销毁的 stdin 不算失败，stdout 仍然读到结束，结果按下文的退出规则判定，Driver 只在私有引擎日志中记一条 `engine.input_closed`。其他写入错误（管道仍然打开，却写不进去）按 `CLI_INPUT_ERROR` 失败并停止进程。需要输入的命令没有拿到输入而以非零退出时，结果是 `CLI_EXIT_NONZERO`。`inputMode: argv` 则要求命令参数中有独立的 `{prompt}` 项，以完整的 Run 文本替换该项。例如：
 
 ```yaml
 engines:
@@ -47,7 +47,9 @@ engines:
 
 `maxOutputBytes` 限制 stdout 原始 UTF-8 字节数，默认 4 MiB。超出上限会停止进程并返回 `CLI_OUTPUT_LIMIT`；此前已经提交的片段仍在轨迹中，Run 不会以截断内容假装成功。stderr 不公开、不保存到规范化事件，避免泄露引擎的认证与配置输出。
 
-退出码 0 返回 `completed / process_exit`，只说明命令正常退出；回复内容是否正确由独立评判器判断。非零退出、启动失败、输入未被接受和异常信号退出分别报告 `CLI_EXIT_NONZERO`、`CLI_SPAWN_ERROR`、`CLI_INPUT_ERROR`、`CLI_PROCESS_SIGNAL`。
+退出码 0 返回 `completed / process_exit`，只说明命令正常退出；回复内容是否正确由独立评判器判断。非零退出、启动失败、输入写入失败（不是因为命令关闭了自己的 stdin）和异常信号退出分别报告 `CLI_EXIT_NONZERO`、`CLI_SPAWN_ERROR`、`CLI_INPUT_ERROR`、`CLI_PROCESS_SIGNAL`。命令没有读输入就以 0 退出，同样是 `completed`：它说明进程正常结束，不说明输入被采纳。
+
+此前，不读 stdin、很快退出的命令会与 Driver 的写入竞争：繁忙的机器上写入晚于进程退出时，`EPIPE` 被当作 `CLI_INPUT_ERROR`，同时销毁 stdout，已经写出的输出被丢弃；stdin 在写完之前被销毁时，写入回调不再触发，Run 会一直等到 deadline。现在写入在 stdin 的 `close` 与 `error` 时也会结束，不再无限等待。
 
 ## 资源和能力边界
 
@@ -55,4 +57,10 @@ Run 的总 deadline 由 Runtime 管理。取消会先向所属 CLI 进程发送 
 
 每轮使用新 CLI 进程；不自动传递上一轮历史，不宣称支持上下文恢复、图片或交互式权限审批。引擎执行本身仍能读写其工作目录和引擎配置允许的资源；进程隔离不等于操作系统沙箱。Windows 的进程树清理与原生命令行为尚未验证。
 
-对应验证位于 [CLI 集成测试](../tests/integration/worker-cli.test.ts)：编译后的 Worker 覆盖 UTF-8 stdin、无 shell argv、失败、输出上限、取消与后代清理；正式 Gateway 覆盖 deadline，以及父进程正常/非零退出但后台孙进程继续运行时的整组清理与 lease 释放。
+对应验证位于 [CLI 集成测试](../tests/integration/worker-cli.test.ts)：编译后的 Worker 覆盖 UTF-8 stdin、无 shell argv、失败、输出上限、取消与后代清理，以及不读输入就退出的命令（1 MiB 输入，超过任何管道缓冲）仍保留输出；正式 Gateway 覆盖 deadline，以及父进程正常/非零退出但后台孙进程继续运行时的整组清理与 lease 释放。[CLI Driver 单元测试](../tests/unit/cli-driver.test.ts) 用真实的进程启动器，不依赖机器负载，确定性地覆盖：
+- 不读 stdin 的命令以 0 退出保留输出、以非零退出按 `CLI_EXIT_NONZERO` 失败；
+- stdin 在写入前被销毁时不再挂起；
+- 需要输入却没有拿到的命令以非零退出；
+- 管道仍然打开时的写入错误按 `CLI_INPUT_ERROR` 失败。
+
+前两项在修正前分别失败（`CLI_INPUT_ERROR`，以及 8 秒内没有结果）。

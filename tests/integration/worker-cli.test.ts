@@ -152,6 +152,33 @@ void test(
 );
 
 void test(
+  "compiled CLI Worker keeps the output of an engine that exits without reading its input",
+  { timeout: 15_000 },
+  async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "harnesshub-cli-ignore-"));
+    const host = new ProcessWorkerHost({
+      workerEntry: WORKER_ENTRY,
+      shutdownGraceMs: 500,
+    });
+    t.after(async () => {
+      await host.close();
+      await rm(directory, { recursive: true });
+    });
+    // More input than any pipe holds: the write meets the engine's closed end.
+    const input = spec(directory, "ignore-input", "x".repeat(1024 * 1024));
+    let text = "";
+    const handle = await host.start(input, async (message) => {
+      text += messageText(message);
+    });
+    const result = await handle.result;
+    assert.equal(result.status, "completed", JSON.stringify(result.error));
+    assert.equal(result.output, "done");
+    assert.equal(text, "done");
+    assert.equal(await host.closeSession(input.sessionId), "confirmed");
+  },
+);
+
+void test(
   "CLI cancellation awaits direct child exit and Host close reclaims owned descendants",
   {
     timeout: 15_000,

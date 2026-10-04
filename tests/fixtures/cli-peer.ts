@@ -36,6 +36,10 @@ switch (mode?.startsWith("--harnesshub-owner=") ? "fake-worker" : mode) {
     process.stderr.write("DO_NOT_PUBLISH_SECRET=fixture-private-value\n");
     process.exitCode = 23;
     break;
+  case "ignore-input":
+    // Never reads stdin: the driver's write meets a closed pipe.
+    process.stdout.write("done");
+    break;
   case "overflow":
     process.stdin.resume();
     process.stdout.write("中文");
