@@ -27,6 +27,7 @@ import {
   type AllowanceReading,
   type GatewayKeyId,
   type GatewayKeyRecord,
+  type KeyLimitStatus,
   type ModelCallEntry,
   type ModelCallId,
   type ModelPlaneStore,
@@ -34,6 +35,7 @@ import {
   type ProviderConfig,
   type ProviderCredential,
   type ProviderModel,
+  type ReasoningEffort,
   type RouteGroup,
   type RouteGroupId,
   type Stickiness,
@@ -44,6 +46,11 @@ import {
   autoGroups,
   autoRouteGroup,
 } from "@harnesshub/core/auto-groups";
+import {
+  groupCapabilities,
+  groupModels,
+  modelEfforts,
+} from "@harnesshub/core/route-groups";
 import { HARNESS_MODEL_ALIAS } from "@harnesshub/core/harness-model";
 import type { RunId, SessionId } from "@harnesshub/core/types";
 import { agentOf } from "./agents.js";
@@ -66,7 +73,7 @@ import {
   Slots,
 } from "./http.js";
 import { RejectionThrottle } from "./ledger.js";
-import { Quotas, type QuotaRefusal } from "./quota.js";
+import { Quotas, type Admission, type QuotaRefusal } from "./quota.js";
 import { CODEX_BACKEND, codexPassthrough, isCodexPath } from "./codex.js";
 import { COMPACT_UNSUPPORTED } from "./compacting.js";
 import { conversationOf, StickyRoutes } from "./sticky.js";
@@ -78,6 +85,7 @@ import { GatewayError, estimateTokens, object } from "./protocol.js";
 import {
   Breakers,
   modelCandidates,
+  planGroup,
   Router,
   type AttemptError,
   type Candidate,
@@ -129,6 +137,11 @@ export interface GatewayHandlerDeps {
   resolveSecret(ref: SecretReference): Promise<string>;
   /** Wall-clock milliseconds since the epoch: ledger times, key expiry, breakers and Retry-After. */
   clock: () => number;
+  /**
+   * The IANA time zone of Gateway Key budget windows (a day from midnight,
+   * a week from Monday, a month from the 1st); this process's when absent.
+   */
+  timeZone?: string;
   /** From {@link resolveHandlerLimits}. */
   limits: Readonly<HandlerLimits>;
   /** Diagnostics: ledger and touch failures, breaker changes, internal errors. */
@@ -221,6 +234,13 @@ export interface GatewayHandler {
    * (closed, nothing known). Read-only and cheap.
    */
   routingState(): CredentialRoutingState[];
+  /**
+   * A key's limits and what it used of its budgets now, from the ledger,
+   * with the requests in flight that this handler holds reservations for;
+   * undefined when the key does not exist. Rejects when the ledger cannot be
+   * read.
+   */
+  keyLimit(keyId: GatewayKeyId): Promise<KeyLimitStatus | undefined>;
 }
 
 /** One credential's routing state (`GatewayHandler.routingState`). */
@@ -260,7 +280,7 @@ type Route =
   | { kind: "models"; format: "openai" | "gemini"; id?: string }
   | { kind: "count"; protocol: "anthropic" | "gemini" }
   | { kind: "call"; call: CallRoute }
-  | { kind: "images" }
+  | { kind: "images"; edit: boolean }
   | { kind: "compact" };
 
 function decode(value: string): string {
@@ -319,7 +339,10 @@ function matchRoute(method: string | undefined, url: URL): Route | undefined {
   if (method !== "POST") return undefined;
   switch (openai) {
     case "/images/generations":
-      return path.startsWith("/v1/") ? { kind: "images" } : undefined;
+    case "/images/edits":
+      return path.startsWith("/v1/")
+        ? { kind: "images", edit: openai === "/images/edits" }
+        : undefined;
     case "/chat/completions":
       return { kind: "call", call: { protocol: "chat" } };
     case "/responses":
@@ -377,6 +400,8 @@ interface ListedModel {
   owner: string;
   created: number;
   model?: ProviderModel;
+  /** The reasoning levels offered, lowest first. */
+  efforts?: readonly ReasoningEffort[];
   nativeEndpoints?: WireProtocol[];
 }
 
@@ -402,6 +427,9 @@ function modelObject(entry: ListedModel): Record<string, unknown> {
       ? {}
       : { max_output_tokens: model.maxOutputTokens }),
     ...(model?.reasoning === undefined ? {} : { reasoning: model.reasoning }),
+    ...(entry.efforts?.length
+      ? { supported_reasoning_levels: entry.efforts }
+      : {}),
     ...(model?.inputModalities === undefined
       ? {}
       : { input_modalities: model.inputModalities }),
@@ -430,40 +458,15 @@ function geminiModel(entry: ListedModel): Record<string, unknown> {
   };
 }
 
-/** Smallest known value, or undefined when any member's value is unknown. */
-function least(values: (number | undefined)[]): number | undefined {
-  return values.length && values.every((value) => value !== undefined)
-    ? Math.min(...(values as number[]))
-    : undefined;
-}
-
-/** Group metadata: the smallest window and output, reasoning and modalities every member has. */
-function groupModel(members: (ProviderModel | undefined)[]): ProviderModel {
-  const known = members.filter(
-    (model): model is ProviderModel => model !== undefined,
-  );
-  const complete = known.length === members.length && members.length > 0;
-  const contextWindow = least(members.map((model) => model?.contextWindow));
-  const maxOutputTokens = least(members.map((model) => model?.maxOutputTokens));
-  const modalities = complete
-    ? known
-        .map((model) => model.inputModalities)
-        .reduce<ProviderModel["inputModalities"]>(
-          (all, list) =>
-            all === undefined || list === undefined
-              ? undefined
-              : all.filter((value) => list.includes(value)),
-          known[0]?.inputModalities,
-        )
-    : undefined;
+/**
+ * Headers of a quota refusal: a budget's reset time, and that SDKs should
+ * not retry (they retry a 429 by themselves otherwise); `Retry-After` is set
+ * with the error.
+ */
+export function refusalHeaders(refusal: QuotaRefusal): Record<string, string> {
   return {
-    id: "",
-    ...(contextWindow === undefined ? {} : { contextWindow }),
-    ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
-    ...(complete && known.every((model) => model.reasoning !== undefined)
-      ? { reasoning: known.every((model) => model.reasoning === true) }
-      : {}),
-    ...(modalities === undefined ? {} : { inputModalities: modalities }),
+    "x-should-retry": "false",
+    ...(refusal.resetsAt ? { "x-hh-limit-reset": refusal.resetsAt } : {}),
   };
 }
 
@@ -530,7 +533,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     },
     reasoning: new ReasoningCaches(limits),
     sticky: new StickyRoutes(clock),
-    quotas: new Quotas(store, clock),
+    quotas: new Quotas(store, clock, deps.timeZone),
     ...(deps.subscriptions ? { subscriptions: deps.subscriptions } : {}),
     ...(deps.copilot
       ? { copilot: new CopilotBridge(deps.copilot, clock) }
@@ -634,12 +637,15 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     protocol: WireProtocol,
     value: Failure,
     retryAfterMs?: number,
+    headers: Record<string, string> = {},
   ) => {
     if (response.headersSent) {
       response.destroy();
       return;
     }
     response.setHeader("x-hh-error-source", "gateway");
+    for (const [name, header] of Object.entries(headers))
+      response.setHeader(name, header);
     if (retryAfterMs !== undefined)
       response.setHeader(
         "retry-after",
@@ -658,6 +664,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     value: Failure,
     started: number,
     retryAfterMs?: number,
+    headers?: Record<string, string>,
   ) => {
     entry.status = value.status;
     entry.errorClass = reason;
@@ -668,7 +675,16 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     entry.timing.durationMs = Math.round(performance.now() - started);
     for (const record of throttle.admit(entry.keyId, reason, entry))
       await services.commit(record);
-    await reply(response, entry.inbound.protocol, value, retryAfterMs);
+    await reply(response, entry.inbound.protocol, value, retryAfterMs, headers);
+  };
+
+  /** USD per million input tokens of a Model Ref asked for; undefined for a group or an unpriced model. */
+  const inputPrice = async (requested: string) => {
+    const parsed = parseModelRef(requested);
+    if (parsed?.kind !== "model") return undefined;
+    const provider = await store.getProvider(parsed.provider);
+    return provider?.models.list.find((model) => model.id === parsed.model)
+      ?.price?.input;
   };
 
   const authenticate = async (
@@ -778,6 +794,27 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         .get(parsed.provider)
         ?.models.list.find((model) => model.id === parsed.model);
     };
+    const byGroup = new Map(groups.map((group) => [group.id, group]));
+    /** A group as one model: what its models share (core `groupCapabilities`). */
+    const describeGroup = (
+      group: RouteGroup | undefined,
+    ): Pick<ListedModel, "model" | "efforts"> => {
+      const capabilities = groupCapabilities(
+        group
+          ? groupModels(
+              group,
+              (id) => byGroup.get(id),
+              (provider, model) =>
+                byId
+                  .get(provider)
+                  ?.models.list.some((entry) => entry.id === model) ?? false,
+            )
+          : [],
+        metadata,
+      );
+      const { efforts, ...model } = capabilities;
+      return { model: { id: "", ...model }, efforts };
+    };
     const listed: ListedModel[] = [];
     if (session) {
       // The alias a Session's engine was configured with, described as its Run's target.
@@ -786,16 +823,17 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         target?.kind === "group"
           ? groups.find((entry) => entry.id === target.group)
           : undefined;
+      const model = metadata(session.target as ModelRef);
       listed.push({
         id: HARNESS_MODEL_ALIAS,
         owner: "harnesshub",
         created: 0,
-        model:
-          target?.kind === "group"
-            ? groupModel(group?.members.map(metadata) ?? [])
-            : (metadata(session.target as ModelRef) ?? {
-                id: HARNESS_MODEL_ALIAS,
-              }),
+        ...(target?.kind === "group"
+          ? describeGroup(group)
+          : {
+              model: model ?? { id: HARNESS_MODEL_ALIAS },
+              efforts: modelEfforts(model),
+            }),
       });
     }
     for (const provider of providers) {
@@ -819,6 +857,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
           owner: provider.id,
           created: Math.floor(Date.parse(provider.createdAt) / 1000) || 0,
           model,
+          efforts: modelEfforts(model),
           nativeEndpoints: provider.translateOnly
             ? []
             : (Object.keys(provider.endpoints) as WireProtocol[]),
@@ -836,7 +875,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         id,
         owner: "harnesshub",
         created: Math.floor(Date.parse(group.createdAt) / 1000) || 0,
-        model: groupModel(group.members.map(metadata)),
+        ...describeGroup(group),
       });
     }
     return listed;
@@ -1025,7 +1064,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
   const plan = async (
     requested: string,
     protocol: WireProtocol,
-    order: (group: RouteGroup) => readonly ModelRef[] = (group) =>
+    order: (group: RouteGroup) => readonly string[] = (group) =>
       services.router.order(group),
   ): Promise<CallPlan & { group?: RouteGroup }> => {
     const parsed = parseModelRef(requested);
@@ -1046,40 +1085,23 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       if (!provider) throw notFound();
       return modelCandidates(provider, parsed.model, protocol);
     }
-    const group =
-      (await store.getRouteGroup(parsed.group)) ??
-      (parsed.group.startsWith(AUTO_GROUP_PREFIX)
-        ? await autoGroup(parsed.group)
-        : undefined);
+    const find = async (id: RouteGroupId) =>
+      (await store.getRouteGroup(id)) ??
+      (id.startsWith(AUTO_GROUP_PREFIX) ? await autoGroup(id) : undefined);
+    const group = await find(parsed.group);
     if (!group) throw notFound();
-    const providers = new Map<string, ProviderConfig | undefined>();
-    const result: CallPlan = { candidates: [], group, skipped: [] };
-    for (const member of order(group)) {
-      const ref = parseModelRef(member);
-      if (ref?.kind !== "model") {
-        result.skipped.push(`${member}: not a Model Ref`);
-        continue;
-      }
-      if (!providers.has(ref.provider))
-        providers.set(ref.provider, await store.getProvider(ref.provider));
-      const provider = providers.get(ref.provider);
-      if (!provider) {
-        result.skipped.push(`${member}: unknown provider`);
-        continue;
-      }
-      const { candidates, skipped } = modelCandidates(
-        provider,
-        ref.model,
-        protocol,
-      );
-      result.candidates.push(...candidates);
-      result.skipped.push(...skipped);
-    }
-    if (group.strategy === "least-used") {
-      await services.router.seed(store, log);
-      result.candidates = services.router.weigh(group, result.candidates);
-    }
-    return result;
+    const { candidates, skipped } = await planGroup(group, protocol, {
+      provider: (id) => store.getProvider(id),
+      group: find,
+      order,
+      weigh: async (weighed, list) => {
+        if (weighed.strategy === "least-used")
+          await services.router.seed(store, log);
+        return services.router.weigh(weighed, list);
+      },
+      blocked: (candidate) => services.breakers.blocked(candidate),
+    });
+    return { candidates, group, skipped };
   };
 
   /** The automatic group of this ID, unless it is hidden; user groups were looked up first. */
@@ -1207,6 +1229,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     if (shutdown.signal.aborted) abort.abort();
     const writer = new HttpWriter(response);
     let reserved = 0;
+    let release = () => {};
     let call: Call | undefined;
     const answer = async (error: unknown) => {
       const stub: Call = call ?? {
@@ -1314,9 +1337,12 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         );
         return;
       }
-      let refusal: QuotaRefusal | undefined;
+      let admission: Admission;
       try {
-        refusal = await services.quotas.admit(key);
+        admission = await services.quotas.admit(key, {
+          bytes: bytes.length,
+          inputPrice: () => inputPrice(requested),
+        });
       } catch (error) {
         log.info("gateway.store.unavailable", {
           error:
@@ -1328,17 +1354,19 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
           "store_unavailable",
         );
       }
-      if (refusal) {
+      if (!admission.ok) {
         await reject(
           response,
           entry,
           "quota_exceeded",
-          failure(429, "quota_exceeded", refusal.message),
+          failure(429, "quota_exceeded", admission.refusal.message),
           started,
-          refusal.retryAfterMs,
+          admission.refusal.retryAfterMs,
+          refusalHeaders(admission.refusal),
         );
         return;
       }
+      release = admission.release;
       const resolved = await plan(requested, route.protocol);
       if (key.allowLan === true) {
         // Subscription accounts serve agents on this computer only (ADR-P09).
@@ -1424,6 +1452,8 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     } catch (error) {
       await answer(error);
     } finally {
+      // The entry was committed (or its commit failed) before this point.
+      release();
       services.memory.give(reserved);
       response.removeListener("close", onClose);
       shutdown.signal.removeEventListener("abort", onShutdown);
@@ -1711,6 +1741,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
               entry,
               started,
               signal: abort.signal,
+              edit: route.edit,
             });
           } finally {
             response.removeListener("close", onClose);
@@ -1919,6 +1950,10 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       for (const stored of services.router.snapshot())
         of(stored.provider, stored.credential).readings.push(stored.reading);
       return [...states.values()];
+    },
+    async keyLimit(keyId: GatewayKeyId) {
+      const key = await store.getGatewayKey(keyId);
+      return key ? services.quotas.status(key) : undefined;
     },
     async awaitSessionIdle(
       sessionId: SessionId,

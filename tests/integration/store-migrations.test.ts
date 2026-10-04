@@ -124,9 +124,14 @@ void test("migration checksums are pinned: an applied migration is never edited"
         "model_call_attribution",
         "95f1867490c4de6b09646954989a64ed5de86f67b5d4cc1ad8e130511c1253d9",
       ],
+      [
+        6,
+        "gateway_key_budgets",
+        "890bb90f27e6b3c09f009533041177b55b804821a3e2fdd176ce13e311cae797",
+      ],
     ],
   );
-  assert.equal(LATEST_SCHEMA_VERSION, 5);
+  assert.equal(LATEST_SCHEMA_VERSION, 6);
   assert.deepEqual(
     MIGRATIONS.map((migration) => migration.version),
     MIGRATIONS.map((_, index) => index + 1),
@@ -196,6 +201,7 @@ void test("a user_version 1 database from the previous build migrates forward wi
       [3, "model_metadata", null],
       [4, "wiring_profiles", null],
       [5, "model_call_attribution", null],
+      [6, "gateway_key_budgets", null],
     ],
   );
   assert.equal(applied[0]?.checksum_sha256, migrationChecksum(MIGRATIONS[0]!));
@@ -286,6 +292,7 @@ void test("a version 2 database gains the model metadata tables and keeps its pr
       [3, "model_metadata", "9.9.9-test"],
       [4, "wiring_profiles", "9.9.9-test"],
       [5, "model_call_attribution", "9.9.9-test"],
+      [6, "gateway_key_budgets", "9.9.9-test"],
     ],
   );
   store.acquireOwner();
@@ -419,7 +426,7 @@ void test("a version 4 database gains the ledger attribution columns, filled fro
 
   const store = open("9.9.9-test");
   const db = inspector();
-  assert.equal(userVersion(db), 5);
+  assert.equal(userVersion(db), LATEST_SCHEMA_VERSION);
   assert.deepEqual(
     migrations(db).map((row) => [row.version, row.name, row.hh_version]),
     [
@@ -428,6 +435,7 @@ void test("a version 4 database gains the ledger attribution columns, filled fro
       [3, "model_metadata", null],
       [4, "wiring_profiles", null],
       [5, "model_call_attribution", "9.9.9-test"],
+      [6, "gateway_key_budgets", "9.9.9-test"],
     ],
   );
   assert.deepEqual(
@@ -469,6 +477,129 @@ void test("a version 4 database gains the ledger attribution columns, filled fro
     [["alpha/key-1", 1]],
   );
   assert.deepEqual(await plane.listHiddenAutoGroups(), []);
+});
+
+void test("a version 5 database's key quotas become calendar budgets that count as they did, caps of 0 included", async (t) => {
+  const { path, open, inspector } = fixture(t);
+  const v5 = new DatabaseSync(path);
+  v5.exec(
+    "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, checksum_sha256 TEXT NOT NULL, applied_at TEXT NOT NULL, hh_version TEXT, note TEXT)",
+  );
+  for (const migration of MIGRATIONS.slice(0, 5)) {
+    v5.exec(migration.sql);
+    v5.prepare(
+      "INSERT INTO schema_migrations (version, name, checksum_sha256, applied_at) VALUES (?, ?, ?, '2026-10-01T00:00:00.000Z')",
+    ).run(migration.version, migration.name, migrationChecksum(migration));
+  }
+  v5.exec("PRAGMA user_version = 5");
+  const key = (keyId: string, quota?: Record<string, number>) => ({
+    keyId,
+    name: keyId,
+    scope: { kind: "client", name: keyId },
+    modelAllow: ["*"],
+    ...(quota ? { quota } : {}),
+    secretHash: "0".repeat(64),
+    createdAt: "2026-10-01T00:00:00.000Z",
+  });
+  const insert = v5.prepare(
+    "INSERT INTO gateway_keys (key_id, record) VALUES (?, ?)",
+  );
+  for (const record of [
+    key("aaaaaaaaaaaa", {
+      requestsPerMinute: 30,
+      tokensPerDay: 1_000_000,
+      costPerMonthUsd: 25,
+    }),
+    key("bbbbbbbbbbbb", { tokensPerDay: 500, costPerMonthUsd: 0 }),
+    key("cccccccccccc", { costPerMonthUsd: 0 }),
+    key("dddddddddddd", { requestsPerMinute: 5 }),
+    key("eeeeeeeeeeee"),
+    key("ffffffffffff", { tokensPerDay: 0 }),
+    key("gggggggggggg", { tokensPerDay: 0, costPerMonthUsd: 0 }),
+  ])
+    insert.run(record.keyId, JSON.stringify(record));
+  v5.close();
+
+  const store = open("9.9.9-test");
+  assert.equal(userVersion(inspector()), 6);
+  store.acquireOwner();
+  const plane = new SqliteModelPlaneStore(path);
+  t.after(() => plane.close());
+  assert.deepEqual(
+    (await plane.listGatewayKeys()).map((record) => [
+      record.keyId,
+      record.quota,
+    ]),
+    [
+      [
+        "aaaaaaaaaaaa",
+        {
+          requestsPerMinute: 30,
+          budgets: [
+            { period: "day", tokens: 1_000_000, cacheReads: true },
+            { period: "month", costUsd: 25 },
+          ],
+        },
+      ],
+      [
+        "bbbbbbbbbbbb",
+        {
+          budgets: [
+            { period: "day", tokens: 500, cacheReads: true },
+            { period: "month", costUsd: 0 },
+          ],
+        },
+      ],
+      // A cap of 0 refused every call and still does: none is dropped.
+      ["cccccccccccc", { budgets: [{ period: "month", costUsd: 0 }] }],
+      ["dddddddddddd", { requestsPerMinute: 5 }],
+      ["eeeeeeeeeeee", undefined],
+      [
+        "ffffffffffff",
+        { budgets: [{ period: "day", tokens: 0, cacheReads: true }] },
+      ],
+      [
+        "gggggggggggg",
+        {
+          budgets: [
+            { period: "day", tokens: 0, cacheReads: true },
+            { period: "month", costUsd: 0 },
+          ],
+        },
+      ],
+    ],
+  );
+  // Each of them reads back as a valid key.
+  for (const keyId of [
+    "bbbbbbbbbbbb",
+    "cccccccccccc",
+    "ffffffffffff",
+    "gggggggggggg",
+  ])
+    assert.ok(await plane.getGatewayKey(keyId as never), keyId);
+  assert.equal(
+    await plane.setGatewayKeyQuota("eeeeeeeeeeee" as never, {
+      budgets: [{ period: "week", costUsd: 3 }],
+    }),
+    true,
+  );
+  assert.deepEqual(
+    (await plane.getGatewayKey("eeeeeeeeeeee" as never))?.quota,
+    { budgets: [{ period: "week", costUsd: 3 }] },
+  );
+  await assert.rejects(
+    plane.setGatewayKeyQuota("eeeeeeeeeeee" as never, {
+      budgets: [
+        { period: "week", costUsd: 3 },
+        { period: "week", tokens: 3 },
+      ],
+    }),
+    code("MODEL_PLANE_RECORD_INVALID"),
+  );
+  assert.equal(
+    await plane.setGatewayKeyQuota("zzzzzzzzzzzz" as never, undefined),
+    false,
+  );
 });
 
 void test("a database newer than this build is refused without modification", (t) => {
@@ -618,6 +749,7 @@ void test("simultaneous opens of a version 1 database apply each migration exact
       [3, null],
       [4, null],
       [5, null],
+      [6, null],
     ],
   );
   assert.equal(userVersion(db), LATEST_SCHEMA_VERSION);

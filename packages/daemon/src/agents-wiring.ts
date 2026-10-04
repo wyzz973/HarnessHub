@@ -28,6 +28,12 @@ import {
 } from "@harnesshub/core/model-plane";
 import { isWiringProfileName } from "@harnesshub/core/model-plane-records";
 import {
+  groupCapabilities,
+  groupModels,
+  modelEfforts,
+  type GroupCapabilities,
+} from "@harnesshub/core/route-groups";
+import {
   applyWiring,
   detectAgent,
   detectDrift,
@@ -1089,25 +1095,21 @@ function stopped(
 }
 
 /**
- * Reasoning levels of a model the metadata plane marks as reasoning: it
- * records that a model reasons, not its levels, and these three are the
- * levels every OpenAI-compatible reasoning API takes.
- */
-const REASONING_LEVELS: readonly ReasoningEffort[] = ["low", "medium", "high"];
-
-/**
  * The models the gateway offers, by Model Ref and in the order `/v1/models`
  * lists them: the exposed models of every provider, with their window,
  * output limit, reasoning levels, image input and the protocols the gateway
- * passes through to the provider, then every route group with what all its
- * members share (the smallest window and output when all are known).
+ * passes through to the provider, then every route group with what its
+ * models share (core `groupCapabilities`: groups inside it included, the
+ * smallest window and output when all are known, the levels every model
+ * that follows the request offers).
  */
 async function gatewayModels(
   store: ModelPlaneStore,
 ): Promise<Map<string, WiringModel>> {
   const catalog = new Map<string, WiringModel>();
   const metadata = new Map<string, ProviderModel>();
-  for (const provider of await store.listProviders()) {
+  const providers = await store.listProviders();
+  for (const provider of providers) {
     const exposed =
       provider.models.expose === "all"
         ? provider.models.list
@@ -1122,18 +1124,38 @@ async function gatewayModels(
     for (const model of exposed) {
       const ref = `${provider.id}/${model.id}`;
       catalog.set(ref, {
-        ...describe(ref, [model]),
+        ...describe(ref, {
+          ...(model.contextWindow !== undefined
+            ? { contextWindow: model.contextWindow }
+            : {}),
+          ...(model.maxOutputTokens !== undefined
+            ? { maxOutputTokens: model.maxOutputTokens }
+            : {}),
+          efforts: modelEfforts(model),
+          ...(model.inputModalities
+            ? { inputModalities: model.inputModalities }
+            : {}),
+        }),
         ...(native.length ? { nativeProtocols: native } : {}),
       });
     }
   }
-  for (const group of await store.listRouteGroups()) {
+  const groups = await store.listRouteGroups();
+  const byId = new Map(groups.map((group) => [group.id, group]));
+  for (const group of groups) {
     const ref = `group/${group.id}`;
     catalog.set(
       ref,
       describe(
         ref,
-        group.members.map((member) => metadata.get(member)),
+        groupCapabilities(
+          groupModels(
+            group,
+            (id) => byId.get(id),
+            (provider, model) => metadata.has(`${provider}/${model}`),
+          ),
+          (member) => metadata.get(member),
+        ),
       ),
     );
   }
@@ -1142,28 +1164,18 @@ async function gatewayModels(
   return catalog;
 }
 
-/** What every one of `models` has: the least window and output, levels and image input only when all have them. */
-function describe(
-  ref: string,
-  models: Array<ProviderModel | undefined>,
-): WiringModel {
-  const least = (values: Array<number | undefined>) =>
-    values.length && values.every((value) => value !== undefined)
-      ? Math.min(...(values as number[]))
-      : undefined;
-  const all = (test: (model: ProviderModel) => boolean) =>
-    models.length > 0 &&
-    models.every((model) => model !== undefined && test(model));
-  const contextWindow = least(models.map((model) => model?.contextWindow));
-  const maxOutputTokens = least(models.map((model) => model?.maxOutputTokens));
+/** A model or group for wiring: its window, output, levels, and image input when it takes images. */
+function describe(ref: string, capabilities: GroupCapabilities): WiringModel {
   return {
     ref,
-    ...(contextWindow !== undefined ? { contextWindow } : {}),
-    ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
-    ...(all((model) => model.reasoning === true)
-      ? { efforts: REASONING_LEVELS }
+    ...(capabilities.contextWindow !== undefined
+      ? { contextWindow: capabilities.contextWindow }
       : {}),
-    ...(all((model) => model.inputModalities?.includes("image") === true)
+    ...(capabilities.maxOutputTokens !== undefined
+      ? { maxOutputTokens: capabilities.maxOutputTokens }
+      : {}),
+    ...(capabilities.efforts.length ? { efforts: capabilities.efforts } : {}),
+    ...(capabilities.inputModalities?.includes("image")
       ? { images: true }
       : {}),
   };

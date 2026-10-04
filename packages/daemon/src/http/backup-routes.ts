@@ -3,7 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { MAX_SEALED_BYTES } from "../backup-envelope.js";
 import type { BackupService } from "../backup.js";
 import type { SyncService } from "../sync.js";
-import { emptyBodySchema, responses } from "./api-v1-schemas.js";
+import { emptyBodySchema, quotaSchema, responses } from "./api-v1-schemas.js";
 
 const text = (maxLength: number) =>
   ({ type: "string", minLength: 1, maxLength }) as const;
@@ -278,15 +278,7 @@ const restoreSummarySchema = {
           name: { type: "string" },
           modelAllow: strings,
           allowLan: { type: "boolean" },
-          quota: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              requestsPerMinute: { type: "integer" },
-              tokensPerDay: { type: "integer" },
-              costPerMonthUsd: { type: "number" },
-            },
-          },
+          quota: quotaSchema,
           expiresAt: { type: "string" },
         },
       },

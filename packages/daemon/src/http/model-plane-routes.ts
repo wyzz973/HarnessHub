@@ -25,8 +25,19 @@ import {
   type UsageFilter,
   type UsageGroupBy,
   type WireProtocol,
+  wireName,
 } from "@harnesshub/core/model-plane";
-import { autoGroups, type AutoGroup } from "@harnesshub/core/auto-groups";
+import {
+  autoGroups,
+  autoRouteGroup,
+  type AutoGroup,
+} from "@harnesshub/core/auto-groups";
+import {
+  canFast,
+  memberText,
+  nestingProblems,
+  parseGroupMember,
+} from "@harnesshub/core/route-groups";
 import { accountUsable } from "@harnesshub/core/subscriptions";
 import {
   endpointProblem,
@@ -66,6 +77,7 @@ import {
   emptyBodySchema,
   gatewayKeyCreatedSchema,
   gatewayKeyCreateSchema,
+  gatewayKeyLimitSchema,
   gatewayKeySchema,
   idParams,
   listOf,
@@ -77,6 +89,7 @@ import {
   modelRefParams,
   noContent,
   presetSchema,
+  quotaSchema,
   providerCreateSchema,
   providerPatchSchema,
   providerSchema,
@@ -320,6 +333,7 @@ export function registerModelPlaneRoutes(
     | "importHome"
     | "subscriptions"
     | "serialize"
+    | "keyLimits"
   >,
 ): void {
   const store: ModelPlaneStore = options.modelPlane;
@@ -987,34 +1001,108 @@ export function registerModelPlaneRoutes(
     if (!found) throw notFound("route group", id);
     return found;
   };
-  /** Members must name models of existing providers. */
+  /**
+   * Members must name models of existing providers or other groups. Each
+   * is stored as `route-groups.ts` spells it (suffixes lowercase); `:fast`
+   * needs a model with a fast mode; groups inside it must exist, must not
+   * contain it, and nest at most 8 deep.
+   */
   const checkGroup = async (candidate: unknown): Promise<RouteGroup> => {
+    const memberProblem = (index: number, detail: string): ProblemItem => ({
+      pointer: `/members/${index}`,
+      detail,
+    });
+    if (
+      object(candidate) &&
+      Array.isArray(candidate.members) &&
+      candidate.members.some(
+        (member) =>
+          typeof member === "string" &&
+          /^group\/[^:]+:/.test(member) &&
+          parseGroupMember(member) === undefined,
+      )
+    )
+      throw invalid(
+        "ROUTE_GROUP_INVALID",
+        "The route group is invalid",
+        candidate.members.flatMap((member, index) =>
+          typeof member === "string" && /^group\/[^:]+:/.test(member)
+            ? [
+                memberProblem(
+                  index,
+                  "a group inside a group routes as it says: it takes no effort or :fast of its own",
+                ),
+              ]
+            : [],
+        ),
+      );
     if (!isRouteGroup(candidate))
       throw invalid("ROUTE_GROUP_INVALID", "The route group is invalid", [
         { pointer: "", detail: "does not form a valid route group" },
       ]);
-    const providers = new Set(
-      (await store.listProviders()).map((item) => item.id),
-    );
-    const errors = candidate.members.flatMap((member, index): ProblemItem[] => {
-      const parsed = parseModelRef(member);
-      return parsed?.kind === "model" && providers.has(parsed.provider)
-        ? []
-        : [
-            {
-              pointer: `/members/${index}`,
-              detail: "must name a model of an existing provider",
-            },
-          ];
+    const [providerList, userGroups, hidden] = await Promise.all([
+      store.listProviders(),
+      store.listRouteGroups(),
+      store.listHiddenAutoGroups(),
+    ]);
+    const providers = new Map(providerList.map((item) => [item.id, item]));
+    const groups = new Map<RouteGroupId, RouteGroup>([
+      ...autoGroups(providerList, {
+        hidden,
+        taken: userGroups.map((group) => group.id),
+      })
+        .filter((group) => !group.hidden)
+        .map((group): [RouteGroupId, RouteGroup] => [
+          group.id,
+          autoRouteGroup(group),
+        ]),
+      ...userGroups.map((group): [RouteGroupId, RouteGroup] => [
+        group.id,
+        group,
+      ]),
+    ]);
+    const errors: ProblemItem[] = [];
+    const members = candidate.members.map((text, index) => {
+      const named = parseGroupMember(text);
+      if (named?.kind === "group") return memberText(named);
+      const provider = named && providers.get(named.provider);
+      if (!provider) {
+        errors.push(
+          memberProblem(index, "must name a model of an existing provider"),
+        );
+        return text;
+      }
+      const member = parseGroupMember(text, (_, model) =>
+        provider.models.list.some((entry) => entry.id === model),
+      );
+      if (member?.kind !== "model") return text;
+      if (member.fast && !canFast(provider, wireName(provider, member.model)))
+        errors.push(
+          memberProblem(
+            index,
+            `${member.ref} has no fast mode the gateway can ask for (OpenAI GPT and o-series models on api.openai.com, a ChatGPT account's GPT models, Claude Opus models with fast mode on api.anthropic.com)`,
+          ),
+        );
+      return memberText(member);
     });
+    if (new Set(members).size !== members.length)
+      errors.push({ pointer: "/members", detail: "must not repeat a member" });
+    const checked: RouteGroup = { ...candidate, members };
+    for (const problem of nestingProblems(checked, (id) => groups.get(id)))
+      errors.push(memberProblem(problem.index, problem.detail));
     if (errors.length)
       throw invalid(
         "ROUTE_GROUP_INVALID",
         "The route group is invalid",
         errors,
       );
-    return candidate;
+    return checked;
   };
+  /** The groups that have `id` among their members. */
+  const groupsWith = async (id: RouteGroupId) =>
+    (await store.listRouteGroups()).filter((group) =>
+      group.members.includes(`group/${id}`),
+    );
   api.get(
     "/route-groups",
     { schema: { response: responses(listOf(routeGroupSchema)) } },
@@ -1090,13 +1178,19 @@ export function registerModelPlaneRoutes(
     async (request, reply) =>
       serialized(async () => {
         const current = await group(request.params.id);
-        const references = (await activeKeys())
-          .filter((key) => key.modelAllow.includes(`group/${current.id}`))
-          .map((key) => ({ type: "gateway-key", id: key.keyId }));
+        const references = [
+          ...(await activeKeys())
+            .filter((key) => key.modelAllow.includes(`group/${current.id}`))
+            .map((key) => ({ type: "gateway-key", id: key.keyId })),
+          ...(await groupsWith(current.id)).map((item) => ({
+            type: "route-group",
+            id: item.id,
+          })),
+        ];
         if (references.length)
           throw new ApiProblem(
             "ROUTE_GROUP_IN_USE",
-            "Gateway Keys still allow this route group",
+            "Gateway Keys or other route groups still use this route group",
             409,
             { references },
           );
@@ -1105,6 +1199,30 @@ export function registerModelPlaneRoutes(
       }),
   );
 
+  /**
+   * A quota's budgets: one per period at most. Problems are added to
+   * `errors` when given, else thrown as 400 `GATEWAY_KEY_INVALID`.
+   */
+  const checkQuota = (
+    quota: GatewayKeyQuota,
+    pointer: string,
+    errors?: ProblemItem[],
+  ): GatewayKeyQuota => {
+    const found: ProblemItem[] = [];
+    const periods = new Set<string>();
+    (quota.budgets ?? []).forEach((budget, index) => {
+      if (periods.has(budget.period))
+        found.push({
+          pointer: `${pointer}/budgets/${index}/period`,
+          detail: `a key has one budget per period; ${budget.period} is given twice`,
+        });
+      periods.add(budget.period);
+    });
+    if (errors) errors.push(...found);
+    else if (found.length)
+      throw invalid("GATEWAY_KEY_INVALID", "The Gateway Key is invalid", found);
+    return quota;
+  };
   const gatewayKey = async (id: string): Promise<GatewayKeyRecord> => {
     const found = await store.getGatewayKey(id as GatewayKeyId);
     if (!found) throw notFound("gateway key", id);
@@ -1163,6 +1281,7 @@ export function registerModelPlaneRoutes(
             pointer: "/expiresAt",
             detail: "must be set for a key with allowLan",
           });
+        if (body.quota) checkQuota(body.quota, "/quota", errors);
         if (errors.length)
           throw invalid(
             "GATEWAY_KEY_INVALID",
@@ -1194,6 +1313,45 @@ export function registerModelPlaneRoutes(
     { schema: { params: idParams, response: responses(gatewayKeySchema) } },
     async (request) => view(await gatewayKey(request.params.id)),
   );
+  api.put<{ Params: { id: string }; Body: GatewayKeyQuota }>(
+    "/gateway-keys/:id/quota",
+    {
+      schema: {
+        params: idParams,
+        body: quotaSchema,
+        response: responses(gatewayKeySchema),
+      },
+    },
+    async (request) =>
+      serialized(async () => {
+        const id = (await gatewayKey(request.params.id)).keyId;
+        const quota = checkQuota(request.body, "");
+        await store.setGatewayKeyQuota(
+          id,
+          quota.requestsPerMinute !== undefined || quota.budgets?.length
+            ? quota
+            : undefined,
+        );
+        return view(await gatewayKey(id));
+      }),
+  );
+  const keyLimits = options.keyLimits;
+  if (keyLimits)
+    api.get<{ Params: { id: string } }>(
+      "/gateway-keys/:id/limit",
+      {
+        schema: {
+          params: idParams,
+          response: responses(gatewayKeyLimitSchema),
+        },
+      },
+      async (request) => {
+        const id = (await gatewayKey(request.params.id)).keyId;
+        const status = await keyLimits.limit(id);
+        if (!status) throw notFound("gateway key", id);
+        return status;
+      },
+    );
   api.post<{ Params: { id: string } }>(
     "/gateway-keys/:id/revoke",
     {
@@ -1323,6 +1481,19 @@ export function registerModelPlaneRoutes(
         const id = request.params.id as RouteGroupId;
         const found = (await derivedGroups()).find((entry) => entry.id === id);
         if (!found) throw notFound("auto group", id);
+        const nesting = await groupsWith(id);
+        if (nesting.length)
+          throw new ApiProblem(
+            "ROUTE_GROUP_IN_USE",
+            "Route groups still have this automatic group among their members",
+            409,
+            {
+              references: nesting.map((item) => ({
+                type: "route-group",
+                id: item.id,
+              })),
+            },
+          );
         await store.setAutoGroupHidden(id, true);
         return reply.code(204).send();
       }),

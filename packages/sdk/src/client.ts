@@ -36,6 +36,7 @@ import type {
 } from "@harnesshub/core/provider-doctor";
 import type {
   AllowanceReading,
+  BudgetPeriod,
   ConversationSummary,
   GatewayKeyQuota,
   GatewayKeyView,
@@ -55,6 +56,8 @@ import type {
 /** Record types of the API, re-exported so clients need no other package. */
 export type {
   AllowanceReading,
+  BudgetPeriod,
+  GatewayKeyBudget,
   GatewayKeyQuota,
   GatewayKeyScope,
   GatewayKeyView,
@@ -342,6 +345,40 @@ export interface GatewayKeyInput {
   allowLan?: boolean;
   /** Absent: 90 days from now; null: never expires. */
   expiresAt?: string | null;
+}
+
+/** One budget of a key as it stands (`GET /gateway-keys/{id}/limit`). */
+export interface KeyBudgetStatus {
+  period: BudgetPeriod;
+  /** The calendar window's start and the next one's (ISO 8601), in the daemon's local time zone. */
+  start: string;
+  resetsAt: string;
+  /** Answered calls in the window. */
+  calls: number;
+  /** Tokens as the budget counts them. */
+  tokens: number;
+  costUsd: number;
+  tokenLimit?: number;
+  costLimitUsd?: number;
+  cacheReads: boolean;
+  tokensLeft?: number;
+  costLeftUsd?: number;
+  /** Requests in flight and what they hold in reservations. */
+  inFlight: number;
+  reservedTokens: number;
+  reservedCostUsd: number;
+  /** A cap is reached: the key is refused until `resetsAt`. */
+  spent: boolean;
+}
+
+/** `GET /gateway-keys/{id}/limit`: a key's limits and what it used of them. */
+export interface GatewayKeyLimit {
+  keyId: string;
+  name: string;
+  /** The IANA time zone the windows are in. */
+  timeZone: string;
+  requestsPerMinute?: number;
+  budgets: KeyBudgetStatus[];
 }
 
 /** LAN sharing settings: the body of `PUT /gateway/share`. */
@@ -1210,6 +1247,19 @@ export class HarnessHubClient {
         "POST",
         `gateway-keys/${segment(keyId)}/revoke`,
         { body: {} },
+      ),
+    /** Replaces the key's quota; `{}` removes it. Budgets apply from the key's next request. */
+    setQuota: (keyId: string, quota: GatewayKeyQuota) =>
+      this.request<GatewayKeyView>(
+        "PUT",
+        `gateway-keys/${segment(keyId)}/quota`,
+        { body: quota },
+      ),
+    /** What the key used of each budget now, with its requests in flight. */
+    limit: (keyId: string) =>
+      this.request<GatewayKeyLimit>(
+        "GET",
+        `gateway-keys/${segment(keyId)}/limit`,
       ),
   };
 

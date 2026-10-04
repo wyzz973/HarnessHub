@@ -13,7 +13,11 @@ import type {
   CatalogService,
   ModelMetadataStore,
 } from "@harnesshub/core/model-metadata";
-import type { ModelPlaneStore } from "@harnesshub/core/model-plane";
+import type {
+  GatewayKeyId,
+  KeyLimitStatus,
+  ModelPlaneStore,
+} from "@harnesshub/core/model-plane";
 import type { ProviderPreset } from "@harnesshub/core/provider-presets";
 import { responses, systemInfoSchema } from "./api-v1-schemas.js";
 import { registerModelPlaneRoutes } from "./model-plane-routes.js";
@@ -159,6 +163,14 @@ export interface ApiV1Options {
   gatewayFeatures?: GatewayFeaturesControl;
   /** The gateway's per-credential routing state; without it `/routing/state` is absent. */
   routing?: RoutingStateSource;
+  /**
+   * Gateway Key budgets as the gateway holds them (`GatewayHandler.keyLimit`):
+   * what each key used of its windows, with requests in flight; without it
+   * `/gateway-keys/{id}/limit` is absent.
+   */
+  keyLimits?: {
+    limit(keyId: GatewayKeyId): Promise<KeyLimitStatus | undefined>;
+  };
   /** Backups and sync; without them `/backup`, `/restore` and `/sync` are absent. */
   backup?: { backups: BackupService; sync: SyncService };
   /**

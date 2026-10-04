@@ -28,7 +28,14 @@ import {
   connectLocal,
   DEFAULT_DAEMON_URL,
 } from "@harnesshub/sdk/local";
-import type { UsageGroupBy, WireProtocol } from "@harnesshub/core/model-plane";
+import {
+  budgetPeriods,
+  type BudgetPeriod,
+  type GatewayKeyBudget,
+  type GatewayKeyQuota,
+  type UsageGroupBy,
+  type WireProtocol,
+} from "@harnesshub/core/model-plane";
 import { choosePreset } from "@harnesshub/core/provider-presets";
 import {
   searchBackendKinds,
@@ -68,7 +75,12 @@ const USAGE = `Usage: hh <command> [options]
               | remove <provider> <credential>
               secret from a hidden prompt, --from-stdin, --from-env VAR or --from-file PATH
   hh key list | create --name N --allow REF... [--expires-at TIME | --no-expiry]
-              [--lan] | revoke <keyId>
+              [--lan] [--rpm N] [--budget PERIOD:tokens=N,cost=USD,cache-reads]...
+              | quota <keyId> [--rpm N] [--budget ...]... | quota <keyId> --clear
+              | limit <keyId> | revoke <keyId>
+              budgets are per calendar day, week or month in the daemon's
+              local time; tokens count input, output and cache writes (and
+              cache reads with cache-reads), cost is the ledger's estimate
   hh gateway features | redaction on|off | redaction rule add NAME PATTERN
               [--ignore-case] | redaction rule remove NAME | vision MODEL|off
               | search add tavily|brave|exa|firecrawl|searxng [--base-url URL]
@@ -78,6 +90,9 @@ const USAGE = `Usage: hh <command> [options]
               [--public-base-url URL]
   hh group list | add <id> --member REF... [--strategy S] [--stickiness S]
               | remove <id> | auto | hide <auto-id> | restore <auto-id>
+              a member is provider/model, fixed at an effort with :none to
+              :max (provider/model:high), sent fast with :fast last, or
+              another group (group/<id>, at most 8 deep)
   hh model show <provider/model | provider/*>
               | set <provider/model | provider/*> KEY=VALUE... | unset <ref>
               keys: context, output (tokens), reasoning, toolcall (yes|no),
@@ -692,6 +707,100 @@ async function credentialCommand(args: string[]): Promise<void> {
   }
 }
 
+/**
+ * `--budget PERIOD:tokens=N,cost=USD,cache-reads`: a key budget for a
+ * calendar day, week or month; at least one of tokens and cost.
+ */
+function budgetOption(text: string): GatewayKeyBudget {
+  const [period = "", rest = ""] = text.split(/:(.*)/s);
+  if (!(budgetPeriods as readonly string[]).includes(period))
+    throw new UsageError(
+      `--budget starts with day, week or month, not ${JSON.stringify(period)}`,
+    );
+  const budget: GatewayKeyBudget = { period: period as BudgetPeriod };
+  for (const item of rest.split(",").map((part) => part.trim())) {
+    if (!item) continue;
+    const [name, value] = item.split("=", 2) as [string, string | undefined];
+    const number =
+      value !== undefined && /^\d+(?:\.\d+)?(?:e[+-]?\d+)?$/i.test(value)
+        ? Number(value)
+        : NaN;
+    // A cap of 0 blocks the key for the window.
+    if (name === "tokens" && Number.isSafeInteger(number) && number >= 0)
+      budget.tokens = number;
+    else if (name === "cost" && Number.isFinite(number) && number >= 0)
+      budget.costUsd = number;
+    else if (name === "cache-reads" && value === undefined)
+      budget.cacheReads = true;
+    else
+      throw new UsageError(
+        `--budget takes tokens=N, cost=USD and cache-reads, not ${JSON.stringify(item)}`,
+      );
+  }
+  if (budget.tokens === undefined && budget.costUsd === undefined)
+    throw new UsageError(`--budget ${text} needs tokens=N or cost=USD`);
+  return budget;
+}
+
+/** A quota in words: `60 rpm; day 1000000 tokens; month $20`. */
+function quotaText(quota: GatewayKeyQuota): string {
+  return [
+    ...(quota.requestsPerMinute !== undefined
+      ? [`${quota.requestsPerMinute} rpm`]
+      : []),
+    ...(quota.budgets ?? []).map((budget) =>
+      [
+        budget.period,
+        ...(budget.tokens !== undefined
+          ? [
+              `${budget.tokens} tokens${budget.cacheReads ? " (with cache reads)" : ""}`,
+            ]
+          : []),
+        ...(budget.costUsd !== undefined ? [`$${budget.costUsd}`] : []),
+      ].join(" "),
+    ),
+  ].join("; ");
+}
+
+/** A quota as the `hh key create` options that give it: `--rpm 60 --budget day:tokens=0,cache-reads`. */
+export function quotaFlags(quota: GatewayKeyQuota): string {
+  return [
+    ...(quota.requestsPerMinute !== undefined
+      ? [`--rpm ${quota.requestsPerMinute}`]
+      : []),
+    ...(quota.budgets ?? []).map(
+      (budget) =>
+        `--budget ${[
+          budget.period,
+          [
+            ...(budget.tokens !== undefined ? [`tokens=${budget.tokens}`] : []),
+            ...(budget.costUsd !== undefined ? [`cost=${budget.costUsd}`] : []),
+            ...(budget.cacheReads ? ["cache-reads"] : []),
+          ].join(","),
+        ].join(":")}`,
+    ),
+  ].join(" ");
+}
+
+/** A quota from `--rpm` and `--budget`; undefined when neither was given. */
+function quotaOptions(
+  values: Record<string, unknown>,
+): GatewayKeyQuota | undefined {
+  const budgets = list(values.budget).map(budgetOption);
+  const rpm = values.rpm;
+  let requestsPerMinute: number | undefined;
+  if (typeof rpm === "string") {
+    requestsPerMinute = Number(rpm);
+    if (!Number.isSafeInteger(requestsPerMinute) || requestsPerMinute < 1)
+      throw new UsageError("--rpm takes a positive integer");
+  }
+  if (!budgets.length && requestsPerMinute === undefined) return undefined;
+  return {
+    ...(requestsPerMinute !== undefined ? { requestsPerMinute } : {}),
+    ...(budgets.length ? { budgets } : {}),
+  };
+}
+
 async function keyCommand(args: string[]): Promise<void> {
   const [action = "", ...rest] = args;
   const { values, positionals: given } = parse(rest, {
@@ -700,6 +809,9 @@ async function keyCommand(args: string[]): Promise<void> {
     "expires-at": { type: "string" },
     "no-expiry": { type: "boolean" },
     lan: { type: "boolean" },
+    rpm: { type: "string" },
+    budget: { type: "string", multiple: true },
+    clear: { type: "boolean" },
   });
   const ctx = context(values);
   switch (action) {
@@ -737,11 +849,13 @@ async function keyCommand(args: string[]): Promise<void> {
         throw new UsageError("Use either --expires-at or --no-expiry");
       if (values["no-expiry"] && values.lan)
         throw new UsageError("A --lan key must expire; drop --no-expiry");
+      const quota = quotaOptions(values);
       const created = await (
         await ctx.client()
       ).gatewayKeys.create({
         name: values.name,
         modelAllow: allow,
+        ...(quota ? { quota } : {}),
         ...(values.lan ? { allowLan: true } : {}),
         ...(values["no-expiry"] ? { expiresAt: null } : {}),
         ...(typeof values["expires-at"] === "string"
@@ -752,6 +866,55 @@ async function keyCommand(args: string[]): Promise<void> {
         `Created key ${created.gatewayKey.keyId}. Store it now: it is not shown again.\n`,
       );
       return output(ctx, created, () => created.key);
+    }
+    case "quota": {
+      const [keyId] = positionals(given, ["keyId"]);
+      const quota = quotaOptions(values);
+      if (values.clear ? quota !== undefined : quota === undefined)
+        throw new UsageError(
+          "key quota takes --rpm N and --budget ..., or --clear alone",
+        );
+      const updated = await (
+        await ctx.client()
+      ).gatewayKeys.setQuota(keyId!, quota ?? {});
+      return output(ctx, updated, () =>
+        updated.quota
+          ? `Key ${updated.keyId}: ${quotaText(updated.quota)}`
+          : `Key ${updated.keyId} has no quota`,
+      );
+    }
+    case "limit": {
+      const [keyId] = positionals(given, ["keyId"]);
+      const limit = await (await ctx.client()).gatewayKeys.limit(keyId!);
+      return output(ctx, limit, () =>
+        [
+          `Key ${limit.keyId} (${limit.name})${limit.requestsPerMinute !== undefined ? `, ${limit.requestsPerMinute} requests per minute` : ""}; windows in ${limit.timeZone}`,
+          table(
+            [
+              "PERIOD",
+              "TOKENS",
+              "COST USD",
+              "CALLS",
+              "IN FLIGHT",
+              "RESETS",
+              "STATUS",
+            ],
+            limit.budgets.map((item) => [
+              item.period,
+              item.tokenLimit !== undefined
+                ? `${item.tokens}/${item.tokenLimit}${item.cacheReads ? " (with cache reads)" : ""}`
+                : String(item.tokens),
+              item.costLimitUsd !== undefined
+                ? `${item.costUsd.toFixed(4)}/${item.costLimitUsd}`
+                : item.costUsd.toFixed(4),
+              String(item.calls),
+              String(item.inFlight),
+              localTime(item.resetsAt),
+              item.spent ? "spent" : "ok",
+            ]),
+          ),
+        ].join("\n"),
+      );
     }
     case "revoke": {
       const [keyId] = positionals(given, ["keyId"]);

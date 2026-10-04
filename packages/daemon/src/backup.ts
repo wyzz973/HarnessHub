@@ -40,6 +40,7 @@ import {
   wiringTiers,
   type AgentWiringStore,
   type CredentialId,
+  type GatewayKeyBudget,
   type GatewayKeyQuota,
   type ModelPlaneStore,
   type ProviderConfig,
@@ -50,6 +51,7 @@ import {
   type WiringProfile,
 } from "@harnesshub/core/model-plane";
 import {
+  isGatewayKeyQuota,
   isProviderConfig,
   isRouteGroup,
   isTimestamp,
@@ -675,7 +677,9 @@ export class BackupService {
           }
         : null,
       agents: await this.planAgents(bundle.agents, agents),
-      clientKeys: bundle.clientKeys,
+      clientKeys: bundle.clientKeys.map((key) =>
+        key.quota ? { ...key, quota: currentQuota(key.quota) } : key,
+      ),
     };
   }
 
@@ -1238,6 +1242,38 @@ function isAgentIntent(value: unknown): value is AgentIntent {
   );
 }
 
+/**
+ * A key quota as keys take it now: a backup written before key budgets has
+ * `tokensPerDay` (a day budget that counted cache reads) and
+ * `costPerMonthUsd` (a month budget), as store migration 6 converts stored
+ * keys. Each cap is carried over as it is: a cap of 0 refused every call and
+ * still does, and a value that is not a cap fails as the key is issued
+ * rather than vanishing.
+ */
+export function currentQuota(quota: GatewayKeyQuota): GatewayKeyQuota {
+  const legacy = quota as GatewayKeyQuota & {
+    tokensPerDay?: unknown;
+    costPerMonthUsd?: unknown;
+  };
+  const { tokensPerDay, costPerMonthUsd, ...rest } = legacy;
+  if (tokensPerDay === undefined && costPerMonthUsd === undefined) return quota;
+  const budgets: GatewayKeyBudget[] = [
+    ...(tokensPerDay !== undefined
+      ? [
+          {
+            period: "day" as const,
+            tokens: tokensPerDay as number,
+            cacheReads: true,
+          },
+        ]
+      : []),
+    ...(costPerMonthUsd !== undefined
+      ? [{ period: "month" as const, costUsd: costPerMonthUsd as number }]
+      : []),
+  ];
+  return { ...rest, budgets };
+}
+
 function isClientKey(value: unknown): value is ClientKeyIntent {
   return (
     object(value) &&
@@ -1246,7 +1282,9 @@ function isClientKey(value: unknown): value is ClientKeyIntent {
     value.name.length <= 200 &&
     strings(value.modelAllow) &&
     typeof value.allowLan === "boolean" &&
-    (value.quota === undefined || object(value.quota)) &&
+    (value.quota === undefined ||
+      (object(value.quota) &&
+        isGatewayKeyQuota(currentQuota(value.quota as GatewayKeyQuota)))) &&
     (value.expiresAt === undefined || isTimestamp(value.expiresAt))
   );
 }

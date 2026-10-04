@@ -188,6 +188,19 @@ export interface ProviderConfig {
 }
 
 /**
+ * Upstream model name: the model's own `wire`, else the provider's `wire`
+ * entry for the id, else its `*` entry with `*` replaced by the id, else the id.
+ */
+export function wireName(provider: ProviderConfig, modelId: string): string {
+  const listed = provider.models.list.find((model) => model.id === modelId);
+  if (listed?.wire) return listed.wire;
+  const exact = provider.wire?.[modelId];
+  if (exact !== undefined) return exact;
+  const pattern = provider.wire?.["*"];
+  return pattern === undefined ? modelId : pattern.replaceAll("*", modelId);
+}
+
+/**
  * `smart` and `pace` order credentials by their allowance readings (Magpie's
  * routings of the same names); without readings they keep the configured order.
  */
@@ -233,12 +246,17 @@ export const DEFAULT_RETRY_POLICY: Readonly<RetryPolicy> = Object.freeze({
   retryAfterWaitCapMs: 8_000,
 });
 
-/** `group/<id>`: an ordered set of Model Refs routed by one strategy. */
+/**
+ * `group/<id>`: an ordered set of members routed by one strategy. A member
+ * is a Model Ref, optionally fixed at a reasoning effort (`:high`) and sent
+ * fast (`:fast` last), or another group (`group/<id>`), as
+ * `route-groups.ts` reads them.
+ */
 export interface RouteGroup {
   id: RouteGroupId;
   strategy: RouteStrategy;
   stickiness: Stickiness;
-  members: ModelRef[];
+  members: string[];
   retry?: Partial<RetryPolicy>;
   createdAt: string;
   updatedAt: string;
@@ -252,10 +270,64 @@ export type GatewayKeyScope =
 
 const scopeLetters = { agent: "a", session: "s", client: "c" } as const;
 
+/** The calendar windows a key budget is set for (Magpie `access.Limit`). */
+export const budgetPeriods = ["day", "week", "month"] as const;
+export type BudgetPeriod = (typeof budgetPeriods)[number];
+
+/**
+ * What a Gateway Key may use in one calendar window of the daemon's local
+ * time: a day from midnight, a week from Monday's midnight, a month from the
+ * 1st's. A call counts in the window it started in. `tokens` caps uncached
+ * input, output, reasoning and cache-write tokens, and cache reads too with
+ * `cacheReads`; `costUsd` caps the estimated cost at the ledger's prices,
+ * to which a call without a price adds nothing. At least one cap is set; a
+ * cap of 0 refuses every call in the window (a key kept but blocked).
+ */
+export interface GatewayKeyBudget {
+  period: BudgetPeriod;
+  tokens?: number;
+  costUsd?: number;
+  cacheReads?: boolean;
+}
+
 export interface GatewayKeyQuota {
   requestsPerMinute?: number;
-  tokensPerDay?: number;
-  costPerMonthUsd?: number;
+  /** At most one per period. */
+  budgets?: GatewayKeyBudget[];
+}
+
+/** One budget as it stands (`GET /api/v1/gateway-keys/{id}/limit`). */
+export interface BudgetStatus {
+  period: BudgetPeriod;
+  /** The window's start and the next window's start (ISO 8601). */
+  start: string;
+  resetsAt: string;
+  /** Answered calls in the window. */
+  calls: number;
+  /** Tokens counted as the budget counts them. */
+  tokens: number;
+  costUsd: number;
+  tokenLimit?: number;
+  costLimitUsd?: number;
+  cacheReads: boolean;
+  tokensLeft?: number;
+  costLeftUsd?: number;
+  /** Requests in flight and what they hold. */
+  inFlight: number;
+  reservedTokens: number;
+  reservedCostUsd: number;
+  /** A cap is reached: the key is refused until `resetsAt`. */
+  spent: boolean;
+}
+
+/** A key's limits and what it used of them. */
+export interface KeyLimitStatus {
+  keyId: string;
+  name: string;
+  /** The IANA time zone the windows are in. */
+  timeZone: string;
+  requestsPerMinute?: number;
+  budgets: BudgetStatus[];
 }
 
 /**
@@ -658,6 +730,11 @@ export interface ModelPlaneStore {
   listGatewayKeys(): Promise<GatewayKeyRecord[]>;
   revokeGatewayKey(keyId: GatewayKeyId, at: string): Promise<boolean>;
   touchGatewayKey(keyId: GatewayKeyId, at: string): Promise<void>;
+  /** Replaces the key's quota, or removes it; false when the key does not exist. */
+  setGatewayKeyQuota(
+    keyId: GatewayKeyId,
+    quota: GatewayKeyQuota | undefined,
+  ): Promise<boolean>;
 
   /** Commits one ledger entry; rejects when the store cannot write (the gateway then answers 503). */
   appendModelCall(entry: ModelCallEntry): Promise<void>;

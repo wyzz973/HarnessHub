@@ -426,7 +426,8 @@ void test("route groups are stored, replaced and deleted; invalid ones are refus
   const invalid: unknown[] = [
     group("Fast"),
     group("fast", { members: [] }),
-    group("fast", { members: ["group/other" as ModelRef] }),
+    // A group member names a group; it takes no suffix of its own.
+    group("fast", { members: ["group/other:high" as ModelRef] }),
     group("fast", { members: ["no-slash" as ModelRef] }),
     group("fast", {
       members: ["alpha/chat-1" as ModelRef, "alpha/chat-1" as ModelRef],

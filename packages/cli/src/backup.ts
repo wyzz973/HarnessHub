@@ -26,6 +26,7 @@ import {
   output,
   parse,
   positionals,
+  quotaFlags,
   report,
   UsageError,
   write,
@@ -268,7 +269,7 @@ function summaryText(summary: RestoreSummary, done: boolean): string {
     );
     for (const key of summary.clientKeys)
       lines.push(
-        `  ${key.name}: ${key.modelAllow.join(", ") || "(no models)"}${key.allowLan ? " (LAN)" : ""}`,
+        `  ${key.name}: ${key.modelAllow.join(", ") || "(no models)"}${key.allowLan ? " (LAN)" : ""}${key.quota && quotaFlags(key.quota) ? `, with ${quotaFlags(key.quota)}` : ""}`,
       );
   }
   return lines.join("\n");

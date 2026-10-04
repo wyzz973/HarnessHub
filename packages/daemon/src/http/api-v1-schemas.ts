@@ -568,6 +568,8 @@ const members = {
   maxItems: 100,
   uniqueItems: true,
   items: modelRefText,
+  description:
+    "provider/model, optionally fixed at an effort (provider/model:high) and sent fast (:fast last), or another group (group/<id>, at most 8 deep)",
 } as const;
 
 export const routeGroupSchema = {
@@ -620,15 +622,41 @@ const scope = {
     name: text(200),
   },
 } as const;
-const quota = {
+const budget = {
+  type: "object",
+  additionalProperties: false,
+  required: ["period"],
+  properties: {
+    period: { enum: ["day", "week", "month"] },
+    tokens: {
+      ...count,
+      description:
+        "Uncached input, output, reasoning and cache-write tokens in the window; cache reads too with cacheReads. 0 refuses every call",
+    },
+    costUsd: {
+      ...amount,
+      description:
+        "Estimated cost in USD at the ledger's prices. 0 refuses every call",
+    },
+    cacheReads: { type: "boolean" },
+  },
+  anyOf: [{ required: ["tokens"] }, { required: ["costUsd"] }],
+} as const;
+export const quotaSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
     requestsPerMinute: positive,
-    tokensPerDay: positive,
-    costPerMonthUsd: amount,
+    budgets: {
+      type: "array",
+      maxItems: 3,
+      items: budget,
+      description:
+        "At most one per period; windows are calendar ones in the daemon's local time zone",
+    },
   },
 } as const;
+const quota = quotaSchema;
 export const gatewayKeySchema = {
   type: "object",
   additionalProperties: false,
@@ -684,6 +712,64 @@ export const gatewayKeyCreatedSchema = {
   properties: {
     key: { type: "string", description: "The key text; shown only once." },
     gatewayKey: gatewayKeySchema,
+  },
+} as const;
+const budgetStatus = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "period",
+    "start",
+    "resetsAt",
+    "calls",
+    "tokens",
+    "costUsd",
+    "cacheReads",
+    "inFlight",
+    "reservedTokens",
+    "reservedCostUsd",
+    "spent",
+  ],
+  properties: {
+    period: { enum: ["day", "week", "month"] },
+    start: timestamp,
+    resetsAt: timestamp,
+    calls: { type: "integer", description: "Answered calls in the window" },
+    tokens: {
+      type: "integer",
+      description: "Tokens as the budget counts them",
+    },
+    costUsd: { type: "number" },
+    tokenLimit: { type: "integer" },
+    costLimitUsd: { type: "number" },
+    cacheReads: { type: "boolean" },
+    tokensLeft: { type: "integer" },
+    costLeftUsd: { type: "number" },
+    inFlight: {
+      type: "integer",
+      description: "Requests in flight holding reservations",
+    },
+    reservedTokens: { type: "integer" },
+    reservedCostUsd: { type: "number" },
+    spent: {
+      type: "boolean",
+      description: "A cap is reached: the key is refused until resetsAt",
+    },
+  },
+} as const;
+export const gatewayKeyLimitSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["keyId", "name", "timeZone", "budgets"],
+  properties: {
+    keyId: { type: "string" },
+    name: { type: "string" },
+    timeZone: {
+      type: "string",
+      description: "The IANA time zone the budget windows are in",
+    },
+    requestsPerMinute: { type: "integer" },
+    budgets: { type: "array", items: budgetStatus },
   },
 } as const;
 export const emptyBodySchema = {

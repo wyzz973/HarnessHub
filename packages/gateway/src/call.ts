@@ -62,6 +62,13 @@ import {
   type Segment,
 } from "./passthrough.js";
 import {
+  memberFast,
+  memberNeedsTranslation,
+  memberPassthrough,
+  memberTranslation,
+  withFastBeta,
+} from "./members.js";
+import {
   GatewayError,
   estimateTokens,
   type ChatResult,
@@ -1056,14 +1063,19 @@ function prepare(call: Call, candidate: Candidate): Prepared {
       ),
     };
   if (candidate.mode === "passthrough") {
+    // A group member's fixed effort and fast mode, in the request's own terms.
+    const member = memberPassthrough(candidate.upstream, call.raw, candidate);
     const built = passthroughBody(
       candidate.upstream,
-      call.bytes,
-      call.raw,
+      member ? Buffer.from(JSON.stringify(member.raw)) : call.bytes,
+      member?.raw ?? call.raw,
       candidate.wireModel,
       set,
     );
-    const masked = redact(call, built.body, built.patches);
+    const masked = redact(call, built.body, [
+      ...built.patches,
+      ...(member?.patches ?? []),
+    ]);
     const { body, patches } =
       candidate.upstream === "responses"
         ? relayResponses(call, masked.body, masked.patches)
@@ -1100,6 +1112,7 @@ function prepare(call: Call, candidate: Candidate): Prepared {
   const patches = new Set(set?.patches ?? []);
   const chatUpstream = candidate.upstream === "chat";
   const visionPatches = !images && call.vision ? [...call.vision.patches] : [];
+  visionPatches.push(...memberTranslation(translation, candidate));
   // The client's server-side web search becomes the gateway's own tool.
   let search: string | undefined;
   if (translation.search) {
@@ -1184,6 +1197,7 @@ function prepare(call: Call, candidate: Candidate): Prepared {
     drops,
     applied,
   );
+  applied.push(...memberFast(upstream, candidate));
   const masked = redact(call, upstream, applied);
   const text = JSON.stringify(masked.body);
   return (
@@ -1640,6 +1654,7 @@ async function translatedAttempt(
       url,
       undefined,
     );
+    withFastBeta(headers, candidate);
     return { url, headers, body };
   };
   const sent = await send(
@@ -1956,6 +1971,7 @@ async function passthroughAttempt(
       url,
       set,
     );
+    withFastBeta(headers, candidate);
     call.entry.patches = [
       ...call.routePatches,
       ...prepared.patches,
@@ -2254,6 +2270,9 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
           break;
         }
       }
+      // A member's fixed effort is set in Chat or Responses terms.
+      if (memberNeedsTranslation(candidate, call.route.protocol))
+        candidate = { ...candidate, mode: "translated" };
       call.searching = searchNeeded(call, candidate);
       // The searches are the gateway's, so the request is translated.
       if (call.searching && candidate.mode === "passthrough")

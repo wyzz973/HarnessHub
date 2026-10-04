@@ -33,7 +33,7 @@ async function chatUpstream(t: TestContext) {
       bodies.push(Buffer.concat(chunks).toString("utf8"));
       paths.push(request.url ?? "");
       response.writeHead(200, { "content-type": "application/json" });
-      if (request.url === "/v1/images/generations") {
+      if (request.url?.startsWith("/v1/images/")) {
         response.end(
           JSON.stringify({
             created: 1,
@@ -180,6 +180,24 @@ void test(
     ]);
     assert.equal(upstream.paths.at(-1), "/v1/images/generations");
     assert.ok(!upstream.bodies.at(-1)!.includes(admin));
+    // An edit, as a multipart form, reaches the provider as one.
+    const form = new FormData();
+    form.append("model", "up/m");
+    form.append("prompt", "make it blue");
+    form.append(
+      "image",
+      new Blob([Buffer.from("an-image")], { type: "image/png" }),
+      "cat.png",
+    );
+    const edit = await fetch(`${hub.url}/v1/images/edits`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${key}` },
+      body: form,
+    });
+    assert.equal(edit.status, 200, await edit.clone().text());
+    assert.equal(upstream.paths.at(-1), "/v1/images/edits");
+    assert.match(upstream.bodies.at(-1)!, /name="model"\r\n\r\nm\r\n/);
+    assert.match(upstream.bodies.at(-1)!, /an-image/);
 
     // The routing state lists the credential, closed, with no message text.
     const routing = await client.routing.state();

@@ -12,16 +12,17 @@
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import { HubError } from "@harnesshub/core/errors";
 import type { LogSink } from "@harnesshub/core/logging";
-import type {
-  ApiKeyHeader,
-  DroppableField,
-  ModelPlaneStore,
-  ProviderConfig,
-  ProviderCredential,
-  ProviderId,
-  ProviderModel,
-  ProviderPatch,
-  WireProtocol,
+import {
+  type ApiKeyHeader,
+  type DroppableField,
+  type ModelPlaneStore,
+  type ProviderConfig,
+  type ProviderCredential,
+  type ProviderId,
+  type ProviderModel,
+  type ProviderPatch,
+  type WireProtocol,
+  wireName,
 } from "@harnesshub/core/model-plane";
 import {
   doctorChecks,
@@ -37,7 +38,7 @@ import {
   type ProbeResult,
   type ProbeTarget,
 } from "@harnesshub/gateway/probe";
-import { FAILURE_WORDS, wireName } from "@harnesshub/gateway/routing";
+import { FAILURE_WORDS } from "@harnesshub/gateway/routing";
 import {
   answerOf,
   ESTIMATE,

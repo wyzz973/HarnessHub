@@ -96,6 +96,32 @@ CREATE INDEX model_calls_agent ON model_calls(agent, occurred_ms);
 CREATE TABLE hidden_auto_groups (id TEXT PRIMARY KEY, hidden_at TEXT NOT NULL);
 `,
   },
+  {
+    version: 6,
+    name: "gateway_key_budgets",
+    // Key quotas move to calendar budgets (Magpie access.Limit): a UTC day's
+    // tokensPerDay becomes a day budget that also counts cache reads, as it
+    // did, and costPerMonthUsd a month budget; both now run in local time.
+    // Every cap is carried over as it is, 0 included: a cap of 0 refused
+    // every call and still does, so no key may do more than before.
+    sql: `
+UPDATE gateway_keys SET record = json_set(
+  json_remove(record, '$.quota.tokensPerDay', '$.quota.costPerMonthUsd'),
+  '$.quota.budgets',
+  json((
+    SELECT json_group_array(json(budget)) FROM (
+      SELECT json_object('period', 'day', 'tokens', json_extract(record, '$.quota.tokensPerDay'), 'cacheReads', json('true')) AS budget
+        WHERE json_extract(record, '$.quota.tokensPerDay') IS NOT NULL
+      UNION ALL
+      SELECT json_object('period', 'month', 'costUsd', json_extract(record, '$.quota.costPerMonthUsd'))
+        WHERE json_extract(record, '$.quota.costPerMonthUsd') IS NOT NULL
+    )
+  ))
+)
+WHERE json_extract(record, '$.quota.tokensPerDay') IS NOT NULL
+   OR json_extract(record, '$.quota.costPerMonthUsd') IS NOT NULL;
+`,
+  },
 ]);
 
 /** The schema version this build creates and requires. */

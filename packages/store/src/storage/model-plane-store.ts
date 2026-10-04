@@ -7,6 +7,7 @@ import {
   type AgentWiringStore,
   type ConversationSummary,
   type GatewayKeyId,
+  type GatewayKeyQuota,
   type GatewayKeyRecord,
   type ModelCallEntry,
   type ModelPlaneStore,
@@ -558,6 +559,22 @@ export class SqliteModelPlaneStore
       const next: GatewayKeyRecord = { ...record, modelAllow: [...modelAllow] };
       if (modelDeny.length) next.modelDeny = [...modelDeny];
       else delete next.modelDeny;
+      return next;
+    });
+  }
+
+  /**
+   * Replaces the key's quota (`undefined` removes it); validated with the
+   * whole record (`MODEL_PLANE_RECORD_INVALID`, 400).
+   */
+  async setGatewayKeyQuota(
+    keyId: GatewayKeyId,
+    quota: GatewayKeyQuota | undefined,
+  ): Promise<boolean> {
+    return this.updateKey(keyId, (record) => {
+      const next: GatewayKeyRecord = { ...record };
+      if (quota) next.quota = quota;
+      else delete next.quota;
       return next;
     });
   }

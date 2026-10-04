@@ -6,6 +6,7 @@
  * identifier formats, not cross-record references.
  */
 import {
+  budgetPeriods,
   droppableFields,
   isGatewayKeyId,
   isModelPattern,
@@ -16,6 +17,7 @@ import {
   reasoningEfforts,
   wireProtocols,
   wiringTiers,
+  type GatewayKeyQuota,
   type GatewayKeyRecord,
   type ModelCallEntry,
   type ProviderConfig,
@@ -24,6 +26,7 @@ import {
   type WiringProfile,
   type WiringRecord,
 } from "./model-plane.js";
+import { parseGroupMember } from "./route-groups.js";
 import { copilotAuthModes, subscriptionBackends } from "./subscriptions.js";
 
 type Check = (value: unknown) => boolean;
@@ -329,7 +332,7 @@ export function isRouteGroup(value: unknown): value is RouteGroup {
       value.strategy,
     ) &&
     member(["auto", "session", "turn", "off"])(value.stickiness) &&
-    list(modelRef, 100)(value.members) &&
+    list(groupMember, 100)(value.members) &&
     Array.isArray(value.members) &&
     value.members.length > 0 &&
     new Set(value.members).size === value.members.length &&
@@ -353,11 +356,43 @@ const scope: Check = (value) => {
   }
 };
 
+/** A route group's member: a Model Ref with its suffixes, or `group/<id>`. */
+const groupMember: Check = (value) =>
+  typeof value === "string" && parseGroupMember(value) !== undefined;
+
+/** A key budget: a period and at least one cap above zero. */
+export function isGatewayKeyBudget(value: unknown): boolean {
+  return (
+    object(value) &&
+    Object.keys(value).every((name) =>
+      ["period", "tokens", "costUsd", "cacheReads"].includes(name),
+    ) &&
+    member(budgetPeriods)(value.period) &&
+    optional(value.tokens, count) &&
+    optional(value.costUsd, amount) &&
+    optional(value.cacheReads, bool) &&
+    (value.tokens !== undefined || value.costUsd !== undefined)
+  );
+}
+
+/** Whether `value` is a key's `quota`: a per-minute rate and at most one budget per period. */
+export function isGatewayKeyQuota(value: unknown): value is GatewayKeyQuota {
+  return quota(value);
+}
+
 const quota: Check = (value) =>
   object(value) &&
+  Object.keys(value).every((name) =>
+    ["requestsPerMinute", "budgets"].includes(name),
+  ) &&
   optional(value.requestsPerMinute, positive) &&
-  optional(value.tokensPerDay, positive) &&
-  optional(value.costPerMonthUsd, amount);
+  optional(
+    value.budgets,
+    (budgets) =>
+      list(isGatewayKeyBudget, budgetPeriods.length)(budgets) &&
+      new Set((budgets as { period: string }[]).map((item) => item.period))
+        .size === (budgets as unknown[]).length,
+  );
 
 const modelPattern: Check = (value) =>
   typeof value === "string" && isModelPattern(value);

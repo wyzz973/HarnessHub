@@ -2,6 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type {
+  GatewayKeyQuota,
   ModelCallEntry,
   ModelCallId,
   Stickiness,
@@ -425,12 +426,15 @@ void test("session stickiness stays across cold turns; off records nothing", asy
   }
 });
 
-async function quota(t: test.TestContext, limits: Record<string, number>) {
+/** Budget windows in New York, four hours behind UTC in October (EDT). */
+const ZONE = "America/New_York";
+
+async function quota(t: test.TestContext, limits: GatewayKeyQuota) {
   const up = await upstream(t, CHAT_REPLY);
   const store = new MemoryStore();
   await store.putProvider(provider("p", { chat: `${up.base}/v1` }));
   const key = await addKey(store, ["p/*"], { quota: limits });
-  const gw = await mount(t, store);
+  const gw = await mount(t, store, {}, { timeZone: ZONE });
   const chat = () =>
     send(gw.port, "/v1/chat/completions", {
       headers: { authorization: `Bearer ${key.text}` },
@@ -458,9 +462,12 @@ void test("requestsPerMinute is a hard token bucket with Retry-After to the next
   assert.equal((await chat()).status, 429);
 });
 
-void test("tokensPerDay counts committed usage: the crossing call finishes, the next one is refused until UTC midnight", async (t) => {
-  const { up, store, gw, chat, key } = await quota(t, { tokensPerDay: 300 });
-  // Earlier ledger rows: 100 tokens today, and a large day before that does not count.
+void test("a day budget counts committed usage: the crossing call finishes, the next one is refused until local midnight", async (t) => {
+  const { up, store, gw, chat, key } = await quota(t, {
+    budgets: [{ period: "day", tokens: 300 }],
+  });
+  // Now is 08:00 on 2 October in New York. Earlier ledger rows: 100 tokens
+  // today, and a large call at 23:59:59 the day before that does not count.
   const earlier = (occurredAt: string, input: number): ModelCallEntry => ({
     callId: `mc_${occurredAt}` as ModelCallId,
     occurredAt,
@@ -482,8 +489,8 @@ void test("tokensPerDay counts committed usage: the crossing call finishes, the 
     },
   });
   store.entries.push(
-    earlier("2026-10-01T23:59:59.000Z", 10_000),
-    earlier("2026-10-02T01:00:00.000Z", 100),
+    earlier("2026-10-02T03:59:59.000Z", 10_000),
+    earlier("2026-10-02T05:00:00.000Z", 100),
   );
   assert.equal((await chat()).status, 200); // 100 used before: 220 after
   assert.equal((await chat()).status, 200); // 220 < 300: crosses to 340
@@ -491,27 +498,36 @@ void test("tokensPerDay counts committed usage: the crossing call finishes, the 
   assert.equal(refused.status, 429);
   assert.equal(
     refused.headers["retry-after"],
-    String(12 * 3600),
-    "until 00:00 UTC",
+    String(16 * 3600),
+    "until 00:00 in New York, 04:00 UTC",
+  );
+  assert.equal(refused.headers["x-should-retry"], "false");
+  assert.equal(refused.headers["x-hh-limit-reset"], "2026-10-03T04:00:00.000Z");
+  assert.match(
+    String(at(refused.json(), "error", "message")),
+    /used 340 of its 300 input, output and cache-write tokens today; it resets at 2026-10-03T04:00:00\.000Z/,
   );
   assert.equal(up.seen.length, 2);
   assert.equal(
     store.aggregations,
-    2,
+    1,
     "one ledger read per window, then committed calls are added",
   );
-  gw.clock.now += 12 * 3_600_000;
-  assert.equal((await chat()).status, 200, "a new UTC day");
+  gw.clock.now += 16 * 3_600_000;
+  assert.equal((await chat()).status, 200, "a new day in New York");
 });
 
-void test("costPerMonthUsd counts committed costs until the next UTC month", async (t) => {
+void test("a month budget counts committed costs until the next local month", async (t) => {
   // Each call costs 100 × 1 + 20 × 2 USD per million tokens.
-  const { up, gw, chat, key } = await quota(t, { costPerMonthUsd: 0.0002 });
+  const { up, gw, chat, key } = await quota(t, {
+    budgets: [{ period: "month", costUsd: 0.0002 }],
+  });
   assert.equal((await chat()).status, 200);
   assert.equal((await chat()).status, 200);
   const refused = await chat();
   assert.equal(refused.status, 429);
-  const reset = Date.parse("2026-11-01T00:00:00.000Z") - gw.clock.now;
+  // 1 November 00:00 in New York, still EDT.
+  const reset = Date.parse("2026-11-01T04:00:00.000Z") - gw.clock.now;
   assert.equal(refused.headers["retry-after"], String(reset / 1000));
   assert.equal(up.seen.length, 2);
   const gemini = await send(

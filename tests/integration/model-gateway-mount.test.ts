@@ -129,6 +129,8 @@ void test("the gateway paths are the model protocol paths and never a management
     "/v1/models/gemini-2.5-pro:generateContent",
     "/v1beta/models/gemini-2.5-pro:streamGenerateContent",
     "/v1alpha/models",
+    "/v1/images/generations",
+    "/v1/images/edits",
     "/chat/completions",
     "/responses",
     "/messages",
@@ -146,6 +148,8 @@ void test("the gateway paths are the model protocol paths and never a management
     "/v1/chat",
     "/v1/responsesx",
     "/v1/responses/compactx",
+    "/v1/images/variations",
+    "/images/edits",
     "/v1/engines",
     "/v1bet/models",
     // The Codex passthrough is mounted on the loopback listener only.

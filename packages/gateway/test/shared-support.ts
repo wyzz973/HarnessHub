@@ -18,6 +18,7 @@ import {
   issueGatewayKey,
   type CredentialId,
   type GatewayKeyId,
+  type GatewayKeyQuota,
   type GatewayKeyRecord,
   type GatewayKeyScope,
   type ModelCallEntry,
@@ -91,6 +92,16 @@ export class MemoryStore implements ModelPlaneStore {
   }
   async touchGatewayKey(keyId: GatewayKeyId) {
     this.touches.push(keyId);
+  }
+  async setGatewayKeyQuota(
+    keyId: GatewayKeyId,
+    quota: GatewayKeyQuota | undefined,
+  ) {
+    const key = this.keys.get(keyId);
+    if (!key) return false;
+    if (quota) key.quota = quota;
+    else delete key.quota;
+    return true;
   }
   async appendModelCall(entry: ModelCallEntry) {
     this.appendStarted++;
@@ -396,6 +407,7 @@ export async function mount(
     | "copilot"
     | "features"
     | "secrets"
+    | "timeZone"
   > = {},
 ): Promise<Mounted> {
   const clock = { now: Date.parse("2026-10-02T12:00:00.000Z") };

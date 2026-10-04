@@ -13,12 +13,20 @@ import {
   type ModelRef,
   type ProviderConfig,
   type ProviderCredential,
+  type ProviderId,
   type ProviderModel,
+  type ReasoningEffort,
   type RetryPolicy,
   type RouteGroup,
   type RouteGroupId,
   type WireProtocol,
+  wireName,
 } from "@harnesshub/core/model-plane";
+import {
+  fastMode,
+  GROUP_NEST_LIMIT,
+  parseGroupMember,
+} from "@harnesshub/core/route-groups";
 import { accountUsable } from "@harnesshub/core/subscriptions";
 import { COPILOT_ENDPOINT } from "./copilot.js";
 import type { Failure } from "./output.js";
@@ -35,19 +43,10 @@ export interface Candidate {
   upstream: WireProtocol;
   /** Base URL of the upstream endpoint, without the operation path. */
   endpoint: string;
-}
-
-/**
- * Upstream model name: the model's own `wire`, else the provider's `wire`
- * entry for the id, else its `*` entry with `*` replaced by the id, else the id.
- */
-export function wireName(provider: ProviderConfig, modelId: string): string {
-  const listed = provider.models.list.find((model) => model.id === modelId);
-  if (listed?.wire) return listed.wire;
-  const exact = provider.wire?.[modelId];
-  if (exact !== undefined) return exact;
-  const pattern = provider.wire?.["*"];
-  return pattern === undefined ? modelId : pattern.replaceAll("*", modelId);
+  /** The effort a group's member is fixed at: asked of the model whatever the request asked. */
+  effort?: ReasoningEffort;
+  /** A group's member sent in its vendor's fast mode (core `fastMode`). */
+  fast?: boolean;
 }
 
 function validFor(credential: ProviderCredential, protocol: WireProtocol) {
@@ -170,6 +169,120 @@ export function modelCandidates(
         );
     }
   }
+  return { candidates, skipped };
+}
+
+/** What {@link planGroup} reads and weighs with. */
+export interface GroupPlanning {
+  provider(id: ProviderId): Promise<ProviderConfig | undefined>;
+  /** A stored group, or a visible automatic one. */
+  group(id: RouteGroupId): Promise<RouteGroup | undefined>;
+  /** The group's members in the order it tries them (`Router.order`). */
+  order(group: RouteGroup): readonly string[];
+  /** The candidates of a `least-used`, `smart` or `pace` group by its strategy (`Router.weigh`). */
+  weigh(group: RouteGroup, candidates: Candidate[]): Promise<Candidate[]>;
+  /** A candidate whose breaker is open, passed over when a nested group is weighed by its first candidate. */
+  blocked(candidate: Candidate): boolean;
+}
+
+const WEIGHED = new Set(["least-used", "smart", "pace"]);
+
+/**
+ * The candidates of a route group for an inbound protocol (Magpie
+ * `planGroup`). Each model member gives its credentials' candidates, fixed
+ * at the member's effort and sent fast where the model has a fast mode
+ * (`:fast` on another model is sent as it is); the same model at the same
+ * effort through the same credential is kept where it came first. A group
+ * member is planned by its own strategy and stays together: in member order
+ * for `order`, `rotate` and `latency`; for `least-used`, `smart` and `pace`
+ * each credential of the group's own models and each group member as one
+ * unit are weighed together, a group member by its first candidate that is
+ * not resting. Groups that are unknown, already on the way down, or deeper
+ * than {@link GROUP_NEST_LIMIT} are skipped with a reason.
+ */
+export async function planGroup(
+  group: RouteGroup,
+  inbound: WireProtocol,
+  planning: GroupPlanning,
+): Promise<{ candidates: Candidate[]; skipped: string[] }> {
+  const skipped: string[] = [];
+  const seen = new Set<string>();
+  const providers = new Map<string, Promise<ProviderConfig | undefined>>();
+  const provider = (id: ProviderId) => {
+    let found = providers.get(id);
+    if (!found) {
+      found = planning.provider(id);
+      providers.set(id, found);
+    }
+    return found;
+  };
+  const level = async (
+    current: RouteGroup,
+    via: RouteGroupId[],
+  ): Promise<Candidate[]> => {
+    const units: Candidate[][] = [];
+    for (const text of planning.order(current)) {
+      const named = parseGroupMember(text);
+      if (!named) {
+        skipped.push(`${text}: not a model or a group`);
+        continue;
+      }
+      if (named.kind === "group") {
+        if (named.group === group.id || via.includes(named.group)) {
+          skipped.push(`${text}: the group is already on the way down`);
+          continue;
+        }
+        if (via.length >= GROUP_NEST_LIMIT) {
+          skipped.push(`${text}: groups nest at most ${GROUP_NEST_LIMIT} deep`);
+          continue;
+        }
+        const inner = await planning.group(named.group);
+        if (!inner) {
+          skipped.push(`${text}: unknown group`);
+          continue;
+        }
+        const planned = await level(inner, [...via, named.group]);
+        if (planned.length) units.push(planned);
+        continue;
+      }
+      const found = await provider(named.provider);
+      if (!found) {
+        skipped.push(`${text}: unknown provider`);
+        continue;
+      }
+      // A colon that belongs to a model the provider lists is the model's.
+      const member = parseGroupMember(text, (_, model) =>
+        found.models.list.some((entry) => entry.id === model),
+      );
+      if (member?.kind !== "model") continue;
+      const result = modelCandidates(found, member.model, inbound);
+      skipped.push(...result.skipped);
+      for (const candidate of result.candidates) {
+        const key = `${credentialKey(candidate)}\u0000${candidate.ref}\u0000${member.effort ?? ""}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (member.effort) candidate.effort = member.effort;
+        if (member.fast) {
+          if (fastMode(found, candidate.wireModel, candidate.upstream))
+            candidate.fast = true;
+          else
+            skipped.push(
+              `${text}: ${candidate.ref} has no fast mode on its ${candidate.upstream} endpoint; sent as it is`,
+            );
+        }
+        units.push([candidate]);
+      }
+    }
+    if (!WEIGHED.has(current.strategy) || units.length < 2) return units.flat();
+    const heads = units.map(
+      (unit) =>
+        unit.find((candidate) => !planning.blocked(candidate)) ?? unit[0]!,
+    );
+    const order = await planning.weigh(current, heads);
+    const byHead = new Map(heads.map((head, index) => [head, units[index]!]));
+    return order.flatMap((head) => byHead.get(head) ?? [head]);
+  };
+  const candidates = await level(group, []);
   return { candidates, skipped };
 }
 
@@ -307,7 +420,7 @@ export class Router {
   constructor(private readonly clock: () => number) {}
 
   /** Member order; a `least-used` group keeps its configured order here. */
-  order(group: RouteGroup): ModelRef[] {
+  order(group: RouteGroup): string[] {
     const members = [...group.members];
     switch (group.strategy) {
       case "order":
@@ -322,7 +435,7 @@ export class Router {
         return [...members.slice(start), ...members.slice(0, start)];
       }
       case "latency": {
-        const score = (ref: ModelRef) => {
+        const score = (ref: string) => {
           const sample = this.#latency.get(ref);
           return !sample || sample.samples < 5 ? -1 : sample.average;
         };

@@ -989,6 +989,17 @@ export async function startHub(options: {
       gatewayShare: share,
       gatewayFeatures,
       routing: { state: () => modelGateway?.routingState() ?? [] },
+      keyLimits: {
+        limit: async (keyId) => {
+          if (!modelGateway)
+            throw new HubError(
+              "GATEWAY_UNAVAILABLE",
+              "The model gateway is not running",
+              503,
+            );
+          return modelGateway.keyLimit(keyId);
+        },
+      },
       backup: { backups, sync },
       ...(subscriptions ? { subscriptions } : {}),
       serialize: serializeWrites,

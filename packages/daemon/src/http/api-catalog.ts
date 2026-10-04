@@ -971,7 +971,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     title: "添加 provider",
     group: "providers",
     request:
-      "preset（内置预设 ID，可加 region 与 plan，缺省为预设列出的第一个）或 id（slug）与 endpoints（至少一个）；与 preset 同给的字段覆盖预设（endpoints 按协议覆盖，id 默认为预设 ID）；name、kind、auth、headers、models、wire、patches、capabilities、translateOnly、imageEndpoint（OpenAI 兼容 Images API 的基址，网关的 /v1/images/generations 直通到这里）、catalog（models.dev provider id）可选；credential（value 或 env/file ref，name 默认 default）添加第一个凭据；未知字段 400。",
+      "preset（内置预设 ID，可加 region 与 plan，缺省为预设列出的第一个）或 id（slug）与 endpoints（至少一个）；与 preset 同给的字段覆盖预设（endpoints 按协议覆盖，id 默认为预设 ID）；name、kind、auth、headers、models、wire、patches、capabilities、translateOnly、imageEndpoint（OpenAI 兼容 Images API 的基址，网关的 /v1/images/generations 与 /v1/images/edits 直通到这里）、catalog（models.dev provider id）可选；credential（value 或 env/file ref，name 默认 default）添加第一个凭据；未知字段 400。",
     response:
       "201：ProviderConfig（来自预设时含 preset、region、plan）；带 credential 时含该凭据的引用。",
     implementation:
@@ -1141,12 +1141,13 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     title: "添加路由组",
     group: "route-groups",
     request:
-      "id、members（Model Ref，至少一个，不重复）必填；strategy（默认 order）、stickiness（默认 auto）、retry 可选。",
-    response: "201：RouteGroup。",
-    implementation: "成员必须是已存在 provider 的模型。",
+      "id、members（至少一个，不重复）必填：provider/model，可加 :<effort>（none 到 max，固定该成员的推理强度）与最后的 :fast（以厂商的快速模式发送），或另一个组 group/<id>；strategy（默认 order）、stickiness（默认 auto）、retry 可选。",
+    response: "201：RouteGroup（成员后缀转为小写）。",
+    implementation:
+      "core route-groups：模型成员必须属于已存在的 provider，provider 列出的含冒号的模型 ID 原样保留；:fast 要求模型有网关能请求的快速模式（api.openai.com 上的 GPT 与 o 系列、ChatGPT 账号的 GPT、api.anthropic.com 上有快速模式的 Claude Opus）；组成员必须存在（用户组或可见的自动组）、不能含自身（无论多深）、嵌套最多 8 层，组成员不带后缀。",
     effects: "写入 route_groups 表。",
     errors:
-      "400 ROUTE_GROUP_INVALID（errors[] 指向 /members/<i>）；409 ROUTE_GROUP_EXISTS；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+      "400 ROUTE_GROUP_INVALID（errors[] 指向 /members/<i> 并说明原因：未知 provider、没有快速模式、组不存在、组会包含自身、超过 8 层、组带后缀、成员重复）；409 ROUTE_GROUP_EXISTS；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/model-plane-routes.ts",
     tests: [
       "tests/integration/api-v1.test.ts",
@@ -1175,9 +1176,9 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     title: "修改路由组",
     group: "route-groups",
     request:
-      "JSON Merge Patch：strategy、stickiness、members、retry（null 删除）。",
+      "JSON Merge Patch：strategy、stickiness、members（形式同添加）、retry（null 删除）。",
     response: "200：RouteGroup。",
-    implementation: "合并后整体校验并替换。",
+    implementation: "合并后按添加的规则整体校验（含嵌套与成环）并替换。",
     effects: "更新 route_groups 记录。尚无 ETag/If-Match。",
     errors:
       "400 ROUTE_GROUP_INVALID；404；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
@@ -1192,10 +1193,11 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     group: "route-groups",
     request: "路径参数 id。",
     response: "204。",
-    implementation: "未吊销的 Gateway Key 允许 group/<id> 时拒绝。",
+    implementation:
+      "未吊销的 Gateway Key 允许 group/<id>，或其他路由组以它为成员时拒绝。",
     effects: "删除记录。",
     errors:
-      "409 ROUTE_GROUP_IN_USE（references）；404；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+      "409 ROUTE_GROUP_IN_USE（references：gateway-key 或 route-group）；404；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/model-plane-routes.ts",
     tests: [
       "tests/integration/api-v1.test.ts",
@@ -1231,11 +1233,11 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     request: "路径参数 id；空 JSON 对象。",
     response: "204。",
     implementation:
-      "ModelPlaneStore.setAutoGroupHidden(id, true)；已隐藏时幂等。",
+      "ModelPlaneStore.setAutoGroupHidden(id, true)；已隐藏时幂等；用户路由组以它为成员时拒绝。",
     effects:
       "写入 hidden_auto_groups 表；网关不再列出、也不再路由 group/<id>（请求 404），直到恢复。",
     errors:
-      "404 AUTO_GROUP_NOT_FOUND（当前没有该自动组）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+      "404 AUTO_GROUP_NOT_FOUND（当前没有该自动组）；409 ROUTE_GROUP_IN_USE（references 列出以它为成员的路由组）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/model-plane-routes.ts",
     tests: [
       "tests/integration/api-v1.test.ts",
@@ -1591,14 +1593,14 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     title: "签发 client Key",
     group: "gateway-keys",
     request:
-      "name、modelAllow（provider/model、provider/*、group/<id>，至少一个）必填；quota 可选；allowLan=true 允许在局域网共享监听器上使用；expiresAt 缺省为 90 天后，null 为不过期（allowLan 的 Key 不允许）。",
+      "name、modelAllow（provider/model、provider/*、group/<id>，至少一个）必填；quota 可选：requestsPerMinute 与 budgets[]（每个 period 为 day、week 或 month，至多各一个；tokens 与 costUsd 至少一个且不小于 0，为 0 时该窗口内的每次调用都被拒绝；cacheReads 时缓存读取也计入 tokens）；allowLan=true 允许在局域网共享监听器上使用；expiresAt 缺省为 90 天后，null 为不过期（allowLan 的 Key 不允许）。",
     response:
       "201：key（hhk_c_… 文本，只在此响应中出现）与 gatewayKey 视图；Cache-Control: no-store。",
     implementation:
       "issueGatewayKey 生成 client 作用域 Key，只保存秘密部分的 SHA-256。",
     effects: "写入 gateway_keys 表。",
     errors:
-      "400 GATEWAY_KEY_INVALID（errors[]：/modelAllow/<i>、/expiresAt 必须在未来，allowLan 时必须设置）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+      "400 GATEWAY_KEY_INVALID（errors[]：/modelAllow/<i>、/expiresAt 必须在未来，allowLan 时必须设置，/quota/budgets/<i>/period 重复）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/model-plane-routes.ts",
     tests: [
       "tests/integration/api-v1.test.ts",
@@ -1620,6 +1622,40 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     source: "packages/daemon/src/http/model-plane-routes.ts",
     tests: ["tests/integration/api-v1.test.ts"],
     operationId: "hh_api_v1_get_gateway_key",
+  },
+  {
+    method: "PUT",
+    path: "/api/v1/gateway-keys/{id}/quota",
+    title: "设置 Gateway Key 限额",
+    group: "gateway-keys",
+    request:
+      "路径参数 id；请求体为 quota（requestsPerMinute 与 budgets[]，形式同签发），空对象删除限额。",
+    response: "200：GatewayKeyView。",
+    implementation:
+      "ModelPlaneStore.setGatewayKeyQuota；每个 period 至多一个预算；新限额从该 Key 的下一个请求起生效。",
+    effects: "更新 gateway_keys 记录。",
+    errors:
+      "400 GATEWAY_KEY_INVALID（/budgets/<i>/period 重复）或请求体不合 schema；404 GATEWAY_KEY_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: ["tests/integration/groups-budgets.test.ts"],
+    operationId: "hh_api_v1_set_gateway_key_quota",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/gateway-keys/{id}/limit",
+    title: "Gateway Key 预算用量",
+    group: "gateway-keys",
+    request: "路径参数 id。",
+    response:
+      "200：keyId、name、timeZone（窗口所在的 IANA 时区）、requestsPerMinute、budgets[]（period、start、resetsAt、calls、tokens、costUsd、tokenLimit、costLimitUsd、cacheReads、tokensLeft、costLeftUsd、inFlight、reservedTokens、reservedCostUsd、spent）。",
+    implementation:
+      "共享网关 GatewayHandler.keyLimit：从账本重新汇总每个预算本地日历窗口（日从午夜、周从周一、月从 1 日）内的用量，加上该网关在途请求的预留。",
+    effects: "只读。",
+    errors:
+      "404 GATEWAY_KEY_NOT_FOUND；503 GATEWAY_UNAVAILABLE（网关尚未运行）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: ["tests/integration/groups-budgets.test.ts"],
+    operationId: "hh_api_v1_get_gateway_key_limit",
   },
   {
     method: "POST",
@@ -2220,7 +2256,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     request:
       "backup（备份文件的 JSON）、passphrase；agents 缺省 true，false 时不重新接线；library 缺省 true，false 时不带入 Library；dryRun 缺省 false，true 时只返回摘要。请求体上限 64 MiB。",
     response:
-      "200：摘要 providers（added、replaced、needKey）、groups（added、replaced、skipped）、overrides、profiles（added、replaced）、library（instructions、mcp、skills 各 added、replaced、removed，mcp.needSecret、skills.incomplete、refused[]；备份没有或 library=false 时为 null）、gatewayShare（action、settings、error）、catalog（backup、current、differs）、agents[]（agent、model、tiers、effort、options、models、deny 与 action=wire|unchanged|skip-*，恢复后 outcome=wired|failed 与 error）、clientKeys（需重新签发）。",
+      "200：摘要 providers（added、replaced、needKey）、groups（added、replaced、skipped）、overrides、profiles（added、replaced）、library（instructions、mcp、skills 各 added、replaced、removed，mcp.needSecret、skills.incomplete、refused[]；备份没有或 library=false 时为 null）、gatewayShare（action、settings、error）、catalog（backup、current、differs）、agents[]（agent、model、tiers、effort、options、models、deny 与 action=wire|unchanged|skip-*，恢复后 outcome=wired|failed 与 error）、clientKeys（需重新签发；旧备份的 tokensPerDay 与 costPerMonthUsd 转换为 budgets，值为 0 的上限保留）。",
     implementation:
       "BackupService.restore：解密并校验内容后逐条写入：同 id 的 provider 与同名 profile 替换、其余新增（不带 Key 的备份保留本机凭证；新凭证先写入密钥存储，provider 写失败则删除），路由组，Library 的条目（LibraryService.bring：逐条按 Library API 的规则与 SECRET_REF_FORBIDDEN 检查，被拒的不写入，没有值的 store 秘密沿用本机同名服务的，保留原时间），局域网共享设置（GatewayShare.update），再对本机已安装的 Agent 经 AgentWiringService 的 plan 与 wire（expect 为该预览）按 model、models、tiers、effort 与 options 以新的 agent: Key 接线，隐藏的模型不同时经 setHidden 设置。",
     effects:
@@ -2231,6 +2267,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     tests: [
       "tests/integration/backup-restore.test.ts",
       "tests/integration/backup-library.test.ts",
+      "tests/integration/groups-budgets.test.ts",
     ],
     operationId: "hh_api_v1_restore_backup",
   },
