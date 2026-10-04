@@ -11,10 +11,20 @@
 Developers increasingly use several coding agents at once — Claude Code, Codex, Gemini CLI, OpenCode, Qwen Code and others. HarnessHub manages them from one place:
 
 - **Model plane**: a local gateway that speaks the OpenAI Chat Completions, OpenAI Responses, Anthropic Messages and Gemini protocols, so every agent can use the model you choose.
-- **Agent plane**: discovers installed agents and prepares their configuration, Skills and MCP servers.
+- **Agent plane**: wires the coding agents installed here to the gateway by editing their own configuration in place (preview, backup, drift detection and restore), and syncs instructions, Skills and MCP servers to them.
 - **Run plane**: runs agents headless through a REST + SSE API, with sessions, runs, permission round-trips, deadlines, cancellation, file artifacts and durable event logs.
 
 The [product definition](docs/proposals/oss/01-product.md) compares HarnessHub with [Magpie](https://github.com/yetone/magpie) and other projects in this space. The main difference: HarnessHub runs agents and records verifiable evidence, instead of only switching their configuration.
+
+## Relationship to Magpie
+
+HarnessHub's model and agent planes reimplement, in TypeScript, what [Magpie](https://github.com/yetone/magpie) by yetone (MIT) does in Go, checked against Magpie's source at commit `2e340f7`, and add the run plane and its evidence on top. Thanks to the Magpie project for the design and the field-level knowledge of each agent.
+
+- **Covered:** the gateway's four protocols with passthrough and translation, routing, retries and route groups; 48 of Magpie's 51 provider presets ([taken from Magpie](THIRD_PARTY_NOTICES.md) with its MIT notice); global wiring of 27 of Magpie's 35 agents (plus Qwen Code), each following Magpie's adapter for that agent; profiles, per-agent model lists, the terminal interface, subscription accounts (ChatGPT and Copilot), LAN sharing, backups and sync.
+- **Different by design:** every agent gets its own Gateway Key (Magpie's loopback gateway takes any token), and a file the user changed is reported as drift rather than rewritten.
+- **Not covered:** agents Magpie switches only to their own models (Goose, Cursor, Copilot CLI, Devin), and Antigravity CLI, OpenHanako, Alma and Cindy ([why](docs/global-wiring.md)); agents inside WSL; Magpie's desktop app (HarnessHub has a web console and `hh tui` instead).
+
+HarnessHub's own code is MIT licensed; code and data taken from other projects keep their licenses, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## What works today
 
@@ -23,40 +33,36 @@ The code base comes from an earlier, single-model edition of HarnessHub and is b
 | Area | Current behavior |
 |---|---|
 | Execution | Durable Sessions and Runs in SQLite, serialized per Session; SSE replay from committed events; idempotent submission; deadlines and cancellation; permission requests; declared file outputs as immutable artifacts; JSONL export |
-| Agents | ACP and CLI drivers; discovery of installed agents (OpenCode, Codex, Qwen Code, Gemini CLI, Pi, MiMo, DSH, OpenClaw, Kimi, Hermes and more); per-Session private configuration, so user configuration files are never modified |
-| Model gateway | A shared gateway on the daemon port for any OpenAI, Anthropic or Gemini client: providers from presets or by hand, route groups, Gateway Keys with model allowlists, passthrough to native endpoints or translation between the four protocols, and a `model.call` ledger with usage and cost. Runs still use the per-Session gateway with one configured model |
+| Agents | Global wiring of 28 agents (`hh init`, `hh wire`, `hh tui` and the console's Agents page): each gets its own Gateway Key in its own configuration file, with a preview, backups, drift detection and restore ([global wiring](docs/global-wiring.md)); for headless runs, ACP and CLI drivers with per-Session private configuration |
+| Model gateway | A shared gateway on the daemon port for any OpenAI, Anthropic or Gemini client and for headless runs: providers from presets or by hand, route groups, Gateway Keys with model allowlists, passthrough to native endpoints or translation between the four protocols, and a `model.call` ledger with usage and cost |
 | Tools | Tool packs with Skills, MCP servers and CLI tools, stored by content hash and bound per agent |
 | Process supervision | One Worker process per Session; process groups on POSIX and Job Objects on Windows; restart recovery |
-| Console | A web console served by the daemon itself on the same port (React + Vite): tasks, models, providers, route groups, Gateway Keys, usage, agents, tools and observability. Sign-in uses one-time links from `hh console`; the browser never holds the admin token |
+| Console | A web console served by the daemon itself on the same port (React + Vite): agents, providers, subscription accounts, routing and keys, usage, profiles, the Library and settings, plus tasks, engines, tools and observability for headless runs. Sign-in uses one-time links from `hh console`; the browser never holds the admin token |
 
-Global agent wiring and the single-binary build are planned for 0.1–0.3 and are not implemented yet.
+A single-executable build of `hh` (`pnpm test:sea`) runs on macOS arm64; other platforms are not built yet, and no release is published.
 
 ## Quick start (from source)
 
-Requirements: Git, Node.js 24.20.0 and pnpm 10.12.3. On macOS, the Xcode Command Line Tools (`swiftc`) build the Keychain helper; on Windows, the system .NET Framework builds the native helpers.
+Requirements: Git, Node.js 24.20.0 and pnpm 10.12.3. The repository's `.node-version` names the Node version for version managers that read it (fnm, nodenv, Volta); with another Node, pnpm warns "Unsupported engine". Node 24 includes Corepack, so `corepack enable` provides the pinned pnpm (or `npm install -g pnpm@10.12.3`). On macOS, the Xcode Command Line Tools (`swiftc`) build the Keychain helper; on Windows, the system .NET Framework builds the native helpers.
 
 ```sh
-git clone https://github.com/wyzz973/HarnessHub.git
+git clone https://github.com/wyzz973/HarnessHub.git   # about 500 MB of history; add --depth 1 to try it out
 cd HarnessHub
 pnpm install --frozen-lockfile
 pnpm build
 pnpm build:console
-pnpm exec hh serve --port 3180 --data-dir ./data/local
+pnpm exec hh serve
 ```
 
-`hh serve` starts the daemon, which also serves the console at <http://127.0.0.1:3180>, and prints a one-time sign-in link (`http://127.0.0.1:3180/#login=…`, valid once for 60 seconds). Open it in a browser on the same machine. For a new link, run this in a second terminal:
+`pnpm install` may report "Ignored build scripts: @google/genai, protobufjs"; those packages only serve the test suites, so there is nothing to approve. `hh serve` listens on `127.0.0.1:3180` and keeps its data in `./data` (`--port` and `--data-dir` change them; every `hh` command then needs the same `--data-dir`). It logs JSON lines and prints `Console: http://127.0.0.1:3180/#login=…`: a one-time sign-in link, valid once for 60 seconds, to open in a browser on the same machine. For a new link, run `pnpm exec hh console` in a second terminal.
 
-```sh
-pnpm exec hh console --data-dir ./data/local
-```
-
-`pnpm start --port 3180 --data-dir ./data/local` starts the same daemon without the `hh` command, which also runs `benchmark`, `tools` and `rollout` ([apps/hh](apps/hh/README.md)).
-
-In a second terminal, `pnpm exec hh init --data-dir ./data/local` sets up the rest: it adds a provider from a preset with its key, refreshes its models, and wires the agents installed here to a default model after showing every change together. `pnpm exec hh tui --data-dir ./data/local` then shows every agent with its model, tiers and effort in the terminal: pick a model from a searchable list, review the file changes and apply them, or save and apply profiles.
+In a second terminal, `pnpm exec hh init` sets up the rest: it adds a provider from a preset with its key, refreshes its models, and wires the agents installed here to a default model after showing every change together. For a local server on another address than the preset's (vLLM, LM Studio or Ollama elsewhere), give it with `--base`. Without an API key, the [quickstart](docs/quickstart.md#没有-api-key-时) shows how to try everything against a local stand-in. `pnpm exec hh tui` then shows every agent with its model, tiers and effort in the terminal: pick a model from a searchable list, review the file changes and apply them, or save and apply profiles.
 
 To use the model gateway from any OpenAI or Anthropic client: add a provider from a preset (`hh provider add --preset deepseek --credential-from-stdin`), create a Gateway Key (`hh key create --name me --allow 'deepseek/*'`) and point the client at `http://127.0.0.1:3180/v1` (Anthropic: `http://127.0.0.1:3180`). The [quickstart](docs/quickstart.md) walks through it.
 
-In the console, configure a model on the **Model** page and register installed agents on the **Engines** page. Discovery never installs anything. Secrets are stored as references (Keychain, DPAPI, environment variable or file), never as plain values in configuration files. The [getting started guide](docs/getting-started.md) covers data directories, real agents and troubleshooting.
+The console is in Chinese for now. It opens on the **Agent** page: every agent installed here with its model; pick a model to preview and apply the wiring. **Provider**, **路由与 Key** (routing and keys) and **用量** (usage) manage the model plane. Headless runs live under **任务** (tasks), with the unified model (统一模型), engines (引擎), tools (工具) and observability (观测); see the [getting started guide](docs/getting-started.md) for data directories, real agents and troubleshooting. Secrets are stored as references (Keychain, DPAPI, environment variable or file), never as plain values in configuration files.
+
+`pnpm start` starts the same daemon without the `hh` command, which also runs `benchmark`, `tools` and `rollout` ([apps/hh](apps/hh/README.md)).
 
 ```sh
 pnpm check   # build, lint, tests (with the protocol suite), API and docs checks, console build

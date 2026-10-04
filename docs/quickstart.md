@@ -7,14 +7,15 @@
 ```sh
 pnpm install --frozen-lockfile
 pnpm build
+pnpm build:console
 pnpm exec hh serve
 ```
 
-`hh serve` 默认监听 `127.0.0.1:3180`（`--port` 修改），数据目录为当前目录下的 `./data`（`--data-dir` 修改），首次启动时在其中生成本机管理令牌 `admin.token`。API Key 默认存入系统密钥库（macOS 钥匙串、Windows DPAPI，其他平台为加密文件）；加 `--secrets-backend file` 改用加密文件，主密钥在 `--config-dir`（默认是平台的 HarnessHub 配置目录）下的 `secrets.key`。
+Node、pnpm 的版本与克隆见 [README](../README.md#quick-start-from-source)。`hh serve` 默认监听 `127.0.0.1:3180`（`--port` 修改），数据目录为当前目录下的 `./data`（`--data-dir` 修改），首次启动时在其中生成本机管理令牌 `admin.token`。它输出 JSON 日志，其中 `Console: http://127.0.0.1:3180/#login=…` 一行是控制台的一次性登录链接（60 秒内可用一次，`pnpm exec hh console` 生成新的）；没有运行 `pnpm build:console` 时控制台页面答复 503。API Key 默认存入系统密钥库（macOS 钥匙串、Windows DPAPI，其他平台为加密文件）；加 `--secrets-backend file` 改用加密文件，主密钥在 `--config-dir`（默认是平台的 HarnessHub 配置目录）下的 `secrets.key`。
 
 ## 向导：`hh init`
 
-另开一个终端运行 `pnpm exec hh init`，它把下面第 2 步与第 5 步[接入 Agent](#5-接入本机的编码-agent)合成一个流程：确认守护进程在运行（没有时提示先运行 `hh serve`，以 3 退出）；从按厂商、中转与本地分组的预设中选择（输入文字即搜索），再选区域与套餐，以隐藏输入读取 API Key（本地预设不需要）；刷新模型并显示数量；列出本机已安装的 Agent 供多选；选择默认模型，选了 Claude Code 时可为各档位另选模型；最后把所有 Agent 的改动合在一份预览中，确认后逐个接线，并提示 `hh usage`、`hh console` 等下一步。同 id 的 provider 已存在时直接使用；已按相同选择接线、Key 有效且没有漂移的 Agent 不重新接线（重新接线会换一把新 Key）。还没有 provider 时，控制台首页显示同样的流程（Claude Code 的各档位跟随默认模型，之后在 Agent 详情中分别设置）。
+另开一个终端运行 `pnpm exec hh init`，它把下面第 2 步与第 5 步[接入 Agent](#5-接入本机的编码-agent)合成一个流程：确认守护进程在运行（没有时提示先运行 `hh serve`，以 3 退出）；从按厂商、中转与本地分组的预设中选择（输入文字即搜索），再选区域与套餐，以隐藏输入读取 API Key（本地预设不需要）；刷新模型并显示数量；列出本机已安装的 Agent 供多选；选择默认模型，选了 Claude Code 时可为各档位另选模型；最后把所有 Agent 的改动合在一份预览中，确认后逐个接线，并提示 `hh usage`、`hh console` 等下一步。交互式向导使用预设的地址；本地服务（vLLM、LM Studio、Ollama）在其他地址时，用下面的非交互形式加 `--base`。同 id 的 provider 已存在时直接使用（不改它的地址）；已按相同选择接线、Key 有效且没有漂移的 Agent 不重新接线（重新接线会换一把新 Key）。还没有 provider 时，控制台首页显示同样的流程（Claude Code 的各档位跟随默认模型，之后在 Agent 详情中分别设置）。
 
 没有终端时（stdin 不是 TTY、设置了 `CI` 或加 `--non-interactive`）由选项给出全部答案，缺少的以 2 退出，且在添加任何东西之前检查：
 
@@ -24,6 +25,23 @@ pnpm exec hh init --preset deepseek --credential-from-env DEEPSEEK_API_KEY \
 ```
 
 `--region`、`--plan` 默认取预设的第一个；`--base URL` 把预设的地址移到另一个基址（需要用户自填地址的预设，如另一台 HarnessHub，必须给出）；`--agents` 也接受 `all`（已安装的全部）与 `none`；没有 `--yes` 时只显示改动并以 4 退出，provider 已添加、Agent 不变；某个 Agent 接线失败时其余照常，命令以 1 退出。`--json` 输出 `{provider: {id, created, models}, agents: [{agent, model, tiers, outcome}]}`。每一步都经 SDK 调用 `/api/v1` 的现有接口（预设、provider、模型刷新、Agent 预览与接线），与 `hh provider add` 和 `hh wire` 相同。
+
+## 没有 API Key 时
+
+仓库自带一个严格的模拟上游（[tools/fake-provider](../tools/fake-provider/README.md)）：它不调用任何真实模型，只在回环地址监听，对每个请求回答固定的文字，可以用来试用下面的全部步骤。在另一个终端启动它，Key 是任意的测试值：
+
+```sh
+HH_FAKE_KEY=sk-test-only node tools/fake-provider/index.mjs --key-env HH_FAKE_KEY --port 8790
+```
+
+再把它当作 vLLM 预设的服务（`--base` 把预设的地址换成它，模型名是 `upstream-sim`）：
+
+```sh
+HH_FAKE_KEY=sk-test-only pnpm exec hh init --preset vllm --base http://127.0.0.1:8790 \
+  --credential-from-env HH_FAKE_KEY --agents codex --model vllm/upstream-sim --yes
+```
+
+之后的命令把 `deepseek` 换成 `vllm`、模型换成 `vllm/upstream-sim` 即可。接线后的 Agent 也会收到这些固定回答，只用来确认链路，不能完成真实任务。
 
 ## 2. 添加 provider 与 Key
 
