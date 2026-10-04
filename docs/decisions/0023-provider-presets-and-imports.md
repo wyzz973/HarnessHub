@@ -1,4 +1,4 @@
-# ADR 0022：预设的地域与套餐，以及 provider 的导入
+# ADR 0023：预设的地域与套餐，以及 provider 的导入
 
 Status: proposed
 

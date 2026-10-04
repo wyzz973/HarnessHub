@@ -1,6 +1,6 @@
 # 导入 provider
 
-两种导入都先预览、确认后才写入：一是厂商、中转服务或同事给出的**导入链接**，二是本机其他应用（Claude Code、Codex）已经配置的上游。导入只创建 provider 与它的第一个凭据，不签发 Gateway Key，不改接线、默认模型或路由组。预设本身见 [Provider 预设](provider-presets.md)；取舍见 [ADR 0022](decisions/0022-provider-presets-and-imports.md)。
+两种导入都先预览、确认后才写入：一是厂商、中转服务或同事给出的**导入链接**，二是本机其他应用（Claude Code、Codex）已经配置的上游。导入只创建 provider 与它的第一个凭据，不签发 Gateway Key，不改接线、默认模型或路由组。预设本身见 [Provider 预设](provider-presets.md)；取舍见 [ADR 0023](decisions/0023-provider-presets-and-imports.md)。
 
 ## 导入链接
 
