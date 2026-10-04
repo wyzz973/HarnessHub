@@ -35,7 +35,7 @@ import {
   type ConfigFormat,
   type KeyPath,
 } from "../src/wiring/formats/index.js";
-import { leaves } from "../src/wiring/formats/values.js";
+import { formatPath, leaves } from "../src/wiring/formats/values.js";
 import {
   directories,
   KEY,
@@ -104,7 +104,10 @@ async function fields(id: string, context: WiringContext) {
     effort: undefined,
     options: resolveOptions(adapter, {}),
   };
-  const located = { path: (fileId: string) => files.get(fileId)!.path };
+  const located = {
+    path: (fileId: string) => files.get(fileId)!.path,
+    current: () => ({}),
+  };
   const all = adapter.settings(resolved, located).flatMap((setting) =>
     ("remove" in setting ? [] : leaves(setting.value, setting.path)).map(
       ([leaf, value]) => ({
@@ -144,6 +147,13 @@ function userEntry(format: ConfigFormat): KeyPath {
     : format === "toml"
       ? ["user_added"]
       : ["userAdded"];
+}
+
+/** A key path as reports show it: an array element as `[field="value"]`. */
+function asText(path: KeyPath): string[] {
+  return path.map((segment) =>
+    typeof segment === "string" ? segment : formatPath([segment]),
+  );
 }
 
 /** `text` made unparseable in its format, judged by the file name. */
@@ -374,7 +384,7 @@ export function adapterSuite(id: string, fixture: AdapterFixture): void {
           finding.keyPath,
           finding.reason,
         ]),
-        [[field.file, [...field.path], reason]],
+        [[field.file, asText(field.path), reason]],
       );
       assert.doesNotMatch(JSON.stringify(report), /hhk_/);
       ({ record } = await applyWiring(id, TARGET, context, {
@@ -395,7 +405,8 @@ export function adapterSuite(id: string, fixture: AdapterFixture): void {
       moved.findings.some(
         (finding) =>
           finding.path === base.file &&
-          JSON.stringify(finding.keyPath) === JSON.stringify(base.path) &&
+          JSON.stringify(finding.keyPath) ===
+            JSON.stringify(asText(base.path)) &&
           finding.kind === "foreign-gateway",
       ),
     );

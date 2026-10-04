@@ -27,6 +27,7 @@ import {
 import {
   BASE_URL_PLACEHOLDER,
   KEY_PLACEHOLDER,
+  MANIFEST_VERSION,
   readManifest,
   readOriginal,
   saveManifest,
@@ -57,6 +58,7 @@ import {
   type ConfigValue,
   type FormatEditor,
   type KeyPath,
+  type PathSegment,
 } from "./formats/index.js";
 import {
   blockingPrefix,
@@ -66,8 +68,10 @@ import {
   formatPath,
   getPath,
   isRecord,
+  isSelector,
   leaves,
   pathKey,
+  selects,
   startsWith,
 } from "./formats/values.js";
 
@@ -553,7 +557,7 @@ export async function detectDrift(
               : "replaced";
         findings.push({
           path: entry.path,
-          keyPath: [...leaf],
+          keyPath: segmentsText(leaf),
           kind,
           reason: result,
         });
@@ -563,7 +567,7 @@ export async function detectDrift(
       if (getPath(document, absent) !== undefined)
         findings.push({
           path: entry.path,
-          keyPath: [...absent],
+          keyPath: segmentsText(absent),
           kind: "replaced",
           reason: "changed",
         });
@@ -577,6 +581,13 @@ export async function detectDrift(
     files,
     findings,
   };
+}
+
+/** A key path as API text: keys as they are, an array element as `[field="value"]`. */
+function segmentsText(path: KeyPath): string[] {
+  return path.map((segment) =>
+    typeof segment === "string" ? segment : formatPath([segment]),
+  );
 }
 
 /** Shows a Gateway Key as `hhk_<scope>_<first four of its id>…`; other text is unchanged. */
@@ -607,32 +618,49 @@ async function planFiles(
     spec: AdapterFile;
     file: string;
     location: FileLocation;
+    realPath: string;
+    state: FileState;
+    before: { text: string | undefined; bom: boolean };
   }> = [];
   for (const spec of adapter.files) {
     const location = spec.locate(environment);
+    const file = await firstExisting(location.candidates, location.create);
+    const { realPath } = await resolveFile(file, [location.root]);
+    const state = await readState(realPath);
     located.push({
       spec,
-      file: await firstExisting(location.candidates, location.create),
+      file,
       location,
+      realPath,
+      state,
+      before: state.exists
+        ? decodeText(state.bytes, file)
+        : { text: undefined, bom: false },
     });
   }
+  const find = (fileId: string) => {
+    const found = located.find((item) => item.spec.id === fileId);
+    if (!found)
+      throw new WiringError(
+        "WIRING_TARGET_INVALID",
+        `${adapter.name} has no file ${JSON.stringify(fileId)}`,
+      );
+    return found;
+  };
   const paths: LocatedFiles = {
-    path(fileId) {
-      const found = located.find((item) => item.spec.id === fileId);
-      if (!found)
-        throw new WiringError(
-          "WIRING_TARGET_INVALID",
-          `${adapter.name} has no file ${JSON.stringify(fileId)}`,
-        );
-      return found.file;
+    path: (fileId) => find(fileId).file,
+    current(fileId) {
+      const { spec, file, before } = find(fileId);
+      return inFileSync(file, () =>
+        editors[spec.format].parse(before.text ?? spec.initial ?? ""),
+      );
     },
   };
   const settings = adapter.settings(target, paths);
+  checkElements(adapter, settings);
   if (target.keyless) checkKeyless(adapter, settings);
   const plans: FilePlan[] = [];
-  for (const { spec, file, location } of located) {
-    const { realPath } = await resolveFile(file, [location.root]);
-    const state = await readState(realPath);
+  for (const { spec, file, location, realPath, state, before } of located) {
     if (!state.exists)
       for (const older of location.migratedFrom ?? [])
         if ((await firstExisting([older], file)) === older)
@@ -642,9 +670,6 @@ async function planFiles(
             { path: older },
           );
     const editor = editors[spec.format];
-    const before = state.exists
-      ? decodeText(state.bytes, file)
-      : { text: undefined, bom: false };
     const own = settings.filter((setting) => setting.file === spec.id);
     const entry = previous?.files.find((candidate) => candidate.path === file);
     const prior = entry
@@ -755,7 +780,7 @@ function preview(
         const next = getPath(after, operation.path);
         if (deepEqual(old, next)) continue;
         changes.push({
-          keyPath: [...operation.path],
+          keyPath: segmentsText(operation.path),
           op: operation.op,
           ...(old !== undefined
             ? { before: shorten(mask(JSON.stringify(old))) }
@@ -900,7 +925,14 @@ function applyOperations(
   return result;
 }
 
-/** Removes objects left empty by removals that did not exist in the original. */
+/** An object without entries or an array without elements. */
+function isEmptyContainer(value: unknown): boolean {
+  return isRecord(value)
+    ? Object.keys(value).length === 0
+    : Array.isArray(value) && value.length === 0;
+}
+
+/** Removes objects and arrays left empty by removals that did not exist in the original. */
 function pruneEmpty(
   editor: FormatEditor,
   text: string,
@@ -917,11 +949,7 @@ function pruneEmpty(
     for (let length = entry.length - 1; length > 0; length--) {
       const parent = entry.slice(0, length);
       const value = getPath(editor.parse(result), parent);
-      if (
-        !isRecord(value) ||
-        Object.keys(value).length ||
-        getPath(original, parent) !== undefined
-      )
+      if (!isEmptyContainer(value) || getPath(original, parent) !== undefined)
         break;
       result = editor.remove(result, parent);
       paths.push(parent);
@@ -991,7 +1019,7 @@ function without(
   ))
     for (let length = entry.length - 1; length > 0; length--) {
       const parent = getPath(copy, entry.slice(0, length));
-      if (!isRecord(parent) || Object.keys(parent).length) break;
+      if (!isEmptyContainer(parent)) break;
       deletePath(copy, entry.slice(0, length));
     }
   return copy;
@@ -1113,14 +1141,14 @@ function manifestOf(
   created: string[],
 ): BackupManifest {
   const prior = plan.previous;
-  const owned = new Map<string, string[]>();
+  const owned = new Map<string, PathSegment[]>();
   for (const entry of [
     ...(prior?.manifest.owned ?? []),
     ...plan.settings.map((setting) => [...setting.path]),
   ])
     owned.set(pathKey(entry), [...entry]);
   return {
-    schemaVersion: 1,
+    schemaVersion: MANIFEST_VERSION,
     adapterId: adapter.id,
     fileId: plan.spec.id,
     format: plan.spec.format,
@@ -1429,6 +1457,26 @@ function baseUrlFieldOf(
   options: Readonly<Record<string, string>>,
 ): WiringAdapter["baseUrlField"] {
   return adapter.baseUrlFieldFor?.(options) ?? adapter.baseUrlField;
+}
+
+/** An element an adapter writes must be one its selector selects, or unwire could not find it. */
+function checkElements(
+  adapter: WiringAdapter,
+  settings: readonly AdapterSetting[],
+): void {
+  for (const setting of settings) {
+    const last = setting.path.at(-1);
+    if (
+      last !== undefined &&
+      isSelector(last) &&
+      !("remove" in setting) &&
+      !selects(last, setting.value)
+    )
+      throw new WiringError(
+        "WIRING_TARGET_INVALID",
+        `${adapter.name} writes an element at ${formatPath(setting.path)} that its selector does not select`,
+      );
+  }
 }
 
 /** A keyless wiring's settings must use neither the key nor the model. */

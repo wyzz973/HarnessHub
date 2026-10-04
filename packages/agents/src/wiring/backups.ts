@@ -4,7 +4,11 @@ import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { WiringError } from "./errors.js";
 import { backupDirectory, deleteFile, isCode, sha256 } from "./files.js";
-import type { ConfigFormat, ConfigValue } from "./formats/index.js";
+import type {
+  ConfigFormat,
+  ConfigValue,
+  PathSegment,
+} from "./formats/index.js";
 
 /** What a file looked like before HarnessHub first wired it. */
 export type OriginalFile =
@@ -22,10 +26,12 @@ export type OriginalFile =
  * The backup of one wired file. It is content-addressed: its id is the
  * SHA-256 of its JSON text. It never holds a key value: values HarnessHub
  * wrote are kept as templates in which the gateway key and base URL are
- * placeholders.
+ * placeholders. Version 2 lets a path end in an array element (an object
+ * `{match}` or `{equals}` segment); version 1 manifests, whose paths are
+ * keys only, are read as they are.
  */
 export interface BackupManifest {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   adapterId: string;
   fileId: string;
   format: ConfigFormat;
@@ -44,13 +50,16 @@ export interface BackupManifest {
   byteRestore: boolean;
   /** Directories wiring created for this file, outermost first. */
   createdDirectories: string[];
-  /** Every key path HarnessHub has written in this file; unwire restores these. */
-  owned: string[][];
+  /** Every key path (or array element) HarnessHub has written in this file; unwire restores these. */
+  owned: PathSegment[][];
   /** The values of the latest wiring, as templates (see `KEY_PLACEHOLDER`). */
-  expected: Array<{ path: string[]; value: ConfigValue }>;
+  expected: Array<{ path: PathSegment[]; value: ConfigValue }>;
   /** Entries the latest wiring removed so that they cannot override it; absent in older manifests. */
-  absent?: string[][];
+  absent?: PathSegment[][];
 }
+
+/** The manifest version written now. */
+export const MANIFEST_VERSION = 2;
 
 /** Stands for the gateway key in stored templates. */
 export const KEY_PLACEHOLDER = "{{harnesshub:gateway-key}}";
@@ -159,6 +168,20 @@ function validManifest(value: unknown): BackupManifest | undefined {
   const original = value.original;
   const strings = (items: unknown): items is string[] =>
     Array.isArray(items) && items.every((item) => typeof item === "string");
+  // Version 1 paths are keys only; version 2 adds element selectors.
+  const segment = (item: unknown): boolean =>
+    typeof item === "string" ||
+    (value.schemaVersion === 2 &&
+      isObject(item) &&
+      ((Object.keys(item).length === 1 && typeof item.equals === "string") ||
+        (Object.keys(item).length === 1 &&
+          isObject(item.match) &&
+          Object.keys(item.match).length > 0 &&
+          Object.values(item.match).every(
+            (field) => typeof field === "string",
+          ))));
+  const paths = (items: unknown): items is PathSegment[] =>
+    Array.isArray(items) && items.every(segment);
   const validOriginal =
     isObject(original) &&
     (original.existed === false ||
@@ -169,7 +192,7 @@ function validManifest(value: unknown): BackupManifest | undefined {
         typeof original.mode === "number" &&
         typeof original.mtimeMs === "number"));
   const valid =
-    value.schemaVersion === 1 &&
+    (value.schemaVersion === 1 || value.schemaVersion === 2) &&
     typeof value.adapterId === "string" &&
     typeof value.fileId === "string" &&
     ["json", "toml", "yaml", "dotenv"].includes(value.format as string) &&
@@ -180,13 +203,13 @@ function validManifest(value: unknown): BackupManifest | undefined {
     typeof value.byteRestore === "boolean" &&
     strings(value.createdDirectories) &&
     Array.isArray(value.owned) &&
-    value.owned.every(strings) &&
+    value.owned.every(paths) &&
     Array.isArray(value.expected) &&
     value.expected.every(
-      (entry) => isObject(entry) && strings(entry.path) && "value" in entry,
+      (entry) => isObject(entry) && paths(entry.path) && "value" in entry,
     ) &&
     (value.absent === undefined ||
-      (Array.isArray(value.absent) && value.absent.every(strings)));
+      (Array.isArray(value.absent) && value.absent.every(paths)));
   return valid ? (value as unknown as BackupManifest) : undefined;
 }
 

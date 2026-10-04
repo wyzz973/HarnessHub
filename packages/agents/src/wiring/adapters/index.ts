@@ -20,6 +20,11 @@ import { omp } from "./omp.js";
 import { pencil } from "./pencil.js";
 import { qoder, qoderCn } from "./qoder.js";
 import { t3code } from "./t3code.js";
+// Agents that keep HarnessHub's entries as elements of their own lists.
+import { claudeDesktop } from "./claude-desktop.js";
+import { droid } from "./droid.js";
+import { workbuddy } from "./workbuddy.js";
+import { zcode } from "./zcode.js";
 
 export type * from "./types.js";
 
@@ -41,6 +46,7 @@ export const wiringAdapters: ReadonlyMap<string, WiringAdapter> = new Map(
       pencil,
       t3code,
     ],
+    ...[droid, workbuddy, zcode, claudeDesktop],
   ].map((adapter) => [adapter.id, adapter]),
 );
 

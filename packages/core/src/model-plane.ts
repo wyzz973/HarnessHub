@@ -202,6 +202,25 @@ export interface GatewayKeyQuota {
   costPerMonthUsd?: number;
 }
 
+/**
+ * How a key's client names models: by alias (`claude-alias`) for a client
+ * that keeps only ids that read as Anthropic's (Claude Desktop). The
+ * gateway then lists each model as `claudeModelAlias(ref)` with the Model
+ * Ref as its display name, and takes the alias in requests.
+ */
+export type ModelIdStyle = "claude-alias";
+
+/**
+ * The alias a model is shown by under `claude-alias`: `claude-hh-` and ten
+ * digits of a hash of the Model Ref, so it says "claude", names no other
+ * vendor and stays the model's while other models come and go.
+ */
+export function claudeModelAlias(ref: string): string {
+  const digest = createHash("sha256").update(ref, "utf8").digest();
+  const number = digest.readBigUInt64BE(0) % 10_000_000_000n;
+  return `claude-hh-${number.toString().padStart(10, "0")}`;
+}
+
 /** A stored Gateway Key. `secretHash` never leaves the store and the gateway. */
 export interface GatewayKeyRecord {
   keyId: GatewayKeyId;
@@ -215,6 +234,8 @@ export interface GatewayKeyRecord {
    * empty hides nothing.
    */
   modelDeny?: string[];
+  /** How the client names models; Model Refs when absent. */
+  modelIdStyle?: ModelIdStyle;
   quota?: GatewayKeyQuota;
   /**
    * The key may be presented on the LAN listener of gateway sharing

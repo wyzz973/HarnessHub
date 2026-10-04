@@ -8,8 +8,10 @@ import { yamlEditor } from "./yaml.js";
 export type {
   ConfigFormat,
   ConfigValue,
+  ElementSelector,
   FormatEditor,
   KeyPath,
+  PathSegment,
 } from "./types.js";
 
 /** The editor of each supported format. */

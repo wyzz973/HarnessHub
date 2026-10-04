@@ -1,7 +1,21 @@
 // SPDX-License-Identifier: MIT
 import { parse as parseToml, TomlError } from "smol-toml";
 import { WiringError } from "../errors.js";
-import type { ConfigValue, FormatEditor, KeyPath } from "./types.js";
+import type { ConfigValue, FormatEditor, KeyPath as AnyPath } from "./types.js";
+
+/** TOML paths are keys only: arrays of tables are refused, so elements cannot be addressed. */
+type KeyPath = readonly string[];
+
+function keysOnly(path: AnyPath): string[] {
+  return path.map((segment) => {
+    if (typeof segment !== "string")
+      throw new WiringError(
+        "WIRING_UNSUPPORTED_STRUCTURE",
+        "TOML array elements cannot be edited in place",
+      );
+    return segment;
+  });
+}
 import { formatPath, getPath, isRecord, leaves, startsWith } from "./values.js";
 
 /**
@@ -20,7 +34,8 @@ import { formatPath, getPath, isRecord, leaves, startsWith } from "./values.js";
 export const tomlEditor: FormatEditor = {
   format: "toml",
   parse,
-  set(text, path, value) {
+  set(text, anyPath, value) {
+    const path = keysOnly(anyPath);
     const document = parse(text);
     if (!isRecord(value)) return setLeaf(text, document, path, value);
     const existing = getPath(document, path);
@@ -32,10 +47,11 @@ export const tomlEditor: FormatEditor = {
         result = removeEntry(result, stale);
     const wanted = leaves(value, path);
     for (const [leaf, item] of wanted)
-      result = setLeaf(result, parse(result), leaf, item);
+      result = setLeaf(result, parse(result), keysOnly(leaf), item);
     return result;
   },
-  remove(text, path) {
+  remove(text, anyPath) {
+    const path = keysOnly(anyPath);
     const document = parse(text);
     return getPath(document, path) === undefined
       ? text

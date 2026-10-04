@@ -84,6 +84,7 @@ async function fields(id: string, context: WiringContext) {
   };
   const located = {
     path: (fileId: string) => files.get(fileId)!.path,
+    current: () => ({}),
   };
   const all = adapter.settings(resolved, located).flatMap((setting) =>
     ("remove" in setting ? [] : leaves(setting.value, setting.path)).map(

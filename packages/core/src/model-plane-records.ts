@@ -331,6 +331,7 @@ export function isGatewayKeyRecord(value: unknown): value is GatewayKeyRecord {
     scope(value.scope) &&
     list(modelPattern, 1000)(value.modelAllow) &&
     optional(value.modelDeny, list(modelPattern, 1000)) &&
+    optional(value.modelIdStyle, member(["claude-alias"])) &&
     optional(value.quota, quota) &&
     optional(
       value.allowLan,

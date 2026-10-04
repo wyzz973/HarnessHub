@@ -2,8 +2,20 @@
 /** Configuration file formats that global wiring can edit in place. */
 export type ConfigFormat = "json" | "toml" | "yaml" | "dotenv";
 
-/** A key path from the document root; every segment is an object key. */
-export type KeyPath = readonly string[];
+/**
+ * One element of an array: the object whose fields have exactly these
+ * string values, or the scalar equal to `equals`. Wiring owns such elements
+ * one by one, so the user's other elements and their order are kept.
+ */
+export type ElementSelector =
+  | { readonly match: Readonly<Record<string, string>> }
+  | { readonly equals: string };
+
+/** An object key, or an element of an array (only as the last segment of an edit). */
+export type PathSegment = string | ElementSelector;
+
+/** A key path from the document root. */
+export type KeyPath = readonly PathSegment[];
 
 /** A value wiring writes. There is no null: TOML and dotenv cannot express it. */
 export type ConfigValue =
@@ -23,8 +35,15 @@ export interface FormatEditor {
   readonly format: ConfigFormat;
   /** Parses the whole document; an empty text is an empty document. */
   parse(text: string): Record<string, unknown>;
-  /** Sets the value at `path`, creating missing parent objects. An object value replaces the entry entirely. */
+  /**
+   * Sets the value at `path`, creating missing parent objects. An object value
+   * replaces the entry entirely. A last segment that selects an array element
+   * replaces that element in place or, when there is none, appends the value
+   * to the array (created when missing). Editors that cannot address elements
+   * (TOML, dotenv) fail with WIRING_UNSUPPORTED_STRUCTURE, as does a selector
+   * before the last segment or one that matches several elements.
+   */
   set(text: string, path: KeyPath, value: ConfigValue): string;
-  /** Removes the entry at `path`; a missing entry leaves the text unchanged. */
+  /** Removes the entry or element at `path`; a missing one leaves the text unchanged. */
   remove(text: string, path: KeyPath): string;
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import path from "node:path";
 import type {
+  ModelIdStyle,
   ReasoningEffort,
   WireProtocol,
   WiringTier,
@@ -41,10 +42,17 @@ export interface AdapterTarget {
   options: Readonly<Record<string, string>>;
 }
 
-/** The paths of an adapter's files as located for this wiring. */
+/** The adapter's files as located for this wiring. */
 export interface LocatedFiles {
   /** The path of the file with this id; an id the adapter does not declare fails. */
   path(fileId: string): string;
+  /**
+   * The file's current content, parsed (its `initial` text, or empty, when
+   * missing), for a setting that depends on what the user has, such as a
+   * list of the user's own that wiring adds to only when it exists. A file
+   * that does not parse fails as it would when planned.
+   */
+  current(fileId: string): Record<string, unknown>;
 }
 
 /** Where an adapter's files live on this machine. */
@@ -145,6 +153,12 @@ export interface WiringAdapter {
   readonly tiers?: readonly WiringTier[];
   /** Levels the agent can be set to start with; none when absent. */
   readonly efforts?: readonly ReasoningEffort[];
+  /**
+   * How the agent's key lists and takes models: `claude-alias` for an agent
+   * that keeps only model ids that read as Anthropic's (Claude Desktop), so
+   * the gateway shows it each model by an alias. Model Refs when absent.
+   */
+  readonly modelIdStyle?: ModelIdStyle;
   /** Adapter options and their allowed values; the first value is the default. */
   readonly options?: Readonly<Record<string, readonly string[]>>;
   /**

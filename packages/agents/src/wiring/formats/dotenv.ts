@@ -52,7 +52,7 @@ export const dotenvEditor: FormatEditor = {
 
 function single(path: KeyPath): string {
   const key = path[0];
-  if (path.length !== 1 || key === undefined || !KEY.test(key))
+  if (path.length !== 1 || typeof key !== "string" || !KEY.test(key))
     throw new WiringError(
       "WIRING_UNSUPPORTED_STRUCTURE",
       "A dotenv key path is one variable name",
