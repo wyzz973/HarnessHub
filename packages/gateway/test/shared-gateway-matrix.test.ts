@@ -6,6 +6,8 @@ import type { ProviderConfig } from "@harnesshub/core/model-plane";
 import {
   addKey,
   at,
+  chatChunks,
+  delta,
   group,
   json,
   MemoryStore,
@@ -656,6 +658,211 @@ void test("Chat on a Responses-only provider keeps interleaved parallel tool arg
     },
   ]);
   assert.equal(at(answer.json(), "choices", 0, "finish_reason"), "tool_calls");
+});
+
+void test("Anthropic clients get interleaved parallel tool arguments of a Chat upstream as one block per call", async (t) => {
+  const chunk = (
+    delta: Record<string, unknown>,
+    finish: string | null = null,
+  ) => ({
+    id: "chatcmpl-1",
+    object: "chat.completion.chunk",
+    choices: [{ index: 0, delta, finish_reason: finish }],
+  });
+  const call = (index: number, extra: Record<string, unknown>) =>
+    chunk({ tool_calls: [{ index, ...extra }] });
+  const start = (index: number, id: string) =>
+    call(index, {
+      id,
+      type: "function",
+      function: { name: "read", arguments: "" },
+    });
+  const args = (index: number, text: string) =>
+    call(index, { function: { arguments: text } });
+  const end = {
+    ...chunk({}, "tool_calls"),
+    usage: { prompt_tokens: 5, completion_tokens: 5 },
+  };
+  const interleaved = [
+    start(0, "call_a"),
+    start(1, "call_b"),
+    args(0, '{"path":'),
+    args(1, '{"path":'),
+    args(0, '"a"}'),
+    args(1, '"b"}'),
+    end,
+  ];
+  const sequential = [
+    start(0, "call_a"),
+    args(0, '{"path":'),
+    args(0, '"a"}'),
+    start(1, "call_b"),
+    args(1, '{"path":"b"}'),
+    end,
+  ];
+  const chatOnly = (base: string) => provider("oai", { chat: `${base}/v1` });
+  const { gw, key } = await setup(
+    t,
+    [chatOnly],
+    [stream(interleaved, false), stream(sequential, false)],
+  );
+  for (const order of ["interleaved", "sequential"]) {
+    const answer = await send(gw.port, "/v1/messages", {
+      headers: { "x-api-key": key.text },
+      body: {
+        model: "oai/model-a",
+        max_tokens: 100,
+        stream: true,
+        messages: [{ role: "user", content: "read both" }],
+        tools: TOOLS,
+      },
+    });
+    assert.equal(answer.status, 200, order);
+    const events = answer.text
+      .split("\n\n")
+      .filter((frame) => frame.includes("data: "))
+      .map(
+        (frame) =>
+          JSON.parse(frame.slice(frame.indexOf("data: ") + 6)) as Record<
+            string,
+            unknown
+          >,
+      );
+    assert.equal(
+      events.filter((event) => event.type === "error").length,
+      0,
+      order,
+    );
+    // Blocks open one at a time and every delta belongs to the open block.
+    let open: number | undefined;
+    const inputs = new Map<number, string>();
+    for (const event of events) {
+      const index = event.index as number;
+      if (event.type === "content_block_start") {
+        assert.equal(
+          open,
+          undefined,
+          `${order}: block ${index} starts inside block ${open}`,
+        );
+        open = index;
+        inputs.set(index, "");
+      } else if (event.type === "content_block_delta") {
+        assert.equal(
+          index,
+          open,
+          `${order}: a delta for a block that is not open`,
+        );
+        const delta = event.delta as { partial_json?: string };
+        inputs.set(index, inputs.get(index)! + (delta.partial_json ?? ""));
+      } else if (event.type === "content_block_stop") {
+        assert.equal(index, open, order);
+        open = undefined;
+      }
+    }
+    assert.deepEqual(
+      [...inputs.values()].map((text) => JSON.parse(text) as unknown),
+      [{ path: "a" }, { path: "b" }],
+      order,
+    );
+    const delta = events.find((event) => event.type === "message_delta")!;
+    assert.equal(at(delta, "delta", "stop_reason"), "tool_use", order);
+  }
+});
+
+void test("a Gemini stream that fails after content ends with the error as a bare JSON chunk", async (t) => {
+  // @google/genai raises an ApiError only for a network chunk that is a JSON
+  // object with `error`; a `data:` event with an error is read as an empty
+  // chunk, and the client reports half an answer as a success (F10).
+  const text = (value: string) => ({
+    candidates: [
+      { content: { role: "model", parts: [{ text: value }] }, index: 0 },
+    ],
+  });
+  const translated: Reply = (response) => {
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.end(
+      chatChunks(
+        [
+          delta({ role: "assistant", content: "" }),
+          delta({ content: "half an" }),
+          { error: { message: "upstream exploded", type: "server_error" } },
+        ],
+        false,
+      ),
+    );
+  };
+  const dropped: Reply = (response) => {
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.write(`data: ${JSON.stringify(text("half an"))}\r\n\r\n`, () =>
+      response.socket?.destroy(),
+    );
+  };
+  const chatOnly = (base: string) => provider("oai", { chat: `${base}/v1` });
+  const { gw, key } = await setup(
+    t,
+    [chatOnly, geminiOnly],
+    [translated, dropped],
+  );
+  for (const model of ["oai/model-a", "gem/model-a"]) {
+    const answer = await send(
+      gw.port,
+      `/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${key.text}`,
+      { body: { contents: [{ role: "user", parts: [{ text: "hi" }] }] } },
+    );
+    assert.equal(answer.status, 200, model);
+    assert.match(answer.text, /half an/, model);
+    assert.doesNotMatch(answer.text, /data: \{"error"/, model);
+    const last = answer.text.trim().split(/\r?\n/).at(-1)!;
+    assert.equal(
+      typeof at(JSON.parse(last) as unknown, "error", "code"),
+      "number",
+      `${model}: the stream ends in a bare Google error object`,
+    );
+  }
+});
+
+void test("a Gemini upstream's bare JSON error after data fails the translated stream", async (t) => {
+  const failing: Reply = (response) => {
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.end(
+      `data: ${JSON.stringify({
+        candidates: [
+          {
+            content: { role: "model", parts: [{ text: "half an" }] },
+            index: 0,
+          },
+        ],
+      })}\r\n\r\n` +
+        JSON.stringify(
+          {
+            error: {
+              code: 503,
+              message: "The model is overloaded. Please try again later.",
+              status: "UNAVAILABLE",
+            },
+          },
+          null,
+          2,
+        ) +
+        "\n",
+    );
+  };
+  const { gw, key } = await setup(t, [geminiOnly], [failing]);
+  const answer = await send(gw.port, "/v1/chat/completions", {
+    headers: { authorization: `Bearer ${key.text}` },
+    body: {
+      model: "gem/model-a",
+      stream: true,
+      messages: [{ role: "user", content: "hi" }],
+    },
+  });
+  assert.equal(answer.status, 200);
+  assert.match(answer.text, /half an/);
+  assert.match(
+    answer.text,
+    /data: \{"error":\{"message":"The model is overloaded\. Please try again later\."/,
+  );
+  assert.doesNotMatch(answer.text, /\[DONE\]/);
 });
 
 void test("upstream errors of other protocols reach the client in its own format", async (t) => {

@@ -611,12 +611,15 @@ function tokens(usage: ModelCallEntry["usage"]): number {
 
 /**
  * Translated-path handlers that hold the sink's `start` (and so the response
- * headers) until the first content event, or until {@link release}.
+ * headers) until the first content event, or until {@link release}. The
+ * sink starts once, whichever of `start`, `release` and {@link open} gets
+ * there first.
  */
 class SinkHold implements CompletionHandlers {
   #holding: boolean;
   #started = false;
   #released: Promise<void> | undefined;
+  #sinkStarted: Promise<void> | undefined;
   constructor(
     private readonly sink: OutputSink,
     holding: boolean,
@@ -627,12 +630,24 @@ class SinkHold implements CompletionHandlers {
   release(): Promise<void> {
     if (!this.#holding) return this.#released ?? Promise.resolve();
     this.#holding = false;
-    this.#released = this.#started ? this.sink.start() : Promise.resolve();
+    this.#released = this.#started ? this.#startSink() : Promise.resolve();
     return this.#released;
   }
   start(): Promise<void> {
     this.#started = true;
-    return this.#holding ? Promise.resolve() : this.sink.start();
+    return this.#holding ? Promise.resolve() : this.#startSink();
+  }
+  /**
+   * Start the sink before any upstream data, so that a keepalive can follow:
+   * resolves false, starting nothing, while output is held.
+   */
+  async open(): Promise<boolean> {
+    if (this.#holding) return false;
+    await this.#startSink();
+    return true;
+  }
+  #startSink(): Promise<void> {
+    return (this.#sinkStarted ??= this.sink.start());
   }
   async reasoning(text: string, field: ReasoningField): Promise<void> {
     this.content();
@@ -664,13 +679,20 @@ class SinkHold implements CompletionHandlers {
   }
 }
 
+/** Whether an SSE event block has comment lines only. */
+function commentOnly(text: string): boolean {
+  const lines = text.split(/\r\n|\r|\n/).filter((line) => line !== "");
+  return lines.length > 0 && lines.every((line) => line.startsWith(":"));
+}
+
 /**
  * Passthrough forwarding of complete segments. Before the first content event
  * segments are held when alternatives remain, and before the first data
  * event in any case; from the terminal event on,
  * everything is withheld until {@link finish}, which runs after the ledger
  * commit. An error segment is never forwarded: it ends forwarding and is
- * reported by the caller in the gateway's own words.
+ * reported by the caller in the gateway's own words. Comment-only segments
+ * are dropped for Gemini clients.
  */
 class Forwarder {
   #holding: boolean;
@@ -701,6 +723,10 @@ class Forwarder {
   get terminal(): boolean {
     return this.#terminal;
   }
+  /** True while segments are held for a possible failover (not merely awaiting data). */
+  get holding(): boolean {
+    return this.#holding;
+  }
   segment(segment: Segment): Observation {
     // Gemini array elements start with `{`; an SSE event never does.
     const observation: Observation = segment.closing
@@ -719,6 +745,10 @@ class Forwarder {
       this.error = observation.error;
       return observation;
     }
+    // Gemini clients never get SSE comments; their keepalive is an empty
+    // candidate (03 section 6).
+    if (this.protocol === "gemini" && commentOnly(segment.text))
+      return observation;
     if (observation.content) this.content();
     if (observation.terminal || this.#terminal) {
       this.#terminal = true;
@@ -782,6 +812,62 @@ class Forwarder {
   }
 }
 
+/**
+ * One keepalive of a passthrough response in the inbound protocol's own form
+ * (03 section 6), never an SSE comment: an empty Chat delta, a Responses
+ * `response.in_progress` (after a `response.created` while neither the
+ * upstream nor an earlier keepalive sent one, as SDK stream helpers need it
+ * first), an Anthropic `ping`, and for Gemini an empty candidate, or
+ * whitespace in a JSON body.
+ */
+function passthroughKeepalive(
+  call: Call,
+  forwarder: Forwarder | undefined,
+  announced: boolean,
+): string {
+  const id = call.entry.callId.replace(/^mc_/, "");
+  const created = Math.floor(call.services.clock() / 1000);
+  const model = forwarder?.model ?? call.shownModel ?? call.requested;
+  switch (call.route.protocol) {
+    case "chat":
+      return sse({
+        id: `chatcmpl-${id}`,
+        object: "chat.completion.chunk",
+        created,
+        model,
+        choices: [{ index: 0, delta: {}, finish_reason: null }],
+      });
+    case "responses": {
+      const response = {
+        id: `resp_${id}`,
+        object: "response",
+        created_at: created,
+        status: "in_progress",
+        model,
+        output: [],
+      };
+      const sequence = (forwarder?.sequence ?? -1) + 1;
+      const progress = (at: number) =>
+        sse(
+          { type: "response.in_progress", sequence_number: at, response },
+          "response.in_progress",
+        );
+      return forwarder?.opened || announced
+        ? progress(sequence)
+        : sse(
+            { type: "response.created", sequence_number: 0, response },
+            "response.created",
+          ) + progress(1);
+    }
+    case "anthropic":
+      return sse({ type: "ping" }, "ping");
+    case "gemini":
+      return call.stream && call.route.gemini?.sse
+        ? `data: ${JSON.stringify({ candidates: [{ content: { role: "model", parts: [] }, index: 0 }] })}\n\n`
+        : "\n";
+  }
+}
+
 /** The in-stream failure of a passthrough response in the inbound protocol's format. */
 function passthroughFailure(
   call: Call,
@@ -820,7 +906,8 @@ function passthroughFailure(
     case "gemini": {
       const error = JSON.stringify(googleErrorResponse(value).body);
       if (!call.stream) return error;
-      if (call.route.gemini?.sse) return `data: ${error}\n\n`;
+      // A bare JSON object, as GoogleSink ends a failed stream.
+      if (call.route.gemini?.sse) return `${error}\n`;
       return `${forwarder?.opened ? ",\r\n" : "["}${error}]`;
     }
   }
@@ -1537,6 +1624,7 @@ async function translatedAttempt(
       writer,
       { gapMs: limits.keepaliveGapMs, maxNoDataMs: limits.maxNoDataMs },
       () => sink.keepalive(),
+      () => hold.open(),
     );
     timers.keepalive = keepalive;
     keepalive.answered();
@@ -1870,21 +1958,35 @@ async function passthroughAttempt(
             : contentType,
         );
     };
-    // Gemini clients give up after 60 s without headers (03 section 6).
+    const streamed =
+      call.stream &&
+      (/event-stream/i.test(contentType) || (gemini && !route.gemini?.sse));
+    // Streams get the inbound protocol's keepalives, which may commit the
+    // response before the first data unless output is held; Gemini clients
+    // also give up after 60 s without headers (03 section 6).
     let keepalive: Keepalive | undefined;
-    if (gemini) {
+    if (gemini || streamed) {
+      let announced = false;
       keepalive = new Keepalive(
         writer,
         { gapMs: limits.keepaliveGapMs, maxNoDataMs: limits.maxNoDataMs },
-        () =>
-          writer.write(
-            call.stream && route.gemini?.sse
-              ? `data: ${JSON.stringify({ candidates: [{ content: { role: "model", parts: [] }, index: 0 }] })}\n\n`
-              : "\n",
-          ),
+        () => {
+          const frame = passthroughKeepalive(call, forwarder, announced);
+          announced = true;
+          return writer.write(frame);
+        },
+        streamed
+          ? () => {
+              if (forwarder?.holding) return Promise.resolve(false);
+              begin();
+              return Promise.resolve(true);
+            }
+          : undefined,
       );
       timers.keepalive = keepalive;
       keepalive.answered();
+    }
+    if (gemini)
       timers.set(
         () => {
           if (writer.sent || writer.closed) return;
@@ -1893,10 +1995,6 @@ async function passthroughAttempt(
         },
         call.started + limits.headerCommitMs - performance.now(),
       );
-    }
-    const streamed =
-      call.stream &&
-      (/event-stream/i.test(contentType) || (gemini && !route.gemini?.sse));
     let bytes = 0;
     const chunks: Buffer[] = [];
     if (streamed) {

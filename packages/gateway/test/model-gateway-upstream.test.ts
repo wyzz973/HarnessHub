@@ -784,9 +784,11 @@ void test("unreachable upstreams return 502, silent upstreams 504 (also for Gemi
   );
   const answeredGemini = await gemini("silent-headers");
   assert.equal(answeredGemini.status, 200);
+  // A bare error object after the committed headers, as the Gemini API ends
+  // a failed stream and @google/genai detects it.
   assert.match(
     await answeredGemini.text(),
-    /^data: \{"error":\{"code":504,.*"status":"DEADLINE_EXCEEDED"\}\}\n\n$/,
+    /^\{"error":\{"code":504,.*"status":"DEADLINE_EXCEEDED"\}\}\n$/,
   );
   assert.deepEqual(
     calls.map((call) => [call.status, call.error?.code]),

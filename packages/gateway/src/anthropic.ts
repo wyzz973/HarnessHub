@@ -388,12 +388,25 @@ function stopReason(finish: string): string {
 type OpenBlock =
   | { kind: "thinking"; index: number; text: string }
   | { kind: "text"; index: number }
-  | { kind: "tool"; index: number; call: number };
+  | { kind: "tool"; index: number; call: number; args: string };
+
+/** Whether tool argument text so far is a complete JSON value. */
+function completeJson(text: string): boolean {
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Anthropic Messages output. Streams message_start, thinking/text/tool_use
  * content blocks (one open block at a time; tool input as input_json_delta),
- * message_delta with stop_reason and usage, then message_stop. The keepalive
+ * message_delta with stop_reason and usage, then message_stop. A tool call
+ * that starts while the open call's input is incomplete is sent whole after
+ * that block, so parallel calls whose argument deltas interleave upstream
+ * still arrive as one block each. The keepalive
  * is the protocol's own `ping` event, as the Anthropic API sends it.
  * `@anthropic-ai/sdk`'s stream iterator skips `ping`, so it resets byte-level
  * timeouts only, not a watchdog that counts SDK events; its effect on Claude
@@ -403,6 +416,13 @@ export class AnthropicSink implements OutputSink {
   #blocks = 0;
   #open: OpenBlock | undefined;
   #closedCalls = new Set<number>();
+  /**
+   * Calls that started while another call's input was incomplete, with their
+   * input so far: Chat and Responses upstreams may interleave the argument
+   * deltas of parallel calls, which Messages blocks cannot. Each is sent as
+   * one block when the open block closes.
+   */
+  #held = new Map<number, { id: string; name: string; args: string }>();
   /** Blocks of the gateway's searches, for an answer that does not stream. */
   #searches: Record<string, unknown>[] = [];
   constructor(
@@ -466,6 +486,26 @@ export class AnthropicSink implements OutputSink {
       });
     if (open.kind === "tool") this.#closedCalls.add(open.call);
     await this.#event("content_block_stop", { index: open.index });
+    for (const [call, held] of this.#held) {
+      this.#held.delete(call);
+      const index = this.#blocks++;
+      await this.#event("content_block_start", {
+        index,
+        content_block: {
+          type: "tool_use",
+          id: held.id,
+          name: held.name,
+          input: {},
+        },
+      });
+      if (held.args)
+        await this.#event("content_block_delta", {
+          index,
+          delta: { type: "input_json_delta", partial_json: held.args },
+        });
+      await this.#event("content_block_stop", { index });
+      this.#closedCalls.add(call);
+    }
   }
   async #begin(block: Record<string, unknown>): Promise<number> {
     await this.#close();
@@ -506,16 +546,31 @@ export class AnthropicSink implements OutputSink {
     name: string;
   }): Promise<void> {
     if (!this.translation.stream) return;
+    const name = nativeTool(this.translation.tools, call.name).name;
+    // A call that starts before the open call's input is complete may have
+    // its arguments interleaved with it; it waits until that block closes.
+    if (
+      this.#open?.kind === "tool" &&
+      (this.#held.size > 0 || !completeJson(this.#open.args))
+    ) {
+      this.#held.set(call.index, { id: call.id, name, args: "" });
+      return;
+    }
     const index = await this.#begin({
       type: "tool_use",
       id: call.id,
-      name: nativeTool(this.translation.tools, call.name).name,
+      name,
       input: {},
     });
-    this.#open = { kind: "tool", index, call: call.index };
+    this.#open = { kind: "tool", index, call: call.index, args: "" };
   }
   async toolArgs(index: number, text: string): Promise<void> {
     if (!this.translation.stream) return;
+    const held = this.#held.get(index);
+    if (held) {
+      held.args += text;
+      return;
+    }
     if (this.#open?.kind !== "tool" || this.#open.call !== index)
       throw new GatewayError(
         this.#closedCalls.has(index)
@@ -524,6 +579,7 @@ export class AnthropicSink implements OutputSink {
         502,
         "upstream_protocol_error",
       );
+    this.#open.args += text;
     await this.#event("content_block_delta", {
       index: this.#open.index,
       delta: { type: "input_json_delta", partial_json: text },

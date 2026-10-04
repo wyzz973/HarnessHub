@@ -20,7 +20,7 @@ import { googleToChat } from "../src/google.js";
 import type { ChatTranslation } from "../src/protocol.js";
 import { reasoningItemKeys } from "../src/reasoning.js";
 import { responsesToChat } from "../src/responses.js";
-import { normalizeChatRequest } from "../src/upstream.js";
+import { contextNumbers, normalizeChatRequest } from "../src/upstream.js";
 import { at } from "./shared-support.js";
 
 const PNG = "iVBORw0KGgo=";
@@ -1057,4 +1057,27 @@ void test("the Gemini decoder emits thoughts, complete function calls with their
     completion_tokens_details: { reasoning_tokens: 2 },
   });
   assert.deepEqual([...decoder.callSignatures], [[0, "TS"]]);
+});
+
+void test("context overflow numbers are read from each vendor's wording", () => {
+  for (const [message, numbers] of [
+    [
+      "This model's maximum context length is 8192 tokens. However, your messages resulted in 9000 tokens. Please reduce the length of the messages.",
+      { actual: 9000, limit: 8192 },
+    ],
+    [
+      "This model's maximum context length is 131072 tokens. However, you requested 139000 tokens (139000 in the messages, 0 in the completion).",
+      { actual: 139000, limit: 131072 },
+    ],
+    [
+      "prompt is too long: 300000 tokens > 200000 maximum",
+      { actual: 300000, limit: 200000 },
+    ],
+    [
+      "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575).",
+      { actual: 1196265, limit: 1048575 },
+    ],
+    ["Request too large", undefined],
+  ] as const)
+    assert.deepEqual(contextNumbers(message), numbers, message);
 });

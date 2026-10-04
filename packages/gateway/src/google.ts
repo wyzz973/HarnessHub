@@ -592,8 +592,10 @@ export class GoogleSink implements OutputSink {
       return;
     }
     if (this.eventStream) {
-      await this.writer.write(`data: ${error}\n\n`);
-      await this.writer.end();
+      // A bare JSON object, as the Gemini API ends a failed stream:
+      // @google/genai raises ApiError only for such a chunk and reads a
+      // `data:` event with an error as an empty answer.
+      await this.writer.end(`${error}\n`);
       return;
     }
     await this.#open();

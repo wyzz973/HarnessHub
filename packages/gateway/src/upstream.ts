@@ -478,12 +478,16 @@ class Completion {
 /**
  * Parse one SSE payload stream; `feed` accepts decoded text in arbitrary
  * splits. `received` runs for every `data` line, comments and other fields
- * excluded, before the event it belongs to is dispatched.
+ * excluded, before the event it belongs to is dispatched. A bare JSON object
+ * between events (the Gemini API's failed-stream form) is dispatched as one
+ * payload once its lines parse, or at the end of the body as it is.
  */
 class SseParser {
   #pending = "";
   #data: string[] = [];
   #done = false;
+  /** Lines of a bare JSON object outside any event, until they parse. */
+  #bare: string[] | undefined;
   /** True once `[DONE]` arrived. */
   get done(): boolean {
     return this.#done;
@@ -502,9 +506,29 @@ class SseParser {
     const lines = this.#pending.split(/\r\n|\r|\n/);
     this.#pending = (final ? "" : (lines.pop() ?? "")) + hold;
     for (const line of lines) await this.#line(line);
+    if (final && this.#bare) {
+      const text = this.#bare.join("\n");
+      this.#bare = undefined;
+      await this.dispatch(text);
+    }
     if (final) await this.#line("");
   }
   async #line(line: string): Promise<void> {
+    // The Gemini API ends a failed stream with a bare JSON error object,
+    // possibly over several lines; it is read as one more payload.
+    if (this.#bare || (line.startsWith("{") && !this.#data.length)) {
+      (this.#bare ??= []).push(line);
+      const text = this.#bare.join("\n");
+      try {
+        JSON.parse(text);
+      } catch {
+        return;
+      }
+      this.#bare = undefined;
+      this.received();
+      await this.dispatch(text);
+      return;
+    }
     if (!line) {
       const data = this.#data.join("\n").trim();
       this.#data = [];
@@ -655,16 +679,25 @@ export function isContextOverflow(
     CONTEXT_PATTERNS.some((pattern) => pattern.test(message))
   );
 }
-/** Numbers from a context-overflow message, when the upstream reported them. */
+/**
+ * Numbers from a context-overflow message, when the upstream reported them:
+ * OpenAI's and vLLM's wording, Anthropic's `prompt is too long: N tokens > M
+ * maximum` and Gemini's `input token count (N) exceeds the maximum number of
+ * tokens allowed (M)`.
+ */
 export function contextNumbers(
   message: string,
 ): { actual: number; limit: number } | undefined {
   const limit =
     message.match(/maximum context length is (\d+)/i) ??
-    message.match(/(?:limit|maximum)(?: of| is)? (\d+) tokens/i);
+    message.match(/(?:limit|maximum)(?: of| is)? (\d+) tokens/i) ??
+    message.match(/> (\d+) maximum/i) ??
+    message.match(/tokens allowed \((\d+)\)/i);
   const actual =
     message.match(/(\d+) in the messages/i) ??
     message.match(/requested (\d+) tokens/i) ??
+    message.match(/resulted in (\d+) tokens/i) ??
+    message.match(/token count \((\d+)\)/i) ??
     message.match(/(?:prompt|input)[^\d]{0,40}(\d+) tokens/i);
   return limit?.[1] && actual?.[1]
     ? { actual: Number(actual[1]), limit: Number(limit[1]) }

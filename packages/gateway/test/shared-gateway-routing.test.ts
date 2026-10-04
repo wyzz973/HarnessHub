@@ -606,3 +606,203 @@ void test("translated streams get protocol keepalives and Gemini answers commit 
   const body = (await gemini.json()) as Record<string, unknown>;
   assert.equal(at(body, "candidates", 0, "content", "parts", 0, "text"), "ab");
 });
+
+void test("an upstream that sends only comments before its first data still gets keepalives through, translated and passed through", async (t) => {
+  const SILENCE_MS = 2_500;
+  /** SSE comments every 200 ms for SILENCE_MS, then `body`. */
+  const commenting =
+    (body: string): Reply =>
+    (response) => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      const timer = setInterval(() => response.write(": thinking\n\n"), 200);
+      const done = setTimeout(() => {
+        clearInterval(timer);
+        response.end(body);
+      }, SILENCE_MS);
+      response.on("close", () => {
+        clearInterval(timer);
+        clearTimeout(done);
+      });
+    };
+  const sse = (type: string, value: Record<string, unknown>) =>
+    `event: ${type}\ndata: ${JSON.stringify({ type, ...value })}\n\n`;
+  const bodies: Record<string, string> = {
+    chat: chatChunks([
+      delta({ role: "assistant", content: "Hello" }),
+      delta({}, "stop"),
+    ]),
+    responses:
+      sse("response.created", {
+        response: { id: "resp_1", status: "in_progress", output: [] },
+      }) +
+      sse("response.output_text.delta", {
+        item_id: "msg_1",
+        output_index: 0,
+        content_index: 0,
+        delta: "Hello",
+      }) +
+      sse("response.completed", {
+        response: {
+          id: "resp_1",
+          status: "completed",
+          output: [
+            {
+              type: "message",
+              id: "msg_1",
+              role: "assistant",
+              content: [{ type: "output_text", text: "Hello" }],
+            },
+          ],
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+      }),
+    anthropic:
+      sse("message_start", {
+        message: {
+          id: "msg_1",
+          type: "message",
+          role: "assistant",
+          content: [],
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+      }) +
+      sse("content_block_start", {
+        index: 0,
+        content_block: { type: "text", text: "" },
+      }) +
+      sse("content_block_delta", {
+        index: 0,
+        delta: { type: "text_delta", text: "Hello" },
+      }) +
+      sse("content_block_stop", { index: 0 }) +
+      sse("message_delta", {
+        delta: { stop_reason: "end_turn" },
+        usage: { output_tokens: 1 },
+      }) +
+      sse("message_stop", {}),
+    gemini: `data: ${JSON.stringify({
+      candidates: [
+        {
+          content: { role: "model", parts: [{ text: "Hello" }] },
+          finishReason: "STOP",
+          index: 0,
+        },
+      ],
+    })}\n\n`,
+  };
+  const store = new MemoryStore();
+  for (const [protocol, body] of Object.entries(bodies)) {
+    const up = await upstream(t, commenting(body));
+    await store.putProvider(
+      provider(
+        protocol,
+        {
+          [protocol]:
+            protocol === "chat" || protocol === "responses"
+              ? `${up.base}/v1`
+              : up.base,
+        },
+        {
+          auth: {
+            apiKeyHeader:
+              protocol === "anthropic"
+                ? "x-api-key"
+                : protocol === "gemini"
+                  ? "x-goog-api-key"
+                  : "authorization-bearer",
+          },
+        },
+      ),
+    );
+  }
+  // Groups that never retry: no alternative remains, so no output is held.
+  for (const id of Object.keys(bodies))
+    await store.putRouteGroup(
+      group(`only-${id}`, [`${id}/model-a`], {
+        retry: { perCandidate: 0, totalAttempts: 1 },
+      }),
+    );
+  const key = await addKey(
+    store,
+    Object.keys(bodies).map((id) => `group/only-${id}`),
+  );
+  const gw = await mount(t, store, { keepaliveGapMs: 1_000 });
+  const request = (inbound: string, upstream: string) => {
+    const model = `group/only-${upstream}`;
+    switch (inbound) {
+      case "chat":
+        return {
+          path: "/v1/chat/completions",
+          headers: { authorization: `Bearer ${key.text}` },
+          body: { model, stream: true, messages: MESSAGES },
+        };
+      case "responses":
+        return {
+          path: "/v1/responses",
+          headers: { authorization: `Bearer ${key.text}` },
+          body: { model, stream: true, input: "hi" },
+        };
+      case "anthropic":
+        return {
+          path: "/v1/messages",
+          headers: { "x-api-key": key.text },
+          body: { model, stream: true, max_tokens: 9, messages: MESSAGES },
+        };
+      default:
+        return {
+          path: `/v1beta/models/${model}:streamGenerateContent?alt=sse`,
+          headers: { "x-goog-api-key": key.text },
+          body: { contents: [{ role: "user", parts: [{ text: "hi" }] }] },
+        };
+    }
+  };
+  /** Each inbound protocol's keepalive, which is never an SSE comment. */
+  const keepalive: Record<string, RegExp> = {
+    chat: /"delta":\{\}/,
+    responses: /event: response\.in_progress/,
+    anthropic: /event: ping/,
+    gemini: /"parts":\[\]/,
+  };
+  const directions = [
+    ["chat", "chat"],
+    ["responses", "responses"],
+    ["anthropic", "anthropic"],
+    ["gemini", "gemini"],
+    ["chat", "anthropic"],
+    ["responses", "chat"],
+    ["anthropic", "chat"],
+    ["gemini", "chat"],
+  ] as const;
+  await Promise.all(
+    directions.map(async ([inbound, upstream]) => {
+      const name = `${inbound} → ${upstream}`;
+      const { path, headers, body } = request(inbound, upstream);
+      const started = performance.now();
+      const response = await fetch(`${gw.base}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify(body),
+      });
+      assert.equal(response.status, 200, name);
+      let text = "";
+      let first: number | undefined;
+      const decoder = new TextDecoder();
+      for await (const chunk of response.body!) {
+        first ??= performance.now() - started;
+        text += decoder.decode(chunk as Uint8Array, { stream: true });
+      }
+      assert.ok(
+        first !== undefined && first < SILENCE_MS - 500,
+        `${name}: the first byte came after ${Math.round(first ?? -1)} ms`,
+      );
+      // The keepalive, never an SSE comment, comes before the first data.
+      const data = text.indexOf("Hello");
+      assert.ok(data > 0, `${name}: the answer arrived`);
+      const kept = keepalive[inbound]!.exec(text);
+      assert.ok(kept && kept.index < data, `${name}: a keepalive first`);
+      // Passthrough keeps other clients' upstream comments; Gemini clients get none.
+      if (inbound === "gemini" || inbound !== upstream)
+        assert.doesNotMatch(text, /^:/m, `${name}: an SSE comment`);
+    }),
+  );
+});

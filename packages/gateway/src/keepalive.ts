@@ -10,13 +10,15 @@ export interface KeepalivePacing {
 }
 
 /**
- * Paces protocol keepalives on one committed engine response. A keepalive is
- * written only when all of these hold: the headers were sent; the upstream
- * showed activity (any body bytes, including SSE comments) since the engine
- * last received bytes; the engine has received nothing for `gapMs`; no write
- * is waiting for the socket; and the upstream sent a data event (or answered
- * with headers) within `maxNoDataMs`. Comments alone therefore keep the
- * engine alive only until `maxNoDataMs`, after which the gateway's idle
+ * Paces protocol keepalives on one engine response. A keepalive is written
+ * only when all of these hold: the headers were sent, or `open` commits them
+ * now (it declines while the call's output is held for a possible failover);
+ * the upstream showed activity (any body bytes, including SSE comments) since
+ * the engine last received bytes; the engine has received nothing for
+ * `gapMs`; no write is waiting for the socket; and the upstream sent a data
+ * event (or answered with headers) within `maxNoDataMs`. An upstream that
+ * sends only comments before its first data therefore gets keepalives once
+ * nothing is held, until `maxNoDataMs`, after which the gateway's idle
  * timeout decides. A silent upstream never causes keepalives.
  *
  * Owned by one model call, which must call {@link stop} before writing its
@@ -32,10 +34,18 @@ export class Keepalive {
   #sending: Promise<void> = Promise.resolve();
   #failure: unknown;
 
+  /**
+   * @param send Writes one protocol keepalive on the committed response.
+   * @param open Commits a response that has sent nothing yet (the sink's
+   *   start events or the headers); resolves false while output is held, and
+   *   the keepalive is then skipped. Without it, uncommitted responses get no
+   *   keepalive.
+   */
   constructor(
     private readonly writer: HttpWriter,
     private readonly pacing: Readonly<KeepalivePacing>,
     private readonly send: () => Promise<void>,
+    private readonly open?: () => Promise<boolean>,
   ) {}
 
   /** The upstream answered with response headers; the no-data window restarts. */
@@ -85,7 +95,7 @@ export class Keepalive {
     // Without new upstream activity since the engine last got bytes, the next
     // activity re-arms the timer; a silent upstream is left to the idle timeout.
     if (this.#stopped || this.#activityAt !== this.writer.writes) return;
-    if (!this.writer.sent || this.writer.closed) return;
+    if (this.writer.closed || (!this.writer.sent && !this.open)) return;
     const now = performance.now();
     if (now - this.#lastData > this.pacing.maxNoDataMs) return;
     const wait = this.writer.lastWrite + this.pacing.gapMs - now;
@@ -94,7 +104,11 @@ export class Keepalive {
       return;
     }
     const previous = this.#sending;
-    const sent = this.send().catch((error: unknown) => {
+    const sent = (async () => {
+      if (!this.writer.sent && !(await this.open!())) return;
+      if (this.#stopped || !this.writer.sent) return;
+      await this.send();
+    })().catch((error: unknown) => {
       this.stop();
       if (!(error instanceof ClientClosed)) this.#failure ??= error;
     });
