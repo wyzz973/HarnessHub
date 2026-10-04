@@ -143,7 +143,9 @@ void test("/api/v1 requires the local admin token and answers with problem detai
     ((await form.json()) as { code: string }).code,
     "UNSUPPORTED_MEDIA_TYPE",
   );
-  const unknown = await fetch(`${hub.url}/api/v1/agents`, { headers });
+  const unknown = await fetch(`${hub.url}/api/v1/no-such-resource`, {
+    headers,
+  });
   assert.equal(unknown.status, 404);
   assert.equal(
     ((await unknown.json()) as { code: string }).code,
