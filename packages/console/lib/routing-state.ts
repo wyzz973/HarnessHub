@@ -99,3 +99,15 @@ export function statesByCredential(
     items.map((item) => [stateKey(item.provider, item.credential), item]),
   );
 }
+
+/** Time left of a rest, `9:52` or `1:02:03`; undefined once it has passed. */
+export function restLeft(until: string, now: number): string | undefined {
+  const seconds = Math.ceil((Date.parse(until) - now) / 1000);
+  if (!(seconds > 0)) return undefined;
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const rest = String(seconds % 60).padStart(2, "0");
+  return hours
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${rest}`
+    : `${minutes}:${rest}`;
+}

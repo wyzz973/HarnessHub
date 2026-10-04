@@ -586,6 +586,9 @@ test("the routing state and gateway features pages present the gateway's state a
   assert.equal(routing.readingView({ window: "x-custom", usedPercent: 140, observedAt: "2026-10-04T11:00:00.000Z" }, now).percent, 100);
   assert.equal(routing.failureText({ kind: "rate_limited", status: 429, at: "2026-10-04T11:00:00.000Z" }), "被限流（HTTP 429）");
   assert.equal(routing.failureText({ kind: "something_new", status: 500, at: "2026-10-04T11:00:00.000Z" }), "something_new（HTTP 500）");
+  assert.equal(routing.restLeft("2026-10-04T12:09:52.000Z", now), "9:52");
+  assert.equal(routing.restLeft("2026-10-04T13:02:03.000Z", now), "1:02:03");
+  assert.equal(routing.restLeft("2026-10-04T12:00:00.000Z", now), undefined, "a rest that has ended has no time left");
   const byCredential = routing.statesByCredential([{ provider: "lab", credential: "default", state: "open", readings: [] }]);
   assert.equal(byCredential.get(routing.stateKey("lab", "default")).state, "open");
 

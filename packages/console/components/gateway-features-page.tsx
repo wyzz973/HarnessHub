@@ -45,6 +45,18 @@ import {
   useLoaded,
 } from "./model-plane-ui";
 
+/** What a feature costs and what it sends where, one line each. */
+function Implications({ cost, privacy }: { cost: string; privacy: string }) {
+  return (
+    <dl className="callout neutral grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+      <dt className="font-medium text-foreground">费用</dt>
+      <dd>{cost}</dd>
+      <dt className="font-medium text-foreground">隐私</dt>
+      <dd>{privacy}</dd>
+    </dl>
+  );
+}
+
 /** The details of a refused change, without the JSON Pointers. */
 function Details({ failure }: { failure: Failure | null }) {
   const details = Object.values(failure?.fields ?? {});
@@ -119,6 +131,10 @@ function Redaction({
         />
       }
     >
+      <Implications
+        cost="不额外请求，不额外计费。"
+        privacy="缺省开启：厂商看不到 HarnessHub 自己的凭据，即使提示词或工具结果引用了它们；关闭后这些值原样发出。"
+      />
       <ul className="list-disc space-y-0.5 pl-5 text-[13px] text-muted-foreground">
         <li>Gateway Key、守护进程的管理令牌</li>
         <li>本进程解析过的 provider 凭据与订阅令牌（至少 8 个字符的精确值）</li>
@@ -303,9 +319,12 @@ function Vision({
       </div>
       <p className="field-hint">
         选择能看图的模型或路由组。描述调用经网关自己的路由、熔断与脱敏，作为
-        Agent harnesshub-vision
-        的独立调用记账，按视觉模型的价格计费；同一张图片的描述会缓存。
+        Agent harnesshub-vision 的独立调用记账；同一张图片的描述会缓存。
       </p>
+      <Implications
+        cost="每张新图片一次额外的模型调用，按视觉模型的价格计费（缓存命中不再调用）。"
+        privacy="图片发给视觉模型所在的 provider，而不只是目标模型的 provider。"
+      />
       <ErrorCallout failure={failure} />
       <Details failure={failure} />
     </Card>
@@ -448,6 +467,10 @@ function WebSearch({
         </Button>
       }
     >
+      <Implications
+        cost="搜索服务按它自己的方式计费（不进 HarnessHub 的账本）；模型为使用搜索结果至多多答 6 轮，按模型价格计费。"
+        privacy="搜索查询（经出站脱敏后）发给你登记的搜索服务；结果交给模型。"
+      />
       {backends.length ? (
         <ol className="divide-y rounded-xl border">
           {backends.map((backend, index) => (

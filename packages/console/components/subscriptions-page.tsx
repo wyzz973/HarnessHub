@@ -350,6 +350,9 @@ function SignInDialog({
                 </a>
               </p>
             ) : null}
+            <p className="text-[12.5px] text-muted-foreground">
+              “不再等待”只停止这个页面的查询；这次登录在到期后自动失效。
+            </p>
           </div>
         ) : phase.step === "done" ? (
           <div className="space-y-2">

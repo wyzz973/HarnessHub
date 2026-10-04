@@ -12,6 +12,7 @@ import {
   breakerStates,
   failureText,
   readingView,
+  restLeft,
   statesByCredential,
 } from "@/lib/routing-state";
 import { cn } from "@/lib/utils";
@@ -74,6 +75,28 @@ export function useRoutingStates(): readonly [RoutingStates, () => void] {
   return [states, () => refresh.current()] as const;
 }
 
+/** "休息到 22:20:28，还剩 9:52", counting down each second until the rest ends. */
+export function RestingUntil({ until }: { until: string }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const left = restLeft(until, now);
+  return (
+    <span className="text-[12px] text-muted-foreground">
+      休息到 <LocalTime value={until} />
+      {left ? (
+        <>
+          ，还剩 <span className="tabular-nums">{left}</span>
+        </>
+      ) : (
+        "，等待下一次请求探测"
+      )}
+    </span>
+  );
+}
+
 /** The breaker as a tag; the rest and the last failure in its tooltip and next to it. */
 export function CredentialState({
   state,
@@ -100,13 +123,12 @@ export function CredentialState({
         {breaker.label}
       </span>
       {!compact && state.state === "open" && state.restingUntil ? (
-        <span className="text-[12px] text-muted-foreground">
-          到 <LocalTime value={state.restingUntil} />
-        </span>
+        <RestingUntil until={state.restingUntil} />
       ) : null}
       {!compact && state.lastFailure ? (
         <span className="text-[12px] text-muted-foreground">
-          {failureText(state.lastFailure)}
+          {failureText(state.lastFailure)}，
+          <LocalTime value={state.lastFailure.at} />
         </span>
       ) : null}
     </span>
@@ -246,8 +268,8 @@ export function CredentialStatesPage({ tabs }: { tabs: React.ReactNode }) {
                         <td>
                           <CredentialState state={item} compact />
                           {item.state === "open" && item.restingUntil ? (
-                            <span className="block text-[12px] text-muted-foreground">
-                              到 <LocalTime value={item.restingUntil} />
+                            <span className="block">
+                              <RestingUntil until={item.restingUntil} />
                             </span>
                           ) : null}
                         </td>

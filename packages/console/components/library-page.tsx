@@ -1021,6 +1021,20 @@ function SkillImportDialog({
             MiB，不能含链接。同名 Skill 再次导入成为新版本。
           </DialogDescription>
         </DialogHeader>
+        <div className="segmented" role="tablist" aria-label="Skill 来源">
+          <button type="button" role="tab" aria-selected>
+            守护进程上的目录
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={false}
+            disabled
+            title="等待守护进程提供上传接口"
+          >
+            上传文件夹或 zip（即将推出）
+          </button>
+        </div>
         <label className="field-label">
           目录的绝对路径
           <input
@@ -1032,7 +1046,7 @@ function SkillImportDialog({
             onChange={(event) => setSource(event.target.value)}
           />
           <span className="field-hint block">
-            守护进程所在电脑上的路径；浏览器无法读出所选目录的路径，暂时不能从页面上传。
+            守护进程所在电脑上的路径（浏览器无法读出所选目录的路径）。
           </span>
         </label>
         <AgentChooser value={agents} onChange={setAgents} names={names} />
