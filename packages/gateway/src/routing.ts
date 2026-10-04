@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT
 /**
  * Candidate selection, per-credential breakers and the retry table of the
- * shared gateway (03 section 5). Everything here is in memory and owned by one
- * handler; nothing is persisted.
+ * shared gateway (03 section 5, with Magpie's failure kinds and rests).
+ * Everything here is in memory and owned by one handler; nothing is
+ * persisted, and `least-used` starts from a bounded read of the ledger.
  */
+import type { LogSink } from "@harnesshub/core/logging";
 import {
   DEFAULT_RETRY_POLICY,
+  type ModelPlaneStore,
   type ModelRef,
   type ProviderConfig,
   type ProviderCredential,
@@ -130,7 +133,7 @@ export function modelCandidates(
   return { candidates, skipped };
 }
 
-/** The group's retry policy over the 03 defaults; `totalAttempts` never exceeds the hard cap of 8. */
+/** The group's retry policy over the defaults; `totalAttempts` never exceeds the hard cap of 8. */
 export function retryPolicy(
   overrides: Partial<RetryPolicy> | undefined,
 ): RetryPolicy {
@@ -140,40 +143,118 @@ export function retryPolicy(
 /** Retry waits of one call stop once they would pass this total. */
 export const RETRY_BUDGET_MS = 30_000;
 
+/** Tokens a credential served count for half after an hour (Magpie `usageHalfLife`). */
+export const USAGE_HALF_LIFE_MS = 3_600_000;
+/** `least-used` starts from the ledger: calls this recent, at most this many. */
+export const USAGE_SEED_MS = 8 * 3_600_000;
+export const USAGE_SEED_CALLS = 5_000;
+
+/** Identity of a credential across providers: its rest, slots and usage. */
+export function credentialKey(candidate: Candidate): string {
+  return `${candidate.provider.id}\u0000${candidate.credential.id}`;
+}
+
+/** One rate-limit window an upstream reported: what was left until it resets. */
+interface RateWindow {
+  limit: number;
+  remaining: number;
+  /** Epoch milliseconds. */
+  reset: number;
+}
+
 /**
- * Member order per strategy. `order` keeps the configuration; `rotate` starts
- * one member later on every call; `least-used` prefers the member with the
- * fewest tokens in the last 24 hours; `latency` prefers the lowest moving
- * average of first-content time, members with fewer than 5 samples first.
- * Usage and latency are counted from calls through this handler since it
- * started; stickiness is not implemented.
+ * A reset or wait in a header value: an RFC 3339 or HTTP date, a duration
+ * such as `6m0s` or `250ms`, Unix seconds (above 1e9), or seconds from now.
+ * Epoch milliseconds, or undefined when the value is none of these.
+ */
+function resetAt(value: string, now: number): number | undefined {
+  const text = value.trim();
+  if (/^\d+(?:\.\d+)?$/.test(text)) {
+    const number = Number(text);
+    return number > 1e9 ? number * 1000 : now + number * 1000;
+  }
+  const units: Record<string, number> = {
+    h: 3_600_000,
+    m: 60_000,
+    s: 1000,
+    ms: 1,
+    us: 0.001,
+    µs: 0.001,
+    ns: 0.000001,
+  };
+  if (/^(?:\d+(?:\.\d+)?(?:h|ms|m|s|us|µs|ns))+$/.test(text)) {
+    let ms = 0;
+    for (const [, amount, unit] of text.matchAll(
+      /(\d+(?:\.\d+)?)(h|ms|m|s|us|µs|ns)/g,
+    ))
+      ms += Number(amount) * units[unit!]!;
+    return now + ms;
+  }
+  const date = Date.parse(text);
+  return Number.isNaN(date) ? undefined : date;
+}
+
+/**
+ * The rate-limit windows of an answer's headers: `x-ratelimit-limit-requests`
+ * with its `remaining` and `reset` (OpenAI), `anthropic-ratelimit-tokens-limit`
+ * and so on. A window counts only with a limit, a remainder and a reset.
+ */
+function rateWindows(headers: Headers, now: number): RateWindow[] {
+  const parts = new Map<string, Partial<RateWindow>>();
+  for (const [name, value] of headers) {
+    const at = name.indexOf("ratelimit-");
+    if (at < 0) continue;
+    const segments = name.slice(at + "ratelimit-".length).split("-");
+    const role = segments.find(
+      (segment) =>
+        segment === "limit" || segment === "remaining" || segment === "reset",
+    ) as keyof RateWindow | undefined;
+    if (!role) continue;
+    const window = segments.filter((segment) => segment !== role).join("-");
+    const entry = parts.get(window) ?? {};
+    const number = role === "reset" ? resetAt(value, now) : Number(value);
+    if (number !== undefined && Number.isFinite(number)) entry[role] = number;
+    parts.set(window, entry);
+  }
+  return [...parts.values()].filter(
+    (window): window is RateWindow =>
+      window.limit !== undefined &&
+      window.limit > 0 &&
+      window.remaining !== undefined &&
+      window.reset !== undefined,
+  );
+}
+
+/**
+ * Candidate order per strategy. `order` keeps the configuration; `rotate`
+ * starts one member later on every call; `latency` prefers the lowest moving
+ * average of first-content time, members with fewer than 5 samples first;
+ * `least-used` (Magpie `usage`) ranks the candidates themselves, see
+ * {@link weigh}. Usage and latency are counted from calls through this
+ * handler, `least-used` also from the ledger it was {@link seed}ed with.
  */
 export class Router {
   #rotation = new Map<RouteGroupId, number>();
-  /** Model Ref → hour index → tokens. */
-  #tokens = new Map<string, Map<number, number>>();
+  /** Credential → decayed tokens at a time. */
+  #served = new Map<string, { tokens: number; at: number }>();
+  /** Credential → the rate-limit windows of its last answer. */
+  #windows = new Map<string, RateWindow[]>();
   #latency = new Map<string, { average: number; samples: number }>();
+  #seeding: Promise<void> | undefined;
   constructor(private readonly clock: () => number) {}
 
+  /** Member order; a `least-used` group keeps its configured order here. */
   order(group: RouteGroup): ModelRef[] {
     const members = [...group.members];
     switch (group.strategy) {
       case "order":
+      case "least-used":
         return members;
       case "rotate": {
         const turn = this.#rotation.get(group.id) ?? 0;
         this.#rotation.set(group.id, turn + 1);
         const start = members.length ? turn % members.length : 0;
         return [...members.slice(start), ...members.slice(0, start)];
-      }
-      case "least-used": {
-        const used = new Map(members.map((ref) => [ref, this.#used(ref)]));
-        return members
-          .map((ref, index) => ({ ref, index }))
-          .sort(
-            (a, b) => used.get(a.ref)! - used.get(b.ref)! || a.index - b.index,
-          )
-          .map(({ ref }) => ref);
       }
       case "latency": {
         const score = (ref: ModelRef) => {
@@ -188,14 +269,85 @@ export class Router {
     }
   }
 
-  /** Record a successful call: tokens for `least-used`, first-content time for `latency`. */
-  record(ref: ModelRef, tokens: number, firstContentMs: number | undefined) {
-    const hour = Math.floor(this.clock() / 3_600_000);
-    const buckets = this.#tokens.get(ref) ?? new Map<number, number>();
-    for (const old of buckets.keys()) if (old <= hour - 24) buckets.delete(old);
-    buckets.set(hour, (buckets.get(hour) ?? 0) + tokens);
-    this.#tokens.set(ref, buckets);
+  /**
+   * The candidates of a `least-used` group, every member's credentials
+   * together: the least share of a rate-limit window used first (whole
+   * percent, as the upstream last reported it; a passed reset counts as
+   * unused), then the fewest tokens served, each halving per hour; ties keep
+   * the configured order. Other strategies are returned unchanged.
+   */
+  weigh(group: RouteGroup | undefined, candidates: Candidate[]): Candidate[] {
+    if (group?.strategy !== "least-used" || candidates.length < 2)
+      return candidates;
+    const ranked = candidates.map((candidate, index) => ({
+      candidate,
+      index,
+      share: this.share(candidate),
+      tokens: this.tokens(candidate),
+    }));
+    return ranked
+      .sort(
+        (a, b) => a.share - b.share || a.tokens - b.tokens || a.index - b.index,
+      )
+      .map(({ candidate }) => candidate);
+  }
+
+  /** Whole percent of the fullest unexpired window the candidate's last answer reported. */
+  share(candidate: Candidate): number {
+    const now = this.clock();
+    let used = 0;
+    for (const window of this.#windows.get(credentialKey(candidate)) ?? [])
+      if (window.reset > now)
+        used = Math.max(
+          used,
+          Math.floor(
+            ((window.limit - Math.max(0, window.remaining)) / window.limit) *
+              100,
+          ),
+        );
+    return Math.min(100, Math.max(0, used));
+  }
+
+  /** Tokens the candidate's credential served, halving per {@link USAGE_HALF_LIFE_MS}. */
+  tokens(candidate: Candidate): number {
+    return this.#decayed(credentialKey(candidate), this.clock());
+  }
+
+  #decayed(key: string, now: number): number {
+    const served = this.#served.get(key);
+    return served
+      ? served.tokens * 2 ** (-(now - served.at) / USAGE_HALF_LIFE_MS)
+      : 0;
+  }
+
+  #add(key: string, tokens: number, at: number): void {
+    const now = this.clock();
+    this.#served.set(key, {
+      tokens:
+        this.#decayed(key, now) +
+        tokens * 2 ** (-(now - at) / USAGE_HALF_LIFE_MS),
+      at: now,
+    });
+  }
+
+  /** The rate-limit headers of any answer from the candidate's upstream. */
+  observe(candidate: Candidate, headers: Headers): void {
+    const windows = rateWindows(headers, this.clock());
+    if (windows.length) this.#windows.set(credentialKey(candidate), windows);
+  }
+
+  /**
+   * Record a successful call: its tokens (at least 1, it answered) for
+   * `least-used`, its first-content time for `latency`.
+   */
+  record(
+    candidate: Candidate,
+    tokens: number,
+    firstContentMs: number | undefined,
+  ): void {
+    this.#add(credentialKey(candidate), Math.max(1, tokens), this.clock());
     if (firstContentMs === undefined) return;
+    const ref = candidate.ref;
     const sample = this.#latency.get(ref);
     // An exponential average over roughly the last 50 calls.
     const alpha = 2 / 51;
@@ -210,12 +362,62 @@ export class Router {
     );
   }
 
-  #used(ref: ModelRef): number {
-    const hour = Math.floor(this.clock() / 3_600_000);
-    let total = 0;
-    for (const [at, tokens] of this.#tokens.get(ref) ?? [])
-      if (at > hour - 24) total += tokens;
-    return total;
+  /**
+   * Add the tokens of the successful calls in the ledger's last
+   * {@link USAGE_SEED_MS}, at most {@link USAGE_SEED_CALLS} of them, to the
+   * usage counts. Runs once; every caller gets the same promise, which
+   * never rejects: a failed read is logged and leaves the counts as they are.
+   */
+  seed(store: ModelPlaneStore, log: LogSink): Promise<void> {
+    this.#seeding ??= (async () => {
+      const now = this.clock();
+      const from = new Date(now - USAGE_SEED_MS).toISOString();
+      let cursor: string | undefined;
+      let read = 0;
+      try {
+        do {
+          const page = await store.listModelCalls(
+            { from },
+            {
+              limit: Math.min(1000, USAGE_SEED_CALLS - read),
+              ...(cursor === undefined ? {} : { cursor }),
+            },
+          );
+          for (const entry of page.items) {
+            const at = Date.parse(entry.occurredAt);
+            if (
+              entry.status >= 400 ||
+              !entry.provider ||
+              !entry.credentialId ||
+              !entry.usage ||
+              at < now - USAGE_SEED_MS
+            )
+              continue;
+            const usage = entry.usage;
+            this.#add(
+              `${entry.provider}\u0000${entry.credentialId}`,
+              Math.max(
+                1,
+                usage.input +
+                  usage.cacheRead +
+                  usage.cacheWrite +
+                  usage.output +
+                  usage.reasoning,
+              ),
+              Math.min(at, now),
+            );
+          }
+          read += page.items.length;
+          cursor = page.nextCursor;
+        } while (cursor !== undefined && read < USAGE_SEED_CALLS);
+      } catch (error) {
+        log.info("gateway.usage.seed_failed", {
+          error:
+            error instanceof Error ? error.message.slice(0, 200) : "unknown",
+        });
+      }
+    })();
+    return this.#seeding;
   }
 }
 
@@ -227,6 +429,122 @@ export type BreakerEffect =
   | { kind: "auth" }
   | { kind: "model"; ms: number };
 
+/**
+ * Why an upstream refused, as it bears on routing (Magpie `failure`):
+ * `proxy` — a proxy in front of the upstream refused the connection;
+ * `verify` — the vendor wants the account verified; `auth` — the credential
+ * is not accepted; `credit` — no money left; `quota` — the plan's allowance
+ * is used up; `rate` — a short rate limit; `model` — this credential or
+ * endpoint does not serve the model; `other` — the upstream failed or timed
+ * out; `request` — the request itself is at fault (context overflow included).
+ */
+export type FailureKind =
+  | "proxy"
+  | "verify"
+  | "auth"
+  | "credit"
+  | "quota"
+  | "rate"
+  | "model"
+  | "other"
+  | "request";
+
+/**
+ * The words by which vendors say why they refused when the status does not
+ * say it (Magpie `internal/gateway/routing.go` and `fallback.go`), in one
+ * table for {@link failureKind} and its tests.
+ */
+export const FAILURE_WORDS = {
+  /** No money left on the account or key. */
+  credit:
+    /insufficient.?(?:balance|credit|fund)|balance|credit|billing|payment|arrear|overdue|suspended|余额|欠费|充值|账户.*(?:不足|停)/i,
+  /** OpenAI's code for an account without credit, sent with 429. */
+  noCredit: /insufficient_quota/,
+  /** The plan's allowance is used up for now. */
+  usedUp:
+    /quota|usage.?limit|limit.?reached|hit your .*limit|limit.{0,24}resets|exceeded.*(?:plan|limit)|额度|用量|套餐|上限/i,
+  /** A short rate limit, requests or tokens per second or minute. */
+  rate: /rate.?limit|too many requests|per.?(?:second|sec|minute|min)\b|\b[rt]pm\b|频率|太频繁/i,
+  /** A 429 that names the plan's own allowance, rate words or not. */
+  planned:
+    /quota|usage.?limit|hit your .*limit|limit.{0,24}resets|per.?(?:day|week|month)|daily|weekly|monthly|额度|用量|套餐/i,
+  /** The connection through a proxy failed (Go's error text, as a relay passes it on). */
+  proxy: /proxyconnect |socks connect /,
+  /** Google's refusal until the account is verified. */
+  verify:
+    /VALIDATION_REQUIRED|verify your account|account verification required/i,
+  /** The model is not served by this credential or endpoint. */
+  modelMissing:
+    /model[^.]{0,80}(?:not (?:found|exist|available|supported|enabled|activated|accessible|allowed)|does ?n[o']t exist|unavailable|unsupported)|no such model|unknown model|unsupported model|model_not_found|invalid model|模型.{0,12}(?:不存在|不支持|无权|未开通)/i,
+} as const;
+
+/**
+ * The kind of an upstream refusal from its status and text (the error body,
+ * or the message of an in-stream error), checked in Magpie's order: a 502
+ * from a proxy; a verification demand on 401 or 403; no credit (402, credit
+ * words on any status but 429, or `insufficient_quota`); a 429 with rate
+ * words and no plan words; a used-up allowance (used-up words, or a 429 with
+ * plan words); any other 429 as a rate limit. Then, for HarnessHub's
+ * breaker: 401 and 403 as `auth`; 404 or model-missing words on 400 and 422
+ * as `model`; 408 and 5xx as `other`; everything else as `request`. A
+ * context overflow is a `request` failure; the caller checks it first.
+ */
+export function failureKind(status: number, text: string): FailureKind {
+  const words = FAILURE_WORDS;
+  if (status === 502 && words.proxy.test(text)) return "proxy";
+  if ((status === 401 || status === 403) && words.verify.test(text))
+    return "verify";
+  if (
+    status === 402 ||
+    (status !== 429 && words.credit.test(text)) ||
+    words.noCredit.test(text)
+  )
+    return "credit";
+  if (status === 429 && words.rate.test(text) && !words.planned.test(text))
+    return "rate";
+  if (words.usedUp.test(text) || (status === 429 && words.planned.test(text)))
+    return "quota";
+  if (status === 429) return "rate";
+  if (status === 401 || status === 403) return "auth";
+  if (
+    status === 404 ||
+    ((status === 400 || status === 422) && words.modelMissing.test(text))
+  )
+    return "model";
+  if (status === 408 || status >= 500) return "other";
+  return "request";
+}
+
+/** The ledger's error class of an upstream failure of this kind. */
+export function failureClass(
+  kind: FailureKind,
+  status: number,
+  overflow: boolean,
+): string {
+  switch (kind) {
+    case "proxy":
+      return "proxy_failed";
+    case "verify":
+      return "verification_required";
+    case "auth":
+      return "auth_failed";
+    case "credit":
+      return "insufficient_balance";
+    case "quota":
+      return "quota_exhausted";
+    case "rate":
+      return "rate_limited";
+    case "model":
+      return "model_not_found";
+    case "other":
+      return status === 408 || status === 504
+        ? "upstream_timeout"
+        : "upstream_unavailable";
+    case "request":
+      return overflow ? "context_length_exceeded" : "upstream_rejected";
+  }
+}
+
 /** A failed attempt that wrote nothing to the client. */
 export interface AttemptError {
   failure: Failure;
@@ -236,102 +554,177 @@ export interface AttemptError {
   phase: "connect" | "headers" | "response" | "local" | "cancelled";
   /** Upstream HTTP status, or the status an in-stream error maps to. */
   status?: number;
+  /** Set for upstream answers (`response`); connection failures and timeouts are `other`. */
+  kind?: FailureKind;
+  /** The vendor's wait from the headers (`retryAfter`). */
   retryAfterMs?: number;
+  /** When a used-up allowance comes back, as the vendor's body says (`resetIn`). */
+  resetMs?: number;
 }
 
 export interface Classification {
-  /** `after`: retry once the Retry-After wait passed; `once`: at most one retry. */
-  retry: "no" | "yes" | "once" | "after";
+  /** Retry the last candidate left: `once` at most one time. */
+  retry: "no" | "yes" | "once";
   failover: boolean;
   breaker: BreakerEffect;
 }
 
+/** How long a failure rests its credential, by kind (Magpie `restAfterMarked`). */
+export const REST_MS = {
+  verify: 30 * 60_000,
+  credit: 30 * 60_000,
+  /** A used-up allowance whose reset the vendor did not say. */
+  quota: 15 * 60_000,
+  /** The longest a used-up allowance rests: a week's window and a day. */
+  quotaMax: 8 * 24 * 3_600_000,
+  /** A rate limit without a wait in its headers. */
+  rate: 60_000,
+  /** 404 and model-missing: only that credential and model. */
+  model: 10 * 60_000,
+} as const;
+
 const TRANSIENT = new Set([408, 500, 502, 503, 504, 529]);
-const QUOTA =
-  /quota|insufficient[_ ]quota|billing|exceeded your current|credit|balance/i;
-const MODEL_MISSING =
-  /model[^.]{0,80}(?:not (?:found|exist|available|supported|enabled|activated)|does ?n[o']t exist|unavailable)|no such model|unknown model|model_not_found|invalid model/i;
 const OPEN_MAX_MS = 600_000;
 
-/** The 03 section 5 retry table. */
-export function classify(
-  error: AttemptError,
-  policy: RetryPolicy,
-): Classification {
-  const status = error.status;
-  if (error.phase === "cancelled")
-    return { retry: "no", failover: false, breaker: { kind: "none" } };
-  if (error.phase === "local")
-    return { retry: "no", failover: true, breaker: { kind: "none" } };
-  if (error.phase === "connect")
-    return { retry: "yes", failover: true, breaker: { kind: "count" } };
-  if (error.phase === "headers")
-    return { retry: "once", failover: true, breaker: { kind: "count" } };
-  if (status === undefined)
-    return { retry: "yes", failover: true, breaker: { kind: "count" } };
-  if (error.failure.contextOverflow)
-    return { retry: "no", failover: false, breaker: { kind: "none" } };
-  if (status === 429) {
-    const wait = error.retryAfterMs;
-    if (QUOTA.test(error.failure.message))
-      return {
-        retry: "no",
-        failover: true,
-        breaker: {
-          kind: "cooldown",
-          ms: Math.min(wait ?? 60_000, OPEN_MAX_MS),
-        },
-      };
-    if (wait !== undefined && wait <= policy.retryAfterWaitCapMs)
-      return {
-        retry: "after",
-        failover: true,
-        breaker: { kind: "cooldown", ms: wait },
-      };
-    return {
-      retry: "no",
-      failover: true,
-      breaker: { kind: "cooldown", ms: Math.min(wait ?? 60_000, OPEN_MAX_MS) },
-    };
+/**
+ * What a failed attempt means for routing. Connection failures, timeouts and
+ * the transient statuses (408, 500, 502, 503, 504, 529) count towards the
+ * breaker and may be retried; a header timeout at most once. `rate` rests the
+ * credential for the vendor's wait, else a minute, and may be retried; `quota`
+ * rests until the vendor's stated reset, else 15 minutes, at most 8 days;
+ * `credit` and `verify` rest 30 minutes; `auth` rests until the credential
+ * changes or 10 minutes pass; `model` marks the credential and model for 10
+ * minutes; `proxy` rests nothing. All of these fail over; a `request` failure
+ * is returned as it is. Retries apply only to the last candidate left.
+ */
+export function classify(error: AttemptError): Classification {
+  switch (error.phase) {
+    case "cancelled":
+      return { retry: "no", failover: false, breaker: { kind: "none" } };
+    case "local":
+      return { retry: "no", failover: true, breaker: { kind: "none" } };
+    case "connect":
+      return { retry: "yes", failover: true, breaker: { kind: "count" } };
+    case "headers":
+      return { retry: "once", failover: true, breaker: { kind: "count" } };
+    case "response":
+      break;
   }
-  if (status === 401 || status === 402 || status === 403)
-    return { retry: "no", failover: true, breaker: { kind: "auth" } };
-  if (
-    status === 404 ||
-    ((status === 400 || status === 422) &&
-      MODEL_MISSING.test(error.failure.message))
-  )
-    return {
-      retry: "no",
-      failover: true,
-      breaker: { kind: "model", ms: 600_000 },
-    };
-  if (TRANSIENT.has(status))
-    return { retry: "yes", failover: true, breaker: { kind: "count" } };
-  if (status >= 500)
-    return { retry: "no", failover: true, breaker: { kind: "count" } };
-  return { retry: "no", failover: false, breaker: { kind: "none" } };
+  const kind =
+    error.kind ??
+    (error.status === undefined
+      ? "other"
+      : failureKind(error.status, error.failure.message));
+  const failover = (
+    breaker: BreakerEffect,
+    retry: Classification["retry"] = "no",
+  ): Classification => ({ retry, failover: true, breaker });
+  switch (kind) {
+    case "proxy":
+      return failover({ kind: "none" });
+    case "verify":
+      return failover({ kind: "cooldown", ms: REST_MS.verify });
+    case "auth":
+      return failover({ kind: "auth" });
+    case "credit":
+      return failover({ kind: "cooldown", ms: REST_MS.credit });
+    case "quota":
+      return failover({
+        kind: "cooldown",
+        ms: Math.min(
+          error.resetMs ?? error.retryAfterMs ?? REST_MS.quota,
+          REST_MS.quotaMax,
+        ),
+      });
+    case "rate":
+      return failover(
+        { kind: "cooldown", ms: error.retryAfterMs ?? REST_MS.rate },
+        "yes",
+      );
+    case "model":
+      return failover({ kind: "model", ms: REST_MS.model });
+    case "other":
+      return failover(
+        { kind: "count" },
+        error.status === undefined || TRANSIENT.has(error.status)
+          ? "yes"
+          : "no",
+      );
+    case "request":
+      return { retry: "no", failover: false, breaker: { kind: "none" } };
+  }
 }
 
-/** `500 ms × 2^n` capped at `maxBackoffMs`, with ±20% jitter. */
+/** The wait before the n-th retry (from 0): `baseBackoffMs × 2^n`, so 1, 2 and 4 s by default. */
 export function backoff(policy: RetryPolicy, retry: number): number {
-  const base = Math.min(policy.maxBackoffMs, policy.baseBackoffMs * 2 ** retry);
-  return Math.round(base * (0.8 + Math.random() * 0.4));
+  return policy.baseBackoffMs * 2 ** retry;
 }
+
+/** The longest wait a vendor's headers are trusted with (Magpie `longestWait`). */
+const LONGEST_WAIT_MS = 3_600_000;
 
 /**
- * Milliseconds from `retry-after-ms` or `retry-after` (seconds or an HTTP
- * date), or `undefined` when absent or malformed.
+ * The vendor's wait in milliseconds, at most an hour: `retry-after-ms`, else
+ * `retry-after` (seconds or an HTTP date), else the latest reset among the
+ * headers that name a rate limit's reset (`x-ratelimit-reset-requests: 6m0s`,
+ * `anthropic-ratelimit-tokens-reset: <RFC 3339>`). Undefined when none says.
  */
 export function retryAfter(headers: Headers, now: number): number | undefined {
   const ms = headers.get("retry-after-ms");
+  let wait: number | undefined;
   if (ms !== null && /^\d+(?:\.\d+)?$/.test(ms.trim()))
-    return Math.ceil(Number(ms));
+    wait = Math.ceil(Number(ms));
   const value = headers.get("retry-after")?.trim();
-  if (!value) return undefined;
-  if (/^\d+$/.test(value)) return Number(value) * 1000;
-  const date = Date.parse(value);
-  return Number.isNaN(date) ? undefined : Math.max(0, date - now);
+  if (wait === undefined && value) {
+    if (/^\d+(?:\.\d+)?$/.test(value)) wait = Math.ceil(Number(value) * 1000);
+    else {
+      const date = Date.parse(value);
+      if (!Number.isNaN(date)) wait = Math.max(0, date - now);
+    }
+  }
+  if (wait === undefined)
+    for (const [name, text] of headers) {
+      if (!name.includes("ratelimit") || !name.includes("reset")) continue;
+      const at = resetAt(text, now);
+      if (at !== undefined && at > now)
+        wait = Math.max(wait ?? 0, Math.ceil(at - now));
+    }
+  return wait === undefined ? undefined : Math.min(wait, LONGEST_WAIT_MS);
+}
+
+/**
+ * When a used-up allowance comes back, as the refusal's body says, in
+ * milliseconds from `now`: Claude Code's `limit reached|<unix>`, ChatGPT's
+ * `error.resets_at` (Unix seconds) or `error.resets_in_seconds`, or Google's
+ * `RetryInfo.retryDelay` (`"20s"`). Undefined when it says none of these.
+ */
+export function resetIn(body: string, now: number): number | undefined {
+  const claude = /limit reached\|(\d{10})\b/i.exec(body);
+  if (claude && Number(claude[1]) * 1000 > now)
+    return Number(claude[1]) * 1000 - now;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  const error = (parsed as { error?: unknown } | null)?.error;
+  if (typeof error !== "object" || error === null) return undefined;
+  const {
+    resets_at: at,
+    resets_in_seconds: seconds,
+    details,
+  } = error as Record<string, unknown>;
+  if (typeof at === "number" && at * 1000 > now) return at * 1000 - now;
+  if (typeof seconds === "number" && seconds > 0) return seconds * 1000;
+  if (Array.isArray(details))
+    for (const detail of details) {
+      const delay = (detail as { retryDelay?: unknown } | null)?.retryDelay;
+      const match =
+        typeof delay === "string" ? /^(\d+(?:\.\d+)?)s$/.exec(delay) : null;
+      if (match) return Math.ceil(Number(match[1]) * 1000);
+    }
+  return undefined;
 }
 
 interface BreakerState {
@@ -359,14 +752,15 @@ function credentialRef(credential: ProviderCredential): string {
 }
 
 /**
- * Per-credential breakers (closed, open, half-open) and per credential and
- * model marks. Three consecutive counted failures, or one auth or quota
- * failure, open a breaker: for the upstream's wait when it gave one,
- * otherwise 60 s doubling per reopening up to 10 minutes. An auth failure
- * also ends when the credential's reference changes. After the open time one
- * probe passes (half-open); its success closes the breaker, a counted
- * failure reopens it. A 404 or model-missing answer marks only that
- * credential and model for 10 minutes.
+ * Per-credential breakers (closed, open, half-open), which are the rests of
+ * Magpie's routing, and per credential and model marks. Three consecutive
+ * counted failures open a breaker for 60 s, doubling per reopening up to 10
+ * minutes; one failure of another kind opens it for as long as
+ * {@link classify} says (a cooldown), or, for an auth failure, 10 minutes or
+ * until the credential's reference changes. After the open time one probe
+ * passes (half-open); its success closes the breaker, a counted failure
+ * reopens it. A 404 or model-missing answer marks only that credential and
+ * model for 10 minutes.
  */
 export class Breakers {
   #states = new Map<string, BreakerState>();
@@ -377,7 +771,23 @@ export class Breakers {
   ) {}
 
   #key(candidate: Candidate): string {
-    return `${candidate.provider.id}\u0000${candidate.credential.id}`;
+    return credentialKey(candidate);
+  }
+
+  /**
+   * Until when the candidate rests and why (the error class that opened it,
+   * or `model_not_found` for a mark); undefined when it may be tried. No
+   * side effects.
+   */
+  restOf(candidate: Candidate): { until: number; reason: string } | undefined {
+    const now = this.clock();
+    const mark = this.#marks.get(this.#markKey(candidate));
+    if (mark !== undefined && mark > now)
+      return { until: mark, reason: "model_not_found" };
+    const state = this.#states.get(this.#key(candidate));
+    return state?.state === "open" && now < state.until
+      ? { until: state.until, reason: state.last?.errorClass ?? "cooldown" }
+      : undefined;
   }
 
   /**

@@ -80,6 +80,22 @@ ALTER TABLE wirings_v4 RENAME TO wirings;
 CREATE TABLE wiring_profiles (name TEXT PRIMARY KEY, record TEXT NOT NULL CHECK(json_valid(record)));
 `,
   },
+  {
+    version: 5,
+    name: "model_call_attribution",
+    // Ledger columns for usage by credential, the conversation views and the
+    // agent filter; earlier rows get the credential and an agent key's
+    // adapter from what they recorded. Hidden automatic groups (03 section 5).
+    sql: `
+ALTER TABLE model_calls ADD COLUMN credential_id TEXT;
+ALTER TABLE model_calls ADD COLUMN conversation_key TEXT;
+ALTER TABLE model_calls ADD COLUMN agent TEXT;
+UPDATE model_calls SET credential_id = json_extract(record, '$.credentialId'), agent = adapter_id;
+CREATE INDEX model_calls_conversation ON model_calls(conversation_key, occurred_ms);
+CREATE INDEX model_calls_agent ON model_calls(agent, occurred_ms);
+CREATE TABLE hidden_auto_groups (id TEXT PRIMARY KEY, hidden_at TEXT NOT NULL);
+`,
+  },
 ]);
 
 /** The schema version this build creates and requires. */

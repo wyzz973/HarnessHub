@@ -380,6 +380,11 @@ const cost: Check = (value) =>
   value === null ||
   (object(value) && amount(value.amountUsd) && text(200)(value.priceSource));
 
+const agent: Check = (value) =>
+  object(value) &&
+  text(200)(value.id) &&
+  member(["key", "user-agent", "route"])(value.source);
+
 export function isModelCallEntry(value: unknown): value is ModelCallEntry {
   return (
     object(value) &&
@@ -390,6 +395,8 @@ export function isModelCallEntry(value: unknown): value is ModelCallEntry {
     optional(value.sessionId, text(200)) &&
     optional(value.runId, text(200)) &&
     optional(value.generation, amount) &&
+    optional(value.conversationKey, sha256) &&
+    optional(value.agent, agent) &&
     object(value.inbound) &&
     protocol(value.inbound.protocol) &&
     text(2048)(value.inbound.path) &&

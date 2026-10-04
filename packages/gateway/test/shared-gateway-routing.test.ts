@@ -51,13 +51,17 @@ async function pair(
   return { a, b, store, gw, key, chat };
 }
 
-void test("503 is retried on the same candidate, then fails over to the next and succeeds", async (t) => {
-  const { a, b, store, chat } = await pair(t, [unavailable], [CHAT_REPLY]);
+void test("503 fails over at once; only the last candidate left is retried", async (t) => {
+  const { a, b, store, chat } = await pair(
+    t,
+    [unavailable],
+    [unavailable, CHAT_REPLY],
+  );
   const answer = await chat({ stream: true });
   assert.equal(answer.status, 200);
   assert.match(answer.text, /data: \[DONE\]/);
-  assert.equal(a.seen.length, 2);
-  assert.equal(b.seen.length, 1);
+  assert.equal(a.seen.length, 1);
+  assert.equal(b.seen.length, 2);
   assert.equal(b.seen[0]!.headers.authorization, "Bearer sk-upstream-b-0002");
   const entry = store.entries[0]!;
   assert.equal(entry.group, "g");
@@ -68,14 +72,14 @@ void test("503 is retried on the same candidate, then fails over to the next and
       attempt.provider,
       attempt.status,
       attempt.decision,
+      attempt.backoffMs,
     ]),
     [
-      ["a", 503, "retry"],
-      ["a", 503, "failover"],
-      ["b", 200, "success"],
+      ["a", 503, "failover", undefined],
+      ["b", 503, "retry", 1],
+      ["b", 200, "success", undefined],
     ],
   );
-  assert.ok(entry.attempts[0]!.backoffMs !== undefined);
   assert.equal(entry.attempts[0]!.errorClass, "upstream_unavailable");
 });
 
@@ -235,11 +239,11 @@ void test("output is held before the first content event, so an early in-stream 
     assert.equal(answer.status, 200);
     assert.doesNotMatch(answer.text, /overloaded/);
     assert.match(answer.text, passthrough ? /\[DONE\]/ : /message_stop/);
-    assert.equal(a.seen.length, 2, "retried once on the same candidate");
+    assert.equal(a.seen.length, 1, "failed over at once");
     assert.equal(b.seen.length, 1);
     assert.deepEqual(
       store.entries[0]!.attempts.map((attempt) => attempt.decision),
-      ["retry", "failover", "success"],
+      ["failover", "success"],
     );
   }
 });
@@ -371,19 +375,16 @@ void test("an auth failure opens the credential at once and another credential t
 });
 
 void test("cancellation stops further attempts and records the disconnect", async (t) => {
-  const { a, b, store, gw, key } = await pair(t, [unavailable], [CHAT_REPLY], {
-    perCandidate: 2,
-    baseBackoffMs: 2_000,
-    maxBackoffMs: 2_000,
-  });
+  const { a, b, store, gw, key } = await pair(t, [unavailable], [CHAT_REPLY]);
   const controller = new AbortController();
+  // A single Model Ref: its only candidate waits 1 s before the retry.
   const pending = fetch(`${gw.base}/v1/chat/completions`, {
     method: "POST",
     headers: {
       authorization: `Bearer ${key.text}`,
       "content-type": "application/json",
     },
-    body: JSON.stringify({ model: "group/g", messages: MESSAGES }),
+    body: JSON.stringify({ model: "a/model-a", messages: MESSAGES }),
     signal: controller.signal,
   }).catch((error: unknown) => error);
   await until(() => a.seen.length === 1);
@@ -538,8 +539,8 @@ void test("upstream header and idle timeouts are retried and end in 504", async 
   const answer = await idle.chat({ stream: true });
   assert.equal(answer.status, 504);
   assert.equal(at(answer.json(), "error", "code"), "upstream_timeout");
-  assert.equal(idle.a.seen.length, 2);
-  assert.equal(idle.b.seen.length, 2);
+  assert.equal(idle.a.seen.length, 1, "failed over at once");
+  assert.equal(idle.b.seen.length, 2, "the last candidate is retried");
 });
 
 void test("translated streams get protocol keepalives and Gemini answers commit their headers early", async (t) => {

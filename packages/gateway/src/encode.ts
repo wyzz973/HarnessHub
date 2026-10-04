@@ -14,6 +14,7 @@ import {
   type ChatTranslation,
   type ReasoningRequest,
 } from "./protocol.js";
+import { reasoningItemKeys } from "./reasoning.js";
 
 export type EncodedProtocol = "anthropic" | "responses" | "gemini";
 
@@ -24,8 +25,9 @@ export interface EncodeContext {
   /** Metadata of the target model, when the provider lists it. */
   model: ProviderModel | undefined;
   /**
-   * The same provider's signature for a thinking text (Anthropic) or for a
-   * tool call id (Gemini `thoughtSignature`), when one is known.
+   * The same provider's signature for a thinking text (Anthropic), for a
+   * tool call id (Gemini `thoughtSignature`), or for the reasoning item a
+   * tool call followed (Responses, under `reasoningItemKeys`), when one is known.
    */
   signature?(kind: "thinking" | "call", key: string): string | undefined;
 }
@@ -394,12 +396,45 @@ function toAnthropic(
 // ---------------------------------------------------------------- Responses
 
 /**
+ * The reasoning items that the same provider returned before these tool
+ * calls, once each, in call order. Only the provider's own items come back
+ * (`EncodeContext.signature` returns nothing for another provider).
+ */
+function reasoningItems(
+  calls: readonly ChatCall[],
+  context: EncodeContext,
+): Record<string, unknown>[] {
+  const items: Record<string, unknown>[] = [];
+  const seen = new Set<string>();
+  for (const call of calls)
+    for (const key of reasoningItemKeys(call)) {
+      const text = context.signature?.("call", key);
+      if (text === undefined) continue;
+      let item: Record<string, unknown> | undefined;
+      try {
+        item = record(JSON.parse(text));
+      } catch {
+        item = undefined;
+      }
+      if (item?.type !== "reasoning") continue;
+      if (!seen.has(text)) items.push(item);
+      seen.add(text);
+      break;
+    }
+  return items;
+}
+
+/**
  * Chat to a stateless Responses request (`store: false`, streamed). The
  * system message becomes `instructions`; assistant tool calls and tool
  * results become `function_call` and `function_call_output` items. Function
  * tools are sent with `strict: false` unless the Chat tool asked for strict
- * schemas. History reasoning cannot be replayed without the provider's
- * encrypted content and is dropped.
+ * schemas. The reasoning item that the same provider returned before a tool
+ * call goes back ahead of that assistant turn, as returned (its id, summary
+ * and encrypted content); other history reasoning is dropped. Encrypted
+ * reasoning is asked for (`include`) whenever reasoning is not turned off and
+ * the request asks for reasoning, the model is known to reason, or an item
+ * goes back.
  */
 function toResponses(
   chat: Record<string, unknown>,
@@ -408,6 +443,7 @@ function toResponses(
   const unmapped = new Set<string>();
   const patches: string[] = [];
   const input: Record<string, unknown>[] = [];
+  let replayed = false;
   for (const message of messages(chat)) {
     if (message.role === "user") {
       const content = pieces(message.content).map((piece) =>
@@ -418,8 +454,14 @@ function toResponses(
       if (content.length)
         input.push({ type: "message", role: "user", content });
     } else if (message.role === "assistant") {
+      const calls = toolCalls(message);
+      // The provider returned its reasoning ahead of the turn's text and calls.
+      const items = reasoningItems(calls, context);
+      replayed ||= items.length > 0;
+      input.push(...items);
       const reasoning = message.reasoning_content ?? message.reasoning;
-      if (typeof reasoning === "string" && reasoning) unmapped.add("reasoning");
+      if (typeof reasoning === "string" && reasoning && !items.length)
+        unmapped.add("reasoning");
       const text = plainText(message.content);
       if (text)
         input.push({
@@ -427,7 +469,7 @@ function toResponses(
           role: "assistant",
           content: [{ type: "output_text", text }],
         });
-      for (const call of toolCalls(message))
+      for (const call of calls)
         input.push({
           type: "function_call",
           call_id: call.id,
@@ -492,6 +534,13 @@ function toResponses(
   const reasoning = context.translation.reasoning;
   if (reasoning && !reasoning.off)
     body.reasoning = { effort: effortOf(reasoning), summary: "auto" };
+  // Stateless (`store: false`) reasoning goes back only with its encrypted
+  // content, which OpenAI refuses to give for a model that does not reason.
+  if (
+    !reasoning?.off &&
+    (reasoning || context.model?.reasoning === true || replayed)
+  )
+    body.include = ["reasoning.encrypted_content"];
   if (stops(chat.stop).length) unmapped.add("stop");
   leftovers(
     chat,

@@ -6,6 +6,7 @@ import {
   issueGatewayKey,
   parseModelRef,
   wireProtocols,
+  type ConversationSummary,
   type CredentialId,
   type GatewayKeyId,
   type GatewayKeyQuota,
@@ -25,6 +26,7 @@ import {
   type UsageGroupBy,
   type WireProtocol,
 } from "@harnesshub/core/model-plane";
+import { autoGroups, type AutoGroup } from "@harnesshub/core/auto-groups";
 import {
   endpointProblem,
   isProviderConfig,
@@ -50,7 +52,12 @@ import {
 } from "@harnesshub/core/provider-presets";
 import { registerImportRoutes, type ProviderBody } from "./import-routes.js";
 import {
+  autoGroupSchema,
   catalogStatusSchema,
+  conversationCallsQuerySchema,
+  conversationPageSchema,
+  conversationParams,
+  conversationsQuerySchema,
   credentialCreateSchema,
   credentialParams,
   credentialSchema,
@@ -167,6 +174,13 @@ function callView(entry: ModelCallEntry) {
   };
 }
 
+function moneyView<T extends { costUsd: number }>({
+  costUsd,
+  ...rest
+}: T): Omit<T, "costUsd"> & { cost: { amount: string; currency: "USD" } } {
+  return { ...rest, cost: { amount: decimal(costUsd), currency: "USD" } };
+}
+
 interface CallQuery {
   from?: string;
   to?: string;
@@ -174,6 +188,7 @@ interface CallQuery {
   provider?: string;
   model?: string;
   sessionId?: string;
+  agent?: string;
 }
 
 function usageFilter(query: CallQuery): UsageFilter {
@@ -190,6 +205,7 @@ function usageFilter(query: CallQuery): UsageFilter {
     ...(query.sessionId !== undefined
       ? { sessionId: query.sessionId as SessionId }
       : {}),
+    ...(query.agent !== undefined ? { agent: query.agent } : {}),
   };
 }
 
@@ -1189,10 +1205,103 @@ export function registerModelPlaneRoutes(
           usageFilter(request.query),
           request.query.groupBy,
         )
-      ).map(({ costUsd, ...bucket }) => ({
-        ...bucket,
-        cost: { amount: decimal(costUsd), currency: "USD" as const },
-      })),
+      ).map(moneyView),
     }),
+  );
+  api.get<{ Querystring: CallQuery & { limit: number; cursor?: string } }>(
+    "/conversations",
+    {
+      schema: {
+        querystring: conversationsQuerySchema,
+        response: responses(conversationPageSchema),
+      },
+    },
+    async (request) => {
+      const { limit, cursor } = request.query;
+      const page = await store.listConversations(
+        usageFilter(request.query),
+        cursor === undefined ? { limit } : { limit, cursor },
+      );
+      return {
+        items: page.items.map((item: ConversationSummary) => moneyView(item)),
+        nextCursor: page.nextCursor ?? null,
+      };
+    },
+  );
+  api.get<{
+    Params: { key: string };
+    Querystring: { limit: number; cursor?: string };
+  }>(
+    "/conversations/:key",
+    {
+      schema: {
+        params: conversationParams,
+        querystring: conversationCallsQuerySchema,
+        response: responses(modelCallPageSchema),
+      },
+    },
+    async (request) => {
+      const { limit, cursor } = request.query;
+      const page = await store.listModelCalls(
+        { conversationKey: request.params.key },
+        cursor === undefined ? { limit } : { limit, cursor },
+      );
+      if (cursor === undefined && page.items.length === 0)
+        throw notFound("conversation", request.params.key);
+      return {
+        items: page.items.map(callView),
+        nextCursor: page.nextCursor ?? null,
+      };
+    },
+  );
+
+  /** The automatic groups as the providers derive them; user groups of the same ID win. */
+  const derivedGroups = async (): Promise<AutoGroup[]> => {
+    const [providers, groups, hidden] = await Promise.all([
+      store.listProviders(),
+      store.listRouteGroups(),
+      store.listHiddenAutoGroups(),
+    ]);
+    return autoGroups(providers, {
+      hidden,
+      taken: groups.map((entry) => entry.id),
+    });
+  };
+  api.get(
+    "/auto-groups",
+    { schema: { response: responses(listOf(autoGroupSchema)) } },
+    async () => ({ items: await derivedGroups(), nextCursor: null }),
+  );
+  api.post<{ Params: { id: string } }>(
+    "/auto-groups/:id/hide",
+    {
+      schema: { params: idParams, body: emptyBodySchema, response: noContent },
+    },
+    async (request, reply) =>
+      serialized(async () => {
+        const id = request.params.id as RouteGroupId;
+        const found = (await derivedGroups()).find((entry) => entry.id === id);
+        if (!found) throw notFound("auto group", id);
+        await store.setAutoGroupHidden(id, true);
+        return reply.code(204).send();
+      }),
+  );
+  api.post<{ Params: { id: string } }>(
+    "/auto-groups/:id/restore",
+    {
+      schema: { params: idParams, body: emptyBodySchema, response: noContent },
+    },
+    async (request, reply) =>
+      serialized(async () => {
+        const id = request.params.id as RouteGroupId;
+        if (!(await store.listHiddenAutoGroups()).includes(id))
+          throw new ApiProblem(
+            "AUTO_GROUP_NOT_FOUND",
+            `No hidden automatic group has the ID ${JSON.stringify(id).slice(0, 120)}`,
+            404,
+          );
+        await store.setAutoGroupHidden(id, false);
+        return reply.code(204).send();
+      }),
   );
 }

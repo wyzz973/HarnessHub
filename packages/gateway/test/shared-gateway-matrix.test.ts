@@ -779,7 +779,7 @@ void test("retry, failover, hold and breakers behave the same on translated rout
       error: { type: "overloaded_error", message: "Overloaded" },
     },
   ]);
-  const a = await upstream(t, busy, busy, earlyError, earlyError);
+  const a = await upstream(t, busy, busy, earlyError);
   const g = await upstream(t, stream([GEMINI_TOOL_TURN], false));
   const store = new MemoryStore();
   await store.putProvider(anthropicOnly(a.base));
@@ -794,39 +794,31 @@ void test("retry, failover, hold and breakers behave the same on translated rout
       headers: { authorization: `Bearer ${key.text}` },
       body: { model: "group/g", stream: true, input: "hi" },
     });
+  const decisions = (index: number) =>
+    store.entries[index]!.attempts.map((attempt) => [
+      attempt.upstreamProtocol,
+      attempt.status,
+      attempt.decision,
+    ]);
+  // With another candidate left, a failure fails over at once.
   const first = await call();
   assert.equal(first.status, 200);
   assert.match(first.text, /"delta":"Calling"/);
   assert.doesNotMatch(first.text, /Overloaded/);
-  assert.deepEqual(
-    store.entries[0]!.attempts.map((attempt) => [
-      attempt.upstreamProtocol,
-      attempt.status,
-      attempt.decision,
-    ]),
-    [
-      ["anthropic", 529, "retry"],
-      ["anthropic", 529, "failover"],
-      ["gemini", 200, "success"],
-    ],
-  );
+  assert.deepEqual(decisions(0), [
+    ["anthropic", 529, "failover"],
+    ["gemini", 200, "success"],
+  ]);
+  await call();
   // A 200 whose stream fails before any content is held and fails over. It
-  // is the third counted failure in a row: the breaker opens, so the retry
-  // that would have followed becomes a failover.
-  const second = await call();
-  assert.doesNotMatch(second.text, /Overloaded/);
-  assert.match(second.text, /"delta":"Calling"/);
-  assert.deepEqual(
-    store.entries[1]!.attempts.map((attempt) => [
-      attempt.upstreamProtocol,
-      attempt.status,
-      attempt.decision,
-    ]),
-    [
-      ["anthropic", 529, "failover"],
-      ["gemini", 200, "success"],
-    ],
-  );
+  // is the third counted failure in a row: the breaker opens.
+  const third = await call();
+  assert.doesNotMatch(third.text, /Overloaded/);
+  assert.match(third.text, /"delta":"Calling"/);
+  assert.deepEqual(decisions(2), [
+    ["anthropic", 529, "failover"],
+    ["gemini", 200, "success"],
+  ]);
   assert.equal(a.seen.length, 3);
   await call();
   assert.equal(
@@ -834,7 +826,7 @@ void test("retry, failover, hold and breakers behave the same on translated rout
     3,
     "the open breaker skips the Anthropic upstream",
   );
-  assert.equal(g.seen.length, 3);
-  assert.equal(store.entries[2]!.attempts[0]!.upstreamProtocol, "gemini");
+  assert.equal(g.seen.length, 4);
+  assert.equal(store.entries[3]!.attempts[0]!.upstreamProtocol, "gemini");
   for (const entry of store.entries) assert.equal(entry.status, 200);
 });

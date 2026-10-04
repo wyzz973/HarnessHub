@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import type {
+  CredentialId,
   ModelCallEntry,
   ModelCallId,
   ModelRef,
@@ -344,6 +345,9 @@ void test(
         },
         modelRef: "alpha/chat-1" as ModelRef,
         provider: "alpha" as ProviderId,
+        credentialId: "key-1" as CredentialId,
+        conversationKey: "c0".repeat(32),
+        agent: { id: "claude", source: "user-agent" },
         patches: [],
         unmapped: [],
         status: 200,
@@ -392,6 +396,61 @@ void test(
     );
     await fails(["usage", "--by", "week"], 2);
     await fails(["usage", "--since", "soon"], 2);
+    assert.match(
+      (await ok(["usage", "--by", "credential"])).stdout,
+      /^CREDENTIAL +CALLS .*\nalpha\/key-1 +2 +1 /,
+    );
+    const conversations = (
+      await ok(["usage", "--by", "conversation", "--agent", "claude"])
+    ).stdout;
+    assert.match(
+      conversations,
+      /^CONVERSATION +CALLS +FAILED +TOKENS +COST USD +UNPRICED +FIRST +LAST +MODELS +AGENTS\n/,
+    );
+    assert.match(
+      conversations,
+      /\nc0c0c0c0c0c0 +2 +1 +396 +0\.25 +1 .* alpha\/chat-1 +claude\n$/,
+    );
+    const conversationPage = JSON.parse(
+      (await ok(["usage", "--by", "conversation", "--json"])).stdout,
+    ) as { items: Array<{ key: string; calls: number }>; nextCursor: null };
+    assert.deepEqual(
+      conversationPage.items.map((item) => [item.key, item.calls]),
+      [["c0".repeat(32), 2]],
+    );
+    assert.equal(
+      (await ok(["usage", "--by", "conversation", "--agent", "codex"])).stdout,
+      "(none)\n",
+    );
+
+    // A model that two providers serve under one name is an automatic group.
+    await ok([
+      "provider",
+      "add",
+      "beta",
+      "--chat",
+      "https://api.beta.example.test/v1",
+      "--model",
+      "Chat_1",
+    ]);
+    assert.match(
+      (await ok(["group", "auto"])).stdout,
+      /^GROUP +MODEL +MEMBERS +HIDDEN\ngroup\/auto-chat-1 +chat-1 +alpha\/chat-1,beta\/Chat_1 +no\n$/,
+    );
+    assert.equal(
+      (await ok(["group", "hide", "auto-chat-1"])).stdout,
+      "Hid group/auto-chat-1; hh group restore auto-chat-1 shows it again\n",
+    );
+    assert.match((await ok(["group", "auto"])).stdout, / +yes\n$/);
+    assert.equal(
+      (await ok(["group", "restore", "auto-chat-1"])).stdout,
+      "Restored group/auto-chat-1\n",
+    );
+    const notHidden = await fails(["group", "restore", "auto-chat-1"], 2);
+    assert.match(notHidden.stderr, /AUTO_GROUP_NOT_FOUND/);
+    await fails(["group", "hide", "auto-nothing"], 2);
+    await ok(["provider", "remove", "beta", "--yes"]);
+    assert.equal((await ok(["group", "auto"])).stdout, "(none)\n");
 
     await fails(["key", "revoke", keyMatch[1]!], 4);
     assert.match(

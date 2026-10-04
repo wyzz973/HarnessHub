@@ -25558,7 +25558,7 @@
         "tags": [
           "usage"
         ],
-        "description": "ModelPlaneStore.listModelCalls，按 occurredAt 新到旧，游标为不透明字符串。\n\n输入：limit（1–200，默认 50）、cursor；过滤 from（含）、to（不含）、keyId、provider、model、sessionId。\n\n返回：200：items（ModelCallEntry，cost 为 {amount 十进制字符串, currency, priceSource} 或 null）、nextCursor。\n\n副作用：只读。\n\n失败与边界：400 INVALID_REQUEST、INVALID_CURSOR、INVALID_USAGE_FILTER；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "description": "ModelPlaneStore.listModelCalls，按 occurredAt 新到旧，游标为不透明字符串。\n\n输入：limit（1–200，默认 50）、cursor；过滤 from（含）、to（不含）、keyId、provider、model、sessionId、agent（agent.id，确定或推断的）。\n\n返回：200：items（ModelCallEntry，含 conversationKey 与 agent；cost 为 {amount 十进制字符串, currency, priceSource} 或 null）、nextCursor。\n\n副作用：只读。\n\n失败与边界：400 INVALID_REQUEST、INVALID_CURSOR、INVALID_USAGE_FILTER；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
         "parameters": [
           {
             "schema": {
@@ -25636,6 +25636,16 @@
             },
             "in": "query",
             "name": "sessionId",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "in": "query",
+            "name": "agent",
             "required": false
           }
         ],
@@ -25715,6 +25725,30 @@
                           },
                           "runId": {
                             "type": "string"
+                          },
+                          "conversationKey": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "agent": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "id",
+                              "source"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "source": {
+                                "enum": [
+                                  "key",
+                                  "user-agent",
+                                  "route"
+                                ]
+                              }
+                            }
                           },
                           "inbound": {
                             "type": "object",
@@ -26074,7 +26108,7 @@
         "tags": [
           "usage"
         ],
-        "description": "ModelPlaneStore.aggregateUsage：状态码不低于 400 记为失败，cost 只累加已知成本，null 成本计入 unpricedCalls，missing 用量按 0 计，日期为 UTC。\n\n输入：groupBy（day、provider、model、key、adapter，默认 model）与 /model-calls 相同的过滤。\n\n返回：200：groupBy、items（key、calls、failedCalls、usage、cost 十进制字符串、unpricedCalls）。\n\n副作用：只读。\n\n失败与边界：400 INVALID_REQUEST、INVALID_USAGE_FILTER；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "description": "ModelPlaneStore.aggregateUsage：状态码不低于 400 记为失败，cost 只累加已知成本，null 成本计入 unpricedCalls，missing 用量按 0 计，日期为 UTC。\n\n输入：groupBy（day、provider、model、key、adapter、credential，默认 model；credential 的 key 为 <provider>/<credentialId>）与 /model-calls 相同的过滤。\n\n返回：200：groupBy、items（key、calls、failedCalls、usage、cost 十进制字符串、unpricedCalls）。\n\n副作用：只读。\n\n失败与边界：400 INVALID_REQUEST、INVALID_USAGE_FILTER；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
         "parameters": [
           {
             "schema": {
@@ -26083,7 +26117,8 @@
                 "provider",
                 "model",
                 "key",
-                "adapter"
+                "adapter",
+                "credential"
               ],
               "default": "model"
             },
@@ -26147,6 +26182,16 @@
             "in": "query",
             "name": "sessionId",
             "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "in": "query",
+            "name": "agent",
+            "required": false
           }
         ],
         "responses": {
@@ -26168,7 +26213,8 @@
                         "provider",
                         "model",
                         "key",
-                        "adapter"
+                        "adapter",
+                        "credential"
                       ],
                       "default": "model"
                     },
@@ -26262,6 +26308,1205 @@
                 }
               }
             }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/conversations": {
+      "get": {
+        "operationId": "hh_api_v1_list_conversations",
+        "summary": "会话视图",
+        "tags": [
+          "usage"
+        ],
+        "description": "ModelPlaneStore.listConversations：按 model_calls.conversation_key 分组，规则同 /usage；最后活动时间新到旧，游标为不透明字符串。\n\n输入：limit（1–200，默认 50）、cursor；与 /model-calls 相同的过滤（from、to、agent 等），过滤先作用于调用再按会话汇总。\n\n返回：200：items（key、calls、failedCalls、usage、cost 十进制字符串、unpricedCalls、firstAt、lastAt、models、credentials（<provider>/<credentialId>）、agents）、nextCursor。\n\n副作用：只读。没有 conversationKey 的调用（如被拒绝的鉴权失败）不属于任何会话。\n\n失败与边界：400 INVALID_REQUEST、INVALID_CURSOR、INVALID_USAGE_FILTER；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "in": "query",
+            "name": "cursor",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "in": "query",
+            "name": "from",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "in": "query",
+            "name": "to",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z2-7]{12}$"
+            },
+            "in": "query",
+            "name": "keyId",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+            },
+            "in": "query",
+            "name": "provider",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 512,
+              "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+            },
+            "in": "query",
+            "name": "model",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "in": "query",
+            "name": "sessionId",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "in": "query",
+            "name": "agent",
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "items",
+                    "nextCursor"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "key",
+                          "calls",
+                          "failedCalls",
+                          "usage",
+                          "cost",
+                          "unpricedCalls",
+                          "firstAt",
+                          "lastAt",
+                          "models",
+                          "credentials",
+                          "agents"
+                        ],
+                        "properties": {
+                          "key": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "calls": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "failedCalls": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "usage": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "input",
+                              "cacheRead",
+                              "cacheWrite",
+                              "output",
+                              "reasoning"
+                            ],
+                            "properties": {
+                              "input": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "cacheRead": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "cacheWrite": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "output": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "reasoning": {
+                                "type": "integer",
+                                "minimum": 0
+                              }
+                            }
+                          },
+                          "cost": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "amount",
+                              "currency"
+                            ],
+                            "properties": {
+                              "amount": {
+                                "type": "string",
+                                "pattern": "^[0-9]+(\\.[0-9]+)?$"
+                              },
+                              "currency": {
+                                "type": "string",
+                                "enum": [
+                                  "USD"
+                                ]
+                              }
+                            }
+                          },
+                          "unpricedCalls": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "firstAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "lastAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "models": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "credentials": {
+                            "type": "array",
+                            "description": "`<provider>/<credentialId>` of each credential used.",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "agents": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "nextCursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/conversations/{key}": {
+      "get": {
+        "operationId": "hh_api_v1_get_conversation",
+        "summary": "单个会话的调用",
+        "tags": [
+          "usage"
+        ],
+        "description": "ModelPlaneStore.listModelCalls（filter.conversationKey），新到旧。\n\n输入：路径参数 key（64 位小写十六进制）；limit（1–200，默认 50）、cursor。\n\n返回：200：items（ModelCallEntry，与 /model-calls 相同）、nextCursor。\n\n副作用：只读。\n\n失败与边界：404 CONVERSATION_NOT_FOUND（首页没有调用）；400 INVALID_REQUEST、INVALID_CURSOR；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "in": "query",
+            "name": "cursor",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "in": "path",
+            "name": "key",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "items",
+                    "nextCursor"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "callId",
+                          "occurredAt",
+                          "inbound",
+                          "patches",
+                          "unmapped",
+                          "status",
+                          "timing",
+                          "attempts",
+                          "cost"
+                        ],
+                        "properties": {
+                          "callId": {
+                            "type": "string"
+                          },
+                          "occurredAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "keyId": {
+                            "type": "string"
+                          },
+                          "scope": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "kind"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "agent",
+                                  "session",
+                                  "client"
+                                ]
+                              },
+                              "adapterId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "sessionId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "name": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              }
+                            }
+                          },
+                          "sessionId": {
+                            "type": "string"
+                          },
+                          "runId": {
+                            "type": "string"
+                          },
+                          "conversationKey": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "agent": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "id",
+                              "source"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "source": {
+                                "enum": [
+                                  "key",
+                                  "user-agent",
+                                  "route"
+                                ]
+                              }
+                            }
+                          },
+                          "inbound": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "protocol",
+                              "path",
+                              "stream"
+                            ],
+                            "properties": {
+                              "protocol": {
+                                "enum": [
+                                  "chat",
+                                  "responses",
+                                  "anthropic",
+                                  "gemini"
+                                ]
+                              },
+                              "path": {
+                                "type": "string"
+                              },
+                              "stream": {
+                                "type": "boolean"
+                              }
+                            }
+                          },
+                          "requestedModel": {
+                            "type": "string"
+                          },
+                          "modelRef": {
+                            "type": "string"
+                          },
+                          "group": {
+                            "type": "string"
+                          },
+                          "provider": {
+                            "type": "string"
+                          },
+                          "credentialId": {
+                            "type": "string"
+                          },
+                          "wireModel": {
+                            "type": "string"
+                          },
+                          "upstreamProtocol": {
+                            "enum": [
+                              "chat",
+                              "responses",
+                              "anthropic",
+                              "gemini"
+                            ]
+                          },
+                          "mode": {
+                            "enum": [
+                              "passthrough",
+                              "translated"
+                            ]
+                          },
+                          "servedModel": {
+                            "type": "string"
+                          },
+                          "patches": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "unmapped": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "status": {
+                            "type": "integer"
+                          },
+                          "errorClass": {
+                            "type": "string"
+                          },
+                          "errorSource": {
+                            "enum": [
+                              "gateway",
+                              "upstream"
+                            ]
+                          },
+                          "error": {
+                            "type": "string"
+                          },
+                          "finishReason": {
+                            "type": "string"
+                          },
+                          "usage": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "input",
+                              "cacheRead",
+                              "cacheWrite",
+                              "output",
+                              "reasoning",
+                              "source"
+                            ],
+                            "properties": {
+                              "input": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "cacheRead": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "cacheWrite": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "output": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "reasoning": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "source": {
+                                "enum": [
+                                  "reported",
+                                  "estimated",
+                                  "missing"
+                                ]
+                              }
+                            }
+                          },
+                          "timing": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "durationMs"
+                            ],
+                            "properties": {
+                              "firstByteMs": {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              "firstContentMs": {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              "durationMs": {
+                                "type": "number",
+                                "minimum": 0
+                              }
+                            }
+                          },
+                          "attempts": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "provider",
+                                "credentialId",
+                                "modelRef",
+                                "wireModel",
+                                "upstreamProtocol",
+                                "startedAt",
+                                "decision"
+                              ],
+                              "properties": {
+                                "provider": {
+                                  "type": "string",
+                                  "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+                                },
+                                "credentialId": {
+                                  "type": "string"
+                                },
+                                "modelRef": {
+                                  "type": "string"
+                                },
+                                "wireModel": {
+                                  "type": "string"
+                                },
+                                "upstreamProtocol": {
+                                  "enum": [
+                                    "chat",
+                                    "responses",
+                                    "anthropic",
+                                    "gemini"
+                                  ]
+                                },
+                                "startedAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "firstByteMs": {
+                                  "type": "number",
+                                  "minimum": 0
+                                },
+                                "status": {
+                                  "type": "integer"
+                                },
+                                "errorClass": {
+                                  "type": "string"
+                                },
+                                "retryAfterMs": {
+                                  "type": "number",
+                                  "minimum": 0
+                                },
+                                "decision": {
+                                  "enum": [
+                                    "success",
+                                    "retry",
+                                    "failover",
+                                    "stop"
+                                  ]
+                                },
+                                "backoffMs": {
+                                  "type": "number",
+                                  "minimum": 0
+                                }
+                              }
+                            }
+                          },
+                          "cost": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "amount",
+                              "currency",
+                              "priceSource"
+                            ],
+                            "properties": {
+                              "amount": {
+                                "type": "string",
+                                "pattern": "^[0-9]+(\\.[0-9]+)?$"
+                              },
+                              "currency": {
+                                "type": "string",
+                                "enum": [
+                                  "USD"
+                                ]
+                              },
+                              "priceSource": {
+                                "type": "string"
+                              }
+                            },
+                            "nullable": true
+                          },
+                          "completion": {
+                            "enum": [
+                              "explicit",
+                              "inferred"
+                            ]
+                          },
+                          "rejected": {
+                            "type": "boolean"
+                          },
+                          "rejectReason": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "nextCursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auto-groups": {
+      "get": {
+        "operationId": "hh_api_v1_list_auto_groups",
+        "summary": "自动路由组",
+        "tags": [
+          "route-groups"
+        ],
+        "description": "core autoGroups：两个及以上就绪 provider 以同一规范化名称（Magpie sameModel）提供的模型；同 ID 的用户路由组优先，不列出；隐藏的照常列出，hidden=true。\n\n输入：无参数。\n\n返回：200：items（id=auto-<slug>、model、members、hidden、createdAt）、nextCursor=null。\n\n副作用：只读；自动组每次派生，不存储。\n\n失败与边界：需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "items",
+                    "nextCursor"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "id",
+                          "model",
+                          "members",
+                          "hidden",
+                          "createdAt"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+                          },
+                          "model": {
+                            "type": "string",
+                            "description": "The model name the members share."
+                          },
+                          "members": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 100,
+                            "uniqueItems": true,
+                            "items": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 512,
+                              "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                            }
+                          },
+                          "hidden": {
+                            "type": "boolean"
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    },
+                    "nextCursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auto-groups/{id}/hide": {
+      "post": {
+        "operationId": "hh_api_v1_hide_auto_group",
+        "summary": "隐藏自动路由组",
+        "tags": [
+          "route-groups"
+        ],
+        "description": "ModelPlaneStore.setAutoGroupHidden(id, true)；已隐藏时幂等。\n\n输入：路径参数 id；空 JSON 对象。\n\n返回：204。\n\n副作用：写入 hidden_auto_groups 表；网关不再列出、也不再路由 group/<id>（请求 404），直到恢复。\n\n失败与边界：404 AUTO_GROUP_NOT_FOUND（当前没有该自动组）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {}
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auto-groups/{id}/restore": {
+      "post": {
+        "operationId": "hh_api_v1_restore_auto_group",
+        "summary": "恢复自动路由组",
+        "tags": [
+          "route-groups"
+        ],
+        "description": "ModelPlaneStore.setAutoGroupHidden(id, false)。\n\n输入：路径参数 id；空 JSON 对象。\n\n返回：204。\n\n副作用：删除 hidden_auto_groups 中的记录；组仍可派生时重新出现。\n\n失败与边界：404 AUTO_GROUP_NOT_FOUND（该 ID 没有被隐藏）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {}
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
           },
           "default": {
             "description": "Default Response",

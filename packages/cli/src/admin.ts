@@ -62,7 +62,7 @@ const USAGE = `Usage: hh <command> [options]
   hh gateway share status | off | on [--host IP] [--port N] [--name HOST]...
               [--public-base-url URL]
   hh group list | add <id> --member REF... [--strategy S] [--stickiness S]
-              | remove <id>
+              | remove <id> | auto | hide <auto-id> | restore <auto-id>
   hh model show <provider/model | provider/*>
               | set <provider/model | provider/*> KEY=VALUE... | unset <ref>
               keys: context, output (tokens), reasoning, toolcall (yes|no),
@@ -70,8 +70,9 @@ const USAGE = `Usage: hh <command> [options]
               price.output, price.cacheRead, price.cacheWrite (USD per
               million tokens); KEY= removes one key of the override
   hh catalog status | refresh
-  hh usage [--by model|provider|day|key|adapter] [--since 7d] [--from TIME]
-              [--to TIME] [--provider P] [--model REF] [--key KEY_ID]
+  hh usage [--by model|provider|day|key|adapter|credential|conversation]
+              [--since 7d] [--from TIME] [--to TIME] [--provider P]
+              [--model REF] [--key KEY_ID] [--agent A]
   hh status
 
 Common options: --url URL (default ${DEFAULT_DAEMON_URL}), --data-dir DIR
@@ -782,6 +783,35 @@ async function groupCommand(args: string[]): Promise<void> {
       await (await ctx.client()).routeGroups.remove(id!);
       return output(ctx, { deleted: true, id }, () => `Removed group/${id}`);
     }
+    case "auto": {
+      positionals(given, []);
+      const page = await (await ctx.client()).autoGroups.list();
+      return output(ctx, page, () =>
+        table(
+          ["GROUP", "MODEL", "MEMBERS", "HIDDEN"],
+          page.items.map((item) => [
+            `group/${item.id}`,
+            item.model,
+            item.members.join(","),
+            item.hidden ? "yes" : "no",
+          ]),
+        ),
+      );
+    }
+    case "hide": {
+      const [id] = positionals(given, ["id"]);
+      await (await ctx.client()).autoGroups.hide(id!);
+      return output(
+        ctx,
+        { hidden: true, id },
+        () => `Hid group/${id}; hh group restore ${id} shows it again`,
+      );
+    }
+    case "restore": {
+      const [id] = positionals(given, ["id"]);
+      await (await ctx.client()).autoGroups.restore(id!);
+      return output(ctx, { hidden: false, id }, () => `Restored group/${id}`);
+    }
     default:
       throw new UsageError(`Unknown group command: ${action || "(none)"}`);
   }
@@ -1032,6 +1062,9 @@ function since(text: string): string {
   return new Date(Date.now() - Number(match[1]) * unit).toISOString();
 }
 
+/** Conversations shown by `hh usage --by conversation`; `--json` prints the API page. */
+const CONVERSATION_ROWS = 200;
+
 async function usageCommand(args: string[]): Promise<void> {
   const { values, positionals: given } = parse(args, {
     by: { type: "string" },
@@ -1041,25 +1074,77 @@ async function usageCommand(args: string[]): Promise<void> {
     provider: { type: "string" },
     model: { type: "string" },
     key: { type: "string" },
+    agent: { type: "string" },
   });
   const ctx = context(values);
   positionals(given, []);
   if (values.since !== undefined && values.from !== undefined)
     throw new UsageError("Use either --since or --from");
-  const groupBy = (values.by ?? "model") as UsageGroupBy;
-  if (!["model", "provider", "day", "key", "adapter"].includes(groupBy))
-    throw new UsageError("--by is model, provider, day, key or adapter");
+  const by = values.by ?? "model";
+  const groups = ["model", "provider", "day", "key", "adapter", "credential"];
+  if (by !== "conversation" && !groups.includes(by))
+    throw new UsageError(
+      "--by is model, provider, day, key, adapter, credential or conversation",
+    );
   const from = values.since !== undefined ? since(values.since) : values.from;
-  const report = await (
-    await ctx.client()
-  ).usage.aggregate({
-    groupBy,
+  const filter = {
     ...(from !== undefined ? { from } : {}),
     ...(values.to !== undefined ? { to: values.to } : {}),
     ...(values.provider !== undefined ? { provider: values.provider } : {}),
     ...(values.model !== undefined ? { model: values.model } : {}),
     ...(values.key !== undefined ? { keyId: values.key } : {}),
-  });
+    ...(values.agent !== undefined ? { agent: values.agent } : {}),
+  };
+  const client = await ctx.client();
+  if (by === "conversation") {
+    const page = await client.conversations.list({
+      ...filter,
+      limit: CONVERSATION_ROWS,
+    });
+    const total = (usage: (typeof page.items)[number]["usage"]) =>
+      usage.input +
+      usage.cacheRead +
+      usage.cacheWrite +
+      usage.output +
+      usage.reasoning;
+    return output(ctx, page, () =>
+      [
+        table(
+          [
+            "CONVERSATION",
+            "CALLS",
+            "FAILED",
+            "TOKENS",
+            "COST USD",
+            "UNPRICED",
+            "FIRST",
+            "LAST",
+            "MODELS",
+            "AGENTS",
+          ],
+          page.items.map((item) => [
+            item.key.slice(0, 12),
+            String(item.calls),
+            String(item.failedCalls),
+            String(total(item.usage)),
+            item.cost.amount,
+            String(item.unpricedCalls),
+            localTime(item.firstAt),
+            localTime(item.lastAt),
+            item.models.join(",") || "-",
+            item.agents.join(",") || "-",
+          ]),
+        ),
+        ...(page.nextCursor
+          ? [
+              `Showing the ${CONVERSATION_ROWS} conversations active last; narrow with --since, --from or --to, or use --json.`,
+            ]
+          : []),
+      ].join("\n"),
+    );
+  }
+  const groupBy = by as UsageGroupBy;
+  const report = await client.usage.aggregate({ groupBy, ...filter });
   output(ctx, report, () =>
     table(
       [

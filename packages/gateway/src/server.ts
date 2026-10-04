@@ -24,13 +24,21 @@ import {
   type ModelPlaneStore,
   type ModelRef,
   type ProviderConfig,
+  type ProviderCredential,
   type ProviderModel,
   type RouteGroup,
+  type RouteGroupId,
   type Stickiness,
   type WireProtocol,
 } from "@harnesshub/core/model-plane";
+import {
+  AUTO_GROUP_PREFIX,
+  autoGroups,
+  autoRouteGroup,
+} from "@harnesshub/core/auto-groups";
 import { HARNESS_MODEL_ALIAS } from "@harnesshub/core/harness-model";
 import type { RunId, SessionId } from "@harnesshub/core/types";
+import { agentOf } from "./agents.js";
 import { anthropicCountTokens } from "./anthropic.js";
 import {
   errorResponse,
@@ -51,6 +59,7 @@ import {
 } from "./http.js";
 import { RejectionThrottle } from "./ledger.js";
 import { Quotas, type QuotaRefusal } from "./quota.js";
+import { CODEX_BACKEND, codexPassthrough, isCodexPath } from "./codex.js";
 import { conversationOf, StickyRoutes } from "./sticky.js";
 import { canonicalHost, LOOPBACK_ONLY, type GatewayAccess } from "./sharing.js";
 import { forwardCountTokens } from "./count.js";
@@ -61,6 +70,7 @@ import {
   Breakers,
   modelCandidates,
   Router,
+  type AttemptError,
   type Candidate,
 } from "./routing.js";
 
@@ -111,6 +121,12 @@ export interface GatewayHandlerDeps {
    * request (`sharingAccess` of ./sharing.js). Absent: {@link LOOPBACK_ONLY}.
    */
   access?: () => GatewayAccess;
+  /**
+   * Where the Codex passthrough forwards `/backend-api/codex/*`. For tests
+   * only, which point it at a loopback fake; the daemon leaves it unset and
+   * requests go to ChatGPT's Codex backend.
+   */
+  codexBackend?: string;
 }
 
 /**
@@ -156,11 +172,13 @@ function normalize(pathname: string): string {
 
 /**
  * Whether the daemon should hand a path to the gateway: `/v1/*`, `/v1beta/*`,
- * `/v1alpha/*`, and the OpenAI and Anthropic paths without `/v1`.
+ * `/v1alpha/*`, the OpenAI and Anthropic paths without `/v1`, and the Codex
+ * passthrough `/backend-api/codex/*`.
  */
 export function isGatewayPath(pathname: string): boolean {
   const path = normalize(pathname);
   return (
+    isCodexPath(path) ||
     /^\/v1(?:beta|alpha)?(?:\/|$)/.test(path) ||
     /^\/(?:chat\/completions|responses|messages(?:\/count_tokens)?|models(?:\/.*)?)$/.test(
       path,
@@ -465,32 +483,39 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     tasks.add(task);
     void task.finally(() => tasks.delete(task));
   };
+  // `least-used` starts from the ledger's recent calls (bounded).
+  track(services.router.seed(store, log));
 
   const baseEntry = (
     protocol: WireProtocol,
     path: string,
     occurredAt: number,
     key: GatewayKeyRecord | undefined,
-  ): ModelCallEntry => ({
-    callId: `mc_${randomUUID().replaceAll("-", "")}` as ModelCallId,
-    occurredAt: new Date(occurredAt).toISOString(),
-    ...(key
-      ? {
-          keyId: key.keyId,
-          scope: key.scope,
-          ...(key.scope.kind === "session"
-            ? { sessionId: key.scope.sessionId }
-            : {}),
-        }
-      : {}),
-    inbound: { protocol, path: path.slice(0, 200), stream: false },
-    patches: [],
-    unmapped: [],
-    status: 0,
-    timing: { durationMs: 0 },
-    attempts: [],
-    cost: null,
-  });
+    userAgent: string | undefined,
+  ): ModelCallEntry => {
+    const agent = agentOf(key?.scope, userAgent);
+    return {
+      callId: `mc_${randomUUID().replaceAll("-", "")}` as ModelCallId,
+      occurredAt: new Date(occurredAt).toISOString(),
+      ...(key
+        ? {
+            keyId: key.keyId,
+            scope: key.scope,
+            ...(key.scope.kind === "session"
+              ? { sessionId: key.scope.sessionId }
+              : {}),
+          }
+        : {}),
+      ...(agent ? { agent } : {}),
+      inbound: { protocol, path: path.slice(0, 200), stream: false },
+      patches: [],
+      unmapped: [],
+      status: 0,
+      timing: { durationMs: 0 },
+      attempts: [],
+      cost: null,
+    };
+  };
 
   const reply = async (
     response: ServerResponse,
@@ -618,10 +643,21 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     key: GatewayKeyRecord,
     session?: ActiveSessionRun,
   ): Promise<ListedModel[]> => {
-    const [providers, groups] = await Promise.all([
+    const [providers, userGroups, hidden] = await Promise.all([
       store.listProviders(),
       store.listRouteGroups(),
+      store.listHiddenAutoGroups(),
     ]);
+    // Automatic groups after the user's, which take their IDs first.
+    const groups = [
+      ...userGroups,
+      ...autoGroups(providers, {
+        hidden,
+        taken: userGroups.map((group) => group.id),
+      })
+        .filter((group) => !group.hidden)
+        .map(autoRouteGroup),
+    ];
     const byId = new Map(providers.map((provider) => [provider.id, provider]));
     const metadata = (ref: ModelRef) => {
       const parsed = parseModelRef(ref);
@@ -857,7 +893,11 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       if (!provider) throw notFound();
       return modelCandidates(provider, parsed.model, protocol);
     }
-    const group = await store.getRouteGroup(parsed.group);
+    const group =
+      (await store.getRouteGroup(parsed.group)) ??
+      (parsed.group.startsWith(AUTO_GROUP_PREFIX)
+        ? await autoGroup(parsed.group)
+        : undefined);
     if (!group) throw notFound();
     const providers = new Map<string, ProviderConfig | undefined>();
     const result: CallPlan = { candidates: [], group, skipped: [] };
@@ -882,7 +922,110 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       result.candidates.push(...candidates);
       result.skipped.push(...skipped);
     }
+    if (group.strategy === "least-used") {
+      await services.router.seed(store, log);
+      result.candidates = services.router.weigh(group, result.candidates);
+    }
     return result;
+  };
+
+  /** The automatic group of this ID, unless it is hidden; user groups were looked up first. */
+  const autoGroup = async (
+    id: RouteGroupId,
+  ): Promise<RouteGroup | undefined> => {
+    const [providers, groups, hidden] = await Promise.all([
+      store.listProviders(),
+      store.listRouteGroups(),
+      store.listHiddenAutoGroups(),
+    ]);
+    const found = autoGroups(providers, {
+      hidden,
+      taken: groups.map((group) => group.id),
+    }).find((group) => group.id === id && !group.hidden);
+    return found && autoRouteGroup(found);
+  };
+
+  /**
+   * Keep the candidates of the credential an `X-HH-Credential` header names
+   * (Magpie `X-Magpie-Account`): by ID, or by name without regard to case,
+   * across every member of a group. Nothing else is tried in its place: 429
+   * `credential_resting` while every match rests, 400 `credential_unserved`
+   * when the credential exists (enabled) but serves no candidate of this
+   * model, its provider not listing the model included, and 404
+   * `credential_not_found` when no enabled credential matches.
+   */
+  const pinCredential = async (
+    pin: string,
+    requested: string,
+    candidates: Candidate[],
+  ): Promise<{ candidates: Candidate[] } | { error: AttemptError }> => {
+    const matches = (credential: ProviderCredential) =>
+      credential.id === pin ||
+      credential.name.toLowerCase() === pin.toLowerCase();
+    const label = JSON.stringify(pin.slice(0, 100));
+    const local = (status: number, code: string, message: string) => ({
+      error: {
+        failure: failure(status, code, `X-HH-Credential: ${message}`),
+        errorClass: code,
+        source: "gateway" as const,
+        phase: "local" as const,
+      },
+    });
+    const matched = candidates.filter((candidate) =>
+      matches(candidate.credential),
+    );
+    const serving = matched.filter(
+      (candidate) =>
+        candidate.model !== undefined ||
+        candidate.provider.models.list.length === 0,
+    );
+    if (serving.length) {
+      const rests = serving.map((candidate) =>
+        services.breakers.restOf(candidate),
+      );
+      if (!rests.every((rest) => rest !== undefined))
+        return { candidates: serving };
+      const next = rests.reduce((soonest, rest) =>
+        rest.until < soonest.until ? rest : soonest,
+      );
+      const resting = local(
+        429,
+        "credential_resting",
+        `credential ${label} rests until ${new Date(next.until).toISOString()} (${next.reason}); no other credential is tried in its place`,
+      );
+      return {
+        error: {
+          ...resting.error,
+          retryAfterMs: Math.max(0, next.until - clock()),
+        },
+      };
+    }
+    const exists =
+      matched.length > 0 ||
+      (await store.listProviders()).some((provider) =>
+        provider.credentials.some(
+          (credential) => credential.enabled && matches(credential),
+        ),
+      );
+    if (exists)
+      return local(
+        400,
+        "credential_unserved",
+        `credential ${label} does not serve ${requested.slice(0, 200)}`,
+      );
+    const names = [
+      ...new Set(
+        candidates.map(
+          (candidate) =>
+            `${candidate.provider.id}/${candidate.credential.name}`,
+        ),
+      ),
+    ].slice(0, 20);
+    return local(
+      404,
+      "credential_not_found",
+      `no enabled credential ${label}; ${requested.slice(0, 200)} is served by ${names.length ? names.join(", ") : "no credential"}`,
+    );
   };
 
   const modelCall = async (
@@ -1050,14 +1193,8 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         request.headers,
         key.keyId,
       );
-      const sticky = services.sticky.apply(
-        conversation,
-        requested,
-        stickiness(resolved.group, key),
-        resolved.candidates,
-        (candidate) => services.breakers.blocked(candidate),
-      );
-      resolved.candidates = sticky.candidates;
+      entry.conversationKey = conversation.key;
+      const routePatches: string[] = [];
       call = {
         services,
         request,
@@ -1076,8 +1213,33 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         shownModel: typeof named === "string" && named ? named : requested,
         stream,
         conversation,
-        routePatches: sticky.patch ? [sticky.patch] : [],
+        routePatches,
       };
+      // The pin header is read here only; no header of the client but a
+      // fixed few is ever sent upstream (upstreamHeaders).
+      const pin = request.headers["x-hh-credential"];
+      if (typeof pin === "string" && pin.trim()) {
+        const pinned = await pinCredential(
+          pin.trim(),
+          requested,
+          resolved.candidates,
+        );
+        if ("error" in pinned) {
+          await publishFailure(call, pinned.error);
+          return;
+        }
+        resolved.candidates = pinned.candidates;
+        routePatches.push("credential:pinned");
+      }
+      const sticky = services.sticky.apply(
+        conversation,
+        requested,
+        stickiness(resolved.group, key),
+        resolved.candidates,
+        (candidate) => services.breakers.blocked(candidate),
+      );
+      resolved.candidates = sticky.candidates;
+      if (sticky.patch) routePatches.push(sticky.patch);
       try {
         await routeCall(call, resolved);
       } catch (error) {
@@ -1100,6 +1262,72 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       shutdown.signal.removeEventListener("abort", onShutdown);
       abort.abort();
     }
+  };
+
+  /**
+   * The Codex passthrough (./codex.js). No Gateway Key is involved, so only
+   * the loopback listener serves it, to loopback peers that name a loopback
+   * Host and send no Origin; anything else is refused with 403 and a
+   * rejection record, as for keyed routes.
+   */
+  const codex = async (
+    request: IncomingMessage,
+    response: ServerResponse,
+    url: URL,
+    path: string,
+    listener: "loopback" | "lan",
+    occurredAt: number,
+    started: number,
+  ) => {
+    const refuse = (reason: string, message: string) =>
+      reject(
+        response,
+        baseEntry(
+          "responses",
+          path,
+          occurredAt,
+          undefined,
+          request.headers["user-agent"],
+        ),
+        reason,
+        failure(403, reason, message),
+        started,
+      );
+    if (listener === "lan" || !loopbackAddress(request.socket.remoteAddress))
+      return refuse(
+        "source_not_allowed",
+        "The Codex passthrough accepts loopback connections only",
+      );
+    if (
+      request.headers.origin !== undefined ||
+      request.headers["sec-fetch-site"] === "cross-site"
+    )
+      return refuse("origin_forbidden", "Browser requests are not accepted");
+    if (!loopbackHost(request.headers.host))
+      return refuse(
+        "origin_forbidden",
+        "The Host header must name a loopback address",
+      );
+    await codexPassthrough({
+      request,
+      response,
+      path,
+      search: url.search,
+      backend: deps.codexBackend ?? CODEX_BACKEND,
+      services,
+      shutdown: shutdown.signal,
+      entry: (stream) => {
+        const entry = baseEntry(
+          "responses",
+          path,
+          occurredAt,
+          undefined,
+          undefined,
+        );
+        entry.inbound.stream = stream;
+        return entry;
+      },
+    });
   };
 
   const serve = async (
@@ -1140,12 +1368,22 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       );
       return;
     }
+    if (isCodexPath(path)) {
+      await codex(request, response, url, path, listener, occurredAt, started);
+      return;
+    }
     const access = deps.access?.() ?? LOOPBACK_ONLY;
     const viaLan = listener === "lan";
     if (viaLan ? !access.lan : !loopbackAddress(request.socket.remoteAddress)) {
       await reject(
         response,
-        baseEntry(protocol, path, occurredAt, undefined),
+        baseEntry(
+          protocol,
+          path,
+          occurredAt,
+          undefined,
+          request.headers["user-agent"],
+        ),
         "source_not_allowed",
         failure(
           403,
@@ -1177,6 +1415,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       path,
       occurredAt,
       auth.ok ? auth.key : auth.key,
+      request.headers["user-agent"],
     );
     if (!auth.ok) {
       await reject(

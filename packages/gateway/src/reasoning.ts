@@ -62,6 +62,17 @@ export function callKeys(call: {
     `call:${hash(`${call.name}\u0000${args}`)}`,
   ];
 }
+/**
+ * Signature keys of the Responses reasoning item that a tool call followed:
+ * the call's {@link callKeys}, apart from the keys of other signatures.
+ */
+export function reasoningItemKeys(call: {
+  id?: string;
+  name: string;
+  arguments: string;
+}): string[] {
+  return callKeys(call).map((key) => `reasoning:${key}`);
+}
 /** Cache key for assistant text, ignoring surrounding whitespace. */
 export function textKey(text: string): string | undefined {
   const trimmed = text.trim();

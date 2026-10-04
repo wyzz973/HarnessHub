@@ -157,18 +157,22 @@ export type RouteStrategy = "order" | "rotate" | "least-used" | "latency";
 export type Stickiness = "auto" | "session" | "turn" | "off";
 
 export interface RetryPolicy {
+  /** Retries of the last candidate that can still be tried; others fail over at once. */
   perCandidate: number;
   totalAttempts: number;
+  /** The n-th retry waits `baseBackoffMs × 2^n`, unless the upstream said when. */
   baseBackoffMs: number;
+  /** A computed wait longer than this is not waited for: the failure is returned. */
   maxBackoffMs: number;
+  /** A `Retry-After` longer than this is not waited for: the failure is returned. */
   retryAfterWaitCapMs: number;
 }
 
-/** Defaults of 03 section 5; resolved in one place. */
+/** Defaults: waits of 1, 2 and 4 s, nothing past 8 s (Magpie `passing`); resolved in one place. */
 export const DEFAULT_RETRY_POLICY: Readonly<RetryPolicy> = Object.freeze({
-  perCandidate: 2,
+  perCandidate: 3,
   totalAttempts: 4,
-  baseBackoffMs: 500,
+  baseBackoffMs: 1_000,
   maxBackoffMs: 8_000,
   retryAfterWaitCapMs: 8_000,
 });
@@ -368,6 +372,18 @@ export interface CallAttempt {
   backoffMs?: number;
 }
 
+/** The agent behind a call, and how the gateway knows it. */
+export interface CallAgent {
+  /** Adapter id, such as `claude` or `codex`. */
+  id: string;
+  /**
+   * `key`: the `agent:` scope of the Gateway Key; `user-agent`: inferred
+   * from the request's User-Agent; `route`: inferred from a route that only
+   * this agent uses. Only `key` is established; the others are inferences.
+   */
+  source: "key" | "user-agent" | "route";
+}
+
 /**
  * One call that entered the gateway, rejected or not. The ledger is the only
  * source of usage and cost; a streamed answer's terminal event is written
@@ -382,6 +398,12 @@ export interface ModelCallEntry {
   runId?: RunId;
   /** Generation of the Run (`session:` keys), as in the Worker execution identity. */
   generation?: number;
+  /**
+   * The conversation as route stickiness knows it: lowercase hex SHA-256,
+   * scoped to the Gateway Key; never the client's own identifier.
+   */
+  conversationKey?: string;
+  agent?: CallAgent;
   inbound: { protocol: WireProtocol; path: string; stream: boolean };
   requestedModel?: string;
   modelRef?: ModelRef;
@@ -418,9 +440,17 @@ export interface UsageFilter {
   provider?: ProviderId;
   modelRef?: ModelRef;
   sessionId?: SessionId;
+  /** `agent.id` of the entry, established or inferred. */
+  agent?: string;
+  conversationKey?: string;
 }
 
-export type UsageGroupBy = "day" | "provider" | "model" | "key" | "adapter";
+/**
+ * `credential` buckets are `<provider>/<credentialId>`, since credential IDs
+ * are unique only within their provider.
+ */
+export type UsageGroupBy =
+  "day" | "provider" | "model" | "key" | "adapter" | "credential";
 
 export interface UsageBucket {
   key: string;
@@ -466,6 +496,23 @@ export interface WiringChoice {
   tiers?: Partial<Record<WiringTier, string>>;
   effort?: ReasoningEffort;
   options?: Record<string, string>;
+}
+
+/** The ledger entries of one conversation (`conversationKey`), summed. */
+export interface ConversationSummary {
+  key: string;
+  calls: number;
+  failedCalls: number;
+  usage: Omit<CallUsage, "source">;
+  costUsd: number;
+  unpricedCalls: number;
+  /** `occurredAt` of the first and the last call. */
+  firstAt: string;
+  lastAt: string;
+  /** Distinct Model Refs, credentials (`<provider>/<credentialId>`) and agent ids, sorted. */
+  models: string[];
+  credentials: string[];
+  agents: string[];
 }
 
 /** A global wiring of one agent on this machine (04 section 4). */
@@ -545,6 +592,19 @@ export interface ModelPlaneStore {
     filter: UsageFilter,
     groupBy: UsageGroupBy,
   ): Promise<UsageBucket[]>;
+  /**
+   * Entries with a `conversationKey` that match `filter`, summed per
+   * conversation; the conversation that was active last comes first.
+   */
+  listConversations(
+    filter: UsageFilter,
+    page: { limit: number; cursor?: string },
+  ): Promise<{ items: ConversationSummary[]; nextCursor?: string }>;
+
+  /** IDs of the automatic route groups the user hid (`auto-…`), sorted. */
+  listHiddenAutoGroups(): Promise<RouteGroupId[]>;
+  /** Hide or show again one automatic group; false when nothing changed. */
+  setAutoGroupHidden(id: RouteGroupId, hidden: boolean): Promise<boolean>;
 
   listWirings(): Promise<WiringRecord[]>;
   putWiring(record: WiringRecord): Promise<void>;

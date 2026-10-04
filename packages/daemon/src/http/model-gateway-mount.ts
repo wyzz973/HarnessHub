@@ -35,6 +35,19 @@ export function isModelGatewayPath(pathname: string): boolean {
   );
 }
 
+/**
+ * Whether a request path goes to the gateway's Codex passthrough
+ * (`/backend-api/codex` and below), which Codex signed in with ChatGPT uses
+ * as its `openai_base_url`. Only the loopback listener mounts it; the LAN
+ * listener of gateway sharing answers 404 for it.
+ */
+export function isCodexPassthroughPath(pathname: string): boolean {
+  const path = pathname.replace(/\/{2,}/g, "/").replace(/(.)\/$/, "$1");
+  return (
+    path === "/backend-api/codex" || path.startsWith("/backend-api/codex/")
+  );
+}
+
 /** The path of a raw request target, without query; "" when it is not origin-form. */
 export function requestPath(target: string | undefined): string {
   if (!target?.startsWith("/")) return "";

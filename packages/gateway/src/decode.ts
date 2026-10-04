@@ -21,6 +21,12 @@ export interface UpstreamDecoder extends ChunkDecoder {
   readonly thinking: readonly { text: string; signature?: string }[];
   /** Signatures by tool call index (Gemini `thoughtSignature` on function calls). */
   readonly callSignatures: ReadonlyMap<number, string>;
+  /**
+   * The reasoning item that preceded each tool call, by tool call index, as
+   * it can go back to the same Responses provider: `type`, `id`, `summary`
+   * and `encrypted_content` when the provider gave them.
+   */
+  readonly callReasoning: ReadonlyMap<number, Record<string, unknown>>;
 }
 
 type Chunk = Record<string, unknown>;
@@ -92,6 +98,7 @@ class AnthropicDecoder implements UpstreamDecoder {
   unmapped = new Set<string>();
   thinking: { text: string; signature?: string }[] = [];
   callSignatures = new Map<number, string>();
+  callReasoning = new Map<number, Record<string, unknown>>();
   #usage: Record<string, number> = {};
   #tools = new Map<number, number>();
   #blocks = new Map<number, { text: string; signature?: string }>();
@@ -288,6 +295,41 @@ class ResponsesDecoder implements UpstreamDecoder {
   #count = 0;
   #text = false;
   #reasoning = false;
+  /** Reasoning items by item id (or output index), as complete as they arrived. */
+  #items = new Map<string, Record<string, unknown>>();
+  /** The reasoning item seen last, and the one each tool call index followed. */
+  #lastItem: string | undefined;
+  #callItems = new Map<number, string>();
+
+  get callReasoning(): ReadonlyMap<number, Record<string, unknown>> {
+    const result = new Map<number, Record<string, unknown>>();
+    for (const [index, name] of this.#callItems) {
+      const item = this.#items.get(name);
+      if (item) result.set(index, item);
+    }
+    return result;
+  }
+  /**
+   * Keep a reasoning item for replay: added items have an empty summary and
+   * done items (and the final output) the whole one, so later non-empty
+   * values win.
+   */
+  #reasoningItem(item: Chunk, outputIndex: unknown): void {
+    const name =
+      typeof item.id === "string" ? `i${item.id}` : `o${String(outputIndex)}`;
+    const known = this.#items.get(name) ?? { type: "reasoning" };
+    if (typeof item.id === "string") known.id = item.id;
+    const summary = (Array.isArray(item.summary) ? item.summary : [])
+      .map(record)
+      .filter((part) => typeof part?.text === "string")
+      .map((part) => ({ type: "summary_text", text: part!.text as string }));
+    if (summary.length || !Array.isArray(known.summary))
+      known.summary = summary;
+    if (typeof item.encrypted_content === "string")
+      known.encrypted_content = item.encrypted_content;
+    this.#items.set(name, known);
+    this.#lastItem = name;
+  }
 
   #usage(value: unknown): Chunk | undefined {
     const usage = record(value);
@@ -310,6 +352,7 @@ class ResponsesDecoder implements UpstreamDecoder {
   }
   #tool(item: Chunk, outputIndex: unknown): Chunk[] {
     const index = this.#count++;
+    if (this.#lastItem) this.#callItems.set(index, this.#lastItem);
     const entry = { index, streamed: false };
     this.#tools.set(`o${String(outputIndex)}`, entry);
     if (typeof item.id === "string") this.#tools.set(`i${item.id}`, entry);
@@ -353,7 +396,9 @@ class ResponsesDecoder implements UpstreamDecoder {
           })
           .join("");
         if (text) chunks.push(delta({ content: text }));
-      } else if (item.type === "reasoning" && !this.#reasoning) {
+      } else if (item.type === "reasoning") {
+        this.#reasoningItem(item, outputIndex);
+        if (this.#reasoning) return;
         const text = (Array.isArray(item.summary) ? item.summary : [])
           .map((part) => {
             const value = record(part);
@@ -433,9 +478,13 @@ class ResponsesDecoder implements UpstreamDecoder {
             choices: [],
           },
         ];
-      case "response.output_item.added": {
+      case "response.output_item.added":
+      case "response.output_item.done": {
         const item = record(value.item) ?? {};
-        return item.type === "function_call" || item.type === "custom_tool_call"
+        if (item.type === "reasoning")
+          this.#reasoningItem(item, value.output_index);
+        return value.type === "response.output_item.added" &&
+          (item.type === "function_call" || item.type === "custom_tool_call")
           ? this.#tool(item, value.output_index)
           : [];
       }
@@ -496,6 +545,7 @@ class GeminiDecoder implements UpstreamDecoder {
   unmapped = new Set<string>();
   thinking: { text: string; signature?: string }[] = [];
   callSignatures = new Map<number, string>();
+  callReasoning = new Map<number, Record<string, unknown>>();
   #tools = 0;
 
   event(payload: unknown): Chunk[] {

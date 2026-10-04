@@ -68,17 +68,26 @@ import {
   type ReasoningField,
   type TranslateOptions,
 } from "./protocol.js";
-import { ReasoningCache, restoreReasoning, resultKeys } from "./reasoning.js";
+import {
+  ReasoningCache,
+  reasoningItemKeys,
+  restoreReasoning,
+  resultKeys,
+} from "./reasoning.js";
 import { responsesToChat, ResponsesSink, streamCode } from "./responses.js";
 import {
   backoff,
   classify,
+  failureClass,
+  failureKind,
   RETRY_BUDGET_MS,
+  resetIn,
   retryAfter,
   retryPolicy,
   type AttemptError,
   type Breakers,
   type Candidate,
+  type FailureKind,
   type Router,
   KEYLESS_CREDENTIAL,
 } from "./routing.js";
@@ -316,32 +325,27 @@ function localError(
   };
 }
 
-function httpErrorClass(status: number, message: string, overflow: boolean) {
-  if (overflow) return "context_length_exceeded";
-  if (status === 429)
-    return /quota|billing|balance|credit/i.test(message)
-      ? "quota_exhausted"
-      : "rate_limited";
-  if (status === 401 || status === 403) return "auth_failed";
-  if (status === 402) return "insufficient_balance";
-  if (status === 404) return "model_not_found";
-  if (status === 408 || status === 504) return "upstream_timeout";
-  if (status >= 500) return "upstream_unavailable";
-  return "upstream_rejected";
-}
-
+/**
+ * An upstream refusal or an in-stream error as an attempt error. Its kind
+ * comes from the status and `body`, the whole error body when there is one
+ * (read for routing only, never stored), else the message.
+ */
 function upstreamFailure(
   error: GatewayError,
   secrets: readonly string[],
+  body?: string,
 ): AttemptError {
   const overflow = error.contextOverflow && error.status !== 429;
   const message = sanitize(error.message, secrets);
+  const kind: FailureKind = overflow
+    ? "request"
+    : failureKind(error.status, body ?? error.message);
   const errorClass =
     error.code === "upstream_invalid_response" ||
     error.code === "upstream_protocol_error" ||
     error.code === "response_too_large"
       ? error.code
-      : httpErrorClass(error.status, message, overflow);
+      : failureClass(kind, error.status, overflow);
   return {
     failure: {
       status: error.status,
@@ -353,6 +357,7 @@ function upstreamFailure(
     source: "upstream",
     phase: "response",
     status: error.status,
+    kind,
   };
 }
 
@@ -971,12 +976,14 @@ async function send(
       headers,
       body,
     });
+    services.router.observe(candidate, response.headers);
     if (response.ok) {
       timers.clear(timer);
       return { ok: true, response, secrets, release };
     }
     attempt.status = response.status;
-    const wait = retryAfter(response.headers, services.clock());
+    const now = services.clock();
+    const wait = retryAfter(response.headers, now);
     if (wait !== undefined) attempt.retryAfterMs = wait;
     // The header deadline also bounds reading the error body.
     const text = await readLimited(response, 64 * 1024);
@@ -991,8 +998,11 @@ async function send(
         isContextOverflow(reported.code, reported.message),
       ),
       secrets,
+      text,
     );
     if (wait !== undefined) error.retryAfterMs = wait;
+    const reset = resetIn(text, now);
+    if (reset !== undefined) error.resetMs = reset;
     return { ok: false, error, release };
   } catch (error) {
     timers.clear(timer);
@@ -1091,8 +1101,9 @@ function recordSuccess(
 
 /**
  * Keep the signatures of a successful answer for this key's next request to
- * the same provider: a single thinking block's signature by its text, and
- * Gemini function-call signatures by the call id the client will send back.
+ * the same provider: a single thinking block's signature by its text, Gemini
+ * function-call signatures by the call id the client will send back, and the
+ * Responses reasoning item each tool call followed by that call's keys.
  */
 function rememberSignatures(
   call: Call,
@@ -1115,6 +1126,12 @@ function rememberSignatures(
   for (const [index, signature] of decoder.callSignatures) {
     const id = result.calls[index]?.id;
     if (id) remember("call", id, signature);
+  }
+  for (const [index, item] of decoder.callReasoning) {
+    const called = result.calls[index];
+    if (called)
+      for (const key of reasoningItemKeys(called))
+        remember("call", key, JSON.stringify(item));
   }
 }
 
@@ -1583,7 +1600,11 @@ async function passthroughAttempt(
 /**
  * Route one call over its candidates and publish exactly one answer: the
  * upstream's (after the entry is committed), an in-stream failure after the
- * first byte, or the last failure in the inbound protocol's format.
+ * first byte, or the last failure in the inbound protocol's format. A failure
+ * that may fail over moves on at once while another candidate can still be
+ * tried (its breaker not open); only the last one left is retried, after
+ * `baseBackoffMs × 2^n` or the vendor's wait, and not when that wait passes
+ * its cap (Magpie `passing`).
  */
 export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
   const { services, entry } = call;
@@ -1601,6 +1622,9 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
   const queue = plan.candidates;
   for (let index = 0; index < queue.length; index++) {
     const candidate = queue[index]!;
+    /** Another candidate after this one can still be tried. */
+    const others = () =>
+      queue.slice(index + 1).some((next) => !services.breakers.blocked(next));
     let retries = 0;
     let headerRetries = 0;
     for (;;) {
@@ -1610,9 +1634,8 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
           call,
           last ?? localError(503, "attempts_exhausted", "No attempt left"),
         );
-      // A retry of this call was decided with its wait, a Retry-After
-      // cooldown included, and checked the breaker then; only the first try
-      // asks the breaker here.
+      // A retry of this call was decided with its wait and the breaker as
+      // it was then; only the first try asks the breaker here.
       if (retries === 0) {
         const admitted = services.breakers.admit(candidate);
         if (!admitted.ok) {
@@ -1647,7 +1670,7 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
       entry.attempts.push(attempt);
       const alternatives =
         entry.attempts.length < policy.totalAttempts &&
-        (index < queue.length - 1 || retries < policy.perCandidate);
+        (others() || retries < policy.perCandidate);
       const result =
         prepared.kind === "passthrough"
           ? await passthroughAttempt(
@@ -1666,7 +1689,7 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
             );
       if (result.kind === "published") {
         if (result.error) {
-          const effect = classify(result.error, policy).breaker;
+          const effect = classify(result.error).breaker;
           services.breakers.failure(
             candidate,
             effect,
@@ -1676,7 +1699,7 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
         } else {
           services.breakers.success(candidate);
           services.router.record(
-            candidate.ref,
+            candidate,
             result.tokens,
             entry.timing.firstContentMs,
           );
@@ -1697,7 +1720,7 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
         services.breakers.release(candidate);
         return publishFailure(call, error);
       }
-      const verdict = classify(error, policy);
+      const verdict = classify(error);
       services.breakers.failure(
         candidate,
         verdict.breaker,
@@ -1705,33 +1728,30 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
         error.errorClass,
       );
       last = error;
-      const more = index < queue.length - 1;
       const left = entry.attempts.length < policy.totalAttempts;
       let wait = 0;
       let decision: CallAttempt["decision"] = "stop";
-      if (left && verdict.retry === "after") {
-        if (more) decision = "failover";
-        else if (retries < policy.perCandidate) {
-          decision = "retry";
-          wait = error.retryAfterMs ?? 0;
-        }
-      } else if (
+      if (left && verdict.failover && others()) decision = "failover";
+      else if (
         left &&
         retries < policy.perCandidate &&
         (verdict.retry === "yes" ||
           (verdict.retry === "once" && headerRetries < 1))
       ) {
-        decision = "retry";
-        wait = backoff(policy, retries);
-      } else if (left && verdict.failover && more) decision = "failover";
-      // A retry onto a breaker this failure just opened fails over instead;
-      // only a Retry-After wait (its own cooldown) retries regardless.
-      if (
-        decision === "retry" &&
-        (performance.now() - began + wait > RETRY_BUDGET_MS ||
-          (verdict.retry !== "after" && services.breakers.blocked(candidate)))
-      )
-        decision = verdict.failover && more ? "failover" : "stop";
+        const said = error.retryAfterMs;
+        wait = said ?? backoff(policy, retries);
+        // Not past its cap or the call's budget, and not onto a breaker this
+        // failure opened, unless that is a rate limit's rest the wait honours.
+        if (
+          wait <=
+            (said === undefined
+              ? policy.maxBackoffMs
+              : policy.retryAfterWaitCapMs) &&
+          performance.now() - began + wait <= RETRY_BUDGET_MS &&
+          (error.kind === "rate" || !services.breakers.blocked(candidate))
+        )
+          decision = "retry";
+      }
       attempt.decision = decision;
       if (decision === "stop") return publishFailure(call, error);
       if (decision === "failover") break;

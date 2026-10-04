@@ -119,9 +119,14 @@ void test("migration checksums are pinned: an applied migration is never edited"
         "wiring_profiles",
         "3e25a337b4937a751d0552eb0216b7aa7aeed79880ef105fb4794a742de0d41d",
       ],
+      [
+        5,
+        "model_call_attribution",
+        "95f1867490c4de6b09646954989a64ed5de86f67b5d4cc1ad8e130511c1253d9",
+      ],
     ],
   );
-  assert.equal(LATEST_SCHEMA_VERSION, 4);
+  assert.equal(LATEST_SCHEMA_VERSION, 5);
   assert.deepEqual(
     MIGRATIONS.map((migration) => migration.version),
     MIGRATIONS.map((_, index) => index + 1),
@@ -190,6 +195,7 @@ void test("a user_version 1 database from the previous build migrates forward wi
       [2, "model_plane", null],
       [3, "model_metadata", null],
       [4, "wiring_profiles", null],
+      [5, "model_call_attribution", null],
     ],
   );
   assert.equal(applied[0]?.checksum_sha256, migrationChecksum(MIGRATIONS[0]!));
@@ -271,7 +277,7 @@ void test("a version 2 database gains the model metadata tables and keeps its pr
 
   const store = open("9.9.9-test");
   const db = inspector();
-  assert.equal(userVersion(db), 4);
+  assert.equal(userVersion(db), LATEST_SCHEMA_VERSION);
   assert.deepEqual(
     migrations(db).map((row) => [row.version, row.name, row.hh_version]),
     [
@@ -279,6 +285,7 @@ void test("a version 2 database gains the model metadata tables and keeps its pr
       [2, "model_plane", null],
       [3, "model_metadata", "9.9.9-test"],
       [4, "wiring_profiles", "9.9.9-test"],
+      [5, "model_call_attribution", "9.9.9-test"],
     ],
   );
   store.acquireOwner();
@@ -341,7 +348,7 @@ void test("a version 3 database keeps its wirings, which may then have no key, a
   v3.close();
 
   const store = open("9.9.9-test");
-  assert.equal(userVersion(inspector()), 4);
+  assert.equal(userVersion(inspector()), LATEST_SCHEMA_VERSION);
   store.acquireOwner();
   const plane = new SqliteModelPlaneStore(path);
   t.after(() => plane.close());
@@ -355,6 +362,113 @@ void test("a version 3 database keeps its wirings, which may then have no key, a
   await plane.putWiring(signedIn);
   assert.deepEqual(await plane.listWirings(), [signedIn, wiring]);
   assert.deepEqual(await plane.listWiringProfiles(), []);
+});
+
+void test("a version 4 database gains the ledger attribution columns, filled from what earlier calls recorded", async (t) => {
+  const { path, open, inspector } = fixture(t);
+  const v4 = new DatabaseSync(path);
+  v4.exec(
+    "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, checksum_sha256 TEXT NOT NULL, applied_at TEXT NOT NULL, hh_version TEXT, note TEXT)",
+  );
+  for (const migration of MIGRATIONS.slice(0, 4)) {
+    v4.exec(migration.sql);
+    v4.prepare(
+      "INSERT INTO schema_migrations (version, name, checksum_sha256, applied_at) VALUES (?, ?, ?, '2026-10-01T00:00:00.000Z')",
+    ).run(migration.version, migration.name, migrationChecksum(migration));
+  }
+  v4.exec("PRAGMA user_version = 4");
+  const entry = (callId: string, extra: Record<string, unknown>) => ({
+    callId,
+    occurredAt: "2026-10-01T08:00:00.000Z",
+    inbound: { protocol: "chat", path: "/v1/chat/completions", stream: false },
+    patches: [],
+    unmapped: [],
+    status: 200,
+    timing: { durationMs: 10 },
+    attempts: [],
+    cost: null,
+    ...extra,
+  });
+  const insert = v4.prepare(
+    "INSERT INTO model_calls (call_id, occurred_ms, key_id, provider, model_ref, session_id, run_id, adapter_id, status, input_tokens, cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens, cost_usd, record) VALUES (?, ?, NULL, ?, ?, NULL, NULL, ?, 200, 0, 0, 0, 0, 0, NULL, ?)",
+  );
+  const routed = entry("call-agent", {
+    scope: { kind: "agent", adapterId: "claude" },
+    provider: "alpha",
+    modelRef: "alpha/chat-1",
+    credentialId: "key-1",
+  });
+  const rejected = entry("call-rejected", { status: 401, rejected: true });
+  insert.run(
+    "call-agent",
+    Date.parse(routed.occurredAt),
+    "alpha",
+    "alpha/chat-1",
+    "claude",
+    JSON.stringify(routed),
+  );
+  insert.run(
+    "call-rejected",
+    Date.parse(rejected.occurredAt),
+    null,
+    null,
+    null,
+    JSON.stringify(rejected),
+  );
+  v4.close();
+
+  const store = open("9.9.9-test");
+  const db = inspector();
+  assert.equal(userVersion(db), 5);
+  assert.deepEqual(
+    migrations(db).map((row) => [row.version, row.name, row.hh_version]),
+    [
+      [1, "runtime_core", null],
+      [2, "model_plane", null],
+      [3, "model_metadata", null],
+      [4, "wiring_profiles", null],
+      [5, "model_call_attribution", "9.9.9-test"],
+    ],
+  );
+  assert.deepEqual(
+    db
+      .prepare(
+        "SELECT call_id, credential_id, conversation_key, agent FROM model_calls ORDER BY seq",
+      )
+      .all()
+      .map((row) => ({ ...row })),
+    [
+      {
+        call_id: "call-agent",
+        credential_id: "key-1",
+        conversation_key: null,
+        agent: "claude",
+      },
+      {
+        call_id: "call-rejected",
+        credential_id: null,
+        conversation_key: null,
+        agent: null,
+      },
+    ],
+  );
+  store.acquireOwner();
+  const plane = new SqliteModelPlaneStore(path);
+  t.after(() => plane.close());
+  // The records are unchanged; the columns serve the new filters and buckets.
+  assert.deepEqual(
+    (await plane.listModelCalls({}, { limit: 10 })).items.map(
+      (item) => item.callId,
+    ),
+    ["call-rejected", "call-agent"],
+  );
+  assert.deepEqual(
+    (await plane.aggregateUsage({ agent: "claude" }, "credential")).map(
+      (bucket) => [bucket.key, bucket.calls],
+    ),
+    [["alpha/key-1", 1]],
+  );
+  assert.deepEqual(await plane.listHiddenAutoGroups(), []);
 });
 
 void test("a database newer than this build is refused without modification", (t) => {
@@ -503,6 +617,7 @@ void test("simultaneous opens of a version 1 database apply each migration exact
       [2, null],
       [3, null],
       [4, null],
+      [5, null],
     ],
   );
   assert.equal(userVersion(db), LATEST_SCHEMA_VERSION);

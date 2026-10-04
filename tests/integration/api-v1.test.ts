@@ -739,6 +739,226 @@ void test("usage and model calls are served from the ledger", async (t) => {
   );
 });
 
+void test("conversations and usage by credential are served from the ledger", async (t) => {
+  const { client, dataDir } = await daemon(t);
+  const plane = new SqliteModelPlaneStore(
+    path.join(dataDir, "harnesshub.sqlite"),
+  );
+  t.after(() => plane.close());
+  const talk = "ab".repeat(32);
+  const other = "cd".repeat(32);
+  const entry = (
+    index: number,
+    patch: Partial<ModelCallEntry>,
+  ): ModelCallEntry => ({
+    callId: `call-${index}` as ModelCallId,
+    occurredAt: `2026-10-02T0${index}:00:00.000Z`,
+    inbound: { protocol: "chat", path: "/v1/chat/completions", stream: true },
+    modelRef: "alpha/chat-1" as ModelRef,
+    provider: "alpha" as ProviderId,
+    credentialId: "key-1" as CredentialId,
+    patches: [],
+    unmapped: [],
+    status: 200,
+    usage: {
+      input: 10,
+      cacheRead: 1,
+      cacheWrite: 0,
+      output: 5,
+      reasoning: 0,
+      source: "reported",
+    },
+    timing: { durationMs: 100 },
+    attempts: [],
+    cost: { amountUsd: 0.1, priceSource: "user" },
+    ...patch,
+  });
+  await plane.appendModelCall(
+    entry(1, { conversationKey: talk, agent: { id: "claude", source: "key" } }),
+  );
+  await plane.appendModelCall(
+    entry(2, {
+      conversationKey: other,
+      agent: { id: "codex", source: "user-agent" },
+      credentialId: "key-2" as CredentialId,
+    }),
+  );
+  await plane.appendModelCall(
+    entry(3, {
+      conversationKey: talk,
+      agent: { id: "claude", source: "key" },
+      modelRef: "beta/chat-1" as ModelRef,
+      provider: "beta" as ProviderId,
+      status: 503,
+      cost: null,
+    }),
+  );
+
+  const page = await client.conversations.list();
+  assert.equal(page.nextCursor, null);
+  assert.deepEqual(page.items, [
+    {
+      key: talk,
+      calls: 2,
+      failedCalls: 1,
+      usage: {
+        input: 20,
+        cacheRead: 2,
+        cacheWrite: 0,
+        output: 10,
+        reasoning: 0,
+      },
+      cost: { amount: "0.1", currency: "USD" },
+      unpricedCalls: 1,
+      firstAt: "2026-10-02T01:00:00.000Z",
+      lastAt: "2026-10-02T03:00:00.000Z",
+      models: ["alpha/chat-1", "beta/chat-1"],
+      credentials: ["alpha/key-1", "beta/key-1"],
+      agents: ["claude"],
+    },
+    {
+      key: other,
+      calls: 1,
+      failedCalls: 0,
+      usage: {
+        input: 10,
+        cacheRead: 1,
+        cacheWrite: 0,
+        output: 5,
+        reasoning: 0,
+      },
+      cost: { amount: "0.1", currency: "USD" },
+      unpricedCalls: 0,
+      firstAt: "2026-10-02T02:00:00.000Z",
+      lastAt: "2026-10-02T02:00:00.000Z",
+      models: ["alpha/chat-1"],
+      credentials: ["alpha/key-2"],
+      agents: ["codex"],
+    },
+  ]);
+  const first = await client.conversations.list({ limit: 1 });
+  assert.deepEqual(
+    first.items.map((item) => item.key),
+    [talk],
+  );
+  assert.ok(first.nextCursor);
+  assert.deepEqual(
+    (
+      await client.conversations.list({ limit: 1, cursor: first.nextCursor })
+    ).items.map((item) => item.key),
+    [other],
+  );
+  assert.deepEqual(
+    (await client.conversations.list({ agent: "codex" })).items.map(
+      (item) => item.key,
+    ),
+    [other],
+  );
+  // One conversation's calls carry their attribution.
+  const calls = await client.conversations.get(talk);
+  assert.deepEqual(
+    calls.items.map((item) => [item.callId, item.conversationKey, item.agent]),
+    [
+      ["call-3", talk, { id: "claude", source: "key" }],
+      ["call-1", talk, { id: "claude", source: "key" }],
+    ],
+  );
+  assert.equal(calls.nextCursor, null);
+  await assert.rejects(
+    client.conversations.get("ef".repeat(32)),
+    problem("CONVERSATION_NOT_FOUND", 404),
+  );
+  await assert.rejects(
+    client.conversations.get("not-a-key"),
+    problem("INVALID_REQUEST", 400),
+  );
+  await assert.rejects(
+    client.conversations.list({ cursor: "garbage" }),
+    problem("INVALID_CURSOR", 400),
+  );
+
+  assert.deepEqual(
+    (await client.usage.aggregate({ groupBy: "credential" })).items.map(
+      (item) => [item.key, item.calls],
+    ),
+    [
+      ["alpha/key-1", 1],
+      ["alpha/key-2", 1],
+      ["beta/key-1", 1],
+    ],
+  );
+  assert.deepEqual(
+    (await client.modelCalls.list({ agent: "codex" })).items.map(
+      (item) => item.callId,
+    ),
+    ["call-2"],
+  );
+});
+
+void test("automatic groups are derived from the providers, hidden and restored", async (t) => {
+  const { client, dataDir, start, stop } = await daemon(t);
+  const models = (...ids: string[]) => ({
+    source: "manual" as const,
+    list: ids.map((id) => ({ id })),
+    expose: "all" as const,
+  });
+  await client.providers.create({
+    id: "alpha",
+    endpoints: { chat: "https://api.alpha.example.test/v1" },
+    models: models("glm-4.6", "solo-1"),
+  });
+  await client.providers.create({
+    id: "beta",
+    endpoints: { chat: "https://api.beta.example.test/v1" },
+    models: models("z-ai/GLM-4.6"),
+  });
+  const derived = (await client.autoGroups.list()).items;
+  assert.deepEqual(
+    derived.map((item) => [item.id, item.model, item.members, item.hidden]),
+    [
+      [
+        "auto-glm-4-6",
+        "glm-4-6",
+        ["alpha/glm-4.6", "beta/z-ai/GLM-4.6"],
+        false,
+      ],
+    ],
+  );
+  // A model one provider serves alone is no group, and cannot be hidden.
+  await assert.rejects(
+    client.autoGroups.hide("auto-solo-1"),
+    problem("AUTO_GROUP_NOT_FOUND", 404),
+  );
+  await assert.rejects(
+    client.autoGroups.restore("auto-glm-4-6"),
+    problem("AUTO_GROUP_NOT_FOUND", 404),
+  );
+  await client.autoGroups.hide("auto-glm-4-6");
+  // Hiding is idempotent, and the hidden list survives a restart.
+  await client.autoGroups.hide("auto-glm-4-6");
+  await stop();
+  const restarted = await start();
+  t.after(() => restarted.server.close());
+  const again = await connectLocal({ dataDir, url: restarted.url });
+  assert.deepEqual(
+    (await again.autoGroups.list()).items.map((item) => [item.id, item.hidden]),
+    [["auto-glm-4-6", true]],
+  );
+  await again.autoGroups.restore("auto-glm-4-6");
+  assert.deepEqual(
+    (await again.autoGroups.list()).items.map((item) => [item.id, item.hidden]),
+    [["auto-glm-4-6", false]],
+  );
+  // A user group of the same ID takes the automatic group's place.
+  await again.routeGroups.create({
+    id: "auto-glm-4-6",
+    members: ["alpha/glm-4.6"],
+  });
+  assert.deepEqual((await again.autoGroups.list()).items, []);
+  await again.routeGroups.remove("auto-glm-4-6");
+  assert.equal((await again.autoGroups.list()).items.length, 1);
+});
+
 void test("the SDK reports an unreachable daemon", async () => {
   const client = new HarnessHubClient({
     url: "http://127.0.0.1:9",

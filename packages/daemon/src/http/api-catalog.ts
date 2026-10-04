@@ -1135,6 +1135,64 @@ export const apiCatalog: readonly ApiDocumentation[] = [
   },
   {
     method: "GET",
+    path: "/api/v1/auto-groups",
+    title: "自动路由组",
+    group: "route-groups",
+    request: "无参数。",
+    response:
+      "200：items（id=auto-<slug>、model、members、hidden、createdAt）、nextCursor=null。",
+    implementation:
+      "core autoGroups：两个及以上就绪 provider 以同一规范化名称（Magpie sameModel）提供的模型；同 ID 的用户路由组优先，不列出；隐藏的照常列出，hidden=true。",
+    effects: "只读；自动组每次派生，不存储。",
+    errors:
+      "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/api-v1.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_list_auto_groups",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/auto-groups/{id}/hide",
+    title: "隐藏自动路由组",
+    group: "route-groups",
+    request: "路径参数 id；空 JSON 对象。",
+    response: "204。",
+    implementation:
+      "ModelPlaneStore.setAutoGroupHidden(id, true)；已隐藏时幂等。",
+    effects:
+      "写入 hidden_auto_groups 表；网关不再列出、也不再路由 group/<id>（请求 404），直到恢复。",
+    errors:
+      "404 AUTO_GROUP_NOT_FOUND（当前没有该自动组）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/api-v1.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_hide_auto_group",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/auto-groups/{id}/restore",
+    title: "恢复自动路由组",
+    group: "route-groups",
+    request: "路径参数 id；空 JSON 对象。",
+    response: "204。",
+    implementation: "ModelPlaneStore.setAutoGroupHidden(id, false)。",
+    effects: "删除 hidden_auto_groups 中的记录；组仍可派生时重新出现。",
+    errors:
+      "404 AUTO_GROUP_NOT_FOUND（该 ID 没有被隐藏）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/api-v1.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_restore_auto_group",
+  },
+  {
+    method: "GET",
     path: "/api/v1/gateway/share",
     title: "局域网共享状态",
     group: "gateway-share",
@@ -1254,9 +1312,9 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     title: "model.call 账本",
     group: "usage",
     request:
-      "limit（1–200，默认 50）、cursor；过滤 from（含）、to（不含）、keyId、provider、model、sessionId。",
+      "limit（1–200，默认 50）、cursor；过滤 from（含）、to（不含）、keyId、provider、model、sessionId、agent（agent.id，确定或推断的）。",
     response:
-      "200：items（ModelCallEntry，cost 为 {amount 十进制字符串, currency, priceSource} 或 null）、nextCursor。",
+      "200：items（ModelCallEntry，含 conversationKey 与 agent；cost 为 {amount 十进制字符串, currency, priceSource} 或 null）、nextCursor。",
     implementation:
       "ModelPlaneStore.listModelCalls，按 occurredAt 新到旧，游标为不透明字符串。",
     effects: "只读。",
@@ -1272,7 +1330,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     title: "用量聚合",
     group: "usage",
     request:
-      "groupBy（day、provider、model、key、adapter，默认 model）与 /model-calls 相同的过滤。",
+      "groupBy（day、provider、model、key、adapter、credential，默认 model；credential 的 key 为 <provider>/<credentialId>）与 /model-calls 相同的过滤。",
     response:
       "200：groupBy、items（key、calls、failedCalls、usage、cost 十进制字符串、unpricedCalls）。",
     implementation:
@@ -1286,6 +1344,46 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "tests/integration/hh-cli.test.ts",
     ],
     operationId: "hh_api_v1_get_usage",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/conversations",
+    title: "会话视图",
+    group: "usage",
+    request:
+      "limit（1–200，默认 50）、cursor；与 /model-calls 相同的过滤（from、to、agent 等），过滤先作用于调用再按会话汇总。",
+    response:
+      "200：items（key、calls、failedCalls、usage、cost 十进制字符串、unpricedCalls、firstAt、lastAt、models、credentials（<provider>/<credentialId>）、agents）、nextCursor。",
+    implementation:
+      "ModelPlaneStore.listConversations：按 model_calls.conversation_key 分组，规则同 /usage；最后活动时间新到旧，游标为不透明字符串。",
+    effects:
+      "只读。没有 conversationKey 的调用（如被拒绝的鉴权失败）不属于任何会话。",
+    errors:
+      "400 INVALID_REQUEST、INVALID_CURSOR、INVALID_USAGE_FILTER；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/api-v1.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_list_conversations",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/conversations/{key}",
+    title: "单个会话的调用",
+    group: "usage",
+    request:
+      "路径参数 key（64 位小写十六进制）；limit（1–200，默认 50）、cursor。",
+    response:
+      "200：items（ModelCallEntry，与 /model-calls 相同）、nextCursor。",
+    implementation:
+      "ModelPlaneStore.listModelCalls（filter.conversationKey），新到旧。",
+    effects: "只读。",
+    errors:
+      "404 CONVERSATION_NOT_FOUND（首页没有调用）；400 INVALID_REQUEST、INVALID_CURSOR；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: ["tests/integration/api-v1.test.ts"],
+    operationId: "hh_api_v1_get_conversation",
   },
   {
     method: "GET",

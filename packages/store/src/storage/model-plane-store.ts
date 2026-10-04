@@ -1,21 +1,24 @@
 // SPDX-License-Identifier: MIT
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { HubError } from "@harnesshub/core/errors";
-import type {
-  AgentWiringStore,
-  GatewayKeyId,
-  GatewayKeyRecord,
-  ModelCallEntry,
-  ModelPlaneStore,
-  ProviderConfig,
-  ProviderId,
-  RouteGroup,
-  RouteGroupId,
-  UsageBucket,
-  UsageFilter,
-  UsageGroupBy,
-  WiringProfile,
-  WiringRecord,
+import { AUTO_GROUP_PREFIX } from "@harnesshub/core/auto-groups";
+import {
+  parseModelRef,
+  type AgentWiringStore,
+  type ConversationSummary,
+  type GatewayKeyId,
+  type GatewayKeyRecord,
+  type ModelCallEntry,
+  type ModelPlaneStore,
+  type ProviderConfig,
+  type ProviderId,
+  type RouteGroup,
+  type RouteGroupId,
+  type UsageBucket,
+  type UsageFilter,
+  type UsageGroupBy,
+  type WiringProfile,
+  type WiringRecord,
 } from "@harnesshub/core/model-plane";
 import {
   isModelOverride,
@@ -94,6 +97,28 @@ function textColumn(row: Record<string, unknown>, name: string): string {
   return value;
 }
 
+/** The distinct values of a `json_group_array(DISTINCT …)` column, without nulls, sorted. */
+function distinctColumn(row: Record<string, unknown>, name: string): string[] {
+  let values: unknown;
+  try {
+    values = JSON.parse(textColumn(row, name));
+  } catch {
+    values = undefined;
+  }
+  if (
+    !Array.isArray(values) ||
+    !values.every((value) => value === null || typeof value === "string")
+  )
+    throw new HubError(
+      "STORAGE_CORRUPT",
+      "Persisted ledger column is not a list of text",
+      500,
+    );
+  return (values as (string | null)[])
+    .filter((value): value is string => value !== null)
+    .sort();
+}
+
 /** The provider ID of a validated `provider/model` ref. */
 function providerOf(ref: string): string {
   return ref.slice(0, ref.indexOf("/"));
@@ -102,6 +127,36 @@ function providerOf(ref: string): string {
 /** Opaque page position: the (occurred_ms, seq) of the last item returned. */
 function encodeCursor(occurredMs: number, seq: number): string {
   return Buffer.from(`v1:${occurredMs}:${seq}`, "utf8").toString("base64url");
+}
+
+/** Opaque conversation page position: the last call time and key of the last summary. */
+function encodeConversationCursor(lastMs: number, key: string): string {
+  return Buffer.from(`c1:${lastMs}:${key}`, "utf8").toString("base64url");
+}
+
+function decodeConversationCursor(cursor: string): {
+  lastMs: number;
+  key: string;
+} {
+  const match = /^c1:(-?\d{1,16}):([0-9a-f]{64})$/.exec(
+    Buffer.from(cursor, "base64url").toString("utf8"),
+  );
+  const lastMs = Number(match?.[1]);
+  if (!match || !Number.isSafeInteger(lastMs))
+    throw invalid("INVALID_CURSOR", "The page cursor is not valid");
+  return { lastMs, key: match[2]! };
+}
+
+function pageLimit(limit: number): void {
+  if (
+    !Number.isSafeInteger(limit) ||
+    limit < 1 ||
+    limit > MODEL_CALL_PAGE_LIMIT
+  )
+    throw invalid(
+      "INVALID_PAGE_LIMIT",
+      `Page limit must be an integer from 1 to ${MODEL_CALL_PAGE_LIMIT}`,
+    );
 }
 
 function decodeCursor(cursor: string): { occurredMs: number; seq: number } {
@@ -134,6 +189,8 @@ function filterClause(filter: UsageFilter): {
     [filter.provider, "provider"],
     [filter.modelRef, "model_ref"],
     [filter.sessionId, "session_id"],
+    [filter.agent, "agent"],
+    [filter.conversationKey, "conversation_key"],
   ];
   for (const [value, column] of columns)
     if (value !== undefined) {
@@ -156,6 +213,8 @@ function bucketExpression(groupBy: UsageGroupBy): string {
       return "COALESCE(key_id, '')";
     case "adapter":
       return "COALESCE(adapter_id, '')";
+    case "credential":
+      return "CASE WHEN provider IS NULL OR credential_id IS NULL THEN '' ELSE provider || '/' || credential_id END";
   }
 }
 
@@ -182,7 +241,20 @@ function bucketExpression(groupBy: UsageGroupBy): string {
  * sums the known costs and `unpricedCalls` counts `cost: null`. Day buckets are
  * UTC dates (`YYYY-MM-DD`); calls without the grouped attribute (no key, no
  * provider, a non-agent scope for `adapter`) form the bucket with key `""`.
- * Buckets are ordered by key.
+ * Buckets are ordered by key. Credential buckets are `<provider>/<credentialId>`,
+ * since credential IDs are unique only within their provider.
+ *
+ * `listConversations` sums the entries that have a `conversationKey` and
+ * match the filter, one summary per key, by the same rules as
+ * `aggregateUsage`; summaries come newest `lastAt` first (then by key), with
+ * the same page limits and an opaque cursor as `listModelCalls`. `firstAt`
+ * and `lastAt` are UTC; models, credentials and agents list the distinct
+ * values the calls recorded, sorted, without calls that recorded none. The
+ * filter's `agent` matches `agent.id`, established or inferred.
+ *
+ * Hidden automatic groups (`listHiddenAutoGroups`, `setAutoGroupHidden`)
+ * are IDs starting with `auto-` that are valid route group IDs; any other ID
+ * is `AUTO_GROUP_ID_INVALID` (400).
  */
 export class SqliteModelPlaneStore
   implements ModelPlaneStore, ModelMetadataStore, AgentWiringStore
@@ -532,7 +604,7 @@ export class SqliteModelPlaneStore
         Number(
           db
             .prepare(
-              "INSERT INTO model_calls (call_id, occurred_ms, key_id, provider, model_ref, session_id, run_id, adapter_id, status, input_tokens, cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens, cost_usd, record) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(call_id) DO NOTHING",
+              "INSERT INTO model_calls (call_id, occurred_ms, key_id, provider, model_ref, session_id, run_id, adapter_id, credential_id, conversation_key, agent, status, input_tokens, cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens, cost_usd, record) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(call_id) DO NOTHING",
             )
             .run(
               entry.callId,
@@ -543,6 +615,9 @@ export class SqliteModelPlaneStore
               entry.sessionId ?? null,
               entry.runId ?? null,
               entry.scope?.kind === "agent" ? entry.scope.adapterId : null,
+              entry.credentialId ?? null,
+              entry.conversationKey ?? null,
+              entry.agent?.id ?? null,
               entry.status,
               usage?.input ?? 0,
               usage?.cacheRead ?? 0,
@@ -584,15 +659,7 @@ export class SqliteModelPlaneStore
     filter: UsageFilter,
     page: { limit: number; cursor?: string },
   ): Promise<{ items: ModelCallEntry[]; nextCursor?: string }> {
-    if (
-      !Number.isSafeInteger(page.limit) ||
-      page.limit < 1 ||
-      page.limit > MODEL_CALL_PAGE_LIMIT
-    )
-      throw invalid(
-        "INVALID_PAGE_LIMIT",
-        `Page limit must be an integer from 1 to ${MODEL_CALL_PAGE_LIMIT}`,
-      );
+    pageLimit(page.limit);
     const where = filterClause(filter);
     const clauses = where.sql ? [where.sql] : [];
     const params = [...where.params];
@@ -645,6 +712,93 @@ export class SqliteModelPlaneStore
         costUsd: numberColumn(row, "cost"),
         unpricedCalls: integerColumn(row, "unpriced"),
       }));
+  }
+
+  /**
+   * @param page.limit 1 to `MODEL_CALL_PAGE_LIMIT`; otherwise
+   *   `INVALID_PAGE_LIMIT` (400).
+   * @param page.cursor A `nextCursor` from an earlier page with the same
+   *   filter; anything else is `INVALID_CURSOR` (400).
+   */
+  async listConversations(
+    filter: UsageFilter,
+    page: { limit: number; cursor?: string },
+  ): Promise<{ items: ConversationSummary[]; nextCursor?: string }> {
+    pageLimit(page.limit);
+    const where = filterClause(filter);
+    const params = [...where.params];
+    let having = "";
+    if (page.cursor !== undefined) {
+      const after = decodeConversationCursor(page.cursor);
+      having =
+        "HAVING MAX(occurred_ms) < ? OR (MAX(occurred_ms) = ? AND conversation_key < ?)";
+      params.push(after.lastMs, after.lastMs, after.key);
+    }
+    const rows = this.open()
+      .prepare(
+        `SELECT conversation_key AS key, COUNT(*) AS calls, SUM(status >= 400) AS failed, SUM(input_tokens) AS input, SUM(cache_read_tokens) AS cache_read, SUM(cache_write_tokens) AS cache_write, SUM(output_tokens) AS output, SUM(reasoning_tokens) AS reasoning, TOTAL(cost_usd) AS cost, SUM(cost_usd IS NULL) AS unpriced, MIN(occurred_ms) AS first_ms, MAX(occurred_ms) AS last_ms, json_group_array(DISTINCT model_ref) AS models, json_group_array(DISTINCT CASE WHEN provider IS NULL OR credential_id IS NULL THEN NULL ELSE provider || '/' || credential_id END) AS credentials, json_group_array(DISTINCT agent) AS agents FROM model_calls WHERE conversation_key IS NOT NULL${where.sql ? ` AND ${where.sql}` : ""} GROUP BY conversation_key ${having} ORDER BY last_ms DESC, key DESC LIMIT ?`,
+      )
+      .all(...params, page.limit + 1);
+    const items = rows.slice(0, page.limit).map((row) => ({
+      key: textColumn(row, "key"),
+      calls: integerColumn(row, "calls"),
+      failedCalls: integerColumn(row, "failed"),
+      usage: {
+        input: integerColumn(row, "input"),
+        cacheRead: integerColumn(row, "cache_read"),
+        cacheWrite: integerColumn(row, "cache_write"),
+        output: integerColumn(row, "output"),
+        reasoning: integerColumn(row, "reasoning"),
+      },
+      costUsd: numberColumn(row, "cost"),
+      unpricedCalls: integerColumn(row, "unpriced"),
+      firstAt: new Date(integerColumn(row, "first_ms")).toISOString(),
+      lastAt: new Date(integerColumn(row, "last_ms")).toISOString(),
+      models: distinctColumn(row, "models"),
+      credentials: distinctColumn(row, "credentials"),
+      agents: distinctColumn(row, "agents"),
+    }));
+    const last = rows[page.limit - 1];
+    return rows.length > page.limit && last
+      ? {
+          items,
+          nextCursor: encodeConversationCursor(
+            integerColumn(last, "last_ms"),
+            textColumn(last, "key"),
+          ),
+        }
+      : { items };
+  }
+
+  async listHiddenAutoGroups(): Promise<RouteGroupId[]> {
+    return this.open()
+      .prepare("SELECT id FROM hidden_auto_groups ORDER BY id")
+      .all()
+      .map((row) => textColumn(row, "id") as RouteGroupId);
+  }
+
+  async setAutoGroupHidden(
+    id: RouteGroupId,
+    hidden: boolean,
+  ): Promise<boolean> {
+    if (
+      !id.startsWith(AUTO_GROUP_PREFIX) ||
+      id.length === AUTO_GROUP_PREFIX.length ||
+      parseModelRef(`group/${id}`)?.kind !== "group"
+    )
+      throw invalid(
+        "AUTO_GROUP_ID_INVALID",
+        "Not the ID of an automatic route group",
+      );
+    const db = this.open();
+    const result = hidden
+      ? db
+          .prepare(
+            "INSERT INTO hidden_auto_groups (id, hidden_at) VALUES (?, ?) ON CONFLICT(id) DO NOTHING",
+          )
+          .run(id, new Date().toISOString())
+      : db.prepare("DELETE FROM hidden_auto_groups WHERE id = ?").run(id);
+    return Number(result.changes) > 0;
   }
 
   async listWirings(): Promise<WiringRecord[]> {

@@ -1,6 +1,6 @@
 # 模型平面 API 与 CLI
 
-守护进程在 `/api/v1` 下提供模型平面的管理接口：provider 与凭据、模型元数据与覆盖、路由组、`client:` Gateway Key、`model.call` 账本与用量（设计见 [06 接口与交互面](proposals/oss/06-interfaces.md) 与 [03 模型平面](proposals/oss/03-model-plane.md)）。[`@harnesshub/sdk`](../packages/sdk/README.md) 是它的类型化客户端，`hh provider|credential|model|catalog|key|group|usage|status|gateway|import` 经 SDK 调用它。现有的 `/v1/*` 管理路由暂时保持原样，之后再迁到 `/api/v1`；全局接线（`/agents`，`hh agents|wire|use|unwire`）见 [全局接线](global-wiring.md)。逐接口的输入、返回与错误见 [API 实现参考](api/reference.md)（`/api/v1` 各节）。
+守护进程在 `/api/v1` 下提供模型平面的管理接口：provider 与凭据、模型元数据与覆盖、路由组与自动路由组、`client:` Gateway Key、`model.call` 账本、用量与会话视图（设计见 [06 接口与交互面](proposals/oss/06-interfaces.md) 与 [03 模型平面](proposals/oss/03-model-plane.md)）。[`@harnesshub/sdk`](../packages/sdk/README.md) 是它的类型化客户端，`hh provider|credential|model|catalog|key|group|usage|status|gateway|import` 经 SDK 调用它。现有的 `/v1/*` 管理路由暂时保持原样，之后再迁到 `/api/v1`；全局接线（`/agents`，`hh agents|wire|use|unwire`）见 [全局接线](global-wiring.md)。逐接口的输入、返回与错误见 [API 实现参考](api/reference.md)（`/api/v1` 各节）。
 
 ## 认证与错误
 
@@ -22,10 +22,12 @@
 | models | `GET /providers/{id}/models`；`GET /models/{ref}`；`GET`、`PUT`、`DELETE /models/{ref}/overrides` | 见[模型元数据](#模型元数据)。`{ref}` 中的斜杠编码为 `%2F`（模型名本身可含斜杠）；覆盖的 `{ref}` 也可以是 `provider/*` |
 | catalog | `GET /catalog`；`POST /catalog/refresh` | 使用中的 models.dev 目录（`source` 为内置快照 `bundled` 或刷新副本 `refreshed`）及其取得时间、上游提交与 SHA-256、provider 与模型数，刷新地址、是否后台刷新（关闭原因 `setting` 或 `offline`）、上次刷新与下次时间。`POST` 立即刷新，后台刷新关闭时也执行；失败为 502 `CATALOG_REFRESH_FAILED`，原目录继续使用 |
 | route-groups | `GET`、`POST /route-groups`；`GET`、`PATCH`、`DELETE /route-groups/{id}` | 成员必须是已存在 provider 的 Model Ref；被未吊销的 Key 允许时删除返回 409 |
+| auto-groups | `GET /auto-groups`；`POST /auto-groups/{id}/hide`、`POST /auto-groups/{id}/restore` | 自动路由组：两个及以上就绪的 provider（无凭据，或至少一个凭据启用）以同一规范化名称提供的模型，即 `group/auto-<slug>`。名称规范化同 Magpie：小写、`_` 换成 `-`、只取最后一个 `/` 之后、数字之间的 `.` 或 `p` 换成 `-`、去掉快照日期（`-YYYYMMDD`、`@YYYYMMDD`、火山方舟的 `-YYMMDD`）；成员按 provider 的添加顺序，每个 provider 取第一个同名模型。自动组每次派生、不存储；同 ID 的用户路由组优先，不再列出。列表含 `id`、`model`（共同名称）、`members`、`hidden`、`createdAt`。`hide` 把 ID 写入 `hidden_auto_groups` 表（幂等），网关此后不列出、不路由它；当前没有该自动组时 404 `AUTO_GROUP_NOT_FOUND`。`restore` 删除隐藏记录，该 ID 没有被隐藏时 404 |
 | gateway-keys | `GET`、`POST /gateway-keys`；`GET /gateway-keys/{id}`；`POST /gateway-keys/{id}/revoke` | 只签发 `client:` 作用域，`modelAllow` 必填；默认 90 天后过期，`expiresAt: null` 不过期。`allowLan: true` 的 Key 可以在局域网共享监听器上使用，必须有过期时间。Key 文本只出现在创建响应中，列表与详情不含哈希 |
 | gateway/share | `GET`、`PUT /gateway/share` | 局域网共享的设置（`lan.enabled`、`lan.host`、`lan.port`、`lan.names`、`publicBaseUrl`）与监听器状态（`listening`、`boundPort`、`urls`、`error`）；`PUT` 替换整份设置，先绑定再保存，绑定失败 409 `GATEWAY_SHARE_LISTEN_FAILED`、设置无效 400 `GATEWAY_SHARE_INVALID`，均不改变现状。规则见 [局域网共享](model-gateway.md#局域网共享) |
-| model-calls | `GET /model-calls` | 新到旧，`limit` 1–200（默认 50），`cursor` 为上一页的 `nextCursor`；按 `from`（含）、`to`（不含）、`keyId`、`provider`、`model`、`sessionId` 过滤 |
-| usage | `GET /usage` | `groupBy` 为 `day`（UTC）、`provider`、`model`（默认）、`key` 或 `adapter`；状态码不低于 400 记为失败，成本只累加已知价格，未知价格计入 `unpricedCalls`，`missing` 用量按 0 计 |
+| model-calls | `GET /model-calls` | 新到旧，`limit` 1–200（默认 50），`cursor` 为上一页的 `nextCursor`；按 `from`（含）、`to`（不含）、`keyId`、`provider`、`model`、`sessionId`、`agent` 过滤。每项带网关记录的 `conversationKey`（会话键的 SHA-256，按 Gateway Key 隔离）与 `agent`（`{id, source}`：`key` 来自 `agent:` Key 的作用域，`user-agent` 与 `route` 是推断） |
+| usage | `GET /usage` | `groupBy` 为 `day`（UTC）、`provider`、`model`（默认）、`key`、`adapter` 或 `credential`（键为 `<provider>/<credentialId>`，凭据 ID 只在 provider 内唯一）；状态码不低于 400 记为失败，成本只累加已知价格，未知价格计入 `unpricedCalls`，`missing` 用量按 0 计 |
+| conversations | `GET /conversations`；`GET /conversations/{key}` | 列表按会话汇总有 `conversationKey` 的调用：`calls`、`failedCalls`、`usage`、`cost`、`unpricedCalls`、`firstAt`、`lastAt`，以及用到的 `models`、`credentials`（`<provider>/<credentialId>`）与 `agents`，最后活动的会话在前；`limit`、`cursor` 与过滤同 `/model-calls`，过滤先作用于调用再汇总。`/{key}` 返回该会话的调用（与 `/model-calls` 相同的项与分页），首页没有调用时 404 `CONVERSATION_NOT_FOUND`，`key` 不是 64 位小写十六进制时 400 |
 | agents | `GET /agents`、`GET /agents/{id}`；`POST /agents/{id}/wiring/plan`、`POST /agents/{id}/wiring`、`POST /agents/{id}/wiring/rotate`、`DELETE /agents/{id}/wiring` | 本机 Agent 的安装、接线与漂移；接线签发 `agent:` Key，Key 文本只写入 Agent 的配置文件。见 [全局接线](global-wiring.md) |
 | system | `GET /system/info` | 版本、提交、pid、启动时间、数据目录、秘密后端，以及 `gateway`：本机客户端使用的模型网关基址（`openaiBaseUrl` 含 `/v1`，`anthropicBaseUrl` 与 `geminiBaseUrl` 不含版本段） |
 
@@ -77,8 +79,12 @@ hh model unset deepseek/deepseek-chat
 hh catalog status                            # 使用中的目录、上次刷新、是否后台刷新
 hh catalog refresh
 hh group add fast --member deepseek/deepseek-chat --strategy latency
+hh group auto                                # 自动路由组及是否隐藏
+hh group hide auto-deepseek-v4               # hh group restore auto-deepseek-v4 恢复
 hh key create --name ci --allow deepseek/* --allow group/fast   # Key 只打印这一次
 hh usage --by provider --since 7d
+hh usage --by credential --since 1d          # 每个凭据：<provider>/<credentialId>
+hh usage --by conversation --agent codex     # 每个会话：调用数、token、成本、首末时间
 hh key revoke <keyId> --yes
 hh gateway share on --host 192.168.1.5        # 另在局域网地址上监听，端口默认同守护进程
 hh key create --name laptop --allow deepseek/* --lan   # 局域网上只接受这种 Key
@@ -93,9 +99,10 @@ hh provider models office --refresh           # 模型名为 office/<provider>/<
 - `hh model set` 的键：`context`、`output`（token 数）、`reasoning`、`toolcall`（yes 或 no）、`modalities`（逗号分隔的 text、image、pdf、audio、video）、`price.input`、`price.output`、`price.cacheRead`、`price.cacheWrite`（美元每百万 token）。新值与已有覆盖合并，`键=` 删除一项，全部删除后覆盖被移除。
 - `hh gateway share on` 的 `--host`（本机 IP，`0.0.0.0` 表示全部地址，此时需要 `--name`）、`--port`、可重复的 `--name` 与 `--public-base-url` 未给出时沿用当前设置；`off` 保留地址只关闭监听器。`hh provider add --preset P [--region R] [--plan P] --base URL` 把所选组合的每个端点路径接到 `URL` 之后，`--chat` 等显式端点优先。
 - 秘密从不作为参数：终端中隐藏输入，非交互时必须用 `--from-stdin`、`--from-env <变量>` 或 `--from-file <路径>`，否则以 2 退出。
+- `hh usage --by conversation` 经 `GET /conversations` 列出最后活动的 200 个会话（会话键只显示前 12 位，`--json` 输出完整的 API 响应），可用 `--since`、`--from`、`--to`、`--agent` 等缩小范围；其他 `--by` 取值经 `GET /usage` 汇总。`hh group hide` 与 `restore` 只接受自动路由组，可以随时恢复，因此不需要确认。
 - `provider remove`、`credential remove`、`group remove`、`key revoke` 与 `import` 需要确认；`--yes` 跳过，非交互且没有 `--yes` 时以 4 退出且不做修改。stdin 不是终端、设置了 `CI` 或给出 `--non-interactive` 时为非交互。
 - 退出码（06 第 5 节）：0 成功；1 内部错误；2 用法错误、输入无效或名称不存在；3 守护进程不可达或数据目录中没有令牌；4 需要确认；5 冲突（409、412、422）；6 认证失败；7 达到上限或未就绪（429、503）；130 中断。
 
 控制台的 Provider、路由组、Gateway Key 与用量页面经同源代理调用这些接口；代理在服务端从 `HARNESSHUB_DATA_DIR/admin.token` 读取令牌，浏览器拿不到它（见 [控制台](../packages/console/README.md)）。
 
-测试：[api-v1.test.ts](../tests/integration/api-v1.test.ts) 在进程内启动守护进程，经 SDK 验证认证、校验、凭据值不出现在任何响应、日志与数据目录文件中、Key 的签发与吊销、基于写入账本的用量；[hh-cli.test.ts](../tests/integration/hh-cli.test.ts) 对同一守护进程运行真实的 `hh` 入口；[model-metadata.test.ts](../tests/integration/model-metadata.test.ts) 经 SDK 验证预设与快照补齐、覆盖与手工值的优先级、重启后覆盖仍在，以及网关按补齐的价格计算成本，[单元测试](../tests/unit/model-metadata.test.ts) 覆盖解析顺序与来源记录。
+测试：[api-v1.test.ts](../tests/integration/api-v1.test.ts) 在进程内启动守护进程，经 SDK 验证认证、校验、凭据值不出现在任何响应、日志与数据目录文件中、Key 的签发与吊销、基于写入账本的用量、会话视图与按凭据汇总、自动路由组的派生、隐藏（重启后仍在）与恢复；[hh-cli.test.ts](../tests/integration/hh-cli.test.ts) 对同一守护进程运行真实的 `hh` 入口；[model-metadata.test.ts](../tests/integration/model-metadata.test.ts) 经 SDK 验证预设与快照补齐、覆盖与手工值的优先级、重启后覆盖仍在，以及网关按补齐的价格计算成本，[单元测试](../tests/unit/model-metadata.test.ts) 覆盖解析顺序与来源记录。

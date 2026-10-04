@@ -676,6 +676,8 @@ const callFilter = {
   provider: slug,
   model: modelRefText,
   sessionId: text(200),
+  /** `agent.id` of the call, established or inferred. */
+  agent: text(200),
 } as const;
 export const modelCallsQuerySchema = {
   type: "object",
@@ -691,12 +693,15 @@ export const usageQuerySchema = {
   additionalProperties: false,
   properties: {
     groupBy: {
-      enum: ["day", "provider", "model", "key", "adapter"],
+      enum: ["day", "provider", "model", "key", "adapter", "credential"],
       default: "model",
     },
     ...callFilter,
   },
 } as const;
+
+/** A ledger conversation: lowercase hex SHA-256, scoped to its Gateway Key. */
+const conversationKey = { type: "string", pattern: "^[0-9a-f]{64}$" } as const;
 
 const attempt = {
   type: "object",
@@ -746,6 +751,16 @@ export const modelCallSchema = {
     scope,
     sessionId: { type: "string" },
     runId: { type: "string" },
+    conversationKey: conversationKey,
+    agent: {
+      type: "object",
+      additionalProperties: false,
+      required: ["id", "source"],
+      properties: {
+        id: { type: "string" },
+        source: { enum: ["key", "user-agent", "route"] },
+      },
+    },
     inbound: {
       type: "object",
       additionalProperties: false,
@@ -846,6 +861,81 @@ export const usageSchema = {
         },
       },
     },
+  },
+} as const;
+
+export const conversationsQuerySchema = modelCallsQuerySchema;
+export const conversationParams = {
+  type: "object",
+  additionalProperties: false,
+  required: ["key"],
+  properties: { key: conversationKey },
+} as const;
+export const conversationCallsQuerySchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    limit: modelCallsQuerySchema.properties.limit,
+    cursor: modelCallsQuerySchema.properties.cursor,
+  },
+} as const;
+const conversationSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "key",
+    "calls",
+    "failedCalls",
+    "usage",
+    "cost",
+    "unpricedCalls",
+    "firstAt",
+    "lastAt",
+    "models",
+    "credentials",
+    "agents",
+  ],
+  properties: {
+    key: conversationKey,
+    calls: count,
+    failedCalls: count,
+    usage: tokens,
+    cost: money,
+    unpricedCalls: count,
+    firstAt: timestamp,
+    lastAt: timestamp,
+    models: { type: "array", items: { type: "string" } },
+    credentials: {
+      type: "array",
+      description: "`<provider>/<credentialId>` of each credential used.",
+      items: { type: "string" },
+    },
+    agents: { type: "array", items: { type: "string" } },
+  },
+} as const;
+export const conversationPageSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["items", "nextCursor"],
+  properties: {
+    items: { type: "array", items: conversationSchema },
+    nextCursor: { type: ["string", "null"] },
+  },
+} as const;
+
+export const autoGroupSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "model", "members", "hidden", "createdAt"],
+  properties: {
+    id: slug,
+    model: {
+      type: "string",
+      description: "The model name the members share.",
+    },
+    members,
+    hidden: { type: "boolean" },
+    createdAt: timestamp,
   },
 } as const;
 

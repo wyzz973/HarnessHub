@@ -13,12 +13,14 @@ import type {
   ResolvedField,
 } from "@harnesshub/core/model-metadata";
 import type { ProviderPreset } from "@harnesshub/core/provider-presets";
+import type { AutoGroup } from "@harnesshub/core/auto-groups";
 import type {
   ImportApp,
   ImportPreview,
   ImportResult,
 } from "@harnesshub/core/import-links";
 import type {
+  ConversationSummary,
   GatewayKeyQuota,
   GatewayKeyView,
   ModelCallEntry,
@@ -66,6 +68,7 @@ export type {
   ImportPreview,
   ImportResult,
 } from "@harnesshub/core/import-links";
+export type { AutoGroup } from "@harnesshub/core/auto-groups";
 export type {
   CatalogMeta,
   CatalogStatus,
@@ -273,6 +276,8 @@ export interface CallFilter {
   /** A Model Ref. */
   model?: string;
   sessionId?: string;
+  /** `agent.id` of the call, established or inferred. */
+  agent?: string;
 }
 
 export interface Page<T> {
@@ -301,6 +306,12 @@ export interface UsageReport {
   groupBy: UsageGroupBy;
   items: UsageBucketView[];
 }
+
+/** One conversation's calls summed, as `GET /conversations` returns it. */
+export type ConversationView = Omit<ConversationSummary, "costUsd"> & {
+  /** Sum of known costs; `unpricedCalls` had none. */
+  cost: Money;
+};
 
 export interface SystemInfo {
   apiVersion: "v1";
@@ -840,5 +851,32 @@ export class HarnessHubClient {
   readonly usage = {
     aggregate: (query: CallFilter & { groupBy?: UsageGroupBy } = {}) =>
       this.request<UsageReport>("GET", "usage", { query: { ...query } }),
+  };
+
+  readonly conversations = {
+    /** Conversations active last first; the filter applies to their calls. `limit` is 1 to 200 (default 50). */
+    list: (query: CallFilter & { limit?: number; cursor?: string } = {}) =>
+      this.request<Page<ConversationView>>("GET", "conversations", {
+        query: { ...query },
+      }),
+    /** One conversation's calls, newest first; 404 CONVERSATION_NOT_FOUND when it has none. */
+    get: (key: string, page: { limit?: number; cursor?: string } = {}) =>
+      this.request<Page<ApiModelCall>>("GET", `conversations/${segment(key)}`, {
+        query: { ...page },
+      }),
+  };
+
+  readonly autoGroups = {
+    /** Groups of models that several providers serve under one name, hidden ones included. */
+    list: () => this.request<Page<AutoGroup>>("GET", "auto-groups"),
+    /** The gateway stops listing and routing `group/<id>` until it is restored. */
+    hide: (id: string) =>
+      this.request<void>("POST", `auto-groups/${segment(id)}/hide`, {
+        body: {},
+      }),
+    restore: (id: string) =>
+      this.request<void>("POST", `auto-groups/${segment(id)}/restore`, {
+        body: {},
+      }),
   };
 }

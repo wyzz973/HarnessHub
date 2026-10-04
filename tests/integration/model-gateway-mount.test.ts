@@ -7,7 +7,10 @@ import path from "node:path";
 import test from "node:test";
 import type { TestContext } from "node:test";
 import { apiCatalog } from "@harnesshub/daemon/http/api-catalog";
-import { isModelGatewayPath } from "@harnesshub/daemon/http/model-gateway-mount";
+import {
+  isCodexPassthroughPath,
+  isModelGatewayPath,
+} from "@harnesshub/daemon/http/model-gateway-mount";
 import { startHub } from "@harnesshub/daemon/main";
 import { connectLocal } from "@harnesshub/sdk/local";
 import { temporaryDirectory } from "../support/temporary.js";
@@ -143,8 +146,18 @@ void test("the gateway paths are the model protocol paths and never a management
     "/v1/responsesx",
     "/v1/engines",
     "/v1bet/models",
+    // The Codex passthrough is mounted on the loopback listener only.
+    "/backend-api/codex/responses",
   ])
     assert.equal(isModelGatewayPath(pathname), false, pathname);
+  for (const pathname of [
+    "/backend-api/codex",
+    "/backend-api/codex/responses",
+    "//backend-api/codex/models/",
+  ])
+    assert.equal(isCodexPassthroughPath(pathname), true, pathname);
+  for (const pathname of ["/backend-api/codexx", "/backend-api", "/codex"])
+    assert.equal(isCodexPassthroughPath(pathname), false, pathname);
   // Every documented management operation stays with Fastify.
   const management = apiCatalog.filter((entry) => entry.path.startsWith("/v1"));
   assert.ok(management.length > 30);
@@ -252,6 +265,7 @@ void test(
     assert.equal(completion.choices[0]?.message.content, "Hello world");
     const upstreamChat = fake.seen.at(-1)!;
     assert.equal(upstreamChat.headers.authorization, `Bearer ${CHAT_KEY}`);
+
     assert.equal(
       (JSON.parse(upstreamChat.body) as { model: string }).model,
       "chat-1",
@@ -361,6 +375,16 @@ void test(
     assert.equal(bucket("claude")?.calls, 1);
     assert.equal(bucket("claude")?.usage.input, 10);
     assert.equal(bucket("")?.calls, 2);
+
+    // The Codex passthrough is mounted on the daemon's port; a browser
+    // origin is refused by the gateway before anything is forwarded.
+    const codex = await call(
+      `http://127.0.0.1:${port}/backend-api/codex/responses`,
+      { headers: { origin: "https://example.com" }, body: { model: "gpt-5" } },
+    );
+    assert.equal(codex.status, 403, codex.text);
+    assert.equal(codex.headers.get("x-hh-error-source"), "gateway");
+    assert.match(codex.text, /origin_forbidden/);
 
     // Management routes on the same port still answer from Fastify.
     const engines = await fetch(`${hub.url}/v1/engines`);

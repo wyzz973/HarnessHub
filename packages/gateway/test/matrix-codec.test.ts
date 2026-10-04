@@ -18,6 +18,7 @@ import {
 } from "../src/encode.js";
 import { googleToChat } from "../src/google.js";
 import type { ChatTranslation } from "../src/protocol.js";
+import { reasoningItemKeys } from "../src/reasoning.js";
 import { responsesToChat } from "../src/responses.js";
 import { normalizeChatRequest } from "../src/upstream.js";
 import { at } from "./shared-support.js";
@@ -335,6 +336,86 @@ void test("Responses encoding: instructions, items, images, non-strict tools, fo
     "stop",
     "tool_result.is_error",
   ]);
+});
+
+void test("Responses encoding returns the same provider's reasoning item ahead of its tool calls and asks for encrypted reasoning", () => {
+  const item = {
+    type: "reasoning",
+    id: "rs_1",
+    summary: [{ type: "summary_text", text: "I should read it." }],
+    encrypted_content: "sealed-1",
+  };
+  const asked: string[] = [];
+  // The provider's own item, remembered under the first call's keys only.
+  const own = (kind: "thinking" | "call", key: string) => {
+    asked.push(`${kind}:${key}`);
+    return kind === "call" &&
+      reasoningItemKeys({
+        id: "call_1",
+        name: "read",
+        arguments: '{"path":"a"}',
+      }).includes(key)
+      ? JSON.stringify(item)
+      : undefined;
+  };
+  const replayed = encodeRequest(
+    "responses",
+    conversation(),
+    context({ signature: own }),
+  );
+  assert.deepEqual(at(replayed.body, "input", 1), item);
+  assert.deepEqual(
+    (replayed.body.input as Record<string, unknown>[])
+      .slice(1, 5)
+      .map((entry) => entry.type),
+    ["reasoning", "message", "function_call", "function_call"],
+  );
+  assert.equal(
+    (replayed.body.input as Record<string, unknown>[]).filter(
+      (entry) => entry.type === "reasoning",
+    ).length,
+    1,
+  );
+  assert.ok(!replayed.unmapped.includes("reasoning"));
+  assert.deepEqual(replayed.body.include, ["reasoning.encrypted_content"]);
+  assert.ok(asked.every((name) => name.startsWith("call:reasoning:")));
+
+  // Another provider's cache has nothing: the history reasoning is dropped.
+  const foreign = encodeRequest(
+    "responses",
+    conversation(),
+    context({ signature: () => undefined }),
+  );
+  assert.ok(
+    (foreign.body.input as Record<string, unknown>[]).every(
+      (entry) => entry.type !== "reasoning",
+    ),
+  );
+  assert.ok(foreign.unmapped.includes("reasoning"));
+  assert.equal(foreign.body.include, undefined);
+
+  // Encrypted reasoning is asked for when the model is known to reason, and
+  // never when the request turns reasoning off.
+  const reasoner = encodeRequest(
+    "responses",
+    conversation(),
+    context({ model: { id: "wire-1", reasoning: true } }),
+  );
+  assert.deepEqual(reasoner.body.include, ["reasoning.encrypted_content"]);
+  const off = encodeRequest(
+    "responses",
+    conversation(),
+    context({
+      model: { id: "wire-1", reasoning: true },
+      translation: {
+        body: { messages: [] },
+        tools: new Map(),
+        stream: true,
+        reasoning: { off: true },
+      },
+    }),
+  );
+  assert.equal(off.body.include, undefined);
 });
 
 void test("Gemini encoding: systemInstruction, merged turns, declarations with restricted schemas and named responses", () => {
@@ -819,6 +900,113 @@ void test("the Responses decoder keeps interleaved parallel function arguments a
         },
       }),
     (error: unknown) => (error as { status?: number }).status === 429,
+  );
+});
+
+void test("the Responses decoder keeps the reasoning item each tool call followed, completed by later events", () => {
+  const streamed = createDecoder("responses");
+  for (const event of [
+    { type: "response.created", response: { model: "gpt-x" } },
+    {
+      type: "response.output_item.added",
+      output_index: 0,
+      item: { type: "reasoning", id: "rs_1", summary: [] },
+    },
+    {
+      type: "response.reasoning_summary_text.delta",
+      item_id: "rs_1",
+      delta: "think",
+    },
+    {
+      type: "response.output_item.done",
+      output_index: 0,
+      item: {
+        type: "reasoning",
+        id: "rs_1",
+        summary: [{ type: "summary_text", text: "think" }],
+        encrypted_content: "sealed-1",
+      },
+    },
+    {
+      type: "response.output_item.added",
+      output_index: 1,
+      item: {
+        type: "function_call",
+        id: "fc_a",
+        call_id: "call_a",
+        name: "read",
+        arguments: '{"x":1}',
+      },
+    },
+    {
+      type: "response.output_item.added",
+      output_index: 2,
+      item: {
+        type: "function_call",
+        id: "fc_b",
+        call_id: "call_b",
+        name: "list",
+        arguments: '{"y":2}',
+      },
+    },
+    { type: "response.completed", response: { status: "completed" } },
+  ])
+    streamed.event(event);
+  const item = {
+    type: "reasoning",
+    id: "rs_1",
+    summary: [{ type: "summary_text", text: "think" }],
+    encrypted_content: "sealed-1",
+  };
+  assert.deepEqual(
+    [...streamed.callReasoning],
+    [
+      [0, item],
+      [1, item],
+    ],
+  );
+  assert.deepEqual([...streamed.callSignatures], []);
+
+  // A whole response: the item comes from the output, without encrypted
+  // content when the provider gave none; a call before any reasoning has none.
+  const whole = createDecoder("responses");
+  whole.body({
+    model: "gpt-x",
+    status: "completed",
+    output: [
+      {
+        type: "function_call",
+        id: "fc_0",
+        call_id: "call_0",
+        name: "read",
+        arguments: "{}",
+      },
+      {
+        type: "reasoning",
+        id: "rs_2",
+        summary: [{ type: "summary_text", text: "then" }],
+      },
+      {
+        type: "function_call",
+        id: "fc_1",
+        call_id: "call_1",
+        name: "read",
+        arguments: "{}",
+      },
+    ],
+  });
+  assert.deepEqual(
+    [...whole.callReasoning],
+    [
+      [
+        1,
+        {
+          type: "reasoning",
+          id: "rs_2",
+          summary: [{ type: "summary_text", text: "then" }],
+        },
+      ],
+    ],
   );
 });
 

@@ -33,7 +33,11 @@ import {
   type WiringRecord,
 } from "@harnesshub/core/model-plane";
 import { resolveHandlerLimits } from "../src/limits.js";
-import { createGatewayHandler, type GatewayHandler } from "../src/server.js";
+import {
+  createGatewayHandler,
+  type GatewayHandler,
+  type GatewayHandlerDeps,
+} from "../src/server.js";
 
 /** ModelPlaneStore in memory; `appendGate` delays and `failAppend` rejects ledger writes. */
 export class MemoryStore implements ModelPlaneStore {
@@ -133,6 +137,20 @@ export class MemoryStore implements ModelPlaneStore {
         unpricedCalls: rows.filter((entry) => entry.cost === null).length,
       },
     ];
+  }
+  /** Not used by the gateway; conversations are summed by the SQLite store. */
+  async listConversations() {
+    return { items: [] };
+  }
+  hidden = new Set<string>();
+  async listHiddenAutoGroups() {
+    return [...this.hidden].sort() as RouteGroupId[];
+  }
+  async setAutoGroupHidden(id: RouteGroupId, hidden: boolean) {
+    if (this.hidden.has(id) === hidden) return false;
+    if (hidden) this.hidden.add(id);
+    else this.hidden.delete(id);
+    return true;
   }
   async listWirings(): Promise<WiringRecord[]> {
     return [];
@@ -369,6 +387,7 @@ export async function mount(
   t: test.TestContext,
   store: MemoryStore,
   limits: Record<string, number> = {},
+  deps: Pick<GatewayHandlerDeps, "log" | "codexBackend"> = {},
 ): Promise<Mounted> {
   const clock = { now: Date.parse("2026-10-02T12:00:00.000Z") };
   const handler = createGatewayHandler({
@@ -376,6 +395,7 @@ export async function mount(
     resolveSecret,
     clock: () => clock.now,
     limits: resolveHandlerLimits(limits),
+    ...deps,
   });
   const server = createServer(handler);
   server.listen(0, "127.0.0.1");

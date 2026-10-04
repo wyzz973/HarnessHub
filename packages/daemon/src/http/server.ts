@@ -21,6 +21,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import {
+  isCodexPassthroughPath,
   isModelGatewayPath,
   requestPath,
   type ModelGatewayMount,
@@ -100,7 +101,8 @@ export async function createGateway(
     sessionLogs?: SessionLogReader;
     /**
      * The shared model gateway. Requests whose path {@link isModelGatewayPath}
-     * accepts go to it on the same listener before Fastify: they skip
+     * or {@link isCodexPassthroughPath} accepts go to it on the same listener
+     * before Fastify: they skip
      * Fastify's body limit, JSON parser and hooks, and the gateway applies
      * its own limits and loopback, Host and Origin rules. The owner closes
      * the gateway before the stores.
@@ -119,7 +121,8 @@ export async function createGateway(
             ) => void,
           ) => {
             const listener = createServer((request, response) => {
-              if (isModelGatewayPath(requestPath(request.url)))
+              const path = requestPath(request.url);
+              if (isModelGatewayPath(path) || isCodexPassthroughPath(path))
                 modelGateway.handle(request, response);
               else handler(request, response);
             });

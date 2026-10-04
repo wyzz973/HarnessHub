@@ -59,7 +59,7 @@ Anthropic 客户端使用不带 `/v1` 的基址：`ANTHROPIC_BASE_URL=http://127
 pnpm exec hh usage --by model --since 1d
 ```
 
-每次进入网关的调用，包括被拒绝的，都记在 `model.call` 账本中：`GET /api/v1/model-calls` 列出明细，`GET /api/v1/usage` 按模型、provider、日期、Key 或 Agent 汇总；价格未知的调用单独计数，不按 0 计算。控制台的“用量”页面显示同样的数据（[控制台](../packages/console/README.md)）。
+每次进入网关的调用，包括被拒绝的，都记在 `model.call` 账本中：`GET /api/v1/model-calls` 列出明细，`GET /api/v1/usage` 按模型、provider、日期、Key、Agent 或凭据汇总，`GET /api/v1/conversations`（`hh usage --by conversation`）按会话汇总；价格未知的调用单独计数，不按 0 计算。控制台的“用量”页面显示同样的数据（[控制台](../packages/console/README.md)）。
 
 ## 5. 接入本机的编码 Agent
 

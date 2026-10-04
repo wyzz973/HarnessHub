@@ -93,14 +93,6 @@ function request(
   }
 }
 
-/**
- * Known gap, kept visible as a todo: a tool call answered through a Responses
- * upstream needs the call's reasoning item back, and the Responses encoder
- * cannot send it yet (it would need the item's encrypted content).
- */
-const RESPONSES_REPLAY_GAP =
-  "the Responses encoder does not send a call's reasoning item back";
-
 void test(
   "every inbound protocol reaches every upstream protocol of the strict fake provider in whitelist mode through the daemon",
   { timeout: 120_000 },
@@ -117,10 +109,6 @@ void test(
     };
     const fake = await startFakeProvider(strict);
     t.after(() => fake.close());
-    // The known gap runs against its own provider, so that its failures do
-    // not mix with the records checked below.
-    const replay = await startFakeProvider(strict);
-    t.after(() => replay.close());
     const { directory, defer } = await temporaryDirectory(t, "hh-matrix-");
     const dataDir = path.join(directory, "data");
     const hub = await startHub({
@@ -155,12 +143,6 @@ void test(
       credential,
     });
     await client.providers.create({
-      id: "up-responses-replay",
-      endpoints: { responses: `${replay.url}/v1` },
-      models,
-      credential,
-    });
-    await client.providers.create({
       id: PROVIDER.messages,
       endpoints: { anthropic: fake.url },
       auth: { apiKeyHeader: "x-api-key" },
@@ -177,10 +159,7 @@ void test(
     const key = (
       await client.gatewayKeys.create({
         name: "matrix",
-        modelAllow: [
-          ...Object.values(PROVIDER).map((id) => `${id}/*`),
-          "up-responses-replay/*",
-        ],
+        modelAllow: Object.values(PROVIDER).map((id) => `${id}/*`),
       })
     ).key;
     const builders = await requestBuilders();
@@ -220,48 +199,41 @@ void test(
             assert.equal(plain.text, "OK", where);
           });
           expected.push({ protocol: upstream, turn: "plain" });
-          const gap = upstream === "responses" && inbound !== "responses";
           // A tool round trip: the provider requires the reasoning of its
           // call back in its own protocol's place.
-          await t.test(
-            `${where}: tool round trip`,
-            gap ? { todo: RESPONSES_REPLAY_GAP } : {},
-            async () => {
-              const model = `${gap ? "up-responses-replay" : PROVIDER[upstream]}/${MODEL}`;
-              const first = request(
-                inbound,
-                model,
-                stream,
-                `HH_MOCK_TOOL ${where}`,
-                tools,
-              );
-              const called = await call(inbound, model, stream, first, where);
-              assert.deepEqual(
-                called.toolCalls.map((tool) => [
-                  tool.name,
-                  JSON.parse(tool.arguments) as unknown,
-                ]),
-                [["bash", { command: "echo mock-ok > mock-ok.txt" }]],
-                where,
-              );
-              const done = await call(
-                inbound,
-                model,
-                stream,
-                builders.followUp(inbound, first, called, {
-                  echo:
-                    called.reasoning !== "" || called.signature !== undefined,
-                }),
-                where,
-              );
-              assert.equal(done.text, "DONE", where);
-            },
-          );
-          if (!gap)
-            expected.push(
-              { protocol: upstream, turn: "tool-call" },
-              { protocol: upstream, turn: "tool-result" },
+          await t.test(`${where}: tool round trip`, async () => {
+            const model = `${PROVIDER[upstream]}/${MODEL}`;
+            const first = request(
+              inbound,
+              model,
+              stream,
+              `HH_MOCK_TOOL ${where}`,
+              tools,
             );
+            const called = await call(inbound, model, stream, first, where);
+            assert.deepEqual(
+              called.toolCalls.map((tool) => [
+                tool.name,
+                JSON.parse(tool.arguments) as unknown,
+              ]),
+              [["bash", { command: "echo mock-ok > mock-ok.txt" }]],
+              where,
+            );
+            const done = await call(
+              inbound,
+              model,
+              stream,
+              builders.followUp(inbound, first, called, {
+                echo: called.reasoning !== "" || called.signature !== undefined,
+              }),
+              where,
+            );
+            assert.equal(done.text, "DONE", where);
+          });
+          expected.push(
+            { protocol: upstream, turn: "tool-call" },
+            { protocol: upstream, turn: "tool-result" },
+          );
         }
 
     // With thinking enabled, Messages shows the reasoning and wants the signed
@@ -331,9 +303,7 @@ void test(
           : undefined,
         record.protocol,
       );
-    const ledger = (await client.modelCalls.list({ limit: 200 })).items.filter(
-      (entry) => entry.provider !== "up-responses-replay",
-    );
+    const ledger = (await client.modelCalls.list({ limit: 200 })).items;
     assert.equal(ledger.length, expected.length);
     for (const entry of ledger) {
       assert.equal(entry.status, 200);

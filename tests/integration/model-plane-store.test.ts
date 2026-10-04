@@ -980,6 +980,18 @@ void test("usage aggregation sums known costs, counts unpriced calls and zeroes 
       ["claude-code", 2, 0.5, 1],
     ],
   );
+  // Credential IDs are unique within their provider only.
+  assert.deepEqual(
+    (await plane.aggregateUsage({}, "credential")).map((bucket) => [
+      bucket.key,
+      bucket.calls,
+    ]),
+    [
+      ["", 1],
+      ["alpha/primary", 2],
+      ["beta/primary", 1],
+    ],
+  );
   // Filters: time range (from inclusive, to exclusive), key, provider, model, session.
   assert.deepEqual(
     (
@@ -1029,4 +1041,217 @@ void test("usage aggregation sums known costs, counts unpriced calls and zeroes 
     plane.aggregateUsage({ to: "2026-13-45T00:00:00Z" }, "day"),
     code("INVALID_USAGE_FILTER"),
   );
+});
+
+void test("conversations sum their calls, newest first, with a stable cursor and filters", async (t) => {
+  const { plane, store, open } = fixture(t);
+  const conversation = (index: number) => index.toString(16).repeat(64);
+  const [first, second, third] = [1, 2, 3].map(conversation) as [
+    string,
+    string,
+    string,
+  ];
+  const at = (minute: number) => `2026-10-02T08:0${minute}:00.000Z`;
+  await plane.appendModelCall(
+    call({
+      occurredAt: at(1),
+      conversationKey: first,
+      agent: { id: "claude", source: "key" },
+      cost: { amountUsd: 0.5, priceSource: "provider" },
+    }),
+  );
+  await plane.appendModelCall(
+    call({
+      occurredAt: at(4),
+      conversationKey: first,
+      agent: { id: "claude", source: "key" },
+      provider: "beta" as ProviderId,
+      modelRef: "beta/chat-2" as ModelRef,
+      credentialId: "backup" as CredentialId,
+      status: 429,
+      cost: null,
+    }),
+  );
+  await plane.appendModelCall(
+    call({
+      occurredAt: at(3),
+      conversationKey: second,
+      agent: { id: "codex", source: "user-agent" },
+    }),
+  );
+  // A rejected call keeps its conversation but names no model or credential.
+  const rejected = call({
+    occurredAt: at(2),
+    conversationKey: third,
+    status: 403,
+    rejected: true,
+    rejectReason: "model_not_allowed",
+    attempts: [],
+    cost: null,
+  });
+  for (const field of [
+    "provider",
+    "modelRef",
+    "credentialId",
+    "usage",
+  ] as const)
+    delete rejected[field];
+  await plane.appendModelCall(rejected);
+  // Calls without a conversation are no conversation's.
+  await plane.appendModelCall(call({ occurredAt: at(5) }));
+
+  const all = await plane.listConversations({}, { limit: 10 });
+  assert.equal(all.nextCursor, undefined);
+  assert.deepEqual(all.items[0], {
+    key: first,
+    calls: 2,
+    failedCalls: 1,
+    usage: {
+      input: 200,
+      cacheRead: 20,
+      cacheWrite: 0,
+      output: 100,
+      reasoning: 10,
+    },
+    costUsd: 0.5,
+    unpricedCalls: 1,
+    firstAt: at(1),
+    lastAt: at(4),
+    models: ["alpha/chat-1", "beta/chat-2"],
+    credentials: ["alpha/primary", "beta/backup"],
+    agents: ["claude"],
+  });
+  assert.deepEqual(
+    all.items.map((item) => item.key),
+    [first, second, third],
+  );
+  assert.deepEqual(all.items[2], {
+    key: third,
+    calls: 1,
+    failedCalls: 1,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, reasoning: 0 },
+    costUsd: 0,
+    unpricedCalls: 1,
+    firstAt: at(2),
+    lastAt: at(2),
+    models: [],
+    credentials: [],
+    agents: [],
+  });
+
+  // Paging by one walks the same order and ends without a cursor.
+  const seen: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await plane.listConversations(
+      {},
+      cursor === undefined ? { limit: 1 } : { limit: 1, cursor },
+    );
+    seen.push(...page.items.map((item) => item.key));
+    cursor = page.nextCursor;
+  } while (cursor !== undefined);
+  assert.deepEqual(seen, [first, second, third]);
+
+  // Filters apply to the calls before they are summed.
+  assert.deepEqual(
+    (
+      await plane.listConversations({ agent: "codex" }, { limit: 10 })
+    ).items.map((item) => item.key),
+    [second],
+  );
+  const window = await plane.listConversations(
+    { from: at(2), to: at(4) },
+    { limit: 10 },
+  );
+  assert.deepEqual(
+    window.items.map((item) => [item.key, item.calls]),
+    [
+      [second, 1],
+      [third, 1],
+    ],
+  );
+  // One conversation's calls, newest first.
+  assert.deepEqual(
+    (
+      await plane.listModelCalls({ conversationKey: first }, { limit: 10 })
+    ).items.map((item) => item.occurredAt),
+    [at(4), at(1)],
+  );
+  assert.deepEqual(
+    (await plane.aggregateUsage({ agent: "claude" }, "model")).map((bucket) => [
+      bucket.key,
+      bucket.calls,
+    ]),
+    [
+      ["alpha/chat-1", 1],
+      ["beta/chat-2", 1],
+    ],
+  );
+
+  for (const limit of [0, 1001])
+    await assert.rejects(
+      plane.listConversations({}, { limit }),
+      code("INVALID_PAGE_LIMIT"),
+    );
+  for (const bad of [
+    "garbage",
+    Buffer.from("v1:1:1").toString("base64url"),
+    Buffer.from("c1:1:not-a-key").toString("base64url"),
+  ])
+    await assert.rejects(
+      plane.listConversations({}, { limit: 1, cursor: bad }),
+      code("INVALID_CURSOR"),
+    );
+  await assert.rejects(
+    plane.listConversations({ from: "yesterday" }, { limit: 1 }),
+    code("INVALID_USAGE_FILTER"),
+  );
+
+  // The columns come back after a reopen.
+  plane.close();
+  store.close();
+  const reopened = open().plane;
+  assert.equal(
+    (await reopened.listConversations({}, { limit: 10 })).items.length,
+    3,
+  );
+});
+
+void test("hidden automatic groups are kept until restored and survive a reopen", async (t) => {
+  const { plane, store, open } = fixture(t);
+  assert.deepEqual(await plane.listHiddenAutoGroups(), []);
+  assert.equal(
+    await plane.setAutoGroupHidden("auto-glm-4-6" as RouteGroupId, true),
+    true,
+  );
+  assert.equal(
+    await plane.setAutoGroupHidden("auto-glm-4-6" as RouteGroupId, true),
+    false,
+  );
+  await plane.setAutoGroupHidden("auto-deepseek-v4" as RouteGroupId, true);
+  assert.deepEqual(await plane.listHiddenAutoGroups(), [
+    "auto-deepseek-v4",
+    "auto-glm-4-6",
+  ]);
+  plane.close();
+  store.close();
+  const reopened = open().plane;
+  assert.deepEqual(await reopened.listHiddenAutoGroups(), [
+    "auto-deepseek-v4",
+    "auto-glm-4-6",
+  ]);
+  assert.equal(
+    await reopened.setAutoGroupHidden("auto-glm-4-6" as RouteGroupId, false),
+    true,
+  );
+  assert.equal(
+    await reopened.setAutoGroupHidden("auto-glm-4-6" as RouteGroupId, false),
+    false,
+  );
+  assert.deepEqual(await reopened.listHiddenAutoGroups(), ["auto-deepseek-v4"]);
+  for (const bad of ["fast", "auto-", "auto-UPPER", "auto-a b", "group/auto-x"])
+    await assert.rejects(
+      reopened.setAutoGroupHidden(bad as RouteGroupId, true),
+      code("AUTO_GROUP_ID_INVALID"),
+    );
 });
