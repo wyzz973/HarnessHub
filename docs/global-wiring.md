@@ -42,7 +42,11 @@ pnpm exec hh profile apply work                       # 显示改动，确认后
 
 Agent 的 Key 是它的模型列表（Magpie 的 `visible` 与 `hiddenModels`）：`modelAllow` 是白名单，默认 `*`；`modelDeny` 是黑名单，名单之外的模型（包括之后新增的）都显示。网关的 `/v1/models` 与调用、写进 Agent 文件的模型清单（OpenCode、Pi、Crush、Kimi 的模型条目，Codex 的模型目录，Claude 的 `CLAUDE_CODE_MODEL_CAPABILITIES`）都按同一组 `modelAllowed(allow, ref, deny)` 过滤网关的模型，所以两边一致。
 
-`PUT /api/v1/agents/{id}/models {hidden}`（`hh agents models <id> --hide REF --show REF`）把 `modelDeny` 改为 `hidden`，不换 Key：守护进程从 Agent 的文件中读回它的 Key（`wiredKeyText`），以过滤后的列表经 `applyWiring` 重写这些文件，失败时把 `modelDeny` 改回原值。隐藏 Agent 正在用的模型或档位模型为 409 `AGENT_MODEL_IN_USE`；Agent 文件中已没有它的 Key（用户换掉了）为 409 `AGENT_KEY_NOT_IN_FILES`，需要 `--rotate`。网关新增模型后，网关立即对 Key 列出它；Agent 文件中的清单要到下次接线或隐藏操作时才更新（尚未实现 Magpie 的自动同步）。
+`PUT /api/v1/agents/{id}/models {hidden}`（`hh agents models <id> --hide REF --show REF`）把 `modelDeny` 改为 `hidden`，不换 Key：守护进程从 Agent 的文件中读回它的 Key（`wiredKeyText`），以过滤后的列表经 `applyWiring` 重写这些文件，失败时把 `modelDeny` 改回原值。隐藏 Agent 正在用的模型或档位模型为 409 `AGENT_MODEL_IN_USE`；Agent 文件中已没有它的 Key（用户换掉了）为 409 `AGENT_KEY_NOT_IN_FILES`，需要 `--rotate`。网关新增模型后，网关立即对 Key 列出它，Agent 文件中的清单由目录同步更新（见下文）。
+
+### 目录同步
+
+按 Magpie 的 `SyncCatalog`：provider 保存或删除（包括模型列表刷新与元数据补齐）、路由组改动之后，守护进程等改动停下 500 ms，再把每个已接线、有 Key 的 Agent 文件中的模型清单改写为该 Key 现在可见的模型。每个 Agent 走正常的计划与写入路径（备份、原子写、回读校验），沿用它文件里的 Key 与隐藏列表，与其他接线操作串行；清单没有变化时什么都不写。以下情况不改写该 Agent，并在 `GET /api/v1/agents` 的 `wiring.attention`（`hh agents` 的 DRIFT 列）标出原因，直到一次同步或接线操作成功：自 HarnessHub 上次写入后文件被改动（漂移，`AGENT_FILES_CHANGED`）、Key 已吊销或丢失（`AGENT_KEY_INACTIVE`）、文件中已没有它的 Key（`AGENT_KEY_NOT_IN_FILES`）、所选模型或档位模型已不在网关上（`AGENT_MODEL_UNAVAILABLE`）。`startHub` 的选项 `wiring: {autoSync: false}` 关闭同步（默认开启，由 `resolveWiringSettings` 解析，其他取值启动失败）；标记只在内存中，守护进程重启后由下一次同步重新得出。
 
 ### Profile
 
@@ -62,6 +66,10 @@ Profile 保存每个已接线 Agent 的模型选择（模型、档位、effort�
 | `wiredKeyText(record, ctx)` | 只读。Agent 文件中当前的、属于 `record.keyId` 的 Key 文本（也在列表项与对象内查找）；用户换掉或删掉后为 undefined。用于不换 Key 地重写接线 |
 | `resolveOptions(adapter, options)`、`isKeyless(adapter, options)` | 补齐 Adapter 选项的默认值（未声明的选项或取值为 `WIRING_TARGET_INVALID`）；这组选项下 Agent 是否自己登录、不用 Key |
 
+### 数组元素
+
+有的 Agent 把 provider 或模型存为用户自己也会写入的数组的元素。键路径的最后一段可以是元素选择器：对象 `{match: {字段: 值}}`（所有字段相等的那个元素）或标量 `{equals: 值}`。设置时选中的元素原地替换，没有则追加在数组末尾（数组不存在时创建）；删除时只删这个元素（连同它自己的行与分隔逗号），其他元素的字节与顺序不变；选择器在中间时进入一个已存在的元素设置其中的字段。选择器选中多个元素为 `WIRING_UNSUPPORTED_STRUCTURE`。JSON 与 YAML 支持，TOML 与 dotenv 拒绝。HarnessHub 拥有的是这些元素：重新接线时原地更新、新的追加在后、不再写的删除；还原时删除它们，或把它替换掉的用户元素按原值写回；元素被删或被改为漂移。备份清单的格式版本因此为 2（版本 1 仍可读取）。Adapter 可以经 `files.current(id)` 读取文件当前的内容，用于依赖用户已有内容的设置（如只在用户保留了 `availableModels` 时把模型加入其中）。
+
 `target` 为 `{baseUrl, keyText?, keyId?, model?, models[], tiers?, effort?, options?}`：`baseUrl` 是网关根地址（如 `http://127.0.0.1:3180`），各 Adapter 按协议自行追加 `/v1`；`keyText` 必须是 `agent` 作用域且与 `keyId` 一致的 Gateway Key；`models` 带 `/v1/models` 的窗口、输出上限、推理档位（`efforts`）、图像输入（`images`）与网关可直通的原生协议（`nativeProtocols`），各档模型的元数据也从这里取。`tiers`、`effort` 与 `options` 必须是 Adapter 声明的（`WiringAdapter.tiers`、`efforts`、`options`），否则为 `WIRING_TARGET_INVALID`。Adapter 在这组选项下自己登录（`keyless`，如 Codex 的 `codexAuth: chatgpt`）时不接受 Key、模型、档位与 effort，记录中也没有 `keyId` 与 `model`；为防 Adapter 误用，库检查它的设置没有引用 Key 或模型。`ctx` 为 `{home, dataDir, env?, clock?}`：`home` 必填，库从不读取 `os.homedir()` 或 `process.env`，Agent 的目录变量只来自显式的 `env`。
 
 Adapter 的设置可以是 `{value}`，也可以是 `{remove: true}`：删除用户的条目，以免它覆盖接线（Claude 档位不同时的 `CLAUDE_CODE_SUBAGENT_MODEL`、设置 effort 时的 `CLAUDE_CODE_EFFORT_LEVEL`）；还原时同样恢复原值。`generated: true` 的文件（Codex 的模型目录）整个由 HarnessHub 生成，预览只显示大小；计划中超过 2000 字符的值被截断，diff 仍完整。
@@ -79,9 +87,9 @@ Adapter 的设置可以是 `{value}`，也可以是 `{remove: true}`：删除用
 
 | 格式 | 做法 | 拒绝 |
 |---|---|---|
-| JSON/JSONC | `jsonc-parser` 解析取得节点偏移，按偏移拼接；新属性放在所在对象最后一个属性之后，沿用该行缩进、对象的尾逗号风格，内联对象保持单行，上一行末尾的注释留在原行 | 解析错误、根不是对象、路径上的重复键 |
-| TOML | `smol-toml` 校验与回读，自带的行扫描器定位表头与赋值；只替换值、插入一行或删除条目的行。新键加在所在表（或点号键组）的最后一个赋值之后，缺失的表追加到文件末尾并以一个空行分隔，删除该表时一并删除这个空行 | 内联表与数组表中的键、数组中的表、非有限数 |
-| YAML | `yaml` 的 Document API，保留注释、空行、键顺序与标量样式；序列化可能规范化流式集合内的空白，因此按值校验 | 多文档、根不是映射、路径上的锚点或别名 |
+| JSON/JSONC | `jsonc-parser` 解析取得节点偏移，按偏移拼接；新属性放在所在对象最后一个属性之后，沿用该行缩进、对象的尾逗号风格，内联对象保持单行，上一行末尾的注释留在原行；数组元素同样追加在最后一个元素之后，删除最后一个元素后容器收回为 `[]`/`{}` | 解析错误、根不是对象、路径上的重复键、选中多个元素的选择器 |
+| TOML | `smol-toml` 校验与回读，自带的行扫描器定位表头与赋值；只替换值、插入一行或删除条目的行。新键加在所在表（或点号键组）的最后一个赋值之后，缺失的表追加到文件末尾并以一个空行分隔，删除该表时一并删除这个空行 | 内联表与数组表中的键、数组中的表、非有限数、数组元素选择器 |
+| YAML | `yaml` 的 Document API，保留注释、空行、键顺序与标量样式；序列化可能规范化流式集合内的空白，因此按值校验 | 多文档、根不是映射、路径上的锚点或别名、选中多个项的选择器 |
 | dotenv | 按行编辑，保留 `export` 前缀与行尾注释；值为纯字符时不加引号，否则加单引号 | 未闭合的引号、重复赋值的目标变量、需要转义才能表达的值 |
 
 BOM 与换行风格（LF/CRLF）保持原样。回读校验用真实解析器确认每个目标键的值，并确认去掉这些键后文档与写前相同。
@@ -101,7 +109,7 @@ BOM 与换行风格（LF/CRLF）保持原样。回读校验用真实解析器确
 | `crush` Crush | `crush.json`（`${XDG_CONFIG_HOME:-~/.config}/crush`，Windows 为 `%LOCALAPPDATA%\crush`） | `providers.harnesshub`（`type: openai-compat`、`base_url`、`api_key`、`models[]` 含 `context_window`、`default_max_tokens`、`can_reason`、`reasoning_levels`、`default_reasoning_effort`、`supports_attachments`）、`models.large`（设置时含 `reasoning_effort`）、`models.small` | Chat | 配置文件 |
 | `kimi` Kimi Code | `config.toml`（`${KIMI_SHARE_DIR:-~/.kimi}`，核实） | `default_model`；`[providers.harnesshub]`（`type = "openai_legacy"`、`base_url`、`api_key`）；窗口已知的每个模型一个 `[models."<ref>"]`（`provider`、`model`、`max_context_size`）。所选模型必须有窗口 | Chat | 配置文件 |
 
-以下 Adapter 依照 Magpie @2e340f7，未以真实 Agent 验证；Key 一律写入配置文件。Magpie 的网关不校验 Key（`magpie` 或 `magpie-<agent>`），HarnessHub 的网关要求 Agent 作用域的 Key，因此只收录能把 Key 写进配置的 Agent，且不写 Magpie 仅用于识别调用方的 `User-Agent` 头（Key 已标明 Agent）。`WiringModel` 只有窗口与输出上限，Magpie 按模型写入的推理档位、图片输入与按原生 API 逐模型选择协议（Pi、omp 的 `openai-responses`/`anthropic-messages`）一律不写，所有模型走表中的协议。
+以下 Adapter 依照 Magpie @2e340f7，未以真实 Agent 验证；Key 一律写入配置文件。Magpie 的网关不校验 Key（`magpie` 或 `magpie-<agent>`），HarnessHub 的网关要求 Agent 作用域的 Key，因此只收录能把 Key 写进配置的 Agent，且不写 Magpie 仅用于识别调用方的 `User-Agent` 头（Key 已标明 Agent）。除 MiMo、OmO（复用 OpenCode、Pi 的写入）与最后四个外，这些 Adapter 只写窗口与输出上限，尚未写 Magpie 按模型写入的推理档位与图片输入，也不按原生 API 逐模型选择协议（omp 的 `openai-responses`/`anthropic-messages`），所有模型走表中的协议。
 
 | Adapter | 文件（目录变量） | 写入的键 | 协议 | 说明 |
 |---|---|---|---|---|
@@ -114,6 +122,10 @@ BOM 与换行风格（LF/CRLF）保持原样。回读校验用真实解析器确
 | `qoder` Qoder、`qoder-cn` Qoder CN | `settings.json`（`${QODER_CONFIG_DIR:-~/.qoder}`；`${QODERCN_CONFIG_DIR:-~/.qoder-cn}`） | `providers.harnesshub`（`protocol: openai`、`baseUrl`、`apiKey`、`model`、`models[]` 含 `capabilities`、`contextWindow`、`maxOutputTokens`）、`model.name = "harnesshub/<ref>"` | Chat | Qoder 只对已登录且套餐含 BYOK 的账号启用自定义 provider，否则接线不生效 |
 | `cline` Cline CLI | `settings/providers.json` 与 `settings/models.json`（`$CLINE_DATA_DIR`，否则 `${CLINE_DIR:-~/.cline}/data`） | 接管内置的 `providers.openai-compatible`（Cline 拒绝自定义 provider，cline/cline#14180）：`settings` 的 `provider`、`apiKey`、`model`、`baseUrl`，`tokenSource: manual`；`lastUsedProvider`；`models.json` 同名条目的 `provider` 与 `models` | Chat | 新建的文件从 `{"version": 1}` 开始；原槽位在还原时按值写回；Magpie 写的 `updatedAt` 与 VS Code 扩展状态（`globalState.json`、`secrets.json`）不写 |
 | `pencil` Pencil | `~/.pencil/models.json` | `providers.harnesshub`（Pi 格式，`api: openai-completions`、`apiKey`、每个模型带 Pencil 写的字段，窗口与输出未知时取 Pi 的默认值 128000 与 16384） | Chat | 只让模型出现在 Pencil 的选择器中，不写所选模型；没有命令，按 `~/.pencil` 判断安装 |
+| `droid` Droid | `settings.json`（`${FACTORY_HOME_OVERRIDE:-~}/.factory`） | `customModels` 中每个模型一个元素，`id = "custom:harnesshub/<ref>"`（`model`、`displayName`、`baseUrl`、`apiKey`、`provider` 按原生协议为 `generic-chat-completion-api`、`openai` 或 `anthropic`（网关根）、已知的 `maxContextLimit`、`maxOutputTokens`、`noImageSupport`）；`sessionDefaultSettings.model` | 逐模型 Chat、Responses 或 Anthropic | 用户自己的 `customModels` 保持原位与顺序 |
+| `workbuddy` WorkBuddy | `models.json`（`${WORKBUDDY_CONFIG_DIR:-~/.workbuddy}`） | `models` 中每个模型一个元素，`{id: <ref>, vendor: "harnesshub"}`（`name`、`apiKey`、`url`（`/v1/chat/completions`）、已知的 `maxInputTokens`、`maxOutputTokens`（至多 128000）、`supportsToolCall`、`supportsImages`、`supportsReasoning`、有档位时的 `reasoning`）；用户保留了非空 `availableModels` 时，把模型 Ref 加入其中 | Chat | 只让模型出现在选择器中，不写所选模型；根为数组的 `models.json` 被拒绝（`WIRING_UNSUPPORTED_STRUCTURE`），只支持对象形式；WorkBuddy 热加载，无需重启；没有命令，按目录判断安装 |
+| `zcode` ZCode | `~/.zcode/v2/config.json` 与 `provider_config.json`（新建时 `{"schemaVersion": 1}`） | `config.json` 的 `provider.harnesshub`（`kind: anthropic`、`enabled`、`source: custom`、`options.apiKey`、`options.baseURL`（网关根）、每个模型的 `limit`、`modalities`、`reasoning`）；`provider_config.json` 中 `config.providerConfigRules.providerRules` 的 `{providerId: harnesshub}` 元素（`access`、`api: anthropic-messages`、`personalModelIds`、`modelOrder`）与 `config.modelConfigRules.providerModelRules` 中每个模型一个 `{providerId, modelId}` 元素（窗口、图片输入、输出上限、推理档位） | Anthropic | 用户手动设置过规则的模型（`manualProviderModelRules`）不写规则；在 ZCode 中关闭的 provider 保持关闭；只让模型出现在选择器中 |
+| `claude-desktop` Claude Desktop | macOS `~/Library/Application Support`、Windows `%LOCALAPPDATA%`、其他 `${XDG_CONFIG_HOME:-~/.config}` 下的 `Claude-3p/configLibrary/<id>.json`、`Claude-3p/configLibrary/_meta.json`、`Claude-3p/claude_desktop_config.json`、`Claude/claude_desktop_config.json` | 配置文件 `inferenceProvider: gateway`、`inferenceGatewayBaseUrl`（网关根）、`inferenceGatewayApiKey`、`inferenceGatewayAuthScheme: bearer`，以及该文件尚未设置时的 `disableDeploymentModeChooser: true`、`coworkEgressAllowedHosts: ["*"]`；`_meta.json` 的 `entries` 元素与 `appliedId`；两个 `claude_desktop_config.json` 的 `deploymentMode: "3p"`（最后写） | Anthropic | Key 的 `modelIdStyle` 为 `claude-alias`：网关对它以 `claude-hh-<10 位数字>` 列出模型、显示名为 Model Ref，并接受这个别名（Desktop 只保留看起来属于 Anthropic 的 id）；还原时写回原 `deploymentMode` 与原 `appliedId`，其他配置项保留；Desktop 只在启动时读取 |
 | `t3code` T3 Code | `userdata/settings.json`（`${T3CODE_HOME:-~/.t3}`） | `providerInstances.harnesshub`（`driver: claudeAgent`、`environment` 列表中的 `ANTHROPIC_BASE_URL`（网关根）与 `ANTHROPIC_AUTH_TOKEN`，均 `sensitive: false`；`config.customModels[]`） | Anthropic（经 Claude Code） | 只让模型出现在 T3 的选择器中；Claude Code 自己 `settings.json` 的 `env` 若指向别处仍然优先；没有命令，按 `~/.t3/userdata` 判断安装 |
 
 未收录的 Magpie Agent：
@@ -125,7 +137,6 @@ BOM 与换行风格（LF/CRLF）保持原样。回读校验用真实解析器确
 | `cindy` | 只生成导入链接，由用户在应用中确认 |
 | `agy` | 只从环境变量读取端点与 Key，需要启动命令而非配置文件 |
 | `commandcode`、`fx`、`muse` | 配置里无法写入 Key：Command Code 拒绝写入的 Key（Magpie 写 `apiKey: false`），fx 只见过 `auth: {type: "none"}`，Muse 的 `auth` 只能是 Meta 登录令牌或 `none`；Muse 还要求网关提供 `/muse-code/models` |
-| `droid`、`workbuddy`、`zcode`、`claude-desktop` | 要在用户自己的数组中追加或删除 HarnessHub 的元素（Droid 的 `customModels`、WorkBuddy 的模型列表、ZCode 3.14 起的 `provider_config.json` 规则、Claude Desktop 的 `configLibrary/_meta.json` 的 `entries`）；格式编辑器只按对象键寻址，整体替换数组会在还原时丢掉用户之后加入的元素。Claude Desktop 另需网关为它改写模型 id（Magpie 的 `gw/desktop.go`） |
 | `dsh` | 补丁文件的根是 YAML 列表、各 profile 一份（文件集合随 profile 变化），且 dsh 会改写条目，Magpie 每 30 秒重写一次 |
 | `openchamber` | provider 写在 OpenCode 的配置文件里，与 `opencode` Adapter 共用同一文件与键；`preferences.json` 还要写当前时间。用 `opencode` 接线即可，OpenChamber 没有自己的默认模型时沿用 OpenCode 的 |
 
@@ -154,13 +165,15 @@ Shell 环境中已有的同名变量优先于 dotenv 文件（Gemini、Qwen）�
 
 - Crush 使用 `type: openai-compat`（Crush 对 OpenAI 兼容 Chat 端点的类型；04 写作 `openai`，Crush 以它表示 OpenAI 本身）。
 - 与 Magpie 的差异：Pi 的 `thinkingLevelMap` 不能写 `null` 隐藏模型没有的档位（HarnessHub 的编辑器不写 `null`），改为映射到不高于它的最近档位；Codex 读 `CODEX_HOME`（Magpie 固定 `~/.codex`），且不读 `auth.json` 判断登录状态，模式由用户选择；Claude 的档位不支持 `<model>:<effort>` 固定档位 effort（网关不支持按成员固定 effort）；Pi 不把新模型加入用户的 `enabledModels`；Crush 未知窗口时不写默认值（Magpie 写 200000 与 16384）；Codex 的 ChatGPT 模式不写 `model`，只转发 Codex 自己的模型（Magpie 的 `codex_backend` 也在这条路径上提供它自己的模型）。
-- 网关新增或删除模型后，Agent 文件中的模型清单不会自动重写（Magpie 的 `SyncCatalog`）；下次接线或隐藏操作时更新。网关的 `/v1/models` 立即生效。
+- Claude Desktop 与 Magpie 的差异：所有模型都以 `claude-hh-` 别名列出（Magpie 对已像 Claude 的 id 原样列出，并对有推理档位的模型用 `mythos-magpie-…` 或 `….anthropic.claude-…` 别名，让 Desktop 显示 effort 选择器，HarnessHub 尚未实现）；没有实现 Magpie 把 Desktop 的标题等小请求转回会话所选模型的 `desktopTurn`，也没有把这些别名的能力写进 Claude Code 的 `CLAUDE_CODE_MODEL_CAPABILITIES`；Windows 上不按 `Claude…` 前缀查找目录。
 - OpenCode 在设置了 `OPENCODE_CONFIG_DIR` 时写入该目录，因为其中的文件覆盖全局配置。
 - 漂移检测没有区分“另一个 HarnessHub 实例”与其他网关：基址不同一律为 `foreign-gateway`。
 - 每次接线都签发新 Key，所以对已接线的 Agent 预览时，即使模型不变，Key 一项也显示为改动（04 第 4 节的“无变化时计划为空”只在不换 Key 时成立）。
 - 未实现：OpenClaw（JSON5）、Copilot（env-launch）Adapter 与上文未收录的 Magpie Agent；备份保留数清理；接线前检查 Agent 是否在运行；`bypassed` 与 `stale-key` 漂移（需要网关账本）；“rename 前被并发修改”之外的写后篡改注入测试（04 第 9 节第 6 项）；Windows 验证；真实 Agent 的接线生效测试（第 5 项）。
 
 ## 验证
+
+[agents-wiring-sync.test.ts](../tests/integration/agents-wiring-sync.test.ts) 经 `startHub`（临时 `wiringHome`）与严格假上游：provider 增删模型与改窗口后，OpenCode 与 Droid 文件中的清单随之改写（Droid 用户自己的 `customModels` 保持在前），Key 不变且 `/v1/models` 一致；用户改过的 Pi 文件不被改写并标出 `AGENT_FILES_CHANGED`，所选模型离开网关的 Crush 标出 `AGENT_MODEL_UNAVAILABLE`，重新接线后清除；`wiring.autoSync: false` 时不改写；无效设置启动失败；Claude Desktop 的 Key 以别名列出模型、显示名为 Ref，别名（含 `[1m]`）与 Ref 都能调用。`packages/agents/test/wiring-arrays.test.ts` 用种子随机序列覆盖数组元素：JSON（多行、内联、CRLF 与尾逗号、空数组）与 YAML 中设置、替换、删除元素，与用户在任意位置增删自己的元素交错，每步核对整个数组与其他内容；只增删 HarnessHub 的元素后 JSON 字节与原文相同；以及 Droid 的接线、多轮重新接线（模型集合与 Key 变化）、用户在其间的增删与还原，核对用户元素与顺序、HarnessHub 元素的位置与漂移。Droid、WorkBuddy、ZCode、Claude Desktop 各有 `wiring-agent-<id>.test.ts`。
 
 [agents-wiring-semantics.test.ts](../tests/integration/agents-wiring-semantics.test.ts) 经 `startHub`（临时 `wiringHome`）与严格假上游：Claude Code 的档位、1M 模型的 `[1m]`、未标记档位的窗口、能力与 effort，Key 能调用各档模型，档位清除后子 Agent 跟随主模型；Codex 的 ChatGPT 模式只写 `openai_base_url` 且不签发 Key，API 模式生成模型目录，两种模式互相切换后旧 Key 失效、还原回原文件；隐藏与显示模型同时改变 Agent 文件中的清单和该 Key 的 `/v1/models` 与调用（403），Key 不变，网关新增的模型默认显示，真实 `hh agents models` 入口；Profile 保存、切走、应用后文件与保存时相同（Key 除外），过期的预览被拒绝，真实 `hh profile list|apply|rm` 入口。`packages/agents/test/wiring-semantics.test.ts` 在库层覆盖同样的语义与 Pi、OpenCode、Crush、Gemini 的元数据和 `wiredKeyText`。
 

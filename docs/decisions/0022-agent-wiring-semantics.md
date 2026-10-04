@@ -20,6 +20,12 @@ Status: proposed
 - `WiringRecord.keyId` 与 `model` 变为可选：Adapter 可声明在某组选项下自己登录（`keyless`），此时不签发 Key、不写模型。Codex 以选项 `codexAuth: gateway-key | chatgpt` 选择；`chatgpt` 只写 `openai_base_url = <网关>/backend-api/codex`。迁移 4 重建 `wirings`，`key_id` 改为可空。
 - `WiringRecord` 记录 `tiers`、`effort` 与 `options`（`WiringChoice`）。Profile 是按名称保存的每个已接线 Agent 的 `WiringChoice`，存于迁移 4 新增的 `wiring_profiles` 表；不含隐藏名单与 Key。应用 Profile 对选择不同的 Agent 逐个走接线的同一路径（预览、确认、新 Key、备份、回读校验），先确认所有要改的 Agent 都有确认过的预览，遇到第一个失败即停止。
 
+补充（2026-10-04，`feat/wiring-arrays`）：
+
+- **数组元素归属**：键路径的最后一段可以是元素选择器（`{match}` 或 `{equals}`），HarnessHub 在用户自己的数组中只拥有它写入的元素，重新接线原地更新、还原只删除这些元素。备份清单格式升为版本 2，仍读取版本 1。Droid、WorkBuddy、ZCode、Claude Desktop 因此可以接线。
+- **目录同步**：网关的 provider 或路由组改变后，守护进程把已接线 Agent 文件中的模型清单改写为该 Key 现在可见的模型，走正常的计划与写入路径并沿用文件中的 Key；自上次写入后被用户改过（漂移）等情况不改写，在 `GET /agents` 标为 `attention`。`wiring.autoSync: false` 关闭。
+- **Claude 风格的模型别名**：Key 可带 `modelIdStyle: claude-alias`，网关对它以 `claude-hh-<数字>` 列出并接受模型，供只保留 Anthropic 风格 id 的客户端（Claude Desktop）。这是 Key 的属性而不是按 Agent 分支。
+
 ## 考虑过的替代方案
 
 - **把隐藏列表存在守护进程的设置文件里，接线时把过滤后的列表写进 `modelAllow`**（原做法的延伸）：新模型要等重新接线才可用，与“默认显示”相反；名单也会与 Key 的实际权限分成两处。
@@ -27,6 +33,10 @@ Status: proposed
 - **ChatGPT 模式签发一把不写入文件的 Key 以满足必填字段**：Key 没有使用方，吊销与轮换也无意义，等于在存储中留一条假的引用。
 - **Profile 存为数据目录中的 JSON 文件**（Magpie 的 `profiles.json`）：模型平面存储已有迁移框架，`wirings` 也需要同一次迁移；放进同一个库可以在一个事务里校验并随备份走。
 - **应用 Profile 时撤掉不在 Profile 中的 Agent 的接线**（Magpie 以空值表示“恢复 Agent 自己的默认”）：会在用户没有明确要求时改动其他 Agent 的文件；只切换 Profile 中的 Agent 更可预期。
+
+- **数组整体替换**（把 Agent 的 `customModels` 等整个数组当作 HarnessHub 的条目）：还原时会丢掉用户在接线之后加入的元素，也会覆盖用户在接线前的元素顺序。
+- **按调用方 Agent 在网关中改写模型 id**（Magpie 的 `gw/desktop.go` 按 User-Agent 识别 Desktop）：违反“网关不按引擎分支”；放在 Key 上的显式属性由接线设置，网关只看 Key。
+- **目录变化时重写所有文件、不看漂移**：会覆盖用户在 Agent 中做的改动；跳过并标出，由用户决定重新接线。
 
 ## 后果
 
