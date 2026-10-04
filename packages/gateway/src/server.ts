@@ -90,6 +90,8 @@ import {
   type CodexListing,
 } from "./codex.js";
 import { COMPACT_UNSUPPORTED } from "./compacting.js";
+import { Classifier } from "./classify.js";
+import { applyRules, GroupRules } from "./rules.js";
 import { conversationOf, StickyRoutes } from "./sticky.js";
 import { canonicalHost, LOOPBACK_ONLY, type GatewayAccess } from "./sharing.js";
 import { forwardCountTokens } from "./count.js";
@@ -302,7 +304,8 @@ type Route =
   | { kind: "count"; protocol: "anthropic" | "gemini" }
   | { kind: "call"; call: CallRoute }
   | { kind: "images"; edit: boolean }
-  | { kind: "compact" };
+  | { kind: "compact" }
+  | { kind: "limit" };
 
 function decode(value: string): string {
   try {
@@ -351,6 +354,7 @@ function matchRoute(method: string | undefined, url: URL): Route | undefined {
       : undefined;
   const openai = path.replace(/^\/v1(?=\/)/, "");
   if (method === "GET") {
+    if (path === "/v1/harnesshub/limit") return { kind: "limit" };
     if (openai === "/models") return { kind: "models", format: "openai" };
     const one = /^\/models\/(.+)$/.exec(openai);
     return one
@@ -597,6 +601,14 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     tasks.add(task);
     void task.finally(() => tasks.delete(task));
   };
+  // Route group rules and their classifier, which asks through this gateway.
+  const groupRules = new GroupRules(
+    clock,
+    new Classifier(
+      (body, signal) => internalCall("classify", body, signal),
+      clock,
+    ),
+  );
   // `least-used` starts from the ledger's recent calls (bounded).
   track(services.router.seed(store, log));
   const allowances = deps.allowances;
@@ -1116,7 +1128,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       (id.startsWith(AUTO_GROUP_PREFIX) ? await autoGroup(id) : undefined);
     const group = await find(parsed.group);
     if (!group) throw notFound();
-    const { candidates, skipped } = await planGroup(group, protocol, {
+    const { candidates, skipped, groups } = await planGroup(group, protocol, {
       provider: (id) => store.getProvider(id),
       group: find,
       order,
@@ -1127,7 +1139,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       },
       blocked: (candidate) => services.breakers.blocked(candidate),
     });
-    return { candidates, group, skipped };
+    return { candidates, group, groups, skipped };
   };
 
   /** The automatic group of this ID, unless it is hidden; user groups were looked up first. */
@@ -1238,7 +1250,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     started: number,
     abort: AbortController,
     session: ActiveSessionRun | undefined,
-    internal?: "vision" | "search",
+    internal?: "vision" | "search" | "classify",
     preread?: Buffer,
   ) => {
     let disconnected = false;
@@ -1465,7 +1477,33 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         (candidate) => services.breakers.blocked(candidate),
       );
       resolved.candidates = sticky.candidates;
-      if (sticky.patch) routePatches.push(sticky.patch);
+      const ruled = resolved.group
+        ? await applyRules({
+            rules: groupRules,
+            group: resolved.group,
+            groups: resolved.groups ?? new Map(),
+            candidates: resolved.candidates,
+            protocol: route.protocol,
+            raw,
+            conversation: conversation.key,
+            ...(entry.agent ? { agent: entry.agent.id } : {}),
+            timeZone: services.quotas.timeZone,
+            // A classifier's own call asks no classifier in turn.
+            ask: internal !== "classify",
+            signal: abort.signal,
+            stuck: sticky.patch === "sticky:hit",
+            blocked: (candidate) => services.breakers.blocked(candidate),
+          })
+        : undefined;
+      if (sticky.patch)
+        routePatches.push(
+          ruled?.brokeSticky ? "sticky:broken:rule" : sticky.patch,
+        );
+      if (ruled) {
+        resolved.candidates = ruled.candidates;
+        routePatches.push(...ruled.patches);
+        call.rules = { compact: ruled.compact, answered: ruled.answered };
+      }
       try {
         await routeCall(call, resolved);
       } catch (error) {
@@ -1934,6 +1972,27 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         case "models":
           await listModels(response, key, route);
           return;
+        case "limit": {
+          // The calling key's own limits and use (Magpie /v1/magpie/limit).
+          let status: KeyLimitStatus;
+          try {
+            status = await services.quotas.status(key);
+          } catch {
+            throw new GatewayError(
+              "Gateway Key usage cannot be read",
+              503,
+              "store_unavailable",
+            );
+          }
+          await new HttpWriter(response).json(200, {
+            object: "gateway_key.limit",
+            limited:
+              status.requestsPerMinute !== undefined ||
+              status.budgets.length > 0,
+            ...status,
+          });
+          return;
+        }
         case "count":
           await countTokens(request, response, route.protocol, key);
           return;
@@ -2023,7 +2082,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       timingSafeEqual(Buffer.from(presented), Buffer.from(internalToken)) &&
       request.method === "POST" &&
       request.url === "/v1/chat/completions" &&
-      (purpose === "vision" || purpose === "search");
+      (purpose === "vision" || purpose === "search" || purpose === "classify");
     if (!valid) {
       response.writeHead(404).end();
       return;
@@ -2050,7 +2109,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     );
   };
   const internalCall = async (
-    purpose: "vision" | "search",
+    purpose: "vision" | "search" | "classify",
     body: Record<string, unknown>,
     signal: AbortSignal,
   ): Promise<{ status: number; body: unknown; callId?: string }> => {

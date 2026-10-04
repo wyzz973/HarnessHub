@@ -572,6 +572,88 @@ const members = {
     "provider/model, optionally fixed at an effort (provider/model:high) and sent fast (:fast last), or another group (group/<id>, at most 8 deep)",
 } as const;
 
+const groupRule = {
+  type: "object",
+  additionalProperties: false,
+  required: ["use"],
+  properties: {
+    use: {
+      type: "string",
+      minLength: 1,
+      maxLength: 1000,
+      description:
+        "The member the requests it matches go to first, as members names it",
+    },
+    tokens: {
+      ...positive,
+      description:
+        "The request is at least this long: its text / 4, or what the vendor counted for the conversation's last request",
+    },
+    images: {
+      type: "boolean",
+      description: "The request carries an image, in this turn or before",
+    },
+    effort: {
+      enum: ["on", "low", "medium", "high", "xhigh", "max"],
+      description: "The agent asked for at least this reasoning; on: for any",
+    },
+    agents: {
+      type: "array",
+      minItems: 1,
+      maxItems: 20,
+      items: { type: "string", minLength: 1, maxLength: 64 },
+      description:
+        "The request comes from one of these agents (the ledger's agent ids)",
+    },
+    intent: {
+      type: "string",
+      minLength: 1,
+      maxLength: 1000,
+      description:
+        "The group's classifier says the turn's first message is of this kind (at most 200 characters)",
+    },
+    compact: {
+      type: "boolean",
+      description: "The agent is compacting its conversation",
+    },
+    time: {
+      type: "object",
+      additionalProperties: false,
+      required: ["from", "to"],
+      properties: {
+        from: { type: "string", minLength: 1, maxLength: 5 },
+        to: { type: "string", minLength: 1, maxLength: 5 },
+        days: {
+          type: "array",
+          maxItems: 7,
+          items: { type: "string", minLength: 3, maxLength: 9 },
+        },
+      },
+      description:
+        "The turn begins within these hours (HH:MM, the daemon's local time; past midnight when to is before from) on these days (mon … sun)",
+    },
+  },
+} as const;
+const rules = {
+  type: "array",
+  maxItems: 50,
+  items: groupRule,
+  description:
+    "Checked in order when a user's turn begins: the first that matches puts its member first for the turn",
+} as const;
+const classifier = {
+  type: "string",
+  minLength: 3,
+  maxLength: 1000,
+  description:
+    "The model (provider/model) or group asked which intent a turn's first message is, and with effort auto how much reasoning it wants",
+} as const;
+const groupEffort = {
+  enum: ["auto"],
+  description:
+    "auto: the classifier picks each turn's reasoning where the agent asked for reasoning",
+} as const;
+
 export const routeGroupSchema = {
   type: "object",
   additionalProperties: false,
@@ -589,6 +671,9 @@ export const routeGroupSchema = {
     stickiness,
     members,
     retry,
+    rules,
+    classifier,
+    effort: groupEffort,
     createdAt: timestamp,
     updatedAt: timestamp,
   },
@@ -597,7 +682,16 @@ export const routeGroupCreateSchema = {
   type: "object",
   additionalProperties: false,
   required: ["id", "members"],
-  properties: { id: slug, strategy, stickiness, members, retry },
+  properties: {
+    id: slug,
+    strategy,
+    stickiness,
+    members,
+    retry,
+    rules,
+    classifier,
+    effort: groupEffort,
+  },
 } as const;
 export const routeGroupPatchSchema = {
   type: "object",
@@ -608,6 +702,9 @@ export const routeGroupPatchSchema = {
     stickiness,
     members,
     retry: { ...retry, type: ["object", "null"] },
+    rules: { ...rules, type: ["array", "null"] },
+    classifier: { ...classifier, type: ["string", "null"] },
+    effort: { ...groupEffort, enum: ["auto", null] },
   },
 } as const;
 

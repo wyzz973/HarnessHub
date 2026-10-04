@@ -27,6 +27,7 @@ import {
   type WiringRecord,
 } from "./model-plane.js";
 import { parseGroupMember } from "./route-groups.js";
+import { cleanGroupRules } from "./route-rules.js";
 import { copilotAuthModes, subscriptionBackends } from "./subscriptions.js";
 
 type Check = (value: unknown) => boolean;
@@ -324,7 +325,60 @@ const retry: Check = (value) =>
       ])(name) && count(item),
   );
 
+/** A rule's fields have their types; what they say is checked by `cleanGroupRules`. */
+const groupRule: Check = (value) =>
+  object(value) &&
+  Object.keys(value).every((name) =>
+    [
+      "use",
+      "tokens",
+      "images",
+      "effort",
+      "agents",
+      "intent",
+      "compact",
+      "time",
+    ].includes(name),
+  ) &&
+  text(1000)(value.use) &&
+  optional(value.tokens, positive) &&
+  optional(value.images, bool) &&
+  optional(value.effort, text(16)) &&
+  optional(value.agents, list(text(64), 20)) &&
+  optional(value.intent, text(1000)) &&
+  optional(value.compact, bool) &&
+  optional(
+    value.time,
+    (time) =>
+      object(time) &&
+      Object.keys(time).every((name) =>
+        ["from", "to", "days"].includes(name),
+      ) &&
+      text(5)(time.from) &&
+      text(5)(time.to) &&
+      optional(time.days, list(text(3), 7)),
+  );
+
+/**
+ * Whether `value` is a stored route group: its members, and its rules,
+ * classifier and effort as `cleanGroupRules` accepts them and already in
+ * the form it puts them in.
+ */
 export function isRouteGroup(value: unknown): value is RouteGroup {
+  if (!(
+    object(value) &&
+    optional(value.rules, list(groupRule, 50)) &&
+    optional(value.classifier, text(1000)) &&
+    optional(value.effort, member(["auto"])) &&
+    list(groupMember, 100)(value.members)
+  ))
+    return false;
+  const checked = cleanGroupRules(value as unknown as RouteGroup);
+  if (
+    checked.problems.length ||
+    JSON.stringify(checked.rules ?? []) !== JSON.stringify(value.rules ?? [])
+  )
+    return false;
   return (
     object(value) &&
     groupId(value.id) &&

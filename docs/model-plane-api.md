@@ -89,6 +89,11 @@ hh catalog refresh
 hh group add fast --member deepseek/deepseek-chat --strategy latency
 hh group add plans --member chatgpt/gpt-plan --member keyed/model --strategy smart   # 也可 pace
 hh group add deep --member openai/gpt-5.5:high:fast --member group/fast   # 固定强度、快速模式、组中的组
+hh group rule add deep 'use=group/fast tokens=200k'          # 长请求先给 group/fast
+hh group rule add deep use=gpt-5.5 images days=sat,sun        # 周末带图片的请求
+hh group rule add deep use=gpt-5.5 intent="a quick question" classifier=groq/llama-3.1-8b
+hh group rule list deep                      # 规则、条件与分类器；remove|move <n> 删除或调整次序
+hh group rule effort deep auto               # 分类器为每一轮选推理强度；off 关闭
 hh group auto                                # 自动路由组及是否隐藏
 hh group hide auto-deepseek-v4               # hh group restore auto-deepseek-v4 恢复
 hh key create --name ci --allow deepseek/* --allow group/fast   # Key 只打印这一次
@@ -116,6 +121,7 @@ hh provider models office --refresh           # 模型名为 office/<provider>/<
 ```
 
 - `hh key create` 与 `hh key quota` 的 `--budget PERIOD:tokens=N,cost=USD,cache-reads`：PERIOD 为 day、week 或 month（守护进程本地时区的日历窗口），`tokens` 与 `cost` 至少一个，值为 0 时该窗口内的每次调用都被拒绝，`cache-reads` 时缓存读取也计入 tokens；`--rpm N` 是每分钟请求数。`hh key quota` 替换整个限额，`--clear` 删除。路由组成员的写法见 [统一模型网关](model-gateway.md#路由重试与熔断)：`provider/model:<effort>`、最后的 `:fast` 与 `group/<id>`。
+- `hh group rule add <group> WORD...`：Magpie 的写法，`use=<成员>`（全名、模型名或其最后一段，可省略成员的档位后缀）加至少一个条件：`tokens=200k`（也写 `1.5m`）、`images`、`effort[=on|low|medium|high|xhigh|max]`、`agents=claude,codex`、`intent="…"`（需要组的分类器，可在同一行给出 `classifier=<provider/model>`）、`compact`、`time=HH:MM-HH:MM`（本地时间，可跨午夜）、`days=mon-fri`；`at=N` 放到第 N 位。整条规则也可以放在一个引号里。读不懂时退出码 2，并指出是哪个词。`hh group rule classifier <group> <ref>|off` 设置或去掉分类器。规则的含义与路由见 [统一模型网关](model-gateway.md#路由重试与熔断)。
 - `hh model set` 的键：`context`、`output`（token 数）、`reasoning`、`toolcall`（yes 或 no）、`modalities`（逗号分隔的 text、image、pdf、audio、video）、`price.input`、`price.output`、`price.cacheRead`、`price.cacheWrite`（美元每百万 token）。新值与已有覆盖合并，`键=` 删除一项，全部删除后覆盖被移除。
 - `hh gateway share on` 的 `--host`（本机 IP，`0.0.0.0` 表示全部地址，此时需要 `--name`）、`--port`、可重复的 `--name` 与 `--public-base-url` 未给出时沿用当前设置；`off` 保留地址只关闭监听器。`hh provider add --preset P [--region R] [--plan P] --base URL` 把所选组合的每个端点路径接到 `URL` 之后，`--chat` 等显式端点优先。
 - 秘密从不作为参数：终端中隐藏输入，非交互时必须用 `--from-stdin`、`--from-env <变量>` 或 `--from-file <路径>`，否则以 2 退出。

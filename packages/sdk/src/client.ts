@@ -40,6 +40,7 @@ import type {
   ConversationSummary,
   GatewayKeyQuota,
   GatewayKeyView,
+  GroupRule,
   ModelCallEntry,
   ProviderConfig,
   ProviderCredential,
@@ -61,6 +62,7 @@ export type {
   GatewayKeyQuota,
   GatewayKeyScope,
   GatewayKeyView,
+  GroupRule,
   ProviderConfig,
   ProviderCredential,
   ProviderKind,
@@ -327,13 +329,22 @@ export interface RouteGroupInput {
   strategy?: RouteGroup["strategy"];
   stickiness?: RouteGroup["stickiness"];
   retry?: Partial<RetryPolicy>;
+  /** Checked in order as a turn begins; the first that matches puts its member first. */
+  rules?: GroupRule[];
+  /** The model or group that tells which intent a message is. */
+  classifier?: string;
+  effort?: "auto";
 }
 
+/** Fields to change; null removes `retry`, `rules`, `classifier` or `effort`. */
 export interface RouteGroupPatch {
   members?: string[];
   strategy?: RouteGroup["strategy"];
   stickiness?: RouteGroup["stickiness"];
   retry?: Partial<RetryPolicy> | null;
+  rules?: GroupRule[] | null;
+  classifier?: string | null;
+  effort?: "auto" | null;
 }
 
 export interface GatewayKeyInput {

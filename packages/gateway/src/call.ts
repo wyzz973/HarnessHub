@@ -18,6 +18,7 @@ import type {
   ModelCallEntry,
   ModelPlaneStore,
   RouteGroup,
+  RouteGroupId,
   WireProtocol,
 } from "@harnesshub/core/model-plane";
 import {
@@ -308,6 +309,8 @@ export interface CallRoute {
 export interface CallPlan {
   candidates: Candidate[];
   group?: RouteGroup;
+  /** The groups inside `group` that were planned, by ID. */
+  groups?: Map<RouteGroupId, RouteGroup>;
   /** Candidates that cannot serve this inbound protocol, with reasons. */
   skipped: string[];
 }
@@ -344,7 +347,13 @@ export interface Call {
    */
   routePatches: string[];
   /** Set on a call the gateway makes for itself; such a call gets no vision fallback. */
-  internal?: "vision" | "search";
+  internal?: "vision" | "search" | "classify";
+  /**
+   * What a route group's rules decided (./rules.js): a compaction they
+   * routed leaves the conversation's stickiness record alone, and an
+   * answer tells them how long the conversation is.
+   */
+  rules?: { compact: boolean; answered(input: number): void };
   /** The images of this call described for models without image input, once per call. */
   vision?: VisionResult;
   /** The current attempt answers the client's web search itself (./search.js). */
@@ -2404,13 +2413,18 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
             result.tokens,
             entry.timing.firstContentMs,
           );
-          if (call.conversation)
+          if (call.conversation && !call.rules?.compact)
             services.sticky.remember(
               call.conversation,
               call.requested,
               candidate,
               entry.usage?.cacheRead ?? 0,
             );
+          call.rules?.answered(
+            (entry.usage?.input ?? 0) +
+              (entry.usage?.cacheRead ?? 0) +
+              (entry.usage?.cacheWrite ?? 0),
+          );
         }
         return;
       }

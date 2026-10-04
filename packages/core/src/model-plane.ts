@@ -246,11 +246,64 @@ export const DEFAULT_RETRY_POLICY: Readonly<RetryPolicy> = Object.freeze({
   retryAfterWaitCapMs: 8_000,
 });
 
+/** The reasoning levels a group rule compares with, lowest first (Magpie `provider.Efforts`). */
+export const ruleEfforts = ["low", "medium", "high", "xhigh", "max"] as const;
+export type RuleEffort = (typeof ruleEfforts)[number];
+
+/** Days of the week as a rule's hours name them, Sunday first (Magpie `Weekdays`). */
+export const weekdays = [
+  "sun",
+  "mon",
+  "tue",
+  "wed",
+  "thu",
+  "fri",
+  "sat",
+] as const;
+export type Weekday = (typeof weekdays)[number];
+
+/**
+ * Hours of the day in the daemon's local time zone: `from` until `to`
+ * (`HH:MM`), past midnight when `to` comes before `from`, the whole day when
+ * they are the same. `days` are the days it holds on, Monday first, none
+ * for every day; a window past midnight is of the day it begins on.
+ */
+export interface RuleTimeWindow {
+  from: string;
+  to: string;
+  days?: Weekday[];
+}
+
+/**
+ * A route group rule (Magpie `provider.Rule`): the requests it matches go to
+ * `use`, one of the group's members, before the others. Every condition set
+ * must hold, and a rule sets at least one: `tokens`, the request is at
+ * least this long; `images`, it carries an image; `effort`, the agent asked
+ * for at least this reasoning (`on`: any); `agents`, it comes from one of
+ * these agents (the ledger's agent ids); `intent`, the group's classifier
+ * says the turn's first message is of this kind; `compact`, the agent is
+ * compacting its conversation; `time`, the turn begins within these hours.
+ * The rules are read in `route-rules.ts`.
+ */
+export interface GroupRule {
+  use: string;
+  tokens?: number;
+  images?: boolean;
+  effort?: "on" | RuleEffort;
+  agents?: string[];
+  intent?: string;
+  compact?: boolean;
+  time?: RuleTimeWindow;
+}
+
 /**
  * `group/<id>`: an ordered set of members routed by one strategy. A member
  * is a Model Ref, optionally fixed at a reasoning effort (`:high`) and sent
  * fast (`:fast` last), or another group (`group/<id>`), as
- * `route-groups.ts` reads them.
+ * `route-groups.ts` reads them. `rules` put one member first for the
+ * requests they match, the first that matches deciding; `classifier` is
+ * the model (or `group/<id>`) asked which intent a turn's first message is,
+ * and, with `effort: "auto"`, how much reasoning the turn wants.
  */
 export interface RouteGroup {
   id: RouteGroupId;
@@ -258,6 +311,9 @@ export interface RouteGroup {
   stickiness: Stickiness;
   members: string[];
   retry?: Partial<RetryPolicy>;
+  rules?: GroupRule[];
+  classifier?: string;
+  effort?: "auto";
   createdAt: string;
   updatedAt: string;
 }

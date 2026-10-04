@@ -131,6 +131,7 @@ void test("the gateway paths are the model protocol paths and never a management
     "/v1alpha/models",
     "/v1/images/generations",
     "/v1/images/edits",
+    "/v1/harnesshub/limit",
     "/chat/completions",
     "/responses",
     "/messages",
@@ -150,6 +151,9 @@ void test("the gateway paths are the model protocol paths and never a management
     "/v1/responses/compactx",
     "/v1/images/variations",
     "/images/edits",
+    "/harnesshub/limit",
+    "/v1/harnesshub",
+    "/v1/harnesshub/route",
     "/v1/engines",
     "/v1bet/models",
     // The Codex passthrough is mounted on the loopback listener only.

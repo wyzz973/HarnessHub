@@ -47,6 +47,13 @@ export interface Candidate {
   effort?: ReasoningEffort;
   /** A group's member sent in its vendor's fast mode (core `fastMode`). */
   fast?: boolean;
+  /**
+   * The members it is of, from the requested group's own down to the model
+   * (Magpie `Member.Path`): `["a/m"]` for a model the group names,
+   * `["group/inner", "b/n"]` for one of the group inside it. Absent for a
+   * Model Ref asked for directly.
+   */
+  path?: string[];
 }
 
 function validFor(credential: ProviderCredential, protocol: WireProtocol) {
@@ -204,8 +211,14 @@ export async function planGroup(
   group: RouteGroup,
   inbound: WireProtocol,
   planning: GroupPlanning,
-): Promise<{ candidates: Candidate[]; skipped: string[] }> {
+): Promise<{
+  candidates: Candidate[];
+  skipped: string[];
+  /** The groups inside the group that were planned, by ID. */
+  groups: Map<RouteGroupId, RouteGroup>;
+}> {
   const skipped: string[] = [];
+  const groups = new Map<RouteGroupId, RouteGroup>();
   const seen = new Set<string>();
   const providers = new Map<string, Promise<ProviderConfig | undefined>>();
   const provider = (id: ProviderId) => {
@@ -219,6 +232,7 @@ export async function planGroup(
   const level = async (
     current: RouteGroup,
     via: RouteGroupId[],
+    path: string[],
   ): Promise<Candidate[]> => {
     const units: Candidate[][] = [];
     for (const text of planning.order(current)) {
@@ -241,7 +255,12 @@ export async function planGroup(
           skipped.push(`${text}: unknown group`);
           continue;
         }
-        const planned = await level(inner, [...via, named.group]);
+        groups.set(inner.id, inner);
+        const planned = await level(
+          inner,
+          [...via, named.group],
+          [...path, text],
+        );
         if (planned.length) units.push(planned);
         continue;
       }
@@ -261,6 +280,7 @@ export async function planGroup(
         const key = `${credentialKey(candidate)}\u0000${candidate.ref}\u0000${member.effort ?? ""}`;
         if (seen.has(key)) continue;
         seen.add(key);
+        candidate.path = [...path, text];
         if (member.effort) candidate.effort = member.effort;
         if (member.fast) {
           if (fastMode(found, candidate.wireModel, candidate.upstream))
@@ -282,8 +302,8 @@ export async function planGroup(
     const byHead = new Map(heads.map((head, index) => [head, units[index]!]));
     return order.flatMap((head) => byHead.get(head) ?? [head]);
   };
-  const candidates = await level(group, []);
-  return { candidates, skipped };
+  const candidates = await level(group, [], []);
+  return { candidates, skipped, groups };
 }
 
 /** The group's retry policy over the defaults; `totalAttempts` never exceeds the hard cap of 8. */

@@ -1141,17 +1141,19 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     title: "添加路由组",
     group: "route-groups",
     request:
-      "id、members（至少一个，不重复）必填：provider/model，可加 :<effort>（none 到 max，固定该成员的推理强度）与最后的 :fast（以厂商的快速模式发送），或另一个组 group/<id>；strategy（默认 order）、stickiness（默认 auto）、retry 可选。",
-    response: "201：RouteGroup（成员后缀转为小写）。",
+      "id、members（至少一个，不重复）必填：provider/model，可加 :<effort>（none 到 max，固定该成员的推理强度）与最后的 :fast（以厂商的快速模式发送），或另一个组 group/<id>；strategy（默认 order）、stickiness（默认 auto）、retry 可选；rules[] 可选（至多 50 条，每条 use 为成员之一，另有至少一个条件：tokens、images、effort（on 或 low 到 max）、agents、intent、compact、time{from,to,days}）；classifier 可选（Model Ref 或 group/<id>，带 intent 的规则与 effort=auto 需要它）；effort 可选（auto）。",
+    response:
+      "201：RouteGroup（成员后缀转为小写，规则按 core route-rules 规范化）。",
     implementation:
-      "core route-groups：模型成员必须属于已存在的 provider，provider 列出的含冒号的模型 ID 原样保留；:fast 要求模型有网关能请求的快速模式（api.openai.com 上的 GPT 与 o 系列、ChatGPT 账号的 GPT、api.anthropic.com 上有快速模式的 Claude Opus）；组成员必须存在（用户组或可见的自动组）、不能含自身（无论多深）、嵌套最多 8 层，组成员不带后缀。",
+      "core route-groups：模型成员必须属于已存在的 provider，provider 列出的含冒号的模型 ID 原样保留；:fast 要求模型有网关能请求的快速模式（api.openai.com 上的 GPT 与 o 系列、ChatGPT 账号的 GPT、api.anthropic.com 上有快速模式的 Claude Opus）；组成员必须存在（用户组或可见的自动组）、不能含自身（无论多深）、嵌套最多 8 层，组成员不带后缀；core route-rules 的 cleanGroupRules 校验并规范化规则（use 按成员的写法比较，时间为 HH:MM，日按周一到周日排列），classifier 的 provider 或组必须存在。",
     effects: "写入 route_groups 表。",
     errors:
-      "400 ROUTE_GROUP_INVALID（errors[] 指向 /members/<i> 并说明原因：未知 provider、没有快速模式、组不存在、组会包含自身、超过 8 层、组带后缀、成员重复）；409 ROUTE_GROUP_EXISTS；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+      "400 ROUTE_GROUP_INVALID（errors[] 指向 /members/<i> 并说明原因：未知 provider、没有快速模式、组不存在、组会包含自身、超过 8 层、组带后缀、成员重复；或指向 /rules/<i>/<字段>、/classifier、/effort：规则的成员不在组中、没有条件、字段无效、带 intent 或 effort=auto 却没有 classifier、classifier 不存在或是组自身）；409 ROUTE_GROUP_EXISTS；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/model-plane-routes.ts",
     tests: [
       "tests/integration/api-v1.test.ts",
       "tests/integration/hh-cli.test.ts",
+      "tests/integration/group-rules.test.ts",
     ],
     operationId: "hh_api_v1_create_route_group",
   },
@@ -1176,14 +1178,17 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     title: "修改路由组",
     group: "route-groups",
     request:
-      "JSON Merge Patch：strategy、stickiness、members（形式同添加）、retry（null 删除）。",
+      "JSON Merge Patch：strategy、stickiness、members（形式同添加）、retry、rules（整体替换）、classifier、effort（null 删除）。",
     response: "200：RouteGroup。",
     implementation: "合并后按添加的规则整体校验（含嵌套与成环）并替换。",
     effects: "更新 route_groups 记录。尚无 ETag/If-Match。",
     errors:
       "400 ROUTE_GROUP_INVALID；404；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/model-plane-routes.ts",
-    tests: ["tests/integration/api-v1.test.ts"],
+    tests: [
+      "tests/integration/api-v1.test.ts",
+      "tests/integration/group-rules.test.ts",
+    ],
     operationId: "hh_api_v1_update_route_group",
   },
   {
@@ -1194,7 +1199,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     request: "路径参数 id。",
     response: "204。",
     implementation:
-      "未吊销的 Gateway Key 允许 group/<id>，或其他路由组以它为成员时拒绝。",
+      "未吊销的 Gateway Key 允许 group/<id>，或其他路由组以它为成员或 classifier 时拒绝。",
     effects: "删除记录。",
     errors:
       "409 ROUTE_GROUP_IN_USE（references：gateway-key 或 route-group）；404；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",

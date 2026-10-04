@@ -22,6 +22,8 @@ import {
   type MetadataField,
   type ModelOverride,
   type OverrideValues,
+  type RouteGroup,
+  type RouteGroupPatch,
 } from "@harnesshub/sdk/client";
 import {
   AdminTokenUnavailableError,
@@ -37,6 +39,15 @@ import {
   type WireProtocol,
 } from "@harnesshub/core/model-plane";
 import { choosePreset } from "@harnesshub/core/provider-presets";
+import {
+  parseRule,
+  RULE_KEYS,
+  ruleConditions,
+  ruleKey,
+  ruleLine,
+  ruleWords,
+  RuleSyntaxError,
+} from "@harnesshub/core/route-rules";
 import {
   searchBackendKinds,
   type SearchBackendKind,
@@ -93,6 +104,13 @@ const USAGE = `Usage: hh <command> [options]
               a member is provider/model, fixed at an effort with :none to
               :max (provider/model:high), sent fast with :fast last, or
               another group (group/<id>, at most 8 deep)
+  hh group rule list <id> | add <id> use=MEMBER [tokens=200k] [images]
+              [effort[=on|low|medium|high|xhigh|max]] [agents=a,b]
+              [intent="..."] [compact] [time=HH:MM-HH:MM] [days=mon-fri]
+              [classifier=REF] [at=N] | remove <id> <n> | move <id> <n> <to>
+              | classifier <id> REF|off | effort <id> auto|off
+              the first rule a turn matches puts its member first for the
+              turn; an intent is judged by the group's classifier
   hh model show <provider/model | provider/*>
               | set <provider/model | provider/*> KEY=VALUE... | unset <ref>
               keys: context, output (tokens), reasoning, toolcall (yes|no),
@@ -1006,8 +1024,137 @@ async function groupCommand(args: string[]): Promise<void> {
       await (await ctx.client()).autoGroups.restore(id!);
       return output(ctx, { hidden: false, id }, () => `Restored group/${id}`);
     }
+    case "rule":
+      return groupRuleCommand(ctx, given);
     default:
       throw new UsageError(`Unknown group command: ${action || "(none)"}`);
+  }
+}
+
+/** A group's rules as `hh group rule list` shows them. */
+function rulesText(group: RouteGroup): string {
+  const head = [
+    `group/${group.id}`,
+    ...(group.classifier ? [`classifier ${group.classifier}`] : []),
+    ...(group.effort ? [`effort ${group.effort}`] : []),
+  ].join(", ");
+  return `${head}\n${table(
+    ["N", "USE", "WHEN", "TYPED"],
+    (group.rules ?? []).map((rule, index) => [
+      String(index + 1),
+      rule.use,
+      ruleConditions(rule).join(", "),
+      ruleLine(rule),
+    ]),
+  )}`;
+}
+
+/**
+ * Typed rule words: each argument, or the words of one that holds a whole
+ * rule (`'use=a/m tokens=200k'`); an argument whose value has spaces of
+ * its own (`intent=a quick question`) stays one word.
+ */
+function typedWords(args: readonly string[]): string[] {
+  return args.flatMap((arg) => {
+    const words = ruleWords(arg);
+    return words.length > 1 &&
+      words.every((word) => RULE_KEYS.has(ruleKey(word)))
+      ? words
+      : [arg];
+  });
+}
+
+/** A rule's place from 1, within `count` (`count + 1` for a place at the end). */
+function rulePlace(text: string | undefined, count: number): number {
+  const place = Number(text);
+  if (!/^\d+$/.test(text ?? "") || place < 1 || place > count)
+    throw new UsageError(
+      `${text ?? "(none)"} is not a rule's place: 1 to ${count}`,
+    );
+  return place;
+}
+
+async function groupRuleCommand(ctx: Context, given: string[]): Promise<void> {
+  const [verb = "", id, ...rest] = given;
+  if (!id) throw new UsageError(`hh group rule ${verb || "list"} <id> …`);
+  const client = await ctx.client();
+  const group = await client.routeGroups.get(id);
+  const rules = [...(group.rules ?? [])];
+  const save = async (patch: RouteGroupPatch, said: string) => {
+    const updated = await client.routeGroups.update(id, patch);
+    return output(ctx, updated, () => `${said}\n${rulesText(updated)}`);
+  };
+  switch (verb) {
+    case "list":
+      positionals(rest, []);
+      return output(ctx, group, () => rulesText(group));
+    case "add": {
+      let typed;
+      try {
+        typed = parseRule(group.members, id, typedWords(rest));
+      } catch (error) {
+        if (error instanceof RuleSyntaxError)
+          throw new UsageError(error.message);
+        throw error;
+      }
+      if (typed.rule.intent && !typed.classifier && !group.classifier)
+        throw new UsageError(
+          "a rule with an intent needs the group's classifier, the model that tells which intent a message is: add classifier=<provider/model>, best a small fast one",
+        );
+      const at =
+        typed.at === undefined
+          ? rules.length + 1
+          : rulePlace(String(typed.at), rules.length + 1);
+      rules.splice(at - 1, 0, typed.rule);
+      return save(
+        {
+          rules,
+          ...(typed.classifier ? { classifier: typed.classifier } : {}),
+        },
+        `Added rule ${at} to group/${id}`,
+      );
+    }
+    case "remove":
+    case "rm": {
+      const [place] = positionals(rest, ["n"]);
+      const n = rulePlace(place, rules.length);
+      rules.splice(n - 1, 1);
+      return save(
+        { rules: rules.length ? rules : null },
+        `Removed rule ${n} from group/${id}`,
+      );
+    }
+    case "move":
+    case "mv": {
+      const [from, to] = positionals(rest, ["n", "to"]);
+      const n = rulePlace(from, rules.length);
+      const place = rulePlace(to, rules.length);
+      const [moved] = rules.splice(n - 1, 1);
+      rules.splice(place - 1, 0, moved!);
+      return save({ rules }, `Moved rule ${n} of group/${id} to ${place}`);
+    }
+    case "classifier": {
+      const [model] = positionals(rest, ["provider/model|off"]);
+      return save(
+        { classifier: model === "off" ? null : model! },
+        model === "off"
+          ? `group/${id} has no classifier`
+          : `group/${id} asks ${model} which intent a message is`,
+      );
+    }
+    case "effort": {
+      const [effort] = positionals(rest, ["auto|off"]);
+      if (effort !== "auto" && effort !== "off")
+        throw new UsageError("hh group rule effort <id> auto|off");
+      return save(
+        { effort: effort === "off" ? null : "auto" },
+        effort === "off"
+          ? `group/${id}'s turns ask for the reasoning the agent asks for`
+          : `group/${id}'s classifier picks each turn's reasoning`,
+      );
+    }
+    default:
+      throw new UsageError(`Unknown group rule command: ${verb || "(none)"}`);
   }
 }
 

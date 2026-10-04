@@ -12,6 +12,7 @@ import {
   type GatewayKeyQuota,
   type GatewayKeyRecord,
   type GatewayKeyView,
+  type GroupRule,
   type ModelCallEntry,
   type ModelPlaneStore,
   type ModelRef,
@@ -38,6 +39,7 @@ import {
   nestingProblems,
   parseGroupMember,
 } from "@harnesshub/core/route-groups";
+import { cleanGroupRules } from "@harnesshub/core/route-rules";
 import { accountUsable } from "@harnesshub/core/subscriptions";
 import {
   endpointProblem,
@@ -1005,7 +1007,10 @@ export function registerModelPlaneRoutes(
    * Members must name models of existing providers or other groups. Each
    * is stored as `route-groups.ts` spells it (suffixes lowercase); `:fast`
    * needs a model with a fast mode; groups inside it must exist, must not
-   * contain it, and nest at most 8 deep.
+   * contain it, and nest at most 8 deep. Rules are checked and stored as
+   * `route-rules.ts` puts them, each sending to one of the members (named
+   * as members are); the classifier is a model of an existing provider or
+   * another existing group.
    */
   const checkGroup = async (candidate: unknown): Promise<RouteGroup> => {
     const memberProblem = (index: number, detail: string): ProblemItem => ({
@@ -1036,7 +1041,14 @@ export function registerModelPlaneRoutes(
             : [],
         ),
       );
-    if (!isRouteGroup(candidate))
+    // The rules are checked below, against the members as they are stored.
+    const {
+      rules: typedRules,
+      classifier,
+      effort,
+      ...plain
+    } = object(candidate) ? candidate : {};
+    if (!isRouteGroup(plain))
       throw invalid("ROUTE_GROUP_INVALID", "The route group is invalid", [
         { pointer: "", detail: "does not form a valid route group" },
       ]);
@@ -1062,7 +1074,19 @@ export function registerModelPlaneRoutes(
       ]),
     ]);
     const errors: ProblemItem[] = [];
-    const members = candidate.members.map((text, index) => {
+    /** A member as it is stored: suffixes lowercase, a listed model's own colon kept. */
+    const stored = (text: string) => {
+      const named = parseGroupMember(text);
+      if (named?.kind !== "model") return named ? memberText(named) : text;
+      const provider = providers.get(named.provider);
+      const member =
+        provider &&
+        parseGroupMember(text, (_, model) =>
+          provider.models.list.some((entry) => entry.id === model),
+        );
+      return member ? memberText(member) : text;
+    };
+    const members = plain.members.map((text, index) => {
       const named = parseGroupMember(text);
       if (named?.kind === "group") return memberText(named);
       const provider = named && providers.get(named.provider);
@@ -1087,7 +1111,39 @@ export function registerModelPlaneRoutes(
     });
     if (new Set(members).size !== members.length)
       errors.push({ pointer: "/members", detail: "must not repeat a member" });
-    const checked: RouteGroup = { ...candidate, members };
+    const typed = (Array.isArray(typedRules) ? typedRules : []) as GroupRule[];
+    const ruling = cleanGroupRules({
+      id: plain.id,
+      members,
+      rules: typed.map((rule) =>
+        typeof rule.use === "string"
+          ? { ...rule, use: stored(rule.use) }
+          : rule,
+      ),
+      ...(typeof classifier === "string" ? { classifier } : {}),
+      ...(effort !== undefined ? { effort: effort as "auto" } : {}),
+    });
+    errors.push(...ruling.problems);
+    if (typeof classifier === "string" && !ruling.problems.length) {
+      const named = parseModelRef(classifier);
+      if (named?.kind === "model" && !providers.has(named.provider))
+        errors.push({
+          pointer: "/classifier",
+          detail: "must name a model of an existing provider",
+        });
+      else if (named?.kind === "group" && !groups.has(named.group))
+        errors.push({
+          pointer: "/classifier",
+          detail: `there is no group ${named.group}`,
+        });
+    }
+    const checked: RouteGroup = {
+      ...plain,
+      members,
+      ...(ruling.rules ? { rules: ruling.rules } : {}),
+      ...(typeof classifier === "string" ? { classifier } : {}),
+      ...(effort === "auto" ? { effort: "auto" as const } : {}),
+    };
     for (const problem of nestingProblems(checked, (id) => groups.get(id)))
       errors.push(memberProblem(problem.index, problem.detail));
     if (errors.length)
@@ -1098,10 +1154,12 @@ export function registerModelPlaneRoutes(
       );
     return checked;
   };
-  /** The groups that have `id` among their members. */
+  /** The groups that have `id` among their members, or as their classifier. */
   const groupsWith = async (id: RouteGroupId) =>
-    (await store.listRouteGroups()).filter((group) =>
-      group.members.includes(`group/${id}`),
+    (await store.listRouteGroups()).filter(
+      (group) =>
+        group.members.includes(`group/${id}`) ||
+        group.classifier === `group/${id}`,
     );
   api.get(
     "/route-groups",
