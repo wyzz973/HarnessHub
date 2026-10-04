@@ -100,8 +100,25 @@ export async function agentSandbox(
 ): Promise<Sandbox & { defer: (cleanup: () => unknown) => void }> {
   const { directory, defer } = await temporaryDirectory(t, "hh-conformance-");
   const root = await realpath(directory);
-  const home = path.join(root, "home");
-  const work = path.join(root, "work");
+  return {
+    ...(await sandboxIn(root, agentDirectory, {
+      home: path.join(root, "home"),
+      work: path.join(root, "work"),
+    })),
+    defer,
+  };
+}
+
+/**
+ * The sandbox of `agentSandbox` in a directory the caller owns and removes:
+ * `root` is its real path, `home` and `work` are inside it (created when
+ * missing), and its temporary directory is `root/tmp`.
+ */
+export async function sandboxIn(
+  root: string,
+  agentDirectory: string,
+  { home, work }: { home: string; work: string },
+): Promise<Sandbox> {
   const tmp = path.join(root, "tmp");
   for (const made of [home, work, tmp]) await mkdir(made, { recursive: true });
   const user = os.userInfo().username;
@@ -136,7 +153,6 @@ export async function agentSandbox(
     root,
     home,
     work,
-    defer,
     env: (withProxies) => ({
       ...base,
       ...(withProxies
@@ -262,6 +278,25 @@ export async function runSandboxed(
   },
 ): Promise<AgentRun> {
   return (await startSandboxed(sandbox, file, args, options)).done;
+}
+
+/** The first line an agent prints for `--version`, run in the sandbox. */
+export async function agentVersion(
+  sandbox: Sandbox,
+  file: string,
+  env: Record<string, string>,
+): Promise<string> {
+  const run = await runSandboxed(sandbox, file, ["--version"], {
+    env,
+    timeoutMs: 30_000,
+  });
+  return (
+    (run.stdout + run.stderr)
+      .split("\n")
+      .map((line) => line.trim())
+      .find(Boolean)
+      ?.slice(0, 80) ?? "unknown"
+  );
 }
 
 /** A file's bytes, or undefined when it does not exist. */
