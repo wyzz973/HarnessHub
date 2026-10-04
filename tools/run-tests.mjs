@@ -54,6 +54,8 @@ export const SUITES = {
   },
   integration: { files: ["dist/tests/integration/*.test.js"], testTimeoutMs: 120_000, deadlineMs: 25 * 60_000 },
   smoke: { files: ["dist/tests/smoke/*.test.js"], testTimeoutMs: 120_000, deadlineMs: 10 * 60_000 },
+  // Opt-in, not part of `pnpm test`: real agents run offline in a sandbox (tools/conformance.mjs).
+  conformance: { files: ["dist/tests/conformance/*.test.js"], testTimeoutMs: 300_000, deadlineMs: 45 * 60_000 },
 };
 
 /** Test opt-in switches; the inventory directory belongs to the launcher, not to the tests. */

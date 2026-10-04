@@ -156,7 +156,7 @@ Shell 环境中已有的同名变量优先于 dotenv 文件（Gemini、Qwen）�
 
 ### Codex 的两种模式
 
-- `codexAuth: gateway-key`（默认）：HarnessHub 作为 `harnesshub` provider，Key 在 `experimental_bearer_token`。`model_catalog_json` 指向同目录的 `harnesshub-models.json`，由 HarnessHub 生成：每个列出的模型一项，按隔离接线已用固定版本 Codex 读取过的格式（`codex-models.ts`），带窗口、推理档位（默认 medium，其次 high，再其次第一个）、图像输入与 Codex 的默认指令。不再写 `model_context_window`（它对所有模型生效，切换模型后不再正确）。
+- `codexAuth: gateway-key`（默认）：HarnessHub 作为 `harnesshub` provider，Key 在 `experimental_bearer_token`。`model_catalog_json` 指向同目录的 `harnesshub-models.json`，由 HarnessHub 生成：每个列出的模型一项，按隔离接线已用固定版本 Codex 读取过的格式（`codex-models.ts`），带窗口、推理档位（默认 medium，其次 high，再其次第一个）、图像输入与 Codex 的默认指令。不再写 `model_context_window`（它对所有模型生效，切换模型后不再正确）。所选模型的 provider 不原生接收 Responses 时另写 `web_search = "disabled"`：Codex 每轮都附带它的托管 `web_search` 工具，网关只能在原样转发到有该工具的 Responses provider 时服务它，转换到其他协议时整轮失败（用真实的 Codex 0.144.5 对 Chat Completions 上游实测发现，见 [兼容性](compatibility.md)）。
 - `codexAuth: chatgpt`：用户的 ChatGPT 登录不动，只写 `openai_base_url = "<网关>/backend-api/codex"`，Codex 内置的 OpenAI provider 带着它自己的登录经网关转发到 ChatGPT：网关的 `/backend-api/codex` 路由只在回环监听器上，把这个前缀下的请求（包括 `models`）原样转发到 `https://chatgpt.com/backend-api/codex`，不在本地回答、不合并 HarnessHub 的模型，调用按 provider `chatgpt-subscription` 记入账本。不签发、不写 Key，也不写 `model`：Codex 用它自己的 ChatGPT 模型；用户另设了非 OpenAI 的 `model_provider` 时这条路径不生效。从 API 模式切换过来时，HarnessHub 之前写的 provider、`model` 与目录条目恢复原值，旧 Key 被吊销。
 
 两种模式都不读取 `~/.codex/auth.json`。

@@ -24,6 +24,7 @@
     "test:unit": "node tools/run-tests.mjs unit",
     "test:integration": "node tools/run-tests.mjs integration",
     "test:smoke": "node tools/run-tests.mjs smoke",
+    "test:conformance": "pnpm build && node tools/conformance.mjs",
     "test": "pnpm build && pnpm test:tooling && pnpm test:unit && pnpm test:integration && pnpm test:smoke",
     "check": "pnpm check:runtime && pnpm lint && pnpm format:check && pnpm check:boundaries && pnpm check:docs && pnpm check:spdx && pnpm check:labels && pnpm test && pnpm check:api && pnpm check:console",
     "start": "node packages/daemon/dist/src/main.js",
