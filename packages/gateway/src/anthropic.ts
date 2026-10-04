@@ -4,11 +4,13 @@ import {
   array,
   boundedNumber,
   estimateTokens,
+  foundText,
   imagePart,
   nativeTool,
   omittedMedia,
   object,
   record,
+  searchedText,
   string,
   toolAlias,
   userContent,
@@ -107,10 +109,19 @@ export function anthropicToChat(
     throw new GatewayError("Invalid stream setting");
   const bindings = new Map<string, ToolBinding>();
   const tools: Record<string, unknown>[] = [];
+  let search = false;
   for (const rawTool of request.tools === undefined || request.tools === null
     ? []
     : array(request.tools)) {
     const tool = object(rawTool);
+    if (
+      options.search &&
+      typeof tool.type === "string" &&
+      tool.type.startsWith("web_search_")
+    ) {
+      search = true;
+      continue;
+    }
     if (tool.type !== undefined && tool.type !== null && tool.type !== "custom")
       throw new GatewayError(
         `Anthropic server tool ${typeof tool.type === "string" ? tool.type.slice(0, 64) : "unknown"} is unsupported; use client tools`,
@@ -193,6 +204,31 @@ export function anthropicToChat(
             content: resultText(block.content),
           });
           break;
+        case "server_tool_use":
+        case "web_search_tool_result":
+          // A search the gateway answered earlier, as text for the model.
+          if (options.search && role === "assistant") {
+            const text =
+              block.type === "server_tool_use"
+                ? searchedText(String(object(block.input).query ?? ""))
+                : foundText(
+                    (Array.isArray(block.content) ? block.content : [])
+                      .map((hit: unknown) => object(hit))
+                      .filter((hit) => typeof hit.url === "string")
+                      .map((hit) => ({
+                        url: String(hit.url),
+                        ...(typeof hit.title === "string"
+                          ? { title: hit.title }
+                          : {}),
+                      })),
+                  );
+            texts.push(text);
+            parts.push({ type: "text", text });
+            break;
+          }
+          throw new GatewayError(
+            `Unsupported Anthropic content block: ${block.type}`,
+          );
         case "image":
         case "document": {
           const url = block.type === "image" ? imageUrl(block) : undefined;
@@ -281,6 +317,7 @@ export function anthropicToChat(
       : {}),
     ...(reasoning ? { reasoning } : {}),
     ...(toolErrors.size ? { toolErrors } : {}),
+    ...(search ? { search } : {}),
   };
 }
 
@@ -366,6 +403,8 @@ export class AnthropicSink implements OutputSink {
   #blocks = 0;
   #open: OpenBlock | undefined;
   #closedCalls = new Set<number>();
+  /** Blocks of the gateway's searches, for an answer that does not stream. */
+  #searches: Record<string, unknown>[] = [];
   constructor(
     private readonly writer: HttpWriter,
     private readonly translation: ChatTranslation,
@@ -490,6 +529,49 @@ export class AnthropicSink implements OutputSink {
       delta: { type: "input_json_delta", partial_json: text },
     });
   }
+  /**
+   * A web search the gateway ran: a `server_tool_use` block and its
+   * `web_search_tool_result`, with ids marked as the gateway's
+   * (`srvtoolu_hh_…`) so a later request with them is answered here again.
+   */
+  async search(
+    query: string,
+    hits: { title: string; url: string }[],
+  ): Promise<void> {
+    const id = `srvtoolu_hh_${this.context.id}_${this.#blocks + this.#searches.length}`;
+    const use = {
+      type: "server_tool_use",
+      id,
+      name: "web_search",
+      input: { query },
+    };
+    const found = {
+      type: "web_search_tool_result",
+      tool_use_id: id,
+      content: hits.map((hit) => ({
+        type: "web_search_result",
+        title: hit.title,
+        url: hit.url,
+        encrypted_content: "",
+        page_age: null,
+      })),
+    };
+    if (!this.translation.stream) {
+      this.#searches.push(use, found);
+      return;
+    }
+    const at = await this.#begin({ ...use, input: {} });
+    await this.#event("content_block_delta", {
+      index: at,
+      delta: {
+        type: "input_json_delta",
+        partial_json: JSON.stringify({ query }),
+      },
+    });
+    await this.#event("content_block_stop", { index: at });
+    const result = await this.#begin(found);
+    await this.#event("content_block_stop", { index: result });
+  }
   async finish(result: ChatResult): Promise<void> {
     if (this.translation.stream) {
       await this.#close();
@@ -501,7 +583,7 @@ export class AnthropicSink implements OutputSink {
       await this.writer.end();
       return;
     }
-    const content: Record<string, unknown>[] = [];
+    const content: Record<string, unknown>[] = [...this.#searches];
     if (this.context.reasoning && result.reasoning)
       content.push({
         type: "thinking",

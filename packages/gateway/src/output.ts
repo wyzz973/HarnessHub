@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import type { ServerResponse } from "node:http";
 import type { ChatResult, ReasoningField } from "./protocol.js";
+import type { OutputTransform } from "./restore.js";
 
 /** A classified call failure with a public, sanitized message (≤ 500 characters). */
 export interface Failure {
@@ -26,7 +27,18 @@ export class HttpWriter {
   #lastWrite = performance.now();
   #firstWrite: number | undefined;
   #pending = 0;
+  #transform: OutputTransform | undefined;
   constructor(private readonly response: ServerResponse) {}
+  /**
+   * Rewrite the body from now on (redacted secrets restored in tool
+   * arguments, ./restore.js). Set before the first body write.
+   */
+  set transform(transform: OutputTransform) {
+    this.#transform = transform;
+  }
+  get transformed(): boolean {
+    return this.#transform !== undefined;
+  }
   /** True once the status line was sent; later failures must be in-band. */
   get sent(): boolean {
     return this.response.headersSent;
@@ -71,9 +83,11 @@ export class HttpWriter {
     this.response.flushHeaders();
     this.#mark();
   }
-  async write(text: string | Uint8Array): Promise<void> {
+  async write(chunk: string | Uint8Array): Promise<void> {
     if (this.closed) throw new ClientClosed();
     this.#mark();
+    const text = this.#transform ? this.#transform.push(chunk) : chunk;
+    if (this.#transform && text.length === 0) return;
     this.#pending++;
     try {
       await new Promise<void>((resolve, reject) =>
@@ -85,9 +99,12 @@ export class HttpWriter {
       this.#pending--;
     }
   }
-  async end(text: string | Uint8Array = ""): Promise<void> {
+  async end(chunk: string | Uint8Array = ""): Promise<void> {
     if (this.closed) throw new ClientClosed();
     this.#mark();
+    const text = this.#transform
+      ? this.#transform.push(chunk) + this.#transform.end()
+      : chunk;
     await new Promise<void>((resolve) => this.response.end(text, resolve));
   }
   /**
@@ -151,6 +168,11 @@ export interface OutputSink {
    * `fail`; rejects with {@link ClientClosed} when the engine is gone.
    */
   keepalive(): Promise<void>;
+  /**
+   * A web search the gateway ran for the model (./search.js), shown as the
+   * protocol shows its vendor's own; protocols without such a form ignore it.
+   */
+  search?(query: string, hits: { title: string; url: string }[]): Promise<void>;
   /**
    * Commit the success headers before the first upstream chunk, for clients
    * that time out waiting for headers. Implemented only by protocols that

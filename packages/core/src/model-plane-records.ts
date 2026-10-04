@@ -280,6 +280,14 @@ export function isProviderConfig(value: unknown): value is ProviderConfig {
     ) &&
     optional(value.translateOnly, bool) &&
     optional(
+      value.imageEndpoint,
+      (url) =>
+        typeof url === "string" &&
+        url.length <= 2048 &&
+        /^https?:\/\/[^\s]+$/.test(url) &&
+        !url.includes("/images/generations"),
+    ) &&
+    optional(
       value.subscription,
       (subscription) =>
         object(subscription) &&

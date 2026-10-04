@@ -7,8 +7,14 @@
  * routes each call over provider credentials and commits one `model.call`
  * entry per call, rejected or not, before the answer's terminal event.
  */
-import { randomBytes, randomUUID } from "node:crypto";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { once } from "node:events";
+import {
+  createServer,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from "node:http";
 import { isIP } from "node:net";
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import { NO_LOG, type LogSink } from "@harnesshub/core/logging";
@@ -77,6 +83,13 @@ import {
 } from "./routing.js";
 import type { SubscriptionTokens } from "./siwc.js";
 import { CopilotBridge, type CopilotRuntime } from "./copilot.js";
+import {
+  DEFAULT_GATEWAY_FEATURES,
+  type GatewayFeatures,
+} from "@harnesshub/core/gateway-features";
+import { Redactor } from "./redaction.js";
+import { VisionDescriber } from "./vision.js";
+import { imagesCall } from "./images.js";
 
 /** The Run a `session:` key's calls belong to, and the model target it selected. */
 export interface ActiveSessionRun {
@@ -136,6 +149,17 @@ export interface GatewayHandlerDeps {
    * calls fail as `subscription_unavailable`.
    */
   copilot?: CopilotRuntime;
+  /**
+   * The user's gateway features (redaction, vision, web search), read for
+   * each request; without it the defaults apply: redaction on without user
+   * rules, no vision model, no search.
+   */
+  features?: () => GatewayFeatures;
+  /**
+   * Values this handler never resolves itself but must never send upstream
+   * (the daemon's admin token); redaction replaces them like credentials.
+   */
+  secrets?: readonly string[];
   /**
    * Where the last allowance readings persist between runs (`smart` and
    * `pace`): loaded once at start, saved within a minute of a change and on
@@ -213,7 +237,8 @@ export function isGatewayPath(pathname: string): boolean {
 type Route =
   | { kind: "models"; format: "openai" | "gemini"; id?: string }
   | { kind: "count"; protocol: "anthropic" | "gemini" }
-  | { kind: "call"; call: CallRoute };
+  | { kind: "call"; call: CallRoute }
+  | { kind: "images" };
 
 function decode(value: string): string {
   try {
@@ -270,6 +295,8 @@ function matchRoute(method: string | undefined, url: URL): Route | undefined {
   }
   if (method !== "POST") return undefined;
   switch (openai) {
+    case "/images/generations":
+      return path.startsWith("/v1/") ? { kind: "images" } : undefined;
     case "/chat/completions":
       return { kind: "call", call: { protocol: "chat" } };
     case "/responses":
@@ -440,6 +467,9 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
   const tasks = new Set<Promise<void>>();
   let closing: Promise<void> | undefined;
   const throttle = new RejectionThrottle(clock);
+  const redactor = new Redactor();
+  for (const secret of deps.secrets ?? [])
+    redactor.remember(secret, "ADMIN_TOKEN");
   /** In-flight model calls of `session:` keys, per Session. */
   const sessionCalls = new Map<
     SessionId,
@@ -480,6 +510,11 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     ...(deps.copilot
       ? { copilot: new CopilotBridge(deps.copilot, clock) }
       : {}),
+    redactor,
+    features: deps.features ?? (() => DEFAULT_GATEWAY_FEATURES),
+    vision: new VisionDescriber((purpose, body, signal) =>
+      internalCall(purpose, body, signal),
+    ),
     makeId: () => `call_${nonce}${(generated++).toString(36)}`,
     async commit(entry: ModelCallEntry): Promise<boolean> {
       try {
@@ -1130,6 +1165,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     started: number,
     abort: AbortController,
     session: ActiveSessionRun | undefined,
+    internal?: "vision" | "search",
   ) => {
     let disconnected = false;
     const closed = new Promise<void>((resolve) =>
@@ -1319,6 +1355,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         stream,
         conversation,
         routePatches,
+        ...(internal ? { internal } : {}),
       };
       // The pin header is read here only; no header of the client but a
       // fixed few is ever sent upstream (upstreamHeaders).
@@ -1621,6 +1658,30 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         case "count":
           await countTokens(request, response, route.protocol, key);
           return;
+        case "images": {
+          const abort = new AbortController();
+          const onClose = () => {
+            if (!response.writableFinished) abort.abort();
+          };
+          response.once("close", onClose);
+          const onShutdown = () => abort.abort();
+          shutdown.signal.addEventListener("abort", onShutdown, { once: true });
+          try {
+            await imagesCall({
+              services,
+              request,
+              response,
+              key,
+              entry,
+              started,
+              signal: abort.signal,
+            });
+          } finally {
+            response.removeListener("close", onClose);
+            shutdown.signal.removeEventListener("abort", onShutdown);
+          }
+          return;
+        }
         case "call": {
           entry.inbound.protocol = route.call.protocol;
           let session: ActiveSessionRun | undefined;
@@ -1684,6 +1745,107 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     }
   };
 
+  /**
+   * Calls the gateway makes for itself (vision descriptions, web search
+   * rounds): Chat requests on a private listener on 127.0.0.1, started on
+   * first use, that answers only requests carrying this handler's random
+   * token. They take the normal path (routing, failover, ledger) with a key
+   * that may use any model and has no quota, and each is its own ledger
+   * entry with the agent `harnesshub-<purpose>`.
+   */
+  const internalToken = randomBytes(32).toString("base64url");
+  const internalKey: GatewayKeyRecord = {
+    keyId: "internal0000" as GatewayKeyId,
+    name: "HarnessHub internal",
+    scope: { kind: "client", name: "harnesshub" },
+    modelAllow: ["*"],
+    secretHash: "",
+    createdAt: new Date(0).toISOString(),
+  };
+  let internalServer: Promise<{ server: Server; url: string }> | undefined;
+  const internalServe = async (
+    request: IncomingMessage,
+    response: ServerResponse,
+  ) => {
+    const presented = request.headers["x-hh-internal"];
+    const purpose = request.headers["x-hh-internal-purpose"];
+    const valid =
+      typeof presented === "string" &&
+      presented.length === internalToken.length &&
+      timingSafeEqual(Buffer.from(presented), Buffer.from(internalToken)) &&
+      request.method === "POST" &&
+      request.url === "/v1/chat/completions" &&
+      (purpose === "vision" || purpose === "search");
+    if (!valid) {
+      response.writeHead(404).end();
+      return;
+    }
+    const entry = baseEntry(
+      "chat",
+      "/v1/chat/completions",
+      clock(),
+      undefined,
+      undefined,
+    );
+    entry.agent = { id: `harnesshub-${purpose}`, source: "route" };
+    response.setHeader("x-hh-call-id", entry.callId);
+    await modelCall(
+      request,
+      response,
+      { protocol: "chat" },
+      internalKey,
+      entry,
+      performance.now(),
+      new AbortController(),
+      undefined,
+      purpose,
+    );
+  };
+  const internalCall = async (
+    purpose: "vision" | "search",
+    body: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<{ status: number; body: unknown; callId?: string }> => {
+    if (closing) throw new GatewayError("The gateway is stopping", 503);
+    internalServer ??= (async () => {
+      const server = createServer((request, response) => {
+        track(
+          internalServe(request, response).catch(() => void response.destroy()),
+        );
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const address = server.address();
+      if (!address || typeof address === "string")
+        throw new GatewayError("The internal listener has no address", 500);
+      return { server, url: `http://127.0.0.1:${address.port}` };
+    })();
+    const { url } = await internalServer;
+    const answer = await fetch(`${url}/v1/chat/completions`, {
+      method: "POST",
+      signal,
+      headers: {
+        "content-type": "application/json",
+        "x-hh-internal": internalToken,
+        "x-hh-internal-purpose": purpose,
+      },
+      body: JSON.stringify(body),
+    });
+    const text = await answer.text();
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch {
+      value = undefined;
+    }
+    const callId = answer.headers.get("x-hh-call-id");
+    return {
+      status: answer.status,
+      body: value,
+      ...(callId ? { callId } : {}),
+    };
+  };
+
   const handler = (request: IncomingMessage, response: ServerResponse) => {
     track(
       serve(request, response, "loopback").catch(() => void response.destroy()),
@@ -1711,6 +1873,13 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         shutdown.abort();
         clearInterval(saver);
         while (tasks.size) await Promise.allSettled([...tasks]);
+        const internal = await internalServer?.catch(() => undefined);
+        if (internal) {
+          internal.server.closeAllConnections();
+          await new Promise<void>((resolve) =>
+            internal.server.close(() => resolve()),
+          );
+        }
         await services.copilot?.close();
         for (const record of throttle.drain()) await services.commit(record);
         await saveReadings();

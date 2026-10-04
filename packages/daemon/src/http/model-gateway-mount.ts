@@ -13,7 +13,7 @@ export interface ModelGatewayMount {
 }
 
 const V1_MODEL_PATH =
-  /^\/v1\/(?:chat\/completions|responses|messages(?:\/count_tokens)?|models(?:\/.*)?)$/;
+  /^\/v1\/(?:chat\/completions|responses|messages(?:\/count_tokens)?|models(?:\/.*)?|images\/generations)$/;
 const PREFIXLESS_PATH =
   /^\/(?:chat\/completions|responses|messages(?:\/count_tokens)?|models(?:\/.*)?)$/;
 
@@ -21,7 +21,8 @@ const PREFIXLESS_PATH =
  * Whether a request path goes to the model gateway (03-model-plane section
  * 1): `/v1beta/*` and `/v1alpha/*`; under `/v1` only the model protocol
  * paths (`chat/completions`, `responses`, `messages`,
- * `messages/count_tokens`, `models` and `models/...`), because the
+ * `messages/count_tokens`, `models`, `models/...` and
+ * `images/generations`), because the
  * management routes still live under `/v1` until they move to `/api/v1`;
  * and the same paths without `/v1`. Repeated and trailing slashes are
  * ignored as the gateway ignores them.

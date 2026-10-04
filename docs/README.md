@@ -41,6 +41,7 @@
 | [发现](engine-discovery.md) | 已知 Harness、标准模板、manifest 与安装证据 |
 | [独立配置](engine-configuration.md) | 统一模型、Provider/模型/URL、秘密引用、Skills、MCP、配置检查 |
 | [统一模型网关](model-gateway.md) | Chat/Responses/Anthropic/Google 协议转换、上游规范化、推理回填、媒体与错误 |
+| [网关功能](gateway-features.md) | 出站秘密脱敏与工具参数中的还原、视觉兜底、联网搜索模拟与图像端点的设置与行为 |
 | [统一模型下的引擎接线](model-gateway-engines.md) | 各引擎的私有配置、缺省值与已知限制 |
 | [全局接线](global-wiring.md) | 把本机 Agent 的用户配置接到网关：预览、备份、原子写、还原、漂移与各 Adapter 写入的键 |
 | [备份、恢复与同步](backup-sync.md) | 口令加密的备份文件、逐条恢复与 Agent 重新接线、经 WebDAV 或 S3 的多机同步与冲突合并 |

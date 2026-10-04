@@ -16,6 +16,7 @@ import {
   type SubscriptionAccountView,
   type SubscriptionBackend,
   type SubscriptionNoticeView,
+  type GatewayFeaturesView,
   type GatewayShareStatus,
   type HarnessHubClient,
   type MetadataField,
@@ -29,6 +30,10 @@ import {
 } from "@harnesshub/sdk/local";
 import type { UsageGroupBy, WireProtocol } from "@harnesshub/core/model-plane";
 import { choosePreset } from "@harnesshub/core/provider-presets";
+import {
+  searchBackendKinds,
+  type SearchBackendKind,
+} from "@harnesshub/core/gateway-features";
 import type { ImportPreview } from "@harnesshub/core/import-links";
 
 const EXIT = {
@@ -47,8 +52,8 @@ const USAGE = `Usage: hh <command> [options]
 
   hh provider list | show <id> | presets | models <id> [--refresh]
               | add <id> --chat URL [--responses URL] [--anthropic URL]
-                [--gemini URL] [--name N] [--kind K] [--api-key-header H]
-                [--model ID]...
+                [--gemini URL] [--image-endpoint URL] [--name N] [--kind K]
+                [--api-key-header H] [--model ID]...
               | add [<id>] --preset P [--region R] [--plan P] [--name N]
                 [--base URL | --chat URL ...]
                 [--credential-from-stdin | --credential-from-env VAR
@@ -62,6 +67,11 @@ const USAGE = `Usage: hh <command> [options]
               secret from a hidden prompt, --from-stdin, --from-env VAR or --from-file PATH
   hh key list | create --name N --allow REF... [--expires-at TIME | --no-expiry]
               [--lan] | revoke <keyId>
+  hh gateway features | redaction on|off | redaction rule add NAME PATTERN
+              [--ignore-case] | redaction rule remove NAME | vision MODEL|off
+              | search add tavily|brave|exa|firecrawl|searxng [--base-url URL]
+              [--key | --key-from-stdin | --key-from-env VAR
+              | --key-from-file PATH] | search remove ID
   hh gateway share status | off | on [--host IP] [--port N] [--name HOST]...
               [--public-base-url URL]
   hh group list | add <id> --member REF... [--strategy S] [--stickiness S]
@@ -357,6 +367,7 @@ async function providerCommand(args: string[]): Promise<void> {
     responses: { type: "string" },
     anthropic: { type: "string" },
     gemini: { type: "string" },
+    "image-endpoint": { type: "string" },
     "api-key-header": { type: "string" },
     model: { type: "string", multiple: true },
     preset: { type: "string" },
@@ -553,6 +564,9 @@ async function providerCommand(args: string[]): Promise<void> {
           : { id: id!, endpoints }),
         ...(credential ? { credential } : {}),
         ...(typeof values.name === "string" ? { name: values.name } : {}),
+        ...(typeof values["image-endpoint"] === "string"
+          ? { imageEndpoint: values["image-endpoint"] }
+          : {}),
         ...(typeof values.kind === "string"
           ? { kind: values.kind as "vendor" | "relay" | "local" | "custom" }
           : {}),
@@ -1245,8 +1259,139 @@ function shareText(status: GatewayShareStatus): string {
   ].join("\n");
 }
 
+/** The gateway features as lines. */
+function featuresText(features: GatewayFeaturesView): string {
+  const lines = [
+    `Redaction: ${features.redaction.enabled ? "on" : "off"}${features.redaction.rules.length ? "" : " (known secrets only)"}`,
+    ...features.redaction.rules.map(
+      (rule) => `  rule ${rule.name}: /${rule.pattern}/${rule.flags ?? ""}`,
+    ),
+    `Vision fallback: ${features.vision ? features.vision.model : "off (images become a placeholder for models without image input)"}`,
+    `Web search: ${features.search?.backends.length ? "" : "off"}`,
+    ...(features.search?.backends ?? []).map(
+      (backend) =>
+        `  ${backend.id} ${backend.kind}${backend.baseUrl ? ` ${backend.baseUrl}` : ""}${backend.hasKey ? " (key stored)" : ""}`,
+    ),
+  ];
+  return lines.join("\n");
+}
+
+/**
+ * `hh gateway features | redaction on|off | redaction rule add <name>
+ * <pattern> [--ignore-case] | redaction rule remove <name> | vision
+ * <model>|off | search add <kind> [--base-url URL] [key source] | search
+ * remove <id>`: the gateway's optional capabilities (Magpie parity §11).
+ * A search key is read like a credential secret, never from the command
+ * line itself and never from an environment variable that is not named.
+ */
+async function gatewayFeaturesCommand(
+  group: string,
+  args: string[],
+): Promise<void> {
+  const { values, positionals: given } = parse(args, {
+    "ignore-case": { type: "boolean" },
+    "base-url": { type: "string" },
+    key: { type: "boolean" },
+    "key-from-stdin": { type: "boolean" },
+    "key-from-env": { type: "string" },
+    "key-from-file": { type: "string" },
+  });
+  const ctx = context(values);
+  const client = await ctx.client();
+  const show = (features: GatewayFeaturesView) =>
+    output(ctx, features, () => featuresText(features));
+  if (group === "features") {
+    positionals(given, []);
+    return show(await client.gatewayFeatures.get());
+  }
+  if (group === "vision") {
+    const [model] = positionals(given, ["model or off"]);
+    return show(
+      model === "off"
+        ? await client.gatewayFeatures.clearVision()
+        : await client.gatewayFeatures.setVision(model!),
+    );
+  }
+  if (group === "redaction") {
+    const [action = "", ...rest] = given;
+    if (action === "on" || action === "off") {
+      positionals(rest, []);
+      return show(
+        await client.gatewayFeatures.setRedaction({ enabled: action === "on" }),
+      );
+    }
+    if (action !== "rule")
+      throw new UsageError(
+        "hh gateway redaction on | off | rule add | rule remove",
+      );
+    const [verb = "", name = "", pattern] = rest;
+    const rules = (await client.gatewayFeatures.get()).redaction.rules;
+    if (verb === "add") {
+      positionals(rest.slice(1), ["name", "pattern"]);
+      return show(
+        await client.gatewayFeatures.setRedaction({
+          rules: [
+            ...rules.filter(
+              (rule) => rule.name.toUpperCase() !== name.toUpperCase(),
+            ),
+            {
+              name,
+              pattern: pattern!,
+              ...(values["ignore-case"] ? { flags: "i" } : {}),
+            },
+          ],
+        }),
+      );
+    }
+    if (verb === "remove") {
+      positionals(rest.slice(1), ["name"]);
+      if (!rules.some((rule) => rule.name === name))
+        throw new UsageError(`No redaction rule ${name}`);
+      return show(
+        await client.gatewayFeatures.setRedaction({
+          rules: rules.filter((rule) => rule.name !== name),
+        }),
+      );
+    }
+    throw new UsageError(
+      "hh gateway redaction rule add <name> <pattern> | rule remove <name>",
+    );
+  }
+  // search
+  const [action = "", ...rest] = given;
+  if (action === "remove") {
+    const [id] = positionals(rest, ["id"]);
+    return show(await client.gatewayFeatures.removeSearch(id!));
+  }
+  if (action !== "add")
+    throw new UsageError("hh gateway search add <kind> | remove <id>");
+  const [kind] = positionals(rest, ["kind"]);
+  if (!searchBackendKinds.includes(kind as SearchBackendKind))
+    throw new UsageError(
+      `Unknown search backend ${kind}; known: ${searchBackendKinds.join(", ")}`,
+    );
+  const keyGiven = (
+    ["key", "key-from-stdin", "key-from-env", "key-from-file"] as const
+  ).some((name) => values[name] !== undefined && values[name] !== false);
+  const key =
+    keyGiven || kind !== "searxng"
+      ? await readSecret(ctx, values, "key-")
+      : undefined;
+  return show(
+    await client.gatewayFeatures.addSearch({
+      kind: kind as SearchBackendKind,
+      ...(key !== undefined ? { key } : {}),
+      ...(typeof values["base-url"] === "string"
+        ? { baseUrl: values["base-url"] }
+        : {}),
+    }),
+  );
+}
+
 async function gatewayCommand(args: string[]): Promise<void> {
   const [group = "", action = "", ...rest] = args;
+  if (["features", "redaction", "vision", "search"].includes(group))
+    return gatewayFeaturesCommand(group, args.slice(1));
   if (group !== "share")
     throw new UsageError(`Unknown gateway command: ${group || "(none)"}`);
   const { values, positionals: given } = parse(rest, {

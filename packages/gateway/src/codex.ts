@@ -22,6 +22,8 @@ import {
   type ProviderId,
 } from "@harnesshub/core/model-plane";
 import type { CallServices } from "./call.js";
+import { maskBody } from "./redaction.js";
+import { ToolArgumentRestorer } from "./restore.js";
 import {
   failure,
   networkFailure,
@@ -227,6 +229,21 @@ export async function codexPassthrough(context: CodexRequest): Promise<void> {
       if (raw && typeof model === "string" && model) {
         entry = context.entry(raw.stream === true);
         attribute(entry, model, raw, request.headers);
+      }
+      // Known secrets stay here; tool arguments get them back.
+      const masked = maskBody(
+        services.redactor,
+        services.features().redaction,
+        body,
+      );
+      if (masked.count) {
+        body = masked.body;
+        entry?.patches.push(`redact:${masked.count}`);
+        writer.transform = new ToolArgumentRestorer(
+          services.redactor,
+          "responses",
+          raw?.stream === true ? "sse" : "json",
+        );
       }
     }
     const url = new URL(

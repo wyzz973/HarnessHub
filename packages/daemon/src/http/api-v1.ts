@@ -26,6 +26,10 @@ import {
   type GatewayShareControl,
 } from "./gateway-share-routes.js";
 import {
+  registerGatewayFeaturesRoutes,
+  type GatewayFeaturesControl,
+} from "./gateway-features-routes.js";
+import {
   registerSubscriptionRoutes,
   type SubscriptionControl,
 } from "./subscription-routes.js";
@@ -146,6 +150,8 @@ export interface ApiV1Options {
   importHome?: WiringHome;
   /** LAN sharing of the model gateway; without it `/gateway/share` is absent. */
   gatewayShare?: GatewayShareControl;
+  /** Redaction, vision and search settings; without them `/gateway/features` is absent. */
+  gatewayFeatures?: GatewayFeaturesControl;
   /** Backups and sync; without them `/backup`, `/restore` and `/sync` are absent. */
   backup?: { backups: BackupService; sync: SyncService };
   /**
@@ -337,6 +343,8 @@ export function registerApiV1(
       registerLibraryRoutes(api, options.library);
       if (options.gatewayShare)
         registerGatewayShareRoutes(api, options.gatewayShare);
+      if (options.gatewayFeatures)
+        registerGatewayFeaturesRoutes(api, options.gatewayFeatures);
       if (options.backup)
         registerBackupRoutes(api, options.backup.backups, options.backup.sync);
       if (options.subscriptions)

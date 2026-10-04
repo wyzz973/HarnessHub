@@ -3,11 +3,13 @@ import {
   GatewayError,
   array,
   boundedNumber,
+  foundText,
   imagePart,
   omittedMedia,
   nativeTool,
   object,
   record,
+  searchedText,
   string,
   toolAlias,
   userContent,
@@ -160,11 +162,20 @@ export function responsesToChat(
     );
   const bindings = new Map<string, ToolBinding>();
   const tools: Record<string, unknown>[] = [];
+  let search = false;
   const addTools = (values: unknown[], namespace?: string) => {
     for (const rawTool of values) {
       const tool = object(rawTool);
       if (tool.type === "namespace" && !namespace) {
         addTools(array(tool.tools), string(tool.name));
+        continue;
+      }
+      if (
+        options.search &&
+        typeof tool.type === "string" &&
+        tool.type.startsWith("web_search")
+      ) {
+        search = true;
         continue;
       }
       if (tool.type !== "function" && tool.type !== "custom")
@@ -297,7 +308,20 @@ export function responsesToChat(
       const value = reasoningText(item);
       if (value) reasoning = reasoning ? `${reasoning}\n${value}` : value;
     } else if (type === "additional_tools") addTools(array(item.tools));
-    else
+    else if (type === "web_search_call" && options.search) {
+      // A search the gateway answered earlier, as text for the model.
+      const action = record(item.action);
+      const sources = Array.isArray(action?.sources) ? action.sources : [];
+      const hits = sources
+        .map((source) => record(source))
+        .filter((source) => typeof source?.url === "string")
+        .map((source) => ({ url: String(source!.url) }));
+      const content = [
+        searchedText(typeof action?.query === "string" ? action.query : ""),
+        ...(hits.length ? [foundText(hits)] : []),
+      ].join("\n");
+      messages.push(withReasoning({ role: "assistant", content }));
+    } else
       throw new GatewayError(
         `Unsupported Responses input item: ${typeof type === "string" ? type.slice(0, 64) : "unknown"}`,
       );
@@ -368,6 +392,7 @@ export function responsesToChat(
       ? { requestedModel: request.model }
       : {}),
     ...(effort ? { reasoning: effort } : {}),
+    ...(search ? { search } : {}),
   };
 }
 
@@ -645,6 +670,43 @@ export class ResponsesSink implements OutputSink {
       item_id: `fc_${id}`,
       output_index: state.index,
       delta: text,
+    });
+  }
+  /**
+   * A web search the gateway ran: a `web_search_call` item with its query
+   * and sources, its id marked as the gateway's (`ws_hh_…`) so a later
+   * request with it is answered here again.
+   */
+  async search(
+    query: string,
+    hits: { title: string; url: string }[],
+  ): Promise<void> {
+    await this.#close();
+    const index = this.#reserve();
+    const id = `ws_hh_${this.context.id}_${index}`;
+    const item = {
+      id,
+      type: "web_search_call",
+      status: "completed",
+      action: {
+        type: "search",
+        query,
+        sources: hits.map((hit) => ({ type: "url", url: hit.url })),
+      },
+    };
+    this.#output[index] = item;
+    if (!this.translation.stream) return;
+    const at = { output_index: index, item_id: id };
+    await this.#event("response.output_item.added", {
+      output_index: index,
+      item: { ...item, status: "in_progress" },
+    });
+    await this.#event("response.web_search_call.in_progress", at);
+    await this.#event("response.web_search_call.searching", at);
+    await this.#event("response.web_search_call.completed", at);
+    await this.#event("response.output_item.done", {
+      output_index: index,
+      item,
     });
   }
   #final(result: ChatResult): Record<string, unknown> {

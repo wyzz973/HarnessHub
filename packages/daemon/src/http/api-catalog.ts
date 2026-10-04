@@ -971,7 +971,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     title: "添加 provider",
     group: "providers",
     request:
-      "preset（内置预设 ID，可加 region 与 plan，缺省为预设列出的第一个）或 id（slug）与 endpoints（至少一个）；与 preset 同给的字段覆盖预设（endpoints 按协议覆盖，id 默认为预设 ID）；name、kind、auth、headers、models、wire、patches、capabilities、translateOnly、catalog（models.dev provider id）可选；credential（value 或 env/file ref，name 默认 default）添加第一个凭据；未知字段 400。",
+      "preset（内置预设 ID，可加 region 与 plan，缺省为预设列出的第一个）或 id（slug）与 endpoints（至少一个）；与 preset 同给的字段覆盖预设（endpoints 按协议覆盖，id 默认为预设 ID）；name、kind、auth、headers、models、wire、patches、capabilities、translateOnly、imageEndpoint（OpenAI 兼容 Images API 的基址，网关的 /v1/images/generations 直通到这里）、catalog（models.dev provider id）可选；credential（value 或 env/file ref，name 默认 default）添加第一个凭据；未知字段 400。",
     response:
       "201：ProviderConfig（来自预设时含 preset、region、plan）；带 credential 时含该凭据的引用。",
     implementation:
@@ -1301,6 +1301,107 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "tests/integration/hh-cli.test.ts",
     ],
     operationId: "hh_api_v1_put_gateway_share",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/gateway/features",
+    title: "网关功能设置",
+    group: "gateway-features",
+    request: "无参数。",
+    response:
+      "200：schemaVersion、redaction（enabled、rules[] 的 name、pattern、flags）、vision（model，未设置时没有）、search（backends[] 的 id、kind、baseUrl、hasKey；没有后端时没有），从不含密钥或其引用。",
+    implementation:
+      "GatewayFeaturesFile.view：<dataDir>/gateway-features.json 中的设置（文件不存在时为缺省值：脱敏开启、没有用户规则、没有视觉模型、没有搜索后端）。",
+    effects: "只读。",
+    errors:
+      "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/gateway-features-routes.ts",
+    tests: ["tests/integration/gateway-features.test.ts"],
+    operationId: "hh_api_v1_get_gateway_features",
+  },
+  {
+    method: "PUT",
+    path: "/api/v1/gateway/features/redaction",
+    title: "设置出站脱敏",
+    group: "gateway-features",
+    request:
+      "至少一项：enabled（布尔）；rules（最多 64 条，name 为字母开头的 1 到 32 个字母数字或 _，pattern 为 JavaScript 正则表达式，1 到 512 个字符，不得匹配空串，flags 只能为 i）；给出 rules 时整体替换。",
+    response: "200：与 GET 相同。",
+    implementation:
+      "GatewayFeaturesFile.setRedaction 校验后原子写入设置文件；网关对之后的每个上游请求读取它。",
+    effects: "写入 <dataDir>/gateway-features.json（0600）。",
+    errors:
+      "400 GATEWAY_FEATURES_INVALID（errors[] 指向规则）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/gateway-features-routes.ts",
+    tests: ["tests/integration/gateway-features.test.ts"],
+    operationId: "hh_api_v1_put_gateway_redaction",
+  },
+  {
+    method: "PUT",
+    path: "/api/v1/gateway/features/vision",
+    title: "设置视觉模型",
+    group: "gateway-features",
+    request: "model：Model Ref 或 group/<id>，用来为不能看图的模型描述图片。",
+    response: "200：与 GET 相同。",
+    implementation:
+      "GatewayFeaturesFile.setVision 校验 Model Ref 形式后写入设置文件。",
+    effects: "写入 <dataDir>/gateway-features.json。",
+    errors:
+      "400 GATEWAY_FEATURES_INVALID；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/gateway-features-routes.ts",
+    tests: ["tests/integration/gateway-features.test.ts"],
+    operationId: "hh_api_v1_put_gateway_vision",
+  },
+  {
+    method: "DELETE",
+    path: "/api/v1/gateway/features/vision",
+    title: "关闭视觉兜底",
+    group: "gateway-features",
+    request: "无参数。",
+    response: "200：与 GET 相同（没有 vision）。",
+    implementation: "GatewayFeaturesFile.setVision(null)。",
+    effects:
+      "写入 <dataDir>/gateway-features.json；之后不能看图的模型收到的图片是占位文字。",
+    errors:
+      "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/gateway-features-routes.ts",
+    tests: ["tests/integration/gateway-features.test.ts"],
+    operationId: "hh_api_v1_delete_gateway_vision",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/gateway/features/search",
+    title: "添加搜索后端",
+    group: "gateway-features",
+    request:
+      "kind（tavily、brave、exa、firecrawl、searxng）；key（API 密钥，searxng 可没有）；baseUrl（searxng 必填，其他可覆盖厂商 API 地址）。",
+    response:
+      "201：与 GET 相同，新后端的 id 为 search-<n>，hasKey 表示是否保存了密钥。",
+    implementation:
+      "GatewayFeaturesFile.addSearch：先校验，再把密钥写入秘密存储，设置文件只记引用；保存失败时删除刚写入的密钥。",
+    effects:
+      "写入秘密存储与 <dataDir>/gateway-features.json；从不读取未登记的环境变量。",
+    errors:
+      "400 GATEWAY_FEATURES_INVALID（缺少密钥、searxng 缺少 baseUrl、地址不是 http(s)）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/gateway-features-routes.ts",
+    tests: ["tests/integration/gateway-features.test.ts"],
+    operationId: "hh_api_v1_add_gateway_search",
+  },
+  {
+    method: "DELETE",
+    path: "/api/v1/gateway/features/search/{id}",
+    title: "删除搜索后端",
+    group: "gateway-features",
+    request: "路径参数 id。",
+    response: "200：与 GET 相同。",
+    implementation:
+      "GatewayFeaturesFile.removeSearch：先从设置文件中删除，再删除秘密存储中的密钥。",
+    effects: "写入 <dataDir>/gateway-features.json 并删除密钥。",
+    errors:
+      "404 SEARCH_BACKEND_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/gateway-features-routes.ts",
+    tests: ["tests/integration/gateway-features.test.ts"],
+    operationId: "hh_api_v1_remove_gateway_search",
   },
   {
     method: "GET",

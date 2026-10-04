@@ -131,6 +131,12 @@ export interface ReasoningRequest {
 export interface TranslateOptions {
   /** Keep images as Chat `image_url` parts instead of text placeholders. */
   images?: boolean;
+  /**
+   * The gateway answers web search itself (./search.js): a server-side web
+   * search tool is accepted and noted in `search`, and searches in the
+   * history become text.
+   */
+  search?: boolean;
 }
 /** Image content as a Chat `image_url` part. */
 export function imagePart(url: string): Record<string, unknown> {
@@ -162,6 +168,20 @@ export interface ChatTranslation {
   reasoning?: ReasoningRequest;
   /** `tool_call_id`s whose results the client marked as errors. */
   toolErrors?: Set<string>;
+  /** The client offered its model a server-side web search tool (with `search` only). */
+  search?: boolean;
+}
+
+/** A web search in an answer's history, as the model reads it later. */
+export function searchedText(query: string): string {
+  return `[Searched the web for: ${query}]`;
+}
+/** The pages a web search in the history found, as the model reads them later. */
+export function foundText(hits: { title?: string; url: string }[]): string {
+  return [
+    "[Web search results:]",
+    ...hits.map((hit) => `- ${hit.title ? `${hit.title} — ` : ""}${hit.url}`),
+  ].join("\n");
 }
 
 /** Upstream token usage parsed leniently; absent fields were not reported. */

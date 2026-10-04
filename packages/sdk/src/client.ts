@@ -20,6 +20,11 @@ import type {
   SubscriptionNotice,
 } from "@harnesshub/core/subscriptions";
 import type {
+  RedactionRule,
+  RedactionSettings,
+  SearchBackendKind,
+} from "@harnesshub/core/gateway-features";
+import type {
   ImportApp,
   ImportPreview,
   ImportResult,
@@ -74,6 +79,11 @@ export type {
   ImportResult,
 } from "@harnesshub/core/import-links";
 export type { AutoGroup } from "@harnesshub/core/auto-groups";
+export type {
+  RedactionRule,
+  RedactionSettings,
+  SearchBackendKind,
+} from "@harnesshub/core/gateway-features";
 export type {
   CopilotAccount,
   CopilotAuth,
@@ -250,6 +260,8 @@ export interface ProviderFields {
   patches?: ProviderConfig["patches"];
   capabilities?: ProviderConfig["capabilities"];
   translateOnly?: boolean;
+  /** Base URL of the provider's OpenAI-compatible Images API (`/v1/images/generations` goes there). */
+  imageEndpoint?: string;
 }
 
 /** A value to store, or an `env` or `file` reference. */
@@ -341,6 +353,21 @@ export interface GatewayShareStatus {
   urls: string[];
   /** Why the listener is not serving although sharing is enabled. */
   error?: string;
+}
+
+/** `GET /gateway/features`: redaction, the vision model and search backends, without keys. */
+export interface GatewayFeaturesView {
+  schemaVersion: 1;
+  redaction: RedactionSettings;
+  vision?: { model: string };
+  search?: {
+    backends: {
+      id: string;
+      kind: SearchBackendKind;
+      baseUrl?: string;
+      hasKey: boolean;
+    }[];
+  };
 }
 
 /** `POST /gateway-keys`: `key` is the key text, returned only by this call. */
@@ -1309,6 +1336,36 @@ export class HarnessHubClient {
       this.request<GatewayShareStatus>("PUT", "gateway/share", {
         body: settings,
       }),
+  };
+
+  readonly gatewayFeatures = {
+    get: () => this.request<GatewayFeaturesView>("GET", "gateway/features"),
+    /** Turn outbound redaction on or off and replace the user's rules. */
+    setRedaction: (input: { enabled?: boolean; rules?: RedactionRule[] }) =>
+      this.request<GatewayFeaturesView>("PUT", "gateway/features/redaction", {
+        body: input,
+      }),
+    /** The model (Model Ref or `group/<id>`) that describes images for models without image input. */
+    setVision: (model: string) =>
+      this.request<GatewayFeaturesView>("PUT", "gateway/features/vision", {
+        body: { model },
+      }),
+    clearVision: () =>
+      this.request<GatewayFeaturesView>("DELETE", "gateway/features/vision"),
+    /** Add a web search backend; `key` goes to the daemon's secret store. */
+    addSearch: (input: {
+      kind: SearchBackendKind;
+      key?: string;
+      baseUrl?: string;
+    }) =>
+      this.request<GatewayFeaturesView>("POST", "gateway/features/search", {
+        body: input,
+      }),
+    removeSearch: (id: string) =>
+      this.request<GatewayFeaturesView>(
+        "DELETE",
+        `gateway/features/search/${segment(id)}`,
+      ),
   };
 
   readonly backup = {

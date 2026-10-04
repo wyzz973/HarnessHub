@@ -15654,6 +15654,11 @@
                           "translateOnly": {
                             "type": "boolean"
                           },
+                          "imageEndpoint": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 2048
+                          },
                           "subscription": {
                             "type": "object",
                             "additionalProperties": false,
@@ -15776,7 +15781,7 @@
         "tags": [
           "providers"
         ],
-        "description": "预设由 @harnesshub/gateway 的 presets 加载并经 providerFromPreset 展开：端点依次取 plan、region、预设自己的，初始模型依次取 plan 的 models、预设的 models.list 与 fallbackModels，userEndpoint 预设必须给出 endpoints，required 的 headerHints 必须在 headers 中；手动时默认 name=id、kind=custom、auth=authorization-bearer、models={manual,[],all}；端点按官方 SDK 基址约定校验（chat/responses 含 /v1，anthropic、gemini 不含版本段）。每个模型缺的窗口、输出上限、推理、输入模态与价格按 03 第 7 节的优先级（覆盖、预设、models.dev 快照）补齐；请求里给出的值保留。credential 的值先写入秘密存储，provider 写入失败时删除。\n\n输入：preset（内置预设 ID，可加 region 与 plan，缺省为预设列出的第一个）或 id（slug）与 endpoints（至少一个）；与 preset 同给的字段覆盖预设（endpoints 按协议覆盖，id 默认为预设 ID）；name、kind、auth、headers、models、wire、patches、capabilities、translateOnly、catalog（models.dev provider id）可选；credential（value 或 env/file ref，name 默认 default）添加第一个凭据；未知字段 400。\n\n返回：201：ProviderConfig（来自预设时含 preset、region、plan）；带 credential 时含该凭据的引用。\n\n副作用：在一个事务内写入 providers 记录与各模型元数据的来源（model_provenance）；有 credential.value 时写一个托管秘密。\n\n失败与边界：400 PRESET_NOT_FOUND（/preset）、PRESET_REGION_NOT_FOUND（/region）、PRESET_PLAN_NOT_FOUND（/plan）、PROVIDER_INVALID（errors[] 指向 /id、/endpoints、/endpoints/<协议>、/headers/<名称> 或没有 preset 时的 /region、/plan：操作路径、版本段、内嵌凭据、查询串、片段、非 HTTPS 的公网地址、userEndpoint 预设缺少端点、缺少必需的 header）、CREDENTIAL_INVALID、INVALID_SECRET；409 PROVIDER_EXISTS；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "description": "预设由 @harnesshub/gateway 的 presets 加载并经 providerFromPreset 展开：端点依次取 plan、region、预设自己的，初始模型依次取 plan 的 models、预设的 models.list 与 fallbackModels，userEndpoint 预设必须给出 endpoints，required 的 headerHints 必须在 headers 中；手动时默认 name=id、kind=custom、auth=authorization-bearer、models={manual,[],all}；端点按官方 SDK 基址约定校验（chat/responses 含 /v1，anthropic、gemini 不含版本段）。每个模型缺的窗口、输出上限、推理、输入模态与价格按 03 第 7 节的优先级（覆盖、预设、models.dev 快照）补齐；请求里给出的值保留。credential 的值先写入秘密存储，provider 写入失败时删除。\n\n输入：preset（内置预设 ID，可加 region 与 plan，缺省为预设列出的第一个）或 id（slug）与 endpoints（至少一个）；与 preset 同给的字段覆盖预设（endpoints 按协议覆盖，id 默认为预设 ID）；name、kind、auth、headers、models、wire、patches、capabilities、translateOnly、imageEndpoint（OpenAI 兼容 Images API 的基址，网关的 /v1/images/generations 直通到这里）、catalog（models.dev provider id）可选；credential（value 或 env/file ref，name 默认 default）添加第一个凭据；未知字段 400。\n\n返回：201：ProviderConfig（来自预设时含 preset、region、plan）；带 credential 时含该凭据的引用。\n\n副作用：在一个事务内写入 providers 记录与各模型元数据的来源（model_provenance）；有 credential.value 时写一个托管秘密。\n\n失败与边界：400 PRESET_NOT_FOUND（/preset）、PRESET_REGION_NOT_FOUND（/region）、PRESET_PLAN_NOT_FOUND（/plan）、PROVIDER_INVALID（errors[] 指向 /id、/endpoints、/endpoints/<协议>、/headers/<名称> 或没有 preset 时的 /region、/plan：操作路径、版本段、内嵌凭据、查询串、片段、非 HTTPS 的公网地址、userEndpoint 预设缺少端点、缺少必需的 header）、CREDENTIAL_INVALID、INVALID_SECRET；409 PROVIDER_EXISTS；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
         "requestBody": {
           "required": true,
           "content": {
@@ -16266,6 +16271,11 @@
                   },
                   "translateOnly": {
                     "type": "boolean"
+                  },
+                  "imageEndpoint": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2048
                   }
                 }
               }
@@ -16854,6 +16864,11 @@
                     },
                     "translateOnly": {
                       "type": "boolean"
+                    },
+                    "imageEndpoint": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2048
                     },
                     "subscription": {
                       "type": "object",
@@ -18638,6 +18653,11 @@
                               "translateOnly": {
                                 "type": "boolean"
                               },
+                              "imageEndpoint": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 2048
+                              },
                               "subscription": {
                                 "type": "object",
                                 "additionalProperties": false,
@@ -19356,6 +19376,11 @@
                     "translateOnly": {
                       "type": "boolean"
                     },
+                    "imageEndpoint": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2048
+                    },
                     "subscription": {
                       "type": "object",
                       "additionalProperties": false,
@@ -19902,6 +19927,12 @@
                   },
                   "translateOnly": {
                     "type": "boolean",
+                    "nullable": true
+                  },
+                  "imageEndpoint": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2048,
                     "nullable": true
                   }
                 }
@@ -20503,6 +20534,11 @@
                     },
                     "translateOnly": {
                       "type": "boolean"
+                    },
+                    "imageEndpoint": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2048
                     },
                     "subscription": {
                       "type": "object",
@@ -21331,6 +21367,11 @@
                     },
                     "translateOnly": {
                       "type": "boolean"
+                    },
+                    "imageEndpoint": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2048
                     },
                     "subscription": {
                       "type": "object",
@@ -37345,6 +37386,1381 @@
                     },
                     "error": {
                       "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/gateway/features": {
+      "get": {
+        "operationId": "hh_api_v1_get_gateway_features",
+        "summary": "网关功能设置",
+        "tags": [
+          "gateway-features"
+        ],
+        "description": "GatewayFeaturesFile.view：<dataDir>/gateway-features.json 中的设置（文件不存在时为缺省值：脱敏开启、没有用户规则、没有视觉模型、没有搜索后端）。\n\n输入：无参数。\n\n返回：200：schemaVersion、redaction（enabled、rules[] 的 name、pattern、flags）、vision（model，未设置时没有）、search（backends[] 的 id、kind、baseUrl、hasKey；没有后端时没有），从不含密钥或其引用。\n\n副作用：只读。\n\n失败与边界：需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "schemaVersion",
+                    "redaction"
+                  ],
+                  "properties": {
+                    "schemaVersion": {
+                      "type": "integer",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "redaction": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "enabled",
+                        "rules"
+                      ],
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "rules": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "name",
+                              "pattern"
+                            ],
+                            "properties": {
+                              "name": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 32
+                              },
+                              "pattern": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 512
+                              },
+                              "flags": {
+                                "type": "string",
+                                "enum": [
+                                  "",
+                                  "i"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "vision": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "model"
+                      ],
+                      "properties": {
+                        "model": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "search": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "backends"
+                      ],
+                      "properties": {
+                        "backends": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "id",
+                              "kind",
+                              "hasKey"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "tavily",
+                                  "brave",
+                                  "exa",
+                                  "firecrawl",
+                                  "searxng"
+                                ]
+                              },
+                              "baseUrl": {
+                                "type": "string"
+                              },
+                              "hasKey": {
+                                "type": "boolean"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/gateway/features/redaction": {
+      "put": {
+        "operationId": "hh_api_v1_put_gateway_redaction",
+        "summary": "设置出站脱敏",
+        "tags": [
+          "gateway-features"
+        ],
+        "description": "GatewayFeaturesFile.setRedaction 校验后原子写入设置文件；网关对之后的每个上游请求读取它。\n\n输入：至少一项：enabled（布尔）；rules（最多 64 条，name 为字母开头的 1 到 32 个字母数字或 _，pattern 为 JavaScript 正则表达式，1 到 512 个字符，不得匹配空串，flags 只能为 i）；给出 rules 时整体替换。\n\n返回：200：与 GET 相同。\n\n副作用：写入 <dataDir>/gateway-features.json（0600）。\n\n失败与边界：400 GATEWAY_FEATURES_INVALID（errors[] 指向规则）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "minProperties": 1,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "rules": {
+                    "type": "array",
+                    "maxItems": 64,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "name",
+                        "pattern"
+                      ],
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 32
+                        },
+                        "pattern": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512
+                        },
+                        "flags": {
+                          "type": "string",
+                          "enum": [
+                            "",
+                            "i"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "schemaVersion",
+                    "redaction"
+                  ],
+                  "properties": {
+                    "schemaVersion": {
+                      "type": "integer",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "redaction": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "enabled",
+                        "rules"
+                      ],
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "rules": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "name",
+                              "pattern"
+                            ],
+                            "properties": {
+                              "name": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 32
+                              },
+                              "pattern": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 512
+                              },
+                              "flags": {
+                                "type": "string",
+                                "enum": [
+                                  "",
+                                  "i"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "vision": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "model"
+                      ],
+                      "properties": {
+                        "model": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "search": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "backends"
+                      ],
+                      "properties": {
+                        "backends": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "id",
+                              "kind",
+                              "hasKey"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "tavily",
+                                  "brave",
+                                  "exa",
+                                  "firecrawl",
+                                  "searxng"
+                                ]
+                              },
+                              "baseUrl": {
+                                "type": "string"
+                              },
+                              "hasKey": {
+                                "type": "boolean"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/gateway/features/vision": {
+      "put": {
+        "operationId": "hh_api_v1_put_gateway_vision",
+        "summary": "设置视觉模型",
+        "tags": [
+          "gateway-features"
+        ],
+        "description": "GatewayFeaturesFile.setVision 校验 Model Ref 形式后写入设置文件。\n\n输入：model：Model Ref 或 group/<id>，用来为不能看图的模型描述图片。\n\n返回：200：与 GET 相同。\n\n副作用：写入 <dataDir>/gateway-features.json。\n\n失败与边界：400 GATEWAY_FEATURES_INVALID；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "model"
+                ],
+                "properties": {
+                  "model": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 300
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "schemaVersion",
+                    "redaction"
+                  ],
+                  "properties": {
+                    "schemaVersion": {
+                      "type": "integer",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "redaction": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "enabled",
+                        "rules"
+                      ],
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "rules": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "name",
+                              "pattern"
+                            ],
+                            "properties": {
+                              "name": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 32
+                              },
+                              "pattern": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 512
+                              },
+                              "flags": {
+                                "type": "string",
+                                "enum": [
+                                  "",
+                                  "i"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "vision": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "model"
+                      ],
+                      "properties": {
+                        "model": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "search": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "backends"
+                      ],
+                      "properties": {
+                        "backends": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "id",
+                              "kind",
+                              "hasKey"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "tavily",
+                                  "brave",
+                                  "exa",
+                                  "firecrawl",
+                                  "searxng"
+                                ]
+                              },
+                              "baseUrl": {
+                                "type": "string"
+                              },
+                              "hasKey": {
+                                "type": "boolean"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "hh_api_v1_delete_gateway_vision",
+        "summary": "关闭视觉兜底",
+        "tags": [
+          "gateway-features"
+        ],
+        "description": "GatewayFeaturesFile.setVision(null)。\n\n输入：无参数。\n\n返回：200：与 GET 相同（没有 vision）。\n\n副作用：写入 <dataDir>/gateway-features.json；之后不能看图的模型收到的图片是占位文字。\n\n失败与边界：需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "schemaVersion",
+                    "redaction"
+                  ],
+                  "properties": {
+                    "schemaVersion": {
+                      "type": "integer",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "redaction": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "enabled",
+                        "rules"
+                      ],
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "rules": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "name",
+                              "pattern"
+                            ],
+                            "properties": {
+                              "name": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 32
+                              },
+                              "pattern": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 512
+                              },
+                              "flags": {
+                                "type": "string",
+                                "enum": [
+                                  "",
+                                  "i"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "vision": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "model"
+                      ],
+                      "properties": {
+                        "model": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "search": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "backends"
+                      ],
+                      "properties": {
+                        "backends": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "id",
+                              "kind",
+                              "hasKey"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "tavily",
+                                  "brave",
+                                  "exa",
+                                  "firecrawl",
+                                  "searxng"
+                                ]
+                              },
+                              "baseUrl": {
+                                "type": "string"
+                              },
+                              "hasKey": {
+                                "type": "boolean"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/gateway/features/search": {
+      "post": {
+        "operationId": "hh_api_v1_add_gateway_search",
+        "summary": "添加搜索后端",
+        "tags": [
+          "gateway-features"
+        ],
+        "description": "GatewayFeaturesFile.addSearch：先校验，再把密钥写入秘密存储，设置文件只记引用；保存失败时删除刚写入的密钥。\n\n输入：kind（tavily、brave、exa、firecrawl、searxng）；key（API 密钥，searxng 可没有）；baseUrl（searxng 必填，其他可覆盖厂商 API 地址）。\n\n返回：201：与 GET 相同，新后端的 id 为 search-<n>，hasKey 表示是否保存了密钥。\n\n副作用：写入秘密存储与 <dataDir>/gateway-features.json；从不读取未登记的环境变量。\n\n失败与边界：400 GATEWAY_FEATURES_INVALID（缺少密钥、searxng 缺少 baseUrl、地址不是 http(s)）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "tavily",
+                      "brave",
+                      "exa",
+                      "firecrawl",
+                      "searxng"
+                    ]
+                  },
+                  "key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  },
+                  "baseUrl": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2048
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "schemaVersion",
+                    "redaction"
+                  ],
+                  "properties": {
+                    "schemaVersion": {
+                      "type": "integer",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "redaction": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "enabled",
+                        "rules"
+                      ],
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "rules": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "name",
+                              "pattern"
+                            ],
+                            "properties": {
+                              "name": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 32
+                              },
+                              "pattern": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 512
+                              },
+                              "flags": {
+                                "type": "string",
+                                "enum": [
+                                  "",
+                                  "i"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "vision": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "model"
+                      ],
+                      "properties": {
+                        "model": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "search": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "backends"
+                      ],
+                      "properties": {
+                        "backends": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "id",
+                              "kind",
+                              "hasKey"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "tavily",
+                                  "brave",
+                                  "exa",
+                                  "firecrawl",
+                                  "searxng"
+                                ]
+                              },
+                              "baseUrl": {
+                                "type": "string"
+                              },
+                              "hasKey": {
+                                "type": "boolean"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/gateway/features/search/{id}": {
+      "delete": {
+        "operationId": "hh_api_v1_remove_gateway_search",
+        "summary": "删除搜索后端",
+        "tags": [
+          "gateway-features"
+        ],
+        "description": "GatewayFeaturesFile.removeSearch：先从设置文件中删除，再删除秘密存储中的密钥。\n\n输入：路径参数 id。\n\n返回：200：与 GET 相同。\n\n副作用：写入 <dataDir>/gateway-features.json 并删除密钥。\n\n失败与边界：404 SEARCH_BACKEND_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "schemaVersion",
+                    "redaction"
+                  ],
+                  "properties": {
+                    "schemaVersion": {
+                      "type": "integer",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "redaction": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "enabled",
+                        "rules"
+                      ],
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "rules": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "name",
+                              "pattern"
+                            ],
+                            "properties": {
+                              "name": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 32
+                              },
+                              "pattern": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 512
+                              },
+                              "flags": {
+                                "type": "string",
+                                "enum": [
+                                  "",
+                                  "i"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "vision": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "model"
+                      ],
+                      "properties": {
+                        "model": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "search": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "backends"
+                      ],
+                      "properties": {
+                        "backends": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "id",
+                              "kind",
+                              "hasKey"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "tavily",
+                                  "brave",
+                                  "exa",
+                                  "firecrawl",
+                                  "searxng"
+                                ]
+                              },
+                              "baseUrl": {
+                                "type": "string"
+                              },
+                              "hasKey": {
+                                "type": "boolean"
+                              }
+                            }
+                          }
+                        }
+                      }
                     }
                   }
                 }

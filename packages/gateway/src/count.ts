@@ -14,6 +14,7 @@ import {
   unsupportedPatches,
   upstreamHeaders,
 } from "./passthrough.js";
+import { maskBody } from "./redaction.js";
 import { KEYLESS_CREDENTIAL, type Candidate } from "./routing.js";
 
 /** Bytes of a count answer that are read; a larger answer is not a count. */
@@ -37,7 +38,10 @@ export async function forwardCountTokens(options: {
   bytes: Buffer;
   raw: Record<string, unknown>;
   headers: IncomingHttpHeaders;
-  services: Pick<CallServices, "resolveSecret" | "limits" | "slots"> & {
+  services: Pick<
+    CallServices,
+    "resolveSecret" | "limits" | "slots" | "redactor" | "features"
+  > & {
     log?: LogSink;
   };
   signal: AbortSignal;
@@ -67,15 +71,21 @@ export async function forwardCountTokens(options: {
     if (candidate.credential !== KEYLESS_CREDENTIAL)
       try {
         secret = await services.resolveSecret(candidate.credential.ref);
+        services.redactor.remember(secret, "PROVIDER_KEY");
       } catch {
         return fallback("credential_unavailable");
       }
-    const { body } = passthroughBody(
-      "anthropic",
-      options.bytes,
-      options.raw,
-      candidate.wireModel,
-      set,
+    // Counting sends the prompt upstream too; known secrets stay here.
+    const { body } = maskBody(
+      services.redactor,
+      services.features().redaction,
+      passthroughBody(
+        "anthropic",
+        options.bytes,
+        options.raw,
+        candidate.wireModel,
+        set,
+      ).body,
     );
     const url = countTokensUrl(candidate.endpoint);
     const { headers } = upstreamHeaders(

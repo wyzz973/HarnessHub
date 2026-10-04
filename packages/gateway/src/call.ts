@@ -82,6 +82,24 @@ import {
   copilotUnmapped,
   type CopilotBridge,
 } from "./copilot.js";
+import type { GatewayFeatures } from "@harnesshub/core/gateway-features";
+import { maskBody, type Redactor } from "./redaction.js";
+import { ToolArgumentRestorer } from "./restore.js";
+import {
+  SEARCH_MARKERS,
+  SEARCH_ROUNDS,
+  SearchRelay,
+  searchesNatively,
+  searchOffered,
+  searchTool,
+  webSearch,
+} from "./search.js";
+import {
+  describeImages,
+  imagesOf,
+  type VisionDescriber,
+  type VisionResult,
+} from "./vision.js";
 import {
   backoff,
   classify,
@@ -253,6 +271,12 @@ export interface CallServices {
   subscriptions?: SubscriptionTokens;
   /** Answers Copilot accounts' calls; without it their candidates fail as unavailable. */
   copilot?: CopilotBridge;
+  /** Outbound secret redaction: the known secrets and placeholders of this handler. */
+  redactor: Redactor;
+  /** The user's gateway features, read when needed. */
+  features(): GatewayFeatures;
+  /** Describes images for models without image input; absent where the gateway cannot call itself. */
+  vision?: VisionDescriber;
 }
 
 /** Route parts of a model call. */
@@ -297,6 +321,12 @@ export interface Call {
   conversation?: Conversation;
   /** Routing decisions recorded before any attempt (`sticky:…`). */
   routePatches: string[];
+  /** Set on a call the gateway makes for itself; such a call gets no vision fallback. */
+  internal?: "vision" | "search";
+  /** The images of this call described for models without image input, once per call. */
+  vision?: VisionResult;
+  /** The current attempt answers the client's web search itself (./search.js). */
+  searching?: boolean;
 }
 
 type Prepared =
@@ -311,6 +341,8 @@ type Prepared =
       patches: string[];
       unmapped: string[];
       replay: boolean;
+      /** The search tool's name, when the gateway answers web search itself (./search.js). */
+      search?: string;
     }
   | { kind: "skip"; error: AttemptError };
 
@@ -432,6 +464,82 @@ function cancelled(call: Call): AttemptError {
   };
 }
 
+/**
+ * The gateway answers the client's web search for this candidate: search
+ * backends are set, the request offers its model a server-side web search
+ * (or has the gateway's searches in its history), and the candidate's
+ * upstream does not run that search itself.
+ */
+function searchNeeded(call: Call, candidate: Candidate): boolean {
+  const { services } = call;
+  if (call.internal || !services.features().search?.backends.length)
+    return false;
+  if (!searchOffered(call.route.protocol, call.raw)) return false;
+  const text = JSON.stringify(call.raw);
+  const ours =
+    text.includes(SEARCH_MARKERS[0]) || text.includes(SEARCH_MARKERS[1]);
+  return ours || !searchesNatively(candidate, call.route.protocol);
+}
+
+/** The usage of several upstream answers of one call, as one. */
+function sumUsage(parts: readonly UsageParts[]): UsageParts {
+  if (parts.length === 1) return parts[0]!;
+  const sum: UsageParts = {};
+  for (const part of parts)
+    for (const key of [
+      "input",
+      "cacheRead",
+      "cacheWrite",
+      "output",
+      "reasoning",
+    ] as const)
+      if (part[key] !== undefined) sum[key] = (sum[key] ?? 0) + part[key];
+  return sum;
+}
+
+/** The candidate's model takes image input, by its metadata. */
+function takesImages(candidate: Candidate): boolean {
+  return candidate.model?.inputModalities?.includes("image") === true;
+}
+
+/**
+ * The translated request goes to a model without image input while a
+ * vision model is set, and the request has images.
+ */
+function visionNeeded(call: Call, candidate: Candidate): boolean {
+  // Translated requests lose images without metadata saying otherwise;
+  // passed-through ones only when the metadata says the model takes none.
+  const inputs = candidate.model?.inputModalities;
+  if (
+    candidate.mode === "translated"
+      ? takesImages(candidate)
+      : !inputs || inputs.includes("image")
+  )
+    return false;
+  if (call.vision) return true;
+  const { services } = call;
+  if (call.internal || !services.vision || !services.features().vision)
+    return false;
+  try {
+    return (
+      imagesOf(translate(call, { images: true, search: true }).body.messages)
+        .length > 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Describe the call's images with the vision model (cached by image). */
+async function describeCall(call: Call): Promise<VisionResult> {
+  const { services } = call;
+  const model = services.features().vision!.model;
+  const images = imagesOf(
+    translate(call, { images: true, search: true }).body.messages,
+  );
+  return services.vision!.describe(model, images, call.signal);
+}
+
 function translate(call: Call, options: TranslateOptions): ChatTranslation {
   switch (call.route.protocol) {
     case "chat":
@@ -547,6 +655,12 @@ class SinkHold implements CompletionHandlers {
   }
   toolArgs(index: number, text: string): Promise<void> {
     return this.sink.toolArgs(index, text);
+  }
+  /** A web search the gateway ran, as the client's protocol shows one. */
+  async search(query: string, hits: { title: string; url: string }[]) {
+    this.content();
+    await this.release();
+    await this.sink.search?.(query, hits);
   }
 }
 
@@ -843,19 +957,26 @@ function prepare(call: Call, candidate: Candidate): Prepared {
       ),
     };
   if (candidate.mode === "passthrough") {
-    const { body, patches } = passthroughBody(
+    const built = passthroughBody(
       candidate.upstream,
       call.bytes,
       call.raw,
       candidate.wireModel,
       set,
     );
+    const { body, patches } = redact(call, built.body, built.patches);
     return tooLarge(body.length) ?? { kind: "passthrough", body, patches };
   }
-  const images = candidate.model?.inputModalities?.includes("image") === true;
+  const images = takesImages(candidate);
   let translation: ChatTranslation;
   try {
-    translation = translate(call, { images });
+    // Described images are kept until they are replaced by their text.
+    translation = translate(call, {
+      images: images || !!call.vision,
+      search: call.searching === true,
+    });
+    if (!images && call.vision)
+      describeImages(translation.body.messages, call.vision.descriptions);
   } catch (error) {
     if (!(error instanceof GatewayError)) throw error;
     return {
@@ -875,6 +996,18 @@ function prepare(call: Call, candidate: Candidate): Prepared {
   }
   const patches = new Set(set?.patches ?? []);
   const chatUpstream = candidate.upstream === "chat";
+  const visionPatches = !images && call.vision ? [...call.vision.patches] : [];
+  // The client's server-side web search becomes the gateway's own tool.
+  let search: string | undefined;
+  if (translation.search) {
+    const offered = searchTool(translation.body.tools);
+    search = offered.name;
+    translation.body.tools = [
+      ...(Array.isArray(translation.body.tools) ? translation.body.tools : []),
+      offered.tool,
+    ];
+    visionPatches.push("search:emulated");
+  }
   // Anthropic takes history thinking only with its signature, which is
   // looked up by the reasoning text the cache restores.
   const replay =
@@ -900,7 +1033,7 @@ function prepare(call: Call, candidate: Candidate): Prepared {
     dropParameters: chatUpstream ? drops : [],
     images: images ? "passthrough" : "placeholder",
   };
-  const applied: string[] = [];
+  const applied: string[] = [...visionPatches];
   if (chatUpstream)
     for (const field of drops)
       if (field in translation.body) applied.push(`drop-fields:${field}`);
@@ -932,44 +1065,107 @@ function prepare(call: Call, candidate: Candidate): Prepared {
   }
   if (patches.has("max-tokens-field") && "max_completion_tokens" in body)
     applied.push("max-tokens-field");
-  let upstream = body;
-  // A Copilot session takes the messages, tools and reasoning effort only.
-  let unmapped: string[] =
-    candidate.provider.subscription?.backend === "copilot"
-      ? copilotUnmapped(body)
-      : [];
-  if (candidate.upstream !== "chat") {
-    const { reasoning } = call.services;
-    const encoded = encodeRequest(candidate.upstream, body, {
-      translation,
-      model: candidate.model,
-      ...(candidate.provider.subscription?.backend === "siwc"
-        ? { profile: "siwc" as const }
-        : {}),
-      signature: (kind, key) =>
-        reasoning.signature(call.key.keyId, candidate.provider.id, kind, key),
-    });
-    upstream = encoded.body;
-    for (const field of drops)
-      if (field in upstream) {
-        delete upstream[field];
-        applied.push(`drop-fields:${field}`);
-      }
-    applied.push(...encoded.patches);
-    unmapped = encoded.unmapped;
-  }
-  const text = JSON.stringify(upstream);
+  const { upstream, unmapped } = encodeUpstream(
+    call,
+    candidate,
+    translation,
+    body,
+    drops,
+    applied,
+  );
+  const masked = redact(call, upstream, applied);
+  const text = JSON.stringify(masked.body);
   return (
     tooLarge(Buffer.byteLength(text)) ?? {
       kind: "translated",
       translation,
       chat: body,
       body: text,
-      patches: applied,
+      patches: masked.patches,
       unmapped,
       replay,
+      ...(search ? { search } : {}),
     }
   );
+}
+
+/**
+ * The upstream body of a normalized Chat request: the Chat request itself,
+ * or its encoding for the candidate's protocol, with the provider's dropped
+ * fields removed. Patches are added to `applied`.
+ */
+function encodeUpstream(
+  call: Call,
+  candidate: Candidate,
+  translation: ChatTranslation,
+  body: Record<string, unknown>,
+  drops: readonly string[],
+  applied: string[],
+): { upstream: Record<string, unknown>; unmapped: string[] } {
+  // A Copilot session takes the messages, tools and reasoning effort only.
+  if (candidate.upstream === "chat")
+    return {
+      upstream: body,
+      unmapped:
+        candidate.provider.subscription?.backend === "copilot"
+          ? copilotUnmapped(body)
+          : [],
+    };
+  const { reasoning } = call.services;
+  const encoded = encodeRequest(candidate.upstream, body, {
+    translation,
+    model: candidate.model,
+    ...(candidate.provider.subscription?.backend === "siwc"
+      ? { profile: "siwc" as const }
+      : {}),
+    signature: (kind, key) =>
+      reasoning.signature(call.key.keyId, candidate.provider.id, kind, key),
+  });
+  const upstream = encoded.body;
+  for (const field of drops)
+    if (field in upstream) {
+      delete upstream[field];
+      applied.push(`drop-fields:${field}`);
+    }
+  applied.push(...encoded.patches);
+  return { upstream, unmapped: encoded.unmapped };
+}
+
+/**
+ * The upstream body with known secrets replaced by placeholders, and the
+ * patch `redact:<count>`; when anything was replaced, the client's response
+ * gets the values back in tool-call arguments (./restore.js).
+ */
+function redact<T extends Buffer | Record<string, unknown>>(
+  call: Call,
+  body: T,
+  patches: string[],
+): { body: T; patches: string[] } {
+  const settings = call.services.features().redaction;
+  if (!settings.enabled) return { body, patches };
+  let count: number;
+  let masked: T;
+  if (Buffer.isBuffer(body)) {
+    const result = maskBody(call.services.redactor, settings, body);
+    count = result.count;
+    masked = result.body as T;
+  } else {
+    const result = call.services.redactor.maskJson(body, settings.rules);
+    count = result.count;
+    masked = result.value as T;
+  }
+  if (!count) return { body, patches };
+  if (!call.writer.transformed)
+    call.writer.transform = new ToolArgumentRestorer(
+      call.services.redactor,
+      call.route.protocol,
+      !call.stream
+        ? "json"
+        : call.route.protocol === "gemini" && !call.route.gemini?.sse
+          ? "array"
+          : "sse",
+    );
+  return { body: masked, patches: [...patches, `redact:${count}`] };
 }
 
 /** The parts every attempt shares: slot, credential, request and response headers. */
@@ -1027,6 +1223,8 @@ async function send(
       );
     } else if (candidate.credential !== KEYLESS_CREDENTIAL)
       secret = await services.resolveSecret(candidate.credential.ref);
+    // From now on this credential is never sent in a prompt.
+    if (secret) services.redactor.remember(secret, "PROVIDER_KEY");
   } catch (error) {
     if (call.signal.aborted)
       return { ok: false, error: cancelled(call), release };
@@ -1273,7 +1471,11 @@ async function translatedAttempt(
       );
     },
   );
-  const sent = await send(call, candidate, attempt, abort, timers, (secret) => {
+  // The gateway's own web search: its tool calls stay here (./search.js).
+  const relay = prepared.search
+    ? new SearchRelay(hold, prepared.search)
+    : undefined;
+  const request = (body: string) => (secret: string) => {
     const url =
       candidate.upstream === "chat"
         ? chatCompletionsUrl(candidate.endpoint)
@@ -1295,8 +1497,17 @@ async function translatedAttempt(
       url,
       undefined,
     );
-    return { url, headers, body: prepared.body };
-  });
+    return { url, headers, body };
+  };
+  const sent = await send(
+    call,
+    candidate,
+    attempt,
+    abort,
+    timers,
+    request(prepared.body),
+  );
+  let release = sent.release;
   let secrets: string[] = [];
   let idle = false;
   let data = 0;
@@ -1335,34 +1546,144 @@ async function translatedAttempt(
         call.started + limits.headerCommitMs - performance.now(),
       );
     let held = 0;
-    const counted = upstream.body?.pipeThrough(
-      new TransformStream<Uint8Array, Uint8Array>({
-        transform(chunk, controller) {
-          attempt.firstByteMs ??= Math.round(
-            performance.now() - attemptStarted,
+    const unmapped = new Set<string>();
+    /** One upstream answer, read into the client's sink. */
+    const read = async (answer: Response): Promise<ChatResult> => {
+      const counted = answer.body?.pipeThrough(
+        new TransformStream<Uint8Array, Uint8Array>({
+          transform(chunk, controller) {
+            attempt.firstByteMs ??= Math.round(
+              performance.now() - attemptStarted,
+            );
+            held += chunk.byteLength;
+            if (held >= limits.holdBytes)
+              void hold.release().catch(() => undefined);
+            controller.enqueue(chunk);
+          },
+        }),
+      );
+      const decoding =
+        candidate.upstream === "chat"
+          ? undefined
+          : ((answer === upstream ? decoder : undefined) ??
+            createDecoder(candidate.upstream));
+      const read = await readCompletion(
+        new Response(counted ?? null, { headers: answer.headers }),
+        relay ?? hold,
+        services.makeId,
+        {
+          maxBytes: limits.maxResponseBytes,
+          activity: () => keepalive.activity(),
+          data: () => {
+            data++;
+            touch();
+            keepalive.data();
+          },
+        },
+        decoding,
+      );
+      for (const field of decoding?.unmapped ?? []) unmapped.add(field);
+      if (decoding && decoding !== decoder)
+        rememberSignatures(call, candidate, decoding, read);
+      return read;
+    };
+    let result = await read(upstream);
+    const parts: UsageParts[] = [];
+    const usageOf = (value: ChatResult) =>
+      parts.push(value.rawUsage ? usageParts("chat", value.rawUsage) : {});
+    usageOf(result);
+    if (relay) {
+      // Search, then ask again with what was found, until the model answers.
+      const messages = [
+        ...(prepared.chat.messages as Record<string, unknown>[]),
+      ];
+      const backends = services.features().search?.backends ?? [];
+      let rounds = 0;
+      for (;;) {
+        const searches = relay.round(result);
+        if (!searches.length || rounds > SEARCH_ROUNDS) {
+          result = relay.result(result);
+          break;
+        }
+        rounds++;
+        const found = await Promise.all(
+          searches.map((search) =>
+            rounds > SEARCH_ROUNDS
+              ? { error: "No more searches: answer with what was found." }
+              : search.query
+                ? webSearch(
+                    services.redactor.mask(
+                      search.query,
+                      services.features().redaction.enabled
+                        ? services.features().redaction.rules
+                        : [],
+                    ).text,
+                    backends,
+                    services.resolveSecret,
+                    call.signal,
+                  )
+                : { error: "The query is empty." },
+          ),
+        );
+        for (const [index, outcome] of found.entries())
+          if ("hits" in outcome)
+            await hold.search(searches[index]!.query, outcome.hits);
+        messages.push(
+          {
+            role: "assistant",
+            content: result.text || null,
+            tool_calls: searches.map((search) => ({
+              id: search.id,
+              type: "function",
+              function: {
+                name: prepared.search,
+                arguments: JSON.stringify({ query: search.query }),
+              },
+            })),
+          },
+          ...searches.map((search, index) => {
+            const outcome = found[index]!;
+            return {
+              role: "tool",
+              tool_call_id: search.id,
+              content:
+                "text" in outcome
+                  ? outcome.text
+                  : `The search failed: ${outcome.error}`,
+            };
+          }),
+        );
+        const applied: string[] = [];
+        const encoded = encodeUpstream(
+          call,
+          candidate,
+          prepared.translation,
+          { ...prepared.chat, messages },
+          [],
+          applied,
+        );
+        const masked = redact(call, encoded.upstream, applied);
+        release();
+        const again = await send(
+          call,
+          candidate,
+          attempt,
+          abort,
+          timers,
+          request(JSON.stringify(masked.body)),
+        );
+        release = again.release;
+        if (!again.ok)
+          throw new GatewayError(
+            again.error.failure.message,
+            again.error.failure.status,
+            again.error.failure.code,
           );
-          held += chunk.byteLength;
-          if (held >= limits.holdBytes)
-            void hold.release().catch(() => undefined);
-          controller.enqueue(chunk);
-        },
-      }),
-    );
-    const result = await readCompletion(
-      new Response(counted ?? null, { headers: upstream.headers }),
-      hold,
-      services.makeId,
-      {
-        maxBytes: limits.maxResponseBytes,
-        activity: () => keepalive.activity(),
-        data: () => {
-          data++;
-          touch();
-          keepalive.data();
-        },
-      },
-      decoder,
-    );
+        result = await read(again.response);
+        usageOf(result);
+      }
+      call.entry.patches.push(`search:rounds:${rounds}`);
+    }
     await timers.stop(call.closed);
     if (data === 0)
       throw new GatewayError(
@@ -1384,15 +1705,13 @@ async function translatedAttempt(
       call,
       candidate,
       attempt,
-      result.rawUsage ? usageParts("chat", result.rawUsage) : {},
+      sumUsage(parts),
       result.model,
       result.finish,
       result.terminated === true,
     );
-    if (decoder?.unmapped.size)
-      call.entry.unmapped = [
-        ...new Set([...call.entry.unmapped, ...decoder.unmapped]),
-      ];
+    if (unmapped.size)
+      call.entry.unmapped = [...new Set([...call.entry.unmapped, ...unmapped])];
     const recorded = await commit(call);
     try {
       if (recorded) {
@@ -1436,7 +1755,7 @@ async function translatedAttempt(
     return { kind: "published", error: reported, tokens: 0 };
   } finally {
     await timers.stop(call.closed);
-    sent.release();
+    release();
     abort.abort();
   }
 }
@@ -1740,7 +2059,7 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
     | undefined;
   const queue = plan.candidates;
   for (let index = 0; index < queue.length; index++) {
-    const candidate = queue[index]!;
+    let candidate = queue[index]!;
     /** Another candidate after this one can still be tried. */
     const others = () =>
       queue.slice(index + 1).some((next) => !services.breakers.blocked(next));
@@ -1760,6 +2079,25 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
         if (!admitted.ok) {
           if (!blocked || (admitted.last?.at ?? 0) > (blocked.last?.at ?? 0))
             blocked = admitted;
+          break;
+        }
+      }
+      call.searching = searchNeeded(call, candidate);
+      // The searches are the gateway's, so the request is translated.
+      if (call.searching && candidate.mode === "passthrough")
+        candidate = { ...candidate, mode: "translated" };
+      if (visionNeeded(call, candidate)) {
+        // Images are replaced by text, so the request is translated.
+        if (candidate.mode === "passthrough")
+          candidate = { ...candidate, mode: "translated" };
+        call.vision ??= await describeCall(call);
+        if (call.vision.currentFailed) {
+          services.breakers.release(candidate);
+          skip ??= localError(
+            502,
+            "vision_failed",
+            `The image of this turn could not be described by ${services.features().vision?.model ?? "the vision model"} for ${candidate.ref}, which takes no image input`,
+          );
           break;
         }
       }

@@ -159,6 +159,12 @@ export interface ProviderConfig {
   /** Never pass requests through byte for byte, even on a matching endpoint. */
   translateOnly?: boolean;
   /**
+   * Base URL of the provider's OpenAI-compatible Images API, without the
+   * operation path (`/images/generations` is appended); the gateway's
+   * `/v1/images/generations` passes calls through to it. Absent: no images.
+   */
+  imageEndpoint?: string;
+  /**
    * The credentials are accounts of a subscription, used through this
    * backend (ADR-P09). Its requests are always translated, its accounts serve
    * loopback calls only, and an account is used only after the user accepted

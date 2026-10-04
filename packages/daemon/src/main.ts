@@ -46,7 +46,12 @@ import {
   SecretStore,
   type SecretBackendSetting,
 } from "@harnesshub/secrets/secret-store";
-import { ensureAdminToken, ADMIN_TOKEN_FILE } from "./admin-token.js";
+import {
+  ensureAdminToken,
+  readAdminToken,
+  ADMIN_TOKEN_FILE,
+} from "./admin-token.js";
+import { GatewayFeaturesFile } from "./gateway-features.js";
 import { registerApiV1 } from "./http/api-v1.js";
 import { ConsoleSessions } from "./http/console-session.js";
 import { loadConsole, registerConsole } from "./http/console-static.js";
@@ -672,6 +677,10 @@ export async function startHub(options: {
     });
     shareToClose = share;
     await share.load();
+    // Redaction, vision and search settings (Magpie parity §11).
+    const gatewayFeatures = new GatewayFeaturesFile({ dataDir, secrets });
+    await gatewayFeatures.load();
+    const adminToken = await readAdminToken(dataDir);
     // The shared model gateway on this listener (03-model-plane); it reads
     // providers, keys and the ledger from the store and resolves credentials
     // per upstream attempt. With OTLP export, each committed ledger entry
@@ -689,6 +698,8 @@ export async function startHub(options: {
       subscriptions: siwcTokens,
       copilot: copilotHosts,
       allowances: allowanceFile(dataDir),
+      features: () => gatewayFeatures.current(),
+      ...(adminToken ? { secrets: [adminToken] } : {}),
     });
     manager = new EngineManager({
       config,
@@ -980,6 +991,7 @@ export async function startHub(options: {
       agents,
       library,
       gatewayShare: share,
+      gatewayFeatures,
       backup: { backups, sync },
       ...(subscriptions ? { subscriptions } : {}),
       serialize: serializeWrites,

@@ -23,6 +23,7 @@
 | Anthropic Messages | `POST /v1/messages`；`POST /v1/messages/count_tokens` | 命名事件 SSE；计数接口返回本地估算的 `{input_tokens}` |
 | Google | `POST /v1beta/models/{m}:generateContent`、`:streamGenerateContent` | `?alt=sse` 时为 SSE，否则为流式 JSON 数组 |
 | 模型列表 | `GET /v1/models`、`GET /v1/models/{id}` | 返回 alias，配置时附 `context_window`、`context_length`、`max_model_len`、`max_output_tokens` |
+| OpenAI Images | `POST /v1/images/generations` | 直通到声明了 `imageEndpoint` 的 provider；`stream: true` 的事件原样转发（[图像生成](gateway-features.md#图像生成)） |
 
 OpenAI 与 Anthropic 路径的 `/v1` 前缀可省略；Google 路径也接受 `/v1` 与 `/v1alpha`。查询字符串除 `key` 与 `alt` 外被忽略（例如 Claude Code 的 `?beta=true`）。
 
@@ -185,7 +186,7 @@ Session 的 Run 经守护进程端口上的共享网关使用模型（03 第 10 
 
 ## 共享网关
 
-`createGatewayHandler(deps)`（[server.ts](../packages/gateway/src/server.ts)）返回一个不带监听器的 Node `(request, response)` 处理函数，由守护进程挂载到自己的端口上；`isGatewayPath(pathname)` 判断某条路径是否交给它（`/v1/*`、`/v1beta/*`、`/v1alpha/*`，省略 `/v1` 的 `/chat/completions`、`/responses`、`/messages`、`/messages/count_tokens`、`/models`，以及 Codex 透传的 `/backend-api/codex` 与其下路径）。守护进程在 `startHub` 中用 `SqliteModelPlaneStore`、`SecretStore.resolve`（`env` 引用读取守护进程启动时的环境快照）与 `resolveHandlerLimits(gatewayLimits)` 构造它，经 Fastify 的 `serverFactory` 挂在同一个监听器上、先于 Fastify 处理：交给它的是 `/v1beta/*`、`/v1alpha/*`、`/v1` 下的 `chat/completions`、`responses`、`messages`、`messages/count_tokens`、`models` 与 `models/…`，以及这些路径省略 `/v1` 的形式（[model-gateway-mount.ts](../packages/daemon/src/http/model-gateway-mount.ts) 的 `isModelGatewayPath`），回环监听器另外交给它 `/backend-api/codex` 及其下路径（`isCodexPassthroughPath`，见下文“Codex 透传”），局域网监听器不交。`/v1` 下的其他路径仍是现有管理接口，由 Fastify 处理，直到它们迁到 `/api/v1`；这些请求不经过 Fastify 的 2 MiB 请求体上限、JSON 解析与钩子。监听器的 `headersTimeout` 取 `requestHeadersTimeoutMs`；关闭时先在 `preClose` 中 `await close()`，再关闭存储。`GET /api/v1/system/info` 的 `gateway` 给出本机客户端使用的基址，见 [快速上手](quickstart.md)。本节描述已实现的行为；目标设计与本节不同之处列在最后。
+`createGatewayHandler(deps)`（[server.ts](../packages/gateway/src/server.ts)）返回一个不带监听器的 Node `(request, response)` 处理函数，由守护进程挂载到自己的端口上；`isGatewayPath(pathname)` 判断某条路径是否交给它（`/v1/*`、`/v1beta/*`、`/v1alpha/*`，省略 `/v1` 的 `/chat/completions`、`/responses`、`/messages`、`/messages/count_tokens`、`/models`，以及 Codex 透传的 `/backend-api/codex` 与其下路径）。守护进程在 `startHub` 中用 `SqliteModelPlaneStore`、`SecretStore.resolve`（`env` 引用读取守护进程启动时的环境快照）与 `resolveHandlerLimits(gatewayLimits)` 构造它，经 Fastify 的 `serverFactory` 挂在同一个监听器上、先于 Fastify 处理：交给它的是 `/v1beta/*`、`/v1alpha/*`、`/v1` 下的 `chat/completions`、`responses`、`messages`、`messages/count_tokens`、`models`、`models/…` 与 `images/generations`，以及这些路径省略 `/v1` 的形式（[model-gateway-mount.ts](../packages/daemon/src/http/model-gateway-mount.ts) 的 `isModelGatewayPath`），回环监听器另外交给它 `/backend-api/codex` 及其下路径（`isCodexPassthroughPath`，见下文“Codex 透传”），局域网监听器不交。`/v1` 下的其他路径仍是现有管理接口，由 Fastify 处理，直到它们迁到 `/api/v1`；这些请求不经过 Fastify 的 2 MiB 请求体上限、JSON 解析与钩子。监听器的 `headersTimeout` 取 `requestHeadersTimeoutMs`；关闭时先在 `preClose` 中 `await close()`，再关闭存储。`GET /api/v1/system/info` 的 `gateway` 给出本机客户端使用的基址，见 [快速上手](quickstart.md)。本节描述已实现的行为；目标设计与本节不同之处列在最后。
 
 ### 依赖与所有权
 
@@ -199,6 +200,8 @@ Session 的 Run 经守护进程端口上的共享网关使用模型（03 第 10 
 | `subscriptions` | 订阅账号的令牌管理器（[siwc.ts](../packages/gateway/src/siwc.ts) 的 `SiwcTokens`）：每个账号同一时间至多一次续期；没有它时订阅账号的调用以 `credential_unavailable` 失败 |
 | `copilot` | Copilot 账号的客户端（[copilot.ts](../packages/gateway/src/copilot.ts) 的 `CopilotRuntime`，守护进程以每个账号一个宿主进程实现）；处理函数的 `CopilotBridge` 拥有会话并在 `close()` 中关闭它们；没有它时 Copilot 账号的调用以 `subscription_unavailable` 失败 |
 | `allowances` | 额度读数的保存位置（守护进程：`<dataDir>/allowance-readings.json`）：启动时读回，变化后一分钟内与 `close()` 时保存，失败只写日志；没有它时读数只在内存中 |
+| `features` | 用户的网关功能设置（[网关功能](gateway-features.md)：出站脱敏、视觉模型、搜索后端），每个请求读取；没有它时脱敏开启、没有用户规则，其余关闭 |
+| `secrets` | 处理函数自己不解析、但绝不能发往上游的值（守护进程的管理令牌）；脱敏像凭据一样替换它们 |
 | `codexBackend` | 只供测试：Codex 透传转发到的基址，测试把它指向回环假服务；守护进程不设置，即 `https://chatgpt.com/backend-api/codex`，没有对应的用户配置项 |
 
 监听器的所有者把 `limits.requestHeadersTimeoutMs` 设为 `server.headersTimeout`，并在关闭存储之前 `await handler.close()`。`close()` 幂等：之后的新请求返回 503 `gateway_closing`；在途调用被中止（账本记 499 `client_cancelled`），等待所有请求结束，再提交被节流的拒绝计数。
@@ -330,6 +333,8 @@ node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js
 - 响应体上限按原始字节而不是解码后的内容计算；`latency` 只统计本次启动以来的调用，`least-used` 另从账本取最近 8 小时的初值；认证失败的熔断最长 10 分钟后进入半开，而不是一直保持到 Credential 更新。
 
 ## 变更记录
+
+- **2026-10-04：出站秘密脱敏**（[网关功能](gateway-features.md#出站脱敏)）。发往上游的请求中已知的秘密（Gateway Key、本进程解析过的凭据与订阅令牌、管理令牌、用户规则）替换为稳定的占位符，答复中只在工具调用参数里还原；缺省开启，账本记 `redact:<个数>`。设置了视觉模型时，发往不能看图的模型的图片由它描述成文字（[视觉兜底](gateway-features.md#视觉兜底)），描述调用是独立的账本条目。登记了搜索后端时，Responses 与 Anthropic 的服务端联网搜索由网关用搜索 API 完成（[联网搜索模拟](gateway-features.md#联网搜索模拟)），至多 6 轮。新增 `POST /v1/images/generations`：直通到声明了 `imageEndpoint` 的 provider，账本记用量与有价格时的费用。
 
 - **2026-10-04：订阅账号**（[ADR 0026](decisions/0026-subscription-accounts.md)）。provider 可以是订阅（`subscription: {backend: "siwc"}`），Credential 是账号（`account`）；ChatGPT 套餐经 Sign in with ChatGPT 登录与调用，请求按预览要求整形，`subscription_sharing_*` 错误按 OpenAI 的说明映射；账号接受当前风险告知前不可用，只服务本机。新增路由策略 `smart` 与 `pace` 及额度读数的保存。GitHub Copilot 账号（`subscription: {backend: "copilot"}`）经 Copilot SDK 驱动用户安装的 Copilot CLI：网关的 `CopilotBridge` 把 Chat 请求交给按对话延续的会话，工具调用交回调用方，额度报告成为读数。
 

@@ -267,6 +267,7 @@ export const providerSchema = {
     patches,
     capabilities,
     translateOnly: { type: "boolean" },
+    imageEndpoint: text(2048),
     subscription: {
       type: "object",
       additionalProperties: false,
@@ -326,6 +327,7 @@ export const providerCreateSchema = {
     patches,
     capabilities,
     translateOnly: { type: "boolean" },
+    imageEndpoint: text(2048),
   },
 } as const;
 
@@ -509,6 +511,7 @@ export const providerPatchSchema = {
     },
     capabilities: { ...capabilities, type: ["object", "null"] },
     translateOnly: { type: ["boolean", "null"] },
+    imageEndpoint: { type: ["string", "null"], minLength: 1, maxLength: 2048 },
   },
 } as const;
 

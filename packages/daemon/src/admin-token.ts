@@ -95,6 +95,14 @@ export async function ensureAdminToken(dataDir: string): Promise<Buffer> {
   return adminTokenDigest(token);
 }
 
+/**
+ * The admin token itself, for outbound redaction only (the gateway never
+ * sends it upstream); undefined when there is no valid token file.
+ */
+export function readAdminToken(dataDir: string): Promise<string | undefined> {
+  return readToken(path.join(dataDir, ADMIN_TOKEN_FILE));
+}
+
 /** SHA-256 of a presented or stored admin token. */
 export function adminTokenDigest(token: string): Buffer {
   return createHash("sha256").update(token, "utf8").digest();
