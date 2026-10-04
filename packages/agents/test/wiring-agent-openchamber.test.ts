@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   applyWiring,
+  detectAgent,
   detectDrift,
   planWiring,
   unwire,
@@ -264,4 +265,24 @@ void test("openchamber: its provider and OpenCode's sit side by side in one file
   assert.equal((await detectDrift(chamber.record, context)).drifted, false);
   await unwire(chamber.record, context);
   assert.equal(await readFile(file, "utf8"), EXISTING[OPENCODE]);
+});
+
+void test("openchamber: OpenCode's configuration alone does not make it configured", async (t) => {
+  const context = await sandbox(t);
+  const env = { PATH: path.join(context.root, "bin") };
+  await mkdir(env.PATH);
+  // OpenCode is set up (wiring OpenCode creates this directory).
+  await mkdir(path.join(context.home, ".config", "opencode"), {
+    recursive: true,
+  });
+  assert.equal(
+    (await detectAgent("openchamber", { ...context, env })).status,
+    "not-found",
+  );
+  const directory = path.join(context.home, ".config", "openchamber");
+  await mkdir(directory);
+  assert.deepEqual(await detectAgent("openchamber", { ...context, env }), {
+    status: "configured-only",
+    configDirectories: [directory],
+  });
 });

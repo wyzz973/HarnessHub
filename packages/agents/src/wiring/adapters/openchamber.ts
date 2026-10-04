@@ -54,7 +54,7 @@ export const openchamber: WiringAdapter = {
       format: "json",
       locate: (environment) => chamberFile(environment, "settings.json"),
     },
-    { id: "opencode", format: "json", locate: openCodeFile },
+    { id: "opencode", format: "json", locate: openCodeFile, shared: true },
   ],
   baseUrlField: {
     file: "opencode",

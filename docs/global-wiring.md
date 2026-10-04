@@ -49,7 +49,7 @@ pnpm exec hh tui                                      # 终端界面：以上操
 
 | 接口 | 行为 |
 |---|---|
-| `GET /api/v1/agents`、`GET /api/v1/agents/{id}` | 每个 Adapter 的安装状态（PATH 上有其命令为 `installed`，只有配置目录为 `configured-only`；不执行 Agent）、可设置的 `capabilities`（档位、effort、选项）、接线的选择（模型、档位、effort、选项）、显示与隐藏的模型、Key 状态与漂移 |
+| `GET /api/v1/agents`、`GET /api/v1/agents/{id}` | 每个 Adapter 的安装状态（PATH 上有其命令为 `installed`，只有配置目录为 `configured-only`，与其他 Agent 共用的文件所在目录不算，如 OpenChamber 写入的 OpenCode 配置；不执行 Agent）、可设置的 `capabilities`（档位、effort、选项）、接线的选择（模型、档位、effort、选项）、显示与隐藏的模型、Key 状态与漂移 |
 | `POST /api/v1/agents/{id}/wiring/plan` | `{model?, models?, tiers?, effort?, options?}`；用一把不保存的临时 Key 计算预览，不写文件、不签发 Key |
 | `POST /api/v1/agents/{id}/wiring` | 同上加 `expect`，`expect` 为确认过的预览 |
 | `POST /api/v1/agents/{id}/wiring/rotate` | 以当前选择与模型列表重新接线；没有 Key 的旧记录（ADR 0030 之前的 ChatGPT 模式）得到第一把 Key |

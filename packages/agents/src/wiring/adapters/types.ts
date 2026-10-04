@@ -128,6 +128,12 @@ export interface AdapterFile {
    * segment. A missing file is still created as an object.
    */
   readonly arrayRoot?: boolean;
+  /**
+   * Another agent's file that this adapter also writes (OpenChamber's
+   * entries in OpenCode's configuration): its directory says nothing about
+   * whether this agent is here, so detection leaves it out.
+   */
+  readonly shared?: boolean;
 }
 
 /**

@@ -26,7 +26,8 @@ export interface AgentInstallation {
 /**
  * Detects an agent from the explicit context only: PATH and PATHEXT come
  * from `context.env` (never `process.env`) and directories from the adapter's
- * file locations under `context.home`. Nothing is executed and no file is
+ * own file locations under `context.home` (not the files it shares with
+ * another agent). Nothing is executed and no file is
  * read; a command counts when it is an executable regular file. Unknown
  * adapters fail with WIRING_ADAPTER_UNKNOWN.
  */
@@ -39,9 +40,9 @@ export async function detectAgent(
   const environment = adapterEnvironment(context);
   const directories = [
     ...new Set(
-      adapter.files.map((file) =>
-        path.dirname(file.locate(environment).create),
-      ),
+      adapter.files
+        .filter((file) => !file.shared)
+        .map((file) => path.dirname(file.locate(environment).create)),
     ),
   ];
   const configDirectories: string[] = [];
