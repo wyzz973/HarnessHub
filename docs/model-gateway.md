@@ -267,7 +267,7 @@ Session 的 Run 经守护进程端口上的共享网关使用模型（03 第 10 
 
 每个进入网关的模型调用提交一条 `ModelCallEntry`：`attempts[]`（候选、开始时间、上游首字节、状态、错误类别、`Retry-After`、决定与退避）、按协议规范化的五项 usage（无上报时 `source: missing` 且各项为 0）、`timing`（`durationMs`；已写出字节时的 `firstByteMs`；首内容时的 `firstContentMs`）、`status`、`errorClass`、`errorSource`、脱敏后的 `error`、`patches[]`、`mode`、`servedModel`、`finishReason`（直通与转换用同一套取值：`stop`、`length`、`tool_calls`、`content_filter` 或上游自己的值；回答中有供客户端执行的工具调用时为 `tool_calls`，即使上游以 Responses 的 `completed`、Gemini 的 `STOP` 或 Chat 中转的 `stop` 结束）、`completion`（`explicit` 或 `inferred`）。`cost` 只在 provider 模型声明了价格、且每个用到的 token 类别都有价格时计算（推理按输出价格），否则为 null。`unmapped[]` 列出转换到其他协议时丢弃的请求字段与内容（如 `reasoning`、`stop`、`schema.additionalProperties`）以及无法转给客户端的响应块（如 `response.redacted_thinking`）；直通与转换到 Chat 上游时为空。
 
-**先提交后发布**：流式响应的终止事件（`[DONE]`、`response.completed` 或 `response.incomplete`、`message_stop`、带结束原因的 Gemini 块及其后的内容、数组的 `]`）与非流式响应体在 `appendModelCall` 成功之后才写出。提交失败时，尚未写出响应头则返回 503 `evidence_unavailable`，否则在流内写出该错误且不写终止事件。每个调用至多追加一条记录。
+**先提交后发布**：流式响应的终止事件（`[DONE]`、`response.completed` 或 `response.incomplete`、`message_stop`、带结束原因的 Gemini 块及其后的内容、数组的 `]`）与非流式响应体在 `appendModelCall` 成功之后才写出。同时到达的账本记录合成一个事务提交（组提交，见[性能基准](../tests/perf/README.md#账本提交)），每条记录的写入仍在它自己的记录持久之后才算成功。提交失败时，尚未写出响应头则返回 503 `evidence_unavailable`，否则在流内写出该错误且不写终止事件。每个调用至多追加一条记录。
 
 每条记录另有调用归属：`conversationKey` 是粘性会话键（按 Gateway Key 隔离的 SHA-256，不含客户端原始标识），进入路由的调用都有，被拒绝的调用没有；`agent` 是 `{id, source}`，`agent:` Key 的 adapter 记为 `source: key`，否则按 User-Agent 的产品名推断（`claude-cli`、`codex…`、`GeminiCLI`、`QwenCode`、`KimiCLI`、`opencode`、`crush`，见 [agents.ts](../packages/gateway/src/agents.ts)）并记为 `user-agent`，Codex 透传记为 `route`；不认识的 User-Agent 不记录。
 

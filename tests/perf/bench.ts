@@ -873,7 +873,7 @@ function summary(results: Record<string, unknown>): string {
     "",
     `Daemon memory after a full GC: ${memory.idle.rssMB} MB resident, ${memory.idle.heapUsedMB} MB heap in use right after start; ${memory.afterLatency.rssMB} MB resident, ${memory.afterLatency.heapUsedMB} MB heap in use (${memory.afterLatency.youngGenerationMB} MB young generation committed) after ${memory.gatewayCalls} gateway calls. Heap in use that grows with the calls is retained memory; the resident growth beside it is the young generation and allocator pages (tests/perf/README.md).`,
     "",
-    `Commits are synchronous SQLite writes (synchronous=FULL; how much an fsync costs depends on the platform), so ${commits.burst} commits queued at once complete one after another: the last waits for all the others.`,
+    `Ledger appends that arrive together are written in one transaction (group commit, synchronous=FULL), so the ${commits.burst} appends of a burst are durable together; the time is mostly that transaction's commit, which depends on the platform's fsync.`,
     "",
   ].join("\n");
 }
