@@ -5,6 +5,7 @@ import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
 import { createInterface } from "node:readline";
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { temporaryDirectory } from "../support/temporary.js";
@@ -57,7 +58,7 @@ void test(
 
     const benchmark = await hh(directory, ["benchmark", "--help"]);
     assert.equal(benchmark.code, 0, benchmark.stderr);
-    assert.match(benchmark.stdout, /^HarnessHub Benchmark: /);
+    assert.match(benchmark.stdout, /^Usage:\n {2}hh benchmark --dataset /);
 
     const tools = await hh(directory, ["tools", "list"]);
     assert.equal(tools.code, 1);
@@ -69,7 +70,7 @@ void test(
     assert.equal(toolsHelp.code, 0, toolsHelp.stderr);
     assert.match(
       toolsHelp.stdout,
-      /^Usage: .* --root <absolute store directory>/,
+      /^Usage: hh tools --root <absolute store directory>/,
     );
 
     // Model-plane commands go to the CLI, which needs the daemon's admin token.
@@ -196,6 +197,66 @@ void test(
         assert.ok(text.includes(shown), `${name} shows ${shown}`);
       for (const hidden of item.hides)
         assert.ok(!text.includes(hidden), `${name} hides ${hidden}`);
+    });
+  },
+);
+
+void test(
+  "serve, rollout, tools and benchmark answer --help anywhere under hh names, and a wrong command line with the usage",
+  { timeout: 60_000 },
+  async (t) => {
+    const { directory } = await temporaryDirectory(t, "harnesshub-entries-");
+    const store = path.join(directory, "tool-packages");
+    const helps: Array<[string[], string]> = [
+      [["serve", "--help"], "Usage:\n  hh serve ["],
+      [["serve", "x", "-h"], "Usage:\n  hh serve ["],
+      [["rollout", "--help"], "Usage: hh rollout --url "],
+      [["rollout", "--bogus", "--help"], "Usage: hh rollout --url "],
+      [["tools", "--help"], "Usage: hh tools --root "],
+      [["tools", "--root", store, "list", "--help"], "Usage: hh tools --root "],
+      [["benchmark", "--help"], "Usage:\n  hh benchmark --dataset "],
+      [["benchmark", "run", "--help"], "Usage:\n  hh benchmark --dataset "],
+    ];
+    const errors: Array<[string[], string, string]> = [
+      [["serve", "--bogus"], "Error: Unknown option '--bogus'", "  hh serve ["],
+      [
+        ["benchmark", "run"],
+        "Error: Unexpected argument 'run'",
+        "  hh benchmark --dataset ",
+      ],
+      [
+        ["benchmark"],
+        "Error: --dataset and --engines are required",
+        "  hh benchmark --dataset ",
+      ],
+    ];
+    const [helped, failed] = await Promise.all([
+      Promise.all(helps.map(([args]) => hh(directory, args))),
+      Promise.all(errors.map(([args]) => hh(directory, args))),
+    ]);
+    helps.forEach(([args, start], index) => {
+      const outcome = helped[index]!;
+      const name = `hh ${args.join(" ")}`;
+      assert.equal(outcome.code, 0, `${name}: ${outcome.stderr}`);
+      assert.ok(
+        outcome.stdout.startsWith(start),
+        `${name}:\n${outcome.stdout}`,
+      );
+      assert.doesNotMatch(outcome.stdout, /\bnode |dist\//, name);
+    });
+    errors.forEach(([args, start, usage], index) => {
+      const outcome = failed[index]!;
+      const name = `hh ${args.join(" ")}`;
+      assert.equal(outcome.code, 2, `${name}: ${outcome.stderr}`);
+      assert.ok(
+        outcome.stderr.startsWith(start),
+        `${name}:\n${outcome.stderr}`,
+      );
+      assert.ok(
+        outcome.stderr.includes(`\n\nUsage:\n${usage}`),
+        `${name}:\n${outcome.stderr}`,
+      );
+      assert.doesNotMatch(outcome.stderr, /Benchmark did not complete/, name);
     });
   },
 );

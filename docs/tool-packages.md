@@ -129,7 +129,7 @@ id 默认取目录名；源为 JSON 文件时取文件名，`mcp.json` 这类通
 
 ## 可脚本化 CLI
 
-开发仓库先完成构建，使用当前 Node 运行 [组合入口](../packages/daemon/src/tool-packages-main.ts)。`--root` 必须是第一项，后跟显式绝对存储目录，其余参数交给工具模块。成功向 stdout 输出 JSON；失败向 stderr 输出带 `code/message` 的 JSON 并返回非零状态。调用者负责选择是否保存或提交返回的引擎配置。
+开发仓库先完成构建，使用当前 Node 运行 [组合入口](../packages/daemon/src/tool-packages-main.ts)（与 `hh tools` 相同；`hh tools --help` 列出命令）。`--root` 必须是第一项，后跟显式绝对存储目录，其余参数交给工具模块。成功向 stdout 输出 JSON；失败向 stderr 输出带 `code/message` 的 JSON 并返回非零状态。调用者负责选择是否保存或提交返回的引擎配置。
 
 ```powershell
 node packages/daemon/dist/src/tool-packages-main.js --root C:\HarnessHub\data\tool-packages inspect --source C:\HarnessHub\examples\tool-packages\portable-review

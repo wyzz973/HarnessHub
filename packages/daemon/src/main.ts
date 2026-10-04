@@ -1117,18 +1117,18 @@ export async function startHub(options: {
   }
 }
 
-/**
- * Command-line entry of `serve` (`node dist/src/main.js` and `hh serve`):
- * `--version [--json]`, `--help`, or start the Gateway and print the `ready`
- * line on stdout. Usage and version errors set `process.exitCode`; a startup
- * failure rejects, which ends the process with exit code 1 exactly like the
- * former top-level await did. A started Gateway keeps running after this
- * resolves and stops on SIGINT or SIGTERM.
- *
- * @param argv The command-line arguments after the command itself.
- */
-export async function main(argv: string[]): Promise<void> {
-  const { values } = parseArgs({
+const SERVE_USAGE = `Usage:
+  hh serve [--host 127.0.0.1] [--port 3180] [--data-dir ./data] [--config-dir DIR]
+           [--secrets-backend auto|keychain|dpapi|file] [--wiring-home DIR]
+           [--demo] [--engine opencode] [--config engines/local.yaml]
+           [--tool-package-root DIR] [--harness-model-file FILE] [--otlp-config FILE]
+  hh serve --version [--json]
+
+Flags override <config-dir>/config.jsonc (hh config show).`;
+
+/** The options of `serve`; throws a TypeError for an unknown option or a stray word. */
+function parseServe(argv: string[]) {
+  return parseArgs({
     args: argv,
     options: {
       demo: { type: "boolean", default: false },
@@ -1143,11 +1143,40 @@ export async function main(argv: string[]): Promise<void> {
       "harness-model-file": { type: "string" },
       "otlp-config": { type: "string" },
       "wiring-home": { type: "string" },
-      help: { type: "boolean" },
       version: { type: "boolean" },
       json: { type: "boolean" },
     },
   });
+}
+
+/**
+ * Command-line entry of `serve` (`node dist/src/main.js` and `hh serve`):
+ * `--version [--json]`, `--help` (or `-h`, anywhere), or start the Gateway
+ * and print the `ready` line on stdout. A wrong command line prints the
+ * error and the usage on stderr; it and version errors set
+ * `process.exitCode` (2, or 1 for an unreadable build identity). A startup
+ * failure rejects, which ends the process with exit code 1 exactly like the
+ * former top-level await did. A started Gateway keeps running after this
+ * resolves and stops on SIGINT or SIGTERM.
+ *
+ * @param argv The command-line arguments after the command itself.
+ */
+export async function main(argv: string[]): Promise<void> {
+  if (argv.includes("--help") || argv.includes("-h")) {
+    console.log(SERVE_USAGE);
+    return;
+  }
+  let parsed: ReturnType<typeof parseServe>;
+  try {
+    parsed = parseServe(argv);
+  } catch (error) {
+    console.error(
+      `Error: ${error instanceof Error ? error.message : String(error)}\n\n${SERVE_USAGE}`,
+    );
+    process.exitCode = 2;
+    return;
+  }
+  const { values } = parsed;
   if (values.json && !values.version) {
     console.error("--json is only valid with --version");
     process.exitCode = 2;
@@ -1173,11 +1202,7 @@ export async function main(argv: string[]): Promise<void> {
       );
       process.exitCode = 1;
     }
-  } else if (values.help)
-    console.log(
-      "HarnessHub: node dist/src/main.js [--engine opencode] [--host 127.0.0.1] [--port 3180] [--config engines/local.yaml] [--data-dir ./data] [--config-dir DIR] [--secrets-backend auto|keychain|dpapi|file] [--tool-package-root DIR] [--harness-model-file FILE] [--otlp-config FILE] [--wiring-home DIR] | --version [--json]\nFlags override <config-dir>/config.jsonc (hh config show).",
-    );
-  else {
+  } else {
     // Flags, then documented variables, then <configDir>/config.jsonc, then
     // defaults (config-file.ts); --otlp-config passes its file's text.
     const configDir = path.resolve(values["config-dir"] ?? defaultConfigDir());

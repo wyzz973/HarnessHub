@@ -6,10 +6,14 @@ import type { RunId } from "@harnesshub/core/types";
 import { exportRollout } from "./rollout/export.js";
 
 const usage =
-  "Usage: node dist/src/cli.js rollout --url http://127.0.0.1:3180 --run RUN_ID --output FILE";
+  "Usage: hh rollout --url http://127.0.0.1:3180 --run RUN_ID --output FILE";
 
 /** Run one export command; SIGINT/SIGTERM cancel I/O and remove partial output. */
 export async function runCli(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) {
+    console.log(usage);
+    return;
+  }
   const { values, positionals } = parseArgs({
     args,
     allowPositionals: true,
@@ -17,13 +21,8 @@ export async function runCli(args: string[]): Promise<void> {
       url: { type: "string" },
       run: { type: "string" },
       output: { type: "string" },
-      help: { type: "boolean" },
     },
   });
-  if (values.help) {
-    console.log(usage);
-    return;
-  }
   if (positionals.length !== 1 || positionals[0] !== "rollout") {
     throw new Error(usage);
   }
@@ -63,7 +62,8 @@ export async function runCli(args: string[]): Promise<void> {
 
 /**
  * Command-line entry (`node dist/src/cli.js rollout ...` and `hh rollout ...`):
- * runs runCli and prints a failure's message on stderr.
+ * runs runCli and prints a failure's message on stderr. `--help` (or `-h`)
+ * anywhere prints the usage.
  *
  * @param argv The command-line arguments, starting with the subcommand.
  * @returns The process exit code.

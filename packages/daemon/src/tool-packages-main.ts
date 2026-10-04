@@ -9,7 +9,24 @@ import { sharedProcessLauncher } from "@harnesshub/runtime/process/launcher";
 import { usePlatformLauncher } from "@harnesshub/store/platform/process-launcher";
 
 const USAGE =
-  "Usage: node dist/src/tool-packages-main.js --root <absolute store directory> <package command>";
+  "Usage: hh tools --root <absolute store directory> <command> [options]";
+
+const HELP = `${USAGE}
+
+Commands:
+  inspect --source DIR        validate a package directory; installs nothing
+  install --source DIR        copy a package into the store and register it
+  import --source PATH [--kind K] [--id ID] [--version V] [--display-name N]
+                              register a skill directory or MCP configuration
+                              as a package (installs, does not bind)
+  list [--include-removed]    the registered packages
+  verify --id ID --version V  validate every file of an installed package
+  remove --id ID --version V  mark a package removed; its files stay
+  bind --id ID --version V --engine FILE [--bindings FILE] [--replace]
+                              an engine registration that uses the package
+
+--root comes first. A result is JSON on stdout; a failure is JSON with its
+code and message on stderr (exit 1).`;
 
 /**
  * Standalone composition; publishing wrappers can inject their own root into
@@ -32,14 +49,15 @@ export async function toolPackagesMain(argv: string[]): Promise<unknown> {
 /**
  * Command-line entry of `tools` (`node dist/src/tool-packages-main.js` and
  * `hh tools`): prints the result as JSON on stdout, or the error code and
- * message as JSON on stderr. `--help` alone prints the usage and exits 0.
+ * message as JSON on stderr. `--help` (or `-h`) anywhere prints the usage
+ * and exits 0.
  *
  * @param argv The command-line arguments after the command itself.
  * @returns The process exit code.
  */
 export async function main(argv: string[]): Promise<number> {
-  if (argv.length === 1 && (argv[0] === "--help" || argv[0] === "-h")) {
-    console.log(USAGE);
+  if (argv.includes("--help") || argv.includes("-h")) {
+    console.log(HELP);
     return 0;
   }
   try {

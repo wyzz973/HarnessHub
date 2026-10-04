@@ -13,42 +13,72 @@ import {
 import type { AttemptId } from "@harnesshub/core/benchmark";
 import { buildBenchmarkReport } from "@harnesshub/runtime/benchmark/report";
 
-/** Plain-Node benchmark composition. SIGINT/SIGTERM cancel through the same Runtime and stop further attempts. */
-export async function benchmarkMain(args: string[]): Promise<number> {
-  const { values } = parseArgs({
-    args,
-    options: {
-      dataset: { type: "string" },
-      config: { type: "string" },
-      engines: { type: "string" },
-      repeat: { type: "string", default: "1" },
-      permissions: { type: "string", default: "deny" },
-      "data-dir": { type: "string", default: "./data/benchmark" },
-      demo: { type: "boolean", default: false },
-      regrade: { type: "string" },
-      report: { type: "boolean", default: false },
-      batch: { type: "string" },
-      help: { type: "boolean", default: false },
-    },
-  });
-  if (values.help) {
-    console.log(
-      "HarnessHub Benchmark: node dist/src/benchmark-main.js --dataset examples/benchmark-text.json --engines dsh --config engines/local.yaml [--repeat 1] [--permissions deny|allow-once] [--data-dir ./data/benchmark]\nRegrade captured evidence: --regrade ATTEMPT_ID --data-dir DATA_DIR [--config engines/local.yaml | --demo]\nReport saved attempts: --report --data-dir DATA_DIR [--batch BATCH_ID] [--config engines/local.yaml | --demo]",
+const USAGE = `Usage:
+  hh benchmark --dataset FILE --engines ID[,ID]... [--config FILE | --demo]
+               [--repeat 1] [--permissions deny|allow-once]
+               [--data-dir ./data/benchmark]
+                          run every task on each engine and grade it
+  hh benchmark --regrade ATTEMPT_ID --data-dir DIR [--config FILE | --demo]
+                          grade an attempt's captured evidence again
+  hh benchmark --report --data-dir DIR [--batch BATCH_ID] [--config FILE | --demo]
+                          report the saved attempts`;
+
+/** A wrong command line: printed with the usage (exit 2), not as a failed benchmark. */
+class BenchmarkUsageError extends Error {}
+
+/** The options of `benchmark`; a wrong command line is a BenchmarkUsageError. */
+function parseBenchmark(args: string[]) {
+  try {
+    return parseArgs({
+      args,
+      options: {
+        dataset: { type: "string" },
+        config: { type: "string" },
+        engines: { type: "string" },
+        repeat: { type: "string", default: "1" },
+        permissions: { type: "string", default: "deny" },
+        "data-dir": { type: "string", default: "./data/benchmark" },
+        demo: { type: "boolean", default: false },
+        regrade: { type: "string" },
+        report: { type: "boolean", default: false },
+        batch: { type: "string" },
+      },
+    });
+  } catch (error) {
+    throw new BenchmarkUsageError(
+      error instanceof Error ? error.message : String(error),
     );
+  }
+}
+
+/**
+ * Plain-Node benchmark composition. SIGINT/SIGTERM cancel through the same
+ * Runtime and stop further attempts. `--help` (or `-h`) anywhere prints the
+ * usage; a wrong command line throws BenchmarkUsageError before anything
+ * starts.
+ */
+export async function benchmarkMain(args: string[]): Promise<number> {
+  if (args.includes("--help") || args.includes("-h")) {
+    console.log(USAGE);
     return 0;
   }
+  const { values } = parseBenchmark(args);
   if (values.permissions !== "deny" && values.permissions !== "allow-once")
-    throw new Error("--permissions must be deny or allow-once");
+    throw new BenchmarkUsageError("--permissions must be deny or allow-once");
   if (values.report && (values.dataset || values.engines || values.regrade))
-    throw new Error(
+    throw new BenchmarkUsageError(
       "Use --report independently from --dataset/--engines/--regrade",
     );
   if (values.batch !== undefined && (!values.report || !values.batch.trim()))
-    throw new Error("A non-empty --batch is only valid with --report");
+    throw new BenchmarkUsageError(
+      "A non-empty --batch is only valid with --report",
+    );
   if (values.regrade && (values.dataset || values.engines))
-    throw new Error("Use --regrade independently from --dataset/--engines");
+    throw new BenchmarkUsageError(
+      "Use --regrade independently from --dataset/--engines",
+    );
   if (!values.regrade && !values.report && (!values.dataset || !values.engines))
-    throw new Error("--dataset and --engines are required");
+    throw new BenchmarkUsageError("--dataset and --engines are required");
   const packageValue: unknown = JSON.parse(
     await readFile(new URL("../../package.json", import.meta.url), "utf8"),
   );
@@ -148,7 +178,8 @@ export async function benchmarkMain(args: string[]): Promise<number> {
 /**
  * Command-line entry of `benchmark` (`node dist/src/benchmark-main.js` and
  * `hh benchmark`): runs benchmarkMain and reports a failure as one JSON line on
- * stderr without its details.
+ * stderr without its details. A wrong command line is printed as `Error:`
+ * with the usage instead, with exit code 2.
  *
  * @param argv The command-line arguments after the command itself.
  * @returns The process exit code.
@@ -157,6 +188,10 @@ export async function main(argv: string[]): Promise<number> {
   try {
     return await benchmarkMain(argv);
   } catch (error) {
+    if (error instanceof BenchmarkUsageError) {
+      console.error(`Error: ${error.message}\n\n${USAGE}`);
+      return 2;
+    }
     console.error(
       JSON.stringify({
         error: error instanceof Error ? error.name : "BenchmarkError",

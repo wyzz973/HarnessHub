@@ -20,7 +20,7 @@ PATH="$PWD/.tools/node/bin:$PATH" node packages/daemon/dist/src/benchmark-main.j
 
 该样例以 `json-equal` 检查 `result.json` 的所有字段与数组顺序，并要求两份文件都已登记。`summary.txt` 的存在与字节完整性会检查，但此样例没有单独评判其文字正确性。文本任务可使用 [benchmark-text.json](../examples/benchmark-text.json)。引擎 ID 必须已配置；CLI 不安装引擎或补充凭证。
 
-`--engines dsh,opencode` 为每个引擎分别准备 workspace；`--repeat 2` 增加独立重复次数。一个批次最多 1000 个 attempt，当前依次执行。每次输出 attempt、Run、引擎、配置 revision、执行状态和 Evaluation，最后给出计划、执行和通过数量。只有全部计划任务评分通过且未中断，进程才退出 0。
+`--engines dsh,opencode` 为每个引擎分别准备 workspace；`--repeat 2` 增加独立重复次数。一个批次最多 1000 个 attempt，当前依次执行。每次输出 attempt、Run、引擎、配置 revision、执行状态和 Evaluation，最后给出计划、执行和通过数量。只有全部计划任务评分通过且未中断，进程才退出 0；其他失败在 stderr 输出一行不含细节的 JSON，以 1 退出。命令行有误（未知选项、多余的词如 `run`、缺少 `--dataset` 与 `--engines`、选项组合不对）时在启动任何东西之前打印错误与用法，以 2 退出；`--help`（或 `-h`）出现在任何位置都只打印用法（`hh benchmark --help`）。
 
 Benchmark CLI 启动仅绑定回环地址的 Gateway，端口自动分配，必须独占自己的 `data-dir`；不能与已运行 Gateway 共用数据库。历史数据和上一批 workspace 均保留。SIGINT/SIGTERM 通过 Runtime 取消当前 Run，等待终态并停止后续任务。
 
