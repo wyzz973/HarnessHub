@@ -34,6 +34,8 @@ export interface FakeProvider {
     seq: number;
     protocol: string;
   } & FakeProviderRecord["violations"][number])[];
+  /** Responses in progress, pending delay timers and open sockets. */
+  activity(): { responses: number; timers: number; sockets: number };
   /** Resolves once every request received so far has closed and been recorded. */
   idle(): Promise<void>;
   /** Responses in progress, pending delay timers and open sockets. */

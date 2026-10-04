@@ -439,8 +439,10 @@ export const SCOPES = Object.freeze({
 
 /**
  * The field lists with a manifest applied. A manifest has, per protocol, a
- * `declared` map of scope to extra accepted names and a `forbidden` map of
- * scope to `{name: reason}`; both only add.
+ * `declared` map of scope to extra accepted names, a `forbidden` map of
+ * scope to `{name: reason}` (both only add), and an `allowed` map of scope to
+ * names that are taken off the blacklist and declared, for an upstream that
+ * accepts a field strict upstreams reject (such as `max_completion_tokens`).
  *
  * @param {unknown} [manifest] For example `{"chat": {"declared": {"topLevel": ["user"]}}}`.
  * @returns {Readonly<Record<string, {declared: Record<string, ReadonlySet<string>>,
@@ -459,9 +461,9 @@ export function resolveFields(manifest = {}) {
     if (!plain(extra))
       throw new Error(`Field manifest: ${protocol} must be an object`);
     for (const key of Object.keys(extra))
-      if (key !== "declared" && key !== "forbidden")
+      if (key !== "declared" && key !== "forbidden" && key !== "allowed")
         throw new Error(
-          `Field manifest: ${protocol}.${key} is not declared or forbidden`,
+          `Field manifest: ${protocol}.${key} is not declared, forbidden or allowed`,
         );
     const base = BASE_FIELDS[protocol];
     const declared = {};
@@ -486,6 +488,17 @@ export function resolveFields(manifest = {}) {
         throw new Error(`Field manifest: ${where} must map names to reasons`);
       for (const [name, reason] of Object.entries(reasons))
         forbidden[scope].set(name, reason);
+    }
+    for (const [scope, names] of Object.entries(extra.allowed ?? {})) {
+      const where = `${protocol}.allowed.${scope}`;
+      if (!SCOPES[protocol].includes(scope))
+        throw new Error(`Field manifest: unknown scope ${where}`);
+      if (!Array.isArray(names) || !names.every(nonEmptyString))
+        throw new Error(`Field manifest: ${where} must be an array of names`);
+      for (const name of names) {
+        forbidden[scope].delete(name);
+        declared[scope].add(name);
+      }
     }
     result[protocol] = Object.freeze({
       declared: Object.freeze(declared),

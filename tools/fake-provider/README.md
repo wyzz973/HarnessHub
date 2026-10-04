@@ -67,7 +67,7 @@ HH_FAKE_KEY=合成的金丝雀值 node tools/fake-provider/index.mjs --port 0 --
 - 黑名单模式（默认）拒绝已知的厂商私有字段与其他协议的字段，例如 Chat 中的 `store`、`stream_options`、`max_completion_tokens`、`developer` 角色与 Anthropic 的 `cache_control`。名单之外的未知字段放行。
 - 白名单模式只接受该协议公开文档中、无状态上游为单个请求实现的可移植字段；托管状态、账户与路由控制等需要由字段清单显式加入。
 
-另外两种模式都检查各协议的必需字段与结构（例如 Messages 的 `max_tokens`、Chat 只能有一条且位于开头的 system 消息、Chat 的 `tool_choice` 必须与 `tools` 同时出现）。字段清单只能追加，格式如下，`--fields` 或 `fields` 选项读入，未知协议、作用域或非字符串名称在启动前报错：
+另外两种模式都检查各协议的必需字段与结构（例如 Messages 的 `max_tokens`、Chat 只能有一条且位于开头的 system 消息、Chat 的 `tool_choice` 必须与 `tools` 同时出现）。字段清单的 `declared` 与 `forbidden` 只能追加；`allowed` 把字段从黑名单中移除并声明它，用于接受严格上游所拒绝字段的上游（如只接受 `max_completion_tokens` 的端点：`allowed` 中列出它，`forbidden` 中列出 `max_tokens`）。格式如下，`--fields` 或 `fields` 选项读入，未知协议、作用域或非字符串名称在启动前报错：
 
 ```json
 {
@@ -117,6 +117,7 @@ HH_FAKE_KEY=合成的金丝雀值 node tools/fake-provider/index.mjs --port 0 --
 | `slowHeaders` | 延迟发送响应头 |
 | `midStreamError` | 流式在若干帧后以该协议的流内错误结束；非流式发送一半响应体后断开连接 |
 | `retryAfter` | 429 或 503，带 `Retry-After` 头与该协议的错误体 |
+| `servedModel` | 回答中的模型名换成给定值（模拟替换模型的中转） |
 
 ## 观测
 
@@ -129,6 +130,7 @@ HH_FAKE_KEY=合成的金丝雀值 node tools/fake-provider/index.mjs --port 0 --
 - [协议矩阵](protocols.test.mjs)：每个协议的流式与非流式各有接受样例、黑名单拒绝、带路径的白名单拒绝、鉴权失败与错误信封；另有模型列表、count_tokens、移植的 Chat 规则、字段清单与选项校验。
 - [怪癖](quirks.test.mjs)与[脚本](script.test.mjs)：每个怪癖与每项脚本功能一个可观察的用例，内置指令与四个协议的推理回传。
 - [服务](server.test.mjs)：拒绝非回环地址；客户端中途断开后不留响应、计时器与连接（去掉计时器的取消时该用例失败）；记录与日志中没有提示词与 Key；命令行的就绪文件、信号退出与错误退出。
+- [Provider 体检](../../tests/integration/provider-doctor.test.ts)：以字段清单与怪癖为体检的每项检查构造通过与失败的上游。
 - [真实网关集成](../../tests/integration/fake-provider.test.ts)：真实的会话模型网关以 Chat 上游连接黑名单模式的假 provider，经四种入站协议各发流式与非流式请求（含工具往返），断言零违规、只出现配置的上游 Key；兼容性设置让网关发送 `stream_options` 与 `max_completion_tokens` 时，假 provider 报告这两处违规；另从守护进程、Worker 与 ACP 夹具引擎完成一次 Run。
 
 ```sh

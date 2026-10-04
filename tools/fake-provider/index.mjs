@@ -517,7 +517,7 @@ export async function startFakeProvider(options = {}) {
       const context = {
         id: responseId(protocolName),
         created: Math.floor(Date.now() / 1000),
-        model,
+        model: quirks.servedModel ?? model,
         request: body,
         sse: routed.sse === true,
         quirks: {

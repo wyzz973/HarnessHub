@@ -59,6 +59,8 @@ const USAGE = `Usage: hh <command> [options]
                 [--credential-from-stdin | --credential-from-env VAR
                  | --credential-from-file PATH]
               | remove <id>
+              | test <id> [--model M]
+              | doctor <id> [--model M] [--deep] [--slow-ms N] [--fix]
   hh import <link> | - (link on stdin) | --from claude-code|codex [--only REF]...
               shows what would be added, then asks (--yes adds without asking)
   hh credential list <provider> | add <provider> [--name N] [--id ID]
@@ -360,6 +362,9 @@ function rebase(
 
 async function providerCommand(args: string[]): Promise<void> {
   const [action = "", ...rest] = args;
+  // Loaded on use: doctor.ts uses this module's helpers.
+  if (action === "test" || action === "doctor")
+    return (await import("./doctor.js")).doctorCommand(action, rest);
   const { values, positionals: given } = parse(rest, {
     name: { type: "string" },
     kind: { type: "string" },

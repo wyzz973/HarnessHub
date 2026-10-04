@@ -257,6 +257,21 @@ test("retryAfter: 429 or 503 with a Retry-After header and the native error body
   assert.equal(result.json.error.status, "UNAVAILABLE");
 });
 
+test("servedModel: answers in every protocol and form name another model", async (t) => {
+  const fake = await provider(t, { quirks: { servedModel: "swapped-model" } });
+  for (const protocol of PROTOCOLS)
+    for (const stream of [false, true]) {
+      const result = await send(fake, protocol, { stream });
+      assert.equal(result.status, 200);
+      // Chat, Responses and Messages name it `model`, Gemini `modelVersion`.
+      assert.match(result.text, /"(model|modelVersion)":"swapped-model"/, `${protocol} ${stream}`);
+      assert.doesNotMatch(result.text, /upstream-sim/, `${protocol} ${stream}`);
+    }
+  await fake.idle();
+  for (const record of fake.records())
+    assert.deepEqual(record.quirks, ["servedModel"]);
+});
+
 test("a script turn's quirks replace the global ones for that turn", async (t) => {
   const fake = await provider(t, {
     quirks: { noUsage: true },
@@ -282,6 +297,10 @@ test("quirk switches are validated", () => {
   assert.throws(
     () => resolveQuirks({ noUsage: "yes" }),
     /quirks.noUsage must be true or false/,
+  );
+  assert.throws(
+    () => resolveQuirks({ servedModel: "" }),
+    /quirks.servedModel must be false or a model name/,
   );
   assert.throws(
     () => resolveQuirks({ slowHeaders: -1 }),

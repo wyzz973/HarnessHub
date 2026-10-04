@@ -293,6 +293,12 @@ void test(
       !/synthetic-(access|refresh)/.test(JSON.stringify(provider)),
       "tokens stay in the secret store",
     );
+    // The account's reference holds sign-in tokens, never sent as an API key.
+    for (const check of [
+      () => client.providers.doctor("chatgpt", { model: "gpt-5" }),
+      () => client.providers.test("chatgpt", { model: "gpt-5" }),
+    ])
+      await assert.rejects(check(), { code: "SUBSCRIPTION_PROVIDER" });
     assert.equal(
       JSON.parse(
         await readFile(

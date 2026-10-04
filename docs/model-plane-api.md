@@ -20,6 +20,7 @@
 |---|---|---|
 | presets | `GET /presets` | 内置的 provider 预设（[Provider 预设](provider-presets.md)，格式见 [presets](../packages/gateway/presets/README.md)）：端点、地域 `regions`、套餐 `plans`、图标、header 提示、Key 的发送方式、获取 Key 的页面、核对日期 `verified` 与数据出处 `source` |
 | providers | `GET`、`POST /providers`；`GET`、`PATCH`、`DELETE /providers/{id}`；`POST /providers/{id}/models/refresh` | `POST` 可以只给 `preset`（可加 `region`、`plan`、`id`、`name`、按协议覆盖的 `endpoints` 与第一个 `credential`）；provider 记录所选的 `region` 与 `plan`，元数据按该组合的目录 ID 补齐，`catalog` 可以另行指定。刷新用第一个启用的凭据从上游列出模型（chat 基址 + `/models`、anthropic 基址 + `/v1/models`、gemini 基址 + `/v1beta/models`），按[模型元数据](#模型元数据)补齐每个模型的窗口与价格，手工填写的值保留；失败时保留原列表并标记 `stale`，错误只含主机与 HTTP 状态。端点是厂商官方 SDK 的基址：chat 与 responses 含 `/v1`，anthropic 与 gemini 不含版本段；以操作路径或版本段结尾、内嵌凭据、带查询串或片段、公网 HTTP 的基址被拒绝，`errors[]` 指向 `/endpoints/<协议>`。`PATCH` 是 JSON Merge Patch。被路由组或未吊销的 Key 引用时删除返回 409 |
+| test、doctor | `POST /providers/{id}/test`；`POST /providers/{id}/doctor` | 向上游发送真实请求：每个端点一个最小请求，或 03 第 9 节的全部检查（`dryRun` 只返回计划）；每个请求记入账本，作用域 `client:doctor`；报告附带提议的 provider 补丁，不修改配置。见 [Provider 测试与体检](provider-doctor.md) |
 | import | `POST /import/preview`；`POST /import/apply` | 导入链接或其他应用（Claude Code、Codex）的配置先预览为一次性的 `previewId`，确认后按 `POST /providers` 创建；见 [导入 provider](provider-import.md) |
 | credentials | `GET`、`POST /providers/{id}/credentials`；`PUT .../{credentialId}/secret`；`DELETE .../{credentialId}` | `value` 存入秘密后端，响应只含 `{kind:"store", value:<UUID>}` 引用；也可以给 `env` 或 `file` 引用。轮换保持引用不变；删除凭据或 provider 时同时删除托管秘密。06 第 3 节的 `/credentials` 顶层资源改为挂在 provider 下 |
 | models | `GET /providers/{id}/models`；`GET /models/{ref}`；`GET`、`PUT`、`DELETE /models/{ref}/overrides` | 见[模型元数据](#模型元数据)。`{ref}` 中的斜杠编码为 `%2F`（模型名本身可含斜杠）；覆盖的 `{ref}` 也可以是 `provider/*` |
@@ -70,6 +71,8 @@ printf '%s' "$KEY" | hh provider add --preset deepseek --credential-from-stdin
 printf '%s' "$KEY" | hh provider add --preset moonshot --region global --credential-from-stdin
 hh provider add glm --preset zhipu --plan coding
 hh provider models deepseek --refresh
+hh provider test deepseek                     # 每个端点一个最小请求
+hh provider doctor deepseek [--deep] [--fix]  # 先打印计划与预计成本，再逐项检查
 hh import - < link.txt                       # 导入链接：先预览，再确认
 hh import --from codex                        # 导入 Codex 已配置的上游
 hh provider add local-llm --chat http://127.0.0.1:8000/v1 --model my-model

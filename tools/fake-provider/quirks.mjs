@@ -16,6 +16,7 @@
  * | `slowHeaders` | ms | Wait this long before sending the response headers. |
  * | `midStreamError` | `true`, a frame count, or `{after, message}` | After `after` frames (default 1) the stream reports an error in the protocol's in-stream form and ends; a non-streaming body is cut off and the connection reset. |
  * | `retryAfter` | `true`, seconds, or `{status, seconds}` | Answer 429 (or 503) with `Retry-After: seconds` (default 1) and the protocol's error body. |
+ * | `servedModel` | a model name | Answers name this model instead of the requested one (a relay that swaps models). |
  */
 import { isObject } from "./common.mjs";
 
@@ -28,6 +29,7 @@ export const QUIRKS = Object.freeze([
   "slowHeaders",
   "midStreamError",
   "retryAfter",
+  "servedModel",
 ]);
 
 /** Every quirk switched off. */
@@ -41,6 +43,7 @@ export const NO_QUIRKS = Object.freeze({
   slowHeaders: 0,
   midStreamError: null,
   retryAfter: null,
+  servedModel: null,
 });
 
 function integer(value, where, minimum, maximum) {
@@ -165,6 +168,12 @@ export function resolveQuirks(raw, where = "quirks") {
           );
         break;
       }
+      case "servedModel":
+        if (value === false) result[name] = null;
+        else if (typeof value === "string" && value && value.length <= 200)
+          result[name] = value;
+        else throw new Error(`${at} must be false or a model name`);
+        break;
       default:
         throw new Error(`${at} is not a known quirk (${QUIRKS.join(", ")})`);
     }

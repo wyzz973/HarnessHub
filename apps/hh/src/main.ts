@@ -6,7 +6,7 @@ Commands:
   init        Set up: add a provider from a preset, wire the agents installed here
   status      Show the running daemon and its model plane
   console     Print a one-time link that signs a browser in to the console
-  provider    Manage model providers (list, show, presets, add, remove)
+  provider    Manage model providers (list, show, presets, add, remove, test, doctor)
   import      Add providers from an import link or from Claude Code / Codex
   credential  Manage provider credentials (list, add, rotate, remove)
   key         Manage Gateway Keys (list, create, revoke)

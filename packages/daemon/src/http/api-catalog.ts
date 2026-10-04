@@ -1769,6 +1769,44 @@ export const apiCatalog: readonly ApiDocumentation[] = [
   },
   {
     method: "POST",
+    path: "/api/v1/providers/{id}/test",
+    title: "测试 provider 的端点",
+    group: "providers",
+    request:
+      "路径参数 id；请求体可给 model（provider 的模型 ID，缺省为第一个公开的模型）。",
+    response:
+      "200：provider、model、wireModel、endpoints（每个声明的端点：protocol、url（不含查询串）、ok、status（无响应为 0）、durationMs、firstByteMs、servedModel、脱敏后的 error）、modelCalls、costUsd、unpricedCalls。",
+    implementation:
+      "对每个声明的端点经 @harnesshub/gateway/probe 发一个最小的非流式请求（输出上限 16 token），使用 provider 第一个可用于该端点的启用凭据与配置的 Key 发送方式；上游失败记在结果中而不是作为错误返回。",
+    effects:
+      "每个请求在发出下一个之前提交一条 model.call（scope 为 client:doctor，inbound.path 为 /doctor/test），按模型价格计入成本；不修改 provider。",
+    errors:
+      "404 PROVIDER_NOT_FOUND；400 DOCTOR_MODEL_REQUIRED（provider 没有模型且未给 model）；409 CREDENTIAL_UNAVAILABLE（凭据无法读取）、SUBSCRIPTION_PROVIDER（订阅 provider 不经 doctor 测试）；503 EVIDENCE_UNAVAILABLE（账本无法写入，停止发送）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/doctor-routes.ts",
+    tests: ["tests/integration/provider-doctor.test.ts"],
+    operationId: "hh_api_v1_test_provider",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/providers/{id}/doctor",
+    title: "provider 体检",
+    group: "providers",
+    request:
+      "路径参数 id；请求体：model（缺省为第一个公开的模型）、deep（另发超过模型上下文窗口的输入）、slowMs（首内容中位数超过它为 warn，默认 10000）、dryRun（只返回计划，不发请求）。",
+    response:
+      "200：plan（provider、model、wireModel、protocol、deep、modelCalls、maxModelCalls、listRequests、estimatedTokens、estimatedCostUsd（模型没有价格时为 null）、各检查的请求数）；不是 dryRun 时另有 startedAt、durationMs、modelCalls、costUsd、unpricedCalls、items（check、status=pass/warn/fail/skip、summary、details、脱敏的 excerpt、httpStatus、url、suggestions、patch、values）与合并后的 patch（PATCH /providers/{id} 的 JSON Merge Patch 提议）。",
+    implementation:
+      "packages/daemon/src/provider-doctor.ts 按 03 第 9 节依次检查：基址与路径、认证头（401/403 时另试其他发送方式）、模型列表与 wire 名、流式、usage（带与不带 stream_options.include_usage）、max_tokens 与 max_completion_tokens、工具往返、推理回传（Chat）、可选字段逐个加入并与对照请求比较、1×1 PNG 与模型元数据、未声明的同基址 OpenAI 端点、served model、3 次流式的首字节与首内容中位数、deep 时的上下文超长分类。每个请求经 @harnesshub/gateway/probe 原样发送（不应用 provider 补丁）。",
+    effects:
+      "每个请求在发出下一个之前提交一条 model.call（scope 为 client:doctor，inbound.path 为 /doctor/<检查>）；诊断日志记录一条 provider.doctor（各状态计数、请求数与成本）；不修改 provider，patch 只是提议。",
+    errors:
+      "404 PROVIDER_NOT_FOUND；400 DOCTOR_MODEL_REQUIRED、INVALID_REQUEST；409 CREDENTIAL_UNAVAILABLE、SUBSCRIPTION_PROVIDER（订阅 provider）；503 EVIDENCE_UNAVAILABLE（账本无法写入，停止发送）、SHUTTING_DOWN；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/doctor-routes.ts",
+    tests: ["tests/integration/provider-doctor.test.ts"],
+    operationId: "hh_api_v1_doctor_provider",
+  },
+  {
+    method: "POST",
     path: "/api/v1/providers/{id}/models/refresh",
     title: "刷新模型列表",
     group: "providers",

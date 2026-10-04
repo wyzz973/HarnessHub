@@ -63,6 +63,7 @@ import { LibraryService } from "./library-service.js";
 import { SIWC, SiwcClient, SiwcTokens } from "@harnesshub/gateway/siwc";
 import { CopilotHosts } from "./copilot.js";
 import { allowanceFile, SubscriptionService } from "./subscriptions.js";
+import { ProviderDoctor } from "./provider-doctor.js";
 import { GatewayShare } from "./lan-share.js";
 import {
   getPreset,
@@ -958,7 +959,15 @@ export async function startHub(options: {
     syncToClose = sync;
     await sync.load();
     server.addHook("preClose", async () => sync.close());
+    const doctor = new ProviderDoctor({
+      store: modelPlane,
+      resolveSecret: (ref) => secrets.resolve(ref, environment),
+      log: gatewayLog,
+    });
+    // Before the stores close: stop doctor runs and wait for their ledger entries.
+    server.addHook("preClose", async () => doctor.close());
     registerApiV1(server, {
+      doctor,
       adminTokenDigest,
       consoleSessions,
       modelPlane,

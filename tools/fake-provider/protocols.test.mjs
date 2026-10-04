@@ -519,6 +519,29 @@ test("whitelist mode accepts declared fields, Gemini snake_case spellings and fi
     rejected.json.error.message,
     "Unsupported parameter: 'temperature' is not tunable here.",
   );
+  // `allowed` takes a field off the blacklist and declares it.
+  const lenient = await provider(t, {
+    fields: {
+      chat: {
+        allowed: { topLevel: ["max_completion_tokens"] },
+        forbidden: { topLevel: { max_tokens: "send max_completion_tokens" } },
+      },
+    },
+  });
+  assert.equal(
+    (await send(lenient, "chat", { body: { max_completion_tokens: 16 } }))
+      .status,
+    200,
+  );
+  assert.equal(
+    (await send(lenient, "chat", { body: { max_tokens: 16 } })).status,
+    400,
+  );
+  assert.equal(
+    (await send(stricter, "chat", { body: { max_completion_tokens: 16 } }))
+      .status,
+    400,
+  );
 });
 
 test("field manifests and options are validated before listening", async () => {
@@ -536,8 +559,16 @@ test("field manifests and options are validated before listening", async () => {
     /must map names to reasons/,
   );
   assert.throws(
-    () => resolveFields({ chat: { allowed: {} } }),
-    /is not declared or forbidden/,
+    () => resolveFields({ chat: { permitted: {} } }),
+    /is not declared, forbidden or allowed/,
+  );
+  assert.throws(
+    () => resolveFields({ chat: { allowed: { topLevel: "store" } } }),
+    /chat.allowed.topLevel must be an array of names/,
+  );
+  assert.throws(
+    () => resolveFields({ chat: { allowed: { headers: ["x"] } } }),
+    /unknown scope chat.allowed.headers/,
   );
   await assert.rejects(
     startFakeProvider({ mode: "strict" }),

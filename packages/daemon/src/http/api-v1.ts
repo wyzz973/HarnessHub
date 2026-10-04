@@ -21,6 +21,7 @@ import type { AgentWiringService, WiringHome } from "../agents-wiring.js";
 import { registerAgentRoutes } from "./agents-routes.js";
 import type { LibraryService } from "../library-service.js";
 import { registerLibraryRoutes } from "./library-routes.js";
+import { registerDoctorRoutes, type DoctorService } from "./doctor-routes.js";
 import {
   registerGatewayShareRoutes,
   type GatewayShareControl,
@@ -171,6 +172,8 @@ export interface ApiV1Options {
    * their own.
    */
   serialize?: <T>(operation: () => Promise<T>) => Promise<T>;
+  /** Provider test and doctor; without it their routes are absent. */
+  doctor?: DoctorService;
 }
 
 const LOOPBACK =
@@ -357,6 +360,7 @@ export function registerApiV1(
         registerBackupRoutes(api, options.backup.backups, options.backup.sync);
       if (options.subscriptions)
         registerSubscriptionRoutes(api, options.subscriptions);
+      if (options.doctor) registerDoctorRoutes(api, options.doctor);
     },
     { prefix: "/api/v1" },
   );

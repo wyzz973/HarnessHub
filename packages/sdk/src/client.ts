@@ -30,6 +30,11 @@ import type {
   ImportResult,
 } from "@harnesshub/core/import-links";
 import type {
+  DoctorPlan,
+  DoctorReport,
+  ProviderTestReport,
+} from "@harnesshub/core/provider-doctor";
+import type {
   AllowanceReading,
   ConversationSummary,
   GatewayKeyQuota,
@@ -80,6 +85,15 @@ export type {
   ImportPreview,
   ImportResult,
 } from "@harnesshub/core/import-links";
+export type {
+  DoctorCheck,
+  DoctorItem,
+  DoctorPlan,
+  DoctorReport,
+  DoctorStatus,
+  EndpointTest,
+  ProviderTestReport,
+} from "@harnesshub/core/provider-doctor";
 export type { AutoGroup } from "@harnesshub/core/auto-groups";
 export type {
   RedactionRule,
@@ -1035,6 +1049,36 @@ export class HarnessHubClient {
         "POST",
         `providers/${segment(id)}/models/refresh`,
         { body: {} },
+      ),
+    /**
+     * One minimal request per declared endpoint, recorded in the ledger
+     * under `client:doctor`: status, latency and served model of each.
+     */
+    test: (id: string, options: { model?: string } = {}) =>
+      this.request<ProviderTestReport>(
+        "POST",
+        `providers/${segment(id)}/test`,
+        { body: options },
+      ),
+    /**
+     * The checks of 03 section 9 against the provider's upstream (real,
+     * billed requests under `client:doctor`); `dryRun` returns only the plan
+     * (model calls and estimated cost) and sends nothing. The report's
+     * `patch` is a proposal for `update`; the doctor changes nothing.
+     */
+    doctor: (
+      id: string,
+      options: {
+        model?: string;
+        deep?: boolean;
+        slowMs?: number;
+        dryRun?: boolean;
+      } = {},
+    ) =>
+      this.request<Partial<DoctorReport> & { plan: DoctorPlan }>(
+        "POST",
+        `providers/${segment(id)}/doctor`,
+        { body: options },
       ),
     /** The metadata of every listed model, with sources. */
     models: (id: string) =>
