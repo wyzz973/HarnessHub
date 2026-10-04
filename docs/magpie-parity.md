@@ -13,7 +13,7 @@ Every row was checked against Magpie's source and against HarnessHub's code or d
 
 **Not verified.** Windows is unverified throughout ([Windows](windows.md)). Most adapters that follow Magpie have not been run against the real agent; [compatibility](compatibility.md) lists the agents the conformance suite has run for real. Sync was tested only against fake WebDAV and S3 servers, the Copilot add-on only against a fake SDK, and OTLP export only against a local receiver.
 
-**Console labels.** The web console is in Chinese. This page calls its pages Agents (Agent), Providers (Provider), Subscriptions (订阅账号), Routing and Keys (路由与 Key), Usage (用量), Profiles (Profile), Library and Settings (设置). Routing and Keys has the tabs Route groups (路由组), Automatic groups (自动路由组), Keys (Key), Credential state (凭据状态) and Route decisions (路由决定); Settings has General (通用), Gateway features (网关功能) and Backup and sync (备份与同步).
+**Console labels.** The web console is in English and Chinese (Settings → Language). This page uses its English names, with the Chinese ones in parentheses: Agents (Agent), Providers (Provider), Subscriptions (订阅账号), Routing and keys (路由与 Key), Usage (用量), Profiles (Profile), Library and Settings (设置). Routing and keys has the tabs Route groups (路由组), Automatic groups (自动路由组), Gateway Keys (Gateway Key), Credential state (凭据状态) and Route decisions (路由决定); Settings has General (通用), Gateway features (网关功能) and Backup and sync (备份与同步).
 
 ## Gateway and protocols
 
@@ -214,7 +214,7 @@ Every row was checked against Magpie's source and against HarnessHub's code or d
 | Pages for agents, providers, routing, keys, usage, sessions, library and settings | partial | Agents, Providers, Subscriptions, Routing and Keys, Usage, Profiles, Library, Settings | No page for agents' own session files ([pages](../packages/console/README.md#页面与状态)) |
 | Terminal agents screen: a row per agent, a searchable picker, `s` and `p` for profiles | same | `hh tui` | Adds refresh, unwire, new key, the diff before writing and a fold for agents not found ([terminal UI](global-wiring.md#终端界面)) |
 | Other terminal pages (providers, routing, usage, sessions, library), `S` to sync | not covered | `hh catalog refresh` | |
-| English and Chinese | partial | The console is in Chinese; `hh` and `hh tui` are in English | |
+| English and Chinese | partial | The console is in English and Chinese ([ADR 0034](decisions/0034-console-languages.md)); `hh` and `hh tui` are in English only | |
 | Omarchy status-bar widget | not covered | — | |
 
 ## Packaging and operations
