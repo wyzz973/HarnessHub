@@ -19,6 +19,7 @@ import type {
 } from "@harnesshub/core/model-metadata";
 import type { ModelCallEntry } from "@harnesshub/core/model-plane";
 import { parseCatalog, snapshotText } from "./catalog.js";
+import { deadline } from "./http.js";
 
 export const DEFAULT_CATALOG_URL = "https://models.dev/api.json";
 const REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -418,13 +419,18 @@ export class CatalogRefresher implements CatalogService {
 
   /** The new catalog, or undefined when the server says it is unchanged. */
   private async download(at: string) {
+    const timeout = deadline(this.abort.signal, FETCH_TIMEOUT_MS);
+    try {
+      return await this.fetchCatalog(at, timeout.signal);
+    } finally {
+      timeout.dispose();
+    }
+  }
+
+  private async fetchCatalog(at: string, signal: AbortSignal) {
     const url = this.options.settings.url;
     const host = new URL(url).host;
     const etag = this.active.meta.etag;
-    const signal = AbortSignal.any([
-      this.abort.signal,
-      AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    ]);
     const failed = (error: unknown): never => {
       if (this.abort.signal.aborted)
         throw new Error("the daemon is shutting down");

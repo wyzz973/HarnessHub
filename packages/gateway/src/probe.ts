@@ -21,7 +21,7 @@ import {
   type ProviderModel,
   type WireProtocol,
 } from "@harnesshub/core/model-plane";
-import { networkFailure, readLimited } from "./http.js";
+import { deadline, networkFailure, readLimited } from "./http.js";
 import { callCost, callUsage, type UsageParts } from "./ledger.js";
 import {
   observeEvent,
@@ -160,10 +160,11 @@ export async function probeUpstream(
   const startedAt = new Date();
   const started = performance.now();
   const since = () => Math.round(performance.now() - started);
-  const timeout = AbortSignal.timeout(request.timeoutMs);
-  const signal = request.signal
-    ? AbortSignal.any([request.signal, timeout])
-    : timeout;
+  const timeout = deadline(
+    request.signal ?? new AbortController().signal,
+    request.timeoutMs,
+  );
+  const signal = timeout.signal;
   try {
     const response = await fetch(url, {
       method: "POST",
@@ -258,7 +259,7 @@ export async function probeUpstream(
       result.cancelled = true;
       result.networkError = "Cancelled before the answer was complete";
     } else if (error instanceof GatewayError) result.error = failureOf(error);
-    else if (timeout.aborted)
+    else if (timeout.expired())
       result.networkError = `No complete answer within ${request.timeoutMs} ms`;
     else
       result.networkError = sanitize(
@@ -266,6 +267,8 @@ export async function probeUpstream(
           (error instanceof Error ? error.message : String(error)),
         secrets,
       );
+  } finally {
+    timeout.dispose();
   }
   result.timing.durationMs = since();
   return { result, entry: probeEntry(target, request, result, startedAt) };
