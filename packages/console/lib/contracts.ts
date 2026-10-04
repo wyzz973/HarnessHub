@@ -321,7 +321,6 @@ export const overviewSchema = z.object({
 /** `GET /v1/runtime/info`: the Gateway's startup mode, never user preference. */
 export const runtimeInfoSchema = z.object({
   fullAccess: z.boolean(),
-  consoleUrl: z.string().optional(),
 });
 export const harnessModelEngineStatusSchema = z.object({
   engineId: z.string(),

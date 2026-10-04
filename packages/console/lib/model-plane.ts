@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 /**
  * Data access and presentation helpers of the model-plane pages. Requests go
- * through `@harnesshub/sdk` to the same-origin proxy, which adds the admin
- * token on the server; the browser never holds it.
+ * through `@harnesshub/sdk` to the daemon that serves the page, with the
+ * console session (lib/session.ts); the browser never holds the admin token.
  */
 import {
-  HarnessHubClient,
+  type HarnessHubClient,
   HarnessHubError,
   HarnessHubUnavailableError,
   type ProviderConfig,
@@ -16,14 +16,11 @@ import {
   type ResolvedField,
   type WireProtocol,
 } from "@harnesshub/sdk/client";
+import { apiClient } from "./session";
 
-let client: HarnessHubClient | undefined;
-/** The SDK client for this page's origin (browser only). */
+/** The SDK client of the signed-in console session (browser only). */
 export function modelPlane(): HarnessHubClient {
-  client ??= new HarnessHubClient({
-    url: new URL("/api/gateway/", window.location.origin),
-  });
-  return client;
+  return apiClient();
 }
 
 export const protocols: readonly WireProtocol[] = [
@@ -80,10 +77,9 @@ const codeText: Record<string, string> = {
   GATEWAY_KEY_INVALID: "Key 设置不正确",
   GATEWAY_KEY_NOT_FOUND: "Key 不存在",
   INVALID_REQUEST: "输入不符合接口要求",
-  ADMIN_TOKEN_UNAVAILABLE:
-    "控制台无法读取守护进程的管理令牌，请用 pnpm start:local 启动或设置 HARNESSHUB_DATA_DIR",
-  ADMIN_TOKEN_INVALID: "管理令牌与正在运行的守护进程不符，请重启控制台",
-  GATEWAY_UNAVAILABLE: "暂时无法连接守护进程，请确认它已启动",
+  CONSOLE_SESSION_INVALID: "控制台会话已结束，请运行 hh console 重新登录",
+  ADMIN_TOKEN_REQUIRED: "控制台尚未登录，请运行 hh console 打开登录链接",
+  CSRF_TOKEN_INVALID: "会话已在其他标签页更新，请重试",
 };
 
 /** An API failure prepared for a form: one message, field errors by JSON Pointer, blocking references. */

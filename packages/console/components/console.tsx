@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-"use client";
 import {
   Fragment,
   useCallback,
@@ -50,6 +49,8 @@ import {
 } from "@/lib/contracts";
 import { engineName } from "@/lib/engines";
 import { useGatewayStatus } from "@/lib/gateway-status";
+import { navigate, pagePaths, usePage, type Page } from "@/lib/router";
+import { signOut } from "@/lib/session";
 import { cn } from "@/lib/utils";
 import {
   parseOutputPaths,
@@ -70,7 +71,7 @@ import { EnginePage } from "./engine-page";
 import { LogPanel } from "./log-panel";
 import { ObservabilityPage } from "./observability-page";
 import { ModelPage } from "./model-page";
-import { Sidebar, type HistoryItem, type Page } from "./sidebar";
+import { Sidebar, type HistoryItem } from "./sidebar";
 import { ToolPacksPage } from "./tool-packs-page";
 import { ProvidersPage } from "./providers-page";
 import { GroupsPage } from "./groups-page";
@@ -130,7 +131,7 @@ export function Console() {
     gateway.model.state === "ready" ? gateway.model.value : undefined;
   const modelMissing =
     gateway.model.state === "ready" && !gateway.model.value.configured;
-  const [page, setPage] = useState<Page>("tasks");
+  const page = usePage();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
@@ -310,7 +311,8 @@ export function Console() {
     return () => controller.abort();
   }, [loading, active, sessions, report]);
 
-  const choose = useCallback((next: ActiveSelection) => {
+  /** Show a task (or a new one) without touching the address. */
+  const select = useCallback((next: ActiveSelection) => {
     activeRef.current = next;
     viewApplied.current = ++viewStarted.current;
     setActive(next);
@@ -320,18 +322,43 @@ export function Console() {
     setSelection(undefined);
     setError(null);
     setStreamError(false);
-    setPage("tasks");
     setMobileNav(false);
-    window.history.replaceState(
-      null,
-      "",
-      next
-        ? `?${next.type}=${encodeURIComponent(next.id)}`
-        : window.location.pathname,
-    );
     if (next?.type === "session") setMode("direct");
     if (next?.type === "workflow") setMode("auto");
   }, []);
+  /**
+   * Open a task on the task page. Switching tasks there replaces the history
+   * entry; coming from another page adds one, so Back returns to that page.
+   */
+  const choose = useCallback(
+    (next: ActiveSelection) => {
+      select(next);
+      navigate("tasks", {
+        search: next ? `?${next.type}=${encodeURIComponent(next.id)}` : "",
+        replace: window.location.pathname === pagePaths.tasks,
+      });
+    },
+    [select],
+  );
+  // Back and forward between tasks restore the task named in the address.
+  useEffect(() => {
+    const follow = () => {
+      if (window.location.pathname !== pagePaths.tasks) return;
+      const params = new URLSearchParams(window.location.search);
+      const workflowId = params.get("workflow");
+      const sessionId = params.get("session");
+      const next: ActiveSelection = workflowId
+        ? { type: "workflow", id: workflowId }
+        : sessionId
+          ? { type: "session", id: sessionId }
+          : null;
+      const current = activeRef.current;
+      if (next?.type !== current?.type || next?.id !== current?.id)
+        select(next);
+    };
+    window.addEventListener("popstate", follow);
+    return () => window.removeEventListener("popstate", follow);
+  }, [select]);
 
   const mergeEvents = useCallback((id: string, batch: AgentEvent[]) => {
     if (!batch.length) return;
@@ -832,7 +859,7 @@ export function Console() {
     return () => window.removeEventListener("keydown", shortcut);
   }, [newTask]);
   const openPage = (next: Page) => {
-    setPage(next);
+    navigate(next);
     setMobileNav(false);
     // Engine revisions change after unified-model and tool-pack updates from any client.
     if (next === "engines" || next === "tools") void refresh().catch(report);
@@ -909,6 +936,7 @@ export function Console() {
             onToggle={toggleSidebar}
             onNewTask={newTask}
             onOpenPage={openPage}
+            onSignOut={() => void signOut().catch(report)}
             history={history}
             loading={loading}
             activeId={active?.id}

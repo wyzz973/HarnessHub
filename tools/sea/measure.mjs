@@ -449,6 +449,26 @@ async function endToEnd(binary, build) {
       });
     });
     if (!gateway) return checks;
+    // The embedded console: the page and the script it loads, from the extracted build.
+    await attempt("console.page", async () => {
+      const page = await fetch(`${gateway.record.url}/`, {
+        headers: { accept: "text/html" },
+      });
+      const html = await page.text();
+      const script = /src="(\/assets\/[^"]+\.js)"/.exec(html)?.[1];
+      const asset = script
+        ? await fetch(`${gateway.record.url}${script}`)
+        : undefined;
+      await asset?.arrayBuffer();
+      check(
+        "console.page",
+        page.status === 200 &&
+          html.includes('id="root"') &&
+          page.headers.get("content-security-policy") !== null &&
+          asset?.status === 200,
+        { status: page.status, script: script ?? null, asset: asset?.status ?? null },
+      );
+    });
     // Read per request: the crash-recovery check restarts the Gateway on a new port.
     const api = async (method, route, body) => {
       const response = await fetch(gateway.record.url + route, {

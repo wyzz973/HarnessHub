@@ -98,7 +98,7 @@ Status: accepted
 ### 4. 工具包与控制台
 
 - **工具包**：`POST /v1/tool-packs/apply` 接受 `engineIds: "all" | string[]`，并逐个引擎返回结果。新增 `POST /v1/tool-packs/import`，可以直接导入 Skill 目录、标准 `mcpServers` JSON 或 CLI 清单，由服务端生成清单和 sha256。
-- **控制台**：Gateway 配置了控制台地址（`--console-url`）时，根路径 `/` 跳转过去。控制台新增统一模型页和工具包页，默认进入直接对话模式。
+- **控制台**：Gateway 配置了控制台地址（`--console-url`）时，根路径 `/` 跳转过去（2026-10-04 起由 [ADR 0024](0024-embedded-console.md) 取代：控制台内嵌在守护进程中，`--console-url` 与 `consoleUrl` 已移除）。控制台新增统一模型页和工具包页，默认进入直接对话模式。
 
 ### 5. 响应头、保活与空闲超时（2026-10-02 补充）
 
@@ -180,7 +180,7 @@ Worker 把 `ModelCallRecord` 原样作为 `type: "model.call"` 的事件 `data` 
 
 ### 运行信息
 
-`GET /v1/runtime/info` 返回 `{ fullAccess: boolean, consoleUrl?: string }`，供控制台显示当前运行模式。（2026-10-02 起另含必需字段 `build`，即构建身份，见 [快速开始](../getting-started.md) 的 `--version`。）
+`GET /v1/runtime/info` 返回 `{ fullAccess: boolean, consoleUrl?: string }`，供控制台显示当前运行模式。（2026-10-02 起另含必需字段 `build`，即构建身份，见 [快速开始](../getting-started.md) 的 `--version`；2026-10-04 起不再有 `consoleUrl`，见 [ADR 0024](0024-embedded-console.md)。）
 
 ### 会话工作目录占位符
 

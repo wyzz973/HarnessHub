@@ -490,13 +490,11 @@ void test(
       ...base,
       dataDir: path.join(directory, "ready"),
       defaultEngine: "stub",
-      consoleUrl: "http://127.0.0.1:3330/",
     });
     hubs.push(hub);
     assert.deepEqual((await call(hub, "GET", "/v1/runtime/info")).value, {
       build: await loadBuildInfo(),
       fullAccess: true,
-      consoleUrl: "http://127.0.0.1:3330/",
     });
   },
 );

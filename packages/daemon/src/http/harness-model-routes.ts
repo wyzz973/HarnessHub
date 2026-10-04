@@ -153,7 +153,6 @@ const runtimeInfoSchema = {
   properties: {
     build: buildInfoSchema,
     fullAccess: { type: "boolean" },
-    consoleUrl: { type: "string" },
   },
 } as const;
 const responses = (schema: object) => ({

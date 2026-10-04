@@ -33,11 +33,7 @@ export default tseslint.config(
   },
   {
     files: ["packages/console/**/*.ts", "packages/console/**/*.tsx"],
-    ignores: [
-      "packages/console/.next/**",
-      "packages/console/next-env.d.ts",
-      "packages/console/node_modules/**",
-    ],
+    ignores: ["packages/console/dist/**", "packages/console/node_modules/**"],
     languageOptions: {
       parser: tseslint.parser,
       parserOptions: {

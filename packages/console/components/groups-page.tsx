@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-"use client";
 import { useCallback, useState } from "react";
 import { Loader2, Pencil, Plus, RefreshCw, Route, Trash2 } from "lucide-react";
 import type {

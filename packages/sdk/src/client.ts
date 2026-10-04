@@ -127,18 +127,48 @@ export class HarnessHubUnavailableError extends Error {
 
 export interface ClientOptions {
   /**
-   * Daemon origin, e.g. `http://127.0.0.1:3180`, or a proxy base whose path
-   * ends with `/`, e.g. `http://127.0.0.1:3330/api/gateway/`: requests go to
-   * `<base>api/v1/...`.
+   * Daemon origin, e.g. `http://127.0.0.1:3180`, or a base whose path ends
+   * with `/`, e.g. `http://127.0.0.1:3330/` of a development proxy: requests
+   * go to `<base>api/v1/...`.
    */
   url: string | URL;
   /**
-   * The local admin token (`<dataDir>/admin.token`). Omit it only behind a
-   * proxy that adds the token itself, as the console's does.
+   * The local admin token (`<dataDir>/admin.token`), sent as
+   * `Authorization: Bearer`. Omit it in a page served by the daemon, which
+   * authenticates with its console session instead (`csrfToken`).
    */
   token?: string;
+  /**
+   * The CSRF value of a console session (`auth.createConsoleSession`,
+   * `auth.currentConsoleSession`), sent as `X-HH-CSRF`. The session itself
+   * is the HttpOnly `hh_console` cookie, which a page served by the daemon
+   * sends with every same-origin request; the daemon rejects requests that
+   * change state with 403 `CSRF_TOKEN_INVALID` when the value does not match.
+   */
+  csrfToken?: string;
   /** Replaces the global `fetch`, e.g. in tests. */
   fetch?: typeof fetch;
+}
+
+/** `POST /auth/console-links`: a one-time console login code. */
+export interface ConsoleLink {
+  /** 128 random bits, base64url; valid once, until `expiresAt`. */
+  code: string;
+  expiresAt: string;
+}
+
+/**
+ * A console session (`POST /auth/console-sessions`,
+ * `GET /auth/console-sessions/current`). The session value is the HttpOnly
+ * cookie and never appears here.
+ */
+export interface ConsoleSession {
+  /** Sent as `X-HH-CSRF` on requests that change state (`csrfToken` option). */
+  csrfToken: string;
+  /** The session ends at this time whatever its use (7 days after creation). */
+  expiresAt: string;
+  /** The session ends at this time unless it is used before (12 hours idle). */
+  idleExpiresAt: string;
 }
 
 /** `POST /providers`; credentials are added with `credentials.add`. */
@@ -497,6 +527,7 @@ const segment = (value: string) => encodeURIComponent(value);
 export class HarnessHubClient {
   private readonly base: URL;
   private readonly token: string | undefined;
+  private readonly csrfToken: string | undefined;
   private readonly send: typeof fetch;
 
   constructor(options: ClientOptions) {
@@ -514,6 +545,7 @@ export class HarnessHubClient {
     base.hash = "";
     this.base = new URL("api/v1/", base);
     this.token = options.token;
+    this.csrfToken = options.csrfToken;
     // Called unbound: browsers reject a `fetch` invoked with another `this`.
     this.send =
       options.fetch ?? ((input, init) => globalThis.fetch(input, init));
@@ -540,6 +572,9 @@ export class HarnessHubClient {
           accept: "application/json",
           ...(this.token !== undefined
             ? { authorization: `Bearer ${this.token}` }
+            : {}),
+          ...(this.csrfToken !== undefined
+            ? { "x-hh-csrf": this.csrfToken }
             : {}),
           ...(options.body !== undefined
             ? { "content-type": options.contentType ?? "application/json" }
@@ -586,6 +621,28 @@ export class HarnessHubClient {
 
   readonly system = {
     info: () => this.request<SystemInfo>("GET", "system/info"),
+  };
+
+  /**
+   * Console sign-in (07-data-security section 5.2). `createConsoleLink`
+   * needs the admin token; the page opened with `/#login=<code>` exchanges
+   * the code once with `createConsoleSession`, which sets the session cookie.
+   * An unknown, used or expired code is 401 `CONSOLE_LINK_INVALID`; an ended
+   * or signed-out session is 401 `CONSOLE_SESSION_INVALID`, and a request
+   * without any credential 401 `ADMIN_TOKEN_REQUIRED`.
+   */
+  readonly auth = {
+    createConsoleLink: () =>
+      this.request<ConsoleLink>("POST", "auth/console-links", { body: {} }),
+    createConsoleSession: (code: string) =>
+      this.request<ConsoleSession>("POST", "auth/console-sessions", {
+        body: { code },
+      }),
+    currentConsoleSession: () =>
+      this.request<ConsoleSession>("GET", "auth/console-sessions/current"),
+    /** Signs out: the session ends at once and its cookie is cleared. */
+    deleteConsoleSession: () =>
+      this.request<void>("DELETE", "auth/console-sessions/current"),
   };
 
   readonly providers = {

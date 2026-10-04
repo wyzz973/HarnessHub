@@ -4,12 +4,15 @@
 
 ## 认证与错误
 
-- 守护进程启动时在数据目录中创建 `admin.token`（256 位随机数的 base64url，0600；已存在则校验后沿用），内存中只保留其 SHA-256。`/api/v1` 的每个请求都必须带 `Authorization: Bearer <令牌>`，而且来自回环连接；服务器原有的 Host、Origin 与 `Sec-Fetch-Site` 校验照常执行在前。令牌文件可被其他用户读取、是链接或内容无效时启动失败（`ADMIN_TOKEN_INSECURE`），删除后重启会生成新令牌。令牌不经命令行参数或环境变量传递。
+- 守护进程启动时在数据目录中创建 `admin.token`（256 位随机数的 base64url，0600；已存在则校验后沿用），内存中只保留其 SHA-256。`/api/v1` 的每个请求都必须来自回环连接，并带下面两种凭据之一；服务器原有的 Host 与 Origin 校验照常执行在前，`Sec-Fetch-Site` 存在时必须是 `same-origin`（否则 403 `LOCAL_ACCESS_REQUIRED`）。令牌文件可被其他用户读取、是链接或内容无效时启动失败（`ADMIN_TOKEN_INSECURE`），删除后重启会生成新令牌。令牌不经命令行参数或环境变量传递。
+  - 本机管理令牌：`Authorization: Bearer <令牌>`，供 CLI 与 SDK 使用；带了这个头就只按令牌判断（错误为 401 `ADMIN_TOKEN_INVALID`）。
+  - 控制台会话（[07 第 5.2 节](proposals/oss/07-data-security.md#52-本机管理令牌与控制台会话)，[ADR 0024](decisions/0024-embedded-console.md)）：`hh console` 用令牌调用 `POST /auth/console-links` 取得 60 秒内可用一次的登录码并打印 `http://127.0.0.1:3180/#login=<code>`；页面立即从地址栏清除登录码，再以 `POST /auth/console-sessions` 换取 `hh_console` Cookie（`HttpOnly; SameSite=Strict; Path=/`，有效期 7 天、空闲 12 小时）与会话的 CSRF 值。之后的请求带 Cookie，GET 与 HEAD 之外的请求还要带 `X-HH-CSRF: <CSRF 值>`（缺少或不符 403 `CSRF_TOKEN_INVALID`）；会话结束或被吊销时 401 `CONSOLE_SESSION_INVALID` 并清除 Cookie。重新加载的页面用 `GET /auth/console-sessions/current` 取回 CSRF 值，`DELETE /auth/console-sessions/current` 退出。会话只在内存中，守护进程重启后需要重新登录。
+  - 两者都没有：401 `ADMIN_TOKEN_REQUIRED`。
 - 改变状态的请求（POST、PUT、PATCH）必须是 `application/json`（PATCH 也接受 `application/merge-patch+json`），否则 415。请求中的未知字段返回 400。
 - 错误一律是 RFC 9457 `application/problem+json`：`type`、`title`、`status`、`detail`、`instance`、`code`、`requestId`，输入错误另有 `errors[]`（`pointer` 指向请求体成员，或 `parameter` 指向查询参数），被引用而不能删除时另有 `references[]`。
 - 金额是十进制字符串 `{amount, currency: "USD"}`；时间是 RFC 3339。
 
-尚未实现：ETag 与 `If-Match`、`Idempotency-Key`、控制台会话，以及配置列表的分页（provider、凭据、路由组与 Key 的列表一次返回全部，`nextCursor` 为 `null`）。
+尚未实现：ETag 与 `If-Match`、`Idempotency-Key`、`hh admin-token rotate`（07 第 5.2 节要求它同时吊销控制台会话），以及配置列表的分页（provider、凭据、路由组与 Key 的列表一次返回全部，`nextCursor` 为 `null`）。
 
 ## 资源
 
@@ -103,6 +106,6 @@ hh provider models office --refresh           # 模型名为 office/<provider>/<
 - `provider remove`、`credential remove`、`group remove`、`key revoke` 与 `import` 需要确认；`--yes` 跳过，非交互且没有 `--yes` 时以 4 退出且不做修改。stdin 不是终端、设置了 `CI` 或给出 `--non-interactive` 时为非交互。
 - 退出码（06 第 5 节）：0 成功；1 内部错误；2 用法错误、输入无效或名称不存在；3 守护进程不可达或数据目录中没有令牌；4 需要确认；5 冲突（409、412、422）；6 认证失败；7 达到上限或未就绪（429、503）；130 中断。
 
-控制台的 Provider、路由组、Gateway Key 与用量页面经同源代理调用这些接口；代理在服务端从 `HARNESSHUB_DATA_DIR/admin.token` 读取令牌，浏览器拿不到它（见 [控制台](../packages/console/README.md)）。
+控制台由守护进程在同一端口提供，它的 Provider、路由组、Gateway Key、用量与 Agent 页面以控制台会话经 SDK 调用这些接口，浏览器拿不到管理令牌（见 [控制台](../packages/console/README.md)）。`hh console [--url URL] [--data-dir DIR] [--json]` 打印登录链接，退出码同上。
 
 测试：[api-v1.test.ts](../tests/integration/api-v1.test.ts) 在进程内启动守护进程，经 SDK 验证认证、校验、凭据值不出现在任何响应、日志与数据目录文件中、Key 的签发与吊销、基于写入账本的用量、会话视图与按凭据汇总、自动路由组的派生、隐藏（重启后仍在）与恢复；[hh-cli.test.ts](../tests/integration/hh-cli.test.ts) 对同一守护进程运行真实的 `hh` 入口；[model-metadata.test.ts](../tests/integration/model-metadata.test.ts) 经 SDK 验证预设与快照补齐、覆盖与手工值的优先级、重启后覆盖仍在，以及网关按补齐的价格计算成本，[单元测试](../tests/unit/model-metadata.test.ts) 覆盖解析顺序与来源记录。

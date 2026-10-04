@@ -4,6 +4,7 @@ const USAGE = `Usage: hh <command> [arguments]
 Commands:
   serve       Start the Gateway (hh serve --help)
   status      Show the running daemon and its model plane
+  console     Print a one-time link that signs a browser in to the console
   provider    Manage model providers (list, show, presets, add, remove)
   import      Add providers from an import link or from Claude Code / Codex
   credential  Manage provider credentials (list, add, rotate, remove)
@@ -43,6 +44,10 @@ const COMMANDS: Readonly<Record<string, Command>> = {
   tools: async (argv) => {
     const { main } = await import("@harnesshub/daemon/tool-packages-main");
     return main(argv.slice(1));
+  },
+  console: async (argv) => {
+    const { main } = await import("@harnesshub/cli/console");
+    return main(argv);
   },
   // The rollout command line parses its subcommand itself.
   rollout: async (argv) => {
@@ -84,7 +89,7 @@ const COMMANDS: Readonly<Record<string, Command>> = {
 
 /**
  * Run one `hh` command: `serve`, `benchmark` and `tools` go to the daemon's
- * entries; `rollout` and the model-plane commands (`status`, `provider`,
+ * entries; `console`, `rollout` and the model-plane commands (`status`, `provider`,
  * `credential`, `key`, `group`, `model`, `catalog`, `usage`, `gateway`) and
  * the agent commands (`agents`, `wire`, `use`, `unwire`, `profile`) to the CLI's, which
  * reach the running daemon over HTTP. `--help` prints the commands on stdout;

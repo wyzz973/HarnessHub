@@ -17,7 +17,7 @@ pnpm build:console
 pnpm start:local --demo
 ```
 
-控制台为 http://127.0.0.1:3330，后端为 http://127.0.0.1:3180。启动器显式连接这两个服务，拒绝占用中的端口；Ctrl+C 停止其拥有的服务。Windows 启动器将 Gateway 和 Console 放入 Job，启动器异常退出时回收其进程后代。Windows 强制退出后，活动 Run 下次启动按 interrupted 恢复，不会自动重跑。
+Gateway 在 http://127.0.0.1:3180 同时提供控制台，启动时打印一次性登录链接（60 秒内可用一次，`pnpm exec hh console --data-dir data\demo` 生成新链接）。启动器拒绝占用中的端口；Ctrl+C 停止其拥有的服务。加 `--dev` 时另启动控制台的 Vite 开发服务器 http://127.0.0.1:3330。Windows 启动器将它启动的进程放入 Job，启动器异常退出时回收其进程后代。Windows 强制退出后，活动 Run 下次启动按 interrupted 恢复，不会自动重跑。
 
 若当前仓库安装了 `.tools/node-v24.20.0-win-arm64/node.exe` 或对应 x64 运行时，启动脚本自动优先使用该本地 Node，不更改系统 PATH。Windows 自带 PowerShell 的默认策略可能禁止脚本，使用仅对本次进程生效的调用，不修改全局执行策略：
 
@@ -25,11 +25,11 @@ pnpm start:local --demo
 powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\scripts\start-windows.ps1 --demo
 ```
 
-手动启动两个终端时，前端环境变量使用 PowerShell 语法：
+对已在运行的 Gateway 单独启动开发服务器时，环境变量使用 PowerShell 语法：
 
 ```powershell
-$env:HARNESSHUB_GATEWAY_URL = 'http://127.0.0.1:3180'
-pnpm start:console
+$env:HARNESSHUB_DAEMON_URL = 'http://127.0.0.1:3180'
+pnpm dev:console
 ```
 
 `--demo` 加入 fake 引擎并使用 `data/demo`，也允许登记和运行真实引擎。省略该参数会改用独立的 `data/local`，不加入 fake，也不会自动迁移原目录的引擎或历史。运行目录和日志不提交 Git，不能同时启动两个 Gateway 写同一数据目录。

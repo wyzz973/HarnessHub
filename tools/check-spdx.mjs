@@ -24,9 +24,7 @@ import { fileURLToPath } from "node:url";
 const SOURCE_ROOTS = ["packages", "apps", "tests", "tools", "examples"];
 const ROOT_FILES = ["eslint.config.mjs"];
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".mjs", ".js", ".cjs", ".cs", ".swift"]);
-const SKIPPED_DIRECTORIES = new Set(["node_modules", "dist", ".next", "out", "coverage"]);
-/** Generated and ignored by git: Next.js rewrites it on every console build. */
-const SKIPPED_FILES = new Set(["packages/console/next-env.d.ts"]);
+const SKIPPED_DIRECTORIES = new Set(["node_modules", "dist", "coverage"]);
 /** Tool package payloads: their bytes are pinned by size and SHA-256 in each package manifest. */
 const PAYLOAD_DIRECTORIES = ["examples/tool-packages/"];
 const PROJECT_LICENSE = "MIT";
@@ -95,7 +93,7 @@ async function collect(root, relative, files) {
     if (entry.isDirectory()) {
       if (!SKIPPED_DIRECTORIES.has(entry.name) && !PAYLOAD_DIRECTORIES.includes(`${child}/`))
         await collect(root, child, files);
-    } else if (entry.isFile() && SOURCE_EXTENSIONS.has(path.extname(entry.name)) && !SKIPPED_FILES.has(child))
+    } else if (entry.isFile() && SOURCE_EXTENSIONS.has(path.extname(entry.name)))
       files.push(child);
   }
 }

@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { catalogAssets, nativeAssets, presetAssets } from "./sea/build.mjs";
+import { catalogAssets, consoleAssets, nativeAssets, presetAssets } from "./sea/build.mjs";
 
 async function tree(t, files) {
   const root = await mkdtemp(path.join(os.tmpdir(), "hh-sea-native-"));
@@ -80,5 +80,24 @@ test("the single executable carries the model catalog snapshot and its license",
   assert.deepEqual(
     catalogAssets(root).map((asset) => asset.path),
     ["packages/gateway/catalog/models-dev.LICENSE", "packages/gateway/catalog/models-dev.json"],
+  );
+});
+
+test("the single executable carries the built console and refuses to build without it", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "hh-sea-console-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  assert.throws(() => consoleAssets(root), /packages\/console\/dist\/index\.html is missing; run pnpm build:console/);
+  const directory = path.join(root, "packages", "console", "dist");
+  await mkdir(path.join(directory, "assets"), { recursive: true });
+  await writeFile(path.join(directory, "assets", "index-1a2b.js"), "");
+  assert.throws(() => consoleAssets(root), /index\.html is missing/);
+  for (const name of ["index.html", "theme-boot.js"]) await writeFile(path.join(directory, name), "");
+  assert.deepEqual(
+    consoleAssets(root).map((asset) => asset.path),
+    [
+      "packages/console/dist/assets/index-1a2b.js",
+      "packages/console/dist/index.html",
+      "packages/console/dist/theme-boot.js",
+    ],
   );
 });

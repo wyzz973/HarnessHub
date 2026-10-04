@@ -27,9 +27,9 @@ The code base comes from an earlier, single-model edition of HarnessHub and is b
 | Model gateway | A shared gateway on the daemon port for any OpenAI, Anthropic or Gemini client: providers from presets or by hand, route groups, Gateway Keys with model allowlists, passthrough to native endpoints or translation between the four protocols, and a `model.call` ledger with usage and cost. Runs still use the per-Session gateway with one configured model |
 | Tools | Tool packs with Skills, MCP servers and CLI tools, stored by content hash and bound per agent |
 | Process supervision | One Worker process per Session; process groups on POSIX and Job Objects on Windows; restart recovery |
-| Console | A local web console (Next.js) for tasks, models, tools, agents and observability |
+| Console | A web console served by the daemon itself on the same port (React + Vite): tasks, models, providers, route groups, Gateway Keys, usage, agents, tools and observability. Sign-in uses one-time links from `hh console`; the browser never holds the admin token |
 
-Global agent wiring, the single-binary build and the new console are planned for 0.1–0.3 and are not implemented yet.
+Global agent wiring and the single-binary build are planned for 0.1–0.3 and are not implemented yet.
 
 ## Quick start (from source)
 
@@ -41,20 +41,20 @@ cd HarnessHub
 pnpm install --frozen-lockfile
 pnpm build
 pnpm build:console
-pnpm start --port 3180 --data-dir ./data/local
+pnpm exec hh serve --port 3180 --data-dir ./data/local
 ```
 
-`pnpm exec hh serve --port 3180 --data-dir ./data/local` starts the same Gateway through the `hh` command, which also runs `benchmark`, `tools` and `rollout` ([apps/hh](apps/hh/README.md)).
+`hh serve` starts the daemon, which also serves the console at <http://127.0.0.1:3180>, and prints a one-time sign-in link (`http://127.0.0.1:3180/#login=…`, valid once for 60 seconds). Open it in a browser on the same machine. For a new link, run this in a second terminal:
+
+```sh
+pnpm exec hh console --data-dir ./data/local
+```
+
+`pnpm start --port 3180 --data-dir ./data/local` starts the same daemon without the `hh` command, which also runs `benchmark`, `tools` and `rollout` ([apps/hh](apps/hh/README.md)).
 
 To use the model gateway from any OpenAI or Anthropic client: add a provider from a preset (`hh provider add --preset deepseek --credential-from-stdin`), create a Gateway Key (`hh key create --name me --allow 'deepseek/*'`) and point the client at `http://127.0.0.1:3180/v1` (Anthropic: `http://127.0.0.1:3180`). The [quickstart](docs/quickstart.md) walks through it.
 
-In a second terminal, start the console and open <http://127.0.0.1:3330>:
-
-```sh
-HARNESSHUB_GATEWAY_URL=http://127.0.0.1:3180 HARNESSHUB_DATA_DIR="$PWD/data/local" pnpm start:console
-```
-
-Configure a model on the **Model** page and register installed agents on the **Engines** page. Discovery never installs anything. Secrets are stored as references (Keychain, DPAPI, environment variable or file), never as plain values in configuration files. The [getting started guide](docs/getting-started.md) covers data directories, real agents and troubleshooting.
+In the console, configure a model on the **Model** page and register installed agents on the **Engines** page. Discovery never installs anything. Secrets are stored as references (Keychain, DPAPI, environment variable or file), never as plain values in configuration files. The [getting started guide](docs/getting-started.md) covers data directories, real agents and troubleshooting.
 
 ```sh
 pnpm check   # build, lint, tests, API and docs checks, console build

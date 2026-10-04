@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-"use client";
 import { useCallback, useState } from "react";
 import { Bot, Loader2, RefreshCw } from "lucide-react";
 import type {
@@ -143,12 +142,16 @@ function WireDialog({
           </DialogDescription>
         </DialogHeader>
         {plan ? (
-          <div className="space-y-3">
+          // min-w-0: the dialog is a grid, and a long path or diff line
+          // must scroll inside the block instead of widening the dialog.
+          <div className="min-w-0 space-y-3">
             {plan.files.map((file) => (
-              <section key={file.path} className="space-y-1">
+              <section key={file.path} className="min-w-0 space-y-1">
                 <p className="text-[13px] font-medium">
                   {file.exists ? "修改" : "新建"}{" "}
-                  <span className="font-mono text-[12.5px]">{file.path}</span>
+                  <span className="font-mono text-[12.5px] break-all">
+                    {file.path}
+                  </span>
                 </p>
                 <pre className="max-h-[40vh] overflow-auto rounded-xl border bg-muted p-3 font-mono text-[12px] leading-5">
                   {file.diff || "（无改动）"}

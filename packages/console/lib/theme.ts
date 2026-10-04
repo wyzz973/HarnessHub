@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-"use client";
 import { useCallback, useSyncExternalStore } from "react";
 
 import { THEME_STORAGE_KEY } from "./theme-script";

@@ -424,7 +424,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     title: "运行模式信息",
     group: "health",
     request: "无参数。",
-    response: "200：build（构建身份）、fullAccess、可选 consoleUrl。",
+    response: "200：build（构建身份）与 fullAccess。",
     implementation: "返回 Gateway 启动时确定的运行模式，供控制台显示。",
     effects: "只读。",
     errors: "无业务错误。",
@@ -875,6 +875,76 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "tests/integration/hh-cli.test.ts",
     ],
     operationId: "hh_api_v1_get_system_info",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/auth/console-links",
+    title: "控制台一次性登录码",
+    group: "auth",
+    request: "空对象 {}。",
+    response:
+      "201：code（128 位随机值，base64url）与 expiresAt（60 秒后）。`hh console` 把它放进 `http://127.0.0.1:3180/#login=<code>`。",
+    implementation:
+      "ConsoleSessions 在内存中只保存登录码的 SHA-256 与期限，最多保留 32 个未用登录码，超出时丢弃最早的。",
+    effects: "只在内存中；守护进程重启后全部失效。",
+    errors:
+      "只接受本机管理令牌：无凭据 401 ADMIN_TOKEN_REQUIRED，令牌错误 401 ADMIN_TOKEN_INVALID，用控制台会话调用 403 ADMIN_TOKEN_REQUIRED；Sec-Fetch-Site 不是 same-origin 时 403 LOCAL_ACCESS_REQUIRED。",
+    source: "packages/daemon/src/http/console-session.ts",
+    tests: [
+      "tests/integration/console.test.ts",
+      "packages/daemon/test/console-session.test.ts",
+    ],
+    operationId: "hh_api_v1_create_console_link",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/auth/console-sessions",
+    title: "以登录码换取控制台会话",
+    group: "auth",
+    request:
+      "code：console-links 返回的 22 字符登录码。不需要凭据；必须是 application/json。",
+    response:
+      "201：csrfToken、expiresAt（创建后 7 天）与 idleExpiresAt（空闲 12 小时）；Set-Cookie `hh_console=<256 位随机值>; Path=/; HttpOnly; SameSite=Strict; Max-Age=604800`（经 TLS 时另加 Secure）；Cache-Control: no-store。",
+    implementation:
+      "登录码无论是否有效都在这次尝试中作废；请求自带的旧会话 Cookie 在换取成功后被吊销。会话值与 CSRF 值各 256 位随机数，会话只保存 SHA-256。",
+    effects:
+      "只在内存中，最多 64 个会话，超出时丢弃最早的；守护进程重启后全部失效。",
+    errors:
+      "登录码未知、已用或过期 401 CONSOLE_LINK_INVALID；格式不符 400 INVALID_REQUEST；非 JSON 415；跨源或 Sec-Fetch-Site 不是 same-origin 时 403 LOCAL_ACCESS_REQUIRED。",
+    source: "packages/daemon/src/http/console-session.ts",
+    tests: ["tests/integration/console.test.ts"],
+    operationId: "hh_api_v1_create_console_session",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/auth/console-sessions/current",
+    title: "当前控制台会话",
+    group: "auth",
+    request: "hh_console Cookie。",
+    response:
+      "200：csrfToken、expiresAt、idleExpiresAt；Cache-Control: no-store。重新加载的页面用它取回 CSRF 值。",
+    implementation: "按 Cookie 查找会话并重新开始空闲计时。",
+    effects: "更新会话的最近使用时间（内存）。",
+    errors:
+      "会话已结束 401 CONSOLE_SESSION_INVALID 并清除 Cookie；以管理令牌调用 404 CONSOLE_SESSION_NOT_FOUND。",
+    source: "packages/daemon/src/http/console-session.ts",
+    tests: ["tests/integration/console.test.ts"],
+    operationId: "hh_api_v1_get_console_session",
+  },
+  {
+    method: "DELETE",
+    path: "/api/v1/auth/console-sessions/current",
+    title: "退出控制台",
+    group: "auth",
+    request: "hh_console Cookie 与 X-HH-CSRF 头。",
+    response: "204；Set-Cookie 以 Max-Age=0 清除 hh_console。",
+    implementation: "立即吊销会话，之后同一 Cookie 的请求得到 401。",
+    effects: "从内存中删除会话。",
+    errors:
+      "缺少或不符的 X-HH-CSRF 403 CSRF_TOKEN_INVALID；会话已结束 401 CONSOLE_SESSION_INVALID；以管理令牌调用 404 CONSOLE_SESSION_NOT_FOUND。",
+    source: "packages/daemon/src/http/console-session.ts",
+    tests: ["tests/integration/console.test.ts"],
+    operationId: "hh_api_v1_delete_console_session",
   },
   {
     method: "GET",

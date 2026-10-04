@@ -65,6 +65,7 @@ jobs:
         run: node -e 'const actual = `${process.platform}-${process.arch}`; if (actual !== process.env.TARGET) { console.error(`runner is ${actual}, expected ${process.env.TARGET}`); process.exit(1); }'
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      - run: pnpm build:console
       - name: Build the single executable
         run: node tools/sea/build.mjs
       # Diagnostic, read-only: whether Defender real-time protection was on for the timings below.

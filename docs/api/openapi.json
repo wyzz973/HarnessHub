@@ -14275,7 +14275,7 @@
         "tags": [
           "health"
         ],
-        "description": "返回 Gateway 启动时确定的运行模式，供控制台显示。\n\n输入：无参数。\n\n返回：200：build（构建身份）、fullAccess、可选 consoleUrl。\n\n副作用：只读。\n\n失败与边界：无业务错误。",
+        "description": "返回 Gateway 启动时确定的运行模式，供控制台显示。\n\n输入：无参数。\n\n返回：200：build（构建身份）与 fullAccess。\n\n副作用：只读。\n\n失败与边界：无业务错误。",
         "responses": {
           "200": {
             "description": "Default Response",
@@ -14367,9 +14367,6 @@
                     },
                     "fullAccess": {
                       "type": "boolean"
-                    },
-                    "consoleUrl": {
-                      "type": "string"
                     }
                   }
                 }
@@ -14499,6 +14496,481 @@
                 }
               }
             }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/console-links": {
+      "post": {
+        "operationId": "hh_api_v1_create_console_link",
+        "summary": "控制台一次性登录码",
+        "tags": [
+          "auth"
+        ],
+        "description": "ConsoleSessions 在内存中只保存登录码的 SHA-256 与期限，最多保留 32 个未用登录码，超出时丢弃最早的。\n\n输入：空对象 {}。\n\n返回：201：code（128 位随机值，base64url）与 expiresAt（60 秒后）。`hh console` 把它放进 `http://127.0.0.1:3180/#login=<code>`。\n\n副作用：只在内存中；守护进程重启后全部失效。\n\n失败与边界：只接受本机管理令牌：无凭据 401 ADMIN_TOKEN_REQUIRED，令牌错误 401 ADMIN_TOKEN_INVALID，用控制台会话调用 403 ADMIN_TOKEN_REQUIRED；Sec-Fetch-Site 不是 same-origin 时 403 LOCAL_ACCESS_REQUIRED。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "code",
+                    "expiresAt"
+                  ],
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/console-sessions": {
+      "post": {
+        "operationId": "hh_api_v1_create_console_session",
+        "summary": "以登录码换取控制台会话",
+        "tags": [
+          "auth"
+        ],
+        "description": "登录码无论是否有效都在这次尝试中作废；请求自带的旧会话 Cookie 在换取成功后被吊销。会话值与 CSRF 值各 256 位随机数，会话只保存 SHA-256。\n\n输入：code：console-links 返回的 22 字符登录码。不需要凭据；必须是 application/json。\n\n返回：201：csrfToken、expiresAt（创建后 7 天）与 idleExpiresAt（空闲 12 小时）；Set-Cookie `hh_console=<256 位随机值>; Path=/; HttpOnly; SameSite=Strict; Max-Age=604800`（经 TLS 时另加 Secure）；Cache-Control: no-store。\n\n副作用：只在内存中，最多 64 个会话，超出时丢弃最早的；守护进程重启后全部失效。\n\n失败与边界：登录码未知、已用或过期 401 CONSOLE_LINK_INVALID；格式不符 400 INVALID_REQUEST；非 JSON 415；跨源或 Sec-Fetch-Site 不是 same-origin 时 403 LOCAL_ACCESS_REQUIRED。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "code"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{22}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "csrfToken",
+                    "expiresAt",
+                    "idleExpiresAt"
+                  ],
+                  "properties": {
+                    "csrfToken": {
+                      "type": "string"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "idleExpiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/console-sessions/current": {
+      "get": {
+        "operationId": "hh_api_v1_get_console_session",
+        "summary": "当前控制台会话",
+        "tags": [
+          "auth"
+        ],
+        "description": "按 Cookie 查找会话并重新开始空闲计时。\n\n输入：hh_console Cookie。\n\n返回：200：csrfToken、expiresAt、idleExpiresAt；Cache-Control: no-store。重新加载的页面用它取回 CSRF 值。\n\n副作用：更新会话的最近使用时间（内存）。\n\n失败与边界：会话已结束 401 CONSOLE_SESSION_INVALID 并清除 Cookie；以管理令牌调用 404 CONSOLE_SESSION_NOT_FOUND。",
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "csrfToken",
+                    "expiresAt",
+                    "idleExpiresAt"
+                  ],
+                  "properties": {
+                    "csrfToken": {
+                      "type": "string"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "idleExpiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "hh_api_v1_delete_console_session",
+        "summary": "退出控制台",
+        "tags": [
+          "auth"
+        ],
+        "description": "立即吊销会话，之后同一 Cookie 的请求得到 401。\n\n输入：hh_console Cookie 与 X-HH-CSRF 头。\n\n返回：204；Set-Cookie 以 Max-Age=0 清除 hh_console。\n\n副作用：从内存中删除会话。\n\n失败与边界：缺少或不符的 X-HH-CSRF 403 CSRF_TOKEN_INVALID；会话已结束 401 CONSOLE_SESSION_INVALID；以管理令牌调用 404 CONSOLE_SESSION_NOT_FOUND。",
+        "responses": {
+          "204": {
+            "description": "No content"
           },
           "default": {
             "description": "Default Response",

@@ -11,7 +11,7 @@ test("the console toolchain sees system variables and its own settings only", ()
     PATH: "/bin",
     HOME: "/Users/dev",
     CI: "true",
-    HARNESSHUB_GATEWAY_URL: "http://127.0.0.1:3180",
+    HARNESSHUB_DAEMON_URL: "http://127.0.0.1:3180",
     HARNESSHUB_DATA_DIR: "/Users/dev/HarnessHub/data/local",
     GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_developer_token_value",
     HARNESSHUB_MODEL_API_KEY: "sk-developer-key",
@@ -20,13 +20,13 @@ test("the console toolchain sees system variables and its own settings only", ()
     NODE_OPTIONS: "--require hook.js",
     PWD: "/Users/dev/HarnessHub",
   });
+  // The daemon's data directory (where admin.token is) is not passed: the
+  // console never reads the token.
   assert.deepEqual(env, {
     PATH: "/bin",
     HOME: "/Users/dev",
     CI: "true",
-    HARNESSHUB_GATEWAY_URL: "http://127.0.0.1:3180",
-    HARNESSHUB_DATA_DIR: "/Users/dev/HarnessHub/data/local",
-    NEXT_TELEMETRY_DISABLED: "1",
+    HARNESSHUB_DAEMON_URL: "http://127.0.0.1:3180",
   });
   // Credential-looking and canary values are scanned for; paths and short values are not.
   assert.deepEqual(Object.keys(needles).sort(), [
@@ -39,15 +39,15 @@ test("the console toolchain sees system variables and its own settings only", ()
 test("finds a leaked value inside binary cache files and names only the variable", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "hh-console-leak-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  await mkdir(path.join(directory, "cache", "turbopack"), { recursive: true });
+  await mkdir(path.join(directory, "assets"), { recursive: true });
   await writeFile(
-    path.join(directory, "cache", "turbopack", "00000010.sst"),
+    path.join(directory, "assets", "index-0a1b2c.js"),
     Buffer.concat([Buffer.from([0, 255, 17]), Buffer.from("GITHUB_PERSONAL_ACCESS_TOKEN(ghp_developer_token_value"), Buffer.from([0])]),
   );
   await writeFile(path.join(directory, "clean.js"), "export {};\n");
   const needles = { GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_developer_token_value", OTHER_TOKEN: "absent-value" };
   assert.deepEqual(await findLeaks(directory, needles), [
-    `GITHUB_PERSONAL_ACCESS_TOKEN in ${path.join("cache", "turbopack", "00000010.sst")}`,
+    `GITHUB_PERSONAL_ACCESS_TOKEN in ${path.join("assets", "index-0a1b2c.js")}`,
   ]);
 
   const clean = await mkdtemp(path.join(os.tmpdir(), "hh-console-clean-"));

@@ -44,6 +44,12 @@
 - [x] **OSS-014 控制台构建的环境卫生**：Next.js 16 的 Turbopack 持久缓存会记录构建进程的完整环境变量；2026-10-02 在本机 `web/.next/cache` 中发现开发者 shell 中的 GitHub 令牌（缓存已删除，令牌未进入任何提交或发布），并复现：直接执行 `next build` 时，金丝雀变量的名称与值都出现在 `.sst` 缓存文件中。进展：控制台的 `build`/`dev` 经 `tools/console.mjs` 以白名单环境运行并关闭 Next.js 遥测；构建后在 `web/.next` 中搜索随机金丝雀与凭据形态变量的值，命中即失败且只报告变量名。拒绝样例：`tools/check-console-environment.test.mjs`。控制台改为 Vite（ADR-P10）后沿用同一包装。 证据：合入 #5（`761348e`），三平台 CI 通过。
 - [ ] **OSS-013 M0 组合验收**：从全新克隆执行 `pnpm install --frozen-lockfile` 与 `pnpm check`，在 Linux x64、macOS arm64、Windows x64 上通过；记录 Scorecard 基线分数。 进展：Scorecard 基线 6.2（2026-10-02，`f7a2f49`）；满分项含 Vulnerabilities、Dependency-Update-Tool、SAST、Token-Permissions、Pinned-Dependencies、Dangerous-Workflow、Binary-Artifacts、Security-Policy、License、CI-Tests；0 分项为 Code-Review、Maintained（仓库不足 90 天）、Contributors、Fuzzing、Signed-Releases、CII-Best-Practices，Branch-Protection 为 3。
 
+## 控制台先行（所有者 2026-10-04 决定）
+
+所有者决定先把 Web 控制台做强：控制台内嵌在守护进程中，打开一个地址就是完整界面（对标 Magpie 的单一应用）。原计划属于 M2 的控制台重写（[12 第 2 节](docs/proposals/oss/12-roadmap-migration.md#2-里程碑)）因此提前。
+
+- [ ] **W4 控制台内嵌守护进程**（[ADR-P10](docs/proposals/oss/adr-drafts.md#adr-p10-控制台改为内嵌静态单页)、[ADR 0024](docs/decisions/0024-embedded-console.md)）：Next.js 控制台迁为 React + Vite 静态单页（`packages/console/dist`），由守护进程在同一端口提供：`/` 与 HTML 页面回退、带哈希且长期缓存的 `/assets/*`、CSP（无内联脚本、`frame-ancestors 'none'`）与安全头，不遮蔽 `/api/v1`、`/v1*`、`/health*`、`/openapi.json` 与模型网关路径；单文件构建嵌入 `dist`。控制台会话按 07 第 5.2 节：`hh console` 与 `hh serve` 启动输出打印 `/#login=<code>` 一次性链接（60 秒），换取 HttpOnly、`SameSite=Strict` 的 Cookie，GET 之外的请求另需 `X-HH-CSRF`；浏览器不再持有管理令牌，服务端代理与 `--console-url` 移除。旧 `/v1/*` 管理路由保持回环规则（ADR 0022 第 4 条）。进展（2026-10-04，分支 `feat/console-vite`）：macOS arm64 本机 `pnpm check` 通过（工具 183、单元 414 通过 14 跳过、集成 234 通过 11 跳过 6 todo、smoke 5；含 `check:api` 与 `check:console`），新增 `tests/integration/console.test.ts`（5 项）与 `packages/daemon/test/console-session.test.ts`（3 项）；从 `hh serve`（临时数据目录、文件秘密后端、`--wiring-home` 临时目录）在 Chromium 中走完全部页面并截图，无 CSP 违例或脚本错误。待合入与三平台 CI 后勾选；Windows 未验证，控制台浏览器回归测试（10 第 3.6 节）尚未接入。
+
 ## M1–M5
 
 各里程碑的交付与验收标准见 [12 第 2 节](docs/proposals/oss/12-roadmap-migration.md#2-里程碑)。进入对应里程碑时，在本文件中展开为带编号的任务。

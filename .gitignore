@@ -21,10 +21,7 @@ node_modules/
 # Local discovery registrations reference installed commands and user configuration.
 engines/manifests/
 
-# Next.js console build/cache
-/packages/console/.next/
-/packages/console/out/
-/packages/console/next-env.d.ts
+# Console type-check cache (its build output is packages/console/dist/, above)
 /packages/console/*.tsbuildinfo
 
 # Local console configuration and browser verification artifacts
@@ -33,3 +30,7 @@ engines/*.local.yaml
 
 # Browser automation evidence is local runtime data.
 .playwright-mcp/
+
+# Build output of the former Next.js console; never commit it (OSS-014: its cache can hold environment values).
+/packages/console/.next/
+/packages/console/next-env.d.ts

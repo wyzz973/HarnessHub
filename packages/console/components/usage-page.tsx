@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-"use client";
 import { useCallback, useState } from "react";
 import {
   ChevronLeft,

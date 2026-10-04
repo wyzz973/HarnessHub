@@ -204,7 +204,7 @@ HarnessHub 把本机文件分成配置、数据、日志、缓存四类根目录
 
 - 首次启动生成 256 位随机令牌，写入 `<数据根>/admin.token`（0600 或私有 DACL），守护进程只在内存中保存其 SHA-256。`hh` CLI 读取该文件，以 `Authorization: Bearer` 调用 `/api/v1`。令牌不经命令行参数或环境变量传递，也不传给 Worker 与插件。
 - 控制台登录：`hh console` 用管理令牌调用 `POST /api/v1/auth/console-links`，得到 128 位一次性登录码（有效期 60 s，只能使用一次），然后打开 `http://127.0.0.1:3180/#login=<code>`。登录码放在 URL 片段中，不会发到服务器，也不会进入访问日志；单页读取后立即用 `history.replaceState` 清除，再调用 `POST /api/v1/auth/console-sessions` 换取 Cookie：`hh_console=<256 位随机值>; HttpOnly; SameSite=Strict; Path=/`，经 TLS 访问时另加 `Secure`。会话空闲 12 小时或自创建起 7 天失效；登出与 `hh admin-token rotate` 立即吊销。
-- 改变状态的请求还必须是 `Content-Type: application/json`。跨源页面无法在不触发 CORS 预检的情况下发送这种请求，而守护进程不响应预检，这是 SameSite 与 Origin 校验之外的第三道 CSRF 防线。Magpie 的控制台同样用常数时间比较令牌后换成 HttpOnly Cookie，但使用 `SameSite=Lax`（`internal/gui/web.go`）；本机控制台不需要跨站导航携带 Cookie，因此用 Strict。
+- 改变状态的请求还必须是 `Content-Type: application/json`。跨源页面无法在不触发 CORS 预检的情况下发送这种请求，而守护进程不响应预检，这是 SameSite 与 Origin 校验之外的第三道 CSRF 防线。实现另加第四道：每个会话有 256 位 CSRF 值，换取会话时返回（刷新后的页面经 `GET /api/v1/auth/console-sessions/current` 取回），以 Cookie 认证、GET 与 HEAD 之外的请求必须以 `X-HH-CSRF` 携带它（[ADR 0024](../../decisions/0024-embedded-console.md)）。Magpie 的控制台同样用常数时间比较令牌后换成 HttpOnly Cookie，但使用 `SameSite=Lax`（`internal/gui/web.go`）；本机控制台不需要跨站导航携带 Cookie，因此用 Strict。
 - 没有会话时直接打开控制台，页面只提示运行 `hh console`，不提供口令表单。
 
 ### 5.3 Host、Origin 与 Sec-Fetch 校验

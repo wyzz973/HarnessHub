@@ -28,7 +28,11 @@ import {
 } from "./contracts";
 import type { SecretReference } from "./engine-configuration";
 
-const base = "/api/gateway";
+/**
+ * The legacy `/v1` routes are on the page's own origin: the daemon serves the
+ * console. They keep their loopback Host and Origin rule and need no session.
+ */
+const base = "";
 /** The connected Gateway has no route for this path, e.g. an older build without ADR 0013 APIs. */
 export class UnsupportedFeatureError extends Error {
   constructor(readonly path: string) {
@@ -118,9 +122,8 @@ export function remoteOf<T>(result: PromiseSettledResult<T>): Remote<T> {
 }
 export type GatewayHealth = "checking" | "ready" | "not-ready" | "offline";
 /**
- * Probe `/health/ready` through the same-origin proxy with a 4 s budget.
- * `offline` covers an unreachable Gateway and a proxy that cannot connect;
- * rejects only when the caller's signal aborts.
+ * Probe `/health/ready` on the page's origin with a 4 s budget. `offline`
+ * covers an unreachable daemon; rejects only when the caller's signal aborts.
  */
 export async function probeHealth(
   signal: AbortSignal,

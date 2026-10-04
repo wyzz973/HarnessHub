@@ -88,6 +88,8 @@ export const PACKAGE_GRAPH = {
   runtime: ["core", "store", "agents"],
   drivers: ["core"],
   "plugin-host": ["core"],
+  // The daemon serves the console's build (ADR-P10); it imports only its
+  // location, `@harnesshub/console/assets`.
   daemon: [
     "core",
     "store",
@@ -97,6 +99,7 @@ export const PACKAGE_GRAPH = {
     "runtime",
     "drivers",
     "plugin-host",
+    "console",
   ],
   cli: ["core", "sdk"],
   sdk: ["core"],
@@ -104,12 +107,12 @@ export const PACKAGE_GRAPH = {
 };
 
 /**
- * Source directories of packages that do not use src/ and test/: the Next.js
- * console keeps its code in app/, components/ and lib/. Their files are bound
+ * Source directories of packages that do not use src/ and test/: the Vite
+ * console keeps its code in src/, components/ and lib/. Their files are bound
  * by the dependency graph (console may import only the sdk) and the
  * stay-inside rule, without legacy module rules.
  */
-export const SOURCE_AREAS = { console: ["app", "components", "lib"] };
+export const SOURCE_AREAS = { console: ["src", "components", "lib"] };
 
 /** Applications only dispatch to the packages that own the commands. */
 export const APP_GRAPH = { hh: ["cli", "daemon"] };

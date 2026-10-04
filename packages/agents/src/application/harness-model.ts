@@ -140,7 +140,6 @@ export interface RuntimeInfo {
   /** Identity of the running build (dist/build-info.json). */
   build: BuildInfo;
   fullAccess: boolean;
-  consoleUrl?: string;
 }
 
 /** HTTP-facing port implemented by {@link HarnessModelService}. */

@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-"use client";
 import { useSyncExternalStore } from "react";
 
 const subscribe = () => () => {};

@@ -25,7 +25,6 @@ test("accepts MIT headers, shebang files and listed third-party licenses", async
     "packages/core/node_modules/ajv/index.js": "dependency without a header\n",
     "packages/core/dist/src/types.js": "compiled output\n",
     "packages/console/components/ai-elements/x.tsx": "// SPDX-License-Identifier: Apache-2.0\n\"use client\";\n",
-    "packages/console/next-env.d.ts": '/// <reference types="next" />\n',
     "packages/agents/src/configuration/codex-default-instructions.ts": "// SPDX-License-Identifier: Apache-2.0\n",
     "tests/node_modules/ignored.ts": "no header\n",
     "examples/tool-packages/demo/cli/run.mjs": "pinned payload bytes\n",

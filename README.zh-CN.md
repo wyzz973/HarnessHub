@@ -27,9 +27,9 @@
 | 模型网关 | 守护进程端口上的共享网关，供任意 OpenAI、Anthropic 或 Gemini 客户端使用：从预设或手动添加 provider、路由组、带模型白名单的 Gateway Key、直通原生端点或在四种协议之间转换，以及记录用量与费用的 `model.call` 账本；执行任务时仍使用每个 Session 的网关与一个配置好的模型 |
 | 工具 | 工具包，含 Skills、MCP 服务与 CLI 工具，按内容哈希存储，按 Agent 绑定 |
 | 进程监督 | 每个 Session 一个 Worker 进程；POSIX 用进程组，Windows 用 Job Object；重启后恢复 |
-| 控制台 | 本地 Web 控制台（Next.js），包含任务、模型、工具、Agent 与观测页面 |
+| 控制台 | 由守护进程在同一端口提供的 Web 控制台（React + Vite）：任务、模型、Provider、路由组、Gateway Key、用量、Agent、工具与观测页面；用 `hh console` 生成的一次性链接登录，浏览器拿不到管理令牌 |
 
-全局接线、单文件分发与新控制台计划在 0.1–0.3 实现，目前尚未实现。本机网关的用法见 [快速上手](docs/quickstart.md)。
+全局接线与单文件分发计划在 0.1–0.3 实现，目前尚未实现。本机网关的用法见 [快速上手](docs/quickstart.md)。
 
 ## 从源码快速开始
 
@@ -41,16 +41,18 @@ cd HarnessHub
 pnpm install --frozen-lockfile
 pnpm build
 pnpm build:console
-pnpm start --port 3180 --data-dir ./data/local
+pnpm exec hh serve --port 3180 --data-dir ./data/local
 ```
 
-在第二个终端启动控制台，然后打开 <http://127.0.0.1:3330>：
+`hh serve` 启动守护进程，它同时在 <http://127.0.0.1:3180> 提供控制台，并打印一个一次性登录链接（`http://127.0.0.1:3180/#login=…`，60 秒内可用一次），在本机浏览器中打开即可。需要新链接时，在第二个终端运行：
 
 ```sh
-HARNESSHUB_GATEWAY_URL=http://127.0.0.1:3180 HARNESSHUB_DATA_DIR="$PWD/data/local" pnpm start:console
+pnpm exec hh console --data-dir ./data/local
 ```
 
-在“模型”页配置模型，在“引擎”页登记已安装的 Agent。发现过程不会安装任何程序；秘密只以引用形式保存（钥匙串、DPAPI、环境变量或文件），配置文件中不出现明文。数据目录、真实 Agent 与排障见 [使用指南](docs/getting-started.md)。
+`pnpm start --port 3180 --data-dir ./data/local` 不经 `hh` 命令启动同一个守护进程。
+
+在控制台的“模型”页配置模型，在“引擎”页登记已安装的 Agent。发现过程不会安装任何程序；秘密只以引用形式保存（钥匙串、DPAPI、环境变量或文件），配置文件中不出现明文。数据目录、真实 Agent 与排障见 [使用指南](docs/getting-started.md)。
 
 ```sh
 pnpm check   # 构建、lint、测试、API 与文档检查、控制台构建

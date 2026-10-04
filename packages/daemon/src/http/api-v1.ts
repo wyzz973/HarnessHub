@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-import { createHash, timingSafeEqual } from "node:crypto";
 import { STATUS_CODES } from "node:http";
 import type {
   FastifyError,
@@ -24,6 +23,11 @@ import {
   registerGatewayShareRoutes,
   type GatewayShareControl,
 } from "./gateway-share-routes.js";
+import {
+  authenticateApiRequest,
+  registerConsoleSessionRoutes,
+  type ConsoleSessions,
+} from "./console-session.js";
 
 /** Where a problem's `errors[]` entry points: a body member or a query parameter. */
 export type ProblemItem =
@@ -105,6 +109,8 @@ export interface SystemInfo {
 export interface ApiV1Options {
   /** SHA-256 of the local admin token (`<dataDir>/admin.token`). */
   adminTokenDigest: Buffer;
+  /** Console login codes and sessions, the other credential of `/api/v1`. */
+  consoleSessions: ConsoleSessions;
   /** The model-plane store with model overrides and metadata provenance. */
   modelPlane: ModelPlaneStore & ModelMetadataStore;
   secrets: ManagedSecrets;
@@ -191,12 +197,12 @@ function validationItems(error: FastifyError): ProblemItem[] {
 }
 
 /**
- * Register `/api/v1` (06-interfaces): every route requires the local admin
- * token as `Authorization: Bearer` and a loopback peer, on top of the
- * server-wide Host and Origin checks; state-changing requests with a body must
- * be JSON (415 otherwise); every error is `application/problem+json`. The
- * plugin is encapsulated, so the legacy `/v1` routes keep their own error
- * format.
+ * Register `/api/v1` (06-interfaces): every route requires a loopback peer
+ * and a credential, the local admin token as `Authorization: Bearer` or a
+ * console session (`authenticateApiRequest`), on top of the server-wide Host
+ * and Origin checks; state-changing requests with a body must be JSON (415
+ * otherwise); every error is `application/problem+json`. The plugin is
+ * encapsulated, so the legacy `/v1` routes keep their own error format.
  */
 export function registerApiV1(
   server: FastifyInstance,
@@ -220,26 +226,10 @@ export function registerApiV1(
             "The management API accepts loopback connections only",
             403,
           );
-        const match = /^Bearer ([A-Za-z0-9._~+/=-]{1,512})$/.exec(
-          request.headers.authorization ?? "",
-        );
-        if (!match) {
-          reply.header("www-authenticate", 'Bearer realm="harnesshub"');
-          throw new HubError(
-            "ADMIN_TOKEN_REQUIRED",
-            "Send the local admin token as a Bearer token",
-            401,
-          );
-        }
-        const presented = createHash("sha256").update(match[1]!).digest();
-        if (!timingSafeEqual(presented, options.adminTokenDigest)) {
-          reply.header("www-authenticate", 'Bearer error="invalid_token"');
-          throw new HubError(
-            "ADMIN_TOKEN_INVALID",
-            "The admin token is not valid for this daemon",
-            401,
-          );
-        }
+        authenticateApiRequest(request, reply, {
+          adminTokenDigest: options.adminTokenDigest,
+          sessions: options.consoleSessions,
+        });
         if (
           ["POST", "PUT", "PATCH"].includes(request.method) &&
           !JSON_BODY.test(request.headers["content-type"] ?? "")
@@ -317,6 +307,7 @@ export function registerApiV1(
         { schema: { response: responses(systemInfoSchema) } },
         async () => options.system(),
       );
+      registerConsoleSessionRoutes(api, options.consoleSessions);
       registerModelPlaneRoutes(api, options);
       registerAgentRoutes(api, options.agents);
       if (options.gatewayShare)

@@ -2,20 +2,20 @@
 // SPDX-License-Identifier: MIT
 /**
  * Build or develop the console without the developer's environment.
- * Usage: node tools/console.mjs <build|dev> [next arguments]
+ * Usage: node tools/console.mjs <build|dev> [vite arguments]
  *
- * Next.js 16 records the environment of the build process in its Turbopack
- * cache (packages/console/.next/cache), so a token in the developer's shell ends up on disk.
- * The console toolchain therefore gets only the system variables of
- * lib/environment.mjs, the home and temporary directories, CI,
- * HARNESSHUB_GATEWAY_URL and HARNESSHUB_DATA_DIR (the daemon's data directory,
- * where the proxy reads the admin token at request time; the path, not the
- * token), with Next.js telemetry disabled.
+ * The console is a Vite single-page app that the daemon serves (ADR-P10).
+ * Build tools can copy environment values into their output or caches (OSS-014
+ * found a token in the Turbopack cache of the former Next.js console), so the
+ * console toolchain gets only the system variables of lib/environment.mjs, the
+ * home and temporary directories, CI and HARNESSHUB_DAEMON_URL (the daemon the
+ * development server forwards `/api`, `/v1`, `/health` and `/openapi.json` to;
+ * an address, not a credential).
  *
- * After a build, packages/console/.next is searched for a random canary that was placed in the
- * parent environment and for every dropped variable whose name looks like a
- * credential; a hit fails the build and names the variable, never the value.
- * Exits with Next's status, or 1.
+ * After a build, packages/console/dist is searched for a random canary that
+ * was placed in the parent environment and for every dropped variable whose
+ * name looks like a credential; a hit fails the build and names the variable,
+ * never the value. Exits with Vite's status, or 1.
  */
 
 import { spawn } from "node:child_process";
@@ -23,10 +23,10 @@ import { randomBytes } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { assignEnvironment, pickEnvironment } from "./lib/environment.mjs";
+import { pickEnvironment } from "./lib/environment.mjs";
 
 const WEB = fileURLToPath(new URL("../packages/console/", import.meta.url));
-const NEXT = path.join(WEB, "node_modules", "next", "dist", "bin", "next");
+const VITE = path.join(WEB, "node_modules", "vite", "bin", "vite.js");
 const ALLOWED = [
   "HOME",
   "USERPROFILE",
@@ -38,12 +38,11 @@ const ALLOWED = [
   "TEMP",
   "TMP",
   "CI",
-  "HARNESSHUB_GATEWAY_URL",
-  "HARNESSHUB_DATA_DIR",
+  "HARNESSHUB_DAEMON_URL",
 ];
 const CREDENTIAL_NAME = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE|SESSION|PAT)(_|$)/i;
 const CANARY = "HARNESSHUB_CONSOLE_CANARY";
-const DEFAULT_ARGUMENTS = { build: [], dev: ["--hostname", "127.0.0.1", "--port", "3330"] };
+const COMMANDS = { build: ["build"], dev: [] };
 
 /**
  * The console toolchain's environment and the values that must not appear in its output.
@@ -58,7 +57,7 @@ export function consoleEnvironment(parent) {
       ([name, value]) => (name === CANARY || CREDENTIAL_NAME.test(name)) && value.length >= 8,
     ),
   );
-  return { env: assignEnvironment(env, { NEXT_TELEMETRY_DISABLED: "1" }), needles };
+  return { env, needles };
 }
 
 /**
@@ -84,11 +83,11 @@ export async function findLeaks(directory, needles) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [command, ...rest] = process.argv.slice(2);
   if (command !== "build" && command !== "dev") {
-    console.error("usage: node tools/console.mjs <build|dev> [next arguments]");
+    console.error("usage: node tools/console.mjs <build|dev> [vite arguments]");
     process.exit(1);
   }
   const { env, needles } = consoleEnvironment({ ...process.env, [CANARY]: randomBytes(16).toString("hex") });
-  const child = spawn(process.execPath, [NEXT, command, ...(rest.length ? rest : DEFAULT_ARGUMENTS[command])], {
+  const child = spawn(process.execPath, [VITE, ...COMMANDS[command], ...rest], {
     cwd: WEB,
     env,
     stdio: "inherit",
@@ -100,7 +99,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     child.once("exit", (code, signal) => resolve(code ?? (signal ? 1 : 0)));
   });
   if (status !== 0 || command !== "build") process.exit(status);
-  const leaks = await findLeaks(path.join(WEB, ".next"), needles);
+  const leaks = await findLeaks(path.join(WEB, "dist"), needles);
   for (const leak of leaks) console.error(`console build output contains the value of ${leak}`);
   if (leaks.length) process.exit(1);
   console.log(`Console build output checked for ${Object.keys(needles).length} environment values.`);

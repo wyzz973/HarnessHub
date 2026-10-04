@@ -35,7 +35,7 @@ void test("requests go below the base path, with the token only when one is give
     `Bearer ${"t".repeat(43)}`,
   );
 
-  // Behind the console proxy: the path prefix is kept and no token is sent.
+  // Behind a proxy with a path prefix: the prefix is kept and no token is sent.
   const proxied = recorder(
     Response.json({ items: [], nextCursor: null }),
     new Response(null, { status: 204 }),
@@ -66,6 +66,92 @@ void test("requests go below the base path, with the token only when one is give
   assert.equal(
     bare.requests[0]?.url,
     "http://127.0.0.1:3330/api/gateway/api/v1/system/info",
+  );
+});
+
+void test("a console session sends its CSRF value and signs in and out under /auth", async () => {
+  const session = {
+    csrfToken: "c".repeat(43),
+    expiresAt: "2026-10-11T00:00:00.000Z",
+    idleExpiresAt: "2026-10-04T12:00:00.000Z",
+  };
+  const page = recorder(
+    Response.json(session, { status: 201 }),
+    Response.json(session),
+    Response.json({ items: [], nextCursor: null }),
+    new Response(null, { status: 204 }),
+  );
+  const anonymous = new HarnessHubClient({
+    url: "http://127.0.0.1:3180",
+    fetch: page.send,
+  });
+  assert.deepEqual(
+    await anonymous.auth.createConsoleSession("k".repeat(22)),
+    session,
+  );
+  assert.deepEqual(await anonymous.auth.currentConsoleSession(), session);
+  const client = new HarnessHubClient({
+    url: "http://127.0.0.1:3180",
+    csrfToken: session.csrfToken,
+    fetch: page.send,
+  });
+  await client.providers.list();
+  assert.equal(await client.auth.deleteConsoleSession(), undefined);
+  assert.deepEqual(
+    page.requests.map((request) => [
+      request.method,
+      request.url,
+      request.headers.get("x-hh-csrf"),
+      request.headers.get("authorization"),
+    ]),
+    [
+      [
+        "POST",
+        "http://127.0.0.1:3180/api/v1/auth/console-sessions",
+        null,
+        null,
+      ],
+      [
+        "GET",
+        "http://127.0.0.1:3180/api/v1/auth/console-sessions/current",
+        null,
+        null,
+      ],
+      [
+        "GET",
+        "http://127.0.0.1:3180/api/v1/providers",
+        session.csrfToken,
+        null,
+      ],
+      [
+        "DELETE",
+        "http://127.0.0.1:3180/api/v1/auth/console-sessions/current",
+        session.csrfToken,
+        null,
+      ],
+    ],
+  );
+
+  const terminal = recorder(
+    Response.json(
+      { code: "k".repeat(22), expiresAt: "2026-10-04T00:01:00.000Z" },
+      { status: 201 },
+    ),
+  );
+  await new HarnessHubClient({
+    url: "http://127.0.0.1:3180",
+    token: "t".repeat(43),
+    fetch: terminal.send,
+  }).auth.createConsoleLink();
+  assert.equal(terminal.requests[0]?.method, "POST");
+  assert.equal(
+    terminal.requests[0]?.url,
+    "http://127.0.0.1:3180/api/v1/auth/console-links",
+  );
+  assert.equal(terminal.requests[0]?.headers.get("x-hh-csrf"), null);
+  assert.equal(
+    terminal.requests[0]?.headers.get("content-type"),
+    "application/json",
   );
 });
 

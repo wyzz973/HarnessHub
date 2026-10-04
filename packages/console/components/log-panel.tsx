@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-"use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Copy, Download, Maximize2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";

@@ -10,19 +10,17 @@
 | `pnpm start --config <file>` | 读取 YAML/JSON 文件；运行中只热更新引擎目录和默认项 |
 | `--port` | Gateway 默认3180；0由系统分配，ready日志中返回实际URL |
 | `--data-dir` | 默认`./data`；不同Gateway必须使用不同数据目录 |
-| Console | 默认3330；生产模式必须先`pnpm build:console`；开发用`pnpm dev:console` |
-| Console 后端 | `HARNESSHUB_GATEWAY_URL`；新环境显式设置为实际Gateway URL，不能依赖历史3182默认 |
-| `--console-url <URL>` | 可选；Gateway 根路径 `/` 302 跳转到该控制台地址，并在 `GET /v1/runtime/info` 中返回 |
+| 控制台 | 由 Gateway 在自己的端口提供（`/`），先 `pnpm build:console`；未构建时页面返回 503 并说明构建命令。启动时在 stderr 打印一次性登录链接，`hh console` 生成新链接；见 [控制台](../packages/console/README.md) |
 | `--otlp-config <file>` | 可选；JSON 文件中的 `otlp` 配置块，开启模型调用的 OTLP 导出，见 [OTLP 导出](observability.md#otlp-导出) |
 | `--version [--json]` | 打印构建身份（版本、提交、是否有未提交改动）后退出；`--json` 输出 `packages/daemon/dist/build-info.json` 的全部字段。同一身份出现在 `GET /v1/runtime/info` 的 `build` 与 `gateway.log` 的 `gateway.start` 记录中；`pnpm build` 生成该文件，缺失或损坏时 Gateway 拒绝启动 |
 
-服务绑定loopback，拒绝跨Origin/跨站浏览器访问。当前没有远程多用户认证和租户隔离，不应直接当公网服务部署。
+服务绑定loopback，拒绝跨Origin/跨站浏览器访问。`/api/v1` 需要本机管理令牌或控制台会话；旧 `/v1/*` 管理接口仍只有 loopback 的 Host 与 Origin 校验（[ADR 0024](decisions/0024-embedded-console.md)）。当前没有远程多用户认证和租户隔离，不应直接当公网服务部署。
 
 `--demo` 会额外登记一个名为 `fake` 的引擎。它是自动测试用的协议替身，不做真实推理；除运行仓库自带的测试与示例脚本外不要使用它。
 
 ## 控制台页面
 
-顶部状态条每 5 秒探测 `/health/ready`，并显示 Full Access 与统一模型（真实模型名与引擎看到的别名）。Gateway 缺少某个接口时，对应位置显示“当前 Gateway 不支持”，其余功能照常使用。
+打开 `hh serve` 打印的链接或 `hh console` 的输出即登录；会话空闲 12 小时或创建 7 天后结束，守护进程重启后也需要重新登录。每个页面有自己的地址（如 `/providers`、`/agents`），可以刷新和收藏。顶部状态条每 5 秒探测 `/health/ready`，并显示 Full Access 与统一模型（真实模型名与引擎看到的别名）。Gateway 缺少某个接口时，对应位置显示“当前 Gateway 不支持”，其余功能照常使用。
 
 | 页面 | 用途 |
 |---|---|
@@ -90,10 +88,13 @@ curl -s -X POST http://127.0.0.1:3180/v1/sessions \
 
 ## 本地开发
 
-后端变更后`pnpm build`，再重启对应Gateway；不要覆盖其他人正在使用的数据目录。前端开发运行：
+后端变更后`pnpm build`，再重启对应Gateway；不要覆盖其他人正在使用的数据目录。Gateway 在启动时索引控制台构建，重新 `pnpm build:console` 后也要重启。前端开发用 Vite 开发服务器（127.0.0.1:3330），它把 `/api`、`/v1`、`/health` 与 `/openapi.json` 转发给 Gateway：
 
 ```sh
-HARNESSHUB_GATEWAY_URL=http://127.0.0.1:3180 pnpm dev:console
+pnpm start:local --dev        # Gateway 3180 + Vite 3330，并打印开发服务器的登录链接
+# 或者对已在运行的 Gateway：
+HARNESSHUB_DAEMON_URL=http://127.0.0.1:3180 pnpm dev:console
+pnpm exec hh console --url http://127.0.0.1:3330 --data-dir ./data/local
 ```
 
 修改公开接口时同步domain schema、消费者与文档，再运行`pnpm docs:api`和相关验证。文档读者测试和生成文件检查见[贡献指南](../CONTRIBUTING.md)。

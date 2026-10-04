@@ -821,7 +821,7 @@ test("the console reaches the daemon only through the sdk", () => {
   );
   assert.deepEqual(
     checkAt(
-      "packages/console/app/page.tsx",
+      "packages/console/src/main.tsx",
       'import { contracts } from "../lib/contracts";\nimport { Button } from "@/components/ui/button";',
     ),
     [],
@@ -849,7 +849,7 @@ test("the console reaches the daemon only through the sdk", () => {
   );
 });
 
-test("CLI scans the console's app/, components/ and lib/", (context) => {
+test("CLI scans the console's src/, components/ and lib/", (context) => {
   const directory = mkdtempSync(
     join(tmpdir(), "harnesshub-boundaries-console-"),
   );
@@ -866,6 +866,16 @@ test("CLI scans the console's app/, components/ and lib/", (context) => {
   );
   write(directory, {
     "packages/console/lib/contracts.ts": "export const ok = true;",
+    "packages/console/src/main.tsx": 'import "@harnesshub/daemon/main";',
+  });
+  const entry = run(directory);
+  assert.equal(entry.status, 1);
+  assert.match(
+    entry.stderr,
+    /packages\/console\/src\/main\.tsx:1 packages\/console cannot depend on @harnesshub\/daemon/,
+  );
+  write(directory, {
+    "packages/console/src/main.tsx": "export {};",
   });
   assert.equal(run(directory).status, 0);
 });
@@ -995,7 +1005,7 @@ test("imports target only the dependencies their package declares, internal and 
   // The console's "@/" alias is its own directory, not a package.
   assert.deepEqual(
     checkAt(
-      "packages/console/app/page.tsx",
+      "packages/console/src/main.tsx",
       'import { Button } from "@/components/ui/button";',
       new Set(),
     ),
@@ -1003,7 +1013,7 @@ test("imports target only the dependencies their package declares, internal and 
   );
   assert.match(
     checkAt(
-      "packages/console/app/page.tsx",
+      "packages/console/src/main.tsx",
       'import { x } from "@/../daemon/src/main";',
       new Set(),
     ).join("\n"),

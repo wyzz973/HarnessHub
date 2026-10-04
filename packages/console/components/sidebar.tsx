@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-"use client";
 import {
   Activity,
   Blocks,
@@ -9,6 +8,7 @@ import {
   Cpu,
   KeyRound,
   Layers2,
+  LogOut,
   Moon,
   PanelLeft,
   Route,
@@ -26,21 +26,11 @@ import {
 } from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { GatewayHealth } from "@/lib/api";
+import type { Page } from "@/lib/router";
 import { useIsMac } from "@/lib/platform";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
-export type Page =
-  | "tasks"
-  | "model"
-  | "tools"
-  | "engines"
-  | "observability"
-  | "providers"
-  | "groups"
-  | "keys"
-  | "usage"
-  | "agents";
 export interface HistoryItem {
   type: "session" | "workflow";
   id: string;
@@ -146,6 +136,7 @@ export function Sidebar({
   onToggle,
   onNewTask,
   onOpenPage,
+  onSignOut,
   history,
   loading,
   activeId,
@@ -162,6 +153,8 @@ export function Sidebar({
   onToggle: () => void;
   onNewTask: () => void;
   onOpenPage: (page: Page) => void;
+  /** End the console session (the page then shows how to sign in again). */
+  onSignOut: () => void;
   history: HistoryItem[];
   loading: boolean;
   activeId: string | undefined;
@@ -350,6 +343,21 @@ export function Sidebar({
           </TooltipTrigger>
           <TooltipContent side={collapsed ? "right" : "top"}>
             {theme === "dark" ? "浅色" : "深色"}
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-sidebar-hover hover:text-foreground"
+              aria-label="退出登录"
+              onClick={onSignOut}
+            >
+              <LogOut className="size-[17px]" strokeWidth={1.7} />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side={collapsed ? "right" : "top"}>
+            退出登录
           </TooltipContent>
         </Tooltip>
       </div>

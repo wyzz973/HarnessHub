@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-"use client";
 import { ArrowUpRight, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Overview, Workflow } from "@/lib/contracts";

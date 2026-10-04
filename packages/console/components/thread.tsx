@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-"use client";
 import { createContext, memo, useContext, useState } from "react";
 import {
   ComposerPrimitive,

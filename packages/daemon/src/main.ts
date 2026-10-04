@@ -48,6 +48,9 @@ import {
 } from "@harnesshub/secrets/secret-store";
 import { ensureAdminToken, ADMIN_TOKEN_FILE } from "./admin-token.js";
 import { registerApiV1 } from "./http/api-v1.js";
+import { ConsoleSessions } from "./http/console-session.js";
+import { loadConsole, registerConsole } from "./http/console-static.js";
+import { consoleAssets } from "@harnesshub/console/assets";
 import { AgentWiringService } from "./agents-wiring.js";
 import { GatewayShare } from "./lan-share.js";
 import {
@@ -246,8 +249,11 @@ export async function startHub(options: {
   host?: string;
   defaultEngine?: string;
   workspaces?: Workspace[];
-  /** Console page opened from the Gateway root `/`. */
-  consoleUrl?: string;
+  /**
+   * The built console served at `/` (ADR-P10); defaults to the build of
+   * `@harnesshub/console`. Without its `index.html` the page answers 503.
+   */
+  consoleDir?: string;
   /** Installed Tool Package root; defaults to `<dataDir>/tool-packages`. */
   toolPackageRoot?: string;
   /**
@@ -426,7 +432,6 @@ export async function startHub(options: {
   const runtimeInfo: RuntimeInfo = {
     build,
     fullAccess: fullAccessEnabled(process.env),
-    ...(options.consoleUrl ? { consoleUrl: options.consoleUrl } : {}),
   };
   const artifactRoot = path.join(dataDir, "artifacts");
   const host = new ProcessWorkerHost({
@@ -460,6 +465,10 @@ export async function startHub(options: {
     // The model-plane API: the admin token, managed secrets and the store
     // on this owned database (opened after SqliteStore applied migrations).
     const adminTokenDigest = await ensureAdminToken(dataDir);
+    const consoleSessions = new ConsoleSessions();
+    const consoleBundle = await loadConsole(
+      path.resolve(options.consoleDir ?? fileURLToPath(consoleAssets)),
+    );
     const secrets = await SecretStore.open({
       dataDir,
       configDir: path.resolve(options.configDir ?? defaultConfigDir()),
@@ -763,6 +772,7 @@ export async function startHub(options: {
     registerHarnessModelRoutes(server, harnessModel, () => runtimeInfo);
     registerApiV1(server, {
       adminTokenDigest,
+      consoleSessions,
       modelPlane,
       secrets,
       presets: {
@@ -802,10 +812,7 @@ export async function startHub(options: {
     // Registered after createGateway's hook, so the application has already cancelled
     // Runs; this only stops a pending model test and waits for its Session cleanup.
     server.addHook("preClose", async () => harnessModel.close());
-    if (options.consoleUrl) {
-      const consoleUrl = options.consoleUrl;
-      server.get("/", async (_request, reply) => reply.redirect(consoleUrl));
-    }
+    registerConsole(server, consoleBundle);
     server.addHook("onClose", async () => {
       for (const abort of activeProbes) abort.abort();
       await Promise.allSettled([...probeTasks]);
@@ -839,14 +846,28 @@ export async function startHub(options: {
         bindHost,
       ),
       fullAccess: runtimeInfo.fullAccess,
-      consoleUrl: options.consoleUrl ?? null,
+      console: consoleBundle?.directory ?? null,
       adminToken: path.join(dataDir, ADMIN_TOKEN_FILE),
       modelGateway: gatewayOrigin ?? null,
       maxConcurrency: config.maxConcurrency,
       defaultTimeoutMs: config.defaultTimeoutMs,
     });
     catalog.start();
-    return { server, app, url, logFile: gatewayLog.file };
+    const origin = gatewayOrigin;
+    return {
+      server,
+      app,
+      url,
+      logFile: gatewayLog.file,
+      /** Whether the built console was found and is served at `/`. */
+      consoleBuilt: consoleBundle !== undefined,
+      /**
+       * A new one-time console sign-in URL on this daemon's loopback origin,
+       * valid once for 60 s (`/#login=<code>`, 07-data-security 5.2).
+       */
+      consoleLink: () =>
+        `${origin ?? url}/#login=${consoleSessions.createLink().code}`,
+    };
   } catch (error) {
     gatewayLog.info("gateway.start_failed", {
       stage: "startup",
@@ -899,7 +920,6 @@ export async function main(argv: string[]): Promise<void> {
       "secrets-backend": { type: "string" },
       "tool-package-root": { type: "string" },
       "harness-model-file": { type: "string" },
-      "console-url": { type: "string" },
       "otlp-config": { type: "string" },
       "wiring-home": { type: "string" },
       help: { type: "boolean" },
@@ -942,7 +962,7 @@ export async function main(argv: string[]): Promise<void> {
     process.exitCode = 2;
   } else if (values.help)
     console.log(
-      "HarnessHub: node dist/src/main.js [--engine opencode] [--host localhost] [--port 3180] [--config engines/local.yaml] [--data-dir ./data] [--config-dir DIR] [--secrets-backend auto|keychain|dpapi|file] [--tool-package-root DIR] [--harness-model-file FILE] [--console-url URL] [--otlp-config FILE] [--wiring-home DIR] | --version [--json]",
+      "HarnessHub: node dist/src/main.js [--engine opencode] [--host localhost] [--port 3180] [--config engines/local.yaml] [--data-dir ./data] [--config-dir DIR] [--secrets-backend auto|keychain|dpapi|file] [--tool-package-root DIR] [--harness-model-file FILE] [--otlp-config FILE] [--wiring-home DIR] | --version [--json]",
     );
   else {
     const selectedEngine = values.engine ?? process.env.AGENT_ENGINE;
@@ -969,7 +989,6 @@ export async function main(argv: string[]): Promise<void> {
       ...(values["harness-model-file"]
         ? { harnessModelFile: values["harness-model-file"] }
         : {}),
-      ...(values["console-url"] ? { consoleUrl: values["console-url"] } : {}),
       // The `otlp` block as a JSON file; startHub validates it.
       ...(values["otlp-config"]
         ? {
@@ -1001,6 +1020,13 @@ export async function main(argv: string[]): Promise<void> {
         engine: selectedEngine ?? hub.app.defaultEngine(),
         pid: process.pid,
       }),
+    );
+    // For the person at the terminal (stderr, like the log echo); the code
+    // never enters the log file.
+    process.stderr.write(
+      hub.consoleBuilt
+        ? `Console: ${hub.consoleLink()}\n  (sign-in link, valid once for 60 s; run hh console for a new one)\n`
+        : "Console: not built; run pnpm build:console and restart\n",
     );
     let stopping = false;
     const stop = () => {

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 /**
  * Build the HarnessHub single executable for the current platform (SEA feasibility spike,
- * OSS-008). Run after `pnpm build`; the result goes to dist/sea/.
+ * OSS-008). Run after `pnpm build` and `pnpm build:console`; the result goes to dist/sea/.
  *
  * Usage: node tools/sea/build.mjs [--out dist/sea]
  *
@@ -14,8 +14,8 @@
  * gets an ad-hoc signature. `build.json` records sizes and inputs for the spike report.
  *
  * Fails when Node does not match .node-version (the binary is a copy of process.execPath),
- * when dist/ is missing, or when any bundled module keeps an `import.meta` use the rewrite does
- * not cover.
+ * when dist/ or the console build is missing, or when any bundled module keeps an
+ * `import.meta` use the rewrite does not cover.
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -168,6 +168,33 @@ export function catalogAssets(root) {
     }));
 }
 
+/**
+ * The built console the daemon serves (packages/console/assets.mjs points at
+ * packages/console/dist): every file of the build, at its repository-relative
+ * path under the extraction root.
+ *
+ * @param {string} root Repository root.
+ * @returns {{path: string, file: string}[]} Sorted by path.
+ * @throws {Error} When the console is not built (no dist/index.html): an
+ *   executable without it would serve a 503 page.
+ */
+export function consoleAssets(root) {
+  const relative = "packages/console/dist";
+  const directory = path.join(root, ...relative.split("/"));
+  if (!existsSync(path.join(directory, "index.html")))
+    throw new Error(`${relative}/index.html is missing; run pnpm build:console first`);
+  return readdirSync(directory, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => {
+      const file = path.join(entry.parentPath, entry.name);
+      return {
+        path: `${relative}/${path.relative(directory, file).split(path.sep).join("/")}`,
+        file,
+      };
+    })
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
 const ROLE_PLACEHOLDER = `// Placeholder for a HarnessHub single-executable role entry. The executable that wrote this
 // directory runs the bundled role when it is started with this path; nothing else may run it.
 throw new Error("HarnessHub single-executable role placeholder; start it through the executable");
@@ -281,7 +308,11 @@ export async function buildSea({ out = path.join(ROOT, "dist", "sea") } = {}) {
       bytes: readFileSync(helper.file),
       executable: true,
     });
-  for (const data of [...presetAssets(ROOT), ...catalogAssets(ROOT)])
+  for (const data of [
+    ...presetAssets(ROOT),
+    ...catalogAssets(ROOT),
+    ...consoleAssets(ROOT),
+  ])
     assets.set(data.path, {
       bytes: readFileSync(data.file),
       executable: false,
