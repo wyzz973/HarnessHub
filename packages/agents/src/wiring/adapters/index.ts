@@ -24,6 +24,10 @@ import { t3code } from "./t3code.js";
 // Agents that keep HarnessHub's entries as elements of their own lists.
 import { claudeDesktop } from "./claude-desktop.js";
 import { dsh } from "./dsh.js";
+// Agents that send no key of their own: it goes in the path (ADR 0033).
+import { commandcode } from "./commandcode.js";
+import { fx } from "./fx.js";
+import { muse } from "./muse.js";
 import { droid } from "./droid.js";
 import { workbuddy } from "./workbuddy.js";
 import { zcode } from "./zcode.js";
@@ -50,6 +54,7 @@ export const wiringAdapters: ReadonlyMap<string, WiringAdapter> = new Map(
       openchamber,
     ],
     ...[droid, workbuddy, zcode, claudeDesktop, dsh],
+    ...[commandcode, fx, muse],
   ].map((adapter) => [adapter.id, adapter]),
 );
 
