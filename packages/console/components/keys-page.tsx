@@ -29,10 +29,11 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { t } from "@/lib/i18n";
 import {
-  expiresAtFor,
+  expiryAllowed,
   expiryChoices,
   expiryLabel,
   failureOf,
+  keyCreateInput,
   modelPlane,
   modelRefChoices,
   type ExpiryChoice,
@@ -125,6 +126,7 @@ function CreateKeyDialog({
   const [allow, setAllow] = useState<string[]>([]);
   const [extra, setExtra] = useState("");
   const [expiry, setExpiry] = useState<ExpiryChoice>("90d");
+  const [allowLan, setAllowLan] = useState(false);
   const [quotaForm, setQuotaForm] = useState(() => quotaFormOf(undefined));
   const [quotaProblems, setQuotaProblems] = useState<Record<string, string>>(
     {},
@@ -152,12 +154,18 @@ function CreateKeyDialog({
     setFailure(null);
     try {
       setCreated(
-        await modelPlane().gatewayKeys.create({
-          name: name.trim(),
-          modelAllow,
-          expiresAt: expiresAtFor(expiry, Date.now()),
-          ...(quota.quota ? { quota: quota.quota } : {}),
-        }),
+        await modelPlane().gatewayKeys.create(
+          keyCreateInput(
+            {
+              name,
+              modelAllow,
+              expiry,
+              allowLan,
+              ...(quota.quota ? { quota: quota.quota } : {}),
+            },
+            Date.now(),
+          ),
+        ),
       );
       onCreated();
     } catch (reason) {
@@ -267,13 +275,35 @@ function CreateKeyDialog({
                 }
               >
                 {expiryChoices.map((choice) => (
-                  <option key={choice.id} value={choice.id}>
+                  <option
+                    key={choice.id}
+                    value={choice.id}
+                    disabled={!expiryAllowed(choice.id, allowLan)}
+                  >
                     {expiryLabel(choice.id)}
                   </option>
                 ))}
               </select>
               <FieldError failure={failure} pointer="/expiresAt" />
             </label>
+            <div className="space-y-2">
+              <Checkbox
+                checked={allowLan}
+                onChange={(on) => {
+                  setAllowLan(on);
+                  if (!expiryAllowed(expiry, on)) setExpiry("90d");
+                }}
+              >
+                {t("routing.key.lan")}
+              </Checkbox>
+              <p className="field-hint">{t("routing.key.lanHint")}</p>
+              {allowLan ? (
+                <div className="callout warn items-start">
+                  <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+                  {t("routing.key.lanWarning")}
+                </div>
+              ) : null}
+            </div>
             <QuotaFields
               form={quotaForm}
               onChange={setQuotaForm}
@@ -385,6 +415,11 @@ export function KeysPage({ tabs }: { tabs?: React.ReactNode }) {
                         </td>
                         <td>
                           <span className="tag">{key.scope.kind}</span>
+                          {key.allowLan ? (
+                            <span className="tag warn ml-1">
+                              {t("routing.keys.lan")}
+                            </span>
+                          ) : null}
                         </td>
                         <td className="max-w-[260px]">
                           <p

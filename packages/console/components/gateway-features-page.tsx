@@ -322,6 +322,7 @@ function Vision({
         />
       </div>
       <p className="field-hint">{t("settings.vision.hint")}</p>
+      <p className="field-hint">{t("settings.vision.key")}</p>
       <Implications
         cost={t("settings.vision.cost")}
         privacy={t("settings.vision.privacy")}

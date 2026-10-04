@@ -262,6 +262,11 @@ export const zh = {
   "routing.key.extra": "其他 Model Ref（可选）",
   "routing.key.extraPlaceholder": "provider/model，以空格或逗号分隔",
   "routing.key.expiry": "有效期",
+  "routing.key.lan": "局域网：可经局域网共享使用",
+  "routing.key.lanHint":
+    "开启局域网共享（设置 › 通用）后，其他电脑可以用这把 Key 访问本机的模型网关，与 hh key create --lan 相同。局域网 Key 必须设置有效期。",
+  "routing.key.lanWarning":
+    "局域网上的请求是明文 HTTP，Key 也随请求明文传输：只在可信网络中使用，或放在 TLS 反向代理之后。",
   "routing.key.create": "创建",
   "routing.keys.title": "Gateway Key",
   "routing.keys.lede":
@@ -273,6 +278,7 @@ export const zh = {
   "routing.keys.expires": "过期",
   "routing.keys.lastUsed": "最近使用",
   "routing.keys.never": "永不",
+  "routing.keys.lan": "局域网",
   "routing.keys.usageOf": "{name} 的用量",
   "routing.keys.usage": "用量",
   "routing.keys.limitsOf": "{name} 的额度",
@@ -562,6 +568,11 @@ export const en: Translation<typeof zh> = {
   "routing.key.extraPlaceholder":
     "provider/model, separated by spaces or commas",
   "routing.key.expiry": "Valid for",
+  "routing.key.lan": "LAN access: usable through LAN sharing",
+  "routing.key.lanHint":
+    "With LAN sharing on (Settings › General), other computers can use this key to reach this computer's model gateway, as with hh key create --lan. A LAN key must expire.",
+  "routing.key.lanWarning":
+    "Requests on the LAN are plain HTTP, and the key travels with them in the clear: use it only on a trusted network, or behind a TLS reverse proxy.",
   "routing.key.create": "Create",
   "routing.keys.title": "Gateway Keys",
   "routing.keys.lede":
@@ -573,6 +584,7 @@ export const en: Translation<typeof zh> = {
   "routing.keys.expires": "Expires",
   "routing.keys.lastUsed": "Last used",
   "routing.keys.never": "Never",
+  "routing.keys.lan": "LAN",
   "routing.keys.usageOf": "Usage of {name}",
   "routing.keys.usage": "Usage",
   "routing.keys.limitsOf": "Limits of {name}",

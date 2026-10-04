@@ -344,6 +344,40 @@ test("the model-plane pages build API requests and read problem details", async 
   assert.equal(lib.failureOf(new Error("plain")).message, "plain");
 });
 
+test("the key form sends LAN access as hh key create --lan does, and a LAN key always expires", async () => {
+  const lib = await consoleModule("lib/model-plane.ts", {
+    'import { apiClient } from "./session";': "const apiClient = undefined;",
+  });
+  const { gatewayKeyCreateSchema } = await import(
+    new URL("../packages/daemon/dist/src/http/api-v1-schemas.js", import.meta.url).href
+  );
+  const now = Date.UTC(2026, 9, 5);
+  const form = { name: " lan-box ", modelAllow: ["p/small", "group/fast"], expiry: "30d", allowLan: true };
+  const body = lib.keyCreateInput(form, now);
+  assert.deepEqual(body, {
+    name: "lan-box",
+    modelAllow: ["p/small", "group/fast"],
+    expiresAt: new Date(now + 30 * 86_400_000).toISOString(),
+    allowLan: true,
+  });
+  // The daemon's create schema takes every field the form sends, LAN access included.
+  for (const field of Object.keys(body)) assert.ok(field in gatewayKeyCreateSchema.properties, field);
+  assert.equal("allowLan" in lib.keyCreateInput({ ...form, allowLan: false }, now), false, "a loopback-only key");
+  const quota = { requestsPerMinute: 5, budgets: [] };
+  assert.deepEqual(lib.keyCreateInput({ ...form, quota }, now).quota, quota);
+  assert.equal(lib.keyCreateInput({ ...form, allowLan: false, expiry: "never" }, now).expiresAt, null);
+  // The daemon refuses a LAN key that never expires; the form does not offer it.
+  assert.deepEqual(
+    lib.expiryChoices.filter((choice) => lib.expiryAllowed(choice.id, true)).map((choice) => choice.id),
+    ["30d", "90d", "365d"],
+  );
+  assert.equal(lib.expiryAllowed("never", false), true);
+  // The dialog builds its request with keyCreateInput and passes the LAN choice; the list marks LAN keys.
+  const page = await readFile(new URL("../packages/console/components/keys-page.tsx", import.meta.url), "utf8");
+  assert.match(page, /gatewayKeys\.create\(\s*keyCreateInput\(\s*\{[^}]*\ballowLan\b[^}]*\}/);
+  assert.match(page, /key\.allowLan \?/);
+});
+
 test("the agent pages derive wiring requests, shown models and attention from the API records", async () => {
   const agents = await consoleModule("lib/agents.ts");
   const gateway = await consoleModule("lib/gateway-models.ts", {

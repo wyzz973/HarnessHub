@@ -132,6 +132,8 @@ export const zh = {
   "settings.vision.none": "不使用：图片换成占位文字",
   "settings.vision.hint":
     "选择能看图的模型或路由组。描述调用经网关自己的路由、熔断与脱敏，作为 Agent harnesshub-vision 的独立调用记账；同一张图片的描述会缓存。",
+  "settings.vision.key":
+    "描述以发出请求的 Gateway Key 进行：视觉模型必须在这把 Key 允许的模型中，否则不描述；描述计入它的预算与每分钟请求数。每个请求至多描述 gateway.limits.maxDescribedImages（默认 16）张没有缓存的图片。",
   "settings.vision.cost":
     "每张新图片一次额外的模型调用，按视觉模型的价格计费（缓存命中不再调用）。",
   "settings.vision.privacy":
@@ -303,6 +305,8 @@ export const en: Translation<typeof zh> = {
   "settings.vision.none": "None: images become placeholder text",
   "settings.vision.hint":
     "Choose a model or route group that can see images. Description calls go through the gateway's own routing, breakers and redaction, and are recorded as separate calls of the agent harnesshub-vision; descriptions of the same image are cached.",
+  "settings.vision.key":
+    "Descriptions run as the Gateway Key that sent the request: the vision model must be among that key's allowed models, or nothing is described, and descriptions count against its budget and requests per minute. Each request has at most gateway.limits.maxDescribedImages (16 by default) uncached images described.",
   "settings.vision.cost":
     "One extra model call per new image, charged at the vision model's price (cache hits make no call).",
   "settings.vision.privacy":

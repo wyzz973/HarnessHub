@@ -5,6 +5,8 @@
  * console session (lib/session.ts); the browser never holds the admin token.
  */
 import {
+  type GatewayKeyInput,
+  type GatewayKeyQuota,
   type HarnessHubClient,
   HarnessHubError,
   HarnessHubUnavailableError,
@@ -250,6 +252,35 @@ export function expiresAtFor(choice: ExpiryChoice, now: number): string | null {
   const found = expiryChoices.find((item) => item.id === choice);
   const days = found === undefined ? 90 : found.days;
   return days === null ? null : new Date(now + days * 86_400_000).toISOString();
+}
+
+/** Whether the key form offers an expiry choice: a LAN key must expire. */
+export function expiryAllowed(
+  choice: ExpiryChoice,
+  allowLan: boolean,
+): boolean {
+  return !(allowLan && choice === "never");
+}
+
+/** The key form's fields; `quota` is already checked (lib/routing.ts). */
+export interface KeyForm {
+  name: string;
+  modelAllow: string[];
+  expiry: ExpiryChoice;
+  quota?: GatewayKeyQuota;
+  /** Usable through LAN sharing, as `hh key create --lan`. */
+  allowLan: boolean;
+}
+
+/** The body of `POST /gateway-keys` for the key form. */
+export function keyCreateInput(form: KeyForm, now: number): GatewayKeyInput {
+  return {
+    name: form.name.trim(),
+    modelAllow: form.modelAllow,
+    expiresAt: expiresAtFor(form.expiry, now),
+    ...(form.quota ? { quota: form.quota } : {}),
+    ...(form.allowLan ? { allowLan: true } : {}),
+  };
 }
 
 /** Model Ref choices from providers: `provider/*` and every listed model. */

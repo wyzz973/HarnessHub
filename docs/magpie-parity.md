@@ -166,7 +166,7 @@ Every row was checked against Magpie's source and against HarnessHub's code or d
 | Magpie capability | HarnessHub status | How in HarnessHub | Notes |
 |---|---|---|---|
 | LAN sharing by binding the gateway to all interfaces | different by design | `hh gateway share on --host IP [--port N] [--public-base-url URL]`, `share status\|off`; Settings → General | A separate listener serves only the model paths; the management API is not on it ([LAN sharing](model-gateway.md#局域网共享), [ADR 0021](decisions/0021-gateway-lan-sharing.md)) |
-| Remote callers need a named gateway key | same | `hh key create --name N --allow REF… --lan --expires-at TIME` | A LAN key must expire; the console's key form has no LAN option yet |
+| Remote callers need a named gateway key | same | `hh key create --name N --allow REF… --lan --expires-at TIME` | A LAN key must expire; the console's key form (Routing and keys › Gateway Keys) has the same LAN option |
 | Key text kept and shown again later | different by design | Shown once (`hhk_…`); only a hash is stored | A copied data directory or backup holds no usable key |
 | Rename, disable, rotate and remove keys | partial | `hh key list\|create\|quota\|limit\|revoke`; Routing and Keys → Keys | No rename, disable or rotate for client keys (agents: `hh wire <agent> --rotate`); client keys expire after 90 days by default |
 | Public URL behind a reverse proxy (`MAGPIE_PUBLIC_URL`) | same | `--public-base-url` | Also widens the accepted Host header |
