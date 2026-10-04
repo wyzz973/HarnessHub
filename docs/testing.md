@@ -79,6 +79,7 @@ Windows 用原生环境验证中文/空格路径、env 大小写、cmd/PowerShel
 | `check:docs` | 包装已有文档检查；建立可运行示例后纳入 typecheck，随后补锚点检查 |
 | `test:engine` | 首个真实引擎接入时运行；缺凭证明确未验证 |
 | `test:conformance` | 已接入，不属于 `pnpm check`：本机安装的真实 Agent 经全局接线、在 macOS 沙箱中离线运行一次并到达假上游，结果写入[兼容性](compatibility.md)；未安装的 Agent 跳过并列为未安装，没有沙箱的平台整组跳过 |
+| `test:sea` | 已接入，不属于 `pnpm check`：构建单可执行文件（构建本身要求 `hh` 的每个命令在可执行文件中回答 `--help`），再经它运行 `version`、`serve`、模型平面与接线命令、两次网关调用、`tui`、`console` 与控制台页面，全部在一个临时目录中、只连回环地址的假 provider（[SEA 可行性验证第 10 节](proposals/oss/sea-spike.md#10-hh-的全部命令2026-10-04)） |
 | `test:windows` | 首个 ProcessHost 路径建立时接入 Windows 原生执行；发布前必需 |
 
 实际 script 名称、参数与依赖顺序由 [package.json](../package.json)和 [CI 配置](../.github/workflows/ci.yml)拥有，本页只说明职责。启动脚本存在但没有调用真实检查，或 CI 总判定没有依赖必需任务，均视为未接入。

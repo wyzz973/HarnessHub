@@ -71,7 +71,8 @@
 - [x] **真实 Agent 一致性**：macOS 沙箱中以离线假 provider 运行本机真实 Agent，接线、工具、流式、取消与 usage 五项（`516dc67`、`c78cb54`、`36a6789`、`0987463`）；结果见 [compatibility.md](docs/compatibility.md)，Codex 工具项因 Seatbelt 嵌套只部分通过。`pnpm test:conformance` 为可选检查，不在 `pnpm check` 中。
 - [x] **Provider 测试与体检**：`@harnesshub/gateway/probe`，`hh provider test|doctor` 与 `POST /api/v1/providers/{id}/test|doctor`，14 项检查、预演计划与成本、提议的补丁，每个请求先记账；订阅 provider 返回 409 `SUBSCRIPTION_PROVIDER`（`9d31969`，[provider-doctor.md](docs/provider-doctor.md)）。
 - [x] **配置文件**：`config.jsonc` 的 14 项启动设置，参数、环境变量、文件、默认的取值顺序，未知键、无效值与疑似秘密以退出码 2 拒绝，`hh config show|get|set|unset` 保留注释与格式；局域网共享与网关功能仍是运行时设置文件（`feat/config-file` 压缩合入，[configuration.md](docs/configuration.md)）。偏离：日志级别仍只由 `HARNESSHUB_LOG_LEVEL` 设置，07 第 1 节列在配置文件中；所有设置不热加载。
-- [ ] **进行中**：控制台的 provider 检测与网关功能页面；备份排除订阅 provider（恢复失败的修复）、浏览器上传 Skill、取消订阅登录；协议一致性矩阵与网关基准；单可执行文件包含完整 CLI。
+- [ ] **单可执行文件运行 `hh` 的全部命令**（ADR-P01）：SEA 入口把角色与脚本以外的命令行交给 `apps/hh` 的 `main`（新增 `hh version`）；四个固定引擎启动器成为角色，资源目录的脚本由 `SCRIPT_ASSETS` 归类，未归类即构建失败；守护进程的 `package.json` 解包供 `hh benchmark` 读取版本；jsonc-parser 改用 ESM 构建（此前 `main` 上的可执行文件构建成功，但 `serve` 与 `version` 启动即失败）；构建最后要求每个 `hh` 命令在可执行文件中回答 `--help`；`pnpm test:sea`（不属于 `pnpm check`）构建后经可执行文件运行命令序列。进展（2026-10-04，分支 `feat/sea-full-cli`）：macOS arm64 本机 `pnpm test:sea` 与 `measure.mjs`（11 项端到端检查）通过，29 个命令全部在可执行文件中运行，体积 130.9 MB，首次运行/已解包 p95 309.6/319.5 ms（node 基线 378.4 ms），数字见 [SEA 可行性验证第 10 节](docs/proposals/oss/sea-spike.md#10-hh-的全部命令2026-10-04)。待合入后勾选；其他平台与 CI 未运行。
+- [ ] **进行中**：控制台的 provider 检测与网关功能页面；备份排除订阅 provider（恢复失败的修复）、浏览器上传 Skill、取消订阅登录；协议一致性矩阵与网关基准。
 - [ ] **未验证**：真实 provider 与真实 Agent 的端到端（首次实测因改写用户真实配置需所有者亲自执行而待做）；Windows；单可执行文件的实际构建。
 
 ## M1–M5

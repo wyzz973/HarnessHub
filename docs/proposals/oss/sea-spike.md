@@ -37,16 +37,16 @@
 
 | argv | 运行内容 |
 |---|---|
-| `harnesshub serve [Gateway 参数]` | Gateway（`packages/daemon/dist/src/main.js` 的命令行入口） |
-| `harnesshub version [--json]` | 输出构建身份 |
 | `harnesshub <根目录>/packages/daemon/dist/src/worker/main.js …` | Session Worker；由 `fork()` 产生 |
 | `harnesshub <根目录>/packages/agents/assets/launch-engine.mjs …` | 可移植引擎启动器 |
+| `harnesshub <根目录>/packages/agents/assets/launch-{dsh,openclaw,opencode,pi}-acp.mjs …` | 固定引擎启动器（2026-10-04 加入，第 10 节） |
 | `harnesshub <根目录>/packages/daemon/dist/src/command-mcp-main.js …` | 工具包的 command MCP 服务器 |
 | `harnesshub <其他 .js/.mjs/.cjs 文件> …` | node-compat：用 `Module.runMain()` 像 `node <文件>` 一样运行 |
+| 其他命令行：`harnesshub serve …`、`harnesshub version [--json]`、`harnesshub agents` 等 | `apps/hh` 的 `main`，即 `hh` 的全部命令，输出与退出码相同（2026-10-04 起，第 10 节；此前只有 `serve` 与 `version`） |
 
 子进程从自身的角色路径推出根目录，只接受标记文件中构建号与自身一致的根目录。这样即使 Worker 的 HOME 被改成 Session 私有目录，也能找到与 Gateway 相同的文件。
 
-**解包根目录**：其他程序必须从磁盘读取的文件（构建身份、原生辅助程序、Pi 扩展）作为 SEA 资源嵌入，按构建写入每个用户的缓存目录：macOS 为 `~/Library/Caches/HarnessHub/sea/<构建号>`，Linux 为 `$XDG_CACHE_HOME/harnesshub/sea/<构建号>`（缺省 `~/.cache`），Windows 为 `%LOCALAPPDATA%\HarnessHub\sea\<构建号>`。角色入口位置写入占位文件，因为工具包绑定会检查 command MCP 入口是普通文件；占位文件被其他程序直接执行时抛错。用户命令每次启动都按 SHA-256 校验并修复这些文件，原子写入（临时文件加改名），目录权限 0700 且必须属于当前用户。`HARNESSHUB_SEA_ROOT` 可以覆盖根目录，只用于测量。构建号是 bundle 与全部资源的 SHA-256 前 16 位。原生辅助程序只从 `dist/native` 与各包的 `dist/native` 嵌入 `build.mjs` 中 `NATIVE_HELPERS` 列出的文件，这些目录中的其他文件（例如早先构建留下的旧辅助程序）会使构建失败；`build.json` 记录每个嵌入资源的 SHA-256，`measure.mjs` 的 `asset.secret-helper` 检查当前平台的密钥辅助程序解包后与记录一致（只读文件，不访问密钥库；Linux 没有该辅助程序，检查注明原因后跳过）。
+**解包根目录**：必须从磁盘读取的文件（构建身份、守护进程的 `package.json`、原生辅助程序、Pi 扩展、Copilot 宿主、provider 预设、模型目录与控制台）作为 SEA 资源嵌入，按构建写入每个用户的缓存目录：macOS 为 `~/Library/Caches/HarnessHub/sea/<构建号>`，Linux 为 `$XDG_CACHE_HOME/harnesshub/sea/<构建号>`（缺省 `~/.cache`），Windows 为 `%LOCALAPPDATA%\HarnessHub\sea\<构建号>`。角色入口位置写入占位文件，因为工具包绑定会检查 command MCP 入口是普通文件；占位文件被其他程序直接执行时抛错。用户命令每次启动都按 SHA-256 校验并修复这些文件，原子写入（临时文件加改名），目录权限 0700 且必须属于当前用户。`HARNESSHUB_SEA_ROOT` 可以覆盖根目录，只用于测量。构建号是 bundle 与全部资源的 SHA-256 前 16 位。原生辅助程序只从 `dist/native` 与各包的 `dist/native` 嵌入 `build.mjs` 中 `NATIVE_HELPERS` 列出的文件，这些目录中的其他文件（例如早先构建留下的旧辅助程序）会使构建失败；`build.json` 记录每个嵌入资源的 SHA-256，`measure.mjs` 的 `asset.secret-helper` 检查当前平台的密钥辅助程序解包后与记录一致（只读文件，不访问密钥库；Linux 没有该辅助程序，检查注明原因后跳过）。
 
 **构建身份**：SEA 内嵌的 `build-info.json` 与 `packages/daemon/dist/build-info.json` 相同，只把 `installMethod` 改为 `sea`。`harnesshub version --json` 输出它，端到端检查逐字段与构建时写入的文件比对。
 
@@ -190,7 +190,7 @@ PR #41 的手动运行 37002564159（提交 c7e0780），每组 30 次，p95 按
 
 | 问题 | 本次处理 | 剩余工作 |
 |---|---|---|
-| SEA main 只能是 CommonJS，`packages/daemon/src/main.ts` 有顶层 await | 改为不带顶层 await 的函数调用（第 4 节） | `packages/cli/src/cli.ts`（rollout 导出）同样有顶层 await，进入 SEA 前要同样处理 |
+| SEA main 只能是 CommonJS，`packages/daemon/src/main.ts` 有顶层 await | 改为不带顶层 await 的函数调用（第 4 节） | 已处理：`cli.ts`、`benchmark-main.ts`、`tool-packages-main.ts` 与两个固定引擎启动器同样改写（第 10 节） |
 | 子进程入口、原生辅助程序与脚本按 `import.meta.url` 相对定位 | 构建时逐模块改写，资源解包到按构建区分的根目录 | 见第 7 节第 1 项 |
 | 自有子进程用 `process.execPath` 启动，在 SEA 中会再次运行 SEA | 按角色路径分派；Worker 租约中的命令行仍与 `ps` 一致，崩溃恢复可以识别 | 无 |
 | 第三方 Node 脚本按“随附的 Node”启动：发现的 Claude 与 Codex ACP 适配器（`[node, adapter]`）、DSH、工具包中 `launch: node` 的 MCP 与 CLI 工具 | node-compat 模式，已用 ACP 夹具验证 | `Module.runMain()` 不是文档化的公开接口；不支持 Node 命令行选项（`node -e`、`--inspect` 等），`harnesshub --version` 输出的是 HarnessHub 版本；只按扩展名识别脚本 |
@@ -199,7 +199,7 @@ PR #41 的手动运行 37002564159（提交 c7e0780），每组 30 次，p95 按
 | acpx 用 `import.meta.url` 找自身的 `package.json` 读版本号 | SEA 中找不到，按 acpx 自身逻辑退回未知版本 | 把 acpx 的 `package.json` 作为资源解包，或改为构建时注入版本 |
 | 解包目录的信任 | 每个用户独立目录、0700、属主检查；用户命令启动时校验 SHA-256；子进程只核对标记 | 校验与执行之间仍有同用户的竞争窗口；Windows 依赖 `%LOCALAPPDATA%` 的默认 ACL，未单独设置 |
 | 签名 | macOS 只做了 ad-hoc 签名；Windows 注入后 node.exe 原有的 Authenticode 签名失效 | 发布需要 Developer ID 签名与公证（含解包出的钥匙串辅助程序）及 Authenticode，签名后重跑端到端检查（[10 第 4.3 节](10-engineering.md#43-发布流水线)） |
-| 控制台与其他入口 | Next.js 控制台、`tool-packages-main`、`benchmark-main`、rollout CLI 不在本次 SEA 中 | 控制台按 [ADR-P10](adr-drafts.md#adr-p10-控制台改为内嵌静态单页) 改为 Vite 静态页后作为资源内嵌 |
+| 控制台与其他入口 | Next.js 控制台、`tool-packages-main`、`benchmark-main`、rollout CLI 不在本次 SEA 中 | 已处理：控制台改为 Vite 静态页后作为资源内嵌（ADR 0024）；`hh` 的全部命令进入 SEA（第 10 节） |
 
 ## 7. 对照 ADR-P01 的建议
 
@@ -222,7 +222,10 @@ pnpm install --frozen-lockfile
 pnpm build
 node tools/sea/build.mjs
 node tools/sea/measure.mjs --runs 20 --baseline --phases-out dist/sea/phases.json
+node tools/sea/commands.mjs --runs 5          # hh 命令经可执行文件运行（第 10 节）
 ```
+
+`pnpm test:sea` 依次运行 `pnpm build`、`pnpm build:console`、`build.mjs` 与一次 `commands.mjs`；它不属于 `pnpm check`。
 
 `build.mjs` 产出 `dist/sea/harnesshub`（Windows 为 `harnesshub.exe`）与 `dist/sea/build.json`；`measure.mjs` 写出 `dist/sea/result.json`，全部检查与启动都成功时退出码为 0、`ok` 为 `true`，任何一项失败时退出码为 1。CI 上在 Actions 中手动运行“SEA spike”，每个目标上传名为 `sea-<目标>` 的 JSON 结果与名为 `sea-phases-<目标>` 的分阶段报告（见 5.6 节）。
 
@@ -235,3 +238,83 @@ node tools/sea/measure.mjs --runs 20 --baseline --phases-out dist/sea/phases.jso
 - 签名与公证后的产物，以及 macOS 隔离属性下的首次运行。
 - 真实引擎；工具包的 CLI 工具调用（只验证了 `tools/list`）；Pi 读取解包出的扩展；从解包位置调用钥匙串辅助程序完成密钥操作。
 - Windows 上除端到端检查覆盖之外的行为：端到端检查已覆盖从解包位置运行的 Job 辅助程序（demo Run 与崩溃恢复的清理为 `confirmed`），ACL 辅助程序与 DPAPI 辅助程序未单独验证。
+
+## 10. `hh` 的全部命令（2026-10-04）
+
+原型只分派 `serve` 与 `version`，其余 `hh` 命令要另装 Node 运行。2026-10-04 起同一个可执行文件运行 `hh` 的全部命令。
+
+**做法**：
+
+- [entry.mjs](../../../tools/sea/entry.mjs) 先按角色路径与脚本扩展名分派（与原来相同）。其他命令行都交给 `apps/hh` 的 `main`，与 `hh` 共用同一张命令表（29 个命令），包括 `serve`、`version`、`config`、`init`、`agents`、`wire`、`tui`、`backup`、`library`、`console`、`rollout`、`tools`、`benchmark` 与模型平面命令。
+  - `hh` 为此新增 `version` 与 `--version`，等同于原来的 `harnesshub version`。
+  - 每个命令启动时都先解包并校验根目录，再设定模块位置。`process.argv[1]` 保持为可执行文件本身，因此打包进来的模块都不会把自己当作主模块。
+  - 设置 `HARNESSHUB_SEA_TRACE` 时，`serve` 先求值 Gateway 模块再交给 `main`，分阶段测量的含义与第 5.6 节相同。
+- 角色新增四个固定引擎启动器 `launch-{dsh,openclaw,opencode,pi}-acp.mjs`。此前它们既没有打包也没有解包，引擎命令按路径运行它们时找不到文件。
+  - 资源目录（`packages/agents/assets`、`packages/daemon/assets`）中的每个脚本，都在 `build.mjs` 的 `SCRIPT_ASSETS` 中归为三类之一：角色、原样解包的文件（Pi 扩展、Copilot 宿主），或只被角色导入的模块（`spawn-engine.mjs`）。
+  - 未归类的新脚本或缺失的脚本都会使构建失败。
+- `hh benchmark` 从 `packages/daemon/package.json` 读取版本，该文件因此也作为资源解包。
+- `cli.ts`、`benchmark-main.ts`、`tool-packages-main.ts` 与两个启动器的顶层 await 改为 Promise 链，行为不变。
+- `hh tools --help` 改为打印用法并以 0 退出（此前以 1 报参数错误）。
+- jsonc-parser 的主入口是 UMD：它的工厂函数经自己的 `require` 参数加载 `./impl/format`，esbuild 无法跟进，打包后在运行时失败。构建改为把它解析到它的 ESM 构建（`module` 字段）。
+
+**发现**：全局接线引入 jsonc-parser 之后，`main`（`a714682`）上的可执行文件构建成功，但 `serve` 与 `version` 一启动就失败（`ERR_UNKNOWN_BUILTIN_MODULE: No such built-in module: ./impl/format`）。2026-10-04 在 `main` 的检出上重新构建并运行，确认了这一点。此前的构建与测量都早于这次依赖变化，没有发现它。
+
+**检查**：
+
+- 构建的最后一步用私有的 HOME、临时目录与解包根目录，对 `apps/hh` 导出的 `COMMAND_NAMES` 逐个运行 `<可执行文件> <命令> --help`，任何一个退出码不为 0 都会使构建失败，错误信息列出失败的命令。`build.json` 的 `commandHelpMs` 记录每个命令的耗时。
+  - 这一步在上述 jsonc-parser 问题上实际失败过，列出了 `serve`、`version` 与 `benchmark`。
+- `tools/check-sea-build.test.mjs` 为这一检查、角色列表与 entry.mjs 的一致性检查，以及 `SCRIPT_ASSETS` 的分类，各提供一个拒绝样例。
+
+**命令序列**：[commands.mjs](../../../tools/sea/commands.mjs)（`pnpm test:sea` 中运行一次）把 HOME、临时目录、解包根目录、数据目录与接线目录都放在一个临时目录中。它使用文件秘密后端，上游只有回环地址上的严格假 provider（合成 Key），经名为 `hh` 的符号链接运行可执行文件，PATH 上放一个 `opencode` 占位程序。
+
+本机 macOS arm64（Apple M5 Pro，Node 24.20.0，`main` 的 `1b59225` 加本分支）。测量时同一台机器上还有其他构建在运行，负载均值约 4–6。下表是 5 次的中位数（毫秒），对照列以 `node apps/hh/bin/hh.mjs` 运行同一序列：
+
+| 步骤 | 退出码或状态 | SEA | node |
+|---|---|---|---|
+| `hh version --json`（每次新的解包根目录，含解包） | 0 | 127 | 203 |
+| 四个固定引擎启动器与 `launch-engine` 作为角色运行（无参数，各自打印用法或失败，而不是占位文件的错误） | 5 个 | – | – |
+| `hh config show` | 0 | 40 | 49 |
+| `hh config get server.port` | 0 | 40 | 48 |
+| `hh serve` 到 `ready` | 运行中 | 285 | 359 |
+| `hh status` | 0 | 90 | 93 |
+| `hh provider presets` | 0 | 76 | 78 |
+| `hh provider add`（Key 经 stdin） | 0 | 101 | 100 |
+| `hh key create`，再以该 Key 调用网关 | 0，200 | 73 | 76 |
+| `hh agents` | 0 | 78 | 79 |
+| `hh wire opencode --yes`（临时 `--wiring-home`），再以写入 OpenCode 配置的 Key 调用网关 | 0，200 | 105 | 108 |
+| `hh usage` | 0 | 71 | 81 |
+| `hh unwire opencode --yes`，同一 Key 再次调用 | 0，401 | 97 | 100 |
+| `hh tui`（没有终端） | 2 | 57 | 59 |
+| `hh console`（打印 `/#login=` 链接） | 0 | 77 | 84 |
+| 可执行文件提供的控制台 `GET /` | 200 | 3 | 2 |
+| 假 provider 收到 2 次鉴权通过的调用，无字段违规 | 2 次 | – | – |
+| SIGTERM 停止 `hh serve` | 0 | – | – |
+
+构建时每个命令的 `--help` 约 36–64 ms，`serve`、`version` 与 `benchmark` 加载 Gateway 模块，约 118–128 ms。macOS 上新签名的可执行文件第一次执行时多出约 1.2 s（构建中排在第一个的 `serve --help` 为 1341 ms，此后同一命令约 120 ms），推测是系统对新签名的评估，安装后的第一次运行会遇到同样的开销；`measure.mjs` 的预热启动吸收了它，没有单独研究。
+
+**体积**：二进制 130,929,200 字节（124.9 MiB），gzip -9 后 41,710,786 字节；bundle 5,752,830 字节，blob 9,935,332 字节。在 `a714682` 上比较：`main` 的构建为 130,453,136 字节、bundle 5,332,793 字节，加入 `hh` 的命令后为 130,715,792 字节，增加 262,656 字节（0.2%）。仍在 ADR-P01 的 150 MB 以内。
+
+**冷启动**（`measure.mjs --runs 20 --baseline`，HOME 指向临时目录，负载同上，p50 / p95 / 最大，毫秒）：
+
+| 组 | p50 | p95 | 最大 |
+|---|---|---|---|
+| SEA，首次运行 | 294.9 | 309.6 | 311.0 |
+| SEA，已解包 | 299.9 | 319.5 | 342.7 |
+| `node packages/daemon/dist/src/main.js` | 352.8 | 378.4 | 382.4 |
+
+- 已解包的分阶段 p50：进程到入口 20.0 ms，解包校验 4.5 ms（首次运行写入约 70 个文件 13.7 ms），Gateway 模块求值 88.5 ms，求值到 `ready` 179.9 ms。
+- 11 项端到端检查全部通过：构建身份、密钥辅助程序、`ready`、控制台页面、两个角色、demo Run、两次网关调用、崩溃恢复、SIGTERM。
+- 首次运行与已解包的 p95 都低于 ADR-P01 的 1.5 s。
+- 与第 5 节相比，冷启动约为 2026-10-02 的两倍。同机 node 基线也从 p95 196 ms 增至 378 ms，SEA 仍比 node 快约 15%，增量主要来自守护进程自那以后增加的启动工作。`main` 上的可执行文件不能启动 `serve`，无法直接比较本次改动前后。
+- 负载更高时测得的数字（`a714682` 上的同一改动）：
+  - 负载约 15–23：首次运行 407.5 / 602.2 ms，已解包 340.2 / 372.5 ms，node 454.2 / 519.3 ms（p50 / p95）。
+  - 负载约 10：首次运行 313.2 / 672.1 ms，已解包 290.9 / 299.5 ms，node 366.5 / 416.6 ms。
+  - 两次的首次运行 p95 都来自其中几次慢启动。
+
+**未验证**：
+
+- 其他平台，以及 `sea-spike.yml` 工作流：按所有者的决定，本次没有运行 CI。
+- 发现与配置的引擎经可执行文件运行固定引擎启动器的完整 Run：只验证了它们作为角色运行，没有接真实引擎。
+- 安装位置的 `hh` 链接与 `node` 垫片（第 6 节）。
+- `hh init` 等交互命令在真实终端中经可执行文件运行：只验证了 `--help`。
+  - `hh tui` 在 macOS 的伪终端中经可执行文件运行过一次，连接同一可执行文件启动的守护进程：运行时为原始模式，SIGWINCH 后重绘，`q` 后退出码 0，退出后 `stty -a` 除窗口尺寸外与运行前相同。这次运行未写成自动测试。
