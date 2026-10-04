@@ -251,7 +251,8 @@ async function modelsCommand(args: string[]): Promise<void> {
   );
 }
 
-function profileText(plan: ProfilePlan): string {
+/** A profile plan as `hh profile apply` prints it: each changed agent's file diffs. */
+export function profileText(plan: ProfilePlan): string {
   return plan.agents
     .map((agent) =>
       agent.plan

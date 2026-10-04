@@ -21,6 +21,7 @@ Commands:
   use         The same as wire: hh use <agent> <model>
   unwire      Restore an agent's configuration and revoke its key
   profile     Save and apply every wired agent's model choices (save, list, apply, rm)
+  tui         The agents in the terminal: pick models, tiers and effort, apply profiles
   backup      Seal providers, keys, groups and agent wirings into a file
   restore     Restore a backup (hh restore --help)
   sync        Sync with other machines through WebDAV or S3 (hh sync --help)
@@ -61,6 +62,10 @@ const COMMANDS: Readonly<Record<string, Command>> = {
   },
   library: async (argv) => {
     const { main } = await import("@harnesshub/cli/library");
+    return main(argv);
+  },
+  tui: async (argv) => {
+    const { main } = await import("@harnesshub/cli/tui");
     return main(argv);
   },
   // The rollout command line parses its subcommand itself.
@@ -116,7 +121,7 @@ const COMMANDS: Readonly<Record<string, Command>> = {
  * entries; `console`, `rollout` and the model-plane commands (`status`, `provider`,
  * `credential`, `key`, `group`, `model`, `catalog`, `usage`, `gateway`,
  * `subscription`), the agent commands (`agents`, `wire`, `use`, `unwire`,
- * `profile`, `library`) and `init` to the CLI's, which
+ * `profile`, `library`, `tui`) and `init` to the CLI's, which
  * reach the running daemon over HTTP. `--help` prints the commands on stdout;
  * a missing or unknown command prints them on stderr and fails with exit code 2.
  * A command's own failures keep that command's output and exit code; a
