@@ -110,8 +110,8 @@ function summary(agent: Agent, done: string): string {
   const wiring = agent.wiring!;
   return [
     wiring.keyId === undefined
-      ? `${done} ${agent.name} through the gateway with its own sign-in and models; no key.`
-      : `${done} ${agent.name} to ${wiring.model} through the gateway (${agent.protocol}); key ${wiring.keyId}, ${wiring.models.length} model(s) listed${wiring.hidden.length ? `, ${wiring.hidden.length} hidden` : ""}.`,
+      ? `${done} ${agent.name} through the gateway with its own sign-in and models; no key (hh wire ${agent.id} --rotate gives it one).`
+      : `${done} ${agent.name} ${wiring.model === undefined ? "with its own model" : `to ${wiring.model}`} through the gateway (${agent.protocol}); key ${wiring.keyId}, ${wiring.models.length} model(s) listed${wiring.hidden.length ? `, ${wiring.hidden.length} hidden` : ""}.`,
     ...Object.entries(wiring.tiers ?? {}).map(
       ([tier, model]) => `  ${tier}: ${model}`,
     ),

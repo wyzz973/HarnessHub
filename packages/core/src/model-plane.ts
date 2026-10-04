@@ -827,8 +827,8 @@ export interface ConversationSummary {
 export interface WiringRecord extends WiringChoice {
   adapterId: string;
   /**
-   * The `agent:` key written into the agent's files. Absent when the agent
-   * authenticates by itself (Codex with a ChatGPT login): no key was issued.
+   * The `agent:` key written into the agent's files. Absent only in a Codex
+   * wiring in ChatGPT mode from before that mode took a key (ADR 0030).
    */
   keyId?: GatewayKeyId;
   files: Array<{

@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import type { LogFields, LogSink } from "@harnesshub/core/logging";
+import { issueGatewayKey } from "@harnesshub/core/model-plane";
 import { isModelCallEntry } from "@harnesshub/core/model-plane-records";
 import { CODEX_SUMMARY_PREFIX } from "../src/compacting.js";
 import { encodeReasoning } from "../src/reasoning.js";
@@ -489,41 +490,64 @@ void test("ChatGPT-mode Codex with its key in the path: HarnessHub's models are 
   }
 });
 
-void test("a key that is no longer valid in the path still lets Codex's own models through, and lists only ChatGPT's", async (t) => {
-  const models = { models: [{ slug: "gpt-5.1-codex" }] };
-  const chatgpt = await upstream(t, json(200, models, { etag: '"e1"' }));
+void test("a key in the path that is wrong or revoked is refused here for every request, without the path in the answer", async (t) => {
+  const chatgpt = await upstream(t, json(200, { models: [] }));
   const store = new MemoryStore();
-  const key = await addKey(store, ["*"], {
+  const revoked = await addKey(store, ["*"], {
     scope: { kind: "agent", adapterId: "codex" },
     revokedAt: "2026-10-01T00:00:00.000Z",
   });
+  // Well-formed, but no such key: a secret that does not match its hash.
+  const wrong = revoked.text.replace(
+    /_[A-Za-z0-9_-]{43}$/,
+    `_${"A".repeat(43)}`,
+  );
+  const unknown = issueGatewayKey({ kind: "agent", adapterId: "codex" }).text;
+  const log = capture();
   const gw = await mount(
     t,
     store,
     {},
     {
+      log,
       codexBackend: `${chatgpt.base}/chatgpt/backend-api/codex`,
       codexCatalog: () => [{ slug: "never" }],
     },
   );
-  const listed = await send(gw.port, `/backend-api/codex/${key.text}/models`, {
-    headers: HEADERS,
-  });
-  assert.equal(listed.status, 200);
-  assert.deepEqual(listed.json(), models);
-  assert.equal(listed.headers.etag, '"e1"');
-  assert.equal(chatgpt.seen[0]!.url, "/chatgpt/backend-api/codex/models");
-  const refused = await send(
-    gw.port,
-    `/backend-api/codex/${key.text}/responses`,
-    {
-      headers: HEADERS,
-      body: { ...BODY, model: "group/default" },
-    },
+  for (const [text, code] of [
+    [revoked.text, "key_revoked"],
+    [wrong, "invalid_key"],
+    [unknown, "invalid_key"],
+  ] as const)
+    for (const [path, body] of [
+      ["models?client_version=0.150.0", undefined],
+      ["responses", BODY],
+      ["responses", { ...BODY, model: "group/default" }],
+      ["responses/compact", BODY],
+    ] as const) {
+      const answer = await send(gw.port, `/backend-api/codex/${text}/${path}`, {
+        headers: HEADERS,
+        ...(body ? { body } : {}),
+      });
+      assert.equal(answer.status, 401, `${code} ${path}`);
+      assert.equal(at(answer.json(), "error", "code"), code);
+      assert.ok(!answer.text.includes(text), "the key is not echoed");
+      assert.ok(!answer.text.includes("backend-api"), "nor is the path");
+    }
+  assert.equal(chatgpt.seen.length, 0, "nothing went to ChatGPT");
+  assert.equal(store.entries.length, 12);
+  assert.ok(
+    store.entries.every(
+      (entry) =>
+        entry.rejected === true &&
+        entry.status === 401 &&
+        entry.inbound.path.startsWith("/backend-api/codex/") &&
+        !entry.inbound.path.includes("hhk_"),
+    ),
   );
-  assert.equal(refused.status, 401);
-  assert.equal(at(refused.json(), "error", "code"), "key_revoked");
-  assert.equal(chatgpt.seen.length, 1);
+  for (const text of [JSON.stringify(store.entries), log.text()])
+    for (const secret of [revoked.text, wrong, unknown, TOKEN])
+      assert.ok(!text.includes(secret));
 });
 
 void test("only loopback peers without a browser origin may use the passthrough", async (t) => {
@@ -554,14 +578,33 @@ void test("only loopback peers without a browser origin may use the passthrough"
   });
   assert.equal(shared.status, 403);
   assert.equal(at(shared.json(), "error", "code"), "source_not_allowed");
+  // Nor with a key in the path, valid or not: it is not even looked at.
+  const key = await addKey(store, ["*"], {
+    scope: { kind: "agent", adapterId: "codex" },
+  });
+  const keyed = await send(
+    address.port,
+    `/backend-api/codex/${key.text}/responses`,
+    { headers: HEADERS, body: { ...BODY, model: "group/default" } },
+  );
+  assert.equal(keyed.status, 403);
+  assert.equal(at(keyed.json(), "error", "code"), "source_not_allowed");
+  assert.ok(!keyed.text.includes(key.text));
   assert.equal(chatgpt.seen.length, 0);
   assert.deepEqual(
-    store.entries.map((entry) => [entry.rejected, entry.rejectReason]),
+    store.entries.map((entry) => [
+      entry.rejected,
+      entry.rejectReason,
+      entry.keyId,
+      entry.inbound.path,
+    ]),
     [
-      [true, "origin_forbidden"],
-      [true, "origin_forbidden"],
-      [true, "source_not_allowed"],
+      [true, "origin_forbidden", undefined, "/backend-api/codex/responses"],
+      [true, "origin_forbidden", undefined, "/backend-api/codex/responses"],
+      [true, "source_not_allowed", undefined, "/backend-api/codex/responses"],
+      [true, "source_not_allowed", undefined, "/backend-api/codex/responses"],
     ],
   );
   assert.ok(!JSON.stringify(store.entries).includes(TOKEN));
+  assert.ok(!JSON.stringify(store.entries).includes(key.text));
 });

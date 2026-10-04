@@ -764,7 +764,20 @@ function preview(
       const before =
         plan.before === undefined ? {} : plan.editor.parse(plan.before);
       const after = plan.editor.parse(plan.after);
-      // Previous values of entries that carry the key are secrets too.
+      // Previous values of entries that carry the key are secrets too,
+      // unless the previous wiring wrote them (keys in them are masked
+      // anyway): a base URL that gains a key shows what it was.
+      const wrote = (leaf: KeyPath, value: string) =>
+        plan.previous?.manifest.expected.some((expected) =>
+          leaves(expected.value, expected.path).some(
+            ([at, template]) =>
+              pathKey(at) === pathKey(leaf) &&
+              typeof template === "string" &&
+              templatePattern(template, plan.previous!.manifest.baseUrl).test(
+                value,
+              ),
+          ),
+        ) === true;
       const secrets = plan.settings
         .flatMap((setting) =>
           "remove" in setting ? [] : leaves(setting.value, setting.path),
@@ -773,8 +786,12 @@ function preview(
           ([, value]) =>
             typeof value === "string" && value.includes(resolved.keyText),
         )
-        .map(([leaf]) => getPath(before, leaf))
-        .filter((value): value is string => typeof value === "string");
+        .map(([leaf]) => [leaf, getPath(before, leaf)] as const)
+        .filter(
+          (pair): pair is readonly [KeyPath, string] =>
+            typeof pair[1] === "string" && !wrote(pair[0], pair[1]),
+        )
+        .map(([, value]) => value);
       const mask = masker(secrets);
       const changes: PlannedChange[] = [];
       for (const operation of [

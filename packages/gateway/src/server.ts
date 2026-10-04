@@ -1747,8 +1747,40 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     let local:
       | { key: GatewayKeyRecord; entry: ModelCallEntry; body: Buffer }
       | undefined;
+    /** 401 here: no Gateway Key, or not a valid one; the path is not repeated. */
+    const unauthorized = async (
+      entry: ModelCallEntry,
+      why?: Authentication,
+    ) => {
+      const reason = why?.ok === false ? why.reason : "invalid_key";
+      await reject(
+        response,
+        entry,
+        reason,
+        failure(
+          401,
+          reason,
+          `${why?.ok === false ? `${why.message}. ` : ""}HarnessHub models need the Gateway Key that wiring Codex in ChatGPT mode puts in openai_base_url; wire Codex again`,
+        ),
+        started,
+      );
+    };
     try {
       auth = keyText === undefined ? undefined : await verifyKey(keyText);
+      // A key in the path must be valid, whatever the request is for.
+      if (auth && !auth.ok) {
+        await unauthorized(
+          baseEntry(
+            "responses",
+            path,
+            occurredAt,
+            auth.key,
+            request.headers["user-agent"],
+          ),
+          auth,
+        );
+        return;
+      }
       const key = auth?.ok ? auth.key : undefined;
       listing = key ? await codexListing(key) : undefined;
       const method = request.method ?? "GET";
@@ -1783,17 +1815,8 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
           );
           if (!key) {
             services.memory.give(bytes.length);
-            await reject(
-              response,
-              entry,
-              auth?.ok === false ? auth.reason : "invalid_key",
-              failure(
-                401,
-                auth?.ok === false ? auth.reason : "invalid_key",
-                `${auth?.ok === false ? `${auth.message}. ` : ""}HarnessHub models need the Gateway Key that wiring Codex in ChatGPT mode puts in openai_base_url; wire Codex again`,
-              ),
-              started,
-            );
+            bytes = undefined;
+            await unauthorized(entry);
             return;
           }
           local = { key, entry, body: bytes };
