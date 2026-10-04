@@ -26,6 +26,7 @@ import {
   parseInstructionSet,
   readSkill,
   SKILL_NAME,
+  SKIPPED_SKILL_ENTRIES,
   type SkillFile,
 } from "./validate.js";
 import {
@@ -262,17 +263,47 @@ export class LibraryStore {
   ): Promise<SkillItem> {
     const skill = await readSkill(source);
     await this.storeVersion(skill);
+    return this.indexSkill(versionOf(skill), agents);
+  }
+
+  /**
+   * Imports a skill from uploaded files (paths with `/` below the skill
+   * directory) as `importSkill` imports a directory: the same validation
+   * through `storeSkillFiles`, then the index. Entries a skill directory
+   * does not hold (`.DS_Store`, `.git`) are dropped first.
+   *
+   * @throws LibraryError `LIBRARY_SKILL_INVALID`.
+   */
+  async importSkillFiles(
+    name: string,
+    files: ReadonlyArray<{ path: string; bytes: Buffer; executable: boolean }>,
+    agents: LibraryAgent[],
+  ): Promise<SkillItem> {
+    const kept = files.filter(
+      (file) =>
+        !file.path
+          .split("/")
+          .some((segment) => SKIPPED_SKILL_ENTRIES.has(segment)),
+    );
+    return this.indexSkill(await this.storeSkillFiles(name, kept), agents);
+  }
+
+  /** Points the skill of the version's name at it, for `agents`. */
+  private async indexSkill(
+    version: Omit<SkillItem, "agents" | "createdAt" | "updatedAt">,
+    agents: LibraryAgent[],
+  ): Promise<SkillItem> {
     const index = await this.index();
-    const previous = index.skills.find((item) => item.name === skill.name);
+    const previous = index.skills.find((item) => item.name === version.name);
     const now = this.now();
     const item: SkillItem = {
-      ...versionOf(skill),
+      ...version,
       agents,
       createdAt: previous?.createdAt ?? now,
       updatedAt: now,
     };
     index.skills = [
-      ...index.skills.filter((other) => other.name !== skill.name),
+      ...index.skills.filter((other) => other.name !== version.name),
       item,
     ].sort((a, b) => a.name.localeCompare(b.name));
     await this.saveIndex(index);

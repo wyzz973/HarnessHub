@@ -36,7 +36,7 @@ pnpm exec hh sync off
 | settings | 局域网共享设置（`gateway-sharing.json` 的 lan 与 publicBaseUrl）；启动时的目录设置（`catalog.autoRefresh`、`catalog.url`） |
 | clientKeys | 未吊销的 `client:` Key 的名称、允许范围、配额、LAN 与到期时间，用于提示重新签发 |
 
-不在备份中：任何 Gateway Key 的文本或哈希（文本从不保存，因而不可恢复：恢复时 Agent 以新的 `agent:` Key 重新接线，`client:` Key 列为“需重新签发”）、Session 与 Run、用量账本、引擎目录与 Tool Pack、统一模型文件、Agent 自己的登录。`--no-keys` 另外去掉名称匹配 `auth|key|token|secret|cookie|session|password`（不区分大小写）的 provider 请求头，规则同 Magpie。
+不在备份中：任何 Gateway Key 的文本或哈希（文本从不保存，因而不可恢复：恢复时 Agent 以新的 `agent:` Key 重新接线，`client:` Key 列为“需重新签发”）、Session 与 Run、用量账本、引擎目录与 Tool Pack、统一模型文件、Agent 自己的登录，以及[订阅 provider](subscriptions.md)（ChatGPT、Copilot）与它们的账号：账号是这台电脑上的登录（OAuth 授权或 CLI 登录），在每台电脑上分别登录，与 Magpie 相同（“sign in to them on each machine”）。`--no-keys` 另外去掉名称匹配 `auth|key|token|secret|cookie|session|password`（不区分大小写）的 provider 请求头，规则同 Magpie。
 
 ## 文件格式
 
@@ -56,7 +56,8 @@ pnpm exec hh sync off
 `POST /api/v1/restore` 以 `{backup, passphrase, agents, dryRun}` 调用；`dryRun` 只返回摘要。恢复逐条写入，不清库，也不删除本机的任何记录：
 
 - **provider**：同 id 替换，其余新增。凭证按备份：带值的写入密钥存储（本机同 id 凭证的值相同则沿用原引用），外部引用原样写入；新秘密先写入，provider 写入失败时删除；provider 写入后，本机不再被引用的旧秘密删除。备份不带 Key 时保留本机凭证（同 id 的以本机为准，本机另有的也保留），并保留本机名称像密钥的请求头。恢复后仍没有任何凭证、而备份中原本有凭证的 provider 列入 `needKey`。模型来源与覆盖随 provider 一起写入，本机有而备份中没有的覆盖被删除，使值、来源与覆盖保持一致。
-- **路由组**：同 id 替换，其余新增；成员指向的 provider 既不在备份中也不在本机时跳过并列入 `skipped`。
+- **订阅 provider**：从不写入、替换或删除。较早版本的备份中带有的订阅 provider 不恢复，列入 `signInAgain`（在这台电脑上重新登录：`hh subscription login chatgpt|copilot`）；备份中与本机订阅 provider 同 id 的 provider 不恢复，本机的登录保留，列入 `signedInHere`。演练（`dryRun`）的摘要与实际恢复的结果一致。
+- **路由组**：同 id 替换，其余新增；成员指向的 provider 既不在备份中也不在本机时跳过并列入 `skipped`（只在备份中的订阅 provider 不算在内）。
 - **局域网共享**：与本机不同时经 `GatewayShare.update` 应用；地址不属于本机等原因失败时设置不变，错误写在摘要中。
 - **目录设置**：来自配置文件，恢复只报告是否不同。
 - **profile**：同名替换，其余新增；应用 profile 仍由用户执行（`hh profile apply`）。
@@ -78,7 +79,7 @@ pnpm exec hh sync off
 |---|---|---|
 | 用本机的 | 带入服务器的 | 保留最后修改的一边：本机该部分记录的最新 `updatedAt`（`agents` 为 `wiredAt`，`profiles` 为 profile 的 `updatedAt`，`library` 为条目的 `updatedAt`）与服务器文件的生成时间比较；删除没有时间，因此只有删除时服务器一边胜出 |
 
-两边都改时，被替换的一方完整保存到 `<dataDir>/sync/conflicts/<时间>-this-computer.harnesshub-backup`（本机的，加密）或 `…-server.harnesshub-backup`（服务器的），状态的 `notice` 写明哪部分被谁替换。第一次加入时服务器的部分替换本机的；本机该部分为空时不算替换。带入 `providers` 是镜像：服务器上已没有的 provider 与路由组在本机删除，但仍被未吊销的 Gateway Key 允许（或被保留的路由组引用）的保留并列入 `notice.kept`。带入 `agents` 只对本机已安装的 Agent 接线，不撤销本机其他接线。带入 `profiles` 同样是镜像：服务器上已没有的 profile 在本机删除；来自加入 profile 之前的 HarnessHub 的文件没有这一部分，本机的 profile 随之上传。带入 `library` 也是镜像，条目按恢复的规则检查（被拒的条目本机保持原样并记入日志 `sync.library_refused`）；比较时不计未携带的大文件名，因此只缺大文件的 Skill 不会来回同步，本机有完整版本的保留本机版本。开启了 Agent 接线同步（`agents=yes`）时，带入后再把 Library 同步到本机已安装的 Agent（不写秘密值；失败时条目已带入、Agent 文件不变，记入日志 `sync.library_agents_failed`）；来自加入 Library 之前的 HarnessHub 的文件没有这一部分，本机的随之上传。发送方未带 Key 时，合并保留服务器已有的凭证值，本机写入时保留本机凭证。
+两边都改时，被替换的一方完整保存到 `<dataDir>/sync/conflicts/<时间>-this-computer.harnesshub-backup`（本机的，加密）或 `…-server.harnesshub-backup`（服务器的），状态的 `notice` 写明哪部分被谁替换。第一次加入时服务器的部分替换本机的；本机该部分为空时不算替换。带入 `providers` 是镜像：服务器上已没有的 provider 与路由组在本机删除，但仍被未吊销的 Gateway Key 允许（或被保留的路由组引用）的保留并列入 `notice.kept`。订阅 provider 不上传，也不因镜像被删除或替换；本机的登录改变不算作 `providers` 部分的改变。带入 `agents` 只对本机已安装的 Agent 接线，不撤销本机其他接线。带入 `profiles` 同样是镜像：服务器上已没有的 profile 在本机删除；来自加入 profile 之前的 HarnessHub 的文件没有这一部分，本机的 profile 随之上传。带入 `library` 也是镜像，条目按恢复的规则检查（被拒的条目本机保持原样并记入日志 `sync.library_refused`）；比较时不计未携带的大文件名，因此只缺大文件的 Skill 不会来回同步，本机有完整版本的保留本机版本。开启了 Agent 接线同步（`agents=yes`）时，带入后再把 Library 同步到本机已安装的 Agent（不写秘密值；失败时条目已带入、Agent 文件不变，记入日志 `sync.library_agents_failed`）；来自加入 Library 之前的 HarnessHub 的文件没有这一部分，本机的随之上传。发送方未带 Key 时，合并保留服务器已有的凭证值，本机写入时保留本机凭证。
 
 **只覆盖读到的版本**：写回时带条件——WebDAV 为 `If-Match: <ETag>`，首次写入为 `If-None-Match: *`；S3 相同。被拒（412，或 S3 的 409 `ConditionalRequestConflict`）说明另一台机器刚写过：重新读取对方的版本、再合并一次并重试一次，仍被抢先则报 `SYNC_CONFLICT`，下次同步再试。不支持条件写的 S3 服务（以 501 或提到条件头的 400 回应）改为写前用 HEAD 比较 ETag；若响应带 `x-amz-version-id`（桶开启了版本），写后再列出对象版本，确认紧挨在本次写入之前的版本就是读到的那个，否则读入中间那个版本并合并重试。既不支持条件写也未开启版本的服务器，在 HEAD 与 PUT 之间的写入无法发现。WebDAV 写入后用 HEAD 比较长度，被中转截断的写入以截断后的版本为条件最多重写到三次。
 

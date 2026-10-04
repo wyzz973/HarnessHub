@@ -5,8 +5,11 @@
  * overrides, the agents' wirings as intents (model, tiers, effort, options
  * and the models they list and hide), wiring profiles, the Library
  * (`library-backup.ts`), settings, and the client keys that would need
- * re-issuing. Gateway Key text is never stored
- * anywhere, so no key is in a backup: restoring re-wires agents with new
+ * re-issuing. Subscription providers (ChatGPT, Copilot) are left out: their
+ * accounts are sign-ins of this machine (an OAuth grant, a CLI login), to
+ * be signed in again on each machine, so a backup never carries them and a
+ * restore or sync never writes, replaces or removes them. Gateway Key text
+ * is never stored anywhere, so no key is in a backup: restoring re-wires agents with new
  * `agent:` keys and lists the client keys to issue again. Restore is
  * additive and goes record by record: a provider or profile with the same id
  * is replaced, the others are added, nothing is deleted. Sync's mirrors
@@ -216,6 +219,16 @@ export interface RestoreSummary {
     replaced: string[];
     /** Restored without any credential: neither the backup nor this machine has a key. */
     needKey: string[];
+    /**
+     * Subscription providers of a backup from before they were left out:
+     * not restored; their accounts are signed in again on this machine.
+     */
+    signInAgain: string[];
+    /**
+     * Providers of the backup whose ID is a subscription provider here: this
+     * machine's sign-ins are kept and the backup's provider is not restored.
+     */
+    signedInHere: string[];
   };
   groups: {
     added: string[];
@@ -323,6 +336,8 @@ export class BackupService {
     const { store } = this.options;
     const providers: BackupProvider[] = [];
     for (const provider of await store.listProviders()) {
+      // Accounts are sign-ins of this machine; they are not carried.
+      if (provider.subscription) continue;
       const { credentials, headers, ...rest } = provider;
       const kept =
         headers && !options.keys
@@ -400,15 +415,24 @@ export class BackupService {
    * Writes the bundle's providers and groups. Without `mirror` this is a
    * restore: same ids replaced, others added. With `mirror` (sync), providers
    * and groups that the bundle lacks are deleted too, except those Gateway
-   * Keys still allow, which are kept and named in the result.
+   * Keys still allow, which are kept and named in the result. Subscription
+   * providers are left alone either way: the bundle's (from a backup made
+   * before they were left out) are not written, and this machine's are
+   * neither replaced nor deleted.
    */
   async bringProviders(
     bundle: BackupBundle,
     mirror: boolean,
   ): Promise<MirrorResult> {
     const { store } = this.options;
+    const signedIn = new Set(
+      (await store.listProviders())
+        .filter((item) => item.subscription)
+        .map((item) => item.id as string),
+    );
     for (const provider of bundle.providers)
-      await this.writeProvider(provider, bundle.keys);
+      if (!provider.config.subscription && !signedIn.has(provider.config.id))
+        await this.writeProvider(provider, bundle.keys);
     const providers = new Set<string>(
       (await store.listProviders()).map((item) => item.id),
     );
@@ -428,6 +452,8 @@ export class BackupService {
       }
     const groups = await store.listRouteGroups();
     for (const provider of await store.listProviders()) {
+      // This machine's sign-ins are never in the bundle and stay.
+      if (provider.subscription) continue;
       if (bundle.providers.some((item) => item.config.id === provider.id))
         continue;
       const used =
@@ -531,6 +557,8 @@ export class BackupService {
         times.push(profile.updatedAt);
     else {
       for (const provider of await store.listProviders()) {
+        // Sign-ins change only this machine's subscription providers.
+        if (provider.subscription) continue;
         times.push(provider.updatedAt);
         for (const override of await store.listModelOverrides(provider.id))
           times.push(override.updatedAt);
@@ -562,9 +590,20 @@ export class BackupService {
       added: [],
       replaced: [],
       needKey: [],
+      signInAgain: [],
+      signedInHere: [],
     };
     for (const provider of bundle.providers) {
       const local = here.get(provider.config.id);
+      // As bringProviders skips them.
+      if (provider.config.subscription) {
+        providers.signInAgain.push(provider.config.id);
+        continue;
+      }
+      if (local?.subscription) {
+        providers.signedInHere.push(provider.config.id);
+        continue;
+      }
       (local ? providers.replaced : providers.added).push(provider.config.id);
       if (
         provider.credentials.length > 0 &&
@@ -574,7 +613,9 @@ export class BackupService {
     }
     const ids = new Set([
       ...here.keys(),
-      ...bundle.providers.map((item) => item.config.id),
+      ...bundle.providers
+        .filter((item) => !item.config.subscription)
+        .map((item) => item.config.id),
     ]);
     const groupsHere = new Set(
       (await store.listRouteGroups()).map((item) => item.id as string),
@@ -607,7 +648,11 @@ export class BackupService {
       providers,
       groups,
       overrides: bundle.providers.reduce(
-        (total, item) => total + item.overrides.length,
+        (total, item) =>
+          total +
+          (item.config.subscription || here.get(item.config.id)?.subscription
+            ? 0
+            : item.overrides.length),
         0,
       ),
       profiles,

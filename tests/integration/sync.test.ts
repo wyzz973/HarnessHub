@@ -21,6 +21,7 @@ import {
   startFakeWebDav,
   type FakeStorage,
 } from "../support/fake-storage.js";
+import { seedSubscription } from "../support/subscription-provider.js";
 import { temporaryDirectory } from "../support/temporary.js";
 
 // Synthetic values only.
@@ -444,3 +445,52 @@ void test(
       );
   },
 );
+
+void test("sync carries no subscription provider and never removes one: sign-ins stay on their machine", async (t) => {
+  const storage = await startFakeWebDav({
+    user: DAV_USER,
+    password: DAV_PASSWORD,
+  });
+  t.after(() => storage.close());
+  const settings: SyncSettings = {
+    kind: "webdav",
+    url: `${storage.url}/dav`,
+    user: DAV_USER,
+    secret: DAV_PASSWORD,
+    passphrase: PASSPHRASE,
+  };
+  const a = await machine(t, "subs-a");
+  const b = await machine(t, "subs-b");
+  await provider(a, "pa", KEY_A);
+  await seedSubscription(a.dataDir, "chatgpt", "siwc");
+  await a.client.sync.configure(settings);
+  await a.client.sync.now();
+  const first = await server(storage, DAV_FILE);
+  assert.deepEqual(
+    first.bundle.providers.map((item) => item.config.id),
+    ["pa"],
+  );
+
+  // B joins with its own Copilot sign-in: the server's providers are
+  // mirrored in, and B's sign-in stays.
+  await seedSubscription(b.dataDir, "copilot", "copilot");
+  await b.client.sync.configure(settings);
+  assert.equal((await b.client.sync.now()).lastError, undefined);
+  assert.deepEqual(await ids(b), ["copilot", "pa"]);
+  // B's sign-in is not pushed either; a change on B goes up without it.
+  await provider(b, "pb", KEY_B);
+  await b.client.sync.now();
+  assert.deepEqual(
+    (await server(storage, DAV_FILE)).bundle.providers.map(
+      (item) => item.config.id,
+    ),
+    ["pa", "pb"],
+  );
+  // A brings pb in and keeps its own ChatGPT sign-in.
+  await a.client.sync.now();
+  assert.deepEqual(await ids(a), ["chatgpt", "pa", "pb"]);
+  assert.equal(
+    (await a.client.providers.get("chatgpt")).credentials[0]?.account?.backend,
+    "siwc",
+  );
+});

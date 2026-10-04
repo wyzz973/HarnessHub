@@ -36,7 +36,7 @@ export interface SignInInput {
 export interface SignInView {
   id: string;
   backend: SubscriptionBackend;
-  status: "pending" | "succeeded" | "failed";
+  status: "pending" | "succeeded" | "failed" | "cancelled";
   provider: string;
   /** ChatGPT: open in the system browser to continue with the vendor. */
   authorizeUrl?: string;
@@ -102,6 +102,16 @@ export interface SubscriptionControl {
   startSignIn(input: SignInInput): Promise<SignInView>;
   /** A sign-in started in the last ten minutes, or undefined. */
   signIn(id: string): SignInView | undefined;
+  /**
+   * Cancel a pending ChatGPT sign-in: its loopback callback listener closes
+   * and the attempt reads `cancelled`. Nothing is saved; a later callback
+   * finds no listener. Undefined for an unknown attempt.
+   *
+   * @throws HubError `SIGN_IN_NOT_PENDING` (409) when it already ended,
+   *   `SIGN_IN_COMPLETING` (409) when the browser came back and the account
+   *   is being saved.
+   */
+  cancelSignIn(id: string): SignInView | undefined;
   /**
    * End the account's renewable session with the vendor, clear its tokens,
    * and keep its registration; `revoked` is false when the vendor did not
@@ -189,7 +199,10 @@ const signInSchema = {
   properties: {
     id: { type: "string" },
     backend,
-    status: { type: "string", enum: ["pending", "succeeded", "failed"] },
+    status: {
+      type: "string",
+      enum: ["pending", "succeeded", "failed", "cancelled"],
+    },
     provider: { type: "string" },
     authorizeUrl: { type: "string" },
     expiresAt: { type: "string" },
@@ -280,6 +293,30 @@ export function registerSubscriptionRoutes(
     },
     async (request) => {
       const view = subscriptions.signIn(request.params.id);
+      if (!view)
+        throw new ApiProblem(
+          "SIGN_IN_NOT_FOUND",
+          "No sign-in of the last ten minutes has this ID",
+          404,
+        );
+      return view;
+    },
+  );
+  api.delete<{ Params: { id: string } }>(
+    "/subscriptions/sign-in/:id",
+    {
+      schema: {
+        params: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id"],
+          properties: { id: { type: "string", minLength: 1, maxLength: 100 } },
+        },
+        response: responses(signInSchema),
+      },
+    },
+    async (request) => {
+      const view = subscriptions.cancelSignIn(request.params.id);
       if (!view)
         throw new ApiProblem(
           "SIGN_IN_NOT_FOUND",

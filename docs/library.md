@@ -2,7 +2,7 @@
 
 Library 在 HarnessHub 中保存一份指令集、MCP 服务与 Skills，按各 Agent 自己的位置与格式同步到本机已安装的 Agent。写入方式与[全局接线](global-wiring.md)相同：先预览，确认后备份原文件、原子写、回读校验；HarnessHub 只拥有自己写入的部分，移除时只取出这些部分，文件仍是上次写入的样子时写回原始字节。目标设计见 [04 Agent 平面第 8 节](proposals/oss/04-agent-plane.md#8-library)；各 Agent 读取的位置参照 Magpie（`yetone/magpie`，MIT）`internal/library/targets.go` 与 `mcp.go`（`2e340f7`）。
 
-现状：库（`packages/agents/src/library/`）、守护进程的 `/api/v1/library`、SDK 的 `client.library`、`hh library` 与控制台的 Library 页（`/library`，见[控制台](../packages/console/README.md#页面与状态)）已实现，以临时主目录经正式守护进程入口验证。尚未实现：项目级放置（`hh library project add`）、MCP Registry 与 `mcp.json` 导入、版本历史接口、Profile 中的 Library 选择、从浏览器上传 Skill（接口只接受守护进程所在电脑上的目录路径）；没有用真实 Agent 验证它们读到了写入的内容；Windows 未验证。
+现状：库（`packages/agents/src/library/`）、守护进程的 `/api/v1/library`、SDK 的 `client.library`、`hh library` 与控制台的 Library 页（`/library`，见[控制台](../packages/console/README.md#页面与状态)）已实现，以临时主目录经正式守护进程入口验证。尚未实现：项目级放置（`hh library project add`）、MCP Registry 与 `mcp.json` 导入、版本历史接口、Profile 中的 Library 选择；没有用真实 Agent 验证它们读到了写入的内容；Windows 未验证。
 
 ## 使用
 
@@ -30,7 +30,7 @@ pnpm exec hh library rm mcp github         # 从 Library 删除，下一次 sync
 | MCP 服务 | `library.json` 中的 `{name, transport, command, args, url, env, secretEnv, headers, secretHeaders}` | 不支持该传输的 Agent 登记时拒绝（Codex、Pi 没有 SSE） |
 | Skill | 按内容哈希保存的目录 `skills/<sha256>/<name>/`，不再修改 | 每个 Agent 的 Skills 目录，链接或带标记的副本 |
 
-Skill 导入时按 [Agent Skills 规范](https://agentskills.io/specification)校验：`SKILL.md` 以 YAML front matter 开头，`name` 只含小写字母、数字与单个连字符并等于目录名，`description` 必填（最多 1024 个字符）；目录中不能有链接，最多 500 个文件、20 MiB。不合格的目录在导入时就被拒绝（400 `LIBRARY_SKILL_INVALID`），不会同步后被 Agent 静默跳过。同名 Skill 再次导入成为新版本；没有被 Library 或任何 Agent 引用的版本在下一次导入、删除或同步后回收。
+Skill 导入时按 [Agent Skills 规范](https://agentskills.io/specification)校验：`SKILL.md` 以 YAML front matter 开头，`name` 只含小写字母、数字与单个连字符并等于目录名，`description` 必填（最多 1024 个字符）；目录中不能有链接，最多 500 个文件、20 MiB。不合格的目录在导入时就被拒绝（400 `LIBRARY_SKILL_INVALID`），不会同步后被 Agent 静默跳过。Skill 也可以上传（控制台从浏览器选择目录）：`POST /api/v1/library/skills` 以 `name`、`files`（Skill 目录下以 `/` 分隔的路径到 base64 内容，与备份携带 Skill 的格式相同）与 `exec`（可执行文件的路径）代替 `source`，请求体最大 30 MiB；写入前检查文件数、20 MiB 总量、base64、重复路径（不区分大小写）与同时作为文件和目录的路径，再按与目录导入相同的规则校验（路径不能离开目录，不能含 `.`、`..`、反斜杠或冒号）；上传只含普通文件，不能带链接；`.DS_Store` 与 `.git` 被忽略。同名 Skill 再次导入成为新版本；没有被 Library 或任何 Agent 引用的版本在下一次导入、删除或同步后回收。
 
 ## 秘密
 
@@ -93,7 +93,7 @@ Library 的条目随[备份](backup-sync.md)保存与恢复，并作为同步的
 |---|---|
 | `GET`、`POST /api/v1/library/instructions`；`GET`、`PUT`、`DELETE /api/v1/library/instructions/{id}` | 指令集；`POST` 遇到已有 id 返回 409 `LIBRARY_EXISTS` |
 | `GET`、`POST /api/v1/library/mcp`；`GET`、`PUT`、`DELETE /api/v1/library/mcp/{name}` | MCP 服务；秘密规则见上 |
-| `GET`、`POST /api/v1/library/skills`；`GET`、`PATCH`、`DELETE /api/v1/library/skills/{name}` | `POST` 的 `source` 是守护进程所在机器上 Skill 目录的绝对路径；`PATCH` 只改 `agents` |
+| `GET`、`POST /api/v1/library/skills`；`GET`、`PATCH`、`DELETE /api/v1/library/skills/{name}` | `POST` 的 `source` 是守护进程所在机器上 Skill 目录的绝对路径，或以 `name`、`files`、`exec` 上传文件；`PATCH` 只改 `agents` |
 | `POST /api/v1/library/sync/plan` | `agents`、`allowPlaintextSecret`、`placement`（`auto`\|`copy`），返回每个 Agent 的文件 diff、Skill 动作、被拒绝的条目与警告；不写文件 |
 | `POST /api/v1/library/sync/apply` | 同上，另需 `expect`（预览响应即可） |
 

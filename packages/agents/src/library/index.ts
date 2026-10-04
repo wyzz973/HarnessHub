@@ -29,6 +29,7 @@ export {
   parseAgents,
   parseInstructionSet,
   parseMcpServer,
+  SKILL_LIMITS,
   SKILL_NAME,
   type SkillFile,
 } from "./validate.js";

@@ -1486,7 +1486,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     group: "subscriptions",
     request: "路径参数 id。",
     response:
-      "200：与开始时相同的字段；status 为 pending、succeeded（另有 credential、email 或 login、firstSignIn）或 failed（另有 error）。",
+      "200：与开始时相同的字段；status 为 pending、succeeded（另有 credential、email 或 login、firstSignIn）、failed（另有 error）或 cancelled。",
     implementation: "SubscriptionService.signIn；结束的尝试保留 10 分钟。",
     effects: "只读。",
     errors:
@@ -1494,6 +1494,22 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     source: "packages/daemon/src/http/subscription-routes.ts",
     tests: ["tests/integration/subscriptions.test.ts"],
     operationId: "hh_api_v1_get_subscription_sign_in",
+  },
+  {
+    method: "DELETE",
+    path: "/api/v1/subscriptions/sign-in/{id}",
+    title: "取消订阅登录",
+    group: "subscriptions",
+    request: "路径参数 id：尚未完成的 ChatGPT 登录尝试。",
+    response: "200：该尝试，status 为 cancelled。",
+    implementation:
+      "SubscriptionService.cancelSignIn：结束尝试并关闭其 127.0.0.1 回调监听与连接；浏览器带着有效 state 回来之后，尝试由该回调完成，不再接受取消。",
+    effects: "不保存任何账号或令牌；结束的尝试保留 10 分钟可查询。",
+    errors:
+      "404 SIGN_IN_NOT_FOUND；409 SIGN_IN_NOT_PENDING（已结束，包括 Copilot 登录）、SIGN_IN_COMPLETING（浏览器已回来，账号正在保存）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/subscription-routes.ts",
+    tests: ["tests/integration/subscriptions.test.ts"],
+    operationId: "hh_api_v1_cancel_subscription_sign_in",
   },
   {
     method: "GET",
@@ -2472,10 +2488,10 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     title: "导入 Skill",
     group: "library",
     request:
-      "source（守护进程所在机器上 Skill 目录的绝对路径）必填，agents 可选。",
+      "source（守护进程所在机器上 Skill 目录的绝对路径），或上传：name（Skill 名，即目录名）、files（目录下以 / 分隔的路径到 base64 内容，最多 500 个）与可选的 exec（可执行文件的路径）；agents 可选。请求体最大 30 MiB。",
     response: "201：Skill。",
     implementation:
-      "LibraryService.importSkill → LibraryStore.importSkill：按 Agent Skills 规范校验（SKILL.md 的 YAML front matter 有 name 与 description，name 为小写字母、数字、单个连字符且等于目录名；不含链接；最多 500 个文件、20 MiB），按内容哈希保存到 library/skills/<sha256>/<name>/（已有版本不重复保存）；同名 Skill 指向新版本。",
+      "LibraryService.importSkill → LibraryStore.importSkill（目录）或 importSkillFiles（上传：先检查文件数、20 MiB 总量、严格 base64、不区分大小写的重复路径与同时作为文件和目录的路径，忽略 .DS_Store 与 .git，再经 storeSkillFiles 写入临时目录：路径段不能为空、. 、..，不能含反斜杠、冒号或 NUL；上传只含普通文件，不能带链接）。两者按同样的 Agent Skills 规范校验（SKILL.md 的 YAML front matter 有 name 与 description，name 为小写字母、数字、单个连字符且等于目录名；不含链接；最多 500 个文件、20 MiB），按内容哈希保存到 library/skills/<sha256>/<name>/（已有版本不重复保存）；同名 Skill 指向新版本。",
     effects: "写 <dataDir>/library；回收没有被引用的旧版本。",
     errors:
       "400 LIBRARY_SKILL_INVALID、LIBRARY_INVALID；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",

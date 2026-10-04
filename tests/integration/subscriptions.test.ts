@@ -52,6 +52,8 @@ async function fakeOpenAi(t: TestContext) {
       authorization: string | undefined;
       body: Record<string, unknown>;
     }[],
+    /** While set, the code exchange waits for it. */
+    hold: undefined as Promise<void> | undefined,
   };
   let base = "";
   const idToken = (claims: Record<string, unknown>) => {
@@ -105,6 +107,8 @@ async function fakeOpenAi(t: TestContext) {
       if (url.pathname === "/api/accounts/oauth/token") {
         const form = Object.fromEntries(new URLSearchParams(body));
         state.forms.push(form);
+        if (form.grant_type === "authorization_code" && state.hold)
+          await state.hold;
         if (form.resource !== "https://api.openai.com/v1" || form.client_secret)
           return json(400, { error: "invalid_request" });
         if (form.grant_type === "authorization_code") {
@@ -542,3 +546,96 @@ void test(
     );
   },
 );
+
+void test("a pending ChatGPT sign-in is cancelled: its listener closes and nothing is saved", async (t) => {
+  const openai = await fakeOpenAi(t);
+  const { directory, defer } = await temporaryDirectory(t, "hh-siwc-cancel-");
+  const dataDir = path.join(directory, "data");
+  const hub = await startHub({
+    dataDir,
+    configDir: path.join(directory, "config"),
+    secretsBackend: "file",
+    demo: true,
+    cwd: directory,
+    port: 0,
+    host: "127.0.0.1",
+    siwc: { issuer: openai.base, responsesBase: `${openai.base}/v1` },
+  });
+  defer(() => hub.server.close());
+  const client = await connectLocal({ dataDir, url: hub.url });
+  const notice = (await client.subscriptions.notices()).items.find(
+    (item) => item.backend === "siwc",
+  )!;
+  const code = (problem: string) => (error: unknown) =>
+    error instanceof HarnessHubError && error.code === problem;
+  /** OpenAI sending the browser back to the attempt's loopback callback. */
+  const callback = (view: { authorizeUrl?: string }) => {
+    const params = new URL(view.authorizeUrl!).searchParams;
+    const value = `code-cancel-${openai.state.codes.size}`;
+    openai.state.codes.set(value, {
+      clientId: CLIENT_ID,
+      nonce: params.get("nonce")!,
+      challenge: params.get("code_challenge")!,
+      redirectUri: params.get("redirect_uri")!,
+    });
+    const url = new URL(params.get("redirect_uri")!);
+    url.searchParams.set("code", value);
+    url.searchParams.set("state", params.get("state")!);
+    url.searchParams.set("client_id", CLIENT_ID);
+    return url;
+  };
+
+  const pending = await client.subscriptions.startSignIn({
+    backend: "siwc",
+    acceptNotice: notice.version,
+  });
+  assert.equal(pending.status, "pending");
+  const url = callback(pending);
+  const cancelled = await client.subscriptions.cancelSignIn(pending.id);
+  assert.equal(cancelled.status, "cancelled");
+  assert.equal(
+    (await client.subscriptions.signIn(pending.id)).status,
+    "cancelled",
+  );
+  // The loopback listener is closed: the browser finds nobody there.
+  await assert.rejects(fetch(url));
+  assert.equal(openai.state.forms.length, 0);
+  await assert.rejects(
+    client.subscriptions.cancelSignIn(pending.id),
+    code("SIGN_IN_NOT_PENDING"),
+  );
+  await assert.rejects(
+    client.subscriptions.cancelSignIn("no-such-attempt"),
+    code("SIGN_IN_NOT_FOUND"),
+  );
+  assert.deepEqual((await client.subscriptions.accounts()).items, []);
+
+  // Once the browser came back, the attempt completes and cannot be cancelled.
+  const second = await client.subscriptions.startSignIn({
+    backend: "siwc",
+    acceptNotice: notice.version,
+  });
+  let release!: () => void;
+  openai.state.hold = new Promise((resolve) => (release = resolve));
+  const page = fetch(callback(second));
+  const deadline = Date.now() + 10_000;
+  while (
+    !openai.state.forms.some((form) => form.grant_type === "authorization_code")
+  ) {
+    assert.ok(Date.now() < deadline, "the code exchange never started");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  await assert.rejects(
+    client.subscriptions.cancelSignIn(second.id),
+    code("SIGN_IN_COMPLETING"),
+  );
+  release();
+  assert.equal((await page).status, 200);
+  let done = await client.subscriptions.signIn(second.id);
+  while (done.status === "pending") {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    done = await client.subscriptions.signIn(second.id);
+  }
+  assert.equal(done.status, "succeeded");
+  assert.equal((await client.subscriptions.accounts()).items.length, 1);
+});

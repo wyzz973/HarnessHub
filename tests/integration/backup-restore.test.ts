@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import type { TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
-import { open } from "@harnesshub/daemon/backup-envelope";
+import { open, seal } from "@harnesshub/daemon/backup-envelope";
 import { startHub } from "@harnesshub/daemon/main";
 import {
   HarnessHubError,
@@ -19,6 +19,7 @@ import {
   startFakeProvider,
   type FakeProvider,
 } from "../support/fake-provider.js";
+import { seedSubscription } from "../support/subscription-provider.js";
 import { temporaryDirectory } from "../support/temporary.js";
 
 // Synthetic values only: they never reach a real service.
@@ -332,6 +333,8 @@ void test("restore replaces providers with the same id, adds the others and re-w
     added: ["second"],
     replaced: ["fake"],
     needKey: [],
+    signInAgain: [],
+    signedInHere: [],
   });
   assert.deepEqual(summary.groups, {
     added: ["pair"],
@@ -669,3 +672,144 @@ void test(
       );
   },
 );
+
+void test("subscription providers stay on their machine: left out of backups, skipped by restores, kept when another is restored", async (t) => {
+  const fake = await upstream(t);
+  const a = await daemon(t, "subs-a", { codex: false });
+  const b = await daemon(t, "subs-b", { codex: false });
+  await a.client.providers.create({
+    id: "fake",
+    kind: "custom",
+    endpoints: { chat: `${fake.url}/v1` },
+    models,
+    credential: { value: KEY_A },
+  });
+  await seedSubscription(a.dataDir, "chatgpt", "siwc");
+  await seedSubscription(a.dataDir, "copilot", "copilot");
+
+  // A backup leaves A's sign-ins out.
+  const envelope = await a.client.backup.create({ passphrase: PASSPHRASE });
+  const bundle = JSON.parse(await plain(envelope)) as {
+    providers: Array<{ config: { id: string } }>;
+  };
+  assert.deepEqual(
+    bundle.providers.map((item) => item.config.id),
+    ["fake"],
+  );
+  assert.doesNotMatch(await plain(envelope), /account-1|synthetic-subject/);
+
+  // B has its own ChatGPT sign-in, which a restore keeps.
+  const own = await seedSubscription(b.dataDir, "chatgpt", "siwc");
+  const restored = await b.client.backup.restore({
+    backup: envelope,
+    passphrase: PASSPHRASE,
+    agents: false,
+  });
+  assert.deepEqual(restored.providers, {
+    added: ["fake"],
+    replaced: [],
+    needKey: [],
+    signInAgain: [],
+    signedInHere: [],
+  });
+  assert.deepEqual(
+    (await b.client.providers.list()).items.map((item) => item.id).sort(),
+    ["chatgpt", "fake"],
+  );
+  assert.deepEqual(
+    (await b.client.providers.get("chatgpt")).credentials,
+    own.credentials,
+  );
+});
+
+void test("a backup from before subscriptions were left out restores without them and says to sign in again", async (t) => {
+  const b = await daemon(t, "old", { codex: false });
+  await seedSubscription(b.dataDir, "copilot", "copilot");
+  const now = new Date().toISOString();
+  const provider = (id: string, extra: Record<string, unknown> = {}) => ({
+    config: {
+      schemaVersion: 1,
+      id,
+      name: id,
+      kind: "vendor",
+      endpoints: { responses: "https://chatgpt.example.test/v1" },
+      auth: { apiKeyHeader: "authorization-bearer" },
+      models: { source: "manual", list: [{ id: "plan-model" }], expose: "all" },
+      createdAt: now,
+      updatedAt: now,
+      ...extra,
+    },
+    // As the older HarnessHub carried them: the account field was dropped.
+    credentials: [
+      {
+        id: "account-1",
+        name: "plan-user@example.com",
+        enabled: true,
+        secret: { source: "store", value: "synthetic-account-bundle" },
+      },
+    ],
+    provenance: [],
+    overrides: [],
+  });
+  const old = {
+    version: 1,
+    createdAt: now,
+    app: "HarnessHub 0.1.0",
+    keys: true,
+    providers: [
+      provider("chatgpt", { subscription: { backend: "siwc" } }),
+      provider("relay"),
+      // A plain provider with the ID of B's Copilot sign-in.
+      provider("copilot"),
+    ],
+    groups: [
+      {
+        id: "plans",
+        strategy: "order",
+        stickiness: "auto",
+        members: ["chatgpt/plan-model", "relay/plan-model"],
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
+    settings: {},
+    agents: [],
+    clientKeys: [],
+  };
+  const backup = await seal(Buffer.from(JSON.stringify(old)), PASSPHRASE);
+  const expected = {
+    added: ["relay"],
+    replaced: [],
+    needKey: [],
+    signInAgain: ["chatgpt"],
+    signedInHere: ["copilot"],
+  };
+  const dry = await b.client.backup.restore({
+    backup,
+    passphrase: PASSPHRASE,
+    agents: false,
+    dryRun: true,
+  });
+  assert.deepEqual(dry.providers, expected);
+  // Its group names a provider that is neither restored nor here.
+  assert.deepEqual(dry.groups.skipped, ["plans"]);
+  const done = await b.client.backup.restore({
+    backup,
+    passphrase: PASSPHRASE,
+    agents: false,
+  });
+  // The run does exactly what the dry run said.
+  assert.deepEqual(done.providers, dry.providers);
+  assert.deepEqual(done.groups, dry.groups);
+  assert.deepEqual(
+    (await b.client.providers.list()).items.map((item) => item.id).sort(),
+    ["copilot", "relay"],
+  );
+  assert.deepEqual((await b.client.providers.get("copilot")).subscription, {
+    backend: "copilot",
+  });
+  assert.deepEqual(
+    await b.client.routeGroups.list().then((page) => page.items),
+    [],
+  );
+});

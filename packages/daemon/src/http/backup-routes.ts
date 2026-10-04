@@ -133,8 +133,14 @@ const restoreSummarySchema = {
     providers: {
       type: "object",
       additionalProperties: false,
-      required: ["added", "replaced", "needKey"],
-      properties: { added: strings, replaced: strings, needKey: strings },
+      required: ["added", "replaced", "needKey", "signInAgain", "signedInHere"],
+      properties: {
+        added: strings,
+        replaced: strings,
+        needKey: strings,
+        signInAgain: strings,
+        signedInHere: strings,
+      },
     },
     groups: {
       type: "object",

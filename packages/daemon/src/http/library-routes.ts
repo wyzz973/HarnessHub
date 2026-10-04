@@ -195,15 +195,33 @@ const skillSchema = {
     updatedAt: timestamp,
   },
 } as const;
+/** Base64 of 20 MiB of files, with room for the JSON around it. */
+const SKILL_UPLOAD_BODY_LIMIT = 30 * 1024 * 1024;
 const skillImportBody = {
   type: "object",
   additionalProperties: false,
-  required: ["source"],
   properties: {
     source: {
       ...text(4096),
       description:
         "Absolute path of the skill directory on the daemon's machine; its name is the skill's",
+    },
+    name: {
+      ...text(64),
+      description: "An upload: the skill's name, which its directory has",
+    },
+    files: {
+      type: "object",
+      maxProperties: 500,
+      additionalProperties: { type: "string" },
+      description:
+        "An upload: each file's base64 content by its path with / below the skill directory",
+    },
+    exec: {
+      type: "array",
+      maxItems: 500,
+      items: text(1024),
+      description: "An upload: the paths of its executable files",
     },
     agents: agentsSchema,
   },
@@ -492,6 +510,7 @@ export function registerLibraryRoutes(
   api.post<{ Body: unknown }>(
     "/library/skills",
     {
+      bodyLimit: SKILL_UPLOAD_BODY_LIMIT,
       schema: {
         body: skillImportBody,
         response: responses(skillSchema, 201),

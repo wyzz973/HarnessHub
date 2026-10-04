@@ -8,6 +8,7 @@ import {
   readdir,
   readFile,
   readlink,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
@@ -324,6 +325,142 @@ void test("library: items are kept without a wiring home; syncing needs one", as
   await assert.rejects(
     client.library.sync.plan(),
     problem("AGENT_WIRING_UNAVAILABLE", 503),
+  );
+});
+
+void test("library: a skill uploaded as files is validated like a directory import", async (t) => {
+  const { client, skill, dataDir } = await setup(t, false);
+  const base64 = (text: string) => Buffer.from(text).toString("base64");
+  const manifest = base64(
+    "---\nname: pdf-tools\ndescription: Work with PDF files.\n---\n\nUse scripts/run.sh.\n",
+  );
+  const script = base64("#!/bin/sh\necho pdf\n");
+  const uploaded = await client.library.skills.upload({
+    name: "pdf-tools",
+    files: {
+      "SKILL.md": manifest,
+      "scripts/run.sh": script,
+      // What a browser's directory picker may add; a skill directory skips it.
+      ".DS_Store": base64("finder"),
+    },
+    exec: ["scripts/run.sh"],
+    agents: ["claude"],
+  });
+  assert.equal(uploaded.name, "pdf-tools");
+  assert.deepEqual(uploaded.agents, ["claude"]);
+  // The same content imported from its directory is the same version.
+  const imported = await client.library.skills.import(skill, ["claude"]);
+  assert.equal(imported.sha256, uploaded.sha256);
+  const stored = path.join(
+    dataDir,
+    "library",
+    "skills",
+    uploaded.sha256,
+    "pdf-tools",
+  );
+  if (process.platform !== "win32")
+    assert.notEqual(
+      (await stat(path.join(stored, "scripts", "run.sh"))).mode & 0o100,
+      0,
+    );
+
+  const refused: Array<[Record<string, unknown>, string]> = [
+    [
+      { name: "pdf-tools", files: { "../SKILL.md": manifest } },
+      "LIBRARY_SKILL_INVALID",
+    ],
+    [
+      {
+        name: "pdf-tools",
+        files: { "SKILL.md": manifest, "/etc/passwd": script },
+      },
+      "LIBRARY_SKILL_INVALID",
+    ],
+    [
+      { name: "pdf-tools", files: { "SKILL.md": manifest, "a\\b": script } },
+      "LIBRARY_SKILL_INVALID",
+    ],
+    [
+      {
+        name: "pdf-tools",
+        files: { "SKILL.md": manifest, "scripts/./run.sh": script },
+      },
+      "LIBRARY_SKILL_INVALID",
+    ],
+    [
+      {
+        name: "pdf-tools",
+        files: { "SKILL.md": manifest, "x.sh": script, "X.sh": script },
+      },
+      "LIBRARY_SKILL_INVALID",
+    ],
+    [
+      {
+        name: "pdf-tools",
+        files: {
+          "SKILL.md": manifest,
+          scripts: script,
+          "scripts/run.sh": script,
+        },
+      },
+      "LIBRARY_SKILL_INVALID",
+    ],
+    [
+      { name: "pdf-tools", files: { "SKILL.md": "not base64!" } },
+      "LIBRARY_SKILL_INVALID",
+    ],
+    [
+      { name: "pdf-tools", files: { "SKILL.md": manifest }, exec: ["run.sh"] },
+      "LIBRARY_SKILL_INVALID",
+    ],
+    // The name must be the one the front matter gives.
+    [
+      { name: "other-tools", files: { "SKILL.md": manifest } },
+      "LIBRARY_SKILL_INVALID",
+    ],
+    [
+      { name: "pdf-tools", files: { "notes.md": script } },
+      "LIBRARY_SKILL_INVALID",
+    ],
+    [
+      { name: "pdf-tools", files: { "SKILL.md": manifest }, source: skill },
+      "LIBRARY_INVALID",
+    ],
+    [{ files: { "SKILL.md": manifest } }, "LIBRARY_INVALID"],
+  ];
+  for (const [body, code] of refused)
+    await assert.rejects(
+      client.library.skills.upload(body as never),
+      problem(code, 400),
+      JSON.stringify(body).slice(0, 120),
+    );
+  // Over the 20 MiB limit, before anything is written.
+  await assert.rejects(
+    client.library.skills.upload({
+      name: "pdf-tools",
+      files: {
+        "SKILL.md": manifest,
+        "big.bin": Buffer.alloc(21 * 1024 * 1024).toString("base64"),
+      },
+    }),
+    problem("LIBRARY_SKILL_INVALID", 400),
+  );
+  const many = Object.fromEntries(
+    Array.from({ length: 501 }, (_, index) => [`f${index}.md`, script]),
+  );
+  await assert.rejects(
+    client.library.skills.upload({ name: "pdf-tools", files: many }),
+    problem("INVALID_REQUEST", 400),
+  );
+  // Refused uploads left no staging directory behind.
+  const entries = await readdir(path.join(dataDir, "library", "skills"));
+  assert.deepEqual(
+    entries.filter((name) => name.startsWith(".staging")),
+    [],
+  );
+  assert.deepEqual(
+    (await client.library.skills.list()).items.map((item) => item.name),
+    ["pdf-tools"],
   );
 });
 

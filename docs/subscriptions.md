@@ -33,6 +33,8 @@ hh subscription logout chatgpt account-1
 
 - `login` 先显示“Use your ChatGPT plan”与风险告知，询问是否接受并 Continue with ChatGPT（`--accept-notice` 表示已接受；非交互且没有该参数时退出码 4，什么也不开始）。随后守护进程在 `127.0.0.1` 的随机端口开回调监听（路径 `/auth/callback`），命令打印授权链接，用户在浏览器中完成 OpenAI 自己的登录与授权，命令轮询结果。第一次成功时打印“You're using your ChatGPT plan. Eligible usage in HarnessHub uses your ChatGPT plan. Manage usage in your ChatGPT settings”，再读取模型列表。
 - 新账号以 `client_id=dynamic_agent_client`、`agent_name_hint=HarnessHub` 动态注册，回调返回为该账号签发的 client ID；以后同一账号在本机重新登录时使用它（不带 `agent_name_hint`，带 `login_hint` 与保存的 `id_token_hint`）。本机的 `ext_agent_host_id`（`urn:uuid:…`）首次登录前生成，保存在 `<dataDir>/subscriptions/siwc-host.json`。
+- 尚未完成的登录可以取消：`DELETE /api/v1/subscriptions/sign-in/{id}`（SDK `subscriptions.cancelSignIn`）关闭回调监听，尝试记为 `cancelled`，什么也不保存，之后浏览器回到回调地址时已无人监听。浏览器已经回来、账号正在保存时返回 409 `SIGN_IN_COMPLETING`（等待其结果）；已经结束的返回 409 `SIGN_IN_NOT_PENDING`。
+- 订阅 provider 与账号不随[备份与同步](backup-sync.md)带到其他电脑，在每台电脑上分别登录。
 - 每次尝试有新的 `state`、`nonce` 与 PKCE（S256）；换取令牌不用客户端密钥。ID token 按 OpenAI 公布的 JWKS 校验 RS256 签名、`iss`、`aud`（签发的 client ID）、`exp` 与 `nonce`，以 `sub` 为账号身份；重新登录必须是同一 `sub`。没有授予 `chatgpt.tokens.use.direct` 时登录失败（“ChatGPT plan use was not granted”）。尝试 10 分钟未完成即失败。
 - 第一次登录创建 provider `chatgpt`（名称 “ChatGPT plan”，Responses 端点 `https://api.openai.com/v1`，`subscription: {backend: "siwc"}`），账号是 Credential `account-<n>`，名称为邮箱。`--provider` 可以指定另一个订阅 provider。
 - `logout` 向撤销端点提交 refresh token 结束可续期会话，清空令牌，Credential 停用并记 `signedOutAt`，保留账号登记（client ID），以便以后重新登录。OpenAI 没有确认撤销时命令如实说明，用户可在 ChatGPT 设置中断开 HarnessHub。

@@ -28,9 +28,18 @@ const MAX_TEXT = 8192;
 const MAX_INSTRUCTIONS = 256 * 1024;
 const MAX_MAP = 32;
 const MAX_ARGS = 128;
-const SKILL_LIMITS = { files: 500, bytes: 20 * 1024 * 1024 };
+/** The most files and bytes a skill holds. */
+export const SKILL_LIMITS = Object.freeze({
+  files: 500,
+  bytes: 20 * 1024 * 1024,
+});
 /** Entries of a skill directory that are not part of it. */
-const SKIPPED = new Set([".DS_Store", ".git", ".harnesshub-skill"]);
+export const SKIPPED_SKILL_ENTRIES: ReadonlySet<string> = new Set([
+  ".DS_Store",
+  ".git",
+  ".harnesshub-skill",
+]);
+const SKIPPED = SKIPPED_SKILL_ENTRIES;
 
 function invalid(message: string): LibraryError {
   return new LibraryError("LIBRARY_INVALID", message);

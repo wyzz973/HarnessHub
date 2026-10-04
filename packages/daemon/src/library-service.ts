@@ -25,6 +25,7 @@ import {
   parseInstructionSet,
   parseMcpServer,
   planLibrarySync,
+  SKILL_LIMITS,
   type ConfirmedLibraryPlan,
   type InstructionSet,
   type LibraryAgent,
@@ -304,27 +305,54 @@ export class LibraryService {
   }
 
   /**
-   * Imports the skill directory `input.source` (an absolute path on this
-   * machine) as a new version, for `input.agents`. The directory is
-   * validated against the Agent Skills specification first (400
-   * LIBRARY_SKILL_INVALID).
+   * Imports a skill as a new version, for `input.agents`: the directory
+   * `input.source` (an absolute path on this machine), or an upload of its
+   * files, `input.name` with `input.files` (base64 by path with `/` below the
+   * skill directory, as backups carry skills) and `input.exec` (the paths
+   * that are executable). Either is validated against the Agent Skills
+   * specification the same way (400 LIBRARY_SKILL_INVALID): at most 500
+   * files and 20 MiB, no path that leaves the directory; an upload holds
+   * regular files only, so it cannot carry a link.
    */
   importSkill(input: unknown): Promise<SkillItem> {
     return this.serial(async () => {
-      if (!object(input) || typeof input.source !== "string")
+      if (!object(input))
         throw new LibraryError(
           "LIBRARY_INVALID",
-          "A skill import needs source, the absolute path of the skill directory",
+          "A skill import is an object",
         );
+      const upload = input.files !== undefined;
+      const fields = upload
+        ? ["name", "files", "exec", "agents"]
+        : ["source", "agents"];
       for (const key of Object.keys(input))
-        if (key !== "source" && key !== "agents")
+        if (!fields.includes(key))
           throw new LibraryError(
             "LIBRARY_INVALID",
-            `${key} is not a field of a skill import`,
+            `${key} is not a field of a skill ${upload ? "upload" : "import"}`,
           );
       // Every Library agent has a skills directory.
       const agents = parseAgents(input.agents, () => undefined);
-      const item = await this.store.importSkill(input.source, agents);
+      let item: SkillItem;
+      if (upload) {
+        if (typeof input.name !== "string")
+          throw new LibraryError(
+            "LIBRARY_INVALID",
+            "A skill upload needs name, the skill's directory name",
+          );
+        item = await this.store.importSkillFiles(
+          input.name,
+          uploadedFiles(input.files, input.exec),
+          agents,
+        );
+      } else {
+        if (typeof input.source !== "string")
+          throw new LibraryError(
+            "LIBRARY_INVALID",
+            "A skill import needs source, the absolute path of the skill directory, or name and files",
+          );
+        item = await this.store.importSkill(input.source, agents);
+      }
       await this.store.collect();
       return item;
     });
@@ -929,6 +957,72 @@ export class LibraryService {
     this.queue = result.catch(() => undefined);
     return result;
   }
+}
+
+/**
+ * The files of a skill upload, decoded and checked before anything is
+ * written: within the skill limits, strict base64, no path twice (also when
+ * only its case differs) and no file where another needs a directory. Path
+ * segments are checked when they are written (`storeSkillFiles`).
+ *
+ * @throws LibraryError `LIBRARY_SKILL_INVALID`, `LIBRARY_INVALID`.
+ */
+function uploadedFiles(
+  files: unknown,
+  exec: unknown,
+): Array<{ path: string; bytes: Buffer; executable: boolean }> {
+  const fail = (message: string) =>
+    new LibraryError("LIBRARY_SKILL_INVALID", message);
+  if (!object(files))
+    throw new LibraryError(
+      "LIBRARY_INVALID",
+      "files maps each path below the skill directory to its base64 content",
+    );
+  if (
+    exec !== undefined &&
+    !(Array.isArray(exec) && exec.every((item) => typeof item === "string"))
+  )
+    throw new LibraryError("LIBRARY_INVALID", "exec lists file paths");
+  const entries = Object.entries(files);
+  if (entries.length > SKILL_LIMITS.files)
+    throw fail(`The skill exceeds ${SKILL_LIMITS.files} files`);
+  const seen = new Set<string>();
+  const directories = new Set<string>();
+  let total = 0;
+  const decoded = entries.map(([file, data]) => {
+    const where = JSON.stringify(file.slice(0, 200));
+    if (
+      typeof data !== "string" ||
+      data.length % 4 !== 0 ||
+      !/^[A-Za-z0-9+/]*={0,2}$/.test(data)
+    )
+      throw fail(`The content of ${where} is not base64`);
+    const bytes = Buffer.from(data, "base64");
+    total += bytes.length;
+    if (total > SKILL_LIMITS.bytes)
+      throw fail(`The skill exceeds ${SKILL_LIMITS.bytes} bytes`);
+    const folded = file.toLowerCase();
+    if (seen.has(folded)) throw fail(`${where} is given twice`);
+    seen.add(folded);
+    const segments = folded.split("/");
+    for (let index = 1; index < segments.length; index++)
+      directories.add(segments.slice(0, index).join("/"));
+    return { path: file, bytes, executable: false };
+  });
+  for (const file of decoded)
+    if (directories.has(file.path.toLowerCase()))
+      throw fail(
+        `${JSON.stringify(file.path.slice(0, 200))} is both a file and a directory`,
+      );
+  for (const file of (exec as string[] | undefined) ?? []) {
+    const found = decoded.find((item) => item.path === file);
+    if (!found)
+      throw fail(
+        `exec names ${JSON.stringify(file.slice(0, 200))}, which is not a file of the skill`,
+      );
+    found.executable = true;
+  }
+  return decoded;
 }
 
 /**

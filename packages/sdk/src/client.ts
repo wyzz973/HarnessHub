@@ -118,7 +118,7 @@ export interface SubscriptionNoticeView extends SubscriptionNotice {
 export interface SignInView {
   id: string;
   backend: SubscriptionBackend;
-  status: "pending" | "succeeded" | "failed";
+  status: "pending" | "succeeded" | "failed" | "cancelled";
   provider: string;
   /** ChatGPT: open in the system browser to continue with the vendor. */
   authorizeUrl?: string;
@@ -645,7 +645,15 @@ export interface RestoreSummary {
   app: string;
   /** The backup carries credential values. */
   keys: boolean;
-  providers: { added: string[]; replaced: string[]; needKey: string[] };
+  providers: {
+    added: string[];
+    replaced: string[];
+    needKey: string[];
+    /** Subscription providers of an older backup: not restored; sign in again on this machine. */
+    signInAgain: string[];
+    /** The backup's providers whose ID is a subscription provider here, which is kept. */
+    signedInHere: string[];
+  };
   groups: { added: string[]; replaced: string[]; skipped: string[] };
   overrides: number;
   profiles: { added: string[]; replaced: string[] };
@@ -1352,6 +1360,20 @@ export class HarnessHubClient {
         this.request<LibrarySkill>("POST", "library/skills", {
           body: { source, ...(agents ? { agents } : {}) },
         }),
+      /**
+       * Uploads a skill's files: `files` maps each path with `/` below the
+       * skill directory (named `name`) to its base64 content, `exec` lists
+       * the executable ones. Validated like a directory import (at most 500
+       * files and 20 MiB, no path out of the directory);
+       * `LIBRARY_SKILL_INVALID` (400) otherwise.
+       */
+      upload: (input: {
+        name: string;
+        files: Record<string, string>;
+        exec?: string[];
+        agents?: LibraryAgent[];
+      }) =>
+        this.request<LibrarySkill>("POST", "library/skills", { body: input }),
       setAgents: (name: string, agents: LibraryAgent[]) =>
         this.request<LibrarySkill>("PATCH", `library/skills/${segment(name)}`, {
           body: { agents },
@@ -1541,6 +1563,17 @@ export class HarnessHubClient {
       }),
     signIn: (id: string) =>
       this.request<SignInView>("GET", `subscriptions/sign-in/${segment(id)}`),
+    /**
+     * Cancel a pending ChatGPT sign-in: the daemon closes its loopback
+     * callback listener and the attempt reads `cancelled`. 409
+     * `SIGN_IN_NOT_PENDING` once it ended, `SIGN_IN_COMPLETING` while the
+     * browser's callback is being completed; 404 for an unknown ID.
+     */
+    cancelSignIn: (id: string) =>
+      this.request<SignInView>(
+        "DELETE",
+        `subscriptions/sign-in/${segment(id)}`,
+      ),
     /** Whether the Copilot SDK add-on and the Copilot CLI are installed, and how to install the SDK. */
     copilotSetup: () =>
       this.request<CopilotSetupView>("GET", "subscriptions/copilot/setup"),

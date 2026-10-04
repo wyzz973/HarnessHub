@@ -1668,6 +1668,8 @@ async function subscriptionCommand(args: string[]): Promise<void> {
         await new Promise((resolve) => setTimeout(resolve, 500));
         view = await client.subscriptions.signIn(view.id);
       }
+      if (view.status === "cancelled")
+        throw new Error("The sign-in was cancelled");
       if (view.status === "failed")
         throw new Error(`The sign-in failed: ${view.error ?? "unknown"}`);
       const models = await refreshSubscriptionModels(client, view.provider);

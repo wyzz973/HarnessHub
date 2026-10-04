@@ -81,6 +81,8 @@ interface Attempt {
   consentAt: string;
   server: Server;
   timer: NodeJS.Timeout;
+  /** The browser came back with a valid state; the account is being saved. */
+  completing?: boolean;
 }
 
 function page(title: string, text: string): string {
@@ -368,6 +370,35 @@ export class SubscriptionService implements SubscriptionControl {
     return { ...attempt.view };
   }
 
+  cancelSignIn(id: string): SignInView | undefined {
+    const attempt = this.#attempts.get(id);
+    if (!attempt) {
+      if (this.#finished.has(id))
+        throw new HubError(
+          "SIGN_IN_NOT_PENDING",
+          "This sign-in has already ended",
+          409,
+        );
+      return undefined;
+    }
+    if (attempt.view.status !== "pending")
+      throw new HubError(
+        "SIGN_IN_NOT_PENDING",
+        `This sign-in has already ${attempt.view.status}`,
+        409,
+      );
+    if (attempt.completing)
+      throw new HubError(
+        "SIGN_IN_COMPLETING",
+        "The browser came back and the sign-in is being completed; read its result",
+        409,
+      );
+    this.#finish(attempt, { cancelled: true });
+    // No browser request is in flight: the listener goes now.
+    attempt.server.closeAllConnections();
+    return { ...attempt.view };
+  }
+
   signIn(id: string): SignInView | undefined {
     const attempt = this.#attempts.get(id);
     const view = attempt?.view ?? this.#finished.get(id);
@@ -491,6 +522,8 @@ export class SubscriptionService implements SubscriptionControl {
         title: "This sign-in is not pending",
         text: "Start the sign-in again from HarnessHub.",
       };
+    // From here on the attempt cannot be cancelled: its outcome is this callback's.
+    attempt.completing = true;
     const fail = (message: string) => {
       this.#finish(attempt, { error: message });
       return { ok: false, title: "Sign-in did not complete", text: message };
@@ -679,6 +712,7 @@ export class SubscriptionService implements SubscriptionControl {
     attempt: Attempt,
     result:
       | { error: string }
+      | { cancelled: true }
       | { credential: CredentialId; email?: string; firstSignIn: boolean },
   ): void {
     if (attempt.view.status !== "pending") return;
@@ -686,13 +720,15 @@ export class SubscriptionService implements SubscriptionControl {
     attempt.view =
       "error" in result
         ? { ...attempt.view, status: "failed", error: result.error }
-        : {
-            ...attempt.view,
-            status: "succeeded",
-            credential: result.credential,
-            ...(result.email ? { email: result.email } : {}),
-            firstSignIn: result.firstSignIn,
-          };
+        : "cancelled" in result
+          ? { ...attempt.view, status: "cancelled" }
+          : {
+              ...attempt.view,
+              status: "succeeded",
+              credential: result.credential,
+              ...(result.email ? { email: result.email } : {}),
+              firstSignIn: result.firstSignIn,
+            };
     // The browser's own request finishes first; then the listener closes.
     attempt.server.close();
     attempt.server.closeIdleConnections();

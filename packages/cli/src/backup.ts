@@ -150,6 +150,14 @@ function summaryText(summary: RestoreSummary, done: boolean): string {
     lines.push(
       `  Without a key here and in the backup (add one with hh credential add): ${list(providers.needKey)}`,
     );
+  if (providers.signInAgain.length)
+    lines.push(
+      `  Subscriptions, not restored: sign in again on this machine (hh subscription login chatgpt|copilot): ${list(providers.signInAgain)}`,
+    );
+  if (providers.signedInHere.length)
+    lines.push(
+      `  Kept as signed in on this machine, not replaced: ${list(providers.signedInHere)}`,
+    );
   if (groups.added.length || groups.replaced.length || groups.skipped.length)
     lines.push(
       `Route groups: ${[
