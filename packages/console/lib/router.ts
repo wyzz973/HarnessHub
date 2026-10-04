@@ -12,6 +12,7 @@ export type Page =
   | "auto-groups"
   | "keys"
   | "credential-state"
+  | "decisions"
   | "usage"
   | "conversations"
   | "settings"
@@ -40,6 +41,7 @@ export const pagePaths: Readonly<Record<Page, string>> = {
   "auto-groups": "/routing/auto-groups",
   keys: "/routing/keys",
   "credential-state": "/routing/credentials",
+  decisions: "/routing/decisions",
   usage: "/usage",
   conversations: "/usage/conversations",
   settings: "/settings",

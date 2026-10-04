@@ -2,7 +2,9 @@
 import { useCallback, useState } from "react";
 import {
   Check,
+  ChartNoAxesColumn,
   Copy,
+  Gauge,
   KeyRound,
   Loader2,
   Plus,
@@ -34,6 +36,8 @@ import {
   type ExpiryChoice,
   type Failure,
 } from "@/lib/model-plane";
+import { quotaFormOf, quotaOf, quotaSummary } from "@/lib/routing";
+import { LimitDialog, QuotaDialog, QuotaFields } from "./key-budgets";
 import {
   Checkbox,
   ConfirmDialog,
@@ -119,6 +123,10 @@ function CreateKeyDialog({
   const [allow, setAllow] = useState<string[]>([]);
   const [extra, setExtra] = useState("");
   const [expiry, setExpiry] = useState<ExpiryChoice>("90d");
+  const [quotaForm, setQuotaForm] = useState(() => quotaFormOf(undefined));
+  const [quotaProblems, setQuotaProblems] = useState<Record<string, string>>(
+    {},
+  );
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [created, setCreated] = useState<CreatedGatewayKey | null>(null);
@@ -132,6 +140,12 @@ function CreateKeyDialog({
     .filter(Boolean);
   const modelAllow = [...new Set([...allow, ...typed])];
   async function create() {
+    const quota = quotaOf(quotaForm);
+    if (!quota.ok) {
+      setQuotaProblems(quota.problems);
+      return;
+    }
+    setQuotaProblems({});
     setBusy(true);
     setFailure(null);
     try {
@@ -140,6 +154,7 @@ function CreateKeyDialog({
           name: name.trim(),
           modelAllow,
           expiresAt: expiresAtFor(expiry, Date.now()),
+          ...(quota.quota ? { quota: quota.quota } : {}),
         }),
       );
       onCreated();
@@ -258,6 +273,11 @@ function CreateKeyDialog({
               </select>
               <FieldError failure={failure} pointer="/expiresAt" />
             </label>
+            <QuotaFields
+              form={quotaForm}
+              onChange={setQuotaForm}
+              problems={quotaProblems}
+            />
             <ErrorCallout failure={failure} />
             <OtherFieldErrors
               failure={failure}
@@ -300,6 +320,8 @@ export function KeysPage({ tabs }: { tabs?: React.ReactNode }) {
   const [data, reload] = useLoaded(load);
   const [creating, setCreating] = useState(false);
   const [revoking, setRevoking] = useState<GatewayKeyView | null>(null);
+  const [quotaOfKey, setQuotaOfKey] = useState<GatewayKeyView | null>(null);
+  const [limitOfKey, setLimitOfKey] = useState<GatewayKeyView | null>(null);
   const now = Date.now();
   return (
     <div className="page-body">
@@ -336,12 +358,13 @@ export function KeysPage({ tabs }: { tabs?: React.ReactNode }) {
             <LoadError message={data.message} retry={reload} />
           ) : data.value.keys.length ? (
             <div className="panel overflow-x-auto">
-              <table className="data-table min-w-[760px]">
+              <table className="data-table min-w-[880px]">
                 <thead>
                   <tr>
                     <th>名称</th>
                     <th>作用域</th>
                     <th>允许的模型</th>
+                    <th>额度</th>
                     <th>过期</th>
                     <th>最近使用</th>
                     <th>状态</th>
@@ -370,6 +393,17 @@ export function KeysPage({ tabs }: { tabs?: React.ReactNode }) {
                             {key.modelAllow.join(", ")}
                           </p>
                         </td>
+                        <td className="min-w-[170px] text-[12.5px]">
+                          {key.quota ? (
+                            quotaSummary(key.quota).map((line) => (
+                              <span key={line} className="block">
+                                {line}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-subtle">不限</span>
+                          )}
+                        </td>
                         <td className="text-[12.5px]">
                           {key.expiresAt ? (
                             <LocalTime value={key.expiresAt} />
@@ -385,15 +419,37 @@ export function KeysPage({ tabs }: { tabs?: React.ReactNode }) {
                             {state.label}
                           </span>
                         </td>
-                        <td className="w-[84px] text-right">
-                          {key.revokedAt ? null : (
+                        <td className="w-[200px] text-right whitespace-nowrap">
+                          {key.quota ? (
                             <Button
-                              size="xs"
+                              size="icon-sm"
                               variant="ghost"
-                              onClick={() => setRevoking(key)}
+                              aria-label={`${key.name} 的用量`}
+                              title="用量"
+                              onClick={() => setLimitOfKey(key)}
                             >
-                              吊销
+                              <ChartNoAxesColumn />
                             </Button>
+                          ) : null}
+                          {key.revokedAt ? null : (
+                            <>
+                              <Button
+                                size="icon-sm"
+                                variant="ghost"
+                                aria-label={`${key.name} 的额度`}
+                                title="额度"
+                                onClick={() => setQuotaOfKey(key)}
+                              >
+                                <Gauge />
+                              </Button>
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                onClick={() => setRevoking(key)}
+                              >
+                                吊销
+                              </Button>
+                            </>
                           )}
                         </td>
                       </tr>
@@ -414,6 +470,24 @@ export function KeysPage({ tabs }: { tabs?: React.ReactNode }) {
             groups={data.value.groups}
             onClose={() => setCreating(false)}
             onCreated={reload}
+          />
+        ) : null}
+        {quotaOfKey ? (
+          <QuotaDialog
+            key={quotaOfKey.keyId}
+            gatewayKey={quotaOfKey}
+            onClose={() => setQuotaOfKey(null)}
+            onSaved={() => {
+              setQuotaOfKey(null);
+              reload();
+            }}
+          />
+        ) : null}
+        {limitOfKey ? (
+          <LimitDialog
+            key={limitOfKey.keyId}
+            gatewayKey={limitOfKey}
+            onClose={() => setLimitOfKey(null)}
           />
         ) : null}
         <ConfirmDialog

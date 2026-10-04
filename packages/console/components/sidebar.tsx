@@ -57,7 +57,7 @@ const gatewayNavigation: NavItem[] = [
     page: "routing",
     label: "路由与 Key",
     icon: Route,
-    also: ["auto-groups", "keys", "credential-state"],
+    also: ["auto-groups", "keys", "credential-state", "decisions"],
   },
   {
     page: "usage",

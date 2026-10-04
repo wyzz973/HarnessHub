@@ -71,10 +71,15 @@ export type {
   ProviderModel,
   ReasoningEffort,
   RouteDecision,
+  RouteDecisionCandidate,
   RouteDecisionPage,
   RouteDecisionQuery,
+  RouteDecisionRule,
   RouteGroup,
   RouteStrategy,
+  RuleEffort,
+  RuleTimeWindow,
+  Weekday,
   Stickiness,
   UsageGroupBy,
   WireProtocol,
@@ -1001,7 +1006,13 @@ export class HarnessHubClient {
   private async request<T>(
     method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
     path: string,
-    options: { body?: unknown; query?: Query; contentType?: string } = {},
+    options: {
+      body?: unknown;
+      query?: Query;
+      contentType?: string;
+      /** Ends the request; it then rejects with the signal's reason. */
+      signal?: AbortSignal;
+    } = {},
   ): Promise<T> {
     const url = new URL(path, this.base);
     for (const [name, value] of Object.entries(options.query ?? {}))
@@ -1025,8 +1036,10 @@ export class HarnessHubClient {
         ...(options.body !== undefined
           ? { body: JSON.stringify(options.body) }
           : {}),
+        ...(options.signal ? { signal: options.signal } : {}),
       });
     } catch (error) {
+      if (options.signal?.aborted) throw options.signal.reason;
       throw new HarnessHubUnavailableError(this.base.origin, error);
     }
     if (response.status === 204) return undefined as T;
@@ -1499,11 +1512,16 @@ export class HarnessHubClient {
      * The gateway's latest routing decisions after `after` (oldest first),
      * of one conversation or Session with `session`; with `wait` (seconds,
      * at most 60) the request waits for one when there is none yet. Pass the
-     * page's `seq` back as `after` to follow.
+     * page's `seq` back as `after` to follow. `signal` ends a wait early;
+     * the call then rejects with the signal's reason.
      */
-    decisions: (query: RouteDecisionQuery = {}) =>
+    decisions: (
+      query: RouteDecisionQuery = {},
+      options: { signal?: AbortSignal } = {},
+    ) =>
       this.request<RouteDecisionPage>("GET", "routing/decisions", {
         query: { ...query },
+        ...(options.signal ? { signal: options.signal } : {}),
       }),
   };
 

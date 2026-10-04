@@ -1092,7 +1092,8 @@ export function Console() {
             ) : page === "routing" ||
               page === "auto-groups" ||
               page === "keys" ||
-              page === "credential-state" ? (
+              page === "credential-state" ||
+              page === "decisions" ? (
               <RoutingPage key={refreshEpoch} tab={page} />
             ) : page === "usage" || page === "conversations" ? (
               <UsagePage key={refreshEpoch} tab={page} />

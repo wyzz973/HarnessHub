@@ -17,18 +17,20 @@
  * last part is a suffix only when it names a level or `fast` and the whole
  * id is not a model the provider lists.
  */
+import type {
+  ModelRef,
+  ProviderConfig,
+  ProviderId,
+  ProviderModel,
+  RouteGroup,
+  RouteGroupId,
+  WireProtocol,
+} from "./model-plane.js";
 import {
   parseModelRef,
   reasoningEfforts,
-  type ModelRef,
-  type ProviderConfig,
-  type ProviderId,
-  type ProviderModel,
   type ReasoningEffort,
-  type RouteGroup,
-  type RouteGroupId,
-  type WireProtocol,
-} from "./model-plane.js";
+} from "./model-refs.js";
 
 /** How deep groups may sit inside groups (Magpie `maxNest`). */
 export const GROUP_NEST_LIMIT = 8;

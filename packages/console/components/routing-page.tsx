@@ -17,6 +17,7 @@ import {
   useLoaded,
 } from "./model-plane-ui";
 import { PageTabs } from "./page-tabs";
+import { DecisionsPage } from "./route-decisions";
 import { CredentialStatesPage } from "./routing-state";
 
 /**
@@ -148,13 +149,17 @@ const tabs = [
   { page: "auto-groups", label: "自动路由组" },
   { page: "keys", label: "Gateway Key" },
   { page: "credential-state", label: "凭据状态" },
+  { page: "decisions", label: "路由决定" },
 ] as const;
 
-/** Route groups, automatic groups, Gateway Keys and the credentials' routing state, one tab each. */
+/** Route groups, automatic groups, Gateway Keys, the credentials' routing state and the route decisions, one tab each. */
 export function RoutingPage({
   tab,
 }: {
-  tab: Extract<Page, "routing" | "auto-groups" | "keys" | "credential-state">;
+  tab: Extract<
+    Page,
+    "routing" | "auto-groups" | "keys" | "credential-state" | "decisions"
+  >;
 }) {
   const nav = <PageTabs label="路由与 Key" current={tab} tabs={tabs} />;
   return tab === "routing" ? (
@@ -163,6 +168,8 @@ export function RoutingPage({
     <AutoGroupsPage tabs={nav} />
   ) : tab === "credential-state" ? (
     <CredentialStatesPage tabs={nav} />
+  ) : tab === "decisions" ? (
+    <DecisionsPage tabs={nav} />
   ) : (
     <KeysPage tabs={nav} />
   );

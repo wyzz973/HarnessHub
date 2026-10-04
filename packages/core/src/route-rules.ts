@@ -8,18 +8,20 @@
  * the typed form (`use=a/m tokens=200k images`) are here; the gateway reads
  * requests and keeps each turn's decision (`gateway/rules.ts`).
  */
+import type {
+  GroupRule,
+  ModelRef,
+  ProviderModel,
+  RouteGroup,
+  RuleTimeWindow,
+} from "./model-plane.js";
 import {
   parseModelRef,
   ruleEfforts,
   weekdays,
-  type GroupRule,
-  type ModelRef,
-  type ProviderModel,
-  type RouteGroup,
   type RuleEffort,
-  type RuleTimeWindow,
   type Weekday,
-} from "./model-plane.js";
+} from "./model-refs.js";
 import {
   groupCapabilities,
   parseGroupMember,
@@ -455,27 +457,57 @@ export class RuleSyntaxError extends Error {
   }
 }
 
-/** A typed line split into words, a `"quoted"` part kept in one: `intent="a quick question"`. */
-export function ruleWords(line: string): string[] {
-  const out: string[] = [];
+/** One word of a typed line and where it stands in the line (UTF-16 offsets, `end` exclusive). */
+export interface RuleWord {
+  word: string;
+  start: number;
+  end: number;
+}
+
+/**
+ * A typed line split into words, a `"quoted"` part kept in one
+ * (`intent="a quick question"` is the word `intent=a quick question`), each
+ * with where it stands, for an editor to mark the word an error names.
+ */
+export function ruleWordSpans(line: string): RuleWord[] {
+  const out: RuleWord[] = [];
   let word = "";
+  let start = -1;
   let quoted = false;
-  let some = false;
-  for (const char of line) {
-    if (char === '"') {
-      quoted = !quoted;
-      some = true;
-    } else if (!quoted && (char === " " || char === "\t")) {
-      if (some) out.push(word);
+  for (let index = 0; index < line.length; index++) {
+    const char = line[index]!;
+    if (!quoted && (char === " " || char === "\t")) {
+      if (start >= 0) out.push({ word, start, end: index });
       word = "";
-      some = false;
-    } else {
-      word += char;
-      some = true;
+      start = -1;
+      continue;
     }
+    if (start < 0) start = index;
+    if (char === '"') quoted = !quoted;
+    else word += char;
   }
-  if (some) out.push(word);
+  if (start >= 0) out.push({ word, start, end: line.length });
   return out;
+}
+
+/** A typed line split into words ({@link ruleWordSpans} without the places). */
+export function ruleWords(line: string): string[] {
+  return ruleWordSpans(line).map((span) => span.word);
+}
+
+/**
+ * The words of `line` a {@link RuleSyntaxError} names: the word itself, else
+ * the words it is part of (a day of `days=mon,funday`); none for a word the
+ * line lacks (`use` when it is missing).
+ */
+export function faultySpans(line: string, word: string): RuleWord[] {
+  const spans = ruleWordSpans(line);
+  const exact = spans.filter((span) => span.word === word);
+  return exact.length
+    ? exact
+    : word
+      ? spans.filter((span) => span.word.includes(word))
+      : [];
 }
 
 /** A length typed as `200000`, `200k` or `1.5m`, in tokens. */

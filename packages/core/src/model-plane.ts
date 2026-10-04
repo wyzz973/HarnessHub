@@ -14,6 +14,25 @@ import type {
   SubscriptionBackend,
 } from "./subscriptions.js";
 import type { Brand, RunId, SessionId } from "./types.js";
+import {
+  parseModelRef,
+  type ReasoningEffort,
+  type RuleEffort,
+  type Weekday,
+} from "./model-refs.js";
+
+// Model Refs and the level lists live in ./model-refs.ts, which needs no
+// Node module, so that the console can bundle the route-group code.
+export {
+  isProviderId,
+  parseModelRef,
+  reasoningEfforts,
+  ruleEfforts,
+  weekdays,
+  type ReasoningEffort,
+  type RuleEffort,
+  type Weekday,
+} from "./model-refs.js";
 
 export type ProviderId = Brand<string, "ProviderId">;
 export type CredentialId = Brand<string, "CredentialId">;
@@ -245,22 +264,6 @@ export const DEFAULT_RETRY_POLICY: Readonly<RetryPolicy> = Object.freeze({
   maxBackoffMs: 8_000,
   retryAfterWaitCapMs: 8_000,
 });
-
-/** The reasoning levels a group rule compares with, lowest first (Magpie `provider.Efforts`). */
-export const ruleEfforts = ["low", "medium", "high", "xhigh", "max"] as const;
-export type RuleEffort = (typeof ruleEfforts)[number];
-
-/** Days of the week as a rule's hours name them, Sunday first (Magpie `Weekdays`). */
-export const weekdays = [
-  "sun",
-  "mon",
-  "tue",
-  "wed",
-  "thu",
-  "fri",
-  "sat",
-] as const;
-export type Weekday = (typeof weekdays)[number];
 
 /**
  * Hours of the day in the daemon's local time zone: `from` until `to`
@@ -599,35 +602,6 @@ export function isGatewayKeyId(value: string): value is GatewayKeyId {
   return KEY_ID.test(value);
 }
 
-const PROVIDER_ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
-
-export function isProviderId(value: string): value is ProviderId {
-  return PROVIDER_ID.test(value) && value !== "group";
-}
-
-/**
- * Parses `provider/model` or `group/<id>`. The model part is everything after
- * the first `/`, so `openrouter/deepseek/deepseek-chat` names model
- * `deepseek/deepseek-chat` of provider `openrouter`.
- */
-export function parseModelRef(
-  text: string,
-):
-  | { kind: "model"; ref: ModelRef; provider: ProviderId; model: string }
-  | { kind: "group"; group: RouteGroupId }
-  | undefined {
-  const slash = text.indexOf("/");
-  if (slash <= 0 || slash === text.length - 1) return undefined;
-  const head = text.slice(0, slash);
-  const rest = text.slice(slash + 1);
-  if (head === "group")
-    return PROVIDER_ID.test(rest)
-      ? { kind: "group", group: rest as RouteGroupId }
-      : undefined;
-  if (!isProviderId(head) || /\s/.test(rest)) return undefined;
-  return { kind: "model", ref: text as ModelRef, provider: head, model: rest };
-}
-
 /**
  * Whether a key may use a Model Ref or a group: some entry of `modelAllow`
  * admits it (exact, `provider/*`, `group/<id>` or `*`) and no entry of
@@ -779,18 +753,6 @@ export const wiringTiers = [
   "subagent",
 ] as const;
 export type WiringTier = (typeof wiringTiers)[number];
-
-/** Reasoning levels an agent can start with, lowest first. */
-export const reasoningEfforts = [
-  "none",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-] as const;
-export type ReasoningEffort = (typeof reasoningEfforts)[number];
 
 /**
  * The model choices of one wired agent: what a profile keeps and applies.
