@@ -132,10 +132,14 @@ function contentType(file: string): string {
   );
 }
 
-/** Fastify's own 404 body, which clients of the legacy routes recognize. */
+/**
+ * The shape of Fastify's own 404 body, which clients of the legacy routes
+ * recognize, without the URL: a path may hold a Gateway Key put where the
+ * gateway does not take it from (`/K/<key>/v1/...`).
+ */
 function routeNotFound(request: FastifyRequest, reply: FastifyReply) {
   return reply.code(404).send({
-    message: `Route ${request.method}:${request.url} not found`,
+    message: `No ${request.method} route has this path`,
     error: "Not Found",
     statusCode: 404,
   });
@@ -154,7 +158,7 @@ function routeNotFound(request: FastifyRequest, reply: FastifyReply) {
  *
  * Console responses carry `CONSOLE_CSP`, `nosniff`, `no-referrer`, `DENY`
  * framing and same-origin opener and resource policies. Any other unmatched
- * request keeps Fastify's 404 body. Without a bundle (the console was not
+ * request gets the shape of Fastify's 404 body, without the URL. Without a bundle (the console was not
  * built), the page answers 503 with how to build it. The server-wide Host
  * and Origin checks apply as to every route. Must be called before the
  * server starts; it sets the server's not-found handler.

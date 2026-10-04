@@ -143,8 +143,9 @@ void test("the daemon serves the console page, its assets and the page fallback 
     headers: { accept: "application/json" },
   });
   assert.equal(json.status, 404);
+  // Fastify's 404 shape, without the URL (a path may hold a key).
   assert.deepEqual(await json.json(), {
-    message: "Route GET:/agents not found",
+    message: "No GET route has this path",
     error: "Not Found",
     statusCode: 404,
   });
@@ -167,12 +168,13 @@ void test("the daemon serves the console page, its assets and the page fallback 
   assert.equal(head.status, 200);
   assert.equal(await head.text(), "");
 
-  // Unknown assets and names outside the build are 404, never the page.
-  for (const target of [
-    "/assets/missing.js",
-    "/assets/..%2Findex.html",
-    "/assets/%2e%2e/%2e%2e/data/admin.token",
-  ]) {
+  // Unknown assets are 404 and names outside the build 400 (encoded dots
+  // and slashes are refused before dispatch), never the page.
+  for (const [target, expected] of [
+    ["/assets/missing.js", 404],
+    ["/assets/..%2Findex.html", 400],
+    ["/assets/%2e%2e/%2e%2e/data/admin.token", 400],
+  ] as const) {
     const status = await new Promise<number>((resolve, reject) => {
       // `path` is sent as written; a URL string would be normalized first.
       const { hostname, port } = new URL(url);
@@ -186,7 +188,7 @@ void test("the daemon serves the console page, its assets and the page fallback 
       outgoing.on("error", reject);
       outgoing.end();
     });
-    assert.equal(status, 404, target);
+    assert.equal(status, expected, target);
   }
   // The console is the daemon's own page: a page of another origin cannot load it.
   const foreign = await fetch(`${url}/`, {

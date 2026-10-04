@@ -251,8 +251,9 @@ void test("unexpected errors describe ACP RequestError data and cause chains, re
     describeError(wrapped),
     "Failed to create session: Authentication required: login needed for ACP: use gateway",
   );
+  const gatewayKey = `hhk_a_abcdefghijkl_${"Q".repeat(43)}`;
   const leaking = new Error(
-    `bad key ${secret}; Authorization: Bearer abc.def-123 api_key=xyz987 sk-abcdefghijk token="tok123456"`,
+    `bad key ${secret}; Authorization: Bearer abc.def-123 api_key=xyz987 sk-abcdefghijk token="tok123456" GET /K/${gatewayKey}/v1/models`,
   );
   const message = publicErrorMessage(leaking, redact);
   for (const value of [
@@ -261,6 +262,7 @@ void test("unexpected errors describe ACP RequestError data and cause chains, re
     "xyz987",
     "abcdefghijk",
     "tok123456",
+    gatewayKey.slice(0, -1),
   ])
     assert.equal(message.includes(value), false, message);
   assert.match(message, /\[REDACTED\]/);

@@ -8,6 +8,7 @@ import type {
 } from "fastify";
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import { HubError } from "@harnesshub/core/errors";
+import { keylessPath } from "@harnesshub/core/key-text";
 import type { LogSink } from "@harnesshub/core/logging";
 import type { OutboundFetch } from "@harnesshub/core/outbound";
 import type {
@@ -221,7 +222,7 @@ function problemBody(
     title: STATUS_CODES[status] ?? "Error",
     status,
     detail,
-    instance: request.url.split("?")[0]!.slice(0, 500),
+    instance: keylessPath(request.url.split("?")[0]!).slice(0, 500),
     code,
     requestId: String(request.id),
     ...extensions,

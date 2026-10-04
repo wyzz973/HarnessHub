@@ -112,7 +112,11 @@
     - 一个请求的搜索从 300 次降为 20 次；
     - 分类器不再因另一把 Key 的 400 而冷却。
   - 本机完整 `pnpm check` 通过（macOS arm64）。控制台的视觉提示待控制台所有者补充；Windows 未验证。
-- [ ] **B Key 文本泄露与路径规范化**（L1、L2、L6）：日志脱敏器识别 `hhk_` Key，访问日志与 404 不回显原始路径，含点段、编码斜杠、反斜杠或以 `//` 开头的路径在分派前以 400 拒绝；Codex 透传中像 Key 的首段在本地拒绝；钉选不在 Key 候选内的凭据一律 404。
+- [x] **B Key 文本泄露与路径规范化**（L1、L2、L6）：日志脱敏器识别 `hhk_` Key，访问日志与 404 不回显原始路径，含点段、编码斜杠、反斜杠或以 `//` 开头的路径在分派前以 400 拒绝；Codex 透传中像 Key 的首段在本地拒绝；钉选不在 Key 候选内的凭据一律 404。
+  已完成（分支 `fix/key-text-leaks`，[ADR 0033 修订](docs/decisions/0033-gateway-key-in-path.md#修订2026-10-05安全审查-b-组)）。
+  - 与原计划不同的两点：编码斜杠在 `/api/` 下保留，因为 `GET /api/v1/models/{ref}` 等操作按约定把 Model Ref 的斜杠编码；Key 文本按比签发格式宽的规则识别（`hhk_` 不分大小写、下划线可编码、任意长度），差一个字符的 Key 只剩 64 种可能。Codex 透传的第一段只接受 `responses`、`models`、`realtime`（取自 Codex 0.144.5 调用的路径）。
+  - 证据：[Key 文本测试](tests/integration/key-text-leaks.test.ts)由审查脚本 keypath.mjs 与 codexseg.mjs 改写，修复前失败、修复后通过，在答复、网关日志、stderr 回显、账本与数据目录中扫描完整 Key、差一个字符的 Key 与大写的 Key；[钉选测试](packages/gateway/test/shared-gateway-pinning.test.ts)修复前失败；[core Key 文本测试](packages/core/test/key-text.test.ts)。
+  - 本机完整 `pnpm check` 通过（macOS arm64）。Windows 未验证。
 - [x] **C 控制台会话**（M3）：Cookie 不按端口隔离，拿到 Cookie 的其他回环端口服务在浏览器外可取得 CSRF 令牌；改为只在登录交换时返回令牌，或把会话凭据放在按源隔离的 sessionStorage。采用两者结合（[ADR 0024 补充](docs/decisions/0024-embedded-console.md#补充会话分为浏览器-cookie-与标签页令牌2026-10-05安全审查-m3)）：会话由浏览器的 `hh_console` Cookie（属性与 CSP 不变）与标签页令牌组成，令牌只由登录交换返回一次，控制台存于 `sessionStorage`，以 `X-HH-CSRF` 随每个 `/api/v1` 请求（含 GET）发送；只有 Cookie、只有令牌或两者不配对一律 401 `CONSOLE_SESSION_INVALID`，`current` 不再返回令牌。每个标签页用自己的链接登录，登录与退出不影响其他标签页，最后一个退出时清除 Cookie。证据（2026-10-05，分支 `fix/console-session-port`，基于 `e44f1a3`，macOS arm64）：完整 `pnpm check` 通过（工具 221、单元 874 通过 14 跳过、集成 352 通过 11 跳过、smoke 10、协议 508）；新增集成测试让另一个回环端口按 RFC 6265 收到 Cookie，在浏览器外对 OpenAPI 中的每个 `/api/v1` 操作重放（只带 Cookie 或加猜测的令牌）全部 401，该测试在原实现上失败（`GET /api/v1/system/info` 得到 200）；无头 Chromium 中登录、刷新、第二个标签页、另一个端口收到 Cookie 后重放、篡改令牌、逐个退出与重新登录共 52 项检查通过。未验证：Firefox 与 Safari；Windows。
 - [ ] **D Library**（L7、L8、L9）：按路径导入时先检查累计大小再读文件；上传的文件名按 NFC 与大小写去重、限制长度与深度，文件系统冲突返回 400；同名 Skill 只在显式 `replace` 时替换。
 

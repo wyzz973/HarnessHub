@@ -24,6 +24,7 @@ import { isIP } from "node:net";
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import { NO_LOG, type LogSink } from "@harnesshub/core/logging";
 import type { OutboundFetch } from "@harnesshub/core/outbound";
+import { keylessPath } from "@harnesshub/core/key-text";
 import {
   gatewayKeyMatches,
   claudeModelAlias,
@@ -123,6 +124,17 @@ import type { InternalAnswer, InternalCalls } from "./internal.js";
 import { imagesCall } from "./images.js";
 import { resolveBareName } from "./bare-names.js";
 import { standIn } from "./stand-in.js";
+
+/**
+ * The first path segments Codex calls under its `openai_base_url` (after
+ * the key): `/responses` (and `/responses/compact`), `/models` and
+ * `/realtime`. The passthrough answers anything else itself.
+ */
+const CODEX_SEGMENTS: ReadonlySet<string> = new Set([
+  "responses",
+  "models",
+  "realtime",
+]);
 
 /** The Run a `session:` key's calls belong to, and the model target it selected. */
 export interface ActiveSessionRun {
@@ -682,7 +694,12 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
           }
         : {}),
       ...(agent ? { agent } : {}),
-      inbound: { protocol, path: path.slice(0, 200), stream: false },
+      // A key put where the gateway does not take it from stays out too.
+      inbound: {
+        protocol,
+        path: keylessPath(path).slice(0, 200),
+        stream: false,
+      },
       patches: [],
       unmapped: [],
       status: 0,
@@ -1335,15 +1352,16 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
    * (Magpie `X-Magpie-Account`): by ID, or by name without regard to case,
    * across every member of a group. Nothing else is tried in its place: 429
    * `credential_resting` while every match rests, 400 `credential_unserved`
-   * when the credential exists (enabled) but serves no candidate of this
-   * model, its provider not listing the model included, and 404
-   * `credential_not_found` when no enabled credential matches.
+   * when a candidate's credential matches but its provider does not list
+   * the model, and 404 `credential_not_found` when no candidate's
+   * credential matches, the same for a credential that exists outside the
+   * candidates as for one that does not exist.
    */
-  const pinCredential = async (
+  const pinCredential = (
     pin: string,
     requested: string,
     candidates: Candidate[],
-  ): Promise<{ candidates: Candidate[] } | { error: AttemptError }> => {
+  ): { candidates: Candidate[] } | { error: AttemptError } => {
     const matches = (credential: ProviderCredential) =>
       credential.id === pin ||
       credential.name.toLowerCase() === pin.toLowerCase();
@@ -1385,14 +1403,10 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         },
       };
     }
-    const exists =
-      matched.length > 0 ||
-      (await store.listProviders()).some((provider) =>
-        provider.credentials.some(
-          (credential) => credential.enabled && matches(credential),
-        ),
-      );
-    if (exists)
+    // A credential outside this call's candidates is not found, whether or
+    // not it exists: the answer does not tell a key about credentials it
+    // cannot use.
+    if (matched.length)
       return local(
         400,
         "credential_unserved",
@@ -1637,7 +1651,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       // fixed few is ever sent upstream (upstreamHeaders).
       const pin = request.headers["x-hh-credential"];
       if (typeof pin === "string" && pin.trim()) {
-        const pinned = await pinCredential(
+        const pinned = pinCredential(
           pin.trim(),
           requested,
           resolved.candidates,
@@ -1884,6 +1898,34 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       return refuse(
         "origin_forbidden",
         "The Host header must name a loopback address",
+      );
+    // After the key, only the paths Codex calls. A segment that looks like a
+    // key but is none is refused, and so is any other path: neither goes to
+    // ChatGPT, and the ledger does not get the segment.
+    const first = path.slice(CODEX_PATH.length + 1).split("/", 1)[0]!;
+    if (/^hhk(?:_|%5f)/i.test(first))
+      return reject(
+        response,
+        baseEntry(
+          "responses",
+          CODEX_PATH + path.slice(CODEX_PATH.length + 1 + first.length),
+          occurredAt,
+          undefined,
+          request.headers["user-agent"],
+        ),
+        "invalid_key",
+        failure(
+          401,
+          "invalid_key",
+          "The path does not hold a HarnessHub Gateway Key",
+        ),
+        started,
+      );
+    if (!CODEX_SEGMENTS.has(first))
+      return reply(
+        response,
+        "responses",
+        failure(404, "route_not_found", "Not a Codex passthrough route"),
       );
     const relay = (extra: { body?: Buffer; modelsTag?: string } = {}) => ({
       request,

@@ -69,3 +69,42 @@ export function requestPath(target: string | undefined): string {
   const end = target.search(/[?#]/);
   return end < 0 ? target : target.slice(0, end);
 }
+
+/**
+ * Whether a raw request path is outside the form the listeners dispatch on,
+ * so that it could reach a handler other than the one its resolved form
+ * names (and carry a key there): a leading `//`, a `.` or `..` segment, a
+ * backslash, an encoded dot (`%2E`), or an encoded slash or backslash
+ * (`%2F`, `%5C`) outside `/api/`, whose operations take a Model Ref with
+ * its slash encoded (`GET /api/v1/models/{ref}`). Both the daemon's
+ * listener and the LAN listener refuse such a path with
+ * {@link refuseNonCanonical} before dispatch.
+ */
+export function nonCanonicalPath(pathname: string): boolean {
+  return (
+    pathname.startsWith("//") ||
+    pathname.includes("\\") ||
+    /(?:^|\/)\.\.?(?:\/|$)/.test(pathname) ||
+    /%2e/i.test(pathname) ||
+    (!pathname.startsWith("/api/") && /%(?:2f|5c)/i.test(pathname))
+  );
+}
+
+/** Answers 400 `path_not_canonical` without repeating the path, and drains the request. */
+export function refuseNonCanonical(
+  request: IncomingMessage,
+  response: ServerResponse,
+): void {
+  request.resume();
+  response.on("error", () => undefined);
+  response.writeHead(400, { "content-type": "application/json" });
+  response.end(
+    JSON.stringify({
+      error: {
+        code: "path_not_canonical",
+        message:
+          "The request path holds a dot segment, an encoded dot or slash, a backslash, or begins with //",
+      },
+    }),
+  );
+}

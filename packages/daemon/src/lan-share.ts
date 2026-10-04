@@ -5,6 +5,8 @@
  * sharing settings and the second, LAN listener of the daemon. That listener
  * serves the model protocol paths only, through the shared gateway's LAN
  * entry; every other path, the management API included, does not exist on it.
+ * A path that is not canonical (`nonCanonicalPath`) is refused with 400
+ * before that choice.
  */
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
@@ -30,7 +32,12 @@ import {
 } from "@harnesshub/gateway/sharing";
 import { ApiProblem } from "./http/api-v1.js";
 import type { GatewayShareStatus } from "./http/gateway-share-routes.js";
-import { isModelGatewayPath, requestPath } from "./http/model-gateway-mount.js";
+import {
+  isModelGatewayPath,
+  nonCanonicalPath,
+  refuseNonCanonical,
+  requestPath,
+} from "./http/model-gateway-mount.js";
 
 /** The settings file in the data root. */
 export const GATEWAY_SHARING_FILE = "gateway-sharing.json";
@@ -251,7 +258,12 @@ export class GatewayShare {
   async #bind(host: string, port: number): Promise<Listener> {
     const handle = this.options.handle;
     const server = createServer((request, response) => {
-      if (isModelGatewayPath(requestPath(request.url))) {
+      const target = requestPath(request.url);
+      if (nonCanonicalPath(target)) {
+        refuseNonCanonical(request, response);
+        return;
+      }
+      if (isModelGatewayPath(target)) {
         handle(request, response);
         return;
       }

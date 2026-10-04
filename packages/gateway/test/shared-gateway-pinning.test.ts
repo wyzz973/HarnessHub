@@ -119,30 +119,35 @@ void test("a pinned credential that rests answers 429 and nothing else is tried"
   );
 });
 
-void test("a pinned credential that does not serve the model is 400, an unknown one 404", async (t) => {
+void test("a pinned credential that does not serve the model is 400; one outside the candidates is 404, as an unknown one", async (t) => {
   const { up, call, store } = await setup(t);
   const unlisted = await call("a/model-x", "cred-0");
   assert.equal(unlisted.status, 400, "provider a does not list model-x");
   assert.equal(at(unlisted.json(), "error", "code"), "credential_unserved");
+  // Provider other's "Team Key" exists, but not among a/model-a's
+  // candidates: the answer is the one for a name nothing has.
   const elsewhere = await call("a/model-a", "team key");
-  assert.equal(elsewhere.status, 400, "a credential of another provider");
-  assert.match(
-    String(at(elsewhere.json(), "error", "message")),
-    /credential "team key" does not serve a\/model-a/,
-  );
   const unknown = await call("a/model-a", "nobody");
-  assert.equal(unknown.status, 404);
-  assert.equal(at(unknown.json(), "error", "code"), "credential_not_found");
-  assert.match(
-    String(at(unknown.json(), "error", "message")),
-    /a\/credential 0, a\/credential 1/,
-  );
+  for (const [answer, label] of [
+    [elsewhere, '"team key"'],
+    [unknown, '"nobody"'],
+  ] as const) {
+    assert.equal(answer.status, 404, label);
+    assert.deepEqual(answer.json(), {
+      error: {
+        message: `X-HH-Credential: no enabled credential ${label}; a/model-a is served by a/credential 0, a/credential 1`,
+        type: "not_found_error",
+        param: null,
+        code: "credential_not_found",
+      },
+    });
+  }
   assert.equal(up.seen.length, 0);
   assert.deepEqual(
     store.entries.map((entry) => [entry.status, entry.errorClass]),
     [
       [400, "credential_unserved"],
-      [400, "credential_unserved"],
+      [404, "credential_not_found"],
       [404, "credential_not_found"],
     ],
   );

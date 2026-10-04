@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { redactKeyText } from "@harnesshub/core/key-text";
 import {
   GatewayError,
   array,
@@ -758,14 +759,15 @@ export function truncateText(value: string): string {
     : value;
 }
 /**
- * Remove known secret values and credential-shaped text, collapse whitespace
- * and truncate to 500 characters. Used for every upstream-derived message.
+ * Remove known secret values and credential-shaped text (Gateway Key text
+ * included), collapse whitespace and truncate to 500 characters. Used for
+ * every upstream-derived message.
  */
 export function sanitize(text: string, secrets: readonly string[]): string {
   let value = text;
   for (const secret of secrets)
     if (secret.length >= 4) value = value.split(secret).join("[redacted]");
-  value = value
+  value = redactKeyText(value)
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [redacted]")
     .replace(/\bsk-[A-Za-z0-9_-]{4,}/g, "sk-[redacted]")
     .replace(

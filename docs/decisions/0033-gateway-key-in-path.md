@@ -33,3 +33,9 @@ HarnessHub 的模型调用都要求 Gateway Key，按 Key 做模型白名单、�
 - 网关（合成密钥、回环假上游）：路径中的 agent Key 能调用与列出模型，上游、账本与日志都没有 Key 文本；错误的、格式不对的、`client:` Key 与路径和请求头不一致时 401，`/k/<Key>/backend-api/codex/…` 与 `/k/<Key>` 404，均不回显；局域网监听器与非回环来源 403；Muse 列表取最新的有效 Muse Key，未接线 404，POST、`Origin` 与非回环 `Host` 被拒绝。
 - 正式守护进程入口：接线 Command Code、fx 与 Muse 后用文件中的基址调用 Chat Completions 与 Responses，读 Muse 列表；开启局域网共享后两种路径在局域网监听器上 404；取消接线后 Key 失效、Muse 列表 404；关闭后数据目录、配置目录、接线目录与 OTLP 导出中都没有 Key 文本。
 - 未以真实的 Command Code、fx 与 Muse 验证它们会把路径原样保留、并在 `apiKey: false` 或 `auth: none` 时不发送别的凭据。
+
+## 修订（2026-10-05，安全审查 B 组）
+
+- Key 放在网关不读取它的位置（`/K/<Key>`、`/%6b/<Key>`、`/x/../k/<Key>`、`/k%2F<Key>`）时，请求绕过了分派，Key 进入访问日志与 Fastify 404 的回显。现在两个监听器在分派前以 400 拒绝不规范的路径（`//` 开头、点段、反斜杠、编码的点，以及 `/api/` 之外编码的斜杠与反斜杠）；其余的落点不回显路径，日志、问题详情与账本中的路径去掉 Key 文本。`/api/` 例外是因为 `GET /api/v1/models/{ref}` 等操作按约定把 Model Ref 的斜杠编码为 `%2F`，那些路径从不交给网关。
+- Key 文本按比签发格式宽的规则识别（`hhk_` 不分大小写、下划线可编码、其后的 Key 字符），因为差一个字符的 Key 只剩 64 种可能。
+- Codex 透传中 Key 之后只接受 Codex 调用的第一段（`responses`、`models`、`realtime`）；像 Key 却无效的段本地 401，其他段本地 404，都不转发给 ChatGPT。

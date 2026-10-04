@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { appendFile, mkdir } from "node:fs/promises";
 import path from "node:path";
+import { redactKeyText } from "@harnesshub/core/key-text";
 
 /** Upper bound, in characters (code points), of any error text crossing IPC. */
 export const PUBLIC_ERROR_LIMIT = 500;
@@ -11,7 +12,8 @@ export type Redactor = (text: string) => string;
 /**
  * Redact one Session's secrets from text. `secrets` is read on every call, so
  * values resolved later in the Session are covered without rebuilding the
- * redactor. Known values are replaced first, then credential shapes: `Bearer`
+ * redactor. Known values are replaced first, then credential shapes: Gateway
+ * Key text (`redactKeyText`: `hhk_` in any case and what follows it), `Bearer`
  * tokens, `sk-` keys and `token`/`key`/`secret`/`password`/`authorization`
  * assignments. Values shorter than 4 characters are ignored to avoid
  * destroying ordinary text.
@@ -23,7 +25,7 @@ export function createRedactor(secrets: ReadonlySet<string>): Redactor {
       .filter((value) => value.length >= 4)
       .sort((left, right) => right.length - left.length);
     for (const value of values) output = output.split(value).join("[REDACTED]");
-    return output
+    return redactKeyText(output)
       .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [REDACTED]")
       .replace(/\bsk-[A-Za-z0-9_-]{6,}/g, "sk-[REDACTED]")
       .replace(

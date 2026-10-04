@@ -24,9 +24,12 @@ import {
   isCodexPassthroughPath,
   isLocalAgentPath,
   isModelGatewayPath,
+  nonCanonicalPath,
+  refuseNonCanonical,
   requestPath,
   type ModelGatewayMount,
 } from "./model-gateway-mount.js";
+import { keylessPath } from "@harnesshub/core/key-text";
 import { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import Fastify, { type FastifyError } from "fastify";
@@ -88,8 +91,9 @@ export async function createGateway(
     remoteHosts?: boolean;
     /**
      * Access log: one `http` record per finished response (method, route, path
-     * without query, status, duration, Session/Run id from the route). Bodies,
-     * headers and query strings are never logged. Successful GET/HEAD responses
+     * without query and without Gateway Key text (`keylessPath`), status,
+     * duration, Session/Run id from the route). Bodies, headers and query
+     * strings are never logged. Successful GET/HEAD responses
      * other than `GET /event` are polling and are written at debug level only;
      * everything else is info. Streaming responses such as `GET /event` are
      * recorded when they end.
@@ -107,41 +111,46 @@ export async function createGateway(
      * before Fastify: they skip
      * Fastify's body limit, JSON parser and hooks, and the gateway applies
      * its own limits and loopback, Host and Origin rules. The owner closes
-     * the gateway before the stores.
+     * the gateway before the stores. With or without it, a request whose
+     * path is {@link nonCanonicalPath} is answered 400 before dispatch
+     * (an info `http` record, path without key text).
      */
     modelGateway?: ModelGatewayMount;
   } = {},
 ) {
   const modelGateway = options.modelGateway;
+  const access = options.log;
   const server = Fastify({
-    ...(modelGateway
-      ? {
-          serverFactory: (
-            handler: (
-              request: IncomingMessage,
-              response: ServerResponse,
-            ) => void,
-          ) => {
-            const listener = createServer((request, response) => {
-              const path = requestPath(request.url);
-              if (
-                isModelGatewayPath(path) ||
-                isCodexPassthroughPath(path) ||
-                isLocalAgentPath(path)
-              )
-                modelGateway.handle(request, response);
-              else handler(request, response);
-            });
-            listener.headersTimeout = modelGateway.headersTimeoutMs;
-            return listener;
-          },
-        }
-      : {}),
+    serverFactory: (
+      handler: (request: IncomingMessage, response: ServerResponse) => void,
+    ) => {
+      const listener = createServer((request, response) => {
+        const path = requestPath(request.url);
+        if (nonCanonicalPath(path)) {
+          refuseNonCanonical(request, response);
+          access?.info("http", {
+            method: request.method,
+            route: null,
+            path: keylessPath(path).slice(0, 300),
+            status: 400,
+            remote: request.socket.remoteAddress,
+          });
+        } else if (
+          modelGateway &&
+          (isModelGatewayPath(path) ||
+            isCodexPassthroughPath(path) ||
+            isLocalAgentPath(path))
+        )
+          modelGateway.handle(request, response);
+        else handler(request, response);
+      });
+      if (modelGateway) listener.headersTimeout = modelGateway.headersTimeoutMs;
+      return listener;
+    },
     logger: false,
     bodyLimit: 2 * 1024 * 1024,
     ajv: { customOptions: { removeAdditional: false } },
   });
-  const access = options.log;
   if (access)
     server.addHook("onResponse", async (request, reply) => {
       const params =
@@ -154,7 +163,7 @@ export async function createGateway(
       const record = {
         method: request.method,
         route,
-        path: request.url.split("?")[0]!.slice(0, 300),
+        path: keylessPath(request.url.split("?")[0]!).slice(0, 300),
         status: reply.statusCode,
         ms: Math.round(reply.elapsedTime),
         id: id("id") ?? id("sessionId") ?? id("runId"),
