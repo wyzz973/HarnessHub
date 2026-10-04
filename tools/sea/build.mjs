@@ -6,16 +6,20 @@
  *
  * Usage: node tools/sea/build.mjs [--out dist/sea]
  *
- * Steps: esbuild bundles tools/sea/entry.mjs with the Gateway, the Worker, the command MCP
- * and the engine launcher into one CommonJS script, rewriting `import.meta.url` of every module
- * to its repository-relative location under the runtime extraction root (see entry.mjs); files
- * other programs read from disk become SEA assets; `node --experimental-sea-config` writes the
- * blob (with V8 code cache); postject injects it into a copy of this Node executable; macOS
- * gets an ad-hoc signature. `build.json` records sizes and inputs for the spike report.
+ * Steps: esbuild bundles tools/sea/entry.mjs with the `hh` command table (apps/hh) and every
+ * command it dispatches, the Worker, the command MCP and the engine launchers into one
+ * CommonJS script, rewriting `import.meta.url` of every module to its repository-relative
+ * location under the runtime extraction root (see entry.mjs); files read from disk become
+ * SEA assets; `node --experimental-sea-config` writes the blob (with V8 code cache); postject
+ * injects it into a copy of this Node executable; macOS gets an ad-hoc signature. Finally every
+ * `hh` command must answer `--help` from the built executable, with a private HOME and
+ * extraction root. `build.json` records sizes, inputs and that check.
  *
  * Fails when Node does not match .node-version (the binary is a copy of process.execPath),
- * when dist/ or the console build is missing, or when any bundled module keeps an
- * `import.meta` use the rewrite does not cover.
+ * when dist/ or the console build is missing, when any bundled module keeps an `import.meta`
+ * use the rewrite does not cover, when entry.mjs and ROLE_ENTRIES disagree, when an asset
+ * directory holds a script SCRIPT_ASSETS does not classify, or when the executable does not
+ * run one of the `hh` commands.
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -42,30 +46,63 @@ const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const require = createRequire(import.meta.url);
 const SENTINEL_FUSE = "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2";
 const BUILD_ID_PLACEHOLDER = "HARNESSHUB-SEA-BUILD-ID-PLACEHOLDER";
+/**
+ * The plain scripts of the asset directories, by repository-relative path, and
+ * how the executable carries each: `role`, bundled and dispatched when a child
+ * is started with its path (a placeholder file stands at that path); `file`,
+ * extracted as it is, for a program that reads or runs it from disk with no
+ * imports but Node's (Pi loads its extension, the Copilot host runs in
+ * node-compat mode); `bundled`, imported by roles only and never run by path.
+ * A new script in these directories fails the build until it is listed here.
+ */
+export const SCRIPT_ASSETS = {
+  "packages/agents/assets/launch-engine.mjs": "role",
+  "packages/agents/assets/launch-dsh-acp.mjs": "role",
+  "packages/agents/assets/launch-openclaw-acp.mjs": "role",
+  "packages/agents/assets/launch-opencode-acp.mjs": "role",
+  "packages/agents/assets/launch-pi-acp.mjs": "role",
+  "packages/agents/assets/spawn-engine.mjs": "bundled",
+  "packages/agents/assets/native-mcp/pi-extension.mjs": "file",
+  "packages/daemon/assets/copilot-host.mjs": "file",
+};
+const SCRIPT_DIRECTORIES = ["packages/agents/assets", "packages/daemon/assets"];
+
 const ROLE_ENTRIES = [
   "packages/daemon/dist/src/main.js",
   "packages/daemon/dist/src/worker/main.js",
   "packages/daemon/dist/src/command-mcp-main.js",
-  "packages/agents/assets/launch-engine.mjs",
   "packages/runtime/dist/src/process/proc-scan-main.js",
-];
-/**
- * entry.mjs dispatches the same role entries. A role missing there makes the
- * child run a placeholder (the Linux process-table scanner once failed this way,
- * leaving every crash recovery `unconfirmed`), so the two lists must match.
- */
-const ENTRY_ROLES = [
-  ...readFileSync(path.join(ROOT, "tools/sea/entry.mjs"), "utf8").matchAll(
-    /\[\s*"([^"]+)",\s*\(\) => import\(/g,
+  ...Object.keys(SCRIPT_ASSETS).filter(
+    (relative) => SCRIPT_ASSETS[relative] === "role",
   ),
-].map((match) => match[1]);
-if (
-  ENTRY_ROLES.length !== ROLE_ENTRIES.length ||
-  ENTRY_ROLES.some((role) => !ROLE_ENTRIES.includes(role))
-)
-  throw new Error(
-    `tools/sea/entry.mjs dispatches [${ENTRY_ROLES.join(", ")}] but the build extracts [${ROLE_ENTRIES.join(", ")}]`,
-  );
+];
+
+/**
+ * The role entries entry.mjs dispatches (its `ROLES` map), which must be
+ * ROLE_ENTRIES. A role missing there makes the child run a placeholder (the
+ * Linux process-table scanner once failed this way, leaving every crash
+ * recovery `unconfirmed`).
+ *
+ * @param {string} entrySource The text of entry.mjs.
+ * @param {readonly string[]} roles ROLE_ENTRIES.
+ * @throws {Error} When the two lists differ.
+ */
+export function checkRoles(entrySource, roles) {
+  const dispatched = [
+    ...entrySource.matchAll(/\[\s*"([^"]+)",\s*\(\) => import\(/g),
+  ].map((match) => match[1]);
+  if (
+    dispatched.length !== roles.length ||
+    dispatched.some((role) => !roles.includes(role))
+  )
+    throw new Error(
+      `tools/sea/entry.mjs dispatches [${dispatched.join(", ")}] but the build extracts [${roles.join(", ")}]`,
+    );
+}
+checkRoles(
+  readFileSync(path.join(ROOT, "tools/sea/entry.mjs"), "utf8"),
+  ROLE_ENTRIES,
+);
 /**
  * Native helpers the executable may embed, by directory relative to the
  * repository. A migration step that moves or adds a helper updates this table.
@@ -119,6 +156,86 @@ export function nativeAssets(root) {
       `Native helper directories hold files NATIVE_HELPERS does not list: ${unknown.join(", ")}. Delete stale helpers, or list a new helper in tools/sea/build.mjs.`,
     );
   return helpers;
+}
+
+/**
+ * The `file` scripts of SCRIPT_ASSETS, at their repository-relative paths under
+ * the extraction root.
+ *
+ * @param {string} root Repository root.
+ * @param {Readonly<Record<string, "role" | "file" | "bundled">>} [table] SCRIPT_ASSETS.
+ * @returns {{path: string, file: string}[]} Sorted by path.
+ * @throws {Error} When an asset directory holds a file the table does not
+ *   list, or a listed file is missing.
+ */
+export function scriptAssets(root, table = SCRIPT_ASSETS) {
+  const found = [];
+  for (const relative of SCRIPT_DIRECTORIES) {
+    const directory = path.join(root, ...relative.split("/"));
+    if (!existsSync(directory)) continue;
+    for (const entry of readdirSync(directory, {
+      recursive: true,
+      withFileTypes: true,
+    }))
+      if (entry.isFile())
+        found.push(
+          `${relative}/${path
+            .relative(directory, path.join(entry.parentPath, entry.name))
+            .split(path.sep)
+            .join("/")}`,
+        );
+  }
+  const unknown = found.filter((relative) => !Object.hasOwn(table, relative));
+  if (unknown.length)
+    throw new Error(
+      `Asset directories hold scripts SCRIPT_ASSETS does not classify: ${unknown.sort().join(", ")}. List each in tools/sea/build.mjs as a role, a file or bundled.`,
+    );
+  const missing = Object.keys(table).filter(
+    (relative) => !found.includes(relative),
+  );
+  if (missing.length)
+    throw new Error(
+      `SCRIPT_ASSETS lists scripts that do not exist: ${missing.sort().join(", ")}`,
+    );
+  return found
+    .filter((relative) => table[relative] === "file")
+    .sort()
+    .map((relative) => ({
+      path: relative,
+      file: path.join(root, ...relative.split("/")),
+    }));
+}
+
+/**
+ * Check that the built executable runs every `hh` command: each must answer
+ * `<command> --help` with exit code 0. A command the executable does not
+ * dispatch, did not bundle or cannot load fails here instead of at a user's
+ * first try.
+ *
+ * @param {readonly string[]} names The commands of apps/hh (`COMMAND_NAMES`).
+ * @param {(name: string) => {status: number | null, stderr: string, ms: number}} run
+ *   Runs `<binary> <name> --help`.
+ * @returns {Record<string, number>} Milliseconds per command.
+ * @throws {Error} Naming every command that failed, with its exit status and
+ *   the first line of its stderr.
+ */
+export function checkCommands(names, run) {
+  if (!names.length) throw new Error("apps/hh lists no commands");
+  const timings = {};
+  const failed = [];
+  for (const name of names) {
+    const result = run(name);
+    timings[name] = Math.round(result.ms);
+    if (result.status !== 0)
+      failed.push(
+        `${name} (exit ${result.status}: ${result.stderr.trim().split("\n")[0] ?? ""})`,
+      );
+  }
+  if (failed.length)
+    throw new Error(
+      `The executable does not run these hh commands: ${failed.join("; ")}`,
+    );
+  return timings;
 }
 
 /**
@@ -204,6 +321,25 @@ const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const relativeToRoot = (file) =>
   path.relative(ROOT, file).split(path.sep).join("/");
 
+/**
+ * jsonc-parser's main build is UMD: its factory requires "./impl/format"
+ * through its own `require` argument, which esbuild cannot follow, so the
+ * bundled `require` fails at run time. Its ESM build (its `module` field)
+ * bundles normally.
+ */
+const esmBuildPlugin = {
+  name: "harnesshub-sea-esm-build",
+  setup(build) {
+    build.onResolve({ filter: /^jsonc-parser$/ }, (args) => {
+      const manifest = createRequire(path.join(args.resolveDir, "index.js")).resolve(
+        "jsonc-parser/package.json",
+      );
+      const { module } = JSON.parse(readFileSync(manifest, "utf8"));
+      return { path: path.join(path.dirname(manifest), module) };
+    });
+  },
+};
+
 /** Rewrites `import.meta.url` per module; see entry.mjs for the runtime half. */
 const moduleUrlPlugin = {
   name: "harnesshub-sea-module-url",
@@ -230,6 +366,47 @@ function run(command, args) {
   if (result.error) throw result.error;
   if (result.status !== 0)
     throw new Error(`${command} ${args.join(" ")} exited ${result.status}`);
+}
+
+/**
+ * Run `<binary> <command> --help` for every command of apps/hh with a private
+ * HOME, temporary directory and extraction root under `out`, removed after.
+ */
+async function probeCommands(binary, out) {
+  const { COMMAND_NAMES } = await import(
+    new URL("../../apps/hh/dist/src/main.js", import.meta.url).href
+  );
+  const directory = path.join(out, "command-probe");
+  mkdirSync(path.join(directory, "home"), { recursive: true });
+  mkdirSync(path.join(directory, "tmp"), { recursive: true });
+  const env = {
+    PATH: process.env.PATH ?? "",
+    ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+    HOME: path.join(directory, "home"),
+    USERPROFILE: path.join(directory, "home"),
+    LOCALAPPDATA: path.join(directory, "home", "AppData", "Local"),
+    XDG_CACHE_HOME: path.join(directory, "home", ".cache"),
+    TMPDIR: path.join(directory, "tmp"),
+    TEMP: path.join(directory, "tmp"),
+    TMP: path.join(directory, "tmp"),
+    HARNESSHUB_SEA_ROOT: path.join(directory, "root"),
+    HH_OFFLINE: "1",
+  };
+  try {
+    return checkCommands(COMMAND_NAMES, (name) => {
+      const started = performance.now();
+      const result = spawnSync(binary, [name, "--help"], {
+        cwd: directory,
+        env,
+        encoding: "utf8",
+        timeout: 60_000,
+      });
+      if (result.error) throw result.error;
+      return { ...result, ms: performance.now() - started };
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 /** Group bundled input bytes by package (or by src/ top directory) for the size breakdown. */
@@ -287,29 +464,10 @@ export async function buildSea({ out = path.join(ROOT, "dist", "sea") } = {}) {
       },
     ],
     [
-      "packages/agents/assets/native-mcp/pi-extension.mjs",
+      // hh benchmark records the daemon's version from it.
+      "packages/daemon/package.json",
       {
-        bytes: readFileSync(
-          path.join(
-            ROOT,
-            "packages",
-            "agents",
-            "assets",
-            "native-mcp",
-            "pi-extension.mjs",
-          ),
-        ),
-        executable: false,
-      },
-    ],
-    [
-      // Run by path with this executable as Node: it imports the optional
-      // Copilot SDK add-on, which cannot be bundled.
-      "packages/daemon/assets/copilot-host.mjs",
-      {
-        bytes: readFileSync(
-          path.join(ROOT, "packages", "daemon", "assets", "copilot-host.mjs"),
-        ),
+        bytes: readFileSync(path.join(ROOT, "packages", "daemon", "package.json")),
         executable: false,
       },
     ],
@@ -320,6 +478,9 @@ export async function buildSea({ out = path.join(ROOT, "dist", "sea") } = {}) {
       executable: true,
     });
   for (const data of [
+    // The Copilot host runs by path with this executable as Node: it imports
+    // the optional Copilot SDK add-on, which cannot be bundled.
+    ...scriptAssets(ROOT),
     ...presetAssets(ROOT),
     ...catalogAssets(ROOT),
     ...consoleAssets(ROOT),
@@ -361,7 +522,7 @@ export async function buildSea({ out = path.join(ROOT, "dist", "sea") } = {}) {
       __HH_SEA_BUILD_ID__: JSON.stringify(BUILD_ID_PLACEHOLDER),
       __HH_SEA_FILES__: JSON.stringify(files),
     },
-    plugins: [moduleUrlPlugin],
+    plugins: [esmBuildPlugin, moduleUrlPlugin],
     logLevel: "warning",
     logOverride: { "empty-import-meta": "error" },
   });
@@ -420,6 +581,7 @@ export async function buildSea({ out = path.join(ROOT, "dist", "sea") } = {}) {
     ...(process.platform === "darwin" ? { machoSegmentName: "NODE_SEA" } : {}),
   });
   if (process.platform === "darwin") run("codesign", ["--sign", "-", binary]);
+  const commands = await probeCommands(binary, out);
 
   const record = {
     platform: process.platform,
@@ -447,6 +609,8 @@ export async function buildSea({ out = path.join(ROOT, "dist", "sea") } = {}) {
       files.filter((f) => f.asset === f.path).map((f) => [f.path, f.sha256]),
     ),
     bundleInputs: inputBreakdown(bundled.metafile),
+    // Milliseconds each `hh <command> --help` took from the built executable.
+    commandHelpMs: commands,
   };
   writeFileSync(
     path.join(out, "build.json"),

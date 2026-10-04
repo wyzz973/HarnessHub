@@ -214,11 +214,11 @@ async function main() {
     process.off("SIGTERM", forwardTerm);
   }
 }
-try {
-  await main();
-} catch (error) {
+// Not a top-level await: the single executable (tools/sea) bundles this
+// launcher as CommonJS, which cannot contain one.
+main().catch((error) => {
   process.stderr.write(
     `${error instanceof LaunchError ? error.message : "OpenCode launcher could not initialize its isolated configuration"}\n`,
   );
   process.exitCode = 1;
-}
+});

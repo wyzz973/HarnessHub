@@ -99,11 +99,11 @@ async function main() {
   }
 }
 
-try {
-  await main();
-} catch (error) {
+// Not a top-level await: the single executable (tools/sea) bundles this
+// launcher as CommonJS, which cannot contain one.
+main().catch((error) => {
   process.stderr.write(
     `${error instanceof LaunchError ? error.message : "Pi launcher could not initialize its local configuration"}\n`,
   );
   process.exitCode = 1;
-}
+});

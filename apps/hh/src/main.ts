@@ -3,6 +3,7 @@ const USAGE = `Usage: hh <command> [arguments]
 
 Commands:
   serve       Start the Gateway (hh serve --help)
+  version     Print the build identity (--json for all of it)
   init        Set up: add a provider from a preset, wire the agents installed here
   config      Show or edit config.jsonc (show, get, set, unset)
   status      Show the running daemon and its model plane
@@ -39,12 +40,20 @@ Commands:
  */
 type Command = (argv: string[]) => Promise<number | undefined>;
 
+/** `hh version [--json]`, also `hh --version`: the daemon's build identity. */
+const version: Command = async (argv) => {
+  const { main } = await import("@harnesshub/daemon/main");
+  await main(["--version", ...argv.slice(1)]);
+  return undefined;
+};
+
 const COMMANDS: Readonly<Record<string, Command>> = {
   serve: async (argv) => {
     const { main } = await import("@harnesshub/daemon/main");
     await main(argv.slice(1));
     return undefined;
   },
+  version,
   benchmark: async (argv) => {
     const { main } = await import("@harnesshub/daemon/benchmark-main");
     return main(argv.slice(1));
@@ -122,8 +131,15 @@ const COMMANDS: Readonly<Record<string, Command>> = {
 };
 
 /**
- * Run one `hh` command: `serve`, `config`, `benchmark` and `tools` go to the
- * daemon's entries; `console`, `rollout` and the model-plane commands (`status`, `provider`,
+ * Every command `main` runs. The single executable (tools/sea) runs `main`
+ * for all of them, and its build fails when one of these does not answer
+ * `--help` from the built binary.
+ */
+export const COMMAND_NAMES: readonly string[] = Object.keys(COMMANDS);
+
+/**
+ * Run one `hh` command: `serve`, `version`, `config`, `benchmark` and `tools`
+ * go to the daemon's entries; `console`, `rollout` and the model-plane commands (`status`, `provider`,
  * `credential`, `key`, `group`, `model`, `catalog`, `usage`, `gateway`,
  * `subscription`), the agent commands (`agents`, `wire`, `use`, `unwire`,
  * `profile`, `library`, `tui`) and `init` to the CLI's, which
@@ -141,6 +157,7 @@ export async function main(argv: string[]): Promise<number | undefined> {
     console.log(USAGE);
     return 0;
   }
+  if (name === "--version") return version(argv);
   const command =
     name !== undefined && Object.hasOwn(COMMANDS, name)
       ? COMMANDS[name]

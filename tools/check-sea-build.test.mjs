@@ -4,7 +4,16 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { catalogAssets, consoleAssets, nativeAssets, presetAssets } from "./sea/build.mjs";
+import {
+  catalogAssets,
+  checkCommands,
+  checkRoles,
+  consoleAssets,
+  nativeAssets,
+  presetAssets,
+  scriptAssets,
+  SCRIPT_ASSETS,
+} from "./sea/build.mjs";
 
 async function tree(t, files) {
   const root = await mkdtemp(path.join(os.tmpdir(), "hh-sea-native-"));
@@ -100,4 +109,57 @@ test("the single executable carries the built console and refuses to build witho
       "packages/console/dist/theme-boot.js",
     ],
   );
+});
+
+test("every script of the asset directories is a role, an extracted file or bundled", async (t) => {
+  const listed = Object.keys(SCRIPT_ASSETS);
+  const root = await tree(t, listed);
+  assert.deepEqual(
+    scriptAssets(root).map((asset) => asset.path),
+    [
+      "packages/agents/assets/native-mcp/pi-extension.mjs",
+      "packages/daemon/assets/copilot-host.mjs",
+    ],
+  );
+  // A new launcher nobody classified would be neither dispatched nor extracted.
+  const added = await tree(t, [...listed, "packages/agents/assets/launch-new-acp.mjs"]);
+  assert.throws(
+    () => scriptAssets(added),
+    /scripts SCRIPT_ASSETS does not classify: packages\/agents\/assets\/launch-new-acp\.mjs\./,
+  );
+  const removed = await tree(t, listed.filter((relative) => !relative.endsWith("copilot-host.mjs")));
+  assert.throws(() => scriptAssets(removed), /do not exist: packages\/daemon\/assets\/copilot-host\.mjs/);
+});
+
+test("the build fails when entry.mjs and the extracted roles disagree", () => {
+  const entry = `const ROLES = new Map([
+  ["packages/daemon/dist/src/main.js", () => import("../../packages/daemon/dist/src/main.js")],
+  ["packages/agents/assets/launch-engine.mjs", () => import("../../packages/agents/assets/launch-engine.mjs")],
+]);`;
+  checkRoles(entry, ["packages/agents/assets/launch-engine.mjs", "packages/daemon/dist/src/main.js"]);
+  assert.throws(
+    () =>
+      checkRoles(entry, [
+        "packages/daemon/dist/src/main.js",
+        "packages/agents/assets/launch-engine.mjs",
+        "packages/agents/assets/launch-pi-acp.mjs",
+      ]),
+    /dispatches \[.*launch-engine\.mjs\] but the build extracts \[.*launch-pi-acp\.mjs\]/,
+  );
+});
+
+test("the build fails when the executable does not run an hh command", () => {
+  const outcomes = {
+    serve: { status: 0, stderr: "" },
+    agents: { status: 0, stderr: "" },
+    tui: { status: 2, stderr: "Unknown command: tui\nUsage: hh <command>" },
+    rollout: { status: 1, stderr: "Error [ERR_UNKNOWN_BUILTIN_MODULE]: No such built-in module: ./impl/format\n    at" },
+  };
+  const run = (name) => ({ ...outcomes[name], ms: 50 });
+  assert.deepEqual(checkCommands(["serve", "agents"], run), { serve: 50, agents: 50 });
+  assert.throws(
+    () => checkCommands(Object.keys(outcomes), run),
+    /does not run these hh commands: tui \(exit 2: Unknown command: tui\); rollout \(exit 1: Error \[ERR_UNKNOWN_BUILTIN_MODULE\]: No such built-in module: \.\/impl\/format\)$/,
+  );
+  assert.throws(() => checkCommands([], run), /lists no commands/);
 });

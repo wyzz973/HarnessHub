@@ -172,5 +172,9 @@ if (
   process.argv[1] &&
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
-  process.exitCode = await main(process.argv.slice(2));
+  // Not a top-level await: the single executable (tools/sea) bundles this
+  // module as CommonJS, which cannot contain one. `main` reports its own errors.
+  void main(process.argv.slice(2)).then((code) => {
+    process.exitCode = code;
+  });
 }

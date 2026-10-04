@@ -8,6 +8,9 @@ import { runToolPackageCli } from "@harnesshub/agents/tool-packages/index";
 import { sharedProcessLauncher } from "@harnesshub/runtime/process/launcher";
 import { usePlatformLauncher } from "@harnesshub/store/platform/process-launcher";
 
+const USAGE =
+  "Usage: node dist/src/tool-packages-main.js --root <absolute store directory> <package command>";
+
 /**
  * Standalone composition; publishing wrappers can inject their own root into
  * runToolPackageCli. Package storage on Windows starts the ACL helper through
@@ -17,10 +20,7 @@ export async function toolPackagesMain(argv: string[]): Promise<unknown> {
   usePlatformLauncher(sharedProcessLauncher());
   const [flag, root, ...command] = argv;
   if (flag !== "--root" || !root || !path.isAbsolute(root))
-    throw new HubError(
-      "INVALID_TOOL_PACKAGE_ARGUMENT",
-      "Usage: node dist/src/tool-packages-main.js --root <absolute store directory> <package command>",
-    );
+    throw new HubError("INVALID_TOOL_PACKAGE_ARGUMENT", USAGE);
   return runToolPackageCli(command, {
     root,
     nodeExecutable: process.execPath,
@@ -32,12 +32,16 @@ export async function toolPackagesMain(argv: string[]): Promise<unknown> {
 /**
  * Command-line entry of `tools` (`node dist/src/tool-packages-main.js` and
  * `hh tools`): prints the result as JSON on stdout, or the error code and
- * message as JSON on stderr.
+ * message as JSON on stderr. `--help` alone prints the usage and exits 0.
  *
  * @param argv The command-line arguments after the command itself.
  * @returns The process exit code.
  */
 export async function main(argv: string[]): Promise<number> {
+  if (argv.length === 1 && (argv[0] === "--help" || argv[0] === "-h")) {
+    console.log(USAGE);
+    return 0;
+  }
   try {
     console.log(JSON.stringify(await toolPackagesMain(argv), null, 2));
     return 0;
@@ -62,5 +66,9 @@ if (
   process.argv[1] &&
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
-  process.exitCode = await main(process.argv.slice(2));
+  // Not a top-level await: the single executable (tools/sea) bundles this
+  // module as CommonJS, which cannot contain one. `main` reports its own errors.
+  void main(process.argv.slice(2)).then((code) => {
+    process.exitCode = code;
+  });
 }

@@ -2,12 +2,12 @@
 /**
  * Main script of the HarnessHub single executable (SEA feasibility spike, OSS-008).
  *
- * tools/sea/build.mjs bundles this file together with the Gateway, the Worker and our own
- * child-process scripts into one CommonJS script that Node runs as the SEA main. It only
- * works inside that executable and is never run from the repository.
+ * tools/sea/build.mjs bundles this file together with the `hh` command table (apps/hh), the
+ * Gateway, the Worker and our own child-process scripts into one CommonJS script that Node
+ * runs as the SEA main. It only works inside that executable and is never run from the
+ * repository.
  *
  * Every HarnessHub process is the same binary; argv selects what it runs:
- * - `harnesshub serve [Gateway options]` and `harnesshub version [--json]`: user commands.
  * - `harnesshub <root>/<role entry> ...`: a child started by our own code. The code keeps
  *   computing child entry paths from `import.meta.url`; the build rewrites `import.meta.url`
  *   of every bundled module to the module's repository-relative location under the extraction
@@ -17,9 +17,13 @@
  * - `harnesshub <file.js|.mjs|.cjs> ...`: any other script runs as with `node <file>`
  *   ("node-compat"), for third-party Node agents and tool packages launched with the
  *   bundled Node executable, which is this binary.
+ * - Anything else is an `hh` command line (`harnesshub serve ...`, `harnesshub agents`, ...):
+ *   apps/hh's `main` runs it, with the same commands, output and exit codes as `hh`. The
+ *   build fails when one of its commands does not answer `--help` from the built binary.
  *
- * Extraction root: files that other programs read from disk (build identity, native helpers,
- * the Pi extension, provider presets) and placeholders for role entries (tool package binding checks that its
+ * Extraction root: files that are read from disk (build identity, the daemon's package.json,
+ * native helpers, the Pi extension, the Copilot host, provider presets, the model catalog,
+ * the console) and placeholders for role entries (tool package binding checks that its
  * entry is a regular file) are written once per build under a per-user cache directory
  * (`HARNESSHUB_SEA_ROOT` overrides it for measurements) and verified by SHA-256 whenever a user
  * command starts. A child accepts a root only when its marker names this build.
@@ -28,7 +32,8 @@
  * tools/sea/measure.mjs sets, a `serve` or `version` process writes one JSON line per event to
  * stderr, `{"event":"sea.trace","phase":...,"at":<epoch ms>}`: when the process started and
  * reached this script, each extracted file (repository-relative path, verified or written, and
- * the time it took), the end of extraction, the start and evaluation of the Gateway role, and
+ * the time it took), the end of extraction, the start and evaluation of the command (for
+ * `serve`, the Gateway module is evaluated within it, as when it was the only role), and
  * each native helper the process starts (file name only: spawn, process created, first output,
  * exit). It never names the extraction root, arguments or environment values. Child processes
  * (Workers, launchers, node-compat scripts) write no trace.
@@ -67,8 +72,8 @@ const BUILD_ID = __HH_SEA_BUILD_ID__;
 /** @type {{path: string, asset: string, sha256: string, size: number, executable: boolean}[]} */
 const FILES = __HH_SEA_FILES__;
 const MARKER = ".harnesshub-sea.json";
-const USAGE =
-  "Usage: harnesshub serve [--demo] [--host localhost] [--port 3180] [--data-dir ./data] [--config FILE] [--engine ID] | harnesshub version [--json]";
+/** The commands whose start the phase trace records. */
+const TRACED = new Set(["serve", "version"]);
 
 /** Role entries, keyed by the repository-relative path their callers compute. */
 const ROLES = new Map([
@@ -87,6 +92,23 @@ const ROLES = new Map([
   [
     "packages/agents/assets/launch-engine.mjs",
     () => import("../../packages/agents/assets/launch-engine.mjs"),
+  ],
+  // The fixed engine launchers that discovered and configured engines run by path.
+  [
+    "packages/agents/assets/launch-dsh-acp.mjs",
+    () => import("../../packages/agents/assets/launch-dsh-acp.mjs"),
+  ],
+  [
+    "packages/agents/assets/launch-openclaw-acp.mjs",
+    () => import("../../packages/agents/assets/launch-openclaw-acp.mjs"),
+  ],
+  [
+    "packages/agents/assets/launch-opencode-acp.mjs",
+    () => import("../../packages/agents/assets/launch-opencode-acp.mjs"),
+  ],
+  [
+    "packages/agents/assets/launch-pi-acp.mjs",
+    () => import("../../packages/agents/assets/launch-pi-acp.mjs"),
   ],
   // Linux process-table scanner, started with process.execPath during Worker cleanup.
   [
@@ -246,9 +268,14 @@ function traceHelpers() {
   }
 }
 
-async function runRole(root, relative, args) {
+/** Bundled modules find their files, and the entries of their children, under `root`. */
+function useRoot(root) {
   globalThis.__harnesshubSeaModuleUrl = (moduleRelative) =>
     pathToFileURL(under(root, moduleRelative)).href;
+}
+
+async function runRole(root, relative, args) {
+  useRoot(root);
   // Role modules read their arguments as `node <entry> ...args` would see them.
   process.argv = [process.execPath, under(root, relative), ...args];
   await ROLES.get(relative)();
@@ -271,41 +298,29 @@ async function main() {
     statSync(command, { throwIfNoEntry: false })?.isFile()
   )
     return runAsNode(command, rest);
-  switch (command) {
-    case "serve":
-    case "version":
-    case "--version": {
-      tracing = process.env.HARNESSHUB_SEA_TRACE === "1";
-      if (tracing) {
-        trace("entry", {
-          processStart: performance.timeOrigin,
-          entered: ENTERED_AT,
-        });
-        traceHelpers();
-      }
-      const root = defaultRoot();
-      trace("extract.start");
-      const written = ensureRoot(root);
-      trace("extract.end", { written });
-      trace("role.start");
-      await runRole(
-        root,
-        "packages/daemon/dist/src/main.js",
-        command === "serve" ? rest : ["--version", ...rest],
-      );
-      trace("role.evaluated");
-      return;
-    }
-    case undefined:
-    case "help":
-    case "--help":
-    case "-h":
-      console.log(USAGE);
-      return;
-    default:
-      console.error(USAGE);
-      process.exitCode = 2;
+  // Every other command line is hh's. process.argv[1] stays this binary, so no bundled
+  // module mistakes itself for the main module.
+  tracing = TRACED.has(command) && process.env.HARNESSHUB_SEA_TRACE === "1";
+  if (tracing) {
+    trace("entry", {
+      processStart: performance.timeOrigin,
+      entered: ENTERED_AT,
+    });
+    traceHelpers();
   }
+  const root = defaultRoot();
+  trace("extract.start");
+  const written = ensureRoot(root);
+  trace("extract.end", { written });
+  useRoot(root);
+  trace("role.start");
+  // Traced as before hh dispatched serve: the Gateway module's evaluation, then its start.
+  if (tracing && command === "serve")
+    await import("../../packages/daemon/dist/src/main.js");
+  const { main: hh } = await import("../../apps/hh/dist/src/main.js");
+  trace("role.evaluated");
+  const code = await hh(process.argv.slice(2));
+  if (code !== undefined) process.exitCode = code;
 }
 
 // A rejection ends the process with exit code 1, like a failed `node <entry>`.

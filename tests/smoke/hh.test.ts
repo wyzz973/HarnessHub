@@ -38,7 +38,7 @@ function hh(cwd: string, args: string[]): Promise<Outcome> {
 }
 
 void test(
-  "hh dispatches serve, benchmark and tools to the daemon and rollout and status to the CLI",
+  "hh dispatches serve, version, benchmark and tools to the daemon and rollout and status to the CLI",
   { timeout: 60_000 },
   async (t) => {
     const { directory } = await temporaryDirectory(t, "harnesshub-hh-");
@@ -47,6 +47,13 @@ void test(
     const version = await hh(directory, ["serve", "--version", "--json"]);
     assert.equal(version.code, 0, version.stderr);
     assert.deepEqual(JSON.parse(version.stdout), build);
+    // hh version is the same identity, also as hh --version.
+    const identity = await hh(directory, ["version", "--json"]);
+    assert.equal(identity.code, 0, identity.stderr);
+    assert.deepEqual(JSON.parse(identity.stdout), build);
+    const short = await hh(directory, ["--version"]);
+    assert.equal(short.code, 0, short.stderr);
+    assert.match(short.stdout, /^HarnessHub \S+ \S+/);
 
     const benchmark = await hh(directory, ["benchmark", "--help"]);
     assert.equal(benchmark.code, 0, benchmark.stderr);
@@ -57,6 +64,12 @@ void test(
     assert.equal(
       (JSON.parse(tools.stderr) as { error: { code: string } }).error.code,
       "INVALID_TOOL_PACKAGE_ARGUMENT",
+    );
+    const toolsHelp = await hh(directory, ["tools", "--help"]);
+    assert.equal(toolsHelp.code, 0, toolsHelp.stderr);
+    assert.match(
+      toolsHelp.stdout,
+      /^Usage: .* --root <absolute store directory>/,
     );
 
     // Model-plane commands go to the CLI, which needs the daemon's admin token.
