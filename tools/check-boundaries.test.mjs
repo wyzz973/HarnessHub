@@ -1086,6 +1086,10 @@ for (const tree of ["conformance", "tests/e2e", "tests/browser", "examples"]) {
       checkAt(file, 'const { Fastify } = await import("fastify");').join("\n"),
       rejected,
     );
+    // Only the protocol suite drives the gateway with the official clients.
+    const client = checkAt(file, 'import OpenAI from "openai";').join("\n");
+    if (tree === "conformance") assert.equal(client, "");
+    else assert.match(client, rejected);
     assert.match(
       checkAt(
         file,
@@ -1102,6 +1106,61 @@ for (const tree of ["conformance", "tests/e2e", "tests/browser", "examples"]) {
     );
   });
 }
+
+test("conformance/ may import only the protocol clients, each pinned exactly in the root devDependencies", () => {
+  const file = "conformance/protocols/matrix.test.ts";
+  const pinned = new Set(["openai", "@anthropic-ai/sdk", "@google/genai"]);
+  assert.deepEqual(
+    checkAt(
+      file,
+      [
+        'import OpenAI from "openai";',
+        'import { APIError } from "openai/error";',
+        'import Anthropic from "@anthropic-ai/sdk";',
+        'import { GoogleGenAI } from "@google/genai";',
+      ].join("\n"),
+      pinned,
+    ),
+    [],
+  );
+  assert.match(
+    checkAt(file, 'import OpenAI from "openai";', new Set()).join("\n"),
+    /conformance imports openai, which the root package\.json must pin to an exact version in devDependencies/,
+  );
+  assert.match(
+    checkAt(file, 'import { generateText } from "ai";', pinned).join("\n"),
+    /black-box code may use only/,
+  );
+  assert.match(
+    checkAt(file, 'import WebSocket from "ws";', pinned).join("\n"),
+    /black-box code may use only/,
+  );
+});
+
+test("CLI accepts a protocol client in conformance/ only at an exact root pin", (context) => {
+  const directory = mkdtempSync(
+    join(tmpdir(), "harnesshub-boundaries-clients-"),
+  );
+  context.after(() => rmSync(directory, { recursive: true, force: true }));
+  const files = (version) => ({
+    "package.json": manifest("harnesshub-workspace", {}, { openai: version }),
+    "packages/core/package.json": manifest("@harnesshub/core"),
+    "packages/core/src/index.ts": "export {};",
+    "conformance/protocols/chat.test.ts": 'import OpenAI from "openai";',
+  });
+  write(directory, files("7.25.0"));
+  const passed = run(directory);
+  assert.equal(passed.status, 0, passed.stderr);
+  for (const version of ["^7.25.0", "~7.25.0", "latest", "7"]) {
+    write(directory, files(version));
+    const failed = run(directory);
+    assert.equal(failed.status, 1, version);
+    assert.match(
+      failed.stderr,
+      /conformance\/protocols\/chat\.test\.ts:1 conformance imports openai, which the root package\.json must pin/,
+    );
+  }
+});
 
 test("CLI fails on a manifest outside the graph, a missing manifest, an undeclared import and a black-box violation", (context) => {
   const directory = mkdtempSync(

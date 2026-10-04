@@ -21,6 +21,9 @@
  * - Black-box trees (BLACK_BOX: conformance/, tests/e2e/, tests/browser/ and
  *   examples/, where present) may use only @harnesshub/core, @harnesshub/sdk,
  *   Node built-ins (HTTP, and starting the `hh` command) and their own files.
+ *   conformance/ may also import the official protocol clients
+ *   (PROTOCOL_CLIENTS), each pinned to an exact version in the root
+ *   package.json devDependencies.
  * - Inside packages and applications, @harnesshub/* imports also follow the
  *   graph, and legacy module rules (`allowed`) keep applying to package
  *   files through PACKAGE_ORIGINS; package files outside any legacy module
@@ -133,6 +136,19 @@ export const BLACK_BOX = [
   "examples",
 ];
 const BLACK_BOX_PACKAGES = new Set(["core", "sdk"]);
+
+/**
+ * The official SDKs the protocol suite uses as clients of the gateway
+ * (10-engineering section 3.3): third-party code that only conformance/ may
+ * import, and only at the exact version the root package.json pins, so a
+ * passing run names the client versions it proves.
+ */
+export const PROTOCOL_CLIENTS = new Set([
+  "openai",
+  "@anthropic-ai/sdk",
+  "@google/genai",
+]);
+const EXACT_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 /**
  * Import aliases of a package's tsconfig `paths`: the console's `@/x` is the
@@ -310,6 +326,7 @@ export function classify(path, root) {
   if (box !== undefined)
     return {
       kind: "black-box",
+      box,
       container: join(root, ...box.split("/")),
       legacyPath: null,
     };
@@ -373,9 +390,10 @@ function containerName(where, root) {
  * @param {string} contents Its source text.
  * @param {string} root Repository root.
  * @param {Set<string>} [declared] The packages the file's manifest lets it
- *   import (declaredDependencies). checkBoundaries always passes it; without
- *   it the declared-dependency rule is not applied, which only unit tests of
- *   the other rules rely on.
+ *   import (declaredDependencies; for conformance/, the protocol clients the
+ *   root package.json pins exactly). checkBoundaries always passes it;
+ *   without it the declared-dependency rule is not applied, which only unit
+ *   tests of the other rules rely on.
  * @returns {string[]} One message per violation, prefixed with the file and line.
  */
 export function checkSource(filePath, contents, root, declared) {
@@ -524,7 +542,14 @@ export function checkSource(filePath, contents, root, declared) {
     const builtin = specifier.startsWith("node:") || isBuiltin(specifier);
     if (!builtin) {
       if (where.kind === "black-box") {
-        report(node, `${blackBox()}: ${specifier}`);
+        const client = packageName(specifier);
+        if (where.box !== "conformance" || !PROTOCOL_CLIENTS.has(client))
+          report(node, `${blackBox()}: ${specifier}`);
+        else if (declared !== undefined && !declared.has(client))
+          report(
+            node,
+            `conformance imports ${client}, which the root package.json must pin to an exact version in devDependencies`,
+          );
         return;
       }
       inspectDeclared(node, packageName(specifier));
@@ -728,6 +753,20 @@ function sourceTrees(root) {
   return trees;
 }
 
+/** The protocol clients the root manifest pins to an exact version in devDependencies. */
+function pinnedClients(manifest) {
+  return new Set(
+    Object.entries(manifest?.devDependencies ?? {})
+      .filter(
+        ([name, version]) =>
+          PROTOCOL_CLIENTS.has(name) &&
+          typeof version === "string" &&
+          EXACT_VERSION.test(version),
+      )
+      .map(([name]) => name),
+  );
+}
+
 /**
  * Check a repository: its manifests, then every scanned file against the
  * dependencies its manifest declares. A repository without source files, a
@@ -770,7 +809,8 @@ export function checkBoundaries(root) {
         failures.push("package.json is missing at the repository root");
         declared = new Set();
       } else declared = declaredDependencies(rootManifest, "test");
-    }
+    } else if (where.kind === "black-box" && where.box === "conformance")
+      declared = pinnedClients(rootManifest);
     failures.push(
       ...checkSource(file, readFileSync(file, "utf8"), root, declared),
     );
