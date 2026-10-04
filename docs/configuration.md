@@ -76,7 +76,7 @@
 
 ## 出站代理
 
-守护进程自己发出的请求都经过同一个出站策略（[outbound.ts](../packages/daemon/src/outbound.ts)，参照 Magpie `internal/netproxy`）：provider 的模型调用、`count_tokens`、图像、模型列表刷新、`hh provider test` 与 `doctor`、models.dev 目录刷新、ChatGPT 登录与令牌（Sign in with ChatGPT 与 JWKS）、Codex 透传到 chatgpt.com、联网搜索后端、WebDAV 与 S3 同步、OTLP 导出。安装 Copilot SDK 的 npm 与 Copilot CLI 由守护进程启动、自己联网，它们的 `HTTPS_PROXY`、`HTTP_PROXY`、`ALL_PROXY` 与 `NO_PROXY` 被替换为守护进程的代理（含凭据），`NO_PROXY` 列出回环地址与 `network.noProxy`；没有代理时这些变量被删除。
+守护进程自己发出的请求都经过同一个出站策略（[outbound.ts](../packages/daemon/src/outbound.ts)，参照 Magpie `internal/netproxy`，取舍见 [ADR 0035](decisions/0035-outbound-proxy.md)）：provider 的模型调用、`count_tokens`、图像、模型列表刷新、`hh provider test` 与 `doctor`、models.dev 目录刷新、ChatGPT 登录与令牌（Sign in with ChatGPT 与 JWKS）、Codex 透传到 chatgpt.com、联网搜索后端、WebDAV 与 S3 同步、OTLP 导出。安装 Copilot SDK 的 npm 与 Copilot CLI 由守护进程启动、自己联网，它们的 `HTTPS_PROXY`、`HTTP_PROXY`、`ALL_PROXY` 与 `NO_PROXY` 被替换为守护进程的代理（含凭据），`NO_PROXY` 列出回环地址与 `network.noProxy`；没有代理时这些变量被删除。
 
 - **取值**：`--proxy` 优先，其次是 `https_proxy`、`HTTPS_PROXY`、`http_proxy`、`HTTP_PROXY`（取第一个非空的；一个代理用于所有请求，只设了 HTTP 代理时 HTTPS 也经过它），再次是 `network.proxy`。`--proxy direct` 在环境中有代理时关闭它。`network.noProxy` 同样由 `no_proxy`/`NO_PROXY` 优先。`startHub` 本身不读这些变量，只有 `hh serve` 按上面的顺序传入。
 - **不经代理**：回环地址（`localhost`、`*.localhost`、`127.0.0.0/8`、`::1`）从不经过代理；私有网络也直连：`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、链路本地地址、`100.64.0.0/10`（运营商 NAT 与 Tailscale）、`fc00::/7`、`fe80::/10`，以及不带点的主机名和 `.local`、`.home.arpa`、`.internal` 下的名称。公网名称解析到私有地址的情形无法在不查询 DNS 的情况下判断，需要写进 `network.noProxy`。

@@ -38,6 +38,7 @@ ADR 记录重要且未来可能重新讨论的决定。适用范围见 [文档�
 - [0032：路由组规则与分类器](0032-group-rules-and-classifier.md)（proposed）
 - [0033：不能发送请求头的 Agent 把 Gateway Key 放在路径中](0033-gateway-key-in-path.md)（proposed）
 - [0034：控制台的中英文界面](0034-console-languages.md)（proposed）
+- [0035：守护进程的出站代理](0035-outbound-proxy.md)（proposed）
 
 编号 0009、0011、0012、0015 是早期版本的 Windows 便携发行、上游网关适配、离线交付与预装工具包决定，随对应功能一起移除，原文保留在 `archive/competition` 分支；编号不再复用。
 
