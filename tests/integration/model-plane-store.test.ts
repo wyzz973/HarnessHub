@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -733,6 +734,134 @@ void test("a ledger write that fails rejects and commits nothing", async (t) => 
   await assert.rejects(plane.appendModelCall(call()), code("STORE_CLOSED"));
   await assert.rejects(plane.listProviders(), code("STORE_CLOSED"));
   assert.equal(count(db, "model_calls"), 1);
+});
+
+void test("concurrent ledger appends commit as a group: every one durable, readable and in order", async (t) => {
+  const { plane, raw } = fixture(t);
+  const conversationKey = "c1".repeat(32);
+  const entries = Array.from({ length: 300 }, () => call({ conversationKey }));
+  // Appended in one burst: they share a transaction.
+  await Promise.all(entries.map((entry) => plane.appendModelCall(entry)));
+  assert.equal(count(raw(), "model_calls"), 300);
+  // Same time: newest first is the reverse of the order they were appended in.
+  const listed: ModelCallEntry[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await plane.listModelCalls(
+      { conversationKey },
+      { limit: 100, ...(cursor ? { cursor } : {}) },
+    );
+    listed.push(...page.items);
+    cursor = page.nextCursor;
+  } while (cursor);
+  assert.deepEqual(
+    listed.map((entry) => entry.callId),
+    entries.map((entry) => entry.callId).reverse(),
+  );
+});
+
+void test("an entry that fails in a group fails alone; the others commit", async (t) => {
+  const { plane, raw } = fixture(t);
+  const earlier = call();
+  await plane.appendModelCall(earlier);
+  const db = raw();
+  db.exec(
+    "CREATE TRIGGER refuse_one BEFORE INSERT ON model_calls WHEN NEW.call_id = 'call-refused' BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END",
+  );
+  const before = call();
+  const refused = call({ callId: "call-refused" as ModelCallId });
+  const conflicting = { ...earlier, status: 500 };
+  const after = call();
+  const results = await Promise.allSettled([
+    plane.appendModelCall(before),
+    plane.appendModelCall(refused),
+    plane.appendModelCall(conflicting),
+    plane.appendModelCall(earlier),
+    plane.appendModelCall(after),
+  ]);
+  assert.deepEqual(
+    results.map((result) =>
+      result.status === "fulfilled"
+        ? "committed"
+        : (result.reason as HubError).code,
+    ),
+    [
+      "committed",
+      "MODEL_CALL_WRITE_FAILED",
+      "MODEL_CALL_CONFLICT",
+      "committed",
+      "committed",
+    ],
+  );
+  assert.match(
+    String(((results[1] as PromiseRejectedResult).reason as HubError).cause),
+    /synthetic write failure/,
+  );
+  assert.deepEqual(
+    db
+      .prepare("SELECT call_id FROM model_calls ORDER BY seq")
+      .all()
+      .map((row) => row.call_id),
+    [earlier.callId, before.callId, after.callId],
+  );
+});
+
+void test("close() commits the group still waiting, and the appends resolve", async (t) => {
+  const { plane, store, open } = fixture(t);
+  const entries = [call(), call(), call()];
+  const appended = entries.map((entry) => plane.appendModelCall(entry));
+  plane.close();
+  await Promise.all(appended);
+  store.close();
+  const reopened = open();
+  assert.equal(
+    (await reopened.plane.listModelCalls({}, { limit: 10 })).items.length,
+    3,
+  );
+});
+
+void test("appends that resolved before the process was killed are in the ledger after a restart", async (t) => {
+  const { dir, path, plane, store, open } = fixture(t);
+  plane.close();
+  store.close();
+  const entries = Array.from({ length: 200 }, () => call());
+  const file = join(dir, "entries.json");
+  writeFileSync(file, JSON.stringify(entries));
+  // A process that owns the database, appends in one burst, reports the
+  // resolved appends and is killed without closing anything.
+  const program = `
+    const { readFileSync } = await import("node:fs");
+    const { SqliteStore } = await import(${JSON.stringify(import.meta.resolve("@harnesshub/store/storage/sqlite-store"))});
+    const { SqliteModelPlaneStore } = await import(${JSON.stringify(import.meta.resolve("@harnesshub/store/storage/model-plane-store"))});
+    const store = new SqliteStore(${JSON.stringify(path)});
+    store.acquireOwner();
+    const plane = new SqliteModelPlaneStore(${JSON.stringify(path)});
+    const entries = JSON.parse(readFileSync(${JSON.stringify(file)}, "utf8"));
+    await Promise.all(entries.map((entry) => plane.appendModelCall(entry)));
+    process.stdout.write("resolved " + entries.length + "\\n", () => process.kill(process.pid, "SIGKILL"));
+  `;
+  const child = spawnSync(
+    process.execPath,
+    ["--input-type=module", "--eval", program],
+    { encoding: "utf8" },
+  );
+  assert.equal(child.signal, "SIGKILL", child.stderr);
+  assert.equal(child.stdout, "resolved 200\n");
+  const restarted = open();
+  const ids = new Set<string>();
+  let cursor: string | undefined;
+  do {
+    const page = await restarted.plane.listModelCalls(
+      {},
+      { limit: 100, ...(cursor ? { cursor } : {}) },
+    );
+    for (const entry of page.items) ids.add(entry.callId);
+    cursor = page.nextCursor;
+  } while (cursor);
+  assert.deepEqual(
+    [...ids].sort(),
+    entries.map((entry) => entry.callId).sort(),
+  );
 });
 
 void test("ledger pages run newest first with a stable cursor", async (t) => {

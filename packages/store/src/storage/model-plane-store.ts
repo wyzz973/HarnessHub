@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: MIT
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import {
+  DatabaseSync,
+  type SQLInputValue,
+  type StatementSync,
+} from "node:sqlite";
 import { HubError } from "@harnesshub/core/errors";
 import { AUTO_GROUP_PREFIX } from "@harnesshub/core/auto-groups";
 import {
@@ -230,7 +234,8 @@ function bucketExpression(groupBy: UsageGroupBy): string {
  * fails with `SCHEMA_NOT_MIGRATED` (500) or `MODEL_PLANE_OWNER_REQUIRED`
  * (409). The caller owns `close()` and closes this store before releasing the
  * owner. Methods run synchronously on the connection and settle their
- * promise afterwards, so a resolved write is committed (WAL with
+ * promise afterwards; ledger appends wait for their group commit
+ * (`appendModelCall`). Either way a resolved write is committed (WAL with
  * `synchronous = FULL`). Records are validated before writing
  * (`MODEL_PLANE_RECORD_INVALID`, 400) and when read (`STORAGE_CORRUPT`, 500).
  * After `close()` every method rejects with `STORE_CLOSED` (503).
@@ -609,42 +614,58 @@ export class SqliteModelPlaneStore
    * entry is a no-op; a different entry under that ID is `MODEL_CALL_CONFLICT`
    * (409). A failed write rejects with `MODEL_CALL_WRITE_FAILED` (503), the
    * SQLite error as its cause, and nothing committed.
+   *
+   * Group commit: entries appended before the store next gets the event
+   * loop's check phase (a burst, or calls that end in the same I/O poll)
+   * are written in one transaction, in the order they were appended, and
+   * each promise settles after that transaction is durable (WAL with
+   * `synchronous = FULL`). When the group's transaction fails, it is rolled
+   * back and each entry is written on its own, so only the entries that fail
+   * alone reject. An invalid entry rejects before it joins a group.
    */
   async appendModelCall(entry: ModelCallEntry): Promise<void> {
     const record = checked(entry, isModelCallEntry, "model call");
-    const db = this.open();
-    const usage =
-      entry.usage && entry.usage.source !== "missing" ? entry.usage : undefined;
-    let inserted: boolean;
+    this.open();
+    return new Promise<void>((resolve, reject) => {
+      this.pendingCalls.push({ entry, record, resolve, reject });
+      this.groupCommit ??= setImmediate(() => this.commitGroup());
+    });
+  }
+
+  /** Entries waiting for the next group commit, in the order they were appended. */
+  private pendingCalls: PendingCall[] = [];
+  private groupCommit: NodeJS.Immediate | undefined;
+  private insertCall: StatementSync | undefined;
+
+  /** Writes the pending entries in one transaction and settles their promises. */
+  private commitGroup(): void {
+    clearImmediate(this.groupCommit);
+    this.groupCommit = undefined;
+    const group = this.pendingCalls.splice(0);
+    if (!group.length) return;
+    if (group.length === 1) {
+      settle(group[0]!, this.writeCall(group[0]!));
+      return;
+    }
+    const db = this.db;
+    let outcomes: (HubError | undefined)[];
     try {
-      inserted =
-        Number(
-          db
-            .prepare(
-              "INSERT INTO model_calls (call_id, occurred_ms, key_id, provider, model_ref, session_id, run_id, adapter_id, credential_id, conversation_key, agent, status, input_tokens, cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens, cost_usd, record) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(call_id) DO NOTHING",
-            )
-            .run(
-              entry.callId,
-              Date.parse(entry.occurredAt),
-              entry.keyId ?? null,
-              entry.provider ?? null,
-              entry.modelRef ?? null,
-              entry.sessionId ?? null,
-              entry.runId ?? null,
-              entry.scope?.kind === "agent" ? entry.scope.adapterId : null,
-              entry.credentialId ?? null,
-              entry.conversationKey ?? null,
-              entry.agent?.id ?? null,
-              entry.status,
-              usage?.input ?? 0,
-              usage?.cacheRead ?? 0,
-              usage?.cacheWrite ?? 0,
-              usage?.output ?? 0,
-              usage?.reasoning ?? 0,
-              entry.cost?.amountUsd ?? null,
-              record,
-            ).changes,
-        ) > 0;
+      db.exec("BEGIN IMMEDIATE");
+      outcomes = group.map((call) => this.insertOrConflict(call));
+      db.exec("COMMIT");
+    } catch {
+      if (db.isTransaction) db.exec("ROLLBACK");
+      // Each entry alone, so that one bad entry fails only itself.
+      for (const call of group) settle(call, this.writeCall(call));
+      return;
+    }
+    group.forEach((call, index) => settle(call, outcomes[index]));
+  }
+
+  /** One entry in its own transaction: its conflict or write failure, if any. */
+  private writeCall(call: PendingCall): HubError | undefined {
+    try {
+      return this.insertOrConflict(call);
     } catch (cause) {
       const error = new HubError(
         "MODEL_CALL_WRITE_FAILED",
@@ -652,18 +673,58 @@ export class SqliteModelPlaneStore
         503,
       );
       error.cause = cause;
-      throw error;
+      return error;
     }
-    if (inserted) return;
-    const existing = db
+  }
+
+  /**
+   * Inserts an entry; an existing row with its ID is a no-op when it is the
+   * same entry, otherwise the conflict is returned. Throws the SQLite error.
+   */
+  private insertOrConflict({
+    entry,
+    record,
+  }: PendingCall): HubError | undefined {
+    const usage =
+      entry.usage && entry.usage.source !== "missing" ? entry.usage : undefined;
+    this.insertCall ??= this.db.prepare(
+      "INSERT INTO model_calls (call_id, occurred_ms, key_id, provider, model_ref, session_id, run_id, adapter_id, credential_id, conversation_key, agent, status, input_tokens, cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens, cost_usd, record) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(call_id) DO NOTHING",
+    );
+    const inserted =
+      Number(
+        this.insertCall.run(
+          entry.callId,
+          Date.parse(entry.occurredAt),
+          entry.keyId ?? null,
+          entry.provider ?? null,
+          entry.modelRef ?? null,
+          entry.sessionId ?? null,
+          entry.runId ?? null,
+          entry.scope?.kind === "agent" ? entry.scope.adapterId : null,
+          entry.credentialId ?? null,
+          entry.conversationKey ?? null,
+          entry.agent?.id ?? null,
+          entry.status,
+          usage?.input ?? 0,
+          usage?.cacheRead ?? 0,
+          usage?.cacheWrite ?? 0,
+          usage?.output ?? 0,
+          usage?.reasoning ?? 0,
+          entry.cost?.amountUsd ?? null,
+          record,
+        ).changes,
+      ) > 0;
+    if (inserted) return undefined;
+    const existing = this.db
       .prepare("SELECT record FROM model_calls WHERE call_id = ?")
       .get(entry.callId);
-    if (existing?.record !== record)
-      throw new HubError(
-        "MODEL_CALL_CONFLICT",
-        "A different model call with this ID is recorded",
-        409,
-      );
+    return existing?.record === record
+      ? undefined
+      : new HubError(
+          "MODEL_CALL_CONFLICT",
+          "A different model call with this ID is recorded",
+          409,
+        );
   }
 
   /**
@@ -884,10 +945,24 @@ export class SqliteModelPlaneStore
     return this.remove("DELETE FROM wiring_profiles WHERE name = ?", name);
   }
 
-  /** Idempotent. */
+  /** Commits the pending ledger entries, then closes the connection. Idempotent. */
   close(): void {
     if (this.closed) return;
+    this.commitGroup();
     this.closed = true;
     this.db.close();
   }
+}
+
+/** A ledger entry waiting for its group commit. */
+interface PendingCall {
+  entry: ModelCallEntry;
+  record: string;
+  resolve(): void;
+  reject(error: HubError): void;
+}
+
+function settle(call: PendingCall, error: HubError | undefined): void {
+  if (error) call.reject(error);
+  else call.resolve();
 }
