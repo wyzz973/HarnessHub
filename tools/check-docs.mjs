@@ -16,7 +16,13 @@
  * are visited once, so cycles cannot recurse forever.
  *
  * Lines indented by four spaces or a tab are treated as code examples.
- * Does not validate anchors, remote URLs, reference links, autolinks, HTML,
+ * A `#fragment` of a link to a Markdown file (or of a link within one) must
+ * name a heading of that file, by GitHub's slugs (lowercase, punctuation and
+ * symbols removed, CJK kept, spaces to hyphens, `-1`, `-2` for repeated
+ * headings), or an explicit `<a id>`/`<a name>` anchor; fragments of links
+ * to other files (source line anchors, JSON) are not checked. Headings are
+ * ATX and setext headings outside code.
+ * Does not validate remote URLs, reference links, autolinks, other HTML,
  * or Markdown container grammar (e.g. list indentation and quoted fences).
  * URI schemes and protocol-relative URLs are ignored except file: URLs, which
  * are rejected in favor of portable relative paths. No network requests occur.
@@ -87,6 +93,67 @@ function maskCode(text, report) {
   return result.join('');
 }
 
+/**
+ * The text a heading renders to: code spans, links and images by their
+ * text, emphasis and HTML tags dropped.
+ */
+function headingText(markdown) {
+  return markdown
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/<[^>]+>/g, '')
+    .replace(/`/g, '')
+    .replace(/(^|[^\p{L}\p{N}])_+|_+(?=[^\p{L}\p{N}]|$)/gu, '$1');
+}
+
+/** GitHub's slug of a heading's text, before duplicates are numbered. */
+export function headingSlug(text) {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{M}\p{N}\p{Pc} -]/gu, '')
+    .replace(/ /g, '-');
+}
+
+/**
+ * The anchors of a document: its headings' slugs, numbered `-1`, `-2` …
+ * when repeated as GitHub numbers them, and the ids and names of its `<a>`
+ * tags. `visible` is the text with its code masked (maskCode): a heading
+ * is read from the original line, code spans included, where the masked
+ * line is not code; tags count outside code only.
+ */
+export function documentAnchors(text, visible) {
+  const original = text.split('\n');
+  const anchors = new Set();
+  const occurrences = new Map();
+  const add = (base) => {
+    let slug = base;
+    while (occurrences.has(slug)) {
+      const count = occurrences.get(base) + 1;
+      occurrences.set(base, count);
+      slug = `${base}-${count}`;
+    }
+    occurrences.set(slug, 0);
+    anchors.add(slug);
+  };
+  const lines = visible.split('\n');
+  lines.forEach((line, index) => {
+    if (line.trim() === '') return;
+    const atx = original[index].match(/^ {0,3}#{1,6}(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/);
+    if (atx) add(headingSlug(headingText(atx[1] ?? '')));
+    const previous = lines[index - 1];
+    if (
+      /^ {0,3}(?:=+|-+)[ \t]*$/.test(line) &&
+      previous !== undefined &&
+      previous.trim() !== '' &&
+      !/^ {0,3}(?:#|>|[-*+][ \t]|\d+[.)][ \t]|\||(?:=+|-+)[ \t]*$)/.test(previous)
+    )
+      add(headingSlug(headingText(original[index - 1].trim())));
+    for (const tag of line.matchAll(/<a\s[^>]*>/gi))
+      for (const attribute of tag[0].matchAll(/\s(?:id|name)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"']+))/gi))
+        anchors.add(attribute[1] ?? attribute[2] ?? attribute[3]);
+  });
+  return anchors;
+}
+
 function inlineLinks(line) {
   const links = [];
   for (let start = 0; start < line.length; start++) {
@@ -148,6 +215,16 @@ export async function checkDocs(rootDirectory = DEFAULT_ROOT) {
   const display = (file) => path.relative(root, file).split(path.sep).join('/') || '.';
   const report = (file, line, message) => diagnostics.push(`${display(file)}:${line}: ${message}`);
   const visited = new Set();
+  /** The anchors of each Markdown file read, by real path. */
+  const anchors = new Map();
+  const anchorsOf = async (file) => {
+    const real = await realpath(file);
+    if (!anchors.has(real)) {
+      const text = (await readFile(real, 'utf8')).replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+      anchors.set(real, documentAnchors(text, maskCode(text, () => {})));
+    }
+    return anchors.get(real);
+  };
 
   async function walk(directory) {
     const resolved = await realpath(directory);
@@ -173,6 +250,20 @@ export async function checkDocs(rootDirectory = DEFAULT_ROOT) {
       } else if (entry.isFile() && /\.(md|markdown)$/i.test(entry.name)) files.push(file);
     }
   }
+  /** Reports a link's fragment that names no anchor of the Markdown file `target`. */
+  async function checkAnchor(file, line, target, fragment, raw) {
+    let anchor;
+    try {
+      anchor = decodeURIComponent(fragment);
+    } catch {
+      report(file, line, `invalid URL encoding in anchor: ${raw}`);
+      return;
+    }
+    if (!anchor) return;
+    if (!(await anchorsOf(target)).has(anchor))
+      report(file, line, `no heading or anchor #${anchor} in ${display(target)}: ${raw}`);
+  }
+
   await walk(root);
   if (!files.length) report(root, 1, 'no Markdown files found; nothing was checked');
 
@@ -201,12 +292,17 @@ export async function checkDocs(rootDirectory = DEFAULT_ROOT) {
     }
 
     // Normalize only for parsing, after recording encoding/style errors above.
-    const visible = maskCode(text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n'),
-      (line, message) => report(file, line, message));
+    const normalized = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+    const visible = maskCode(normalized, (line, message) => report(file, line, message));
+    anchors.set(await realpath(file), documentAnchors(normalized, visible));
     for (const [index, line] of visible.split('\n').entries()) {
       for (const raw of inlineLinks(line)) {
         const destination = raw.replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\]\\^_`{|}~])/g, '$1');
-        if (!destination || destination.startsWith('#') || destination.startsWith('//')) continue;
+        if (!destination || destination.startsWith('//')) continue;
+        if (destination.startsWith('#')) {
+          await checkAnchor(file, index + 1, file, destination.slice(1), raw);
+          continue;
+        }
         if (/^file:/i.test(destination)) {
           report(file, index + 1, 'file: links are unsupported; use a relative path');
           continue;
@@ -236,10 +332,15 @@ export async function checkDocs(rootDirectory = DEFAULT_ROOT) {
         try {
           if (!withinRoot(root, await realpath(target))) {
             report(file, index + 1, `local link symlink escapes project root: ${raw}`);
+            continue;
           }
         } catch (error) {
           report(file, index + 1, `local link target unavailable (${error.code ?? error.message}): ${raw}`);
+          continue;
         }
+        const hash = destination.indexOf('#');
+        if (hash !== -1 && /\.(md|markdown)$/i.test(local) && (await stat(target)).isFile())
+          await checkAnchor(file, index + 1, target, destination.slice(hash + 1), raw);
       }
     }
   }

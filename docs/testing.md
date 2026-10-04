@@ -6,7 +6,7 @@
 
 | 变更 | 最少相关证据 |
 |---|---|
-| 文档、相对链接 | 文档检查；语义、锚点及命令人工复核 |
+| 文档、相对链接与标题锚点 | 文档检查；语义及命令人工复核 |
 | 纯函数、schema、错误映射 | 有效和无效输入测试、typecheck；覆盖真实边界，不镜像实现 |
 | Run、队列、权限、deadline | 状态转换及竞态测试；真实 SQLite/IPC 组合链路 |
 | Store、事件、迁移、重放 | 真数据库的事务回滚、幂等、排序、重启及上一版本升级 |
@@ -76,7 +76,7 @@ Windows 用原生环境验证中文/空格路径、env 大小写、cmd/PowerShel
 | `check:boundaries` | 首个模块图建立时检查导入方向和第三方类型泄露，配无效 fixture |
 | `test:unit` / `test:integration` | 纯行为与真实 DB/IPC/API 组合，必需组为空时失败 |
 | `build` / `test:smoke` | Gateway/Worker 入口建立时验证编译产物启动 |
-| `check:docs` | 包装已有文档检查；建立可运行示例后纳入 typecheck，随后补锚点检查 |
+| `check:docs` | 已接入：Markdown 的编码与换行、代码围栏，代码区域外行内本地链接的文件存在性与根目录范围，以及指向 Markdown 文件（含本页）的 `#片段` 必须是目标文件的标题锚点（GitHub 的 slug：小写、去掉标点与符号、保留中日韩文字、空格变连字符、重复标题加 `-1`、`-2`）或 `<a id>`/`<a name>`，逐个以 `文件:行` 报告并非零退出；指向其他文件（源码行号、JSON）的片段不检查。拒绝样例见 `tools/check-docs.test.mjs`。可运行示例纳入 typecheck 尚未接入 |
 | `check:conflicts` | 已接入，`pnpm check` 的第一步：git 跟踪的文件与未被忽略的未跟踪文件中不得有合并冲突标记（行首七个 `<`、`|` 或 `>`，或其后的七个 `=`），停在冲突上的变基或合并不能被当作完成来检查；拒绝样例见 `tools/check-conflicts.test.mjs` |
 | `test:engine` | 首个真实引擎接入时运行；缺凭证明确未验证 |
 | `test:protocol` | 已接入，属于 `pnpm test` 与 `pnpm check`：`conformance/protocols/` 以固定版本的官方 SDK（openai、Anthropic、Google）为客户端，经 `hh serve` 访问白名单模式的假上游，覆盖 16 个协议方向的对话、工具、失败与保活，严格上游零违规，见[一致性套件](../conformance/README.md) |

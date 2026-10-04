@@ -23,7 +23,7 @@ async function fixture(t, files) {
 
 test('valid documents, nested paths, fragments, remote URLs and generated exclusions', async (t) => {
   const root = await fixture(t, {
-    'README.md': '# Project\n\n[Design](docs/design.md#not-validated) [Web](https://example.test/missing) [Mail](mailto:a@example.test) [Local](#anchor)\n',
+    'README.md': '# Project\n\n[Design](docs/design.md#design) [Web](https://example.test/missing) [Mail](mailto:a@example.test) [Local](#project)\n',
     'docs/design.md': '# Design\n\n[Root](../README.md)\n',
     'node_modules/broken.md': '\uFEFF[bad](absent.md)',
     'data/output.md': '[bad](absent.md)',
@@ -85,7 +85,7 @@ test('an unreadable project root rejects and the CLI exits nonzero', async (t) =
 test('spaces, Unicode, URL encoding, escaped parentheses, images and titles', async (t) => {
   const root = await fixture(t, {
     'README.md': '# Links\n\n[空格](<docs/中文 file.md>) [Encoded](docs/%E4%B8%AD%E6%96%87%20file.md?view=1#section) [Title](<docs/中文 file.md> "label")\n![Image](assets/a%20b.png) [Nested](docs/a(b).md) [Escaped](docs/a\\(b\\).md)\n',
-    'docs/中文 file.md': '# 中文\n',
+    'docs/中文 file.md': '# 中文\n\n## Section\n',
     'docs/a(b).md': '# Parentheses\n',
     'assets/a b.png': Buffer.from([0]),
   });
@@ -182,4 +182,60 @@ test('an empty or whitespace-only document is an error, such as a truncated file
   ]);
   const cli = spawnSync(process.execPath, [script, '--root', root], { encoding: 'utf8' });
   assert.equal(cli.status, 1);
+});
+
+test('anchors: missing headings, duplicate numbering, CJK slugs, other files and non-Markdown targets', async (t) => {
+  const root = await fixture(t, {
+    'README.md': [
+      '# Project',
+      '',
+      '## Setup',
+      '',
+      '## Setup',
+      '',
+      '## 向导：`hh init`',
+      '',
+      '## 局域网共享',
+      '',
+      '## 10. `hh` 的全部命令（2026-10-04）',
+      '',
+      '## Keys, *budgets* & rules!',
+      '',
+      '<a id="custom-place"></a>',
+      '',
+      '```md',
+      '## Not a heading',
+      '```',
+      '',
+      '[a](#setup) [b](#setup-1) [c](#向导hh-init) [d](#%E5%B1%80%E5%9F%9F%E7%BD%91%E5%85%B1%E4%BA%AB)',
+      '[e](#10-hh-的全部命令2026-10-04) [f](#keys-budgets--rules) [g](#custom-place)',
+      '[h](docs/guide.md#install-from-source) [i](docs/guide.md#old-name) [j](data.json#anything)',
+      '[k](#setup-2) [l](#missing) [m](#not-a-heading) [n](docs/guide.md#plain)',
+      '',
+    ].join('\n'),
+    'docs/guide.md': 'Install from source\n===================\n\n<a name="plain"></a>\n',
+    'data.json': '{}\n',
+  });
+  const result = await checkDocs(root);
+  assert.deepEqual(result.diagnostics, [
+    'README.md:23: no heading or anchor #old-name in docs/guide.md: docs/guide.md#old-name',
+    'README.md:24: no heading or anchor #setup-2 in README.md: #setup-2',
+    'README.md:24: no heading or anchor #missing in README.md: #missing',
+    'README.md:24: no heading or anchor #not-a-heading in README.md: #not-a-heading',
+  ]);
+  const cli = spawnSync(process.execPath, [script, '--root', root], { encoding: 'utf8' });
+  assert.equal(cli.status, 1);
+  assert.match(cli.stderr, /README\.md:24: no heading or anchor #setup-2/);
+});
+
+test('anchors: a heading that repeats a numbered slug takes the next number, as GitHub numbers them', async (t) => {
+  const root = await fixture(t, {
+    'README.md': '# A\n\n## Step\n\n## Step 1\n\n## Step\n\n[x](#step-1) [y](#step-1-1) [z](#step-2)\n',
+  });
+  // "Step 1" is step-1, so the second "Step" skips that slug and becomes
+  // step-2, as github-slugger numbers them.
+  const result = await checkDocs(root);
+  assert.deepEqual(result.diagnostics, [
+    'README.md:9: no heading or anchor #step-1-1 in README.md: #step-1-1',
+  ]);
 });
