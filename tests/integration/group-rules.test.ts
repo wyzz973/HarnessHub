@@ -510,3 +510,97 @@ void test("a Gateway Key reads its own limits and use at /v1/harnesshub/limit th
   assert.ok(!JSON.stringify(other.body).includes(limited.gatewayKey.keyId));
   assert.equal((await read("hh_c_not_a_key")).status, 401);
 });
+
+void test("through the daemon, a group advertises what its rules reach, and each turn's decision can be followed", async (t) => {
+  const on = await hub(t);
+  const { client, fake } = on;
+  await client.routeGroups.create({
+    id: "reach",
+    members: ["fake/small", "fake/seer"],
+    rules: [
+      { use: "fake/seer", images: true },
+      { use: "fake/seer", tokens: 900 },
+    ],
+  });
+  const created = await client.gatewayKeys.create({
+    name: "reach",
+    modelAllow: ["group/reach"],
+  });
+  const listed = await fetch(`${on.v1}/models/group/reach`, {
+    headers: { authorization: `Bearer ${created.key}` },
+  });
+  const model = (await listed.json()) as Record<string, unknown>;
+  assert.deepEqual(
+    [model.context_window, model.input_modalities],
+    [200_000, ["text", "image"]],
+  );
+  // Wiring offers the same: OpenCode is told the larger window.
+  const plan = await client.agents.plan("opencode", {
+    model: "group/reach",
+    models: ["group/reach"],
+  });
+  const written = JSON.parse(
+    plan.files[0]!.changes.find(
+      (change) => change.keyPath.join("/") === "provider/harnesshub",
+    )?.after ?? "{}",
+  ) as { models?: Record<string, { limit?: { context?: number } }> };
+  assert.equal(written.models?.["group/reach"]?.limit?.context, 200_000);
+
+  // A long poll for the next decision is answered by the next turn.
+  const start = await client.routing.decisions();
+  const waiting = client.routing.decisions({ after: start.seq, wait: 20 });
+  const answer = await fetch(`${on.v1}/chat/completions`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${created.key}`,
+      "content-type": "application/json",
+      "x-hh-conversation": "followed",
+    },
+    body: JSON.stringify({
+      model: "group/reach",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "what is this" },
+            {
+              type: "image_url",
+              image_url: { url: "data:image/png;base64,iVBORw0KGgo=" },
+            },
+          ],
+        },
+      ],
+    }),
+  });
+  assert.equal(answer.status, 200, await answer.clone().text());
+  await answer.text();
+  const page = await waiting;
+  const [decided] = page.items;
+  assert.ok(decided, JSON.stringify(page));
+  assert.equal(decided.requested, "group/reach");
+  assert.deepEqual(
+    [decided.rules[0]?.n, decided.rules[0]?.use, decided.candidates[0]?.model],
+    [1, "fake/seer", "fake/seer"],
+  );
+  assert.equal(fake.records().at(-1)?.model, "seer");
+  // Its conversation's decisions, finished with what answered.
+  const calls = await client.modelCalls.list({ limit: 1 });
+  const conversation = calls.items[0]!.conversationKey!;
+  const own = await client.routing.decisions({ session: conversation });
+  assert.deepEqual(
+    own.items.map((item) => [item.callId, item.done, item.served?.model]),
+    [[decided.callId, true, "fake/seer"]],
+  );
+  assert.equal(
+    (await client.routing.decisions({ session: "nobody" })).items.length,
+    0,
+  );
+  // Administrators only.
+  const anonymous = await fetch(`${on.url}/api/v1/routing/decisions`);
+  assert.equal(anonymous.status, 401);
+  await assert.rejects(
+    client.routing.decisions({ wait: 61 }),
+    (error: unknown) =>
+      error instanceof HarnessHubError && error.code === "INVALID_REQUEST",
+  );
+});

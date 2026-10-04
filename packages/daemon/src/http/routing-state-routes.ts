@@ -1,7 +1,16 @@
 // SPDX-License-Identifier: MIT
 import type { FastifyInstance } from "fastify";
-import type { ModelPlaneStore } from "@harnesshub/core/model-plane";
-import { listOf, responses } from "./api-v1-schemas.js";
+import type {
+  ModelPlaneStore,
+  RouteDecisionPage,
+  RouteDecisionQuery,
+} from "@harnesshub/core/model-plane";
+import {
+  listOf,
+  responses,
+  routeDecisionPageSchema,
+  routeDecisionsQuerySchema,
+} from "./api-v1-schemas.js";
 
 /** One credential's routing state as the gateway holds it in memory. */
 export interface CredentialRoutingView {
@@ -25,6 +34,15 @@ export interface CredentialRoutingView {
 /** Where the routing state comes from: the shared gateway (`GatewayHandler.routingState`). */
 export interface RoutingStateSource {
   state(): CredentialRoutingView[];
+  /**
+   * The latest routing decisions (`GatewayHandler.routeDecisions`), waiting
+   * for one with `query.wait` until `signal` aborts; without it
+   * `/routing/decisions` is absent.
+   */
+  decisions?(
+    query: RouteDecisionQuery,
+    signal: AbortSignal,
+  ): Promise<RouteDecisionPage>;
 }
 
 const reading = {
@@ -115,4 +133,28 @@ export function registerRoutingStateRoutes(
       return { items, nextCursor: null };
     },
   );
+  const decisions = source.decisions?.bind(source);
+  if (decisions)
+    api.get<{ Querystring: RouteDecisionQuery }>(
+      "/routing/decisions",
+      {
+        schema: {
+          querystring: routeDecisionsQuerySchema,
+          response: responses(routeDecisionPageSchema),
+        },
+      },
+      async (request, reply) => {
+        // A long poll ends early when its client goes away.
+        const abort = new AbortController();
+        const gone = () => {
+          if (!reply.raw.writableFinished) abort.abort();
+        };
+        reply.raw.once("close", gone);
+        try {
+          return await decisions(request.query, abort.signal);
+        } finally {
+          reply.raw.removeListener("close", gone);
+        }
+      },
+    );
 }

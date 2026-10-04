@@ -13,12 +13,19 @@ import {
   ruleEfforts,
   weekdays,
   type GroupRule,
+  type ModelRef,
+  type ProviderModel,
   type RouteGroup,
   type RuleEffort,
   type RuleTimeWindow,
   type Weekday,
 } from "./model-plane.js";
-import { parseGroupMember } from "./route-groups.js";
+import {
+  groupCapabilities,
+  parseGroupMember,
+  type GroupCapabilities,
+  type ResolvedMember,
+} from "./route-groups.js";
 
 /** Rules a group may have. */
 export const MAX_RULES = 50;
@@ -775,4 +782,93 @@ export function ruleLine(rule: GroupRule): string {
       );
   }
   return out.join(" ");
+}
+
+/**
+ * A group's capabilities with what its rules make reachable (Magpie
+ * `ruledEntry`), over {@link groupCapabilities} of its models:
+ *
+ * - images, when a rule of images alone (no other condition) sends every
+ *   request with an image to a member whose models all take images, and
+ *   every rule before it, which may take such a request first, sends to a
+ *   member that takes them too;
+ * - a larger window, when a rule of length alone (`tokens` and nothing
+ *   else) sends every request at least that long to a member with more
+ *   room: the window is that member's, if every other member whose window
+ *   is known takes requests up to the rule's length, and no larger than
+ *   the window of any rule before it (a member of a rule before it whose
+ *   window is not known leaves the group's as it was).
+ *
+ * A member's window is the smallest known of its models'. Without rules
+ * the group offers what all its models do.
+ */
+export function ruledCapabilities(
+  group: Pick<RouteGroup, "members" | "rules">,
+  models: readonly ResolvedMember[],
+  metadata: (ref: ModelRef) => ProviderModel | undefined,
+): GroupCapabilities {
+  const base = groupCapabilities(models, metadata);
+  const rules = group.rules ?? [];
+  if (!rules.length) return base;
+  /** What a member's models take: the smallest known window (0 when none is), and whether all take images. */
+  const of = (member: string) => {
+    const known = models
+      .filter((model) => model.member === member)
+      .map((model) => metadata(model.ref));
+    if (!known.length) return undefined;
+    let window = 0;
+    for (const model of known) {
+      const value = model?.contextWindow ?? 0;
+      if (value > 0 && (window === 0 || value < window)) window = value;
+    }
+    return {
+      window,
+      sees: known.every(
+        (model) => model?.inputModalities?.includes("image") === true,
+      ),
+    };
+  };
+  let window = base.contextWindow ?? 0;
+  let images = base.inputModalities?.includes("image") === true;
+  rules.forEach((rule, index) => {
+    const target = of(rule.use);
+    if (!target) return;
+    const before = rules.slice(0, index);
+    const alone = (field: keyof GroupRule) =>
+      (Object.keys(rule) as (keyof GroupRule)[]).every(
+        (name) => name === "use" || name === field,
+      );
+    if (
+      rule.images &&
+      alone("images") &&
+      target.sees &&
+      !images &&
+      !before.some((earlier) => !of(earlier.use)?.sees)
+    )
+      images = true;
+    if (!rule.tokens || !alone("tokens") || target.window <= window) return;
+    // Every request up to the rule's length must fit whoever may get it.
+    let fits = target.window;
+    for (const member of group.members) {
+      if (member === rule.use) continue;
+      const other = of(member);
+      if (other && other.window > 0 && other.window < rule.tokens) fits = 0;
+    }
+    // A longer one may still be taken by a rule before it.
+    for (const earlier of before) {
+      const other = of(earlier.use);
+      if (!other) fits = 0;
+      else if (other.window < fits) fits = other.window;
+    }
+    if (fits > window) window = fits;
+  });
+  const modalities =
+    images && !base.inputModalities?.includes("image")
+      ? [...(base.inputModalities ?? ["text"]), "image" as const]
+      : base.inputModalities;
+  return {
+    ...base,
+    ...(window > 0 ? { contextWindow: window } : {}),
+    ...(modalities ? { inputModalities: modalities } : {}),
+  };
 }

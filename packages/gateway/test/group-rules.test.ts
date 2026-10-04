@@ -558,3 +558,120 @@ void test("a key sees its own limits and use at /v1/harnesshub/limit, and no oth
     404,
   );
 });
+
+void test("/v1/models lists a group with what its rules make reachable", async (t) => {
+  const { gw, key } = await rig(t, [
+    group("g", ["p/small", "p/seer"], {
+      rules: [
+        { use: "p/seer", images: true },
+        { use: "p/seer", tokens: 900 },
+      ],
+    }),
+  ]);
+  const listed = await send(gw.port, "/v1/models/group/g", {
+    headers: { authorization: `Bearer ${key.text}` },
+  });
+  assert.equal(listed.status, 200, listed.text);
+  assert.deepEqual(
+    [listed.json().context_window, listed.json().input_modalities],
+    [100_000, ["text", "image"]],
+  );
+});
+
+void test("route decisions: one per new turn of a group, finished when its call ends, read after a seq and waited for", async (t) => {
+  const { chat, gw } = await rig(
+    t,
+    [
+      group("g", ["p/small", "p/big", "p/seer"], {
+        stickiness: "session",
+        classifier: "q/judge",
+        rules: [
+          { use: "p/seer", images: true },
+          { use: "p/big", intent: "a quick question" },
+        ],
+      }),
+    ],
+    (text) => (text.includes("QUICK") ? "1" : "0"),
+  );
+  const read = (query: Parameters<typeof gw.handler.routeDecisions>[0]) =>
+    gw.handler.routeDecisions(query, new AbortController().signal);
+  assert.deepEqual(await read({}), { seq: 0, items: [] });
+  // A read that waits is answered by the next decision.
+  const waiting = read({ wait: 5 });
+  await chat([user("QUICK what is 2 + 2")]);
+  const first = await waiting;
+  assert.equal(first.items.length, 1);
+  const [made] = first.items;
+  assert.equal(made!.requested, "group/g");
+  assert.equal(made!.turn, 1);
+  assert.deepEqual(made!.rules, [
+    {
+      group: "g",
+      kind: "turn",
+      n: 2,
+      use: "p/big",
+      when: ['intent "a quick question"'],
+      then: [],
+      classifier: {
+        by: "q/judge",
+        intents: ["a quick question"],
+        intent: "a quick question",
+        cached: false,
+        resting: false,
+      },
+    },
+  ]);
+  assert.equal(made!.sticky, "miss:new");
+  assert.deepEqual(
+    made!.candidates.map((candidate) => candidate.model),
+    ["p/big", "p/small", "p/seer"],
+  );
+  // The call has ended by now: the decision is done, with what answered.
+  const all = await read({});
+  const done = all.items.find((item) => item.callId === made!.callId)!;
+  assert.equal(done.done, true);
+  assert.equal(done.status, 200);
+  assert.equal(done.served?.model, "p/big");
+  assert.ok(done.seq > made!.seq);
+  // Tool results within the turn are no new decision.
+  const before = all.seq;
+  await chat([...toolTurn("QUICK what is 2 + 2"), result("4")]);
+  assert.deepEqual((await read({ after: before })).items, []);
+  // A rule that moves the conversation off its credential says so.
+  await chat([
+    user("QUICK what is 2 + 2"),
+    { role: "assistant", content: "4" },
+    user([
+      { type: "text", text: "and this?" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
+    ]),
+  ]);
+  const moved = (await read({ after: before })).items.at(-1)!;
+  assert.deepEqual(
+    [moved.rules[0]!.n, moved.sticky, moved.candidates[0]!.model],
+    [1, "broken:rule", "p/seer"],
+  );
+  // The classifier's own call is no decision of a group.
+  assert.ok(
+    (await read({})).items.every((item) => item.requested === "group/g"),
+  );
+  // One conversation's decisions; an after past the latest reads from the start.
+  const other = await chat([user("hi")], {}, { "x-hh-conversation": "other" });
+  assert.equal(other.status, 200);
+  const latest = await read({});
+  const conversation = latest.items.at(-1)!.conversation;
+  assert.deepEqual(
+    (await read({ session: conversation })).items.map(
+      (item) => item.conversation,
+    ),
+    [conversation],
+  );
+  assert.equal(
+    (await read({ after: latest.seq + 100 })).items.length,
+    latest.items.length,
+  );
+  // A wait ends when the handler closes.
+  const parked = read({ after: latest.seq, wait: 30 });
+  await gw.handler.close();
+  assert.deepEqual((await parked).items, []);
+});

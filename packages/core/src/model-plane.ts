@@ -386,6 +386,109 @@ export interface KeyLimitStatus {
   budgets: BudgetStatus[];
 }
 
+/** A candidate as a route decision lists it. */
+export interface RouteDecisionCandidate {
+  provider: string;
+  credential: string;
+  /** The Model Ref. */
+  model: string;
+  /** The member of the requested group it is of. */
+  member?: string;
+  effort?: ReasoningEffort;
+  fast?: boolean;
+}
+
+/** What one group's rules decided for a request, as a route decision tells it. */
+export interface RouteDecisionRule {
+  /** The group whose rules these are: the requested one, or one inside it. */
+  group: string;
+  /**
+   * `turn` decided as the turn began; `grown` moved within the turn, the
+   * conversation past its model's window; `compact` a compaction looked at
+   * on its own; `held` kept from the turn's start; `waits` a turn begun
+   * before the gateway saw it, which no rule moves.
+   */
+  kind: "turn" | "grown" | "compact" | "held" | "waits";
+  /** The rule, from 1; 0 when none matched. */
+  n: number;
+  /** The member it puts first, and its conditions in words. */
+  use?: string;
+  when?: string[];
+  /** The members of the rules after it that match too, which come next. */
+  then: string[];
+  /** Members passed over as too small for a compaction. */
+  small?: string[];
+  /** No candidate of `use` was ready; `instead` went first (none: the group's order). */
+  unready?: boolean;
+  instead?: string;
+  /** What the group's classifier was asked as the turn began, and said. */
+  classifier?: {
+    by: string;
+    intents: string[];
+    intent?: string;
+    effort?: ReasoningEffort;
+    /** Said before for the same message: not asked again. */
+    cached: boolean;
+    /** Not asked: it failed less than 30 seconds ago. */
+    resting: boolean;
+    error?: string;
+  };
+}
+
+/**
+ * One routing decision of the gateway (`GET /api/v1/routing/decisions`): a
+ * request to a route group as a turn began, or that a rule moved within
+ * one. Kept in memory, the latest few hundred; `seq` grows with every
+ * decision and again when its call ends.
+ */
+export interface RouteDecision {
+  seq: number;
+  at: string;
+  callId: string;
+  keyId?: string;
+  agent?: string;
+  /** The conversation key, as the ledger has it. */
+  conversation: string;
+  /** The HarnessHub Session of a `session:` key. */
+  sessionId?: string;
+  /** The group asked for: `group/<id>`. */
+  requested: string;
+  /** The user's turns so far, and the request's length in tokens, as the rules took them. */
+  turn?: number;
+  tokens?: number;
+  /** The rules of the group, then of the groups inside it down the member that went first. */
+  rules: RouteDecisionRule[];
+  /** The reasoning the classifier picked for the turn (`effort: "auto"`). */
+  effort?: ReasoningEffort;
+  /** Stickiness: `hit`, `miss:<why>` or `broken:<why>` (`broken:rule` when a rule moved the conversation). */
+  sticky?: string;
+  /** The candidates in the order they are tried (at most 20; `more` follow). */
+  candidates: RouteDecisionCandidate[];
+  more?: number;
+  /** The call ended: its status, and the candidate that answered. */
+  done: boolean;
+  status?: number;
+  served?: RouteDecisionCandidate;
+}
+
+/** What a read of route decisions asks for. */
+export interface RouteDecisionQuery {
+  /** A conversation key, or the HarnessHub Session of a `session:` key. */
+  session?: string;
+  /** Only decisions published or changed after this `seq`. */
+  after?: number;
+  /** Seconds to wait for one when there is none yet, at most 60. */
+  wait?: number;
+  /** At most this many, oldest first (1 to 256, default 50). */
+  limit?: number;
+}
+
+/** Route decisions after a `seq`, and the latest `seq`. */
+export interface RouteDecisionPage {
+  seq: number;
+  items: RouteDecision[];
+}
+
 /**
  * How a key's client names models: by alias (`claude-alias`) for a client
  * that keeps only ids that read as Anthropic's (Claude Desktop). The

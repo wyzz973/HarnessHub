@@ -1429,6 +1429,25 @@ export const apiCatalog: readonly ApiDocumentation[] = [
   },
   {
     method: "GET",
+    path: "/api/v1/routing/decisions",
+    title: "路由决定",
+    group: "providers",
+    request:
+      "查询参数可选：session（会话键，即账本的 conversationKey，或 session: Key 的 HarnessHub Session）、after（只要 seq 大于它的决定，默认 0）、wait（没有新决定时最多等待的秒数，0 到 60，默认 0）、limit（1 到 256，默认 50）。",
+    response:
+      "200：seq（最新的 seq，下次作为 after 传回）与 items[]（按 seq 从旧到新）：seq、at、callId、keyId、agent、conversation、sessionId、requested（group/<id>）、turn 与 tokens（规则看到的轮次与长度）、rules[]（请求的组在前，其后是组中组：group、kind 为 turn/grown/compact/held/waits、n、use、when、then、small、unready、instead、classifier{by、intents、intent、effort、cached、resting、error}）、effort（分类器为这一轮选的档位）、sticky（hit、miss:<原因> 或 broken:<原因>，规则改变时为 broken:rule）、candidates[]（尝试顺序，最多 20 个，more 为其余的数量）、done、status 与 served（应答的候选）。",
+    implementation:
+      "共享网关的 DecisionTrace（packages/gateway/src/trace.ts）：路由组的请求在一轮开始时（或规则在一轮中把它换走时）发布一条决定，在询问厂商之前；调用结束时再更新一次，seq 随之增大。内存中保留最近 256 条；after 大于最新 seq（网关重启过）时从头读起。",
+    effects:
+      "只读；决定只在守护进程内存中，重启后为空；不含提示词或回答的文字。",
+    errors:
+      "400 INVALID_REQUEST（查询参数不合 schema）；503 GATEWAY_UNAVAILABLE（网关没有运行）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/routing-state-routes.ts",
+    tests: ["tests/integration/group-rules.test.ts"],
+    operationId: "hh_api_v1_list_route_decisions",
+  },
+  {
+    method: "GET",
     path: "/api/v1/subscriptions/notices",
     title: "订阅风险告知",
     group: "subscriptions",

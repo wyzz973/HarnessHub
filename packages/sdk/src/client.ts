@@ -46,6 +46,8 @@ import type {
   ProviderCredential,
   ReasoningEffort,
   RetryPolicy,
+  RouteDecisionPage,
+  RouteDecisionQuery,
   RouteGroup,
   UsageGroupBy,
   WireProtocol,
@@ -68,6 +70,9 @@ export type {
   ProviderKind,
   ProviderModel,
   ReasoningEffort,
+  RouteDecision,
+  RouteDecisionPage,
+  RouteDecisionQuery,
   RouteGroup,
   RouteStrategy,
   Stickiness,
@@ -1490,6 +1495,16 @@ export class HarnessHubClient {
     /** Every credential's breaker state, rest, last failure class and allowance readings. */
     state: () =>
       this.request<Page<CredentialRoutingState>>("GET", "routing/state"),
+    /**
+     * The gateway's latest routing decisions after `after` (oldest first),
+     * of one conversation or Session with `session`; with `wait` (seconds,
+     * at most 60) the request waits for one when there is none yet. Pass the
+     * page's `seq` back as `after` to follow.
+     */
+    decisions: (query: RouteDecisionQuery = {}) =>
+      this.request<RouteDecisionPage>("GET", "routing/decisions", {
+        query: { ...query },
+      }),
   };
 
   readonly gatewayFeatures = {

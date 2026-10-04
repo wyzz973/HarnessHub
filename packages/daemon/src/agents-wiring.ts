@@ -28,11 +28,11 @@ import {
 } from "@harnesshub/core/model-plane";
 import { isWiringProfileName } from "@harnesshub/core/model-plane-records";
 import {
-  groupCapabilities,
   groupModels,
   modelEfforts,
   type GroupCapabilities,
 } from "@harnesshub/core/route-groups";
+import { ruledCapabilities } from "@harnesshub/core/route-rules";
 import {
   applyWiring,
   detectAgent,
@@ -1095,7 +1095,8 @@ function stopped(
  * passes through to the provider, then every route group with what its
  * models share (core `groupCapabilities`: groups inside it included, the
  * smallest window and output when all are known, the levels every model
- * that follows the request offers).
+ * that follows the request offers), and the larger window or image input
+ * its rules make reachable (core `ruledCapabilities`).
  */
 async function gatewayModels(
   store: ModelPlaneStore,
@@ -1142,7 +1143,8 @@ async function gatewayModels(
       ref,
       describe(
         ref,
-        groupCapabilities(
+        ruledCapabilities(
+          group,
           groupModels(
             group,
             (id) => byId.get(id),

@@ -16,6 +16,7 @@ import { createHash } from "node:crypto";
 import type {
   GroupRule,
   ReasoningEffort,
+  RouteDecisionRule,
   RouteGroup,
   RouteGroupId,
   WireProtocol,
@@ -23,6 +24,7 @@ import type {
 import { parseModelRef } from "@harnesshub/core/model-plane";
 import {
   matchRule,
+  ruleConditions,
   ruleIntents,
   thenUses,
   type RuleRequest,
@@ -629,6 +631,13 @@ export interface RulesApplied {
   brokeSticky: boolean;
   /** The conversation's request was answered, the vendor counting `input` tokens. */
   answered(input: number): void;
+  /** What each group's rules decided, the requested group's first, for the decision trace. */
+  decisions: RouteDecisionRule[];
+  /** The user's turns so far and the request's length, as the rules took them. */
+  turn: number;
+  tokens: number;
+  /** The reasoning the classifier picked for the turn. */
+  pick?: ReasoningEffort;
 }
 
 /**
@@ -667,6 +676,8 @@ export async function applyRules(input: {
   let brokeSticky = false;
   let pick: ReasoningEffort | undefined;
   let compacted = false;
+  const decisions: RouteDecisionRule[] = [];
+  let taken: number | undefined;
   const decideAt = async (
     group: RouteGroup,
     key: string,
@@ -688,17 +699,58 @@ export async function applyRules(input: {
     patches.push(...hitPatches(hit, prefix, Boolean(group.rules?.length)));
     if (!hit.compact) keys.push(key);
     pick ??= hit.pick;
+    taken ??= hit.tokens;
+    const decision: RouteDecisionRule = {
+      group: group.id,
+      kind: hit.compact
+        ? "compact"
+        : hit.grown
+          ? "grown"
+          : hit.waits
+            ? "waits"
+            : hit.held
+              ? "held"
+              : "turn",
+      n: hit.n,
+      ...(hit.use ? { use: hit.use } : {}),
+      ...(hit.n ? { when: ruleConditions(group.rules![hit.n - 1]!) } : {}),
+      then: hit.then,
+      ...(hit.small ? { small: hit.small } : {}),
+      ...(hit.classified
+        ? {
+            classifier: {
+              by: hit.classified.by,
+              intents: hit.classified.intents,
+              ...(hit.classified.intent
+                ? { intent: hit.classified.intent }
+                : {}),
+              ...(hit.classified.effort
+                ? { effort: hit.classified.effort }
+                : {}),
+              cached: hit.classified.cached === true,
+              resting: hit.classified.resting === true,
+              ...(hit.classified.error ? { error: hit.classified.error } : {}),
+            },
+          }
+        : {}),
+    };
+    decisions.push(decision);
     if (hit.use && !(hit.held && input.stuck && !brokeSticky)) {
       const was = candidates[0];
+      const order = [hit.use, ...hit.then];
       const ordered = ruleFirst(
-        [hit.use, ...hit.then],
+        order,
         candidates,
         (candidate) =>
           within(candidate) ? candidate.path?.[depth] : undefined,
         input.blocked,
       );
       candidates = ordered.candidates;
-      if (ordered.lead !== 0) patches.push(`${prefix}:unready`);
+      if (ordered.lead !== 0) {
+        patches.push(`${prefix}:unready`);
+        decision.unready = true;
+        if (ordered.lead > 0) decision.instead = order[ordered.lead]!;
+      }
       if (ordered.lead >= 0 && input.stuck && candidates[0] !== was)
         brokeSticky = true;
     }
@@ -744,5 +796,9 @@ export async function applyRules(input: {
     answered: (tokens) => {
       for (const at of keys) input.rules.answered(at, tokens);
     },
+    decisions,
+    turn: view.turn,
+    tokens: taken ?? view.tokens,
+    ...(pick ? { pick } : {}),
   };
 }

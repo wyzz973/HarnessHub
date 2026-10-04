@@ -991,7 +991,18 @@ export async function startHub(options: {
       library,
       gatewayShare: share,
       gatewayFeatures,
-      routing: { state: () => modelGateway?.routingState() ?? [] },
+      routing: {
+        state: () => modelGateway?.routingState() ?? [],
+        decisions: async (query, signal) => {
+          if (!modelGateway)
+            throw new HubError(
+              "GATEWAY_UNAVAILABLE",
+              "The model gateway is not running",
+              503,
+            );
+          return modelGateway.routeDecisions(query, signal);
+        },
+      },
       keyLimits: {
         limit: async (keyId) => {
           if (!modelGateway)

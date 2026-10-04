@@ -40731,6 +40731,385 @@
         }
       }
     },
+    "/api/v1/routing/decisions": {
+      "get": {
+        "operationId": "hh_api_v1_list_route_decisions",
+        "summary": "路由决定",
+        "tags": [
+          "providers"
+        ],
+        "description": "共享网关的 DecisionTrace（packages/gateway/src/trace.ts）：路由组的请求在一轮开始时（或规则在一轮中把它换走时）发布一条决定，在询问厂商之前；调用结束时再更新一次，seq 随之增大。内存中保留最近 256 条；after 大于最新 seq（网关重启过）时从头读起。\n\n输入：查询参数可选：session（会话键，即账本的 conversationKey，或 session: Key 的 HarnessHub Session）、after（只要 seq 大于它的决定，默认 0）、wait（没有新决定时最多等待的秒数，0 到 60，默认 0）、limit（1 到 256，默认 50）。\n\n返回：200：seq（最新的 seq，下次作为 after 传回）与 items[]（按 seq 从旧到新）：seq、at、callId、keyId、agent、conversation、sessionId、requested（group/<id>）、turn 与 tokens（规则看到的轮次与长度）、rules[]（请求的组在前，其后是组中组：group、kind 为 turn/grown/compact/held/waits、n、use、when、then、small、unready、instead、classifier{by、intents、intent、effort、cached、resting、error}）、effort（分类器为这一轮选的档位）、sticky（hit、miss:<原因> 或 broken:<原因>，规则改变时为 broken:rule）、candidates[]（尝试顺序，最多 20 个，more 为其余的数量）、done、status 与 served（应答的候选）。\n\n副作用：只读；决定只在守护进程内存中，重启后为空；不含提示词或回答的文字。\n\n失败与边界：400 INVALID_REQUEST（查询参数不合 schema）；503 GATEWAY_UNAVAILABLE（网关没有运行）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "in": "query",
+            "name": "session",
+            "required": false,
+            "description": "A conversation key, or the HarnessHub Session of a session key"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "in": "query",
+            "name": "after",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 60
+            },
+            "in": "query",
+            "name": "wait",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 256
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "seq",
+                    "items"
+                  ],
+                  "properties": {
+                    "seq": {
+                      "type": "integer",
+                      "description": "The latest seq; pass it as after"
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "seq",
+                          "at",
+                          "callId",
+                          "conversation",
+                          "requested",
+                          "rules",
+                          "candidates",
+                          "done"
+                        ],
+                        "properties": {
+                          "seq": {
+                            "type": "integer"
+                          },
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "callId": {
+                            "type": "string"
+                          },
+                          "keyId": {
+                            "type": "string"
+                          },
+                          "agent": {
+                            "type": "string"
+                          },
+                          "conversation": {
+                            "type": "string"
+                          },
+                          "sessionId": {
+                            "type": "string"
+                          },
+                          "requested": {
+                            "type": "string"
+                          },
+                          "turn": {
+                            "type": "integer"
+                          },
+                          "tokens": {
+                            "type": "integer"
+                          },
+                          "rules": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "group",
+                                "kind",
+                                "n",
+                                "then"
+                              ],
+                              "properties": {
+                                "group": {
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "enum": [
+                                    "turn",
+                                    "grown",
+                                    "compact",
+                                    "held",
+                                    "waits"
+                                  ],
+                                  "description": "turn: decided as the turn began; grown: moved within the turn, past its model's window; compact: a compaction on its own; held: kept from the turn's start; waits: a turn the gateway did not see begin"
+                                },
+                                "n": {
+                                  "type": "integer",
+                                  "description": "The rule, from 1; 0 for none"
+                                },
+                                "use": {
+                                  "type": "string"
+                                },
+                                "when": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "then": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "small": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "unready": {
+                                  "type": "boolean"
+                                },
+                                "instead": {
+                                  "type": "string"
+                                },
+                                "classifier": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "by",
+                                    "intents",
+                                    "cached",
+                                    "resting"
+                                  ],
+                                  "properties": {
+                                    "by": {
+                                      "type": "string"
+                                    },
+                                    "intents": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "intent": {
+                                      "type": "string"
+                                    },
+                                    "effort": {
+                                      "type": "string"
+                                    },
+                                    "cached": {
+                                      "type": "boolean"
+                                    },
+                                    "resting": {
+                                      "type": "boolean"
+                                    },
+                                    "error": {
+                                      "type": "string"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "effort": {
+                            "type": "string"
+                          },
+                          "sticky": {
+                            "type": "string",
+                            "description": "hit, miss:<why> or broken:<why>"
+                          },
+                          "candidates": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "provider",
+                                "credential",
+                                "model"
+                              ],
+                              "properties": {
+                                "provider": {
+                                  "type": "string"
+                                },
+                                "credential": {
+                                  "type": "string"
+                                },
+                                "model": {
+                                  "type": "string",
+                                  "description": "The Model Ref"
+                                },
+                                "member": {
+                                  "type": "string",
+                                  "description": "The member of the requested group it is of"
+                                },
+                                "effort": {
+                                  "type": "string"
+                                },
+                                "fast": {
+                                  "type": "boolean"
+                                }
+                              }
+                            }
+                          },
+                          "more": {
+                            "type": "integer"
+                          },
+                          "done": {
+                            "type": "boolean"
+                          },
+                          "status": {
+                            "type": "integer"
+                          },
+                          "served": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "provider",
+                              "credential",
+                              "model"
+                            ],
+                            "properties": {
+                              "provider": {
+                                "type": "string"
+                              },
+                              "credential": {
+                                "type": "string"
+                              },
+                              "model": {
+                                "type": "string",
+                                "description": "The Model Ref"
+                              },
+                              "member": {
+                                "type": "string",
+                                "description": "The member of the requested group it is of"
+                              },
+                              "effort": {
+                                "type": "string"
+                              },
+                              "fast": {
+                                "type": "boolean"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/backup": {
       "post": {
         "operationId": "hh_api_v1_create_backup",

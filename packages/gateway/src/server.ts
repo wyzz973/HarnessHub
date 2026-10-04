@@ -42,6 +42,8 @@ import {
   type ProviderModel,
   type ReasoningEffort,
   type RouteGroup,
+  type RouteDecisionPage,
+  type RouteDecisionQuery,
   type RouteGroupId,
   type Stickiness,
   type WireProtocol,
@@ -51,11 +53,8 @@ import {
   autoGroups,
   autoRouteGroup,
 } from "@harnesshub/core/auto-groups";
-import {
-  groupCapabilities,
-  groupModels,
-  modelEfforts,
-} from "@harnesshub/core/route-groups";
+import { groupModels, modelEfforts } from "@harnesshub/core/route-groups";
+import { ruledCapabilities } from "@harnesshub/core/route-rules";
 import { HARNESS_MODEL_ALIAS } from "@harnesshub/core/harness-model";
 import type { RunId, SessionId } from "@harnesshub/core/types";
 import { agentOf } from "./agents.js";
@@ -92,6 +91,7 @@ import {
 import { COMPACT_UNSUPPORTED } from "./compacting.js";
 import { Classifier } from "./classify.js";
 import { applyRules, GroupRules } from "./rules.js";
+import { DecisionTrace } from "./trace.js";
 import { conversationOf, StickyRoutes } from "./sticky.js";
 import { canonicalHost, LOOPBACK_ONLY, type GatewayAccess } from "./sharing.js";
 import { forwardCountTokens } from "./count.js";
@@ -264,6 +264,17 @@ export interface GatewayHandler {
    * read.
    */
   keyLimit(keyId: GatewayKeyId): Promise<KeyLimitStatus | undefined>;
+  /**
+   * The latest routing decisions (`trace.ts`): each request to a route
+   * group as a turn began, or that a rule moved within one, published
+   * before the vendor is asked and again when its call ends. With
+   * `query.wait`, waits up to 60 seconds for one after `query.after`, until
+   * `signal` aborts or the handler closes. In memory only.
+   */
+  routeDecisions(
+    query: RouteDecisionQuery,
+    signal: AbortSignal,
+  ): Promise<RouteDecisionPage>;
 }
 
 /** One credential's routing state (`GatewayHandler.routingState`). */
@@ -601,6 +612,8 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     tasks.add(task);
     void task.finally(() => tasks.delete(task));
   };
+  // The latest routing decisions, for the console to show why a turn went where it did.
+  const trace = new DecisionTrace(clock);
   // Route group rules and their classifier, which asks through this gateway.
   const groupRules = new GroupRules(
     clock,
@@ -833,11 +846,12 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         ?.models.list.find((model) => model.id === parsed.model);
     };
     const byGroup = new Map(groups.map((group) => [group.id, group]));
-    /** A group as one model: what its models share (core `groupCapabilities`). */
+    /** A group as one model: what its models share, and what its rules make reachable (core `ruledCapabilities`). */
     const describeGroup = (
       group: RouteGroup | undefined,
     ): Pick<ListedModel, "model" | "efforts"> => {
-      const capabilities = groupCapabilities(
+      const capabilities = ruledCapabilities(
+        group ?? { members: [] },
         group
           ? groupModels(
               group,
@@ -1495,18 +1509,56 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
             blocked: (candidate) => services.breakers.blocked(candidate),
           })
         : undefined;
-      if (sticky.patch)
-        routePatches.push(
-          ruled?.brokeSticky ? "sticky:broken:rule" : sticky.patch,
-        );
+      const stuck = ruled?.brokeSticky ? "sticky:broken:rule" : sticky.patch;
+      if (stuck) routePatches.push(stuck);
       if (ruled) {
         resolved.candidates = ruled.candidates;
         routePatches.push(...ruled.patches);
         call.rules = { compact: ruled.compact, answered: ruled.answered };
       }
+      // A group's decision as a turn begins, or as a rule moves it.
+      const first = ruled?.decisions[0]?.kind;
+      const decision =
+        resolved.group && !internal
+          ? (
+              first
+                ? first !== "held" && first !== "waits"
+                : !conversation.withinTurn
+            )
+            ? trace.publish({
+                callId: entry.callId,
+                ...(entry.keyId ? { keyId: entry.keyId } : {}),
+                ...(entry.agent ? { agent: entry.agent.id } : {}),
+                conversation: conversation.key,
+                ...(key.scope.kind === "session"
+                  ? { sessionId: key.scope.sessionId }
+                  : {}),
+                requested,
+                ...(ruled ? { turn: ruled.turn, tokens: ruled.tokens } : {}),
+                rules: ruled?.decisions ?? [],
+                ...(ruled?.pick ? { effort: ruled.pick } : {}),
+                ...(stuck ? { sticky: stuck.slice("sticky:".length) } : {}),
+                candidates: resolved.candidates,
+              })
+            : undefined
+          : undefined;
       try {
         await routeCall(call, resolved);
+        if (decision)
+          trace.finish(
+            decision,
+            entry.status,
+            (entry.status ?? 500) < 400
+              ? resolved.candidates.find(
+                  (candidate) =>
+                    candidate.provider.id === entry.provider &&
+                    candidate.credential.id === entry.credentialId &&
+                    candidate.ref === entry.modelRef,
+                )
+              : undefined,
+          );
       } catch (error) {
+        if (decision) trace.finish(decision, entry.status, undefined);
         if (writer.sent) {
           log.info("gateway.call.internal_error", {
             callId: entry.callId,
@@ -2195,6 +2247,9 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       const key = await store.getGatewayKey(keyId);
       return key ? services.quotas.status(key) : undefined;
     },
+    routeDecisions(query: RouteDecisionQuery, signal: AbortSignal) {
+      return trace.read(query, signal);
+    },
     async awaitSessionIdle(
       sessionId: SessionId,
       options: { abort?: boolean } = {},
@@ -2209,6 +2264,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     close(): Promise<void> {
       closing ??= (async () => {
         shutdown.abort();
+        trace.close();
         clearInterval(saver);
         while (tasks.size) await Promise.allSettled([...tasks]);
         const internal = await internalServer?.catch(() => undefined);

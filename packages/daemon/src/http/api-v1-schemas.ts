@@ -869,6 +869,121 @@ export const gatewayKeyLimitSchema = {
     budgets: { type: "array", items: budgetStatus },
   },
 } as const;
+
+const decisionCandidate = {
+  type: "object",
+  additionalProperties: false,
+  required: ["provider", "credential", "model"],
+  properties: {
+    provider: { type: "string" },
+    credential: { type: "string" },
+    model: { type: "string", description: "The Model Ref" },
+    member: {
+      type: "string",
+      description: "The member of the requested group it is of",
+    },
+    effort: { type: "string" },
+    fast: { type: "boolean" },
+  },
+} as const;
+const decisionRule = {
+  type: "object",
+  additionalProperties: false,
+  required: ["group", "kind", "n", "then"],
+  properties: {
+    group: { type: "string" },
+    kind: {
+      enum: ["turn", "grown", "compact", "held", "waits"],
+      description:
+        "turn: decided as the turn began; grown: moved within the turn, past its model's window; compact: a compaction on its own; held: kept from the turn's start; waits: a turn the gateway did not see begin",
+    },
+    n: { type: "integer", description: "The rule, from 1; 0 for none" },
+    use: { type: "string" },
+    when: { type: "array", items: { type: "string" } },
+    then: { type: "array", items: { type: "string" } },
+    small: { type: "array", items: { type: "string" } },
+    unready: { type: "boolean" },
+    instead: { type: "string" },
+    classifier: {
+      type: "object",
+      additionalProperties: false,
+      required: ["by", "intents", "cached", "resting"],
+      properties: {
+        by: { type: "string" },
+        intents: { type: "array", items: { type: "string" } },
+        intent: { type: "string" },
+        effort: { type: "string" },
+        cached: { type: "boolean" },
+        resting: { type: "boolean" },
+        error: { type: "string" },
+      },
+    },
+  },
+} as const;
+export const routeDecisionPageSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["seq", "items"],
+  properties: {
+    seq: { type: "integer", description: "The latest seq; pass it as after" },
+    items: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "seq",
+          "at",
+          "callId",
+          "conversation",
+          "requested",
+          "rules",
+          "candidates",
+          "done",
+        ],
+        properties: {
+          seq: { type: "integer" },
+          at: timestamp,
+          callId: { type: "string" },
+          keyId: { type: "string" },
+          agent: { type: "string" },
+          conversation: { type: "string" },
+          sessionId: { type: "string" },
+          requested: { type: "string" },
+          turn: { type: "integer" },
+          tokens: { type: "integer" },
+          rules: { type: "array", items: decisionRule },
+          effort: { type: "string" },
+          sticky: {
+            type: "string",
+            description: "hit, miss:<why> or broken:<why>",
+          },
+          candidates: { type: "array", items: decisionCandidate },
+          more: { type: "integer" },
+          done: { type: "boolean" },
+          status: { type: "integer" },
+          served: decisionCandidate,
+        },
+      },
+    },
+  },
+} as const;
+export const routeDecisionsQuerySchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    session: {
+      type: "string",
+      minLength: 1,
+      maxLength: 200,
+      description:
+        "A conversation key, or the HarnessHub Session of a session key",
+    },
+    after: { type: "integer", minimum: 0 },
+    wait: { type: "number", minimum: 0, maximum: 60 },
+    limit: { type: "integer", minimum: 1, maximum: 256 },
+  },
+} as const;
 export const emptyBodySchema = {
   type: "object",
   additionalProperties: false,

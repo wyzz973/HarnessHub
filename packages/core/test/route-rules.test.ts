@@ -2,8 +2,13 @@
 /** Route group rules: the typed form, checking, matching and the stored record. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import type { GroupRule, RouteGroup } from "../src/model-plane.js";
+import type {
+  GroupRule,
+  ProviderModel,
+  RouteGroup,
+} from "../src/model-plane.js";
 import { isRouteGroup } from "../src/model-plane-records.js";
+import { groupModels } from "../src/route-groups.js";
 import {
   cleanGroupRules,
   cleanRule,
@@ -12,6 +17,7 @@ import {
   ruleConditions,
   ruleIntents,
   ruleLine,
+  ruledCapabilities,
   ruleMatches,
   ruleWords,
   RuleSyntaxError,
@@ -377,4 +383,100 @@ void test("a stored group's rules are checked and already in their stored form",
       !isRouteGroup(stored(rules, extra)),
       JSON.stringify([rules, extra]),
     );
+});
+
+void test("a group advertises what its rules make reachable: images and a larger window, as Magpie's ruledEntry", () => {
+  const metadata = new Map<string, ProviderModel>([
+    [
+      "a/small",
+      { id: "small", contextWindow: 8_000, inputModalities: ["text"] },
+    ],
+    ["a/mid", { id: "mid", contextWindow: 100_000, inputModalities: ["text"] }],
+    [
+      "a/big",
+      { id: "big", contextWindow: 200_000, inputModalities: ["text", "image"] },
+    ],
+    ["a/blind", { id: "blind" }],
+  ]);
+  const of = (members: string[], rules: GroupRule[]) => {
+    const group = {
+      id: "g",
+      strategy: "order",
+      stickiness: "auto",
+      members,
+      rules,
+      createdAt: "2026-10-05T00:00:00.000Z",
+      updatedAt: "2026-10-05T00:00:00.000Z",
+    } as RouteGroup;
+    return ruledCapabilities(
+      group,
+      groupModels(group, () => undefined),
+      (ref) => metadata.get(ref),
+    );
+  };
+  const plain = of(["a/small", "a/big"], []);
+  assert.deepEqual(
+    [plain.contextWindow, plain.inputModalities],
+    [8_000, ["text"]],
+  );
+  // A rule of images alone, to a member that takes them.
+  assert.deepEqual(
+    of(["a/small", "a/big"], [{ use: "a/big", images: true }]).inputModalities,
+    ["text", "image"],
+  );
+  // Not with another condition, nor after a rule to a member that does not.
+  assert.deepEqual(
+    of(["a/small", "a/big"], [{ use: "a/big", images: true, tokens: 5 }])
+      .inputModalities,
+    ["text"],
+  );
+  assert.deepEqual(
+    of(
+      ["a/small", "a/big"],
+      [
+        { use: "a/small", agents: ["claude"] },
+        { use: "a/big", images: true },
+      ],
+    ).inputModalities,
+    ["text"],
+  );
+  // A rule of length alone: the larger window, when every other member
+  // takes requests up to the rule's length.
+  assert.equal(
+    of(["a/small", "a/big"], [{ use: "a/big", tokens: 8_000 }]).contextWindow,
+    200_000,
+  );
+  assert.equal(
+    of(["a/small", "a/big"], [{ use: "a/big", tokens: 9_000 }]).contextWindow,
+    8_000,
+    "small cannot take a request of 8,500 tokens, which no rule moves",
+  );
+  assert.equal(
+    of(["a/small", "a/big"], [{ use: "a/big", tokens: 8_000, images: true }])
+      .contextWindow,
+    8_000,
+    "not with another condition",
+  );
+  // A rule before it caps the window by its member's.
+  assert.equal(
+    of(
+      ["a/small", "a/mid", "a/big"],
+      [
+        { use: "a/mid", agents: ["claude"] },
+        { use: "a/big", tokens: 8_000 },
+      ],
+    ).contextWindow,
+    100_000,
+  );
+  // A member whose window is not known, in a rule before it, leaves the group's as it was.
+  assert.equal(
+    of(
+      ["a/small", "a/blind", "a/big"],
+      [
+        { use: "a/blind", agents: ["claude"] },
+        { use: "a/big", tokens: 8_000 },
+      ],
+    ).contextWindow,
+    undefined,
+  );
 });
