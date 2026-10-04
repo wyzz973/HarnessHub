@@ -102,6 +102,20 @@ async function setup(t: test.TestContext) {
     quirks: { foreignSeals: true },
     script: {
       turns: [
+        // A model that writes no summary, with or without reasoning.
+        {
+          when: { contains: "EMPTY-SUMMARY" },
+          repeat: true,
+          text: "",
+          usage: { input: 500, output: 3 },
+        },
+        {
+          when: { contains: "THINK-ONLY" },
+          repeat: true,
+          reasoning: "Only thinking, no summary.",
+          text: "",
+          usage: { input: 500, output: 3 },
+        },
         // Tools sent with a compaction request would be no summary.
         {
           when: {
@@ -359,6 +373,44 @@ void test(
         assert.ok(
           (await latest(client)).patches.includes("compaction:restored:1"),
         );
+      });
+
+      await t.test(`compaction without a summary: ${where}`, async () => {
+        for (const marker of ["EMPTY-SUMMARY", "THINK-ONLY"]) {
+          const failed = await call(hub.url, key, "/v1/responses", {
+            model,
+            stream,
+            input: [user(`${marker} fix it`), { type: "compaction_trigger" }],
+          });
+          // Failed before any byte went out, or in the stream after.
+          const error =
+            failed.status === 502
+              ? (JSON.parse(failed.text) as { error: Json }).error
+              : ((
+                  events(failed.text).find(
+                    (event) => event.type === "response.failed",
+                  )?.response as Json | undefined
+                )?.error as Json | undefined);
+          assert.ok(
+            failed.status === 502 || (stream && failed.status === 200),
+            `${marker}: ${failed.status} ${failed.text}`,
+          );
+          assert.equal(
+            error?.message,
+            "compaction: the model wrote no summary",
+            `${marker}: ${failed.text}`,
+          );
+          assert.doesNotMatch(failed.text, /"type":"compaction"/);
+          const entry = await latest(client);
+          assert.deepEqual(
+            [entry.status, entry.errorClass, entry.errorSource],
+            [502, "compaction_empty", "gateway"],
+            marker,
+          );
+          assert.equal(entry.error, "compaction: the model wrote no summary");
+          assert.equal(entry.usage?.output, 3, "the upstream's usage counts");
+          assert.ok(entry.patches.includes("compaction:summary"));
+        }
       });
     }
 

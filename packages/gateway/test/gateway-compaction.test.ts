@@ -13,6 +13,7 @@ import {
   codexInput,
   isCompactionRequest,
   refusesSeal,
+  SummaryReader,
   unsealed,
   withoutOwnReasoning,
 } from "../src/compacting.js";
@@ -405,6 +406,43 @@ void test("a failed stream, an error body or a reply without summary text is no 
     error: { message: "bad request", code: "invalid_prompt" },
   });
   assert.equal(json.push(refusal) + json.end(), refusal);
+});
+
+void test("the summary is read from message items, else from the terminal response, as sent or whole", () => {
+  const streamed = new SummaryReader();
+  for (const event of STREAM) streamed.read(frame(event));
+  assert.equal(streamed.text, "SUMMARY: fixed the bug.");
+  const terminal = new SummaryReader();
+  terminal.read(
+    frame({
+      type: "response.completed",
+      response: {
+        output: [
+          {
+            type: "message",
+            content: [{ type: "output_text", text: "From the end." }],
+          },
+        ],
+      },
+    }),
+  );
+  assert.equal(terminal.text, "From the end.");
+  const whole = new SummaryReader();
+  whole.read(
+    JSON.stringify({
+      object: "response",
+      output: [
+        { type: "reasoning", summary: [{ type: "summary_text", text: "x" }] },
+        { type: "message", content: [{ type: "output_text", text: "Whole." }] },
+      ],
+    }),
+  );
+  assert.equal(whole.text, "Whole.");
+  const none = new SummaryReader();
+  none.read(frame(STREAM[0]!));
+  none.read(": keepalive\n\n");
+  none.read("not json");
+  assert.equal(none.text, "");
 });
 
 void test("a JSON summary becomes the response's only output item", () => {

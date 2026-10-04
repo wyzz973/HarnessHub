@@ -94,8 +94,10 @@ import { maskBody, type Redactor } from "./redaction.js";
 import { ToolArgumentRestorer } from "./restore.js";
 import {
   codexInput,
+  COMPACTION_EMPTY,
   CompactionReply,
   refusesSeal,
+  SummaryReader,
   unsealed,
   withoutOwnReasoning,
 } from "./compacting.js";
@@ -346,6 +348,8 @@ export interface Call {
   vision?: VisionResult;
   /** The current attempt answers the client's web search itself (./search.js). */
   searching?: boolean;
+  /** The gateway serves Codex's compaction: an answer without a summary fails (./compacting.js). */
+  compaction?: boolean;
 }
 
 type Prepared =
@@ -1871,12 +1875,15 @@ async function translatedAttempt(
     );
     if (unmapped.size)
       call.entry.unmapped = [...new Set([...call.entry.unmapped, ...unmapped])];
+    const empty = emptyCompaction(call, result.text);
     const recorded = await commit(call);
     try {
-      if (recorded) {
+      if (!recorded) await evidenceUnavailable(call, sink);
+      else if (empty) await failAnswer(call, empty, sink);
+      else {
         await hold.release();
         await sink.finish(result);
-      } else await evidenceUnavailable(call, sink);
+      }
     } catch (error) {
       if (!(error instanceof ClientClosed)) throw error;
     }
@@ -1919,17 +1926,50 @@ async function translatedAttempt(
   }
 }
 
+/**
+ * A compaction the gateway serves whose model wrote no summary
+ * (./compacting.js) fails with 502 `compaction_empty`. Recorded over the
+ * success fields, so the upstream's usage stays counted; the client gets
+ * this failure instead of the answer ({@link failAnswer}).
+ */
+function emptyCompaction(
+  call: Call,
+  summary: string | undefined,
+): Failure | undefined {
+  if (!call.compaction || summary?.trim()) return undefined;
+  const error = localError(502, "compaction_empty", COMPACTION_EMPTY);
+  recordFailure(call.entry, error);
+  return error.failure;
+}
+
 /** The ledger could not be written: report 503 `evidence_unavailable` instead of the answer. */
 async function evidenceUnavailable(
   call: Call,
   sink: OutputSink | undefined,
   forwarder?: Forwarder,
 ): Promise<void> {
-  const value = failure(
-    503,
-    "evidence_unavailable",
-    "The model call could not be recorded; the answer is withheld",
+  await failAnswer(
+    call,
+    failure(
+      503,
+      "evidence_unavailable",
+      "The model call could not be recorded; the answer is withheld",
+    ),
+    sink,
+    forwarder,
   );
+}
+
+/**
+ * Report `value` instead of an answer that is withheld: as the inbound
+ * protocol's error response while nothing was sent, else in the stream.
+ */
+async function failAnswer(
+  call: Call,
+  value: Failure,
+  sink: OutputSink | undefined,
+  forwarder?: Forwarder,
+): Promise<void> {
   const { writer, response } = call;
   if (!writer.sent) {
     response.setHeader("x-hh-error-source", "gateway");
@@ -2079,6 +2119,7 @@ async function passthroughAttempt(
       : gemini && !route.gemini?.sse
         ? new ArraySegmenter(limits.maxEventBytes)
         : new SseSegmenter(limits.maxEventBytes);
+    const summary = call.compaction ? new SummaryReader() : undefined;
     if (upstream.body)
       for await (const chunk of upstream.body) {
         attempt.firstByteMs ??= Math.round(performance.now() - attemptStarted);
@@ -2100,6 +2141,7 @@ async function passthroughAttempt(
         }
         for (const segment of segmenter.push(chunk)) {
           const observation = forwarder.segment(segment);
+          summary?.read(segment.text);
           if (observation.valid) {
             touch();
             keepalive?.data();
@@ -2110,7 +2152,10 @@ async function passthroughAttempt(
         await forwarder.drain();
       }
     if (segmenter && forwarder && !forwarder.error)
-      for (const segment of segmenter.end()) forwarder.segment(segment);
+      for (const segment of segmenter.end()) {
+        forwarder.segment(segment);
+        summary?.read(segment.text);
+      }
     await timers.stop(call.closed);
     let parts: UsageParts;
     let served: string | undefined;
@@ -2160,11 +2205,14 @@ async function passthroughAttempt(
       served = observation.model;
       finish = observation.finish;
       terminated = true;
+      summary?.read(body.toString("utf8"));
     }
     recordSuccess(call, candidate, attempt, parts, served, finish, terminated);
+    const empty = emptyCompaction(call, summary?.text);
     const recorded = await commit(call);
     try {
       if (!recorded) await evidenceUnavailable(call, undefined, forwarder);
+      else if (empty) await failAnswer(call, empty, undefined, forwarder);
       else if (forwarder) {
         await forwarder.finish();
         begin();
@@ -2225,6 +2273,7 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
       if (codex.restored)
         call.routePatches.push(`compaction:restored:${codex.restored}`);
       if (codex.summary) {
+        call.compaction = true;
         call.routePatches.push("compaction:summary");
         call.writer.addTransform(
           new CompactionReply(call.stream ? "sse" : "json"),

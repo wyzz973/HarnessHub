@@ -266,7 +266,69 @@ function compactionItem(responseId: unknown, summary: string): Json {
   };
 }
 
-const NO_SUMMARY = "compaction: the model wrote no summary";
+/** Why a compaction the gateway serves fails when its model wrote no summary. */
+export const COMPACTION_EMPTY = "compaction: the model wrote no summary";
+
+/** The JSON data of one SSE event, or undefined. */
+function eventData(raw: string): Json | undefined {
+  const data = raw
+    .split(/\r\n|\r|\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).replace(/^ /, ""));
+  if (!data.length) return undefined;
+  try {
+    return record(JSON.parse(data.join("\n")));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The summary in the answer to a compaction the gateway serves: the text of
+ * the message items of its `response.output_item.done` events, else of the
+ * terminal response's `output` (`response.completed`, `response.incomplete`
+ * or a JSON response). The gateway reads the upstream's answer with it before
+ * the call is recorded, and {@link CompactionReply} the client's.
+ */
+export class SummaryReader {
+  #items: string[] = [];
+  #output: unknown[] = [];
+
+  /** One parsed Responses event, or a whole response. */
+  take(value: Json): void {
+    switch (value.type) {
+      case "response.output_item.done": {
+        const item = record(value.item);
+        if (item?.type === "message") this.#items.push(summaryText([item]));
+        return;
+      }
+      case "response.completed":
+      case "response.incomplete":
+        this.#output = list(record(value.response)?.output);
+        return;
+      case undefined:
+        if (Array.isArray(value.output)) this.#output = value.output;
+    }
+  }
+
+  /** One SSE event as it was sent, or a JSON response body. */
+  read(text: string): void {
+    let value: Json | undefined;
+    if (text.trimStart().startsWith("{"))
+      try {
+        value = record(JSON.parse(text));
+      } catch {
+        value = undefined;
+      }
+    else value = eventData(text);
+    if (value) this.take(value);
+  }
+
+  /** The summary read so far; blank when the model wrote none. */
+  get text(): string {
+    return this.#items.join("") || summaryText(this.#output);
+  }
+}
 
 /**
  * The answer to a compaction the gateway serves ({@link codexInput}), as
@@ -277,14 +339,16 @@ const NO_SUMMARY = "compaction: the model wrote no summary";
  * usage. In a stream, `response.created`, `response.in_progress`, failures
  * and comments pass at once and the model's own items are held back; a JSON
  * answer gets the item as its `output`. An answer that is not a Responses
- * stream or response (an error body) passes unchanged, and one without
- * summary text ends failed (`compaction: the model wrote no summary`).
+ * stream or response (an error body) passes unchanged. The gateway fails a
+ * call whose answer has no summary text before it is recorded (502
+ * `compaction_empty`), so the client gets that failure, not an answer;
+ * should one reach this transform all the same, it ends failed too.
  */
 export class CompactionReply implements OutputTransform {
   #segmenter: SseSegmenter | undefined;
   #body = "";
   #decoder = new TextDecoder();
-  #summary: string[] = [];
+  #summary = new SummaryReader();
   #id: unknown;
   #terminal: Json | undefined;
   #events = 0;
@@ -319,8 +383,7 @@ export class CompactionReply implements OutputTransform {
       .map((segment) => this.#event(segment.text))
       .join("");
     if (this.#failed || this.#events === 0) return rest;
-    const text =
-      this.#summary.join("") || summaryText(list(this.#terminal?.output));
+    const text = this.#summary.text;
     if (!text.trim())
       return (
         rest +
@@ -331,7 +394,7 @@ export class CompactionReply implements OutputTransform {
             object: "response",
             status: "failed",
             output: [],
-            error: { code: "server_error", message: NO_SUMMARY },
+            error: { code: "server_error", message: COMPACTION_EMPTY },
           },
         })
       );
@@ -360,19 +423,10 @@ export class CompactionReply implements OutputTransform {
 
   /** One SSE event: what passes now ("" while held). */
   #event(raw: string): string {
-    const data = raw
-      .split(/\r\n|\r|\n/)
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).replace(/^ /, ""));
-    if (!data.length) return raw;
-    let value: Json | undefined;
-    try {
-      value = record(JSON.parse(data.join("\n")));
-    } catch {
-      return raw;
-    }
+    const value = eventData(raw);
     if (!value) return raw;
     this.#events++;
+    this.#summary.take(value);
     if (
       typeof value.sequence_number === "number" &&
       value.sequence_number >= this.#sequence
@@ -389,11 +443,6 @@ export class CompactionReply implements OutputTransform {
       case "error":
         this.#failed = true;
         return raw;
-      case "response.output_item.done": {
-        const item = record(value.item);
-        if (item?.type === "message") this.#summary.push(summaryText([item]));
-        return "";
-      }
       case "response.completed":
       case "response.incomplete":
         this.#terminal = response;
@@ -412,13 +461,14 @@ export class CompactionReply implements OutputTransform {
     }
     if (!value || !Array.isArray(value.output) || record(value.error))
       return body;
-    const text = summaryText(value.output);
+    this.#summary.take(value);
+    const text = this.#summary.text;
     if (!text.trim())
       return JSON.stringify({
         ...value,
         status: "failed",
         output: [],
-        error: { code: "server_error", message: NO_SUMMARY },
+        error: { code: "server_error", message: COMPACTION_EMPTY },
       });
     return JSON.stringify({
       ...value,
