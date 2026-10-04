@@ -150,14 +150,14 @@ Every row was checked against Magpie's source and against HarnessHub's code or d
 |---|---|---|---|
 | A passphrase-sealed backup file (PBKDF2-SHA256 at 600,000 rounds, AES-256-GCM) | same | `hh backup [--no-keys] [file]`; Settings → Backup and sync | Same parameters; the file format is HarnessHub's own, so Magpie backups cannot be opened ([file format](backup-sync.md#文件格式)) |
 | Contents: providers and keys, route groups, profiles, agents' model settings, the Library | same | `hh backup` | Agents are saved as wiring choices and wired again on restore ([contents](backup-sync.md#备份的内容)) |
-| All settings, uploaded icons, search APIs, provider order | partial | Only LAN sharing and catalog settings | Gateway features (search backends, redaction rules, the vision model) are not in backups yet ([differences](backup-sync.md#与-magpie-的差异)) |
+| All settings, uploaded icons, search APIs, provider order | partial | LAN sharing and catalog settings; the gateway features (redaction and its rules, the vision model, search backends with their keys) | No uploaded icons or provider order; startup settings in `config.jsonc` stay out ([contents](backup-sync.md#备份的内容)) |
 | Gateway keys exported in full | different by design | Only each client key's name, allow list, budgets and expiry; `hh restore` prints the `hh key create` options | Key text is never stored; restored agents get new keys |
 | `--no-keys` leaves out credentials and secret-looking headers | same | `hh backup --no-keys` | Same pattern for header names |
 | Library MCP secrets in plain text, blanked by `--no-keys` | different by design | Secrets are references; a stored value travels only with keys | ([Library secrets](library.md#秘密)) |
 | `backup --no-library`, `restore --no-agents --no-library` | partial | `hh restore --no-agents --no-library` | `hh backup` cannot leave the Library out |
 | Restore: replace or add providers, keep local keys, list providers that need a key | same | `hh restore <file>` shows a summary, then asks | Library entries are replaced one by one instead of as a whole ([restore](backup-sync.md#恢复)) |
 | WebDAV and S3 sync every 3 minutes with backoff | same | `hh sync webdav on <url> …`, `hh sync s3 on s3://bucket …`, `hh sync status\|now\|off` | Tested against fake servers only ([sync](backup-sync.md#同步)) |
-| Three-way merge per part, conflict copies, mirrored deletions, conditional writes | same | Automatic | Parts: providers, agents, profiles, library; providers a live key or group still uses are kept |
+| Three-way merge per part, conflict copies, mirrored deletions, conditional writes | same | Automatic | Parts: providers, agents, profiles, library, gateway features; providers a live key or group still uses are kept; redaction turned off by another machine is called out ([sync](backup-sync.md#同步)) |
 | A settings part, `library=no`, usage shared across machines | partial | `keys=yes\|no`, `agents=yes\|no` | Settings are left out on purpose (they could turn on LAN sharing elsewhere); usage is not shared |
 | Sync secrets in `sync.json`, a lock across processes | different by design | Secret-store references; one daemon owns the data directory | Keeps the sync password and passphrase out of plain files ([differences](backup-sync.md#与-magpie-的差异)) |
 
