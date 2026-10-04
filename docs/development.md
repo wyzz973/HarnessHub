@@ -34,7 +34,7 @@ OSS-004 期间代码按 [多包迁移计划](proposals/oss/13-package-migration.
 
 - 清单：`packages/` 与 `apps/` 下每个 `package.json` 在任一依赖字段中声明的 `@harnesshub/*` 内部依赖，必须是它在依赖图中那一项的子集；包名必须与目录对应（`@harnesshub/<目录>`，应用 `hh` 为 `harnesshub`）。缺少 `package.json` 的包或应用是错误。
 - 源码：静态导入、动态导入、类型导入、`import()` 类型与 re-export 只能指向所在包声明的依赖，内部包与第三方包相同，因此 workspace 的提升（根 `node_modules` 中的包）不会掩盖缺失的声明；Node 内置模块不需要声明。`src/`、控制台的源码目录、agents 的 `assets/` 与应用的 `bin/` 可以使用 `dependencies`、`peerDependencies` 与 `optionalDependencies`，`test/` 还可以使用 `devDependencies`。根目录的 `tests/` 按根 `package.json` 的声明检查（测试依赖是它的 `devDependencies`），相对导入不得离开 `tests/`，测试可以按计算出的路径动态加载夹具。第三方包因此只能出现在声明它的包中。
-- 黑盒：`conformance/`、`tests/e2e/`、`tests/browser/` 与 `examples/`（存在者）只能使用 `@harnesshub/core`、`@harnesshub/sdk`、Node 内置模块（HTTP 与启动 `hh` 命令）及本目录内的文件，`new URL(..., import.meta.url)` 也不得离开本目录。目前只有 `examples/`。
+- 黑盒：`conformance/`、`tests/e2e/`、`tests/browser/` 与 `examples/`（存在者）只能使用 `@harnesshub/core`、`@harnesshub/sdk`、Node 内置模块（HTTP 与启动 `hh` 命令）及本目录内的文件，`new URL(..., import.meta.url)` 也不得离开本目录。唯一的例外：`conformance/` 可以导入官方协议客户端 `openai`、`@anthropic-ai/sdk` 与 `@google/genai`，且必须是根 `package.json` 中按精确版本固定的开发依赖（[ADR 0029](decisions/0029-protocol-suite.md)）。目前有 `conformance/` 与 `examples/`。
 - 程序目录：agents 的 `assets/` 与应用的 `bin/` 随包发布、按路径运行，执行上述声明依赖规则，相对导入不得离开所在包（`bin/hh.mjs` 导入 `../dist/src/main.js` 可以）；不执行模块归属规则，因为 assets 中的启动器自己启动所包装的引擎，[ADR 0017 F08 补充](decisions/0017-package-layout-migration.md#补充子进程创建收口f082026-10-02)（范围）已说明它们不经 `ProcessLauncher`。计算出的动态导入在这里会失败，只有 `assets/native-mcp/pi-extension.mjs` 是登记的例外：它从引擎自己的安装中加载 MCP SDK。
 - 尚未执行：公开类型不得暴露第三方类型，留给 API Extractor 报告（[10 第 2 节](proposals/oss/10-engineering.md#2-代码规范)）。
 

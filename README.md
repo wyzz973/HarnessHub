@@ -59,7 +59,8 @@ To use the model gateway from any OpenAI or Anthropic client: add a provider fro
 In the console, configure a model on the **Model** page and register installed agents on the **Engines** page. Discovery never installs anything. Secrets are stored as references (Keychain, DPAPI, environment variable or file), never as plain values in configuration files. The [getting started guide](docs/getting-started.md) covers data directories, real agents and troubleshooting.
 
 ```sh
-pnpm check   # build, lint, tests, API and docs checks, console build
+pnpm check   # build, lint, tests (with the protocol suite), API and docs checks, console build
+pnpm bench   # gateway latency, per-chunk cost, 200 streams and ledger commits against the M1 targets
 ```
 
 ## Documentation
