@@ -634,21 +634,13 @@ async function agents(
       wiring?.keyId !== undefined &&
       calls.length > 0 &&
       calls.every((call) => call.keyId === wiring.keyId);
+    // Passed through or translated, the ledger names a tool turn tool_calls.
     const toolTurns = calls.filter(
-      (call) =>
-        call.finishReason === "tool_calls" || call.finishReason === "tool_use",
+      (call) => call.finishReason === "tool_calls",
     ).length;
-    const responsesOnly =
-      calls.length > 0 &&
-      calls.every(
-        (call) =>
-          call.inbound.protocol === "responses" && call.mode === "passthrough",
-      );
     const tools = toolTurns
       ? `✓ ${toolTurns} of ${calls.length} calls ended in a tool call`
-      : responsesOnly && calls.length >= 2
-        ? `${calls.length} calls; a Responses passthrough records the response status, not tool calls`
-        : `✗ no call ended in a tool call (${calls.length} calls)`;
+      : `✗ no call ended in a tool call (${calls.length} calls)`;
     if (!answered) report.fail(`${id}: ${detail}`);
     if (!attributed)
       report.fail(
