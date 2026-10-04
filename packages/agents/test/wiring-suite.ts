@@ -49,6 +49,8 @@ import {
 /** An adapter's declaration and reviewed fixtures; paths are relative to the home. */
 export interface AdapterFixture {
   protocol: string;
+  /** Where the key goes; default `config-file`. */
+  keyDelivery?: "config-file" | "env-file";
   executables: readonly string[];
   /** The files wired in an empty home, in the adapter's order. */
   files: readonly string[];
@@ -178,7 +180,7 @@ export function adapterSuite(id: string, fixture: AdapterFixture): void {
     const context = await sandbox(t);
     const adapter = wiringAdapter(id);
     assert.equal(adapter.protocol, fixture.protocol);
-    assert.equal(adapter.keyDelivery, "config-file");
+    assert.equal(adapter.keyDelivery, fixture.keyDelivery ?? "config-file");
     assert.deepEqual(adapter.executables, fixture.executables);
     const plan = await planWiring(id, TARGET, context);
     assert.deepEqual(

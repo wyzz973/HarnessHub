@@ -23,6 +23,7 @@ import { qoder, qoderCn } from "./qoder.js";
 import { t3code } from "./t3code.js";
 // Agents that keep HarnessHub's entries as elements of their own lists.
 import { claudeDesktop } from "./claude-desktop.js";
+import { dsh } from "./dsh.js";
 import { droid } from "./droid.js";
 import { workbuddy } from "./workbuddy.js";
 import { zcode } from "./zcode.js";
@@ -48,7 +49,7 @@ export const wiringAdapters: ReadonlyMap<string, WiringAdapter> = new Map(
       t3code,
       openchamber,
     ],
-    ...[droid, workbuddy, zcode, claudeDesktop],
+    ...[droid, workbuddy, zcode, claudeDesktop, dsh],
   ].map((adapter) => [adapter.id, adapter]),
 );
 

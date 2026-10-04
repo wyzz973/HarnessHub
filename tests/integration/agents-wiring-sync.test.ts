@@ -291,6 +291,39 @@ void test("OpenChamber's provider follows the gateway's models while its profile
   assert.equal(view.wiring?.drift?.drifted, false);
 });
 
+void test("dsh's route follows the gateway's models with the key its .env holds, and a model picked in dsh stops the sync", async (t) => {
+  const { client, home, setModels, v1 } = await setup(t, [
+    { id: "big" },
+    { id: "small" },
+  ]);
+  await wire(client, "dsh", "fake/small");
+  const settings = path.join(home, ".dsh", "settings.yaml");
+  const env = await readFile(path.join(home, ".dsh", ".env"), "utf8");
+  const key = /^HARNESSHUB_GATEWAY_KEY=(.+)$/m.exec(env)![1]!;
+  assert.deepEqual(await listed(v1, key), ["fake/big", "fake/small"]);
+  await setModels([{ id: "big" }, { id: "small" }, { id: "later" }]);
+  await eventually(
+    async () => (await readFile(settings, "utf8")).includes("fake/later"),
+    "the new model in dsh's route",
+  );
+  assert.equal(await readFile(path.join(home, ".dsh", ".env"), "utf8"), env);
+  // Another model picked in dsh's Models page is drift: the next sync leaves
+  // the file alone and marks the agent.
+  const picked = (await readFile(settings, "utf8")).replace(
+    "provider: harnesshub",
+    "provider: deepseek-official",
+  );
+  await writeFile(settings, picked);
+  await setModels([{ id: "small" }, { id: "later" }]);
+  await eventually(
+    async () =>
+      (await client.agents.get("dsh")).wiring?.attention?.code ===
+      "AGENT_FILES_CHANGED",
+    "dsh marked",
+  );
+  assert.equal(await readFile(settings, "utf8"), picked);
+});
+
 void test("wiring.autoSync false leaves the agents' files as they were written", async (t) => {
   const { client, home, setModels } = await setup(
     t,
