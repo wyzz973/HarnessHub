@@ -127,6 +127,17 @@ export interface SystemInfo {
     anthropicBaseUrl: string;
     geminiBaseUrl: string;
   } | null;
+  /**
+   * The proxy of the daemon's own outbound requests, fixed at start:
+   * `proxy` with any password as `***` (null: direct), the `noProxy`
+   * hosts, and where `network.proxy` came from (null when it is not set,
+   * or when the embedding caller did not say).
+   */
+  network: {
+    proxy: string | null;
+    noProxy: string[];
+    source: "flag" | "env" | "file" | null;
+  };
 }
 
 export interface ApiV1Options {

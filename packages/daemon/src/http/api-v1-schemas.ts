@@ -1499,6 +1499,7 @@ export const systemInfoSchema = {
     "dataDir",
     "secretBackend",
     "gateway",
+    "network",
   ],
   properties: {
     apiVersion: { type: "string", enum: ["v1"] },
@@ -1518,6 +1519,21 @@ export const systemInfoSchema = {
         openaiBaseUrl: { type: "string" },
         anthropicBaseUrl: { type: "string" },
         geminiBaseUrl: { type: "string" },
+      },
+    },
+    network: {
+      type: "object",
+      additionalProperties: false,
+      required: ["proxy", "noProxy", "source"],
+      description:
+        "The proxy of the daemon's outbound requests: proxy with any password as ***, null for direct; noProxy hosts; source of network.proxy (flag, env or file), null when not set",
+      properties: {
+        proxy: { type: ["string", "null"] },
+        noProxy: { type: "array", items: { type: "string" } },
+        source: {
+          type: ["string", "null"],
+          enum: ["flag", "env", "file", null],
+        },
       },
     },
   },

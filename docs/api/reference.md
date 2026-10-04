@@ -773,12 +773,12 @@
 **GET `/api/v1/system/info` — 守护进程信息**
 
 - 输入：无参数。
-- 返回：200：apiVersion=v1、version、commit、pid、startedAt、dataDir、secretBackend，以及 gateway：本机客户端使用的模型网关基址 openaiBaseUrl（含 /v1）、anthropicBaseUrl 与 geminiBaseUrl（不含版本段），监听器绑定之前为 null。
-- 实现链路：组合根在启动时固定的构建身份与秘密后端，加上监听器绑定后的回环地址；`hh status` 读取它并提示客户端的配置方式。
+- 返回：200：apiVersion=v1、version、commit、pid、startedAt、dataDir、secretBackend，以及 gateway：本机客户端使用的模型网关基址 openaiBaseUrl（含 /v1）、anthropicBaseUrl 与 geminiBaseUrl（不含版本段），监听器绑定之前为 null；network：守护进程自己出站请求的代理 proxy（密码显示为 ***，直连为 null）、noProxy 主机列表，以及 network.proxy 的来源 source（flag、env 或 file，未设置为 null）。
+- 实现链路：组合根在启动时固定的构建身份、秘密后端与出站代理（startHub 的 network 与 networkSource，由 hh serve 的 startOptions 给出；代理地址经 displayProxy 显示，密码来自地址或 network.proxyPassword 时都显示为 ***），加上监听器绑定后的回环地址；`hh status` 读取它并提示客户端的配置方式，控制台的设置页显示代理。
 - 持久化与副作用：只读。
 - 失败与边界：需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。
 
-实现入口：[packages/daemon/src/http/api-v1.ts](../../packages/daemon/src/http/api-v1.ts)。验证依据：[tests/integration/api-v1.test.ts](../../tests/integration/api-v1.test.ts)、[tests/integration/hh-cli.test.ts](../../tests/integration/hh-cli.test.ts)。
+实现入口：[packages/daemon/src/http/api-v1.ts](../../packages/daemon/src/http/api-v1.ts)。验证依据：[tests/integration/api-v1.test.ts](../../tests/integration/api-v1.test.ts)、[tests/integration/hh-cli.test.ts](../../tests/integration/hh-cli.test.ts)、[tests/integration/outbound-proxy.test.ts](../../tests/integration/outbound-proxy.test.ts)。
 
 ## hh_api_v1_create_console_link
 

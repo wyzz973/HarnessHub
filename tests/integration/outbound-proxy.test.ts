@@ -232,6 +232,36 @@ void test("proxy credentials: the user in the address, the password from a secre
   );
   assert.equal((await on.ask(`far/${MODEL}`)).status, 200);
   assert.deepEqual(proxy.credentials, [`alice:${PROXY_PASSWORD}`]);
+  // /system/info shows the proxy with the password masked, wherever it came from.
+  const info = await on.client.system.info();
+  assert.deepEqual(info.network, {
+    proxy: `http://alice:***@${address.host}`,
+    noProxy: [],
+    source: null,
+  });
+  assert.ok(!JSON.stringify(info).includes(PROXY_PASSWORD));
+  const fromEnvironment = await daemon(
+    t,
+    {
+      proxy: `http://alice:${PROXY_PASSWORD}@${address.host}`,
+      noProxy: [".corp.example"],
+    },
+    { networkSource: "env" },
+  );
+  const raw = await (
+    await fetch(`${fromEnvironment.hub.url}/api/v1/system/info`, {
+      headers: {
+        authorization: `Bearer ${(await readFile(path.join(fromEnvironment.dataDir, "admin.token"), "utf8")).trim()}`,
+      },
+    })
+  ).text();
+  assert.ok(!raw.includes(PROXY_PASSWORD), raw);
+  assert.deepEqual((JSON.parse(raw) as { network: unknown }).network, {
+    proxy: `http://alice:***@${address.host}`,
+    noProxy: [".corp.example"],
+    source: "env",
+  });
+  await fromEnvironment.close();
   await on.close();
   // Neither the log nor the store holds the password.
   const files = await readdir(on.dataDir, { recursive: true });

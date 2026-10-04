@@ -572,12 +572,17 @@ export function startOptions(config: ResolvedConfig): {
   gatewayLimits?: unknown;
   otlp?: unknown;
   network: { proxy?: string; proxyPassword?: unknown; noProxy?: unknown };
+  /** Where `network.proxy` came from; absent when it is not set. */
+  networkSource?: "flag" | "env" | "file";
 } {
   const get = (dotted: string) =>
     config.entries.find((entry) => entry.path === dotted)?.value;
   const autoRefresh = config.entries.find(
     (entry) => entry.path === "catalog.autoRefresh",
   )!;
+  const proxySource = config.entries.find(
+    (entry) => entry.path === "network.proxy",
+  )?.source.kind;
   const optional = <K extends string>(key: K, value: unknown) =>
     (value === undefined ? {} : { [key]: value }) as Partial<Record<K, never>>;
   return {
@@ -606,6 +611,9 @@ export function startOptions(config: ResolvedConfig): {
       ...optional("proxyPassword", get("network.proxyPassword")),
       ...optional("noProxy", get("network.noProxy")),
     },
+    ...(proxySource !== undefined && proxySource !== "default"
+      ? { networkSource: proxySource }
+      : {}),
   };
 }
 

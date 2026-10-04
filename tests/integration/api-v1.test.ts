@@ -158,6 +158,7 @@ void test("/api/v1 requires the local admin token and answers with problem detai
   assert.equal(info.apiVersion, "v1");
   assert.equal(info.secretBackend, "file");
   assert.equal(info.pid, process.pid);
+  assert.deepEqual(info.network, { proxy: null, noProxy: [], source: null });
 
   // The OpenAPI document lists the new operations.
   const spec = (await (await fetch(`${hub.url}/openapi.json`)).json()) as {

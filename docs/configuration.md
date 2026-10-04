@@ -83,6 +83,7 @@
 - **协议**：HTTP 代理以 `CONNECT` 建立隧道，HTTPS 上游的 TLS 在隧道内与上游直接协商（`https://` 代理另有一层到代理的 TLS）；SOCKS5 由代理解析主机名（`socks5` 与 `socks5h` 相同）。代理的凭据：用户名写在地址中，密码来自 `network.proxyPassword` 的秘密引用，或写在环境变量的地址中（`http://user:pass@host:port`，特殊字符按 URL 编码）。HTTP 代理以 `Proxy-Authorization: Basic` 发送，SOCKS5 按 RFC 1929。密码不进入配置文件、日志、账本或 `hh config show`（显示为 `***`）；守护进程启动时读取一次 `proxyPassword`，读不到时以 `CONFIG_INVALID` 拒绝启动。
 - **provider 自己的代理**：provider 的 `proxy` 为 `direct`（不经代理）或不含凭据的代理地址时，它的模型调用、模型列表、测试与体检改用它（Magpie 的按 provider 代理），仍不代理回环地址；`hh provider add … --proxy URL|direct`，`hh provider proxy <id> [URL|direct|default]`（`default` 删除，回到守护进程的代理），API 为 `POST`/`PATCH /api/v1/providers` 的 `proxy`。需要密码的代理只能是守护进程的 `network.proxy`。Copilot provider 没有 `proxy`：它的请求由 Copilot CLI 发出。
 - **失败**：连不上代理、代理拒绝隧道（包括 407 要求凭据）、代理在应答前关闭连接，或 10 秒内没有建立隧道时，请求立即失败，错误指出代理（不含凭据），不会挂起或反复重连。模型调用的账本 `errorClass` 为 `proxy_failed`，响应 502 `proxy_failed`；这次失败不让该凭据休息，也不在同一候选上重试，直接转移到下一个候选。`count_tokens` 转发失败时改用本地估算；搜索后端的失败原因写进工具结果。
+- **查看**：`GET /api/v1/system/info` 的 `network` 给出启动时生效的代理（密码显示为 `***`，直连为 `null`）、`noProxy` 与 `network.proxy` 的来源（`flag`、`env` 或 `file`，未设置为 `null`）；修改需要改设置后重启守护进程。
 - **TLS 检查型代理**：会替换证书的企业代理，把它的根证书放进 `NODE_EXTRA_CA_CERTS`（Node 的标准变量，启动时读取）。
 - **不经过这里的请求**：引擎自己（Session Run 启动的 Claude Code、Codex 等）按各自的环境联网；Worker 内的 Session 网关（声明了自己 openai-completions provider 的引擎与配置检查，[共享网关](model-gateway.md#session-run-与共享网关)）仍直接连接上游，不读这些设置；网关对自己的内部调用（视觉兜底、分类器）只走回环；`hh` 命令只连接本机守护进程。
 

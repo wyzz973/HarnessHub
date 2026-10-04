@@ -234,6 +234,25 @@ void test("the proxy comes from --proxy, then HTTPS_PROXY and the like, then the
     proxyPassword: { kind: "env", value: "PROXY_PASSWORD" },
     noProxy: [".corp.example", "10.0.0.0/8"],
   });
+  // /system/info says where the proxy came from.
+  assert.equal(startOptions(fromFile).networkSource, "file");
+  assert.equal(
+    startOptions(
+      resolveConfig({ config: file, env: { HTTPS_PROXY: "http://a:1" } }),
+    ).networkSource,
+    "env",
+  );
+  assert.equal(
+    startOptions(
+      resolveConfig({ config: file, env: {}, flags: { "--proxy": "direct" } }),
+    ).networkSource,
+    "flag",
+  );
+  assert.equal(
+    "networkSource" in
+      startOptions(resolveConfig({ config: document({}), env: {} })),
+    false,
+  );
   // curl's order: lower case first, and an HTTP proxy serves HTTPS too.
   for (const [env, name] of [
     [

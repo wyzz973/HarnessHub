@@ -548,6 +548,16 @@ export interface SystemInfo {
     anthropicBaseUrl: string;
     geminiBaseUrl: string;
   } | null;
+  /**
+   * The proxy of the daemon's own outbound requests, fixed when it started:
+   * `proxy` with any password shown as `***` (null: direct), the hosts that
+   * bypass it, and where `network.proxy` came from (null: not set).
+   */
+  network: {
+    proxy: string | null;
+    noProxy: string[];
+    source: "flag" | "env" | "file" | null;
+  };
 }
 
 /**

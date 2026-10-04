@@ -25,6 +25,7 @@ import { startModelGateway } from "@harnesshub/gateway/gateway";
 import { probeConfiguration } from "@harnesshub/runtime/process/probe";
 import { HubError } from "@harnesshub/core/errors";
 import { parseBuildInfo, type BuildInfo } from "@harnesshub/core/build-info";
+import { displayProxy } from "@harnesshub/core/outbound";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import type { RunId, SessionId } from "@harnesshub/core/types";
@@ -333,6 +334,12 @@ export async function startHub(options: {
    */
   network?: unknown;
   /**
+   * Where `network.proxy` came from (`startOptions`), shown by
+   * `GET /api/v1/system/info`; absent when it is not set or the caller
+   * does not say.
+   */
+  networkSource?: "flag" | "env" | "file";
+  /**
    * For tests only: certificates the daemon's outbound requests trust besides
    * the system's, for loopback TLS fakes behind a test proxy. There is no
    * user setting; a TLS-inspecting proxy's certificate goes in
@@ -587,6 +594,14 @@ export async function startHub(options: {
       options.outboundCa ? { ca: options.outboundCa } : {},
     );
     const send = outbound.fetch;
+    // As /system/info shows it: the user kept, a password in use as ***.
+    let shownProxy: string | null = null;
+    if (networkSettings.proxy) {
+      const address = new URL(networkSettings.proxy.href);
+      if (address.username && !address.password && proxyPassword !== undefined)
+        address.password = "password";
+      shownProxy = displayProxy(address);
+    }
     if (outbound.proxy)
       gatewayLog.info("network.proxy", {
         proxy: outbound.proxy,
@@ -1046,6 +1061,11 @@ export async function startHub(options: {
               geminiBaseUrl: gatewayOrigin,
             }
           : null,
+        network: {
+          proxy: shownProxy,
+          noProxy: [...networkSettings.noProxy],
+          source: options.networkSource ?? null,
+        },
       }),
       log: gatewayLog,
       ...(options.wiringHome ? { importHome: options.wiringHome } : {}),
