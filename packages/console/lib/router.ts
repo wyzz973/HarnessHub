@@ -6,12 +6,15 @@ export type Page =
   | "agents"
   | "profiles"
   | "providers"
+  | "subscriptions"
+  | "library"
   | "routing"
   | "auto-groups"
   | "keys"
   | "usage"
   | "conversations"
   | "settings"
+  | "backup"
   | "tasks"
   | "model"
   | "tools"
@@ -29,12 +32,15 @@ export const pagePaths: Readonly<Record<Page, string>> = {
   agents: "/",
   profiles: "/profiles",
   providers: "/providers",
+  subscriptions: "/subscriptions",
+  library: "/library",
   routing: "/routing",
   "auto-groups": "/routing/auto-groups",
   keys: "/routing/keys",
   usage: "/usage",
   conversations: "/usage/conversations",
   settings: "/settings",
+  backup: "/settings/backup",
   tasks: "/tasks",
   model: "/model",
   tools: "/tools",

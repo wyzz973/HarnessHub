@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { useCallback, useState } from "react";
-import {
-  DatabaseBackup,
-  Loader2,
-  RefreshCw,
-  TriangleAlert,
-} from "lucide-react";
+import { Loader2, RefreshCw, TriangleAlert } from "lucide-react";
 import type {
   CatalogStatus,
   GatewayShareSettings,
@@ -15,58 +10,20 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { failureOf, modelPlane, type Failure } from "@/lib/model-plane";
+import type { Page } from "@/lib/router";
 import { notify } from "@/lib/toast";
+import { BackupPage } from "./backup-page";
 import {
+  Card,
   ConfirmDialog,
-  EmptyState,
   ErrorCallout,
   LoadError,
   LocalTime,
   PageHeader,
+  Row,
   useLoaded,
 } from "./model-plane-ui";
-
-function Card({
-  title,
-  lede,
-  aside,
-  children,
-}: {
-  title: string;
-  lede?: string;
-  aside?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="panel space-y-4 p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="section-title">{title}</h2>
-          {lede ? (
-            <p className="mt-1 text-[12.5px] text-muted-foreground">{lede}</p>
-          ) : null}
-        </div>
-        {aside}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function Row({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="metric-row">
-      <dt>{label}</dt>
-      <dd className="min-w-0">{children}</dd>
-    </div>
-  );
-}
+import { PageTabs } from "./page-tabs";
 
 const lists = (text: string) =>
   text
@@ -342,11 +299,62 @@ function Catalog({
   );
 }
 
+/** Gateway features that are coming: shown so their place is known, not settable yet. */
+function GatewayFeatures() {
+  const features = [
+    { name: "脱敏", text: "请求发往上游之前替换其中的敏感内容" },
+    { name: "图片理解", text: "让不支持图片输入的模型也能处理图片" },
+    { name: "联网搜索", text: "为模型调用提供搜索" },
+  ];
+  return (
+    <Card
+      title="网关功能"
+      lede="守护进程提供对应接口后，在这里为网关开启。"
+      aside={<span className="tag neutral">即将推出</span>}
+    >
+      <ul className="divide-y rounded-xl border">
+        {features.map((feature) => (
+          <li
+            key={feature.name}
+            className="flex items-center justify-between gap-3 px-4 py-3"
+          >
+            <span className="min-w-0">
+              <span className="block text-[13.5px]">{feature.name}</span>
+              <span className="block text-[12.5px] text-muted-foreground">
+                {feature.text}
+              </span>
+            </span>
+            <Switch
+              checked={false}
+              disabled
+              aria-label={`${feature.name}（即将推出）`}
+            />
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+const tabs = [
+  { page: "settings", label: "通用" },
+  { page: "backup", label: "备份与同步" },
+] as const;
+
 /**
- * Settings of the daemon: LAN sharing, the model catalog, backup and
- * restore, and what is running.
+ * Settings of the daemon: LAN sharing, the model catalog, gateway features
+ * and what is running; backup, restore and sync are the second tab.
  */
-export function SettingsPage() {
+export function SettingsPage({
+  tab,
+}: {
+  tab: Extract<Page, "settings" | "backup">;
+}) {
+  const nav = <PageTabs label="设置" current={tab} tabs={tabs} />;
+  return tab === "backup" ? <BackupPage tabs={nav} /> : <General tabs={nav} />;
+}
+
+function General({ tabs }: { tabs: React.ReactNode }) {
   const load = useCallback(async () => {
     const client = modelPlane();
     const [share, catalog, system] = await Promise.all([
@@ -364,9 +372,10 @@ export function SettingsPage() {
   return (
     <div className="page-body">
       <div className="page-column max-w-[880px]">
+        {tabs}
         <PageHeader
           title="设置"
-          lede="局域网共享、模型目录、备份与这个守护进程的信息。"
+          lede="局域网共享、模型目录、网关功能与这个守护进程的信息。"
         >
           <Button
             size="icon-sm"
@@ -407,10 +416,7 @@ export function SettingsPage() {
                   setOverride((current) => ({ ...current, catalog }))
                 }
               />
-              <EmptyState icon={DatabaseBackup} title="备份、恢复与同步">
-                导出与恢复配置、在多台电脑之间同步 provider
-                与接线，将在守护进程提供对应接口后出现在这里。
-              </EmptyState>
+              <GatewayFeatures />
               <Card title="关于">
                 <dl className="text-[13px]">
                   <Row label="版本">

@@ -20,6 +20,7 @@ import commandcode from "@lobehub/icons-static-svg/icons/commandcode.svg?url";
 import deepseekColor from "@lobehub/icons-static-svg/icons/deepseek-color.svg?url";
 import fireworksColor from "@lobehub/icons-static-svg/icons/fireworks-color.svg?url";
 import geminiColor from "@lobehub/icons-static-svg/icons/gemini-color.svg?url";
+import githubcopilot from "@lobehub/icons-static-svg/icons/githubcopilot.svg?url";
 import grok from "@lobehub/icons-static-svg/icons/grok.svg?url";
 import groq from "@lobehub/icons-static-svg/icons/groq.svg?url";
 import huaweicloudColor from "@lobehub/icons-static-svg/icons/huaweicloud-color.svg?url";
@@ -63,6 +64,7 @@ const icons: Readonly<Record<string, string>> = {
   "deepseek-color": deepseekColor,
   "fireworks-color": fireworksColor,
   "gemini-color": geminiColor,
+  githubcopilot: githubcopilot,
   grok: grok,
   groq: groq,
   "huaweicloud-color": huaweicloudColor,

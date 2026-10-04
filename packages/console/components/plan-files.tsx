@@ -6,7 +6,14 @@ import type { AgentPlanFile } from "@harnesshub/sdk/client";
  * masked as `hhk_a_xxxx…`). Long paths and lines scroll inside the block,
  * never widening the dialog around it.
  */
-export function PlanFiles({ files }: { files: readonly AgentPlanFile[] }) {
+export function PlanFiles({
+  files,
+  keyNote = true,
+}: {
+  files: readonly AgentPlanFile[];
+  /** Explain the masked keys under the files; a page showing several plans says it once. */
+  keyNote?: boolean;
+}) {
   // A file the plan only reads (an unchanged catalog) has nothing to show.
   const changed = files.filter((file) => file.diff || file.changes.length);
   if (!changed.length)
@@ -26,10 +33,12 @@ export function PlanFiles({ files }: { files: readonly AgentPlanFile[] }) {
           </pre>
         </section>
       ))}
-      <p className="text-[12.5px] text-muted-foreground">
-        Key 以 hhk_a_xxxx… 显示；实际的 Key
-        只写入上面的文件，不会显示或保存在别处。
-      </p>
+      {keyNote ? (
+        <p className="text-[12.5px] text-muted-foreground">
+          Key 以 hhk_a_xxxx… 显示；实际的 Key
+          只写入上面的文件，不会显示或保存在别处。
+        </p>
+      ) : null}
     </div>
   );
 }

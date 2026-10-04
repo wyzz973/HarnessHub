@@ -2,7 +2,7 @@
 
 Library 在 HarnessHub 中保存一份指令集、MCP 服务与 Skills，按各 Agent 自己的位置与格式同步到本机已安装的 Agent。写入方式与[全局接线](global-wiring.md)相同：先预览，确认后备份原文件、原子写、回读校验；HarnessHub 只拥有自己写入的部分，移除时只取出这些部分，文件仍是上次写入的样子时写回原始字节。目标设计见 [04 Agent 平面第 8 节](proposals/oss/04-agent-plane.md#8-library)；各 Agent 读取的位置参照 Magpie（`yetone/magpie`，MIT）`internal/library/targets.go` 与 `mcp.go`（`2e340f7`）。
 
-现状：库（`packages/agents/src/library/`）、守护进程的 `/api/v1/library`、SDK 的 `client.library` 与 `hh library` 已实现，以临时主目录经正式守护进程入口验证。尚未实现：项目级放置（`hh library project add`）、MCP Registry 与 `mcp.json` 导入、版本历史接口、Profile 中的 Library 选择、控制台页面；没有用真实 Agent 验证它们读到了写入的内容；Windows 未验证。
+现状：库（`packages/agents/src/library/`）、守护进程的 `/api/v1/library`、SDK 的 `client.library`、`hh library` 与控制台的 Library 页（`/library`，见[控制台](../packages/console/README.md#页面与状态)）已实现，以临时主目录经正式守护进程入口验证。尚未实现：项目级放置（`hh library project add`）、MCP Registry 与 `mcp.json` 导入、版本历史接口、Profile 中的 Library 选择、从浏览器上传 Skill（接口只接受守护进程所在电脑上的目录路径）；没有用真实 Agent 验证它们读到了写入的内容；Windows 未验证。
 
 ## 使用
 

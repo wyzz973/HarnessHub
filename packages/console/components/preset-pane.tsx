@@ -124,10 +124,14 @@ export function PresetPane({
   onSaved,
   onCancel,
   onBusy,
+  cancelLabel = "取消",
+  submitLabel = "创建",
 }: {
   onSaved: (saved: ProviderConfig) => void;
   onCancel: () => void;
   onBusy: (busy: boolean) => void;
+  cancelLabel?: string;
+  submitLabel?: string;
 }) {
   const load = useCallback(
     async () => (await modelPlane().presets.list()).items,
@@ -227,7 +231,7 @@ export function PresetPane({
         )}
         <DialogFooter>
           <Button variant="outline" onClick={onCancel}>
-            取消
+            {cancelLabel}
           </Button>
         </DialogFooter>
       </>
@@ -430,11 +434,11 @@ export function PresetPane({
       />
       <DialogFooter>
         <Button variant="outline" disabled={busy} onClick={onCancel}>
-          取消
+          {cancelLabel}
         </Button>
         <Button disabled={busy || missingHeader} onClick={() => void save()}>
           {busy ? <Loader2 className="animate-spin" /> : null}
-          创建
+          {submitLabel}
         </Button>
       </DialogFooter>
     </>

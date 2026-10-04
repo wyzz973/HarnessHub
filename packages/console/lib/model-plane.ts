@@ -80,6 +80,21 @@ const codeText: Record<string, string> = {
   CONSOLE_SESSION_INVALID: "控制台会话已结束，请运行 hh console 重新登录",
   ADMIN_TOKEN_REQUIRED: "控制台尚未登录，请运行 hh console 打开登录链接",
   CSRF_TOKEN_INVALID: "会话已在其他标签页更新，请重试",
+  BACKUP_PASSPHRASE: "口令不对，或者文件被改动过",
+  BACKUP_UNSUPPORTED: "这个备份来自更新版本的 HarnessHub，请先升级",
+  SYNC_PASSPHRASE: "口令与服务器上的副本不符：每台电脑要用同一个口令",
+  SYNC_CONFLICT: "另一台电脑刚刚同步过，下次同步时会再合并",
+  SYNC_DISABLED: "同步未开启",
+  LIBRARY_EXISTS: "已有同名条目",
+  LIBRARY_NOT_FOUND: "条目不存在，可能已被删除",
+  LIBRARY_CONCURRENT_MODIFICATION:
+    "预览之后 Agent 的文件又被改动，什么都没有写入；请重新预览",
+  AGENT_WIRING_UNAVAILABLE:
+    "这个守护进程启动时没有接线目录，不能写入 Agent 的文件（hh serve 默认使用你的主目录）",
+  SUBSCRIPTION_NOTICE_NOT_ACCEPTED: "风险告知已经更新，请重新阅读并接受",
+  COPILOT_TOKEN_INVALID:
+    "只接受带 Copilot Requests 权限的细粒度个人访问令牌（github_pat_…）",
+  NPM_NOT_FOUND: "找不到 npm：请在终端运行下面的安装命令",
 };
 
 /** An API failure prepared for a form: one message, field errors by JSON Pointer, blocking references. */

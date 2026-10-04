@@ -2,6 +2,7 @@
 import { useCallback, useState } from "react";
 import {
   ArrowLeft,
+  CreditCard,
   Download,
   KeyRound,
   Loader2,
@@ -10,6 +11,7 @@ import {
   RefreshCw,
   RotateCw,
   Server,
+  Stethoscope,
   Trash2,
 } from "lucide-react";
 import type {
@@ -44,6 +46,8 @@ import {
   type Failure,
   type ProviderForm,
 } from "@/lib/model-plane";
+import { providerIcon } from "@/lib/gateway-models";
+import { navigate } from "@/lib/router";
 import { BrandIcon } from "./brand-icon";
 import { ImportDialog } from "./import-dialog";
 import {
@@ -578,6 +582,12 @@ function ProviderDetail({
           `更新于 ${new Date(provider.updatedAt).toLocaleString()}`,
         ].join(" · ")}
       >
+        <span title="即将推出：检查端点、Key 与模型列表">
+          <Button size="sm" variant="outline" disabled>
+            <Stethoscope />
+            检测
+          </Button>
+        </span>
         <Button size="sm" variant="outline" onClick={edit}>
           <Pencil />
           编辑
@@ -609,15 +619,28 @@ function ProviderDetail({
         </dl>
       </div>
       <div className="mt-7 mb-3 flex items-center justify-between gap-3">
-        <h2 className="section-title">凭据</h2>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => setSecret({ rotating: undefined })}
-        >
-          <Plus />
-          添加凭据
-        </Button>
+        <h2 className="section-title">
+          {provider.subscription ? "订阅账号" : "凭据"}
+        </h2>
+        {provider.subscription ? (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => navigate("subscriptions")}
+          >
+            <CreditCard />
+            管理账号
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setSecret({ rotating: undefined })}
+          >
+            <Plus />
+            添加凭据
+          </Button>
+        )}
       </div>
       <div className="panel overflow-x-auto">
         <table className="data-table min-w-[560px]">
@@ -652,7 +675,7 @@ function ProviderDetail({
                     .join("、") ?? "全部"}
                 </td>
                 <td className="w-[132px] text-right">
-                  {credential.ref.kind === "store" ? (
+                  {credential.ref.kind === "store" && !provider.subscription ? (
                     <Button
                       size="icon-sm"
                       variant="ghost"
@@ -766,9 +789,14 @@ export function ProvidersPage() {
   );
   const [presets] = useLoaded(loadPresets);
   const iconOf = (provider: ProviderConfig) =>
-    presets.state === "ready" && provider.preset
-      ? presets.value.find((preset) => preset.id === provider.preset)?.icon
-      : undefined;
+    providerIcon(
+      provider,
+      new Map(
+        presets.state === "ready"
+          ? presets.value.map((preset) => [preset.id, preset.icon])
+          : [],
+      ),
+    );
   const [importing, setImporting] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [editing, setEditing] = useState<{

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Bot,
   ChevronDown,
@@ -29,6 +29,7 @@ import { modelPlane } from "@/lib/model-plane";
 import { navigate, useSearch } from "@/lib/router";
 import { notify } from "@/lib/toast";
 import { AgentDetail } from "./agent-detail";
+import { FirstRun } from "./first-run";
 import {
   ConfirmDialog,
   EmptyState,
@@ -156,13 +157,30 @@ function AgentRow({
  */
 export function AgentsPage() {
   const load = useCallback(async () => {
-    const [agents, models] = await Promise.all([
+    const [agents, models, providers] = await Promise.all([
       modelPlane().agents.list(),
       loadGatewayModels(),
+      modelPlane().providers.list(),
     ]);
-    return { agents: agents.items, models };
+    return {
+      agents: agents.items,
+      models,
+      providers: providers.items.length,
+    };
   }, []);
   const [data, reload] = useLoaded(load);
+  // Offered once per visit when there is no provider; it stays open while it
+  // runs, as the provider it adds would otherwise end it.
+  const [firstRun, setFirstRun] = useState<"unknown" | "open" | "closed">(
+    "unknown",
+  );
+  const noProvider = data.state === "ready" && data.value.providers === 0;
+  useEffect(() => {
+    if (firstRun === "unknown" && data.state === "ready")
+      setFirstRun(noProvider ? "open" : "closed");
+  }, [firstRun, data.state, noProvider]);
+  const showFirstRun =
+    firstRun === "open" || (firstRun === "unknown" && noProvider);
   const [wiring, setWiring] = useState<{
     agent: Agent;
     input: AgentWiringInput;
@@ -239,9 +257,27 @@ export function AgentsPage() {
             </div>
           ) : data.state === "error" ? (
             <LoadError message={data.message} retry={reload} />
+          ) : showFirstRun ? (
+            <FirstRun
+              agents={data.value.agents}
+              onClose={() => {
+                setFirstRun("closed");
+                reload();
+              }}
+            />
           ) : (
             <>
-              {!data.value.models.sections.length ? (
+              {noProvider ? (
+                <div className="callout info items-center">
+                  <span className="min-w-0 flex-1">
+                    还没有 provider：添加一个模型 provider，再给 Agent
+                    选择模型。
+                  </span>
+                  <Button size="xs" onClick={() => setFirstRun("open")}>
+                    开始设置
+                  </Button>
+                </div>
+              ) : !data.value.models.sections.length ? (
                 <div className="callout info items-center">
                   <span className="min-w-0 flex-1">
                     网关还没有模型：先添加一个 provider，再给 Agent 选择模型。

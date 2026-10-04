@@ -9,6 +9,8 @@
 | GitHub Copilot              | 已实现：后端 `copilot`      | GitHub 的 Copilot SDK（用户安装的可选附加组件）驱动用户安装的 Copilot CLI；用户自己的 Copilot CLI 登录，或带 “Copilot Requests” 权限的细粒度 PAT |
 | Claude（Free、Pro、Max）    | 不可用，不实现              | 见下文“Claude 订阅”                                                                                                                              |
 
+控制台的“订阅账号”页（`/subscriptions`）提供与下文命令相同的流程：先显示风险告知并要求勾选接受；ChatGPT 在新标签页打开 OpenAI 的授权页并查询登录结果，Copilot 先检查与安装 SDK 附加组件，再用 CLI 的登录或 PAT 登录；还有账号列表、退出登录与删除（见[控制台](../packages/console/README.md#页面与状态)）。
+
 ## 共同规则
 
 - **风险告知**：告知文本按后端只在 [subscriptions.ts](../packages/core/src/subscriptions.ts) 的 `SUBSCRIPTION_NOTICES` 中维护，带版本号；文本改变即换版本。账号记录接受的版本与时间（`account.consent`）；版本不是当前版本的账号不被网关使用，用户重新登录（重新接受）后恢复。`GET /api/v1/subscriptions/notices` 与 `hh subscription notice` 显示全文。

@@ -2,7 +2,7 @@
 
 把本机的模型平面打包成一个用口令加密的文件，带到另一台机器恢复；或者经 WebDAV 目录、S3 兼容存储桶在多台机器之间自动同步。文件格式、按部分三方合并与条件写的做法参照 Magpie（[yetone/magpie](https://github.com/yetone/magpie)，MIT，`internal/backup` 与 `internal/davsync`，@2e340f7），实现是 HarnessHub 自己的。
 
-现状：守护进程的 `POST /api/v1/backup`、`POST /api/v1/restore`、`/api/v1/sync`，SDK 的 `backup`、`sync`，以及 `hh backup|restore|sync` 已实现，并经正式守护进程入口、真实 `hh` 命令与本机回环上的假 WebDAV、假 S3 服务器验证（见文末）。没有对真实的 WebDAV 服务（坚果云、Synology、Nextcloud 等）或真实的 S3（AWS、R2、MinIO 等）验证，也没有在 Windows 上运行过。
+现状：守护进程的 `POST /api/v1/backup`、`POST /api/v1/restore`、`/api/v1/sync`，SDK 的 `backup`、`sync`，`hh backup|restore|sync`，以及控制台“设置 → 备份与同步”页（`/settings/backup`，同样先预览摘要再恢复，带入 Library 后预览写入 Agent 的改动）已实现，并经正式守护进程入口、真实 `hh` 命令与本机回环上的假 WebDAV、假 S3 服务器验证（见文末）。没有对真实的 WebDAV 服务（坚果云、Synology、Nextcloud 等）或真实的 S3（AWS、R2、MinIO 等）验证，也没有在 Windows 上运行过。
 
 ## 使用
 

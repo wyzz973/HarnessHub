@@ -76,6 +76,8 @@ import { UsagePage } from "./usage-page";
 import { AgentsPage } from "./agents-page";
 import { ProfilesPage } from "./profiles-page";
 import { SettingsPage } from "./settings-page";
+import { SubscriptionsPage } from "./subscriptions-page";
+import { LibraryPage } from "./library-page";
 
 type ActiveSelection = { type: "session" | "workflow"; id: string } | null;
 /** Pages of HarnessHub's own tasks, where the unified model matters. */
@@ -1093,8 +1095,12 @@ export function Console() {
               <RoutingPage key={refreshEpoch} tab={page} />
             ) : page === "usage" || page === "conversations" ? (
               <UsagePage key={refreshEpoch} tab={page} />
-            ) : page === "settings" ? (
-              <SettingsPage key={refreshEpoch} />
+            ) : page === "subscriptions" ? (
+              <SubscriptionsPage key={refreshEpoch} />
+            ) : page === "library" ? (
+              <LibraryPage key={refreshEpoch} />
+            ) : page === "settings" || page === "backup" ? (
+              <SettingsPage key={refreshEpoch} tab={page} />
             ) : page === "tools" ? (
               <ToolPacksPage engines={engines} refreshEngines={refresh} />
             ) : page === "engines" ? (

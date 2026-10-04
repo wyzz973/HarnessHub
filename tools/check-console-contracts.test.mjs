@@ -433,3 +433,130 @@ test("the agent pages derive wiring requests, shown models and attention from th
     "an agent that signs in by itself gets no model, tiers or effort",
   );
 });
+
+test("the backup page reads backup files and builds sync settings without dropping secrets it must send", async () => {
+  const backup = await consoleModule("lib/backup.ts");
+  assert.equal(backup.backupFileName(new Date(2026, 9, 4, 23, 59)), "harnesshub-2026-10-04.harnesshub-backup");
+  const envelope = { format: "harnesshub-backup", version: 1, kdf: "pbkdf2-sha256", iterations: 600000, salt: "s", nonce: "n", data: "d" };
+  assert.deepEqual(backup.readBackupFile(JSON.stringify(envelope)), envelope);
+  // Rejection samples: not JSON, not an object, another format.
+  for (const text of ["not json", "[]", "null", JSON.stringify({ ...envelope, format: "magpie-backup" })])
+    assert.throws(() => backup.readBackupFile(text), /不是 HarnessHub 备份文件/, text);
+
+  const off = { enabled: false, intervalMs: 180000, secretBackend: "file" };
+  const form = { ...backup.syncFormOf(off), url: " https://dav.example.com/me ", user: "me", secret: "dav-pass", passphrase: "p", confirm: "p" };
+  assert.deepEqual(backup.syncSettings(form, off), {
+    settings: { kind: "webdav", url: "https://dav.example.com/me", user: "me", secret: "dav-pass", passphrase: "p", keys: true, agents: true },
+  });
+  assert.match(backup.syncSettings({ ...form, url: "" }, off).error, /WebDAV/);
+  assert.match(backup.syncSettings({ ...form, passphrase: "", confirm: "" }, off).error, /口令/, "turning sync on needs a passphrase");
+  assert.match(backup.syncSettings({ ...form, confirm: "q" }, off).error, /不一致/);
+  assert.match(backup.syncSettings({ ...form, kind: "s3", url: "s3://bucket", user: "" }, off).error, /Access Key ID/);
+  const on = { ...off, enabled: true, kind: "s3", url: "s3://bucket/team", user: "AKIA", region: "auto", pathStyle: true, keys: false, agents: true };
+  const edit = backup.syncFormOf(on);
+  assert.equal(edit.pathStyle, "yes");
+  assert.equal(edit.keys, false);
+  assert.deepEqual(
+    backup.syncSettings({ ...edit, endpoint: "https://r2.example.com" }, on),
+    { settings: { kind: "s3", url: "s3://bucket/team", user: "AKIA", endpoint: "https://r2.example.com", region: "auto", pathStyle: true, keys: false, agents: true } },
+    "once on, empty secrets keep the stored ones",
+  );
+  assert.equal(
+    "endpoint" in backup.syncSettings({ ...form, endpoint: "https://ignored" }, off).settings,
+    false,
+    "WebDAV sends no S3 fields",
+  );
+
+  const summary = (library) => ({ library });
+  const none = { added: [], replaced: [], removed: [] };
+  assert.equal(backup.libraryChanged(summary(null)), false);
+  assert.equal(backup.libraryChanged(summary({ instructions: none, mcp: { ...none, needSecret: [] }, skills: { ...none, incomplete: [] }, refused: [] })), false);
+  assert.equal(backup.libraryChanged(summary({ instructions: { ...none, added: ["team"] }, mcp: { ...none, needSecret: [] }, skills: { ...none, incomplete: [] }, refused: [] })), true);
+});
+
+test("the Library page sends MCP secrets as references or values and points at the rows a refusal names", async () => {
+  const library = await consoleModule("lib/library.ts");
+  const stored = { kind: "store", value: "secret-ref-1" };
+  const server = {
+    name: "github",
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-github"],
+    env: { LOG_LEVEL: "info" },
+    secretEnv: { GITHUB_TOKEN: { kind: "env", value: "MY_GITHUB_TOKEN" }, EXTRA: stored },
+    agents: ["claude", "opencode"],
+  };
+  const form = library.mcpFormOf(server);
+  assert.deepEqual(form.secretEnv.map((row) => row.kind), ["env", "keep"], "a stored secret is kept, never shown");
+  assert.deepEqual(library.mcpInput(form), {
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-github"],
+    env: { LOG_LEVEL: "info" },
+    secretEnv: { GITHUB_TOKEN: { kind: "env", value: "MY_GITHUB_TOKEN" }, EXTRA: stored },
+    agents: ["claude", "opencode"],
+  });
+  const replaced = { ...form, secretEnv: [{ name: "GITHUB_TOKEN", kind: "value", value: "new-value" }] };
+  assert.deepEqual(library.mcpInput(replaced).secretEnv, { GITHUB_TOKEN: { secret: "new-value" } });
+  const http = { ...form, transport: "http", url: " https://mcp.example.com/mcp ", headers: "X-Team: platform", secretHeaders: [{ name: "Authorization", kind: "file", value: "/home/me/token" }] };
+  assert.deepEqual(library.mcpInput(http), {
+    transport: "http",
+    url: "https://mcp.example.com/mcp",
+    headers: { "X-Team": "platform" },
+    secretHeaders: { Authorization: { kind: "file", value: "/home/me/token" } },
+    agents: ["claude", "opencode"],
+  }, "an HTTP server sends no command, environment or environment secrets");
+  // Rejection samples: a line without its separator, a reference without its name or path.
+  assert.throws(() => library.mcpInput({ ...form, env: "LOG_LEVEL" }), /第 1 行/);
+  assert.throws(() => library.mcpInput({ ...form, secretEnv: [{ name: "TOKEN", kind: "env", value: " " }] }), /环境变量名/);
+  assert.throws(() => library.mcpInput({ ...form, secretEnv: [{ name: "TOKEN", kind: "value", value: "" }] }), /填写值/);
+
+  const marked = { ...form, secretEnv: [{ name: "GITHUB_TOKEN", kind: "env", value: "HH_ADMIN_TOKEN" }, { name: "OTHER", kind: "env", value: "FINE" }] };
+  assert.deepEqual([...library.rowsNamedBy("HH_ADMIN_TOKEN is one of HarnessHub's own environment variables", marked)], ["secretEnv:GITHUB_TOKEN"]);
+  assert.deepEqual([...library.rowsNamedBy("secretEnv.OTHER is the value of one of HarnessHub's own credentials", marked)], ["secretEnv:OTHER"]);
+  assert.deepEqual([...library.rowsNamedBy("Something else", marked)], []);
+
+  const agent = (id, status) => ({ id, installation: { status } });
+  assert.deepEqual(
+    library.installedLibraryAgents([agent("opencode", "installed"), agent("droid", "installed"), agent("claude", "configured"), agent("kimi", "not-found")]),
+    ["claude", "opencode"],
+    "Library agents found here, in the Library's order",
+  );
+  assert.equal(library.bytes(2048), "2.0 KiB");
+});
+
+test("the subscription page explains account states and the first run mirrors hh init", async () => {
+  const subscriptions = await consoleModule("lib/subscriptions.ts");
+  const account = { signedIn: true, noticeAccepted: true, enabled: true, usable: true };
+  assert.equal(subscriptions.accountState(account).label, "可用");
+  assert.equal(subscriptions.accountState({ ...account, signedIn: false, noticeAccepted: false, usable: false }).label, "已退出登录", "signing out is the first reason");
+  assert.equal(subscriptions.accountState({ ...account, noticeAccepted: false, usable: false }).label, "需要接受新的告知");
+  assert.equal(subscriptions.accountState({ ...account, enabled: false, usable: false }).label, "已停用");
+  const setup = { sdkDirectory: "/addons", supportedSdkVersion: "1.0.16", installCommand: "npm install" };
+  assert.deepEqual(subscriptions.copilotReadiness(setup), { sdk: "missing", cli: false, ready: false });
+  assert.deepEqual(subscriptions.copilotReadiness({ ...setup, sdkVersion: "1.0.15", cliPath: "/bin/copilot" }), { sdk: "other-version", cli: true, ready: false });
+  assert.equal(subscriptions.copilotReadiness({ ...setup, sdkVersion: "1.0.16", cliPath: "/bin/copilot" }).ready, true);
+  assert.equal(subscriptions.secondsLeft("2026-10-04T12:10:00.000Z", Date.parse("2026-10-04T12:00:00.000Z")), 600);
+  assert.equal(subscriptions.secondsLeft("2026-10-04T12:00:00.000Z", Date.parse("2026-10-04T12:01:00.000Z")), 0);
+
+  const gateway = await consoleModule("lib/gateway-models.ts", {
+    'import { modelPlane } from "./model-plane";': "const modelPlane = undefined;",
+  });
+  const plan = { id: "chatgpt", name: "ChatGPT plan", subscription: { backend: "siwc" }, models: { source: "live", list: [{ id: "gpt-plan" }], expose: "all" } };
+  assert.equal(gateway.gatewayModels([plan], [], [], []).sections[0].icon, "openai", "a subscription provider shows its vendor's mark");
+
+  const firstRun = await consoleModule("lib/first-run.ts");
+  assert.deepEqual(
+    firstRun.exposedModels({ id: "lab", models: { list: [{ id: "a" }, { id: "b" }], expose: ["b"] } }),
+    ["lab/b"],
+  );
+  const wired = {
+    wiring: { model: "lab/b", tiers: { haiku: "lab/a" }, keyState: "active", drift: { drifted: false, kinds: [], findings: [] } },
+  };
+  assert.equal(firstRun.sameWiring(wired, { model: "lab/b", tiers: { haiku: "lab/a" } }), true);
+  // An agent wired another way, with a dead key or with drift is wired again.
+  assert.equal(firstRun.sameWiring(wired, { model: "lab/b" }), false);
+  assert.equal(firstRun.sameWiring({ wiring: { ...wired.wiring, keyState: "revoked" } }, { model: "lab/b", tiers: { haiku: "lab/a" } }), false);
+  assert.equal(firstRun.sameWiring({ wiring: { ...wired.wiring, drift: { drifted: true, kinds: ["replaced"], findings: [] } } }, { model: "lab/b", tiers: { haiku: "lab/a" } }), false);
+  assert.equal(firstRun.sameWiring({ wiring: null }, { model: "lab/b" }), false);
+});

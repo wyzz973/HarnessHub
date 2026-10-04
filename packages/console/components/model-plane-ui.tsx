@@ -283,3 +283,47 @@ export function LoadError({
     </div>
   );
 }
+
+/** A titled section of a settings-like page, with an optional aside (actions). */
+export function Card({
+  title,
+  lede,
+  aside,
+  children,
+}: {
+  title: string;
+  lede?: string;
+  aside?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="panel space-y-4 p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="section-title">{title}</h2>
+          {lede ? (
+            <p className="mt-1 text-[12.5px] text-muted-foreground">{lede}</p>
+          ) : null}
+        </div>
+        {aside}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+/** One label and value of a `<dl>` in a card. */
+export function Row({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="metric-row">
+      <dt>{label}</dt>
+      <dd className="min-w-0">{children}</dd>
+    </div>
+  );
+}

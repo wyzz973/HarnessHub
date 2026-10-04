@@ -9,8 +9,24 @@ import type {
   ProviderConfig,
   ProviderPreset,
   RouteGroup,
+  SubscriptionBackend,
 } from "@harnesshub/sdk/client";
 import { modelPlane } from "./model-plane";
+
+/** Marks of subscription providers, which have no preset (lib/brand-icons.ts). */
+export const subscriptionIcons: Readonly<Record<SubscriptionBackend, string>> =
+  { siwc: "openai", copilot: "githubcopilot" };
+
+/** A provider's mark: its preset's, or its subscription backend's. */
+export function providerIcon(
+  provider: ProviderConfig,
+  presetIcons: ReadonlyMap<string, string | undefined>,
+): string | undefined {
+  if (provider.preset) return presetIcons.get(provider.preset);
+  return provider.subscription
+    ? subscriptionIcons[provider.subscription.backend]
+    : undefined;
+}
 
 export interface ModelOption {
   /** Model Ref: `provider/model` or `group/<id>`. */
@@ -29,7 +45,7 @@ export interface ModelSection {
   /** Provider id, `group` or `auto-group`. */
   id: string;
   title: string;
-  /** Lobehub slug of the provider's preset. */
+  /** Lobehub slug of the provider's preset or subscription. */
   icon?: string;
   options: ModelOption[];
 }
@@ -49,7 +65,7 @@ export function gatewayModels(
 ): GatewayModels {
   const icons = new Map(presets.map((preset) => [preset.id, preset.icon]));
   const sections: ModelSection[] = providers.map((provider) => {
-    const icon = provider.preset ? icons.get(provider.preset) : undefined;
+    const icon = providerIcon(provider, icons);
     return {
       id: provider.id,
       title: provider.name,

@@ -6,8 +6,10 @@ import {
   BrainCircuit,
   ChartColumn,
   Cpu,
+  CreditCard,
   Layers,
   Layers2,
+  LibraryBig,
   LogOut,
   Moon,
   PanelLeft,
@@ -46,10 +48,11 @@ interface NavItem {
   /** Other pages that belong to this entry (tabs of the same section). */
   also?: Page[];
 }
-/** The gateway: agents (the home page), providers, routing, usage and settings. */
+/** The gateway: agents (the home page), providers and accounts, routing, usage, profiles, the Library and settings. */
 const gatewayNavigation: NavItem[] = [
   { page: "agents", label: "Agent", icon: Bot },
   { page: "providers", label: "Provider", icon: Server },
+  { page: "subscriptions", label: "订阅账号", icon: CreditCard },
   {
     page: "routing",
     label: "路由与 Key",
@@ -63,7 +66,8 @@ const gatewayNavigation: NavItem[] = [
     also: ["conversations"],
   },
   { page: "profiles", label: "Profile", icon: Layers },
-  { page: "settings", label: "设置", icon: Settings },
+  { page: "library", label: "Library", icon: LibraryBig },
+  { page: "settings", label: "设置", icon: Settings, also: ["backup"] },
 ];
 /** Tasks run by HarnessHub itself, and their engines and tools. */
 const taskNavigation: NavItem[] = [
