@@ -1,0 +1,157 @@
+// SPDX-License-Identifier: MIT
+/** Messages of the usage pages: sums, calls and conversations (see ./types.ts). */
+import type { Translation } from "./types";
+
+export const zh = {
+  "usage.lede":
+    "来自网关的 model.call 账本：每次进入网关的调用都有一条记录，包括被拒绝的。",
+  "usage.range": "时间范围",
+  "usage.tab.usage": "汇总与调用",
+  "usage.tab.conversations": "会话",
+
+  "usage.group.model": "按模型",
+  "usage.group.provider": "按 provider",
+  "usage.group.credential": "按凭据",
+  "usage.group.key": "按 Key",
+  "usage.group.adapter": "按 Agent",
+  "usage.group.day": "按日期（UTC）",
+  "usage.column.model": "模型",
+  "usage.column.provider": "Provider",
+  "usage.column.credential": "凭据（provider/凭据）",
+  "usage.column.key": "Gateway Key",
+  "usage.column.adapter": "Agent",
+  "usage.column.day": "日期（UTC）",
+
+  "usage.calls.time": "时间",
+  "usage.calls.status": "状态",
+  "usage.calls.model": "模型",
+  "usage.calls.provider": "Provider / 凭据",
+  "usage.calls.tokens": "Token（输入 / 输出）",
+  "usage.calls.cost": "费用",
+  "usage.calls.timing": "首字节 / 总耗时",
+  "usage.calls.rejected": " 拒绝",
+  "usage.calls.unknown": "未知",
+  "usage.calls.estimated": "估算",
+  "usage.calls.unpriced": "未定价",
+
+  "usage.recent": "最近调用",
+  "usage.previousPage": "上一页",
+  "usage.nextPage": "下一页",
+  "usage.page": "第 {n} 页",
+  "usage.refreshCalls": "刷新调用",
+  "usage.noCalls": "这段时间没有调用",
+  "usage.loadingCalls": "正在读取调用",
+
+  "usage.stat.calls": "调用",
+  "usage.stat.failed": "{n} 次失败",
+  "usage.stat.noFailures": "没有失败",
+  "usage.stat.tokensNote": "输入、缓存与输出之和",
+  "usage.stat.cost": "已知费用",
+  "usage.stat.someUnpriced": "另有 {n} 次调用未定价",
+  "usage.stat.allPriced": "全部调用已定价",
+  "usage.stat.unpriced": "未定价调用",
+  "usage.stat.unpricedNote": "价格未知时不按 0 计",
+
+  "usage.summary": "汇总",
+  "usage.groupBy": "分组方式",
+  "usage.table.failed": "失败",
+  "usage.table.input": "输入",
+  "usage.table.cache": "缓存读 / 写",
+  "usage.table.output": "输出",
+  "usage.table.reasoning": "推理",
+  "usage.table.none": "（无）",
+  "usage.table.unpricedHint": "这些调用的价格未知，费用中未计入",
+  "usage.table.unpriced": "{n} 未定价",
+
+  "usage.conversations.lede":
+    "同一会话的调用汇总在一起：用了哪些模型与凭据、多少 token、花了多少钱。",
+  "usage.conversations.help":
+    "最近活动的在前；会话由网关按 Key 与客户端的会话标识区分，不显示原始标识。",
+  "usage.conversations.refresh": "刷新会话",
+  "usage.conversations.empty": "这段时间没有会话",
+  "usage.conversations.emptyBody":
+    "Agent 或客户端经网关的调用带有会话标识时，按会话汇总在这里。",
+  "usage.conversations.unknownClient": "未识别的客户端",
+  "usage.conversations.credentials": "凭据 {list}",
+  "usage.conversations.failed": " （{n} 失败）",
+  "usage.conversations.unpriced": " +{n} 未定价",
+  "usage.conversations.latestOnly": "只显示最近 50 次调用。",
+} as const;
+
+export const en: Translation<typeof zh> = {
+  "usage.lede":
+    "From the gateway's model.call ledger: every call that reaches the gateway has a record, including refused ones.",
+  "usage.range": "Time range",
+  "usage.tab.usage": "Sums and calls",
+  "usage.tab.conversations": "Conversations",
+
+  "usage.group.model": "By model",
+  "usage.group.provider": "By provider",
+  "usage.group.credential": "By credential",
+  "usage.group.key": "By key",
+  "usage.group.adapter": "By agent",
+  "usage.group.day": "By date (UTC)",
+  "usage.column.model": "Model",
+  "usage.column.provider": "Provider",
+  "usage.column.credential": "Credential (provider/credential)",
+  "usage.column.key": "Gateway Key",
+  "usage.column.adapter": "Agent",
+  "usage.column.day": "Date (UTC)",
+
+  "usage.calls.time": "Time",
+  "usage.calls.status": "Status",
+  "usage.calls.model": "Model",
+  "usage.calls.provider": "Provider / credential",
+  "usage.calls.tokens": "Tokens (input / output)",
+  "usage.calls.cost": "Cost",
+  "usage.calls.timing": "First byte / total time",
+  "usage.calls.rejected": " refused",
+  "usage.calls.unknown": "Unknown",
+  "usage.calls.estimated": "estimated",
+  "usage.calls.unpriced": "Unpriced",
+
+  "usage.recent": "Recent calls",
+  "usage.previousPage": "Previous page",
+  "usage.nextPage": "Next page",
+  "usage.page": "Page {n}",
+  "usage.refreshCalls": "Refresh calls",
+  "usage.noCalls": "No calls in this period",
+  "usage.loadingCalls": "Loading calls",
+
+  "usage.stat.calls": "Calls",
+  "usage.stat.failed": "{n, plural, one {# failure} other {# failures}}",
+  "usage.stat.noFailures": "No failures",
+  "usage.stat.tokensNote": "Input, cache and output combined",
+  "usage.stat.cost": "Known cost",
+  "usage.stat.someUnpriced":
+    "{n, plural, one {# more call is} other {# more calls are}} unpriced",
+  "usage.stat.allPriced": "Every call is priced",
+  "usage.stat.unpriced": "Unpriced calls",
+  "usage.stat.unpricedNote": "An unknown price is not counted as 0",
+
+  "usage.summary": "Sums",
+  "usage.groupBy": "Group by",
+  "usage.table.failed": "Failed",
+  "usage.table.input": "Input",
+  "usage.table.cache": "Cache read / write",
+  "usage.table.output": "Output",
+  "usage.table.reasoning": "Reasoning",
+  "usage.table.none": "(none)",
+  "usage.table.unpricedHint":
+    "These calls' prices are unknown and not included in the cost",
+  "usage.table.unpriced": "{n} unpriced",
+
+  "usage.conversations.lede":
+    "The calls of one conversation summed together: which models and credentials it used, how many tokens and how much it cost.",
+  "usage.conversations.help":
+    "Most recently active first; the gateway tells conversations apart by key and the client's conversation ID, and does not show the original ID.",
+  "usage.conversations.refresh": "Refresh conversations",
+  "usage.conversations.empty": "No conversations in this period",
+  "usage.conversations.emptyBody":
+    "When an agent's or client's calls through the gateway carry a conversation ID, they are summed by conversation here.",
+  "usage.conversations.unknownClient": "Unrecognized client",
+  "usage.conversations.credentials": "Credentials {list}",
+  "usage.conversations.failed": " ({n} failed)",
+  "usage.conversations.unpriced": " +{n} unpriced",
+  "usage.conversations.latestOnly": "Only the latest 50 calls are shown.",
+};

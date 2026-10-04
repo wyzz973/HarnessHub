@@ -24,6 +24,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { t } from "@/lib/i18n";
 import {
   failureOf,
   modelPlane,
@@ -36,25 +37,22 @@ import { ErrorCallout, FieldError, OtherFieldErrors } from "./model-plane-ui";
 /** The words of a typed rule, as `hh group rule add` takes them. */
 function SyntaxHelp() {
   const words: [string, string][] = [
-    ["use=<成员>", "命中时先交给这个成员（全名、模型名或其最后一段）"],
-    ["tokens=200k", "请求至少这么长（也写 200000、1.5m）"],
-    ["images", "本轮或之前带图片"],
-    ["effort[=high]", "Agent 要求的推理至少到这一档；只写 effort 为任意推理"],
-    ["agents=claude,codex", "来自这些 Agent（账本中的 Agent ID）"],
-    ['intent="a quick question"', "分类器判断本轮第一条消息属于这种意图"],
-    ["compact", "Agent 在压缩会话"],
-    [
-      "time=09:00-18:00",
-      "一轮开始时处于这段时间（守护进程本地时间，可跨午夜）",
-    ],
-    ["days=mon-fri", "只在这几天（mon … sun）"],
-    ["classifier=<provider/model>", "同时设置组的分类器"],
-    ["at=1", "放到第几条（从 1 起），默认最后"],
+    [t("routing.syntax.useWord"), t("routing.syntax.use")],
+    ["tokens=200k", t("routing.syntax.tokens")],
+    ["images", t("routing.syntax.images")],
+    ["effort[=high]", t("routing.syntax.effort")],
+    ["agents=claude,codex", t("routing.syntax.agents")],
+    ['intent="a quick question"', t("routing.syntax.intent")],
+    ["compact", t("routing.syntax.compact")],
+    ["time=09:00-18:00", t("routing.syntax.time")],
+    ["days=mon-fri", t("routing.syntax.days")],
+    ["classifier=<provider/model>", t("routing.syntax.classifier")],
+    ["at=1", t("routing.syntax.at")],
   ];
   return (
     <details className="rounded-xl border px-3 py-2 text-[12.5px]">
       <summary className="cursor-pointer text-muted-foreground">
-        写法（与 hh group rule add 相同）
+        {t("routing.syntax.summary")}
       </summary>
       <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
         {words.map(([word, meaning]) => (
@@ -64,9 +62,7 @@ function SyntaxHelp() {
           </div>
         ))}
       </dl>
-      <p className="mt-2 text-muted-foreground">
-        一条规则的条件都满足才命中；多条规则按顺序，第一条命中的决定这一轮。
-      </p>
+      <p className="mt-2 text-muted-foreground">{t("routing.syntax.footer")}</p>
     </details>
   );
 }
@@ -154,11 +150,10 @@ export function RulesDialog({
     >
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-[720px]">
         <DialogHeader>
-          <DialogTitle>group/{group.id} 的规则</DialogTitle>
-          <DialogDescription>
-            一轮开始时，第一条命中的规则把它的成员放到最前，整轮沿用；之后命中的规则的成员排在其后，再是组的其他成员。会话超过当前模型窗口的
-            95% 时，换到规则指向的更大窗口的成员。
-          </DialogDescription>
+          <DialogTitle>
+            {t("routing.groups.rulesOf", { group: `group/${group.id}` })}
+          </DialogTitle>
+          <DialogDescription>{t("routing.rules.lede")}</DialogDescription>
         </DialogHeader>
         {rules.length ? (
           <ol className="space-y-1.5 rounded-xl border p-2">
@@ -176,7 +171,10 @@ export function RulesDialog({
                       {ruleLine(rule)}
                     </p>
                     <p className="mt-0.5 text-[12px] text-muted-foreground">
-                      {ruleConditions(rule).join("，")} → {rule.use}
+                      {ruleConditions(rule).join(
+                        t("routing.conditionSeparator"),
+                      )}{" "}
+                      → {rule.use}
                     </p>
                     {(failed.get(index) ?? []).map((detail: string) => (
                       <p
@@ -191,7 +189,7 @@ export function RulesDialog({
                   <Button
                     size="icon-xs"
                     variant="ghost"
-                    aria-label={`修改规则 ${index + 1}`}
+                    aria-label={t("routing.rules.edit", { n: index + 1 })}
                     onClick={() => {
                       setEditing(index);
                       setDraft(ruleLine(rule));
@@ -202,7 +200,7 @@ export function RulesDialog({
                   <Button
                     size="icon-xs"
                     variant="ghost"
-                    aria-label={`上移规则 ${index + 1}`}
+                    aria-label={t("routing.rules.up", { n: index + 1 })}
                     disabled={index === 0}
                     onClick={() => setRules(moved(rules, index, index - 1))}
                   >
@@ -211,7 +209,7 @@ export function RulesDialog({
                   <Button
                     size="icon-xs"
                     variant="ghost"
-                    aria-label={`下移规则 ${index + 1}`}
+                    aria-label={t("routing.rules.down", { n: index + 1 })}
                     disabled={index === rules.length - 1}
                     onClick={() => setRules(moved(rules, index, index + 1))}
                   >
@@ -220,7 +218,7 @@ export function RulesDialog({
                   <Button
                     size="icon-xs"
                     variant="ghost"
-                    aria-label={`删除规则 ${index + 1}`}
+                    aria-label={t("routing.rules.delete", { n: index + 1 })}
                     onClick={() => {
                       setRules(rules.filter((_, at) => at !== index));
                       if (editing === index) {
@@ -237,11 +235,13 @@ export function RulesDialog({
           </ol>
         ) : (
           <p className="rounded-xl border px-3 py-3 text-[13px] text-muted-foreground">
-            还没有规则：所有请求按组的策略排列。
+            {t("routing.rules.none")}
           </p>
         )}
         <label className="field-label">
-          {editing === null ? "添加规则" : `修改规则 ${editing + 1}`}
+          {editing === null
+            ? t("routing.rules.add")
+            : t("routing.rules.edit", { n: editing + 1 })}
           <input
             className="field font-mono text-[13px]"
             value={draft}
@@ -262,9 +262,14 @@ export function RulesDialog({
         <div id="rule-draft-state" aria-live="polite">
           {read === undefined ? null : read.ok ? (
             <p className="field-hint">
-              {ruleConditions(read.rule).join("，")} → {read.rule.use}
-              {read.at !== undefined ? `，放到第 ${read.at} 条` : ""}
-              {read.classifier ? `；分类器设为 ${read.classifier}` : ""}
+              {ruleConditions(read.rule).join(t("routing.conditionSeparator"))}{" "}
+              → {read.rule.use}
+              {read.at !== undefined
+                ? t("routing.rules.placeAt", { n: read.at })
+                : ""}
+              {read.classifier
+                ? t("routing.rules.setClassifier", { model: read.classifier })
+                : ""}
             </p>
           ) : (
             <div role="alert" className="callout error items-start">
@@ -299,7 +304,7 @@ export function RulesDialog({
                 setDraft("");
               }}
             >
-              取消修改
+              {t("routing.rules.cancelEdit")}
             </Button>
           ) : null}
           <Button
@@ -309,19 +314,21 @@ export function RulesDialog({
             onClick={apply}
           >
             {editing === null ? <Plus /> : <Pencil />}
-            {editing === null ? "加入规则" : "替换规则"}
+            {editing === null
+              ? t("routing.rules.insert")
+              : t("routing.rules.replace")}
           </Button>
         </div>
         <SyntaxHelp />
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="field-label">
-            分类器
+            {t("routing.groups.classifier")}
             <select
               className="field"
               value={classifier}
               onChange={(event) => setClassifier(event.target.value)}
             >
-              <option value="">无</option>
+              <option value="">{t("routing.none")}</option>
               {classifierChoices.map((ref) => (
                 <option key={ref} value={ref}>
                   {ref}
@@ -332,25 +339,21 @@ export function RulesDialog({
               ) : null}
             </select>
             <span className="field-hint">
-              判断本轮第一条消息属于哪种意图的模型，宜小而快；它的调用记在用量中（Agent
-              为 harnesshub-classify）。
+              {t("routing.rules.classifierHint")}
             </span>
             <FieldError failure={failure} pointer="/classifier" />
           </label>
           <label className="field-label">
-            推理强度
+            {t("routing.rules.effort")}
             <select
               className="field"
               value={effortAuto ? "auto" : ""}
               onChange={(event) => setEffortAuto(event.target.value === "auto")}
             >
-              <option value="">按 Agent 的要求</option>
-              <option value="auto">自动：分类器为每一轮选择</option>
+              <option value="">{t("routing.rules.effortAgent")}</option>
+              <option value="auto">{t("routing.rules.effortAuto")}</option>
             </select>
-            <span className="field-hint">
-              自动时，Agent 要求了推理的一轮由分类器选 low 到
-              xhigh，发给没有固定强度的成员；需要分类器。
-            </span>
+            <span className="field-hint">{t("routing.rules.effortHint")}</span>
             <FieldError failure={failure} pointer="/effort" />
           </label>
         </div>
@@ -358,14 +361,14 @@ export function RulesDialog({
         <OtherFieldErrors failure={failure} shown={shownPointers} />
         <DialogFooter>
           <Button variant="outline" disabled={busy} onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </Button>
           <Button
             disabled={busy || (effortAuto && !classifier)}
             onClick={() => void save()}
           >
             {busy ? <Loader2 className="animate-spin" /> : null}
-            保存
+            {t("routing.save")}
           </Button>
         </DialogFooter>
       </DialogContent>

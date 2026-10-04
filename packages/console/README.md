@@ -37,6 +37,12 @@ Cookie 按主机名而不按端口区分，所以在 3180 或 3330 登录的会�
 
 `--demo` 登记的 fake 引擎只用于测试，不出现在任务页的引擎选择器中；用 HTTP 在 fake 上创建的会话（见 [HTTP 接口自测](../../docs/getting-started.md#http-接口自测开发用)）会出现在历史中，可以在页面中查看和继续对话。真实引擎的自有配置按 [配置说明](../../docs/engine-management.md)准备。macOS 的 Keychain helper 需要 Xcode Command Line Tools；通用前置条件见 [快速开始](../../README.md#install-from-source)。守护进程只绑定 loopback。
 
+## 语言
+
+界面有中文（`zh-CN`，源语言）与英文（`en`）两种（[lib/i18n.ts](lib/i18n.ts)）。语言在“设置 → 语言”中选择，保存在这个浏览器的 `localStorage`（`harnesshub.locale`，读写失败时只对当前页面生效）；没有选择时按浏览器的语言列表取第一个中文或英文，其他语言用英文。切换后整个界面重新渲染。日期、数字与金额按所选语言格式化（`formatDateTime`、`formatNumber`、`formatUsd`）。守护进程返回的问题详情、风险告知、体检结论、预设名称等内容按守护进程发送的原样显示；控制台自己组织的错误文字（按错误码）在目录中。
+
+文字在 [lib/messages](lib/messages/) 中，每个区域一个模块（`common`、`agents`、`providers`、`subscriptions`、`library`、`backup`、`settings`、`routing`、`usage`、`tasks`），同一模块中写中文与英文两份：中文以 `as const` 声明，英文的类型要求同样的键，占位符写作 `{name}`，英文可用 `{n, plural, one {…} other {…}}` 区分单复数。组件用 `t(key, values)`；值需要是 React 节点（链接、代码）时用 `tr`（[lib/i18n-react.tsx](lib/i18n-react.tsx)）。`tools/check-console-i18n.test.mjs` 检查两种语言的键与占位符一致、键不跨区域、英文中没有中文，并在组件或库模块出现目录之外的中文字面量时失败（注释除外；语言切换中“中文”这个名称与按全角逗号分隔的输入解析是登记过的例外）。新增界面文字时把两种语言同时写入所属区域的模块。
+
 ## 页面与状态
 
 侧栏分两组：网关（Agent、Provider、订阅账号、路由与 Key、用量、Profile、Library、设置）与任务（新建任务、统一模型、引擎、工具、观测，以及任务历史）。网关的页面以控制台会话经 `@harnesshub/sdk` 访问 [`/api/v1`](../../docs/model-plane-api.md)；任务的页面仍使用 `lib/api.ts` 与 `/v1/*` 旧接口。
@@ -50,7 +56,7 @@ Cookie 按主机名而不按端口区分，所以在 3180 或 3330 登录的会�
 - **路由与 Key**：路由组（[groups-page.tsx](components/groups-page.tsx)）：策略（含 `smart` 与 `pace`）、粘性与有序的成员，每个模型成员可固定推理强度（`none` 到 `max`）、勾选 `fast`，也可加入另一个路由组，可上下移动；守护进程拒绝的成员（例如没有快速模式的模型）标在该行。“规则”（[rules-editor.tsx](components/rules-editor.tsx)）按 `hh group rule add` 的写法输入（`use=… tokens=200k images effort=high agents=… intent="…" compact time=… days=… classifier=… at=N`），用与守护进程相同的代码（`@harnesshub/sdk/route-rules`）即时读取，读不懂或不合规则时标出出错的词并给出原因；规则可修改、上下移动与删除，另选分类器与“推理强度：自动”，保存时守护进程的错误标在对应的规则上。自动路由组（两个以上 provider 同名的模型，`group/auto-<名字>`），可以隐藏与恢复；Gateway Key 的创建、列表与吊销，创建时与“额度”中可设置每分钟请求数与每天、每周、每月的 token 或成本预算（0 拒绝该窗口内的每次调用，可计入缓存读取；[key-budgets.tsx](components/key-budgets.tsx)），列表显示额度，“用量”打开每个预算本窗口的已用、在途预留、重置时间与是否用尽（`GET /api/v1/gateway-keys/{id}/limit`，打开时每 5 秒读取）；“路由决定”页签（[route-decisions.tsx](components/route-decisions.tsx)）列出路由组每一轮的决定：命中的规则与条件、分类器的判断（是否来自缓存或冷却）、选出的推理强度、粘性、候选的尝试顺序与应答者，可只看一个会话，“实时跟随”以长轮询读取新的决定（`GET /api/v1/routing/decisions?after=&wait=`，换会话或离开页面时中止）；“凭据状态”页签（[routing-state.tsx](components/routing-state.tsx)）列出每个凭据的熔断状态、休息到期时间与倒计时、最近一次失败与额度读数（`/api/v1/routing/state`，页面可见时每 5 秒读取，守护进程重启后熔断状态清空、读数保留）。
 - **用量**：按模型、provider、凭据（`provider/凭据`）、Key、Agent 或 UTC 日期汇总所选时间范围，未定价的调用单独标出、不计为 0；最近调用显示 provider 与凭据，以及规范化的结束原因（正常结束、达到输出上限、工具调用、内容过滤，其他值按上游原样显示）。“会话”页签按会话汇总调用（`/api/v1/conversations`）：Agent、模型、凭据、token 与费用，展开可看该会话的逐次调用。
 - **Library（`/library`，[library-page.tsx](components/library-page.tsx)）**：指令集（Markdown 编辑与预览，去往的 Agent；Kimi 与 Hermes 没有用户级指令文件，已被其他指令集占用的 Agent 不能再选）；MCP 服务（本地命令或 HTTP、SSE；普通环境变量与请求头之外，秘密逐个以环境变量、文件或新值登记，已保存的秘密只显示“已保存”且原样保留；守护进程以 `SECRET_REF_FORBIDDEN` 拒绝引用 HarnessHub 自身凭据时显示规则并标出对应的行，把凭据当普通值时提示移到秘密）；Skills（上传浏览器中选择的文件夹或 zip：在浏览器中读取并解压，先按 500 个文件、20 MiB 检查并确认有 SKILL.md，单一顶层文件夹作为名称，忽略 `.DS_Store` 与 `.git`，zip 中的链接与加密条目被拒绝，可执行权限只来自 zip；或导入守护进程所在电脑上的目录路径；改变去往的 Agent，删除）；“同步到 Agent”选择 Agent、是否允许写入明文秘密与是否复制 Skill，先预览每个文件的 diff、Skill 的放置、被拒绝的条目与警告，确认后按这份预览写入（预览之后文件被改则该 Agent 什么都不写，提示重新预览）。
-- **设置**：“通用”页签：局域网共享（开关、监听地址、端口、主机名、公开地址，明文 HTTP 的警告；开启前确认）；模型目录的状态与立即刷新；版本、数据目录、秘密存储与网关基址。“网关功能”页签（`/settings/features`，[gateway-features-page.tsx](components/gateway-features-page.tsx)，见 [网关功能](../../docs/gateway-features.md)）每项各用一行说明费用与隐私（视觉兜底把图片发给视觉模型的 provider 并多一次计费调用；联网搜索把脱敏后的查询发给登记的搜索服务，由该服务计费，模型多答至多 6 轮）：出站脱敏的开关（关闭前确认）与自己的规则（正则表达式、忽略大小写，同名替换，守护进程拒绝的规则显示原因）；视觉兜底的模型（可搜索的选择器，或不使用）；联网搜索后端（Tavily、Brave、Exa、Firecrawl、SearXNG，按登记顺序使用，Key 只发送一次）的添加与删除；设置了图像端点的 provider。修改对下一个请求生效。“备份与同步”页签（`/settings/backup`，[backup-page.tsx](components/backup-page.tsx)）：口令输入两次后下载加密备份，可不含凭据的值；恢复先上传文件、输入口令并预览（新增、替换、需要填写 Key、缺少秘密、被拒绝的 Library 条目、每个 Agent 的重新接线或“已相同”、需重新签发的 client Key），确认后恢复，可不重新接线或不带入 Library；带入了 Library 时接着预览并确认写入本机 Agent。同步：WebDAV 或 S3 的设置（密码与口令只发送一次，之后留空即保留已保存的），保存后立即同步一次；状态（上次与下次同步、最近的错误、两边都改时被替换的部分与副本位置、保留的 provider）、立即同步与关闭。口令与秘密只在表单中，页面不保存。
+- **设置**：“通用”页签：语言（中文或英文，见上文“语言”）；局域网共享（开关、监听地址、端口、主机名、公开地址，明文 HTTP 的警告；开启前确认）；模型目录的状态与立即刷新；版本、数据目录、秘密存储与网关基址。“网关功能”页签（`/settings/features`，[gateway-features-page.tsx](components/gateway-features-page.tsx)，见 [网关功能](../../docs/gateway-features.md)）每项各用一行说明费用与隐私（视觉兜底把图片发给视觉模型的 provider 并多一次计费调用；联网搜索把脱敏后的查询发给登记的搜索服务，由该服务计费，模型多答至多 6 轮）：出站脱敏的开关（关闭前确认）与自己的规则（正则表达式、忽略大小写，同名替换，守护进程拒绝的规则显示原因）；视觉兜底的模型（可搜索的选择器，或不使用）；联网搜索后端（Tavily、Brave、Exa、Firecrawl、SearXNG，按登记顺序使用，Key 只发送一次）的添加与删除；设置了图像端点的 provider。修改对下一个请求生效。“备份与同步”页签（`/settings/backup`，[backup-page.tsx](components/backup-page.tsx)）：口令输入两次后下载加密备份，可不含凭据的值；恢复先上传文件、输入口令并预览（新增、替换、需要填写 Key、缺少秘密、被拒绝的 Library 条目、每个 Agent 的重新接线或“已相同”、需重新签发的 client Key），确认后恢复，可不重新接线或不带入 Library；带入了 Library 时接着预览并确认写入本机 Agent。同步：WebDAV 或 S3 的设置（密码与口令只发送一次，之后留空即保留已保存的），保存后立即同步一次；状态（上次与下次同步、最近的错误、两边都改时被替换的部分与副本位置、保留的 provider）、立即同步与关闭。口令与秘密只在表单中，页面不保存。
 - 状态条（任务页面）：每 5 秒探测 `/health/ready`，显示 Full Access 与统一模型（来自 `/v1/runtime/info`、`/v1/harness/model`）。接口不存在（Fastify 路由 404）时显示“当前 Gateway 不支持”，业务 404 仍按错误显示。
 - 任务工作台（`/tasks`）：默认直接执行，另有自动规划。会话与历史每 3 秒同步（页面可见时）；继续对话时即使会话不在最近 200 条内也沿用原会话。工具调用显示为可读卡片，原始 JSON 折叠；还有流式正文、思考展开和实际权限请求。
 - 自动计划：先展示步骤、依赖、产物与选择依据，确认后执行；失败或取消不偷偷重试。
@@ -64,7 +70,7 @@ Cookie 按主机名而不按端口区分，所以在 3180 或 3330 登录的会�
 
 当前任务 ID 保存在 URL 中，刷新从持久数据恢复。SSE 使用真实命名事件与序号，40ms 合并显示更新；流结束（Gateway 已提交终态）时立即刷新该会话，网络断开时以事件游标和持久查询追赶；较早发出的刷新结果不会覆盖较新的视图。关闭页面不取消任务，停止按钮才发出取消请求。没有生成静态伪任务、伪曲线或用零代替未知用量。
 
-界面使用浅色主题、清晰焦点、中文标签和克制过渡，尊重 `prefers-reduced-motion`，窄屏改用导航菜单与抽屉。控制台是本机应用，尚未加入远端多用户认证、完整账单对账或全平台桌面发行。
+界面使用浅色主题、清晰焦点、中英文标签和克制过渡，尊重 `prefers-reduced-motion`，窄屏改用导航菜单与抽屉。控制台是本机应用，尚未加入远端多用户认证、完整账单对账或全平台桌面发行。
 
 ## 组件来源与许可
 

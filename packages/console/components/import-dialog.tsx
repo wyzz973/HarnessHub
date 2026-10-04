@@ -15,28 +15,27 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { t } from "@/lib/i18n";
+import { tr } from "@/lib/i18n-react";
 import { failureOf, modelPlane, type Failure } from "@/lib/model-plane";
 import { notify } from "@/lib/toast";
 import { Checkbox, ErrorCallout, FieldError } from "./model-plane-ui";
 
-const statusText: Record<
-  ImportItem["status"],
-  { label: string; tone: string }
-> = {
-  new: { label: "将创建", tone: "good" },
-  exists: { label: "已存在", tone: "" },
-  skipped: { label: "跳过", tone: "warn" },
+const statusTones: Readonly<Record<ImportItem["status"], string>> = {
+  new: "good",
+  exists: "",
+  skipped: "warn",
 };
 
-const apps: Array<{ id: ImportApp; label: string }> = [
-  { id: "claude-code", label: "从 Claude Code 导入" },
-  { id: "codex", label: "从 Codex 导入" },
-];
+const apps: readonly ImportApp[] = ["claude-code", "codex"];
 
 function keyText(key: ImportItem["key"]): string {
-  if (key.kind === "none") return "没有 Key";
-  if (key.kind === "env") return `环境变量 ${key.variable}`;
-  return key.last4 ? `Key …${key.last4}` : "带 Key";
+  if (key.kind === "none") return t("providers.import.key.none");
+  if (key.kind === "env")
+    return t("providers.import.key.env", { name: key.variable });
+  return key.last4
+    ? t("providers.import.key.last4", { last4: key.last4 })
+    : t("providers.import.key.some");
 }
 
 /** What one item of the preview would create, and where its requests would go. */
@@ -49,7 +48,10 @@ function ItemCard({
   checked: boolean;
   onChange: (checked: boolean) => void;
 }) {
-  const status = statusText[item.status];
+  const status = {
+    label: t(`providers.import.status.${item.status}`),
+    tone: statusTones[item.status],
+  };
   const provider = item.provider;
   return (
     <div className="space-y-2 rounded-xl border p-3">
@@ -76,7 +78,7 @@ function ItemCard({
           </div>
           {provider.preset ? (
             <div className="metric-row">
-              <dt>预设</dt>
+              <dt>{t("providers.import.preset")}</dt>
               <dd className="font-mono">
                 {provider.preset}
                 {provider.region ? ` · ${provider.region}` : ""}
@@ -85,9 +87,9 @@ function ItemCard({
             </div>
           ) : null}
           <div className="metric-row">
-            <dt>请求发往</dt>
+            <dt>{t("providers.import.hosts")}</dt>
             <dd className="font-mono break-all">
-              {item.hosts.join("、") || "—"}
+              {item.hosts.join(t("providers.separator")) || "—"}
             </dd>
           </div>
           <div className="metric-row">
@@ -95,17 +97,21 @@ function ItemCard({
             <dd>{keyText(item.key)}</dd>
           </div>
           <div className="metric-row">
-            <dt>模型</dt>
+            <dt>{t("providers.models")}</dt>
             <dd>
               {provider.models.length
-                ? `${provider.models.length} 个`
-                : "从上游刷新"}
+                ? t("providers.import.modelCount", {
+                    n: provider.models.length,
+                  })
+                : t("providers.import.refresh")}
             </dd>
           </div>
           {provider.headers.length ? (
             <div className="metric-row">
-              <dt>请求头</dt>
-              <dd className="font-mono">{provider.headers.join("、")}</dd>
+              <dt>{t("providers.import.headers")}</dt>
+              <dd className="font-mono">
+                {provider.headers.join(t("providers.separator"))}
+              </dd>
             </div>
           ) : null}
         </dl>
@@ -164,12 +170,21 @@ export function ImportDialog({
       const failed = result.items.filter((item) => item.status === "failed");
       if (created.length)
         notify.success(
-          `已导入 ${created.map((item) => item.provider?.name ?? item.ref).join("、")}`,
+          t("providers.import.imported", {
+            names: created
+              .map((item) => item.provider?.name ?? item.ref)
+              .join(t("providers.separator")),
+          }),
         );
       for (const item of failed)
         notify.error(
-          new Error(`${item.ref}：${item.reason ?? item.code ?? "失败"}`),
-          "没有导入",
+          new Error(
+            t("providers.import.failedItem", {
+              ref: item.ref,
+              reason: item.reason ?? item.code ?? t("providers.import.failed"),
+            }),
+          ),
+          t("providers.import.notImported"),
         );
       onImported();
       onClose();
@@ -178,19 +193,18 @@ export function ImportDialog({
     <Dialog open onOpenChange={(open) => (!open && !busy ? onClose() : null)}>
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-[640px]">
         <DialogHeader>
-          <DialogTitle>导入 provider</DialogTitle>
-          <DialogDescription>
-            粘贴 harnesshub:// 或 magpie:// 导入链接，或者读取本机 Claude
-            Code、Codex 的配置。先预览将创建的 provider
-            与请求的去向，确认后才写入。
-          </DialogDescription>
+          <DialogTitle>{t("providers.import.title")}</DialogTitle>
+          <DialogDescription>{t("providers.import.lede")}</DialogDescription>
         </DialogHeader>
         {preview ? (
           <div className="min-w-0 space-y-3">
             {preview.file ? (
               <p className="text-[12.5px] text-muted-foreground">
-                读取自{" "}
-                <span className="font-mono break-all">{preview.file}</span>
+                {tr("providers.import.readFrom", {
+                  file: (
+                    <span className="font-mono break-all">{preview.file}</span>
+                  ),
+                })}
               </p>
             ) : null}
             {preview.warnings.length ? (
@@ -217,13 +231,13 @@ export function ImportDialog({
                 />
               ))
             ) : (
-              <p className="callout neutral">没有可以导入的 provider。</p>
+              <p className="callout neutral">{t("providers.import.nothing")}</p>
             )}
           </div>
         ) : (
           <div className="space-y-4">
             <label className="field-label">
-              导入链接
+              {t("providers.import.link")}
               <textarea
                 className="field min-h-[84px] font-mono text-[12.5px]"
                 placeholder="harnesshub://import?preset=deepseek&key=…"
@@ -233,8 +247,7 @@ export function ImportDialog({
                 onChange={(event) => setLink(event.target.value)}
               />
               <span className="field-hint">
-                链接中的 Key
-                只发送给本机守护进程，存入秘密存储；预览中只显示末四位。
+                {t("providers.import.linkHint")}
               </span>
               <FieldError failure={failure} pointer="/link" />
             </label>
@@ -244,17 +257,17 @@ export function ImportDialog({
                 onClick={() => read({ link: link.trim() })}
               >
                 <Link2 />
-                预览链接
+                {t("providers.import.previewLink")}
               </Button>
               {apps.map((app) => (
                 <Button
-                  key={app.id}
+                  key={app}
                   variant="outline"
                   disabled={busy}
-                  onClick={() => read({ app: app.id })}
+                  onClick={() => read({ app })}
                 >
                   <Download />
-                  {app.label}
+                  {t(`providers.import.app.${app}`)}
                 </Button>
               ))}
             </div>
@@ -272,16 +285,16 @@ export function ImportDialog({
                   setFailure(null);
                 }}
               >
-                返回
+                {t("providers.import.back")}
               </Button>
               <Button disabled={busy || !chosen.size} onClick={apply}>
                 {busy ? <Loader2 className="animate-spin" /> : null}
-                导入 {chosen.size} 个
+                {t("providers.import.apply", { n: chosen.size })}
               </Button>
             </>
           ) : (
             <Button variant="outline" disabled={busy} onClick={onClose}>
-              取消
+              {t("common.cancel")}
             </Button>
           )}
         </DialogFooter>

@@ -25,15 +25,29 @@ import {
 import { pathExamples, useWindowsPaths } from "@/lib/platform";
 import { engineName } from "@/lib/engines";
 import { cn } from "@/lib/utils";
+import { t } from "@/lib/i18n";
 const field = "field";
 const label = "field-label";
-const protocols: Record<string, string> = {
-  "openai-completions": "OpenAI 兼容 · Chat Completions",
-  "openai-responses": "OpenAI 兼容 · Responses",
-  anthropic: "Anthropic",
-  google: "Google Gemini",
-};
-type Tab = "连接" | "Skills" | "MCP" | "高级";
+/** A provider protocol's name; product names stay as they are, others show as sent. */
+function protocolName(protocol: string): string {
+  if (protocol === "openai-completions" || protocol === "openai-responses")
+    return t(`tasks.engineConfig.protocol.${protocol}`);
+  const names: Record<string, string> = {
+    anthropic: "Anthropic",
+    google: "Google Gemini",
+  };
+  return names[protocol] ?? protocol;
+}
+type Tab = "connection" | "skills" | "mcp" | "advanced";
+function tabName(tab: Tab): string {
+  return tab === "connection"
+    ? t("tasks.engineConfig.tab.connection")
+    : tab === "advanced"
+      ? t("tasks.engineConfig.tab.advanced")
+      : tab === "skills"
+        ? "Skills"
+        : "MCP";
+}
 /**
  * Each editor works on a complete revision; unknown/unsupported settings fail through the same
  * Gateway schema. With a configured unified model the Gateway overwrites model and provider on
@@ -53,7 +67,7 @@ export function EngineConfigurationDialog({
   const initial = engine.configuration;
   const managed = unifiedModel?.configured ? unifiedModel : undefined;
   const examples = pathExamples(useWindowsPaths());
-  const [tab, setTab] = useState<Tab>("连接");
+  const [tab, setTab] = useState<Tab>("connection");
   const [model, setModel] = useState(engine.model ?? "");
   const [adapter, setAdapter] = useState<Configuration["adapter"]>(
     initial?.adapter ??
@@ -115,30 +129,36 @@ export function EngineConfigurationDialog({
       api.configurationAdapters(controller.signal),
       api.configurationTemplates(controller.signal),
     ])
-      .then(([a, t]) => {
+      .then(([a, found]) => {
         if (!controller.signal.aborted) {
           setAdapters(a.adapters);
-          setTemplates(t.candidates);
+          setTemplates(found.candidates);
         }
       })
       .catch((e) => {
         if (!controller.signal.aborted)
-          setError(e instanceof Error ? e.message : "无法读取适配能力");
+          setError(
+            e instanceof Error
+              ? e.message
+              : t("tasks.engineConfig.adaptersFailed"),
+          );
       });
     return () => controller.abort();
   }, []);
   const selected = adapters.find((a) => a.id === adapter);
-  const template = templates.find((t) => t.id === adapter)?.registration;
+  const template = templates.find(
+    (candidate) => candidate.id === adapter,
+  )?.registration;
   function change() {
     setSaved(false);
     setError(null);
   }
   function registration(config: Configuration): Registration {
     if (!engine.command || engine.driver === "fake")
-      throw new Error("不支持配置该引擎");
+      throw new Error(t("tasks.engineConfig.notConfigurable"));
     const launch = useTemplate ? template : undefined;
     if (useTemplate && !launch)
-      throw new Error("本机没有此适配器的标准启动模板");
+      throw new Error(t("tasks.engineConfig.noTemplate"));
     return {
       id: engine.id,
       driver: launch?.driver ?? engine.driver,
@@ -219,7 +239,9 @@ export function EngineConfigurationDialog({
       await onSaved();
       setSaved(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "保存失败");
+      setError(
+        e instanceof Error ? e.message : t("tasks.engineConfig.saveFailed"),
+      );
     } finally {
       setBusy(false);
     }
@@ -233,29 +255,37 @@ export function EngineConfigurationDialog({
     >
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[640px]">
         <DialogHeader>
-          <DialogTitle>{engineName(engine.id)} 配置</DialogTitle>
-          <DialogDescription>保存后对新任务生效。</DialogDescription>
+          <DialogTitle>
+            {t("tasks.engineConfig.title", { engine: engineName(engine.id) })}
+          </DialogTitle>
+          <DialogDescription>{t("tasks.engineConfig.lede")}</DialogDescription>
         </DialogHeader>
-        <div className="segmented w-fit" role="tablist" aria-label="配置分类">
-          {(["连接", "Skills", "MCP", "高级"] as const).map((name) => (
-            <button
-              key={name}
-              type="button"
-              role="tab"
-              aria-selected={tab === name}
-              onClick={() => setTab(name)}
-            >
-              {name}
-            </button>
-          ))}
+        <div
+          className="segmented w-fit"
+          role="tablist"
+          aria-label={t("tasks.engineConfig.tabs")}
+        >
+          {(["connection", "skills", "mcp", "advanced"] as const).map(
+            (name) => (
+              <button
+                key={name}
+                type="button"
+                role="tab"
+                aria-selected={tab === name}
+                onClick={() => setTab(name)}
+              >
+                {tabName(name)}
+              </button>
+            ),
+          )}
         </div>
-        {tab === "连接" ? (
+        {tab === "connection" ? (
           <div className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <label className={label}>
-                配置适配器
+                {t("tasks.engineConfig.adapter")}
                 <select
-                  aria-label="配置适配器"
+                  aria-label={t("tasks.engineConfig.adapter")}
                   className={field}
                   value={adapter}
                   onChange={(e) => {
@@ -273,13 +303,13 @@ export function EngineConfigurationDialog({
                 </select>
               </label>
               <label className={label}>
-                模型
+                {t("tasks.engineConfig.model")}
                 <input
                   className={cn(
                     field,
                     managed && "bg-muted text-muted-foreground",
                   )}
-                  placeholder="留空沿用原生默认模型"
+                  placeholder={t("tasks.engineConfig.modelPlaceholder")}
                   value={
                     managed ? (engine.model ?? managed.model ?? "") : model
                   }
@@ -294,7 +324,9 @@ export function EngineConfigurationDialog({
             </div>
             {managed ? (
               <p id="managed-model-note" className="callout good">
-                模型由“模型”页面统一管理：{managed.model ?? "未报告"}
+                {t("tasks.engineConfig.managedModel", {
+                  model: managed.model ?? t("tasks.engineConfig.notReported"),
+                })}
               </p>
             ) : null}
             <label className={label}>
@@ -312,7 +344,9 @@ export function EngineConfigurationDialog({
                 }}
               >
                 <option value="">
-                  {managed ? "由统一模型管理" : "沿用原生账号与配置"}
+                  {managed
+                    ? t("tasks.engineConfig.managedProvider")
+                    : t("tasks.engineConfig.nativeProvider")}
                 </option>
                 {(managed
                   ? [initial?.provider?.protocol].filter(
@@ -321,13 +355,15 @@ export function EngineConfigurationDialog({
                   : (selected?.providerProtocols ?? [])
                 ).map((p) => (
                   <option key={p} value={p}>
-                    {protocols[p] ?? p}
+                    {protocolName(p)}
                   </option>
                 ))}
               </select>
             </label>
             {!managed && selected && !selected.providerProtocols.length ? (
-              <p className="field-hint">此引擎不支持自定义 Provider。</p>
+              <p className="field-hint">
+                {t("tasks.engineConfig.noProvider")}
+              </p>
             ) : null}
             {provider && !managed ? (
               <>
@@ -345,7 +381,7 @@ export function EngineConfigurationDialog({
                 </label>
                 <div className="rounded-xl border p-4">
                   <label className={label}>
-                    API Key 来源
+                    {t("tasks.engineConfig.keySource")}
                     <select
                       className={field}
                       value={secretKind}
@@ -356,12 +392,18 @@ export function EngineConfigurationDialog({
                       }}
                     >
                       <option value="new">
-                        输入新 Key · 保存到系统安全存储
+                        {t("tasks.engineConfig.keyNew")}
                       </option>
-                      <option value="env">环境变量引用</option>
-                      <option value="file">本地密钥文件引用</option>
+                      <option value="env">
+                        {t("tasks.engineConfig.keyEnv")}
+                      </option>
+                      <option value="file">
+                        {t("tasks.engineConfig.keyFile")}
+                      </option>
                       {secretKind === "keychain" ? (
-                        <option value="keychain">已保存的安全存储引用</option>
+                        <option value="keychain">
+                          {t("tasks.engineConfig.keyKeychain")}
+                        </option>
                       ) : null}
                     </select>
                   </label>
@@ -369,10 +411,10 @@ export function EngineConfigurationDialog({
                     {secretKind === "new"
                       ? "API Key"
                       : secretKind === "env"
-                        ? "环境变量名称"
+                        ? t("tasks.engineConfig.envName")
                         : secretKind === "file"
-                          ? "密钥文件绝对路径"
-                          : "安全存储引用 ID"}
+                          ? t("tasks.engineConfig.filePath")
+                          : t("tasks.engineConfig.keychainId")}
                     <input
                       type={secretKind === "new" ? "password" : "text"}
                       autoComplete="off"
@@ -385,7 +427,7 @@ export function EngineConfigurationDialog({
                       }}
                       placeholder={
                         secretKind === "new"
-                          ? "留空表示无新密钥"
+                          ? t("tasks.engineConfig.noNewKey")
                           : secretKind === "env"
                             ? "MY_ENGINE_API_KEY"
                             : secretKind === "file"
@@ -395,7 +437,7 @@ export function EngineConfigurationDialog({
                     />
                   </label>
                   <p className="field-hint">
-                    密钥保存在本机系统安全存储中，配置里只保留引用。
+                    {t("tasks.engineConfig.storedHint")}
                   </p>
                 </div>
               </>
@@ -412,7 +454,9 @@ export function EngineConfigurationDialog({
                 }}
               />
               <span>
-                使用本机标准启动命令{!template ? "（未找到）" : ""}
+                {template
+                  ? t("tasks.engineConfig.useTemplate")
+                  : t("tasks.engineConfig.useTemplateMissing")}
               </span>
             </label>
             {useTemplate ? (
@@ -422,15 +466,17 @@ export function EngineConfigurationDialog({
             ) : null}
           </div>
         ) : null}
-        {tab === "Skills" ? (
+        {tab === "skills" ? (
           <div className="space-y-4">
             <p className="field-hint mt-0">
-              本机 SKILL.md 的绝对路径，启用后随任务发送给此引擎。
+              {t("tasks.engineConfig.skillsHint")}
             </p>
             {skills.map((skill, index) => (
               <div className="flex items-start gap-2" key={index}>
                 <input
-                  aria-label={`启用 Skill ${index + 1}`}
+                  aria-label={t("tasks.engineConfig.enableSkill", {
+                    n: index + 1,
+                  })}
                   type="checkbox"
                   className="mt-9 size-4 accent-(--primary)"
                   checked={skill.enabled}
@@ -444,7 +490,7 @@ export function EngineConfigurationDialog({
                   }}
                 />
                 <label className={`${label} min-w-0 flex-1`}>
-                  SKILL.md 路径
+                  {t("tasks.engineConfig.skillPath")}
                   <input
                     className={field}
                     value={skill.path}
@@ -465,7 +511,9 @@ export function EngineConfigurationDialog({
                   ) : null}
                 </label>
                 <Button
-                  aria-label={`删除 Skill ${index + 1}`}
+                  aria-label={t("tasks.engineConfig.removeSkill", {
+                    n: index + 1,
+                  })}
                   variant="ghost"
                   size="icon"
                   className="mt-7"
@@ -487,17 +535,17 @@ export function EngineConfigurationDialog({
               }}
             >
               <Plus />
-              添加 Skill
+              {t("tasks.engineConfig.addSkill")}
             </Button>
           </div>
         ) : null}
-        {tab === "MCP" ? (
+        {tab === "mcp" ? (
           <div className="space-y-3">
             <p className="field-hint mt-0">
-              支持 stdio、HTTP 和 SSE，用 enabled 控制启停。
+              {t("tasks.engineConfig.mcpHint")}
             </p>
             <label className={label}>
-              MCP 服务配置（JSON）
+              {t("tasks.engineConfig.mcpJson")}
               <Textarea
                 className="mt-2 min-h-[250px] font-mono text-[12.5px]"
                 spellCheck={false}
@@ -534,20 +582,20 @@ export function EngineConfigurationDialog({
                   );
                   change();
                 } catch {
-                  setError("请先修正 MCP JSON 数组");
+                  setError(t("tasks.engineConfig.fixMcp"));
                 }
               }}
             >
               <Plus />
-              插入 stdio 示例
+              {t("tasks.engineConfig.insertStdio")}
             </Button>
 
           </div>
         ) : null}
-        {tab === "高级" ? (
+        {tab === "advanced" ? (
           <div className="space-y-4">
             <label className={label}>
-              普通环境变量（JSON）
+              {t("tasks.engineConfig.env")}
               <Textarea
                 className="mt-2 min-h-24 font-mono text-[12.5px]"
                 value={envText}
@@ -558,7 +606,7 @@ export function EngineConfigurationDialog({
               />
             </label>
             <label className={label}>
-              环境密钥映射（JSON）
+              {t("tasks.engineConfig.secretEnv")}
               <Textarea
                 className="mt-2 min-h-32 font-mono text-[12.5px]"
                 value={secretEnvText}
@@ -569,8 +617,9 @@ export function EngineConfigurationDialog({
               />
             </label>
             <p className="field-hint mt-0">
-              密钥映射示例：
-              {`{"OPENAI_API_KEY":{"kind":"env","value":"ENGINE_A_KEY"}}`}
+              {t("tasks.engineConfig.secretEnvExample", {
+                example: `{"OPENAI_API_KEY":{"kind":"env","value":"ENGINE_A_KEY"}}`,
+              })}
             </p>
           </div>
         ) : null}
@@ -581,15 +630,16 @@ export function EngineConfigurationDialog({
         ) : null}
         {saved ? (
           <p role="status" className="callout good">
-            已保存，新任务生效。
+            {t("tasks.engineConfig.saved")}
           </p>
         ) : null}
         <DialogFooter>
           <Button variant="outline" disabled={busy} onClick={onClose}>
-            关闭
+            {t("tasks.engineConfig.close")}
           </Button>
           <Button disabled={busy} onClick={() => void save()}>
-            {busy ? <Loader2 className="animate-spin" /> : null}保存
+            {busy ? <Loader2 className="animate-spin" /> : null}
+            {t("tasks.engineConfig.save")}
           </Button>
         </DialogFooter>
       </DialogContent>

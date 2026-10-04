@@ -29,6 +29,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { isMessageKey, t, translate } from "@/lib/i18n";
 import {
   failureOf,
   modelPlane,
@@ -54,32 +55,48 @@ import {
 } from "./model-plane-ui";
 import { RulesDialog } from "./rules-editor";
 
-const strategies: { id: RouteStrategy; label: string }[] = [
-  { id: "order", label: "按顺序（第一个可用的成员）" },
-  { id: "rotate", label: "轮转" },
-  { id: "least-used", label: "最少使用" },
-  { id: "latency", label: "最低延迟" },
-  { id: "smart", label: "按额度读数（smart）" },
-  { id: "pace", label: "按额度节奏（pace）" },
+const strategies: readonly RouteStrategy[] = [
+  "order",
+  "rotate",
+  "least-used",
+  "latency",
+  "smart",
+  "pace",
 ];
-const stickinessOptions: { id: Stickiness; label: string }[] = [
-  { id: "auto", label: "自动" },
-  { id: "session", label: "会话内固定" },
-  { id: "turn", label: "单轮内固定" },
-  { id: "off", label: "不固定" },
+const stickinessOptions: readonly Stickiness[] = [
+  "auto",
+  "session",
+  "turn",
+  "off",
 ];
+/** A strategy in words; one the console does not know shows as the daemon names it. */
+function strategyName(strategy: string): string {
+  const key = `routing.strategy.${strategy}`;
+  return isMessageKey(key) ? translate(key) : strategy;
+}
+/** Stickiness in words; an unknown value shows as the daemon names it. */
+function stickinessName(stickiness: string): string {
+  const key = `routing.stickiness.${stickiness}`;
+  return isMessageKey(key) ? translate(key) : stickiness;
+}
 
 /** A member's effort and fast mode as tags beside its model. */
 function MemberTags({ row }: { row: MemberRow }) {
   return (
     <>
       {row.effort ? (
-        <span className="tag info ml-1.5" title="固定推理强度">
+        <span
+          className="tag info ml-1.5"
+          title={t("routing.member.effortTitle")}
+        >
           {row.effort}
         </span>
       ) : null}
       {row.fast ? (
-        <span className="tag brand ml-1.5" title="以厂商的快速模式发送">
+        <span
+          className="tag brand ml-1.5"
+          title={t("routing.member.fastTitle")}
+        >
           fast
         </span>
       ) : null}
@@ -126,7 +143,7 @@ function MembersEditor({
   };
   return (
     <fieldset>
-      <legend className="field-label mb-1">成员（按顺序，上面的优先）</legend>
+      <legend className="field-label mb-1">{t("routing.member.legend")}</legend>
       {rows.length ? (
         <ol className="space-y-1.5 rounded-xl border p-2">
           {rows.map((row, index) => (
@@ -140,14 +157,16 @@ function MembersEditor({
               <span className="min-w-0 flex-1 font-mono text-[12.5px] break-all">
                 {row.ref}
                 {row.kind === "group" ? (
-                  <span className="tag ml-1.5">组</span>
+                  <span className="tag ml-1.5">
+                    {t("routing.member.groupTag")}
+                  </span>
                 ) : null}
               </span>
               {row.kind === "model" ? (
                 <>
                   <select
                     className="field mt-0 h-8 w-[118px] py-0 text-[12.5px]"
-                    aria-label={`${row.ref} 的推理强度`}
+                    aria-label={t("routing.member.effortOf", { ref: row.ref })}
                     value={row.effort ?? ""}
                     onChange={(event) =>
                       update(
@@ -158,16 +177,18 @@ function MembersEditor({
                       )
                     }
                   >
-                    <option value="">跟随请求</option>
+                    <option value="">
+                      {t("routing.member.followRequest")}
+                    </option>
                     {memberEfforts.map((effort) => (
                       <option key={effort} value={effort}>
-                        固定 {effort}
+                        {t("routing.member.fixed", { effort })}
                       </option>
                     ))}
                   </select>
                   <label
                     className="flex items-center gap-1 text-[12.5px]"
-                    title="以厂商的快速模式发送（api.openai.com 的 GPT 与 o 系列、ChatGPT 账号的 GPT、有快速模式的 Claude Opus）"
+                    title={t("routing.member.fastHint")}
                   >
                     <input
                       type="checkbox"
@@ -184,7 +205,7 @@ function MembersEditor({
               <Button
                 size="icon-xs"
                 variant="ghost"
-                aria-label={`上移 ${row.ref}`}
+                aria-label={t("routing.member.up", { ref: row.ref })}
                 disabled={index === 0}
                 onClick={() => onChange(moved(rows, index, index - 1))}
               >
@@ -193,7 +214,7 @@ function MembersEditor({
               <Button
                 size="icon-xs"
                 variant="ghost"
-                aria-label={`下移 ${row.ref}`}
+                aria-label={t("routing.member.down", { ref: row.ref })}
                 disabled={index === rows.length - 1}
                 onClick={() => onChange(moved(rows, index, index + 1))}
               >
@@ -202,7 +223,7 @@ function MembersEditor({
               <Button
                 size="icon-xs"
                 variant="ghost"
-                aria-label={`移除 ${row.ref}`}
+                aria-label={t("routing.member.remove", { ref: row.ref })}
                 onClick={() => onChange(rows.filter((_, at) => at !== index))}
               >
                 <X />
@@ -215,17 +236,17 @@ function MembersEditor({
         </ol>
       ) : (
         <p className="rounded-xl border px-3 py-3 text-[13px] text-muted-foreground">
-          还没有成员。
+          {t("routing.member.none")}
         </p>
       )}
       <div className="mt-2 flex gap-2">
         <select
           className="field mt-0"
-          aria-label="要添加的成员"
+          aria-label={t("routing.member.toAdd")}
           value={adding}
           onChange={(event) => setAdding(event.target.value)}
         >
-          <option value="">选择模型或路由组…</option>
+          <option value="">{t("routing.member.choose")}</option>
           {choices.map((choice) => (
             <optgroup key={choice.provider} label={choice.provider}>
               {choice.refs.map((ref) => (
@@ -236,7 +257,7 @@ function MembersEditor({
             </optgroup>
           ))}
           {groups.some((group) => group.id !== self) ? (
-            <optgroup label="路由组（组中的组，最多 8 层）">
+            <optgroup label={t("routing.member.nestedGroups")}>
               {groups
                 .filter((group) => group.id !== self)
                 .map((group) => (
@@ -249,7 +270,7 @@ function MembersEditor({
         </select>
         <Button variant="outline" disabled={!adding} onClick={add}>
           <Plus />
-          添加
+          {t("routing.member.add")}
         </Button>
       </div>
       <FieldError failure={failure} pointer="/members" />
@@ -319,12 +340,13 @@ function GroupDialog({
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-[640px]">
         <DialogHeader>
           <DialogTitle>
-            {group ? `编辑 group/${group.id}` : "添加路由组"}
+            {group
+              ? t("routing.groupDialog.editTitle", {
+                  group: `group/${group.id}`,
+                })
+              : t("routing.groupDialog.addTitle")}
           </DialogTitle>
-          <DialogDescription>
-            调用 group/ID
-            时，网关按策略在成员之间选择与故障转移。成员可以固定推理强度、以快速模式发送，或是另一个路由组。
-          </DialogDescription>
+          <DialogDescription>{t("routing.groupDialog.lede")}</DialogDescription>
         </DialogHeader>
         <label className="field-label">
           ID
@@ -342,7 +364,7 @@ function GroupDialog({
         </label>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="field-label">
-            策略
+            {t("routing.groupDialog.strategy")}
             <select
               className="field"
               value={strategy}
@@ -351,14 +373,14 @@ function GroupDialog({
               }
             >
               {strategies.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.label}
+                <option key={item} value={item}>
+                  {strategyName(item)}
                 </option>
               ))}
             </select>
           </label>
           <label className="field-label">
-            粘性
+            {t("routing.groupDialog.stickiness")}
             <select
               className="field"
               value={stickiness}
@@ -367,8 +389,8 @@ function GroupDialog({
               }
             >
               {stickinessOptions.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.label}
+                <option key={item} value={item}>
+                  {stickinessName(item)}
                 </option>
               ))}
             </select>
@@ -384,8 +406,7 @@ function GroupDialog({
         />
         {group?.rules?.length ? (
           <p className="field-hint">
-            这个组有 {group.rules.length}{" "}
-            条规则；移除规则用到的成员前，先在“规则”中删去或修改那些规则。
+            {t("routing.groupDialog.rulesHint", { n: group.rules.length })}
           </p>
         ) : null}
         <ErrorCallout failure={failure} />
@@ -395,14 +416,14 @@ function GroupDialog({
         />
         <DialogFooter>
           <Button variant="outline" disabled={busy} onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </Button>
           <Button
             disabled={busy || !rows.length || (!group && !id.trim())}
             onClick={() => void save()}
           >
             {busy ? <Loader2 className="animate-spin" /> : null}
-            保存
+            {t("routing.save")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -426,20 +447,18 @@ export function GroupsPage({ tabs }: { tabs?: React.ReactNode }) {
   } | null>(null);
   const [ruling, setRuling] = useState<RouteGroup | null>(null);
   const [removing, setRemoving] = useState<RouteGroup | null>(null);
-  const strategyName = (id: RouteStrategy) =>
-    strategies.find((item) => item.id === id)?.label ?? id;
   return (
     <div className="page-body">
       <div className="page-column max-w-[1100px]">
         {tabs}
         <PageHeader
-          title="路由组"
-          lede="把多个模型组成 group/ID，按策略路由并在失败时切换；规则按请求的长度、图片、推理强度、Agent、意图、压缩与时段把某个成员放到最前。"
+          title={t("routing.groups.title")}
+          lede={t("routing.groups.lede")}
         >
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label="刷新"
+            aria-label={t("common.refresh")}
             onClick={reload}
           >
             <RefreshCw />
@@ -450,7 +469,7 @@ export function GroupsPage({ tabs }: { tabs?: React.ReactNode }) {
             onClick={() => setEditing({ group: undefined })}
           >
             <Plus />
-            添加路由组
+            {t("routing.groups.add")}
           </Button>
         </PageHeader>
         <div className="mt-6">
@@ -466,11 +485,11 @@ export function GroupsPage({ tabs }: { tabs?: React.ReactNode }) {
               <table className="data-table min-w-[760px]">
                 <thead>
                   <tr>
-                    <th>路由组</th>
-                    <th>策略</th>
-                    <th>粘性</th>
-                    <th>成员</th>
-                    <th>规则</th>
+                    <th>{t("routing.group")}</th>
+                    <th>{t("routing.groupDialog.strategy")}</th>
+                    <th>{t("routing.groupDialog.stickiness")}</th>
+                    <th>{t("routing.groups.members")}</th>
+                    <th>{t("routing.groups.rules")}</th>
                     <th />
                   </tr>
                 </thead>
@@ -484,9 +503,7 @@ export function GroupsPage({ tabs }: { tabs?: React.ReactNode }) {
                         {strategyName(group.strategy)}
                       </td>
                       <td className="text-[12.5px]">
-                        {stickinessOptions.find(
-                          (item) => item.id === group.stickiness,
-                        )?.label ?? group.stickiness}
+                        {stickinessName(group.stickiness)}
                       </td>
                       <td>
                         <ol className="space-y-0.5 font-mono text-[12px]">
@@ -504,22 +521,28 @@ export function GroupsPage({ tabs }: { tabs?: React.ReactNode }) {
                       <td className="text-[12.5px]">
                         {group.rules?.length ? (
                           <span className="tag info">
-                            {group.rules.length} 条
+                            {t("routing.groups.ruleCount", {
+                              n: group.rules.length,
+                            })}
                           </span>
                         ) : (
-                          <span className="text-subtle">无</span>
+                          <span className="text-subtle">
+                            {t("routing.none")}
+                          </span>
                         )}
                         {group.classifier ? (
                           <p
                             className="mt-1 font-mono text-[11.5px] text-muted-foreground"
-                            title="分类器"
+                            title={t("routing.groups.classifier")}
                           >
-                            分类器 {group.classifier}
+                            {t("routing.groups.classifierIs", {
+                              model: group.classifier,
+                            })}
                           </p>
                         ) : null}
                         {group.effort === "auto" ? (
                           <p className="mt-0.5 text-[11.5px] text-muted-foreground">
-                            推理强度：自动
+                            {t("routing.groups.effortAuto")}
                           </p>
                         ) : null}
                       </td>
@@ -527,16 +550,20 @@ export function GroupsPage({ tabs }: { tabs?: React.ReactNode }) {
                         <Button
                           size="xs"
                           variant="ghost"
-                          aria-label={`group/${group.id} 的规则`}
+                          aria-label={t("routing.groups.rulesOf", {
+                            group: `group/${group.id}`,
+                          })}
                           onClick={() => setRuling(group)}
                         >
                           <ListOrdered />
-                          规则
+                          {t("routing.groups.rules")}
                         </Button>
                         <Button
                           size="icon-sm"
                           variant="ghost"
-                          aria-label={`编辑 group/${group.id}`}
+                          aria-label={t("routing.groups.edit", {
+                            group: `group/${group.id}`,
+                          })}
                           onClick={() => setEditing({ group })}
                         >
                           <Pencil />
@@ -544,7 +571,9 @@ export function GroupsPage({ tabs }: { tabs?: React.ReactNode }) {
                         <Button
                           size="icon-sm"
                           variant="ghost"
-                          aria-label={`删除 group/${group.id}`}
+                          aria-label={t("routing.groups.deleteGroup", {
+                            group: `group/${group.id}`,
+                          })}
                           onClick={() => setRemoving(group)}
                         >
                           <Trash2 />
@@ -556,8 +585,8 @@ export function GroupsPage({ tabs }: { tabs?: React.ReactNode }) {
               </table>
             </div>
           ) : (
-            <EmptyState icon={Route} title="还没有路由组">
-              例如把两个 provider 的同类模型组成一组，一个失败时自动切换。
+            <EmptyState icon={Route} title={t("routing.groups.empty")}>
+              {t("routing.groups.emptyHint")}
             </EmptyState>
           )}
         </div>
@@ -589,9 +618,11 @@ export function GroupsPage({ tabs }: { tabs?: React.ReactNode }) {
         ) : null}
         <ConfirmDialog
           open={removing !== null}
-          title={`删除 group/${removing?.id ?? ""}`}
-          description="仍被 Gateway Key 允许使用、或被其他路由组用作成员或分类器时不能删除。"
-          action="删除"
+          title={t("routing.groups.deleteGroup", {
+            group: `group/${removing?.id ?? ""}`,
+          })}
+          description={t("routing.groups.deleteHint")}
+          action={t("routing.delete")}
           onClose={() => setRemoving(null)}
           onConfirm={async () => {
             if (removing) await modelPlane().routeGroups.remove(removing.id);

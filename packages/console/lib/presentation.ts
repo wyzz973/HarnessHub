@@ -7,29 +7,15 @@ import {
   type Run,
   type Session,
 } from "./contracts";
+import { formatNumber, isMessageKey, locale, t, translate } from "./i18n";
 
-export const statusNames: Record<string, string> = {
-  planning: "正在规划",
-  draft: "等待确认",
-  pending: "等待执行",
-  queued: "排队中",
-  starting: "启动中",
-  running: "执行中",
-  waiting_permission: "等待授权",
-  cancelling: "正在停止",
-  finalizing: "整理结果",
-  completed: "已完成",
-  failed: "执行失败",
-  cancelled: "已取消",
-  timed_out: "已超时",
-  interrupted: "已中断",
-  blocked: "依赖未完成",
-  open: "可继续",
-  closing: "正在关闭",
-  closed: "已关闭",
-};
+/** A run's or session's status; a status this console does not know shows as sent. */
+export function statusName(status: string): string {
+  const key = `tasks.status.${status}`;
+  return isMessageKey(key) ? translate(key) : status;
+}
 export function duration(ms: number | null | undefined) {
-  if (ms == null) return "未提供";
+  if (ms == null) return t("common.notProvided");
   if (ms < 1000) return `${Math.round(ms)} ms`;
   return `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)} s`;
 }
@@ -39,16 +25,11 @@ export function duration(ms: number | null | undefined) {
  * protocol and mode; another value is the upstream's own and shows as sent.
  */
 export function finishReasonText(reason: string): string {
-  const known: Record<string, string> = {
-    stop: "正常结束",
-    length: "达到输出上限",
-    tool_calls: "工具调用",
-    content_filter: "内容过滤",
-  };
-  return known[reason] ?? reason;
+  const key = `tasks.finish.${reason}`;
+  return isMessageKey(key) ? translate(key) : reason;
 }
 export function quantity(n: number | null | undefined) {
-  return n == null ? "未提供" : new Intl.NumberFormat("zh-CN").format(n);
+  return n == null ? t("common.notProvided") : formatNumber(n);
 }
 export function bytes(n: number) {
   return n < 1024
@@ -58,7 +39,7 @@ export function bytes(n: number) {
       : `${(n / 1048576).toFixed(1)} MB`;
 }
 export function dateLabel(ms: number) {
-  return new Intl.DateTimeFormat("zh-CN", {
+  return new Intl.DateTimeFormat(locale(), {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -82,7 +63,7 @@ function compact(value: unknown, limit: number) {
   try {
     return clip(JSON.stringify(value) ?? String(value), limit);
   } catch {
-    return "（无法显示）";
+    return t("tasks.tool.unrenderable");
   }
 }
 export type ToolStatus =
@@ -104,24 +85,14 @@ export interface ToolCallView {
   /** Merged engine payload shown only in the collapsed raw view. */
   raw: Record<string, unknown>;
 }
-export const toolStatusNames: Record<ToolStatus, string> = {
-  pending: "等待执行",
-  running: "执行中",
-  completed: "已完成",
-  failed: "失败",
-  unknown: "已结束",
-};
-export const toolKindNames: Record<string, string> = {
-  read: "读取",
-  edit: "编辑",
-  delete: "删除",
-  move: "移动",
-  search: "搜索",
-  execute: "执行命令",
-  fetch: "网络请求",
-  think: "思考",
-  other: "其他",
-};
+export function toolStatusName(status: ToolStatus): string {
+  return t(`tasks.toolStatus.${status}`);
+}
+/** The name of a tool kind an engine reports; undefined for a kind this console does not know. */
+export function toolKindName(kind: string): string | undefined {
+  const key = `tasks.toolKind.${kind}`;
+  return isMessageKey(key) ? translate(key) : undefined;
+}
 function reportedToolStatus(value: string): ToolStatus | undefined {
   switch (value.toLowerCase()) {
     case "pending":
@@ -186,9 +157,15 @@ function toolOutput(details: Record<string, unknown>) {
         if (inner.type === "text") parts.push(string(inner.text));
         else if (typeof inner.type === "string") parts.push(`[${inner.type}]`);
       } else if (item.type === "diff")
-        parts.push(`修改文件 ${string(item.path) || "（未提供路径）"}`);
+        parts.push(
+          t("tasks.tool.diff", {
+            path: string(item.path) || t("tasks.tool.noPath"),
+          }),
+        );
       else if (item.type === "terminal")
-        parts.push(`终端 ${string(item.terminalId)}`.trim());
+        parts.push(
+          t("tasks.tool.terminal", { id: string(item.terminalId) }).trim(),
+        );
     }
   if (!parts.join("").trim() && details.rawOutput !== undefined) {
     const raw = details.rawOutput;
@@ -263,8 +240,8 @@ export function projectEvents(run: Run, events: AgentEvent[]) {
             : string(details.title)) ||
           string(details.name) ||
           previous?.title ||
-          toolKindNames[string(details.kind)] ||
-          "工具调用",
+          toolKindName(string(details.kind)) ||
+          t("tasks.tool.call"),
         status: reportedToolStatus(string(details.status)) ?? previous?.status,
         details: { ...previous?.details, ...details },
       });
@@ -407,7 +384,7 @@ export function parseOutputPaths(text: string) {
 
 /** Render provider-specific serialized model identities without changing their backend meaning. */
 export function modelLabel(value: string | null | undefined) {
-  if (!value) return "未提供";
+  if (!value) return t("common.notProvided");
   if (value.startsWith("[")) {
     try {
       const parts: unknown = JSON.parse(value);
@@ -423,20 +400,8 @@ export function modelLabel(value: string | null | undefined) {
   }
   return value;
 }
-export function observationReason(reason: string) {
-  const labels: Record<string, string> = {
-    "run-cost-not-reported": "引擎未提供本次费用",
-    "backend-cost-not-reported": "引擎未提供费用",
-    "run-token-usage-not-reported": "引擎未提供可归属到本次执行的用量",
-    "acp-token-usage-not-reported": "协议未提供用量",
-    "actual-model-not-reported": "引擎未报告实际模型",
-    "installation-snapshot-not-recorded": "此历史任务没有安装快照",
-    "cleanup-duration-not-recorded": "此历史任务没有清理耗时",
-    "event-projection-limit-or-sequence-gap": "事件记录尚未完整同步",
-    "dsh-private-token-projection-v4": "DSH 会话用量记录",
-    "pi-private-session-jsonl": "Pi 会话用量记录",
-    "opencode-private-messages": "OpenCode 消息用量记录",
-    "native-reader-not-supported": "此引擎尚未提供可读取的原生用量",
-  };
-  return labels[reason] ?? reason;
+/** Why an observation is missing; a reason this console does not know shows as sent. */
+export function observationReason(reason: string): string {
+  const key = `tasks.observation.${reason}`;
+  return isMessageKey(key) ? translate(key) : reason;
 }

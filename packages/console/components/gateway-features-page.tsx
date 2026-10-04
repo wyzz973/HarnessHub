@@ -32,6 +32,7 @@ import {
   type RuleForm,
 } from "@/lib/gateway-features";
 import { gatewayModels, type GatewayModels } from "@/lib/gateway-models";
+import { t } from "@/lib/i18n";
 import { failureOf, modelPlane, type Failure } from "@/lib/model-plane";
 import { navigate } from "@/lib/router";
 import { notify } from "@/lib/toast";
@@ -49,9 +50,13 @@ import {
 function Implications({ cost, privacy }: { cost: string; privacy: string }) {
   return (
     <dl className="callout neutral grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
-      <dt className="font-medium text-foreground">费用</dt>
+      <dt className="font-medium text-foreground">
+        {t("settings.features.cost")}
+      </dt>
       <dd>{cost}</dd>
-      <dt className="font-medium text-foreground">隐私</dt>
+      <dt className="font-medium text-foreground">
+        {t("settings.features.privacy")}
+      </dt>
       <dd>{privacy}</dd>
     </dl>
   );
@@ -117,41 +122,40 @@ function Redaction({
   const rules = features.redaction.rules;
   return (
     <Card
-      title="出站脱敏"
-      lede="请求发往上游之前，把已知的秘密换成占位符；模型在工具调用参数中写回占位符时还原为原值，写给人看的文本保留占位符。"
+      title={t("settings.redaction.title")}
+      lede={t("settings.redaction.lede")}
       aside={
         <Switch
           checked={features.redaction.enabled}
           disabled={busy}
-          aria-label="出站脱敏"
+          aria-label={t("settings.redaction.title")}
           onCheckedChange={(checked) => {
-            if (checked) void save({ enabled: true }, "已开启出站脱敏");
+            if (checked)
+              void save({ enabled: true }, t("settings.redaction.enabled"));
             else setDisabling(true);
           }}
         />
       }
     >
       <Implications
-        cost="不额外请求，不额外计费。"
-        privacy="缺省开启：厂商看不到 HarnessHub 自己的凭据，即使提示词或工具结果引用了它们；关闭后这些值原样发出。"
+        cost={t("settings.redaction.cost")}
+        privacy={t("settings.redaction.privacy")}
       />
       <ul className="list-disc space-y-0.5 pl-5 text-[13px] text-muted-foreground">
-        <li>Gateway Key、守护进程的管理令牌</li>
-        <li>本进程解析过的 provider 凭据与订阅令牌（至少 8 个字符的精确值）</li>
-        <li>下面的规则匹配到的值（有分组时取第 1 组）</li>
+        <li>{t("settings.redaction.known1")}</li>
+        <li>{t("settings.redaction.known2")}</li>
+        <li>{t("settings.redaction.known3")}</li>
       </ul>
       {!features.redaction.enabled ? (
-        <p className="callout warn">
-          出站脱敏已关闭：提示词与工具结果中出现的秘密会原样发给上游。
-        </p>
+        <p className="callout warn">{t("settings.redaction.offWarning")}</p>
       ) : null}
       <div className="overflow-x-auto rounded-xl border">
         <table className="data-table min-w-[520px]">
           <thead>
             <tr>
-              <th>规则</th>
-              <th>正则表达式</th>
-              <th>大小写</th>
+              <th>{t("settings.redaction.rule")}</th>
+              <th>{t("settings.redaction.pattern")}</th>
+              <th>{t("settings.redaction.case")}</th>
               <th />
             </tr>
           </thead>
@@ -163,20 +167,24 @@ function Redaction({
                   {rule.pattern}
                 </td>
                 <td className="text-[12.5px]">
-                  {rule.flags === "i" ? "忽略" : "区分"}
+                  {rule.flags === "i"
+                    ? t("settings.redaction.ignore")
+                    : t("settings.redaction.match")}
                 </td>
                 <td className="w-[56px] text-right">
                   <Button
                     size="icon-sm"
                     variant="ghost"
-                    aria-label={`删除规则 ${rule.name}`}
+                    aria-label={t("settings.redaction.deleteRule", {
+                      name: rule.name,
+                    })}
                     disabled={busy}
                     onClick={() =>
                       void save(
                         {
                           rules: rulesWith(features, { remove: rule.name }),
                         },
-                        `已删除规则 ${rule.name}`,
+                        t("settings.redaction.deleted", { name: rule.name }),
                       )
                     }
                   >
@@ -189,13 +197,13 @@ function Redaction({
         </table>
         {!rules.length ? (
           <p className="px-4 py-3 text-[13px] text-muted-foreground">
-            没有自己的规则，只替换上面列出的已知秘密。
+            {t("settings.redaction.noRules")}
           </p>
         ) : null}
       </div>
       <div className="grid gap-3 sm:grid-cols-[180px_1fr_auto] sm:items-end">
         <label className="field-label">
-          规则名
+          {t("settings.redaction.ruleName")}
           <input
             className="field font-mono text-[13px]"
             value={form.name}
@@ -208,7 +216,7 @@ function Redaction({
           />
         </label>
         <label className="field-label">
-          正则表达式
+          {t("settings.redaction.pattern")}
           <input
             className="field font-mono text-[13px]"
             value={form.pattern}
@@ -230,14 +238,14 @@ function Redaction({
             const rule = ruleOf(form);
             void save(
               { rules: rulesWith(features, { add: rule }) },
-              `已保存规则 ${rule.name}`,
+              t("settings.redaction.saved", { name: rule.name }),
             ).then((saved) => {
               if (saved) setForm({ name: "", pattern: "", ignoreCase: false });
             });
           }}
         >
           {busy ? <Loader2 className="animate-spin" /> : <Plus />}
-          添加规则
+          {t("settings.redaction.addRule")}
         </Button>
       </div>
       <Checkbox
@@ -246,25 +254,22 @@ function Redaction({
           setForm((current) => ({ ...current, ignoreCase }))
         }
       >
-        忽略大小写
+        {t("settings.redaction.ignoreCase")}
       </Checkbox>
-      <p className="field-hint">
-        JavaScript
-        正则表达式；规则名是占位符中的种类（字母、数字与下划线），同名的规则被替换。
-      </p>
+      <p className="field-hint">{t("settings.redaction.hint")}</p>
       <ErrorCallout failure={failure} />
       <Details failure={failure} />
       <ConfirmDialog
         open={disabling}
-        title="关闭出站脱敏"
-        description="关闭后，提示词、工具结果与搜索查询中出现的 Gateway Key、provider 凭据和管理令牌会原样发给上游厂商。"
-        action="关闭脱敏"
+        title={t("settings.redaction.offTitle")}
+        description={t("settings.redaction.offBody")}
+        action={t("settings.redaction.offAction")}
         onClose={() => setDisabling(false)}
         onConfirm={async () => {
           onChange(
             await modelPlane().gatewayFeatures.setRedaction({ enabled: false }),
           );
-          notify.success("已关闭出站脱敏");
+          notify.success(t("settings.redaction.disabled"));
         }}
       />
     </Card>
@@ -293,7 +298,9 @@ function Vision({
         setBusy(false);
         onChange(next);
         notify.success(
-          model === undefined ? "已关闭视觉兜底" : `视觉兜底使用 ${model}`,
+          model === undefined
+            ? t("settings.vision.off")
+            : t("settings.vision.using", { model }),
         );
       },
       (reason: unknown) => {
@@ -303,27 +310,21 @@ function Vision({
     );
   };
   return (
-    <Card
-      title="视觉兜底"
-      lede="请求带图片、而目标模型的元数据表明它不接受图片时，先由这里的模型把每张图片描述成文字（逐字转写图中文字），再交给目标模型。"
-    >
+    <Card title={t("settings.vision.title")} lede={t("settings.vision.lede")}>
       <div className="max-w-[420px]">
         <ModelPicker
-          label="视觉模型"
+          label={t("settings.vision.model")}
           models={models}
           value={features.vision?.model}
-          none="不使用：图片换成占位文字"
+          none={t("settings.vision.none")}
           disabled={busy || !models.sections.length}
           onChange={choose}
         />
       </div>
-      <p className="field-hint">
-        选择能看图的模型或路由组。描述调用经网关自己的路由、熔断与脱敏，作为
-        Agent harnesshub-vision 的独立调用记账；同一张图片的描述会缓存。
-      </p>
+      <p className="field-hint">{t("settings.vision.hint")}</p>
       <Implications
-        cost="每张新图片一次额外的模型调用，按视觉模型的价格计费（缓存命中不再调用）。"
-        privacy="图片发给视觉模型所在的 provider，而不只是目标模型的 provider。"
+        cost={t("settings.vision.cost")}
+        privacy={t("settings.vision.privacy")}
       />
       <ErrorCallout failure={failure} />
       <Details failure={failure} />
@@ -352,13 +353,11 @@ function AddSearchDialog({
     <Dialog open onOpenChange={(open) => (!open && !busy ? onClose() : null)}>
       <DialogContent className="sm:max-w-[520px]">
         <DialogHeader>
-          <DialogTitle>添加搜索后端</DialogTitle>
-          <DialogDescription>
-            网关按登记顺序使用后端，前一个失败或没有结果时用下一个。查询发出之前同样经过出站脱敏。
-          </DialogDescription>
+          <DialogTitle>{t("settings.search.addTitle")}</DialogTitle>
+          <DialogDescription>{t("settings.search.addLede")}</DialogDescription>
         </DialogHeader>
         <label className="field-label">
-          服务
+          {t("settings.search.service")}
           <select
             className="field"
             value={kind}
@@ -376,7 +375,9 @@ function AddSearchDialog({
         <label className="field-label">
           API Key
           {info.key === "optional" ? (
-            <span className="text-subtle">（实例需要时填写）</span>
+            <span className="text-subtle">
+              {t("settings.search.keyOptional")}
+            </span>
           ) : null}
           <input
             className="field font-mono text-[13px]"
@@ -387,11 +388,13 @@ function AddSearchDialog({
             onChange={(event) => setKey(event.target.value)}
           />
           <span className="field-hint block">
-            只发送一次，保存在守护进程的秘密存储中。
+            {t("settings.search.keyHint")}
           </span>
         </label>
         <label className="field-label">
-          {info.baseUrl === "required" ? "实例地址" : "API 地址（可选）"}
+          {info.baseUrl === "required"
+            ? t("settings.search.instance")
+            : t("settings.search.apiUrl")}
           <input
             className="field font-mono text-[13px]"
             value={baseUrl}
@@ -400,7 +403,7 @@ function AddSearchDialog({
             placeholder={
               info.baseUrl === "required"
                 ? "http://127.0.0.1:8888"
-                : `缺省为 ${info.name} 的官方地址`
+                : t("settings.search.defaultUrl", { name: info.name })
             }
             onChange={(event) => setBaseUrl(event.target.value)}
           />
@@ -409,7 +412,7 @@ function AddSearchDialog({
         <Details failure={failure} />
         <DialogFooter>
           <Button variant="outline" disabled={busy} onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </Button>
           <Button
             disabled={busy || !ready}
@@ -427,7 +430,9 @@ function AddSearchDialog({
                     setBusy(false);
                     setKey("");
                     onAdded(next);
-                    notify.success(`已添加 ${info.name}`);
+                    notify.success(
+                      t("settings.search.added", { name: info.name }),
+                    );
                     onClose();
                   },
                   (reason: unknown) => {
@@ -438,7 +443,7 @@ function AddSearchDialog({
             }}
           >
             {busy ? <Loader2 className="animate-spin" /> : null}
-            添加
+            {t("settings.add")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -458,18 +463,18 @@ function WebSearch({
   const backends = features.search?.backends ?? [];
   return (
     <Card
-      title="联网搜索模拟"
-      lede="客户端给模型提供厂商自己执行的联网搜索（Responses 的 web_search、Anthropic 的 web_search_*），而上游执行不了时，由网关调用这里的搜索后端完成。没有后端时这项功能关闭。"
+      title={t("settings.search.title")}
+      lede={t("settings.search.lede")}
       aside={
         <Button size="sm" variant="outline" onClick={() => setAdding(true)}>
           <Plus />
-          添加后端
+          {t("settings.search.addBackend")}
         </Button>
       }
     >
       <Implications
-        cost="搜索服务按它自己的方式计费（不进 HarnessHub 的账本）；模型为使用搜索结果至多多答 6 轮，按模型价格计费。"
-        privacy="搜索查询（经出站脱敏后）发给你登记的搜索服务；结果交给模型。"
+        cost={t("settings.search.cost")}
+        privacy={t("settings.search.privacy")}
       />
       {backends.length ? (
         <ol className="divide-y rounded-xl border">
@@ -495,12 +500,16 @@ function WebSearch({
                 ) : null}
               </span>
               <span className={`tag ${backend.hasKey ? "good" : ""}`}>
-                {backend.hasKey ? "Key 已保存" : "无 Key"}
+                {backend.hasKey
+                  ? t("settings.search.keySaved")
+                  : t("settings.search.noKey")}
               </span>
               <Button
                 size="icon-sm"
                 variant="ghost"
-                aria-label={`删除 ${backend.id}`}
+                aria-label={t("settings.search.deleteBackend", {
+                  id: backend.id,
+                })}
                 onClick={() => setRemoving(backend.id)}
               >
                 <Trash2 />
@@ -511,7 +520,7 @@ function WebSearch({
       ) : (
         <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
           <Search className="size-4" />
-          没有搜索后端：翻译时这类工具被拒绝，直通时原样发送。
+          {t("settings.search.none")}
         </p>
       )}
       {adding ? (
@@ -519,14 +528,14 @@ function WebSearch({
       ) : null}
       <ConfirmDialog
         open={removing !== null}
-        title={`删除搜索后端 ${removing ?? ""}`}
-        description="网关不再使用它，保存的 Key 一并删除。"
-        action="删除"
+        title={t("settings.search.deleteTitle", { id: removing ?? "" })}
+        description={t("settings.search.deleteBody")}
+        action={t("settings.delete")}
         onClose={() => setRemoving(null)}
         onConfirm={async () => {
           if (!removing) return;
           onChange(await modelPlane().gatewayFeatures.removeSearch(removing));
-          notify.success(`已删除 ${removing}`);
+          notify.success(t("settings.search.deleted", { id: removing }));
         }}
       />
     </Card>
@@ -538,15 +547,16 @@ function Images({ providers }: { providers: readonly ProviderConfig[] }) {
   const serving = providers.filter((provider) => provider.imageEndpoint);
   return (
     <Card
-      title="图像生成"
-      lede="网关的 POST /v1/images/generations（OpenAI Images）直通到设置了图像端点的 provider；model 是 Model Ref 或路由组，订阅 provider 不参与。"
+      title={t("settings.images.title")}
+      lede={t("settings.images.lede")}
       aside={
         <Button
           size="sm"
           variant="outline"
           onClick={() => navigate("providers")}
         >
-          <ImageIcon />在 Provider 中设置
+          <ImageIcon />
+          {t("settings.images.configure")}
         </Button>
       }
     >
@@ -563,7 +573,7 @@ function Images({ providers }: { providers: readonly ProviderConfig[] }) {
         </ul>
       ) : (
         <p className="text-[13px] text-muted-foreground">
-          还没有 provider 设置图像端点，图像请求返回 404 images_unavailable。
+          {t("settings.images.none")}
         </p>
       )}
     </Card>
@@ -600,13 +610,13 @@ export function GatewayFeaturesPage({ tabs }: { tabs: React.ReactNode }) {
       <div className="page-column max-w-[880px]">
         {tabs}
         <PageHeader
-          title="网关功能"
-          lede="共享模型网关的可选能力。修改立即保存在数据目录中，对下一个请求生效。"
+          title={t("settings.features.title")}
+          lede={t("settings.features.lede")}
         >
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label="刷新"
+            aria-label={t("common.refresh")}
             onClick={() => {
               setFeatures(null);
               reload();
@@ -620,7 +630,7 @@ export function GatewayFeaturesPage({ tabs }: { tabs: React.ReactNode }) {
             <div
               className="panel space-y-3 p-5"
               role="status"
-              aria-label="正在读取"
+              aria-label={t("common.loading")}
             >
               <Skeleton className="h-4 w-1/3" />
               <Skeleton className="h-4 w-2/3" />

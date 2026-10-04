@@ -8,30 +8,12 @@ import type {
   LibrarySyncInput,
 } from "@harnesshub/sdk/client";
 import { Button } from "@/components/ui/button";
+import { t } from "@/lib/i18n";
+import { tr } from "@/lib/i18n-react";
 import { libraryAgents } from "@/lib/library";
 import { failureOf, modelPlane, type Failure } from "@/lib/model-plane";
 import { notify } from "@/lib/toast";
 import { Checkbox, ErrorCallout } from "./model-plane-ui";
-
-const fileActions: Record<
-  LibraryPlan["agents"][number]["files"][number]["action"],
-  string
-> = {
-  write: "写入",
-  restore: "还原",
-  delete: "删除",
-  unchanged: "不变",
-};
-const skillActions: Record<
-  LibraryPlan["agents"][number]["skills"][number]["action"],
-  string
-> = {
-  place: "放置",
-  replace: "替换",
-  remove: "移除",
-  unchanged: "不变",
-};
-const kindNames = { instructions: "指令集", mcp: "MCP 服务", skills: "Skill" };
 
 /**
  * One Library plan: per agent, each file's unified diff (secret values
@@ -64,7 +46,9 @@ export function LibraryPlanView({
                 {agent.agent}
               </span>
               <span className={`tag ${agent.changed ? "brand" : ""}`}>
-                {agent.changed ? "有改动" : "没有改动"}
+                {agent.changed
+                  ? t("library.sync.changed")
+                  : t("library.sync.unchanged")}
               </span>
             </p>
             {agent.refused.length ? (
@@ -73,9 +57,11 @@ export function LibraryPlanView({
                 <ul className="min-w-0 space-y-0.5">
                   {agent.refused.map((item) => (
                     <li key={`${item.kind}:${item.name}`}>
-                      不写入 {kindNames[item.kind]}{" "}
-                      <span className="font-mono">{item.name}</span>：
-                      {item.reason}
+                      {tr("library.sync.refused", {
+                        kind: t(`library.kind.${item.kind}`),
+                        name: <span className="font-mono">{item.name}</span>,
+                        reason: item.reason,
+                      })}
                     </li>
                   ))}
                 </ul>
@@ -94,9 +80,13 @@ export function LibraryPlanView({
             {files.map((file) => (
               <div key={file.path} className="min-w-0 space-y-1">
                 <p className="text-[12.5px]">
-                  {fileActions[file.action]}
-                  {file.exists ? "" : "（新文件）"}{" "}
-                  <span className="font-mono break-all">{file.path}</span>
+                  {tr("library.sync.file", {
+                    action: t(`library.sync.action.${file.action}`),
+                    state: file.exists ? "" : t("library.sync.newFile"),
+                    path: (
+                      <span className="font-mono break-all">{file.path}</span>
+                    ),
+                  })}
                 </p>
                 {file.diff ? (
                   <pre className="max-h-[36vh] overflow-auto rounded-lg border bg-muted p-3 font-mono text-[12px] leading-5">
@@ -109,18 +99,22 @@ export function LibraryPlanView({
               <ul className="space-y-0.5 text-[12.5px]">
                 {skills.map((skill) => (
                   <li key={skill.name}>
-                    {skillActions[skill.action]} Skill{" "}
-                    <span className="font-mono">{skill.name}</span>{" "}
-                    <span className="font-mono break-all text-subtle">
-                      {skill.path}
-                    </span>
+                    {tr("library.sync.skill", {
+                      action: t(`library.sync.skillAction.${skill.action}`),
+                      name: <span className="font-mono">{skill.name}</span>,
+                      path: (
+                        <span className="font-mono break-all text-subtle">
+                          {skill.path}
+                        </span>
+                      ),
+                    })}
                   </li>
                 ))}
               </ul>
             ) : null}
             {!files.length && !skills.length && !agent.refused.length ? (
               <p className="text-[12.5px] text-muted-foreground">
-                文件已经是 Library 的样子。
+                {t("library.sync.upToDate")}
               </p>
             ) : null}
           </section>
@@ -128,6 +122,21 @@ export function LibraryPlanView({
       })}
     </div>
   );
+}
+
+/** Which agents a sync wrote into, or that it had nothing to write. */
+function writtenText(
+  applied: LibraryPlan,
+  names: ReadonlyMap<string, string>,
+): string {
+  const agents = applied.agents
+    .filter((agent) => agent.changed)
+    .map((agent) => names.get(agent.agent) ?? agent.name);
+  return agents.length
+    ? t("library.sync.written", {
+        agents: agents.join(t("library.listSeparator")),
+      })
+    : t("library.sync.writtenNone");
 }
 
 /**
@@ -204,10 +213,10 @@ export function LibrarySync({
           );
           if (refused)
             notify.error(
-              new Error(`${refused} 个条目被拒绝，其余已写入`),
-              "部分条目没有写入",
+              new Error(t("library.sync.refusedCount", { count: refused })),
+              t("library.sync.partial"),
             );
-          else notify.success("Library 已同步到 Agent");
+          else notify.success(t("library.sync.done"));
           onApplied?.(result);
         },
         (reason: unknown) => {
@@ -219,7 +228,7 @@ export function LibrarySync({
   return (
     <div className="space-y-3">
       <fieldset>
-        <legend className="field-label">同步到</legend>
+        <legend className="field-label">{t("library.sync.to")}</legend>
         <div className="mt-1.5 grid gap-x-2 sm:grid-cols-3">
           {libraryAgents.map((agent) => (
             <Checkbox
@@ -236,7 +245,9 @@ export function LibrarySync({
             >
               {names.get(agent) ?? agent}
               {installed.has(agent) ? null : (
-                <span className="ml-1.5 text-[12px] text-subtle">未安装</span>
+                <span className="ml-1.5 text-[12px] text-subtle">
+                  {t("library.sync.notInstalled")}
+                </span>
               )}
             </Checkbox>
           ))}
@@ -250,7 +261,7 @@ export function LibrarySync({
             changed();
           }}
         >
-          允许把秘密值写入不支持变量引用的 Agent 文件
+          {t("library.sync.plaintext")}
         </Checkbox>
         <Checkbox
           checked={copy}
@@ -259,27 +270,17 @@ export function LibrarySync({
             changed();
           }}
         >
-          复制 Skill，而不是建立链接
+          {t("library.sync.copy")}
         </Checkbox>
       </div>
       {plaintext ? (
-        <p className="callout warn">
-          支持环境变量引用的 Agent 仍然只写引用；其余 Agent
-          的文件会含有秘密的明文值（预览中显示为 &lt;secret&gt;）。
-        </p>
+        <p className="callout warn">{t("library.sync.plaintextWarning")}</p>
       ) : null}
       <ErrorCallout failure={failure} />
       {plan ? <LibraryPlanView plan={plan} names={names} /> : null}
       {applied ? (
         <div className="space-y-2">
-          <p className="callout good">
-            已写入
-            {applied.agents
-              .filter((agent) => agent.changed)
-              .map((agent) => names.get(agent.agent) ?? agent.name)
-              .join("、") || "（没有改动）"}
-            。正在运行的 Agent 重新启动后读到新的内容。
-          </p>
+          <p className="callout good">{writtenText(applied, names)}</p>
         </div>
       ) : null}
       <div className="flex flex-wrap justify-end gap-2">
@@ -289,11 +290,11 @@ export function LibrarySync({
           onClick={preview}
         >
           {busy === "plan" ? <Loader2 className="animate-spin" /> : <Eye />}
-          {plan ? "重新预览" : "预览改动"}
+          {plan ? t("library.sync.previewAgain") : t("library.sync.preview")}
         </Button>
         <Button disabled={busy !== null || !plan?.changed} onClick={apply}>
           {busy === "apply" ? <Loader2 className="animate-spin" /> : null}
-          写入 Agent
+          {t("library.sync.write")}
         </Button>
       </div>
     </div>

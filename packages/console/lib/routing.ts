@@ -32,6 +32,7 @@ import {
   ruleWordSpans,
   type RuleWord,
 } from "@harnesshub/sdk/route-rules";
+import { formatNumber, formatUsd, isMessageKey, t, translate } from "./i18n";
 
 /** One member of a group as the editor shows it. */
 export interface MemberRow {
@@ -147,8 +148,7 @@ export function readTypedRule(
   if (rule.intent && !typed.classifier && !hasClassifier)
     return {
       ok: false,
-      message:
-        "带 intent 的规则需要组的分类器（判断消息属于哪种意图的模型）：在这一行加上 classifier=<provider/model>，或先在下方选择分类器",
+      message: t("routing.rules.intentNeedsClassifier"),
       spans: ruleWordSpans(text).filter((span) =>
         fieldKeys.intent!.includes(ruleKey(span.word)),
       ),
@@ -209,11 +209,10 @@ export function moved<T>(items: readonly T[], from: number, to: number): T[] {
 
 // Gateway Key budgets.
 
-export const budgetPeriodNames: Readonly<Record<BudgetPeriod, string>> = {
-  day: "每天",
-  week: "每周",
-  month: "每月",
-};
+/** A budget's window in words: daily, weekly, monthly. */
+export function budgetPeriodName(period: BudgetPeriod): string {
+  return t(`routing.period.${period}`);
+}
 const periods: readonly BudgetPeriod[] = ["day", "week", "month"];
 
 /** The quota form: requests per minute, and one budget per period. */
@@ -264,7 +263,7 @@ export function quotaOf(
   const rpm = form.rpm.trim();
   if (rpm) {
     if (!/^\d+$/.test(rpm) || Number(rpm) < 1)
-      problems.rpm = "每分钟请求数是大于 0 的整数";
+      problems.rpm = t("routing.quota.rpmInvalid");
     else quota.requestsPerMinute = Number(rpm);
   }
   const budgets: GatewayKeyBudget[] = [];
@@ -276,16 +275,15 @@ export function quotaOf(
     const cost = fields.cost.trim();
     if (tokens) {
       if (!/^\d+$/.test(tokens))
-        problems[`${period}.tokens`] = "token 上限是 0 或更大的整数";
+        problems[`${period}.tokens`] = t("routing.quota.tokensInvalid");
       else budget.tokens = Number(tokens);
     }
     if (cost) {
       if (!/^\d+(\.\d+)?$/.test(cost))
-        problems[`${period}.cost`] = "成本上限是 0 或更大的美元数";
+        problems[`${period}.cost`] = t("routing.quota.costInvalid");
       else budget.costUsd = Number(cost);
     }
-    if (!tokens && !cost)
-      problems[period] = "至少填写 token 或成本中的一个上限";
+    if (!tokens && !cost) problems[period] = t("routing.quota.capNeeded");
     if (fields.cacheReads) budget.cacheReads = true;
     budgets.push(budget);
   }
@@ -299,31 +297,44 @@ export function quotaOf(
 
 function tokenCount(value: number): string {
   if (value >= 1_000_000 && value % 10_000 === 0)
-    return `${value / 1_000_000} 百万`;
-  return value.toLocaleString();
+    return t("routing.quota.millions", { n: value / 1_000_000 });
+  return formatNumber(value);
 }
 
-/** A quota in words: `60 次/分钟`、`每天 2 百万 token（含缓存读取）`、`每月 $20`. */
+/** A quota in words: 60 requests per minute, daily 2 million tokens with cache reads, monthly $20. */
 export function quotaSummary(quota: GatewayKeyQuota | undefined): string[] {
   if (!quota) return [];
   return [
     ...(quota.requestsPerMinute !== undefined
-      ? [`${quota.requestsPerMinute} 次/分钟`]
+      ? [t("routing.quota.rpm", { n: quota.requestsPerMinute })]
       : []),
     ...(quota.budgets ?? []).map((budget) => {
       const caps = [
         ...(budget.tokens !== undefined
           ? [
               budget.tokens === 0
-                ? "0 token（拒绝所有调用）"
-                : `${tokenCount(budget.tokens)} token${budget.cacheReads ? "（含缓存读取）" : ""}`,
+                ? t("routing.quota.tokensZero")
+                : budget.cacheReads
+                  ? t("routing.quota.tokensWithCache", {
+                      count: tokenCount(budget.tokens),
+                    })
+                  : t("routing.quota.tokens", {
+                      count: tokenCount(budget.tokens),
+                    }),
             ]
           : []),
         ...(budget.costUsd !== undefined
-          ? [budget.costUsd === 0 ? "$0（拒绝所有调用）" : `$${budget.costUsd}`]
+          ? [
+              budget.costUsd === 0
+                ? t("routing.quota.costZero", { amount: formatUsd(0) })
+                : formatUsd(budget.costUsd),
+            ]
           : []),
       ];
-      return `${budgetPeriodNames[budget.period]} ${caps.join("、")}`;
+      return t("routing.quota.budgetLine", {
+        period: budgetPeriodName(budget.period),
+        caps: caps.join(t("routing.separator")),
+      });
     }),
   ];
 }
@@ -387,29 +398,33 @@ export function mergeDecisions(
     .slice(0, DECISIONS_SHOWN);
 }
 
-export const decisionKinds: Readonly<
-  Record<RouteDecisionRule["kind"], string>
-> = {
-  turn: "新一轮",
-  grown: "超出窗口后改换",
-  compact: "压缩请求",
-  held: "沿用本轮的决定",
-  waits: "没见到这一轮的开头",
-};
+/** Why a decision was made: a new turn, a grown conversation, compaction… */
+export function decisionKindName(kind: RouteDecisionRule["kind"]): string {
+  return t(`routing.decisionKind.${kind}`);
+}
 
-/** What one group's rules did: `规则 2 → a/m（tokens ≥ 200000）`. */
+/** What one group's rules did: rule 2 → a/m (tokens ≥ 200000). */
 export function ruleDecisionText(rule: RouteDecisionRule): string {
   if (!rule.n)
     return rule.kind === "held" || rule.kind === "waits"
-      ? decisionKinds[rule.kind]
-      : "没有规则命中，按组的策略排列";
-  const when = rule.when?.length ? `（${rule.when.join("，")}）` : "";
+      ? decisionKindName(rule.kind)
+      : t("routing.decision.noRule");
+  const when = rule.when?.length
+    ? t("routing.decision.when", {
+        conditions: rule.when.join(t("routing.conditionSeparator")),
+      })
+    : "";
   const instead = rule.unready
     ? rule.instead
-      ? `；它没有就绪的凭据，改由 ${rule.instead} 先试`
-      : "；它没有就绪的凭据，按组的策略排列"
+      ? t("routing.decision.insteadTo", { model: rule.instead })
+      : t("routing.decision.insteadOrder")
     : "";
-  return `规则 ${rule.n} → ${rule.use ?? "?"}${when}${instead}`;
+  return t("routing.decision.rule", {
+    n: rule.n,
+    use: rule.use ?? "?",
+    when,
+    instead,
+  });
 }
 
 /** A conversation the decisions came from, for choosing one to follow. */
@@ -442,40 +457,49 @@ export function decisionSessions(
   );
 }
 
-/** What the classifier said: `judge 判断：意图是 a quick question`. */
+/** What the classifier said: judge decided: the intent is a quick question. */
 export function classifierText(
   classifier: NonNullable<RouteDecisionRule["classifier"]>,
 ): string {
   if (classifier.resting)
-    return `${classifier.by} 刚失败过，30 秒内不再询问：${classifier.error ?? ""}`;
-  if (classifier.error) return `${classifier.by} 没能判断：${classifier.error}`;
+    return t("routing.classifier.resting", {
+      by: classifier.by,
+      error: classifier.error ?? "",
+    });
+  if (classifier.error)
+    return t("routing.classifier.error", {
+      by: classifier.by,
+      error: classifier.error,
+    });
   const parts = [
     ...(classifier.intents.length
       ? [
           classifier.intent
-            ? `意图是 ${classifier.intent}`
-            : "不属于任何一种意图",
+            ? t("routing.classifier.intent", { intent: classifier.intent })
+            : t("routing.classifier.noIntent"),
         ]
       : []),
-    ...(classifier.effort ? [`需要 ${classifier.effort} 推理`] : []),
-  ];
-  return `${classifier.by} 判断：${parts.join("，")}${classifier.cached ? "（10 分钟内问过同一消息，用的是那次的回答）" : ""}`;
+    ...(classifier.effort
+      ? [t("routing.classifier.effort", { effort: classifier.effort })]
+      : []),
+  ].join(t("routing.conditionSeparator"));
+  return classifier.cached
+    ? t("routing.classifier.decidedCached", { by: classifier.by, parts })
+    : t("routing.classifier.decided", { by: classifier.by, parts });
 }
 
-/** Stickiness in words: `hit` → 留在上次应答的凭据. */
+/**
+ * Stickiness in words: `hit` stayed on the credential that answered last;
+ * a reason the console does not know shows as the daemon sends it.
+ */
 export function stickyText(sticky: string | undefined): string | undefined {
   if (sticky === undefined) return undefined;
   const [state, why] = sticky.split(":", 2);
-  if (state === "hit") return "留在上次应答的凭据";
-  const reasons: Record<string, string> = {
-    new: "新会话",
-    model_changed: "换了模型",
-    cache_cold: "提示缓存已冷",
-    new_turn: "新的一轮",
-    breaker: "上次的凭据在休息",
-    unavailable: "上次的凭据已不可用",
-    rule: "规则把它换到了别的成员",
-  };
-  const reason = why === undefined ? "" : (reasons[why] ?? why);
-  return state === "broken" ? `粘性被打破：${reason}` : `没有沿用：${reason}`;
+  if (state === "hit") return t("routing.sticky.hit");
+  const key = `routing.sticky.reason.${why ?? ""}`;
+  const reason =
+    why === undefined ? "" : isMessageKey(key) ? translate(key) : why;
+  return state === "broken"
+    ? t("routing.sticky.broken", { reason })
+    : t("routing.sticky.notKept", { reason });
 }

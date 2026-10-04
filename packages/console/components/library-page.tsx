@@ -47,6 +47,8 @@ import {
   type McpForm,
   type SecretRow,
 } from "@/lib/library";
+import { t } from "@/lib/i18n";
+import { tr } from "@/lib/i18n-react";
 import { failureOf, modelPlane, type Failure } from "@/lib/model-plane";
 import {
   ignored,
@@ -72,12 +74,7 @@ import {
 } from "./model-plane-ui";
 
 type Tab = "instructions" | "mcp" | "skills" | "sync";
-const tabs: ReadonlyArray<{ id: Tab; label: string }> = [
-  { id: "instructions", label: "指令集" },
-  { id: "mcp", label: "MCP 服务" },
-  { id: "skills", label: "Skills" },
-  { id: "sync", label: "同步到 Agent" },
-];
+const tabs: readonly Tab[] = ["instructions", "mcp", "skills", "sync"];
 
 interface LibraryData {
   instructions: LibraryInstructionSet[];
@@ -98,7 +95,8 @@ function AgentTags({
   agents: readonly LibraryAgent[];
   names: ReadonlyMap<string, string>;
 }) {
-  if (!agents.length) return <span className="text-subtle">未分配</span>;
+  if (!agents.length)
+    return <span className="text-subtle">{t("library.unassigned")}</span>;
   return (
     <span className="flex flex-wrap gap-1">
       {agents.map((agent) => (
@@ -127,7 +125,7 @@ function AgentChooser({
 }) {
   return (
     <fieldset>
-      <legend className="field-label">去往的 Agent</legend>
+      <legend className="field-label">{t("library.agentsLegend")}</legend>
       <div className="mt-1.5 grid gap-x-2 sm:grid-cols-3">
         {libraryAgents.map((agent) => {
           const reason = blocked?.(agent);
@@ -221,7 +219,7 @@ function InstructionDialog({
       () => {
         setBusy(false);
         notify.success(
-          `已保存指令集 ${existing?.id ?? id.trim()}；同步后写入 Agent`,
+          t("library.instructions.saved", { id: existing?.id ?? id.trim() }),
         );
         onSaved();
         onClose();
@@ -237,12 +235,12 @@ function InstructionDialog({
       <DialogContent className="max-h-[94vh] overflow-y-auto sm:max-w-[820px]">
         <DialogHeader>
           <DialogTitle>
-            {existing ? `编辑指令集 ${existing.id}` : "新建指令集"}
+            {existing
+              ? t("library.instructions.edit", { id: existing.id })
+              : t("library.instructions.new")}
           </DialogTitle>
           <DialogDescription>
-            Markdown 文本写入每个 Agent 的用户级指令文件（如
-            CLAUDE.md、AGENTS.md）中一个带标记的区块，区块外的内容不动。一个
-            Agent 只有一套指令集。
+            {t("library.instructions.description")}
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
@@ -258,16 +256,16 @@ function InstructionDialog({
               onChange={(event) => setId(event.target.value)}
             />
             {existing ? null : (
-              <span className="field-hint block">小写字母、数字与连字符</span>
+              <span className="field-hint block">{t("library.idHint")}</span>
             )}
           </label>
           <label className="field-label">
-            名称
+            {t("library.name")}
             <input
               className="field"
               value={name}
               autoComplete="off"
-              placeholder={id || "团队约定"}
+              placeholder={id || t("library.instructions.namePlaceholder")}
               onChange={(event) => setName(event.target.value)}
             />
           </label>
@@ -278,22 +276,28 @@ function InstructionDialog({
           names={names}
           blocked={(agent) =>
             noInstructionFile.has(agent)
-              ? "没有用户级指令文件"
+              ? t("library.instructions.noFile")
               : takenBy.has(agent)
-                ? `已用于 ${takenBy.get(agent)}`
+                ? t("library.instructions.takenBy", {
+                    id: takenBy.get(agent) ?? "",
+                  })
                 : undefined
           }
         />
         <div className="space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="segmented" role="tablist" aria-label="编辑或预览">
+            <div
+              className="segmented"
+              role="tablist"
+              aria-label={t("library.instructions.view")}
+            >
               <button
                 type="button"
                 role="tab"
                 aria-selected={view === "edit"}
                 onClick={() => setView("edit")}
               >
-                编辑
+                {t("library.instructions.editTab")}
               </button>
               <button
                 type="button"
@@ -301,7 +305,7 @@ function InstructionDialog({
                 aria-selected={view === "preview"}
                 onClick={() => setView("preview")}
               >
-                预览
+                {t("library.instructions.previewTab")}
               </button>
             </div>
             <span
@@ -319,9 +323,9 @@ function InstructionDialog({
             <textarea
               className="field min-h-[320px] font-mono text-[13px]"
               value={text}
-              aria-label="指令集 Markdown"
+              aria-label={t("library.instructions.markdown")}
               spellCheck={false}
-              placeholder={"# 团队约定\n\n- 提交前运行测试\n- 回答使用中文"}
+              placeholder={t("library.instructions.placeholder")}
               onChange={(event) => setText(event.target.value)}
             />
           ) : (
@@ -331,7 +335,9 @@ function InstructionDialog({
                   {text}
                 </Streamdown>
               ) : (
-                <p className="text-[13px] text-subtle">没有内容</p>
+                <p className="text-[13px] text-subtle">
+                  {t("library.instructions.empty")}
+                </p>
               )}
             </div>
           )}
@@ -339,7 +345,7 @@ function InstructionDialog({
         <ErrorCallout failure={failure} />
         <DialogFooter>
           <Button variant="outline" disabled={busy} onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </Button>
           <Button
             disabled={
@@ -348,7 +354,7 @@ function InstructionDialog({
             onClick={save}
           >
             {busy ? <Loader2 className="animate-spin" /> : null}
-            保存
+            {t("library.save")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -374,7 +380,7 @@ function InstructionsTab({
       <div className="flex justify-end">
         <Button size="sm" onClick={() => setEditing({ item: undefined })}>
           <Plus />
-          新建指令集
+          {t("library.instructions.new")}
         </Button>
       </div>
       {data.instructions.length ? (
@@ -382,10 +388,10 @@ function InstructionsTab({
           <table className="data-table min-w-[640px]">
             <thead>
               <tr>
-                <th>指令集</th>
+                <th>{t("library.instructions.column")}</th>
                 <th>Agent</th>
-                <th>大小</th>
-                <th>修改</th>
+                <th>{t("library.size")}</th>
+                <th>{t("library.modified")}</th>
                 <th />
               </tr>
             </thead>
@@ -409,7 +415,7 @@ function InstructionsTab({
                     <Button
                       size="icon-sm"
                       variant="ghost"
-                      aria-label={`编辑 ${item.id}`}
+                      aria-label={t("library.editItem", { name: item.id })}
                       onClick={() => setEditing({ item })}
                     >
                       <Pencil />
@@ -417,7 +423,7 @@ function InstructionsTab({
                     <Button
                       size="icon-sm"
                       variant="ghost"
-                      aria-label={`删除 ${item.id}`}
+                      aria-label={t("library.deleteItem", { name: item.id })}
                       onClick={() => setRemoving(item)}
                     >
                       <Trash2 />
@@ -431,16 +437,15 @@ function InstructionsTab({
       ) : (
         <EmptyState
           icon={BookOpen}
-          title="还没有指令集"
+          title={t("library.instructions.emptyTitle")}
           action={
             <Button size="sm" onClick={() => setEditing({ item: undefined })}>
               <Plus />
-              新建指令集
+              {t("library.instructions.new")}
             </Button>
           }
         >
-          把团队约定、代码风格等写成一份 Markdown，同步到各个 Agent
-          的用户级指令文件。
+          {t("library.instructions.emptyBody")}
         </EmptyState>
       )}
       {editing ? (
@@ -454,14 +459,18 @@ function InstructionsTab({
       ) : null}
       <ConfirmDialog
         open={removing !== null}
-        title={`删除指令集 ${removing?.id ?? ""}`}
-        description="从 Library 删除；下一次同步时从各个 Agent 的文件中取出它的区块。"
-        action="删除"
+        title={t("library.instructions.deleteTitle", {
+          id: removing?.id ?? "",
+        })}
+        description={t("library.instructions.deleteBody")}
+        action={t("library.delete")}
         onClose={() => setRemoving(null)}
         onConfirm={async () => {
           if (!removing) return;
           await modelPlane().library.instructions.remove(removing.id);
-          notify.success(`已删除指令集 ${removing.id}`);
+          notify.success(
+            t("library.instructions.deleted", { id: removing.id }),
+          );
           reload();
         }}
       />
@@ -469,10 +478,10 @@ function InstructionsTab({
   );
 }
 
-const secretKinds: ReadonlyArray<{ id: SecretRow["kind"]; label: string }> = [
-  { id: "env", label: "环境变量" },
-  { id: "file", label: "文件" },
-  { id: "value", label: "新值" },
+const secretKinds: readonly Exclude<SecretRow["kind"], "keep">[] = [
+  "env",
+  "file",
+  "value",
 ];
 
 /**
@@ -509,7 +518,7 @@ function SecretRows({
           }
         >
           <Plus />
-          添加
+          {t("library.add")}
         </Button>
       </legend>
       {rows.map((row, index) => {
@@ -526,7 +535,7 @@ function SecretRows({
             <input
               className="field mt-0 font-mono text-[13px]"
               value={row.name}
-              aria-label="名称"
+              aria-label={t("library.name")}
               aria-invalid={invalid}
               placeholder={
                 field === "secretEnv" ? "GITHUB_TOKEN" : "Authorization"
@@ -537,7 +546,7 @@ function SecretRows({
             />
             <select
               className="field mt-0"
-              aria-label="来源"
+              aria-label={t("library.secret.source")}
               value={row.kind}
               onChange={(event) =>
                 update(index, {
@@ -546,31 +555,33 @@ function SecretRows({
                 })
               }
             >
-              {row.stored ? <option value="keep">已保存</option> : null}
+              {row.stored ? (
+                <option value="keep">{t("library.secretKind.keep")}</option>
+              ) : null}
               {secretKinds.map((kind) => (
-                <option key={kind.id} value={kind.id}>
-                  {kind.label}
+                <option key={kind} value={kind}>
+                  {t(`library.secretKind.${kind}`)}
                 </option>
               ))}
             </select>
             {row.kind === "keep" ? (
               <p className="field mt-0 flex items-center text-[13px]">
-                已保存在秘密存储中，不显示
+                {t("library.secret.storedHidden")}
               </p>
             ) : (
               <input
                 className="field mt-0 font-mono text-[13px]"
-                aria-label="值"
+                aria-label={t("library.secret.value")}
                 type={row.kind === "value" ? "password" : "text"}
                 value={row.value}
                 autoComplete={row.kind === "value" ? "new-password" : "off"}
                 spellCheck={false}
                 placeholder={
                   row.kind === "env"
-                    ? "变量名，例如 GITHUB_TOKEN"
+                    ? t("library.secret.envPlaceholder")
                     : row.kind === "file"
-                      ? "绝对路径，例如 /home/me/.secrets/github"
-                      : "只发送一次，存入秘密存储"
+                      ? t("library.secret.filePlaceholder")
+                      : t("library.secret.valuePlaceholder")
                 }
                 onChange={(event) =>
                   update(index, { value: event.target.value })
@@ -581,7 +592,9 @@ function SecretRows({
               size="icon-sm"
               variant="ghost"
               className="self-center"
-              aria-label={`移除 ${row.name || "这一行"}`}
+              aria-label={t("library.secret.remove", {
+                name: row.name || t("library.secret.thisRow"),
+              })}
               onClick={() => onChange(rows.filter((_, at) => at !== index))}
             >
               <X />
@@ -599,14 +612,9 @@ function SecretRuleError({ failure }: { failure: Failure }) {
     <div role="alert" className="callout error">
       <ShieldAlert className="mt-0.5 size-4 shrink-0" />
       <div className="min-w-0 space-y-1">
-        <p className="font-medium">不能引用 HarnessHub 自己的凭据</p>
+        <p className="font-medium">{t("library.secretRule.title")}</p>
         <p className="font-mono text-[12.5px]">{failure.message}</p>
-        <p>
-          MCP 服务的秘密不能是：HH_ 或 HARNESSHUB_
-          开头的环境变量；数据目录与配置目录中的文件；任一 provider
-          凭据使用的变量、文件或秘密；Gateway Key、管理令牌或 provider Key
-          的值。请为这个服务另建一个专用的凭据。什么都没有保存。
-        </p>
+        <p>{t("library.secretRule.body")}</p>
       </div>
     </div>
   );
@@ -659,7 +667,7 @@ function McpDialog({
       () => {
         setBusy(false);
         notify.success(
-          `已保存 MCP 服务 ${existing?.name ?? form.name.trim()}；同步后写入 Agent`,
+          t("library.mcp.saved", { name: existing?.name ?? form.name.trim() }),
         );
         onSaved();
         onClose();
@@ -675,17 +683,15 @@ function McpDialog({
       <DialogContent className="max-h-[94vh] overflow-y-auto sm:max-w-[760px]">
         <DialogHeader>
           <DialogTitle>
-            {existing ? `编辑 MCP 服务 ${existing.name}` : "添加 MCP 服务"}
+            {existing
+              ? t("library.mcp.edit", { name: existing.name })
+              : t("library.mcp.add")}
           </DialogTitle>
-          <DialogDescription>
-            Library
-            不保存秘密值：秘密以环境变量、文件或秘密存储的引用登记；Agent
-            支持变量引用时只写引用。
-          </DialogDescription>
+          <DialogDescription>{t("library.mcp.description")}</DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="field-label">
-            名称
+            {t("library.name")}
             <input
               className="field font-mono text-[13px]"
               value={form.name}
@@ -697,9 +703,13 @@ function McpDialog({
             />
           </label>
           <div className="field-label">
-            传输
+            {t("library.mcp.transport")}
             <div className="mt-1.5">
-              <div className="segmented" role="tablist" aria-label="传输">
+              <div
+                className="segmented"
+                role="tablist"
+                aria-label={t("library.mcp.transport")}
+              >
                 {(["stdio", "http", "sse"] as const).map((transport) => (
                   <button
                     key={transport}
@@ -709,7 +719,7 @@ function McpDialog({
                     onClick={() => set("transport", transport)}
                   >
                     {transport === "stdio"
-                      ? "本地命令"
+                      ? t("library.mcp.stdio")
                       : transport === "http"
                         ? "HTTP"
                         : "SSE"}
@@ -722,7 +732,7 @@ function McpDialog({
         {stdio ? (
           <>
             <label className="field-label">
-              命令
+              {t("library.mcp.command")}
               <input
                 className="field font-mono text-[13px]"
                 value={form.command}
@@ -733,7 +743,7 @@ function McpDialog({
               />
             </label>
             <label className="field-label">
-              参数
+              {t("library.mcp.args")}
               <textarea
                 className="field min-h-[72px] font-mono text-[13px]"
                 value={form.args}
@@ -741,10 +751,12 @@ function McpDialog({
                 placeholder={"-y\n@modelcontextprotocol/server-github"}
                 onChange={(event) => set("args", event.target.value)}
               />
-              <span className="field-hint block">每行一个参数</span>
+              <span className="field-hint block">
+                {t("library.mcp.argsHint")}
+              </span>
             </label>
             <label className="field-label">
-              环境变量
+              {t("library.mcp.env")}
               <textarea
                 className="field min-h-[60px] font-mono text-[13px]"
                 value={form.env}
@@ -754,12 +766,11 @@ function McpDialog({
                 onChange={(event) => set("env", event.target.value)}
               />
               <span className="field-hint block">
-                每行 NAME=value，只用于不是秘密的值；名称像 …_TOKEN、…_API_KEY
-                的会被拒绝，请改在下面登记为秘密。
+                {t("library.mcp.envHint")}
               </span>
             </label>
             <SecretRows
-              label="秘密环境变量"
+              label={t("library.mcp.secretEnv")}
               field="secretEnv"
               rows={form.secretEnv}
               marked={marked}
@@ -769,7 +780,7 @@ function McpDialog({
         ) : (
           <>
             <label className="field-label">
-              地址
+              {t("library.mcp.url")}
               <input
                 className="field font-mono text-[13px]"
                 value={form.url}
@@ -780,7 +791,7 @@ function McpDialog({
               />
             </label>
             <label className="field-label">
-              请求头
+              {t("library.mcp.headers")}
               <textarea
                 className="field min-h-[60px] font-mono text-[13px]"
                 value={form.headers}
@@ -790,12 +801,11 @@ function McpDialog({
                 onChange={(event) => set("headers", event.target.value)}
               />
               <span className="field-hint block">
-                每行 Name: value，只用于不是秘密的值；Authorization、Cookie
-                等会被拒绝，请改在下面登记为秘密。
+                {t("library.mcp.headersHint")}
               </span>
             </label>
             <SecretRows
-              label="秘密请求头"
+              label={t("library.mcp.secretHeaders")}
               field="secretHeaders"
               rows={form.secretHeaders}
               marked={marked}
@@ -809,7 +819,7 @@ function McpDialog({
           names={names}
           blocked={(agent) =>
             form.transport === "sse" && noSse.has(agent)
-              ? "不支持 SSE"
+              ? t("library.mcp.noSse")
               : undefined
           }
         />
@@ -820,20 +830,21 @@ function McpDialog({
         )}
         {plainField ? (
           <p className="callout info">
-            把 <span className="font-mono">{plainField[2]}</span> 从
-            {plainField[1] === "env" ? "环境变量" : "请求头"}
-            移到
-            {plainField[1] === "env" ? "秘密环境变量" : "秘密请求头"}
-            ，选择它的来源（环境变量、文件或新值）。
+            {tr(
+              plainField[1] === "env"
+                ? "library.mcp.moveEnv"
+                : "library.mcp.moveHeader",
+              { name: <span className="font-mono">{plainField[2]}</span> },
+            )}
           </p>
         ) : null}
         <DialogFooter>
           <Button variant="outline" disabled={busy} onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </Button>
           <Button disabled={busy || !form.name.trim()} onClick={save}>
             {busy ? <Loader2 className="animate-spin" /> : null}
-            保存
+            {t("library.save")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -859,7 +870,7 @@ function McpTab({
       <div className="flex justify-end">
         <Button size="sm" onClick={() => setEditing({ item: undefined })}>
           <Plus />
-          添加 MCP 服务
+          {t("library.mcp.add")}
         </Button>
       </div>
       {data.mcp.length ? (
@@ -867,9 +878,9 @@ function McpTab({
           <table className="data-table min-w-[720px]">
             <thead>
               <tr>
-                <th>服务</th>
-                <th>命令或地址</th>
-                <th>秘密</th>
+                <th>{t("library.mcp.columnServer")}</th>
+                <th>{t("library.mcp.columnTarget")}</th>
+                <th>{t("library.mcp.columnSecrets")}</th>
                 <th>Agent</th>
                 <th />
               </tr>
@@ -904,19 +915,21 @@ function McpTab({
                               className="tag font-mono"
                               title={
                                 ref.kind === "store"
-                                  ? "秘密存储"
+                                  ? t("library.mcp.secretStore")
                                   : `${ref.kind}:${ref.value}`
                               }
                             >
                               {name}
                               <span className="text-subtle">
-                                {ref.kind === "store" ? "存储" : ref.kind}
+                                {ref.kind === "store"
+                                  ? t("library.mcp.store")
+                                  : ref.kind}
                               </span>
                             </span>
                           ))}
                         </span>
                       ) : (
-                        <span className="text-subtle">无</span>
+                        <span className="text-subtle">{t("library.none")}</span>
                       )}
                     </td>
                     <td>
@@ -926,7 +939,9 @@ function McpTab({
                       <Button
                         size="icon-sm"
                         variant="ghost"
-                        aria-label={`编辑 ${item.name}`}
+                        aria-label={t("library.editItem", {
+                          name: item.name,
+                        })}
                         onClick={() => setEditing({ item })}
                       >
                         <Pencil />
@@ -934,7 +949,9 @@ function McpTab({
                       <Button
                         size="icon-sm"
                         variant="ghost"
-                        aria-label={`删除 ${item.name}`}
+                        aria-label={t("library.deleteItem", {
+                          name: item.name,
+                        })}
                         onClick={() => setRemoving(item)}
                       >
                         <Trash2 />
@@ -949,15 +966,15 @@ function McpTab({
       ) : (
         <EmptyState
           icon={Server}
-          title="还没有 MCP 服务"
+          title={t("library.mcp.emptyTitle")}
           action={
             <Button size="sm" onClick={() => setEditing({ item: undefined })}>
               <Plus />
-              添加 MCP 服务
+              {t("library.mcp.add")}
             </Button>
           }
         >
-          登记一次本地命令或远程 MCP 服务，按各 Agent 自己的格式写入它们的配置。
+          {t("library.mcp.emptyBody")}
         </EmptyState>
       )}
       {editing ? (
@@ -970,14 +987,14 @@ function McpTab({
       ) : null}
       <ConfirmDialog
         open={removing !== null}
-        title={`删除 MCP 服务 ${removing?.name ?? ""}`}
-        description="从 Library 删除，秘密存储中它的秘密一并删除；下一次同步时从各个 Agent 的配置中取出。"
-        action="删除"
+        title={t("library.mcp.deleteTitle", { name: removing?.name ?? "" })}
+        description={t("library.mcp.deleteBody")}
+        action={t("library.delete")}
         onClose={() => setRemoving(null)}
         onConfirm={async () => {
           if (!removing) return;
           await modelPlane().library.mcp.remove(removing.name);
-          notify.success(`已删除 MCP 服务 ${removing.name}`);
+          notify.success(t("library.mcp.deleted", { name: removing.name }));
           reload();
         }}
       />
@@ -1049,16 +1066,21 @@ function SkillImportDialog({
       (file) => !ignored(file.webkitRelativePath || file.name),
     );
     read(
-      `文件夹 ${top}`,
+      t("library.skill.fromFolder", { name: top }),
       async () => {
         // Checked before reading, so a large folder is never loaded.
         const size = files.reduce((sum, file) => sum + file.size, 0);
         if (files.length > SKILL_LIMITS.files)
           throw new Error(
-            `文件夹有 ${files.length} 个文件，超过 ${SKILL_LIMITS.files} 个`,
+            t("library.skill.folderTooMany", {
+              count: files.length,
+              limit: SKILL_LIMITS.files,
+            }),
           );
         if (size > SKILL_LIMITS.bytes)
-          throw new Error(`文件夹共 ${bytes(size)}，超过 20 MiB`);
+          throw new Error(
+            t("library.skill.folderTooLarge", { size: bytes(size) }),
+          );
         return Promise.all(
           files.map(async (file) => ({
             path: file.webkitRelativePath || file.name,
@@ -1074,14 +1096,19 @@ function SkillImportDialog({
   const pickZip = (file: File | undefined) => {
     if (!file) return;
     read(
-      `压缩包 ${file.name}`,
+      t("library.skill.fromZip", { name: file.name }),
       async () => readZip(await file.arrayBuffer()),
       file.name.replace(/\.zip$/i, ""),
     );
   };
-  const done = (skill: LibrarySkill, verb: string) => {
+  const done = (skill: LibrarySkill, uploaded: boolean) => {
     setBusy(false);
-    notify.success(`已${verb} Skill ${skill.name}（${skill.files} 个文件）`);
+    notify.success(
+      t(uploaded ? "library.skill.uploaded" : "library.skill.imported", {
+        name: skill.name,
+        count: skill.files,
+      }),
+    );
     onSaved();
     onClose();
   };
@@ -1092,10 +1119,8 @@ function SkillImportDialog({
     (mode === "upload" && picked.state === "ready"
       ? skills
           .upload(uploadInput(name.trim(), picked.files, agents))
-          .then((skill) => done(skill, "上传"))
-      : skills
-          .import(source.trim(), agents)
-          .then((skill) => done(skill, "导入"))
+          .then((skill) => done(skill, true))
+      : skills.import(source.trim(), agents).then((skill) => done(skill, false))
     ).catch((reason: unknown) => {
       setBusy(false);
       setFailure(failureOf(reason));
@@ -1109,14 +1134,16 @@ function SkillImportDialog({
     <Dialog open onOpenChange={(open) => (!open && !busy ? onClose() : null)}>
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-[620px] [&>*]:min-w-0">
         <DialogHeader>
-          <DialogTitle>添加 Skill</DialogTitle>
+          <DialogTitle>{t("library.skill.add")}</DialogTitle>
           <DialogDescription>
-            Skill 是一个含 SKILL.md 的目录（YAML front matter 的 name
-            等于目录名，并有 description），最多 500 个文件、20
-            MiB，不能含链接。同名 Skill 再次添加成为新版本。
+            {t("library.skill.description")}
           </DialogDescription>
         </DialogHeader>
-        <div className="segmented" role="tablist" aria-label="Skill 来源">
+        <div
+          className="segmented"
+          role="tablist"
+          aria-label={t("library.skill.source")}
+        >
           <button
             type="button"
             role="tab"
@@ -1124,7 +1151,7 @@ function SkillImportDialog({
             disabled={busy}
             onClick={() => setMode("upload")}
           >
-            上传文件夹或 zip
+            {t("library.skill.uploadTab")}
           </button>
           <button
             type="button"
@@ -1133,7 +1160,7 @@ function SkillImportDialog({
             disabled={busy}
             onClick={() => setMode("path")}
           >
-            守护进程上的目录
+            {t("library.skill.pathTab")}
           </button>
         </div>
         {mode === "upload" ? (
@@ -1147,7 +1174,7 @@ function SkillImportDialog({
               type="file"
               multiple
               className="sr-only"
-              aria-label="选择 Skill 文件夹"
+              aria-label={t("library.skill.pickFolderLabel")}
               onChange={(event) => {
                 pickFolder(event.target.files);
                 event.target.value = "";
@@ -1158,7 +1185,7 @@ function SkillImportDialog({
               type="file"
               accept=".zip,application/zip"
               className="sr-only"
-              aria-label="选择 Skill 压缩包"
+              aria-label={t("library.skill.pickZipLabel")}
               onChange={(event) => {
                 pickZip(event.target.files?.[0]);
                 event.target.value = "";
@@ -1171,7 +1198,7 @@ function SkillImportDialog({
                 onClick={() => folderInput.current?.click()}
               >
                 <FolderOpen />
-                选择文件夹
+                {t("library.skill.pickFolder")}
               </Button>
               <Button
                 variant="outline"
@@ -1179,7 +1206,7 @@ function SkillImportDialog({
                 onClick={() => zipInput.current?.click()}
               >
                 <FileArchive />
-                选择 zip
+                {t("library.skill.pickZip")}
               </Button>
             </div>
             {picked.state === "reading" ? (
@@ -1188,7 +1215,7 @@ function SkillImportDialog({
                 role="status"
               >
                 <Loader2 className="size-4 animate-spin" />
-                正在读取文件…
+                {t("library.skill.reading")}
               </p>
             ) : picked.state === "error" ? (
               <p role="alert" className="callout error">
@@ -1197,14 +1224,19 @@ function SkillImportDialog({
             ) : picked.state === "ready" ? (
               <div className="space-y-2 rounded-xl border p-3">
                 <p className="text-[13px]">
-                  {picked.from}：{picked.files.length} 个文件，
-                  {bytes(picked.size)}
+                  {t("library.skill.summary", {
+                    from: picked.from,
+                    count: picked.files.length,
+                    size: bytes(picked.size),
+                  })}
                   {picked.files.some((file) => file.exec)
-                    ? `，${picked.files.filter((file) => file.exec).length} 个可执行`
+                    ? t("library.skill.executableCount", {
+                        count: picked.files.filter((file) => file.exec).length,
+                      })
                     : ""}
                 </p>
                 <label className="field-label">
-                  名称
+                  {t("library.name")}
                   <input
                     className="field font-mono text-[13px]"
                     value={name}
@@ -1213,7 +1245,7 @@ function SkillImportDialog({
                     onChange={(event) => setName(event.target.value)}
                   />
                   <span className="field-hint block">
-                    与 SKILL.md 中的 name 相同（小写字母、数字与连字符）。
+                    {t("library.skill.nameHint")}
                   </span>
                 </label>
                 <ul className="max-h-[22vh] overflow-y-auto font-mono text-[12px] text-muted-foreground">
@@ -1221,12 +1253,18 @@ function SkillImportDialog({
                     <li key={file.path} className="truncate">
                       {file.path}
                       {file.exec ? (
-                        <span className="ml-1.5 text-subtle">可执行</span>
+                        <span className="ml-1.5 text-subtle">
+                          {t("library.skill.executable")}
+                        </span>
                       ) : null}
                     </li>
                   ))}
                   {picked.files.length > 50 ? (
-                    <li>…… 另有 {picked.files.length - 50} 个</li>
+                    <li>
+                      {t("library.skill.more", {
+                        count: picked.files.length - 50,
+                      })}
+                    </li>
                   ) : null}
                 </ul>
                 {picked.problems.length ? (
@@ -1242,14 +1280,13 @@ function SkillImportDialog({
               </div>
             ) : (
               <p className="text-[12.5px] text-muted-foreground">
-                文件在浏览器中读取，检查文件数与大小后上传；从文件夹上传时浏览器不提供可执行权限，需要可执行权限的脚本请用
-                zip 打包。
+                {t("library.skill.uploadHint")}
               </p>
             )}
           </div>
         ) : (
           <label className="field-label">
-            目录的绝对路径
+            {t("library.skill.path")}
             <input
               className="field font-mono text-[13px]"
               value={source}
@@ -1258,18 +1295,22 @@ function SkillImportDialog({
               placeholder="/Users/me/skills/pdf-tools"
               onChange={(event) => setSource(event.target.value)}
             />
-            <span className="field-hint block">守护进程所在电脑上的路径。</span>
+            <span className="field-hint block">
+              {t("library.skill.pathHint")}
+            </span>
           </label>
         )}
         <AgentChooser value={agents} onChange={setAgents} names={names} />
         <ErrorCallout failure={failure} />
         <DialogFooter>
           <Button variant="outline" disabled={busy} onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </Button>
           <Button disabled={busy || !ready} onClick={save}>
             {busy ? <Loader2 className="animate-spin" /> : <FolderInput />}
-            {mode === "upload" ? "上传" : "导入"}
+            {mode === "upload"
+              ? t("library.skill.upload")
+              : t("library.skill.importAction")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1295,14 +1336,16 @@ function SkillAgentsDialog({
     <Dialog open onOpenChange={(open) => (!open && !busy ? onClose() : null)}>
       <DialogContent className="sm:max-w-[560px]">
         <DialogHeader>
-          <DialogTitle>{skill.name} 去往的 Agent</DialogTitle>
+          <DialogTitle>
+            {t("library.skill.agentsTitle", { name: skill.name })}
+          </DialogTitle>
           <DialogDescription>{skill.description}</DialogDescription>
         </DialogHeader>
         <AgentChooser value={agents} onChange={setAgents} names={names} />
         <ErrorCallout failure={failure} />
         <DialogFooter>
           <Button variant="outline" disabled={busy} onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </Button>
           <Button
             disabled={busy}
@@ -1314,7 +1357,9 @@ function SkillAgentsDialog({
                 .then(
                   () => {
                     setBusy(false);
-                    notify.success(`已更新 ${skill.name} 的 Agent`);
+                    notify.success(
+                      t("library.skill.agentsUpdated", { name: skill.name }),
+                    );
                     onSaved();
                     onClose();
                   },
@@ -1326,7 +1371,7 @@ function SkillAgentsDialog({
             }}
           >
             {busy ? <Loader2 className="animate-spin" /> : null}
-            保存
+            {t("library.save")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1351,7 +1396,7 @@ function SkillsTab({
       <div className="flex justify-end">
         <Button size="sm" onClick={() => setImporting(true)}>
           <FolderInput />
-          添加 Skill
+          {t("library.skill.add")}
         </Button>
       </div>
       {data.skills.length ? (
@@ -1360,9 +1405,9 @@ function SkillsTab({
             <thead>
               <tr>
                 <th>Skill</th>
-                <th>文件</th>
+                <th>{t("library.skill.files")}</th>
                 <th>Agent</th>
-                <th>修改</th>
+                <th>{t("library.modified")}</th>
                 <th />
               </tr>
             </thead>
@@ -1378,7 +1423,10 @@ function SkillsTab({
                     </span>
                   </td>
                   <td className="text-[12.5px] whitespace-nowrap">
-                    {skill.files} 个 · {bytes(skill.size)}
+                    {t("library.skill.fileCount", {
+                      count: skill.files,
+                      size: bytes(skill.size),
+                    })}
                   </td>
                   <td>
                     <AgentTags agents={skill.agents} names={names} />
@@ -1390,7 +1438,9 @@ function SkillsTab({
                     <Button
                       size="icon-sm"
                       variant="ghost"
-                      aria-label={`${skill.name} 的 Agent`}
+                      aria-label={t("library.skill.agentsLabel", {
+                        name: skill.name,
+                      })}
                       onClick={() => setAssigning(skill)}
                     >
                       <Users />
@@ -1398,7 +1448,7 @@ function SkillsTab({
                     <Button
                       size="icon-sm"
                       variant="ghost"
-                      aria-label={`删除 ${skill.name}`}
+                      aria-label={t("library.deleteItem", { name: skill.name })}
                       onClick={() => setRemoving(skill)}
                     >
                       <Trash2 />
@@ -1412,15 +1462,15 @@ function SkillsTab({
       ) : (
         <EmptyState
           icon={Sparkles}
-          title="还没有 Skill"
+          title={t("library.skill.emptyTitle")}
           action={
             <Button size="sm" onClick={() => setImporting(true)}>
               <FolderInput />
-              添加 Skill
+              {t("library.skill.add")}
             </Button>
           }
         >
-          导入符合 Agent Skills 规范的目录，链接到各个 Agent 的 Skills 目录。
+          {t("library.skill.emptyBody")}
         </EmptyState>
       )}
       {importing ? (
@@ -1440,14 +1490,14 @@ function SkillsTab({
       ) : null}
       <ConfirmDialog
         open={removing !== null}
-        title={`删除 Skill ${removing?.name ?? ""}`}
-        description="从 Library 删除；下一次同步时从各个 Agent 的 Skills 目录中移除 HarnessHub 放置的链接或副本。"
-        action="删除"
+        title={t("library.skill.deleteTitle", { name: removing?.name ?? "" })}
+        description={t("library.skill.deleteBody")}
+        action={t("library.delete")}
         onClose={() => setRemoving(null)}
         onConfirm={async () => {
           if (!removing) return;
           await modelPlane().library.skills.remove(removing.name);
-          notify.success(`已删除 Skill ${removing.name}`);
+          notify.success(t("library.skill.deleted", { name: removing.name }));
           reload();
         }}
       />
@@ -1482,21 +1532,18 @@ export function LibraryPage() {
   const [data, reload] = useLoaded(load);
   const search = useSearch();
   const requested = new URLSearchParams(search).get("tab");
-  const tab: Tab = tabs.some((item) => item.id === requested)
+  const tab: Tab = tabs.some((item) => item === requested)
     ? (requested as Tab)
     : "instructions";
   const names = namesOf(data.state === "ready" ? data.value.agents : []);
   return (
     <div className="page-body">
       <div className="page-column max-w-[1040px]">
-        <PageHeader
-          title="Library"
-          lede="指令集、MCP 服务与 Skills 保存在 HarnessHub 中，预览改动后写入本机各个 Agent 自己的位置与格式。"
-        >
+        <PageHeader title="Library" lede={t("library.lede")}>
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label="刷新"
+            aria-label={t("common.refresh")}
             onClick={reload}
           >
             <RefreshCw />
@@ -1506,21 +1553,21 @@ export function LibraryPage() {
           <div className="segmented" role="tablist" aria-label="Library">
             {tabs.map((item) => (
               <button
-                key={item.id}
+                key={item}
                 type="button"
                 role="tab"
-                aria-selected={item.id === tab}
+                aria-selected={item === tab}
                 onClick={() =>
                   navigate("library", {
-                    search: item.id === "instructions" ? "" : `?tab=${item.id}`,
+                    search: item === "instructions" ? "" : `?tab=${item}`,
                     replace: true,
                   })
                 }
               >
-                {item.label}
-                {data.state === "ready" && item.id !== "sync" ? (
+                {t(`library.tab.${item}`)}
+                {data.state === "ready" && item !== "sync" ? (
                   <span className="ml-1 text-subtle">
-                    {data.value[item.id].length}
+                    {data.value[item].length}
                   </span>
                 ) : null}
               </button>
@@ -1532,7 +1579,7 @@ export function LibraryPage() {
             <div
               className="panel space-y-3 p-5"
               role="status"
-              aria-label="正在读取"
+              aria-label={t("common.loading")}
             >
               <Skeleton className="h-4 w-1/3" />
               <Skeleton className="h-4 w-2/3" />
@@ -1548,10 +1595,7 @@ export function LibraryPage() {
           ) : (
             <section className="panel space-y-3 p-5">
               <p className="text-[13px] text-muted-foreground">
-                先预览每个 Agent
-                的文件改动，确认后按这份预览写入；预览之后文件又被改动的 Agent
-                什么都不写。HarnessHub 只拥有自己写入的部分，从 Library
-                删除的条目在同步时被取出。
+                {t("library.syncIntro")}
               </p>
               <LibrarySync
                 agents={data.value.agents}

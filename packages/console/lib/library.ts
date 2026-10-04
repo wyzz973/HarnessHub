@@ -14,6 +14,7 @@ import type {
   LibrarySecretInput,
   LibrarySecretRef,
 } from "@harnesshub/sdk/client";
+import { t } from "./i18n";
 
 /** The agents the Library writes into, in the daemon's order. */
 export const libraryAgents: readonly LibraryAgent[] = [
@@ -134,7 +135,11 @@ export function pairsOf(
     const at = line.indexOf(separator);
     if (at <= 0)
       throw new Error(
-        `${field}第 ${index + 1} 行应为 ${separator === "=" ? "NAME=value" : "Name: value"}`,
+        t("library.lineFormat", {
+          field,
+          line: index + 1,
+          format: separator === "=" ? "NAME=value" : "Name: value",
+        }),
       );
     pairs[line.slice(0, at).trim()] = line.slice(at + 1).trim();
   }
@@ -151,15 +156,19 @@ function secretsOf(
   for (const row of named) {
     const name = row.name.trim();
     if (row.kind === "keep") {
-      if (!row.stored) throw new Error(`${field} ${name} 没有已保存的值`);
+      if (!row.stored)
+        throw new Error(t("library.secret.noStored", { field, name }));
       secrets[name] = row.stored;
     } else if (row.kind === "value") {
-      if (!row.value) throw new Error(`${field} ${name}：填写值`);
+      if (!row.value)
+        throw new Error(t("library.secret.needValue", { field, name }));
       secrets[name] = { secret: row.value };
     } else {
       if (!row.value.trim())
         throw new Error(
-          `${field} ${name}：填写${row.kind === "env" ? "环境变量名" : "文件的绝对路径"}`,
+          row.kind === "env"
+            ? t("library.secret.needEnv", { field, name })
+            : t("library.secret.needFile", { field, name }),
         );
       secrets[name] = { kind: row.kind, value: row.value.trim() };
     }
@@ -179,14 +188,16 @@ export function mcpInput(form: McpForm): LibraryMcpInput {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
-  const env = stdio ? pairsOf(form.env, "=", "环境变量") : {};
-  const headers = stdio ? {} : pairsOf(form.headers, ":", "请求头");
+  const env = stdio ? pairsOf(form.env, "=", t("library.mcp.env")) : {};
+  const headers = stdio
+    ? {}
+    : pairsOf(form.headers, ":", t("library.mcp.headers"));
   const secretEnv = stdio
-    ? secretsOf(form.secretEnv, "秘密环境变量")
+    ? secretsOf(form.secretEnv, t("library.mcp.secretEnv"))
     : undefined;
   const secretHeaders = stdio
     ? undefined
-    : secretsOf(form.secretHeaders, "秘密请求头");
+    : secretsOf(form.secretHeaders, t("library.mcp.secretHeaders"));
   return {
     transport: form.transport,
     ...(stdio

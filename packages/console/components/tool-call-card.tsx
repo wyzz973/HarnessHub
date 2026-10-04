@@ -25,10 +25,11 @@ import {
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { cn } from "@/lib/utils";
 import {
-  toolKindNames,
-  toolStatusNames,
+  toolKindName,
+  toolStatusName,
   type ToolCallView,
 } from "@/lib/presentation";
+import { t } from "@/lib/i18n";
 
 const kindIcons: Record<string, LucideIcon> = {
   read: FileText,
@@ -48,7 +49,7 @@ function ToolStep({ tool }: { tool: ToolCallView }) {
   const KindIcon = (tool.kind && kindIcons[tool.kind]) || Wrench;
   const active = tool.status === "running" || tool.status === "pending";
   // Some engines title a file operation with its path; the kind then reads better as the title.
-  const kindName = tool.kind ? toolKindNames[tool.kind] : undefined;
+  const kindName = tool.kind ? toolKindName(tool.kind) : undefined;
   const pathTitle =
     kindName !== undefined && /^[^\s]*[\\/][^\s]*$/.test(tool.title);
   const title = pathTitle ? kindName : tool.title;
@@ -92,7 +93,7 @@ function ToolStep({ tool }: { tool: ToolCallView }) {
         >
           {preview}
         </span>
-        <span className="sr-only">{toolStatusNames[tool.status]}</span>
+        <span className="sr-only">{toolStatusName(tool.status)}</span>
         {active ? (
           <Loader2
             className="size-3.5 shrink-0 animate-spin text-info"
@@ -112,7 +113,7 @@ function ToolStep({ tool }: { tool: ToolCallView }) {
         <div className="step-body">
           {tool.input.length || tool.inputText ? (
             <div>
-              <p className="step-label">参数</p>
+              <p className="step-label">{t("tasks.tool.arguments")}</p>
               {tool.inputText ? (
                 <pre className="step-pre">{tool.inputText}</pre>
               ) : (
@@ -132,14 +133,14 @@ function ToolStep({ tool }: { tool: ToolCallView }) {
               )}
               {tool.inputMore ? (
                 <p className="mt-1 text-[12px] text-subtle">
-                  另有 {tool.inputMore} 个参数
+                  {t("tasks.tool.moreArguments", { n: tool.inputMore })}
                 </p>
               ) : null}
             </div>
           ) : null}
           {tool.locations.length ? (
             <div>
-              <p className="step-label">文件</p>
+              <p className="step-label">{t("tasks.tool.files")}</p>
               <p className="font-mono text-[12px] break-all text-muted-foreground">
                 {tool.locations.join("\n")}
               </p>
@@ -147,7 +148,9 @@ function ToolStep({ tool }: { tool: ToolCallView }) {
           ) : null}
           <div>
             <p className="step-label">
-              输出{tool.outputTruncated ? "（已截断）" : ""}
+              {tool.outputTruncated
+                ? t("tasks.tool.outputTruncated")
+                : t("tasks.tool.output")}
             </p>
             {tool.output ? (
               <pre
@@ -160,13 +163,13 @@ function ToolStep({ tool }: { tool: ToolCallView }) {
               </pre>
             ) : (
               <p className="text-[12.5px] text-subtle">
-                {active ? "等待返回…" : "无输出"}
+                {active ? t("tasks.tool.waiting") : t("tasks.tool.noOutput")}
               </p>
             )}
           </div>
           <details>
             <summary className="w-fit text-[12px] text-subtle hover:text-foreground">
-              原始数据
+              {t("tasks.tool.raw")}
             </summary>
             <pre className="step-pre mt-2 max-h-72">
               {JSON.stringify(tool.raw, null, 2)}
@@ -202,10 +205,12 @@ export function ToolSteps({
       >
         <ListTree className="size-[15px] shrink-0 text-subtle" aria-hidden />
         <span className="font-medium text-foreground">
-          执行了 {tools.length} 个步骤
+          {t("tasks.tool.steps", { n: tools.length })}
         </span>
         {failures ? (
-          <span className="text-danger">{failures} 个失败</span>
+          <span className="text-danger">
+            {t("tasks.tool.failures", { n: failures })}
+          </span>
         ) : null}
         <span className="flex-1" />
         <ChevronRight className="size-3.5 shrink-0 text-subtle" aria-hidden />

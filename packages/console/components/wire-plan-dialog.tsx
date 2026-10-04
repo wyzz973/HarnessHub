@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { modelOptional } from "@/lib/agents";
+import { t } from "@/lib/i18n";
 import { failureOf, modelPlane, type Failure } from "@/lib/model-plane";
 import { notify } from "@/lib/toast";
 import { ErrorCallout } from "./model-plane-ui";
@@ -69,9 +70,7 @@ export function WirePlanDialog({
       .then(
         (wired) => {
           setBusy(false);
-          notify.success(
-            `${agent.name} 已接线，重启正在运行的 ${agent.name} 后生效`,
-          );
+          notify.success(t("agents.wire.done", { name: agent.name }));
           onWired(wired);
           onClose();
         },
@@ -87,10 +86,9 @@ export function WirePlanDialog({
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
-            确认后写入 {agent.name} 自己的配置文件；写入前先备份，之后可以还原。
-            每次接线都签发一把新 Key，旧 Key 随即失效。
+            {t("agents.wire.description", { name: agent.name })}{" "}
             {modelOptional(input.options)
-              ? `${agent.name} 保留自己的 ChatGPT 登录，Key 写在它的网关基址中。`
+              ? t("agents.wire.chatgpt", { name: agent.name })
               : ""}
           </DialogDescription>
         </DialogHeader>
@@ -98,12 +96,14 @@ export function WirePlanDialog({
           plan.changed ? (
             <PlanFiles files={plan.files} />
           ) : (
-            <p className="callout neutral">
-              当前接线已经是这样，没有要写入的改动。
-            </p>
+            <p className="callout neutral">{t("agents.wire.unchanged")}</p>
           )
         ) : failure ? null : (
-          <div className="space-y-2" role="status" aria-label="正在计算改动">
+          <div
+            className="space-y-2"
+            role="status"
+            aria-label={t("agents.wire.computing")}
+          >
             <Skeleton className="h-4 w-2/3" />
             <Skeleton className="h-40 w-full" />
           </div>
@@ -111,11 +111,11 @@ export function WirePlanDialog({
         <ErrorCallout failure={failure} />
         <DialogFooter>
           <Button variant="outline" disabled={busy} onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </Button>
           <Button disabled={busy || !plan?.changed} onClick={apply}>
             {busy ? <Loader2 className="animate-spin" /> : null}
-            确认写入
+            {t("agents.wire.confirm")}
           </Button>
         </DialogFooter>
       </DialogContent>

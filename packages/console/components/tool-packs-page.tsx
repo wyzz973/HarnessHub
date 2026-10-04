@@ -33,11 +33,13 @@ import { pathExamples, useWindowsPaths } from "@/lib/platform";
 import {
   applyRows,
   boundEngineIds,
+  toolPackKindName,
   toolPackKinds,
-  toolPackStatusNames,
+  toolPackStatusName,
 } from "@/lib/tool-packs";
 import { cn } from "@/lib/utils";
 import { EngineAvatar } from "./engine-avatar";
+import { t } from "@/lib/i18n";
 
 interface Outcome {
   title: string;
@@ -46,7 +48,7 @@ interface Outcome {
   rows: ToolPackEngineResult[];
   warnings: string[];
 }
-type ImportKind = (typeof toolPackKinds)[number]["id"];
+type ImportKind = (typeof toolPackKinds)[number];
 type AddTab = "path" | "mcp";
 const absolutePath = /^(?:[A-Za-z]:[\\/]|\\\\|\/)/;
 const mcpExample = `{
@@ -58,9 +60,11 @@ const mcpExample = `{
   }
 }`;
 /** Frequent Gateway reasons in the console's language; anything else is shown verbatim. */
-const reasonNames: Record<string, string> = {
-  "Engine is disabled": "引擎已停用",
-};
+function reasonName(reason: string): string {
+  return reason === "Engine is disabled"
+    ? t("tasks.tools.reason.engineDisabled")
+    : reason;
+}
 function outcomeOf(title: string, result: ToolPackApply | undefined): Outcome {
   return {
     title,
@@ -70,19 +74,24 @@ function outcomeOf(title: string, result: ToolPackApply | undefined): Outcome {
       ...(result?.warnings ?? []),
       ...applyRows(result).flatMap((row) =>
         (row.warnings ?? []).map(
-          (warning) => `${engineName(row.engineId)}：${warning}`,
+          (warning) =>
+            t("tasks.tools.engineWarning", {
+              engine: engineName(row.engineId),
+              warning,
+            }),
         ),
       ),
     ],
   };
 }
-function failure(reason: unknown, feature: string) {
+type Feature = "add" | "apply" | "unbind";
+function failure(reason: unknown, feature: Feature) {
   if (reason instanceof UnsupportedFeatureError)
-    return `当前服务版本不支持${feature}，请升级。`;
-  if (!(reason instanceof Error)) return `${feature}失败`;
+    return t(`tasks.tools.unsupported.${feature}`);
+  if (!(reason instanceof Error)) return t(`tasks.tools.failed.${feature}`);
   // A Gateway without the pasted-MCP contract still requires `source`.
   if (/required property 'source'|must have required property/.test(reason.message))
-    return "当前服务版本不支持粘贴配置，请把配置保存为 mcp.json 后用本机路径添加。";
+    return t("tasks.tools.pasteUnsupported");
   return reason.message;
 }
 function packSlug(name: string) {
@@ -92,7 +101,7 @@ function packSlug(name: string) {
     .replace(/^-+|-+$/g, "");
   return slug.length >= 2 && slug.length <= 64 ? slug : undefined;
 }
-/** Parses pasted MCP JSON; returns the configuration or a message in Chinese. */
+/** Parses pasted MCP JSON; returns the configuration or a message in the console's language. */
 function parseMcp(
   text: string,
 ): { value: { mcpServers: Record<string, unknown> } } | { error: string } {
@@ -100,23 +109,23 @@ function parseMcp(
   try {
     parsed = JSON.parse(text);
   } catch {
-    return { error: "不是有效的 JSON，请检查括号、引号和逗号。" };
+    return { error: t("tasks.tools.invalidJson") };
   }
   const servers =
     typeof parsed === "object" && parsed !== null && "mcpServers" in parsed
       ? (parsed as { mcpServers: unknown }).mcpServers
       : undefined;
   if (typeof servers !== "object" || servers === null || Array.isArray(servers))
-    return { error: '需要包含 "mcpServers" 对象。' };
+    return { error: t("tasks.tools.needServers") };
   const entries = Object.entries(servers as Record<string, unknown>);
-  if (!entries.length) return { error: "mcpServers 里还没有服务。" };
+  if (!entries.length) return { error: t("tasks.tools.noServers") };
   for (const [name, server] of entries) {
     const item =
       typeof server === "object" && server !== null
         ? (server as Record<string, unknown>)
         : {};
     if (typeof item.command !== "string" && typeof item.url !== "string")
-      return { error: `服务 ${name} 需要 command 或 url。` };
+      return { error: t("tasks.tools.needCommand", { name }) };
   }
   return { value: { mcpServers: servers as Record<string, unknown> } };
 }
@@ -163,7 +172,7 @@ function ResultRows({ outcome }: { outcome: Outcome }) {
                 <p className="text-[13.5px]">{engineName(row.engineId)}</p>
                 {row.reason ? (
                   <p className="mt-0.5 text-[12px] leading-5 text-subtle">
-                    {reasonNames[row.reason] ?? row.reason}
+                    {reasonName(row.reason)}
                   </p>
                 ) : null}
               </div>
@@ -175,13 +184,15 @@ function ResultRows({ outcome }: { outcome: Outcome }) {
                   row.status === "skipped" && "warn",
                 )}
               >
-                {toolPackStatusNames[row.status] ?? row.status}
+                {toolPackStatusName(row.status)}
               </span>
             </li>
           ))}
         </ul>
       ) : (
-        <p className="text-[13px] text-muted-foreground">没有引擎受影响。</p>
+        <p className="text-[13px] text-muted-foreground">
+          {t("tasks.tools.noEngineAffected")}
+        </p>
       )}
       {outcome.warnings.length ? (
         <ul className="callout warn mt-3 block list-disc space-y-1 pl-8">
@@ -241,7 +252,11 @@ export function ToolPacksPage({
     (pack.engines ?? boundEngineIds(pack, list, engines)).filter(
       (id) => id !== "fake",
     );
-  async function run(key: string, feature: string, work: () => Promise<Outcome>) {
+  async function run(
+    key: string,
+    feature: Feature,
+    work: () => Promise<Outcome>,
+  ) {
     setBusy(key);
     setError(null);
     try {
@@ -266,7 +281,7 @@ export function ToolPacksPage({
     if (addTab === "path") {
       const path = source.trim();
       if (!absolutePath.test(path)) {
-        setError(`请填写本机绝对路径，例如 ${examples.toolPack}`);
+        setError(t("tasks.tools.needPath", { example: examples.toolPack }));
         return;
       }
       input = {
@@ -291,10 +306,12 @@ export function ToolPacksPage({
         ...target,
       };
     }
-    const ok = await run("import", "添加工具", async () => {
+    const ok = await run("import", "add", async () => {
       const result = await api.importToolPack(input);
       const applied = outcomeOf(
-        `已添加 ${result.displayName ?? result.package.id}`,
+        t("tasks.tools.added", {
+          name: result.displayName ?? result.package.id,
+        }),
         result.apply,
       );
       return {
@@ -311,9 +328,9 @@ export function ToolPacksPage({
     }
   }
   function apply(pack: ToolPackRecord, engineIds: "all" | string[]) {
-    void run(`apply:${pack.id}@${pack.version}`, "应用工具", async () =>
+    void run(`apply:${pack.id}@${pack.version}`, "apply", async () =>
       outcomeOf(
-        `${pack.displayName ?? pack.id} 已应用`,
+        t("tasks.tools.applied", { name: pack.displayName ?? pack.id }),
         await api.applyToolPack({
           package: { id: pack.id, version: pack.version },
           engineIds,
@@ -322,9 +339,9 @@ export function ToolPacksPage({
     );
   }
   function unbind(pack: ToolPackRecord, engineIds: "all" | string[]) {
-    void run(`unbind:${pack.id}@${pack.version}`, "解除工具", async () =>
+    void run(`unbind:${pack.id}@${pack.version}`, "unbind", async () =>
       outcomeOf(
-        `${pack.displayName ?? pack.id} 已解除`,
+        t("tasks.tools.removed", { name: pack.displayName ?? pack.id }),
         await api.unbindToolPack(pack.id, pack.version, engineIds),
       ),
     );
@@ -338,16 +355,14 @@ export function ToolPacksPage({
       <div className="page-column">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="page-title">工具</h1>
-            <p className="page-lede">
-              Skill、MCP 服务和命令行工具，添加后所有引擎都能使用。
-            </p>
+            <h1 className="page-title">{t("tasks.tools.title")}</h1>
+            <p className="page-lede">{t("tasks.tools.lede")}</p>
           </div>
           <div className="flex items-center gap-2">
             <Button
               size="icon-sm"
               variant="ghost"
-              aria-label="刷新"
+              aria-label={t("common.refresh")}
               disabled={!!busy}
               onClick={() => {
                 setError(null);
@@ -358,7 +373,7 @@ export function ToolPacksPage({
             </Button>
             <Button size="sm" onClick={openAdd}>
               <Plus />
-              添加工具
+              {t("tasks.tools.add")}
             </Button>
           </div>
         </div>
@@ -380,10 +395,10 @@ export function ToolPacksPage({
               ))}
             </div>
           ) : packages.state === "unsupported" ? (
-            <p className="empty-state">当前服务版本不支持工具管理。</p>
+            <p className="empty-state">{t("tasks.tools.unsupportedPage")}</p>
           ) : packages.state === "error" ? (
             <p className="empty-state text-danger">
-              读取失败：{packages.message}
+              {t("common.loadFailed", { message: packages.message })}
             </p>
           ) : list.length ? (
             <div className="grid gap-4 md:grid-cols-2">
@@ -407,7 +422,7 @@ export function ToolPacksPage({
                               title={pack.problem.message}
                             >
                               <TriangleAlert className="size-3" />
-                              无法读取
+                              {t("tasks.tools.unreadable")}
                             </span>
                           ) : null}
                         </div>
@@ -424,7 +439,9 @@ export function ToolPacksPage({
                       {engineIds.length ? (
                         <div
                           className="ml-auto flex items-center"
-                          title={engineIds.map(engineName).join("、")}
+                          title={engineIds
+                            .map(engineName)
+                            .join(t("tasks.separator"))}
                         >
                           {engineIds.slice(0, 6).map((id) => (
                             <EngineAvatar
@@ -441,7 +458,7 @@ export function ToolPacksPage({
                         </div>
                       ) : (
                         <span className="ml-auto text-[12.5px] text-subtle">
-                          未应用到引擎
+                          {t("tasks.tools.notApplied")}
                         </span>
                       )}
                     </div>
@@ -455,7 +472,7 @@ export function ToolPacksPage({
                         {busy === `apply:${key}` ? (
                           <Loader2 className="animate-spin" />
                         ) : null}
-                        应用到全部引擎
+                        {t("tasks.tools.applyAll")}
                       </Button>
                       <Button
                         size="sm"
@@ -463,7 +480,7 @@ export function ToolPacksPage({
                         disabled={!!busy}
                         onClick={() => manage(pack)}
                       >
-                        选择引擎
+                        {t("tasks.tools.chooseEngines")}
                       </Button>
                       <Button
                         size="sm"
@@ -475,7 +492,7 @@ export function ToolPacksPage({
                         {busy === `unbind:${key}` ? (
                           <Loader2 className="animate-spin" />
                         ) : null}
-                        解除
+                        {t("tasks.tools.remove")}
                       </Button>
                     </div>
                   </article>
@@ -488,12 +505,12 @@ export function ToolPacksPage({
                 <Blocks className="size-5" strokeWidth={1.7} />
               </span>
               <p className="text-[14px] font-medium text-foreground">
-                还没有工具
+                {t("tasks.tools.empty")}
               </p>
-              <p>添加 Skill 目录、MCP 配置或命令行工具。</p>
+              <p>{t("tasks.tools.emptyHint")}</p>
               <Button size="sm" className="mt-3" onClick={openAdd}>
                 <Plus />
-                添加工具
+                {t("tasks.tools.add")}
               </Button>
             </div>
           )}
@@ -510,10 +527,12 @@ export function ToolPacksPage({
         >
           <DialogContent className="sm:max-w-[560px]">
             <DialogHeader>
-              <DialogTitle>{outcome ? outcome.title : "添加工具"}</DialogTitle>
+              <DialogTitle>
+                {outcome ? outcome.title : t("tasks.tools.add")}
+              </DialogTitle>
               {outcome ? null : (
                 <DialogDescription>
-                  文件留在本机，不会下载或运行安装脚本。
+                  {t("tasks.tools.localOnly")}
                 </DialogDescription>
               )}
             </DialogHeader>
@@ -525,7 +544,7 @@ export function ToolPacksPage({
                     variant="outline"
                     onClick={() => setOutcome(null)}
                   >
-                    继续添加
+                    {t("tasks.tools.addMore")}
                   </Button>
                   <Button
                     onClick={() => {
@@ -533,13 +552,17 @@ export function ToolPacksPage({
                       setOutcome(null);
                     }}
                   >
-                    完成
+                    {t("tasks.tools.done")}
                   </Button>
                 </DialogFooter>
               </>
             ) : (
               <>
-                <div className="segmented w-fit" role="tablist" aria-label="添加方式">
+                <div
+                  className="segmented w-fit"
+                  role="tablist"
+                  aria-label={t("tasks.tools.method")}
+                >
                   <button
                     type="button"
                     role="tab"
@@ -549,7 +572,7 @@ export function ToolPacksPage({
                       setError(null);
                     }}
                   >
-                    本机路径
+                    {t("tasks.tools.localPath")}
                   </button>
                   <button
                     type="button"
@@ -560,13 +583,13 @@ export function ToolPacksPage({
                       setError(null);
                     }}
                   >
-                    粘贴 MCP 配置
+                    {t("tasks.tools.pasteMcp")}
                   </button>
                 </div>
                 {addTab === "path" ? (
                   <div className="space-y-3">
                     <label className="field-label">
-                      路径
+                      {t("tasks.tools.path")}
                       <input
                         className="field font-mono text-[13px]"
                         value={source}
@@ -580,17 +603,17 @@ export function ToolPacksPage({
                         }}
                       />
                       <span className="field-hint block">
-                        Skill 目录、mcp.json、cli.json 或工具包目录。
+                        {t("tasks.tools.pathHint")}
                       </span>
                     </label>
                     <details className="group text-[13px]">
                       <summary className="flex w-fit items-center gap-1 text-muted-foreground hover:text-foreground">
                         <ChevronRight className="size-3.5 transition-transform duration-150 group-open:rotate-90" />
-                        更多选项
+                        {t("tasks.tools.moreOptions")}
                       </summary>
                       <div className="mt-3 grid gap-3 sm:grid-cols-3">
                         <label className="field-label">
-                          类型
+                          {t("tasks.tools.kind")}
                           <select
                             className="field"
                             value={kind}
@@ -599,29 +622,29 @@ export function ToolPacksPage({
                             }
                           >
                             {toolPackKinds.map((item) => (
-                              <option key={item.id} value={item.id}>
-                                {item.label}
+                              <option key={item} value={item}>
+                                {toolPackKindName(item)}
                               </option>
                             ))}
                           </select>
                         </label>
                         <label className="field-label">
-                          名称 ID
+                          {t("tasks.tools.packageId")}
                           <input
                             className="field font-mono text-[13px]"
                             value={packageId}
-                            placeholder="自动生成"
+                            placeholder={t("tasks.tools.generated")}
                             onChange={(event) =>
                               setPackageId(event.target.value)
                             }
                           />
                         </label>
                         <label className="field-label">
-                          版本
+                          {t("tasks.tools.version")}
                           <input
                             className="field font-mono text-[13px]"
                             value={packageVersion}
-                            placeholder="自动生成"
+                            placeholder={t("tasks.tools.generated")}
                             onChange={(event) =>
                               setPackageVersion(event.target.value)
                             }
@@ -633,7 +656,7 @@ export function ToolPacksPage({
                 ) : (
                   <div className="space-y-3">
                     <label className="field-label">
-                      名称（可选）
+                      {t("tasks.tools.nameOptional")}
                       <input
                         className="field"
                         value={mcpName}
@@ -643,7 +666,7 @@ export function ToolPacksPage({
                       />
                     </label>
                     <label className="field-label">
-                      MCP 配置
+                      {t("tasks.tools.mcpConfig")}
                       <textarea
                         className="field font-mono text-[12.5px]"
                         rows={9}
@@ -670,9 +693,9 @@ export function ToolPacksPage({
                     <Switch
                       checked={applyAll}
                       onCheckedChange={setApplyAll}
-                      aria-label="安装到全部引擎"
+                      aria-label={t("tasks.tools.installAll")}
                     />
-                    安装到全部引擎
+                    {t("tasks.tools.installAll")}
                   </label>
                   <div className="flex gap-2">
                     <Button
@@ -680,7 +703,7 @@ export function ToolPacksPage({
                       disabled={busy === "import"}
                       onClick={() => setAdding(false)}
                     >
-                      取消
+                      {t("common.cancel")}
                     </Button>
                     <Button
                       disabled={busy === "import"}
@@ -689,7 +712,7 @@ export function ToolPacksPage({
                       {busy === "import" ? (
                         <Loader2 className="animate-spin" />
                       ) : null}
-                      添加
+                      {t("tasks.tools.addButton")}
                     </Button>
                   </div>
                 </DialogFooter>
@@ -706,13 +729,13 @@ export function ToolPacksPage({
           <DialogContent className="sm:max-w-[520px]">
             <DialogHeader>
               <DialogTitle>{outcome?.title}</DialogTitle>
-              <DialogDescription>新任务生效，进行中的任务不受影响。</DialogDescription>
+              <DialogDescription>{t("tasks.tools.newTasksOnly")}</DialogDescription>
             </DialogHeader>
             {outcome ? <ResultRows outcome={outcome} /> : null}
             <DialogFooter>
               <Button onClick={() => setOutcome(null)}>
                 <Check />
-                完成
+                {t("tasks.tools.done")}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -725,7 +748,7 @@ export function ToolPacksPage({
         >
           <DialogContent className="sm:max-w-[460px]">
             <DialogHeader>
-              <DialogTitle>选择引擎</DialogTitle>
+              <DialogTitle>{t("tasks.tools.chooseEngines")}</DialogTitle>
               <DialogDescription>
                 {managing?.displayName ?? managing?.id}
               </DialogDescription>
@@ -751,13 +774,15 @@ export function ToolPacksPage({
                   <EngineAvatar id={engine.id} />
                   <span className="flex-1">{engineName(engine.id)}</span>
                   {!engine.enabled ? (
-                    <span className="text-[12px] text-subtle">已停用</span>
+                    <span className="text-[12px] text-subtle">
+                      {t("tasks.tools.disabled")}
+                    </span>
                   ) : null}
                 </label>
               ))}
               {!realEngines.length ? (
                 <p className="py-4 text-[13px] text-muted-foreground">
-                  还没有引擎
+                  {t("tasks.tools.noEngines")}
                 </p>
               ) : null}
             </div>
@@ -770,7 +795,7 @@ export function ToolPacksPage({
                   setManaging(null);
                 }}
               >
-                从所选引擎解除
+                {t("tasks.tools.removeSelected")}
               </Button>
               <Button
                 disabled={!!busy || !selected.length}
@@ -779,7 +804,7 @@ export function ToolPacksPage({
                   setManaging(null);
                 }}
               >
-                应用到所选引擎
+                {t("tasks.tools.applySelected")}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -793,15 +818,17 @@ export function ToolPacksPage({
           <DialogContent className="sm:max-w-[420px]">
             <DialogHeader>
               <DialogTitle>
-                解除 {removing?.displayName ?? removing?.id}？
+                {t("tasks.tools.removeTitle", {
+                  name: removing?.displayName ?? removing?.id ?? "",
+                })}
               </DialogTitle>
               <DialogDescription>
-                新任务将不再加载这个工具，可以随时重新应用。
+                {t("tasks.tools.removeHint")}
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
               <Button variant="outline" onClick={() => setRemoving(null)}>
-                取消
+                {t("common.cancel")}
               </Button>
               <Button
                 variant="destructive"
@@ -810,7 +837,7 @@ export function ToolPacksPage({
                   setRemoving(null);
                 }}
               >
-                解除
+                {t("tasks.tools.remove")}
               </Button>
             </DialogFooter>
           </DialogContent>

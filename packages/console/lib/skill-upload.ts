@@ -6,6 +6,7 @@
  * API takes it. The daemon checks everything again.
  */
 import type { LibraryAgent } from "@harnesshub/sdk/client";
+import { t } from "./i18n";
 
 /** The daemon's limits of one skill (docs/library.md). */
 export const SKILL_LIMITS = { files: 500, bytes: 20 * 1024 * 1024 } as const;
@@ -51,11 +52,11 @@ export async function readZip(data: ArrayBuffer): Promise<SkillFile[]> {
       end = at;
       break;
     }
-  if (end < 0) throw new Error("这不是 zip 文件");
+  if (end < 0) throw new Error(t("library.zip.notZip"));
   const count = view.getUint16(end + 10, true);
   const directory = view.getUint32(end + 16, true);
   if (count === 0xffff || directory === 0xffffffff)
-    throw new Error("不支持 ZIP64 格式的压缩包");
+    throw new Error(t("library.zip.zip64"));
   const names = new TextDecoder();
   const entries: Array<{
     path: string;
@@ -68,7 +69,7 @@ export async function readZip(data: ArrayBuffer): Promise<SkillFile[]> {
   let at = directory;
   for (let index = 0; index < count; index++) {
     if (at + 46 > size || view.getUint32(at, true) !== ZIP.central)
-      throw new Error("压缩包已损坏");
+      throw new Error(t("library.zip.corrupt"));
     const madeBy = view.getUint16(at + 4, true);
     const flags = view.getUint16(at + 8, true);
     const method = view.getUint16(at + 10, true);
@@ -81,10 +82,10 @@ export async function readZip(data: ArrayBuffer): Promise<SkillFile[]> {
     const local = view.getUint32(at + 42, true);
     const path = names.decode(new Uint8Array(data, at + 46, nameLength));
     at += 46 + nameLength + extraLength + commentLength;
-    if (flags & 1) throw new Error(`${path} 已加密，不能读取`);
+    if (flags & 1) throw new Error(t("library.zip.encrypted", { path }));
     const mode = madeBy >> 8 === 3 ? external >>> 16 : 0;
     if ((mode & 0o170000) === 0o120000)
-      throw new Error(`${path} 是链接；Skill 只能包含普通文件`);
+      throw new Error(t("library.zip.link", { path }));
     if (path.endsWith("/") || ignored(path)) continue;
     entries.push({
       path,
@@ -98,14 +99,17 @@ export async function readZip(data: ArrayBuffer): Promise<SkillFile[]> {
   const total = entries.reduce((sum, entry) => sum + entry.size, 0);
   if (entries.length > SKILL_LIMITS.files)
     throw new Error(
-      `压缩包有 ${entries.length} 个文件，超过 ${SKILL_LIMITS.files} 个`,
+      t("library.zip.tooMany", {
+        count: entries.length,
+        limit: SKILL_LIMITS.files,
+      }),
     );
   if (total > SKILL_LIMITS.bytes)
-    throw new Error(`压缩包解开后有 ${bytes(total)}，超过 20 MiB`);
+    throw new Error(t("library.zip.tooLarge", { size: bytes(total) }));
   const files: SkillFile[] = [];
   for (const entry of entries) {
     if (view.getUint32(entry.local, true) !== ZIP.local)
-      throw new Error("压缩包已损坏");
+      throw new Error(t("library.zip.corrupt"));
     const start =
       entry.local +
       30 +
@@ -120,10 +124,13 @@ export async function readZip(data: ArrayBuffer): Promise<SkillFile[]> {
           : undefined;
     if (!content)
       throw new Error(
-        `${entry.path} 使用了不支持的压缩方式（${entry.method}）`,
+        t("library.zip.method", {
+          path: entry.path,
+          method: String(entry.method),
+        }),
       );
     if (content.length !== entry.size)
-      throw new Error(`${entry.path} 解压后的大小不符，压缩包可能已损坏`);
+      throw new Error(t("library.zip.size", { path: entry.path }));
     files.push({ path: entry.path, bytes: content, exec: entry.exec });
   }
   return files;
@@ -160,13 +167,18 @@ export function skillOf(
   }
   const size = files.reduce((sum, file) => sum + file.bytes.length, 0);
   const problems: string[] = [];
-  if (!files.length) problems.push("没有文件");
+  if (!files.length) problems.push(t("library.skill.noFiles"));
   if (files.length > SKILL_LIMITS.files)
-    problems.push(`有 ${files.length} 个文件，超过 ${SKILL_LIMITS.files} 个`);
+    problems.push(
+      t("library.skill.tooMany", {
+        count: files.length,
+        limit: SKILL_LIMITS.files,
+      }),
+    );
   if (size > SKILL_LIMITS.bytes)
-    problems.push(`共 ${bytes(size)}，超过 20 MiB`);
+    problems.push(t("library.skill.tooLarge", { size: bytes(size) }));
   if (files.length && !files.some((file) => file.path === "SKILL.md"))
-    problems.push("顶层没有 SKILL.md");
+    problems.push(t("library.skill.noSkillMd"));
   return { name, files, size, problems };
 }
 

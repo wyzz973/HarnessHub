@@ -27,6 +27,7 @@ import {
   workspaceSchema,
 } from "./contracts";
 import type { SecretReference } from "./engine-configuration";
+import { t } from "./i18n";
 
 /**
  * The legacy `/v1` routes are on the page's own origin: the daemon serves the
@@ -36,7 +37,7 @@ const base = "";
 /** The connected Gateway has no route for this path, e.g. an older build without ADR 0013 APIs. */
 export class UnsupportedFeatureError extends Error {
   constructor(readonly path: string) {
-    super("当前 Gateway 不支持此功能，请升级到包含该接口的版本。");
+    super(t("tasks.api.unsupported"));
     this.name = "UnsupportedFeatureError";
   }
 }
@@ -81,8 +82,8 @@ export async function request<T>(
     } catch {
       throw new Error(
         response.ok
-          ? `服务返回了无法解析的数据：${path}`
-          : `请求失败（${response.status}）`,
+          ? t("tasks.api.unparsable", { path })
+          : t("tasks.api.failed", { status: String(response.status) }),
       );
     }
   }
@@ -96,11 +97,11 @@ export async function request<T>(
         ? parsed.data.message
         : nested.success
           ? nested.data.error.message
-          : `请求失败（${response.status}）`,
+          : t("tasks.api.failed", { status: String(response.status) }),
     );
   }
   const parsed = schema.safeParse(data);
-  if (!parsed.success) throw new Error(`服务返回的数据格式不符合约定：${path}`);
+  if (!parsed.success) throw new Error(t("tasks.api.invalidShape", { path }));
   return parsed.data;
 }
 /** Loadable Gateway data with an explicit "this Gateway lacks the API" state. */
@@ -117,7 +118,9 @@ export function remoteOf<T>(result: PromiseSettledResult<T>): Remote<T> {
   return {
     state: "error",
     message:
-      result.reason instanceof Error ? result.reason.message : "读取失败",
+      result.reason instanceof Error
+        ? result.reason.message
+        : t("tasks.api.loadFailed"),
   };
 }
 export type GatewayHealth = "checking" | "ready" | "not-ready" | "offline";
@@ -426,7 +429,9 @@ export async function readEvents(
     { signal, headers: { Accept: "text/event-stream" }, cache: "no-store" },
   );
   if (!response.ok || !response.body)
-    throw new Error(`事件流暂不可用（${response.status}）`);
+    throw new Error(
+      t("tasks.api.streamUnavailable", { status: String(response.status) }),
+    );
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffered = "";

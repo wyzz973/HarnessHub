@@ -5,6 +5,7 @@ import type {
   ToolPackEngineResult,
   ToolPackRecord,
 } from "./contracts";
+import { isMessageKey, t, translate } from "./i18n";
 
 function mentionsDigest(engine: Engine, digest: string) {
   const configuration = engine.configuration;
@@ -65,17 +66,15 @@ export function applyRows(result: ToolPackApply | undefined) {
       ]
     : [];
 }
-export const toolPackStatusNames: Record<string, string> = {
-  applied: "已应用",
-  skipped: "已跳过",
-  failed: "失败",
-  removed: "已解除",
-  unbound: "已解除",
-  unchanged: "无变化",
-};
-export const toolPackKinds = [
-  { id: "auto", label: "自动识别" },
-  { id: "skills", label: "Skill" },
-  { id: "mcp", label: "MCP" },
-  { id: "cli", label: "CLI" },
-] as const;
+/** The outcome of applying a tool pack to an engine; an outcome this console does not know shows as sent. */
+export function toolPackStatusName(status: string): string {
+  const key = `tasks.toolPack.status.${status}`;
+  return isMessageKey(key) ? translate(key) : status;
+}
+export const toolPackKinds = ["auto", "skills", "mcp", "cli"] as const;
+/** The import kinds' names: detection is described, the others are product names. */
+export function toolPackKindName(kind: (typeof toolPackKinds)[number]): string {
+  return kind === "auto"
+    ? t("tasks.toolPack.kind.auto")
+    : { skills: "Skill", mcp: "MCP", cli: "CLI" }[kind];
+}

@@ -22,25 +22,30 @@ import {
   legacyKeyless,
   modelOptional,
   modelVisibility,
-  optionText,
+  optionLabel,
+  optionValueText,
   tierText,
   wiringInput,
   type WiringDraft,
 } from "@/lib/agents";
 import { agentIconSlug } from "@/lib/brand-icons";
 import type { GatewayModels } from "@/lib/gateway-models";
+import { t } from "@/lib/i18n";
 import { modelPlane } from "@/lib/model-plane";
 import { notify } from "@/lib/toast";
 import { ConfirmDialog, LocalTime } from "./model-plane-ui";
 import { WirePlanDialog } from "./wire-plan-dialog";
 
-const keyStateText: Record<string, { label: string; tone: string }> = {
-  active: { label: "可用", tone: "good" },
-  revoked: { label: "已吊销", tone: "error" },
-  expired: { label: "已过期", tone: "error" },
-  missing: { label: "不存在", tone: "error" },
-  none: { label: "无 Key", tone: "" },
-};
+/** The state of an agent's key as a tag. */
+function keyStateText(state: NonNullable<Agent["wiring"]>["keyState"]): {
+  label: string;
+  tone: string;
+} {
+  return {
+    label: t(`agents.keyState.${state}`),
+    tone: state === "active" ? "good" : state === "none" ? "" : "error",
+  };
+}
 
 function Section({
   title,
@@ -91,7 +96,7 @@ function WiringForm({
     <div className="space-y-3">
       {Object.entries(capabilities.options).map(([name, values]) => (
         <label key={name} className="field-label">
-          {optionText[name]?.label ?? name}
+          {optionLabel(name)}
           <select
             className="field"
             value={draft.options[name] ?? values[0]}
@@ -99,7 +104,7 @@ function WiringForm({
           >
             {values.map((value) => (
               <option key={value} value={value}>
-                {optionText[name]?.values[value] ?? value}
+                {optionValueText(name, value)}
               </option>
             ))}
           </select>
@@ -107,20 +112,20 @@ function WiringForm({
       ))}
       {ownModel ? (
         <p className="callout neutral">
-          {agent.name} 保留自己的 ChatGPT
-          登录：不选模型时用它自己的模型，请求经网关转发；选了 HarnessHub
-          的模型时经网关调用它。接线签发的 Key 写在基址中，只在本机可用。
+          {t("agents.detail.chatgptMode", { name: agent.name })}
         </p>
       ) : null}
       <>
         <div>
-          <span className="field-label">主模型</span>
+          <span className="field-label">{t("agents.detail.mainModel")}</span>
           <ModelPicker
             className="mt-1.5"
-            label="主模型"
+            label={t("agents.detail.mainModel")}
             models={models}
             value={draft.model}
-            {...(ownModel ? { none: `${agent.name} 自己的模型` } : {})}
+            {...(ownModel
+              ? { none: t("agents.ownModel", { name: agent.name }) }
+              : {})}
             onChange={(ref) =>
               set(
                 ref || !ownModel
@@ -134,13 +139,13 @@ function WiringForm({
           <div className="grid gap-3 sm:grid-cols-2">
             {capabilities.tiers.map((tier) => (
               <div key={tier}>
-                <span className="field-label">{tierText[tier]}</span>
+                <span className="field-label">{tierText(tier)}</span>
                 <ModelPicker
                   className="mt-1.5"
-                  label={tierText[tier]}
+                  label={tierText(tier)}
                   models={models}
                   value={draft.tiers[tier]}
-                  none="跟随主模型"
+                  none={t("agents.detail.followMain")}
                   onChange={(ref) =>
                     set({ tiers: { ...draft.tiers, [tier]: ref } })
                   }
@@ -151,7 +156,7 @@ function WiringForm({
         ) : null}
         {capabilities.efforts.length && !(ownModel && !draft.model) ? (
           <label className="field-label">
-            推理强度（effort）
+            {t("agents.detail.effort")}
             <select
               className="field"
               value={draft.effort ?? ""}
@@ -163,10 +168,13 @@ function WiringForm({
                 })
               }
             >
-              <option value="">默认（不设置）</option>
+              <option value="">{t("agents.detail.effortDefault")}</option>
               {capabilities.efforts.map((effort) => (
                 <option key={effort} value={effort}>
-                  {effortText[effort]}（{effort}）
+                  {t("agents.detail.effortOption", {
+                    label: effortText(effort),
+                    effort,
+                  })}
                 </option>
               ))}
             </select>
@@ -178,7 +186,7 @@ function WiringForm({
           disabled={!ownModel && !draft.model}
           onClick={() => onPreview(wiringInput(agent, draft))}
         >
-          预览改动
+          {t("agents.detail.preview")}
         </Button>
       </div>
     </div>
@@ -222,35 +230,39 @@ function ModelVisibility({
       .then(
         (updated) => {
           setBusy(false);
-          notify.success(`${agent.name} 现在显示 ${shown} 个模型`);
+          notify.success(
+            t("agents.visibility.saved", { name: agent.name, n: shown }),
+          );
           onChanged(updated);
         },
         (reason: unknown) => {
           setBusy(false);
-          notify.error(reason, "没有保存");
+          notify.error(reason, t("agents.visibility.notSaved"));
         },
       );
   };
   return (
     <Section
-      title={`显示 ${shown} / ${visibility.allowed.length} 个模型`}
+      title={t("agents.row.shown", {
+        shown,
+        allowed: visibility.allowed.length,
+      })}
       aside={
         <Button size="sm" disabled={!changed || busy} onClick={save}>
           {busy ? <Loader2 className="animate-spin" /> : null}
-          保存
+          {t("agents.visibility.save")}
         </Button>
       }
     >
       <p className="text-[12.5px] text-muted-foreground">
-        隐藏的模型从 {agent.name} 的模型列表和它的 Key 可用的模型中去掉，Key
-        不变；网关之后新增的模型默认显示。
+        {t("agents.visibility.help", { name: agent.name })}
       </p>
       <label className="flex h-9 items-center gap-2 rounded-[10px] border px-3">
         <Search className="size-4 shrink-0 text-subtle" />
         <input
           className="h-full min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-subtle"
-          placeholder="筛选模型"
-          aria-label="筛选模型"
+          placeholder={t("agents.visibility.filter")}
+          aria-label={t("agents.visibility.filter")}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
@@ -265,7 +277,7 @@ function ModelVisibility({
                 type="button"
                 disabled={locked}
                 aria-pressed={!off}
-                title={locked ? "正在使用的模型不能隐藏" : undefined}
+                title={locked ? t("agents.visibility.locked") : undefined}
                 className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2 text-left text-[13px] hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={() =>
                   setHidden((current) => {
@@ -286,14 +298,16 @@ function ModelVisibility({
                 >
                   {ref}
                 </span>
-                {locked ? <span className="tag">使用中</span> : null}
+                {locked ? (
+                  <span className="tag">{t("agents.visibility.inUse")}</span>
+                ) : null}
               </button>
             </li>
           );
         })}
         {!list.length ? (
           <li className="px-2 py-4 text-center text-[13px] text-muted-foreground">
-            没有匹配的模型
+            {t("agents.picker.noMatch")}
           </li>
         ) : null}
       </ul>
@@ -321,12 +335,9 @@ export function AgentDetail({
   const [confirm, setConfirm] = useState<"rotate" | "unwire" | null>(null);
   const wiring = agent.wiring;
   const legacy = legacyKeyless(agent);
-  const install = installationText[agent.installation.status];
+  const install = installationText(agent.installation.status);
   const problems = attention(agent, models);
-  const keyState = keyStateText[wiring?.keyState ?? "none"] ?? {
-    label: wiring?.keyState ?? "—",
-    tone: "",
-  };
+  const keyState = keyStateText(wiring?.keyState ?? "none");
   return (
     <Dialog open onOpenChange={(open) => (!open ? onClose() : null)}>
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-[720px]">
@@ -341,8 +352,8 @@ export function AgentDetail({
               <DialogDescription className="font-mono text-[12px]">
                 {agent.id} · {agent.protocol} ·{" "}
                 {agent.keyDelivery === "env-file"
-                  ? "Key 写入 Agent 读取的 .env"
-                  : "Key 写入配置文件"}
+                  ? t("agents.detail.keyInEnv")
+                  : t("agents.detail.keyInConfig")}
               </DialogDescription>
             </div>
           </div>
@@ -360,28 +371,32 @@ export function AgentDetail({
         <dl className="text-[13px]">
           {agent.installation.executable ? (
             <div className="metric-row">
-              <dt>命令</dt>
+              <dt>{t("agents.detail.command")}</dt>
               <dd className="font-mono text-[12px]">
                 {agent.installation.executable}
               </dd>
             </div>
           ) : null}
           <div className="metric-row">
-            <dt>配置目录</dt>
+            <dt>{t("agents.detail.configDirectories")}</dt>
             <dd className="font-mono text-[12px]">
-              {agent.installation.configDirectories.join("、") || "—"}
+              {agent.installation.configDirectories.join(
+                t("agents.listSeparator"),
+              ) || "—"}
             </dd>
           </div>
           {wiring ? (
             <div className="metric-row">
-              <dt>接线时间</dt>
+              <dt>{t("agents.detail.wiredAt")}</dt>
               <dd>
                 <LocalTime value={wiring.wiredAt} />
               </dd>
             </div>
           ) : null}
         </dl>
-        <Section title={wiring ? "接线" : "接到网关"}>
+        <Section
+          title={wiring ? t("agents.detail.wiring") : t("agents.detail.wireUp")}
+        >
           <WiringForm
             key={wiring?.wiredAt ?? "new"}
             agent={agent}
@@ -407,15 +422,13 @@ export function AgentDetail({
                 onClick={() => setConfirm("rotate")}
               >
                 <KeyRound />
-                {legacy ? "签发 Key" : "换 Key"}
+                {legacy ? t("agents.key.issue") : t("agents.key.rotate")}
               </Button>
             }
           >
             {legacy ? (
               <p className="callout info">
-                这条 ChatGPT 接线来自之前的版本，没有 Key：{agent.name}
-                自己的模型照常可用，HarnessHub 的模型会被拒绝（401）。签发一把
-                Key 后它也能使用 HarnessHub 的模型。
+                {t("agents.key.legacy", { name: agent.name })}
               </p>
             ) : (
               <p className="flex flex-wrap items-center gap-2 text-[13px]">
@@ -429,7 +442,7 @@ export function AgentDetail({
         ) : null}
         {wiring ? (
           <Section
-            title="配置文件"
+            title={t("agents.detail.files")}
             aside={
               <Button
                 size="sm"
@@ -437,7 +450,7 @@ export function AgentDetail({
                 onClick={() => setConfirm("unwire")}
               >
                 <Undo2 />
-                还原
+                {t("agents.restore")}
               </Button>
             }
           >
@@ -453,9 +466,9 @@ export function AgentDetail({
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>文件</th>
-                      <th>字段</th>
-                      <th>变化</th>
+                      <th>{t("agents.findings.file")}</th>
+                      <th>{t("agents.findings.field")}</th>
+                      <th>{t("agents.findings.change")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -468,8 +481,10 @@ export function AgentDetail({
                           {finding.keyPath.join(".")}
                         </td>
                         <td>
-                          {driftText[finding.kind] ?? finding.kind}（
-                          {driftReasonText[finding.reason] ?? finding.reason}）
+                          {t("agents.findings.item", {
+                            kind: driftText(finding.kind),
+                            reason: driftReasonText(finding.reason),
+                          })}
                         </td>
                       </tr>
                     ))}
@@ -480,7 +495,7 @@ export function AgentDetail({
               <p className="callout error">{wiring.driftError}</p>
             ) : (
               <p className="text-[12.5px] text-muted-foreground">
-                与接线时写入的内容一致。
+                {t("agents.findings.none")}
               </p>
             )}
           </Section>
@@ -489,42 +504,50 @@ export function AgentDetail({
           <WirePlanDialog
             agent={agent}
             input={plan}
-            title={`${wiring ? "修改" : "接线"} ${agent.name}`}
+            title={t(wiring ? "agents.changeTitle" : "agents.wireTitle", {
+              name: agent.name,
+            })}
             onClose={() => setPlan(null)}
             onWired={onChanged}
           />
         ) : null}
         <ConfirmDialog
           open={confirm === "rotate"}
-          title={
-            legacy
-              ? `给 ${agent.name} 签发 Key`
-              : `给 ${agent.name} 换一把新 Key`
-          }
+          title={t(
+            legacy ? "agents.key.issueTitle" : "agents.key.rotateTitle",
+            {
+              name: agent.name,
+            },
+          )}
           description={
             legacy
-              ? "以当前的选择重新接线并签发第一把 Key，写入它的配置文件。正在运行的实例要重启后才用这把 Key。"
-              : "以当前的模型与列表重新接线并签发新 Key，旧 Key 立即失效。正在运行的实例要重启后才用新 Key。"
+              ? t("agents.key.issueDescription")
+              : t("agents.key.rotateDescription")
           }
-          action={legacy ? "签发 Key" : "换 Key"}
+          action={legacy ? t("agents.key.issue") : t("agents.key.rotate")}
           onClose={() => setConfirm(null)}
           onConfirm={async () => {
             onChanged(await modelPlane().agents.rotate(agent.id));
             notify.success(
-              legacy ? `${agent.name} 已有 Key` : `${agent.name} 已换用新 Key`,
+              t(legacy ? "agents.key.issued" : "agents.key.rotated", {
+                name: agent.name,
+              }),
             );
           }}
         />
         <ConfirmDialog
           open={confirm === "unwire"}
-          title={`还原 ${agent.name}`}
-          description="配置文件未被改动时恢复为接线前的原样；之后改过的文件只撤销 HarnessHub 写入的项。它的 Key 随即吊销。"
-          action="还原"
+          title={t("agents.restoreTitle", { name: agent.name })}
+          description={t("agents.restoreDescription")}
+          action={t("agents.restore")}
           onClose={() => setConfirm(null)}
           onConfirm={async () => {
             const result = await modelPlane().agents.unwire(agent.id);
             notify.success(
-              `${agent.name} 已还原（${result.files.length} 个文件）`,
+              t("agents.restored", {
+                name: agent.name,
+                n: result.files.length,
+              }),
             );
             onChanged(result.agent);
           }}

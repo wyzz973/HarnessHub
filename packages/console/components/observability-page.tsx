@@ -6,6 +6,7 @@ import { engineName } from "@/lib/engines";
 import { dateLabel, duration, quantity, modelLabel } from "@/lib/presentation";
 import { EngineAvatar } from "./engine-avatar";
 import { Status } from "./status";
+import { formatNumber, t } from "@/lib/i18n";
 
 function Stat({
   label,
@@ -46,7 +47,9 @@ export function ObservabilityPage({
     if (workflow.planningRunId)
       labels.set(
         workflow.planningRunId,
-        `计划 · ${workflow.title ?? workflow.goal}`,
+        t("tasks.observe.planLabel", {
+          title: workflow.title ?? workflow.goal,
+        }),
       );
     for (const step of workflow.steps)
       if (step.runId) labels.set(step.runId, step.title);
@@ -59,11 +62,14 @@ export function ObservabilityPage({
       <div className="page-column max-w-[1040px]">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h1 className="page-title">观测</h1>
+            <h1 className="page-title">{t("tasks.observe.title")}</h1>
             <p className="page-lede">
               {overview
-                ? `基于最近 ${overview.scope.sampledRuns} 次执行，${dateLabel(overview.generatedAt)} 更新。`
-                : "执行耗时、用量与引擎负载。"}
+                ? t("tasks.observe.scope", {
+                    n: overview.scope.sampledRuns,
+                    time: dateLabel(overview.generatedAt),
+                  })
+                : t("tasks.observe.lede")}
             </p>
           </div>
           <Button
@@ -73,26 +79,33 @@ export function ObservabilityPage({
             disabled={loading}
           >
             <RefreshCw className={loading ? "animate-spin" : ""} />
-            刷新
+            {t("tasks.observe.refresh")}
           </Button>
         </div>
         <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Stat
-            label="执行次数"
+            label={t("tasks.observe.runs")}
             value={quantity(summary?.totalRuns)}
-            {...(summary ? { note: `${summary.activeRuns} 个进行中` } : {})}
+            {...(summary
+              ? { note: t("tasks.observe.active", { n: summary.activeRuns }) }
+              : {})}
           />
           <Stat
-            label="已完成"
+            label={t("tasks.observe.completed")}
             value={quantity(summary?.completedRuns)}
             {...(summary
               ? {
-                  note: `${summary.failedRuns + summary.timedOutRuns + summary.interruptedRuns} 个失败`,
+                  note: t("tasks.observe.failed", {
+                    n:
+                      summary.failedRuns +
+                      summary.timedOutRuns +
+                      summary.interruptedRuns,
+                  }),
                 }
               : {})}
           />
           <Stat
-            label="耗时中位数"
+            label={t("tasks.observe.median")}
             value={duration(summary?.p50DurationMs)}
             {...(summary
               ? { note: `P95 ${duration(summary.p95DurationMs)}` }
@@ -102,20 +115,26 @@ export function ObservabilityPage({
             label="Token"
             value={quantity(summary?.knownTotalTokens)}
             {...(summary?.usageCoverage != null
-              ? { note: `覆盖 ${Math.round(summary.usageCoverage * 100)}% 的执行` }
+              ? {
+                  note: t("tasks.observe.coverage", {
+                    percent: Math.round(summary.usageCoverage * 100),
+                  }),
+                }
               : {})}
           />
         </div>
-        <h2 className="section-title mt-9 mb-3">引擎</h2>
+        <h2 className="section-title mt-9 mb-3">
+          {t("tasks.observe.engines")}
+        </h2>
         <div className="panel overflow-x-auto">
           <table className="data-table min-w-[560px]">
             <thead>
               <tr>
-                <th>引擎</th>
-                <th>进行中 / 并发上限</th>
-                <th>排队</th>
-                <th>完成 / 失败</th>
-                <th>耗时中位数</th>
+                <th>{t("tasks.observe.engine")}</th>
+                <th>{t("tasks.observe.activeLimit")}</th>
+                <th>{t("tasks.observe.queued")}</th>
+                <th>{t("tasks.observe.doneFailed")}</th>
+                <th>{t("tasks.observe.median")}</th>
               </tr>
             </thead>
             <tbody>
@@ -145,19 +164,23 @@ export function ObservabilityPage({
               ))}
             </tbody>
           </table>
-          {!engines.length ? <p className="empty-state">还没有记录</p> : null}
+          {!engines.length ? (
+            <p className="empty-state">{t("tasks.observe.noRecords")}</p>
+          ) : null}
         </div>
-        <h2 className="section-title mt-9 mb-3">最近执行</h2>
+        <h2 className="section-title mt-9 mb-3">
+          {t("tasks.observe.recent")}
+        </h2>
         <div className="panel overflow-x-auto">
           <table className="data-table min-w-[720px]">
             <thead>
               <tr>
-                <th>任务</th>
-                <th>引擎</th>
-                <th>状态</th>
-                <th>耗时</th>
+                <th>{t("tasks.observe.task")}</th>
+                <th>{t("tasks.observe.engine")}</th>
+                <th>{t("tasks.observe.status")}</th>
+                <th>{t("tasks.observe.duration")}</th>
                 <th>Token</th>
-                <th>费用</th>
+                <th>{t("tasks.observe.cost")}</th>
                 <th />
               </tr>
             </thead>
@@ -197,10 +220,14 @@ export function ObservabilityPage({
                       <span className="text-subtle">—</span>
                     ) : (
                       <span>
-                        {run.cost.currency} {run.cost.amount.toFixed(5)}
+                        {run.cost.currency}{" "}
+                        {formatNumber(run.cost.amount, undefined, {
+                          minimumFractionDigits: 5,
+                          maximumFractionDigits: 5,
+                        })}
                         {run.cost.kind === "estimated" ? (
                           <span className="ml-1 text-[12px] text-subtle">
-                            估算
+                            {t("tasks.observe.estimated")}
                           </span>
                         ) : null}
                       </span>
@@ -210,7 +237,9 @@ export function ObservabilityPage({
                     <Button
                       size="icon-sm"
                       variant="ghost"
-                      aria-label={`查看执行 ${run.runId.slice(0, 8)}`}
+                      aria-label={t("tasks.observe.view", {
+                        id: run.runId.slice(0, 8),
+                      })}
                       onClick={() => inspect(run.sessionId, run.runId)}
                     >
                       <ArrowUpRight />
@@ -221,7 +250,7 @@ export function ObservabilityPage({
             </tbody>
           </table>
           {!overview?.recentRuns.length ? (
-            <p className="empty-state">还没有执行记录</p>
+            <p className="empty-state">{t("tasks.observe.noRuns")}</p>
           ) : null}
         </div>
       </div>

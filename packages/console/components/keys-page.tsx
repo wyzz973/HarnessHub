@@ -27,9 +27,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { t } from "@/lib/i18n";
 import {
   expiresAtFor,
   expiryChoices,
+  expiryLabel,
   failureOf,
   modelPlane,
   modelRefChoices,
@@ -52,10 +54,10 @@ import {
 } from "./model-plane-ui";
 
 function keyState(key: GatewayKeyView, now: number) {
-  if (key.revokedAt) return { label: "已吊销", tone: "" };
+  if (key.revokedAt) return { label: t("routing.key.revoked"), tone: "" };
   if (key.expiresAt && Date.parse(key.expiresAt) <= now)
-    return { label: "已过期", tone: "warn" };
-  return { label: "可用", tone: "good" };
+    return { label: t("routing.key.expired"), tone: "warn" };
+  return { label: t("routing.key.active"), tone: "good" };
 }
 
 /** The new key's text, shown once with a copy button. */
@@ -70,14 +72,14 @@ function CreatedKey({
   return (
     <>
       <DialogHeader>
-        <DialogTitle>已创建 {created.gatewayKey.name}</DialogTitle>
-        <DialogDescription>
-          复制后交给使用它的脚本或工具，调用网关时作为 API Key 发送。
-        </DialogDescription>
+        <DialogTitle>
+          {t("routing.key.createdTitle", { name: created.gatewayKey.name })}
+        </DialogTitle>
+        <DialogDescription>{t("routing.key.createdLede")}</DialogDescription>
       </DialogHeader>
       <div className="callout warn items-start">
         <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-        这是唯一一次显示 Key。关闭后无法再次查看，只能吊销后重新创建。
+        {t("routing.key.shownOnce")}
       </div>
       <div className="flex items-center gap-2">
         <input
@@ -89,7 +91,7 @@ function CreatedKey({
         />
         <Button
           variant="outline"
-          aria-label="复制 Key"
+          aria-label={t("routing.key.copyLabel")}
           onClick={() => {
             void navigator.clipboard.writeText(created.key).then(() => {
               setCopied(true);
@@ -98,11 +100,11 @@ function CreatedKey({
           }}
         >
           {copied ? <Check /> : <Copy />}
-          {copied ? "已复制" : "复制"}
+          {copied ? t("routing.key.copied") : t("routing.key.copy")}
         </Button>
       </div>
       <DialogFooter>
-        <Button onClick={onDone}>我已保存</Button>
+        <Button onClick={onDone}>{t("routing.key.saved")}</Button>
       </DialogFooter>
     </>
   );
@@ -178,14 +180,13 @@ function CreateKeyDialog({
         ) : (
           <>
             <DialogHeader>
-              <DialogTitle>创建 Gateway Key</DialogTitle>
+              <DialogTitle>{t("routing.key.createTitle")}</DialogTitle>
               <DialogDescription>
-                client 作用域的 Key，供脚本、IDE
-                与其他工具调用网关；只能使用允许的模型。
+                {t("routing.key.createLede")}
               </DialogDescription>
             </DialogHeader>
             <label className="field-label">
-              名称
+              {t("routing.key.name")}
               <input
                 className="field"
                 value={name}
@@ -198,7 +199,7 @@ function CreateKeyDialog({
             </label>
             <fieldset>
               <legend className="field-label mb-1">
-                允许的模型（至少一个）
+                {t("routing.key.allowLegend")}
               </legend>
               <div className="max-h-[34vh] space-y-2 overflow-y-auto rounded-xl border p-2">
                 {modelRefChoices(providers).map((choice) => (
@@ -211,7 +212,7 @@ function CreateKeyDialog({
                         {choice.provider}/*
                       </span>
                       <span className="ml-2 text-[12px] text-subtle">
-                        该 provider 的全部模型
+                        {t("routing.key.allProviderModels")}
                       </span>
                     </Checkbox>
                     {choice.refs.map((ref) => (
@@ -240,24 +241,24 @@ function CreateKeyDialog({
                 ))}
                 {!providers.length && !groups.length ? (
                   <p className="px-2 py-3 text-[13px] text-muted-foreground">
-                    还没有 provider，可以在下方直接填写 Model Ref。
+                    {t("routing.key.noProviders")}
                   </p>
                 ) : null}
               </div>
             </fieldset>
             <label className="field-label">
-              其他 Model Ref（可选）
+              {t("routing.key.extra")}
               <input
                 className="field font-mono text-[13px]"
                 value={extra}
-                placeholder="provider/model，以空格或逗号分隔"
+                placeholder={t("routing.key.extraPlaceholder")}
                 spellCheck={false}
                 onChange={(event) => setExtra(event.target.value)}
               />
               <FieldError failure={failure} pointer="/modelAllow" />
             </label>
             <label className="field-label">
-              有效期
+              {t("routing.key.expiry")}
               <select
                 className="field"
                 value={expiry}
@@ -267,7 +268,7 @@ function CreateKeyDialog({
               >
                 {expiryChoices.map((choice) => (
                   <option key={choice.id} value={choice.id}>
-                    {choice.label}
+                    {expiryLabel(choice.id)}
                   </option>
                 ))}
               </select>
@@ -285,14 +286,14 @@ function CreateKeyDialog({
             />
             <DialogFooter>
               <Button variant="outline" disabled={busy} onClick={onClose}>
-                取消
+                {t("common.cancel")}
               </Button>
               <Button
                 disabled={busy || !name.trim() || !modelAllow.length}
                 onClick={() => void create()}
               >
                 {busy ? <Loader2 className="animate-spin" /> : null}
-                创建
+                {t("routing.key.create")}
               </Button>
             </DialogFooter>
           </>
@@ -328,13 +329,13 @@ export function KeysPage({ tabs }: { tabs?: React.ReactNode }) {
       <div className="page-column max-w-[1040px]">
         {tabs}
         <PageHeader
-          title="Gateway Key"
-          lede="调用网关的凭据；本机来源同样需要 Key。Key 文本只在创建时显示一次。"
+          title={t("routing.keys.title")}
+          lede={t("routing.keys.lede")}
         >
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label="刷新"
+            aria-label={t("common.refresh")}
             onClick={reload}
           >
             <RefreshCw />
@@ -345,7 +346,7 @@ export function KeysPage({ tabs }: { tabs?: React.ReactNode }) {
             onClick={() => setCreating(true)}
           >
             <Plus />
-            创建 Key
+            {t("routing.keys.createButton")}
           </Button>
         </PageHeader>
         <div className="mt-6">
@@ -361,13 +362,13 @@ export function KeysPage({ tabs }: { tabs?: React.ReactNode }) {
               <table className="data-table min-w-[880px]">
                 <thead>
                   <tr>
-                    <th>名称</th>
-                    <th>作用域</th>
-                    <th>允许的模型</th>
-                    <th>额度</th>
-                    <th>过期</th>
-                    <th>最近使用</th>
-                    <th>状态</th>
+                    <th>{t("routing.key.name")}</th>
+                    <th>{t("routing.keys.scope")}</th>
+                    <th>{t("routing.keys.allowed")}</th>
+                    <th>{t("routing.keys.limits")}</th>
+                    <th>{t("routing.keys.expires")}</th>
+                    <th>{t("routing.keys.lastUsed")}</th>
+                    <th>{t("routing.status")}</th>
                     <th />
                   </tr>
                 </thead>
@@ -401,14 +402,16 @@ export function KeysPage({ tabs }: { tabs?: React.ReactNode }) {
                               </span>
                             ))
                           ) : (
-                            <span className="text-subtle">不限</span>
+                            <span className="text-subtle">
+                              {t("routing.quota.noLimit")}
+                            </span>
                           )}
                         </td>
                         <td className="text-[12.5px]">
                           {key.expiresAt ? (
                             <LocalTime value={key.expiresAt} />
                           ) : (
-                            "永不"
+                            t("routing.keys.never")
                           )}
                         </td>
                         <td className="text-[12.5px] text-muted-foreground">
@@ -424,8 +427,10 @@ export function KeysPage({ tabs }: { tabs?: React.ReactNode }) {
                             <Button
                               size="icon-sm"
                               variant="ghost"
-                              aria-label={`${key.name} 的用量`}
-                              title="用量"
+                              aria-label={t("routing.keys.usageOf", {
+                                name: key.name,
+                              })}
+                              title={t("routing.keys.usage")}
                               onClick={() => setLimitOfKey(key)}
                             >
                               <ChartNoAxesColumn />
@@ -436,8 +441,10 @@ export function KeysPage({ tabs }: { tabs?: React.ReactNode }) {
                               <Button
                                 size="icon-sm"
                                 variant="ghost"
-                                aria-label={`${key.name} 的额度`}
-                                title="额度"
+                                aria-label={t("routing.keys.limitsOf", {
+                                  name: key.name,
+                                })}
+                                title={t("routing.keys.limits")}
                                 onClick={() => setQuotaOfKey(key)}
                               >
                                 <Gauge />
@@ -447,7 +454,7 @@ export function KeysPage({ tabs }: { tabs?: React.ReactNode }) {
                                 variant="ghost"
                                 onClick={() => setRevoking(key)}
                               >
-                                吊销
+                                {t("routing.keys.revoke")}
                               </Button>
                             </>
                           )}
@@ -459,8 +466,8 @@ export function KeysPage({ tabs }: { tabs?: React.ReactNode }) {
               </table>
             </div>
           ) : (
-            <EmptyState icon={KeyRound} title="还没有 Gateway Key">
-              为脚本、IDE 或其他工具创建一个 client Key。
+            <EmptyState icon={KeyRound} title={t("routing.keys.empty")}>
+              {t("routing.keys.emptyHint")}
             </EmptyState>
           )}
         </div>
@@ -492,9 +499,9 @@ export function KeysPage({ tabs }: { tabs?: React.ReactNode }) {
         ) : null}
         <ConfirmDialog
           open={revoking !== null}
-          title={`吊销 ${revoking?.name ?? ""}`}
-          description="吊销后新请求立即被拒绝，无法撤销。"
-          action="吊销"
+          title={t("routing.keys.revokeTitle", { name: revoking?.name ?? "" })}
+          description={t("routing.keys.revokeHint")}
+          action={t("routing.keys.revoke")}
           onClose={() => setRevoking(null)}
           onConfirm={async () => {
             if (revoking) await modelPlane().gatewayKeys.revoke(revoking.keyId);

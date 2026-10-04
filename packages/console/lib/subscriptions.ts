@@ -8,11 +8,11 @@ import type {
   SubscriptionAccountView,
   SubscriptionBackend,
 } from "@harnesshub/sdk/client";
+import { t } from "./i18n";
 
-export const backendNames: Record<SubscriptionBackend, string> = {
-  siwc: "ChatGPT",
-  copilot: "GitHub Copilot",
-};
+export function backendName(backend: SubscriptionBackend): string {
+  return t(`subscriptions.backend.${backend}`);
+}
 
 /**
  * Why the gateway uses an account or not, first reason first: signed out,
@@ -25,20 +25,25 @@ export function accountState(account: SubscriptionAccountView): {
 } {
   if (!account.signedIn)
     return {
-      label: "已退出登录",
+      label: t("subscriptions.state.signedOut"),
       tone: "warn",
-      hint: "令牌已清除；重新登录后恢复",
+      hint: t("subscriptions.state.signedOutHint"),
     };
   if (!account.noticeAccepted)
     return {
-      label: "需要接受新的告知",
+      label: t("subscriptions.state.notice"),
       tone: "warn",
-      hint: "风险告知已更新；重新登录并接受后恢复",
+      hint: t("subscriptions.state.noticeHint"),
     };
   if (!account.enabled)
-    return { label: "已停用", tone: "neutral", hint: "凭据已停用" };
-  if (account.usable) return { label: "可用", tone: "good" };
-  return { label: "不可用", tone: "error" };
+    return {
+      label: t("subscriptions.state.disabled"),
+      tone: "neutral",
+      hint: t("subscriptions.state.disabledHint"),
+    };
+  if (account.usable)
+    return { label: t("subscriptions.state.usable"), tone: "good" };
+  return { label: t("subscriptions.state.unusable"), tone: "error" };
 }
 
 /** The Copilot SDK add-on and CLI, as the setup step shows them. */

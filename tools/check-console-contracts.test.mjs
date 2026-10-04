@@ -5,6 +5,10 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 import ts from "typescript";
+import { consoleModule } from "./console-module.mjs";
+
+// The assertions below read Chinese texts, the catalogs' source language.
+(await consoleModule("lib/i18n.ts")).setLocale("zh-CN");
 
 // Execute the actual browser schemas without a Next server. Only import paths
 // change; TypeScript's compiler erases types before Node loads the modules.
@@ -161,27 +165,6 @@ test("console reads Session diagnostics pages with free-form records and rejects
     );
 });
 
-/** A console module transpiled for Node, with the SDK resolved to its build. */
-async function consoleModule(file, replacements = {}) {
-  const sdk = (name) =>
-    JSON.stringify(
-      new URL(`../packages/sdk/dist/src/${name}.js`, import.meta.url).href,
-    );
-  let source = await readFile(
-    new URL(`../packages/console/${file}`, import.meta.url),
-    "utf8",
-  );
-  source = source
-    .replaceAll('from "@harnesshub/sdk/client"', `from ${sdk("client")}`)
-    .replaceAll('from "@harnesshub/sdk/local"', `from ${sdk("local")}`);
-  for (const [from, to] of Object.entries(replacements))
-    source = source.replaceAll(from, to);
-  const output = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2024 },
-  }).outputText;
-  return import(`data:text/javascript;base64,${Buffer.from(output).toString("base64")}`);
-}
-
 test("every console page has a path the daemon's console fallback serves", async () => {
   const { pagePaths } = await consoleModule("lib/router.ts", {
     'import { useSyncExternalStore } from "react";': "const useSyncExternalStore = undefined;",
@@ -292,7 +275,7 @@ test("the model-plane pages build API requests and read problem details", async 
   assert.equal(cells.context.text, (128000).toLocaleString());
   assert.match(cells.context.note, /^来源：models\.dev 目录快照，/);
   assert.equal(cells.output.note, "来源：provider 预设，核对于 2026-09-30");
-  assert.equal(cells.price.text, "$0.27 / ?");
+  assert.equal(cells.price.text, "US$0.27 / ?", "a USD amount in the locale's currency format");
   assert.match(cells.price.note, /^输入：来源：模型覆盖，.*\n输出：未知：没有来源提供此值/);
   const empty = lib.modelMetadataCells(undefined);
   assert.deepEqual(
@@ -300,6 +283,23 @@ test("the model-plane pages build API requests and read problem details", async 
     ["—", "—", "—"],
   );
   assert.match(empty.context.note, /^未知/);
+  // The same cells in English.
+  const i18n = await consoleModule("lib/i18n.ts");
+  i18n.setLocale("en");
+  try {
+    const english = lib.modelMetadataCells({
+      ref: "deepseek/deepseek-chat",
+      listed: true,
+      fields: { maxOutputTokens: { value: 8192, source: "preset", at: "2026-09-30" } },
+      unknown: [],
+      overrides: [],
+    });
+    assert.equal(english.output.text, "8,192");
+    assert.equal(english.output.note, "Source: Provider preset, checked on 2026-09-30");
+    assert.equal(lib.failureOf(new HarnessHubError({ type: "x", title: "Conflict", status: 409, code: "PROVIDER_IN_USE", requestId: "r" })).message, "Route groups or Gateway Keys still refer to this provider");
+  } finally {
+    i18n.setLocale("zh-CN");
+  }
 
   const now = Date.parse("2026-10-02T00:00:00.000Z");
   assert.equal(lib.expiresAtFor("never", now), null);
@@ -378,7 +378,7 @@ test("the agent pages derive wiring requests, shown models and attention from th
   assert.equal(gateway.tokenCount(128000), "128K");
   assert.equal(gateway.tokenCount(1048576), "1M");
   assert.equal(gateway.tokenCount(undefined), "—");
-  assert.equal(gateway.priceText({ input: 0.27 }), "$0.27 / ?");
+  assert.equal(gateway.priceText({ input: 0.27 }), "US$0.27 / ?", "a USD price in the locale's currency format");
   assert.equal(gateway.priceText(undefined), "价格未知");
 
   const claude = {
@@ -428,6 +428,23 @@ test("the agent pages derive wiring requests, shown models and attention from th
       "网关不再提供 gone/model",
     ],
   );
+  // The same rules in English, and a value the daemon sends that has no label.
+  const i18n = await consoleModule("lib/i18n.ts");
+  i18n.setLocale("en");
+  try {
+    assert.deepEqual(
+      agents.attention(
+        { ...claude, wiring: { ...claude.wiring, keyState: "revoked", drift: { drifted: true, kinds: ["replaced", "new-kind"], findings: [] } } },
+        models,
+      ),
+      ["Its configuration files were changed: Wired fields changed, new-kind", "Its key no longer works"],
+    );
+    assert.equal(agents.tierLabel("opus"), "Opus tier");
+    assert.equal(agents.tierLabel("future"), "future");
+    assert.equal(gateway.priceText({ input: 0.27 }), "$0.27 / ?");
+  } finally {
+    i18n.setLocale("zh-CN");
+  }
 
   const codex = {
     id: "codex",
@@ -619,10 +636,11 @@ test("the provider check dialog names every doctor check and states the plan's c
   const { doctorChecks } = await import(
     new URL("../packages/core/dist/src/provider-doctor.js", import.meta.url).href
   );
-  assert.deepEqual(Object.keys(doctor.doctorCheckNames), [...doctorChecks], "every check the daemon runs has a name, in its order");
+  assert.deepEqual(Object.keys(doctor.doctorCheckKeys), [...doctorChecks], "every check the daemon runs has a name, in its order");
+  assert.equal(doctor.doctorCheckName("max-tokens"), "输出上限字段");
   const plan = { estimatedCostUsd: null, estimatedTokens: { input: 980, output: 480 } };
   assert.equal(doctor.planCost(plan), "价格未知，约 980 输入与 480 输出 token");
-  assert.equal(doctor.planCost({ ...plan, estimatedCostUsd: 0.00213 }), "预计 $0.0021");
+  assert.equal(doctor.planCost({ ...plan, estimatedCostUsd: 0.00213 }), "预计 US$0.0021", "a USD estimate to 4 decimals in the locale's currency format");
   assert.deepEqual(
     doctor.statusCounts([{ status: "pass" }, { status: "fail" }, { status: "pass" }, { status: "skip" }]),
     { pass: 2, warn: 0, fail: 1, skip: 1 },

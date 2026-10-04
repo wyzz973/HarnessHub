@@ -32,7 +32,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   apiKeyHeaders,
   emptyProviderForm,
-  endpointHints,
+  endpointHint,
   failureOf,
   modelIds,
   modelMetadataCells,
@@ -41,12 +41,14 @@ import {
   protocols,
   providerFormOf,
   providerInput,
+  kindName,
   providerKinds,
   providerPatch,
   type Failure,
   type ProviderForm,
 } from "@/lib/model-plane";
 import { providerIcon } from "@/lib/gateway-models";
+import { formatDateTime, t } from "@/lib/i18n";
 import { stateKey } from "@/lib/routing-state";
 import { navigate } from "@/lib/router";
 import { BrandIcon } from "./brand-icon";
@@ -72,9 +74,6 @@ import {
   type RoutingStates,
 } from "./routing-state";
 
-const kindName = (kind: ProviderConfig["kind"]) =>
-  providerKinds.find((item) => item.id === kind)?.label ?? kind;
-
 /**
  * The provider's models with context, output and price as the daemon
  * resolves them; each value's tooltip names its source. Mounted per provider
@@ -97,11 +96,13 @@ function ModelTable({ provider }: { provider: ProviderConfig }) {
         <thead>
           <tr>
             <th>Model Ref</th>
-            <th>上游名称</th>
-            <th>上下文</th>
-            <th>最大输出</th>
-            <th title="美元 / 百万 token">价格（输入 / 输出）</th>
-            <th>对外列出</th>
+            <th>{t("providers.table.upstreamName")}</th>
+            <th>{t("providers.table.context")}</th>
+            <th>{t("providers.table.maxOutput")}</th>
+            <th title={t("providers.table.priceUnit")}>
+              {t("providers.table.price")}
+            </th>
+            <th>{t("providers.table.listed")}</th>
           </tr>
         </thead>
         <tbody>
@@ -127,7 +128,7 @@ function ModelTable({ provider }: { provider: ProviderConfig }) {
                 </td>
                 <td>
                   <span className={exposed(model.id) ? "tag good" : "tag"}>
-                    {exposed(model.id) ? "是" : "否"}
+                    {exposed(model.id) ? t("providers.yes") : t("providers.no")}
                   </span>
                 </td>
               </tr>
@@ -137,13 +138,11 @@ function ModelTable({ provider }: { provider: ProviderConfig }) {
       </table>
       {metadata.state === "error" ? (
         <p className="px-5 py-2 text-[12.5px] text-muted-foreground">
-          元数据读取失败：{metadata.message}
+          {t("providers.table.metadataFailed", { message: metadata.message })}
         </p>
       ) : null}
       {!provider.models.list.length ? (
-        <p className="empty-state">
-          还没有模型，编辑 provider 时每行填写一个模型 ID。
-        </p>
+        <p className="empty-state">{t("providers.table.noModels")}</p>
       ) : null}
     </div>
   );
@@ -205,23 +204,29 @@ function ProviderDialog({
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-[620px]">
         <DialogHeader>
           <DialogTitle>
-            {provider ? `编辑 ${provider.name}` : "添加 provider"}
+            {provider
+              ? t("providers.dialog.editTitle", { name: provider.name })
+              : t("providers.add")}
           </DialogTitle>
           <DialogDescription>
             {!provider && tab === "preset"
-              ? "从内置预设创建：端点已按厂商文档填好，填写 API Key 即可使用。"
-              : "端点填写厂商官方 SDK 使用的基址；凭据在保存后单独添加。"}
+              ? t("providers.dialog.presetLede")
+              : t("providers.dialog.manualLede")}
           </DialogDescription>
         </DialogHeader>
         {provider ? null : (
-          <div className="segmented w-fit" role="tablist" aria-label="添加方式">
+          <div
+            className="segmented w-fit"
+            role="tablist"
+            aria-label={t("providers.dialog.how")}
+          >
             <button
               type="button"
               role="tab"
               aria-selected={tab === "preset"}
               onClick={() => setTab("preset")}
             >
-              从预设
+              {t("providers.dialog.fromPreset")}
             </button>
             <button
               type="button"
@@ -229,7 +234,7 @@ function ProviderDialog({
               aria-selected={tab === "manual"}
               onClick={() => setTab("manual")}
             >
-              手动填写
+              {t("providers.dialog.manual")}
             </button>
           </div>
         )}
@@ -251,23 +256,23 @@ function ProviderDialog({
                   onChange={(event) => set({ id: event.target.value })}
                 />
                 <span className="field-hint block">
-                  小写字母、数字与连字符；Model Ref 为 ID/模型。
+                  {t("providers.dialog.idHint")}
                 </span>
                 <FieldError failure={failure} pointer="/id" />
               </label>
               <label className="field-label">
-                名称
+                {t("providers.name")}
                 <input
                   className="field"
                   value={form.name}
-                  placeholder="与 ID 相同"
+                  placeholder={t("providers.dialog.namePlaceholder")}
                   autoComplete="off"
                   onChange={(event) => set({ name: event.target.value })}
                 />
                 <FieldError failure={failure} pointer="/name" />
               </label>
               <label className="field-label">
-                类型
+                {t("providers.dialog.kind")}
                 <select
                   className="field"
                   value={form.kind}
@@ -276,14 +281,14 @@ function ProviderDialog({
                   }
                 >
                   {providerKinds.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.label}
+                    <option key={item} value={item}>
+                      {kindName(item)}
                     </option>
                   ))}
                 </select>
               </label>
               <label className="field-label">
-                Key 的发送方式
+                {t("providers.apiKeyHeader")}
                 <select
                   className="field font-mono text-[13px]"
                   value={form.apiKeyHeader}
@@ -307,7 +312,9 @@ function ProviderDialog({
               </label>
             </div>
             <fieldset className="space-y-3">
-              <legend className="section-title mb-2">端点（至少一个）</legend>
+              <legend className="section-title mb-2">
+                {t("providers.dialog.endpointsLegend")}
+              </legend>
               <FieldError failure={failure} pointer="/endpoints" />
               {protocols.map((protocol) => (
                 <label key={protocol} className="field-label">
@@ -329,7 +336,7 @@ function ProviderDialog({
                     }
                   />
                   <span className="field-hint block">
-                    {endpointHints[protocol]}
+                    {endpointHint(protocol)}
                   </span>
                   <FieldError
                     failure={failure}
@@ -339,7 +346,7 @@ function ProviderDialog({
               ))}
             </fieldset>
             <label className="field-label">
-              图像端点（可选）
+              {t("providers.dialog.imageEndpoint")}
               <input
                 className="field font-mono text-[13px]"
                 value={form.imageEndpoint}
@@ -350,18 +357,17 @@ function ProviderDialog({
                 onChange={(event) => set({ imageEndpoint: event.target.value })}
               />
               <span className="field-hint block">
-                OpenAI 兼容 Images API 的基址，不含 /images/generations；网关的
-                /v1/images/generations 直通到这里。
+                {t("providers.dialog.imageEndpointHint")}
               </span>
               <FieldError failure={failure} pointer="/imageEndpoint" />
             </label>
             <label className="field-label">
-              模型
+              {t("providers.models")}
               <textarea
                 className="field font-mono text-[12.5px]"
                 rows={4}
                 value={form.models}
-                placeholder={"每行一个模型 ID，例如\ndeepseek-chat"}
+                placeholder={t("providers.dialog.modelsPlaceholder")}
                 spellCheck={false}
                 onChange={(event) => set({ models: event.target.value })}
               />
@@ -372,7 +378,7 @@ function ProviderDialog({
                   checked={form.expose === "all"}
                   onChange={(all) => set({ expose: all ? "all" : [...models] })}
                 >
-                  全部模型出现在 /v1/models 与 Agent 的模型选择中
+                  {t("providers.dialog.exposeAll")}
                 </Checkbox>
                 {form.expose !== "all" ? (
                   <div className="mt-1 grid gap-0.5 pl-6 sm:grid-cols-2">
@@ -402,11 +408,11 @@ function ProviderDialog({
             <OtherFieldErrors failure={failure} shown={shown} />
             <DialogFooter>
               <Button variant="outline" disabled={busy} onClick={onClose}>
-                取消
+                {t("common.cancel")}
               </Button>
               <Button disabled={busy} onClick={() => void save()}>
                 {busy ? <Loader2 className="animate-spin" /> : null}
-                保存
+                {t("providers.save")}
               </Button>
             </DialogFooter>
           </>
@@ -475,16 +481,15 @@ function SecretDialog({
       <DialogContent className="sm:max-w-[480px]">
         <DialogHeader>
           <DialogTitle>
-            {rotating ? `轮换 ${rotating.name}` : "添加凭据"}
+            {rotating
+              ? t("providers.secret.rotateTitle", { name: rotating.name })
+              : t("providers.secret.addTitle")}
           </DialogTitle>
-          <DialogDescription>
-            Key
-            只发送一次，保存在守护进程的秘密存储中；之后只显示引用，不会再显示值。
-          </DialogDescription>
+          <DialogDescription>{t("providers.secret.lede")}</DialogDescription>
         </DialogHeader>
         {rotating ? null : (
           <label className="field-label">
-            名称
+            {t("providers.name")}
             <input
               className="field"
               value={name}
@@ -495,7 +500,7 @@ function SecretDialog({
           </label>
         )}
         <label className="field-label">
-          {rotating ? "新的 API Key" : "API Key"}
+          {rotating ? t("providers.secret.newKey") : "API Key"}
           <input
             className="field font-mono text-[13px]"
             type="password"
@@ -510,7 +515,7 @@ function SecretDialog({
         {!rotating && available.length > 1 ? (
           <fieldset>
             <legend className="field-label mb-1">
-              只用于这些端点（不选则全部）
+              {t("providers.secret.only")}
             </legend>
             {available.map((protocol) => (
               <Checkbox
@@ -539,11 +544,11 @@ function SecretDialog({
               onClose();
             }}
           >
-            取消
+            {t("common.cancel")}
           </Button>
           <Button disabled={busy || !value} onClick={() => void save()}>
             {busy ? <Loader2 className="animate-spin" /> : null}
-            {rotating ? "轮换" : "保存"}
+            {rotating ? t("providers.secret.rotate") : t("providers.save")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -554,12 +559,12 @@ function SecretDialog({
 function referenceText(credential: ProviderCredential) {
   const { kind, value } = credential.ref;
   return kind === "store"
-    ? `已保存 · ${value.slice(0, 8)}`
+    ? t("providers.ref.store", { id: value.slice(0, 8) })
     : kind === "env"
-      ? `环境变量 ${value}`
+      ? t("providers.ref.env", { name: value })
       : kind === "file"
-        ? `文件 ${value}`
-        : `钥匙串 · ${value.slice(0, 8)}`;
+        ? t("providers.ref.file", { path: value })
+        : t("providers.ref.keychain", { id: value.slice(0, 8) });
 }
 
 function ProviderDetail({
@@ -596,7 +601,7 @@ function ProviderDetail({
         onClick={back}
       >
         <ArrowLeft className="size-3.5" />
-        全部 provider
+        {t("providers.detail.back")}
       </button>
       <PageHeader
         icon={
@@ -612,35 +617,37 @@ function ProviderDetail({
           kindName(provider.kind),
           ...(provider.preset
             ? [
-                `预设 ${provider.preset}${provider.region ? ` · ${provider.region}` : ""}${provider.plan ? ` · ${provider.plan}` : ""}`,
+                `${t("providers.detail.preset", { preset: provider.preset })}${provider.region ? ` · ${provider.region}` : ""}${provider.plan ? ` · ${provider.plan}` : ""}`,
               ]
             : []),
-          `更新于 ${new Date(provider.updatedAt).toLocaleString()}`,
+          t("providers.detail.updated", {
+            time: formatDateTime(provider.updatedAt),
+          }),
         ].join(" · ")}
       >
         {provider.subscription ? (
-          <span title="订阅 provider 不经检测；账号状态见“订阅账号”页">
+          <span title={t("providers.detail.checkSubscription")}>
             <Button size="sm" variant="outline" disabled>
               <Stethoscope />
-              检测
+              {t("providers.detail.check")}
             </Button>
           </span>
         ) : (
           <Button size="sm" variant="outline" onClick={() => setChecking(true)}>
             <Stethoscope />
-            检测
+            {t("providers.detail.check")}
           </Button>
         )}
         <Button size="sm" variant="outline" onClick={edit}>
           <Pencil />
-          编辑
+          {t("providers.edit")}
         </Button>
         <Button size="sm" variant="ghost" onClick={remove}>
           <Trash2 />
-          删除
+          {t("providers.delete")}
         </Button>
       </PageHeader>
-      <h2 className="section-title mt-7 mb-3">端点</h2>
+      <h2 className="section-title mt-7 mb-3">{t("providers.endpoints")}</h2>
       <div className="panel px-5 py-2">
         <dl>
           {protocols
@@ -655,14 +662,14 @@ function ProviderDetail({
             ))}
           {provider.imageEndpoint ? (
             <div className="metric-row">
-              <dt>图像（Images API）</dt>
+              <dt>{t("providers.detail.image")}</dt>
               <dd className="font-mono text-[12.5px]">
                 {provider.imageEndpoint}
               </dd>
             </div>
           ) : null}
           <div className="metric-row">
-            <dt>Key 的发送方式</dt>
+            <dt>{t("providers.apiKeyHeader")}</dt>
             <dd className="font-mono text-[12.5px]">
               {provider.auth.apiKeyHeader}
             </dd>
@@ -671,7 +678,9 @@ function ProviderDetail({
       </div>
       <div className="mt-7 mb-3 flex items-center justify-between gap-3">
         <h2 className="section-title">
-          {provider.subscription ? "订阅账号" : "凭据"}
+          {provider.subscription
+            ? t("providers.detail.accounts")
+            : t("providers.credentials")}
         </h2>
         {provider.subscription ? (
           <Button
@@ -680,7 +689,7 @@ function ProviderDetail({
             onClick={() => navigate("subscriptions")}
           >
             <CreditCard />
-            管理账号
+            {t("providers.detail.manageAccounts")}
           </Button>
         ) : (
           <Button
@@ -689,7 +698,7 @@ function ProviderDetail({
             onClick={() => setSecret({ rotating: undefined })}
           >
             <Plus />
-            添加凭据
+            {t("providers.detail.addCredential")}
           </Button>
         )}
       </div>
@@ -698,10 +707,10 @@ function ProviderDetail({
           <thead>
             <tr>
               <th>ID</th>
-              <th>名称</th>
-              <th>引用</th>
-              <th>端点</th>
-              <th>路由状态</th>
+              <th>{t("providers.name")}</th>
+              <th>{t("providers.detail.reference")}</th>
+              <th>{t("providers.endpoints")}</th>
+              <th>{t("providers.detail.routing")}</th>
               <th />
             </tr>
           </thead>
@@ -712,7 +721,9 @@ function ProviderDetail({
                 <td>
                   {credential.name}
                   {!credential.enabled ? (
-                    <span className="tag warn ml-2">已停用</span>
+                    <span className="tag warn ml-2">
+                      {t("providers.disabled")}
+                    </span>
                   ) : null}
                 </td>
                 <td
@@ -724,7 +735,7 @@ function ProviderDetail({
                 <td className="text-[12.5px]">
                   {credential.protocols
                     ?.map((p) => protocolNames[p])
-                    .join("、") ?? "全部"}
+                    .join(t("providers.separator")) ?? t("providers.all")}
                 </td>
                 <td className="min-w-[200px]">
                   {states.state === "ready" ? (
@@ -752,8 +763,10 @@ function ProviderDetail({
                     <Button
                       size="icon-sm"
                       variant="ghost"
-                      aria-label={`轮换 ${credential.name}`}
-                      title="轮换"
+                      aria-label={t("providers.detail.rotateCredential", {
+                        name: credential.name,
+                      })}
+                      title={t("providers.secret.rotate")}
                       onClick={() => setSecret({ rotating: credential })}
                     >
                       <RotateCw />
@@ -762,8 +775,10 @@ function ProviderDetail({
                   <Button
                     size="icon-sm"
                     variant="ghost"
-                    aria-label={`删除 ${credential.name}`}
-                    title="删除"
+                    aria-label={t("providers.detail.deleteCredential", {
+                      name: credential.name,
+                    })}
+                    title={t("providers.delete")}
                     onClick={() => setDeleting(credential)}
                   >
                     <Trash2 />
@@ -776,22 +791,26 @@ function ProviderDetail({
         {!provider.credentials.length ? (
           <p className="empty-state">
             <KeyRound className="size-5" strokeWidth={1.7} />
-            还没有凭据，请求上游时需要至少一个。
+            {t("providers.detail.noCredentials")}
           </p>
         ) : null}
       </div>
       <div className="mt-7 mb-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="section-title">模型</h2>
+          <h2 className="section-title">{t("providers.models")}</h2>
           <span className="text-[12.5px] text-subtle">
-            {provider.models.source === "live" ? "来自上游" : "手动或内置"}
+            {provider.models.source === "live"
+              ? t("providers.detail.fromUpstream")
+              : t("providers.detail.manualModels")}
             {provider.models.refreshedAt
-              ? `，${new Date(provider.models.refreshedAt).toLocaleString()} 刷新`
+              ? t("providers.detail.refreshedAt", {
+                  time: formatDateTime(provider.models.refreshedAt),
+                })
               : ""}
           </span>
           {provider.models.stale ? (
-            <span className="tag warn" title="上次刷新失败，显示的是之前的列表">
-              未更新
+            <span className="tag warn" title={t("providers.detail.staleHint")}>
+              {t("providers.detail.stale")}
             </span>
           ) : null}
         </div>
@@ -815,7 +834,7 @@ function ProviderDetail({
           }}
         >
           {refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-          刷新模型
+          {t("providers.detail.refreshModels")}
         </Button>
       </div>
       <ErrorCallout failure={refreshFailure} className="mb-3" />
@@ -841,9 +860,11 @@ function ProviderDetail({
       ) : null}
       <ConfirmDialog
         open={deleting !== null}
-        title={`删除凭据 ${deleting?.name ?? ""}`}
-        description="由 HarnessHub 保存的 Key 会从秘密存储中删除。"
-        action="删除"
+        title={t("providers.detail.deleteCredentialTitle", {
+          name: deleting?.name ?? "",
+        })}
+        description={t("providers.detail.deleteCredentialBody")}
+        action={t("providers.delete")}
         onClose={() => setDeleting(null)}
         onConfirm={async () => {
           if (deleting)
@@ -901,14 +922,11 @@ export function ProvidersPage() {
           />
         ) : (
           <>
-            <PageHeader
-              title="Provider"
-              lede="上游模型服务、端点与凭据；网关按 provider/模型 路由请求。"
-            >
+            <PageHeader title="Provider" lede={t("providers.list.lede")}>
               <Button
                 size="icon-sm"
                 variant="ghost"
-                aria-label="刷新"
+                aria-label={t("common.refresh")}
                 onClick={reload}
               >
                 <RefreshCw />
@@ -919,14 +937,14 @@ export function ProvidersPage() {
                 onClick={() => setImporting(true)}
               >
                 <Download />
-                导入
+                {t("providers.importButton")}
               </Button>
               <Button
                 size="sm"
                 onClick={() => setEditing({ provider: undefined })}
               >
                 <Plus />
-                添加 provider
+                {t("providers.add")}
               </Button>
             </PageHeader>
             <div className="mt-6">
@@ -943,11 +961,11 @@ export function ProvidersPage() {
                     <thead>
                       <tr>
                         <th>Provider</th>
-                        <th>类型</th>
-                        <th>端点</th>
-                        <th>凭据</th>
-                        <th>模型</th>
-                        <th>更新</th>
+                        <th>{t("providers.list.kind")}</th>
+                        <th>{t("providers.endpoints")}</th>
+                        <th>{t("providers.credentials")}</th>
+                        <th>{t("providers.models")}</th>
+                        <th>{t("providers.list.updated")}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -990,13 +1008,15 @@ export function ProvidersPage() {
                                 (p) => provider.endpoints[p] !== undefined,
                               )
                               .map((p) => protocolNames[p])
-                              .join("、")}
+                              .join(t("providers.separator"))}
                           </td>
                           <td className="tabular">
                             {provider.credentials.length ? (
                               provider.credentials.length
                             ) : (
-                              <span className="tag warn">无</span>
+                              <span className="tag warn">
+                                {t("providers.list.none")}
+                              </span>
                             )}
                             {states.state === "ready" &&
                             provider.credentials.some(
@@ -1005,7 +1025,9 @@ export function ProvidersPage() {
                                   stateKey(provider.id, credential.id),
                                 )?.state === "open",
                             ) ? (
-                              <span className="tag warn ml-1.5">休息中</span>
+                              <span className="tag warn ml-1.5">
+                                {t("providers.list.resting")}
+                              </span>
                             ) : null}
                           </td>
                           <td className="tabular">
@@ -1022,7 +1044,7 @@ export function ProvidersPage() {
               ) : (
                 <EmptyState
                   icon={Server}
-                  title="还没有 provider"
+                  title={t("providers.list.empty")}
                   action={
                     <div className="flex flex-wrap justify-center gap-2">
                       <Button
@@ -1030,7 +1052,7 @@ export function ProvidersPage() {
                         onClick={() => setEditing({ provider: undefined })}
                       >
                         <Plus />
-                        添加 provider
+                        {t("providers.add")}
                       </Button>
                       <Button
                         size="sm"
@@ -1038,13 +1060,12 @@ export function ProvidersPage() {
                         onClick={() => setImporting(true)}
                       >
                         <Download />
-                        导入
+                        {t("providers.importButton")}
                       </Button>
                     </div>
                   }
                 >
-                  添加模型厂商、中转网关或本机模型服务；也可以粘贴导入链接，或从
-                  Claude Code、Codex 的配置导入。
+                  {t("providers.list.emptyBody")}
                 </EmptyState>
               )}
             </div>
@@ -1071,9 +1092,11 @@ export function ProvidersPage() {
         ) : null}
         <ConfirmDialog
           open={removing !== null}
-          title={`删除 ${removing?.name ?? ""}`}
-          description="同时删除它保存在秘密存储中的 Key。仍被路由组或 Gateway Key 引用时不能删除。"
-          action="删除"
+          title={t("providers.list.deleteTitle", {
+            name: removing?.name ?? "",
+          })}
+          description={t("providers.list.deleteBody")}
+          action={t("providers.delete")}
           onClose={() => setRemoving(null)}
           onConfirm={async () => {
             if (removing) await modelPlane().providers.remove(removing.id);

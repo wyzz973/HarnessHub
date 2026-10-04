@@ -24,9 +24,11 @@ import {
   protocolNames,
   type Failure,
 } from "@/lib/model-plane";
+import { formatUsd, t } from "@/lib/i18n";
+import { tr } from "@/lib/i18n-react";
 import {
-  doctorCheckNames,
-  doctorStatuses,
+  doctorCheckName,
+  doctorStatus,
   planCost,
   statusCounts,
 } from "@/lib/provider-doctor";
@@ -42,10 +44,10 @@ function TestResult({ report }: { report: ProviderTestReport }) {
         <table className="data-table min-w-[560px]">
           <thead>
             <tr>
-              <th>端点</th>
-              <th>结果</th>
-              <th>耗时</th>
-              <th>实际模型</th>
+              <th>{t("providers.doctor.endpoint")}</th>
+              <th>{t("providers.doctor.result")}</th>
+              <th>{t("providers.doctor.duration")}</th>
+              <th>{t("providers.doctor.servedModel")}</th>
             </tr>
           </thead>
           <tbody>
@@ -61,8 +63,10 @@ function TestResult({ report }: { report: ProviderTestReport }) {
                 </td>
                 <td>
                   <span className={`tag ${endpoint.ok ? "good" : "error"}`}>
-                    {endpoint.ok ? "可用" : "失败"} ·{" "}
-                    {endpoint.status || "无响应"}
+                    {endpoint.ok
+                      ? t("providers.doctor.ok")
+                      : t("providers.doctor.failed")}{" "}
+                    · {endpoint.status || t("providers.doctor.noResponse")}
                   </span>
                   {endpoint.error ? (
                     <span className="mt-1 block text-[12px] break-all text-danger">
@@ -74,7 +78,9 @@ function TestResult({ report }: { report: ProviderTestReport }) {
                   {endpoint.durationMs} ms
                   {endpoint.firstByteMs !== undefined ? (
                     <span className="block text-subtle">
-                      首字节 {endpoint.firstByteMs} ms
+                      {t("providers.doctor.firstByte", {
+                        ms: endpoint.firstByteMs,
+                      })}
                     </span>
                   ) : null}
                 </td>
@@ -87,10 +93,14 @@ function TestResult({ report }: { report: ProviderTestReport }) {
         </table>
       </div>
       <p className="text-[12.5px] text-muted-foreground">
-        模型 {report.wireModel}；{report.modelCalls} 次调用，成本 $
-        {report.costUsd.toFixed(4)}
-        {report.unpricedCalls ? `（${report.unpricedCalls} 次价格未知）` : ""}
-        ，记入用量的 client:doctor。
+        {t("providers.doctor.testSummary", {
+          model: report.wireModel,
+          calls: report.modelCalls,
+          cost: formatUsd(Number(report.costUsd.toFixed(4))),
+          unpriced: report.unpricedCalls
+            ? t("providers.doctor.unpriced", { n: report.unpricedCalls })
+            : "",
+        })}
       </p>
     </div>
   );
@@ -100,14 +110,18 @@ function PlanView({ plan }: { plan: DoctorPlan }) {
   return (
     <div className="rounded-xl border p-3 text-[13px]">
       <p>
-        经 {protocolNames[plan.protocol]} 检查模型{" "}
-        <span className="font-mono">{plan.wireModel}</span>：{plan.modelCalls}{" "}
-        次模型请求（失败时至多 {plan.maxModelCalls} 次）、
-        {plan.listRequests} 次模型列表请求，{planCost(plan)}。
+        {tr("providers.doctor.plan", {
+          protocol: protocolNames[plan.protocol],
+          model: <span className="font-mono">{plan.wireModel}</span>,
+          calls: plan.modelCalls,
+          max: plan.maxModelCalls,
+          lists: plan.listRequests,
+          cost: planCost(plan),
+        })}
       </p>
       <p className="mt-1 text-[12px] text-subtle">
         {plan.checks
-          .map((item) => `${doctorCheckNames[item.check]} ${item.modelCalls}`)
+          .map((item) => `${doctorCheckName(item.check)} ${item.modelCalls}`)
           .join(" · ")}
       </p>
     </div>
@@ -119,21 +133,28 @@ function ReportView({ report }: { report: DoctorReport }) {
   return (
     <div className="space-y-2">
       <p className="text-[13px]">
-        通过 {counts.pass}、警告 {counts.warn}、失败 {counts.fail}、跳过{" "}
-        {counts.skip}；{report.modelCalls} 次请求，成本 $
-        {report.costUsd.toFixed(4)}
-        {report.unpricedCalls ? `（${report.unpricedCalls} 次价格未知）` : ""}
-        ，用时 {(report.durationMs / 1000).toFixed(1)} 秒。
+        {t("providers.doctor.reportSummary", {
+          pass: counts.pass,
+          warn: counts.warn,
+          fail: counts.fail,
+          skip: counts.skip,
+          calls: report.modelCalls,
+          cost: formatUsd(Number(report.costUsd.toFixed(4))),
+          unpriced: report.unpricedCalls
+            ? t("providers.doctor.unpriced", { n: report.unpricedCalls })
+            : "",
+          seconds: (report.durationMs / 1000).toFixed(1),
+        })}
       </p>
       <ul className="divide-y rounded-xl border">
         {report.items.map((item) => {
-          const status = doctorStatuses[item.status];
+          const status = doctorStatus(item.status);
           return (
             <li key={item.check} className="space-y-1 px-3 py-2.5">
               <p className="flex flex-wrap items-center gap-2 text-[13px]">
                 <span className={`tag ${status.tone}`}>{status.label}</span>
                 <span className="font-medium">
-                  {doctorCheckNames[item.check]}
+                  {doctorCheckName(item.check)}
                 </span>
                 <span className="min-w-0 text-muted-foreground">
                   {item.summary}
@@ -255,14 +276,17 @@ export function ProviderDoctorDialog({
     <Dialog open onOpenChange={(open) => (!open && !busy ? onClose() : null)}>
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-[760px] [&>*]:min-w-0">
         <DialogHeader>
-          <DialogTitle>检测 {provider.name}</DialogTitle>
-          <DialogDescription>
-            向上游发送真实请求，会消耗额度；每个请求记入用量（client:doctor）。检测从不修改
-            provider。
-          </DialogDescription>
+          <DialogTitle>
+            {t("providers.doctor.title", { name: provider.name })}
+          </DialogTitle>
+          <DialogDescription>{t("providers.doctor.lede")}</DialogDescription>
         </DialogHeader>
         <div className="flex flex-wrap items-end gap-3">
-          <div className="segmented" role="tablist" aria-label="检测方式">
+          <div
+            className="segmented"
+            role="tablist"
+            aria-label={t("providers.doctor.mode")}
+          >
             <button
               type="button"
               role="tab"
@@ -270,7 +294,7 @@ export function ProviderDoctorDialog({
               disabled={busy}
               onClick={() => setMode("test")}
             >
-              测试端点
+              {t("providers.doctor.test")}
             </button>
             <button
               type="button"
@@ -279,11 +303,11 @@ export function ProviderDoctorDialog({
               disabled={busy}
               onClick={() => setMode("doctor")}
             >
-              体检
+              {t("providers.doctor.doctor")}
             </button>
           </div>
           <label className="field-label min-w-[220px] flex-1">
-            模型
+            {t("providers.models")}
             <select
               className="field font-mono text-[13px]"
               value={model}
@@ -300,21 +324,19 @@ export function ProviderDoctorDialog({
         </div>
         {mode === "test" ? (
           <p className="text-[13px] text-muted-foreground">
-            对每个声明的端点发一个最小的非流式请求（输出上限 16
-            token），列出状态、耗时与上游自报的模型。
+            {t("providers.doctor.testLede")}
           </p>
         ) : (
           <>
             <p className="text-[13px] text-muted-foreground">
-              逐项检查端点、Key
-              的发送方式、模型列表、流式、usage、输出上限字段、工具、推理回传、可选字段、图片、延迟等，给出结论、上游错误与建议；建议的修改可以在确认后应用。
+              {t("providers.doctor.doctorLede")}
             </p>
             <div className="grid gap-x-3 sm:grid-cols-[1fr_200px] sm:items-end">
               <Checkbox checked={deep} onChange={setDeep} disabled={busy}>
-                另发一个超过上下文窗口的输入，检查超长的识别（费用较高）
+                {t("providers.doctor.deep")}
               </Checkbox>
               <label className="field-label">
-                慢响应阈值（毫秒）
+                {t("providers.doctor.slowMs")}
                 <input
                   className="field tabular-nums"
                   inputMode="numeric"
@@ -332,23 +354,21 @@ export function ProviderDoctorDialog({
         {mode === "doctor" && report ? <ReportView report={report} /> : null}
         {mode === "doctor" && report?.patch ? (
           <div className="space-y-2 rounded-xl border p-3">
-            <p className="text-[13px]">
-              建议对 provider 的修改（合并后的 JSON Merge Patch）：
-            </p>
+            <p className="text-[13px]">{t("providers.doctor.patchLede")}</p>
             <pre className="max-h-[30vh] overflow-auto rounded-lg bg-muted p-2.5 font-mono text-[12px]">
               {JSON.stringify(report.patch, null, 2)}
             </pre>
             <div className="flex justify-end">
               <Button variant="outline" onClick={() => setPatching(true)}>
                 <Wrench />
-                应用建议的修改
+                {t("providers.doctor.applyPatch")}
               </Button>
             </div>
           </div>
         ) : null}
         <DialogFooter>
           <Button variant="outline" disabled={busy} onClick={onClose}>
-            关闭
+            {t("common.close")}
           </Button>
           <Button
             disabled={busy || !model || (mode === "doctor" && !plan)}
@@ -361,14 +381,18 @@ export function ProviderDoctorDialog({
             ) : (
               <Stethoscope />
             )}
-            {mode === "test" ? "开始测试" : "开始体检"}
+            {mode === "test"
+              ? t("providers.doctor.startTest")
+              : t("providers.doctor.startDoctor")}
           </Button>
         </DialogFooter>
         <ConfirmDialog
           open={patching}
-          title={`修改 ${provider.name}`}
-          description="按体检的建议修改 provider 的设置（PATCH /providers/{id}）；模型元数据的建议不在其中，以上面的命令设置。修改后可以再体检一次确认。"
-          action="应用"
+          title={t("providers.doctor.patchTitle", { name: provider.name })}
+          description={t("providers.doctor.patchBody", {
+            request: "PATCH /providers/{id}",
+          })}
+          action={t("providers.doctor.apply")}
           onClose={() => setPatching(false)}
           onConfirm={async () => {
             if (!report?.patch) return;
@@ -376,7 +400,9 @@ export function ProviderDoctorDialog({
               provider.id,
               report.patch as ProviderPatch,
             );
-            notify.success(`已修改 ${provider.name}`);
+            notify.success(
+              t("providers.doctor.patched", { name: provider.name }),
+            );
             setReport(null);
             onPatched();
           }}

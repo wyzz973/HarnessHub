@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { Check, Circle, CircleAlert, Loader2, Pause } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { statusNames } from "@/lib/presentation";
+import { statusName } from "@/lib/presentation";
 
 const moving = ["running", "planning", "starting", "cancelling", "finalizing"];
 const failed = ["failed", "interrupted", "timed_out"];
@@ -38,7 +38,7 @@ export function Status({
         className={cn("size-3", moving.includes(status) && "animate-spin")}
         strokeWidth={2}
       />
-      {statusNames[status] ?? status}
+      {statusName(status)}
     </span>
   );
 }

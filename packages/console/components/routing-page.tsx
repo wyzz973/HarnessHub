@@ -4,6 +4,7 @@ import { Eye, EyeOff, RefreshCw, Shuffle } from "lucide-react";
 import type { AutoGroup } from "@harnesshub/sdk/client";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { t } from "@/lib/i18n";
 import { modelPlane } from "@/lib/model-plane";
 import type { Page } from "@/lib/router";
 import { notify } from "@/lib/toast";
@@ -43,14 +44,19 @@ function AutoGroupsPage({ tabs }: { tabs: React.ReactNode }) {
         setBusy(null);
         notify.success(
           group.hidden
-            ? `已恢复 group/${group.id}`
-            : `已隐藏 group/${group.id}，网关不再列出和路由它`,
+            ? t("routing.auto.restored", { group: `group/${group.id}` })
+            : t("routing.auto.hidden", { group: `group/${group.id}` }),
         );
         reload();
       },
       (reason: unknown) => {
         setBusy(null);
-        notify.error(reason, group.hidden ? "没有恢复" : "没有隐藏");
+        notify.error(
+          reason,
+          group.hidden
+            ? t("routing.auto.notRestored")
+            : t("routing.auto.notHidden"),
+        );
       },
     );
   };
@@ -59,13 +65,13 @@ function AutoGroupsPage({ tabs }: { tabs: React.ReactNode }) {
       <div className="page-column max-w-[1040px]">
         {tabs}
         <PageHeader
-          title="自动路由组"
-          lede="两个以上 provider 以同一个名字提供的模型，自动组成 group/auto-<名字>，按顺序路由并在失败时切换。不需要时可以隐藏。"
+          title={t("routing.auto.title")}
+          lede={t("routing.auto.lede")}
         >
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label="刷新"
+            aria-label={t("common.refresh")}
             onClick={reload}
           >
             <RefreshCw />
@@ -76,7 +82,7 @@ function AutoGroupsPage({ tabs }: { tabs: React.ReactNode }) {
             <div
               className="panel space-y-3 p-5"
               role="status"
-              aria-label="正在读取"
+              aria-label={t("common.loading")}
             >
               <Skeleton className="h-4 w-1/3" />
               <Skeleton className="h-4 w-2/3" />
@@ -88,10 +94,10 @@ function AutoGroupsPage({ tabs }: { tabs: React.ReactNode }) {
               <table className="data-table min-w-[640px]">
                 <thead>
                   <tr>
-                    <th>路由组</th>
-                    <th>成员（按添加顺序）</th>
-                    <th>出现于</th>
-                    <th>状态</th>
+                    <th>{t("routing.group")}</th>
+                    <th>{t("routing.auto.members")}</th>
+                    <th>{t("routing.auto.since")}</th>
+                    <th>{t("routing.status")}</th>
                     <th />
                   </tr>
                 </thead>
@@ -113,7 +119,9 @@ function AutoGroupsPage({ tabs }: { tabs: React.ReactNode }) {
                       </td>
                       <td>
                         <span className={`tag ${group.hidden ? "" : "good"}`}>
-                          {group.hidden ? "已隐藏" : "使用中"}
+                          {group.hidden
+                            ? t("routing.auto.hiddenTag")
+                            : t("routing.auto.active")}
                         </span>
                       </td>
                       <td className="text-right">
@@ -124,7 +132,9 @@ function AutoGroupsPage({ tabs }: { tabs: React.ReactNode }) {
                           onClick={() => toggle(group)}
                         >
                           {group.hidden ? <Eye /> : <EyeOff />}
-                          {group.hidden ? "恢复" : "隐藏"}
+                          {group.hidden
+                            ? t("routing.auto.restore")
+                            : t("routing.auto.hide")}
                         </Button>
                       </td>
                     </tr>
@@ -133,9 +143,8 @@ function AutoGroupsPage({ tabs }: { tabs: React.ReactNode }) {
               </table>
             </div>
           ) : (
-            <EmptyState icon={Shuffle} title="还没有自动路由组">
-              两个 provider 提供同名模型（例如都列出
-              deepseek-chat）时，这里自动出现对应的组。
+            <EmptyState icon={Shuffle} title={t("routing.auto.empty")}>
+              {t("routing.auto.emptyHint")}
             </EmptyState>
           )}
         </div>
@@ -144,13 +153,14 @@ function AutoGroupsPage({ tabs }: { tabs: React.ReactNode }) {
   );
 }
 
-const tabs = [
-  { page: "routing", label: "路由组" },
-  { page: "auto-groups", label: "自动路由组" },
-  { page: "keys", label: "Gateway Key" },
-  { page: "credential-state", label: "凭据状态" },
-  { page: "decisions", label: "路由决定" },
-] as const;
+const tabs = () =>
+  [
+    { page: "routing", label: t("routing.tab.groups") },
+    { page: "auto-groups", label: t("routing.tab.auto") },
+    { page: "keys", label: t("routing.tab.keys") },
+    { page: "credential-state", label: t("routing.tab.credentials") },
+    { page: "decisions", label: t("routing.tab.decisions") },
+  ] as const;
 
 /** Route groups, automatic groups, Gateway Keys, the credentials' routing state and the route decisions, one tab each. */
 export function RoutingPage({
@@ -161,7 +171,9 @@ export function RoutingPage({
     "routing" | "auto-groups" | "keys" | "credential-state" | "decisions"
   >;
 }) {
-  const nav = <PageTabs label="路由与 Key" current={tab} tabs={tabs} />;
+  const nav = (
+    <PageTabs label={t("common.nav.routing")} current={tab} tabs={tabs()} />
+  );
   return tab === "routing" ? (
     <GroupsPage tabs={nav} />
   ) : tab === "auto-groups" ? (

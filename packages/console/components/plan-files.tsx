@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import type { AgentPlanFile } from "@harnesshub/sdk/client";
+import { t } from "@/lib/i18n";
 
 /**
  * The files a wiring plan writes, each with its unified diff (Gateway Keys
@@ -17,26 +18,29 @@ export function PlanFiles({
   // A file the plan only reads (an unchanged catalog) has nothing to show.
   const changed = files.filter((file) => file.diff || file.changes.length);
   if (!changed.length)
-    return <p className="text-[13px] text-muted-foreground">没有文件改动。</p>;
+    return (
+      <p className="text-[13px] text-muted-foreground">
+        {t("agents.plan.noChanges")}
+      </p>
+    );
   return (
     <div className="min-w-0 space-y-3">
       {changed.map((file) => (
         <section key={file.path} className="min-w-0 space-y-1">
           <p className="text-[13px] font-medium">
-            {file.exists ? "修改" : "新建"}{" "}
+            {file.exists ? t("agents.plan.modify") : t("agents.plan.create")}{" "}
             <span className="font-mono text-[12.5px] break-all">
               {file.path}
             </span>
           </p>
           <pre className="max-h-[40vh] overflow-auto rounded-xl border bg-muted p-3 font-mono text-[12px] leading-5">
-            {file.diff || "（无改动）"}
+            {file.diff || t("agents.plan.noDiff")}
           </pre>
         </section>
       ))}
       {keyNote ? (
         <p className="text-[12.5px] text-muted-foreground">
-          Key 以 hhk_a_xxxx… 显示；实际的 Key
-          只写入上面的文件，不会显示或保存在别处。
+          {t("agents.plan.keyNote")}
         </p>
       ) : null}
     </div>

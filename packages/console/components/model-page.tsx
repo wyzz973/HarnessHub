@@ -18,11 +18,11 @@ import type { HarnessModelTest, HarnessModelView } from "@/lib/contracts";
 import type { SecretReference } from "@/lib/engine-configuration";
 import {
   DEFAULT_ALIAS,
-  engineModelStatusNames,
+  engineModelStatusName,
   formFromView,
   harnessModelBody,
   headerRow,
-  modelSourceNames,
+  modelSourceName,
   validateForm,
   type HarnessModelForm,
   type HeaderRow,
@@ -30,13 +30,14 @@ import {
 import { engineName } from "@/lib/engines";
 import { duration } from "@/lib/presentation";
 import { EngineAvatar } from "./engine-avatar";
+import { t } from "@/lib/i18n";
 
 function referenceLabel(reference: SecretReference) {
   return reference.kind === "keychain"
-    ? "已保存在系统安全存储"
+    ? t("tasks.model.keychain")
     : reference.kind === "file"
-      ? `密钥文件 ${reference.value}`
-      : `环境变量 ${reference.value}`;
+      ? t("tasks.model.keyFile", { path: reference.value })
+      : t("tasks.model.keyEnv", { name: reference.value });
 }
 /**
  * Unified model editor (ADR 0013). Secrets are written through `POST /v1/secrets` first and
@@ -131,9 +132,11 @@ export function ModelPage({
       await onSaved(saved);
       setForm(formFromView(saved));
       setDirty(false);
-      setSaved("已保存，新任务开始使用这个模型。");
+      setSaved(t("tasks.model.saved"));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "保存失败");
+      setError(
+        reason instanceof Error ? reason.message : t("tasks.model.saveFailed"),
+      );
     } finally {
       setBusy(null);
     }
@@ -144,9 +147,14 @@ export function ModelPage({
     setTested(null);
     try {
       const result = await api.testHarnessModel(testEngine || undefined);
-      setTested({ ...result, engine: testEngine || "默认引擎" });
+      setTested({
+        ...result,
+        engine: testEngine || t("tasks.model.defaultEngine"),
+      });
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "测试请求失败");
+      setError(
+        reason instanceof Error ? reason.message : t("tasks.model.testFailed"),
+      );
     } finally {
       setBusy(null);
     }
@@ -175,8 +183,8 @@ export function ModelPage({
       <div className="page-column">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="page-title">模型</h1>
-            <p className="page-lede">所有引擎共用这一个模型。</p>
+            <h1 className="page-title">{t("tasks.model.title")}</h1>
+            <p className="page-lede">{t("tasks.model.lede")}</p>
           </div>
           <Button
             size="sm"
@@ -185,16 +193,16 @@ export function ModelPage({
             onClick={() => void refresh()}
           >
             <RefreshCw className={busy === "reload" ? "animate-spin" : ""} />
-            重新读取
+            {t("tasks.model.reload")}
           </Button>
         </div>
         {unsupported ? (
           <div className="callout warn mt-6">
-            当前服务版本不支持统一模型，请升级。
+            {t("tasks.model.unsupported")}
           </div>
         ) : model.state === "error" ? (
           <div className="callout error mt-6" role="alert">
-            读取失败：{model.message}
+            {t("common.loadFailed", { message: model.message })}
           </div>
         ) : null}
         {model.state === "loading" ? (
@@ -206,16 +214,18 @@ export function ModelPage({
         ) : null}
         {view ? (
           <div className="mt-6 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
-            <section className="panel p-6" aria-label="模型配置">
+            <section
+              className="panel p-6"
+              aria-label={t("tasks.model.settings")}
+            >
               {environmentLocked ? (
                 <div className="callout warn mb-5">
-                  模型由环境变量 HARNESSHUB_MODEL*
-                  提供，在这里不能修改。
+                  {t("tasks.model.environmentLocked")}
                 </div>
               ) : null}
               <fieldset className="space-y-4" disabled={environmentLocked}>
                 <label className="field-label">
-                  接口地址
+                  {t("tasks.model.baseUrl")}
                   <input
                     className="field font-mono text-[13px]"
                     value={form.baseUrl}
@@ -227,11 +237,11 @@ export function ModelPage({
                     }
                   />
                   <span className="field-hint block">
-                    OpenAI Chat Completions 兼容接口，以 /v1 结尾。
+                    {t("tasks.model.baseUrlHint")}
                   </span>
                 </label>
                 <label className="field-label">
-                  模型 ID
+                  {t("tasks.model.modelId")}
                   <input
                     className="field font-mono text-[13px]"
                     value={form.model}
@@ -245,7 +255,7 @@ export function ModelPage({
                   <span className="field-label">API Key</span>
                   <div className="mt-1.5 grid gap-2 sm:grid-cols-[200px_minmax(0,1fr)]">
                     <select
-                      aria-label="API Key 来源"
+                      aria-label={t("tasks.model.keySource")}
                       className="field mt-0"
                       value={form.keyMode}
                       onChange={(event) =>
@@ -256,15 +266,17 @@ export function ModelPage({
                       }
                     >
                       {form.keyReference ? (
-                        <option value="keep">使用已保存的密钥</option>
+                        <option value="keep">{t("tasks.model.keyKeep")}</option>
                       ) : null}
-                      <option value="new">输入新密钥</option>
-                      <option value="env">读取环境变量</option>
-                      <option value="none">不需要密钥</option>
+                      <option value="new">{t("tasks.model.keyNew")}</option>
+                      <option value="env">
+                        {t("tasks.model.keyFromEnv")}
+                      </option>
+                      <option value="none">{t("tasks.model.keyNone")}</option>
                     </select>
                     {form.keyMode === "new" ? (
                       <input
-                        aria-label="新的 API Key"
+                        aria-label={t("tasks.model.newKey")}
                         type="password"
                         autoComplete="off"
                         className="field mt-0 font-mono text-[13px]"
@@ -276,7 +288,7 @@ export function ModelPage({
                       />
                     ) : form.keyMode === "env" ? (
                       <input
-                        aria-label="API Key 环境变量名称"
+                        aria-label={t("tasks.model.envName")}
                         className="field mt-0 font-mono text-[13px]"
                         value={form.envName}
                         placeholder="UPSTREAM_MODEL_KEY"
@@ -293,10 +305,10 @@ export function ModelPage({
                   </div>
                   <p className="field-hint">
                     {form.keyMode === "env"
-                      ? "填写环境变量的名称，服务启动时从该变量读取密钥。"
+                      ? t("tasks.model.envHint")
                       : form.keyMode === "none"
-                        ? "请求不带 Authorization。"
-                        : "密钥保存在本机系统安全存储中，配置里只保留引用。"}
+                        ? t("tasks.model.noneHint")
+                        : t("tasks.model.storedHint")}
                   </p>
                 </div>
                 <details
@@ -308,12 +320,12 @@ export function ModelPage({
                 >
                   <summary className="flex h-11 items-center gap-2 px-4 text-[13.5px] font-medium">
                     <ChevronRight className="size-4 text-subtle transition-transform duration-150 group-open:rotate-90" />
-                    高级设置
+                    {t("tasks.model.advanced")}
                   </summary>
                   <div className="space-y-5 border-t px-4 pt-4 pb-5">
                     <div className="grid gap-4 sm:grid-cols-3">
                       <label className="field-label">
-                        上下文窗口
+                        {t("tasks.model.contextWindow")}
                         <input
                           className="field tabular"
                           inputMode="numeric"
@@ -325,7 +337,7 @@ export function ModelPage({
                         />
                       </label>
                       <label className="field-label">
-                        最大输出
+                        {t("tasks.model.maxOutputField")}
                         <input
                           className="field tabular"
                           inputMode="numeric"
@@ -337,7 +349,7 @@ export function ModelPage({
                         />
                       </label>
                       <label className="field-label">
-                        引擎看到的模型名
+                        {t("tasks.model.alias")}
                         <input
                           className="field font-mono text-[13px]"
                           value={form.alias}
@@ -350,7 +362,9 @@ export function ModelPage({
                       </label>
                     </div>
                     <div>
-                      <span className="field-label">自定义请求头</span>
+                      <span className="field-label">
+                        {t("tasks.model.headers")}
+                      </span>
                       {form.headers.length ? (
                         <div className="mt-2 space-y-2">
                           {form.headers.map((row) => (
@@ -359,7 +373,7 @@ export function ModelPage({
                               className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto_auto] items-center gap-2"
                             >
                               <input
-                                aria-label="请求头名称"
+                                aria-label={t("tasks.model.headerName")}
                                 className="field mt-0 font-mono text-[13px]"
                                 value={row.name}
                                 placeholder="X-Tenant-Id"
@@ -370,15 +384,17 @@ export function ModelPage({
                                 }
                               />
                               <input
-                                aria-label={`请求头 ${row.name || ""} 的值`}
+                                aria-label={t("tasks.model.headerValue", {
+                                  name: row.name || "",
+                                })}
                                 type={row.secret ? "password" : "text"}
                                 autoComplete="off"
                                 className="field mt-0 font-mono text-[13px]"
                                 value={row.value}
                                 placeholder={
                                   row.secret && row.reference
-                                    ? "已保存，留空保持不变"
-                                    : "值"
+                                    ? t("tasks.model.headerKept")
+                                    : t("tasks.model.value")
                                 }
                                 onChange={(event) =>
                                   updateRow(row.key, {
@@ -397,12 +413,14 @@ export function ModelPage({
                                     })
                                   }
                                 />
-                                敏感
+                                {t("tasks.model.sensitive")}
                               </label>
                               <Button
                                 variant="ghost"
                                 size="icon-sm"
-                                aria-label={`删除请求头 ${row.name}`}
+                                aria-label={t("tasks.model.removeHeader", {
+                                  name: row.name,
+                                })}
                                 onClick={() =>
                                   update({
                                     headers: form.headers.filter(
@@ -426,12 +444,12 @@ export function ModelPage({
                         }
                       >
                         <Plus />
-                        添加请求头
+                        {t("tasks.model.addHeader")}
                       </Button>
                     </div>
                     <div className="grid gap-4 sm:grid-cols-2">
                       <label className="field-label">
-                        推理内容
+                        {t("tasks.model.reasoning")}
                         <select
                           className="field"
                           value={form.reasoning}
@@ -442,12 +460,16 @@ export function ModelPage({
                             })
                           }
                         >
-                          <option value="passthrough">回传给引擎</option>
-                          <option value="strip">不转发</option>
+                          <option value="passthrough">
+                            {t("tasks.model.reasoningPass")}
+                          </option>
+                          <option value="strip">
+                            {t("tasks.model.reasoningStrip")}
+                          </option>
                         </select>
                       </label>
                       <label className="field-label">
-                        输出上限字段
+                        {t("tasks.model.maxTokensField")}
                         <select
                           className="field"
                           value={form.maxTokensField}
@@ -466,7 +488,7 @@ export function ModelPage({
                       </label>
                     </div>
                     <label className="field-label">
-                      额外去除的请求参数
+                      {t("tasks.model.drops")}
                       <input
                         className="field font-mono text-[13px]"
                         value={form.dropParameters}
@@ -476,14 +498,14 @@ export function ModelPage({
                         }
                       />
                       <span className="field-hint block">
-                        上游报“不支持某参数”时填写，逗号分隔。
+                        {t("tasks.model.dropsHint")}
                       </span>
                     </label>
                     <label className="flex items-center justify-between gap-4 text-[13.5px]">
                       <span>
-                        请求用量统计
+                        {t("tasks.model.includeUsage")}
                         <span className="field-hint mt-0.5 block">
-                          上游支持 stream_options.include_usage 时开启。
+                          {t("tasks.model.includeUsageHint")}
                         </span>
                       </span>
                       <Switch
@@ -491,7 +513,7 @@ export function ModelPage({
                         onCheckedChange={(checked) =>
                           update({ includeUsage: checked })
                         }
-                        aria-label="请求用量统计"
+                        aria-label={t("tasks.model.includeUsage")}
                       />
                     </label>
                   </div>
@@ -517,30 +539,35 @@ export function ModelPage({
                     {busy === "save" ? (
                       <Loader2 className="animate-spin" />
                     ) : null}
-                    保存
+                    {t("tasks.model.save")}
                   </Button>
                   {dirty ? (
                     <span className="text-[12.5px] text-warning">
-                      有未保存的修改
+                      {t("tasks.model.unsaved")}
                     </span>
                   ) : null}
                 </div>
               )}
             </section>
             <div className="space-y-5">
-              <section className="panel p-5" aria-label="当前状态">
-                <h2 className="section-title">当前状态</h2>
+              <section
+                className="panel p-5"
+                aria-label={t("tasks.model.status")}
+              >
+                <h2 className="section-title">{t("tasks.model.status")}</h2>
                 <dl className="mt-2">
                   <div className="metric-row">
-                    <dt>模型</dt>
+                    <dt>{t("tasks.model.title")}</dt>
                     <dd className="font-mono text-[12.5px]">
-                      {view.configured ? (view.model ?? "未报告") : "未连接"}
+                      {view.configured
+                        ? (view.model ?? t("tasks.model.notReported"))
+                        : t("tasks.model.notConnected")}
                     </dd>
                   </div>
                   {view.configured && view.source ? (
                     <div className="metric-row">
-                      <dt>来源</dt>
-                      <dd>{modelSourceNames[view.source]}</dd>
+                      <dt>{t("tasks.model.source")}</dt>
+                      <dd>{modelSourceName(view.source)}</dd>
                     </div>
                   ) : null}
                 </dl>
@@ -556,26 +583,32 @@ export function ModelPage({
                   ) : (
                     <FlaskConical />
                   )}
-                  {busy === "test" ? "测试中，最长约 90 秒" : "测试连接"}
+                  {busy === "test"
+                    ? t("tasks.model.testing")
+                    : t("tasks.model.test")}
                 </Button>
                 {testable.length > 1 ? (
                   <select
                     className="field h-8 text-[12.5px]"
-                    aria-label="测试引擎"
+                    aria-label={t("tasks.model.testEngine")}
                     value={testEngine}
                     disabled={!!busy}
                     onChange={(event) => setTestEngine(event.target.value)}
                   >
-                    <option value="">用默认引擎测试</option>
+                    <option value="">{t("tasks.model.testDefault")}</option>
                     {testable.map((engine) => (
                       <option key={engine.engineId} value={engine.engineId}>
-                        用 {engineName(engine.engineId)} 测试
+                        {t("tasks.model.testWith", {
+                          engine: engineName(engine.engineId),
+                        })}
                       </option>
                     ))}
                   </select>
                 ) : null}
                 {dirty && view.configured ? (
-                  <p className="field-hint">测试使用已保存的配置。</p>
+                  <p className="field-hint">
+                    {t("tasks.model.testUsesSaved")}
+                  </p>
                 ) : null}
                 {tested ? (
                   <div
@@ -588,7 +621,10 @@ export function ModelPage({
                       <CircleX className="mt-0.5 size-4 shrink-0" />
                     )}
                     <span className="min-w-0">
-                      {tested.ok ? "连接正常" : "测试未通过"} ·{" "}
+                      {tested.ok
+                        ? t("tasks.model.testOk")
+                        : t("tasks.model.testNotOk")}{" "}
+                      ·{" "}
                       {duration(tested.durationMs)}
                       {tested.error ? (
                         <span className="mt-1 block text-[12.5px] break-words">
@@ -600,14 +636,17 @@ export function ModelPage({
                         className="mt-1 block text-[12.5px] underline"
                         onClick={() => openRun(tested.runId)}
                       >
-                        查看测试任务
+                        {t("tasks.model.viewTest")}
                       </button>
                     </span>
                   </div>
                 ) : null}
               </section>
-              <section className="panel p-5" aria-label="引擎">
-                <h2 className="section-title">引擎</h2>
+              <section
+                className="panel p-5"
+                aria-label={t("tasks.model.engines")}
+              >
+                <h2 className="section-title">{t("tasks.model.engines")}</h2>
                 {engineStatuses.length ? (
                   <ul className="mt-3 space-y-2.5">
                     {engineStatuses.map((engine) => (
@@ -621,7 +660,7 @@ export function ModelPage({
                             <span
                               className={`tag ${engine.status === "applied" ? "good" : engine.status === "unsupported" ? "warn" : ""}`}
                             >
-                              {engineModelStatusNames[engine.status]}
+                              {engineModelStatusName(engine.status)}
                             </span>
                           </div>
                           {engine.reason ? (
@@ -635,7 +674,7 @@ export function ModelPage({
                   </ul>
                 ) : (
                   <p className="mt-2 text-[13px] text-muted-foreground">
-                    还没有引擎
+                    {t("tasks.model.noEngines")}
                   </p>
                 )}
               </section>

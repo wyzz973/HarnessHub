@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { useSyncExternalStore } from "react";
 import { HarnessHubError } from "@harnesshub/sdk/client";
+import { t } from "./i18n";
 import { failureOf } from "./model-plane";
 
 /** One notice in the corner of the page. */
@@ -8,7 +9,7 @@ export interface Toast {
   id: number;
   tone: "error" | "success";
   title: string;
-  /** The daemon's own words and identifiers, shown under "技术详情". */
+  /** The daemon's own words and identifiers, shown under the technical details. */
   detail?: { code: string; requestId?: string; message?: string };
 }
 
@@ -43,14 +44,16 @@ export const notify = {
   /**
    * A failed action: the readable message of `reason` (problem details are
    * mapped by code, see `failureOf`), with the problem's code, request ID and
-   * English detail kept for "技术详情". Errors stay 10 s.
+   * English detail kept for the technical details. Errors stay 10 s.
    */
   error(reason: unknown, title?: string): void {
     const failure = failureOf(reason);
     show(
       {
         tone: "error",
-        title: title ? `${title}：${failure.message}` : failure.message,
+        title: title
+          ? t("common.failureTitle", { title, message: failure.message })
+          : failure.message,
         ...(reason instanceof HarnessHubError
           ? {
               detail: {

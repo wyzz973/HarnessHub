@@ -10,9 +10,12 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { failureOf, modelPlane, type Failure } from "@/lib/model-plane";
+import { t } from "@/lib/i18n";
+import { tr } from "@/lib/i18n-react";
 import type { Page } from "@/lib/router";
 import { notify } from "@/lib/toast";
 import { BackupPage } from "./backup-page";
+import { LanguageSwitch } from "./language-switch";
 import { GatewayFeaturesPage } from "./gateway-features-page";
 import {
   Card,
@@ -69,7 +72,11 @@ function LanSharing({
   const save = async () => {
     setFailure(null);
     const saved = await modelPlane().gatewayShare.update(settings());
-    notify.success(saved.lan.enabled ? "局域网共享已开启" : "局域网共享已关闭");
+    notify.success(
+      saved.lan.enabled
+        ? t("settings.lan.enabled")
+        : t("settings.lan.disabled"),
+    );
     onSaved(saved);
   };
   const submit = () => {
@@ -88,74 +95,66 @@ function LanSharing({
   };
   return (
     <Card
-      title="局域网共享"
-      lede="让同一网络中的其他电脑或 HarnessHub 使用本机的模型网关。只开放模型协议；管理接口与控制台仍只在本机。"
+      title={t("settings.lan.title")}
+      lede={t("settings.lan.lede")}
       aside={
         <span className={`tag ${status.listening ? "good" : ""}`}>
           {status.listening
-            ? `监听中${status.boundPort ? ` · 端口 ${status.boundPort}` : ""}`
+            ? `${t("settings.lan.listening")}${status.boundPort ? t("settings.lan.port", { port: String(status.boundPort) }) : ""}`
             : status.lan.enabled
-              ? "未在监听"
-              : "已关闭"}
+              ? t("settings.lan.notListening")
+              : t("settings.lan.off")}
         </span>
       }
     >
       <div className="callout warn">
         <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-        <span>
-          局域网上的请求是明文 HTTP：只在可信网络中开启，或放在 TLS
-          反向代理之后。只有创建时勾选了局域网、并设置了有效期的 client Key
-          能在局域网上使用。
-        </span>
+        <span>{t("settings.lan.warning")}</span>
       </div>
       {status.error ? <p className="callout error">{status.error}</p> : null}
       <label className="flex items-center justify-between gap-3 text-[13.5px]">
-        开启局域网共享
+        {t("settings.lan.enable")}
         <Switch
           checked={enabled}
           onCheckedChange={setEnabled}
-          aria-label="开启局域网共享"
+          aria-label={t("settings.lan.enable")}
         />
       </label>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="field-label">
-          监听地址
+          {t("settings.lan.host")}
           <input
             className="field font-mono"
-            placeholder="192.168.1.20 或 0.0.0.0"
+            placeholder={t("settings.lan.hostPlaceholder")}
             value={host}
             onChange={(event) => setHost(event.target.value)}
           />
-          <span className="field-hint">
-            本机的一个 IP 地址；0.0.0.0 监听全部地址。开启时必填。
-          </span>
+          <span className="field-hint">{t("settings.lan.hostHint")}</span>
         </label>
         <label className="field-label">
-          端口
+          {t("settings.lan.portLabel")}
           <input
             className="field font-mono"
             inputMode="numeric"
-            placeholder="与守护进程相同"
+            placeholder={t("settings.lan.portPlaceholder")}
             value={port}
             aria-invalid={!portValid}
             onChange={(event) => setPort(event.target.value.trim())}
           />
-          <span className="field-hint">留空则使用守护进程的端口。</span>
+          <span className="field-hint">{t("settings.lan.portHint")}</span>
         </label>
         <label className="field-label">
-          主机名
+          {t("settings.lan.names")}
           <input
             className="field font-mono"
             placeholder="hh.local, studio.lan"
             value={names}
             onChange={(event) => setNames(event.target.value)}
           />
-          <span className="field-hint">
-            其他电脑访问时使用的名字，以逗号分隔；只接受列出的名字与 IP。
-          </span>
+          <span className="field-hint">{t("settings.lan.namesHint")}</span>
         </label>
         <label className="field-label">
-          公开地址（可选）
+          {t("settings.lan.publicBaseUrl")}
           <input
             className="field font-mono"
             placeholder="https://hh.example.lan"
@@ -163,19 +162,19 @@ function LanSharing({
             onChange={(event) => setPublicBaseUrl(event.target.value)}
           />
           <span className="field-hint">
-            位于反向代理之后时，客户端使用的地址。
+            {t("settings.lan.publicBaseUrlHint")}
           </span>
         </label>
       </div>
       {status.urls.length ? (
         <p className="text-[12.5px] text-muted-foreground">
-          其他电脑使用{" "}
-          {status.urls.map((url) => (
-            <code key={url} className="mr-1 font-mono">
-              {url}
-            </code>
-          ))}
-          ，另一台 HarnessHub 用 harnesshub-remote 预设添加它。
+          {tr("settings.lan.urls", {
+            urls: status.urls.map((url) => (
+              <code key={url} className="mr-1 font-mono">
+                {url}
+              </code>
+            )),
+          })}
         </p>
       ) : null}
       <ErrorCallout failure={failure} />
@@ -185,26 +184,22 @@ function LanSharing({
           onClick={submit}
         >
           {busy ? <Loader2 className="animate-spin" /> : null}
-          保存
+          {t("settings.save")}
         </Button>
       </div>
       <ConfirmDialog
         open={confirm}
-        title="开启局域网共享"
-        description={`本机的模型网关将在 ${host.trim()}${port ? `:${port}` : ""} 上对局域网开放，请求是明文 HTTP。只有勾选了局域网的 client Key 能使用它。`}
-        action="开启"
+        title={t("settings.lan.enable")}
+        description={t("settings.lan.confirmBody", {
+          address: `${host.trim()}${port ? `:${port}` : ""}`,
+        })}
+        action={t("settings.lan.confirm")}
         onClose={() => setConfirm(false)}
         onConfirm={save}
       />
     </Card>
   );
 }
-
-const refreshOutcome: Record<string, string> = {
-  updated: "已更新",
-  unchanged: "没有变化",
-  failed: "失败",
-};
 
 /** The models.dev catalog in use and its refresh (`/api/v1/catalog`). */
 function Catalog({
@@ -223,55 +218,64 @@ function Catalog({
         (next) => {
           setBusy(false);
           notify.success(
-            `模型目录${refreshOutcome[next.lastRefresh?.outcome ?? "unchanged"] ?? ""}`,
+            t(
+              `settings.catalog.refreshed.${next.lastRefresh?.outcome ?? "unchanged"}`,
+            ),
           );
           onRefreshed(next);
         },
         (reason: unknown) => {
           setBusy(false);
-          notify.error(reason, "目录没有刷新");
+          notify.error(reason, t("settings.catalog.notRefreshed"));
         },
       );
   };
   const snapshot = status.snapshot;
   return (
     <Card
-      title="模型目录"
-      lede="models.dev 的模型窗口、输出上限与价格，补齐 provider 没有给出的元数据。"
+      title={t("settings.catalog.title")}
+      lede={t("settings.catalog.lede")}
       aside={
         <Button size="sm" variant="outline" disabled={busy} onClick={refresh}>
           {busy ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-          立即刷新
+          {t("settings.catalog.refresh")}
         </Button>
       }
     >
       <dl className="text-[13px]">
-        <Row label="使用中">
-          {status.source === "bundled" ? "内置快照" : "刷新后的副本"} ·{" "}
-          {snapshot.providers} 个 provider、{snapshot.models} 个模型
+        <Row label={t("settings.catalog.inUse")}>
+          {status.source === "bundled"
+            ? t("settings.catalog.bundled")
+            : t("settings.catalog.refreshedCopy")}{" "}
+          ·{" "}
+          {t("settings.catalog.counts", {
+            providers: snapshot.providers,
+            models: snapshot.models,
+          })}
         </Row>
-        <Row label="取得时间">
+        <Row label={t("settings.catalog.retrieved")}>
           <LocalTime value={snapshot.retrievedAt} />
         </Row>
-        <Row label="上游提交">
+        <Row label={t("settings.catalog.commit")}>
           <span className="font-mono text-[12px]">
             {snapshot.commit?.slice(0, 12) ?? "—"}
           </span>
         </Row>
-        <Row label="后台刷新">
+        <Row label={t("settings.catalog.auto")}>
           {status.autoRefresh.enabled
-            ? "开启"
+            ? t("settings.catalog.autoOn")
             : status.autoRefresh.disabledBy === "offline"
-              ? "关闭（离线模式 HH_OFFLINE）"
-              : "关闭（设置）"}
+              ? t("settings.catalog.autoOffline")
+              : t("settings.catalog.autoOff")}
           {status.nextRefreshAt ? (
             <span className="text-subtle">
-              {" "}
-              · 下次 <LocalTime value={status.nextRefreshAt} />
+              {tr("settings.catalog.next", {
+                time: <LocalTime value={status.nextRefreshAt} />,
+              })}
             </span>
           ) : null}
         </Row>
-        <Row label="上次刷新">
+        <Row label={t("settings.catalog.last")}>
           {status.lastRefresh ? (
             <>
               <LocalTime value={status.lastRefresh.at} /> ·{" "}
@@ -280,7 +284,7 @@ function Catalog({
                   status.lastRefresh.outcome === "failed" ? "text-danger" : ""
                 }
               >
-                {refreshOutcome[status.lastRefresh.outcome]}
+                {t(`settings.catalog.outcome.${status.lastRefresh.outcome}`)}
               </span>
               {status.lastRefresh.error ? (
                 <span className="block text-[12px] text-danger">
@@ -289,10 +293,10 @@ function Catalog({
               ) : null}
             </>
           ) : (
-            "还没有刷新过"
+            t("settings.catalog.never")
           )}
         </Row>
-        <Row label="来源">
+        <Row label={t("settings.catalog.source")}>
           <span className="font-mono text-[12px] break-all">{status.url}</span>
         </Row>
       </dl>
@@ -300,11 +304,11 @@ function Catalog({
   );
 }
 
-const tabs = [
-  { page: "settings", label: "通用" },
-  { page: "features", label: "网关功能" },
-  { page: "backup", label: "备份与同步" },
-] as const;
+const tabs = () =>
+  (["settings", "features", "backup"] as const).map((page) => ({
+    page,
+    label: t(`settings.tab.${page}`),
+  }));
 
 /**
  * Settings of the daemon: LAN sharing, the model catalog and what is
@@ -316,7 +320,9 @@ export function SettingsPage({
 }: {
   tab: Extract<Page, "settings" | "features" | "backup">;
 }) {
-  const nav = <PageTabs label="设置" current={tab} tabs={tabs} />;
+  const nav = (
+    <PageTabs label={t("settings.title")} current={tab} tabs={tabs()} />
+  );
   return tab === "backup" ? (
     <BackupPage tabs={nav} />
   ) : tab === "features" ? (
@@ -345,14 +351,11 @@ function General({ tabs }: { tabs: React.ReactNode }) {
     <div className="page-body">
       <div className="page-column max-w-[880px]">
         {tabs}
-        <PageHeader
-          title="设置"
-          lede="局域网共享、模型目录与这个守护进程的信息。"
-        >
+        <PageHeader title={t("settings.title")} lede={t("settings.lede")}>
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label="刷新"
+            aria-label={t("common.refresh")}
             onClick={() => {
               setOverride({});
               reload();
@@ -362,11 +365,14 @@ function General({ tabs }: { tabs: React.ReactNode }) {
           </Button>
         </PageHeader>
         <div className="mt-6 space-y-4">
+          <Card title={t("common.language")} lede={t("common.languageLede")}>
+            <LanguageSwitch />
+          </Card>
           {data.state === "loading" ? (
             <div
               className="panel space-y-3 p-5"
               role="status"
-              aria-label="正在读取"
+              aria-label={t("common.loading")}
             >
               <Skeleton className="h-4 w-1/3" />
               <Skeleton className="h-4 w-2/3" />
@@ -388,40 +394,36 @@ function General({ tabs }: { tabs: React.ReactNode }) {
                   setOverride((current) => ({ ...current, catalog }))
                 }
               />
-              <Card title="关于">
+              <Card title={t("settings.about.title")}>
                 <dl className="text-[13px]">
-                  <Row label="版本">
+                  <Row label={t("settings.about.version")}>
                     {data.value.system.version}{" "}
                     <span className="font-mono text-[12px] text-subtle">
                       {data.value.system.commit.slice(0, 12)}
                     </span>
                   </Row>
-                  <Row label="进程">
-                    pid {data.value.system.pid} · 启动于{" "}
-                    <LocalTime value={data.value.system.startedAt} />
+                  <Row label={t("settings.about.process")}>
+                    {tr("settings.about.started", {
+                      pid: String(data.value.system.pid),
+                      time: <LocalTime value={data.value.system.startedAt} />,
+                    })}
                   </Row>
-                  <Row label="数据目录">
+                  <Row label={t("settings.about.dataDir")}>
                     <span className="font-mono text-[12px] break-all">
                       {data.value.system.dataDir}
                     </span>
                   </Row>
-                  <Row label="秘密存储">
-                    {
-                      {
-                        keychain: "macOS 钥匙串",
-                        dpapi: "Windows DPAPI",
-                        file: "加密文件",
-                      }[data.value.system.secretBackend]
-                    }
+                  <Row label={t("settings.about.secrets")}>
+                    {t(`settings.about.${data.value.system.secretBackend}`)}
                   </Row>
                   {data.value.system.gateway ? (
                     <>
-                      <Row label="OpenAI 基址">
+                      <Row label={t("settings.about.openai")}>
                         <span className="font-mono text-[12px]">
                           {data.value.system.gateway.openaiBaseUrl}
                         </span>
                       </Row>
-                      <Row label="Anthropic / Gemini 基址">
+                      <Row label={t("settings.about.anthropic")}>
                         <span className="font-mono text-[12px]">
                           {data.value.system.gateway.anthropicBaseUrl}
                         </span>

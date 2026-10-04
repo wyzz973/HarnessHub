@@ -2,6 +2,7 @@
 import { CircleAlert, CircleCheck, X } from "lucide-react";
 import { dismissToast, useToasts } from "@/lib/toast";
 import { cn } from "@/lib/utils";
+import { t } from "@/lib/i18n";
 
 /**
  * Notices of finished and failed actions, bottom right (full width on a
@@ -38,7 +39,7 @@ export function Toaster() {
             <p className="break-words">{toast.title}</p>
             {toast.detail ? (
               <details className="mt-1 text-[12px] text-muted-foreground">
-                <summary>技术详情</summary>
+                <summary>{t("common.technicalDetails")}</summary>
                 <p className="mt-1 font-mono break-all">
                   {toast.detail.code}
                   {toast.detail.requestId ? ` · ${toast.detail.requestId}` : ""}
@@ -52,7 +53,7 @@ export function Toaster() {
           <button
             type="button"
             className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-            aria-label="关闭通知"
+            aria-label={t("common.dismissNotice")}
             onClick={() => dismissToast(toast.id)}
           >
             <X className="size-3.5" />

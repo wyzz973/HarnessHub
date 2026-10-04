@@ -16,9 +16,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { formatNumber, formatUsd, t } from "@/lib/i18n";
+import { tr } from "@/lib/i18n-react";
 import { failureOf, modelPlane, type Failure } from "@/lib/model-plane";
 import {
-  budgetPeriodNames,
+  budgetPeriodName,
   budgetUse,
   quotaFormOf,
   quotaOf,
@@ -67,24 +69,21 @@ export function QuotaFields({
     ) : null;
   return (
     <fieldset className="space-y-3">
-      <legend className="field-label mb-1">额度（可选）</legend>
+      <legend className="field-label mb-1">{t("routing.quota.legend")}</legend>
       <label className="field-label">
-        每分钟请求数
+        {t("routing.quota.rpmLabel")}
         <input
           className="field w-[160px]"
           inputMode="numeric"
           value={form.rpm}
-          placeholder="不限"
+          placeholder={t("routing.quota.noLimit")}
           onChange={(event) => onChange({ ...form, rpm: event.target.value })}
         />
         {problem("rpm")}
       </label>
       <div className="space-y-2 rounded-xl border p-3">
         <p className="text-[12.5px] text-muted-foreground">
-          预算按守护进程本地时区的日历窗口计算（日从零点、周从周一、月从 1
-          日）。token
-          计入未命中缓存的输入、输出、推理与缓存写入；成本是账本的估算，没有价格的调用不计。上限为
-          0 时，这个窗口内的每次调用都被拒绝。
+          {t("routing.quota.explain")}
         </p>
         {periods.map((period) => {
           const fields = form.budgets[period];
@@ -99,18 +98,22 @@ export function QuotaFields({
                     budget(period, { on: event.target.checked })
                   }
                 />
-                {budgetPeriodNames[period]}的预算
+                {t("routing.quota.budgetOf", {
+                  period: budgetPeriodName(period),
+                })}
               </label>
               {fields.on ? (
                 <div className="grid gap-2 pl-6 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
                   <label className="field-label">
-                    token 上限
+                    {t("routing.quota.tokenCap")}
                     <input
                       className="field"
                       inputMode="numeric"
-                      aria-label={`${budgetPeriodNames[period]}的 token 上限`}
+                      aria-label={t("routing.quota.tokenCapOf", {
+                        period: budgetPeriodName(period),
+                      })}
                       value={fields.tokens}
-                      placeholder="不限"
+                      placeholder={t("routing.quota.noLimit")}
                       onChange={(event) =>
                         budget(period, { tokens: event.target.value })
                       }
@@ -118,13 +121,15 @@ export function QuotaFields({
                     {problem(`${period}.tokens`)}
                   </label>
                   <label className="field-label">
-                    成本上限（美元）
+                    {t("routing.quota.costCap")}
                     <input
                       className="field"
                       inputMode="decimal"
-                      aria-label={`${budgetPeriodNames[period]}的成本上限`}
+                      aria-label={t("routing.quota.costCapOf", {
+                        period: budgetPeriodName(period),
+                      })}
                       value={fields.cost}
-                      placeholder="不限"
+                      placeholder={t("routing.quota.noLimit")}
                       onChange={(event) =>
                         budget(period, { cost: event.target.value })
                       }
@@ -140,7 +145,7 @@ export function QuotaFields({
                         budget(period, { cacheReads: event.target.checked })
                       }
                     />
-                    计入缓存读取
+                    {t("routing.quota.cacheReads")}
                   </label>
                   <span className="sm:col-span-3">{problem(period)}</span>
                 </div>
@@ -197,23 +202,21 @@ export function QuotaDialog({
     >
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-[600px]">
         <DialogHeader>
-          <DialogTitle>{gatewayKey.name} 的额度</DialogTitle>
-          <DialogDescription>
-            超过时网关以 429
-            拒绝，并告诉客户端何时重置、不要自动重试。新的额度从这个 Key
-            的下一个请求起生效；全部留空即不限。
-          </DialogDescription>
+          <DialogTitle>
+            {t("routing.quota.dialogTitle", { name: gatewayKey.name })}
+          </DialogTitle>
+          <DialogDescription>{t("routing.quota.dialogLede")}</DialogDescription>
         </DialogHeader>
         <QuotaFields form={form} onChange={setForm} problems={problems} />
         <ErrorCallout failure={failure} />
         <OtherFieldErrors failure={failure} shown={[]} />
         <DialogFooter>
           <Button variant="outline" disabled={busy} onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </Button>
           <Button disabled={busy} onClick={() => void save()}>
             {busy ? <Loader2 className="animate-spin" /> : null}
-            保存
+            {t("routing.save")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -243,7 +246,9 @@ function Meter({
         <span>{label}</span>
         <span className="text-muted-foreground">
           {format(used)}
-          {held ? ` + 在途预留 ${format(held)}` : ""} / {format(limit)}
+          {held
+            ? t("routing.budget.held", { amount: format(held) })
+            : ""} / {format(limit)}
         </span>
       </div>
       <div
@@ -269,41 +274,52 @@ function BudgetStatus({ status }: { status: KeyBudgetStatus }) {
     <section className="space-y-2 rounded-xl border p-3">
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="text-[13.5px] font-medium">
-          {budgetPeriodNames[status.period]}
+          {budgetPeriodName(status.period)}
         </h3>
         {status.spent ? (
-          <span className="tag error">已用尽，到重置前拒绝</span>
+          <span className="tag error">{t("routing.budget.spent")}</span>
         ) : (
-          <span className="tag good">可用</span>
+          <span className="tag good">{t("routing.budget.available")}</span>
         )}
         <span className="ml-auto text-[12px] text-muted-foreground">
-          重置于 <LocalTime value={status.resetsAt} />
+          {tr("routing.budget.resets", {
+            time: <LocalTime value={status.resetsAt} />,
+          })}
         </span>
       </div>
       {use.tokens ? (
         <Meter
-          label={`token${status.cacheReads ? "（含缓存读取）" : ""}`}
+          label={
+            status.cacheReads
+              ? t("routing.budget.tokensWithCache")
+              : t("routing.budget.tokens")
+          }
           {...use.tokens}
-          format={(value) => value.toLocaleString()}
+          format={(value) => formatNumber(value)}
         />
       ) : (
         <p className="text-[12.5px] text-muted-foreground">
-          token：{status.tokens.toLocaleString()}（不设上限）
+          {t("routing.budget.tokensNoCap", { n: status.tokens })}
         </p>
       )}
       {use.cost ? (
         <Meter
-          label="估算成本"
+          label={t("routing.budget.cost")}
           {...use.cost}
-          format={(value) => `$${Number(value.toFixed(6))}`}
+          format={(value) => formatUsd(Number(value.toFixed(6)))}
         />
       ) : (
         <p className="text-[12.5px] text-muted-foreground">
-          估算成本：${Number(status.costUsd.toFixed(6))}（不设上限）
+          {t("routing.budget.costNoCap", {
+            amount: formatUsd(Number(status.costUsd.toFixed(6))),
+          })}
         </p>
       )}
       <p className="text-[12px] text-subtle">
-        本窗口 {status.calls} 次调用，在途 {status.inFlight} 个
+        {t("routing.budget.calls", {
+          calls: status.calls,
+          inFlight: status.inFlight,
+        })}
       </p>
     </section>
   );
@@ -347,11 +363,10 @@ export function LimitDialog({
     <Dialog open onOpenChange={(next) => !next && onClose()}>
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-[560px]">
         <DialogHeader>
-          <DialogTitle>{gatewayKey.name} 的用量</DialogTitle>
-          <DialogDescription>
-            每个预算本窗口已用多少、在途请求持有多少预留，以及何时重置；持有这个
-            Key 的客户端也可以自己读取 GET /v1/harnesshub/limit。
-          </DialogDescription>
+          <DialogTitle>
+            {t("routing.limit.title", { name: gatewayKey.name })}
+          </DialogTitle>
+          <DialogDescription>{t("routing.limit.lede")}</DialogDescription>
         </DialogHeader>
         {limit.state === "loading" ? (
           <p
@@ -359,18 +374,19 @@ export function LimitDialog({
             className="flex items-center gap-2 text-[13px] text-muted-foreground"
           >
             <Loader2 className="size-4 animate-spin" />
-            正在读取
+            {t("common.loading")}
           </p>
         ) : limit.state === "error" ? (
           <LoadError message={limit.message} retry={refresh} />
         ) : (
           <div className="space-y-3">
             <p className="text-[12.5px] text-muted-foreground">
-              窗口按 {limit.value.timeZone} 时区计算
               {limit.value.requestsPerMinute !== undefined
-                ? `；每分钟最多 ${limit.value.requestsPerMinute} 次请求`
-                : ""}
-              。
+                ? t("routing.limit.zoneRpm", {
+                    zone: limit.value.timeZone,
+                    n: limit.value.requestsPerMinute,
+                  })
+                : t("routing.limit.zone", { zone: limit.value.timeZone })}
             </p>
             {limit.value.budgets.length ? (
               limit.value.budgets.map((status) => (
@@ -378,7 +394,7 @@ export function LimitDialog({
               ))
             ) : (
               <p className="rounded-xl border px-3 py-3 text-[13px] text-muted-foreground">
-                这个 Key 没有预算。
+                {t("routing.limit.noBudgets")}
               </p>
             )}
           </div>
@@ -386,9 +402,9 @@ export function LimitDialog({
         <DialogFooter>
           <Button variant="ghost" onClick={refresh}>
             <RefreshCw />
-            刷新
+            {t("common.refresh")}
           </Button>
-          <Button onClick={onClose}>关闭</Button>
+          <Button onClick={onClose}>{t("common.close")}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

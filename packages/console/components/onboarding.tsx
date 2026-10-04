@@ -21,6 +21,7 @@ import {
   type HarnessModelForm,
 } from "@/lib/harness-model";
 import { cn } from "@/lib/utils";
+import { t } from "@/lib/i18n";
 
 type Phase =
   | { step: "idle" }
@@ -101,22 +102,26 @@ export function ConnectModel({
       } else setPhase({ step: "failed", test, engine: engine.engineId });
     } catch (reason) {
       setPhase({ step: "idle" });
-      setError(reason instanceof Error ? reason.message : "保存失败");
+      setError(
+        reason instanceof Error ? reason.message : t("tasks.model.saveFailed"),
+      );
     }
   }
   return (
     <section
       className="w-full max-w-[460px] rounded-[24px] border bg-card p-7 shadow-float"
-      aria-label="连接模型"
+      aria-label={t("tasks.connect.title")}
     >
       <div className="mb-5 flex items-center gap-3">
         <span className="grid size-10 place-items-center rounded-xl bg-brand-soft text-brand">
           <PlugZap className="size-5" strokeWidth={1.8} />
         </span>
         <div>
-          <h1 className="text-[18px] font-semibold">连接模型</h1>
+          <h1 className="text-[18px] font-semibold">
+            {t("tasks.connect.title")}
+          </h1>
           <p className="text-[13px] text-muted-foreground">
-            所有引擎共用这一个模型
+            {t("tasks.connect.lede")}
           </p>
         </div>
       </div>
@@ -128,7 +133,7 @@ export function ConnectModel({
         }}
       >
         <label className="field-label">
-          接口地址
+          {t("tasks.model.baseUrl")}
           <input
             className="field font-mono text-[13px]"
             value={form.baseUrl}
@@ -140,7 +145,7 @@ export function ConnectModel({
           />
         </label>
         <label className="field-label">
-          模型 ID
+          {t("tasks.model.modelId")}
           <input
             className="field font-mono text-[13px]"
             value={form.model}
@@ -158,7 +163,7 @@ export function ConnectModel({
               className="field pr-10 font-mono text-[13px]"
               type={showKey ? "text" : "password"}
               value={form.newKey}
-              placeholder="无需密钥可留空"
+              placeholder={t("tasks.connect.keyPlaceholder")}
               autoComplete="off"
               spellCheck={false}
               disabled={busy}
@@ -167,7 +172,11 @@ export function ConnectModel({
             <button
               type="button"
               className="absolute top-px right-1 grid size-9 place-items-center rounded-lg text-subtle hover:text-foreground"
-              aria-label={showKey ? "隐藏密钥" : "显示密钥"}
+              aria-label={
+                showKey
+                  ? t("tasks.connect.hideKey")
+                  : t("tasks.connect.showKey")
+              }
               onClick={() => setShowKey((value) => !value)}
             >
               {showKey ? (
@@ -191,12 +200,12 @@ export function ConnectModel({
                 advanced && "rotate-90",
               )}
             />
-            高级
+            {t("tasks.connect.advanced")}
           </button>
           {advanced ? (
             <div className="mt-3 grid animate-in grid-cols-2 gap-3 duration-150 fade-in-0 slide-in-from-top-1">
               <label className="field-label">
-                上下文窗口
+                {t("tasks.model.contextWindow")}
                 <input
                   className="field tabular"
                   inputMode="numeric"
@@ -209,7 +218,7 @@ export function ConnectModel({
                 />
               </label>
               <label className="field-label">
-                最大输出
+                {t("tasks.model.maxOutputField")}
                 <input
                   className="field tabular"
                   inputMode="numeric"
@@ -235,7 +244,9 @@ export function ConnectModel({
             <CircleAlert className="mt-0.5 size-4 shrink-0" />
             <div className="min-w-0">
               <p>
-                已保存，但 {engineName(phase.engine)} 未能通过模型拿到回复。
+                {t("tasks.connect.failed", {
+                  engine: engineName(phase.engine),
+                })}
               </p>
               {phase.test.error ? (
                 <p className="mt-1 text-[12.5px] opacity-80">
@@ -248,10 +259,10 @@ export function ConnectModel({
                   className="underline"
                   onClick={() => openRun(phase.test.runId)}
                 >
-                  查看测试任务
+                  {t("tasks.connect.viewTest")}
                 </button>
                 <button type="button" className="underline" onClick={onDone}>
-                  仍然继续
+                  {t("tasks.connect.continueAnyway")}
                 </button>
               </div>
             </div>
@@ -262,20 +273,24 @@ export function ConnectModel({
             {phase.step === "saving" ? (
               <>
                 <Loader2 className="animate-spin" />
-                正在保存
+                {t("tasks.connect.saving")}
               </>
             ) : phase.step === "testing" ? (
               <>
                 <Loader2 className="animate-spin" />
-                正在用 {engineName(phase.engine)} 测试
+                {t("tasks.connect.testing", {
+                  engine: engineName(phase.engine),
+                })}
               </>
             ) : phase.step === "done" ? (
               <>
                 <Check />
-                {phase.tested ? "连接成功" : "已保存"}
+                {phase.tested
+                  ? t("tasks.connect.connected")
+                  : t("tasks.connect.saved")}
               </>
             ) : (
-              "保存并测试"
+              t("tasks.connect.saveAndTest")
             )}
           </Button>
           <Button
@@ -285,7 +300,7 @@ export function ConnectModel({
             disabled={busy || phase.step === "done"}
             onClick={() => void connect(false)}
           >
-            仅保存
+            {t("tasks.connect.saveOnly")}
           </Button>
         </div>
       </form>
@@ -295,7 +310,7 @@ export function ConnectModel({
         disabled={busy}
         onClick={onSkip}
       >
-        稍后设置
+        {t("tasks.connect.later")}
       </button>
     </section>
   );

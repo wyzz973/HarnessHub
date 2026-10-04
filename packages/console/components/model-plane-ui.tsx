@@ -10,7 +10,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { failureOf, referenceNames, type Failure } from "@/lib/model-plane";
+import { formatDateTime, t } from "@/lib/i18n";
+import { failureOf, referenceName, type Failure } from "@/lib/model-plane";
 
 export type Loaded<T> =
   | { state: "loading" }
@@ -57,7 +58,7 @@ export function ErrorCallout({
           <ul className="mt-1 list-disc pl-5">
             {failure.references.map((item) => (
               <li key={`${item.type}:${item.id}`}>
-                {referenceNames[item.type] ?? item.type}{" "}
+                {referenceName(item.type)}{" "}
                 <span className="font-mono">{item.id}</span>
               </li>
             ))}
@@ -147,7 +148,7 @@ export function ConfirmDialog({
         <ErrorCallout failure={failure} />
         <DialogFooter>
           <Button variant="outline" disabled={busy} onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </Button>
           <Button
             variant="destructive"
@@ -233,7 +234,7 @@ export function LocalTime({ value }: { value: string | undefined }) {
   if (!value) return <span className="text-subtle">—</span>;
   return (
     <time dateTime={value} title={value}>
-      {new Date(value).toLocaleString()}
+      {formatDateTime(value)}
     </time>
   );
 }
@@ -276,9 +277,11 @@ export function LoadError({
   return (
     <div role="alert" className="callout error items-center">
       <CircleAlert className="size-4 shrink-0" />
-      <span className="min-w-0 flex-1">读取失败：{message}</span>
+      <span className="min-w-0 flex-1">
+        {t("common.loadFailed", { message })}
+      </span>
       <Button size="xs" variant="outline" onClick={retry}>
-        重试
+        {t("common.retry")}
       </Button>
     </div>
   );

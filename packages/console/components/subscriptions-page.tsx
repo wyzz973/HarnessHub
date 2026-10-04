@@ -33,10 +33,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { BrandIcon } from "@/components/brand-icon";
 import { failureOf, modelPlane, type Failure } from "@/lib/model-plane";
 import { subscriptionIcons } from "@/lib/gateway-models";
+import { t } from "@/lib/i18n";
+import { tr } from "@/lib/i18n-react";
 import { stateKey } from "@/lib/routing-state";
 import {
   accountState,
-  backendNames,
+  backendName,
   copilotReadiness,
   secondsLeft,
 } from "@/lib/subscriptions";
@@ -166,15 +168,15 @@ function SignInDialog({
   const [cancelling, setCancelling] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
   const siwc = target.backend === "siwc";
-  const name = backendNames[target.backend];
+  const name = backendName(target.backend);
   const finish = (view: SignInView) => {
     if (view.status !== "succeeded") {
       setPhase({
         step: "failed",
         message:
           view.status === "cancelled"
-            ? "这次登录已取消"
-            : (view.error ?? "登录没有完成"),
+            ? t("subscriptions.signIn.cancelled")
+            : (view.error ?? t("subscriptions.signIn.incomplete")),
       });
       return;
     }
@@ -250,7 +252,7 @@ function SignInDialog({
       .then(
         () => {
           setCancelling(false);
-          notify.success("已取消登录");
+          notify.success(t("subscriptions.signIn.cancelDone"));
           onClose();
         },
         (reason: unknown) => {
@@ -260,11 +262,10 @@ function SignInDialog({
             problem.code === "SIGN_IN_COMPLETING"
               ? {
                   ...problem,
-                  message:
-                    "浏览器已回到 HarnessHub，登录正在完成，稍候即可看到结果",
+                  message: t("subscriptions.signIn.completing"),
                 }
               : problem.code === "SIGN_IN_NOT_PENDING"
-                ? { ...problem, message: "这次登录已经结束，稍候显示结果" }
+                ? { ...problem, message: t("subscriptions.signIn.ended") }
                 : problem,
           );
         },
@@ -275,12 +276,17 @@ function SignInDialog({
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-[600px]">
         <DialogHeader>
           <DialogTitle>
-            {siwc ? "Use your ChatGPT plan" : "Use your GitHub Copilot plan"}
+            {siwc
+              ? t("subscriptions.brand.chatgpt")
+              : t("subscriptions.brand.copilot")}
           </DialogTitle>
           <DialogDescription>
             {target.credential
-              ? `重新登录 ${name} 账号 ${target.credential}。`
-              : `用你自己的 ${name} 订阅为本机的 Agent 提供模型。`}
+              ? t("subscriptions.signIn.again", {
+                  name,
+                  credential: target.credential,
+                })
+              : t("subscriptions.signIn.lede", { name })}
           </DialogDescription>
         </DialogHeader>
         {phase.step === "notice" || phase.step === "starting" ? (
@@ -288,21 +294,25 @@ function SignInDialog({
             <>
               <section
                 className="space-y-2 rounded-xl border bg-muted/40 p-4 text-[13px] leading-6"
-                aria-label="风险告知"
+                aria-label={t("subscriptions.notice.label")}
               >
                 <p className="font-medium">{notice.title}</p>
                 {notice.text.split("\n").map((paragraph) => (
                   <p key={paragraph}>{paragraph}</p>
                 ))}
                 <p className="flex flex-wrap items-center gap-x-3 text-[12px] text-subtle">
-                  <span>告知版本 {notice.version}</span>
+                  <span>
+                    {t("subscriptions.notice.version", {
+                      version: notice.version,
+                    })}
+                  </span>
                   <a
                     className="inline-flex items-center gap-1 text-brand hover:underline"
                     href={notice.manageUsageUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                   >
-                    管理用量
+                    {t("subscriptions.notice.manageUsage")}
                     <ExternalLink className="size-3" />
                   </a>
                 </p>
@@ -312,11 +322,13 @@ function SignInDialog({
                 onChange={setAccepted}
                 disabled={busy}
               >
-                我已阅读并接受以上告知
+                {t("subscriptions.notice.accept")}
               </Checkbox>
               {!siwc ? (
                 <fieldset className="space-y-2" disabled={busy}>
-                  <legend className="field-label">登录方式</legend>
+                  <legend className="field-label">
+                    {t("subscriptions.copilot.authMode")}
+                  </legend>
                   <label className="flex items-start gap-2.5 rounded-[10px] px-2 py-1.5 text-[13.5px] hover:bg-accent">
                     <input
                       type="radio"
@@ -326,10 +338,9 @@ function SignInDialog({
                       onChange={() => setAuth("login")}
                     />
                     <span>
-                      Copilot CLI 自己的登录
+                      {t("subscriptions.copilot.cliLogin")}
                       <span className="block text-[12.5px] text-muted-foreground">
-                        先在终端运行 copilot 并用 /login 登录；HarnessHub
-                        不读取这份登录。
+                        {t("subscriptions.copilot.cliLoginHint")}
                       </span>
                     </span>
                   </label>
@@ -342,10 +353,9 @@ function SignInDialog({
                       onChange={() => setAuth("token")}
                     />
                     <span>
-                      细粒度个人访问令牌
+                      {t("subscriptions.copilot.pat")}
                       <span className="block text-[12.5px] text-muted-foreground">
-                        在 GitHub 创建、带 Copilot Requests 权限的
-                        github_pat_…；只发送一次，保存在秘密存储中。
+                        {t("subscriptions.copilot.patHint")}
                       </span>
                     </span>
                   </label>
@@ -353,7 +363,7 @@ function SignInDialog({
                     <input
                       className="field font-mono text-[13px]"
                       type="password"
-                      aria-label="个人访问令牌"
+                      aria-label={t("subscriptions.copilot.patShort")}
                       value={token}
                       autoComplete="new-password"
                       spellCheck={false}
@@ -365,29 +375,33 @@ function SignInDialog({
               ) : null}
             </>
           ) : (
-            <p className="callout error">读取风险告知失败，不能登录。</p>
+            <p className="callout error">
+              {t("subscriptions.notice.loadFailed")}
+            </p>
           )
         ) : phase.step === "waiting" ? (
           <div className="space-y-3" role="status">
             <p className="flex items-center gap-2 text-[13.5px]">
               <Loader2 className="size-4 animate-spin" />
-              在新标签页中用 OpenAI 的页面登录并授权；完成后这里会自动继续。
+              {t("subscriptions.signIn.waiting")}
               <span className="text-subtle">
-                剩余 <Countdown expiresAt={phase.view.expiresAt} />
+                {tr("subscriptions.signIn.remaining", {
+                  time: <Countdown expiresAt={phase.view.expiresAt} />,
+                })}
               </span>
             </p>
             {phase.view.authorizeUrl ? (
               <p className="text-[12.5px] text-muted-foreground">
                 {phase.popupBlocked
-                  ? "浏览器拦截了新标签页，"
-                  : "没有看到新标签页？"}
+                  ? t("subscriptions.signIn.popupBlocked")
+                  : t("subscriptions.signIn.noPopup")}
                 <a
                   className="inline-flex items-center gap-1 text-brand hover:underline"
                   href={phase.view.authorizeUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                 >
-                  Continue with ChatGPT
+                  {t("subscriptions.brand.continue")}
                   <ExternalLink className="size-3" />
                 </a>
               </p>
@@ -399,17 +413,34 @@ function SignInDialog({
               <CircleCheck className="mt-0.5 size-4 shrink-0" />
               <span>
                 {siwc
-                  ? `You're using your ChatGPT plan${phase.view.email ? `（${phase.view.email}）` : ""}。HarnessHub 中符合条件的用量计入你的 ChatGPT 套餐。`
-                  : `已登录 GitHub Copilot${phase.view.login ? `：${phase.view.login}` : ""}。`}
+                  ? t("subscriptions.signIn.doneChatgpt", {
+                      email: phase.view.email
+                        ? t("subscriptions.signIn.email", {
+                            email: phase.view.email,
+                          })
+                        : "",
+                    })
+                  : t("subscriptions.signIn.doneCopilot", {
+                      login: phase.view.login
+                        ? t("subscriptions.signIn.login", {
+                            login: phase.view.login,
+                          })
+                        : "",
+                    })}
+                {phase.view.firstSignIn ? " " : ""}
                 {phase.view.firstSignIn
-                  ? ` 已添加 provider ${phase.view.provider}，账号 ${phase.view.credential}。`
+                  ? t("subscriptions.signIn.added", {
+                      provider: phase.view.provider,
+                      credential: phase.view.credential ?? "",
+                    })
                   : ""}
               </span>
             </p>
             {phase.modelsError ? (
               <p className="callout warn">
-                读取模型列表失败：{phase.modelsError}。可以稍后在 Provider
-                页刷新。
+                {t("subscriptions.signIn.modelsFailed", {
+                  error: phase.modelsError,
+                })}
               </p>
             ) : null}
             {notice ? (
@@ -420,25 +451,27 @@ function SignInDialog({
                 rel="noopener noreferrer"
               >
                 {siwc
-                  ? "在 ChatGPT 设置中管理用量"
-                  : "在 GitHub 计费设置中查看用量"}
+                  ? t("subscriptions.signIn.manageChatgpt")
+                  : t("subscriptions.signIn.manageCopilot")}
                 <ExternalLink className="size-3" />
               </a>
             ) : null}
           </div>
         ) : (
           <p role="alert" className="callout error">
-            登录失败：{phase.message}
+            {t("subscriptions.signIn.failed", { message: phase.message })}
           </p>
         )}
         <ErrorCallout failure={failure} />
         <DialogFooter>
           {phase.step === "done" ? (
-            <Button onClick={onClose}>完成</Button>
+            <Button onClick={onClose}>
+              {t("subscriptions.signIn.finish")}
+            </Button>
           ) : phase.step === "failed" ? (
             <>
               <Button variant="outline" onClick={onClose}>
-                关闭
+                {t("common.close")}
               </Button>
               <Button
                 onClick={() => {
@@ -446,14 +479,16 @@ function SignInDialog({
                   setPhase({ step: "notice" });
                 }}
               >
-                重试
+                {t("common.retry")}
               </Button>
             </>
           ) : (
             <>
               <Button variant="outline" disabled={busy} onClick={cancel}>
                 {cancelling ? <Loader2 className="animate-spin" /> : null}
-                {phase.step === "waiting" ? "取消登录" : "取消"}
+                {phase.step === "waiting"
+                  ? t("subscriptions.signIn.cancel")
+                  : t("common.cancel")}
               </Button>
               {phase.step !== "waiting" ? (
                 <Button
@@ -466,7 +501,9 @@ function SignInDialog({
                   onClick={start}
                 >
                   {busy ? <Loader2 className="animate-spin" /> : <LogIn />}
-                  {siwc ? "Continue with ChatGPT" : "接受并登录"}
+                  {siwc
+                    ? t("subscriptions.brand.continue")
+                    : t("subscriptions.signIn.acceptAndSignIn")}
                 </Button>
               ) : null}
             </>
@@ -493,27 +530,27 @@ function InstallDialog({
     <Dialog open onOpenChange={(open) => (!open && !busy ? onClose() : null)}>
       <DialogContent className="sm:max-w-[600px]">
         <DialogHeader>
-          <DialogTitle>安装 Copilot SDK</DialogTitle>
+          <DialogTitle>{t("subscriptions.install.title")}</DialogTitle>
           <DialogDescription>
-            GitHub 的 Copilot SDK 是可选附加组件，不随 HarnessHub
-            分发。守护进程会用你 PATH 上的 npm 安装受支持的版本{" "}
-            {setup.supportedSdkVersion}
-            ，不装 SDK
-            自带的平台运行时，也不运行依赖的安装脚本；可能需要几分钟。
+            {t("subscriptions.install.description", {
+              version: setup.supportedSdkVersion,
+            })}
           </DialogDescription>
         </DialogHeader>
         <pre className="overflow-x-auto rounded-xl border bg-muted p-3 font-mono text-[12px] leading-5 whitespace-pre-wrap break-all">
           {setup.installCommand}
         </pre>
         <p className="text-[12.5px] text-muted-foreground">
-          安装到{" "}
-          <span className="font-mono break-all">{setup.sdkDirectory}</span>
-          。没有 npm 时可以在终端自己运行上面的命令。
+          {tr("subscriptions.install.target", {
+            directory: (
+              <span className="font-mono break-all">{setup.sdkDirectory}</span>
+            ),
+          })}
         </p>
         <ErrorCallout failure={failure} />
         <DialogFooter>
           <Button variant="outline" disabled={busy} onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </Button>
           <Button
             disabled={busy}
@@ -526,7 +563,9 @@ function InstallDialog({
                   (installed) => {
                     setBusy(false);
                     notify.success(
-                      `已安装 Copilot SDK ${installed.sdkVersion ?? ""}`.trim(),
+                      t("subscriptions.install.done", {
+                        version: installed.sdkVersion ?? "",
+                      }).trim(),
                     );
                     onInstalled(installed);
                     onClose();
@@ -539,7 +578,9 @@ function InstallDialog({
             }}
           >
             {busy ? <Loader2 className="animate-spin" /> : <Download />}
-            {busy ? "正在安装…" : "确认安装"}
+            {busy
+              ? t("subscriptions.install.installing")
+              : t("subscriptions.install.confirm")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -560,29 +601,38 @@ function CopilotCard({
   if (setup.state === "unavailable")
     return (
       <Card
-        title="Use your GitHub Copilot plan"
-        lede="经 GitHub 的 Copilot SDK 驱动你安装的 Copilot CLI。"
+        title={t("subscriptions.brand.copilot")}
+        lede={t("subscriptions.copilot.ledeShort")}
       >
         <p className="callout neutral">
-          这个守护进程不提供 Copilot 账号：{setup.message}
+          {t("subscriptions.copilot.unavailable", { message: setup.message })}
         </p>
       </Card>
     );
   const readiness = copilotReadiness(setup.value);
   return (
     <Card
-      title="Use your GitHub Copilot plan"
-      lede="经 GitHub 的 Copilot SDK 驱动你安装的 Copilot CLI，用 CLI 自己的登录或细粒度个人访问令牌。"
+      title={t("subscriptions.brand.copilot")}
+      lede={t("subscriptions.copilot.lede")}
     >
       <dl className="text-[13px]">
         <Row label="Copilot SDK">
           {readiness.sdk === "ready" ? (
-            <span className="tag good">已安装 {setup.value.sdkVersion}</span>
+            <span className="tag good">
+              {t("subscriptions.copilot.installed", {
+                version: setup.value.sdkVersion ?? "",
+              })}
+            </span>
           ) : readiness.sdk === "missing" ? (
-            <span className="tag warn">未安装</span>
+            <span className="tag warn">
+              {t("subscriptions.copilot.notInstalled")}
+            </span>
           ) : (
             <span className="tag warn">
-              {setup.value.sdkVersion}（支持 {setup.value.supportedSdkVersion}）
+              {t("subscriptions.copilot.otherVersion", {
+                version: setup.value.sdkVersion ?? "",
+                supported: setup.value.supportedSdkVersion,
+              })}
             </span>
           )}
         </Row>
@@ -592,25 +642,25 @@ function CopilotCard({
               {setup.value.cliPath}
             </span>
           ) : (
-            <span className="tag warn">未找到</span>
+            <span className="tag warn">
+              {t("subscriptions.copilot.notFound")}
+            </span>
           )}
         </Row>
       </dl>
       {!readiness.cli ? (
-        <p className="callout info">
-          先安装 GitHub 的 Copilot CLI（命令 copilot 在 PATH 上），再回到这里。
-        </p>
+        <p className="callout info">{t("subscriptions.copilot.installCli")}</p>
       ) : null}
       <div className="flex flex-wrap justify-end gap-2">
         {readiness.sdk !== "ready" ? (
           <Button variant="outline" onClick={() => setInstalling(true)}>
             <Download />
-            安装 SDK
+            {t("subscriptions.copilot.installSdk")}
           </Button>
         ) : null}
         <Button disabled={!readiness.ready} onClick={onSignIn}>
           <LogIn />
-          登录 Copilot
+          {t("subscriptions.copilot.signIn")}
         </Button>
       </div>
       {installing ? (
@@ -649,7 +699,7 @@ function AccountRow({
       <span className="flex min-w-0 flex-1 basis-[240px] items-center gap-3">
         <BrandIcon
           slug={subscriptionIcons[account.backend]}
-          name={backendNames[account.backend]}
+          name={backendName(account.backend)}
         />
         <span className="min-w-0">
           <span className="flex flex-wrap items-center gap-2">
@@ -659,12 +709,14 @@ function AccountRow({
             </span>
             {account.auth ? (
               <span className="tag">
-                {account.auth === "token" ? "个人访问令牌" : "CLI 登录"}
+                {account.auth === "token"
+                  ? t("subscriptions.copilot.patShort")
+                  : t("subscriptions.account.cliLogin")}
               </span>
             ) : null}
           </span>
           <span className="block truncate font-mono text-[12px] text-subtle">
-            {backendNames[account.backend]} · {account.provider}/
+            {backendName(account.backend)} · {account.provider}/
             {account.credential}
           </span>
         </span>
@@ -676,25 +728,27 @@ function AccountRow({
         <Readings readings={routing.readings} className="w-[200px]" />
       ) : null}
       <span className="text-[12px] text-subtle">
-        接受告知于 <LocalTime value={account.acceptedAt} />
+        {tr("subscriptions.account.accepted", {
+          time: <LocalTime value={account.acceptedAt} />,
+        })}
       </span>
       <span className="flex items-center">
         {!account.usable ? (
           <Button size="xs" variant="outline" onClick={onSignIn}>
             <LogIn />
-            重新登录
+            {t("subscriptions.account.signInAgain")}
           </Button>
         ) : null}
         {account.signedIn ? (
           <Button size="xs" variant="ghost" onClick={onSignOut}>
             <LogOut />
-            退出登录
+            {t("subscriptions.account.signOut")}
           </Button>
         ) : null}
         <Button
           size="icon-sm"
           variant="ghost"
-          aria-label={`删除 ${who}`}
+          aria-label={t("subscriptions.account.deleteLabel", { who })}
           onClick={onDelete}
         >
           <Trash2 />
@@ -748,13 +802,13 @@ export function SubscriptionsPage() {
     <div className="page-body">
       <div className="page-column max-w-[1040px]">
         <PageHeader
-          title="订阅账号"
-          lede="用你自己的 ChatGPT 套餐或 GitHub Copilot 订阅为本机的 Agent 提供模型。账号只服务这台电脑上的 Agent，局域网共享的 Key 看不到它们。"
+          title={t("common.nav.subscriptions")}
+          lede={t("subscriptions.lede")}
         >
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label="刷新"
+            aria-label={t("common.refresh")}
             onClick={() => {
               setSetup(null);
               reload();
@@ -768,7 +822,7 @@ export function SubscriptionsPage() {
             <div
               className="panel space-y-3 p-5"
               role="status"
-              aria-label="正在读取"
+              aria-label={t("common.loading")}
             >
               <Skeleton className="h-4 w-1/3" />
               <Skeleton className="h-4 w-2/3" />
@@ -778,7 +832,10 @@ export function SubscriptionsPage() {
           ) : (
             <>
               {data.value.accounts.length ? (
-                <ul className="panel" aria-label="订阅账号">
+                <ul
+                  className="panel"
+                  aria-label={t("common.nav.subscriptions")}
+                >
                   {data.value.accounts.map((account) => (
                     <AccountRow
                       key={`${account.provider}/${account.credential}`}
@@ -798,25 +855,25 @@ export function SubscriptionsPage() {
                   ))}
                 </ul>
               ) : (
-                <EmptyState icon={CreditCard} title="还没有订阅账号">
-                  登录 ChatGPT 或 GitHub Copilot 后，账号作为 provider
-                  出现在模型选择中。
+                <EmptyState
+                  icon={CreditCard}
+                  title={t("subscriptions.empty.title")}
+                >
+                  {t("subscriptions.empty.body")}
                 </EmptyState>
               )}
               <div className="grid gap-4 lg:grid-cols-2">
                 <Card
-                  title="Use your ChatGPT plan"
-                  lede="经 OpenAI 的 Sign in with ChatGPT for open-source apps（预览）使用 Plus、Pro 等套餐。"
+                  title={t("subscriptions.brand.chatgpt")}
+                  lede={t("subscriptions.chatgpt.lede")}
                 >
                   <p className="text-[13px] text-muted-foreground">
-                    登录在 OpenAI 自己的页面完成，HarnessHub
-                    不经手你的密码；请求计入套餐的用量限制，可在 ChatGPT
-                    设置中查看和限制。
+                    {t("subscriptions.chatgpt.body")}
                   </p>
                   <div className="flex justify-end">
                     <Button onClick={() => setSignIn({ backend: "siwc" })}>
                       <LogIn />
-                      Use your ChatGPT plan
+                      {t("subscriptions.brand.chatgpt")}
                     </Button>
                   </div>
                 </Card>
@@ -831,8 +888,7 @@ export function SubscriptionsPage() {
                 />
               </div>
               <p className="text-[12.5px] text-muted-foreground">
-                Claude 订阅不可用：Anthropic 不允许第三方应用经 Free、Pro、Max
-                套餐转发请求；使用 Claude 模型请添加 Anthropic API Key。
+                {t("subscriptions.claudeUnavailable")}
               </p>
             </>
           )}
@@ -847,13 +903,17 @@ export function SubscriptionsPage() {
         ) : null}
         <ConfirmDialog
           open={signingOut !== null}
-          title={`退出 ${signingOut ? (signingOut.email ?? signingOut.login ?? signingOut.credential) : ""}`}
+          title={t("subscriptions.signOut.title", {
+            who: signingOut
+              ? (signingOut.email ?? signingOut.login ?? signingOut.credential)
+              : "",
+          })}
           description={
             signingOut?.backend === "copilot"
-              ? "停止这个账号的 Copilot 宿主进程并清除令牌；账号登记保留，以后可以重新登录。Copilot CLI 自己的登录不受影响，个人访问令牌在你于 GitHub 撤销之前仍然有效。"
-              : "向 OpenAI 撤销这个账号的会话并清除令牌；账号登记保留，以后可以重新登录。"
+              ? t("subscriptions.signOut.copilot")
+              : t("subscriptions.signOut.chatgpt")
           }
-          action="退出登录"
+          action={t("subscriptions.account.signOut")}
           onClose={() => setSigningOut(null)}
           onConfirm={async () => {
             if (!signingOut) return;
@@ -863,19 +923,23 @@ export function SubscriptionsPage() {
             );
             notify.success(
               result.revoked
-                ? "已退出登录，会话已撤销"
+                ? t("subscriptions.signOut.revoked")
                 : signingOut.backend === "siwc"
-                  ? "已退出登录；OpenAI 没有确认撤销，可在 ChatGPT 设置中断开 HarnessHub"
-                  : "已退出登录；令牌在 GitHub 撤销之前仍然有效",
+                  ? t("subscriptions.signOut.unconfirmed")
+                  : t("subscriptions.signOut.tokenValid"),
             );
             reload();
           }}
         />
         <ConfirmDialog
           open={deleting !== null}
-          title={`删除 ${deleting ? (deleting.email ?? deleting.login ?? deleting.credential) : ""}`}
-          description="先结束这个账号与厂商的会话，再删除它的令牌与登记。撤销没有确认也会删除。"
-          action="删除"
+          title={t("subscriptions.delete.title", {
+            who: deleting
+              ? (deleting.email ?? deleting.login ?? deleting.credential)
+              : "",
+          })}
+          description={t("subscriptions.delete.description")}
+          action={t("subscriptions.delete.action")}
           onClose={() => setDeleting(null)}
           onConfirm={async () => {
             if (!deleting) return;
@@ -883,7 +947,7 @@ export function SubscriptionsPage() {
               deleting.provider,
               deleting.credential,
             );
-            notify.success("已删除账号");
+            notify.success(t("subscriptions.delete.done"));
             reload();
           }}
         />

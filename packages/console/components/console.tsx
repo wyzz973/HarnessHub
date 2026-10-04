@@ -49,6 +49,7 @@ import {
 } from "@/lib/contracts";
 import { engineName } from "@/lib/engines";
 import { useGatewayStatus } from "@/lib/gateway-status";
+import { t } from "@/lib/i18n";
 import { navigate, pagePaths, usePage, type Page } from "@/lib/router";
 import { signOut } from "@/lib/session";
 import { cn } from "@/lib/utils";
@@ -116,7 +117,7 @@ const HISTORY_POLL_MS = 3000;
 const convertMessage = (message: ThreadMessageLike): ThreadMessageLike =>
   message;
 function messageOf(error: unknown) {
-  return error instanceof Error ? error.message : "操作未完成，请重试。";
+  return error instanceof Error ? error.message : t("common.actionIncomplete");
 }
 /** Newer records replace older ones by id; records only known locally (opened by id) are kept. */
 function mergeById<T extends { id: string }>(current: T[], incoming: T[]) {
@@ -800,7 +801,10 @@ export function Console() {
         !earliest || run.createdAt < earliest.createdAt ? run : earliest,
       undefined,
     );
-    return first?.input.text ?? `会话 ${session.id.slice(0, 8)}`;
+    return (
+      first?.input.text ??
+      t("common.shell.session", { id: session.id.slice(0, 8) })
+    );
   };
   const history: HistoryItem[] = [
     ...workflows.map((item) => ({
@@ -925,12 +929,12 @@ export function Console() {
             href="#main-content"
             className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[100] focus:rounded-lg focus:bg-popover focus:px-3 focus:py-2 focus:shadow-float"
           >
-            跳到主要内容
+            {t("common.shell.skip")}
           </a>
           {mobileNav ? (
             <button
               className="scrim min-[821px]:hidden"
-              aria-label="关闭导航"
+              aria-label={t("common.shell.closeNav")}
               onClick={() => setMobileNav(false)}
             />
           ) : null}
@@ -959,7 +963,7 @@ export function Console() {
                   className="min-[821px]:hidden"
                   size="icon-sm"
                   variant="ghost"
-                  aria-label="打开导航"
+                  aria-label={t("common.shell.openNav")}
                   onClick={() => setMobileNav(true)}
                 >
                   <Menu />
@@ -980,10 +984,12 @@ export function Console() {
                           className="size-3.5 text-warning"
                           aria-hidden
                         />
-                        完全访问
+                        {t("common.shell.fullAccess")}
                       </span>
                     </TooltipTrigger>
-                    <TooltipContent>工具与权限请求自动批准</TooltipContent>
+                    <TooltipContent>
+                      {t("common.shell.fullAccessHint")}
+                    </TooltipContent>
                   </Tooltip>
                 ) : null}
                 {modelState.state === "ready" && taskPages.has(page) ? (
@@ -1002,15 +1008,16 @@ export function Console() {
                         />
                         <span className="truncate">
                           {modelState.value.configured
-                            ? (modelState.value.model ?? "模型")
-                            : "未连接模型"}
+                            ? (modelState.value.model ??
+                              t("common.shell.model"))
+                            : t("common.shell.noModel")}
                         </span>
                       </button>
                     </TooltipTrigger>
                     <TooltipContent>
                       {modelState.value.configured
-                        ? "所有引擎共用的模型"
-                        : "连接模型后才能执行任务"}
+                        ? t("common.shell.modelHint")
+                        : t("common.shell.noModelHint")}
                     </TooltipContent>
                   </Tooltip>
                 ) : null}
@@ -1021,7 +1028,7 @@ export function Console() {
                       <Button
                         size="icon-sm"
                         variant="ghost"
-                        aria-label="刷新"
+                        aria-label={t("common.refresh")}
                         onClick={() => {
                           setError(null);
                           setStreamError(false);
@@ -1033,7 +1040,7 @@ export function Console() {
                         <RefreshCw />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>刷新</TooltipContent>
+                    <TooltipContent>{t("common.refresh")}</TooltipContent>
                   </Tooltip>
                 ) : null}
                 {page === "tasks" ? (
@@ -1046,7 +1053,9 @@ export function Console() {
                           inspectorOpen && "bg-accent text-foreground",
                         )}
                         aria-label={
-                          inspectorOpen ? "关闭执行详情" : "打开执行详情"
+                          inspectorOpen
+                            ? t("common.shell.closeDetails")
+                            : t("common.shell.openDetails")
                         }
                         aria-pressed={inspectorOpen}
                         onClick={() => setInspectorOpen((value) => !value)}
@@ -1054,7 +1063,7 @@ export function Console() {
                         <PanelRight />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>执行详情</TooltipContent>
+                    <TooltipContent>{t("common.shell.details")}</TooltipContent>
                   </Tooltip>
                 ) : null}
               </div>
@@ -1068,7 +1077,7 @@ export function Console() {
                     variant="ghost"
                     size="icon-xs"
                     className="text-danger hover:bg-danger/10 hover:text-danger"
-                    aria-label="关闭提示"
+                    aria-label={t("common.shell.closeHint")}
                     onClick={() => setError(null)}
                   >
                     <X />
@@ -1122,7 +1131,7 @@ export function Console() {
                   );
                   await api.submit(
                     session.id,
-                    "连接测试：请仅回复 HARNESSHUB_CONNECTION_OK。不要使用工具或修改文件。",
+                    t("common.shell.connectionPrompt"),
                     crypto.randomUUID(),
                   );
                   await refresh();
@@ -1157,7 +1166,9 @@ export function Console() {
                           <div className="thread-column thread-content">
                             {!messages.length && !workflow ? (
                               <p className="text-[13.5px] text-muted-foreground">
-                                {boundSession ? "还没有执行记录" : "正在读取"}
+                                {boundSession
+                                  ? t("common.shell.noRuns")
+                                  : t("common.loading")}
                               </p>
                             ) : null}
                             {workflow ? (
@@ -1229,7 +1240,7 @@ export function Console() {
                           ) : null}
                           {streamError ? (
                             <p className="mb-2 px-4 text-[12.5px] text-warning">
-                              实时连接已断开，正在通过记录同步。
+                              {t("common.shell.streamLost")}
                               <button
                                 className="ml-1 underline"
                                 onClick={() => {
@@ -1237,18 +1248,18 @@ export function Console() {
                                   setRefreshEpoch((n) => n + 1);
                                 }}
                               >
-                                重新连接
+                                {t("common.shell.reconnect")}
                               </button>
                             </p>
                           ) : null}
                           {boundSession?.status === "closed" ? (
                             <div className="flex items-center gap-3 rounded-2xl border bg-muted/50 py-3 pr-3 pl-4">
                               <p className="min-w-0 flex-1 text-[13.5px] text-muted-foreground">
-                                会话已结束
+                                {t("common.shell.sessionEnded")}
                               </p>
                               <Button size="sm" onClick={newTask}>
                                 <SquarePen />
-                                新建任务
+                                {t("common.nav.newTask")}
                               </Button>
                             </div>
                           ) : (
@@ -1298,7 +1309,7 @@ export function Console() {
                       <Fragment key="overlay">
                         <motion.button
                           className="scrim absolute z-10"
-                          aria-label="关闭执行详情"
+                          aria-label={t("common.shell.closeDetails")}
                           initial={{ opacity: 0 }}
                           animate={{ opacity: 1 }}
                           exit={{ opacity: 0 }}

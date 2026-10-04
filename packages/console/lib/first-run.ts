@@ -9,6 +9,7 @@ import type {
   AgentWiringInput,
   ProviderConfig,
 } from "@harnesshub/sdk/client";
+import { t } from "./i18n";
 
 /** The models a provider exposes, as Model Refs. */
 export function exposedModels(provider: ProviderConfig): string[] {
@@ -41,10 +42,14 @@ export function sameWiring(agent: Agent, input: AgentWiringInput): boolean {
 
 /** The steps, in order; each shows what the earlier ones chose. */
 export const firstRunSteps = [
-  { id: "provider", label: "Provider 与 Key" },
-  { id: "models", label: "模型列表" },
-  { id: "agents", label: "Agent" },
-  { id: "model", label: "默认模型" },
-  { id: "review", label: "确认改动" },
+  "provider",
+  "models",
+  "agents",
+  "model",
+  "review",
 ] as const;
-export type FirstRunStep = (typeof firstRunSteps)[number]["id"];
+export type FirstRunStep = (typeof firstRunSteps)[number];
+
+export function firstRunStepLabel(step: FirstRunStep): string {
+  return t(`agents.firstRun.step.${step}`);
+}

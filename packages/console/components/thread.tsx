@@ -70,6 +70,7 @@ import { cn } from "@/lib/utils";
 import { EngineAvatar } from "./engine-avatar";
 import { Status } from "./status";
 import { ToolSteps } from "./tool-call-card";
+import { t } from "@/lib/i18n";
 
 interface ThreadContextValue {
   runs: Run[];
@@ -112,9 +113,12 @@ function permissionLabel(
   option: { label: string; kind: "allow_once" | "reject_once" },
   siblings: { kind: string }[],
 ) {
-  const base = option.kind === "allow_once" ? "允许一次" : "拒绝";
+  const base =
+    option.kind === "allow_once"
+      ? t("tasks.thread.allowOnce")
+      : t("tasks.thread.reject");
   return siblings.filter((item) => item.kind === option.kind).length > 1
-    ? `${base}（${option.label}）`
+    ? t("tasks.thread.optionLabel", { base, label: option.label })
     : base;
 }
 
@@ -145,13 +149,13 @@ const AssistantMessage = () => {
                 variant="ghost"
                 size="icon-xs"
                 className="ml-auto opacity-0 group-hover/message:opacity-100 focus-visible:opacity-100"
-                aria-label="执行详情"
+                aria-label={t("tasks.thread.details")}
                 onClick={() => context.onInspect(run.id)}
               >
                 <PanelRight />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>执行详情</TooltipContent>
+            <TooltipContent>{t("tasks.thread.details")}</TooltipContent>
           </Tooltip>
         ) : null}
       </div>
@@ -162,10 +166,10 @@ const AssistantMessage = () => {
             getThinkingMessage={(streaming) =>
               streaming ? (
                 <Shimmer as="span" duration={1.4}>
-                  正在思考
+                  {t("tasks.thread.thinking")}
                 </Shimmer>
               ) : (
-                <span>思考过程</span>
+                <span>{t("tasks.thread.reasoning")}</span>
               )
             }
           />
@@ -185,14 +189,17 @@ const AssistantMessage = () => {
       !pending?.length ? (
         <p className="py-1 text-[14px]">
           <Shimmer as="span" duration={1.6}>
-            {run.status === "queued" ? "排队中" : "处理中"}
+            {run.status === "queued"
+              ? t("tasks.thread.queued")
+              : t("tasks.thread.working")}
           </Shimmer>
         </p>
       ) : null}
       {projected?.sources.length ? (
         <Sources className="mt-4">
           <SourcesTrigger count={projected.sources.length}>
-            来源 <span className="ml-1">{projected.sources.length}</span>
+            {t("tasks.thread.sources")}{" "}
+            <span className="ml-1">{projected.sources.length}</span>
             <ChevronDown className="size-3" />
           </SourcesTrigger>
           <SourcesContent>
@@ -209,7 +216,7 @@ const AssistantMessage = () => {
         >
           <p className="flex items-center gap-2 text-[13.5px] font-medium">
             <ShieldQuestion className="size-4 text-warning" />
-            需要授权
+            {t("tasks.thread.permission")}
           </p>
           <p className="mt-2 max-h-40 overflow-y-auto font-mono text-[12.5px] leading-6 whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
             {permission.prompt}
@@ -246,7 +253,7 @@ const AssistantMessage = () => {
             onClick={() => context.onOpenLogs(run.id)}
           >
             <ScrollText />
-            查看日志
+            {t("tasks.thread.viewLogs")}
           </Button>
         </div>
       ) : null}
@@ -294,41 +301,18 @@ export function Messages() {
   );
 }
 
-const suggestions: { icon: LucideIcon; label: string; prompt: string }[] = [
-  {
-    icon: FileText,
-    label: "写周报 Word",
-    prompt:
-      "根据当前目录中的资料整理一份本周工作周报，包含本周完成、问题与下周计划，保存为“周报.docx”。",
-  },
-  {
-    icon: FileSpreadsheet,
-    label: "CSV 转 Excel",
-    prompt:
-      "把当前目录下的 CSV 文件整理成一个 Excel 工作簿：加粗表头、设置合适列宽、添加合计行，保存为 .xlsx。",
-  },
-  {
-    icon: Presentation,
-    label: "做汇报 PPT",
-    prompt:
-      "围绕当前目录中的资料制作一份 5 页左右的工作汇报演示文稿，保存为“工作汇报.pptx”。",
-  },
-  {
-    icon: FolderTree,
-    label: "整理文件",
-    prompt:
-      "按文件类型整理当前目录：创建分类文件夹并移动文件，完成后列出整理结果。",
-  },
-  {
-    icon: Mail,
-    label: "打开 Outlook",
-    prompt: "请打开 Outlook 邮件客户端。",
-  },
+/** Starting points; their labels and prompts are in the console's language. */
+const suggestions: { icon: LucideIcon; key: "report" | "excel" | "slides" | "files" | "outlook" }[] = [
+  { icon: FileText, key: "report" },
+  { icon: FileSpreadsheet, key: "excel" },
+  { icon: Presentation, key: "slides" },
+  { icon: FolderTree, key: "files" },
+  { icon: Mail, key: "outlook" },
 ];
 export function Greeting() {
   return (
     <h1 className="text-center text-[28px] leading-tight font-semibold tracking-[-0.015em] max-sm:text-[23px]">
-      今天要完成什么任务？
+      {t("tasks.thread.greeting")}
     </h1>
   );
 }
@@ -337,13 +321,13 @@ export function Suggestions({ onPick }: { onPick: (prompt: string) => void }) {
     <div className="flex flex-wrap justify-center gap-2">
       {suggestions.map((item) => (
         <button
-          key={item.label}
+          key={item.key}
           type="button"
           className="suggestion-chip"
-          onClick={() => onPick(item.prompt)}
+          onClick={() => onPick(t(`tasks.suggest.${item.key}.prompt`))}
         >
           <item.icon className="size-4 text-subtle" strokeWidth={1.7} />
-          {item.label}
+          {t(`tasks.suggest.${item.key}.label`)}
         </button>
       ))}
     </div>
@@ -367,17 +351,25 @@ export function WorkflowPlan({
     (step) => step.status === "completed",
   ).length;
   return (
-    <section className="panel mb-8 overflow-hidden" aria-label="执行计划">
+    <section
+      className="panel mb-8 overflow-hidden"
+      aria-label={t("tasks.plan.label")}
+    >
       <header className="flex items-start gap-3 px-5 pt-4 pb-3">
         <GitBranch className="mt-1 size-4 shrink-0 text-subtle" />
         <div className="min-w-0 flex-1">
           <h2 className="text-[15px] font-semibold">
             {workflow.title ??
-              (workflow.status === "planning" ? "正在制定计划" : "执行计划")}
+              (workflow.status === "planning"
+                ? t("tasks.plan.planning")
+                : t("tasks.plan.label"))}
           </h2>
           {workflow.steps.length ? (
             <p className="mt-0.5 text-[12.5px] text-subtle">
-              {completed} / {workflow.steps.length} 步完成
+              {t("tasks.plan.progress", {
+                done: completed,
+                total: workflow.steps.length,
+              })}
             </p>
           ) : null}
         </div>
@@ -421,23 +413,26 @@ export function WorkflowPlan({
                       className="ml-auto"
                       onClick={() => inspect(step.runId!)}
                     >
-                      详情
+                      {t("tasks.plan.details")}
                     </Button>
                   ) : null}
                 </div>
                 <details className="mt-1 text-[12.5px] text-muted-foreground">
                   <summary className="w-fit text-subtle hover:text-foreground">
-                    说明
                     {step.dependsOn.length
-                      ? `（依赖 ${step.dependsOn.join("、")}）`
-                      : ""}
+                      ? t("tasks.plan.dependsOn", {
+                          steps: step.dependsOn.join(t("tasks.separator")),
+                        })
+                      : t("tasks.plan.instructions")}
                   </summary>
                   <p className="mt-1.5 leading-6 whitespace-pre-wrap">
                     {step.instructions}
                   </p>
                   {step.outputs.length ? (
                     <p className="mt-1.5 font-mono text-[12px]">
-                      {step.outputs.map((output) => output.path).join("、")}
+                      {step.outputs
+                        .map((output) => output.path)
+                        .join(t("tasks.separator"))}
                     </p>
                   ) : null}
                 </details>
@@ -457,7 +452,7 @@ export function WorkflowPlan({
             <>
               <Button size="sm" disabled={pendingAction} onClick={approve}>
                 <Check />
-                确认并执行
+                {t("tasks.plan.approve")}
               </Button>
               <Button
                 variant="ghost"
@@ -465,7 +460,7 @@ export function WorkflowPlan({
                 disabled={pendingAction}
                 onClick={cancel}
               >
-                取消
+                {t("tasks.plan.cancel")}
               </Button>
             </>
           ) : (
@@ -476,7 +471,7 @@ export function WorkflowPlan({
               onClick={cancel}
             >
               <Square className="size-3 fill-current" />
-              停止
+              {t("tasks.plan.stop")}
             </Button>
           )}
         </footer>
@@ -553,14 +548,14 @@ export function Composer({
           className="composer-input"
           placeholder={
             workflowActive
-              ? "计划任务进行中，可新建任务"
+              ? t("tasks.composer.workflowActive")
               : mode === "auto"
-                ? "描述目标，先生成执行计划"
+                ? t("tasks.composer.planPlaceholder")
                 : sessionBound
-                  ? "继续对话"
-                  : "描述你要完成的任务"
+                  ? t("tasks.composer.continue")
+                  : t("tasks.composer.placeholder")
           }
-          aria-label="任务描述"
+          aria-label={t("tasks.composer.label")}
           minRows={1}
           maxRows={8}
           autoFocus={autoFocus}
@@ -574,12 +569,14 @@ export function Composer({
               <button
                 type="button"
                 className="pill -ml-1.5"
-                aria-label="选择引擎"
+                aria-label={t("tasks.composer.chooseEngine")}
                 disabled={locked}
               >
                 <EngineAvatar id={engineId} size="xs" />
                 <span className="truncate">
-                  {engineId === "auto" ? "自动选择" : engineName(engineId)}
+                  {engineId === "auto"
+                    ? t("tasks.composer.auto")
+                    : engineName(engineId)}
                 </span>
                 {locked ? null : (
                   <ChevronDown className="size-3.5 shrink-0 opacity-60" />
@@ -589,7 +586,7 @@ export function Composer({
             <PopoverContent className="w-64" side="top">
               <div
                 role="listbox"
-                aria-label="引擎"
+                aria-label={t("tasks.composer.engine")}
                 className="max-h-[320px] overflow-y-auto"
               >
                 {[{ id: "auto" }, ...choices].map((engine) => (
@@ -607,7 +604,7 @@ export function Composer({
                     <EngineAvatar id={engine.id} />
                     <span className="min-w-0 flex-1 truncate">
                       {engine.id === "auto"
-                        ? "自动选择"
+                        ? t("tasks.composer.auto")
                         : engineName(engine.id)}
                     </span>
                     {engine.id === engineId ? (
@@ -624,7 +621,7 @@ export function Composer({
                     onClick={onManageEngines}
                   >
                     <Settings2 className="size-4" strokeWidth={1.7} />
-                    管理引擎
+                    {t("tasks.composer.manageEngines")}
                   </button>
                 </PopoverClose>
               </div>
@@ -635,7 +632,7 @@ export function Composer({
               <button
                 type="button"
                 className="pill"
-                aria-label="工作目录"
+                aria-label={t("tasks.composer.workspace")}
                 disabled={locked}
                 title={sessionCwd ?? workspace?.path}
               >
@@ -644,13 +641,13 @@ export function Composer({
                   {workspaceLabel(
                     workspace,
                     sessionCwd?.split(/[\\/]/).filter(Boolean).at(-1) ??
-                      (workspaceId || "工作目录"),
+                      (workspaceId || t("tasks.composer.workspace")),
                   )}
                 </span>
               </button>
             </PopoverTrigger>
             <PopoverContent className="w-80" side="top">
-              <div role="listbox" aria-label="工作目录">
+              <div role="listbox" aria-label={t("tasks.composer.workspace")}>
                 {workspaces.map((item) => (
                   <button
                     key={item.id}
@@ -694,7 +691,7 @@ export function Composer({
                     <button
                       type="button"
                       className="pill"
-                      aria-label="完成后保存的文件"
+                      aria-label={t("tasks.composer.outputs")}
                       disabled={running}
                     >
                       <PackagePlus
@@ -707,15 +704,15 @@ export function Composer({
                     </button>
                   </PopoverTrigger>
                 </TooltipTrigger>
-                <TooltipContent>完成后保存的文件</TooltipContent>
+                <TooltipContent>{t("tasks.composer.outputs")}</TooltipContent>
               </Tooltip>
               <PopoverContent className="w-80 p-4" side="top">
                 <label className="field-label" htmlFor="output-paths">
-                  完成后保存的文件
+                  {t("tasks.composer.outputs")}
                 </label>
                 <textarea
                   id="output-paths"
-                  aria-label="预期产物路径"
+                  aria-label={t("tasks.composer.outputPaths")}
                   className="field font-mono text-[12.5px]"
                   rows={3}
                   value={outputPaths}
@@ -723,21 +720,25 @@ export function Composer({
                   onChange={(event) => setOutputPaths(event.target.value)}
                 />
                 <p className="field-hint">
-                  每行一个相对工作目录的路径，任务完成后可在结果中下载。
+                  {t("tasks.composer.outputsHint")}
                 </p>
               </PopoverContent>
             </Popover>
           ) : null}
           <div className="ml-auto flex items-center gap-2">
             {sessionBound || workflowActive ? null : (
-              <div className="segmented max-sm:hidden" role="group" aria-label="执行模式">
+              <div
+                className="segmented max-sm:hidden"
+                role="group"
+                aria-label={t("tasks.composer.mode")}
+              >
                 <button
                   type="button"
                   aria-pressed={mode === "direct"}
                   disabled={running}
                   onClick={() => setMode("direct")}
                 >
-                  直接执行
+                  {t("tasks.composer.direct")}
                 </button>
                 <button
                   type="button"
@@ -745,7 +746,7 @@ export function Composer({
                   disabled={running}
                   onClick={() => setMode("auto")}
                 >
-                  先做计划
+                  {t("tasks.composer.planFirst")}
                 </button>
               </div>
             )}
@@ -753,7 +754,7 @@ export function Composer({
               <button
                 type="button"
                 className="send-button"
-                aria-label="停止执行"
+                aria-label={t("tasks.composer.stop")}
                 onClick={onStop}
               >
                 <Square className="size-3.5 fill-current" />
@@ -763,7 +764,11 @@ export function Composer({
                 <button
                   type="submit"
                   className="send-button"
-                  aria-label={mode === "auto" ? "生成计划" : "发送任务"}
+                  aria-label={
+                    mode === "auto"
+                      ? t("tasks.composer.makePlan")
+                      : t("tasks.composer.send")
+                  }
                   disabled={workflowActive || !choices.length}
                 >
                   <ArrowUp className="size-[18px]" strokeWidth={2.2} />
@@ -775,7 +780,7 @@ export function Composer({
       </ComposerPrimitive.Root>
       {mode === "auto" && fullAccess && !workflowActive && !sessionBound ? (
         <p className="mt-2 px-4 text-[12.5px] text-warning">
-          完全访问模式下计划可能被拒绝，建议直接执行。
+          {t("tasks.composer.fullAccessWarning")}
         </p>
       ) : null}
     </div>
@@ -788,7 +793,7 @@ export function ScrollToBottom() {
         variant="outline"
         size="icon-sm"
         className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full shadow-float disabled:invisible"
-        aria-label="滚动到底部"
+        aria-label={t("tasks.composer.scrollDown")}
       >
         <ArrowDown />
       </Button>

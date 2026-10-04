@@ -12,6 +12,7 @@ import {
   HarnessHubError,
   type ConsoleSession,
 } from "@harnesshub/sdk/client";
+import { t } from "./i18n";
 
 export type SessionState =
   | { status: "checking" }
@@ -90,7 +91,7 @@ const transport: typeof fetch = async (input, init) => {
  */
 export function apiClient(): HarnessHubClient {
   if (state.status !== "signed-in")
-    throw new Error("控制台尚未登录，请运行 hh console 打开登录链接");
+    throw new Error(t("common.signIn.notSignedIn"));
   client ??= new HarnessHubClient({
     url: window.location.origin,
     csrfToken: state.session.csrfToken,
@@ -148,7 +149,7 @@ export async function startSession(): Promise<void> {
         message:
           error instanceof Error
             ? error.message
-            : "无法连接 HarnessHub 守护进程",
+            : t("common.signIn.unreachableDetail"),
       });
   }
 }

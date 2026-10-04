@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { GatewayHealth } from "@/lib/api";
+import { t, type MessageKey } from "@/lib/i18n";
 import type { Page } from "@/lib/router";
 import { useIsMac } from "@/lib/platform";
 import { useTheme } from "@/lib/theme";
@@ -43,65 +44,64 @@ export interface HistoryItem {
 }
 interface NavItem {
   page: Exclude<Page, "tasks">;
-  label: string;
+  label: Extract<MessageKey, `common.nav.${string}`>;
   icon: LucideIcon;
   /** Other pages that belong to this entry (tabs of the same section). */
   also?: Page[];
 }
 /** The gateway: agents (the home page), providers and accounts, routing, usage, profiles, the Library and settings. */
 const gatewayNavigation: NavItem[] = [
-  { page: "agents", label: "Agent", icon: Bot },
-  { page: "providers", label: "Provider", icon: Server },
-  { page: "subscriptions", label: "订阅账号", icon: CreditCard },
+  { page: "agents", label: "common.nav.agents", icon: Bot },
+  { page: "providers", label: "common.nav.providers", icon: Server },
+  {
+    page: "subscriptions",
+    label: "common.nav.subscriptions",
+    icon: CreditCard,
+  },
   {
     page: "routing",
-    label: "路由与 Key",
+    label: "common.nav.routing",
     icon: Route,
     also: ["auto-groups", "keys", "credential-state", "decisions"],
   },
   {
     page: "usage",
-    label: "用量",
+    label: "common.nav.usage",
     icon: ChartColumn,
     also: ["conversations"],
   },
-  { page: "profiles", label: "Profile", icon: Layers },
-  { page: "library", label: "Library", icon: LibraryBig },
+  { page: "profiles", label: "common.nav.profiles", icon: Layers },
+  { page: "library", label: "common.nav.library", icon: LibraryBig },
   {
     page: "settings",
-    label: "设置",
+    label: "common.nav.settings",
     icon: Settings,
     also: ["backup", "features"],
   },
 ];
 /** Tasks run by HarnessHub itself, and their engines and tools. */
 const taskNavigation: NavItem[] = [
-  { page: "model", label: "统一模型", icon: BrainCircuit },
-  { page: "engines", label: "引擎", icon: Cpu },
-  { page: "tools", label: "工具", icon: Blocks },
-  { page: "observability", label: "观测", icon: Activity },
+  { page: "model", label: "common.nav.model", icon: BrainCircuit },
+  { page: "engines", label: "common.nav.engines", icon: Cpu },
+  { page: "tools", label: "common.nav.tools", icon: Blocks },
+  { page: "observability", label: "common.nav.observability", icon: Activity },
 ];
-const healthText: Record<GatewayHealth, string> = {
-  ready: "已连接",
-  checking: "正在连接",
-  "not-ready": "服务未就绪",
-  offline: "无法连接服务",
-};
+const healthText = (health: GatewayHealth) => t(`common.health.${health}`);
 
 function dayStart(time: number) {
   const date = new Date(time);
   date.setHours(0, 0, 0, 0);
   return date.getTime();
 }
-/** 今天 / 昨天 / 近 7 天 / 更早, newest first inside each group. */
+/** Today, yesterday, the last 7 days and earlier, newest first inside each group. */
 function groupByDay(items: HistoryItem[], now: number) {
   const today = dayStart(now);
   const day = 86_400_000;
   const groups: { label: string; items: HistoryItem[] }[] = [
-    { label: "今天", items: [] },
-    { label: "昨天", items: [] },
-    { label: "近 7 天", items: [] },
-    { label: "更早", items: [] },
+    { label: t("common.history.today"), items: [] },
+    { label: t("common.history.yesterday"), items: [] },
+    { label: t("common.history.week"), items: [] },
+    { label: t("common.history.earlier"), items: [] },
   ];
   for (const item of items) {
     const index =
@@ -204,13 +204,13 @@ export function Sidebar({
       className="sidebar"
       data-collapsed={collapsed ? "true" : "false"}
       data-mobile-open={mobileOpen ? "true" : "false"}
-      aria-label="主导航"
+      aria-label={t("common.nav.main")}
     >
       <div className="flex h-14 shrink-0 items-center gap-2 px-3">
         <button
           type="button"
           className="grid size-9 shrink-0 place-items-center rounded-[10px] text-brand hover:bg-sidebar-hover"
-          aria-label={collapsed ? "展开侧栏" : "HarnessHub 首页"}
+          aria-label={collapsed ? t("common.nav.expand") : t("common.nav.home")}
           onClick={collapsed ? onToggle : () => onOpenPage("agents")}
         >
           <Layers2 className="size-[20px]" strokeWidth={1.8} />
@@ -221,28 +221,33 @@ export function Sidebar({
         <button
           type="button"
           className="sidebar-only-open grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-sidebar-hover hover:text-foreground"
-          aria-label="收起侧栏"
+          aria-label={t("common.nav.collapse")}
           tabIndex={collapsed ? -1 : 0}
           onClick={onToggle}
         >
           <PanelLeft className="size-[18px]" strokeWidth={1.7} />
         </button>
       </div>
-      <nav className="shrink-0 space-y-0.5 px-3" aria-label="页面">
+      <nav
+        className="shrink-0 space-y-0.5 px-3"
+        aria-label={t("common.nav.pages")}
+      >
         {gatewayNavigation.map((item) => (
           <Row
             key={item.page}
             icon={item.icon}
-            label={item.label}
+            label={t(item.label)}
             active={page === item.page || (item.also?.includes(page) ?? false)}
             collapsed={collapsed}
             onClick={() => onOpenPage(item.page)}
           />
         ))}
-        <h2 className="history-group sidebar-label pt-3">任务</h2>
+        <h2 className="history-group sidebar-label pt-3">
+          {t("common.nav.tasks")}
+        </h2>
         <Row
           icon={SquarePen}
-          label="新建任务"
+          label={t("common.nav.newTask")}
           active={page === "tasks" && !activeId}
           collapsed={collapsed}
           onClick={onNewTask}
@@ -256,13 +261,16 @@ export function Sidebar({
           <Row
             key={item.page}
             icon={item.icon}
-            label={item.label}
+            label={t(item.label)}
             active={page === item.page}
             collapsed={collapsed}
             onClick={() => onOpenPage(item.page)}
             trailing={
               item.page === "model" && modelMissing ? (
-                <span className="dot warn" aria-label="尚未连接统一模型" />
+                <span
+                  className="dot warn"
+                  aria-label={t("common.nav.modelMissing")}
+                />
               ) : undefined
             }
           />
@@ -272,9 +280,9 @@ export function Sidebar({
         <label className="mx-3 flex h-9 shrink-0 items-center gap-2 rounded-[9px] px-2.5 text-subtle focus-within:bg-sidebar-hover focus-within:text-foreground hover:bg-sidebar-hover">
           <Search className="size-4 shrink-0" strokeWidth={1.7} />
           <input
-            aria-label="搜索任务"
+            aria-label={t("common.nav.searchTasks")}
             className="h-full w-full min-w-0 bg-transparent text-[13.5px] text-foreground outline-none placeholder:text-subtle"
-            placeholder="搜索任务"
+            placeholder={t("common.nav.searchTasks")}
             value={search}
             tabIndex={collapsed ? -1 : 0}
             onChange={(event) => onSearch(event.target.value)}
@@ -308,14 +316,17 @@ export function Sidebar({
                     {item.type === "workflow" ? (
                       <WorkflowIcon
                         className="size-3.5 shrink-0 text-subtle"
-                        aria-label="计划任务"
+                        aria-label={t("common.nav.workflow")}
                       />
                     ) : null}
                     <span className="min-w-0 flex-1 truncate">
                       {item.title}
                     </span>
                     {item.busy ? (
-                      <span className="dot live" aria-label="执行中" />
+                      <span
+                        className="dot live"
+                        aria-label={t("common.nav.running")}
+                      />
                     ) : null}
                   </button>
                 ))}
@@ -323,7 +334,7 @@ export function Sidebar({
             ))
           ) : (
             <p className="px-2.5 pt-4 text-[13px] text-subtle">
-              {search ? "没有匹配的任务" : "还没有任务"}
+              {search ? t("common.nav.noMatch") : t("common.nav.noTasks")}
             </p>
           )}
         </div>
@@ -357,13 +368,13 @@ export function Sidebar({
               />
               <span className="sidebar-label">
                 {health === "ready" && syncError
-                  ? "同步失败"
-                  : healthText[health]}
+                  ? t("common.nav.syncFailed")
+                  : healthText(health)}
               </span>
             </span>
           </TooltipTrigger>
           <TooltipContent side={collapsed ? "right" : "top"}>
-            {syncError ?? healthText[health]}
+            {syncError ?? healthText(health)}
           </TooltipContent>
         </Tooltip>
         <Tooltip>
@@ -371,7 +382,11 @@ export function Sidebar({
             <button
               type="button"
               className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-sidebar-hover hover:text-foreground"
-              aria-label={theme === "dark" ? "切换到浅色" : "切换到深色"}
+              aria-label={
+                theme === "dark"
+                  ? t("common.nav.toLight")
+                  : t("common.nav.toDark")
+              }
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
             >
               {theme === "dark" ? (
@@ -382,7 +397,7 @@ export function Sidebar({
             </button>
           </TooltipTrigger>
           <TooltipContent side={collapsed ? "right" : "top"}>
-            {theme === "dark" ? "浅色" : "深色"}
+            {theme === "dark" ? t("common.nav.light") : t("common.nav.dark")}
           </TooltipContent>
         </Tooltip>
         <Tooltip>
@@ -390,14 +405,14 @@ export function Sidebar({
             <button
               type="button"
               className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-sidebar-hover hover:text-foreground"
-              aria-label="退出登录"
+              aria-label={t("common.nav.signOut")}
               onClick={onSignOut}
             >
               <LogOut className="size-[17px]" strokeWidth={1.7} />
             </button>
           </TooltipTrigger>
           <TooltipContent side={collapsed ? "right" : "top"}>
-            退出登录
+            {t("common.nav.signOut")}
           </TooltipContent>
         </Tooltip>
       </div>

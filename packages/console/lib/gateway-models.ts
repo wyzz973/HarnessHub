@@ -11,6 +11,7 @@ import type {
   RouteGroup,
   SubscriptionBackend,
 } from "@harnesshub/sdk/client";
+import { formatUsd, t } from "./i18n";
 import { modelPlane } from "./model-plane";
 
 /** Marks of subscription providers, which have no preset (lib/brand-icons.ts). */
@@ -92,7 +93,7 @@ export function gatewayModels(
   if (groups.length)
     sections.push({
       id: "group",
-      title: "路由组",
+      title: t("agents.picker.groups"),
       options: groups.map((group) => ({
         ref: `group/${group.id}`,
         label: `group/${group.id}`,
@@ -103,7 +104,7 @@ export function gatewayModels(
   if (visible.length)
     sections.push({
       id: "auto-group",
-      title: "自动路由组",
+      title: t("agents.picker.autoGroups"),
       options: visible.map((group) => ({
         ref: `group/${group.id}`,
         label: `group/${group.id}`,
@@ -149,8 +150,8 @@ export function tokenCount(value: number | undefined): string {
 /** "$0.27 / $1.10" per million input and output tokens; unknown parts are "?". */
 export function priceText(price: ModelOption["price"]): string {
   if (!price || (price.input === undefined && price.output === undefined))
-    return "价格未知";
+    return t("agents.picker.priceUnknown");
   const part = (value: number | undefined) =>
-    value === undefined ? "?" : `$${value}`;
+    value === undefined ? "?" : formatUsd(value);
   return `${part(price.input)} / ${part(price.output)}`;
 }

@@ -8,8 +8,10 @@ import type {
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { failureOf, modelPlane } from "@/lib/model-plane";
+import { formatDateTime, t } from "@/lib/i18n";
+import { tr } from "@/lib/i18n-react";
 import {
-  breakerStates,
+  breakerState,
   failureText,
   readingView,
   restLeft,
@@ -75,7 +77,7 @@ export function useRoutingStates(): readonly [RoutingStates, () => void] {
   return [states, () => refresh.current()] as const;
 }
 
-/** "休息到 22:20:28，还剩 9:52", counting down each second until the rest ends. */
+/** When the rest ends and the time left, counting down each second. */
 export function RestingUntil({ until }: { until: string }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -85,14 +87,14 @@ export function RestingUntil({ until }: { until: string }) {
   const left = restLeft(until, now);
   return (
     <span className="text-[12px] text-muted-foreground">
-      休息到 <LocalTime value={until} />
-      {left ? (
-        <>
-          ，还剩 <span className="tabular-nums">{left}</span>
-        </>
-      ) : (
-        "，等待下一次请求探测"
-      )}
+      {tr("providers.state.restingUntil", {
+        time: <LocalTime value={until} />,
+      })}
+      {left
+        ? tr("providers.state.left", {
+            left: <span className="tabular-nums">{left}</span>,
+          })
+        : t("providers.state.waitingProbe")}
     </span>
   );
 }
@@ -107,12 +109,17 @@ export function CredentialState({
   compact?: boolean;
 }) {
   if (!state) return <span className="text-subtle">—</span>;
-  const breaker = breakerStates[state.state];
+  const breaker = breakerState(state.state);
   const rest = state.restingUntil
-    ? `，休息到 ${new Date(state.restingUntil).toLocaleString()}`
+    ? t("providers.state.restHint", {
+        time: formatDateTime(state.restingUntil),
+      })
     : "";
   const failure = state.lastFailure
-    ? `最近一次失败：${failureText(state.lastFailure)}，${new Date(state.lastFailure.at).toLocaleString()}`
+    ? t("providers.state.lastFailureHint", {
+        failure: failureText(state.lastFailure),
+        time: formatDateTime(state.lastFailure.at),
+      })
     : "";
   return (
     <span className="inline-flex flex-col items-start gap-0.5">
@@ -127,8 +134,10 @@ export function CredentialState({
       ) : null}
       {!compact && state.lastFailure ? (
         <span className="text-[12px] text-muted-foreground">
-          {failureText(state.lastFailure)}，
-          <LocalTime value={state.lastFailure.at} />
+          {tr("providers.state.failureAt", {
+            failure: failureText(state.lastFailure),
+            time: <LocalTime value={state.lastFailure.at} />,
+          })}
         </span>
       ) : null}
     </span>
@@ -146,27 +155,34 @@ export function Readings({
   if (!readings.length) return null;
   const now = Date.now();
   return (
-    <ul className={cn("space-y-1.5", className)} aria-label="额度读数">
+    <ul
+      className={cn("space-y-1.5", className)}
+      aria-label={t("providers.state.readings")}
+    >
       {readings.map((reading) => {
         const view = readingView(reading, now);
         return (
           <li
             key={reading.window}
             className="min-w-[160px] text-[12px]"
-            title={`读取于 ${new Date(reading.observedAt).toLocaleString()}`}
+            title={t("providers.state.readAt", {
+              time: formatDateTime(reading.observedAt),
+            })}
           >
             <span className="flex items-center justify-between gap-2">
               <span className="truncate text-muted-foreground">
                 {view.name}
               </span>
               <span className="tabular-nums">
-                {view.renewed ? "已续期" : `已用 ${view.percent}%`}
+                {view.renewed
+                  ? t("providers.state.renewed")
+                  : t("providers.state.used", { percent: view.percent })}
               </span>
             </span>
             <span
               className="mt-0.5 block h-1.5 overflow-hidden rounded-full bg-muted"
               role="meter"
-              aria-label={`${view.name} 已用`}
+              aria-label={t("providers.state.usedLabel", { name: view.name })}
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={view.percent}
@@ -185,7 +201,9 @@ export function Readings({
             </span>
             {reading.resetsAt && !view.renewed ? (
               <span className="text-subtle">
-                <LocalTime value={reading.resetsAt} /> 续期
+                {tr("providers.state.renews", {
+                  time: <LocalTime value={reading.resetsAt} />,
+                })}
               </span>
             ) : null}
           </li>
@@ -210,13 +228,13 @@ export function CredentialStatesPage({ tabs }: { tabs: React.ReactNode }) {
       <div className="page-column max-w-[1040px]">
         {tabs}
         <PageHeader
-          title="凭据状态"
-          lede="网关如何使用每个凭据：失败后休息，到期后放行一次探测；额度读数来自上游的限流头与官方客户端的额度报告，smart 与 pace 路由按它排序。每 5 秒刷新。"
+          title={t("providers.state.title")}
+          lede={t("providers.state.lede")}
         >
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label="刷新"
+            aria-label={t("common.refresh")}
             onClick={refresh}
           >
             <RefreshCw />
@@ -227,7 +245,7 @@ export function CredentialStatesPage({ tabs }: { tabs: React.ReactNode }) {
             <div
               className="panel space-y-3 p-5"
               role="status"
-              aria-label="正在读取"
+              aria-label={t("common.loading")}
             >
               <Skeleton className="h-4 w-1/3" />
               <Skeleton className="h-4 w-2/3" />
@@ -238,17 +256,17 @@ export function CredentialStatesPage({ tabs }: { tabs: React.ReactNode }) {
             <>
               {resting ? (
                 <p className="callout warn">
-                  {resting} 个凭据正在休息或等待探测；网关在此期间使用其他候选。
+                  {t("providers.state.resting", { n: resting })}
                 </p>
               ) : null}
               <div className="panel overflow-x-auto">
                 <table className="data-table min-w-[720px]">
                   <thead>
                     <tr>
-                      <th>凭据</th>
-                      <th>状态</th>
-                      <th>最近一次失败</th>
-                      <th>额度</th>
+                      <th>{t("providers.state.credential")}</th>
+                      <th>{t("providers.state.status")}</th>
+                      <th>{t("providers.state.lastFailure")}</th>
+                      <th>{t("providers.state.allowance")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -258,7 +276,9 @@ export function CredentialStatesPage({ tabs }: { tabs: React.ReactNode }) {
                           <span className="block">
                             {item.credentialName}
                             {!item.enabled ? (
-                              <span className="tag warn ml-2">已停用</span>
+                              <span className="tag warn ml-2">
+                                {t("providers.disabled")}
+                              </span>
                             ) : null}
                           </span>
                           <span className="font-mono text-[12px] text-subtle">
@@ -290,7 +310,7 @@ export function CredentialStatesPage({ tabs }: { tabs: React.ReactNode }) {
                             <Readings readings={item.readings} />
                           ) : (
                             <span className="text-[12.5px] text-subtle">
-                              尚无读数
+                              {t("providers.state.noReadings")}
                             </span>
                           )}
                         </td>
@@ -301,8 +321,8 @@ export function CredentialStatesPage({ tabs }: { tabs: React.ReactNode }) {
               </div>
             </>
           ) : (
-            <EmptyState icon={Activity} title="还没有凭据">
-              添加 provider 与凭据后，这里显示网关使用它们的状态。
+            <EmptyState icon={Activity} title={t("providers.state.empty")}>
+              {t("providers.state.emptyBody")}
             </EmptyState>
           )}
         </div>

@@ -34,6 +34,7 @@ import { cn } from "@/lib/utils";
 import { EngineAvatar } from "./engine-avatar";
 import { LogPanel, LogView } from "./log-panel";
 import { Status } from "./status";
+import { formatDateTime, formatNumber, t } from "@/lib/i18n";
 
 export type RunPanelTab = "overview" | "model" | "files" | "logs";
 
@@ -63,24 +64,24 @@ export function Inspector({
   const engineId = observation?.engineId ?? selection?.engineId;
   const { calls, invalid } = projectModelCalls(events);
   return (
-    <aside className="run-panel" aria-label="执行详情">
+    <aside className="run-panel" aria-label={t("tasks.inspector.title")}>
       <div className="flex h-14 shrink-0 items-center gap-2.5 pr-3 pl-5">
         {engineId ? <EngineAvatar id={engineId} /> : null}
         <span className="min-w-0 flex-1 truncate text-[14px] font-semibold">
-          {engineId ? engineName(engineId) : "执行详情"}
+          {engineId ? engineName(engineId) : t("tasks.inspector.title")}
         </span>
         {run ? <Status status={run.status} /> : null}
         <Button
           variant="ghost"
           size="icon-sm"
           onClick={close}
-          aria-label="关闭执行详情"
+          aria-label={t("tasks.inspector.close")}
         >
           <X />
         </Button>
       </div>
       {!run ? (
-        <p className="empty-state">发送任务后，这里显示执行详情。</p>
+        <p className="empty-state">{t("tasks.inspector.empty")}</p>
       ) : (
         <Tabs
           value={tab}
@@ -88,9 +89,11 @@ export function Inspector({
           className="min-h-0 flex-1"
         >
           <TabsList className="px-5">
-            <TabsTrigger value="overview">概览</TabsTrigger>
+            <TabsTrigger value="overview">
+              {t("tasks.inspector.overview")}
+            </TabsTrigger>
             <TabsTrigger value="model">
-              模型调用
+              {t("tasks.inspector.modelCalls")}
               {calls.length ? (
                 <span className="ml-1.5 text-[12px] text-subtle tabular">
                   {calls.length}
@@ -98,14 +101,14 @@ export function Inspector({
               ) : null}
             </TabsTrigger>
             <TabsTrigger value="files">
-              产物
+              {t("tasks.inspector.artifacts")}
               {run.artifacts?.length ? (
                 <span className="ml-1.5 text-[12px] text-subtle tabular">
                   {run.artifacts.length}
                 </span>
               ) : null}
             </TabsTrigger>
-            <TabsTrigger value="logs">日志</TabsTrigger>
+            <TabsTrigger value="logs">{t("tasks.inspector.logs")}</TabsTrigger>
           </TabsList>
           <TabsContent value="overview" className="overflow-y-auto px-5 py-4">
             <Overview
@@ -124,7 +127,7 @@ export function Inspector({
           </TabsContent>
           <TabsContent value="files" className="overflow-y-auto px-5 py-4">
             {!run.artifacts?.length ? (
-              <p className="empty-state">没有产物</p>
+              <p className="empty-state">{t("tasks.inspector.noArtifacts")}</p>
             ) : (
               <ul className="space-y-2">
                 {run.artifacts.map((artifact) => (
@@ -150,7 +153,9 @@ export function Inspector({
                       <a
                         href={api.artifactUrl(artifact.id)}
                         download={artifact.name}
-                        aria-label={`下载 ${artifact.name}`}
+                        aria-label={t("tasks.inspector.download", {
+                          name: artifact.name,
+                        })}
                       >
                         <Download />
                       </a>
@@ -198,48 +203,66 @@ function Overview({
   const cost = observation?.cost;
   return (
     <div className="space-y-6">
-      <Group title="执行">
+      <Group title={t("tasks.inspector.run")}>
         <Metric
-          label="实际模型"
+          label={t("tasks.inspector.actualModel")}
           value={modelLabel(observation?.model.actual)}
         />
         <Metric
-          label="配置模型"
+          label={t("tasks.inspector.configuredModel")}
           value={
             observation?.model.configured
               ? modelLabel(observation.model.configured)
-              : "引擎默认"
+              : t("tasks.inspector.engineDefault")
           }
         />
         <Metric
-          label="开始"
-          value={new Date(run.createdAt).toLocaleString("zh-CN", {
-            hour12: false,
-          })}
+          label={t("tasks.inspector.started")}
+          value={formatDateTime(run.createdAt)}
         />
         <Metric
-          label="耗时"
+          label={t("tasks.inspector.duration")}
           value={duration(observation?.timings.durationMs)}
         />
         <Metric
-          label="首次输出"
+          label={t("tasks.inspector.firstOutput")}
           value={duration(observation?.timings.timeToFirstOutputMs)}
         />
-        <Metric label="排队" value={duration(observation?.timings.queueMs)} />
-      </Group>
-      <Group title="用量">
-        <Metric label="输入" value={quantity(observation?.tokens.input)} />
-        <Metric label="输出" value={quantity(observation?.tokens.output)} />
         <Metric
-          label="缓存读取"
+          label={t("tasks.inspector.queue")}
+          value={duration(observation?.timings.queueMs)}
+        />
+      </Group>
+      <Group title={t("tasks.inspector.usage")}>
+        <Metric
+          label={t("tasks.inspector.input")}
+          value={quantity(observation?.tokens.input)}
+        />
+        <Metric
+          label={t("tasks.inspector.output")}
+          value={quantity(observation?.tokens.output)}
+        />
+        <Metric
+          label={t("tasks.inspector.cacheRead")}
           value={quantity(observation?.tokens.cacheRead)}
         />
         <Metric
-          label="费用"
+          label={t("tasks.inspector.cost")}
           value={
             cost?.amount == null
-              ? "未提供"
-              : `${cost.currency ?? ""} ${cost.amount.toFixed(6)}${cost.kind === "estimated" ? "（估算）" : ""}`
+              ? t("common.notProvided")
+              : t(
+                  cost.kind === "estimated"
+                    ? "tasks.inspector.costEstimated"
+                    : "tasks.inspector.costValue",
+                  {
+                    currency: cost.currency ?? "",
+                    amount: formatNumber(cost.amount, undefined, {
+                      minimumFractionDigits: 6,
+                      maximumFractionDigits: 6,
+                    }),
+                  },
+                ).trim()
           }
         />
         {observation?.usage.missingReason ? (
@@ -249,7 +272,13 @@ function Overview({
         ) : null}
       </Group>
       {selection ? (
-        <Group title={selection.mode === "auto" ? "自动选择" : "引擎"}>
+        <Group
+          title={
+            selection.mode === "auto"
+              ? t("tasks.inspector.autoSelection")
+              : t("tasks.inspector.engine")
+          }
+        >
           <p className="text-[13px] leading-6 text-muted-foreground">
             {selection.reason}
           </p>
@@ -263,11 +292,13 @@ function Overview({
                   <div className="flex justify-between gap-2 font-medium">
                     <span>{engineName(candidate.engineId)}</span>
                     <span className="tabular text-muted-foreground">
-                      {candidate.eligible ? candidate.score : "不参与"}
+                      {candidate.eligible
+                        ? candidate.score
+                        : t("tasks.inspector.notEligible")}
                     </span>
                   </div>
                   <p className="mt-0.5 text-[12px] leading-5 text-subtle">
-                    {candidate.reasons.join("；")}
+                    {candidate.reasons.join(t("tasks.reasonSeparator"))}
                   </p>
                 </li>
               ))}
@@ -275,36 +306,39 @@ function Overview({
           ) : null}
         </Group>
       ) : null}
-      <Group title="记录">
+      <Group title={t("tasks.inspector.records")}>
         <Metric label="Run" value={run.id.slice(0, 8)} mono />
         <Metric
-          label="配置版本"
+          label={t("tasks.inspector.profileRevision")}
           value={
-            observation?.versions.profileRevision?.slice(0, 12) ?? "未提供"
+            observation?.versions.profileRevision?.slice(0, 12) ??
+            t("common.notProvided")
           }
           mono
         />
-        <Metric label="事件" value={String(run.lastSeq)} />
+        <Metric label={t("tasks.inspector.events")} value={String(run.lastSeq)} />
         <Metric
-          label="进程清理"
+          label={t("tasks.inspector.cleanup")}
           value={
             run.cleanupStatus === "confirmed"
-              ? "已确认"
+              ? t("tasks.inspector.cleanupConfirmed")
               : run.cleanupStatus === "failed"
-                ? "失败"
-                : "未确认"
+                ? t("tasks.inspector.cleanupFailed")
+                : t("tasks.inspector.cleanupUnconfirmed")
           }
         />
         <Button variant="outline" size="sm" className="mt-3" asChild>
           <a href={api.rolloutUrl(run.id)} download={`${run.id}.jsonl`}>
             <Download />
-            导出完整轨迹
+            {t("tasks.inspector.exportTrace")}
           </a>
         </Button>
         {observation?.coverage.missingReasons.length ? (
           <details className="mt-3 text-[12.5px]">
             <summary className="w-fit text-subtle hover:text-foreground">
-              {observation.coverage.missingReasons.length} 项信息缺失
+              {t("tasks.inspector.missing", {
+                n: observation.coverage.missingReasons.length,
+              })}
             </summary>
             <ul className="mt-2 list-disc space-y-1 pl-4 text-muted-foreground">
               {observation.coverage.missingReasons.map((reason) => (
@@ -336,7 +370,7 @@ function ModelCalls({
   if (evidence.verdict === "none")
     return (
       <p className="empty-state">
-        {finished ? "没有模型调用记录" : "模型调用会实时出现在这里"}
+        {finished ? t("tasks.calls.none") : t("tasks.calls.live")}
       </p>
     );
   const good = evidence.verdict === "unified" || evidence.verdict === "single";
@@ -350,28 +384,49 @@ function ModelCalls({
         )}
         <span>
           {evidence.verdict === "unified"
-            ? `${evidence.total} 次调用全部发往统一模型 ${only}`
+            ? t("tasks.calls.unified", {
+                n: evidence.total,
+                model: only ?? "",
+              })
             : evidence.verdict === "single"
-              ? `${evidence.total} 次调用全部发往 ${only}`
+              ? t("tasks.calls.single", {
+                  n: evidence.total,
+                  model: only ?? "",
+                })
               : evidence.verdict === "mismatch"
-                ? `调用发往 ${only}，与当前统一模型 ${configured} 不同`
-                : `调用发往多个模型：${evidence.models.map((item) => `${item.model} ×${item.count}`).join("、")}`}
-          {evidence.failed ? `，其中 ${evidence.failed} 次失败` : ""}
+                ? t("tasks.calls.mismatch", {
+                    model: only ?? "",
+                    configured: configured ?? "",
+                  })
+                : t("tasks.calls.mixed", {
+                    models: evidence.models
+                      .map((item) => `${item.model} ×${item.count}`)
+                      .join(t("tasks.separator")),
+                  })}
+          {evidence.failed
+            ? t("tasks.calls.failed", { n: evidence.failed })
+            : ""}
         </span>
       </div>
       {invalid ? (
         <p className="text-[12.5px] text-warning">
-          另有 {invalid} 条记录格式无法识别
+          {t("tasks.calls.invalid", { n: invalid })}
         </p>
       ) : null}
       <dl>
         <Metric
-          label="输入 / 输出"
+          label={t("tasks.calls.inputOutput")}
           value={`${quantity(evidence.tokens.input)} / ${quantity(evidence.tokens.output)}`}
         />
-        <Metric label="总耗时" value={duration(evidence.durationMs)} />
+        <Metric
+          label={t("tasks.calls.totalDuration")}
+          value={duration(evidence.durationMs)}
+        />
         {evidence.requested.length ? (
-          <Metric label="引擎请求的名称" value={evidence.requested.join("、")} />
+          <Metric
+            label={t("tasks.calls.requested")}
+            value={evidence.requested.join(t("tasks.separator"))}
+          />
         ) : null}
       </dl>
       <ol className="space-y-1.5">
@@ -389,23 +444,31 @@ function ModelCalls({
                 {inboundNames[call.inbound]}
               </span>
               <span className={cn("tabular", !call.ok && "text-danger")}>
-                {call.status || "无响应"} · {duration(call.durationMs)}
+                {call.status || t("tasks.calls.noResponse")} ·{" "}
+                {duration(call.durationMs)}
               </span>
             </div>
             <p className="mt-1 truncate font-mono text-[11.5px] text-subtle">
               {call.requestedModel ?? "—"} → {call.upstreamModel}
             </p>
             <p className="mt-0.5 text-[12px] text-muted-foreground">
-              输入 {quantity(call.usage?.input)} · 输出{" "}
-              {quantity(call.usage?.output)}
-              {call.toolCalls ? ` · 工具 ${call.toolCalls}` : ""}
-              {call.finishReason
-                ? ` · ${finishReasonText(call.finishReason)}`
-                : ""}
+              {[
+                t("tasks.calls.input", { n: quantity(call.usage?.input) }),
+                t("tasks.calls.output", { n: quantity(call.usage?.output) }),
+                ...(call.toolCalls
+                  ? [t("tasks.calls.tools", { n: call.toolCalls })]
+                  : []),
+                ...(call.finishReason
+                  ? [finishReasonText(call.finishReason)]
+                  : []),
+              ].join(" · ")}
             </p>
             {call.error ? (
               <p className="mt-1 text-[12px] break-words text-danger">
-                {call.error.code}：{call.error.message}
+                {t("tasks.calls.error", {
+                  code: call.error.code,
+                  message: call.error.message,
+                })}
               </p>
             ) : null}
           </li>

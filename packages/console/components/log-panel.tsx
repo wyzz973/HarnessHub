@@ -12,6 +12,7 @@ import {
 import { api, UnsupportedFeatureError } from "@/lib/api";
 import type { LogRecord } from "@/lib/contracts";
 import { cn } from "@/lib/utils";
+import { locale, t } from "@/lib/i18n";
 
 type Source = "engine" | "gateway";
 type Level = "all" | "info" | "debug";
@@ -28,10 +29,7 @@ const FIRST_PAGE = 500;
 /** Records kept per source in the browser; older ones are dropped from view. */
 const KEEP = 5000;
 const POLL_MS = 2000;
-const sources: { id: Source; label: string }[] = [
-  { id: "engine", label: "引擎" },
-  { id: "gateway", label: "网关" },
-];
+const sources: readonly Source[] = ["engine", "gateway"];
 const empty = (): SourceState => ({
   records: [],
   truncated: false,
@@ -41,7 +39,13 @@ const empty = (): SourceState => ({
 function clock(time: string) {
   const date = new Date(time);
   if (Number.isNaN(date.getTime())) return time;
-  return `${date.toLocaleTimeString("zh-CN", { hour12: false })}.${String(date.getMilliseconds()).padStart(3, "0")}`;
+  const clockTime = new Intl.DateTimeFormat(locale(), {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(date);
+  return `${clockTime}.${String(date.getMilliseconds()).padStart(3, "0")}`;
 }
 
 /** Fields other than time/level/event, compact for one row. */
@@ -141,7 +145,12 @@ export function LogView({
       } catch (reason) {
         if (signal?.aborted) return;
         if (reason instanceof UnsupportedFeatureError) setUnsupported(true);
-        else setError(reason instanceof Error ? reason.message : "读取失败");
+        else
+          setError(
+            reason instanceof Error
+              ? reason.message
+              : t("tasks.logs.loadFailed"),
+          );
       } finally {
         if (loading.current[which] === token) loading.current[which] = null;
       }
@@ -187,7 +196,7 @@ export function LogView({
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
     } catch {
-      setError("无法写入剪贴板，请改用下载");
+      setError(t("tasks.logs.clipboard"));
     }
   };
   const download = () => {
@@ -204,22 +213,26 @@ export function LogView({
   if (unsupported)
     return (
       <p className="p-4 text-[13px] text-muted-foreground">
-        当前服务版本不支持在线查看日志，可用 Collect-Logs.cmd 打包。
+        {t("tasks.logs.unsupported")}
       </p>
     );
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2.5">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="segmented" role="tablist" aria-label="日志来源">
+        <div
+          className="segmented"
+          role="tablist"
+          aria-label={t("tasks.logs.source")}
+        >
           {sources.map((item) => (
             <button
-              key={item.id}
+              key={item}
               type="button"
               role="tab"
-              aria-selected={source === item.id}
-              onClick={() => setSource(item.id)}
+              aria-selected={source === item}
+              onClick={() => setSource(item)}
             >
-              {item.label}
+              {t(`tasks.logs.${item}`)}
             </button>
           ))}
         </div>
@@ -227,10 +240,10 @@ export function LogView({
           <select
             className="field mt-0 h-8 w-auto rounded-full pr-7 text-[12.5px]"
             value={level}
-            aria-label="日志级别"
+            aria-label={t("tasks.logs.level")}
             onChange={(event) => setLevel(event.target.value as Level)}
           >
-            <option value="all">全部级别</option>
+            <option value="all">{t("tasks.logs.allLevels")}</option>
             <option value="info">info</option>
             <option value="debug">debug</option>
           </select>
@@ -240,8 +253,8 @@ export function LogView({
             "field mt-0 h-8 rounded-full text-[12.5px]",
             compact ? "min-w-0 flex-1" : "w-60",
           )}
-          placeholder="筛选，如 model.call"
-          aria-label="筛选日志"
+          placeholder={t("tasks.logs.filterPlaceholder")}
+          aria-label={t("tasks.logs.filter")}
           value={filter}
           onChange={(event) => setFilter(event.target.value)}
         />
@@ -249,7 +262,7 @@ export function LogView({
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label="刷新日志"
+            aria-label={t("tasks.logs.refresh")}
             onClick={() => void load(source)}
           >
             <RefreshCw />
@@ -259,7 +272,7 @@ export function LogView({
               <Button
                 variant="ghost"
                 size="icon-sm"
-                aria-label="复制显示的日志"
+                aria-label={t("tasks.logs.copy")}
                 disabled={!visible.length}
                 onClick={() => void copy()}
               >
@@ -268,7 +281,7 @@ export function LogView({
               <Button
                 variant="ghost"
                 size="icon-sm"
-                aria-label="下载显示的日志"
+                aria-label={t("tasks.logs.download")}
                 disabled={!visible.length}
                 onClick={download}
               >
@@ -280,7 +293,7 @@ export function LogView({
             <Button
               variant="ghost"
               size="icon-sm"
-              aria-label="在大窗口中查看日志"
+              aria-label={t("tasks.logs.expand")}
               onClick={onExpand}
             >
               <Maximize2 />
@@ -301,11 +314,13 @@ export function LogView({
       >
         {current.exists === false ? (
           <p className="p-4 font-sans text-[13px] text-muted-foreground">
-            还没有日志，第一次执行后生成。
+            {t("tasks.logs.none")}
           </p>
         ) : !visible.length ? (
           <p className="p-4 font-sans text-[13px] text-muted-foreground">
-            {current.records.length ? "没有匹配的记录" : "读取中"}
+            {current.records.length
+              ? t("tasks.logs.noMatch")
+              : t("tasks.logs.loading")}
           </p>
         ) : (
           visible.map((record, index) => (
@@ -354,9 +369,12 @@ export function LogView({
         className="truncate text-[12px] text-subtle"
         title={current.file ?? undefined}
       >
-        {visible.length} / {current.records.length} 条
-        {current.truncated ? "，较早的记录未显示" : ""}
-        {current.skipped ? `，${current.skipped} 行无法解析` : ""}
+        {t("tasks.logs.count", {
+          shown: visible.length,
+          total: current.records.length,
+        })}
+        {current.truncated ? t("tasks.logs.truncated") : ""}
+        {current.skipped ? t("tasks.logs.skipped", { n: current.skipped }) : ""}
         {current.file && !compact ? ` · ${current.file}` : ""}
       </p>
     </div>
@@ -379,10 +397,10 @@ export function LogPanel({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex h-[min(760px,88vh)] flex-col gap-4 sm:max-w-[1040px]">
         <DialogHeader>
-          <DialogTitle>诊断日志</DialogTitle>
+          <DialogTitle>{t("tasks.logs.title")}</DialogTitle>
           <DialogDescription>
-            会话 {sessionId.slice(0, 8)}
-            {active ? "，执行中自动刷新" : ""}
+            {t("tasks.logs.session", { id: sessionId.slice(0, 8) })}
+            {active ? t("tasks.logs.autoRefresh") : ""}
           </DialogDescription>
         </DialogHeader>
         <LogView sessionId={sessionId} active={active} enabled={open} />

@@ -10,6 +10,7 @@ import type {
   SyncSettings,
   SyncStatus,
 } from "@harnesshub/sdk/client";
+import { t } from "./i18n";
 
 /** `harnesshub-2026-10-04.harnesshub-backup`, by the local date. */
 export function backupFileName(now: Date): string {
@@ -26,7 +27,7 @@ export function readBackupFile(text: string): BackupEnvelope {
   try {
     value = JSON.parse(text);
   } catch {
-    throw new Error("这不是 HarnessHub 备份文件：内容不是 JSON");
+    throw new Error(t("backup.file.notJson"));
   }
   if (
     typeof value !== "object" ||
@@ -34,23 +35,31 @@ export function readBackupFile(text: string): BackupEnvelope {
     Array.isArray(value) ||
     (value as { format?: unknown }).format !== "harnesshub-backup"
   )
-    throw new Error(
-      "这不是 HarnessHub 备份文件：缺少 format: harnesshub-backup",
-    );
+    throw new Error(t("backup.file.noFormat"));
   return value as BackupEnvelope;
 }
 
-export const restoreAgentActions: Record<
+const restoreAgentTones: Record<
   RestoreSummary["agents"][number]["action"],
-  { label: string; tone: "good" | "neutral" | "warn" }
+  "good" | "neutral" | "warn"
 > = {
-  wire: { label: "重新接线", tone: "good" },
-  unchanged: { label: "已相同，不动", tone: "neutral" },
-  "skip-disabled": { label: "跳过：未要求接线", tone: "neutral" },
-  "skip-not-installed": { label: "跳过：本机未安装", tone: "warn" },
-  "skip-unknown": { label: "跳过：未知 Agent", tone: "warn" },
-  "skip-unavailable": { label: "跳过：守护进程不能接线", tone: "warn" },
+  wire: "good",
+  unchanged: "neutral",
+  "skip-disabled": "neutral",
+  "skip-not-installed": "warn",
+  "skip-unknown": "warn",
+  "skip-unavailable": "warn",
 };
+
+/** What a restore does with an agent, as a label and a tone. */
+export function restoreAgentAction(
+  action: RestoreSummary["agents"][number]["action"],
+): { label: string; tone: "good" | "neutral" | "warn" } {
+  return {
+    label: t(`backup.agentAction.${action}`),
+    tone: restoreAgentTones[action],
+  };
+}
 
 /** Whether a restore brought Library items in that agents' files may need. */
 export function libraryChanged(summary: RestoreSummary): boolean {
@@ -115,15 +124,15 @@ export function syncSettings(
     return {
       error:
         form.kind === "webdav"
-          ? "填写 WebDAV 目录的地址（https://…）"
-          : "填写存储桶（s3://bucket 或 s3://bucket/prefix）",
+          ? t("backup.syncDialog.needWebdav")
+          : t("backup.syncDialog.needBucket"),
     };
   if (form.kind === "s3" && !form.user.trim())
-    return { error: "填写 S3 的 Access Key ID" };
+    return { error: t("backup.syncDialog.needAccessKey") };
   if (!status?.enabled && !form.passphrase)
-    return { error: "开启同步需要一个口令，用来加密服务器上的副本" };
+    return { error: t("backup.syncDialog.needPassphrase") };
   if (form.passphrase !== form.confirm)
-    return { error: "两次输入的口令不一致" };
+    return { error: t("backup.passphraseMismatch") };
   const s3 = form.kind === "s3";
   return {
     settings: {
@@ -143,12 +152,9 @@ export function syncSettings(
   };
 }
 
-export const syncPartNames: Record<
-  NonNullable<SyncStatus["notice"]>["here"][number],
-  string
-> = {
-  providers: "provider 与路由",
-  agents: "Agent 接线",
-  profiles: "Profile",
-  library: "Library",
-};
+/** The name of one part of the synced settings. */
+export function syncPartName(
+  part: NonNullable<SyncStatus["notice"]>["here"][number],
+): string {
+  return t(`backup.sync.part.${part}`);
+}

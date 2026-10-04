@@ -6,10 +6,11 @@ import type {
   RouteDecisionCandidate,
 } from "@harnesshub/sdk/client";
 import { Button } from "@/components/ui/button";
+import { formatDateTime, t } from "@/lib/i18n";
 import { failureOf, modelPlane } from "@/lib/model-plane";
 import {
   classifierText,
-  decisionKinds,
+  decisionKindName,
   decisionSessions,
   mergeDecisions,
   ruleDecisionText,
@@ -85,7 +86,9 @@ function CandidateText({ candidate }: { candidate: RouteDecisionCandidate }) {
       ) : null}
       {candidate.fast ? <span className="tag brand ml-1.5">fast</span> : null}
       {candidate.member?.startsWith("group/") ? (
-        <span className="ml-1.5 text-subtle">（经 {candidate.member}）</span>
+        <span className="ml-1.5 text-subtle">
+          {t("routing.decisions.via", { member: candidate.member })}
+        </span>
       ) : null}
     </span>
   );
@@ -117,10 +120,12 @@ function DecisionCard({
         {decision.agent ? <span className="tag">{decision.agent}</span> : null}
         {decision.turn !== undefined ? (
           <span className="text-[12.5px] text-muted-foreground">
-            第 {decision.turn} 轮
             {decision.tokens !== undefined
-              ? ` · 约 ${decision.tokens.toLocaleString()} token`
-              : ""}
+              ? t("routing.decisions.turnTokens", {
+                  turn: decision.turn,
+                  tokens: decision.tokens,
+                })
+              : t("routing.decisions.turn", { turn: decision.turn })}
           </span>
         ) : null}
         <span className="ml-auto">
@@ -128,12 +133,12 @@ function DecisionCard({
             <span
               className={`tag ${decision.status !== undefined && decision.status < 400 ? "good" : "error"}`}
             >
-              {decision.status ?? "已结束"}
+              {decision.status ?? t("routing.decisions.ended")}
             </span>
           ) : (
             <span className="tag info">
               <Loader2 className="size-3 animate-spin" />
-              进行中
+              {t("routing.decisions.running")}
             </span>
           )}
         </span>
@@ -142,7 +147,7 @@ function DecisionCard({
         <ul className="space-y-1.5 text-[13px]">
           {decision.rules.map((rule, index) => (
             <li key={`${rule.group}-${index}`}>
-              <span className="tag mr-1.5">{decisionKinds[rule.kind]}</span>
+              <span className="tag mr-1.5">{decisionKindName(rule.kind)}</span>
               {decision.rules.length > 1 || index > 0 ? (
                 <span className="mr-1 font-mono text-[12px] text-subtle">
                   group/{rule.group}
@@ -151,12 +156,16 @@ function DecisionCard({
               {ruleDecisionText(rule)}
               {rule.then.length ? (
                 <span className="text-muted-foreground">
-                  ；其后 {rule.then.join("、")}
+                  {t("routing.decisions.then", {
+                    members: rule.then.join(t("routing.separator")),
+                  })}
                 </span>
               ) : null}
               {rule.small?.length ? (
                 <span className="text-muted-foreground">
-                  ；窗口太小跳过 {rule.small.join("、")}
+                  {t("routing.decisions.small", {
+                    members: rule.small.join(t("routing.separator")),
+                  })}
                 </span>
               ) : null}
               {rule.classifier ? (
@@ -169,21 +178,25 @@ function DecisionCard({
         </ul>
       ) : (
         <p className="text-[13px] text-muted-foreground">
-          这个组没有规则：按组的策略排列。
+          {t("routing.decisions.noRules")}
         </p>
       )}
       {decision.effort || sticky ? (
         <p className="text-[12.5px] text-muted-foreground">
           {[
-            decision.effort ? `推理强度由分类器定为 ${decision.effort}` : "",
+            decision.effort
+              ? t("routing.decisions.effort", { effort: decision.effort })
+              : "",
             sticky ?? "",
           ]
             .filter(Boolean)
-            .join("；")}
+            .join(t("routing.clauseSeparator"))}
         </p>
       ) : null}
       <div>
-        <p className="text-[12px] text-subtle">尝试顺序</p>
+        <p className="text-[12px] text-subtle">
+          {t("routing.decisions.order")}
+        </p>
         <ol className="mt-1 list-decimal space-y-0.5 pl-5">
           {shown.map((candidate, index) => (
             <li
@@ -195,23 +208,25 @@ function DecisionCard({
         </ol>
         {hidden > 0 && !all ? (
           <Button size="xs" variant="ghost" onClick={() => setAll(true)}>
-            还有 {hidden} 个
+            {t("routing.decisions.more", { n: hidden })}
           </Button>
         ) : null}
       </div>
       {decision.served ? (
         <p className="text-[12.5px]">
-          应答：
+          {t("routing.decisions.served")}
           <CandidateText candidate={decision.served} />
         </p>
       ) : null}
       <button
         type="button"
         className="font-mono text-[11.5px] text-subtle hover:text-foreground"
-        title="只看这个会话"
+        title={t("routing.decisions.onlySession")}
         onClick={() => onSession(decision.conversation)}
       >
-        会话 {decision.conversation.slice(0, 16)}…
+        {t("routing.decisions.session", {
+          id: decision.conversation.slice(0, 16),
+        })}
       </button>
     </li>
   );
@@ -235,8 +250,8 @@ export function DecisionsPage({ tabs }: { tabs?: React.ReactNode }) {
       <div className="page-column max-w-[1040px]">
         {tabs}
         <PageHeader
-          title="路由决定"
-          lede="路由组的每一轮如何路由：命中的规则、分类器的回答、粘性与候选的尝试顺序，以及最后由谁应答。只保存在守护进程内存中（最近 256 条）。"
+          title={t("routing.decisions.title")}
+          lede={t("routing.decisions.lede")}
         >
           <Button
             size="sm"
@@ -245,21 +260,23 @@ export function DecisionsPage({ tabs }: { tabs?: React.ReactNode }) {
             onClick={() => setFollow(!follow)}
           >
             <Radio />
-            {follow ? "实时跟随中" : "实时跟随"}
+            {follow
+              ? t("routing.decisions.following")
+              : t("routing.decisions.follow")}
           </Button>
         </PageHeader>
         <div className="mt-5 flex flex-wrap items-end gap-3">
           <label className="field-label min-w-[280px] flex-1">
-            会话
+            {t("routing.decisions.sessionLabel")}
             <select
               className="field"
               value={session}
               onChange={(event) => setSession(event.target.value)}
             >
-              <option value="">全部会话</option>
+              <option value="">{t("routing.decisions.allSessions")}</option>
               {sessions.map((item) => (
                 <option key={item.key} value={item.key}>
-                  {`${item.agent ?? "未知 Agent"} · ${item.requested} · ${new Date(item.lastAt).toLocaleString()} · ${item.key.slice(0, 8)}`}
+                  {`${item.agent ?? t("routing.decisions.unknownAgent")} · ${item.requested} · ${formatDateTime(item.lastAt)} · ${item.key.slice(0, 8)}`}
                 </option>
               ))}
             </select>
@@ -267,7 +284,7 @@ export function DecisionsPage({ tabs }: { tabs?: React.ReactNode }) {
           {session ? (
             <Button variant="ghost" size="sm" onClick={() => setSession("")}>
               <RotateCcw />
-              显示全部
+              {t("routing.decisions.showAll")}
             </Button>
           ) : null}
         </div>
@@ -284,7 +301,7 @@ export function DecisionsPage({ tabs }: { tabs?: React.ReactNode }) {
               role="status"
             >
               <Loader2 className="size-4 animate-spin" />
-              正在读取
+              {t("common.loading")}
             </div>
           ) : items.length ? (
             <ol className="space-y-3">
@@ -297,9 +314,10 @@ export function DecisionsPage({ tabs }: { tabs?: React.ReactNode }) {
               ))}
             </ol>
           ) : (
-            <EmptyState icon={Waypoints} title="还没有路由决定">
-              请求路由组（group/ID）后，每一轮的决定会出现在这里
-              {follow ? "，页面会自动显示新的决定" : ""}。
+            <EmptyState icon={Waypoints} title={t("routing.decisions.empty")}>
+              {follow
+                ? t("routing.decisions.emptyHintFollow")
+                : t("routing.decisions.emptyHint")}
             </EmptyState>
           )}
         </div>

@@ -30,12 +30,14 @@ import {
   backupFileName,
   libraryChanged,
   readBackupFile,
-  restoreAgentActions,
+  restoreAgentAction,
   syncFormOf,
-  syncPartNames,
+  syncPartName,
   syncSettings,
   type SyncForm,
 } from "@/lib/backup";
+import { t } from "@/lib/i18n";
+import { tr } from "@/lib/i18n-react";
 import { installedLibraryAgents } from "@/lib/library";
 import { failureOf, modelPlane, type Failure } from "@/lib/model-plane";
 import { navigate } from "@/lib/router";
@@ -61,7 +63,7 @@ function PassphraseFields({
   confirm,
   onPassphrase,
   onConfirm,
-  label = "口令",
+  label,
   optional,
 }: {
   passphrase: string;
@@ -75,7 +77,7 @@ function PassphraseFields({
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       <label className="field-label">
-        {label}
+        {label ?? t("backup.passphrase")}
         <input
           className="field"
           type="password"
@@ -86,7 +88,7 @@ function PassphraseFields({
         />
       </label>
       <label className="field-label">
-        再输入一次
+        {t("backup.passphraseAgain")}
         <input
           className="field"
           type="password"
@@ -97,7 +99,7 @@ function PassphraseFields({
         />
         {mismatch ? (
           <span role="alert" className="field-hint block text-danger">
-            两次输入的口令不一致
+            {t("backup.passphraseMismatch")}
           </span>
         ) : null}
       </label>
@@ -136,7 +138,9 @@ function BackupCard() {
           link.remove();
           // Some browsers read the blob after the click returns.
           window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
-          notify.success(`已下载备份 ${link.download}`);
+          notify.success(
+            t("backup.backup.downloaded", { file: link.download }),
+          );
         },
         (reason: unknown) => {
           setBusy(false);
@@ -145,10 +149,7 @@ function BackupCard() {
       );
   };
   return (
-    <Card
-      title="备份"
-      lede="把 provider、凭据、路由组、模型覆盖、Agent 接线、Profile 与 Library 打包成一个用口令加密的文件。"
-    >
+    <Card title={t("backup.backup.title")} lede={t("backup.backup.lede")}>
       <PassphraseFields
         passphrase={passphrase}
         confirm={confirm}
@@ -156,20 +157,18 @@ function BackupCard() {
         onConfirm={setConfirm}
       />
       <Checkbox checked={keys} onChange={setKeys}>
-        包含凭据的值（API Key 与 Library 的秘密）
+        {t("backup.backup.keys")}
       </Checkbox>
       <p className="field-hint">
-        口令只用于这一次加密，页面与守护进程都不保存；忘记口令就无法打开这个文件。
         {keys
-          ? "文件含有 Key 的值，请像保管 Key 一样保管它。"
-          : "不含 Key 时，凭据只保留名称，恢复后需要重新填写 Key。"}
-        Gateway Key 的文本、用量与会话不在备份中。
+          ? t("backup.backup.hintWithKeys")
+          : t("backup.backup.hintWithoutKeys")}
       </p>
       <ErrorCallout failure={failure} />
       <div className="flex justify-end">
         <Button disabled={busy || !ready} onClick={download}>
           {busy ? <Loader2 className="animate-spin" /> : <Download />}
-          下载备份
+          {t("backup.backup.download")}
         </Button>
       </div>
     </Card>
@@ -188,14 +187,15 @@ function Names({ items, tone }: { items: string[]; tone?: string }) {
   );
 }
 
-/** `新增 a b · 替换 c`, with nothing for empty parts. */
+/** Each part's label and its names (added, replaced, …), with nothing for empty parts. */
 function Changes({
   parts,
 }: {
   parts: Array<{ label: string; items: string[]; tone?: string }>;
 }) {
   const shown = parts.filter((part) => part.items.length);
-  if (!shown.length) return <span className="text-subtle">没有变化</span>;
+  if (!shown.length)
+    return <span className="text-subtle">{t("backup.restore.noChanges")}</span>;
   return (
     <span className="flex flex-col gap-1.5">
       {shown.map((part) => (
@@ -209,13 +209,6 @@ function Changes({
     </span>
   );
 }
-
-const shareActions: Record<RestoreSummary["gatewayShare"]["action"], string> = {
-  apply: "应用备份中的局域网共享设置",
-  unchanged: "与本机相同",
-  absent: "备份中没有",
-  unavailable: "无法应用",
-};
 
 /**
  * What a restore does (`done` false: the dry run) or did: records added and
@@ -235,54 +228,75 @@ function RestoreSummaryView({
   return (
     <div className="space-y-3 rounded-xl border p-4">
       <p className="text-[13px]">
-        备份生成于 <LocalTime value={summary.createdAt} />
-        ，来自 <span className="font-mono">{summary.app}</span>；
-        {summary.keys
-          ? "带有凭据的值。"
-          : "不带凭据的值：本机已有的 Key 保留，其余需要重新填写。"}
+        {tr(
+          summary.keys
+            ? "backup.restore.madeWithKeys"
+            : "backup.restore.madeWithoutKeys",
+          {
+            time: <LocalTime value={summary.createdAt} />,
+            app: <span className="font-mono">{summary.app}</span>,
+          },
+        )}
       </p>
       <dl className="text-[13px]">
         <Row label="Provider">
           <Changes
             parts={[
-              { label: "新增", items: summary.providers.added },
-              { label: "替换", items: summary.providers.replaced },
               {
-                label: "需要填写 Key",
+                label: t("backup.restore.added"),
+                items: summary.providers.added,
+              },
+              {
+                label: t("backup.restore.replaced"),
+                items: summary.providers.replaced,
+              },
+              {
+                label: t("backup.restore.needKey"),
                 items: summary.providers.needKey,
                 tone: "warn",
               },
               {
-                label: "订阅账号不随备份恢复，在本机重新登录",
+                label: t("backup.restore.signInAgain"),
                 items: summary.providers.signInAgain,
                 tone: "warn",
               },
               {
-                label: "本机同名的订阅 provider，保留",
+                label: t("backup.restore.signedInHere"),
                 items: summary.providers.signedInHere,
               },
             ]}
           />
         </Row>
-        <Row label="路由组">
+        <Row label={t("backup.restore.groups")}>
           <Changes
             parts={[
-              { label: "新增", items: summary.groups.added },
-              { label: "替换", items: summary.groups.replaced },
+              { label: t("backup.restore.added"), items: summary.groups.added },
               {
-                label: "跳过（成员的 provider 不存在）",
+                label: t("backup.restore.replaced"),
+                items: summary.groups.replaced,
+              },
+              {
+                label: t("backup.restore.groupsSkipped"),
                 items: summary.groups.skipped,
                 tone: "warn",
               },
             ]}
           />
         </Row>
-        <Row label="模型覆盖">{summary.overrides} 条</Row>
+        <Row label={t("backup.restore.overrides")}>
+          {t("backup.restore.overrideCount", { count: summary.overrides })}
+        </Row>
         <Row label="Profile">
           <Changes
             parts={[
-              { label: "新增", items: summary.profiles.added },
-              { label: "替换", items: summary.profiles.replaced },
+              {
+                label: t("backup.restore.added"),
+                items: summary.profiles.added,
+              },
+              {
+                label: t("backup.restore.replaced"),
+                items: summary.profiles.replaced,
+              },
             ]}
           />
         </Row>
@@ -290,24 +304,42 @@ function RestoreSummaryView({
           {library ? (
             <Changes
               parts={[
-                { label: "新增指令集", items: library.instructions.added },
-                { label: "替换指令集", items: library.instructions.replaced },
-                { label: "新增 MCP", items: library.mcp.added },
-                { label: "替换 MCP", items: library.mcp.replaced },
                 {
-                  label: "缺少秘密、已去掉",
+                  label: t("backup.restore.addedInstructions"),
+                  items: library.instructions.added,
+                },
+                {
+                  label: t("backup.restore.replacedInstructions"),
+                  items: library.instructions.replaced,
+                },
+                {
+                  label: t("backup.restore.addedMcp"),
+                  items: library.mcp.added,
+                },
+                {
+                  label: t("backup.restore.replacedMcp"),
+                  items: library.mcp.replaced,
+                },
+                {
+                  label: t("backup.restore.needSecret"),
                   items: library.mcp.needSecret,
                   tone: "warn",
                 },
-                { label: "新增 Skill", items: library.skills.added },
-                { label: "替换 Skill", items: library.skills.replaced },
                 {
-                  label: "缺少大文件",
+                  label: t("backup.restore.addedSkills"),
+                  items: library.skills.added,
+                },
+                {
+                  label: t("backup.restore.replacedSkills"),
+                  items: library.skills.replaced,
+                },
+                {
+                  label: t("backup.restore.incomplete"),
                   items: library.skills.incomplete,
                   tone: "warn",
                 },
                 {
-                  label: "被拒绝",
+                  label: t("backup.restore.refused"),
                   items: library.refused.map(
                     (item) => `${item.kind}:${item.name}`,
                   ),
@@ -316,11 +348,13 @@ function RestoreSummaryView({
               ]}
             />
           ) : (
-            <span className="text-subtle">不带入</span>
+            <span className="text-subtle">
+              {t("backup.restore.libraryLeftOut")}
+            </span>
           )}
         </Row>
-        <Row label="局域网共享">
-          {shareActions[summary.gatewayShare.action]}
+        <Row label={t("backup.restore.share")}>
+          {t(`backup.restore.share.${summary.gatewayShare.action}`)}
           {summary.gatewayShare.error ? (
             <span className="block text-danger">
               {summary.gatewayShare.error}
@@ -328,8 +362,8 @@ function RestoreSummaryView({
           ) : null}
         </Row>
         {summary.catalog?.differs ? (
-          <Row label="模型目录">
-            备份中的目录设置与本机不同；它来自配置文件，恢复不改。
+          <Row label={t("backup.restore.catalog")}>
+            {t("backup.restore.catalogDiffers")}
           </Row>
         ) : null}
       </dl>
@@ -351,26 +385,32 @@ function RestoreSummaryView({
             <thead>
               <tr>
                 <th>Agent</th>
-                <th>模型</th>
-                <th>{done ? "结果" : "将要"}</th>
+                <th>{t("backup.restore.model")}</th>
+                <th>
+                  {done
+                    ? t("backup.restore.result")
+                    : t("backup.restore.planned")}
+                </th>
               </tr>
             </thead>
             <tbody>
               {summary.agents.map((agent) => {
-                const action = restoreAgentActions[agent.action];
+                const action = restoreAgentAction(agent.action);
                 return (
                   <tr key={agent.agent}>
                     <td>{names.get(agent.agent) ?? agent.agent}</td>
                     <td className="font-mono text-[12.5px]">
-                      {agent.model ?? "自行登录"}
+                      {agent.model ?? t("backup.restore.ownSignIn")}
                     </td>
                     <td>
                       {agent.outcome === "failed" ? (
                         <span className="tag error" title={agent.error}>
-                          接线失败
+                          {t("backup.restore.wireFailed")}
                         </span>
                       ) : agent.outcome === "wired" ? (
-                        <span className="tag good">已重新接线</span>
+                        <span className="tag good">
+                          {t("backup.restore.rewired")}
+                        </span>
                       ) : (
                         <span className={`tag ${action.tone}`}>
                           {action.label}
@@ -392,7 +432,7 @@ function RestoreSummaryView({
       {summary.clientKeys.length ? (
         <div className="callout info items-center">
           <span className="min-w-0 flex-1">
-            Key 的文本不在备份中，这些 client Key 需要重新签发：
+            {t("backup.restore.clientKeys")}
             <Names items={summary.clientKeys.map((key) => key.name)} />
           </span>
           {done ? (
@@ -401,7 +441,7 @@ function RestoreSummaryView({
               variant="outline"
               onClick={() => navigate("keys")}
             >
-              去签发
+              {t("backup.restore.issue")}
             </Button>
           ) : null}
         </div>
@@ -444,7 +484,7 @@ function RestoreCard() {
     setFileError(null);
     if (!chosen) return;
     if (chosen.size > MAX_BACKUP_BYTES) {
-      setFileError("文件超过 64 MiB，不是 HarnessHub 备份");
+      setFileError(t("backup.file.tooLarge"));
       return;
     }
     chosen.text().then(
@@ -455,7 +495,7 @@ function RestoreCard() {
           setFileError(error instanceof Error ? error.message : String(error));
         }
       },
-      () => setFileError("读取文件失败"),
+      () => setFileError(t("backup.file.readFailed")),
     );
   };
   const run = (dryRun: boolean) => {
@@ -486,7 +526,7 @@ function RestoreCard() {
           }
           setPassphrase("");
           setPhase({ step: "done", summary });
-          notify.success("已恢复");
+          notify.success(t("backup.restore.restored"));
         },
         (reason: unknown) => {
           setPhase({ step: "idle" });
@@ -500,17 +540,14 @@ function RestoreCard() {
   );
   const syncTo = agentList ? installedLibraryAgents(agentList) : [];
   return (
-    <Card
-      title="恢复"
-      lede="从备份文件恢复：同名的记录被替换，其余新增，本机的其他记录不删除。先预览，确认后再恢复。"
-    >
+    <Card title={t("backup.restore.title")} lede={t("backup.restore.lede")}>
       <div className="flex flex-wrap items-center gap-3">
         <input
           ref={fileInput}
           type="file"
           accept=".harnesshub-backup,.json,application/json"
           className="sr-only"
-          aria-label="选择备份文件"
+          aria-label={t("backup.restore.chooseFile")}
           onChange={(event) => choose(event.target.files?.[0])}
         />
         <Button
@@ -519,10 +556,10 @@ function RestoreCard() {
           onClick={() => fileInput.current?.click()}
         >
           <FileUp />
-          选择备份文件
+          {t("backup.restore.chooseFile")}
         </Button>
         <span className="min-w-0 truncate font-mono text-[12.5px] text-muted-foreground">
-          {file ? file.name : "尚未选择"}
+          {file ? file.name : t("backup.restore.noFile")}
         </span>
       </div>
       {fileError ? (
@@ -531,7 +568,7 @@ function RestoreCard() {
         </p>
       ) : null}
       <label className="field-label">
-        口令
+        {t("backup.passphrase")}
         <input
           className="field"
           type="password"
@@ -552,7 +589,7 @@ function RestoreCard() {
             if (phase.step === "preview") reset();
           }}
         >
-          重新接线本机已安装的 Agent
+          {t("backup.restore.agents")}
         </Checkbox>
         <Checkbox
           checked={library}
@@ -562,7 +599,7 @@ function RestoreCard() {
             if (phase.step === "preview") reset();
           }}
         >
-          带入 Library（指令集、MCP 服务与 Skills）
+          {t("backup.restore.library")}
         </Checkbox>
       </div>
       <ErrorCallout failure={failure} />
@@ -575,9 +612,7 @@ function RestoreCard() {
           />
           {phase.summary.library ? (
             <p className="text-[12.5px] text-muted-foreground">
-              恢复只把 Library 的条目带入
-              HarnessHub；恢复之后会预览把它们写入本机 Agent
-              的改动，再由你确认。
+              {t("backup.restore.libraryNote")}
             </p>
           ) : null}
         </>
@@ -587,12 +622,12 @@ function RestoreCard() {
       ) : null}
       {phase.step === "done" && libraryChanged(phase.summary) && agentList ? (
         <section className="space-y-3 rounded-xl border p-4">
-          <h3 className="section-title">把恢复的 Library 写入 Agent</h3>
+          <h3 className="section-title">{t("backup.restore.syncTitle")}</h3>
           {syncTo.length ? (
             <LibrarySync agents={agentList} initial={syncTo} />
           ) : (
             <p className="text-[13px] text-muted-foreground">
-              本机没有安装 Library 支持的 Agent；安装后在 Library 页同步。
+              {t("backup.restore.noLibraryAgents")}
             </p>
           )}
         </section>
@@ -605,7 +640,7 @@ function RestoreCard() {
             onClick={() => run(true)}
           >
             {busy && phase.dryRun ? <Loader2 className="animate-spin" /> : null}
-            预览恢复
+            {t("backup.restore.preview")}
           </Button>
           <Button
             disabled={busy || phase.step !== "preview"}
@@ -614,7 +649,7 @@ function RestoreCard() {
             {busy && !phase.dryRun ? (
               <Loader2 className="animate-spin" />
             ) : null}
-            恢复
+            {t("backup.restore.restore")}
           </Button>
         </div>
       ) : (
@@ -628,7 +663,7 @@ function RestoreCard() {
               reset();
             }}
           >
-            完成
+            {t("backup.restore.done")}
           </Button>
         </div>
       )}
@@ -690,7 +725,7 @@ function SyncDialog({
           (synced) => {
             setBusy(false);
             onStatus(synced);
-            notify.success("同步已开启，第一次同步已完成");
+            notify.success(t("backup.syncDialog.done"));
             onClose();
           },
           (reason: unknown) => {
@@ -698,7 +733,9 @@ function SyncDialog({
             const problem = failureOf(reason);
             setFailure({
               ...problem,
-              message: `设置已保存，但第一次同步失败：${problem.message}`,
+              message: t("backup.syncDialog.firstFailed", {
+                message: problem.message,
+              }),
             });
           },
         );
@@ -719,13 +756,20 @@ function SyncDialog({
     <Dialog open onOpenChange={(open) => (!open && !busy ? onClose() : null)}>
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-[600px]">
         <DialogHeader>
-          <DialogTitle>{status.enabled ? "修改同步" : "开启同步"}</DialogTitle>
+          <DialogTitle>
+            {status.enabled
+              ? t("backup.syncDialog.edit")
+              : t("backup.syncDialog.on")}
+          </DialogTitle>
           <DialogDescription>
-            经 WebDAV 目录或 S3
-            兼容存储桶在多台电脑之间同步。服务器只保存用口令加密的副本；每台电脑使用同一个口令。
+            {t("backup.syncDialog.description")}
           </DialogDescription>
         </DialogHeader>
-        <div className="segmented" role="tablist" aria-label="同步方式">
+        <div
+          className="segmented"
+          role="tablist"
+          aria-label={t("backup.syncDialog.kind")}
+        >
           {(["webdav", "s3"] as const).map((kind) => (
             <button
               key={kind}
@@ -735,12 +779,14 @@ function SyncDialog({
               disabled={busy}
               onClick={() => switchKind(kind)}
             >
-              {kind === "webdav" ? "WebDAV" : "S3 兼容存储"}
+              {kind === "webdav" ? "WebDAV" : t("backup.syncDialog.s3")}
             </button>
           ))}
         </div>
         <label className="field-label">
-          {s3 ? "存储桶" : "WebDAV 目录"}
+          {s3
+            ? t("backup.syncDialog.bucket")
+            : t("backup.syncDialog.directory")}
           <input
             className="field font-mono text-[13px]"
             value={form.url}
@@ -754,12 +800,12 @@ function SyncDialog({
             onChange={(event) => set("url", event.target.value)}
           />
           <span className="field-hint block">
-            副本保存在其中的 harnesshub/harnesshub.harnesshub-backup。
+            {t("backup.syncDialog.copyHint")}
           </span>
         </label>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="field-label">
-            {s3 ? "Access Key ID" : "用户名"}
+            {s3 ? "Access Key ID" : t("backup.sync.user")}
             <input
               className="field font-mono text-[13px]"
               value={form.user}
@@ -769,13 +815,13 @@ function SyncDialog({
             />
           </label>
           <label className="field-label">
-            {s3 ? "Secret Access Key" : "密码"}
+            {s3 ? "Secret Access Key" : t("backup.syncDialog.password")}
             <input
               className="field font-mono text-[13px]"
               type="password"
               value={form.secret}
               autoComplete="new-password"
-              placeholder={sameTarget ? "留空保留已保存的" : undefined}
+              placeholder={sameTarget ? t("backup.keepStored") : undefined}
               onChange={(event) => set("secret", event.target.value)}
             />
           </label>
@@ -789,12 +835,12 @@ function SyncDialog({
                 value={form.endpoint}
                 autoComplete="off"
                 spellCheck={false}
-                placeholder="缺省为 AWS 该区域的地址"
+                placeholder={t("backup.syncDialog.endpointPlaceholder")}
                 onChange={(event) => set("endpoint", event.target.value)}
               />
             </label>
             <label className="field-label">
-              区域
+              {t("backup.syncDialog.region")}
               <input
                 className="field font-mono text-[13px]"
                 value={form.region}
@@ -805,7 +851,7 @@ function SyncDialog({
               />
             </label>
             <label className="field-label sm:col-span-2">
-              地址形式
+              {t("backup.syncDialog.addressing")}
               <select
                 className="field"
                 value={form.pathStyle}
@@ -813,9 +859,9 @@ function SyncDialog({
                   set("pathStyle", event.target.value as SyncForm["pathStyle"])
                 }
               >
-                <option value="auto">自动</option>
-                <option value="yes">路径式（endpoint/bucket）</option>
-                <option value="no">虚拟主机式（bucket.endpoint）</option>
+                <option value="auto">{t("backup.syncDialog.auto")}</option>
+                <option value="yes">{t("backup.syncDialog.pathStyle")}</option>
+                <option value="no">{t("backup.syncDialog.virtualHost")}</option>
               </select>
             </label>
           </div>
@@ -825,36 +871,34 @@ function SyncDialog({
           confirm={form.confirm}
           onPassphrase={(value) => set("passphrase", value)}
           onConfirm={(value) => set("confirm", value)}
-          optional={enabled ? "留空保留已保存的" : undefined}
+          optional={enabled ? t("backup.keepStored") : undefined}
         />
         <p className="callout warn">
           <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-          <span>
-            为了无人值守地同步，口令与目标的密码保存在本机的秘密存储中：能读取这个账户秘密的人也能打开服务器上的副本。
-          </span>
+          <span>{t("backup.syncDialog.warning")}</span>
         </p>
         <div className="grid gap-x-2 sm:grid-cols-2">
           <Checkbox
             checked={form.keys}
             onChange={(value) => set("keys", value)}
           >
-            同步凭据的值（加密后上传）
+            {t("backup.syncDialog.keys")}
           </Checkbox>
           <Checkbox
             checked={form.agents}
             onChange={(value) => set("agents", value)}
           >
-            同步 Agent 接线
+            {t("backup.syncDialog.agents")}
           </Checkbox>
         </div>
         <ErrorCallout failure={failure} />
         <DialogFooter>
           <Button variant="outline" disabled={busy} onClick={onClose}>
-            {saved ? "关闭" : "取消"}
+            {saved ? t("common.close") : t("common.cancel")}
           </Button>
           <Button disabled={busy} onClick={save}>
             {busy ? <Loader2 className="animate-spin" /> : <CloudUpload />}
-            保存并同步
+            {t("backup.syncDialog.save")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -879,11 +923,11 @@ function SyncCard({
       (synced) => {
         setSyncing(false);
         onStatus(synced);
-        notify.success("已同步");
+        notify.success(t("backup.sync.synced"));
       },
       (reason: unknown) => {
         setSyncing(false);
-        notify.error(reason, "同步失败");
+        notify.error(reason, t("backup.sync.failed"));
         void client.sync.status().then(onStatus, () => undefined);
       },
     );
@@ -891,8 +935,8 @@ function SyncCard({
   const notice = status.notice;
   return (
     <Card
-      title="同步"
-      lede="经 WebDAV 或 S3 兼容存储在多台电脑之间自动同步 provider、Agent 接线、Profile 与 Library；两边都改的部分保留最后修改的一边，另一边的副本存在本机。"
+      title={t("backup.sync.title")}
+      lede={t("backup.sync.lede")}
       aside={
         status.enabled ? (
           <span className="flex flex-wrap gap-1.5">
@@ -903,11 +947,11 @@ function SyncCard({
               onClick={syncNow}
             >
               {syncing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-              立即同步
+              {t("backup.sync.now")}
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
               <Pencil />
-              修改
+              {t("backup.sync.edit")}
             </Button>
             <Button
               size="sm"
@@ -915,13 +959,13 @@ function SyncCard({
               onClick={() => setDisabling(true)}
             >
               <Power />
-              关闭
+              {t("backup.sync.off")}
             </Button>
           </span>
         ) : (
           <Button size="sm" onClick={() => setEditing(true)}>
             <CloudUpload />
-            开启同步
+            {t("backup.sync.on")}
           </Button>
         )
       }
@@ -929,7 +973,7 @@ function SyncCard({
       {status.enabled ? (
         <>
           <dl className="text-[13px]">
-            <Row label="目标">
+            <Row label={t("backup.sync.target")}>
               <span className="tag">
                 {status.kind === "s3" ? "S3" : "WebDAV"}
               </span>{" "}
@@ -938,7 +982,11 @@ function SyncCard({
               </span>
             </Row>
             {status.user ? (
-              <Row label={status.kind === "s3" ? "Access Key ID" : "用户名"}>
+              <Row
+                label={
+                  status.kind === "s3" ? "Access Key ID" : t("backup.sync.user")
+                }
+              >
                 <span className="font-mono text-[12.5px]">{status.user}</span>
               </Row>
             ) : null}
@@ -948,60 +996,81 @@ function SyncCard({
                   {status.endpoint ?? "AWS"}
                   {status.region ? ` · ${status.region}` : ""}
                   {status.pathStyle !== undefined
-                    ? ` · ${status.pathStyle ? "路径式" : "虚拟主机式"}`
+                    ? ` · ${status.pathStyle ? t("backup.sync.pathStyle") : t("backup.sync.virtualHost")}`
                     : ""}
                 </span>
               </Row>
             ) : null}
-            <Row label="内容">
-              provider 与路由、Profile、Library
-              {status.agents ? "、Agent 接线" : "（不含 Agent 接线）"}；
-              {status.keys ? "带凭据的值" : "不带凭据的值"}
+            <Row label={t("backup.sync.contentLabel")}>
+              {t("backup.sync.content", {
+                parts: status.agents
+                  ? t("backup.sync.partsWithAgents")
+                  : t("backup.sync.partsWithoutAgents"),
+                keys: status.keys
+                  ? t("backup.sync.withKeys")
+                  : t("backup.sync.withoutKeys"),
+              })}
             </Row>
-            <Row label="上次同步">
+            <Row label={t("backup.sync.last")}>
               <LocalTime value={status.lastSyncAt} />
             </Row>
-            <Row label="下次同步">
+            <Row label={t("backup.sync.next")}>
               <LocalTime value={status.nextSyncAt} />
             </Row>
           </dl>
           {status.lastError ? (
             <p role="alert" className="callout error">
-              最近一次同步失败：{status.lastError}
+              {t("backup.sync.lastError", { error: status.lastError })}
             </p>
           ) : null}
           {notice &&
           (notice.here.length || notice.there.length || notice.kept?.length) ? (
             <div className="callout warn block space-y-1">
               <p>
-                <LocalTime value={notice.at} /> 的同步中两边都有改动：
+                {tr("backup.sync.noticeAt", {
+                  time: <LocalTime value={notice.at} />,
+                })}
               </p>
               <ul className="list-disc pl-5">
                 {notice.here.length ? (
                   <li>
-                    本机的
-                    {notice.here.map((part) => syncPartNames[part]).join("、")}
-                    被服务器的版本替换
+                    {t("backup.sync.noticeHere", {
+                      parts: notice.here
+                        .map(syncPartName)
+                        .join(t("backup.listSeparator")),
+                    })}
                   </li>
                 ) : null}
                 {notice.there.length ? (
                   <li>
-                    服务器的
-                    {notice.there.map((part) => syncPartNames[part]).join("、")}
-                    被本机的版本替换
+                    {t("backup.sync.noticeThere", {
+                      parts: notice.there
+                        .map(syncPartName)
+                        .join(t("backup.listSeparator")),
+                    })}
                   </li>
                 ) : null}
                 {notice.kept?.length ? (
                   <li>
-                    服务器上已删除、但仍被 Gateway Key 使用而保留：
-                    <span className="font-mono">{notice.kept.join("、")}</span>
+                    {tr("backup.sync.noticeKept", {
+                      names: (
+                        <span className="font-mono">
+                          {notice.kept.join(t("backup.listSeparator"))}
+                        </span>
+                      ),
+                    })}
                   </li>
                 ) : null}
               </ul>
               {notice.saved ? (
                 <p>
-                  被替换的副本（加密）保存在{" "}
-                  <span className="font-mono break-all">{notice.saved}</span>
+                  {tr("backup.sync.noticeSaved", {
+                    path: (
+                      <span className="font-mono break-all">
+                        {notice.saved}
+                      </span>
+                    ),
+                  })}
                 </p>
               ) : null}
             </div>
@@ -1016,7 +1085,7 @@ function SyncCard({
         </>
       ) : (
         <p className="text-[13px] text-muted-foreground">
-          同步未开启。局域网共享、目录设置、client Key 与用量不参与同步。
+          {t("backup.sync.disabled")}
         </p>
       )}
       {editing ? (
@@ -1028,13 +1097,13 @@ function SyncCard({
       ) : null}
       <ConfirmDialog
         open={disabling}
-        title="关闭同步"
-        description="删除同步设置、状态、服务器副本的本机缓存以及保存的密码与口令。冲突副本与服务器上的文件保留。"
-        action="关闭同步"
+        title={t("backup.sync.offTitle")}
+        description={t("backup.sync.offBody")}
+        action={t("backup.sync.offTitle")}
         onClose={() => setDisabling(false)}
         onConfirm={async () => {
           onStatus(await modelPlane().sync.disable());
-          notify.success("同步已关闭");
+          notify.success(t("backup.sync.turnedOff"));
         }}
       />
     </Card>
@@ -1050,14 +1119,11 @@ export function BackupPage({ tabs }: { tabs: React.ReactNode }) {
     <div className="page-body">
       <div className="page-column max-w-[880px]">
         {tabs}
-        <PageHeader
-          title="备份与同步"
-          lede="把模型平面的设置带到另一台电脑，或者在几台电脑之间保持一致。"
-        >
+        <PageHeader title={t("backup.title")} lede={t("backup.lede")}>
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label="刷新"
+            aria-label={t("common.refresh")}
             onClick={() => {
               setStatus(null);
               reload();
@@ -1073,7 +1139,7 @@ export function BackupPage({ tabs }: { tabs: React.ReactNode }) {
             <div
               className="panel space-y-3 p-5"
               role="status"
-              aria-label="正在读取"
+              aria-label={t("common.loading")}
             >
               <Skeleton className="h-4 w-1/3" />
               <Skeleton className="h-4 w-2/3" />

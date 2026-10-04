@@ -13,11 +13,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   addAmounts,
   modelPlane,
+  rangeLabel,
   rangeStart,
   usageRanges,
   usd,
   type UsageRange,
 } from "@/lib/model-plane";
+import { t } from "@/lib/i18n";
 import { duration, finishReasonText, quantity } from "@/lib/presentation";
 import { cn } from "@/lib/utils";
 import type { Page } from "@/lib/router";
@@ -30,14 +32,16 @@ import {
 } from "./model-plane-ui";
 import { PageTabs } from "./page-tabs";
 
-const groupings: { id: UsageGroupBy; label: string; column: string }[] = [
-  { id: "model", label: "按模型", column: "模型" },
-  { id: "provider", label: "按 provider", column: "Provider" },
-  { id: "credential", label: "按凭据", column: "凭据（provider/凭据）" },
-  { id: "key", label: "按 Key", column: "Gateway Key" },
-  { id: "adapter", label: "按 Agent", column: "Agent" },
-  { id: "day", label: "按日期（UTC）", column: "日期（UTC）" },
-];
+/** The groupings the summary offers, in order. */
+const groupings = [
+  "model",
+  "provider",
+  "credential",
+  "key",
+  "adapter",
+  "day",
+] as const satisfies readonly UsageGroupBy[];
+type Grouping = (typeof groupings)[number];
 const PAGE = 20;
 
 function Stat({
@@ -80,13 +84,13 @@ function CallsTable({ calls }: { calls: readonly ApiModelCall[] }) {
     <table className="data-table min-w-[900px]">
       <thead>
         <tr>
-          <th>时间</th>
-          <th>状态</th>
-          <th>模型</th>
-          <th>Provider / 凭据</th>
-          <th>Token（输入 / 输出）</th>
-          <th>费用</th>
-          <th>首字节 / 总耗时</th>
+          <th>{t("usage.calls.time")}</th>
+          <th>{t("usage.calls.status")}</th>
+          <th>{t("usage.calls.model")}</th>
+          <th>{t("usage.calls.provider")}</th>
+          <th>{t("usage.calls.tokens")}</th>
+          <th>{t("usage.calls.cost")}</th>
+          <th>{t("usage.calls.timing")}</th>
         </tr>
       </thead>
       <tbody>
@@ -103,7 +107,7 @@ function CallsTable({ calls }: { calls: readonly ApiModelCall[] }) {
                   title={call.rejectReason ?? call.errorClass ?? ""}
                 >
                   {call.status}
-                  {call.rejected ? " 拒绝" : ""}
+                  {call.rejected ? t("usage.calls.rejected") : ""}
                 </span>
                 {call.finishReason ? (
                   <span
@@ -132,7 +136,9 @@ function CallsTable({ calls }: { calls: readonly ApiModelCall[] }) {
               </td>
               <td className="tabular text-[12.5px]">
                 {total === null || !call.usage ? (
-                  <span className="text-subtle">未知</span>
+                  <span className="text-subtle">
+                    {t("usage.calls.unknown")}
+                  </span>
                 ) : (
                   <>
                     {quantity(
@@ -142,7 +148,9 @@ function CallsTable({ calls }: { calls: readonly ApiModelCall[] }) {
                     )}{" "}
                     / {quantity(call.usage.output)}
                     {call.usage.source === "estimated" ? (
-                      <span className="ml-1 text-subtle">估算</span>
+                      <span className="ml-1 text-subtle">
+                        {t("usage.calls.estimated")}
+                      </span>
                     ) : null}
                   </>
                 )}
@@ -151,7 +159,7 @@ function CallsTable({ calls }: { calls: readonly ApiModelCall[] }) {
                 {call.cost ? (
                   usd(call.cost.amount)
                 ) : (
-                  <span className="tag warn">未定价</span>
+                  <span className="tag warn">{t("usage.calls.unpriced")}</span>
                 )}
               </td>
               <td className="tabular text-[12.5px]">
@@ -183,24 +191,24 @@ function RecentCalls({ from }: { from: string | undefined }) {
   return (
     <>
       <div className="mt-9 mb-3 flex items-center justify-between gap-3">
-        <h2 className="section-title">最近调用</h2>
+        <h2 className="section-title">{t("usage.recent")}</h2>
         <div className="flex shrink-0 items-center gap-1">
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label="上一页"
+            aria-label={t("usage.previousPage")}
             disabled={cursors.length < 2}
             onClick={() => setCursors((list) => list.slice(0, -1))}
           >
             <ChevronLeft />
           </Button>
           <span className="tabular text-[12.5px] whitespace-nowrap text-muted-foreground">
-            第 {cursors.length} 页
+            {t("usage.page", { n: cursors.length })}
           </span>
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label="下一页"
+            aria-label={t("usage.nextPage")}
             disabled={page.state !== "ready" || !page.value.nextCursor}
             onClick={() => {
               if (page.state === "ready" && page.value.nextCursor)
@@ -212,7 +220,7 @@ function RecentCalls({ from }: { from: string | undefined }) {
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label="刷新调用"
+            aria-label={t("usage.refreshCalls")}
             onClick={reload}
           >
             <RefreshCw />
@@ -231,7 +239,7 @@ function RecentCalls({ from }: { from: string | undefined }) {
             <LoadError message={page.message} retry={reload} />
           </div>
         ) : !page.value.items.length ? (
-          <p className="empty-state">这段时间没有调用</p>
+          <p className="empty-state">{t("usage.noCalls")}</p>
         ) : null}
       </div>
     </>
@@ -240,7 +248,7 @@ function RecentCalls({ from }: { from: string | undefined }) {
 
 /** Sums by the chosen attribute and the latest calls, for a time range. */
 function Summary({ from }: { from: string | undefined }) {
-  const [groupBy, setGroupBy] = useState<UsageGroupBy>("model");
+  const [groupBy, setGroupBy] = useState<Grouping>("model");
   const load = useCallback(
     () => modelPlane().usage.aggregate({ groupBy, ...(from ? { from } : {}) }),
     [groupBy, from],
@@ -264,42 +272,53 @@ function Summary({ from }: { from: string | undefined }) {
     <>
       <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat
-          label="调用"
+          label={t("usage.stat.calls")}
           value={report.state === "ready" ? quantity(calls) : "—"}
-          note={failed ? `${failed} 次失败` : "没有失败"}
+          note={
+            failed
+              ? t("usage.stat.failed", { n: failed })
+              : t("usage.stat.noFailures")
+          }
           warn={failed > 0}
         />
         <Stat
           label="Token"
           value={report.state === "ready" ? quantity(tokens) : "—"}
-          note="输入、缓存与输出之和"
+          note={t("usage.stat.tokensNote")}
         />
         <Stat
-          label="已知费用"
+          label={t("usage.stat.cost")}
           value={report.state === "ready" ? usd(cost) : "—"}
           {...(unpriced
-            ? { note: `另有 ${unpriced} 次调用未定价`, warn: true }
-            : { note: "全部调用已定价" })}
+            ? {
+                note: t("usage.stat.someUnpriced", { n: unpriced }),
+                warn: true,
+              }
+            : { note: t("usage.stat.allPriced") })}
         />
         <Stat
-          label="未定价调用"
+          label={t("usage.stat.unpriced")}
           value={report.state === "ready" ? quantity(unpriced) : "—"}
-          note="价格未知时不按 0 计"
+          note={t("usage.stat.unpricedNote")}
           warn={unpriced > 0}
         />
       </div>
       <div className="mt-9 mb-3 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="section-title">汇总</h2>
-        <div className="segmented" role="tablist" aria-label="分组方式">
+        <h2 className="section-title">{t("usage.summary")}</h2>
+        <div
+          className="segmented"
+          role="tablist"
+          aria-label={t("usage.groupBy")}
+        >
           {groupings.map((item) => (
             <button
-              key={item.id}
+              key={item}
               type="button"
               role="tab"
-              aria-selected={groupBy === item.id}
-              onClick={() => setGroupBy(item.id)}
+              aria-selected={groupBy === item}
+              onClick={() => setGroupBy(item)}
             >
-              {item.label}
+              {t(`usage.group.${item}`)}
             </button>
           ))}
         </div>
@@ -308,21 +327,23 @@ function Summary({ from }: { from: string | undefined }) {
         <table className="data-table min-w-[760px]">
           <thead>
             <tr>
-              <th>{groupings.find((item) => item.id === groupBy)?.column}</th>
-              <th>调用</th>
-              <th>失败</th>
-              <th>输入</th>
-              <th>缓存读 / 写</th>
-              <th>输出</th>
-              <th>推理</th>
-              <th>费用</th>
+              <th>{t(`usage.column.${groupBy}`)}</th>
+              <th>{t("usage.stat.calls")}</th>
+              <th>{t("usage.table.failed")}</th>
+              <th>{t("usage.table.input")}</th>
+              <th>{t("usage.table.cache")}</th>
+              <th>{t("usage.table.output")}</th>
+              <th>{t("usage.table.reasoning")}</th>
+              <th>{t("usage.calls.cost")}</th>
             </tr>
           </thead>
           <tbody>
             {items.map((item) => (
               <tr key={item.key}>
                 <td className="font-mono text-[12.5px]">
-                  {item.key || <span className="text-subtle">（无）</span>}
+                  {item.key || (
+                    <span className="text-subtle">{t("usage.table.none")}</span>
+                  )}
                 </td>
                 <td className="tabular">{quantity(item.calls)}</td>
                 <td
@@ -342,10 +363,10 @@ function Summary({ from }: { from: string | undefined }) {
                   {item.unpricedCalls ? (
                     <span
                       className="tag warn ml-2"
-                      title="这些调用的价格未知，费用中未计入"
+                      title={t("usage.table.unpricedHint")}
                     >
                       <TriangleAlert className="size-3" />
-                      {item.unpricedCalls} 未定价
+                      {t("usage.table.unpriced", { n: item.unpricedCalls })}
                     </span>
                   ) : null}
                 </td>
@@ -362,7 +383,7 @@ function Summary({ from }: { from: string | undefined }) {
             <LoadError message={report.message} retry={reload} />
           </div>
         ) : !items.length ? (
-          <p className="empty-state">这段时间没有调用</p>
+          <p className="empty-state">{t("usage.noCalls")}</p>
         ) : null}
       </div>
       <RecentCalls key={from ?? "all"} from={from} />
@@ -379,7 +400,11 @@ function ConversationCalls({ conversation }: { conversation: string }) {
   const [page, reload] = useLoaded(load);
   if (page.state === "loading")
     return (
-      <div className="space-y-2 p-4" role="status" aria-label="正在读取调用">
+      <div
+        className="space-y-2 p-4"
+        role="status"
+        aria-label={t("usage.loadingCalls")}
+      >
         <Skeleton className="h-4 w-2/3" />
       </div>
     );
@@ -394,7 +419,7 @@ function ConversationCalls({ conversation }: { conversation: string }) {
       <CallsTable calls={page.value.items} />
       {page.value.nextCursor ? (
         <p className="px-4 py-2 text-[12px] text-subtle">
-          只显示最近 50 次调用。
+          {t("usage.conversations.latestOnly")}
         </p>
       ) : null}
     </div>
@@ -424,26 +449,25 @@ function Conversations({ from }: { from: string | undefined }) {
     <>
       <div className="mt-6 mb-3 flex flex-wrap items-center justify-between gap-3">
         <p className="text-[13px] text-muted-foreground">
-          最近活动的在前；会话由网关按 Key
-          与客户端的会话标识区分，不显示原始标识。
+          {t("usage.conversations.help")}
         </p>
         <div className="flex shrink-0 items-center gap-1">
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label="上一页"
+            aria-label={t("usage.previousPage")}
             disabled={cursors.length < 2}
             onClick={() => setCursors((list) => list.slice(0, -1))}
           >
             <ChevronLeft />
           </Button>
           <span className="tabular text-[12.5px] whitespace-nowrap text-muted-foreground">
-            第 {cursors.length} 页
+            {t("usage.page", { n: cursors.length })}
           </span>
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label="下一页"
+            aria-label={t("usage.nextPage")}
             disabled={page.state !== "ready" || !page.value.nextCursor}
             onClick={() => {
               if (page.state === "ready" && page.value.nextCursor)
@@ -455,7 +479,7 @@ function Conversations({ from }: { from: string | undefined }) {
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label="刷新会话"
+            aria-label={t("usage.conversations.refresh")}
             onClick={reload}
           >
             <RefreshCw />
@@ -466,7 +490,7 @@ function Conversations({ from }: { from: string | undefined }) {
         <div
           className="panel space-y-3 p-5"
           role="status"
-          aria-label="正在读取"
+          aria-label={t("common.loading")}
         >
           <Skeleton className="h-4 w-2/3" />
           <Skeleton className="h-4 w-1/2" />
@@ -474,8 +498,11 @@ function Conversations({ from }: { from: string | undefined }) {
       ) : page.state === "error" ? (
         <LoadError message={page.message} retry={reload} />
       ) : !page.value.items.length ? (
-        <EmptyState icon={MessagesSquare} title="这段时间没有会话">
-          Agent 或客户端经网关的调用带有会话标识时，按会话汇总在这里。
+        <EmptyState
+          icon={MessagesSquare}
+          title={t("usage.conversations.empty")}
+        >
+          {t("usage.conversations.emptyBody")}
         </EmptyState>
       ) : (
         <ul className="panel">
@@ -509,7 +536,9 @@ function Conversations({ from }: { from: string | undefined }) {
                           </span>
                         ))
                       ) : (
-                        <span className="tag">未识别的客户端</span>
+                        <span className="tag">
+                          {t("usage.conversations.unknownClient")}
+                        </span>
                       )}
                       <span
                         className="font-mono text-[11.5px] text-subtle"
@@ -519,24 +548,30 @@ function Conversations({ from }: { from: string | undefined }) {
                       </span>
                     </span>
                     <span className="mt-1 block font-mono text-[12px] break-all text-muted-foreground">
-                      {conversation.models.join("、") || "—"}
+                      {conversation.models.join(t("agents.listSeparator")) ||
+                        "—"}
                     </span>
                     {conversation.credentials.length ? (
                       <span className="block font-mono text-[11.5px] break-all text-subtle">
-                        凭据 {conversation.credentials.join("、")}
+                        {t("usage.conversations.credentials", {
+                          list: conversation.credentials.join(
+                            t("agents.listSeparator"),
+                          ),
+                        })}
                       </span>
                     ) : null}
                   </span>
                   <span className="grid grid-cols-3 gap-x-6 text-[12.5px] tabular max-sm:w-full max-sm:pl-6">
                     <span>
                       <span className="block text-[11.5px] text-subtle">
-                        调用
+                        {t("usage.stat.calls")}
                       </span>
                       {quantity(conversation.calls)}
                       {conversation.failedCalls ? (
                         <span className="text-danger">
-                          {" "}
-                          （{conversation.failedCalls} 失败）
+                          {t("usage.conversations.failed", {
+                            n: conversation.failedCalls,
+                          })}
                         </span>
                       ) : null}
                     </span>
@@ -548,13 +583,14 @@ function Conversations({ from }: { from: string | undefined }) {
                     </span>
                     <span>
                       <span className="block text-[11.5px] text-subtle">
-                        费用
+                        {t("usage.calls.cost")}
                       </span>
                       {usd(conversation.cost.amount)}
                       {conversation.unpricedCalls ? (
                         <span className="text-warning">
-                          {" "}
-                          +{conversation.unpricedCalls} 未定价
+                          {t("usage.conversations.unpriced", {
+                            n: conversation.unpricedCalls,
+                          })}
                         </span>
                       ) : null}
                     </span>
@@ -578,11 +614,6 @@ function Conversations({ from }: { from: string | undefined }) {
   );
 }
 
-const tabs = [
-  { page: "usage", label: "汇总与调用" },
-  { page: "conversations", label: "会话" },
-] as const;
-
 /**
  * Usage from the `model.call` ledger: sums and the latest calls
  * (`/api/v1/usage`, `/api/v1/model-calls`), or calls by conversation
@@ -599,18 +630,27 @@ export function UsagePage({
   return (
     <div className="page-body">
       <div className="page-column max-w-[1100px]">
-        <PageTabs label="用量" current={tab} tabs={tabs} />
+        <PageTabs
+          label={t("common.nav.usage")}
+          current={tab}
+          tabs={[
+            { page: "usage", label: t("usage.tab.usage") },
+            { page: "conversations", label: t("usage.tab.conversations") },
+          ]}
+        />
         <PageHeader
-          title={tab === "usage" ? "用量" : "会话"}
-          lede={
+          title={
             tab === "usage"
-              ? "来自网关的 model.call 账本：每次进入网关的调用都有一条记录，包括被拒绝的。"
-              : "同一会话的调用汇总在一起：用了哪些模型与凭据、多少 token、花了多少钱。"
+              ? t("common.nav.usage")
+              : t("usage.tab.conversations")
+          }
+          lede={
+            tab === "usage" ? t("usage.lede") : t("usage.conversations.lede")
           }
         >
           <select
             className="field mt-0 h-8 w-auto text-[13px]"
-            aria-label="时间范围"
+            aria-label={t("usage.range")}
             value={range}
             onChange={(event) => {
               const next = usageRanges.find(
@@ -623,14 +663,14 @@ export function UsagePage({
           >
             {usageRanges.map((item) => (
               <option key={item.id} value={item.id}>
-                {item.label}
+                {rangeLabel(item.id)}
               </option>
             ))}
           </select>
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label="刷新"
+            aria-label={t("common.refresh")}
             onClick={() => setFrom(rangeStart(range, Date.now()))}
           >
             <RefreshCw />

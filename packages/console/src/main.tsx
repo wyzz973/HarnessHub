@@ -4,6 +4,8 @@ import { createRoot } from "react-dom/client";
 import { Console } from "@/components/console";
 import { SignIn } from "@/components/sign-in";
 import { Toaster } from "@/components/toaster";
+import { locale } from "@/lib/i18n";
+import { LocaleRoot } from "@/lib/i18n-react";
 import { canonicalizeLocation } from "@/lib/router";
 import { startSession, useSession } from "@/lib/session";
 import "./globals.css";
@@ -12,20 +14,21 @@ import "./globals.css";
 function App() {
   const session = useSession();
   return (
-    <>
+    <LocaleRoot>
       {session.status === "signed-in" ? (
         <Console />
       ) : (
         <SignIn state={session} />
       )}
       <Toaster />
-    </>
+    </LocaleRoot>
   );
 }
 
 const root = document.getElementById("root");
 if (!root) throw new Error("index.html has no #root element");
 canonicalizeLocation();
+document.documentElement.lang = locale();
 void startSession();
 // A link pasted into this tab while it shows `/` changes only the fragment,
 // which does not reload the page.

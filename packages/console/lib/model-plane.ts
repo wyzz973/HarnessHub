@@ -16,6 +16,14 @@ import {
   type ResolvedField,
   type WireProtocol,
 } from "@harnesshub/sdk/client";
+import {
+  formatDateTime,
+  formatNumber,
+  formatUsd,
+  isMessageKey,
+  t,
+  translate,
+} from "./i18n";
 import { apiClient } from "./session";
 
 /** The SDK client of the signed-in console session (browser only). */
@@ -36,21 +44,18 @@ export const protocolNames: Record<WireProtocol, string> = {
   gemini: "Gemini",
 };
 /** The base-URL convention of each endpoint, shown under its field. */
-export const endpointHints: Record<WireProtocol, string> = {
-  chat: "官方 SDK 的基址，通常含 /v1，例如 https://api.openai.com/v1；不要包含 /chat/completions",
-  responses:
-    "官方 SDK 的基址，通常含 /v1，例如 https://api.openai.com/v1；不要包含 /responses",
-  anthropic:
-    "不含版本段，例如 https://api.anthropic.com；网关会追加 /v1/messages",
-  gemini:
-    "不含版本段，例如 https://generativelanguage.googleapis.com；网关会追加 /v1beta/models/…",
-};
-export const providerKinds: { id: ProviderConfig["kind"]; label: string }[] = [
-  { id: "vendor", label: "模型厂商" },
-  { id: "relay", label: "中转或聚合网关" },
-  { id: "local", label: "本机服务" },
-  { id: "custom", label: "自定义" },
+export function endpointHint(protocol: WireProtocol): string {
+  return t(`common.endpointHint.${protocol}`);
+}
+export const providerKinds: readonly ProviderConfig["kind"][] = [
+  "vendor",
+  "relay",
+  "local",
+  "custom",
 ];
+export function kindName(kind: ProviderConfig["kind"]): string {
+  return t(`common.kind.${kind}`);
+}
 export const apiKeyHeaders = [
   "authorization-bearer",
   "x-api-key",
@@ -60,42 +65,10 @@ export const apiKeyHeaders = [
 ] as const;
 
 /** Readable text for known error codes; anything else shows the daemon's detail. */
-const codeText: Record<string, string> = {
-  PROVIDER_EXISTS: "已有同名 provider",
-  PROVIDER_INVALID: "provider 配置不正确",
-  PROVIDER_IN_USE: "仍有路由组或 Gateway Key 引用此 provider",
-  PROVIDER_NOT_FOUND: "provider 不存在",
-  CREDENTIAL_EXISTS: "已有同 ID 的凭据",
-  CREDENTIAL_INVALID: "凭据不正确",
-  CREDENTIAL_NOT_MANAGED: "只有由 HarnessHub 保存的凭据可以在这里轮换",
-  CREDENTIAL_NOT_FOUND: "凭据不存在",
-  INVALID_SECRET: "密钥必须是非空的单行文本，最长 8 KiB",
-  ROUTE_GROUP_EXISTS: "已有同名路由组",
-  ROUTE_GROUP_INVALID: "路由组配置不正确",
-  ROUTE_GROUP_IN_USE: "仍有 Gateway Key 允许使用此路由组",
-  ROUTE_GROUP_NOT_FOUND: "路由组不存在",
-  GATEWAY_KEY_INVALID: "Key 设置不正确",
-  GATEWAY_KEY_NOT_FOUND: "Key 不存在",
-  INVALID_REQUEST: "输入不符合接口要求",
-  CONSOLE_SESSION_INVALID: "控制台会话已结束，请运行 hh console 重新登录",
-  ADMIN_TOKEN_REQUIRED: "控制台尚未登录，请运行 hh console 打开登录链接",
-  CSRF_TOKEN_INVALID: "会话已在其他标签页更新，请重试",
-  BACKUP_PASSPHRASE: "口令不对，或者文件被改动过",
-  BACKUP_UNSUPPORTED: "这个备份来自更新版本的 HarnessHub，请先升级",
-  SYNC_PASSPHRASE: "口令与服务器上的副本不符：每台电脑要用同一个口令",
-  SYNC_CONFLICT: "另一台电脑刚刚同步过，下次同步时会再合并",
-  SYNC_DISABLED: "同步未开启",
-  LIBRARY_EXISTS: "已有同名条目",
-  LIBRARY_NOT_FOUND: "条目不存在，可能已被删除",
-  LIBRARY_CONCURRENT_MODIFICATION:
-    "预览之后 Agent 的文件又被改动，什么都没有写入；请重新预览",
-  AGENT_WIRING_UNAVAILABLE:
-    "这个守护进程启动时没有接线目录，不能写入 Agent 的文件（hh serve 默认使用你的主目录）",
-  SUBSCRIPTION_NOTICE_NOT_ACCEPTED: "风险告知已经更新，请重新阅读并接受",
-  COPILOT_TOKEN_INVALID:
-    "只接受带 Copilot Requests 权限的细粒度个人访问令牌（github_pat_…）",
-  NPM_NOT_FOUND: "找不到 npm：请在终端运行下面的安装命令",
-};
+function codeText(code: string): string | undefined {
+  const key = `common.code.${code}`;
+  return isMessageKey(key) ? translate(key) : undefined;
+}
 
 /** An API failure prepared for a form: one message, field errors by JSON Pointer, blocking references. */
 export interface Failure {
@@ -114,7 +87,7 @@ export function failureOf(reason: unknown): Failure {
       if (key !== undefined && !(key in fields)) fields[key] = item.detail;
     }
     return {
-      message: codeText[problem.code] ?? problem.detail ?? problem.title,
+      message: codeText(problem.code) ?? problem.detail ?? problem.title,
       code: problem.code,
       fields,
       references: problem.references ?? [],
@@ -122,21 +95,23 @@ export function failureOf(reason: unknown): Failure {
   }
   if (reason instanceof HarnessHubUnavailableError)
     return {
-      message: "暂时无法连接控制台服务",
+      message: t("common.unavailable"),
       fields: {},
       references: [],
     };
   return {
-    message: reason instanceof Error ? reason.message : "操作失败",
+    message:
+      reason instanceof Error ? reason.message : t("common.actionFailed"),
     fields: {},
     references: [],
   };
 }
 
-export const referenceNames: Record<string, string> = {
-  "route-group": "路由组",
-  "gateway-key": "Gateway Key",
-};
+/** The name of a kind of record that blocks a change; unknown kinds show as sent. */
+export function referenceName(type: string): string {
+  const key = `common.reference.${type}`;
+  return isMessageKey(key) ? translate(key) : type;
+}
 
 /** The editable fields of a provider form. */
 export interface ProviderForm {
@@ -260,12 +235,15 @@ export function providerPatch(
 }
 
 export const expiryChoices = [
-  { id: "30d", label: "30 天", days: 30 },
-  { id: "90d", label: "90 天（默认）", days: 90 },
-  { id: "365d", label: "1 年", days: 365 },
-  { id: "never", label: "永不过期", days: null },
+  { id: "30d", days: 30 },
+  { id: "90d", days: 90 },
+  { id: "365d", days: 365 },
+  { id: "never", days: null },
 ] as const;
 export type ExpiryChoice = (typeof expiryChoices)[number]["id"];
+export function expiryLabel(choice: ExpiryChoice): string {
+  return t(`common.expiry.${choice}`);
+}
 
 /** `expiresAt` for a choice: an RFC 3339 time, or null for never. */
 export function expiresAtFor(choice: ExpiryChoice, now: number): string | null {
@@ -282,18 +260,21 @@ export function modelRefChoices(providers: ProviderConfig[]) {
   }));
 }
 
-/** `0.3000001` → `$0.3000001`; amounts stay decimal strings, as the API sends them. */
+/** A USD amount as the API sends it (a decimal string), in the locale's currency format. */
 export function usd(amount: string): string {
-  return `$${amount}`;
+  return formatUsd(amount);
 }
 
 export const usageRanges = [
-  { id: "24h", label: "24 小时", ms: 86_400_000 },
-  { id: "7d", label: "7 天", ms: 7 * 86_400_000 },
-  { id: "30d", label: "30 天", ms: 30 * 86_400_000 },
-  { id: "all", label: "全部", ms: null },
+  { id: "24h", ms: 86_400_000 },
+  { id: "7d", ms: 7 * 86_400_000 },
+  { id: "30d", ms: 30 * 86_400_000 },
+  { id: "all", ms: null },
 ] as const;
 export type UsageRange = (typeof usageRanges)[number]["id"];
+export function rangeLabel(range: UsageRange): string {
+  return t(`common.range.${range}`);
+}
 
 /** The `from` filter of a range, or undefined for all time. */
 export function rangeStart(range: UsageRange, now: number): string | undefined {
@@ -320,34 +301,27 @@ export function addAmounts(amounts: string[]): string {
 }
 
 /** Where a model's value came from (03-model-plane section 7). */
-export const sourceNames: Record<MetadataSource, string> = {
-  override: "模型覆盖",
-  "override-provider": "provider 级覆盖（provider/*）",
-  provider: "provider 配置中手工填写",
-  live: "上游模型列表",
-  preset: "provider 预设",
-  catalog: "models.dev 目录快照",
-};
+export function sourceName(source: MetadataSource): string {
+  return t(`common.source.${source}`);
+}
 
 /** Tooltip of one value: its source and when the source produced it. */
 export function sourceNote(field: ResolvedField | undefined): string {
-  if (!field) return "未知：没有来源提供此值，不会按默认值估计";
-  const at =
-    field.at === undefined
-      ? ""
-      : field.at.includes("T")
-        ? `，${new Date(field.at).toLocaleString()}`
-        : `，核对于 ${field.at}`;
-  return `来源：${sourceNames[field.source]}${at}`;
+  if (!field) return t("common.source.unknown");
+  const source = sourceName(field.source);
+  if (field.at === undefined) return t("common.source.note", { source });
+  return field.at.includes("T")
+    ? t("common.source.noteAt", { source, at: formatDateTime(field.at) })
+    : t("common.source.noteChecked", { source, date: field.at });
 }
 
 /** Context, output and price cells of one model, with their tooltips. */
 export function modelMetadataCells(metadata: ModelMetadataView | undefined) {
   const fields = metadata?.fields ?? {};
   const tokens = (field: ResolvedField | undefined) =>
-    typeof field?.value === "number" ? field.value.toLocaleString() : "—";
+    typeof field?.value === "number" ? formatNumber(field.value) : "—";
   const price = (field: ResolvedField | undefined) =>
-    typeof field?.value === "number" ? `$${field.value}` : "?";
+    typeof field?.value === "number" ? formatUsd(field.value) : "?";
   const input = fields["price.input"];
   const output = fields["price.output"];
   return {
@@ -361,7 +335,10 @@ export function modelMetadataCells(metadata: ModelMetadataView | undefined) {
     },
     price: {
       text: input || output ? `${price(input)} / ${price(output)}` : "—",
-      note: `输入：${sourceNote(input)}\n输出：${sourceNote(output)}`,
+      note: t("common.source.priceNote", {
+        input: sourceNote(input),
+        output: sourceNote(output),
+      }),
     },
   };
 }

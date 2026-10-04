@@ -9,11 +9,14 @@ import type {
 import { Button } from "@/components/ui/button";
 import { DialogFooter } from "@/components/ui/dialog";
 import { BrandIcon } from "@/components/brand-icon";
+import { t } from "@/lib/i18n";
+import { tr } from "@/lib/i18n-react";
 import {
   failureOf,
   modelPlane,
   protocolNames,
   protocols,
+  kindName,
   providerKinds,
   type Failure,
 } from "@/lib/model-plane";
@@ -59,8 +62,8 @@ function PresetList({
         <Search className="size-4 shrink-0 text-subtle" />
         <input
           className="h-full min-w-0 flex-1 bg-transparent text-[13.5px] outline-none placeholder:text-subtle"
-          placeholder="搜索预设，例如 deepseek、openrouter"
-          aria-label="搜索预设"
+          placeholder={t("providers.preset.search")}
+          aria-label={t("providers.preset.searchLabel")}
           autoFocus
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -68,12 +71,12 @@ function PresetList({
       </label>
       <div className="max-h-[46vh] overflow-y-auto rounded-xl border p-1.5">
         {providerKinds.map((kind) => {
-          const items = matches.filter((preset) => preset.kind === kind.id);
+          const items = matches.filter((preset) => preset.kind === kind);
           if (!items.length) return null;
           return (
-            <div key={kind.id} role="group" aria-label={kind.label}>
+            <div key={kind} role="group" aria-label={kindName(kind)}>
               <p className="px-2 pt-2 pb-1 text-[12px] text-subtle">
-                {kind.label}
+                {kindName(kind)}
               </p>
               <div className="grid gap-1 sm:grid-cols-2">
                 {items.map((preset) => (
@@ -95,9 +98,15 @@ function PresetList({
                       <span className="block truncate font-mono text-[11.5px] text-subtle">
                         {preset.id}
                         {preset.regions
-                          ? ` · ${preset.regions.length} 个区域`
+                          ? t("providers.preset.regions", {
+                              n: preset.regions.length,
+                            })
                           : ""}
-                        {preset.plans ? ` · ${preset.plans.length} 种套餐` : ""}
+                        {preset.plans
+                          ? t("providers.preset.plans", {
+                              n: preset.plans.length,
+                            })
+                          : ""}
                       </span>
                     </span>
                   </button>
@@ -108,7 +117,7 @@ function PresetList({
         })}
         {!matches.length ? (
           <p className="px-2 py-6 text-center text-[13px] text-muted-foreground">
-            没有匹配的预设，可以改用“手动填写”。
+            {t("providers.preset.noMatch")}
           </p>
         ) : null}
       </div>
@@ -124,8 +133,8 @@ export function PresetPane({
   onSaved,
   onCancel,
   onBusy,
-  cancelLabel = "取消",
-  submitLabel = "创建",
+  cancelLabel = t("common.cancel"),
+  submitLabel = t("providers.preset.create"),
 }: {
   onSaved: (saved: ProviderConfig) => void;
   onCancel: () => void;
@@ -223,10 +232,12 @@ export function PresetPane({
         {presets.state === "ready" ? (
           <PresetList presets={presets.value} onChoose={choose} />
         ) : presets.state === "error" ? (
-          <p className="callout error">读取预设失败：{presets.message}</p>
+          <p className="callout error">
+            {t("providers.preset.loadFailed", { message: presets.message })}
+          </p>
         ) : (
           <p className="text-[13px] text-muted-foreground" role="status">
-            正在读取预设…
+            {t("providers.preset.loading")}
           </p>
         )}
         <DialogFooter>
@@ -245,9 +256,13 @@ export function PresetPane({
           <p className="flex flex-wrap items-center gap-x-2 text-[12px] text-subtle">
             <span className="font-mono">{preset.id}</span>
             {preset.verified === "unverified" ? (
-              <span className="text-warning">端点未核对</span>
+              <span className="text-warning">
+                {t("providers.preset.unverified")}
+              </span>
             ) : (
-              <span>已按文档核对 {preset.verified}</span>
+              <span>
+                {t("providers.preset.verified", { date: preset.verified })}
+              </span>
             )}
             {preset.website ? (
               <a
@@ -256,7 +271,7 @@ export function PresetPane({
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                官网
+                {t("providers.preset.website")}
               </a>
             ) : null}
             {keysUrl ? (
@@ -266,7 +281,7 @@ export function PresetPane({
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                获取 API Key
+                {t("providers.preset.getKey")}
               </a>
             ) : null}
           </p>
@@ -278,7 +293,7 @@ export function PresetPane({
           onClick={() => setPreset(null)}
         >
           <ArrowLeftRight />
-          更换
+          {t("providers.preset.change")}
         </Button>
       </div>
       {preset.notes ? <p className="callout neutral">{preset.notes}</p> : null}
@@ -286,7 +301,7 @@ export function PresetPane({
         <div className="grid gap-3 sm:grid-cols-2">
           {preset.regions ? (
             <label className="field-label">
-              区域
+              {t("providers.preset.region")}
               <select
                 className="field"
                 value={region}
@@ -306,7 +321,7 @@ export function PresetPane({
           ) : null}
           {preset.plans ? (
             <label className="field-label">
-              套餐
+              {t("providers.preset.plan")}
               <select
                 className="field"
                 value={plan}
@@ -340,7 +355,7 @@ export function PresetPane({
           <FieldError failure={failure} pointer="/id" />
         </label>
         <label className="field-label">
-          名称
+          {t("providers.name")}
           <input
             className="field"
             value={name}
@@ -351,10 +366,7 @@ export function PresetPane({
         </label>
       </div>
       {preset.userEndpoint ? (
-        <p className="callout warn">
-          这个预设的地址因人而异（例如 Azure
-          资源或另一台电脑），请把下面的地址改成你自己的。
-        </p>
+        <p className="callout warn">{t("providers.preset.userEndpoint")}</p>
       ) : null}
       {protocols
         .filter((protocol) => defaults[protocol] !== undefined)
@@ -378,11 +390,17 @@ export function PresetPane({
         ))}
       {hints.map((hint) => (
         <label key={hint.name} className="field-label">
-          请求头 <span className="font-mono">{hint.name}</span>
+          {tr("providers.preset.header", {
+            name: <span className="font-mono">{hint.name}</span>,
+          })}
           {hint.required ? (
-            <span className="text-danger">（必填）</span>
+            <span className="text-danger">
+              {t("providers.preset.required")}
+            </span>
           ) : (
-            <span className="text-subtle">（可选）</span>
+            <span className="text-subtle">
+              {t("providers.preset.optional")}
+            </span>
           )}
           <input
             className="field font-mono text-[13px]"
@@ -404,7 +422,9 @@ export function PresetPane({
         <label className="field-label">
           API Key
           {preset.auth.methods.includes("none") ? (
-            <span className="text-subtle">（本机服务可以留空）</span>
+            <span className="text-subtle">
+              {t("providers.preset.keyOptional")}
+            </span>
           ) : null}
           <input
             className="field font-mono text-[13px]"
@@ -415,7 +435,7 @@ export function PresetPane({
             onChange={(event) => setKey(event.target.value)}
           />
           <span className="field-hint block">
-            只发送一次，保存在守护进程的秘密存储中；也可以稍后在凭据中添加。
+            {t("providers.preset.keyHint")}
           </span>
           <FieldError failure={failure} pointer="/credential/value" />
         </label>

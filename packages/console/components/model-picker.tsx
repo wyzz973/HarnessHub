@@ -13,6 +13,7 @@ import {
   type GatewayModels,
   type ModelOption,
 } from "@/lib/gateway-models";
+import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 /** The list: sections filtered by the query, each option with window and price. */
@@ -41,7 +42,7 @@ function ModelList({
     <div
       id={listId}
       role="listbox"
-      aria-label="模型"
+      aria-label={t("agents.picker.models")}
       className="max-h-[min(420px,60vh)] overflow-y-auto p-1"
     >
       {clearing ? (
@@ -86,8 +87,8 @@ function ModelList({
       {!filtered.length && !clearing ? (
         <p className="px-2 py-6 text-center text-[13px] text-muted-foreground">
           {models.sections.length
-            ? "没有匹配的模型"
-            : "网关还没有模型，先添加 provider"}
+            ? t("agents.picker.noMatch")
+            : t("agents.picker.noModels")}
         </p>
       ) : null}
     </div>
@@ -128,21 +129,27 @@ function OptionText({ option }: { option: ModelOption }) {
     <span className="flex min-w-0 flex-wrap items-baseline gap-x-2">
       <span className="truncate font-mono text-[12.5px]">{option.label}</span>
       <span className="text-[11.5px] text-subtle tabular">
-        {option.members ? `${option.members.length} 个成员` : facts(option)}
+        {option.members
+          ? t("agents.picker.members", { n: option.members.length })
+          : facts(option)}
       </span>
     </span>
   );
 }
 
-/** "128K 上下文 · $0.27 / $1.10"; parts that no source knows are left out. */
+/** "128K context · $0.27 / $1.10"; parts that no source knows are left out. */
 function facts(option: ModelOption): string {
   const parts = [
     ...(option.contextWindow !== undefined
-      ? [`${tokenCount(option.contextWindow)} 上下文`]
+      ? [
+          t("agents.picker.context", {
+            tokens: tokenCount(option.contextWindow),
+          }),
+        ]
       : []),
     ...(option.price ? [priceText(option.price)] : []),
   ];
-  return parts.join(" · ") || "窗口与价格未知";
+  return parts.join(" · ") || t("agents.picker.factsUnknown");
 }
 
 function filterSections(models: GatewayModels, query: string) {
@@ -164,7 +171,7 @@ function filterSections(models: GatewayModels, query: string) {
  * Choose one of the gateway's models: a searchable list grouped by provider,
  * with each model's context window and price (USD per million input and
  * output tokens), then route groups. `none` adds a first entry that clears
- * the choice (e.g. "跟随主模型"). Arrow keys move, Enter chooses, Escape
+ * the choice (e.g. "follow the main model"). Arrow keys move, Enter chooses, Escape
  * closes.
  */
 export function ModelPicker({
@@ -218,7 +225,10 @@ export function ModelPicker({
         <button
           type="button"
           disabled={disabled}
-          aria-label={`${label}：${value ?? none ?? "未选择"}`}
+          aria-label={t("agents.picker.trigger", {
+            label,
+            value: value ?? none ?? t("agents.picker.unset"),
+          })}
           className={cn(
             "flex h-9 w-full min-w-0 items-center gap-2 rounded-[10px] border border-input bg-background px-3 text-left text-[13px] outline-none hover:border-border-strong focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:opacity-50",
             className,
@@ -227,7 +237,7 @@ export function ModelPicker({
           <span className="min-w-0 flex-1 truncate font-mono text-[12.5px]">
             {value ?? (
               <span className="font-sans text-subtle">
-                {none ?? "选择模型"}
+                {none ?? t("agents.picker.choose")}
               </span>
             )}
           </span>
@@ -251,8 +261,8 @@ export function ModelPicker({
           <input
             ref={input}
             className="h-full min-w-0 flex-1 bg-transparent text-[13.5px] outline-none placeholder:text-subtle"
-            placeholder="搜索模型或 provider"
-            aria-label="搜索模型"
+            placeholder={t("agents.picker.searchPlaceholder")}
+            aria-label={t("agents.picker.search")}
             role="combobox"
             aria-expanded="true"
             aria-controls={listId}

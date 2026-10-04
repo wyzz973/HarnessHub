@@ -52,6 +52,7 @@ import {
 } from "@/lib/contracts";
 import { engineName, visibleEngines } from "@/lib/engines";
 import { cn } from "@/lib/utils";
+import { t } from "@/lib/i18n";
 
 type ModelStatus = HarnessModelView["engines"][number];
 interface CheckResult {
@@ -61,10 +62,18 @@ interface CheckResult {
 
 function availability(engine: Engine, status: ModelStatus | undefined) {
   if (status?.status === "unsupported")
-    return { label: "不支持统一模型", tone: "warn", reason: status.reason };
+    return {
+      label: t("tasks.engines.noUnified"),
+      tone: "warn",
+      reason: status.reason,
+    };
   if (!engine.enabled)
-    return { label: "已停用", tone: "", reason: status?.reason };
-  return { label: "可用", tone: "good", reason: undefined };
+    return {
+      label: t("tasks.engines.disabled"),
+      tone: "",
+      reason: status?.reason,
+    };
+  return { label: t("tasks.engines.available"), tone: "good", reason: undefined };
 }
 
 export function EnginePage({
@@ -147,12 +156,12 @@ export function EnginePage({
     try {
       input = JSON.parse(registration);
     } catch {
-      setLocalError("不是有效的 JSON。");
+      setLocalError(t("tasks.engines.invalidJson"));
       return;
     }
     const parsed = registrationSchema.safeParse(input);
     if (!parsed.success) {
-      setLocalError("需要 id、driver（acp 或 cli）和 command 数组。");
+      setLocalError(t("tasks.engines.needFields"));
       return;
     }
     setBusy("register");
@@ -161,14 +170,16 @@ export function EnginePage({
       await refresh();
       setDialogOpen(false);
     } catch (error) {
-      setLocalError(error instanceof Error ? error.message : "添加失败");
+      setLocalError(
+        error instanceof Error ? error.message : t("tasks.engines.addFailed"),
+      );
     } finally {
       setBusy(null);
     }
   }
   function configured(engine: Engine, enabled: boolean): Registration {
     if (!engine.command || engine.driver === "fake")
-      throw new Error("该引擎不支持在控制台修改");
+      throw new Error(t("tasks.engines.notEditable"));
     return {
       id: engine.id,
       driver: engine.driver,
@@ -190,10 +201,12 @@ export function EnginePage({
       <div className="page-column">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="page-title">引擎</h1>
+            <h1 className="page-title">{t("tasks.engines.title")}</h1>
             <p className="page-lede">
-              {shown.filter((engine) => engine.enabled).length} 个可用，共{" "}
-              {shown.length} 个。
+              {t("tasks.engines.summary", {
+                enabled: shown.filter((engine) => engine.enabled).length,
+                total: shown.length,
+              })}
             </p>
           </div>
         </div>
@@ -217,7 +230,9 @@ export function EnginePage({
                         {engineName(engine.id)}
                       </span>
                       {isDefault ? (
-                        <span className="tag brand">默认</span>
+                        <span className="tag brand">
+                          {t("tasks.engines.default")}
+                        </span>
                       ) : null}
                     </div>
                     <p className="mt-0.5 truncate text-[12.5px] text-subtle">
@@ -248,14 +263,16 @@ export function EnginePage({
                     ) : (
                       <FlaskConical />
                     )}
-                    测试
+                    {t("tasks.engines.test")}
                   </Button>
                   <Popover>
                     <PopoverTrigger asChild>
                       <Button
                         size="icon-sm"
                         variant="ghost"
-                        aria-label={`${engineName(engine.id)} 的更多操作`}
+                        aria-label={t("tasks.engines.more", {
+                          engine: engineName(engine.id),
+                        })}
                         disabled={!!busy}
                       >
                         <Ellipsis />
@@ -264,7 +281,7 @@ export function EnginePage({
                     <PopoverContent align="end" className="w-48">
                       <MenuItem
                         icon={Star}
-                        label="设为默认"
+                        label={t("tasks.engines.setDefault")}
                         disabled={!engine.enabled || isDefault}
                         onSelect={() =>
                           void action(engine.id, () =>
@@ -274,7 +291,7 @@ export function EnginePage({
                       />
                       <MenuItem
                         icon={Stethoscope}
-                        label="检查连接"
+                        label={t("tasks.engines.check")}
                         onSelect={() =>
                           void action(`check:${engine.id}`, async () =>
                             setCheckResult(
@@ -285,7 +302,7 @@ export function EnginePage({
                       />
                       <MenuItem
                         icon={FlaskConical}
-                        label="测试模型"
+                        label={t("tasks.engines.testModel")}
                         disabled={!engine.enabled}
                         onSelect={() =>
                           void action(`test:${engine.id}`, () =>
@@ -295,7 +312,7 @@ export function EnginePage({
                       />
                       <MenuItem
                         icon={Settings2}
-                        label="配置"
+                        label={t("tasks.engines.configure")}
                         onSelect={() => setEditing(engine)}
                       />
                     </PopoverContent>
@@ -303,7 +320,12 @@ export function EnginePage({
                   <Switch
                     checked={engine.enabled}
                     disabled={!!busy}
-                    aria-label={`${engine.enabled ? "停用" : "启用"} ${engineName(engine.id)}`}
+                    aria-label={t(
+                      engine.enabled
+                        ? "tasks.engines.disable"
+                        : "tasks.engines.enable",
+                      { engine: engineName(engine.id) },
+                    )}
                     onCheckedChange={(enabled) =>
                       void action(engine.id, () =>
                         api.replace(configured(engine, enabled)),
@@ -319,7 +341,7 @@ export function EnginePage({
                 {busy === `check:${engine.id}` ? (
                   <p className="mt-2 flex items-center gap-2 pl-[50px] text-[12.5px] text-muted-foreground">
                     <Loader2 className="size-3.5 animate-spin" />
-                    正在检查
+                    {t("tasks.engines.checking")}
                   </p>
                 ) : null}
                 {checked ? (
@@ -328,11 +350,13 @@ export function EnginePage({
                     className="mt-3 ml-[50px] rounded-xl bg-muted px-3.5 py-3 text-[12.5px]"
                   >
                     <div className="mb-1.5 flex items-center justify-between">
-                      <span className="font-medium">连接检查</span>
+                      <span className="font-medium">
+                        {t("tasks.engines.checkTitle")}
+                      </span>
                       <button
                         type="button"
                         className="text-subtle hover:text-foreground"
-                        aria-label="关闭检查结果"
+                        aria-label={t("tasks.engines.closeCheck")}
                         onClick={() => setCheckResult(null)}
                       >
                         <X className="size-3.5" />
@@ -368,9 +392,9 @@ export function EnginePage({
                 <Cpu className="size-5" strokeWidth={1.7} />
               </span>
               <p className="text-[14px] font-medium text-foreground">
-                还没有引擎
+                {t("tasks.engines.empty")}
               </p>
-              <p>在“高级”中登记本机已安装的引擎。</p>
+              <p>{t("tasks.engines.emptyHint")}</p>
             </li>
           ) : null}
         </ul>
@@ -381,12 +405,17 @@ export function EnginePage({
         >
           <summary className="flex w-fit items-center gap-1.5 text-[13.5px] text-muted-foreground hover:text-foreground">
             <ChevronRight className="size-4 transition-transform duration-150 group-open:rotate-90" />
-            高级
+            {t("tasks.engines.advanced")}
           </summary>
           <div className="mt-4 space-y-4">
-            <section className="panel overflow-hidden" aria-label="本机发现">
+            <section
+              className="panel overflow-hidden"
+              aria-label={t("tasks.engines.discovery")}
+            >
               <header className="flex items-center justify-between gap-3 px-5 py-3.5">
-                <h2 className="section-title">本机发现</h2>
+                <h2 className="section-title">
+                  {t("tasks.engines.discovery")}
+                </h2>
                 <div className="flex gap-2">
                   <Button
                     size="sm"
@@ -395,7 +424,7 @@ export function EnginePage({
                     disabled={discovering}
                   >
                     <RefreshCw className={discovering ? "animate-spin" : ""} />
-                    重新扫描
+                    {t("tasks.engines.rescan")}
                   </Button>
                   <Button
                     size="sm"
@@ -403,7 +432,7 @@ export function EnginePage({
                     disabled={busy === "reload"}
                     onClick={() => void action("reload", api.reload)}
                   >
-                    重载配置文件
+                    {t("tasks.engines.reloadFile")}
                   </Button>
                   <Button
                     size="sm"
@@ -411,7 +440,7 @@ export function EnginePage({
                     onClick={() => setDialogOpen(true)}
                   >
                     <Plus />
-                    手动添加
+                    {t("tasks.engines.addManually")}
                   </Button>
                 </div>
               </header>
@@ -449,16 +478,18 @@ export function EnginePage({
                         ) : (
                           <Check />
                         )}
-                        登记
+                        {t("tasks.engines.register")}
                       </Button>
                     ) : (
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <span className="tag warn">需要适配器</span>
+                          <span className="tag warn">
+                            {t("tasks.engines.needsAdapter")}
+                          </span>
                         </TooltipTrigger>
                         <TooltipContent className="max-w-72">
                           {candidate.notes.join(" ") ||
-                            "需要先安装对应的 ACP 适配器"}
+                            t("tasks.engines.installAdapter")}
                         </TooltipContent>
                       </Tooltip>
                     )}
@@ -467,8 +498,8 @@ export function EnginePage({
                 {!unregistered.length ? (
                   <li className="px-5 py-6 text-center text-[13px] text-muted-foreground">
                     {discovering || candidates === null
-                      ? "正在扫描"
-                      : "没有发现未登记的引擎"}
+                      ? t("tasks.engines.scanning")
+                      : t("tasks.engines.noneFound")}
                   </li>
                 ) : null}
               </ul>
@@ -489,13 +520,11 @@ export function EnginePage({
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent className="sm:max-w-[540px]">
             <DialogHeader>
-              <DialogTitle>手动添加引擎</DialogTitle>
-              <DialogDescription>
-                ACP 或命令行引擎的启动配置。
-              </DialogDescription>
+              <DialogTitle>{t("tasks.engines.addTitle")}</DialogTitle>
+              <DialogDescription>{t("tasks.engines.addLede")}</DialogDescription>
             </DialogHeader>
             <Textarea
-              aria-label="引擎配置（JSON）"
+              aria-label={t("tasks.engines.registration")}
               value={registration}
               onChange={(event) => setRegistration(event.target.value)}
               className="min-h-[240px] font-mono text-[12.5px] leading-6"
@@ -508,7 +537,7 @@ export function EnginePage({
             ) : null}
             <DialogFooter>
               <Button variant="outline" onClick={() => setDialogOpen(false)}>
-                取消
+                {t("common.cancel")}
               </Button>
               <Button
                 disabled={busy === "register"}
@@ -517,7 +546,7 @@ export function EnginePage({
                 {busy === "register" ? (
                   <Loader2 className="animate-spin" />
                 ) : null}
-                添加
+                {t("tasks.engines.add")}
               </Button>
             </DialogFooter>
           </DialogContent>

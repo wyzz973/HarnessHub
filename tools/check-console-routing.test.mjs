@@ -5,25 +5,24 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import ts from "typescript";
+import { consoleModule } from "./console-module.mjs";
+
+// The assertions below read Chinese texts, the catalogs' source language.
+const i18n = await consoleModule("lib/i18n.ts");
+i18n.setLocale("zh-CN");
 
 async function routingModule() {
-  const sdk = (name) =>
-    JSON.stringify(
-      new URL(`../packages/sdk/dist/src/${name}.js`, import.meta.url).href,
-    );
-  const source = (
-    await readFile(
-      new URL("../packages/console/lib/routing.ts", import.meta.url),
-      "utf8",
-    )
-  )
-    .replaceAll('from "@harnesshub/sdk/client"', `from ${sdk("client")}`)
-    .replaceAll('from "@harnesshub/sdk/route-rules"', `from ${sdk("route-rules")}`);
-  const output = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2024 },
-  }).outputText;
-  return import(`data:text/javascript;base64,${Buffer.from(output).toString("base64")}`);
+  return consoleModule("lib/routing.ts");
+}
+
+/** Run `check` with the console in English, then back in Chinese. */
+async function inEnglish(check) {
+  i18n.setLocale("en");
+  try {
+    await check();
+  } finally {
+    i18n.setLocale("zh-CN");
+  }
 }
 
 const providers = [
@@ -171,9 +170,32 @@ test("the quota form gives a quota, 0 included, and names the fields it refuses"
       "60 次/分钟",
       "每天 2 百万 token（含缓存读取）",
       "每周 0 token（拒绝所有调用）",
-      "每月 $20",
+      // A USD amount in the locale's currency format.
+      `每月 ${i18n.formatUsd(20, "zh-CN")}`,
     ],
   );
+  await inEnglish(() => {
+    assert.deepEqual(
+      lib.quotaSummary({
+        requestsPerMinute: 1,
+        budgets: [
+          { period: "day", tokens: 2_000_000, cacheReads: true },
+          { period: "week", tokens: 1500 },
+          { period: "month", tokens: 0, costUsd: 0 },
+        ],
+      }),
+      [
+        "1 request per minute",
+        "Daily: 2 million tokens (cache reads included)",
+        "Weekly: 1,500 tokens",
+        "Monthly: 0 tokens (refuses every call), $0.00 (refuses every call)",
+      ],
+    );
+    assert.deepEqual(lib.quotaOf({ ...lib.quotaFormOf(undefined), rpm: "0" }), {
+      ok: false,
+      problems: { rpm: "Requests per minute must be a whole number greater than 0" },
+    });
+  });
   const status = {
     period: "day",
     tokens: 600,
@@ -260,6 +282,37 @@ test("route decisions merge by call, newest first, and read as words", async () 
   assert.equal(lib.stickyText("broken:rule"), "粘性被打破：规则把它换到了别的成员");
   assert.equal(lib.stickyText("hit"), "留在上次应答的凭据");
   assert.equal(lib.stickyText(undefined), undefined);
+  // A reason the console does not know shows as the daemon sends it.
+  assert.equal(lib.stickyText("missed:something_new"), "没有沿用：something_new");
+  await inEnglish(() => {
+    assert.equal(
+      lib.ruleDecisionText({
+        group: "g",
+        kind: "turn",
+        n: 2,
+        use: "p/big",
+        when: ["tokens ≥ 200000", "images"],
+        then: [],
+        unready: true,
+        instead: "p/small",
+      }),
+      "Rule 2 → p/big (tokens ≥ 200000, images); it has no ready credential, so p/small is tried first instead",
+    );
+    assert.equal(lib.ruleDecisionText({ group: "g", kind: "held", n: 0, then: [] }), "Kept the turn's decision");
+    assert.equal(
+      lib.classifierText({
+        by: "q/judge",
+        intents: ["a quick question"],
+        intent: "a quick question",
+        effort: "high",
+        cached: false,
+        resting: false,
+      }),
+      "q/judge decided: the intent is a quick question, it needs high reasoning",
+    );
+    assert.equal(lib.stickyText("broken:breaker"), "Stickiness broken: the last credential is resting");
+    assert.equal(lib.budgetPeriodName("week"), "Weekly");
+  });
 });
 
 /** The `node:` modules a built module imports, following its own and core's imports. */

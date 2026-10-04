@@ -27,6 +27,7 @@ import {
 import { agentIconSlug } from "@/lib/brand-icons";
 import { loadGatewayModels, type GatewayModels } from "@/lib/gateway-models";
 import { modelPlane } from "@/lib/model-plane";
+import { t } from "@/lib/i18n";
 import { navigate, useSearch } from "@/lib/router";
 import { notify } from "@/lib/toast";
 import { AgentDetail } from "./agent-detail";
@@ -48,22 +49,20 @@ function Badges({ agent, models }: { agent: Agent; models: GatewayModels }) {
       {wiring ? (
         wiring.driftError ? (
           <span className="tag error" title={wiring.driftError}>
-            无法检查
+            {t("agents.badge.uncheckable")}
           </span>
         ) : wiring.drift?.drifted ? (
           <span className="tag warn">
-            {wiring.drift.kinds
-              .map((kind) => driftText[kind] ?? kind)
-              .join("、")}
+            {wiring.drift.kinds.map(driftText).join(t("agents.listSeparator"))}
           </span>
         ) : (
-          <span className="tag good">一致</span>
+          <span className="tag good">{t("agents.badge.consistent")}</span>
         )
       ) : null}
       {problems.length ? (
         <span className="tag error" title={problems.join("\n")}>
           <CircleAlert className="size-3" aria-hidden />
-          需要处理
+          {t("agents.badge.attention")}
         </span>
       ) : null}
     </span>
@@ -86,7 +85,7 @@ function AgentRow({
   onUnwire: () => void;
 }) {
   const wiring = agent.wiring;
-  const install = installationText[agent.installation.status];
+  const install = installationText(agent.installation.status);
   const ownModel = modelOptional(wiring?.options);
   const legacy = legacyKeyless(agent);
   const visibility = wiring ? modelVisibility(agent, models) : undefined;
@@ -110,11 +109,13 @@ function AgentRow({
       </button>
       <div className="w-full min-w-0 sm:w-[300px]">
         <ModelPicker
-          label={`${agent.name} 的模型`}
+          label={t("agents.row.modelOf", { name: agent.name })}
           models={models}
           value={wiring?.model}
           disabled={!models.sections.length}
-          {...(ownModel ? { none: `${agent.name} 自己的模型` } : {})}
+          {...(ownModel
+            ? { none: t("agents.ownModel", { name: agent.name }) }
+            : {})}
           onChange={(ref) => {
             if (ref !== wiring?.model && (ref || ownModel)) onModel(ref);
           }}
@@ -122,13 +123,19 @@ function AgentRow({
         <p className="mt-1 text-[12px] text-subtle">
           {wiring
             ? legacy
-              ? "ChatGPT 登录 · 旧接线没有 Key"
+              ? t("agents.row.legacy")
               : ownModel && !wiring.model
-                ? "ChatGPT 登录 · 用 Codex 自己的模型"
+                ? t("agents.row.chatgptOwn")
                 : visibility
-                  ? `${ownModel ? "ChatGPT 登录 · " : ""}显示 ${visibility.shown.length} / ${visibility.allowed.length} 个模型`
+                  ? t(
+                      ownModel ? "agents.row.chatgptShown" : "agents.row.shown",
+                      {
+                        shown: visibility.shown.length,
+                        allowed: visibility.allowed.length,
+                      },
+                    )
                   : null
-            : "未接线，选择模型即可预览接线"}
+            : t("agents.row.unwired")}
         </p>
       </div>
       <div className="flex flex-wrap items-center justify-end gap-1.5 max-sm:w-full max-sm:justify-between sm:w-[310px]">
@@ -136,12 +143,12 @@ function AgentRow({
         <span className="flex items-center">
           <Button size="xs" variant="ghost" onClick={onDetail}>
             <Settings2 />
-            详情
+            {t("agents.row.details")}
           </Button>
           {wiring ? (
             <Button size="xs" variant="ghost" onClick={onUnwire}>
               <Undo2 />
-              还原
+              {t("agents.restore")}
             </Button>
           ) : null}
         </span>
@@ -225,14 +232,11 @@ export function AgentsPage() {
   return (
     <div className="page-body">
       <div className="page-column max-w-[1080px]">
-        <PageHeader
-          title="Agent"
-          lede="本机的编码 Agent 经网关使用的模型。点模型即可切换：先预览配置文件的改动，确认后写入，随时可以还原。"
-        >
+        <PageHeader title={t("agents.title")} lede={t("agents.lede")}>
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label="刷新"
+            aria-label={t("common.refresh")}
             onClick={reload}
           >
             <RefreshCw />
@@ -243,7 +247,7 @@ export function AgentsPage() {
             onClick={() => navigate("profiles")}
           >
             <Layers />
-            Profile
+            {t("common.nav.profiles")}
           </Button>
         </PageHeader>
         <div className="mt-6 space-y-4">
@@ -251,7 +255,7 @@ export function AgentsPage() {
             <div
               className="panel space-y-3 p-5"
               role="status"
-              aria-label="正在读取"
+              aria-label={t("common.loading")}
             >
               <Skeleton className="h-4 w-1/3" />
               <Skeleton className="h-4 w-2/3" />
@@ -272,20 +276,17 @@ export function AgentsPage() {
               {noProvider ? (
                 <div className="callout info items-center">
                   <span className="min-w-0 flex-1">
-                    还没有 provider：添加一个模型 provider，再给 Agent
-                    选择模型。
+                    {t("agents.noProvider")}
                   </span>
                   <Button size="xs" onClick={() => setFirstRun("open")}>
-                    开始设置
+                    {t("agents.startSetup")}
                   </Button>
                 </div>
               ) : !data.value.models.sections.length ? (
                 <div className="callout info items-center">
-                  <span className="min-w-0 flex-1">
-                    网关还没有模型：先添加一个 provider，再给 Agent 选择模型。
-                  </span>
+                  <span className="min-w-0 flex-1">{t("agents.noModels")}</span>
                   <Button size="xs" onClick={() => navigate("providers")}>
-                    添加 provider
+                    {t("agents.addProvider")}
                   </Button>
                 </div>
               ) : null}
@@ -293,7 +294,7 @@ export function AgentsPage() {
                 <div role="alert" className="callout warn items-start">
                   <CircleAlert className="mt-0.5 size-4 shrink-0" />
                   <div className="min-w-0">
-                    <p>{lists.needs.length} 个 Agent 需要处理：</p>
+                    <p>{t("agents.needs", { n: lists.needs.length })}</p>
                     <ul className="mt-1 list-disc pl-5">
                       {lists.needs.map((agent) => (
                         <li key={agent.id}>
@@ -304,7 +305,11 @@ export function AgentsPage() {
                           >
                             {agent.name}
                           </button>
-                          ：{attention(agent, data.value.models).join("；")}
+                          {t("agents.needsReasons", {
+                            reasons: attention(agent, data.value.models).join(
+                              t("agents.reasonSeparator"),
+                            ),
+                          })}
                         </li>
                       ))}
                     </ul>
@@ -312,7 +317,7 @@ export function AgentsPage() {
                 </div>
               ) : null}
               {lists.here.length ? (
-                <ul className="panel" aria-label="本机的 Agent">
+                <ul className="panel" aria-label={t("agents.here")}>
                   {lists.here.map((agent) => (
                     <AgentRow
                       key={agent.id}
@@ -325,9 +330,8 @@ export function AgentsPage() {
                   ))}
                 </ul>
               ) : (
-                <EmptyState icon={Bot} title="本机没有发现 Agent">
-                  安装 Claude Code、Codex、OpenCode 等编码 Agent
-                  后刷新；也可以在下面为尚未安装的 Agent 预先写好配置。
+                <EmptyState icon={Bot} title={t("agents.empty.title")}>
+                  {t("agents.empty.body")}
                 </EmptyState>
               )}
               {lists.missing.length ? (
@@ -341,10 +345,10 @@ export function AgentsPage() {
                     <ChevronDown
                       className={`size-4 transition-transform ${showMissing ? "" : "-rotate-90"}`}
                     />
-                    未发现的 Agent（{lists.missing.length}）
+                    {t("agents.missingCount", { n: lists.missing.length })}
                   </button>
                   {showMissing ? (
-                    <ul className="panel mt-2" aria-label="未发现的 Agent">
+                    <ul className="panel mt-2" aria-label={t("agents.missing")}>
                       {lists.missing.map((agent) => (
                         <AgentRow
                           key={agent.id}
@@ -366,7 +370,12 @@ export function AgentsPage() {
           <WirePlanDialog
             agent={wiring.agent}
             input={wiring.input}
-            title={`${wiring.agent.wiring ? "切换" : "接线"} ${wiring.agent.name}`}
+            title={t(
+              wiring.agent.wiring ? "agents.switchTitle" : "agents.wireTitle",
+              {
+                name: wiring.agent.name,
+              },
+            )}
             onClose={() => setWiring(null)}
             onWired={reload}
           />
@@ -382,15 +391,18 @@ export function AgentsPage() {
         ) : null}
         <ConfirmDialog
           open={unwiring !== null}
-          title={`还原 ${unwiring?.name ?? ""}`}
-          description="配置文件未被改动时恢复为接线前的原样；之后改过的文件只撤销 HarnessHub 写入的项。它的 Key 随即吊销。"
-          action="还原"
+          title={t("agents.restoreTitle", { name: unwiring?.name ?? "" })}
+          description={t("agents.restoreDescription")}
+          action={t("agents.restore")}
           onClose={() => setUnwiring(null)}
           onConfirm={async () => {
             if (!unwiring) return;
             const result = await modelPlane().agents.unwire(unwiring.id);
             notify.success(
-              `${unwiring.name} 已还原（${result.files.length} 个文件）`,
+              t("agents.restored", {
+                name: unwiring.name,
+                n: result.files.length,
+              }),
             );
             reload();
           }}

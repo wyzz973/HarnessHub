@@ -15,12 +15,15 @@ import { installationText } from "@/lib/agents";
 import { agentIconSlug } from "@/lib/brand-icons";
 import {
   exposedModels,
+  firstRunStepLabel,
   firstRunSteps,
   sameWiring,
   type FirstRunStep,
 } from "@/lib/first-run";
 import { gatewayModels } from "@/lib/gateway-models";
 import { failureOf, modelPlane, type Failure } from "@/lib/model-plane";
+import { t } from "@/lib/i18n";
+import { tr } from "@/lib/i18n-react";
 import { notify } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { Checkbox, ErrorCallout } from "./model-plane-ui";
@@ -40,15 +43,15 @@ interface Outcome {
 }
 
 function Steps({ current }: { current: FirstRunStep }) {
-  const at = firstRunSteps.findIndex((step) => step.id === current);
+  const at = firstRunSteps.indexOf(current);
   return (
     <ol
       className="flex flex-wrap gap-x-4 gap-y-2 text-[12.5px]"
-      aria-label="步骤"
+      aria-label={t("agents.firstRun.steps")}
     >
       {firstRunSteps.map((step, index) => (
         <li
-          key={step.id}
+          key={step}
           aria-current={index === at ? "step" : undefined}
           className={cn(
             "flex items-center gap-1.5 text-subtle",
@@ -65,7 +68,7 @@ function Steps({ current }: { current: FirstRunStep }) {
           >
             {index < at ? <Check className="size-3" /> : index + 1}
           </span>
-          {step.label}
+          {firstRunStepLabel(step)}
         </li>
       ))}
     </ol>
@@ -194,24 +197,30 @@ export function FirstRun({
     setBusy(false);
     setOutcomes(results);
     if (results.some((item) => item.outcome === "failed"))
-      notify.error(new Error("部分 Agent 没有接线"), "接线未全部完成");
-    else notify.success("设置完成，重启正在运行的 Agent 后生效");
+      notify.error(
+        new Error(t("agents.firstRun.someFailed")),
+        t("agents.firstRun.incomplete"),
+      );
+    else notify.success(t("agents.firstRun.done"));
   };
   const changing = planned?.filter((item) => item.plan?.changed) ?? [];
 
   return (
-    <section className="panel space-y-5 p-5 sm:p-6" aria-label="开始使用">
+    <section
+      className="panel space-y-5 p-5 sm:p-6"
+      aria-label={t("agents.firstRun.label")}
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
           <span className="grid size-10 shrink-0 place-items-center rounded-2xl bg-brand-soft text-brand">
             <Sparkles className="size-5" />
           </span>
           <div className="min-w-0">
-            <h2 className="text-[16px] font-semibold">开始使用 HarnessHub</h2>
+            <h2 className="text-[16px] font-semibold">
+              {t("agents.firstRun.title")}
+            </h2>
             <p className="mt-1 text-[13px] text-muted-foreground">
-              添加一个模型 provider，再让本机的编码 Agent
-              经网关使用它。与终端里的 hh init
-              相同，每一步都可以之后在各个页面修改。
+              {t("agents.firstRun.lede")}
             </p>
           </div>
         </div>
@@ -220,8 +229,8 @@ export function FirstRun({
       {step === "provider" ? (
         <div className="space-y-4">
           <PresetPane
-            cancelLabel="跳过，稍后添加"
-            submitLabel="添加并继续"
+            cancelLabel={t("agents.firstRun.skipProvider")}
+            submitLabel={t("agents.firstRun.addProvider")}
             onBusy={() => undefined}
             onCancel={onClose}
             onSaved={(saved) => {
@@ -235,9 +244,15 @@ export function FirstRun({
       {step === "models" && provider ? (
         <div className="space-y-3">
           <p className="text-[13.5px]">
-            已添加 provider <span className="font-mono">{provider.id}</span>
-            {provider.region ? `，区域 ${provider.region}` : ""}
-            {provider.plan ? `，套餐 ${provider.plan}` : ""}。
+            {tr("agents.firstRun.added", {
+              id: <span className="font-mono">{provider.id}</span>,
+              region: provider.region
+                ? t("agents.firstRun.region", { region: provider.region })
+                : "",
+              plan: provider.plan
+                ? t("agents.firstRun.plan", { plan: provider.plan })
+                : "",
+            })}
           </p>
           {refresh.state === "busy" ? (
             <p
@@ -245,26 +260,36 @@ export function FirstRun({
               role="status"
             >
               <Loader2 className="size-4 animate-spin" />
-              正在从上游读取模型列表…
+              {t("agents.firstRun.refreshing")}
             </p>
           ) : (
             <>
               {refresh.error ? (
                 <p className="callout warn">
-                  读取模型列表失败（{refresh.error}），使用预设中的列表。
+                  {t("agents.firstRun.refreshFailed", { error: refresh.error })}
                 </p>
               ) : null}
               <p className="text-[13px]">
-                {provider.name} 提供 {models.length} 个模型
                 {models.length
-                  ? `：${models.slice(0, 5).join("、")}${models.length > 5 ? " 等" : ""}`
-                  : "。可以之后在 Provider 页手动添加。"}
+                  ? t(
+                      models.length > 5
+                        ? "agents.firstRun.modelsMore"
+                        : "agents.firstRun.models",
+                      {
+                        name: provider.name,
+                        n: models.length,
+                        list: models
+                          .slice(0, 5)
+                          .join(t("agents.listSeparator")),
+                      },
+                    )
+                  : t("agents.firstRun.noModels", { name: provider.name })}
               </p>
             </>
           )}
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={onClose}>
-              到此为止
+              {t("agents.firstRun.stop")}
             </Button>
             <Button
               disabled={refresh.state === "busy"}
@@ -272,7 +297,7 @@ export function FirstRun({
                 setStep(installed.length && models.length ? "agents" : "review")
               }
             >
-              继续
+              {t("agents.firstRun.continue")}
             </Button>
           </div>
         </div>
@@ -280,8 +305,7 @@ export function FirstRun({
       {step === "agents" ? (
         <div className="space-y-3">
           <p className="text-[13px] text-muted-foreground">
-            选择要经网关使用这个 provider 的 Agent。每个 Agent
-            写入自己的配置文件，写入前先备份，随时可以还原。
+            {t("agents.firstRun.chooseAgents")}
           </p>
           <ul className="grid gap-1 sm:grid-cols-2">
             {installed.map((agent) => (
@@ -306,8 +330,10 @@ export function FirstRun({
                       <span className="block truncate">{agent.name}</span>
                       <span className="block truncate text-[12px] text-subtle">
                         {agent.wiring?.model
-                          ? `现在 ${agent.wiring.model}`
-                          : installationText[agent.installation.status].label}
+                          ? t("agents.firstRun.now", {
+                              model: agent.wiring.model,
+                            })
+                          : installationText(agent.installation.status).label}
                       </span>
                     </span>
                   </span>
@@ -317,13 +343,13 @@ export function FirstRun({
           </ul>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={onClose}>
-              跳过接线
+              {t("agents.firstRun.skipWiring")}
             </Button>
             <Button
               disabled={!selected.length}
               onClick={() => setStep("model")}
             >
-              继续
+              {t("agents.firstRun.continue")}
             </Button>
           </div>
         </div>
@@ -331,13 +357,15 @@ export function FirstRun({
       {step === "model" && pickerModels ? (
         <div className="space-y-3">
           <p className="text-[13px] text-muted-foreground">
-            {selected.map((agent) => agent.name).join("、")}{" "}
-            默认使用的模型。Claude Code 的各档位跟随这个模型，之后可以在 Agent
-            详情中分别设置。
+            {t("agents.firstRun.chooseModel", {
+              names: selected
+                .map((agent) => agent.name)
+                .join(t("agents.listSeparator")),
+            })}
           </p>
           <div className="max-w-[420px]">
             <ModelPicker
-              label="默认模型"
+              label={t("agents.firstRun.step.model")}
               models={pickerModels}
               value={model}
               onChange={(ref) => {
@@ -352,11 +380,11 @@ export function FirstRun({
               disabled={busy}
               onClick={() => setStep("agents")}
             >
-              上一步
+              {t("agents.firstRun.back")}
             </Button>
             <Button disabled={busy || !model} onClick={review}>
               {busy ? <Loader2 className="animate-spin" /> : null}
-              预览改动
+              {t("agents.detail.preview")}
             </Button>
           </div>
         </div>
@@ -366,13 +394,16 @@ export function FirstRun({
           {!planned ? (
             <p className="text-[13px] text-muted-foreground">
               {!installed.length
-                ? "本机没有发现编码 Agent；安装 Claude Code、Codex、OpenCode 等之后在 Agent 页接线。"
+                ? t("agents.firstRun.noAgents")
                 : !models.length
-                  ? "这个 provider 还没有模型；在 Provider 页添加模型后，再到 Agent 页接线。"
-                  : "没有选择 Agent。之后可以在 Agent 页为它们选择模型。"}
+                  ? t("agents.firstRun.providerNoModels")
+                  : t("agents.firstRun.noneChosen")}
             </p>
           ) : outcomes ? (
-            <ul className="space-y-1.5 text-[13.5px]" aria-label="结果">
+            <ul
+              className="space-y-1.5 text-[13.5px]"
+              aria-label={t("agents.firstRun.results")}
+            >
               {outcomes.map((item) => (
                 <li
                   key={item.agent.id}
@@ -386,10 +417,12 @@ export function FirstRun({
                   {item.agent.name}
                   <span className="text-muted-foreground">
                     {item.outcome === "wired"
-                      ? `已接线到 ${model}`
+                      ? t("agents.firstRun.wired", { model: model ?? "" })
                       : item.outcome === "unchanged"
-                        ? "已经这样接线，未改动"
-                        : `接线失败：${item.error}`}
+                        ? t("agents.firstRun.unchanged")
+                        : t("agents.firstRun.failed", {
+                            error: item.error ?? "",
+                          })}
                   </span>
                 </li>
               ))}
@@ -409,7 +442,9 @@ export function FirstRun({
                     />
                     {agent.name}
                     {plan?.changed ? null : (
-                      <span className="tag">已经这样接线</span>
+                      <span className="tag">
+                        {t("agents.firstRun.alreadyWired")}
+                      </span>
                     )}
                   </p>
                   {plan?.changed ? (
@@ -418,15 +453,14 @@ export function FirstRun({
                 </section>
               ))}
               <p className="text-[12.5px] text-muted-foreground">
-                确认后依次写入；每个 Agent 签发一把自己的 Key。正在运行的 Agent
-                重启后生效。
+                {t("agents.firstRun.writeNote")}
               </p>
             </>
           )}
           <ErrorCallout failure={failure} />
           <div className="flex justify-end gap-2">
             {outcomes || !planned ? (
-              <Button onClick={onClose}>完成</Button>
+              <Button onClick={onClose}>{t("agents.firstRun.finish")}</Button>
             ) : (
               <>
                 <Button
@@ -434,14 +468,14 @@ export function FirstRun({
                   disabled={busy}
                   onClick={() => setStep("model")}
                 >
-                  上一步
+                  {t("agents.firstRun.back")}
                 </Button>
                 <Button
                   disabled={busy || !changing.length}
                   onClick={() => void apply()}
                 >
                   {busy ? <Loader2 className="animate-spin" /> : null}
-                  写入 {changing.length} 个 Agent
+                  {t("agents.firstRun.write", { n: changing.length })}
                 </Button>
               </>
             )}

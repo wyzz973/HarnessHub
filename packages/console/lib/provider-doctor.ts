@@ -9,40 +9,51 @@ import type {
   DoctorPlan,
   DoctorStatus,
 } from "@harnesshub/sdk/client";
+import { formatUsd, t } from "./i18n";
 
 /** Every check, in the daemon's order; the Record keeps the list complete. */
-export const doctorCheckNames: Readonly<Record<DoctorCheck, string>> = {
-  endpoints: "端点",
-  auth: "Key 的发送方式",
-  models: "模型列表",
-  streaming: "流式输出",
-  usage: "用量（usage）",
-  "max-tokens": "输出上限字段",
-  tools: "工具调用",
-  "reasoning-replay": "推理回传",
-  "optional-fields": "可选字段",
-  image: "图片输入",
-  "native-endpoints": "未声明的端点",
-  "served-model": "实际服务的模型",
-  latency: "延迟",
-  "context-overflow": "上下文超长",
+export const doctorCheckKeys: Readonly<Record<DoctorCheck, true>> = {
+  endpoints: true,
+  auth: true,
+  models: true,
+  streaming: true,
+  usage: true,
+  "max-tokens": true,
+  tools: true,
+  "reasoning-replay": true,
+  "optional-fields": true,
+  image: true,
+  "native-endpoints": true,
+  "served-model": true,
+  latency: true,
+  "context-overflow": true,
 };
 
-export const doctorStatuses: Readonly<
-  Record<DoctorStatus, { label: string; tone: "good" | "warn" | "error" | "" }>
-> = {
-  pass: { label: "通过", tone: "good" },
-  warn: { label: "警告", tone: "warn" },
-  fail: { label: "失败", tone: "error" },
-  skip: { label: "跳过", tone: "" },
-};
+/** A check's name. */
+export function doctorCheckName(check: DoctorCheck): string {
+  return t(`providers.check.${check}`);
+}
 
-/** `$0.0021`, or the tokens when the model has no known price. */
+const statusTones: Readonly<
+  Record<DoctorStatus, "good" | "warn" | "error" | "">
+> = { pass: "good", warn: "warn", fail: "error", skip: "" };
+
+/** A status's tag and tone. */
+export function doctorStatus(status: DoctorStatus): {
+  label: string;
+  tone: "good" | "warn" | "error" | "";
+} {
+  return { label: t(`providers.status.${status}`), tone: statusTones[status] };
+}
+
+/** The estimated cost to 4 decimals, or the tokens when the model has no known price. */
 export function planCost(plan: DoctorPlan): string {
   if (plan.estimatedCostUsd !== null)
-    return `预计 $${plan.estimatedCostUsd.toFixed(4)}`;
+    return t("providers.doctor.planCost", {
+      cost: formatUsd(Number(plan.estimatedCostUsd.toFixed(4))),
+    });
   const { input, output } = plan.estimatedTokens;
-  return `价格未知，约 ${input.toLocaleString()} 输入与 ${output.toLocaleString()} 输出 token`;
+  return t("providers.doctor.planTokens", { input, output });
 }
 
 /** How many items have each status, in the report's order of statuses. */

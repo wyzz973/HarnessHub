@@ -7,67 +7,56 @@ import type {
   WiringTier,
 } from "@harnesshub/sdk/client";
 import type { GatewayModels } from "./gateway-models";
+import { isMessageKey, t, translate } from "./i18n";
 
-export const installationText: Record<
-  Agent["installation"]["status"],
-  { label: string; tone: string }
-> = {
-  installed: { label: "已安装", tone: "good" },
-  "configured-only": { label: "只有配置", tone: "" },
-  "not-found": { label: "未发现", tone: "" },
-};
-
-export const driftText: Record<string, string> = {
-  unwired: "未接到网关",
-  replaced: "接线字段被改",
-  "foreign-gateway": "指向其他网关",
-};
-
-export const driftReasonText: Record<string, string> = {
-  missing: "缺失",
-  changed: "被修改",
-  "other-key": "换成了别的 Key",
-  "file-missing": "文件不存在",
-  unreadable: "无法读取",
-};
-
-export const tierText: Record<WiringTier, string> = {
-  opus: "Opus 档",
-  sonnet: "Sonnet 档",
-  haiku: "Haiku 档",
-  fable: "Fable 档",
-  subagent: "子 Agent",
-};
-
-const tierLabels = new Map<string, string>(Object.entries(tierText));
-/** The label of a tier name read from a record keyed by string. */
-export function tierLabel(tier: string): string {
-  return tierLabels.get(tier) ?? tier;
+export function installationText(status: Agent["installation"]["status"]): {
+  label: string;
+  tone: string;
+} {
+  return {
+    label: t(`agents.installation.${status}`),
+    tone: status === "installed" ? "good" : "",
+  };
 }
 
-export const effortText: Record<ReasoningEffort, string> = {
-  none: "不推理",
-  minimal: "最少",
-  low: "低",
-  medium: "中",
-  high: "高",
-  xhigh: "很高",
-  max: "最高",
-};
+/** A known value's label, or the value as the daemon sends it. */
+function labelOf(prefix: string, value: string): string {
+  const key = `${prefix}.${value}`;
+  return isMessageKey(key) ? translate(key) : value;
+}
 
-/** Labels of adapter options and their values; unknown ones show as written. */
-export const optionText: Record<
-  string,
-  { label: string; values: Record<string, string> }
-> = {
-  codexAuth: {
-    label: "Codex 登录方式",
-    values: {
-      "gateway-key": "Gateway Key：经网关调用所选模型",
-      chatgpt: "ChatGPT 登录：保留 Codex 自己的登录，可另选 HarnessHub 的模型",
-    },
-  },
-};
+/** A drift kind (`unwired`, `replaced`, `foreign-gateway`); unknown kinds show as written. */
+export function driftText(kind: string): string {
+  return labelOf("agents.drift", kind);
+}
+
+/** Why a drift finding was found (`missing`, `changed`, …); unknown reasons show as written. */
+export function driftReasonText(reason: string): string {
+  return labelOf("agents.driftReason", reason);
+}
+
+export function tierText(tier: WiringTier): string {
+  return t(`agents.tier.${tier}`);
+}
+
+/** The label of a tier name read from a record keyed by string. */
+export function tierLabel(tier: string): string {
+  return labelOf("agents.tier", tier);
+}
+
+export function effortText(effort: ReasoningEffort): string {
+  return t(`agents.effort.${effort}`);
+}
+
+/** The label of an adapter option; unknown ones show as written. */
+export function optionLabel(name: string): string {
+  return labelOf("agents.option", name);
+}
+
+/** The label of an adapter option's value; unknown ones show as written. */
+export function optionValueText(name: string, value: string): string {
+  return labelOf(`agents.option.${name}`, value);
+}
 
 /**
  * Whether these options let the agent keep its own model: it signs in by
@@ -98,23 +87,31 @@ export function attention(agent: Agent, models?: GatewayModels): string[] {
   const wiring = agent.wiring;
   if (!wiring) return [];
   const reasons: string[] = [];
+  const list = (items: readonly string[]) =>
+    items.join(t("agents.listSeparator"));
   if (agent.installation.status === "not-found")
-    reasons.push("已接线，但本机找不到这个 Agent");
-  if (wiring.driftError) reasons.push("无法检查配置文件");
+    reasons.push(t("agents.attention.notFound"));
+  if (wiring.driftError) reasons.push(t("agents.attention.uncheckable"));
   else if (wiring.drift?.drifted)
     reasons.push(
-      `配置文件被改动：${wiring.drift.kinds.map((kind) => driftText[kind] ?? kind).join("、")}`,
+      t("agents.attention.drifted", {
+        kinds: list(wiring.drift.kinds.map(driftText)),
+      }),
     );
   if (["revoked", "expired", "missing"].includes(wiring.keyState))
     reasons.push(
-      wiring.keyState === "missing" ? "它的 Key 不存在" : "它的 Key 已失效",
+      wiring.keyState === "missing"
+        ? t("agents.attention.keyMissing")
+        : t("agents.attention.keyInvalid"),
     );
   if (models) {
     const gone = [wiring.model, ...Object.values(wiring.tiers ?? {})].filter(
       (ref): ref is string => ref !== undefined && !models.byRef.has(ref),
     );
     if (gone.length)
-      reasons.push(`网关不再提供 ${[...new Set(gone)].join("、")}`);
+      reasons.push(
+        t("agents.attention.modelGone", { models: list([...new Set(gone)]) }),
+      );
   }
   return reasons;
 }
