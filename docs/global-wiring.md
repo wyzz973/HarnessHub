@@ -86,6 +86,8 @@ BOM 与换行风格（LF/CRLF）保持原样。回读校验用真实解析器确
 |---|---|---|---|---|
 | `mimocode` MiMo Code | 已有的 `mimocode.jsonc`、`mimocode.json` 或 `config.json`，否则新建 `mimocode.json`（`$MIMOCODE_HOME/config`，否则 `${XDG_CONFIG_HOME:-~/.config}/mimocode`） | 与 `opencode` 相同 | Chat | OpenCode 的 fork，复用 `opencode` 的写入 |
 | `omo` OmO | `settings.json` 与 `models.json`（`${OMO_CODING_AGENT_DIR:-${SENPI_CODING_AGENT_DIR:-~/.omo/agent}}`） | 与 `pi` 相同 | Chat | Pi 的 fork，复用 `pi` 的写入；与 Pi 共用 `PI_CODING_AGENT_DIR` 的目录由 `pi` 接线 |
+| `hermes` Hermes Agent | `config.yaml`（`${HERMES_HOME:-~/.hermes}`） | `providers.harnesshub`（`base_url`、`api_key`、`api_mode: chat_completions`、`models` 为 Ref 列表）、`model.provider`、`model.default` | Chat | |
+| `minimax-code` MiniMax Code | `config.yaml`（`${MINIMAX_DATA_DIR:-~/.minimax}`） | `custom_provider.harnesshub`（`kind: custom`、`enabled`、`api: anthropic-messages`、`options.apiKey`、`options.baseURL`（网关根）、`options.authMode: api-key`、每个模型的 `name`、已知的 `limit`、`reasoning: false`）、`defaultModel = "custom_provider:harnesshub/<ref>"` | Anthropic | 原有的 `defaultModelVariant` 不清除 |
 
 Shell 环境中已有的同名变量优先于 dotenv 文件（Gemini、Qwen），OpenCode 的 `OPENCODE_CONFIG_DIR` 与 Kimi 的 `OPENAI_*` 变量也会覆盖全局文件；这类绕过由漂移检测的网关证据（`bypassed`，尚未实现）发现。
 
