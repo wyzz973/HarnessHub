@@ -46,6 +46,8 @@ HH_FAKE_KEY=合成的金丝雀值 node tools/fake-provider/index.mjs --port 0 --
 | `--stream-only` | 关 | 拒绝非流式请求 |
 | `--no-reasoning-replay` | 关 | 不要求工具结果回传推理内容 |
 
+程序接口另有 `forbiddenHeaders`（小写请求头名的列表）：带有其中任何一个请求头的请求是 `header:<名称>` 处的 `forbidden` 违规，按该协议返回 400，用于证明客户端自己的登录（如 Codex 的 `Authorization` 与 `ChatGPT-Account-Id`）没有被转发给这个上游。
+
 ## 协议
 
 | 协议 | 端点 | 鉴权 | 错误信封 |

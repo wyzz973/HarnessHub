@@ -586,6 +586,11 @@ test("field manifests and options are validated before listening", async () => {
     startFakeProvider({ apiKey: KEY }),
     /Unknown fake provider option apiKey/,
   );
+  for (const forbiddenHeaders of ["authorization", ["Authorization"], [""]])
+    await assert.rejects(
+      startFakeProvider({ forbiddenHeaders }),
+      /forbiddenHeaders must be at most 32 lowercase header names/,
+    );
   assert.equal(isLoopback("127.0.0.1"), true);
   assert.equal(isLoopback("127.8.9.10"), true);
   assert.equal(isLoopback("::1"), true);
@@ -600,6 +605,30 @@ test("field manifests and options are validated before listening", async () => {
     "128.0.0.1",
   ])
     assert.equal(isLoopback(host), false, host);
+});
+
+test("a forbidden request header is a violation in every protocol, with its path", async (t) => {
+  const fake = await provider(t, {
+    forbiddenHeaders: ["chatgpt-account-id"],
+  });
+  for (const protocol of PROTOCOLS) {
+    const clean = await send(fake, protocol);
+    assert.equal(clean.status, 200, protocol);
+    const sent = await send(fake, protocol, {
+      headers: { "ChatGPT-Account-Id": "acct-synthetic" },
+    });
+    assert.equal(sent.status, 400, protocol);
+    assertEnvelope(protocol, 400, sent.json);
+  }
+  await fake.idle();
+  const violations = fake.violations();
+  assert.equal(violations.length, PROTOCOLS.length);
+  for (const violation of violations)
+    assert.deepEqual([violation.path, violation.rule], [
+      "header:chatgpt-account-id",
+      "forbidden",
+    ]);
+  assert.ok(!JSON.stringify(fake.records()).includes("acct-synthetic"));
 });
 
 test("unknown paths, wrong methods and oversized bodies get native errors", async (t) => {

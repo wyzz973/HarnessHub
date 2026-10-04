@@ -171,6 +171,9 @@ function sendJson(response, status, value, headers = {}) {
  * @param {string} [options.logFile] Also append each record to this file as a JSON line.
  * @param {string} [options.platform] Platform the `HH_MOCK_TOOL` command is
  *   written for (default the current one).
+ * @param {string[]} [options.forbiddenHeaders] Lowercase request header names
+ *   this upstream must never receive (such as a client's own sign-in); a
+ *   request carrying one is a `forbidden` violation at `header:<name>`.
  * @returns {Promise<{url: string, port: number, models: readonly string[],
  *   mode: string, records: (after?: number) => object[],
  *   violations: () => object[], activity: () => {responses: number, timers: number, sockets: number},
@@ -371,6 +374,14 @@ export async function startFakeProvider(options = {}) {
         ) ?? null;
 
       const violations = [
+        // Headers a client of this upstream must never pass on to it.
+        ...settings.forbiddenHeaders
+          .filter((name) => request.headers[name] !== undefined)
+          .map((name) => ({
+            path: `header:${name}`,
+            rule: "forbidden",
+            message: "this upstream must never receive this header",
+          })),
         ...protocol.structure(body, routed, request),
         ...fieldViolations(
           protocolName,

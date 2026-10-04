@@ -42,6 +42,7 @@ const KEYS = [
   "maxBodyBytes",
   "logFile",
   "platform",
+  "forbiddenHeaders",
 ];
 
 function integer(value, name, minimum, maximum) {
@@ -65,7 +66,7 @@ function boolean(value, name) {
  *   fields: ReturnType<typeof resolveFields>, script: ReturnType<typeof parseScript> | null,
  *   quirks: typeof NO_QUIRKS, chunkDelayMs: number, slowMs: number, streamOnly: boolean,
  *   reasoningReplay: boolean, maxBodyBytes: number, logFile: string | undefined,
- *   platform: string}>}
+ *   platform: string, forbiddenHeaders: readonly string[]}>}
  * @throws {Error} For an unknown option, an invalid value or a host that is not loopback.
  */
 export function resolveOptions(raw = {}) {
@@ -106,6 +107,17 @@ export function resolveOptions(raw = {}) {
     (typeof raw.logFile !== "string" || !raw.logFile)
   )
     throw new Error("logFile must be a path");
+  const forbiddenHeaders = raw.forbiddenHeaders ?? [];
+  if (
+    !Array.isArray(forbiddenHeaders) ||
+    forbiddenHeaders.length > 32 ||
+    !forbiddenHeaders.every(
+      (name) => typeof name === "string" && /^[a-z0-9-]{1,64}$/.test(name),
+    )
+  )
+    throw new Error(
+      "forbiddenHeaders must be at most 32 lowercase header names",
+    );
   return Object.freeze({
     host,
     port: integer(raw.port ?? 0, "port", 0, 65535),
@@ -127,5 +139,6 @@ export function resolveOptions(raw = {}) {
     ),
     logFile: raw.logFile,
     platform: raw.platform ?? process.platform,
+    forbiddenHeaders: Object.freeze([...forbiddenHeaders]),
   });
 }
