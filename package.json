@@ -26,6 +26,7 @@
     "test:smoke": "node tools/run-tests.mjs smoke",
     "test:protocol": "node tools/run-tests.mjs protocol",
     "test:conformance": "pnpm build && node tools/conformance.mjs",
+    "test:real": "pnpm build && node dist/tests/real/check.js",
     "test:sea": "pnpm build && pnpm build:console && node tools/sea/build.mjs && node tools/sea/commands.mjs",
     "test": "pnpm build && pnpm test:tooling && pnpm test:unit && pnpm test:integration && pnpm test:smoke && pnpm test:protocol",
     "check": "pnpm check:runtime && pnpm lint && pnpm format:check && pnpm check:boundaries && pnpm check:docs && pnpm check:spdx && pnpm check:labels && pnpm test && pnpm check:api && pnpm check:console",
