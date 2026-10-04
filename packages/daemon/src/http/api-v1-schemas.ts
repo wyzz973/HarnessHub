@@ -32,6 +32,10 @@ const modelRefText = {
   pattern: "^[a-z0-9][a-z0-9-]{0,62}/\\S+$",
 } as const;
 const allowEntry = { ...modelRefText, maxLength: 600 } as const;
+/** A stored allow or deny entry: also `*`, which agent keys use for every model. */
+const storedAllowEntry = {
+  anyOf: [allowEntry, { const: "*" }],
+} as const;
 
 /** Problem details (RFC 9457) of every `/api/v1` error response. */
 export const problemSchema = {
@@ -517,7 +521,13 @@ export const gatewayKeySchema = {
     keyId: { type: "string", pattern: "^[a-z2-7]{12}$" },
     name: text(200),
     scope,
-    modelAllow: { type: "array", items: allowEntry },
+    modelAllow: { type: "array", items: storedAllowEntry },
+    modelDeny: {
+      type: "array",
+      items: storedAllowEntry,
+      description:
+        "Entries the key may not use although modelAllow admits them: the models hidden from a wired agent",
+    },
     quota,
     allowLan: { type: "boolean" },
     createdAt: timestamp,

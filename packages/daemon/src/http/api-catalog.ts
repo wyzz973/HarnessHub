@@ -1465,7 +1465,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     group: "agents",
     request: "无参数。",
     response:
-      "200：items（Agent：id、name、protocol、keyDelivery、installation{status=installed|configured-only|not-found、executable、configDirectories}、wiring{model、models、keyId、keyState、wiredAt、files、drift、driftError}|null）、nextCursor=null。",
+      "200：items（Agent：id、name、protocol、keyDelivery、capabilities{tiers、efforts、options（各选项可取值，默认值在前）}、installation{status=installed|configured-only|not-found、executable、configDirectories}、wiring{model?、tiers?、effort?、options?、models（Agent 列出且 Key 可用的模型）、hidden（隐藏的模型）、keyId?、keyState=active|revoked|expired|missing|none、wiredAt、files、drift、driftError}|null）、nextCursor=null。自己登录的 Agent（Codex 的 codexAuth=chatgpt）没有 model 与 keyId，keyState 为 none。",
     implementation:
       "AgentWiringService.list：对每个支持的 Adapter 调用 detectAgent（只查 PATH 与配置目录，不执行 Agent）、读取 WiringRecord 与其 Key，并以当前网关地址调用 detectDrift。",
     effects: "只读；不读取 Agent 的认证文件，不返回 Key 文本。",
@@ -1496,14 +1496,14 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     title: "预览接线",
     group: "agents",
     request:
-      "路径参数 id；model（provider/model 或 group/<id>）必填；models 为 Agent 模型列表中显示的模型，缺省沿用当前列表或只有 model。",
+      "路径参数 id；model（provider/model 或 group/<id>，缺省沿用当前模型）；models 为 Agent 可列出的模型（provider/model、provider/*、group/<id> 或 *，缺省沿用当前列表，首次为 *，即网关的全部模型、包括之后新增的）；tiers（capabilities.tiers 中各档的模型，缺省沿用当前，{} 清除）；effort（capabilities.efforts 之一，缺省沿用当前，null 清除）；options（capabilities.options，如 codexAuth=gateway-key|chatgpt，缺省沿用当前）。codexAuth=chatgpt 时不接受 model、models、tiers、effort。",
     response:
-      "200：AgentWiringPlan：adapterId、protocol、keyDelivery、model、changed、files[]（id、path、format、exists、hash、changes[]、diff）；diff 中 Gateway Key 显示为 hhk_a_xxxx…，被替换的旧 Key 值为 <redacted>。",
+      "200：AgentWiringPlan：adapterId、protocol、keyDelivery、model?、keyId?、changed、files[]（id、path、format、exists、hash、changes[]、diff）；diff 中 Gateway Key 显示为 hhk_a_xxxx…，被替换的旧 Key 值为 <redacted>；HarnessHub 生成的整个文件（Codex 的模型目录）只显示大小，changes 中超过 2000 字符的值被截断。",
     implementation:
-      "AgentWiringService.plan：按网关的 provider 与路由组核对模型并取窗口与输出上限，用一把不保存的临时 Key 调用 planWiring。",
+      "AgentWiringService.plan：按网关的 provider 与路由组核对模型与各档模型（须由网关提供且未被隐藏），取窗口、输出上限、推理档位（reasoning 模型为 low/medium/high）、图像输入与原生协议，用一把不保存的临时 Key 调用 planWiring；自己登录的 Agent 不用 Key。",
     effects: "只读；不写文件，不签发 Key。",
     errors:
-      "404 WIRING_ADAPTER_UNKNOWN；400 AGENT_MODEL_UNAVAILABLE（网关不提供的模型）；409 WIRING_CONFIG_UNPARSEABLE、WIRING_SYMLINK_ESCAPE、WIRING_PATH_CONFLICT、WIRING_UNSUPPORTED_STRUCTURE；503 GATEWAY_NOT_LISTENING；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+      "404 WIRING_ADAPTER_UNKNOWN；400 AGENT_MODEL_UNAVAILABLE（网关不提供的模型）、AGENT_WIRING_INVALID（缺模型，或自己登录的 Agent 收到模型等）、WIRING_TARGET_INVALID（Agent 没有的档位、effort 或选项）；409 AGENT_MODEL_IN_USE（所选模型被隐藏）、WIRING_CONFIG_UNPARSEABLE、WIRING_SYMLINK_ESCAPE、WIRING_PATH_CONFLICT、WIRING_UNSUPPORTED_STRUCTURE；503 GATEWAY_NOT_LISTENING；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/agents-routes.ts",
     tests: ["tests/integration/agents-wiring.test.ts"],
     operationId: "hh_api_v1_plan_agent_wiring",
@@ -1514,10 +1514,10 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     title: "接线到网关",
     group: "agents",
     request:
-      "路径参数 id；model 必填，models 同预览；expect 必填，为用户确认的计划（预览响应即可），按 files[].path、exists、hash 核对。",
+      "路径参数 id；model、models、tiers、effort、options 同预览；expect 必填，为用户确认的计划（预览响应即可），按 files[].path、exists、hash 核对。",
     response: "200：接线后的 Agent。",
     implementation:
-      "AgentWiringService.wire：签发 agent:<id> 作用域、modelAllow 为 model 与 models、不过期的新 Key，applyWiring 备份、原子写并回读校验，提交 WiringRecord 后吊销旧 Key；任何失败都吊销新 Key。Key 文本只写入 Agent 的配置文件，守护进程不保存。",
+      "AgentWiringService.wire：签发 agent:<id> 作用域、不过期的新 Key（modelAllow 为 models，未含 * 时加上 model 与各档模型；modelDeny 沿用当前隐藏列表），applyWiring 备份、原子写并回读校验，提交 WiringRecord（含 tiers、effort、options）后吊销旧 Key；任何失败都吊销新 Key。Key 文本只写入 Agent 的配置文件，守护进程不保存。codexAuth=chatgpt 时不签发 Key，只写 openai_base_url，并吊销之前的 Key。",
     effects:
       "改写 Agent 的配置文件（备份在 <dataDir>/backups/wiring/）；写入 gateway_keys 与 wirings 表。",
     errors:
@@ -1534,10 +1534,10 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     request: "路径参数 id；请求体为空对象。",
     response: "200：换 Key 后的 Agent。",
     implementation:
-      "AgentWiringService.rotate：以当前 model 与 Key 的 modelAllow 重新接线，流程同接线（不核对预览）。",
+      "AgentWiringService.rotate：以当前 model、tiers、effort、options 与 Key 的 modelAllow、modelDeny 重新接线，流程同接线（不核对预览）。",
     effects: "改写配置文件中的 Key；旧 Key 立即吊销。",
     errors:
-      "409 AGENT_NOT_WIRED；其余同接线；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+      "409 AGENT_NOT_WIRED、AGENT_KEYLESS（自己登录、没有 Key 的 Agent）；其余同接线；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/agents-routes.ts",
     tests: ["tests/integration/agents-wiring.test.ts"],
     operationId: "hh_api_v1_rotate_agent_key",
@@ -1551,7 +1551,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     response:
       "200：agent（还原后）与 files[]（path、action=restored|deleted|reverse-patched|unchanged|absent）。",
     implementation:
-      "AgentWiringService.unwire：unwire 在文件未变时写回原始字节、否则只恢复 HarnessHub 写过的键，然后吊销 Key 并删除 WiringRecord。",
+      "AgentWiringService.unwire：unwire 在文件未变时写回原始字节（接线新建的文件被删除）、否则只恢复 HarnessHub 写过的键，然后吊销 Key（有 Key 时）并删除 WiringRecord。",
     effects:
       "改写或删除 Agent 的配置文件；吊销 Key；删除 wirings 记录。失败时记录与 Key 保留，可重试。",
     errors:
@@ -1559,5 +1559,124 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     source: "packages/daemon/src/http/agents-routes.ts",
     tests: ["tests/integration/agents-wiring.test.ts"],
     operationId: "hh_api_v1_unwire_agent",
+  },
+  {
+    method: "PUT",
+    path: "/api/v1/agents/{id}/models",
+    title: "设置 Agent 隐藏的模型",
+    group: "agents",
+    request:
+      "路径参数 id；hidden 必填：要对该 Agent 隐藏的模型（provider/model、provider/*、group/<id> 或 *），其余模型（包括之后新增的）都显示；空数组显示全部。",
+    response:
+      "200：更新后的 Agent，wiring.models 为显示的模型，wiring.hidden 为隐藏列表。",
+    implementation:
+      "AgentWiringService.setHidden：把 Agent Key 的 modelDeny 改为 hidden（同一把 Key，不轮换），再从 Agent 文件中读回这把 Key、以过滤后的模型列表经 applyWiring 重写其模型清单（OpenCode、Pi、Crush、Kimi 的模型条目，Codex 的模型目录，Claude 的 CLAUDE_CODE_MODEL_CAPABILITIES）；网关的 /v1/models 与调用对这把 Key 按同一列表过滤。重写失败时 modelDeny 恢复原值。",
+    effects:
+      "改写 gateway_keys 中该 Key 的 modelDeny；按需改写 Agent 的配置文件（备份同接线）并更新 wirings 记录。",
+    errors:
+      "400 AGENT_MODELS_INVALID；409 AGENT_NOT_WIRED、AGENT_KEYLESS、AGENT_KEY_INACTIVE（Key 已吊销或丢失）、AGENT_MODEL_IN_USE（隐藏了 Agent 正在用的模型或档位模型）、AGENT_KEY_NOT_IN_FILES（Agent 文件中已没有它的 Key，需 rotate）；其余同接线；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/agents-routes.ts",
+    tests: ["tests/integration/agents-wiring.test.ts"],
+    operationId: "hh_api_v1_set_agent_models",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/profiles",
+    title: "接线 Profile 列表",
+    group: "agents",
+    request: "无参数。",
+    response:
+      "200：items（Profile：name、agents{<agent id>: {model?、tiers?、effort?、options?}}、createdAt、updatedAt）按名称排序、nextCursor=null。",
+    implementation:
+      "AgentWiringService.listProfiles：读取 wiring_profiles 表。",
+    effects: "只读。",
+    errors:
+      "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/agents-routes.ts",
+    tests: ["tests/integration/agents-wiring.test.ts"],
+    operationId: "hh_api_v1_list_profiles",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/profiles/{name}",
+    title: "单个接线 Profile",
+    group: "agents",
+    request:
+      "路径参数 name（1 到 64 个字母、数字、.、_、-，以字母或数字开头）。",
+    response: "200：Profile，字段同列表项。",
+    implementation: "AgentWiringService.getProfile。",
+    effects: "只读。",
+    errors:
+      "400 请求校验失败；404 PROFILE_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/agents-routes.ts",
+    tests: ["tests/integration/agents-wiring.test.ts"],
+    operationId: "hh_api_v1_get_profile",
+  },
+  {
+    method: "PUT",
+    path: "/api/v1/profiles/{name}",
+    title: "保存接线 Profile",
+    group: "agents",
+    request: "路径参数 name；请求体为空对象。",
+    response: "200：保存的 Profile。",
+    implementation:
+      "AgentWiringService.saveProfile：把每个已接线 Agent 的 model、tiers、effort、options 存为该名称的 Profile，同名则替换（保留 createdAt）。隐藏的模型与 Key 不属于 Profile。",
+    effects: "写入 wiring_profiles 表；不改 Agent 文件。",
+    errors:
+      "400 请求校验失败；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/agents-routes.ts",
+    tests: ["tests/integration/agents-wiring.test.ts"],
+    operationId: "hh_api_v1_save_profile",
+  },
+  {
+    method: "DELETE",
+    path: "/api/v1/profiles/{name}",
+    title: "删除接线 Profile",
+    group: "agents",
+    request: "路径参数 name。",
+    response: "204：无内容。",
+    implementation: "AgentWiringService.deleteProfile。",
+    effects: "删除 wiring_profiles 中的一行；不改 Agent 文件。",
+    errors:
+      "404 PROFILE_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/agents-routes.ts",
+    tests: ["tests/integration/agents-wiring.test.ts"],
+    operationId: "hh_api_v1_delete_profile",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/profiles/{name}/plan",
+    title: "预览应用接线 Profile",
+    group: "agents",
+    request: "路径参数 name；请求体为空对象。",
+    response:
+      "200：profile 与 agents[]（adapterId、changed、plan）：选择与当前接线相同的 Agent changed=false、plan=null，其余为预览接线的计划。",
+    implementation:
+      "AgentWiringService.planProfile：对 Profile 中每个 Agent 比较 model、tiers、effort、options，不同的按预览接线计算计划（临时 Key 不保存）。不在 Profile 中的 Agent 不受影响。",
+    effects: "只读；不写文件，不签发 Key。",
+    errors:
+      "404 PROFILE_NOT_FOUND、WIRING_ADAPTER_UNKNOWN；其余同预览接线；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/agents-routes.ts",
+    tests: ["tests/integration/agents-wiring.test.ts"],
+    operationId: "hh_api_v1_plan_profile",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/profiles/{name}/apply",
+    title: "应用接线 Profile",
+    group: "agents",
+    request:
+      "路径参数 name；expect 必填：按 Agent id 给出每个要改变的 Agent 确认过的计划（预览响应中 agents[].plan 即可）。",
+    response:
+      "200：profile 与 agents[]（adapterId、outcome=applied|unchanged、agent）。",
+    implementation:
+      "AgentWiringService.applyProfile：先确认每个与当前不同的 Agent 都有 expect，再逐个经接线同一路径（新 Key、备份、原子写、回读校验、吊销旧 Key）切换；遇到第一个失败即停止，错误信息列出已切换的 Agent。",
+    effects:
+      "改写所切换 Agent 的配置文件；签发新 Key、吊销旧 Key；更新 wirings 记录。",
+    errors:
+      "409 PROFILE_PLAN_STALE（预览后有 Agent 改变，未写任何文件）、WIRING_CONCURRENT_MODIFICATION；404 PROFILE_NOT_FOUND；其余同接线，消息前缀为停止处的 Agent；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/agents-routes.ts",
+    tests: ["tests/integration/agents-wiring.test.ts"],
+    operationId: "hh_api_v1_apply_profile",
   },
 ];

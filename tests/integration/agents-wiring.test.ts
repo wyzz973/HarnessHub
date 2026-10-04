@@ -176,7 +176,8 @@ void test("wiring Codex points it at the gateway with a working agent key; rotat
   const keys = (await client.gatewayKeys.list()).items;
   const issued = keys.find((key) => key.keyId === agent.wiring!.keyId)!;
   assert.deepEqual(issued.scope, { kind: "agent", adapterId: "codex" });
-  assert.deepEqual(issued.modelAllow, [MODEL]);
+  // Every model of the gateway, including ones added later.
+  assert.deepEqual(issued.modelAllow, ["*"]);
   assert.equal(issued.expiresAt, undefined);
   // The daemon keeps no copy of the key text.
   for (const file of await files(dataDir))

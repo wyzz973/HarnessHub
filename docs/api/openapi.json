@@ -23348,11 +23348,39 @@
                           "modelAllow": {
                             "type": "array",
                             "items": {
-                              "type": "string",
-                              "minLength": 3,
-                              "maxLength": 600,
-                              "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "minLength": 3,
+                                  "maxLength": 600,
+                                  "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                },
+                                {
+                                  "enum": [
+                                    "*"
+                                  ]
+                                }
+                              ]
                             }
+                          },
+                          "modelDeny": {
+                            "type": "array",
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "minLength": 3,
+                                  "maxLength": 600,
+                                  "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                },
+                                {
+                                  "enum": [
+                                    "*"
+                                  ]
+                                }
+                              ]
+                            },
+                            "description": "Entries the key may not use although modelAllow admits them: the models hidden from a wired agent"
                           },
                           "quota": {
                             "type": "object",
@@ -23621,11 +23649,39 @@
                         "modelAllow": {
                           "type": "array",
                           "items": {
-                            "type": "string",
-                            "minLength": 3,
-                            "maxLength": 600,
-                            "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 3,
+                                "maxLength": 600,
+                                "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                              },
+                              {
+                                "enum": [
+                                  "*"
+                                ]
+                              }
+                            ]
                           }
+                        },
+                        "modelDeny": {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 3,
+                                "maxLength": 600,
+                                "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                              },
+                              {
+                                "enum": [
+                                  "*"
+                                ]
+                              }
+                            ]
+                          },
+                          "description": "Entries the key may not use although modelAllow admits them: the models hidden from a wired agent"
                         },
                         "quota": {
                           "type": "object",
@@ -23831,11 +23887,39 @@
                     "modelAllow": {
                       "type": "array",
                       "items": {
-                        "type": "string",
-                        "minLength": 3,
-                        "maxLength": 600,
-                        "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 3,
+                            "maxLength": 600,
+                            "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                          },
+                          {
+                            "enum": [
+                              "*"
+                            ]
+                          }
+                        ]
                       }
+                    },
+                    "modelDeny": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 3,
+                            "maxLength": 600,
+                            "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                          },
+                          {
+                            "enum": [
+                              "*"
+                            ]
+                          }
+                        ]
+                      },
+                      "description": "Entries the key may not use although modelAllow admits them: the models hidden from a wired agent"
                     },
                     "quota": {
                       "type": "object",
@@ -24051,11 +24135,39 @@
                     "modelAllow": {
                       "type": "array",
                       "items": {
-                        "type": "string",
-                        "minLength": 3,
-                        "maxLength": 600,
-                        "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 3,
+                            "maxLength": 600,
+                            "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                          },
+                          {
+                            "enum": [
+                              "*"
+                            ]
+                          }
+                        ]
                       }
+                    },
+                    "modelDeny": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 3,
+                            "maxLength": 600,
+                            "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                          },
+                          {
+                            "enum": [
+                              "*"
+                            ]
+                          }
+                        ]
+                      },
+                      "description": "Entries the key may not use although modelAllow admits them: the models hidden from a wired agent"
                     },
                     "quota": {
                       "type": "object",
@@ -24980,7 +25092,7 @@
         "tags": [
           "agents"
         ],
-        "description": "AgentWiringService.list：对每个支持的 Adapter 调用 detectAgent（只查 PATH 与配置目录，不执行 Agent）、读取 WiringRecord 与其 Key，并以当前网关地址调用 detectDrift。\n\n输入：无参数。\n\n返回：200：items（Agent：id、name、protocol、keyDelivery、installation{status=installed|configured-only|not-found、executable、configDirectories}、wiring{model、models、keyId、keyState、wiredAt、files、drift、driftError}|null）、nextCursor=null。\n\n副作用：只读；不读取 Agent 的认证文件，不返回 Key 文本。\n\n失败与边界：守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "description": "AgentWiringService.list：对每个支持的 Adapter 调用 detectAgent（只查 PATH 与配置目录，不执行 Agent）、读取 WiringRecord 与其 Key，并以当前网关地址调用 detectDrift。\n\n输入：无参数。\n\n返回：200：items（Agent：id、name、protocol、keyDelivery、capabilities{tiers、efforts、options（各选项可取值，默认值在前）}、installation{status=installed|configured-only|not-found、executable、configDirectories}、wiring{model?、tiers?、effort?、options?、models（Agent 列出且 Key 可用的模型）、hidden（隐藏的模型）、keyId?、keyState=active|revoked|expired|missing|none、wiredAt、files、drift、driftError}|null）、nextCursor=null。自己登录的 Agent（Codex 的 codexAuth=chatgpt）没有 model 与 keyId，keyState 为 none。\n\n副作用：只读；不读取 Agent 的认证文件，不返回 Key 文本。\n\n失败与边界：守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
         "responses": {
           "200": {
             "description": "Default Response",
@@ -25004,6 +25116,7 @@
                           "name",
                           "protocol",
                           "keyDelivery",
+                          "capabilities",
                           "installation",
                           "wiring"
                         ],
@@ -25027,6 +25140,53 @@
                               "config-file",
                               "env-file"
                             ]
+                          },
+                          "capabilities": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "tiers",
+                              "efforts",
+                              "options"
+                            ],
+                            "properties": {
+                              "tiers": {
+                                "type": "array",
+                                "items": {
+                                  "enum": [
+                                    "opus",
+                                    "sonnet",
+                                    "haiku",
+                                    "fable",
+                                    "subagent"
+                                  ]
+                                }
+                              },
+                              "efforts": {
+                                "type": "array",
+                                "items": {
+                                  "enum": [
+                                    "none",
+                                    "minimal",
+                                    "low",
+                                    "medium",
+                                    "high",
+                                    "xhigh",
+                                    "max"
+                                  ]
+                                }
+                              },
+                              "options": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "description": "Allowed values per option, the default first"
+                              }
+                            }
                           },
                           "installation": {
                             "type": "object",
@@ -25058,9 +25218,8 @@
                             "type": "object",
                             "additionalProperties": false,
                             "required": [
-                              "model",
                               "models",
-                              "keyId",
+                              "hidden",
                               "keyState",
                               "wiredAt",
                               "files",
@@ -25068,23 +25227,88 @@
                             ],
                             "properties": {
                               "model": {
-                                "type": "string"
+                                "type": "string",
+                                "description": "Absent for an agent that keeps its own models"
+                              },
+                              "tiers": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "opus": {
+                                    "type": "string",
+                                    "minLength": 3,
+                                    "maxLength": 512,
+                                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                  },
+                                  "sonnet": {
+                                    "type": "string",
+                                    "minLength": 3,
+                                    "maxLength": 512,
+                                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                  },
+                                  "haiku": {
+                                    "type": "string",
+                                    "minLength": 3,
+                                    "maxLength": 512,
+                                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                  },
+                                  "fable": {
+                                    "type": "string",
+                                    "minLength": 3,
+                                    "maxLength": 512,
+                                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                  },
+                                  "subagent": {
+                                    "type": "string",
+                                    "minLength": 3,
+                                    "maxLength": 512,
+                                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                  }
+                                },
+                                "description": "A model per tier the agent has (capabilities.tiers); an absent tier follows model"
+                              },
+                              "effort": {
+                                "enum": [
+                                  "none",
+                                  "minimal",
+                                  "low",
+                                  "medium",
+                                  "high",
+                                  "xhigh",
+                                  "max"
+                                ]
+                              },
+                              "options": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "string"
+                                }
                               },
                               "models": {
                                 "type": "array",
                                 "items": {
                                   "type": "string"
-                                }
+                                },
+                                "description": "The models the agent lists and its key may use; models added to the gateway later are included"
+                              },
+                              "hidden": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "Models hidden from the agent (its key's deny list)"
                               },
                               "keyId": {
-                                "type": "string"
+                                "type": "string",
+                                "description": "Absent for an agent that signs in by itself"
                               },
                               "keyState": {
                                 "enum": [
                                   "active",
                                   "revoked",
                                   "expired",
-                                  "missing"
+                                  "missing",
+                                  "none"
                                 ]
                               },
                               "wiredAt": {
@@ -25293,6 +25517,7 @@
                     "name",
                     "protocol",
                     "keyDelivery",
+                    "capabilities",
                     "installation",
                     "wiring"
                   ],
@@ -25316,6 +25541,53 @@
                         "config-file",
                         "env-file"
                       ]
+                    },
+                    "capabilities": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "tiers",
+                        "efforts",
+                        "options"
+                      ],
+                      "properties": {
+                        "tiers": {
+                          "type": "array",
+                          "items": {
+                            "enum": [
+                              "opus",
+                              "sonnet",
+                              "haiku",
+                              "fable",
+                              "subagent"
+                            ]
+                          }
+                        },
+                        "efforts": {
+                          "type": "array",
+                          "items": {
+                            "enum": [
+                              "none",
+                              "minimal",
+                              "low",
+                              "medium",
+                              "high",
+                              "xhigh",
+                              "max"
+                            ]
+                          }
+                        },
+                        "options": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "description": "Allowed values per option, the default first"
+                        }
+                      }
                     },
                     "installation": {
                       "type": "object",
@@ -25347,9 +25619,8 @@
                       "type": "object",
                       "additionalProperties": false,
                       "required": [
-                        "model",
                         "models",
-                        "keyId",
+                        "hidden",
                         "keyState",
                         "wiredAt",
                         "files",
@@ -25357,23 +25628,88 @@
                       ],
                       "properties": {
                         "model": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Absent for an agent that keeps its own models"
+                        },
+                        "tiers": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "opus": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 512,
+                              "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                            },
+                            "sonnet": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 512,
+                              "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                            },
+                            "haiku": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 512,
+                              "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                            },
+                            "fable": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 512,
+                              "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                            },
+                            "subagent": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 512,
+                              "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                            }
+                          },
+                          "description": "A model per tier the agent has (capabilities.tiers); an absent tier follows model"
+                        },
+                        "effort": {
+                          "enum": [
+                            "none",
+                            "minimal",
+                            "low",
+                            "medium",
+                            "high",
+                            "xhigh",
+                            "max"
+                          ]
+                        },
+                        "options": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          }
                         },
                         "models": {
                           "type": "array",
                           "items": {
                             "type": "string"
-                          }
+                          },
+                          "description": "The models the agent lists and its key may use; models added to the gateway later are included"
+                        },
+                        "hidden": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Models hidden from the agent (its key's deny list)"
                         },
                         "keyId": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Absent for an agent that signs in by itself"
                         },
                         "keyState": {
                           "enum": [
                             "active",
                             "revoked",
                             "expired",
-                            "missing"
+                            "missing",
+                            "none"
                           ]
                         },
                         "wiredAt": {
@@ -25550,7 +25886,7 @@
         "tags": [
           "agents"
         ],
-        "description": "AgentWiringService.plan：按网关的 provider 与路由组核对模型并取窗口与输出上限，用一把不保存的临时 Key 调用 planWiring。\n\n输入：路径参数 id；model（provider/model 或 group/<id>）必填；models 为 Agent 模型列表中显示的模型，缺省沿用当前列表或只有 model。\n\n返回：200：AgentWiringPlan：adapterId、protocol、keyDelivery、model、changed、files[]（id、path、format、exists、hash、changes[]、diff）；diff 中 Gateway Key 显示为 hhk_a_xxxx…，被替换的旧 Key 值为 <redacted>。\n\n副作用：只读；不写文件，不签发 Key。\n\n失败与边界：404 WIRING_ADAPTER_UNKNOWN；400 AGENT_MODEL_UNAVAILABLE（网关不提供的模型）；409 WIRING_CONFIG_UNPARSEABLE、WIRING_SYMLINK_ESCAPE、WIRING_PATH_CONFLICT、WIRING_UNSUPPORTED_STRUCTURE；503 GATEWAY_NOT_LISTENING；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "description": "AgentWiringService.plan：按网关的 provider 与路由组核对模型与各档模型（须由网关提供且未被隐藏），取窗口、输出上限、推理档位（reasoning 模型为 low/medium/high）、图像输入与原生协议，用一把不保存的临时 Key 调用 planWiring；自己登录的 Agent 不用 Key。\n\n输入：路径参数 id；model（provider/model 或 group/<id>，缺省沿用当前模型）；models 为 Agent 可列出的模型（provider/model、provider/*、group/<id> 或 *，缺省沿用当前列表，首次为 *，即网关的全部模型、包括之后新增的）；tiers（capabilities.tiers 中各档的模型，缺省沿用当前，{} 清除）；effort（capabilities.efforts 之一，缺省沿用当前，null 清除）；options（capabilities.options，如 codexAuth=gateway-key|chatgpt，缺省沿用当前）。codexAuth=chatgpt 时不接受 model、models、tiers、effort。\n\n返回：200：AgentWiringPlan：adapterId、protocol、keyDelivery、model?、keyId?、changed、files[]（id、path、format、exists、hash、changes[]、diff）；diff 中 Gateway Key 显示为 hhk_a_xxxx…，被替换的旧 Key 值为 <redacted>；HarnessHub 生成的整个文件（Codex 的模型目录）只显示大小，changes 中超过 2000 字符的值被截断。\n\n副作用：只读；不写文件，不签发 Key。\n\n失败与边界：404 WIRING_ADAPTER_UNKNOWN；400 AGENT_MODEL_UNAVAILABLE（网关不提供的模型）、AGENT_WIRING_INVALID（缺模型，或自己登录的 Agent 收到模型等）、WIRING_TARGET_INVALID（Agent 没有的档位、effort 或选项）；409 AGENT_MODEL_IN_USE（所选模型被隐藏）、WIRING_CONFIG_UNPARSEABLE、WIRING_SYMLINK_ESCAPE、WIRING_PATH_CONFLICT、WIRING_UNSUPPORTED_STRUCTURE；503 GATEWAY_NOT_LISTENING；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
         "requestBody": {
           "required": true,
           "content": {
@@ -25558,26 +25894,95 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": [
-                  "model"
-                ],
                 "properties": {
                   "model": {
                     "type": "string",
                     "minLength": 3,
                     "maxLength": 512,
-                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$",
+                    "description": "Default: the current model; an agent that signs in by itself takes none"
                   },
                   "models": {
                     "type": "array",
                     "maxItems": 500,
                     "items": {
-                      "type": "string",
-                      "minLength": 3,
-                      "maxLength": 512,
-                      "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 3,
+                          "maxLength": 512,
+                          "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                        },
+                        {
+                          "enum": [
+                            "*"
+                          ]
+                        }
+                      ]
                     },
-                    "description": "Models the agent's picker lists (and its key allows); default: the current list, or just model"
+                    "description": "Models the agent may list (and its key allows): provider/model, provider/*, group/<id> or *; default: the current list, else *"
+                  },
+                  "tiers": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "opus": {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 512,
+                        "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                      },
+                      "sonnet": {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 512,
+                        "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                      },
+                      "haiku": {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 512,
+                        "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                      },
+                      "fable": {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 512,
+                        "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                      },
+                      "subagent": {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 512,
+                        "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                      }
+                    },
+                    "description": "A model per tier the agent has (capabilities.tiers); an absent tier follows model"
+                  },
+                  "effort": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "minimal",
+                      "low",
+                      "medium",
+                      "high",
+                      "xhigh",
+                      "max",
+                      null
+                    ],
+                    "description": "One of capabilities.efforts; default: the current effort; null clears it",
+                    "nullable": true
+                  },
+                  "options": {
+                    "type": "object",
+                    "maxProperties": 20,
+                    "additionalProperties": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "description": "Adapter options (capabilities.options), such as codexAuth: chatgpt"
                   }
                 }
               }
@@ -25607,7 +26012,6 @@
                     "adapterId",
                     "protocol",
                     "keyDelivery",
-                    "model",
                     "changed",
                     "files"
                   ],
@@ -25630,6 +26034,9 @@
                       ]
                     },
                     "model": {
+                      "type": "string"
+                    },
+                    "keyId": {
                       "type": "string"
                     },
                     "changed": {
@@ -25703,7 +26110,7 @@
                           },
                           "diff": {
                             "type": "string",
-                            "description": "Unified diff; Gateway Keys appear as hhk_a_xxxx… and replaced key values as <redacted>"
+                            "description": "Unified diff; Gateway Keys appear as hhk_a_xxxx… and replaced key values as <redacted>; a file HarnessHub generates is summarised by its size"
                           }
                         }
                       }
@@ -25801,7 +26208,7 @@
         "tags": [
           "agents"
         ],
-        "description": "AgentWiringService.wire：签发 agent:<id> 作用域、modelAllow 为 model 与 models、不过期的新 Key，applyWiring 备份、原子写并回读校验，提交 WiringRecord 后吊销旧 Key；任何失败都吊销新 Key。Key 文本只写入 Agent 的配置文件，守护进程不保存。\n\n输入：路径参数 id；model 必填，models 同预览；expect 必填，为用户确认的计划（预览响应即可），按 files[].path、exists、hash 核对。\n\n返回：200：接线后的 Agent。\n\n副作用：改写 Agent 的配置文件（备份在 <dataDir>/backups/wiring/）；写入 gateway_keys 与 wirings 表。\n\n失败与边界：409 WIRING_CONCURRENT_MODIFICATION（文件在预览后被改动，新 Key 已吊销）；500 WIRING_WRITE_FAILED、WIRING_VERIFY_FAILED（已写文件恢复为写前字节，消息列出恢复情况）；其余同预览；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "description": "AgentWiringService.wire：签发 agent:<id> 作用域、不过期的新 Key（modelAllow 为 models，未含 * 时加上 model 与各档模型；modelDeny 沿用当前隐藏列表），applyWiring 备份、原子写并回读校验，提交 WiringRecord（含 tiers、effort、options）后吊销旧 Key；任何失败都吊销新 Key。Key 文本只写入 Agent 的配置文件，守护进程不保存。codexAuth=chatgpt 时不签发 Key，只写 openai_base_url，并吊销之前的 Key。\n\n输入：路径参数 id；model、models、tiers、effort、options 同预览；expect 必填，为用户确认的计划（预览响应即可），按 files[].path、exists、hash 核对。\n\n返回：200：接线后的 Agent。\n\n副作用：改写 Agent 的配置文件（备份在 <dataDir>/backups/wiring/）；写入 gateway_keys 与 wirings 表。\n\n失败与边界：409 WIRING_CONCURRENT_MODIFICATION（文件在预览后被改动，新 Key 已吊销）；500 WIRING_WRITE_FAILED、WIRING_VERIFY_FAILED（已写文件恢复为写前字节，消息列出恢复情况）；其余同预览；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
         "requestBody": {
           "required": true,
           "content": {
@@ -25810,7 +26217,6 @@
                 "type": "object",
                 "additionalProperties": false,
                 "required": [
-                  "model",
                   "expect"
                 ],
                 "properties": {
@@ -25818,18 +26224,90 @@
                     "type": "string",
                     "minLength": 3,
                     "maxLength": 512,
-                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$",
+                    "description": "Default: the current model; an agent that signs in by itself takes none"
                   },
                   "models": {
                     "type": "array",
                     "maxItems": 500,
                     "items": {
-                      "type": "string",
-                      "minLength": 3,
-                      "maxLength": 512,
-                      "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 3,
+                          "maxLength": 512,
+                          "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                        },
+                        {
+                          "enum": [
+                            "*"
+                          ]
+                        }
+                      ]
                     },
-                    "description": "Models the agent's picker lists (and its key allows); default: the current list, or just model"
+                    "description": "Models the agent may list (and its key allows): provider/model, provider/*, group/<id> or *; default: the current list, else *"
+                  },
+                  "tiers": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "opus": {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 512,
+                        "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                      },
+                      "sonnet": {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 512,
+                        "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                      },
+                      "haiku": {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 512,
+                        "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                      },
+                      "fable": {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 512,
+                        "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                      },
+                      "subagent": {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 512,
+                        "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                      }
+                    },
+                    "description": "A model per tier the agent has (capabilities.tiers); an absent tier follows model"
+                  },
+                  "effort": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "minimal",
+                      "low",
+                      "medium",
+                      "high",
+                      "xhigh",
+                      "max",
+                      null
+                    ],
+                    "description": "One of capabilities.efforts; default: the current effort; null clears it",
+                    "nullable": true
+                  },
+                  "options": {
+                    "type": "object",
+                    "maxProperties": 20,
+                    "additionalProperties": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "description": "Adapter options (capabilities.options), such as codexAuth: chatgpt"
                   },
                   "expect": {
                     "type": "object",
@@ -25894,6 +26372,7 @@
                     "name",
                     "protocol",
                     "keyDelivery",
+                    "capabilities",
                     "installation",
                     "wiring"
                   ],
@@ -25917,6 +26396,53 @@
                         "config-file",
                         "env-file"
                       ]
+                    },
+                    "capabilities": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "tiers",
+                        "efforts",
+                        "options"
+                      ],
+                      "properties": {
+                        "tiers": {
+                          "type": "array",
+                          "items": {
+                            "enum": [
+                              "opus",
+                              "sonnet",
+                              "haiku",
+                              "fable",
+                              "subagent"
+                            ]
+                          }
+                        },
+                        "efforts": {
+                          "type": "array",
+                          "items": {
+                            "enum": [
+                              "none",
+                              "minimal",
+                              "low",
+                              "medium",
+                              "high",
+                              "xhigh",
+                              "max"
+                            ]
+                          }
+                        },
+                        "options": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "description": "Allowed values per option, the default first"
+                        }
+                      }
                     },
                     "installation": {
                       "type": "object",
@@ -25948,9 +26474,8 @@
                       "type": "object",
                       "additionalProperties": false,
                       "required": [
-                        "model",
                         "models",
-                        "keyId",
+                        "hidden",
                         "keyState",
                         "wiredAt",
                         "files",
@@ -25958,23 +26483,88 @@
                       ],
                       "properties": {
                         "model": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Absent for an agent that keeps its own models"
+                        },
+                        "tiers": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "opus": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 512,
+                              "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                            },
+                            "sonnet": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 512,
+                              "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                            },
+                            "haiku": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 512,
+                              "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                            },
+                            "fable": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 512,
+                              "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                            },
+                            "subagent": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 512,
+                              "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                            }
+                          },
+                          "description": "A model per tier the agent has (capabilities.tiers); an absent tier follows model"
+                        },
+                        "effort": {
+                          "enum": [
+                            "none",
+                            "minimal",
+                            "low",
+                            "medium",
+                            "high",
+                            "xhigh",
+                            "max"
+                          ]
+                        },
+                        "options": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          }
                         },
                         "models": {
                           "type": "array",
                           "items": {
                             "type": "string"
-                          }
+                          },
+                          "description": "The models the agent lists and its key may use; models added to the gateway later are included"
+                        },
+                        "hidden": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Models hidden from the agent (its key's deny list)"
                         },
                         "keyId": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Absent for an agent that signs in by itself"
                         },
                         "keyState": {
                           "enum": [
                             "active",
                             "revoked",
                             "expired",
-                            "missing"
+                            "missing",
+                            "none"
                           ]
                         },
                         "wiredAt": {
@@ -26149,7 +26739,7 @@
         "tags": [
           "agents"
         ],
-        "description": "AgentWiringService.unwire：unwire 在文件未变时写回原始字节、否则只恢复 HarnessHub 写过的键，然后吊销 Key 并删除 WiringRecord。\n\n输入：路径参数 id。\n\n返回：200：agent（还原后）与 files[]（path、action=restored|deleted|reverse-patched|unchanged|absent）。\n\n副作用：改写或删除 Agent 的配置文件；吊销 Key；删除 wirings 记录。失败时记录与 Key 保留，可重试。\n\n失败与边界：409 AGENT_NOT_WIRED、WIRING_CONFIG_UNPARSEABLE；500 WIRING_BACKUP_INVALID；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "description": "AgentWiringService.unwire：unwire 在文件未变时写回原始字节（接线新建的文件被删除）、否则只恢复 HarnessHub 写过的键，然后吊销 Key（有 Key 时）并删除 WiringRecord。\n\n输入：路径参数 id。\n\n返回：200：agent（还原后）与 files[]（path、action=restored|deleted|reverse-patched|unchanged|absent）。\n\n副作用：改写或删除 Agent 的配置文件；吊销 Key；删除 wirings 记录。失败时记录与 Key 保留，可重试。\n\n失败与边界：409 AGENT_NOT_WIRED、WIRING_CONFIG_UNPARSEABLE；500 WIRING_BACKUP_INVALID；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
         "parameters": [
           {
             "schema": {
@@ -26182,6 +26772,7 @@
                         "name",
                         "protocol",
                         "keyDelivery",
+                        "capabilities",
                         "installation",
                         "wiring"
                       ],
@@ -26205,6 +26796,53 @@
                             "config-file",
                             "env-file"
                           ]
+                        },
+                        "capabilities": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "tiers",
+                            "efforts",
+                            "options"
+                          ],
+                          "properties": {
+                            "tiers": {
+                              "type": "array",
+                              "items": {
+                                "enum": [
+                                  "opus",
+                                  "sonnet",
+                                  "haiku",
+                                  "fable",
+                                  "subagent"
+                                ]
+                              }
+                            },
+                            "efforts": {
+                              "type": "array",
+                              "items": {
+                                "enum": [
+                                  "none",
+                                  "minimal",
+                                  "low",
+                                  "medium",
+                                  "high",
+                                  "xhigh",
+                                  "max"
+                                ]
+                              }
+                            },
+                            "options": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "description": "Allowed values per option, the default first"
+                            }
+                          }
                         },
                         "installation": {
                           "type": "object",
@@ -26236,9 +26874,8 @@
                           "type": "object",
                           "additionalProperties": false,
                           "required": [
-                            "model",
                             "models",
-                            "keyId",
+                            "hidden",
                             "keyState",
                             "wiredAt",
                             "files",
@@ -26246,23 +26883,88 @@
                           ],
                           "properties": {
                             "model": {
-                              "type": "string"
+                              "type": "string",
+                              "description": "Absent for an agent that keeps its own models"
+                            },
+                            "tiers": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "opus": {
+                                  "type": "string",
+                                  "minLength": 3,
+                                  "maxLength": 512,
+                                  "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                },
+                                "sonnet": {
+                                  "type": "string",
+                                  "minLength": 3,
+                                  "maxLength": 512,
+                                  "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                },
+                                "haiku": {
+                                  "type": "string",
+                                  "minLength": 3,
+                                  "maxLength": 512,
+                                  "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                },
+                                "fable": {
+                                  "type": "string",
+                                  "minLength": 3,
+                                  "maxLength": 512,
+                                  "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                },
+                                "subagent": {
+                                  "type": "string",
+                                  "minLength": 3,
+                                  "maxLength": 512,
+                                  "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                }
+                              },
+                              "description": "A model per tier the agent has (capabilities.tiers); an absent tier follows model"
+                            },
+                            "effort": {
+                              "enum": [
+                                "none",
+                                "minimal",
+                                "low",
+                                "medium",
+                                "high",
+                                "xhigh",
+                                "max"
+                              ]
+                            },
+                            "options": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "string"
+                              }
                             },
                             "models": {
                               "type": "array",
                               "items": {
                                 "type": "string"
-                              }
+                              },
+                              "description": "The models the agent lists and its key may use; models added to the gateway later are included"
+                            },
+                            "hidden": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "Models hidden from the agent (its key's deny list)"
                             },
                             "keyId": {
-                              "type": "string"
+                              "type": "string",
+                              "description": "Absent for an agent that signs in by itself"
                             },
                             "keyState": {
                               "enum": [
                                 "active",
                                 "revoked",
                                 "expired",
-                                "missing"
+                                "missing",
+                                "none"
                               ]
                             },
                             "wiredAt": {
@@ -26466,7 +27168,7 @@
         "tags": [
           "agents"
         ],
-        "description": "AgentWiringService.rotate：以当前 model 与 Key 的 modelAllow 重新接线，流程同接线（不核对预览）。\n\n输入：路径参数 id；请求体为空对象。\n\n返回：200：换 Key 后的 Agent。\n\n副作用：改写配置文件中的 Key；旧 Key 立即吊销。\n\n失败与边界：409 AGENT_NOT_WIRED；其余同接线；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "description": "AgentWiringService.rotate：以当前 model、tiers、effort、options 与 Key 的 modelAllow、modelDeny 重新接线，流程同接线（不核对预览）。\n\n输入：路径参数 id；请求体为空对象。\n\n返回：200：换 Key 后的 Agent。\n\n副作用：改写配置文件中的 Key；旧 Key 立即吊销。\n\n失败与边界：409 AGENT_NOT_WIRED、AGENT_KEYLESS（自己登录、没有 Key 的 Agent）；其余同接线；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
         "requestBody": {
           "required": true,
           "content": {
@@ -26503,6 +27205,7 @@
                     "name",
                     "protocol",
                     "keyDelivery",
+                    "capabilities",
                     "installation",
                     "wiring"
                   ],
@@ -26526,6 +27229,53 @@
                         "config-file",
                         "env-file"
                       ]
+                    },
+                    "capabilities": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "tiers",
+                        "efforts",
+                        "options"
+                      ],
+                      "properties": {
+                        "tiers": {
+                          "type": "array",
+                          "items": {
+                            "enum": [
+                              "opus",
+                              "sonnet",
+                              "haiku",
+                              "fable",
+                              "subagent"
+                            ]
+                          }
+                        },
+                        "efforts": {
+                          "type": "array",
+                          "items": {
+                            "enum": [
+                              "none",
+                              "minimal",
+                              "low",
+                              "medium",
+                              "high",
+                              "xhigh",
+                              "max"
+                            ]
+                          }
+                        },
+                        "options": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "description": "Allowed values per option, the default first"
+                        }
+                      }
                     },
                     "installation": {
                       "type": "object",
@@ -26557,9 +27307,8 @@
                       "type": "object",
                       "additionalProperties": false,
                       "required": [
-                        "model",
                         "models",
-                        "keyId",
+                        "hidden",
                         "keyState",
                         "wiredAt",
                         "files",
@@ -26567,23 +27316,88 @@
                       ],
                       "properties": {
                         "model": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Absent for an agent that keeps its own models"
+                        },
+                        "tiers": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "opus": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 512,
+                              "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                            },
+                            "sonnet": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 512,
+                              "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                            },
+                            "haiku": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 512,
+                              "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                            },
+                            "fable": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 512,
+                              "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                            },
+                            "subagent": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 512,
+                              "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                            }
+                          },
+                          "description": "A model per tier the agent has (capabilities.tiers); an absent tier follows model"
+                        },
+                        "effort": {
+                          "enum": [
+                            "none",
+                            "minimal",
+                            "low",
+                            "medium",
+                            "high",
+                            "xhigh",
+                            "max"
+                          ]
+                        },
+                        "options": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          }
                         },
                         "models": {
                           "type": "array",
                           "items": {
                             "type": "string"
-                          }
+                          },
+                          "description": "The models the agent lists and its key may use; models added to the gateway later are included"
+                        },
+                        "hidden": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Models hidden from the agent (its key's deny list)"
                         },
                         "keyId": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Absent for an agent that signs in by itself"
                         },
                         "keyState": {
                           "enum": [
                             "active",
                             "revoked",
                             "expired",
-                            "missing"
+                            "missing",
+                            "none"
                           ]
                         },
                         "wiredAt": {
@@ -26666,6 +27480,2074 @@
                         }
                       },
                       "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/agents/{id}/models": {
+      "put": {
+        "operationId": "hh_api_v1_set_agent_models",
+        "summary": "设置 Agent 隐藏的模型",
+        "tags": [
+          "agents"
+        ],
+        "description": "AgentWiringService.setHidden：把 Agent Key 的 modelDeny 改为 hidden（同一把 Key，不轮换），再从 Agent 文件中读回这把 Key、以过滤后的模型列表经 applyWiring 重写其模型清单（OpenCode、Pi、Crush、Kimi 的模型条目，Codex 的模型目录，Claude 的 CLAUDE_CODE_MODEL_CAPABILITIES）；网关的 /v1/models 与调用对这把 Key 按同一列表过滤。重写失败时 modelDeny 恢复原值。\n\n输入：路径参数 id；hidden 必填：要对该 Agent 隐藏的模型（provider/model、provider/*、group/<id> 或 *），其余模型（包括之后新增的）都显示；空数组显示全部。\n\n返回：200：更新后的 Agent，wiring.models 为显示的模型，wiring.hidden 为隐藏列表。\n\n副作用：改写 gateway_keys 中该 Key 的 modelDeny；按需改写 Agent 的配置文件（备份同接线）并更新 wirings 记录。\n\n失败与边界：400 AGENT_MODELS_INVALID；409 AGENT_NOT_WIRED、AGENT_KEYLESS、AGENT_KEY_INACTIVE（Key 已吊销或丢失）、AGENT_MODEL_IN_USE（隐藏了 Agent 正在用的模型或档位模型）、AGENT_KEY_NOT_IN_FILES（Agent 文件中已没有它的 Key，需 rotate）；其余同接线；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "hidden"
+                ],
+                "properties": {
+                  "hidden": {
+                    "type": "array",
+                    "maxItems": 1000,
+                    "uniqueItems": true,
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 3,
+                          "maxLength": 512,
+                          "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                        },
+                        {
+                          "enum": [
+                            "*"
+                          ]
+                        }
+                      ]
+                    },
+                    "description": "The models to hide from the agent; every other model of the gateway, including ones added later, is shown"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "name",
+                    "protocol",
+                    "keyDelivery",
+                    "capabilities",
+                    "installation",
+                    "wiring"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "protocol": {
+                      "enum": [
+                        "chat",
+                        "responses",
+                        "anthropic",
+                        "gemini"
+                      ]
+                    },
+                    "keyDelivery": {
+                      "enum": [
+                        "config-file",
+                        "env-file"
+                      ]
+                    },
+                    "capabilities": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "tiers",
+                        "efforts",
+                        "options"
+                      ],
+                      "properties": {
+                        "tiers": {
+                          "type": "array",
+                          "items": {
+                            "enum": [
+                              "opus",
+                              "sonnet",
+                              "haiku",
+                              "fable",
+                              "subagent"
+                            ]
+                          }
+                        },
+                        "efforts": {
+                          "type": "array",
+                          "items": {
+                            "enum": [
+                              "none",
+                              "minimal",
+                              "low",
+                              "medium",
+                              "high",
+                              "xhigh",
+                              "max"
+                            ]
+                          }
+                        },
+                        "options": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "description": "Allowed values per option, the default first"
+                        }
+                      }
+                    },
+                    "installation": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "status",
+                        "configDirectories"
+                      ],
+                      "properties": {
+                        "status": {
+                          "enum": [
+                            "installed",
+                            "configured-only",
+                            "not-found"
+                          ]
+                        },
+                        "executable": {
+                          "type": "string"
+                        },
+                        "configDirectories": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "wiring": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "models",
+                        "hidden",
+                        "keyState",
+                        "wiredAt",
+                        "files",
+                        "drift"
+                      ],
+                      "properties": {
+                        "model": {
+                          "type": "string",
+                          "description": "Absent for an agent that keeps its own models"
+                        },
+                        "tiers": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "opus": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 512,
+                              "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                            },
+                            "sonnet": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 512,
+                              "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                            },
+                            "haiku": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 512,
+                              "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                            },
+                            "fable": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 512,
+                              "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                            },
+                            "subagent": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 512,
+                              "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                            }
+                          },
+                          "description": "A model per tier the agent has (capabilities.tiers); an absent tier follows model"
+                        },
+                        "effort": {
+                          "enum": [
+                            "none",
+                            "minimal",
+                            "low",
+                            "medium",
+                            "high",
+                            "xhigh",
+                            "max"
+                          ]
+                        },
+                        "options": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          }
+                        },
+                        "models": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "The models the agent lists and its key may use; models added to the gateway later are included"
+                        },
+                        "hidden": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Models hidden from the agent (its key's deny list)"
+                        },
+                        "keyId": {
+                          "type": "string",
+                          "description": "Absent for an agent that signs in by itself"
+                        },
+                        "keyState": {
+                          "enum": [
+                            "active",
+                            "revoked",
+                            "expired",
+                            "missing",
+                            "none"
+                          ]
+                        },
+                        "wiredAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "files": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "drift": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "drifted",
+                            "kinds",
+                            "findings"
+                          ],
+                          "properties": {
+                            "drifted": {
+                              "type": "boolean"
+                            },
+                            "kinds": {
+                              "type": "array",
+                              "items": {
+                                "enum": [
+                                  "unwired",
+                                  "replaced",
+                                  "foreign-gateway"
+                                ]
+                              }
+                            },
+                            "findings": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "path",
+                                  "keyPath",
+                                  "kind",
+                                  "reason"
+                                ],
+                                "properties": {
+                                  "path": {
+                                    "type": "string"
+                                  },
+                                  "keyPath": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "kind": {
+                                    "enum": [
+                                      "unwired",
+                                      "replaced",
+                                      "foreign-gateway"
+                                    ]
+                                  },
+                                  "reason": {
+                                    "enum": [
+                                      "missing",
+                                      "changed",
+                                      "other-key",
+                                      "file-missing",
+                                      "unreadable"
+                                    ]
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "nullable": true
+                        },
+                        "driftError": {
+                          "type": "string"
+                        }
+                      },
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/profiles": {
+      "get": {
+        "operationId": "hh_api_v1_list_profiles",
+        "summary": "接线 Profile 列表",
+        "tags": [
+          "agents"
+        ],
+        "description": "AgentWiringService.listProfiles：读取 wiring_profiles 表。\n\n输入：无参数。\n\n返回：200：items（Profile：name、agents{<agent id>: {model?、tiers?、effort?、options?}}、createdAt、updatedAt）按名称排序、nextCursor=null。\n\n副作用：只读。\n\n失败与边界：需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "items",
+                    "nextCursor"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "name",
+                          "agents",
+                          "createdAt",
+                          "updatedAt"
+                        ],
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "agents": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "model": {
+                                  "type": "string"
+                                },
+                                "tiers": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "opus": {
+                                      "type": "string",
+                                      "minLength": 3,
+                                      "maxLength": 512,
+                                      "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                    },
+                                    "sonnet": {
+                                      "type": "string",
+                                      "minLength": 3,
+                                      "maxLength": 512,
+                                      "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                    },
+                                    "haiku": {
+                                      "type": "string",
+                                      "minLength": 3,
+                                      "maxLength": 512,
+                                      "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                    },
+                                    "fable": {
+                                      "type": "string",
+                                      "minLength": 3,
+                                      "maxLength": 512,
+                                      "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                    },
+                                    "subagent": {
+                                      "type": "string",
+                                      "minLength": 3,
+                                      "maxLength": 512,
+                                      "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                    }
+                                  },
+                                  "description": "A model per tier the agent has (capabilities.tiers); an absent tier follows model"
+                                },
+                                "effort": {
+                                  "enum": [
+                                    "none",
+                                    "minimal",
+                                    "low",
+                                    "medium",
+                                    "high",
+                                    "xhigh",
+                                    "max"
+                                  ]
+                                },
+                                "options": {
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "type": "string"
+                                  }
+                                }
+                              }
+                            },
+                            "description": "The model choices of each wired agent, by agent id"
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "updatedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    },
+                    "nextCursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/profiles/{name}": {
+      "get": {
+        "operationId": "hh_api_v1_get_profile",
+        "summary": "单个接线 Profile",
+        "tags": [
+          "agents"
+        ],
+        "description": "AgentWiringService.getProfile。\n\n输入：路径参数 name（1 到 64 个字母、数字、.、_、-，以字母或数字开头）。\n\n返回：200：Profile，字段同列表项。\n\n副作用：只读。\n\n失败与边界：400 请求校验失败；404 PROFILE_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+            },
+            "in": "path",
+            "name": "name",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "agents",
+                    "createdAt",
+                    "updatedAt"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "agents": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "model": {
+                            "type": "string"
+                          },
+                          "tiers": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "opus": {
+                                "type": "string",
+                                "minLength": 3,
+                                "maxLength": 512,
+                                "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                              },
+                              "sonnet": {
+                                "type": "string",
+                                "minLength": 3,
+                                "maxLength": 512,
+                                "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                              },
+                              "haiku": {
+                                "type": "string",
+                                "minLength": 3,
+                                "maxLength": 512,
+                                "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                              },
+                              "fable": {
+                                "type": "string",
+                                "minLength": 3,
+                                "maxLength": 512,
+                                "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                              },
+                              "subagent": {
+                                "type": "string",
+                                "minLength": 3,
+                                "maxLength": 512,
+                                "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                              }
+                            },
+                            "description": "A model per tier the agent has (capabilities.tiers); an absent tier follows model"
+                          },
+                          "effort": {
+                            "enum": [
+                              "none",
+                              "minimal",
+                              "low",
+                              "medium",
+                              "high",
+                              "xhigh",
+                              "max"
+                            ]
+                          },
+                          "options": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      "description": "The model choices of each wired agent, by agent id"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "hh_api_v1_save_profile",
+        "summary": "保存接线 Profile",
+        "tags": [
+          "agents"
+        ],
+        "description": "AgentWiringService.saveProfile：把每个已接线 Agent 的 model、tiers、effort、options 存为该名称的 Profile，同名则替换（保留 createdAt）。隐藏的模型与 Key 不属于 Profile。\n\n输入：路径参数 name；请求体为空对象。\n\n返回：200：保存的 Profile。\n\n副作用：写入 wiring_profiles 表；不改 Agent 文件。\n\n失败与边界：400 请求校验失败；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {}
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+            },
+            "in": "path",
+            "name": "name",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "agents",
+                    "createdAt",
+                    "updatedAt"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "agents": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "model": {
+                            "type": "string"
+                          },
+                          "tiers": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "opus": {
+                                "type": "string",
+                                "minLength": 3,
+                                "maxLength": 512,
+                                "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                              },
+                              "sonnet": {
+                                "type": "string",
+                                "minLength": 3,
+                                "maxLength": 512,
+                                "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                              },
+                              "haiku": {
+                                "type": "string",
+                                "minLength": 3,
+                                "maxLength": 512,
+                                "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                              },
+                              "fable": {
+                                "type": "string",
+                                "minLength": 3,
+                                "maxLength": 512,
+                                "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                              },
+                              "subagent": {
+                                "type": "string",
+                                "minLength": 3,
+                                "maxLength": 512,
+                                "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                              }
+                            },
+                            "description": "A model per tier the agent has (capabilities.tiers); an absent tier follows model"
+                          },
+                          "effort": {
+                            "enum": [
+                              "none",
+                              "minimal",
+                              "low",
+                              "medium",
+                              "high",
+                              "xhigh",
+                              "max"
+                            ]
+                          },
+                          "options": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      "description": "The model choices of each wired agent, by agent id"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "hh_api_v1_delete_profile",
+        "summary": "删除接线 Profile",
+        "tags": [
+          "agents"
+        ],
+        "description": "AgentWiringService.deleteProfile。\n\n输入：路径参数 name。\n\n返回：204：无内容。\n\n副作用：删除 wiring_profiles 中的一行；不改 Agent 文件。\n\n失败与边界：404 PROFILE_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+            },
+            "in": "path",
+            "name": "name",
+            "required": true
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/profiles/{name}/plan": {
+      "post": {
+        "operationId": "hh_api_v1_plan_profile",
+        "summary": "预览应用接线 Profile",
+        "tags": [
+          "agents"
+        ],
+        "description": "AgentWiringService.planProfile：对 Profile 中每个 Agent 比较 model、tiers、effort、options，不同的按预览接线计算计划（临时 Key 不保存）。不在 Profile 中的 Agent 不受影响。\n\n输入：路径参数 name；请求体为空对象。\n\n返回：200：profile 与 agents[]（adapterId、changed、plan）：选择与当前接线相同的 Agent changed=false、plan=null，其余为预览接线的计划。\n\n副作用：只读；不写文件，不签发 Key。\n\n失败与边界：404 PROFILE_NOT_FOUND、WIRING_ADAPTER_UNKNOWN；其余同预览接线；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {}
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+            },
+            "in": "path",
+            "name": "name",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "profile",
+                    "agents"
+                  ],
+                  "properties": {
+                    "profile": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "name",
+                        "agents",
+                        "createdAt",
+                        "updatedAt"
+                      ],
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "agents": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "model": {
+                                "type": "string"
+                              },
+                              "tiers": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "opus": {
+                                    "type": "string",
+                                    "minLength": 3,
+                                    "maxLength": 512,
+                                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                  },
+                                  "sonnet": {
+                                    "type": "string",
+                                    "minLength": 3,
+                                    "maxLength": 512,
+                                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                  },
+                                  "haiku": {
+                                    "type": "string",
+                                    "minLength": 3,
+                                    "maxLength": 512,
+                                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                  },
+                                  "fable": {
+                                    "type": "string",
+                                    "minLength": 3,
+                                    "maxLength": 512,
+                                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                  },
+                                  "subagent": {
+                                    "type": "string",
+                                    "minLength": 3,
+                                    "maxLength": 512,
+                                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                  }
+                                },
+                                "description": "A model per tier the agent has (capabilities.tiers); an absent tier follows model"
+                              },
+                              "effort": {
+                                "enum": [
+                                  "none",
+                                  "minimal",
+                                  "low",
+                                  "medium",
+                                  "high",
+                                  "xhigh",
+                                  "max"
+                                ]
+                              },
+                              "options": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          },
+                          "description": "The model choices of each wired agent, by agent id"
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "updatedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    },
+                    "agents": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "adapterId",
+                          "changed",
+                          "plan"
+                        ],
+                        "properties": {
+                          "adapterId": {
+                            "type": "string"
+                          },
+                          "changed": {
+                            "type": "boolean"
+                          },
+                          "plan": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "adapterId",
+                              "protocol",
+                              "keyDelivery",
+                              "changed",
+                              "files"
+                            ],
+                            "properties": {
+                              "adapterId": {
+                                "type": "string"
+                              },
+                              "protocol": {
+                                "enum": [
+                                  "chat",
+                                  "responses",
+                                  "anthropic",
+                                  "gemini"
+                                ]
+                              },
+                              "keyDelivery": {
+                                "enum": [
+                                  "config-file",
+                                  "env-file"
+                                ]
+                              },
+                              "model": {
+                                "type": "string"
+                              },
+                              "keyId": {
+                                "type": "string"
+                              },
+                              "changed": {
+                                "type": "boolean"
+                              },
+                              "files": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "id",
+                                    "path",
+                                    "format",
+                                    "exists",
+                                    "changes",
+                                    "diff"
+                                  ],
+                                  "properties": {
+                                    "id": {
+                                      "type": "string"
+                                    },
+                                    "path": {
+                                      "type": "string"
+                                    },
+                                    "format": {
+                                      "enum": [
+                                        "json",
+                                        "toml",
+                                        "yaml",
+                                        "dotenv"
+                                      ]
+                                    },
+                                    "exists": {
+                                      "type": "boolean"
+                                    },
+                                    "hash": {
+                                      "type": "string",
+                                      "pattern": "^[0-9a-f]{64}$"
+                                    },
+                                    "changes": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "required": [
+                                          "keyPath",
+                                          "op"
+                                        ],
+                                        "properties": {
+                                          "keyPath": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "op": {
+                                            "enum": [
+                                              "set",
+                                              "remove"
+                                            ]
+                                          },
+                                          "before": {
+                                            "type": "string"
+                                          },
+                                          "after": {
+                                            "type": "string"
+                                          }
+                                        }
+                                      }
+                                    },
+                                    "diff": {
+                                      "type": "string",
+                                      "description": "Unified diff; Gateway Keys appear as hhk_a_xxxx… and replaced key values as <redacted>; a file HarnessHub generates is summarised by its size"
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            "nullable": true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/profiles/{name}/apply": {
+      "post": {
+        "operationId": "hh_api_v1_apply_profile",
+        "summary": "应用接线 Profile",
+        "tags": [
+          "agents"
+        ],
+        "description": "AgentWiringService.applyProfile：先确认每个与当前不同的 Agent 都有 expect，再逐个经接线同一路径（新 Key、备份、原子写、回读校验、吊销旧 Key）切换；遇到第一个失败即停止，错误信息列出已切换的 Agent。\n\n输入：路径参数 name；expect 必填：按 Agent id 给出每个要改变的 Agent 确认过的计划（预览响应中 agents[].plan 即可）。\n\n返回：200：profile 与 agents[]（adapterId、outcome=applied|unchanged、agent）。\n\n副作用：改写所切换 Agent 的配置文件；签发新 Key、吊销旧 Key；更新 wirings 记录。\n\n失败与边界：409 PROFILE_PLAN_STALE（预览后有 Agent 改变，未写任何文件）、WIRING_CONCURRENT_MODIFICATION；404 PROFILE_NOT_FOUND；其余同接线，消息前缀为停止处的 Agent；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "expect"
+                ],
+                "properties": {
+                  "expect": {
+                    "type": "object",
+                    "maxProperties": 200,
+                    "additionalProperties": {
+                      "type": "object",
+                      "description": "The plan the user confirmed (the plan response will do): a file that changed since fails with 409 WIRING_CONCURRENT_MODIFICATION",
+                      "required": [
+                        "files"
+                      ],
+                      "properties": {
+                        "files": {
+                          "type": "array",
+                          "maxItems": 20,
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "path",
+                              "exists"
+                            ],
+                            "properties": {
+                              "path": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096
+                              },
+                              "exists": {
+                                "type": "boolean"
+                              },
+                              "hash": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "description": "The confirmed plan of every changed agent, by agent id (the plan response's agents will do)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+            },
+            "in": "path",
+            "name": "name",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "profile",
+                    "agents"
+                  ],
+                  "properties": {
+                    "profile": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "name",
+                        "agents",
+                        "createdAt",
+                        "updatedAt"
+                      ],
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "agents": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "model": {
+                                "type": "string"
+                              },
+                              "tiers": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "opus": {
+                                    "type": "string",
+                                    "minLength": 3,
+                                    "maxLength": 512,
+                                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                  },
+                                  "sonnet": {
+                                    "type": "string",
+                                    "minLength": 3,
+                                    "maxLength": 512,
+                                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                  },
+                                  "haiku": {
+                                    "type": "string",
+                                    "minLength": 3,
+                                    "maxLength": 512,
+                                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                  },
+                                  "fable": {
+                                    "type": "string",
+                                    "minLength": 3,
+                                    "maxLength": 512,
+                                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                  },
+                                  "subagent": {
+                                    "type": "string",
+                                    "minLength": 3,
+                                    "maxLength": 512,
+                                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                  }
+                                },
+                                "description": "A model per tier the agent has (capabilities.tiers); an absent tier follows model"
+                              },
+                              "effort": {
+                                "enum": [
+                                  "none",
+                                  "minimal",
+                                  "low",
+                                  "medium",
+                                  "high",
+                                  "xhigh",
+                                  "max"
+                                ]
+                              },
+                              "options": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          },
+                          "description": "The model choices of each wired agent, by agent id"
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "updatedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    },
+                    "agents": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "adapterId",
+                          "outcome",
+                          "agent"
+                        ],
+                        "properties": {
+                          "adapterId": {
+                            "type": "string"
+                          },
+                          "outcome": {
+                            "enum": [
+                              "applied",
+                              "unchanged"
+                            ]
+                          },
+                          "agent": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "id",
+                              "name",
+                              "protocol",
+                              "keyDelivery",
+                              "capabilities",
+                              "installation",
+                              "wiring"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "protocol": {
+                                "enum": [
+                                  "chat",
+                                  "responses",
+                                  "anthropic",
+                                  "gemini"
+                                ]
+                              },
+                              "keyDelivery": {
+                                "enum": [
+                                  "config-file",
+                                  "env-file"
+                                ]
+                              },
+                              "capabilities": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "tiers",
+                                  "efforts",
+                                  "options"
+                                ],
+                                "properties": {
+                                  "tiers": {
+                                    "type": "array",
+                                    "items": {
+                                      "enum": [
+                                        "opus",
+                                        "sonnet",
+                                        "haiku",
+                                        "fable",
+                                        "subagent"
+                                      ]
+                                    }
+                                  },
+                                  "efforts": {
+                                    "type": "array",
+                                    "items": {
+                                      "enum": [
+                                        "none",
+                                        "minimal",
+                                        "low",
+                                        "medium",
+                                        "high",
+                                        "xhigh",
+                                        "max"
+                                      ]
+                                    }
+                                  },
+                                  "options": {
+                                    "type": "object",
+                                    "additionalProperties": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "description": "Allowed values per option, the default first"
+                                  }
+                                }
+                              },
+                              "installation": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "status",
+                                  "configDirectories"
+                                ],
+                                "properties": {
+                                  "status": {
+                                    "enum": [
+                                      "installed",
+                                      "configured-only",
+                                      "not-found"
+                                    ]
+                                  },
+                                  "executable": {
+                                    "type": "string"
+                                  },
+                                  "configDirectories": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  }
+                                }
+                              },
+                              "wiring": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "models",
+                                  "hidden",
+                                  "keyState",
+                                  "wiredAt",
+                                  "files",
+                                  "drift"
+                                ],
+                                "properties": {
+                                  "model": {
+                                    "type": "string",
+                                    "description": "Absent for an agent that keeps its own models"
+                                  },
+                                  "tiers": {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "opus": {
+                                        "type": "string",
+                                        "minLength": 3,
+                                        "maxLength": 512,
+                                        "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                      },
+                                      "sonnet": {
+                                        "type": "string",
+                                        "minLength": 3,
+                                        "maxLength": 512,
+                                        "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                      },
+                                      "haiku": {
+                                        "type": "string",
+                                        "minLength": 3,
+                                        "maxLength": 512,
+                                        "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                      },
+                                      "fable": {
+                                        "type": "string",
+                                        "minLength": 3,
+                                        "maxLength": 512,
+                                        "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                      },
+                                      "subagent": {
+                                        "type": "string",
+                                        "minLength": 3,
+                                        "maxLength": 512,
+                                        "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                                      }
+                                    },
+                                    "description": "A model per tier the agent has (capabilities.tiers); an absent tier follows model"
+                                  },
+                                  "effort": {
+                                    "enum": [
+                                      "none",
+                                      "minimal",
+                                      "low",
+                                      "medium",
+                                      "high",
+                                      "xhigh",
+                                      "max"
+                                    ]
+                                  },
+                                  "options": {
+                                    "type": "object",
+                                    "additionalProperties": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "models": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    },
+                                    "description": "The models the agent lists and its key may use; models added to the gateway later are included"
+                                  },
+                                  "hidden": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    },
+                                    "description": "Models hidden from the agent (its key's deny list)"
+                                  },
+                                  "keyId": {
+                                    "type": "string",
+                                    "description": "Absent for an agent that signs in by itself"
+                                  },
+                                  "keyState": {
+                                    "enum": [
+                                      "active",
+                                      "revoked",
+                                      "expired",
+                                      "missing",
+                                      "none"
+                                    ]
+                                  },
+                                  "wiredAt": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  },
+                                  "files": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "drift": {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "required": [
+                                      "drifted",
+                                      "kinds",
+                                      "findings"
+                                    ],
+                                    "properties": {
+                                      "drifted": {
+                                        "type": "boolean"
+                                      },
+                                      "kinds": {
+                                        "type": "array",
+                                        "items": {
+                                          "enum": [
+                                            "unwired",
+                                            "replaced",
+                                            "foreign-gateway"
+                                          ]
+                                        }
+                                      },
+                                      "findings": {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "additionalProperties": false,
+                                          "required": [
+                                            "path",
+                                            "keyPath",
+                                            "kind",
+                                            "reason"
+                                          ],
+                                          "properties": {
+                                            "path": {
+                                              "type": "string"
+                                            },
+                                            "keyPath": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "kind": {
+                                              "enum": [
+                                                "unwired",
+                                                "replaced",
+                                                "foreign-gateway"
+                                              ]
+                                            },
+                                            "reason": {
+                                              "enum": [
+                                                "missing",
+                                                "changed",
+                                                "other-key",
+                                                "file-missing",
+                                                "unreadable"
+                                              ]
+                                            }
+                                          }
+                                        }
+                                      }
+                                    },
+                                    "nullable": true
+                                  },
+                                  "driftError": {
+                                    "type": "string"
+                                  }
+                                },
+                                "nullable": true
+                              }
+                            }
+                          }
+                        }
+                      }
                     }
                   }
                 }

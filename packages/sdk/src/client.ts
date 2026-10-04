@@ -19,10 +19,14 @@ import type {
   ModelCallEntry,
   ProviderConfig,
   ProviderCredential,
+  ReasoningEffort,
   RetryPolicy,
   RouteGroup,
   UsageGroupBy,
   WireProtocol,
+  WiringChoice,
+  WiringProfile,
+  WiringTier,
 } from "@harnesshub/core/model-plane";
 
 /** Record types of the API, re-exported so clients need no other package. */
@@ -34,11 +38,15 @@ export type {
   ProviderCredential,
   ProviderKind,
   ProviderModel,
+  ReasoningEffort,
   RouteGroup,
   RouteStrategy,
   Stickiness,
   UsageGroupBy,
   WireProtocol,
+  WiringChoice,
+  WiringProfile,
+  WiringTier,
 } from "@harnesshub/core/model-plane";
 export type { SecretReference } from "@harnesshub/core/engine-configuration";
 export type { ProviderPreset } from "@harnesshub/core/provider-presets";
@@ -324,12 +332,14 @@ export interface AgentDriftFinding {
   reason: "missing" | "changed" | "other-key" | "file-missing" | "unreadable";
 }
 
-export interface AgentWiring {
-  model: string;
-  /** The models the agent lists; also its key's allowlist. */
+export interface AgentWiring extends WiringChoice {
+  /** The models the agent lists and its key may use; models added to the gateway later are included. */
   models: string[];
-  keyId: string;
-  keyState: "active" | "revoked" | "expired" | "missing";
+  /** Models hidden from the agent. */
+  hidden: string[];
+  /** Absent for an agent that signs in by itself (Codex with `codexAuth: chatgpt`). */
+  keyId?: string;
+  keyState: "active" | "revoked" | "expired" | "missing" | "none";
   wiredAt: string;
   files: string[];
   drift: {
@@ -346,6 +356,12 @@ export interface Agent {
   name: string;
   protocol: WireProtocol;
   keyDelivery: "config-file" | "env-file";
+  /** What wiring can set besides the model: tiers, start effort, and option values (default first). */
+  capabilities: {
+    tiers: WiringTier[];
+    efforts: ReasoningEffort[];
+    options: Record<string, string[]>;
+  };
   installation: AgentInstallation;
   wiring: AgentWiring | null;
 }
@@ -371,15 +387,49 @@ export interface AgentWiringPlan {
   adapterId: string;
   protocol: WireProtocol;
   keyDelivery: "config-file" | "env-file";
-  model: string;
+  /** Absent for an agent that keeps its own models. */
+  model?: string;
+  keyId?: string;
   changed: boolean;
   files: AgentPlanFile[];
 }
 
+/**
+ * What to wire an agent to; an absent field keeps the current value. An
+ * agent that signs in by itself (`options: {codexAuth: "chatgpt"}`) takes
+ * no model, models, tiers or effort.
+ */
 export interface AgentWiringInput {
-  model: string;
-  /** Models the agent's picker lists; default: the current list, or just `model`. */
+  model?: string;
+  /** Models the agent may list: `provider/model`, `provider/*`, `group/<id>` or `*`; default: the current list, else `*`. */
   models?: string[];
+  /** A model per tier in `capabilities.tiers`; `{}` clears them. */
+  tiers?: Partial<Record<WiringTier, string>>;
+  /** One of `capabilities.efforts`; null clears it. */
+  effort?: ReasoningEffort | null;
+  /** Values from `capabilities.options`, such as `{codexAuth: "chatgpt"}`. */
+  options?: Record<string, string>;
+}
+
+/** `POST /profiles/{name}/plan`. */
+export interface ProfilePlan {
+  profile: WiringProfile;
+  /** Agents whose choices differ have a plan; pass the plans back as `expect`. */
+  agents: Array<{
+    adapterId: string;
+    changed: boolean;
+    plan: AgentWiringPlan | null;
+  }>;
+}
+
+/** `POST /profiles/{name}/apply`. */
+export interface ProfileApplied {
+  profile: WiringProfile;
+  agents: Array<{
+    adapterId: string;
+    outcome: "applied" | "unchanged";
+    agent: Agent;
+  }>;
 }
 
 /** `DELETE /agents/{id}/wiring`. */
@@ -676,6 +726,53 @@ export class HarnessHubClient {
     /** Restores the agent's files and revokes its key. */
     unwire: (id: string) =>
       this.request<AgentUnwired>("DELETE", `agents/${segment(id)}/wiring`),
+    /**
+     * Hides these models from the agent and shows every other one, including
+     * models added later: its key's deny list changes in place and the model
+     * list in its files is rewritten with the same key.
+     */
+    setHidden: (id: string, hidden: string[]) =>
+      this.request<Agent>("PUT", `agents/${segment(id)}/models`, {
+        body: { hidden },
+      }),
+  };
+
+  readonly profiles = {
+    list: () => this.request<Page<WiringProfile>>("GET", "profiles"),
+    get: (name: string) =>
+      this.request<WiringProfile>("GET", `profiles/${segment(name)}`),
+    /** Saves every wired agent's model choices under `name`, replacing a profile of that name. */
+    save: (name: string) =>
+      this.request<WiringProfile>("PUT", `profiles/${segment(name)}`, {
+        body: {},
+      }),
+    remove: (name: string) =>
+      this.request<void>("DELETE", `profiles/${segment(name)}`),
+    /** What applying the profile would change; nothing is written. */
+    plan: (name: string) =>
+      this.request<ProfilePlan>("POST", `profiles/${segment(name)}/plan`, {
+        body: {},
+      }),
+    /** Switches every changed agent as its confirmed plan in `plan` shows it. */
+    apply: (name: string, plan: Pick<ProfilePlan, "agents">) =>
+      this.request<ProfileApplied>("POST", `profiles/${segment(name)}/apply`, {
+        body: {
+          expect: Object.fromEntries(
+            plan.agents
+              .filter((agent) => agent.plan !== null)
+              .map((agent) => [
+                agent.adapterId,
+                {
+                  files: agent.plan!.files.map((file) => ({
+                    path: file.path,
+                    exists: file.exists,
+                    ...(file.hash !== undefined ? { hash: file.hash } : {}),
+                  })),
+                },
+              ]),
+          ),
+        },
+      }),
   };
 
   readonly gatewayShare = {
