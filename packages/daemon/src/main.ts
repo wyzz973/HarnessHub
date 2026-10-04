@@ -913,7 +913,7 @@ export async function main(argv: string[]): Promise<void> {
       demo: { type: "boolean", default: false },
       config: { type: "string" },
       engine: { type: "string" },
-      host: { type: "string", default: "localhost" },
+      host: { type: "string", default: "127.0.0.1" },
       port: { type: "string" },
       "data-dir": { type: "string", default: "./data" },
       "config-dir": { type: "string" },
@@ -962,7 +962,7 @@ export async function main(argv: string[]): Promise<void> {
     process.exitCode = 2;
   } else if (values.help)
     console.log(
-      "HarnessHub: node dist/src/main.js [--engine opencode] [--host localhost] [--port 3180] [--config engines/local.yaml] [--data-dir ./data] [--config-dir DIR] [--secrets-backend auto|keychain|dpapi|file] [--tool-package-root DIR] [--harness-model-file FILE] [--otlp-config FILE] [--wiring-home DIR] | --version [--json]",
+      "HarnessHub: node dist/src/main.js [--engine opencode] [--host 127.0.0.1] [--port 3180] [--config engines/local.yaml] [--data-dir ./data] [--config-dir DIR] [--secrets-backend auto|keychain|dpapi|file] [--tool-package-root DIR] [--harness-model-file FILE] [--otlp-config FILE] [--wiring-home DIR] | --version [--json]",
     );
   else {
     const selectedEngine = values.engine ?? process.env.AGENT_ENGINE;

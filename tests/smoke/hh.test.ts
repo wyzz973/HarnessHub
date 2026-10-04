@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 import { BUILD_INFO, HH_ENTRY } from "../support/entries.js";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { once } from "node:events";
+import { createInterface } from "node:readline";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -82,5 +84,60 @@ void test(
     const help = await hh(directory, ["--help"]);
     assert.equal(help.code, 0);
     assert.match(help.stdout, /^Usage: hh <command>/);
+  },
+);
+
+void test(
+  "hh serve listens on 127.0.0.1 by default, where clients, links and wiring point",
+  { timeout: 60_000 },
+  async (t) => {
+    const { directory } = await temporaryDirectory(t, "harnesshub-serve-");
+    const child = spawn(
+      process.execPath,
+      [
+        fileURLToPath(HH_ENTRY),
+        "serve",
+        "--port",
+        "0",
+        "--data-dir",
+        `${directory}/data`,
+        "--config-dir",
+        `${directory}/config`,
+        "--secrets-backend",
+        "file",
+      ],
+      {
+        cwd: directory,
+        env: { ...process.env, HH_OFFLINE: "1" },
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    );
+    const exited = once(child, "exit");
+    t.after(async () => {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGTERM");
+        await exited;
+      }
+    });
+    let url: string | undefined;
+    for await (const line of createInterface({ input: child.stdout })) {
+      const event = (() => {
+        try {
+          return JSON.parse(line) as { event?: string; url?: string };
+        } catch {
+          return undefined;
+        }
+      })();
+      if (event?.event === "ready") {
+        url = event.url;
+        break;
+      }
+    }
+    assert.ok(url, "hh serve reported ready");
+    assert.match(url, /^http:\/\/127\.0\.0\.1:\d+$/);
+    const live = await fetch(`${url}/health/live`);
+    assert.equal(live.status, 200);
+    child.kill("SIGTERM");
+    await exited;
   },
 );
