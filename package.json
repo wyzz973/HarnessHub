@@ -77,6 +77,10 @@
     "onlyBuiltDependencies": [
       "esbuild"
     ],
+    "ignoredBuiltDependencies": [
+      "@google/genai",
+      "protobufjs"
+    ],
     "patchedDependencies": {
       "acpx@0.13.2": "patches/acpx@0.13.2.patch"
     }

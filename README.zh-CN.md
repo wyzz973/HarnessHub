@@ -56,7 +56,7 @@ pnpm build
 pnpm build:console
 ```
 
-`pnpm install` 可能提示“Ignored build scripts: @google/genai, protobufjs”：这两个包只供测试套件使用，不需要批准。下面的命令都在仓库根目录执行，`pnpm exec hh` 就是 `hh` 命令（[apps/hh](apps/hh/README.md)）。
+`pnpm install` 只执行 esbuild 的依赖构建脚本；`@google/genai` 与 `protobufjs` 只供测试套件使用，HarnessHub 不需要它们的脚本所做的事，已在 `package.json` 中声明不执行，安装时不再询问。下面的命令都在仓库根目录执行，`pnpm exec hh` 就是 `hh` 命令（[apps/hh](apps/hh/README.md)）。
 
 ## 快速上手
 

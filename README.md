@@ -54,7 +54,7 @@ pnpm build
 pnpm build:console
 ```
 
-`pnpm install` may report "Ignored build scripts: @google/genai, protobufjs"; those packages only serve the test suites, so there is nothing to approve. The commands below run from the repository root; `pnpm exec hh` is the `hh` command ([apps/hh](apps/hh/README.md)).
+`pnpm install` runs no dependency build script but esbuild's; those of `@google/genai` and `protobufjs` (only the test suites use them, and HarnessHub needs nothing they do) are declined in `package.json`, so it asks about none. The commands below run from the repository root; `pnpm exec hh` is the `hh` command ([apps/hh](apps/hh/README.md)).
 
 ## Quickstart
 
