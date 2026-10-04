@@ -146,6 +146,13 @@ export type AdapterSetting =
       readonly file: string;
       readonly path: KeyPath;
       readonly value: ConfigValue;
+      /**
+       * What stays at `path` when the wiring is undone, where the file had
+       * nothing before: an entry the agent needs for state it keeps (Codex
+       * reopens a thread only with the provider it was started on). Never
+       * the key; an adapter must keep setting it for it to stay.
+       */
+      readonly keep?: ConfigValue;
     }
   | { readonly file: string; readonly path: KeyPath; readonly remove: true };
 
@@ -192,6 +199,19 @@ export interface WiringAdapter {
   readonly modelIdStyle?: ModelIdStyle;
   /** Adapter options and their allowed values; the first value is the default. */
   readonly options?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * What the user must do after a change for the agent to use it, such as
+   * restarting it because it reads its configuration at start-up (Magpie's
+   * Notice); none when the agent picks changes up by itself.
+   */
+  readonly restartNotice?: string;
+  /**
+   * Files of an administrator's policy that the agent applies over the
+   * user's (Claude Code's managed settings), by absolute path for the
+   * platform, in the format of the adapter's first file. Wiring reads them
+   * to warn that an entry it writes is overridden, and never writes them.
+   */
+  managedFiles?(platform: NodeJS.Platform): readonly string[];
   /**
    * Whether the agent, configured with these options, keeps its own model
    * choice (Codex signed in with ChatGPT): it is wired with a key all the

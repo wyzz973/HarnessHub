@@ -225,8 +225,20 @@ void test("hh init without a terminal: preset, key from the environment, agents 
   const claude = (await on.client.agents.get("claude")).wiring!;
   assert.equal(claude.model, MODEL);
   assert.deepEqual(claude.tiers, { haiku: MODEL });
-  assert.equal((await on.client.agents.get("codex")).wiring?.model, MODEL);
+  // Each agent takes the tiers it has: Codex has no haiku.
+  const codex = (await on.client.agents.get("codex")).wiring!;
+  assert.equal(codex.model, MODEL);
+  assert.equal(codex.tiers, undefined);
   assert.equal(await callAsClaude(on), "upstream");
+
+  // A tier none of the agents has is refused, not dropped.
+  const lunch = await hh(
+    on.directory,
+    [...options, "--tier", "lunch=x", "--yes"],
+    env,
+  );
+  assert.equal(lunch.code, 2, lunch.stderr);
+  assert.match(lunch.stderr, /lunch is not a tier of Claude Code or Codex CLI/);
 
   // Again: nothing changes, and --json gives the result.
   const again = await hh(on.directory, [...options, "--yes", "--json"], env);
@@ -298,8 +310,11 @@ void test("hh init in a terminal: search a preset, give its base URL and key, pi
     [/^API key for HarnessHub/, KEY],
     [/^Agents to wire/, "claude, codex"],
     [/^Default model .*Enter for harnesshub-remote\/upstream-sim/, ""],
-    [/^Claude Code tiers/, "lunch=x"],
-    [/^Claude Code tiers/, `haiku=${MODEL}`],
+    [
+      /^Claude Code tiers \(opus, sonnet, haiku, fable, subagent\), Codex CLI tiers \(subagent\):/,
+      "lunch=x",
+    ],
+    [/^Claude Code tiers/, `haiku=${MODEL}, subagent=${MODEL}`],
     [/^Write these changes to claude, codex\? \[y\/N\]/, "y"],
   ]);
   const shown: string[] = [];
@@ -319,17 +334,21 @@ void test("hh init in a terminal: search a preset, give its base URL and key, pi
   assert.match(menus, /Relays:\n/);
   assert.match(menus, /Local:\n/);
   assert.match(menus, /No preset matches "nothing-like-this"/);
-  assert.match(menus, /lunch is not a tier of Claude Code/);
+  assert.match(menus, /lunch is not a tier of Claude Code or Codex CLI\./);
   assert.match(menus, /Agents installed here:\n.*claude/s);
   // The search narrowed the menu to the remote presets.
   const narrowed = prompter.notes[1]!;
   assert.match(narrowed, /harnesshub-remote/);
   assert.doesNotMatch(narrowed, /deepseek/);
   assert.match(shown.join("\n"), /Claude Code \(claude\):/);
-  assert.equal(
-    (await on.client.agents.get("claude")).wiring?.tiers?.haiku,
-    MODEL,
-  );
+  // One answer; each agent took the tiers it has.
+  assert.deepEqual((await on.client.agents.get("claude")).wiring?.tiers, {
+    haiku: MODEL,
+    subagent: MODEL,
+  });
+  assert.deepEqual((await on.client.agents.get("codex")).wiring?.tiers, {
+    subagent: MODEL,
+  });
   assert.equal(await callAsClaude(on), "upstream");
 });
 
@@ -338,6 +357,7 @@ void test("hh init in a terminal: declining leaves the agents as they were; a lo
   const prompter = scripted([
     [/^Agents to wire/, "codex"],
     [/^Default model/, MODEL],
+    [/^Codex CLI tiers \(subagent\)/, ""],
     [/^Write these changes to codex\?/, "n"],
   ]);
   await assert.rejects(

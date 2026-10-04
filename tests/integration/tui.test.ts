@@ -215,14 +215,14 @@ void test("hh tui picks a model, shows the plan and wires the agent after y", as
 
   screen = await select(tui, "Codex CLI");
   assert.match(selected(screen), /not wired +\[—\] +effort — +codexAuth —/);
-  // ←→ moves between the agent's fields: model, effort, codexAuth.
+  // ←→ moves between the agent's fields: model, subagent, effort, codexAuth.
   await tui.press(
-    KEYS.right + KEYS.right,
+    KEYS.right + KEYS.right + KEYS.right,
     (text) => /codexAuth\[—\]/.test(selected(text)),
     "the codexAuth field",
   );
   await tui.press(
-    KEYS.left + KEYS.left,
+    KEYS.left + KEYS.left + KEYS.left,
     (text) => /not wired +\[—\]/.test(selected(text)),
     "the model field again",
   );
@@ -620,9 +620,9 @@ void test("hh tui keeps Codex's own model in ChatGPT mode and asks for a model w
   const tui = session(on.client, { env: { NO_COLOR: "1" } });
   await tui.output.waitFor(listed, "the agents");
   await select(tui, "Codex CLI");
-  // model, effort, codexAuth: the option is the third field.
+  // model, subagent, effort, codexAuth: the option is the fourth field.
   await tui.press(
-    KEYS.right + KEYS.right,
+    KEYS.right + KEYS.right + KEYS.right,
     (text) => /codexAuth\[—\]/.test(selected(text)),
     "the codexAuth field",
   );

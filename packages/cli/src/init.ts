@@ -48,7 +48,7 @@ const USAGE = `Usage: hh init [options]
 
 Sets HarnessHub up in six steps: checks that the daemon runs (start it with
 hh serve), adds a provider from a preset with its key, refreshes its models,
-picks the agents installed here, picks a default model (and Claude Code's
+picks the agents installed here, picks a default model (and the agents'
 tiers), then shows every agent's changes together and wires them once you
 confirm. In a terminal it asks for what the options leave out, and for
 the address of a local server (Enter keeps the preset's) or of a +base URL
@@ -64,7 +64,8 @@ Options:
                          the provider's key; in a terminal it is asked for
   --agents A[,A]...      the agents to wire, or all (the installed ones), or none
   --model PROVIDER/MODEL the agents' default model
-  --tier TIER=REF...     a Claude Code tier's model (opus, sonnet, haiku, fable, subagent)
+  --tier TIER=REF...     a tier's model; each agent takes its own (Claude Code:
+                         opus, sonnet, haiku, fable, subagent; Codex: subagent)
   --yes                  wire without asking (the changes are still shown)
 
 Non-interactive: hh init --preset deepseek --credential-from-env DEEPSEEK_API_KEY \\
@@ -658,7 +659,7 @@ export async function runInit(
     return result;
   }
 
-  // 5. The default model, and Claude Code's tiers.
+  // 5. The default model, and the tiers of the agents that have them.
   let model = answers.model;
   if (model === undefined) {
     if (!prompter)
@@ -693,23 +694,42 @@ export async function runInit(
       },
     );
   }
-  const tierAgent = selected.find((agent) => agent.capabilities.tiers.length);
+  // One answer for them all; each agent takes the tiers it has.
+  const tierAgents = selected.filter(
+    (agent) => agent.capabilities.tiers.length,
+  );
+  const tierNames = tierAgents.map((agent) => agent.name).join(" or ");
+  const unknownTiers = (given: Record<string, string>) =>
+    Object.keys(given).filter(
+      (tier) =>
+        !tierAgents.some((agent) =>
+          agent.capabilities.tiers.includes(tier as WiringTier),
+        ),
+    );
   let tiers = answers.tiers;
-  if (tiers === undefined && tierAgent && prompter)
+  if (tiers !== undefined) {
+    const wrong = unknownTiers(tiers as Record<string, string>);
+    if (wrong.length)
+      throw new UsageError(
+        `${wrong.join(", ")} is not a tier of ${tierNames || "the chosen agents"}`,
+      );
+  } else if (tierAgents.length && prompter)
     tiers = await until(
       prompter,
-      `${tierAgent.name} tiers (${tierAgent.capabilities.tiers.join(", ")}): Enter to use ${model} for every one, or TIER=MODEL, comma-separated: `,
+      `${tierAgents
+        .map(
+          (agent) =>
+            `${agent.name} tiers (${agent.capabilities.tiers.join(", ")})`,
+        )
+        .join(
+          ", ",
+        )}: Enter to use ${model} for every one, or TIER=MODEL, comma-separated: `,
       (answer) => {
         try {
           const given = pairs(answer);
-          const wrong = Object.keys(given).filter(
-            (tier) =>
-              !tierAgent.capabilities.tiers.includes(tier as WiringTier),
-          );
+          const wrong = unknownTiers(given);
           if (wrong.length) {
-            prompter.note(
-              `${wrong.join(", ")} is not a tier of ${tierAgent.name}.`,
-            );
+            prompter.note(`${wrong.join(", ")} is not a tier of ${tierNames}.`);
             return undefined;
           }
           return given as Partial<Record<WiringTier, string>>;
@@ -729,11 +749,14 @@ export async function runInit(
     plan: AgentWiringPlan | undefined;
   }> = [];
   for (const agent of selected) {
+    const own = Object.fromEntries(
+      Object.entries(tiers ?? {}).filter(([tier]) =>
+        agent.capabilities.tiers.includes(tier as WiringTier),
+      ),
+    ) as Partial<Record<WiringTier, string>>;
     const input: AgentWiringInput = {
       model,
-      ...(tiers && Object.keys(tiers).length && agent.capabilities.tiers.length
-        ? { tiers }
-        : {}),
+      ...(Object.keys(own).length ? { tiers: own } : {}),
     };
     planned.push({
       agent,

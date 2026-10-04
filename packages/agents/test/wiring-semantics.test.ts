@@ -15,6 +15,7 @@ import {
   type WiringTarget,
 } from "../src/wiring/index.js";
 import {
+  assertUnwound,
   KEY,
   NEW_KEY,
   sandbox,
@@ -291,11 +292,15 @@ void test("codex: the API mode generates a model catalog with windows, levels an
   if (process.platform !== "win32")
     assert.equal((await stat(catalogPath)).mode & 0o777, 0o600);
   const result = await unwire(record, context);
+  // The provider table stays, without the key, for threads started on it.
   assert.deepEqual(
-    result.files.map((file) => file.action),
-    ["deleted", "deleted"],
+    result.files.map((file) => [file.action, file.kept]),
+    [
+      ["restored", [["model_providers", "harnesshub"]]],
+      ["deleted", undefined],
+    ],
   );
-  assert.deepEqual(await snapshot(context.home), {});
+  await assertUnwound("codex", context.home, {});
 });
 
 void test("codex: without the gateway's own search, web search stays on only for a model whose provider takes Responses natively", async (t) => {
@@ -354,7 +359,9 @@ void test("codex: web search stays on whatever the model when the gateway search
   ));
   assert.equal(await searchOf(), "disabled");
   await unwire(record, context);
-  assert.equal(await readFile(file, "utf8"), original);
+  await assertUnwound("codex", context.home, {
+    ".codex/config.toml": original,
+  });
 });
 
 void test("codex: the ChatGPT mode puts the key in openai_base_url, takes a model only when named, and switching modes restores what the other wrote", async (t) => {
@@ -395,13 +402,18 @@ void test("codex: the ChatGPT mode puts the key in openai_base_url, takes a mode
     "WIRING_TARGET_INVALID",
   );
 
-  // Codex keeps its own model: only the base URL, with the key in its path.
+  // Codex keeps its own model: the base URL with the key in its path, the
+  // provider table for threads started on it, the levels its app offers.
   const plan = await planWiring("codex", chatgpt, context);
   assert.equal(plan.keyId, KEY.keyId);
   assert.equal(plan.model, undefined);
   assert.deepEqual(
     plan.files.flatMap((file) => file.changes.map((change) => change.keyPath)),
-    [["openai_base_url"]],
+    [
+      ["openai_base_url"],
+      ["model_providers", "harnesshub"],
+      ["desktop", "enabled-reasoning-efforts"],
+    ],
   );
   assert.ok(
     !JSON.stringify(plan).includes(KEY.keyText),
@@ -414,23 +426,53 @@ void test("codex: the ChatGPT mode puts the key in openai_base_url, takes a mode
   assert.equal(record.model, undefined);
   assert.deepEqual(record.options, { codexAuth: "chatgpt" });
   const config = path.join(context.home, ".codex", "config.toml");
-  const wired = `${original}openai_base_url = "${BASE}/backend-api/codex/${KEY.keyText}"\n`;
-  assert.equal(await readFile(config, "utf8"), wired);
+  const wired = await readFile(config, "utf8");
+  const plain = (text: string) =>
+    JSON.parse(JSON.stringify(parseToml(text))) as Record<string, unknown>;
+  assert.deepEqual(plain(wired), {
+    model: "gpt-5.5-codex",
+    openai_base_url: `${BASE}/backend-api/codex/${KEY.keyText}`,
+    model_providers: {
+      harnesshub: {
+        name: "HarnessHub",
+        base_url: `${BASE}/v1`,
+        wire_api: "responses",
+        experimental_bearer_token: KEY.keyText,
+      },
+    },
+    desktop: {
+      "enabled-reasoning-efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "ultra",
+        "persistent",
+        "minimal",
+        "max",
+      ],
+    },
+  });
+  assert.ok(wired.startsWith(original));
   assert.deepEqual(Object.keys(await snapshot(context.home)), [
     ".codex/config.toml",
   ]);
   assert.equal(await wiredKeyText(record, context), KEY.keyText);
   assert.equal((await detectDrift(record, context)).drifted, false);
+  const base = `openai_base_url = "${BASE}/backend-api/codex/`;
   await writeFile(
     config,
-    `${original}openai_base_url = "https://elsewhere.example/backend-api/codex/${KEY.keyText}"\n`,
+    wired.replace(
+      base,
+      `openai_base_url = "https://elsewhere.example/backend-api/codex/`,
+    ),
   );
   assert.deepEqual((await detectDrift(record, context)).kinds, [
     "foreign-gateway",
   ]);
   await writeFile(
     config,
-    `${original}openai_base_url = "${BASE}/backend-api/codex/${NEW_KEY.keyText}"\n`,
+    wired.replace(`${base}${KEY.keyText}`, `${base}${NEW_KEY.keyText}`),
   );
   assert.deepEqual((await detectDrift(record, context)).kinds, ["unwired"]);
   await writeFile(config, wired);
@@ -458,9 +500,9 @@ void test("codex: the ChatGPT mode puts the key in openai_base_url, takes a mode
   const back = await applyWiring("codex", chatgpt, context, {
     previous: api.record,
   });
-  assert.equal(await readFile(config, "utf8"), wired);
+  assert.deepEqual(plain(await readFile(config, "utf8")), plain(wired));
   await unwire(back.record, context);
-  assert.deepEqual(await snapshot(context.home), {
+  await assertUnwound("codex", context.home, {
     ".codex/config.toml": original,
   });
 });

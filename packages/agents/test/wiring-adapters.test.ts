@@ -29,8 +29,11 @@ import {
 import { leaves } from "../src/wiring/formats/values.js";
 import { GOLDEN } from "./wiring-golden.js";
 import {
+  assertUnwound,
   directories,
   EXISTING,
+  keeps,
+  KEPT,
   KEY,
   NEW_KEY,
   sandbox,
@@ -175,9 +178,15 @@ for (const id of ADAPTERS) {
 
     const result = await unwire(record, context);
     assert.equal(result.keyId, KEY.keyId);
-    assert.ok(result.files.every((file) => file.action === "deleted"));
-    assert.deepEqual(await snapshot(context.home), {});
-    assert.deepEqual(await directories(context.home), []);
+    assert.ok(
+      result.files.every(
+        (file) =>
+          file.action ===
+          (keeps(id, context.home, file.path) ? "restored" : "deleted"),
+      ),
+    );
+    await assertUnwound(id, context.home, {});
+    if (!KEPT[id]) assert.deepEqual(await directories(context.home), []);
   });
 
   void test(`${id}: wires an existing configuration keeping comments and unrelated keys, and restores it byte for byte`, async (t) => {
@@ -203,10 +212,14 @@ for (const id of ADAPTERS) {
     const result = await unwire(record, context);
     assert.ok(
       result.files.every(
-        (file) => file.action === (existed(file.path) ? "restored" : "deleted"),
+        (file) =>
+          file.action ===
+          (keeps(id, context.home, file.path) || existed(file.path)
+            ? "restored"
+            : "deleted"),
       ),
     );
-    assert.deepEqual(await snapshot(context.home), before);
+    await assertUnwound(id, context.home, before);
     if (process.platform !== "win32")
       assert.equal((await stat(first)).mode & 0o777, 0o640);
   });
@@ -231,7 +244,7 @@ for (const id of ADAPTERS) {
     }
     const result = await unwire(record, context);
     assert.ok(result.files.every((file) => file.action === "reverse-patched"));
-    assert.deepEqual(await snapshot(context.home), expected);
+    await assertUnwound(id, context.home, expected);
     assert.doesNotMatch(await allText(context.home), /hhk_/);
   });
 
@@ -380,6 +393,6 @@ for (const id of ADAPTERS) {
       previous: second.record,
     });
     await unwire(third.record, context);
-    assert.deepEqual(await snapshot(context.home), original);
+    await assertUnwound(id, context.home, original);
   });
 }

@@ -53,3 +53,24 @@ Status: proposed（Codex 的 ChatGPT 模式不签发 Key 的部分由 [ADR 0030]
 - 迁移 4 保留已有 `wirings` 行，之后可以写入没有 Key 的记录。
 
 以上由 `tests/integration/agents-wiring-semantics.test.ts`、`tests/integration/store-migrations.test.ts` 与 `tests/integration/model-plane-store.test.ts` 覆盖；没有以真实 Codex 或 Claude Code 验证，也没有在 Windows 上运行。
+
+## 补充：还原后留下的条目、托管配置与重启提示（2026-10-05）
+
+对标 Magpie 的接线细节（`internal/agent/codex.go`、`claude.go`），见 [全局接线](../global-wiring.md#codex-的其他设置)。
+
+决定：
+
+- **还原的例外**：Adapter 的设置可以声明 `keep`，原文件没有该条目时还原后留下这个值（不含 Key，以占位符记在备份清单的 `kept` 中），还原结果的 `kept` 与 `hh unwire` 的输出列出它。目前只有 Codex 的 `[model_providers.harnesshub]`：Codex 只能以会话开始时的 provider 重新打开会话，删掉这张表会使这些会话打不开。“还原回到接线之前”因此对这一项不成立，原文件已有的条目照旧恢复原值。
+- **CC Switch 的 provider 表**：接线期间 `custom`、`cc-switch`、`cc-switch-<n>`（不含被 profile 指名的表）指向网关并带 Key，删除中转站自己的认证项，还原时恢复。只按 `config.toml` 的表名判断，不读取 CC Switch 的数据库。
+- **托管配置只读**：Claude Code 的 `managed-settings.json` 设置了接线写入的项时，预览、Agent 视图与 `hh wire` 给出警告；HarnessHub 从不写入这些系统路径。
+- **重启提示**：Adapter 的 `restartNotice` 出现在预览、Agent 视图（`notice`）与 `hh wire|use|unwire` 的输出中。
+
+考虑过的替代方案：
+
+- **还原时删除 provider 表**（保持逐字节还原）：在 HarnessHub 上开始的 Codex 会话从此无法打开，用户只能手工补回这张表。
+- **留下带 Key 的表**：旧 Key 已吊销，留下它没有用处，还会把已失效的凭据留在用户文件中。
+- **像 Magpie 一样只改 CC Switch 表的 `base_url`**：HarnessHub 的网关在本机也要求 Key，不带 Key 的请求得到 401。
+- **写入托管配置或要求管理员权限**：托管配置属于管理员，改它超出用户授权；只警告，由用户联系管理员。
+- **只在检测到 Agent 正在运行时提示重启**（Magpie）：需要枚举进程，各平台的判断不同；提示总是给出，代价是没有运行时也会看到它。
+
+后果：还原后的 Codex 文件不再与接线前逐字节相同（多一张不带 Key 的表）；测试用 `tests/support/codex-config.ts` 的 `codexUnwired` 表达预期。托管配置的 Windows 路径与 Codex 应用的 `[desktop]` 设置未以真实环境验证。

@@ -38,9 +38,11 @@ import {
   detectAgent,
   detectDrift,
   isModelOptional,
+  managedOverrides,
   planWiring,
   resolveOptions,
   unwire,
+  wiredEntries,
   wiredKeyText,
   wiringAdapter,
   wiringAdapters,
@@ -48,6 +50,7 @@ import {
   type AgentInstallation,
   type ConfirmedPlan,
   type DriftReport,
+  type ManagedOverride,
   type UnwireResult,
   type WiringAdapter,
   type WiringContext,
@@ -62,7 +65,23 @@ export interface WiringHome {
   home: string;
   /** The environment agents see: PATH for detection and directory overrides such as CODEX_HOME. */
   env: Readonly<Record<string, string | undefined>>;
+  /**
+   * For tests only: where system-wide files (Claude Code's managed settings)
+   * are read; the file system root otherwise.
+   */
+  systemRoot?: string;
 }
+
+/**
+ * A wiring preview with what the user must know before applying it: what
+ * to do afterwards for the agent to use it (`notice`), and the entries an
+ * administrator's policy sets over the ones written (`managed`), which then
+ * have no effect.
+ */
+export type AgentWiringPlan = WiringPlan & {
+  notice?: string;
+  managed?: ManagedOverride[];
+};
 
 /** Settings of global wiring, resolved by `resolveWiringSettings`. */
 export interface WiringSettings {
@@ -132,6 +151,8 @@ export interface AgentWiringView extends WiringChoice {
    * a sync or a wiring operation succeeds.
    */
   attention?: { code: string; message: string; at: string };
+  /** Entries written that an administrator's policy overrides, so that they have no effect. */
+  managed?: ManagedOverride[];
 }
 
 /** One agent as `GET /api/v1/agents` shows it. */
@@ -153,6 +174,8 @@ export interface AgentView {
      */
     ownModel: Array<Record<string, string>>;
   };
+  /** What to do after wiring changes for the agent to use them, such as restarting it. */
+  notice?: string;
   installation: AgentInstallation;
   wiring: AgentWiringView | null;
 }
@@ -178,7 +201,7 @@ export interface WiringRequest {
 export interface ProfileAgentPlan {
   adapterId: string;
   changed: boolean;
-  plan: WiringPlan | null;
+  plan: AgentWiringPlan | null;
 }
 
 export interface ProfilePlan {
@@ -388,18 +411,36 @@ export class AgentWiringService {
    * The edits wiring would make, with a throwaway key that is never stored:
    * the preview masks key text anyway, and applying issues the real key.
    */
-  async plan(adapterId: string, request: WiringRequest): Promise<WiringPlan> {
-    wiringAdapter(adapterId);
+  async plan(
+    adapterId: string,
+    request: WiringRequest,
+  ): Promise<AgentWiringPlan> {
+    const adapter = wiringAdapter(adapterId);
     const context = this.context();
     const previous = await this.wiringOf(adapterId);
     const prepared = await this.prepare(adapterId, request, previous);
     const issued = issueGatewayKey({ kind: "agent", adapterId });
-    return planWiring(
+    const plan = await planWiring(
       adapterId,
       this.target(prepared, { text: issued.text, keyId: issued.keyId }),
       context,
       previous ? { previous } : {},
     );
+    // What it writes in the file an administrator's policy can override.
+    const first = plan.files.find((file) => file.id === adapter.files[0]?.id);
+    const managed = await managedOverrides(
+      adapterId,
+      [
+        ...(first?.changes.map((change) => change.keyPath) ?? []),
+        ...(previous ? await wiredEntries(previous, context) : []),
+      ],
+      context,
+    );
+    return {
+      ...plan,
+      ...(adapter.restartNotice ? { notice: adapter.restartNotice } : {}),
+      ...(managed.length ? { managed } : {}),
+    };
   }
 
   /** Wires the agent as requested with a new key (none when it signs in by itself), after checking the confirmed plan. */
@@ -890,6 +931,7 @@ export class AgentWiringService {
         ),
         ownModel: ownModelOptions(adapter),
       },
+      ...(adapter.restartNotice ? { notice: adapter.restartNotice } : {}),
       installation: await detectAgent(adapterId, context),
       wiring: record
         ? await this.wiringView(
@@ -939,8 +981,19 @@ export class AgentWiringService {
       if (!(error instanceof HubError)) throw error;
       driftError = `${error.code}: ${error.message}`;
     }
+    let managed: ManagedOverride[] = [];
+    try {
+      managed = await managedOverrides(
+        record.adapterId,
+        await wiredEntries(record, context),
+        context,
+      );
+    } catch (error) {
+      if (!(error instanceof WiringError)) throw error;
+    }
     return {
       ...choiceOf(record),
+      ...(managed.length ? { managed } : {}),
       models: key
         ? [...catalog.keys()].filter((ref) =>
             modelAllowed(key.modelAllow, ref, key.modelDeny),
@@ -988,6 +1041,7 @@ export class AgentWiringService {
       home: home.home,
       dataDir: this.options.dataDir,
       env: home.env,
+      ...(home.systemRoot ? { systemRoot: home.systemRoot } : {}),
       ...(this.options.clock ? { clock: this.options.clock } : {}),
     };
   }

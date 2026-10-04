@@ -66,6 +66,31 @@ const findingSchema = {
   },
 } as const;
 
+/** Entries an administrator's policy sets over the ones wiring writes. */
+const managedSchema = {
+  type: "array",
+  description:
+    "Files of an administrator's policy (Claude Code's managed settings) that set entries wiring writes, which then have no effect; keyPaths is empty for a file that does not parse",
+  items: {
+    type: "object",
+    additionalProperties: false,
+    required: ["path", "keyPaths"],
+    properties: {
+      path: { type: "string" },
+      keyPaths: {
+        type: "array",
+        items: { type: "array", items: { type: "string" } },
+      },
+    },
+  },
+} as const;
+
+const noticeSchema = {
+  type: "string",
+  description:
+    "What to do after a wiring change for the agent to use it, such as restarting it",
+} as const;
+
 const agentSchema = {
   type: "object",
   additionalProperties: false,
@@ -83,6 +108,7 @@ const agentSchema = {
     name: { type: "string" },
     protocol: { enum: ["chat", "responses", "anthropic", "gemini"] },
     keyDelivery: { enum: ["config-file", "env-file"] },
+    notice: noticeSchema,
     capabilities: {
       type: "object",
       additionalProperties: false,
@@ -162,6 +188,7 @@ const agentSchema = {
           },
         },
         driftError: { type: "string" },
+        managed: managedSchema,
         attention: {
           type: "object",
           additionalProperties: false,
@@ -189,6 +216,8 @@ const planSchema = {
     keyDelivery: { enum: ["config-file", "env-file"] },
     model: { type: "string" },
     keyId: { type: "string" },
+    notice: noticeSchema,
+    managed: managedSchema,
     changed: { type: "boolean" },
     files: {
       type: "array",
@@ -410,6 +439,12 @@ const unwireSchema = {
               "unchanged",
               "absent",
             ],
+          },
+          kept: {
+            type: "array",
+            items: { type: "array", items: { type: "string" } },
+            description:
+              "Entries left in place for state the agent keeps, such as Codex's provider table (without the key) that threads started on it reopen with",
           },
         },
       },

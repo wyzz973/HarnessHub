@@ -31,6 +31,11 @@ export {
   type WiringTarget,
 } from "./operations.js";
 export { detectAgent, type AgentInstallation } from "./detect.js";
+export {
+  managedOverrides,
+  wiredEntries,
+  type ManagedOverride,
+} from "./managed.js";
 export { wiringAdapter, wiringAdapters } from "./adapters/index.js";
 export type { WiringAdapter, WiringModel } from "./adapters/index.js";
 export {

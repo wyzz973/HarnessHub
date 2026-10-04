@@ -17,7 +17,7 @@ Magpie 的回环网关不鉴权；HarnessHub 的模型调用都要求 Gateway Ke
 - **只在回环上，Key 必须有效**：这条路径与原来的透传一样只服务回环监听器上的回环对端（局域网监听器不提供它，网关的局域网入口在查看 Key 之前就以 403 拒绝）。路径中的 Key 按现有方式比较（SHA-256 后常数时间比较）；无效、未知或已吊销时，这个请求无论做什么都在本地答复 401，消息不重复路径或 Key。
 - **按模型名分流**（Magpie：命名空间决定路由）：`/responses` 的 `model` 带 `/`（Model Ref 或 `group/<id>`）时，用路径中的 Key 鉴权，按 `/v1/responses` 的正常路径服务（路由、转移、账本、额度、`session:` Key 的 Run 规则）。进入之前删掉请求中的 `Authorization` 与 `ChatGPT-Account-Id`，ChatGPT 的令牌因此不可能到达任何其他上游；网关本来也只转发固定的几个客户端请求头。没有 Key 时在本地答复 401，不转发给 ChatGPT。其他模型带着有效的 Key 或不带 Key 照旧原样转发。
 - **合并的模型列表**：`GET /models` 带有效 Key 时，网关用 Codex 的请求头取 ChatGPT 的列表，再在后面追加该 Key 可用的模型（与 `/v1/models` 同一个过滤），条目格式与 API 模式写入 `harnesshub-models.json` 的相同（`codexWiringCatalog`，由守护进程注入网关，网关不依赖 agents 包）。`ETag` 与转发答复的 `X-Models-Etag` 加上 HarnessHub 列表的标记（`+hh-<12 位十六进制>`），任一列表变化时 Codex 会重新获取。ChatGPT 拒绝或答复不是模型列表时原样返回，Codex 保留已有的列表。
-- **还原吊销 Key**：`hh unwire codex` 恢复文件并吊销这把 Key；轮换签发新 Key、旧 Key 立即失效。
+- **还原吊销 Key**：`hh unwire codex` 恢复文件（只留下不带 Key 的 `[model_providers.harnesshub]`，见 [ADR 0022 补充](0022-agent-wiring-semantics.md#补充还原后留下的条目托管配置与重启提示2026-10-05)）并吊销这把 Key；轮换签发新 Key、旧 Key 立即失效。
 - **接线签发 Key，模型可选**：Adapter 的 `keyless` 能力改为 `modelOptional`：ChatGPT 模式照样签发 agent Key，没有指定模型时 Codex 保留自己的默认模型（不写 `model`，也不接受档位与 effort）；指定了 HarnessHub 的模型时写 `model` 与 `model_reasoning_effort`。请求的 `model: null`（`hh wire --no-model`）回到 Codex 自己的模型；选项切换到 ChatGPT 模式时不沿用 API 模式的模型。Key 的模型白名单与隐藏列表同样适用于合并列表。
 - **旧记录**：本记录之前以 ChatGPT 模式接线的记录没有 Key，照旧只转发；它们的 HarnessHub 模型请求得到 401。`hh wire codex --rotate` 给它们签发第一把 Key。
 

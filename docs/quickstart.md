@@ -15,7 +15,7 @@ Node、pnpm 的版本与克隆见 [README](../README.md#install-from-source)。`
 
 ## 向导：`hh init`
 
-另开一个终端运行 `pnpm exec hh init`，它把下面第 2 步与第 5 步[接入 Agent](#5-接入本机的编码-agent)合成一个流程：确认守护进程在运行（没有时提示先运行 `hh serve`，以 3 退出）；从按厂商、中转与本地分组的预设中选择（输入文字即搜索），再选区域与套餐，以隐藏输入读取 API Key（本地预设不需要）；刷新模型并显示数量；列出本机已安装的 Agent 供多选；选择默认模型，选了 Claude Code 时可为各档位另选模型；最后把所有 Agent 的改动合在一份预览中，确认后逐个接线，并提示 `hh usage`、`hh console` 等下一步。本地预设（vLLM、LM Studio、Ollama）询问服务的基址，回车沿用预设的地址；“+base URL” 预设（Azure、另一台 HarnessHub 或 Magpie）必须给出基址，提示中的地址只是格式示例。同 id 的 provider 已存在时直接使用，不再询问区域、套餐与基址；预设、`--region`、`--plan` 或 `--base` 与它不同时，向导列出差异（现有 → 要求），只有地址不同时可以更新它的地址，也可以按原样使用或停止（以 4 退出，什么都不改）；区域、套餐与预设在添加时确定，要改它们须先 `hh provider remove` 再重新运行。它已有 Key 时不使用给出的 Key，并在结果中说明（更换 Key 用 `hh credential rotate`）。已按相同选择接线、Key 有效且没有漂移的 Agent 不重新接线（重新接线会换一把新 Key）。还没有 provider 时，控制台首页显示同样的流程（Claude Code 的各档位跟随默认模型，之后在 Agent 详情中分别设置）。
+另开一个终端运行 `pnpm exec hh init`，它把下面第 2 步与第 5 步[接入 Agent](#5-接入本机的编码-agent)合成一个流程：确认守护进程在运行（没有时提示先运行 `hh serve`，以 3 退出）；从按厂商、中转与本地分组的预设中选择（输入文字即搜索），再选区域与套餐，以隐藏输入读取 API Key（本地预设不需要）；刷新模型并显示数量；列出本机已安装的 Agent 供多选；选择默认模型，并可为所选 Agent 的档位另选模型（一次回答，各 Agent 取自己有的档位：Claude Code 的各档、Codex 的 `subagent`，没有 Agent 有的档位被拒绝）；最后把所有 Agent 的改动合在一份预览中，确认后逐个接线，并提示 `hh usage`、`hh console` 等下一步。本地预设（vLLM、LM Studio、Ollama）询问服务的基址，回车沿用预设的地址；“+base URL” 预设（Azure、另一台 HarnessHub 或 Magpie）必须给出基址，提示中的地址只是格式示例。同 id 的 provider 已存在时直接使用，不再询问区域、套餐与基址；预设、`--region`、`--plan` 或 `--base` 与它不同时，向导列出差异（现有 → 要求），只有地址不同时可以更新它的地址，也可以按原样使用或停止（以 4 退出，什么都不改）；区域、套餐与预设在添加时确定，要改它们须先 `hh provider remove` 再重新运行。它已有 Key 时不使用给出的 Key，并在结果中说明（更换 Key 用 `hh credential rotate`）。已按相同选择接线、Key 有效且没有漂移的 Agent 不重新接线（重新接线会换一把新 Key）。还没有 provider 时，控制台首页显示同样的流程（Claude Code 的各档位跟随默认模型，之后在 Agent 详情中分别设置）。
 
 没有终端时（stdin 不是 TTY、设置了 `CI` 或加 `--non-interactive`）由选项给出全部答案，缺少的以 2 退出，且在添加任何东西之前检查：
 
@@ -101,6 +101,6 @@ pnpm exec hh agents
 pnpm exec hh wire codex deepseek/deepseek-chat
 ```
 
-`hh wire` 先显示对 Agent 配置文件（这里是 `~/.codex/config.toml`，以及 HarnessHub 为 Codex 生成的模型目录 `~/.codex/harnesshub-models.json`）的改动，确认后写入，并给该 Agent 签发一把只属于它的 Key；Agent 默认列出网关的全部模型，`hh agents models codex --hide <模型>` 可隐藏其中一些。原文件先备份，`hh unwire codex` 恢复原样并吊销 Key。重启正在运行的 Agent 后生效，它的调用按 Agent 汇总在 `hh usage --by adapter` 中。`pnpm exec hh tui` 在终端中打开同样的操作：每个 Agent 一行，方向键选择 Agent 与字段（模型、Claude Code 的档位、effort），回车打开可搜索的模型选择器，确认 diff 后写入，`s`、`p` 保存与应用 Profile（[终端界面](global-wiring.md#终端界面)）。支持的 Agent、写入的键与安全规则见 [全局接线](global-wiring.md)。
+`hh wire` 先显示对 Agent 配置文件（这里是 `~/.codex/config.toml`，以及 HarnessHub 为 Codex 生成的模型目录 `~/.codex/harnesshub-models.json`）的改动，确认后写入，并给该 Agent 签发一把只属于它的 Key；Agent 默认列出网关的全部模型，`hh agents models codex --hide <模型>` 可隐藏其中一些。原文件先备份，`hh unwire codex` 恢复原样（只留下不带 Key 的 `[model_providers.harnesshub]`，让在它上面开始的会话仍能打开）并吊销 Key。按输出末尾的提示重启正在运行的 Agent 后生效，它的调用按 Agent 汇总在 `hh usage --by adapter` 中。`pnpm exec hh tui` 在终端中打开同样的操作：每个 Agent 一行，方向键选择 Agent 与字段（模型、档位、effort），回车打开可搜索的模型选择器，确认 diff 后写入，`s`、`p` 保存与应用 Profile（[终端界面](global-wiring.md#终端界面)）。支持的 Agent、写入的键与安全规则见 [全局接线](global-wiring.md)。
 
 更多说明：命令与 API 见 [模型平面 API 与 CLI](model-plane-api.md)，网关的路由、重试与限制见 [统一模型网关](model-gateway.md#共享网关)，预设的格式与核对见 [presets](../packages/gateway/presets/README.md)。

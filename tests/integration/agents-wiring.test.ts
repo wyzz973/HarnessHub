@@ -11,6 +11,7 @@ import { HarnessHubError } from "@harnesshub/sdk/client";
 import { connectLocal } from "@harnesshub/sdk/local";
 import { HH_ENTRY } from "../support/entries.js";
 import { startFakeProvider } from "../support/fake-provider.js";
+import { codexUnwired } from "../support/codex-config.js";
 import { temporaryDirectory } from "../support/temporary.js";
 
 const UPSTREAM_KEY = "sk-synthetic-agents-upstream-0001";
@@ -197,7 +198,9 @@ void test("wiring Codex points it at the gateway with a working agent key; rotat
     ["restored", "deleted"],
   );
   assert.equal(unwired.agent.wiring, null);
-  assert.equal(await readFile(config, "utf8"), ORIGINAL);
+  // Codex's provider table stays, without the key, for threads started on it.
+  assert.deepEqual(unwired.files[0]!.kept, [["model_providers", "harnesshub"]]);
+  assert.equal(await readFile(config, "utf8"), codexUnwired(ORIGINAL, gateway));
   assert.equal(await chat(gateway, second.key!), 401);
   assert.ok(
     (await client.gatewayKeys.list()).items
@@ -211,7 +214,7 @@ void test("wiring Codex points it at the gateway with a working agent key; rotat
 });
 
 void test("a manual edit shows as drift, and unwire then restores only HarnessHub's entries", async (t) => {
-  const { client, config } = await setup(t);
+  const { client, config, gateway } = await setup(t);
   const plan = await client.agents.plan("codex", {
     model: MODEL,
     models: [MODEL],
@@ -231,11 +234,14 @@ void test("a manual edit shows as drift, and unwire then restores only HarnessHu
     unwired.files.map((file) => file.action),
     ["reverse-patched", "deleted"],
   );
-  assert.equal(await readFile(config, "utf8"), `${ORIGINAL}\n# added later\n`);
+  assert.equal(
+    await readFile(config, "utf8"),
+    `${codexUnwired(ORIGINAL, gateway)}\n# added later\n`,
+  );
 });
 
 void test("a failed apply revokes the key it issued and leaves the file as the user changed it", async (t) => {
-  const { client, config } = await setup(t);
+  const { client, config, gateway } = await setup(t);
   const plan = await client.agents.plan("codex", { model: MODEL });
   await writeFile(config, `${ORIGINAL}approval_policy = "never"\n`);
   await assert.rejects(
@@ -330,7 +336,7 @@ void test(
   "hh agents, wire, use and unwire show redacted diffs and ask before writing",
   { timeout: 120_000 },
   async (t) => {
-    const { url, dataDir, config, home } = await setup(t);
+    const { url, dataDir, config, home, gateway } = await setup(t);
     const run = (...args: string[]) =>
       hh(home, [...args, "--url", url, "--data-dir", dataDir]);
     const outputs: string[] = [];
@@ -388,7 +394,11 @@ void test(
 
     const unwired = await ok("unwire", "codex", "--yes");
     assert.match(unwired.stdout, /^restored\s+.*config\.toml$/m);
-    assert.equal(await readFile(config, "utf8"), ORIGINAL);
+    assert.match(unwired.stdout, /^kept\s+model_providers\.harnesshub$/m);
+    assert.equal(
+      await readFile(config, "utf8"),
+      codexUnwired(ORIGINAL, gateway),
+    );
     for (const text of outputs)
       for (const key of [first.key!, second.key!, third.key!])
         assert.equal(text.includes(key), false);

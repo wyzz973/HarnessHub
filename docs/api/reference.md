@@ -1601,7 +1601,7 @@
 **GET `/api/v1/agents` — 本机 Agent 列表**
 
 - 输入：无参数。
-- 返回：200：items（Agent：id、name、protocol、keyDelivery、capabilities{tiers、efforts、options（各选项可取值，默认值在前）}、installation{status=installed|configured-only|not-found、executable、configDirectories}、wiring{model?、tiers?、effort?、options?、models（Agent 列出且 Key 可用的模型）、hidden（隐藏的模型）、keyId?、keyState=active|revoked|expired|missing|none、wiredAt、files、drift、driftError、attention?{code、message、at}（上次目录同步没有改写它的文件的原因）}|null）、nextCursor=null。保留自己模型的 Agent（Codex 的 codexAuth=chatgpt 且未指定模型）没有 model；在 Codex 的 ChatGPT 模式开始签发 Key 之前接线的记录没有 keyId，keyState 为 none。
+- 返回：200：items（Agent：id、name、protocol、keyDelivery、capabilities{tiers、efforts、options（各选项可取值，默认值在前）}、notice?（接线改动后要怎样 Agent 才会用上，如重启）、installation{status=installed|configured-only|not-found、executable、configDirectories}、wiring{model?、tiers?、effort?、options?、models（Agent 列出且 Key 可用的模型）、hidden（隐藏的模型）、keyId?、keyState=active|revoked|expired|missing|none、wiredAt、files、drift、driftError、attention?{code、message、at}（上次目录同步没有改写它的文件的原因）、managed?[]{path、keyPaths}（管理员的策略文件——Claude Code 的 managed settings——设置了接线写的哪些项，这些项因此不生效；无法解析的文件 keyPaths 为空）}|null）、nextCursor=null。保留自己模型的 Agent（Codex 的 codexAuth=chatgpt 且未指定模型）没有 model；在 Codex 的 ChatGPT 模式开始签发 Key 之前接线的记录没有 keyId，keyState 为 none。
 - 实现链路：AgentWiringService.list：对每个支持的 Adapter 调用 detectAgent（只查 PATH 与配置目录，不执行 Agent）、读取 WiringRecord 与其 Key，并以当前网关地址调用 detectDrift。
 - 持久化与副作用：只读；不读取 Agent 的认证文件，不返回 Key 文本。
 - 失败与边界：守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。
@@ -1626,7 +1626,7 @@
 **POST `/api/v1/agents/{id}/wiring/plan` — 预览接线**
 
 - 输入：路径参数 id；model（provider/model 或 group/<id>，缺省沿用当前模型，options 把 Agent 切换为保留自己模型时不沿用；null 表示不指定模型，只用于保留自己模型的 Agent）；models 为 Agent 可列出的模型（provider/model、provider/*、group/<id> 或 *，缺省沿用当前列表，首次为 *，即网关的全部模型、包括之后新增的）；tiers（capabilities.tiers 中各档的模型，缺省沿用当前，{} 清除）；effort（capabilities.efforts 之一，缺省沿用当前，null 清除）；options（capabilities.options，如 codexAuth=gateway-key|chatgpt，缺省沿用当前）。codexAuth=chatgpt 时模型可以不指定（Codex 保留自己的模型），这时不接受 tiers 与 effort。
-- 返回：200：AgentWiringPlan：adapterId、protocol、keyDelivery、model?、keyId?、changed、files[]（id、path、format、exists、hash、changes[]、diff）；diff 中 Gateway Key 显示为 hhk_a_xxxx…，被替换的旧 Key 值为 <redacted>；HarnessHub 生成的整个文件（Codex 的模型目录）只显示大小，changes 中超过 2000 字符的值被截断。
+- 返回：200：AgentWiringPlan：adapterId、protocol、keyDelivery、model?、keyId?、notice?（应用之后要怎样 Agent 才会用上）、managed?[]{path、keyPaths}（管理员策略文件会盖过的写入项）、changed、files[]（id、path、format、exists、hash、changes[]、diff）；diff 中 Gateway Key 显示为 hhk_a_xxxx…，被替换的旧 Key 值为 <redacted>；HarnessHub 生成的整个文件（Codex 的模型目录）只显示大小，changes 中超过 2000 字符的值被截断。
 - 实现链路：AgentWiringService.plan：按网关的 provider 与路由组核对模型与各档模型（须由网关提供且未被隐藏），取窗口、输出上限、推理档位（reasoning 模型为 low/medium/high）、图像输入与原生协议，用一把不保存的临时 Key 调用 planWiring。
 - 持久化与副作用：只读；不写文件，不签发 Key。
 - 失败与边界：404 WIRING_ADAPTER_UNKNOWN；400 AGENT_MODEL_UNAVAILABLE（网关不提供的模型）、AGENT_WIRING_INVALID（缺模型，或保留自己模型的 Agent 没有模型却收到 tiers、effort）、WIRING_TARGET_INVALID（Agent 没有的档位、effort 或选项）；409 AGENT_MODEL_IN_USE（所选模型被隐藏）、WIRING_CONFIG_UNPARSEABLE、WIRING_SYMLINK_ESCAPE、WIRING_PATH_CONFLICT、WIRING_UNSUPPORTED_STRUCTURE；503 GATEWAY_NOT_LISTENING；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。
@@ -1665,8 +1665,8 @@
 **DELETE `/api/v1/agents/{id}/wiring` — 还原 Agent 配置**
 
 - 输入：路径参数 id。
-- 返回：200：agent（还原后）与 files[]（path、action=restored|deleted|reverse-patched|unchanged|absent）。
-- 实现链路：AgentWiringService.unwire：unwire 在文件未变时写回原始字节（接线新建的文件被删除）、否则只恢复 HarnessHub 写过的键，然后吊销 Key（有 Key 时）并删除 WiringRecord。
+- 返回：200：agent（还原后）与 files[]（path、action=restored|deleted|reverse-patched|unchanged|absent、kept?：为 Agent 自己保存的状态留下的项，如 Codex 的 [model_providers.harnesshub]（不含 Key），在它上面开始的会话重新打开时需要它）。
+- 实现链路：AgentWiringService.unwire：unwire 在文件未变时写回原始字节（接线新建的文件被删除）、否则只恢复 HarnessHub 写过的键；Adapter 声明要保留的项（原文件没有时）按记录的值写回而不删除，此时文件按键恢复，然后吊销 Key（有 Key 时）并删除 WiringRecord。
 - 持久化与副作用：改写或删除 Agent 的配置文件；吊销 Key；删除 wirings 记录。失败时记录与 Key 保留，可重试。
 - 失败与边界：409 AGENT_NOT_WIRED、WIRING_CONFIG_UNPARSEABLE；500 WIRING_BACKUP_INVALID；守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。
 - Schema 参数索引：path: id（必需）。

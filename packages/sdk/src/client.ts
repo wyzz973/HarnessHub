@@ -636,6 +636,15 @@ export interface AgentWiring extends WiringChoice {
     findings: AgentDriftFinding[];
   } | null;
   driftError?: string;
+  /** Entries written that an administrator's policy (Claude Code's managed settings) overrides. */
+  managed?: AgentManagedOverride[];
+}
+
+/** An administrator's file that sets entries wiring writes, which then have no effect. */
+export interface AgentManagedOverride {
+  path: string;
+  /** Empty when the file does not parse. */
+  keyPaths: string[][];
 }
 
 /** `GET /agents` item. */
@@ -656,6 +665,8 @@ export interface Agent {
      */
     ownModel: Array<Record<string, string>>;
   };
+  /** What to do after a wiring change for the agent to use it, such as restarting it. */
+  notice?: string;
   installation: AgentInstallation;
   wiring: AgentWiring | null;
 }
@@ -684,6 +695,10 @@ export interface AgentWiringPlan {
   /** Absent for an agent that keeps its own models. */
   model?: string;
   keyId?: string;
+  /** What to do after applying it for the agent to use it, such as restarting it. */
+  notice?: string;
+  /** Entries it writes that an administrator's policy overrides, so that they would have no effect. */
+  managed?: AgentManagedOverride[];
   changed: boolean;
   files: AgentPlanFile[];
 }
@@ -733,6 +748,8 @@ export interface AgentUnwired {
   files: Array<{
     path: string;
     action: "restored" | "deleted" | "reverse-patched" | "unchanged" | "absent";
+    /** Entries left in place for state the agent keeps, such as Codex's provider table without the key. */
+    kept?: string[][];
   }>;
 }
 

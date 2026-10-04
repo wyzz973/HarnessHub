@@ -19,10 +19,10 @@ import {
   type WiringTarget,
 } from "../src/wiring/index.js";
 import {
+  assertUnwound,
   KEY,
   NEW_KEY,
   sandbox,
-  snapshot,
   writeFiles,
 } from "./wiring-support.js";
 
@@ -94,6 +94,17 @@ void test("re-wiring a ChatGPT-mode Codex wired without a key shows the key adde
       before: JSON.stringify(`${BASE}/backend-api/codex`),
       after: JSON.stringify(`${BASE}/backend-api/codex/hhk_a_mnop…`),
     },
+    // The provider table both modes now write, which unwire leaves.
+    {
+      keyPath: ["model_providers", "harnesshub"],
+      op: "set",
+      after: JSON.stringify({
+        name: "HarnessHub",
+        base_url: `${BASE}/v1`,
+        wire_api: "responses",
+        experimental_bearer_token: "hhk_a_mnop…",
+      }),
+    },
   ]);
   assert.match(
     file!.diff,
@@ -110,13 +121,16 @@ void test("re-wiring a ChatGPT-mode Codex wired without a key shows the key adde
     expect: plan,
   });
   assert.equal(record.keyId, NEW_KEY.keyId);
-  assert.equal(
-    await readFile(path.join(context.home, ".codex", "config.toml"), "utf8"),
-    `${ORIGINAL}openai_base_url = "${BASE}/backend-api/codex/${NEW_KEY.keyText}"\n`,
+  assert.ok(
+    (
+      await readFile(path.join(context.home, ".codex", "config.toml"), "utf8")
+    ).startsWith(
+      `${ORIGINAL}openai_base_url = "${BASE}/backend-api/codex/${NEW_KEY.keyText}"\n`,
+    ),
   );
   assert.equal((await detectDrift(record, context)).drifted, false);
   await unwire(record, context);
-  assert.deepEqual(await snapshot(context.home), {
+  await assertUnwound("codex", context.home, {
     ".codex/config.toml": ORIGINAL,
   });
 });

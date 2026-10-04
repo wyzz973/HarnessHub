@@ -49,7 +49,8 @@ const COMMAND_USAGE: readonly CommandUsage[] = [
     command: "wire",
     text: `  hh wire <agent> [model]         show the changes, confirm, wire to the gateway
           [--models REF[,REF]]... models the agent may list (default: current, or every model)
-          [--tier TIER=REF]...    a tier's model (Claude Code: opus, sonnet, haiku, fable, subagent)
+          [--tier TIER=REF]...    a tier's model (Claude Code: opus, sonnet, haiku, fable,
+                                  subagent; Codex: subagent)
           [--effort LEVEL]        the effort it starts with: none, minimal, low, medium,
                                   high, xhigh or max, as the agent takes them; --no-effort clears it
           [--option NAME=VALUE]...  an adapter option, such as codexAuth=chatgpt
@@ -128,13 +129,26 @@ async function agentsCommand(args: string[]): Promise<void> {
 
 /** A wiring plan as `hh wire` prints it: each changed file and its diff. */
 export function planText(plan: AgentWiringPlan): string {
-  return plan.files
-    .filter((file) => file.diff)
-    .map(
-      (file) =>
-        `${file.exists ? "Change" : "Create"} ${file.path}\n${file.diff}`,
-    )
-    .join("\n");
+  return [
+    ...plan.files
+      .filter((file) => file.diff)
+      .map(
+        (file) =>
+          `${file.exists ? "Change" : "Create"} ${file.path}\n${file.diff}`,
+      ),
+    ...managedText(plan.managed),
+  ].join("\n");
+}
+
+/** Warnings for entries an administrator's policy sets over the wiring's. */
+function managedText(
+  managed: AgentWiringPlan["managed"] | undefined,
+): string[] {
+  return (managed ?? []).map((file) =>
+    file.keyPaths.length
+      ? `Warning: ${file.path} (an administrator's managed settings) sets ${file.keyPaths.map((keyPath) => keyPath.join(".")).join(", ")}, which wins over the wiring.`
+      : `Warning: ${file.path} (an administrator's managed settings) could not be read; it may override the wiring.`,
+  );
 }
 
 function summary(agent: Agent, done: string): string {
@@ -148,7 +162,9 @@ function summary(agent: Agent, done: string): string {
     ),
     ...(wiring.effort ? [`  effort: ${wiring.effort}`] : []),
     ...wiring.files.map((file) => `  ${file}`),
-    `Restart running ${agent.name} sessions to use the new configuration.`,
+    ...managedText(wiring.managed),
+    agent.notice ??
+      `Restart running ${agent.name} sessions to use the new configuration.`,
   ].join("\n");
 }
 
@@ -249,8 +265,15 @@ async function unwireCommand(args: string[]): Promise<void> {
   const result = await client.agents.unwire(id);
   output(ctx, result, () =>
     [
-      ...result.files.map((file) => `${file.action.padEnd(15)} ${file.path}`),
+      ...result.files.flatMap((file) => [
+        `${file.action.padEnd(15)} ${file.path}`,
+        // Left for state the agent keeps (Codex reopens threads with it).
+        ...(file.kept ?? []).map(
+          (keyPath) => `${"kept".padEnd(15)} ${keyPath.join(".")}`,
+        ),
+      ]),
       `Unwired ${result.agent.name}; key ${current.wiring?.keyId ?? "-"} revoked.`,
+      ...(result.agent.notice ? [result.agent.notice] : []),
     ].join("\n"),
   );
 }

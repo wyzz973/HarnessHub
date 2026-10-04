@@ -101,10 +101,12 @@ void test("a file with several hard links is rewritten in place for every link",
   assert.equal(await readFile(other, "utf8"), await readFile(config, "utf8"));
   assert.match(await readFile(other, "utf8"), /model_providers\.harnesshub/);
   await unwire(record, context);
-  assert.equal(
-    await readFile(other, "utf8"),
-    EXISTING.codex![".codex/config.toml"],
-  );
+  // Restored in place; Codex's provider table stays, without the key.
+  const restored = await readFile(other, "utf8");
+  assert.ok(restored.startsWith(EXISTING.codex![".codex/config.toml"]!));
+  assert.match(restored, /\[model_providers\.harnesshub\]/);
+  assert.doesNotMatch(restored, /hhk_/);
+  assert.equal(await readFile(config, "utf8"), restored);
   assert.equal((await stat(config)).ino, inode);
 });
 
@@ -257,7 +259,10 @@ void test("agent directory overrides come only from the explicit environment", a
   );
   await unwire(codex.record, context);
   await unwire(claude.record, context);
-  assert.deepEqual(await snapshot(codexHome), {});
+  // Only Codex's provider table stays, without the key.
+  const left = await snapshot(codexHome);
+  assert.deepEqual(Object.keys(left), ["config.toml"]);
+  assert.doesNotMatch(left["config.toml"]!, /hhk_/);
   await rejectsWith(
     planWiring("codex", TARGET, {
       ...context,

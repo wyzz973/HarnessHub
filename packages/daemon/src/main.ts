@@ -356,6 +356,11 @@ export async function startHub(options: {
   wiringHome?: {
     home: string;
     env: Readonly<Record<string, string | undefined>>;
+    /**
+     * For tests only: where system-wide files (Claude Code's managed
+     * settings) are read; the file system root otherwise. Not a setting.
+     */
+    systemRoot?: string;
   };
   /**
    * The `wiring` settings: `autoSync` (default true) rewrites the model

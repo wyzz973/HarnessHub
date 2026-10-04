@@ -20,6 +20,7 @@ import {
   credentialFingerprint,
   startFakeProvider,
 } from "../support/fake-provider.js";
+import { codexUnwired } from "../support/codex-config.js";
 import { startCodexStub } from "../support/codex-stub.js";
 import { temporaryDirectory } from "../support/temporary.js";
 
@@ -198,9 +199,13 @@ void test(
     assert.notEqual(second, first);
     assert.equal((await codex(origin, first, false)).status, 401);
     assert.equal((await codex(origin, second, true)).status, 200);
-    // Unwiring revokes the key and puts the file back.
+    // Unwiring revokes the key and puts the file back, but for the
+    // provider table without the key.
     await client.agents.unwire("codex");
-    assert.equal(await readFile(config, "utf8"), ORIGINAL);
+    assert.equal(
+      await readFile(config, "utf8"),
+      codexUnwired(ORIGINAL, `${origin}/v1`),
+    );
     assert.equal((await codex(origin, second, false)).status, 401);
     const keys = (await client.gatewayKeys.list()).items.filter(
       (key) => key.scope.kind === "agent",

@@ -7,9 +7,11 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { TestContext } from "node:test";
+import { parse as parseToml } from "smol-toml";
 import type { GatewayKeyId } from "@harnesshub/core/model-plane";
 import { codexDefaultInstructions } from "../src/configuration/codex-default-instructions.js";
 import type { WiringContext, WiringTarget } from "../src/wiring/index.js";
@@ -110,6 +112,66 @@ export async function snapshot(
   return Object.fromEntries(
     Object.entries(result).sort(([a], [b]) => a.localeCompare(b)),
   );
+}
+
+/**
+ * What unwire leaves of an adapter's file for state the agent keeps
+ * (`AdapterSetting.keep`): Codex's provider table, without the key, so that
+ * threads started on it reopen. Every other entry is restored.
+ */
+export const KEPT: Readonly<
+  Record<
+    string,
+    { file: string; path: string[]; value: Record<string, string> }
+  >
+> = {
+  codex: {
+    file: ".codex/config.toml",
+    path: ["model_providers", "harnesshub"],
+    value: {
+      name: "HarnessHub",
+      base_url: "http://127.0.0.1:3180/v1",
+      wire_api: "responses",
+    },
+  },
+};
+
+/** Whether unwire keeps entries in this wired file of the adapter. */
+export function keeps(id: string, home: string, file: string): boolean {
+  return KEPT[id]?.file === path.relative(home, file);
+}
+
+/**
+ * Asserts that `home` is back to `before` after unwire: byte for byte, but
+ * for the file with kept entries, which keeps the original bytes and adds
+ * those entries.
+ */
+export async function assertUnwound(
+  id: string,
+  home: string,
+  before: Readonly<Record<string, string>>,
+): Promise<void> {
+  const after = await snapshot(home);
+  const kept = KEPT[id];
+  if (!kept) {
+    assert.deepEqual(after, before);
+    return;
+  }
+  const { [kept.file]: text, ...rest } = after;
+  const { [kept.file]: original, ...others } = before;
+  assert.deepEqual(rest, others);
+  assert.ok(text !== undefined, `${kept.file} stays`);
+  if (original !== undefined) assert.ok(text.startsWith(original), text);
+  // Plain objects: smol-toml's have no prototype.
+  const plain = (toml: string) =>
+    JSON.parse(JSON.stringify(parseToml(toml))) as Record<string, unknown>;
+  const expected = plain(original ?? "");
+  let at = expected;
+  for (const segment of kept.path.slice(0, -1))
+    at = (at[segment] ??= {}) as Record<string, unknown>;
+  at[kept.path.at(-1)!] = kept.value;
+  assert.deepEqual(plain(text), expected);
+  assert.doesNotMatch(text, /hhk_/);
 }
 
 /** Every directory under `directory`, relative and sorted. */

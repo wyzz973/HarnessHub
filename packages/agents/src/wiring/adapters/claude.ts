@@ -54,6 +54,8 @@ const CAPABILITIES_LIMIT = 8000;
  *   `CLAUDE_CODE_EFFORT_LEVEL`; other levels to `modelSettings.<claude
  *   model>.effortLevel` for a Claude model and to the top-level
  *   `effortLevel` for models before Opus 5.5 and other vendors' models.
+ * - An administrator's managed settings win over these; wiring reads them
+ *   to warn when they set an entry it writes, and never writes them.
  */
 export const claude: WiringAdapter = {
   id: "claude",
@@ -77,6 +79,9 @@ export const claude: WiringAdapter = {
   baseUrlField: { file: "settings", path: ["env", "ANTHROPIC_BASE_URL"] },
   tiers: [...TIERS, "subagent"],
   efforts: [...SETTINGS_EFFORTS, "max"],
+  restartNotice:
+    "Claude Code applies settings.json when a session starts: restart open Claude Code sessions to use this.",
+  managedFiles: managedSettings,
   settings(target) {
     const env = (name: string, value: string): AdapterSetting => ({
       file: "settings",
@@ -127,6 +132,25 @@ export const claude: WiringAdapter = {
     ];
   },
 };
+
+/**
+ * Where an administrator's Claude Code settings live, which Claude Code
+ * applies over the user's (Claude Code's settings documentation; Windows
+ * moved from ProgramData to Program Files, both are read).
+ */
+function managedSettings(platform: NodeJS.Platform): readonly string[] {
+  switch (platform) {
+    case "darwin":
+      return ["/Library/Application Support/ClaudeCode/managed-settings.json"];
+    case "win32":
+      return [
+        "C:\\Program Files\\ClaudeCode\\managed-settings.json",
+        "C:\\ProgramData\\ClaudeCode\\managed-settings.json",
+      ];
+    default:
+      return ["/etc/claude-code/managed-settings.json"];
+  }
+}
 
 /** Marks a model `[1m]` when its known window is at least 1M tokens. */
 function marker(models: readonly WiringModel[]): (ref: string) => string {

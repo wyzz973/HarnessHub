@@ -10,6 +10,7 @@ import { startHub } from "@harnesshub/daemon/main";
 import { HarnessHubError } from "@harnesshub/sdk/client";
 import { connectLocal } from "@harnesshub/sdk/local";
 import { HH_ENTRY } from "../support/entries.js";
+import { codexUnwired } from "../support/codex-config.js";
 import { startCodexStub } from "../support/codex-stub.js";
 import { startFakeProvider } from "../support/fake-provider.js";
 import { temporaryDirectory } from "../support/temporary.js";
@@ -256,8 +257,9 @@ void test("Codex in API mode lists a generated catalog; in ChatGPT mode it keeps
     expect: chatgptPlan,
   });
   const wired = await readFile(codex, "utf8");
+  // The base URL with the key, then the provider table for threads.
   const base = new RegExp(
-    `^${CODEX_ORIGINAL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}openai_base_url = "${origin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/backend-api/codex/(hhk_a_[a-z2-7]{12}_[A-Za-z0-9_-]{43})"\n$`,
+    `^${CODEX_ORIGINAL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}openai_base_url = "${origin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/backend-api/codex/(hhk_a_[a-z2-7]{12}_[A-Za-z0-9_-]{43})"\n\n\\[model_providers\\.harnesshub\\]\n`,
   ).exec(wired);
   assert.ok(base, wired);
   const chatgptKey = base[1]!;
@@ -361,13 +363,13 @@ void test("Codex in API mode lists a generated catalog; in ChatGPT mode it keeps
   assert.match(
     await readFile(codex, "utf8"),
     new RegExp(
-      `^model = "gpt-5\\.5-codex" # mine\nopenai_base_url = ".+/backend-api/codex/hhk_a_[^"]+"\n$`,
+      `^model = "gpt-5\\.5-codex" # mine\nopenai_base_url = ".+/backend-api/codex/hhk_a_[^"]+"\n`,
     ),
   );
   assert.equal(await chat(v1, key, SMALL), 401);
   const unwired = await client.agents.unwire("codex");
   assert.equal(unwired.agent.wiring, null);
-  assert.equal(await readFile(codex, "utf8"), CODEX_ORIGINAL);
+  assert.equal(await readFile(codex, "utf8"), codexUnwired(CODEX_ORIGINAL, v1));
   assert.equal(await exists(catalog), false);
   // Only HarnessHub's models were asked for: nothing went to ChatGPT.
   assert.deepEqual(chatgpt.requests, []);
@@ -543,7 +545,10 @@ void test("a profile saves every wired agent's choices and applying it switches 
     }),
     problem("PROFILE_PLAN_STALE", 409),
   );
-  assert.equal(await readFile(codex, "utf8"), CODEX_ORIGINAL);
+  assert.equal(
+    await readFile(codex, "utf8"),
+    codexUnwired(CODEX_ORIGINAL, `${origin}/v1`),
+  );
 
   // Through the real hh entry: list, apply with --yes, remove.
   const run = (...args: string[]) =>

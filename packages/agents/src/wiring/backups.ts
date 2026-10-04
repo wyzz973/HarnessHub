@@ -56,6 +56,12 @@ export interface BackupManifest {
   expected: Array<{ path: PathSegment[]; value: ConfigValue }>;
   /** Entries the latest wiring removed so that they cannot override it; absent in older manifests. */
   absent?: PathSegment[][];
+  /**
+   * What unwire leaves at these paths where the original had nothing, as
+   * templates without the key (`AdapterSetting.keep`); absent in older
+   * manifests.
+   */
+  kept?: Array<{ path: PathSegment[]; value: ConfigValue }>;
 }
 
 /** The manifest version written now. */
@@ -209,7 +215,12 @@ function validManifest(value: unknown): BackupManifest | undefined {
       (entry) => isObject(entry) && paths(entry.path) && "value" in entry,
     ) &&
     (value.absent === undefined ||
-      (Array.isArray(value.absent) && value.absent.every(paths)));
+      (Array.isArray(value.absent) && value.absent.every(paths))) &&
+    (value.kept === undefined ||
+      (Array.isArray(value.kept) &&
+        value.kept.every(
+          (entry) => isObject(entry) && paths(entry.path) && "value" in entry,
+        )));
   return valid ? (value as unknown as BackupManifest) : undefined;
 }
 

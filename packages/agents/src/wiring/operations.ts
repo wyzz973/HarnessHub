@@ -118,6 +118,11 @@ export interface WiringContext {
   env?: Readonly<Record<string, string | undefined>>;
   /** Source of `wiredAt`; defaults to the system clock. */
   clock?: () => Date;
+  /**
+   * For tests: the directory that system-wide paths (an administrator's
+   * managed settings) are read under; default the file system root.
+   */
+  systemRoot?: string;
 }
 
 /** One key-level change of a plan. Values are JSON text with keys masked. */
@@ -186,7 +191,7 @@ export interface WiringOutcome {
 }
 
 export type UnwireAction =
-  /** The original bytes were written back. */
+  /** The original bytes were written back, with any `kept` entries set on them. */
   | "restored"
   /** Wiring had created the file, which was unchanged, so it was deleted. */
   | "deleted"
@@ -201,7 +206,8 @@ export interface UnwireResult {
   adapterId: string;
   /** The key that the caller now revokes; absent for a wiring without a key. */
   keyId?: GatewayKeyId;
-  files: Array<{ path: string; action: UnwireAction }>;
+  /** `kept`: entries left in place for state the agent keeps (`AdapterSetting.keep`). */
+  files: Array<{ path: string; action: UnwireAction; kept?: string[][] }>;
 }
 
 /** File-based drift classes of 04 section 5; `bypassed` and `stale-key` need gateway evidence. */
@@ -406,7 +412,51 @@ export async function unwire(
         continue;
       }
       const { original: before } = manifest;
+      // Entries kept for the agent's state stay where the original had none.
+      const keptDocument = manifest.kept?.length
+        ? await originalDocument(context.dataDir, adapter.id, manifest, editor)
+        : undefined;
+      const kept = (manifest.kept ?? []).filter(
+        (keep) =>
+          keptDocument !== undefined &&
+          getPath(keptDocument, keep.path) === undefined,
+      );
+      const stays = kept.length
+        ? { kept: kept.map((keep) => segmentsText(keep.path)) }
+        : {};
       if (state.hash === entry.afterHash && manifest.byteRestore) {
+        if (kept.length) {
+          // The original bytes (none for a file wiring created) with the
+          // kept entries set on them.
+          const base = before.existed
+            ? decodeText(
+                await readOriginal(context.dataDir, adapter.id, before.sha256),
+                entry.path,
+              )
+            : { text: "", bom: false };
+          const text = inFileSync(entry.path, () =>
+            kept.reduce(
+              (current, keep) =>
+                editor.set(
+                  current,
+                  keep.path,
+                  resolveTemplate(keep.value, manifest.baseUrl),
+                ),
+              base.text,
+            ),
+          );
+          const bytes = encodeText(text, base.bom);
+          await inFile(entry.path, () =>
+            writeAtomic(realPath, bytes, {
+              mode: before.existed ? before.mode : state.mode,
+              expectedHash: state.hash,
+              inPlace: state.links > 1,
+            }),
+          );
+          await verifyBytes(realPath, entry.path, sha256(bytes));
+          files.push({ path: entry.path, action: "restored", ...stays });
+          continue;
+        }
         if (before.existed) {
           const bytes = await readOriginal(
             context.dataDir,
@@ -430,21 +480,22 @@ export async function unwire(
         continue;
       }
       const { text, bom } = decodeText(state.bytes, entry.path);
-      const original = await originalDocument(
-        context.dataDir,
-        adapter.id,
-        manifest,
-        editor,
-      );
+      const original =
+        keptDocument ??
+        (await originalDocument(context.dataDir, adapter.id, manifest, editor));
       const restored = inFileSync(entry.path, () => {
-        const operations = revertOperations(manifest.owned, original);
+        const operations = keepOperations(
+          revertOperations(manifest.owned, original),
+          kept,
+          manifest.baseUrl,
+        );
         const after = applyOperations(editor, text, operations);
         const pruned = pruneEmpty(editor, after, operations, original);
         verifyText(editor, text, pruned.text, operations, pruned.paths);
         return pruned.text;
       });
       if (restored === text) {
-        files.push({ path: entry.path, action: "unchanged" });
+        files.push({ path: entry.path, action: "unchanged", ...stays });
         continue;
       }
       const bytes = encodeText(restored, bom);
@@ -456,7 +507,7 @@ export async function unwire(
         }),
       );
       await verifyBytes(realPath, entry.path, sha256(bytes));
-      files.push({ path: entry.path, action: "reverse-patched" });
+      files.push({ path: entry.path, action: "reverse-patched", ...stays });
     }
     return {
       adapterId: adapter.id,
@@ -903,6 +954,45 @@ function fileEditor(
 }
 
 /** Restores each owned entry to its original value, or removes it if it had none. */
+/** Revert operations with the kept entries set instead of removed. */
+function keepOperations(
+  operations: Operation[],
+  kept: NonNullable<BackupManifest["kept"]>,
+  baseUrl: string,
+): Operation[] {
+  const set = (keep: (typeof kept)[number]): Operation => ({
+    op: "set",
+    path: keep.path,
+    value: resolveTemplate(keep.value, baseUrl),
+  });
+  const result = operations.map((operation) => {
+    const keep = kept.find(
+      (entry) => pathKey(entry.path) === pathKey(operation.path),
+    );
+    return keep ? set(keep) : operation;
+  });
+  for (const keep of kept)
+    if (!operations.some((op) => pathKey(op.path) === pathKey(keep.path)))
+      result.push(set(keep));
+  return result;
+}
+
+/** A kept template with the gateway URL it was written with. */
+function resolveTemplate(value: ConfigValue, baseUrl: string): ConfigValue {
+  if (typeof value === "string")
+    return value.split(BASE_URL_PLACEHOLDER).join(baseUrl);
+  if (Array.isArray(value))
+    return value.map((item) => resolveTemplate(item, baseUrl));
+  if (typeof value === "object" && value !== null)
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        key,
+        resolveTemplate(item, baseUrl),
+      ]),
+    );
+  return value;
+}
+
 function revertOperations(
   owned: readonly KeyPath[],
   original: ConfigDocument,
@@ -1252,7 +1342,28 @@ function manifestOf(
     absent: plan.settings
       .filter((setting) => "remove" in setting)
       .map((setting) => [...setting.path]),
+    ...keptOf(adapter, plan.settings, target),
   };
+}
+
+/** The entries of `settings` that unwire leaves in place, as templates; none may hold the key. */
+function keptOf(
+  adapter: WiringAdapter,
+  settings: readonly AdapterSetting[],
+  target: AdapterTarget,
+): Pick<BackupManifest, "kept"> {
+  const kept = settings.flatMap((setting) =>
+    "remove" in setting || setting.keep === undefined
+      ? []
+      : [{ path: [...setting.path], value: template(setting.keep, target) }],
+  );
+  for (const entry of kept)
+    if (containsPlaceholder(entry.value, KEY_PLACEHOLDER))
+      throw new WiringError(
+        "WIRING_TARGET_INVALID",
+        `${adapter.name} would leave the key at ${formatPath(entry.path)} after unwire`,
+      );
+  return kept.length ? { kept } : {};
 }
 
 function template(value: ConfigValue, target: AdapterTarget): ConfigValue {
