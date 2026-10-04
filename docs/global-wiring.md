@@ -95,6 +95,19 @@ BOM 与换行风格（LF/CRLF）保持原样。回读校验用真实解析器确
 | `pencil` Pencil | `~/.pencil/models.json` | `providers.harnesshub`（Pi 格式，`api: openai-completions`、`apiKey`、每个模型带 Pencil 写的字段，窗口与输出未知时取 Pi 的默认值 128000 与 16384） | Chat | 只让模型出现在 Pencil 的选择器中，不写所选模型；没有命令，按 `~/.pencil` 判断安装 |
 | `t3code` T3 Code | `userdata/settings.json`（`${T3CODE_HOME:-~/.t3}`） | `providerInstances.harnesshub`（`driver: claudeAgent`、`environment` 列表中的 `ANTHROPIC_BASE_URL`（网关根）与 `ANTHROPIC_AUTH_TOKEN`，均 `sensitive: false`；`config.customModels[]`） | Anthropic（经 Claude Code） | 只让模型出现在 T3 的选择器中；Claude Code 自己 `settings.json` 的 `env` 若指向别处仍然优先；没有命令，按 `~/.t3/userdata` 判断安装 |
 
+未收录的 Magpie Agent：
+
+| Agent | 原因 |
+|---|---|
+| `goose`、`cursor`、`copilot`、`devin` | Magpie 也不接网关，只切换它们自己的模型 |
+| `alma`、`hanako` | 经运行中应用的本地 API 配置（Hanako 未运行时才写文件），不是文件接线 |
+| `cindy` | 只生成导入链接，由用户在应用中确认 |
+| `agy` | 只从环境变量读取端点与 Key，需要启动命令而非配置文件 |
+| `commandcode`、`fx`、`muse` | 配置里无法写入 Key：Command Code 拒绝写入的 Key（Magpie 写 `apiKey: false`），fx 只见过 `auth: {type: "none"}`，Muse 的 `auth` 只能是 Meta 登录令牌或 `none`；Muse 还要求网关提供 `/muse-code/models` |
+| `droid`、`workbuddy`、`zcode`、`claude-desktop` | 要在用户自己的数组中追加或删除 HarnessHub 的元素（Droid 的 `customModels`、WorkBuddy 的模型列表、ZCode 3.14 起的 `provider_config.json` 规则、Claude Desktop 的 `configLibrary/_meta.json` 的 `entries`）；格式编辑器只按对象键寻址，整体替换数组会在还原时丢掉用户之后加入的元素。Claude Desktop 另需网关为它改写模型 id（Magpie 的 `gw/desktop.go`） |
+| `dsh` | 补丁文件的根是 YAML 列表、各 profile 一份（文件集合随 profile 变化），且 dsh 会改写条目，Magpie 每 30 秒重写一次 |
+| `openchamber` | provider 写在 OpenCode 的配置文件里，与 `opencode` Adapter 共用同一文件与键；`preferences.json` 还要写当前时间。用 `opencode` 接线即可，OpenChamber 没有自己的默认模型时沿用 OpenCode 的 |
+
 Shell 环境中已有的同名变量优先于 dotenv 文件（Gemini、Qwen），OpenCode 的 `OPENCODE_CONFIG_DIR` 与 Kimi 的 `OPENAI_*` 变量也会覆盖全局文件；这类绕过由漂移检测的网关证据（`bypassed`，尚未实现）发现。
 
 ## 与 04 的差异与待做
@@ -104,8 +117,8 @@ Shell 环境中已有的同名变量优先于 dotenv 文件（Gemini、Qwen）�
 - OpenCode 在设置了 `OPENCODE_CONFIG_DIR` 时写入该目录，因为其中的文件覆盖全局配置。
 - 漂移检测没有区分“另一个 HarnessHub 实例”与其他网关：基址不同一律为 `foreign-gateway`。
 - 每次接线都签发新 Key，所以对已接线的 Agent 预览时，即使模型不变，Key 一项也显示为改动（04 第 4 节的“无变化时计划为空”只在不换 Key 时成立）。
-- 未实现：OpenClaw（JSON5）、Hermes、MiMo、Copilot（env-launch）Adapter；备份保留数清理；接线前检查 Agent 是否在运行；`bypassed` 与 `stale-key` 漂移（需要网关账本）；“rename 前被并发修改”之外的写后篡改注入测试（04 第 9 节第 6 项）；Windows 验证；真实 Agent 的接线生效测试（第 5 项）。
+- 未实现：OpenClaw（JSON5）、Copilot（env-launch）Adapter 与上文未收录的 Magpie Agent；备份保留数清理；接线前检查 Agent 是否在运行；`bypassed` 与 `stale-key` 漂移（需要网关账本）；“rename 前被并发修改”之外的写后篡改注入测试（04 第 9 节第 6 项）；Windows 验证；真实 Agent 的接线生效测试（第 5 项）。
 
 ## 验证
 
-[agents-wiring.test.ts](../tests/integration/agents-wiring.test.ts) 经 `startHub`（临时 `wiringHome`）与严格假上游：接线后从 Codex 配置文件读回基址与 Key 并成功调用网关；换 Key 后旧 Key 得到 401、新 Key 200；还原后文件逐字节一致且 Key 失效；手工修改后报告漂移并只撤销 HarnessHub 的项；预览后文件被改动时新 Key 被吊销；未接线、未知 Agent 与网关不提供的模型被拒绝；未设 `wiringHome` 的守护进程拒绝全部操作；真实 `hh` 入口的 `agents`、`wire`、`use`、`unwire` 只打印掩码后的 Key。`packages/agents/test/` 下：`wiring-formats.test.ts`（各编辑器的保留、拒绝与还原，以及每种格式 40 个种子的随机 set/remove 序列：每步按值核对目标键、其余内容与注释不变，JSON、TOML、dotenv 删除新增条目后字节与原文相同）；`wiring-adapters.test.ts`（每个 Adapter：空目录与已有配置的金样、逐字节还原、用户改动后的键级还原、解析失败拒绝、符号链接逃逸拒绝、漂移、Key 轮换后还原，金样在 `wiring-golden.ts`）；`wiring-safety.test.ts`（目录内符号链接、硬链接、只读文件与权限、BOM 与 CRLF、非 UTF-8、预览后被修改、写入失败回滚、锁、残留临时文件、目录变量、目标与上下文校验、预览掩码、损坏的备份）。测试只使用临时目录作为 `home`，Key 为合成值，不访问网络。
+[agents-wiring.test.ts](../tests/integration/agents-wiring.test.ts) 经 `startHub`（临时 `wiringHome`）与严格假上游：接线后从 Codex 配置文件读回基址与 Key 并成功调用网关；换 Key 后旧 Key 得到 401、新 Key 200；还原后文件逐字节一致且 Key 失效；手工修改后报告漂移并只撤销 HarnessHub 的项；预览后文件被改动时新 Key 被吊销；未接线、未知 Agent 与网关不提供的模型被拒绝；未设 `wiringHome` 的守护进程拒绝全部操作；真实 `hh` 入口的 `agents`、`wire`、`use`、`unwire` 只打印掩码后的 Key。`packages/agents/test/` 下：`wiring-formats.test.ts`（各编辑器的保留、拒绝与还原，以及每种格式 40 个种子的随机 set/remove 序列：每步按值核对目标键、其余内容与注释不变，JSON、TOML、dotenv 删除新增条目后字节与原文相同）；`wiring-adapters.test.ts`（每个 Adapter：空目录与已有配置的金样、逐字节还原、用户改动后的键级还原、解析失败拒绝、符号链接逃逸拒绝、漂移、Key 轮换后还原，金样在 `wiring-golden.ts`）；依照 Magpie 的 Adapter 各有 `wiring-agent-<id>.test.ts`，经 `wiring-suite.ts` 运行同样的用例，另核对声明的协议、命令、文件与目录变量，金样与已有配置写在各自文件中（接管用户对象的 Cline 在键级还原后按值比较），并有各自的特例：MiMo 的候选文件顺序、Cline 新建文件的版本号、Grok 按所选模型判断基址、omp 的目录规则与未迁移拒绝、T3 Code 列表内的 Key 与基址漂移、Pencil 与 T3 Code 按目录判断安装；`wiring-safety.test.ts`（目录内符号链接、硬链接、只读文件与权限、BOM 与 CRLF、非 UTF-8、预览后被修改、写入失败回滚、锁、残留临时文件、目录变量、目标与上下文校验、预览掩码、损坏的备份）。测试只使用临时目录作为 `home`，Key 为合成值，不访问网络。
