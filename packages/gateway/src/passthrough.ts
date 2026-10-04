@@ -663,6 +663,7 @@ function responsesObservation(
       RESPONSES_STATUS[code] ?? 500,
       code || "upstream_error",
       code === "context_length_exceeded",
+      JSON.stringify(failed),
     );
     return observation;
   }
@@ -706,6 +707,7 @@ function anthropicObservation(value: Record<string, unknown>): Observation {
         ANTHROPIC_STATUS[type] ?? 502,
         type || "upstream_error",
         /prompt is too long/i.test(failureMessage(error)),
+        JSON.stringify(error ?? {}),
       );
       return observation;
     }

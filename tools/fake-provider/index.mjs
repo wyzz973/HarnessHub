@@ -133,6 +133,67 @@ function responseId(protocol) {
   }
 }
 
+/**
+ * The refusals of the `refuse` quirk (quirks.mjs), each in the words of a
+ * real vendor: status, message and the error body's extra fields.
+ */
+const REFUSAL_REPLIES = {
+  policy: (_model, protocol) => ({
+    status: 400,
+    message:
+      "Your request was rejected as a result of our safety system. Your prompt may contain text that is not allowed by our safety system.",
+    // Messages errors have a type and no code.
+    extra:
+      protocol === "messages"
+        ? { type: "content_policy_violation" }
+        : { code: "content_policy_violation" },
+  }),
+  shape: () => ({
+    status: 422,
+    message:
+      'Failed to deserialize the JSON body into the target type: input[0]: unknown item type "additional_tools"; expected one of: message, reasoning, function_call',
+  }),
+  channel: () => ({
+    status: 400,
+    message: "Illegal API invocation from an unapproved channel",
+  }),
+  busy: () => ({
+    status: 400,
+    message: "The engine is currently overloaded, please try again later",
+  }),
+  unserved: (model) => ({
+    status: 400,
+    message: `The model \`${typeof model === "string" ? clip(model, 200) : "unknown"}\` does not exist or you do not have access to it.`,
+  }),
+  client: () => ({
+    status: 422,
+    message:
+      "Failed to deserialize the JSON body into the target type: missing field `messages` at line 1 column 2",
+  }),
+};
+
+/** The reply length a request asks for, and the field it is in; undefined when it asks for none. */
+function replyLength(protocol, body) {
+  const field = (holder, name, shown = name) =>
+    typeof holder?.[name] === "number"
+      ? { tokens: holder[name], field: shown }
+      : undefined;
+  switch (protocol) {
+    case "chat":
+      return (
+        field(body, "max_completion_tokens") ?? field(body, "max_tokens")
+      );
+    case "responses":
+      return field(body, "max_output_tokens");
+    case "messages":
+      return field(body, "max_tokens");
+    case "gemini":
+      return field(body.generationConfig, "maxOutputTokens", "max_output_tokens");
+    default:
+      return undefined;
+  }
+}
+
 function sendJson(response, status, value, headers = {}) {
   if (response.headersSent || response.destroyed) return;
   const body = JSON.stringify(value);
@@ -514,6 +575,24 @@ export async function startFakeProvider(options = {}) {
           { "Retry-After": String(seconds) },
         );
       }
+      if (quirks.refuse) {
+        const refusal = REFUSAL_REPLIES[quirks.refuse](model, protocolName);
+        return reply(
+          refusal.status,
+          protocol.error(refusal.status, refusal.message, refusal.extra),
+        );
+      }
+      if (quirks.tokenFloor) {
+        const asked = replyLength(protocolName, body);
+        if (asked && asked.tokens < quirks.tokenFloor)
+          return reply(
+            400,
+            protocol.error(
+              400,
+              `${asked.field} must be at least ${quirks.tokenFloor}`,
+            ),
+          );
+      }
       if (plan.error)
         return reply(
           plan.error.status,
@@ -532,6 +611,12 @@ export async function startFakeProvider(options = {}) {
       const answer = plan.answer;
       if (quirks.noUsage) answer.usage = null;
       if (quirks.abnormalFinish) answer.finish = quirks.abnormalFinish;
+      if (quirks.safetyRefusal) {
+        answer.reasoning = [];
+        answer.text = [];
+        answer.toolCalls = [];
+        answer.finish = "content_filter";
+      }
       const reasoningSent =
         answer.reasoning.length > 0 && protocol.reasoningShown(body);
       if (answer.reasoning.length) state.seals.add(answer.signature);

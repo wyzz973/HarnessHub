@@ -43,3 +43,83 @@ Status: proposed
 - 网关 HTTP（回环假上游、合成密钥）：休息到期前不访问上游、到期后一次探测；只在最后一个候选上重试；钉选的 429、400、404 与请求头不外发；自动组的列出、路由、隐藏与用户组优先；Codex 透传的逐字节转发、不保存 Authorization、用量入账与先提交后发布。
 - 存储与接口：迁移 5 的升级与补齐、会话汇总的游标、按 Credential 汇总、隐藏与恢复。
 - 未验证：真实 ChatGPT 后端与真实 Codex 经透传的会话；真实厂商的限流头与错误措辞以它们公开的格式为准，没有录制语料。
+
+## 补充：拒绝类 400/422 与安全拒绝的转移
+
+日期：2026-10-05
+
+原先 400 与 422 只有带“模型不存在”措辞时才转移，其余都按 `request` 直接返回客户端。Magpie 在下列情况会换下一个候选（`internal/gateway/fallback.go` 的 `retryable`、`shapeRefused`、`policyRefusal`、`refusedReply`，`gateway.go` 的 `withTokenFloor` 与拒绝分支）：
+
+- 400/422 的错误体带它的余额、用尽或繁忙措辞（`quotaWords`）、模型不存在措辞（`unservedWords`）、拒绝渠道措辞（`refusedWords`）或请求形状措辞（`shapeWords`）；
+- 安全过滤器拒绝了请求，表现为错误码，或者一个什么都没说的回答；
+- 厂商嫌请求要的回复太短。
+
+### 决定
+
+1. **新增三个失败类别**，词表照搬 Magpie，集中在 `FAILURE_WORDS` 与 `policyRefusal`：
+   - `policy`：安全过滤器拒绝了这个请求，另一个账号或厂商可能会回答。按错误码判断（`refusal`、`content_filter`、`content_policy_violation`、Gemini 的各种 `SAFETY` 原因、`<名称>_policy`、被标记的 `invalid_prompt`），429 以外的任何状态都算，因为流内的拒绝可能被映射成 5xx。
+   - `refused`：厂商拒绝这个客户端或渠道的所有请求。
+   - `shape`：这个 API 读不懂请求的形状，另一个 API 可能读得懂。
+   - 繁忙措辞的 400/422（`overloaded`、`too many requests` 等）归入 `other`，与 Magpie 的 `failOther` 一致。模型不存在措辞补上 Magpie 的 `unknown` 与 `invalid`。
+2. **客户端自己的错误永不转移**：400/422 先用 `clientFault` 词表排除对所有 provider 都错的请求，它们一律是 `request`。
+   - 这些请求包括：缺少必填字段（`field required`、`missing field`）、消息为空或缺失、请求体不是 JSON。
+   - 这一步排在其他词表之前，因为 axum 的 “Failed to deserialize the JSON body …: missing field `messages`” 同时会命中形状词表。
+   - 这是 HarnessHub 新增的显式区分：Magpie 只是靠词表没有收录这些措辞来避免转移。
+3. **休息**（照 Magpie）：
+   - `policy` 与 `shape` 不休息，因为 Credential 本身没有问题；
+   - `refused` 与繁忙类计入熔断，与 `other` 相同（Magpie 是退避休息）；
+   - 都不在原处重试。
+4. **转移的方向**：
+   - `shape`：跳过其余同一 provider、同一上游协议的候选。同一个 API 再问一次也读不懂；别的 provider 或协议可能读得懂。Magpie 只是问下一个候选，不跳过。
+   - `policy`：先问同一 provider、同一模型与强度、未休息的其他 Credential（Magpie `matesFirst`）。
+5. **回复长度下限**（Magpie `tokenFloor`、`withTokenFloor`）：
+   - 400 说出下限（`max_tokens must be greater than 2`、`Expected >= 16` 等，至多 1024），而本次请求要求的长度低于它时，同一候选立即重发一次。
+   - 之后这次调用的每个请求都至少要求这么长，账本记 `max-tokens:floor:<n>`。
+   - 请求没有要求长度，或要求已经足够时，这个 400 说的是别的事，照常返回。
+6. **什么都没说的安全拒绝**（Magpie `refusedReply`、#248）：
+   - 2xx 回答以安全拒绝结束（各协议的拒绝原因统一记为 `content_filter`），且没有文字、推理或工具调用，同时客户端尚未收到任何字节时，按 400 的 `policy` 失败处理：
+     - 有候选就转移；
+     - 没有候选时客户端得到这个 400，而不是一个它会再发一遍、每次都付提示词费用的空回答。
+   - 只要还有重试或候选，流就会在第一个内容事件之前被扣留，所以流式与非流式的处理相同。
+   - 流内的错误事件保留厂商的错误对象（`GatewayError.detail`，只用于分类，不保存也不发出），所以 Responses 的 `response.failed`（`bio_policy`）这类流内拒绝也会被识别。
+
+### 考虑过的替代方案
+
+- **`shape` 也像 Magpie 一样问下一个候选，不跳过**：同一 provider 的其他 Credential 指向同一个 API，必然得到同样的答复，只会白白多一次请求。
+- **最后一个候选的拒绝原样交给客户端**：对协议保真更好，但 Codex 这类客户端会把空回答再发一遍（Magpie #248），所以采用 Magpie 的做法。
+- **为拒绝另设账本字段**：`errorClass` 已经能区分；尝试的 `errorClass` 与 `decision` 记录了转移。
+
+### 后果
+
+- 以前直接返回的一些 400/422 现在会转移到其他候选，客户端更少看到厂商特有的形状或渠道错误，但调用可能多一次上游请求。
+- 被拒绝的尝试若有用量（什么都没说的拒绝也可能计了输入），只计在那个上游，不进入这次调用的账本用量。
+- 与 Magpie 的其余差别列在 [统一模型网关](../model-gateway.md#与-03-的差异与未实现项)：
+  - 推理之后才出现的拒绝不再转移；
+  - Gemini 的 `RECITATION` 也算拒绝；
+  - 只有 `promptFeedback.blockReason` 的回答不识别为拒绝。
+
+### 验证
+
+- 单元测试 `shared-gateway-failover.test.ts`：
+  - 失败类别表，新增安全拒绝、拒绝渠道、繁忙、形状与客户端错误的正反样例；
+  - 每个词表的正反样例；
+  - 新类别的休息与转移。
+- 单元测试 `refusal-failover.test.ts`：
+  - 照搬 Magpie 的 `policyRefusal` 与 `tokenFloor` 样例；
+  - `withTokenFloor` 与 `matesFirst`；
+  - 回环假上游上的各种情况：
+    - 形状错误跳过同一 API；
+    - 安全拒绝先问同一模型的其他 Credential；
+    - 拒绝渠道与繁忙；
+    - 客户端错误不重试、不转移；
+    - 下限重发与不重发；
+    - 什么都没说的回答，非流式与流式，以及没有候选时的 400；
+    - 转换路径；
+    - Responses 流内的 `bio_policy`。
+- 假 provider 新增怪癖 `refuse`（`policy`、`shape`、`channel`、`busy`、`unserved`、`client`）、`tokenFloor` 与 `safetyRefusal`，各有四个协议的用例与无效样例。
+- 集成测试 `tests/integration/refusal-failover.test.ts` 经正式守护进程与两个严格假 provider 验证：
+  - 五类拒绝与什么都没说的拒绝（含流式与 Anthropic 入站）都转移到第二个 provider，账本记录每次尝试的类别与决定；
+  - 客户端错误与普通 400 不重试、不转移；
+  - 回复太短时同一 provider 重发。
+  - 在修改前的网关代码上，两个用例都失败。
+- 协议一致性套件保持通过。

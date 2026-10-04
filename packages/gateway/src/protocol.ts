@@ -8,11 +8,16 @@ import { createHash } from "node:crypto";
  * reports; `contextOverflow` selects the inbound protocol's context-limit error.
  */
 export class GatewayError extends Error {
+  /**
+   * @param detail The vendor's error object as it came (JSON), for an
+   *   in-stream error: read to route the failure, never stored or sent.
+   */
   constructor(
     message: string,
     readonly status = 400,
     readonly code = "invalid_request",
     readonly contextOverflow = false,
+    readonly detail?: string,
   ) {
     super(message);
   }

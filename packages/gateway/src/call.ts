@@ -135,6 +135,9 @@ import {
   resetIn,
   retryAfter,
   retryPolicy,
+  matesFirst,
+  tokenFloor,
+  withTokenFloor,
   type AttemptError,
   type Breakers,
   type Candidate,
@@ -371,6 +374,8 @@ export interface Call {
   searching?: boolean;
   /** The web searches of this call, over all its attempts: run, and not run for a limit. */
   searched?: { ran: number; refused: number };
+  /** The least reply length a vendor said it takes: every request of this call asks for at least this many tokens. */
+  tokenFloor?: number;
   /** The gateway serves Codex's compaction: an answer without a summary fails (./compacting.js). */
   compaction?: boolean;
 }
@@ -474,15 +479,17 @@ function upstreamFailure(
 ): AttemptError {
   const overflow = error.contextOverflow && error.status !== 429;
   const message = sanitize(error.message, secrets);
+  const text = body ?? error.detail ?? `${error.code} ${error.message}`;
   const kind: FailureKind = overflow
     ? "request"
-    : failureKind(error.status, body ?? `${error.code} ${error.message}`);
+    : failureKind(error.status, text);
   const errorClass =
     error.code === "upstream_invalid_response" ||
     error.code === "upstream_protocol_error" ||
     error.code === "response_too_large"
       ? error.code
       : failureClass(kind, error.status, overflow);
+  const floor = error.status === 400 ? tokenFloor(text) : 0;
   return {
     failure: {
       status: error.status,
@@ -495,7 +502,39 @@ function upstreamFailure(
     phase: "response",
     status: error.status,
     kind,
+    ...(floor ? { floor } : {}),
   };
+}
+
+/**
+ * A reply that is the vendor's safety filter refusing with nothing said
+ * (Magpie `refusedReply`), while nothing went to the client: thrown as the
+ * 400 it stands for, a `policy` failure that the next candidate may answer.
+ * With nobody left the client gets that 400, not an empty reply it would
+ * send again (Magpie #248); a stream already flowing to the client (held
+ * back for no retry or other candidate) reaches it as it came.
+ */
+function refusedWithNothingSaid(): GatewayError {
+  return new GatewayError(
+    "The upstream's safety filter refused the request with nothing said",
+    400,
+    "content_filter",
+  );
+}
+
+/** `prepared` asking for at least `floor` tokens of reply where it asked for fewer ({@link withTokenFloor}). */
+function floored(prepared: Prepared, floor: number): boolean {
+  if (prepared.kind === "passthrough") {
+    const text = withTokenFloor(prepared.body.toString("utf8"), floor);
+    if (text !== undefined) prepared.body = Buffer.from(text);
+    return text !== undefined;
+  }
+  if (prepared.kind === "translated") {
+    const text = withTokenFloor(prepared.body, floor);
+    if (text !== undefined) prepared.body = text;
+    return text !== undefined;
+  }
+  return false;
 }
 
 function cancelled(call: Call): AttemptError {
@@ -770,6 +809,8 @@ class Forwarder {
   finishReason: string | undefined;
   /** An event held a tool call: a `stop` finish is then `tool_calls`. */
   toolCall = false;
+  /** An event said something: text, reasoning or a call. */
+  said = false;
   sequence: number | undefined;
   error: GatewayError | undefined;
   constructor(
@@ -811,7 +852,10 @@ class Forwarder {
     // candidate (03 section 6).
     if (this.protocol === "gemini" && commentOnly(segment.text))
       return observation;
-    if (observation.content) this.content();
+    if (observation.content) {
+      this.said = true;
+      this.content();
+    }
     if (observation.terminal || this.#terminal) {
       this.#terminal = true;
       this.#withheld.push(segment.bytes);
@@ -1937,6 +1981,14 @@ async function translatedAttempt(
         502,
         "upstream_protocol_error",
       );
+    if (
+      !writer.sent &&
+      result.finish === "content_filter" &&
+      !result.text &&
+      !result.reasoning &&
+      !result.calls.length
+    )
+      throw refusedWithNothingSaid();
     recordSuccess(
       call,
       candidate,
@@ -2234,6 +2286,7 @@ async function passthroughAttempt(
     let served: string | undefined;
     let finish: string | undefined;
     let terminated: boolean;
+    let said: boolean;
     let body: Buffer | undefined;
     if (forwarder) {
       if (forwarder.error) throw forwarder.error;
@@ -2247,6 +2300,7 @@ async function passthroughAttempt(
       served = forwarder.model;
       finish = settleFinish(forwarder.finishReason, forwarder.toolCall);
       terminated = forwarder.terminal;
+      said = forwarder.said;
     } else {
       body = Buffer.concat(chunks);
       let value: unknown;
@@ -2274,12 +2328,15 @@ async function passthroughAttempt(
           "upstream_invalid_response",
         );
       if (observation.content) firstContent();
+      said = observation.content;
       parts = observation.usage ?? {};
       served = observation.model;
       finish = settleFinish(observation.finish, observation.toolCall === true);
       terminated = true;
       summary?.read(body.toString("utf8"));
     }
+    if (!writer.sent && finish === "content_filter" && !said)
+      throw refusedWithNothingSaid();
     recordSuccess(call, candidate, attempt, parts, served, finish, terminated);
     const empty = emptyCompaction(call, summary?.text);
     const recorded = await commit(call);
@@ -2367,12 +2424,23 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
         last?: { failure: Failure; errorClass: string; at: number };
       }
     | undefined;
-  const queue = plan.candidates;
+  const queue = [...plan.candidates];
+  /** Upstream APIs (provider and protocol) that could not read this request's shape. */
+  const unreadable = new Set<string>();
+  const api = (candidate: Candidate) =>
+    `${candidate.provider.id}\u0000${candidate.upstream}`;
   for (let index = 0; index < queue.length; index++) {
     let candidate = queue[index]!;
+    // An API that could not read the request's shape will not read it now.
+    if (unreadable.has(api(candidate))) continue;
     /** Another candidate after this one can still be tried. */
     const others = () =>
-      queue.slice(index + 1).some((next) => !services.breakers.blocked(next));
+      queue
+        .slice(index + 1)
+        .some(
+          (next) =>
+            !services.breakers.blocked(next) && !unreadable.has(api(next)),
+        );
     let retries = 0;
     let headerRetries = 0;
     for (;;) {
@@ -2421,6 +2489,7 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
         }
       }
       const prepared = prepare(call, candidate);
+      if (call.tokenFloor !== undefined) floored(prepared, call.tokenFloor);
       if (prepared.kind === "skip") {
         services.breakers.release(candidate);
         skip ??= prepared.error;
@@ -2520,6 +2589,21 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
         retries = 0;
         continue;
       }
+      // A vendor that takes no reply this short is asked again, once, for
+      // the least it takes (Magpie `withTokenFloor`).
+      if (
+        error.floor !== undefined &&
+        call.tokenFloor === undefined &&
+        entry.attempts.length < policy.totalAttempts &&
+        floored(prepared, error.floor)
+      ) {
+        call.tokenFloor = error.floor;
+        call.routePatches.push(`max-tokens:floor:${error.floor}`);
+        services.breakers.release(candidate);
+        attempt.decision = "retry";
+        retries = 0;
+        continue;
+      }
       const verdict = classify(error);
       services.breakers.failure(
         candidate,
@@ -2528,6 +2612,11 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
         error.errorClass,
       );
       last = error;
+      // Another API may read a shape this one could not; this one won't.
+      if (error.kind === "shape") unreadable.add(api(candidate));
+      // What one account's safety filter refused, another account of the
+      // same model may answer: they go first (Magpie `matesFirst`).
+      if (error.kind === "policy") matesFirst(queue, index, services.breakers);
       const left = entry.attempts.length < policy.totalAttempts;
       let wait = 0;
       let decision: CallAttempt["decision"] = "stop";

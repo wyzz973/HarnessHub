@@ -79,9 +79,54 @@ void test("failure kinds follow Magpie's order of status codes and words", () =>
     [404, "Not Found", "model"],
     [400, "The model `gpt-9` does not exist", "model"],
     [422, "模型不存在", "model"],
+    [400, '{"error":{"message":"The model gpt-x is invalid"}}', "model"],
+    // Magpie's retryable 400s and 422s.
+    [
+      400,
+      '{"error":{"type":"invalid_request_error","code":"bio_policy","message":"This content was flagged for possible biological risk."}}',
+      "policy",
+    ],
+    [
+      400,
+      '{"error":{"code":"content_policy_violation","message":"Your request was rejected as a result of our safety system."}}',
+      "policy",
+    ],
+    // A refusal in a stream, mapped to a 5xx: its code says what it is.
+    [500, '{"code":"cyber_policy","message":"x"}', "policy"],
+    [
+      400,
+      '{"code":11101,"msg":"Illegal API invocation from an unapproved channel"}',
+      "refused",
+    ],
+    [
+      400,
+      "The engine is currently overloaded, please try again later",
+      "other",
+    ],
+    [400, "请求限流，请稍后再试", "other"],
+    [
+      422,
+      '{"error":"Failed to deserialize the JSON body into the target type: input[0]: unknown item type \\"additional_tools\\"; expected one of: message, reasoning, function_call"}',
+      "shape",
+    ],
+    [
+      400,
+      '{"error":{"message":"Unknown parameter: \'reasoning.summary\'.","code":"unknown_parameter"}}',
+      "shape",
+    ],
+    // The client's own fault for every provider: never failed over.
+    [400, '{"error":{"message":"messages: field required"}}', "request"],
+    [
+      422,
+      "Failed to deserialize the JSON body into the target type: missing field `messages` at line 1 column 2",
+      "request",
+    ],
+    [400, "Expecting value: line 1 column 1 (char 0)", "request"],
+    [400, "max_tokens must be greater than 2", "request"],
     [408, "Request Timeout", "other"],
     [500, "Internal error", "other"],
     [529, "Overloaded", "other"],
+    [500, "unknown parameter", "other"],
     [400, "temperature must be at most 2", "request"],
     [413, "Request entity too large", "request"],
   ];
@@ -121,8 +166,48 @@ void test("each word list matches its own phrases and not ordinary errors", () =
         "The model `x` does not exist",
         "Unknown model: x",
         "模型未开通",
+        "model gpt-x is invalid",
       ],
-      ["bad temperature"],
+      ["bad temperature", "The model is fine. The request is invalid"],
+    ],
+    busy: [
+      [
+        "overloaded",
+        "Too many requests",
+        "rate_limit",
+        "请求限流",
+        "insufficient",
+      ],
+      ["temperature out of range"],
+    ],
+    refused: [
+      ["Illegal API invocation", "from an unapproved channel"],
+      ["approved", "illegal argument"],
+    ],
+    shape: [
+      [
+        "Failed to deserialize the JSON body",
+        "unknown variant `developer`",
+        "Unknown parameter: 'x'",
+        "unrecognized request argument supplied: foo",
+        "Extra inputs are not permitted",
+        "Additional properties are not allowed",
+      ],
+      ["unknown error", "field required"],
+    ],
+    clientFault: [
+      [
+        "messages: field required",
+        "missing field `messages`",
+        "messages is required",
+        "at least 1 message is required",
+        "messages must not be empty",
+        "Expecting value: line 1 column 1",
+        "invalid JSON body",
+        "Unexpected token } in JSON at position 3",
+        "EOF while parsing a value",
+      ],
+      ["unknown parameter", "Unknown model", "the request is too large"],
     ],
   };
   for (const [name, [yes, no]] of Object.entries(words)) {
@@ -214,6 +299,22 @@ void test("each kind rests its credential as Magpie does, and only a request fai
     [
       error("proxy"),
       { retry: "no", failover: true, breaker: { kind: "none" } },
+    ],
+    [
+      error("policy", { status: 400 }),
+      { retry: "no", failover: true, breaker: { kind: "none" } },
+    ],
+    [
+      error("shape", { status: 422 }),
+      { retry: "no", failover: true, breaker: { kind: "none" } },
+    ],
+    [
+      error("refused", { status: 400 }),
+      { retry: "no", failover: true, breaker: { kind: "count" } },
+    ],
+    [
+      error("other", { status: 400 }),
+      { retry: "no", failover: true, breaker: { kind: "count" } },
     ],
     [
       error("other"),

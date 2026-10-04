@@ -832,8 +832,14 @@ export type BreakerEffect =
  * `verify` — the vendor wants the account verified; `auth` — the credential
  * is not accepted; `credit` — no money left; `quota` — the plan's allowance
  * is used up; `rate` — a short rate limit; `model` — this credential or
- * endpoint does not serve the model; `other` — the upstream failed or timed
- * out; `request` — the request itself is at fault (context overflow included).
+ * endpoint does not serve the model; `policy` — the vendor's safety filter
+ * refused this request, which another account or vendor may answer;
+ * `refused` — the vendor refuses requests from this client or channel
+ * altogether; `shape` — the vendor's API cannot read the request's shape
+ * (an item, field or parameter it does not know), which another API may;
+ * `other` — the upstream failed, timed out or was busy; `request` — the
+ * request itself is at fault for every provider (context overflow, a
+ * malformed body, a missing required field).
  */
 export type FailureKind =
   | "proxy"
@@ -843,6 +849,9 @@ export type FailureKind =
   | "quota"
   | "rate"
   | "model"
+  | "policy"
+  | "refused"
+  | "shape"
   | "other"
   | "request";
 
@@ -870,10 +879,153 @@ export const FAILURE_WORDS = {
   /** Google's refusal until the account is verified. */
   verify:
     /VALIDATION_REQUIRED|verify your account|account verification required/i,
-  /** The model is not served by this credential or endpoint. */
+  /** The model is not served by this credential or endpoint (Magpie `unservedWords`). */
   modelMissing:
-    /model[^.]{0,80}(?:not (?:found|exist|available|supported|enabled|activated|accessible|allowed)|does ?n[o']t exist|unavailable|unsupported)|no such model|unknown model|unsupported model|model_not_found|invalid model|模型.{0,12}(?:不存在|不支持|无权|未开通)/i,
+    /model[^.]{0,80}(?:not (?:found|exist|available|supported|enabled|activated|accessible|allowed)|does ?n[o']t exist|unavailable|unsupported|unknown|invalid)|no such model|unknown model|unsupported model|model_not_found|invalid model|模型.{0,12}(?:不存在|不支持|无权|未开通)/i,
+  /**
+   * How a vendor says "out of quota" or "slow down" when its status does
+   * not (Magpie `quotaWords`): a 400 or 422 with them fails over. Credit and
+   * used-up words are their own kinds; the rest (busy, overloaded, a rate
+   * limit said with 400) are `other`.
+   */
+  busy: /quota|insufficient|balance|credit|billing|exceeded|rate.?limit|usage.?limit|limit.?reached|hit your .*limit|limit.{0,24}resets|too many requests|overloaded|余额|额度|欠费|限流|频率|套餐|用量|上限/i,
+  /**
+   * The vendor will not take requests from this client at all (Magpie
+   * `refusedWords`: WorkBuddy's "Illegal API invocation from an unapproved
+   * channel"): a refusal of the provider, not of the request.
+   */
+  refused: /unapproved channel|illegal api invocation/i,
+  /**
+   * The vendor's API cannot read the request's shape (Magpie `shapeWords`):
+   * xAI's 422 "Failed to deserialize the JSON body …: unknown item type",
+   * OpenAI's "Unknown parameter". Another vendor's API may take it.
+   */
+  shape:
+    /failed to deserialize|unknown (?:item |content |input )?(?:type|variant|field|parameter)|unknown_parameter|unrecognized (?:request argument|field|parameter)|extra (?:inputs|fields) are not permitted|additional properties are not allowed/i,
+  /**
+   * The request is at fault for every provider: a body that is not JSON,
+   * or one missing what every API requires (the messages). Checked before
+   * the lists that fail over, as such a body may match one of them (axum's
+   * "Failed to deserialize the JSON body …: missing field `messages`").
+   */
+  clientFault:
+    /missing (?:required )?(?:field|parameter|property|argument)|field required|required (?:field|parameter|property)|\b(?:messages?|contents|input) (?:is|are) required|at least (?:one|1) message|(?:messages?|contents|input)[^.]{0,40}(?:must not|cannot|may not) be empty|expecting value|json ?decode|(?:invalid|malformed) json|not valid json|could not parse (?:the )?(?:json|request body)|unexpected (?:token|end of (?:json|input))|eof while parsing|json syntax/i,
 } as const;
+
+/**
+ * How a vendor's safety filter says it stopped a request or a reply
+ * (Magpie `filterReasons`): Anthropic's stop reason, OpenAI's finish reason
+ * and error code, Azure's, and Gemini's finish and block reasons.
+ */
+const FILTER_REASONS = new Set([
+  "refusal",
+  "content_filter",
+  "content_policy_violation",
+  "SAFETY",
+  "PROHIBITED_CONTENT",
+  "BLOCKLIST",
+  "SPII",
+  "IMAGE_SAFETY",
+]);
+
+/**
+ * Whether an error (its body, or `code message` of an in-stream error) is
+ * the vendor's safety filter refusing the request (Magpie
+ * `policyRefusal`): a code or type that is a filter reason, a
+ * `<name>_policy` code such as OpenAI's `bio_policy`, or `invalid_prompt`
+ * flagged against the usage policy. Not the request at fault as another
+ * 400 is: another account or vendor may answer it.
+ */
+export function policyRefusal(text: string): boolean {
+  let code = "";
+  let message = text;
+  try {
+    const value: unknown = JSON.parse(text);
+    const body =
+      typeof value === "object" && value !== null
+        ? (value as Record<string, unknown>)
+        : {};
+    const inner =
+      typeof body.error === "object" && body.error !== null
+        ? (body.error as Record<string, unknown>)
+        : body;
+    const named = typeof inner.code === "string" ? inner.code : "";
+    code = named || (typeof inner.type === "string" ? inner.type : "");
+    message = typeof inner.message === "string" ? inner.message : "";
+  } catch {
+    // An in-stream error as `code message`.
+    const at = text.indexOf(" ");
+    code = at < 0 ? text : text.slice(0, at);
+    message = at < 0 ? "" : text.slice(at + 1);
+  }
+  return (
+    FILTER_REASONS.has(code) ||
+    /^[a-z]+_policy$/.test(code) ||
+    (code === "invalid_prompt" && /flagged|usage polic/i.test(message))
+  );
+}
+
+/**
+ * How a vendor says a request asked for too short a reply (Magpie
+ * `tooFewTokens`): "max_tokens must be greater than 2", "Expected >= 16";
+ * a `>` may come JSON-escaped.
+ */
+const TOO_FEW_TOKENS =
+  /max_(?:completion_|output_)?tokens.{0,60}?(greater than|more than|larger than|at least|(?:>|\\u003e)=?)\s*(\d+)/i;
+
+/**
+ * The least reply length a vendor said it takes, or 0 when the error is not
+ * about that (Magpie `tokenFloor`); at most 1024.
+ */
+export function tokenFloor(text: string): number {
+  const found = TOO_FEW_TOKENS.exec(text);
+  if (!found) return 0;
+  const n = Number(found[2]);
+  if (!Number.isSafeInteger(n) || n < 0 || n > 1024) return 0;
+  const sign = found[1]!;
+  return /^at least$/i.test(sign) || sign.endsWith("=") ? n : n + 1;
+}
+
+/**
+ * `body` (an upstream request, JSON) asking for at least `floor` tokens of
+ * reply wherever its protocol keeps the length (Magpie `withTokenFloor`):
+ * `max_tokens`, `max_completion_tokens`, `max_output_tokens` and Gemini's
+ * `generationConfig.maxOutputTokens`. Undefined when it asked for that much
+ * already, or asked for no length, so the error was about something else.
+ */
+export function withTokenFloor(
+  body: string,
+  floor: number,
+): string | undefined {
+  if (floor <= 0) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return undefined;
+  const request = value as Record<string, unknown>;
+  const raise = (holder: Record<string, unknown>, key: string): boolean => {
+    const n = holder[key];
+    if (typeof n !== "number" || n >= floor) return false;
+    holder[key] = floor;
+    return true;
+  };
+  let raised = false;
+  for (const key of [
+    "max_tokens",
+    "max_completion_tokens",
+    "max_output_tokens",
+  ])
+    raised = raise(request, key) || raised;
+  const config = request.generationConfig;
+  if (typeof config === "object" && config !== null && !Array.isArray(config))
+    raised =
+      raise(config as Record<string, unknown>, "maxOutputTokens") || raised;
+  return raised ? JSON.stringify(request) : undefined;
+}
 
 /**
  * The kind of an upstream refusal from its status and text (the error body,
@@ -882,12 +1034,19 @@ export const FAILURE_WORDS = {
  * words on any status but 429, or `insufficient_quota`); a 429 with rate
  * words and no plan words; a used-up allowance (used-up words, or a 429 with
  * plan words); any other 429 as a rate limit. Then, for HarnessHub's
- * breaker: 401 and 403 as `auth`; 404 or model-missing words on 400 and 422
- * as `model`; 408 and 5xx as `other`; everything else as `request`. A
- * context overflow is a `request` failure; the caller checks it first.
+ * breaker: 401 and 403 as `auth`; 404 as `model`. A 400 or 422 fails over
+ * as Magpie's `retryable` and `shapeRefused` say, unless it is the
+ * request's own fault for every provider (`clientFault` words): model-
+ * missing words as `model`, refusal words as `refused`, busy words as
+ * `other`, shape words as `shape`. A safety filter's refusal (any status but
+ * 429, {@link policyRefusal}) comes first, as `policy`. 408 and 5xx are
+ * `other`; everything else is `request`. A context overflow is a `request`
+ * failure; the caller checks it first.
  */
 export function failureKind(status: number, text: string): FailureKind {
   const words = FAILURE_WORDS;
+  // An in-stream refusal may come mapped to a 5xx: its code says what it is.
+  if (status !== 429 && policyRefusal(text)) return "policy";
   if (status === 502 && words.proxy.test(text)) return "proxy";
   if ((status === 401 || status === 403) && words.verify.test(text))
     return "verify";
@@ -903,11 +1062,15 @@ export function failureKind(status: number, text: string): FailureKind {
     return "quota";
   if (status === 429) return "rate";
   if (status === 401 || status === 403) return "auth";
-  if (
-    status === 404 ||
-    ((status === 400 || status === 422) && words.modelMissing.test(text))
-  )
-    return "model";
+  if (status === 404) return "model";
+  if (status === 400 || status === 422) {
+    if (words.clientFault.test(text)) return "request";
+    if (words.modelMissing.test(text)) return "model";
+    if (words.refused.test(text)) return "refused";
+    if (words.busy.test(text)) return "other";
+    if (words.shape.test(text)) return "shape";
+    return "request";
+  }
   if (status === 408 || status >= 500) return "other";
   return "request";
 }
@@ -933,6 +1096,12 @@ export function failureClass(
       return "rate_limited";
     case "model":
       return "model_not_found";
+    case "policy":
+      return "safety_refused";
+    case "refused":
+      return "client_refused";
+    case "shape":
+      return "request_shape_unsupported";
     case "other":
       return status === 408 || status === 504
         ? "upstream_timeout"
@@ -957,6 +1126,8 @@ export interface AttemptError {
   retryAfterMs?: number;
   /** When a used-up allowance comes back, as the vendor's body says (`resetIn`). */
   resetMs?: number;
+  /** The least reply length a 400 said the vendor takes ({@link tokenFloor}). */
+  floor?: number;
 }
 
 export interface Classification {
@@ -991,9 +1162,11 @@ const OPEN_MAX_MS = 600_000;
  * rests until the vendor's stated reset, else 15 minutes, at most 8 days;
  * `credit` and `verify` rest 30 minutes; `auth` rests until the credential
  * changes or 10 minutes pass; `model` marks the credential and model for 10
- * minutes; `proxy` rests nothing and, when the daemon's own proxy failed to
- * connect, is not retried. All of these fail over; a `request` failure is
- * returned as it is. Retries apply only to the last candidate left.
+ * minutes; `refused` counts towards the breaker; `proxy`, `policy` and
+ * `shape` rest nothing (Magpie: nothing is wrong with the credential), and
+ * `proxy`, when the daemon's own proxy failed to connect, is not retried.
+ * All of these fail over; a `request` failure is returned as it is.
+ * Retries apply only to the last candidate left.
  */
 export function classify(error: AttemptError): Classification {
   switch (error.phase) {
@@ -1044,6 +1217,13 @@ export function classify(error: AttemptError): Classification {
       );
     case "model":
       return failover({ kind: "model", ms: REST_MS.model });
+    case "policy":
+    case "shape":
+      // Nothing is wrong with the credential: it does not rest.
+      return failover({ kind: "none" });
+    case "refused":
+      // Every request of this client would be refused: it rests as a failure.
+      return failover({ kind: "count" });
     case "other":
       return failover(
         { kind: "count" },
@@ -1054,6 +1234,32 @@ export function classify(error: AttemptError): Classification {
     case "request":
       return { retry: "no", failover: false, breaker: { kind: "none" } };
   }
+}
+
+/**
+ * Put first, of the candidates after `index`, the other credentials of the
+ * failed candidate's provider, model and effort that are not resting (Magpie
+ * `matesFirst`); the order is otherwise kept.
+ */
+export function matesFirst(
+  queue: Candidate[],
+  index: number,
+  breakers: Breakers,
+): void {
+  const failed = queue[index]!;
+  const mate = (next: Candidate) =>
+    next.provider.id === failed.provider.id &&
+    next.ref === failed.ref &&
+    next.effort === failed.effort &&
+    next.credential.id !== failed.credential.id &&
+    !breakers.blocked(next);
+  const left = queue.slice(index + 1);
+  queue.splice(
+    index + 1,
+    left.length,
+    ...left.filter(mate),
+    ...left.filter((next) => !mate(next)),
+  );
 }
 
 /** The wait before the n-th retry (from 0): `baseBackoffMs × 2^n`, so 1, 2 and 4 s by default. */

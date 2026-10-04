@@ -127,6 +127,9 @@ HH_FAKE_KEY=合成的金丝雀值 node tools/fake-provider/index.mjs --port 0 --
 | `retryAfter` | 429 或 503，带 `Retry-After` 头与该协议的错误体 |
 | `servedModel` | 回答中的模型名换成给定值（模拟替换模型的中转） |
 | `foreignSeals` | 只用于 Responses、只能全局打开：输入项带有不是本 provider 签发的 `encrypted_content` 时，在安排回合之前按 OpenAI 的方式返回 400 `invalid_encrypted_content`（模拟拒绝别的账号封存的推理或压缩） |
+| `refuse` | 每个请求都以该协议的错误体拒绝，措辞取自对应的真实厂商：`policy`（400，OpenAI 的安全拒绝 `content_policy_violation`，作为错误的 `code`，Messages 作为 `type`；Gemini 的错误体没有这两个字段，用 `safetyRefusal`）、`shape`（422，xAI 的 “Failed to deserialize the JSON body …: unknown item type”）、`channel`（400，WorkBuddy 的 “Illegal API invocation from an unapproved channel”）、`busy`（400，“The engine is currently overloaded”）、`unserved`（400，“The model … does not exist”）、`client`（422，axum 的 “… missing field `messages`”，属于客户端自己的错误） |
+| `tokenFloor` | 请求的回复长度（`max_tokens`、`max_completion_tokens`、`max_output_tokens`、Gemini 的 `generationConfig.maxOutputTokens`）小于给定值（1–1024）时返回 400 “<字段> must be at least N”；没有要求长度或足够时正常回答 |
+| `safetyRefusal` | 回答不含文字、推理或工具调用，以该协议的安全拒绝结束：Chat 的 `content_filter`、Responses 的 incomplete `content_filter`、Messages 的 `refusal`、Gemini 的 `SAFETY` |
 
 ## 观测
 

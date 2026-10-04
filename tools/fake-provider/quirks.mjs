@@ -20,6 +20,9 @@
  * | `retryAfter` | `true`, seconds, or `{status, seconds}` | Answer 429 (or 503) with `Retry-After: seconds` (default 1) and the protocol's error body. |
  * | `servedModel` | a model name | Answers name this model instead of the requested one (a relay that swaps models). |
  * | `foreignSeals` | boolean | Responses only, for every request (not in a script turn): an input item whose `encrypted_content` this provider did not issue is answered 400 `invalid_encrypted_content` before the request is planned, as OpenAI refuses reasoning or a compaction another account sealed. |
+ * | `refuse` | a kind (below) | Every request is refused with the protocol's error body, in the words of a real vendor of that kind: `policy` (400, OpenAI's `content_policy_violation` safety refusal: the error's `code`, for Messages its `type`; Gemini errors carry neither, use `safetyRefusal`), `shape` (422, xAI's "Failed to deserialize the JSON body …: unknown item type"), `channel` (400, WorkBuddy's "Illegal API invocation from an unapproved channel"), `busy` (400, "The engine is currently overloaded"), `unserved` (400, "The model … does not exist"), `client` (422, axum's "Failed to deserialize the JSON body …: missing field `messages`", the client's own fault). |
+ * | `tokenFloor` | 1–1024 | A request asking for fewer reply tokens than this (`max_tokens`, `max_completion_tokens`, `max_output_tokens`, Gemini's `generationConfig.maxOutputTokens`) is answered 400 "<field> must be at least N"; one that asks for none or enough is answered. |
+ * | `safetyRefusal` | boolean | The answer says nothing (no text, reasoning or call) and ends as the protocol's safety refusal: Chat `content_filter`, Responses incomplete `content_filter`, Messages `refusal`, Gemini `SAFETY`. |
  */
 import { isObject } from "./common.mjs";
 
@@ -31,7 +34,17 @@ const BOOLEANS = [
   "interleavedToolArgs",
   "htmlBody",
   "foreignSeals",
+  "safetyRefusal",
 ];
+/** The kinds of the `refuse` quirk. */
+export const REFUSALS = Object.freeze([
+  "policy",
+  "shape",
+  "channel",
+  "busy",
+  "unserved",
+  "client",
+]);
 export const QUIRKS = Object.freeze([
   ...BOOLEANS,
   "commentKeepalive",
@@ -41,6 +54,8 @@ export const QUIRKS = Object.freeze([
   "disconnect",
   "retryAfter",
   "servedModel",
+  "refuse",
+  "tokenFloor",
 ]);
 
 /** Every quirk switched off. */
@@ -51,6 +66,7 @@ export const NO_QUIRKS = Object.freeze({
   interleavedToolArgs: false,
   htmlBody: false,
   foreignSeals: false,
+  safetyRefusal: false,
   commentKeepalive: null,
   abnormalFinish: null,
   slowHeaders: 0,
@@ -58,6 +74,8 @@ export const NO_QUIRKS = Object.freeze({
   disconnect: null,
   retryAfter: null,
   servedModel: null,
+  refuse: null,
+  tokenFloor: null,
 });
 
 function integer(value, where, minimum, maximum) {
@@ -194,6 +212,14 @@ export function resolveQuirks(raw, where = "quirks") {
         else if (typeof value === "string" && value && value.length <= 200)
           result[name] = value;
         else throw new Error(`${at} must be false or a model name`);
+        break;
+      case "refuse":
+        if (value === false) result[name] = null;
+        else if (REFUSALS.includes(value)) result[name] = value;
+        else throw new Error(`${at} must be false or one of ${REFUSALS.join(", ")}`);
+        break;
+      case "tokenFloor":
+        result[name] = value === false ? null : integer(value, at, 1, 1024);
         break;
       default:
         throw new Error(`${at} is not a known quirk (${QUIRKS.join(", ")})`);

@@ -387,6 +387,7 @@ export function streamError(value: unknown): GatewayError {
     status,
     "upstream_error",
     isContextOverflow(code, message),
+    JSON.stringify(value),
   );
 }
 

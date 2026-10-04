@@ -436,6 +436,94 @@ test("a script turn's quirks replace the global ones for that turn", async (t) =
   assert.equal((await send(fake, "chat")).answer.usage, undefined);
 });
 
+test("refuse: every protocol answers the kind's vendor error, the policy one with its code", async (t) => {
+  const expected = {
+    policy: [400, /rejected as a result of our safety system/],
+    shape: [422, /Failed to deserialize the JSON body .*unknown item type/],
+    channel: [400, /Illegal API invocation from an unapproved channel/],
+    busy: [400, /currently overloaded/],
+    unserved: [400, /The model `upstream-sim` does not exist/],
+    client: [422, /missing field `messages`/],
+  };
+  for (const [kind, [status, message]] of Object.entries(expected)) {
+    const fake = await provider(t, { quirks: { refuse: kind } });
+    for (const protocol of PROTOCOLS) {
+      const result = await send(fake, protocol);
+      assert.equal(result.status, status, `${kind} ${protocol}`);
+      assert.match(JSON.stringify(result.json), message, `${kind} ${protocol}`);
+      if (kind !== "policy") continue;
+      const error = result.json.error;
+      if (protocol === "chat" || protocol === "responses")
+        assert.equal(error.code, "content_policy_violation");
+      if (protocol === "messages")
+        assert.equal(error.type, "content_policy_violation");
+    }
+  }
+});
+
+test("tokenFloor: a request asking for fewer reply tokens is refused with the floor; one asking for none or enough is answered", async (t) => {
+  const fake = await provider(t, { quirks: { tokenFloor: 16 } });
+  const short = {
+    chat: { max_tokens: 1 },
+    responses: { max_output_tokens: 1 },
+    messages: { max_tokens: 1 },
+    gemini: { generationConfig: { maxOutputTokens: 1 } },
+  };
+  const field = {
+    chat: "max_tokens",
+    responses: "max_output_tokens",
+    messages: "max_tokens",
+    gemini: "max_output_tokens",
+  };
+  for (const protocol of PROTOCOLS) {
+    const refused = await send(fake, protocol, { body: short[protocol] });
+    assert.equal(refused.status, 400, protocol);
+    assert.match(
+      JSON.stringify(refused.json),
+      new RegExp(`${field[protocol]} must be at least 16`),
+      protocol,
+    );
+    const enough = await send(fake, protocol, {
+      body: (base) => {
+        const body = structuredClone(base);
+        for (const [key, value] of Object.entries(short[protocol]))
+          body[key] =
+            typeof value === "number"
+              ? 16
+              : { ...value, maxOutputTokens: 16 };
+        return body;
+      },
+    });
+    assert.equal(enough.status, 200, protocol);
+  }
+  const chat = await send(fake, "chat");
+  assert.equal(chat.status, 200, "no length asked for");
+});
+
+test("safetyRefusal: the answer says nothing and ends as the protocol's safety refusal", async (t) => {
+  const fake = await provider(t, {
+    script: TOOL_SCRIPT,
+    quirks: { safetyRefusal: true },
+  });
+  const expected = {
+    chat: "content_filter",
+    responses: "incomplete:content_filter",
+    messages: "refusal",
+    gemini: "SAFETY",
+  };
+  for (const protocol of PROTOCOLS)
+    for (const stream of [false, true]) {
+      const result = await send(fake, protocol, { stream });
+      assert.equal(result.status, 200, `${protocol} ${stream}`);
+      assert.equal(result.answer.text, "", `${protocol} ${stream}`);
+      assert.equal(result.answer.toolCalls.length, 0, `${protocol} ${stream}`);
+      assert.ok(
+        result.answer.finishes.includes(expected[protocol]),
+        `${protocol} ${stream}: ${result.answer.finishes}`,
+      );
+    }
+});
+
 test("quirk switches are validated", () => {
   assert.throws(
     () => resolveQuirks({ slowBody: true }),
@@ -481,6 +569,30 @@ test("quirk switches are validated", () => {
     () => resolveQuirks({ foreignSeals: 1 }),
     /quirks.foreignSeals must be true or false/,
   );
+  assert.throws(
+    () => resolveQuirks({ refuse: "rude" }),
+    /quirks.refuse must be false or one of policy, shape, channel, busy, unserved, client/,
+  );
+  assert.throws(
+    () => resolveQuirks({ refuse: true }),
+    /quirks.refuse must be false or one of/,
+  );
+  assert.throws(
+    () => resolveQuirks({ tokenFloor: 0 }),
+    /quirks.tokenFloor must be an integer from 1 to 1024/,
+  );
+  assert.throws(
+    () => resolveQuirks({ tokenFloor: 2000 }),
+    /quirks.tokenFloor must be an integer from 1 to 1024/,
+  );
+  assert.throws(
+    () => resolveQuirks({ safetyRefusal: "yes" }),
+    /quirks.safetyRefusal must be true or false/,
+  );
+  assert.deepEqual(resolveQuirks({ refuse: "shape", tokenFloor: 16 }), {
+    refuse: "shape",
+    tokenFloor: 16,
+  });
   assert.deepEqual(
     resolveQuirks({ retryAfter: 3, midStreamError: false, disconnect: true }),
     {
