@@ -326,8 +326,16 @@ export class AgentWiringService {
     return true;
   }
 
-  /** Every supported agent with installation, wiring and drift. */
-  async list(): Promise<AgentView[]> {
+  /**
+   * Every supported agent with installation, wiring and drift. Waits for a
+   * wiring operation or catalog sync in progress: those write the files
+   * before the record, and a view between the two would report drift.
+   */
+  list(): Promise<AgentView[]> {
+    return this.serial(() => this.listNow());
+  }
+
+  private async listNow(): Promise<AgentView[]> {
     const context = this.context();
     const wirings = await this.options.store.listWirings();
     const catalog = await gatewayModels(this.options.store);
@@ -344,10 +352,15 @@ export class AgentWiringService {
     return views;
   }
 
-  /** One agent; an unknown id fails with WIRING_ADAPTER_UNKNOWN (404). */
+  /**
+   * One agent; an unknown id fails with WIRING_ADAPTER_UNKNOWN (404). Waits
+   * for a wiring operation or sync in progress, as `list` does.
+   */
   async get(adapterId: string): Promise<AgentView> {
     wiringAdapter(adapterId);
-    return this.view(adapterId, this.context(), await this.wiringOf(adapterId));
+    return this.serial(async () =>
+      this.view(adapterId, this.context(), await this.wiringOf(adapterId)),
+    );
   }
 
   /**
