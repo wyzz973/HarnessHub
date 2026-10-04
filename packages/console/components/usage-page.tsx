@@ -18,7 +18,7 @@ import {
   usd,
   type UsageRange,
 } from "@/lib/model-plane";
-import { duration, quantity } from "@/lib/presentation";
+import { duration, finishReasonText, quantity } from "@/lib/presentation";
 import { cn } from "@/lib/utils";
 import type { Page } from "@/lib/router";
 import {
@@ -105,6 +105,14 @@ function CallsTable({ calls }: { calls: readonly ApiModelCall[] }) {
                   {call.status}
                   {call.rejected ? " 拒绝" : ""}
                 </span>
+                {call.finishReason ? (
+                  <span
+                    className="mt-1 block text-[12px] text-muted-foreground"
+                    title={`finishReason: ${call.finishReason}`}
+                  >
+                    {finishReasonText(call.finishReason)}
+                  </span>
+                ) : null}
               </td>
               <td className="max-w-[220px]">
                 <p

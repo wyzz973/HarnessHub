@@ -12,7 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { effortText, keylessOptions, tierLabel } from "@/lib/agents";
+import { effortText, modelOptional, tierLabel } from "@/lib/agents";
 import { failureOf, modelPlane, type Failure } from "@/lib/model-plane";
 import { notify } from "@/lib/toast";
 import {
@@ -30,8 +30,9 @@ const PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 /** One agent's choice in a profile, as a line of text. */
 function choiceText(choice: WiringProfile["agents"][string]): string {
-  if (keylessOptions(choice.options)) return "ChatGPT 登录";
-  const parts = [choice.model ?? "—"];
+  const parts = modelOptional(choice.options)
+    ? ["ChatGPT 登录", ...(choice.model ? [choice.model] : [])]
+    : [choice.model ?? "—"];
   for (const [tier, ref] of Object.entries(choice.tiers ?? {}))
     parts.push(`${tierLabel(tier)} ${ref}`);
   if (choice.effort) parts.push(`effort ${effortText[choice.effort]}`);

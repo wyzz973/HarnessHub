@@ -436,11 +436,20 @@ test("the agent pages derive wiring requests, shown models and attention from th
   };
   const codexDraft = agents.draftOf(codex);
   assert.deepEqual(codexDraft.options, { codexAuth: "gateway-key" }, "options default to the first value");
+  // ChatGPT mode (ADR 0030): a key is issued, and a HarnessHub model is optional.
   assert.deepEqual(
-    agents.wiringInput(codex, { ...codexDraft, model: "lab/fast", options: { codexAuth: "chatgpt" } }),
-    { options: { codexAuth: "chatgpt" } },
-    "an agent that signs in by itself gets no model, tiers or effort",
+    agents.wiringInput(codex, { ...codexDraft, model: "lab/fast", effort: "low", options: { codexAuth: "chatgpt" } }),
+    { model: "lab/fast", effort: "low", options: { codexAuth: "chatgpt" } },
   );
+  assert.deepEqual(
+    agents.wiringInput(codex, { ...codexDraft, model: undefined, effort: "low", options: { codexAuth: "chatgpt" } }),
+    { model: null, options: { codexAuth: "chatgpt" } },
+    "without a model the agent keeps its own, and takes no effort",
+  );
+  assert.equal(agents.legacyKeyless({ wiring: { options: { codexAuth: "chatgpt" } } }), true, "a ChatGPT wiring from before keys has none");
+  assert.equal(agents.legacyKeyless({ wiring: { options: { codexAuth: "chatgpt" }, keyId: "hhk_a_1" } }), false);
+  assert.equal(agents.legacyKeyless({ wiring: { options: { codexAuth: "gateway-key" } } }), false);
+  assert.equal(agents.legacyKeyless({ wiring: null }), false);
 });
 
 test("the backup page reads backup files and builds sync settings without dropping secrets it must send", async () => {
@@ -617,5 +626,94 @@ test("the provider check dialog names every doctor check and states the plan's c
   assert.deepEqual(
     doctor.statusCounts([{ status: "pass" }, { status: "fail" }, { status: "pass" }, { status: "skip" }]),
     { pass: 2, warn: 0, fail: 1, skip: 1 },
+  );
+});
+
+/** A zip archive of `entries` (Unix-made, so modes count), stored or deflated. */
+async function zipOf(entries) {
+  const { deflateRawSync } = await import("node:zlib");
+  const locals = [];
+  const centrals = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const name = Buffer.from(entry.path);
+    const content = Buffer.from(entry.content ?? "");
+    const data = entry.deflate ? deflateRawSync(content) : content;
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(entry.flags ?? 0, 6);
+    local.writeUInt16LE(entry.deflate ? 8 : 0, 8);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(content.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE((3 << 8) | 30, 4);
+    central.writeUInt16LE(entry.flags ?? 0, 8);
+    central.writeUInt16LE(entry.deflate ? 8 : 0, 10);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt32LE(content.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE(((entry.mode ?? 0o100644) << 16) >>> 0, 38);
+    central.writeUInt32LE(offset, 42);
+    locals.push(local, name, data);
+    centrals.push(central, name);
+    offset += local.length + name.length + data.length;
+  }
+  const directory = Buffer.concat(centrals);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(directory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  const all = Buffer.concat([...locals, directory, end]);
+  return all.buffer.slice(all.byteOffset, all.byteOffset + all.length);
+}
+
+test("the Library page reads a skill from a zip or folder and checks the daemon's limits first", async () => {
+  const upload = await consoleModule("lib/skill-upload.ts");
+  const skillText = "---\nname: pdf-tools\ndescription: PDFs\n---\n# PDF tools\n";
+  const files = await upload.readZip(
+    await zipOf([
+      { path: "pdf-tools/", mode: 0o040755 },
+      { path: "pdf-tools/SKILL.md", content: skillText, deflate: true },
+      { path: "pdf-tools/scripts/merge.sh", content: "#!/bin/sh\necho merge\n", mode: 0o100755 },
+      { path: "pdf-tools/.DS_Store", content: "junk" },
+      { path: "pdf-tools/.git/HEAD", content: "ref" },
+    ]),
+  );
+  assert.deepEqual(
+    files.map((file) => [file.path, file.exec, new TextDecoder().decode(file.bytes)]),
+    [
+      ["pdf-tools/SKILL.md", false, skillText],
+      ["pdf-tools/scripts/merge.sh", true, "#!/bin/sh\necho merge\n"],
+    ],
+    "deflated and stored entries are read, the executable bit is kept and ignored entries are left out",
+  );
+  const skill = upload.skillOf(files, "archive");
+  assert.equal(skill.name, "pdf-tools", "a single top folder names the skill");
+  assert.deepEqual(skill.files.map((file) => file.path), ["SKILL.md", "scripts/merge.sh"]);
+  assert.deepEqual(skill.problems, []);
+  const input = upload.uploadInput(skill.name, skill.files, ["claude"]);
+  assert.deepEqual(Object.keys(input.files), ["SKILL.md", "scripts/merge.sh"]);
+  assert.equal(Buffer.from(input.files["SKILL.md"], "base64").toString(), skillText);
+  assert.deepEqual(input.exec, ["scripts/merge.sh"]);
+  assert.equal("exec" in upload.uploadInput("x", [{ path: "SKILL.md", bytes: new Uint8Array(1), exec: false }], []), false);
+  const big = new Uint8Array(200000).map((_, index) => index % 251);
+  assert.equal(upload.base64(big), Buffer.from(big).toString("base64"), "large files encode in chunks");
+
+  // Rejection samples: not a zip, links, encrypted entries, too many files, no SKILL.md, too large.
+  await assert.rejects(upload.readZip(new TextEncoder().encode("not a zip").buffer), /不是 zip/);
+  await assert.rejects(upload.readZip(await zipOf([{ path: "a/link", content: "x", mode: 0o120777 }])), /链接/);
+  await assert.rejects(upload.readZip(await zipOf([{ path: "a/b", content: "x", flags: 1 }])), /加密/);
+  await assert.rejects(
+    upload.readZip(await zipOf(Array.from({ length: 501 }, (_, index) => ({ path: `s/f${index}`, content: "x" })))),
+    /超过 500 个/,
+  );
+  assert.deepEqual(upload.skillOf([{ path: "README.md", bytes: new Uint8Array(1), exec: false }], "x").problems, ["顶层没有 SKILL.md"]);
+  assert.match(
+    upload.skillOf([{ path: "SKILL.md", bytes: new Uint8Array(20 * 1024 * 1024 + 1), exec: false }], "x").problems[0],
+    /超过 20 MiB/,
   );
 });

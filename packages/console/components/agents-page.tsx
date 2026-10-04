@@ -19,7 +19,8 @@ import {
   draftOf,
   driftText,
   installationText,
-  keylessOptions,
+  legacyKeyless,
+  modelOptional,
   modelVisibility,
   wiringInput,
 } from "@/lib/agents";
@@ -79,13 +80,15 @@ function AgentRow({
 }: {
   agent: Agent;
   models: GatewayModels;
-  onModel: (ref: string) => void;
+  /** A model, or undefined for the agent's own (agents that may keep theirs). */
+  onModel: (ref: string | undefined) => void;
   onDetail: () => void;
   onUnwire: () => void;
 }) {
   const wiring = agent.wiring;
   const install = installationText[agent.installation.status];
-  const keyless = keylessOptions(wiring?.options);
+  const ownModel = modelOptional(wiring?.options);
+  const legacy = legacyKeyless(agent);
   const visibility = wiring ? modelVisibility(agent, models) : undefined;
   return (
     <li className="flex flex-wrap items-center gap-x-4 gap-y-2.5 border-b px-4 py-3.5 last:border-b-0 sm:px-5">
@@ -106,26 +109,25 @@ function AgentRow({
         </span>
       </button>
       <div className="w-full min-w-0 sm:w-[300px]">
-        {keyless ? (
-          <p className="flex h-9 items-center rounded-[10px] border border-dashed px-3 text-[12.5px] text-muted-foreground">
-            ChatGPT 登录 · Agent 自选模型
-          </p>
-        ) : (
-          <ModelPicker
-            label={`${agent.name} 的模型`}
-            models={models}
-            value={wiring?.model}
-            disabled={!models.sections.length}
-            onChange={(ref) => {
-              if (ref && ref !== wiring?.model) onModel(ref);
-            }}
-          />
-        )}
+        <ModelPicker
+          label={`${agent.name} 的模型`}
+          models={models}
+          value={wiring?.model}
+          disabled={!models.sections.length}
+          {...(ownModel ? { none: `${agent.name} 自己的模型` } : {})}
+          onChange={(ref) => {
+            if (ref !== wiring?.model && (ref || ownModel)) onModel(ref);
+          }}
+        />
         <p className="mt-1 text-[12px] text-subtle">
           {wiring
-            ? visibility && !keyless
-              ? `显示 ${visibility.shown.length} / ${visibility.allowed.length} 个模型`
-              : null
+            ? legacy
+              ? "ChatGPT 登录 · 旧接线没有 Key"
+              : ownModel && !wiring.model
+                ? "ChatGPT 登录 · 用 Codex 自己的模型"
+                : visibility
+                  ? `${ownModel ? "ChatGPT 登录 · " : ""}显示 ${visibility.shown.length} / ${visibility.allowed.length} 个模型`
+                  : null
             : "未接线，选择模型即可预览接线"}
         </p>
       </div>
@@ -193,7 +195,7 @@ export function AgentsPage() {
     navigate("agents", {
       search: id ? `?agent=${encodeURIComponent(id)}` : "",
     });
-  const wire = (agent: Agent, model: string) =>
+  const wire = (agent: Agent, model: string | undefined) =>
     setWiring({
       agent,
       input: wiringInput(agent, { ...draftOf(agent), model }),

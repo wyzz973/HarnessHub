@@ -64,17 +64,33 @@ export const optionText: Record<
     label: "Codex 登录方式",
     values: {
       "gateway-key": "Gateway Key：经网关调用所选模型",
-      chatgpt: "ChatGPT 登录：保留 Codex 自己的登录，请求经网关转发",
+      chatgpt: "ChatGPT 登录：保留 Codex 自己的登录，可另选 HarnessHub 的模型",
     },
   },
 };
 
 /**
- * Whether these options make the agent sign in by itself, without a key,
- * model, tiers or effort (Codex with `codexAuth: chatgpt`; 04 section 4).
+ * Whether these options let the agent keep its own model: it signs in by
+ * itself and a HarnessHub model is optional (Codex with `codexAuth:
+ * chatgpt`, ADR 0030). It still gets a key; without a model it takes no
+ * tiers or effort.
  */
-export function keylessOptions(options: Record<string, string> | undefined) {
+export function modelOptional(options: Record<string, string> | undefined) {
   return options?.codexAuth === "chatgpt";
+}
+
+/**
+ * A ChatGPT-mode wiring from before ADR 0030: it has no key, so the
+ * gateway answers its HarnessHub model calls with 401 until a rotation
+ * issues the first key.
+ */
+export function legacyKeyless(agent: Agent): boolean {
+  const wiring = agent.wiring;
+  return (
+    wiring !== null &&
+    modelOptional(wiring.options) &&
+    wiring.keyId === undefined
+  );
 }
 
 /** Why an agent needs attention; empty when it does not. */
@@ -153,8 +169,9 @@ export function draftOf(agent: Agent): WiringDraft {
 }
 
 /**
- * The request for a draft. A keyless choice sends only the options; tiers
- * are always sent so cleared ones are removed, effort `null` clears it.
+ * The request for a draft. Tiers are always sent so cleared ones are
+ * removed, effort `null` clears it. An agent that may keep its own model
+ * sends `model: null` for none, and then no tiers or effort.
  */
 export function wiringInput(
   agent: Agent,
@@ -163,7 +180,8 @@ export function wiringInput(
   const options = Object.keys(draft.options).length
     ? { options: draft.options }
     : {};
-  if (keylessOptions(draft.options)) return options;
+  if (modelOptional(draft.options) && !draft.model)
+    return { model: null, ...options };
   const tiers = Object.fromEntries(
     Object.entries(draft.tiers).filter(([, ref]) => ref),
   );

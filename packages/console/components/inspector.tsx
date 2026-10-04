@@ -22,6 +22,7 @@ import { engineName } from "@/lib/engines";
 import {
   bytes,
   duration,
+  finishReasonText,
   inboundNames,
   modelEvidence,
   projectModelCalls,
@@ -398,7 +399,9 @@ function ModelCalls({
               输入 {quantity(call.usage?.input)} · 输出{" "}
               {quantity(call.usage?.output)}
               {call.toolCalls ? ` · 工具 ${call.toolCalls}` : ""}
-              {call.finishReason ? ` · ${call.finishReason}` : ""}
+              {call.finishReason
+                ? ` · ${finishReasonText(call.finishReason)}`
+                : ""}
             </p>
             {call.error ? (
               <p className="mt-1 text-[12px] break-words text-danger">

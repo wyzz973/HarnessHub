@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   BookOpen,
+  FileArchive,
   FolderInput,
+  FolderOpen,
   Loader2,
   Pencil,
   Plus,
@@ -46,6 +48,14 @@ import {
   type SecretRow,
 } from "@/lib/library";
 import { failureOf, modelPlane, type Failure } from "@/lib/model-plane";
+import {
+  ignored,
+  readZip,
+  SKILL_LIMITS,
+  skillOf,
+  uploadInput,
+  type SkillFile,
+} from "@/lib/skill-upload";
 import { navigate, useSearch } from "@/lib/router";
 import { notify } from "@/lib/toast";
 import { cn } from "@/lib/utils";
@@ -975,9 +985,23 @@ function McpTab({
   );
 }
 
+type Picked =
+  | { state: "none" }
+  | { state: "reading" }
+  | { state: "error"; message: string }
+  | {
+      state: "ready";
+      from: string;
+      name: string;
+      files: SkillFile[];
+      size: number;
+      problems: string[];
+    };
+
 /**
- * Import a skill directory. The API takes a path on the daemon's machine
- * (a browser cannot give a directory's path, and there is no upload yet).
+ * Add a skill: upload a folder or zip picked in the browser (checked
+ * against the 500-file and 20 MiB limits before it is sent), or import a
+ * directory on the daemon's machine by its path.
  */
 function SkillImportDialog({
   names,
@@ -988,76 +1012,264 @@ function SkillImportDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const [mode, setMode] = useState<"upload" | "path">("upload");
   const [source, setSource] = useState("");
+  const [picked, setPicked] = useState<Picked>({ state: "none" });
+  const [name, setName] = useState("");
   const [agents, setAgents] = useState<LibraryAgent[]>([]);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
+  const folderInput = useRef<HTMLInputElement>(null);
+  const zipInput = useRef<HTMLInputElement>(null);
+  const read = (
+    from: string,
+    load: () => Promise<SkillFile[]>,
+    fallback: string,
+  ) => {
+    setPicked({ state: "reading" });
+    setFailure(null);
+    load().then(
+      (files) => {
+        const skill = skillOf(files, fallback);
+        setName(skill.name);
+        setPicked({ state: "ready", from, ...skill });
+      },
+      (reason: unknown) =>
+        setPicked({
+          state: "error",
+          message: reason instanceof Error ? reason.message : String(reason),
+        }),
+    );
+  };
+  const pickFolder = (list: FileList | null) => {
+    const all = [...(list ?? [])];
+    if (!all.length) return;
+    const top = all[0]!.webkitRelativePath.split("/")[0] ?? "";
+    const files = all.filter(
+      (file) => !ignored(file.webkitRelativePath || file.name),
+    );
+    read(
+      `文件夹 ${top}`,
+      async () => {
+        // Checked before reading, so a large folder is never loaded.
+        const size = files.reduce((sum, file) => sum + file.size, 0);
+        if (files.length > SKILL_LIMITS.files)
+          throw new Error(
+            `文件夹有 ${files.length} 个文件，超过 ${SKILL_LIMITS.files} 个`,
+          );
+        if (size > SKILL_LIMITS.bytes)
+          throw new Error(`文件夹共 ${bytes(size)}，超过 20 MiB`);
+        return Promise.all(
+          files.map(async (file) => ({
+            path: file.webkitRelativePath || file.name,
+            bytes: new Uint8Array(await file.arrayBuffer()),
+            // A browser does not say whether a file is executable.
+            exec: false,
+          })),
+        );
+      },
+      top,
+    );
+  };
+  const pickZip = (file: File | undefined) => {
+    if (!file) return;
+    read(
+      `压缩包 ${file.name}`,
+      async () => readZip(await file.arrayBuffer()),
+      file.name.replace(/\.zip$/i, ""),
+    );
+  };
+  const done = (skill: LibrarySkill, verb: string) => {
+    setBusy(false);
+    notify.success(`已${verb} Skill ${skill.name}（${skill.files} 个文件）`);
+    onSaved();
+    onClose();
+  };
   const save = () => {
     setBusy(true);
     setFailure(null);
-    modelPlane()
-      .library.skills.import(source.trim(), agents)
-      .then(
-        (skill) => {
-          setBusy(false);
-          notify.success(`已导入 Skill ${skill.name}（${skill.files} 个文件）`);
-          onSaved();
-          onClose();
-        },
-        (reason: unknown) => {
-          setBusy(false);
-          setFailure(failureOf(reason));
-        },
-      );
+    const skills = modelPlane().library.skills;
+    (mode === "upload" && picked.state === "ready"
+      ? skills
+          .upload(uploadInput(name.trim(), picked.files, agents))
+          .then((skill) => done(skill, "上传"))
+      : skills
+          .import(source.trim(), agents)
+          .then((skill) => done(skill, "导入"))
+    ).catch((reason: unknown) => {
+      setBusy(false);
+      setFailure(failureOf(reason));
+    });
   };
+  const ready =
+    mode === "upload"
+      ? picked.state === "ready" && !picked.problems.length && !!name.trim()
+      : !!source.trim();
   return (
     <Dialog open onOpenChange={(open) => (!open && !busy ? onClose() : null)}>
-      <DialogContent className="sm:max-w-[620px]">
+      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-[620px] [&>*]:min-w-0">
         <DialogHeader>
-          <DialogTitle>导入 Skill</DialogTitle>
+          <DialogTitle>添加 Skill</DialogTitle>
           <DialogDescription>
             Skill 是一个含 SKILL.md 的目录（YAML front matter 的 name
             等于目录名，并有 description），最多 500 个文件、20
-            MiB，不能含链接。同名 Skill 再次导入成为新版本。
+            MiB，不能含链接。同名 Skill 再次添加成为新版本。
           </DialogDescription>
         </DialogHeader>
         <div className="segmented" role="tablist" aria-label="Skill 来源">
-          <button type="button" role="tab" aria-selected>
-            守护进程上的目录
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "upload"}
+            disabled={busy}
+            onClick={() => setMode("upload")}
+          >
+            上传文件夹或 zip
           </button>
           <button
             type="button"
             role="tab"
-            aria-selected={false}
-            disabled
-            title="等待守护进程提供上传接口"
+            aria-selected={mode === "path"}
+            disabled={busy}
+            onClick={() => setMode("path")}
           >
-            上传文件夹或 zip（即将推出）
+            守护进程上的目录
           </button>
         </div>
-        <label className="field-label">
-          目录的绝对路径
-          <input
-            className="field font-mono text-[13px]"
-            value={source}
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="/Users/me/skills/pdf-tools"
-            onChange={(event) => setSource(event.target.value)}
-          />
-          <span className="field-hint block">
-            守护进程所在电脑上的路径（浏览器无法读出所选目录的路径）。
-          </span>
-        </label>
+        {mode === "upload" ? (
+          <div className="space-y-3">
+            <input
+              ref={(node) => {
+                // Not a React attribute: the browser's folder picker.
+                if (node) node.webkitdirectory = true;
+                folderInput.current = node;
+              }}
+              type="file"
+              multiple
+              className="sr-only"
+              aria-label="选择 Skill 文件夹"
+              onChange={(event) => {
+                pickFolder(event.target.files);
+                event.target.value = "";
+              }}
+            />
+            <input
+              ref={zipInput}
+              type="file"
+              accept=".zip,application/zip"
+              className="sr-only"
+              aria-label="选择 Skill 压缩包"
+              onChange={(event) => {
+                pickZip(event.target.files?.[0]);
+                event.target.value = "";
+              }}
+            />
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                disabled={busy || picked.state === "reading"}
+                onClick={() => folderInput.current?.click()}
+              >
+                <FolderOpen />
+                选择文件夹
+              </Button>
+              <Button
+                variant="outline"
+                disabled={busy || picked.state === "reading"}
+                onClick={() => zipInput.current?.click()}
+              >
+                <FileArchive />
+                选择 zip
+              </Button>
+            </div>
+            {picked.state === "reading" ? (
+              <p
+                className="flex items-center gap-2 text-[13px] text-muted-foreground"
+                role="status"
+              >
+                <Loader2 className="size-4 animate-spin" />
+                正在读取文件…
+              </p>
+            ) : picked.state === "error" ? (
+              <p role="alert" className="callout error">
+                {picked.message}
+              </p>
+            ) : picked.state === "ready" ? (
+              <div className="space-y-2 rounded-xl border p-3">
+                <p className="text-[13px]">
+                  {picked.from}：{picked.files.length} 个文件，
+                  {bytes(picked.size)}
+                  {picked.files.some((file) => file.exec)
+                    ? `，${picked.files.filter((file) => file.exec).length} 个可执行`
+                    : ""}
+                </p>
+                <label className="field-label">
+                  名称
+                  <input
+                    className="field font-mono text-[13px]"
+                    value={name}
+                    autoComplete="off"
+                    spellCheck={false}
+                    onChange={(event) => setName(event.target.value)}
+                  />
+                  <span className="field-hint block">
+                    与 SKILL.md 中的 name 相同（小写字母、数字与连字符）。
+                  </span>
+                </label>
+                <ul className="max-h-[22vh] overflow-y-auto font-mono text-[12px] text-muted-foreground">
+                  {picked.files.slice(0, 50).map((file) => (
+                    <li key={file.path} className="truncate">
+                      {file.path}
+                      {file.exec ? (
+                        <span className="ml-1.5 text-subtle">可执行</span>
+                      ) : null}
+                    </li>
+                  ))}
+                  {picked.files.length > 50 ? (
+                    <li>…… 另有 {picked.files.length - 50} 个</li>
+                  ) : null}
+                </ul>
+                {picked.problems.length ? (
+                  <ul
+                    role="alert"
+                    className="callout error block list-disc space-y-0.5 pl-8"
+                  >
+                    {picked.problems.map((problem) => (
+                      <li key={problem}>{problem}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : (
+              <p className="text-[12.5px] text-muted-foreground">
+                文件在浏览器中读取，检查文件数与大小后上传；从文件夹上传时浏览器不提供可执行权限，需要可执行权限的脚本请用
+                zip 打包。
+              </p>
+            )}
+          </div>
+        ) : (
+          <label className="field-label">
+            目录的绝对路径
+            <input
+              className="field font-mono text-[13px]"
+              value={source}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="/Users/me/skills/pdf-tools"
+              onChange={(event) => setSource(event.target.value)}
+            />
+            <span className="field-hint block">守护进程所在电脑上的路径。</span>
+          </label>
+        )}
         <AgentChooser value={agents} onChange={setAgents} names={names} />
         <ErrorCallout failure={failure} />
         <DialogFooter>
           <Button variant="outline" disabled={busy} onClick={onClose}>
             取消
           </Button>
-          <Button disabled={busy || !source.trim()} onClick={save}>
+          <Button disabled={busy || !ready} onClick={save}>
             {busy ? <Loader2 className="animate-spin" /> : <FolderInput />}
-            导入
+            {mode === "upload" ? "上传" : "导入"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1139,7 +1351,7 @@ function SkillsTab({
       <div className="flex justify-end">
         <Button size="sm" onClick={() => setImporting(true)}>
           <FolderInput />
-          导入 Skill
+          添加 Skill
         </Button>
       </div>
       {data.skills.length ? (
@@ -1204,7 +1416,7 @@ function SkillsTab({
           action={
             <Button size="sm" onClick={() => setImporting(true)}>
               <FolderInput />
-              导入 Skill
+              添加 Skill
             </Button>
           }
         >

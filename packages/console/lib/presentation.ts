@@ -33,6 +33,20 @@ export function duration(ms: number | null | undefined) {
   if (ms < 1000) return `${Math.round(ms)} ms`;
   return `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)} s`;
 }
+/**
+ * How a model call ended, from the ledger's `finishReason`: the gateway
+ * records `stop`, `length`, `tool_calls` and `content_filter` for every
+ * protocol and mode; another value is the upstream's own and shows as sent.
+ */
+export function finishReasonText(reason: string): string {
+  const known: Record<string, string> = {
+    stop: "正常结束",
+    length: "达到输出上限",
+    tool_calls: "工具调用",
+    content_filter: "内容过滤",
+  };
+  return known[reason] ?? reason;
+}
 export function quantity(n: number | null | undefined) {
   return n == null ? "未提供" : new Intl.NumberFormat("zh-CN").format(n);
 }

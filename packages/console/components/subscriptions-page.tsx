@@ -163,12 +163,19 @@ function SignInDialog({
   const [auth, setAuth] = useState<CopilotAuth>(target.auth ?? "login");
   const [token, setToken] = useState("");
   const [phase, setPhase] = useState<SignInPhase>({ step: "notice" });
+  const [cancelling, setCancelling] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
   const siwc = target.backend === "siwc";
   const name = backendNames[target.backend];
   const finish = (view: SignInView) => {
     if (view.status !== "succeeded") {
-      setPhase({ step: "failed", message: view.error ?? "登录没有完成" });
+      setPhase({
+        step: "failed",
+        message:
+          view.status === "cancelled"
+            ? "这次登录已取消"
+            : (view.error ?? "登录没有完成"),
+      });
       return;
     }
     // A sign-in through the API does not read the models; do it here, as `hh subscription login` does.
@@ -227,9 +234,44 @@ function SignInDialog({
         },
       );
   };
-  const busy = phase.step === "starting";
+  const busy = phase.step === "starting" || cancelling;
+  // Cancelling a pending ChatGPT sign-in closes the daemon's callback
+  // listener. While the browser's callback is completing it cannot be
+  // cancelled; the attempt then finishes and polling shows the result.
+  const cancel = () => {
+    if (phase.step !== "waiting") {
+      onClose();
+      return;
+    }
+    setCancelling(true);
+    setFailure(null);
+    modelPlane()
+      .subscriptions.cancelSignIn(phase.view.id)
+      .then(
+        () => {
+          setCancelling(false);
+          notify.success("已取消登录");
+          onClose();
+        },
+        (reason: unknown) => {
+          setCancelling(false);
+          const problem = failureOf(reason);
+          setFailure(
+            problem.code === "SIGN_IN_COMPLETING"
+              ? {
+                  ...problem,
+                  message:
+                    "浏览器已回到 HarnessHub，登录正在完成，稍候即可看到结果",
+                }
+              : problem.code === "SIGN_IN_NOT_PENDING"
+                ? { ...problem, message: "这次登录已经结束，稍候显示结果" }
+                : problem,
+          );
+        },
+      );
+  };
   return (
-    <Dialog open onOpenChange={(open) => (!open && !busy ? onClose() : null)}>
+    <Dialog open onOpenChange={(open) => (!open && !busy ? cancel() : null)}>
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-[600px]">
         <DialogHeader>
           <DialogTitle>
@@ -350,9 +392,6 @@ function SignInDialog({
                 </a>
               </p>
             ) : null}
-            <p className="text-[12.5px] text-muted-foreground">
-              “不再等待”只停止这个页面的查询；这次登录在到期后自动失效。
-            </p>
           </div>
         ) : phase.step === "done" ? (
           <div className="space-y-2">
@@ -412,8 +451,9 @@ function SignInDialog({
             </>
           ) : (
             <>
-              <Button variant="outline" disabled={busy} onClick={onClose}>
-                {phase.step === "waiting" ? "不再等待" : "取消"}
+              <Button variant="outline" disabled={busy} onClick={cancel}>
+                {cancelling ? <Loader2 className="animate-spin" /> : null}
+                {phase.step === "waiting" ? "取消登录" : "取消"}
               </Button>
               {phase.step !== "waiting" ? (
                 <Button

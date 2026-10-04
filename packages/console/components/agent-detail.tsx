@@ -19,7 +19,8 @@ import {
   driftText,
   effortText,
   installationText,
-  keylessOptions,
+  legacyKeyless,
+  modelOptional,
   modelVisibility,
   optionText,
   tierText,
@@ -72,10 +73,20 @@ function WiringForm({
   onPreview: (input: AgentWiringInput) => void;
 }) {
   const [draft, setDraft] = useState<WiringDraft>(() => draftOf(agent));
-  const keyless = keylessOptions(draft.options);
+  const ownModel = modelOptional(draft.options);
   const capabilities = agent.capabilities;
   const set = (patch: Partial<WiringDraft>) =>
     setDraft((current) => ({ ...current, ...patch }));
+  // Switching to an option that keeps the agent's own model starts without
+  // a model: the other mode's model is not carried over (ADR 0030).
+  const setOption = (name: string, value: string) => {
+    const options = { ...draft.options, [name]: value };
+    set(
+      modelOptional(options) && !modelOptional(draft.options)
+        ? { options, model: undefined, effort: undefined, tiers: {} }
+        : { options },
+    );
+  };
   return (
     <div className="space-y-3">
       {Object.entries(capabilities.options).map(([name, values]) => (
@@ -84,9 +95,7 @@ function WiringForm({
           <select
             className="field"
             value={draft.options[name] ?? values[0]}
-            onChange={(event) =>
-              set({ options: { ...draft.options, [name]: event.target.value } })
-            }
+            onChange={(event) => setOption(name, event.target.value)}
           >
             {values.map((value) => (
               <option key={value} value={value}>
@@ -96,70 +105,77 @@ function WiringForm({
           </select>
         </label>
       ))}
-      {keyless ? (
+      {ownModel ? (
         <p className="callout neutral">
-          {agent.name} 自己登录并选择模型；HarnessHub
-          只把它的请求经网关转发并记账，不写模型、档位或 Key。
+          {agent.name} 保留自己的 ChatGPT
+          登录：不选模型时用它自己的模型，请求经网关转发；选了 HarnessHub
+          的模型时经网关调用它。接线签发的 Key 写在基址中，只在本机可用。
         </p>
-      ) : (
-        <>
-          <div>
-            <span className="field-label">主模型</span>
-            <ModelPicker
-              className="mt-1.5"
-              label="主模型"
-              models={models}
-              value={draft.model}
-              onChange={(ref) => set({ model: ref })}
-            />
+      ) : null}
+      <>
+        <div>
+          <span className="field-label">主模型</span>
+          <ModelPicker
+            className="mt-1.5"
+            label="主模型"
+            models={models}
+            value={draft.model}
+            {...(ownModel ? { none: `${agent.name} 自己的模型` } : {})}
+            onChange={(ref) =>
+              set(
+                ref || !ownModel
+                  ? { model: ref }
+                  : { model: undefined, effort: undefined },
+              )
+            }
+          />
+        </div>
+        {capabilities.tiers.length && !(ownModel && !draft.model) ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {capabilities.tiers.map((tier) => (
+              <div key={tier}>
+                <span className="field-label">{tierText[tier]}</span>
+                <ModelPicker
+                  className="mt-1.5"
+                  label={tierText[tier]}
+                  models={models}
+                  value={draft.tiers[tier]}
+                  none="跟随主模型"
+                  onChange={(ref) =>
+                    set({ tiers: { ...draft.tiers, [tier]: ref } })
+                  }
+                />
+              </div>
+            ))}
           </div>
-          {capabilities.tiers.length ? (
-            <div className="grid gap-3 sm:grid-cols-2">
-              {capabilities.tiers.map((tier) => (
-                <div key={tier}>
-                  <span className="field-label">{tierText[tier]}</span>
-                  <ModelPicker
-                    className="mt-1.5"
-                    label={tierText[tier]}
-                    models={models}
-                    value={draft.tiers[tier]}
-                    none="跟随主模型"
-                    onChange={(ref) =>
-                      set({ tiers: { ...draft.tiers, [tier]: ref } })
-                    }
-                  />
-                </div>
+        ) : null}
+        {capabilities.efforts.length && !(ownModel && !draft.model) ? (
+          <label className="field-label">
+            推理强度（effort）
+            <select
+              className="field"
+              value={draft.effort ?? ""}
+              onChange={(event) =>
+                set({
+                  effort: capabilities.efforts.find(
+                    (effort) => effort === event.target.value,
+                  ),
+                })
+              }
+            >
+              <option value="">默认（不设置）</option>
+              {capabilities.efforts.map((effort) => (
+                <option key={effort} value={effort}>
+                  {effortText[effort]}（{effort}）
+                </option>
               ))}
-            </div>
-          ) : null}
-          {capabilities.efforts.length ? (
-            <label className="field-label">
-              推理强度（effort）
-              <select
-                className="field"
-                value={draft.effort ?? ""}
-                onChange={(event) =>
-                  set({
-                    effort: capabilities.efforts.find(
-                      (effort) => effort === event.target.value,
-                    ),
-                  })
-                }
-              >
-                <option value="">默认（不设置）</option>
-                {capabilities.efforts.map((effort) => (
-                  <option key={effort} value={effort}>
-                    {effortText[effort]}（{effort}）
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-        </>
-      )}
+            </select>
+          </label>
+        ) : null}
+      </>
       <div className="flex justify-end">
         <Button
-          disabled={!keyless && !draft.model}
+          disabled={!ownModel && !draft.model}
           onClick={() => onPreview(wiringInput(agent, draft))}
         >
           预览改动
@@ -304,7 +320,7 @@ export function AgentDetail({
   const [plan, setPlan] = useState<AgentWiringInput | null>(null);
   const [confirm, setConfirm] = useState<"rotate" | "unwire" | null>(null);
   const wiring = agent.wiring;
-  const keyless = keylessOptions(wiring?.options);
+  const legacy = legacyKeyless(agent);
   const install = installationText[agent.installation.status];
   const problems = attention(agent, models);
   const keyState = keyStateText[wiring?.keyState ?? "none"] ?? {
@@ -373,7 +389,7 @@ export function AgentDetail({
             onPreview={setPlan}
           />
         </Section>
-        {wiring && !keyless ? (
+        {wiring && !legacy ? (
           <ModelVisibility
             key={wiring.hidden.join(",")}
             agent={agent}
@@ -385,20 +401,21 @@ export function AgentDetail({
           <Section
             title="Key"
             aside={
-              keyless ? null : (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setConfirm("rotate")}
-                >
-                  <KeyRound />换 Key
-                </Button>
-              )
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setConfirm("rotate")}
+              >
+                <KeyRound />
+                {legacy ? "签发 Key" : "换 Key"}
+              </Button>
             }
           >
-            {keyless ? (
-              <p className="text-[13px] text-muted-foreground">
-                {agent.name} 自己登录，没有 HarnessHub 的 Key。
+            {legacy ? (
+              <p className="callout info">
+                这条 ChatGPT 接线来自之前的版本，没有 Key：{agent.name}
+                自己的模型照常可用，HarnessHub 的模型会被拒绝（401）。签发一把
+                Key 后它也能使用 HarnessHub 的模型。
               </p>
             ) : (
               <p className="flex flex-wrap items-center gap-2 text-[13px]">
@@ -479,13 +496,23 @@ export function AgentDetail({
         ) : null}
         <ConfirmDialog
           open={confirm === "rotate"}
-          title={`给 ${agent.name} 换一把新 Key`}
-          description="以当前的模型与列表重新接线并签发新 Key，旧 Key 立即失效。正在运行的实例要重启后才用新 Key。"
-          action="换 Key"
+          title={
+            legacy
+              ? `给 ${agent.name} 签发 Key`
+              : `给 ${agent.name} 换一把新 Key`
+          }
+          description={
+            legacy
+              ? "以当前的选择重新接线并签发第一把 Key，写入它的配置文件。正在运行的实例要重启后才用这把 Key。"
+              : "以当前的模型与列表重新接线并签发新 Key，旧 Key 立即失效。正在运行的实例要重启后才用新 Key。"
+          }
+          action={legacy ? "签发 Key" : "换 Key"}
           onClose={() => setConfirm(null)}
           onConfirm={async () => {
             onChanged(await modelPlane().agents.rotate(agent.id));
-            notify.success(`${agent.name} 已换用新 Key`);
+            notify.success(
+              legacy ? `${agent.name} 已有 Key` : `${agent.name} 已换用新 Key`,
+            );
           }}
         />
         <ConfirmDialog

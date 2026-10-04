@@ -16,7 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { keylessOptions } from "@/lib/agents";
+import { modelOptional } from "@/lib/agents";
 import { failureOf, modelPlane, type Failure } from "@/lib/model-plane";
 import { notify } from "@/lib/toast";
 import { ErrorCallout } from "./model-plane-ui";
@@ -88,9 +88,10 @@ export function WirePlanDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
             确认后写入 {agent.name} 自己的配置文件；写入前先备份，之后可以还原。
-            {keylessOptions(input.options)
-              ? `${agent.name} 自己登录，不使用 HarnessHub 的 Key。`
-              : "每次接线都签发一把新 Key，旧 Key 随即失效。"}
+            每次接线都签发一把新 Key，旧 Key 随即失效。
+            {modelOptional(input.options)
+              ? `${agent.name} 保留自己的 ChatGPT 登录，Key 写在它的网关基址中。`
+              : ""}
           </DialogDescription>
         </DialogHeader>
         {plan ? (
