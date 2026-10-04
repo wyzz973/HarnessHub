@@ -5,6 +5,7 @@ import {
   outputLimit,
   withSelected,
   type AdapterEnvironment,
+  type AdapterTarget,
   type FileLocation,
   type WiringAdapter,
 } from "./types.js";
@@ -34,42 +35,12 @@ export const opencode: WiringAdapter = {
     path: ["provider", "harnesshub", "options", "baseURL"],
   },
   settings(target) {
-    const models: Record<string, ConfigValue> = {};
-    for (const model of withSelected(target.models, target.model))
-      models[model.ref] = {
-        name: model.ref,
-        ...(model.images
-          ? {
-              attachment: true,
-              modalities: { input: ["text", "image"], output: ["text"] },
-            }
-          : {}),
-        ...(model.contextWindow
-          ? {
-              limit: {
-                context: model.contextWindow,
-                output: outputLimit(model) ?? 0,
-              },
-            }
-          : {}),
-        variants: Object.fromEntries(
-          (model.efforts ?? []).map((effort) => [
-            effort,
-            { reasoningEffort: effort },
-          ]),
-        ),
-      };
     const selection = `harnesshub/${target.model}`;
     return [
       {
         file: "config",
         path: ["provider", "harnesshub"],
-        value: {
-          name: "HarnessHub",
-          npm: "@ai-sdk/openai-compatible",
-          options: { baseURL: `${target.baseUrl}/v1`, apiKey: target.keyText },
-          models,
-        },
+        value: openCodeProvider(target, "HarnessHub"),
       },
       { file: "config", path: ["model"], value: selection },
       { file: "config", path: ["small_model"], value: selection },
@@ -77,7 +48,49 @@ export const opencode: WiringAdapter = {
   },
 };
 
-function openCodeFile(environment: AdapterEnvironment): FileLocation {
+/**
+ * A provider of the gateway's models in an OpenCode configuration, as
+ * OpenCode and the agents built on it read one, with the key in its options.
+ */
+export function openCodeProvider(
+  target: AdapterTarget,
+  name: string,
+): ConfigValue {
+  const models: Record<string, ConfigValue> = {};
+  for (const model of withSelected(target.models, target.model))
+    models[model.ref] = {
+      name: model.ref,
+      ...(model.images
+        ? {
+            attachment: true,
+            modalities: { input: ["text", "image"], output: ["text"] },
+          }
+        : {}),
+      ...(model.contextWindow
+        ? {
+            limit: {
+              context: model.contextWindow,
+              output: outputLimit(model) ?? 0,
+            },
+          }
+        : {}),
+      variants: Object.fromEntries(
+        (model.efforts ?? []).map((effort) => [
+          effort,
+          { reasoningEffort: effort },
+        ]),
+      ),
+    };
+  return {
+    name,
+    npm: "@ai-sdk/openai-compatible",
+    options: { baseURL: `${target.baseUrl}/v1`, apiKey: target.keyText },
+    models,
+  };
+}
+
+/** OpenCode's configuration file, as OpenCode picks it. */
+export function openCodeFile(environment: AdapterEnvironment): FileLocation {
   const override = environment.directory("OPENCODE_CONFIG_DIR");
   const config = environment.directory("XDG_CONFIG_HOME");
   const directory =

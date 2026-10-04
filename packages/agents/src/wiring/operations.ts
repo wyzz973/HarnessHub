@@ -269,7 +269,7 @@ export async function planWiring(
   options: WiringOptions = {},
 ): Promise<WiringPlan> {
   const adapter = wiringAdapter(adapterId);
-  const resolved = resolveTarget(adapter, target);
+  const resolved = resolveTarget(adapter, target, wiringTime(context));
   const plans = await planFiles(adapter, resolved, context, options.previous);
   return preview(adapter, resolved, plans);
 }
@@ -291,7 +291,7 @@ export async function applyWiring(
   options: ApplyOptions = {},
 ): Promise<WiringOutcome> {
   const adapter = wiringAdapter(adapterId);
-  const resolved = resolveTarget(adapter, target);
+  const resolved = resolveTarget(adapter, target, wiringTime(context));
   return withAdapterLock(context.dataDir, adapter.id, async () => {
     const plans = await planFiles(adapter, resolved, context, options.previous);
     if (options.expect) checkExpected(plans, options.expect);
@@ -360,7 +360,7 @@ export async function applyWiring(
         ...(resolved.keyId !== undefined ? { keyId: resolved.keyId } : {}),
         ...choiceOf(adapter, resolved),
         files,
-        wiredAt: (context.clock?.() ?? new Date()).toISOString(),
+        wiredAt: wiringTime(context).toISOString(),
       },
       plan: preview(adapter, resolved, plans),
     };
@@ -654,6 +654,7 @@ async function planFiles(
   };
   const paths: LocatedFiles = {
     path: (fileId) => find(fileId).file,
+    exists: (fileId) => find(fileId).state.exists,
     current(fileId) {
       const { spec, file, before } = find(fileId);
       return inFileSync(file, () =>
@@ -687,6 +688,8 @@ async function planFiles(
           ),
         }
       : undefined;
+    // A missing file the adapter leaves alone is not part of the plan.
+    if (!state.exists && own.length === 0 && !prior) continue;
     const original = prior
       ? await originalDocument(
           context.dataDir,
@@ -1351,9 +1354,15 @@ async function originalDocument(
   );
 }
 
+/** The context's time, for agents that stamp their entries. */
+function wiringTime(context: WiringContext): Date {
+  return context.clock?.() ?? new Date();
+}
+
 function resolveTarget(
   adapter: WiringAdapter,
   target: WiringTarget,
+  now: Date,
 ): ResolvedTarget {
   const invalid = (detail: string) =>
     new WiringError("WIRING_TARGET_INVALID", detail);
@@ -1437,6 +1446,7 @@ function resolveTarget(
     effort: target.effort,
     options,
     gatewaySearch,
+    now,
   };
 }
 

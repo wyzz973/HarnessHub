@@ -251,6 +251,46 @@ void test("Codex keeps its web search while the gateway has a search backend, an
   assert.equal((await client.agents.get("codex")).wiring?.attention, undefined);
 });
 
+void test("OpenChamber's provider follows the gateway's models while its profile keeps the time it was set", async (t) => {
+  const { client, home, setModels, v1 } = await setup(t, [
+    { id: "big" },
+    { id: "small" },
+  ]);
+  const chamber = path.join(home, ".config", "openchamber");
+  await mkdir(chamber, { recursive: true });
+  const preferences = path.join(chamber, "preferences.json");
+  await writeFile(preferences, '{"version": 1, "fields": {}}\n');
+  await wire(client, "openchamber", "fake/small");
+  const opencode = path.join(home, ".config", "opencode", "opencode.json");
+  const provider = async () =>
+    (
+      (await json(opencode)).provider as Record<string, Record<string, unknown>>
+    )["harnesshub-openchamber"]!;
+  const profile = await readFile(preferences, "utf8");
+  assert.equal(
+    (JSON.parse(profile) as { fields: { defaultModel: { value: string } } })
+      .fields.defaultModel.value,
+    "harnesshub-openchamber/fake/small",
+  );
+  await setModels([{ id: "big" }, { id: "small" }, { id: "later" }]);
+  await eventually(
+    async () =>
+      Object.keys((await provider()).models as object).includes("fake/later"),
+    "the new model in OpenChamber's provider",
+  );
+  assert.equal(await readFile(preferences, "utf8"), profile);
+  // The key in OpenCode's file is OpenChamber's own and calls the gateway.
+  const key = ((await provider()).options as Record<string, string>).apiKey!;
+  assert.deepEqual(await listed(v1, key), [
+    "fake/big",
+    "fake/later",
+    "fake/small",
+  ]);
+  const view = await client.agents.get("openchamber");
+  assert.equal(view.wiring?.attention, undefined);
+  assert.equal(view.wiring?.drift?.drifted, false);
+});
+
 void test("wiring.autoSync false leaves the agents' files as they were written", async (t) => {
   const { client, home, setModels } = await setup(
     t,

@@ -17,6 +17,7 @@ import { mimocode } from "./mimocode.js";
 import { minimaxCode } from "./minimax-code.js";
 import { omo } from "./omo.js";
 import { omp } from "./omp.js";
+import { openchamber } from "./openchamber.js";
 import { pencil } from "./pencil.js";
 import { qoder, qoderCn } from "./qoder.js";
 import { t3code } from "./t3code.js";
@@ -45,6 +46,7 @@ export const wiringAdapters: ReadonlyMap<string, WiringAdapter> = new Map(
       omp,
       pencil,
       t3code,
+      openchamber,
     ],
     ...[droid, workbuddy, zcode, claudeDesktop],
   ].map((adapter) => [adapter.id, adapter]),

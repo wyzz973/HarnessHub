@@ -53,12 +53,16 @@ export interface AdapterTarget {
   options: Readonly<Record<string, string>>;
   /** Whether the gateway answers hosted web search tools itself, for any model. */
   gatewaySearch: boolean;
+  /** When this plan is made (the context's clock), for an agent that stamps its entries. */
+  now: Date;
 }
 
 /** The adapter's files as located for this wiring. */
 export interface LocatedFiles {
   /** The path of the file with this id; an id the adapter does not declare fails. */
   path(fileId: string): string;
+  /** Whether the file is there now. */
+  exists(fileId: string): boolean;
   /**
    * The file's current content, parsed (its `initial` text, or empty, when
    * missing), for a setting that depends on what the user has, such as a

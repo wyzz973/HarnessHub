@@ -89,7 +89,7 @@ Profile 保存每个已接线 Agent 的模型选择（模型、档位、effort�
 
 ### 数组元素
 
-有的 Agent 把 provider 或模型存为用户自己也会写入的数组的元素。键路径的最后一段可以是元素选择器：对象 `{match: {字段: 值}}`（所有字段相等的那个元素）或标量 `{equals: 值}`。设置时选中的元素原地替换，没有则追加在数组末尾（数组不存在时创建）；删除时只删这个元素（连同它自己的行与分隔逗号），其他元素的字节与顺序不变；选择器在中间时进入一个已存在的元素设置其中的字段。选择器选中多个元素为 `WIRING_UNSUPPORTED_STRUCTURE`。JSON 与 YAML 支持，TOML 与 dotenv 拒绝。Adapter 声明 `arrayRoot` 的 JSON 文件根也可以是列表，路径以选择器开头（WorkBuddy 的裸列表 `models.json`）；文件不存在时仍新建为对象。HarnessHub 拥有的是这些元素：重新接线时原地更新、新的追加在后、不再写的删除；还原时删除它们，或把它替换掉的用户元素按原值写回；元素被删或被改为漂移。备份清单的格式版本因此为 2（版本 1 仍可读取）。Adapter 可以经 `files.current(id)` 读取文件当前的内容，用于依赖用户已有内容的设置（如只在用户保留了 `availableModels` 时把模型加入其中）。
+有的 Agent 把 provider 或模型存为用户自己也会写入的数组的元素。键路径的最后一段可以是元素选择器：对象 `{match: {字段: 值}}`（所有字段相等的那个元素）或标量 `{equals: 值}`。设置时选中的元素原地替换，没有则追加在数组末尾（数组不存在时创建）；删除时只删这个元素（连同它自己的行与分隔逗号），其他元素的字节与顺序不变；选择器在中间时进入一个已存在的元素设置其中的字段。选择器选中多个元素为 `WIRING_UNSUPPORTED_STRUCTURE`。JSON 与 YAML 支持，TOML 与 dotenv 拒绝。Adapter 声明 `arrayRoot` 的 JSON 文件根也可以是列表，路径以选择器开头（WorkBuddy 的裸列表 `models.json`）；文件不存在时仍新建为对象。HarnessHub 拥有的是这些元素：重新接线时原地更新、新的追加在后、不再写的删除；还原时删除它们，或把它替换掉的用户元素按原值写回；元素被删或被改为漂移。备份清单的格式版本因此为 2（版本 1 仍可读取）。Adapter 可以经 `files.current(id)` 读取文件当前的内容、经 `files.exists(id)` 得知文件是否存在，用于依赖用户已有内容的设置（如只在用户保留了 `availableModels` 时把模型加入其中）；`target.now` 是上下文时钟给出的接线时间，供给条目盖时间戳的 Agent 使用。Adapter 不改动且不存在的文件不进入计划。
 
 `target` 为 `{baseUrl, keyText, keyId, model?, models[], tiers?, effort?, options?}`：`baseUrl` 是网关根地址（如 `http://127.0.0.1:3180`），各 Adapter 按协议自行追加 `/v1`；`keyText` 必须是 `agent` 作用域且与 `keyId` 一致的 Gateway Key；`models` 带 `/v1/models` 的窗口、输出上限、推理档位（`efforts`）、图像输入（`images`）与网关可直通的原生协议（`nativeProtocols`），各档模型的元数据也从这里取。`tiers`、`effort` 与 `options` 必须是 Adapter 声明的（`WiringAdapter.tiers`、`efforts`、`options`），否则为 `WIRING_TARGET_INVALID`。Adapter 在这组选项下保留 Agent 自己的模型（`modelOptional`，如 Codex 的 `codexAuth: chatgpt`）时，`model` 可以不给，这时也不接受档位与 effort，记录中没有 `model`，Adapter 收到 `ownModel: true`；为防 Adapter 误用，库检查它的设置没有引用模型。`ctx` 为 `{home, dataDir, env?, clock?}`：`home` 必填，库从不读取 `os.homedir()` 或 `process.env`，Agent 的目录变量只来自显式的 `env`。
 
@@ -148,18 +148,18 @@ BOM 与换行风格（LF/CRLF）保持原样。回读校验用真实解析器确
 | `zcode` ZCode | `~/.zcode/v2/config.json` 与 `provider_config.json`（新建时 `{"schemaVersion": 1}`） | `config.json` 的 `provider.harnesshub`（`kind: anthropic`、`enabled`、`source: custom`、`options.apiKey`、`options.baseURL`（网关根）、每个模型的 `limit`、`modalities`、`reasoning`）；`provider_config.json` 中 `config.providerConfigRules.providerRules` 的 `{providerId: harnesshub}` 元素（`access`、`api: anthropic-messages`、`personalModelIds`、`modelOrder`）与 `config.modelConfigRules.providerModelRules` 中每个模型一个 `{providerId, modelId}` 元素（窗口、图片输入、输出上限、推理档位） | Anthropic | 用户手动设置过规则的模型（`manualProviderModelRules`）不写规则；在 ZCode 中关闭的 provider 保持关闭；只让模型出现在选择器中 |
 | `claude-desktop` Claude Desktop | macOS `~/Library/Application Support`、Windows `%LOCALAPPDATA%`、其他 `${XDG_CONFIG_HOME:-~/.config}` 下的 `Claude-3p/configLibrary/<id>.json`、`Claude-3p/configLibrary/_meta.json`、`Claude-3p/claude_desktop_config.json`、`Claude/claude_desktop_config.json` | 配置文件 `inferenceProvider: gateway`、`inferenceGatewayBaseUrl`（网关根）、`inferenceGatewayApiKey`、`inferenceGatewayAuthScheme: bearer`，以及该文件尚未设置时的 `disableDeploymentModeChooser: true`、`coworkEgressAllowedHosts: ["*"]`；`_meta.json` 的 `entries` 元素与 `appliedId`；两个 `claude_desktop_config.json` 的 `deploymentMode: "3p"`（最后写） | Anthropic | Key 的 `modelIdStyle` 为 `claude-alias`：网关对它以 `claude-hh-<10 位数字>` 列出模型、显示名为 Model Ref，并接受这个别名（Desktop 只保留看起来属于 Anthropic 的 id）；还原时写回原 `deploymentMode` 与原 `appliedId`，其他配置项保留；Desktop 只在启动时读取 |
 | `t3code` T3 Code | `userdata/settings.json`（`${T3CODE_HOME:-~/.t3}`） | `providerInstances.harnesshub`（`driver: claudeAgent`、`environment` 列表中的 `ANTHROPIC_BASE_URL`（网关根）与 `ANTHROPIC_AUTH_TOKEN`，均 `sensitive: false`；`config.customModels[]`） | Anthropic（经 Claude Code） | 只让模型出现在 T3 的选择器中；Claude Code 自己 `settings.json` 的 `env` 若指向别处仍然优先；没有命令，按 `~/.t3/userdata` 判断安装 |
+| `openchamber` OpenChamber | `preferences.json` 与 `settings.json`（`${OPENCHAMBER_DATA_DIR:-~/.config/openchamber}`，不随 `XDG_CONFIG_HOME`），以及 OpenCode 的配置文件（与 `opencode` 相同） | OpenCode 配置中的 `provider.harnesshub-openchamber`（写法与 `opencode` 的 provider 相同，Key 是 OpenChamber 的）；`preferences.json` 存在时其 `fields.defaultModel = {value: "harnesshub-openchamber/<ref>", updatedAt}`，设置 effort 时 `fields.defaultVariant`（即模型按档位的 variant），否则删除 `defaultVariant`；`settings.json` 存在或没有 `preferences.json` 时，其顶层 `defaultModel` 与 `defaultVariant` 同样写入 | Chat | `updatedAt` 只在值改变时取接线时间；版本不是 1 的 `preferences.json` 被拒绝（`WIRING_UNSUPPORTED_STRUCTURE`）；与 `opencode` 的 `harnesshub` provider 在同一文件中各自接线与还原；项目自己的 `defaultModel` 仍优先 |
 
 未收录的 Magpie Agent：
 
 | Agent | 原因 |
 |---|---|
 | `goose`、`cursor`、`copilot`、`devin` | Magpie 也不接网关，只切换它们自己的模型 |
-| `alma`、`hanako` | 经运行中应用的本地 API 配置（Hanako 未运行时才写文件），不是文件接线 |
+| `alma`、`hanako` | 经运行中应用的本地 API 配置，不是文件接线。Hanako 未运行时可以写文件，但它启动时把 provider 定义从 `provider-catalog.json` 移到 `provider-plugins/` 下的另一文件（只留 Key），所写的条目每次启动后都像被改动；要改的模型在 `primaryAgent` 指向的 `agents/<id>/config.yaml` 中，文件位置取决于另一文件的内容 |
 | `cindy` | 只生成导入链接，由用户在应用中确认 |
 | `agy` | 只从环境变量读取端点与 Key，需要启动命令而非配置文件 |
 | `commandcode`、`fx`、`muse` | 配置里无法写入 Key：Command Code 拒绝写入的 Key（Magpie 写 `apiKey: false`），fx 只见过 `auth: {type: "none"}`，Muse 的 `auth` 只能是 Meta 登录令牌或 `none`；Muse 还要求网关提供 `/muse-code/models` |
-| `dsh` | 补丁文件的根是 YAML 列表、各 profile 一份（文件集合随 profile 变化），且 dsh 会改写条目，Magpie 每 30 秒重写一次 |
-| `openchamber` | provider 写在 OpenCode 的配置文件里，与 `opencode` Adapter 共用同一文件与键；`preferences.json` 还要写当前时间。用 `opencode` 接线即可，OpenChamber 没有自己的默认模型时沿用 OpenCode 的 |
+| `dsh` | 补丁文件的根是 YAML 列表、各 profile 一份（文件集合随 profile 变化）；dsh 自己的 Models 页面写文件时会丢掉其他程序加的 route，Magpie 因此每 30 秒重写一次，而目录同步从不改写用户（或 Agent）改过的文件，两者需要先定取舍 |
 
 Shell 环境中已有的同名变量优先于 dotenv 文件（Gemini、Qwen），OpenCode 的 `OPENCODE_CONFIG_DIR` 与 Kimi 的 `OPENAI_*` 变量也会覆盖全局文件；这类绕过由漂移检测的网关证据（`bypassed`，尚未实现）发现。
 

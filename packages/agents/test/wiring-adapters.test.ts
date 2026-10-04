@@ -83,9 +83,11 @@ async function fields(id: string, context: WiringContext) {
     effort: undefined,
     options: resolveOptions(adapter, {}),
     gatewaySearch: false,
+    now: new Date(0),
   };
   const located = {
     path: (fileId: string) => files.get(fileId)!.path,
+    exists: () => false,
     current: () => ({}),
   };
   const all = adapter.settings(resolved, located).flatMap((setting) =>
