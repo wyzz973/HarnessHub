@@ -60,6 +60,68 @@ function catalog(entry: CatalogEntry) {
   };
 }
 
+/** One model of a catalog that global wiring lists for Codex. */
+export interface CodexWiringModel {
+  slug: string;
+  contextWindow?: number;
+  /** Reasoning levels, lowest first; empty when the model has none or they are unknown. */
+  efforts: readonly string[];
+  images: boolean;
+}
+
+/**
+ * The `model_catalog_json` of global wiring: one entry per model the agent
+ * lists, in the shape of the isolated catalog above (which the pinned Codex
+ * reads), with each model's window, levels and image input. The default
+ * level is medium, else high, else the first (as Magpie's codexcat picks it).
+ */
+export function codexWiringCatalog(models: readonly CodexWiringModel[]) {
+  return {
+    models: models.map((model, index) => {
+      const reasoning = model.efforts.length > 0;
+      const level = reasoning
+        ? (["medium", "high"].find((effort) =>
+            model.efforts.includes(effort),
+          ) ?? model.efforts[0]!)
+        : undefined;
+      return {
+        slug: model.slug,
+        display_name: model.slug,
+        description: `${model.slug} through HarnessHub`,
+        ...(level !== undefined ? { default_reasoning_level: level } : {}),
+        supported_reasoning_levels: model.efforts.map((effort) => ({
+          effort,
+          description: `${effort} reasoning effort`,
+        })),
+        shell_type: "shell_command",
+        visibility: "list",
+        supported_in_api: true,
+        priority: index + 1,
+        support_verbosity: false,
+        apply_patch_tool_type: "freeform",
+        web_search_tool_type: "text",
+        truncation_policy: { mode: "tokens", limit: 10_000 },
+        ...(model.contextWindow !== undefined
+          ? {
+              context_window: model.contextWindow,
+              max_context_window: model.contextWindow,
+            }
+          : {}),
+        effective_context_window_percent: 95,
+        input_modalities: model.images ? ["text", "image"] : ["text"],
+        supports_image_detail_original: false,
+        experimental_supported_tools: [],
+        default_reasoning_summary: "none",
+        ...(reasoning ? {} : { supports_reasoning_summary_parameter: false }),
+        model_messages: { instructions_template: codexDefaultInstructions },
+        base_instructions: codexDefaultInstructions,
+        supports_reasoning_summaries: false,
+        supports_parallel_tool_calls: false,
+      };
+    }),
+  };
+}
+
 /** Known metadata only: unknown model names keep Codex's existing fallback behavior. */
 export function codexModelCatalog(model: string) {
   if (model !== "deepseek-v4-flash") return undefined;

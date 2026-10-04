@@ -190,9 +190,10 @@ void test("wiring Codex points it at the gateway with a working agent key; rotat
   assert.equal(await chat(gateway, second.key!), 200);
 
   const unwired = await client.agents.unwire("codex");
+  // The model catalog wiring generated beside config.toml is deleted.
   assert.deepEqual(
     unwired.files.map((file) => file.action),
-    ["restored"],
+    ["restored", "deleted"],
   );
   assert.equal(unwired.agent.wiring, null);
   assert.equal(await readFile(config, "utf8"), ORIGINAL);
@@ -227,7 +228,7 @@ void test("a manual edit shows as drift, and unwire then restores only HarnessHu
   const unwired = await client.agents.unwire("codex");
   assert.deepEqual(
     unwired.files.map((file) => file.action),
-    ["reverse-patched"],
+    ["reverse-patched", "deleted"],
   );
   assert.equal(await readFile(config, "utf8"), `${ORIGINAL}\n# added later\n`);
 });

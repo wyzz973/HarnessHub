@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import path from "node:path";
 import {
+  outputLimit,
   withSelected,
   type AdapterEnvironment,
   type FileLocation,
@@ -9,10 +10,14 @@ import {
 
 /**
  * Crush reads `crush.json` in `${XDG_CONFIG_HOME:-~/.config}/crush`
- * (`%LOCALAPPDATA%\crush` on Windows). A `harnesshub` provider of type
+ * (`%LOCALAPPDATA%\\crush` on Windows). A `harnesshub` provider of type
  * `openai-compat` (Crush's type for OpenAI-compatible Chat endpoints; 04
  * names `openai`, which Crush reserves for OpenAI itself) lists the gateway's
- * models, and both model roles select the chosen model.
+ * models with their known window and output limit, `can_reason` and, with
+ * known levels, `reasoning_levels` and `default_reasoning_effort` (medium,
+ * else high, else the first), and `supports_attachments` for image input.
+ * Both model roles select the chosen model; the effort is the large model's
+ * `reasoning_effort`, one of the levels Magpie offers for Crush.
  */
 export const crush: WiringAdapter = {
   id: "crush",
@@ -25,6 +30,7 @@ export const crush: WiringAdapter = {
     file: "config",
     path: ["providers", "harnesshub", "base_url"],
   },
+  efforts: ["low", "medium", "high"],
   settings(target) {
     const selection = { model: target.model, provider: "harnesshub" };
     return [
@@ -36,19 +42,43 @@ export const crush: WiringAdapter = {
           type: "openai-compat",
           base_url: `${target.baseUrl}/v1`,
           api_key: target.keyText,
-          models: withSelected(target.models, target.model).map((model) => ({
-            id: model.ref,
-            name: model.ref,
-            ...(model.contextWindow
-              ? { context_window: model.contextWindow }
-              : {}),
-            ...(model.maxOutputTokens
-              ? { default_max_tokens: model.maxOutputTokens }
-              : {}),
-          })),
+          models: withSelected(target.models, target.model).map((model) => {
+            const output = outputLimit(model);
+            const levels = (model.efforts ?? []).filter(
+              (effort) => effort !== "none",
+            );
+            return {
+              id: model.ref,
+              name: model.ref,
+              ...(model.contextWindow
+                ? { context_window: model.contextWindow }
+                : {}),
+              ...(output ? { default_max_tokens: output } : {}),
+              can_reason: levels.length > 0,
+              ...(levels.length
+                ? {
+                    reasoning_levels: levels,
+                    default_reasoning_effort:
+                      ["medium", "high"].find((level) =>
+                        (levels as string[]).includes(level),
+                      ) ?? levels[0]!,
+                  }
+                : {}),
+              ...(model.images ? { supports_attachments: true } : {}),
+            };
+          }),
         },
       },
-      { file: "config", path: ["models", "large"], value: selection },
+      {
+        file: "config",
+        path: ["models", "large"],
+        value: {
+          ...selection,
+          ...(target.effort !== undefined
+            ? { reasoning_effort: target.effort }
+            : {}),
+        },
+      },
       { file: "config", path: ["models", "small"], value: selection },
     ];
   },

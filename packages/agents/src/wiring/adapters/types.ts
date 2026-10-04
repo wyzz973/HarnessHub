@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 import path from "node:path";
-import type { WireProtocol } from "@harnesshub/core/model-plane";
+import type {
+  ReasoningEffort,
+  WireProtocol,
+  WiringTier,
+} from "@harnesshub/core/model-plane";
 import type { ConfigFormat, ConfigValue, KeyPath } from "../formats/index.js";
 
 /** Metadata of one model the gateway exposes, as `/v1/models` reports it. */
@@ -9,6 +13,15 @@ export interface WiringModel {
   ref: string;
   contextWindow?: number;
   maxOutputTokens?: number;
+  /** Reasoning levels the model takes, lowest first; absent or empty when it has none or they are unknown. */
+  efforts?: readonly ReasoningEffort[];
+  /** The model accepts image input. */
+  images?: boolean;
+  /**
+   * Protocols the gateway passes through to the model's provider without
+   * translating; empty or absent for a route group, whose members may differ.
+   */
+  nativeProtocols?: readonly WireProtocol[];
 }
 
 /** What an adapter writes, after validation. */
@@ -20,6 +33,18 @@ export interface AdapterTarget {
   models: readonly WiringModel[];
   /** The metadata of `model`, when the gateway knows it. */
   selected: WiringModel | undefined;
+  /** A model per tier the adapter declares; a tier that is absent follows `model`. */
+  tiers: Readonly<Partial<Record<WiringTier, string>>>;
+  /** The level the agent starts with, one of the adapter's `efforts`; undefined leaves the agent's own. */
+  effort: ReasoningEffort | undefined;
+  /** Every option the adapter declares, the default where none was given. */
+  options: Readonly<Record<string, string>>;
+}
+
+/** The paths of an adapter's files as located for this wiring. */
+export interface LocatedFiles {
+  /** The path of the file with this id; an id the adapter does not declare fails. */
+  path(fileId: string): string;
 }
 
 /** Where an adapter's files live on this machine. */
@@ -58,6 +83,11 @@ export interface FileLocation {
 export interface AdapterFile {
   readonly id: string;
   readonly format: ConfigFormat;
+  /**
+   * HarnessHub generates the whole file (such as Codex's model catalog), so a
+   * preview summarises it instead of showing every line.
+   */
+  readonly generated?: boolean;
   locate(environment: AdapterEnvironment): FileLocation;
   /**
    * The text a missing file starts from before the settings are applied,
@@ -68,10 +98,23 @@ export interface AdapterFile {
   readonly initial?: string;
 }
 
-export interface AdapterSetting {
+/**
+ * One entry an adapter owns: set to `value`, or removed (`remove: true`) so
+ * that a value of the user's cannot override the wiring. Unwire puts back
+ * what was there before either way.
+ */
+export type AdapterSetting =
+  | {
+      readonly file: string;
+      readonly path: KeyPath;
+      readonly value: ConfigValue;
+    }
+  | { readonly file: string; readonly path: KeyPath; readonly remove: true };
+
+/** Where an adapter keeps the gateway URL: a fixed path, or one per wired model. */
+export interface BaseUrlField {
   readonly file: string;
-  readonly path: KeyPath;
-  readonly value: ConfigValue;
+  readonly path: KeyPath | ((model: string) => KeyPath);
 }
 
 /**
@@ -95,11 +138,22 @@ export interface WiringAdapter {
    * function gives it for the wired model, for an agent that keeps the URL
    * in each model's own entry.
    */
-  readonly baseUrlField: {
-    readonly file: string;
-    readonly path: KeyPath | ((model: string) => KeyPath);
-  };
-  settings(target: AdapterTarget): AdapterSetting[];
+  readonly baseUrlField: BaseUrlField;
+  /** The setting that holds the gateway URL with these options, when it is not `baseUrlField`. */
+  baseUrlFieldFor?(options: Readonly<Record<string, string>>): BaseUrlField;
+  /** Tiers whose models can differ from the main model; none when absent. */
+  readonly tiers?: readonly WiringTier[];
+  /** Levels the agent can be set to start with; none when absent. */
+  readonly efforts?: readonly ReasoningEffort[];
+  /** Adapter options and their allowed values; the first value is the default. */
+  readonly options?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * Whether the agent, configured with these options, authenticates by
+   * itself: it is then wired without a Gateway Key and without a model, and
+   * its settings must not use `keyText` or `model`. Never when absent.
+   */
+  keyless?(options: Readonly<Record<string, string>>): boolean;
+  settings(target: AdapterTarget, files: LocatedFiles): AdapterSetting[];
 }
 
 /**
@@ -121,6 +175,20 @@ export function overridable(
     create: path.join(directory, create),
     root: override ?? environment.home,
   };
+}
+
+/**
+ * The output limit to hand an agent for `model`: never above its window,
+ * since some catalogs list a larger output than window. Undefined when the
+ * output is unknown.
+ */
+export function outputLimit(model: WiringModel): number | undefined {
+  const { contextWindow, maxOutputTokens } = model;
+  return contextWindow !== undefined &&
+    maxOutputTokens !== undefined &&
+    maxOutputTokens > contextWindow
+    ? contextWindow
+    : maxOutputTokens;
 }
 
 /** The listed models, plus the selected one when the list lacks it. */

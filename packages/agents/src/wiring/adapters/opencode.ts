@@ -2,6 +2,7 @@
 import path from "node:path";
 import type { ConfigValue } from "../formats/index.js";
 import {
+  outputLimit,
   withSelected,
   type AdapterEnvironment,
   type FileLocation,
@@ -14,8 +15,12 @@ import {
  * OPENCODE_CONFIG_DIR, whose files override the global ones; wiring edits
  * that directory when it is set. A `harnesshub` provider uses the bundled
  * OpenAI-compatible SDK with the key in its options (OpenCode 1.1 sent an
- * `{env:...}` reference verbatim). `limit` is written only when both the
- * window and the output cap are known, as OpenCode requires both.
+ * `{env:...}` reference verbatim). Each model carries, as Magpie writes it:
+ * `limit` once the window is known (an unknown output is 0, OpenCode's own
+ * default), `attachment` and `modalities` for image input, and `variants`
+ * with one entry per reasoning level asking for that `reasoningEffort`; a
+ * model without levels gets none, as OpenCode 2 would otherwise offer low,
+ * medium and high.
  */
 export const opencode: WiringAdapter = {
   id: "opencode",
@@ -33,14 +38,26 @@ export const opencode: WiringAdapter = {
     for (const model of withSelected(target.models, target.model))
       models[model.ref] = {
         name: model.ref,
-        ...(model.contextWindow && model.maxOutputTokens
+        ...(model.images
+          ? {
+              attachment: true,
+              modalities: { input: ["text", "image"], output: ["text"] },
+            }
+          : {}),
+        ...(model.contextWindow
           ? {
               limit: {
                 context: model.contextWindow,
-                output: model.maxOutputTokens,
+                output: outputLimit(model) ?? 0,
               },
             }
           : {}),
+        variants: Object.fromEntries(
+          (model.efforts ?? []).map((effort) => [
+            effort,
+            { reasoningEffort: effort },
+          ]),
+        ),
       };
     const selection = `harnesshub/${target.model}`;
     return [

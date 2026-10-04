@@ -9,9 +9,12 @@
 export {
   applyWiring,
   detectDrift,
+  isKeyless,
   maskGatewayKeys,
   planWiring,
+  resolveOptions,
   unwire,
+  wiredKeyText,
   type ApplyOptions,
   type ConfirmedPlan,
   type DriftFinding,

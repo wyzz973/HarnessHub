@@ -21,9 +21,13 @@ export const GOLDEN: Readonly<
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek/deepseek-chat",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek/deepseek-chat",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek/deepseek-chat",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL": "deepseek/deepseek-chat",
+    "ANTHROPIC_SMALL_FAST_MODEL": "deepseek/deepseek-chat",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek/deepseek-chat",
     "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "128000",
     "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "8192"
-  }
+  },
+  "model": "deepseek/deepseek-chat"
 }
 `,
     },
@@ -39,12 +43,16 @@ export const GOLDEN: Readonly<
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek/deepseek-chat",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek/deepseek-chat",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek/deepseek-chat",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL": "deepseek/deepseek-chat",
+    "ANTHROPIC_SMALL_FAST_MODEL": "deepseek/deepseek-chat",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek/deepseek-chat",
     "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "128000",
     "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "8192"
   },
   "permissions": {
     "allow": ["Bash(ls:*)"]
-  }
+  },
+  "model": "deepseek/deepseek-chat"
 }
 `,
     },
@@ -53,7 +61,7 @@ export const GOLDEN: Readonly<
     empty: {
       ".codex/config.toml": `model_provider = "harnesshub"
 model = "deepseek/deepseek-chat"
-model_context_window = 128000
+model_catalog_json = "<home>/.codex/harnesshub-models.json"
 
 [model_providers.harnesshub]
 name = "HarnessHub"
@@ -61,13 +69,84 @@ base_url = "http://127.0.0.1:3180/v1"
 wire_api = "responses"
 experimental_bearer_token = "hhk_a_abcdefghijkl_SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS"
 `,
+      ".codex/harnesshub-models.json": `{
+  "models": [
+    {
+      "slug": "deepseek/deepseek-chat",
+      "display_name": "deepseek/deepseek-chat",
+      "description": "deepseek/deepseek-chat through HarnessHub",
+      "supported_reasoning_levels": [],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 1,
+      "support_verbosity": false,
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text",
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "context_window": 128000,
+      "max_context_window": 128000,
+      "effective_context_window_percent": 95,
+      "input_modalities": [
+        "text"
+      ],
+      "supports_image_detail_original": false,
+      "experimental_supported_tools": [],
+      "default_reasoning_summary": "none",
+      "supports_reasoning_summary_parameter": false,
+      "model_messages": {
+        "instructions_template": "<codex default instructions>"
+      },
+      "base_instructions": "<codex default instructions>",
+      "supports_reasoning_summaries": false,
+      "supports_parallel_tool_calls": false
+    },
+    {
+      "slug": "openai/gpt-5",
+      "display_name": "openai/gpt-5",
+      "description": "openai/gpt-5 through HarnessHub",
+      "supported_reasoning_levels": [],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 2,
+      "support_verbosity": false,
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text",
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "context_window": 400000,
+      "max_context_window": 400000,
+      "effective_context_window_percent": 95,
+      "input_modalities": [
+        "text"
+      ],
+      "supports_image_detail_original": false,
+      "experimental_supported_tools": [],
+      "default_reasoning_summary": "none",
+      "supports_reasoning_summary_parameter": false,
+      "model_messages": {
+        "instructions_template": "<codex default instructions>"
+      },
+      "base_instructions": "<codex default instructions>",
+      "supports_reasoning_summaries": false,
+      "supports_parallel_tool_calls": false
+    }
+  ]
+}
+`,
     },
     existing: {
       ".codex/config.toml": `# Codex settings
 model = "deepseek/deepseek-chat" # my default
 approval_policy = "on-request"
 model_provider = "harnesshub"
-model_context_window = 128000
+model_catalog_json = "<home>/.codex/harnesshub-models.json"
 
 [projects."/Users/me/work"]
 trust_level = "trusted"
@@ -81,6 +160,77 @@ name = "HarnessHub"
 base_url = "http://127.0.0.1:3180/v1"
 wire_api = "responses"
 experimental_bearer_token = "hhk_a_abcdefghijkl_SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS"
+`,
+      ".codex/harnesshub-models.json": `{
+  "models": [
+    {
+      "slug": "deepseek/deepseek-chat",
+      "display_name": "deepseek/deepseek-chat",
+      "description": "deepseek/deepseek-chat through HarnessHub",
+      "supported_reasoning_levels": [],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 1,
+      "support_verbosity": false,
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text",
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "context_window": 128000,
+      "max_context_window": 128000,
+      "effective_context_window_percent": 95,
+      "input_modalities": [
+        "text"
+      ],
+      "supports_image_detail_original": false,
+      "experimental_supported_tools": [],
+      "default_reasoning_summary": "none",
+      "supports_reasoning_summary_parameter": false,
+      "model_messages": {
+        "instructions_template": "<codex default instructions>"
+      },
+      "base_instructions": "<codex default instructions>",
+      "supports_reasoning_summaries": false,
+      "supports_parallel_tool_calls": false
+    },
+    {
+      "slug": "openai/gpt-5",
+      "display_name": "openai/gpt-5",
+      "description": "openai/gpt-5 through HarnessHub",
+      "supported_reasoning_levels": [],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 2,
+      "support_verbosity": false,
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text",
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "context_window": 400000,
+      "max_context_window": 400000,
+      "effective_context_window_percent": 95,
+      "input_modalities": [
+        "text"
+      ],
+      "supports_image_detail_original": false,
+      "experimental_supported_tools": [],
+      "default_reasoning_summary": "none",
+      "supports_reasoning_summary_parameter": false,
+      "model_messages": {
+        "instructions_template": "<codex default instructions>"
+      },
+      "base_instructions": "<codex default instructions>",
+      "supports_reasoning_summaries": false,
+      "supports_parallel_tool_calls": false
+    }
+  ]
+}
 `,
     },
   },
@@ -96,7 +246,8 @@ GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:3180
     }
   },
   "model": {
-    "name": "deepseek/deepseek-chat"
+    "name": "deepseek/deepseek-chat",
+    "compressionThreshold": 0.0977
   }
 }
 `,
@@ -117,7 +268,8 @@ GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:3180
     }
   },
   "model": {
-    "name": "deepseek/deepseek-chat"
+    "name": "deepseek/deepseek-chat",
+    "compressionThreshold": 0.0977
   }
 }
 `,
@@ -183,10 +335,16 @@ OPENAI_MODEL=deepseek/deepseek-chat
           "limit": {
             "context": 128000,
             "output": 8192
-          }
+          },
+          "variants": {}
         },
         "openai/gpt-5": {
-          "name": "openai/gpt-5"
+          "name": "openai/gpt-5",
+          "limit": {
+            "context": 400000,
+            "output": 0
+          },
+          "variants": {}
         }
       }
     }
@@ -219,10 +377,16 @@ OPENAI_MODEL=deepseek/deepseek-chat
           "limit": {
             "context": 128000,
             "output": 8192
-          }
+          },
+          "variants": {}
         },
         "openai/gpt-5": {
-          "name": "openai/gpt-5"
+          "name": "openai/gpt-5",
+          "limit": {
+            "context": 400000,
+            "output": 0
+          },
+          "variants": {}
         }
       }
     },
@@ -307,9 +471,9 @@ OPENAI_MODEL=deepseek/deepseek-chat
 }
 `,
       ".pi/agent/settings.json": `{
-\t"theme": "dark",
-\t"defaultProvider": "harnesshub",
-\t"defaultModel": "deepseek/deepseek-chat"
+	"theme": "dark",
+	"defaultProvider": "harnesshub",
+	"defaultModel": "deepseek/deepseek-chat"
 }
 `,
     },
@@ -328,12 +492,14 @@ OPENAI_MODEL=deepseek/deepseek-chat
           "id": "deepseek/deepseek-chat",
           "name": "deepseek/deepseek-chat",
           "context_window": 128000,
-          "default_max_tokens": 8192
+          "default_max_tokens": 8192,
+          "can_reason": false
         },
         {
           "id": "openai/gpt-5",
           "name": "openai/gpt-5",
-          "context_window": 400000
+          "context_window": 400000,
+          "can_reason": false
         }
       ]
     }
@@ -366,12 +532,14 @@ OPENAI_MODEL=deepseek/deepseek-chat
           "id": "deepseek/deepseek-chat",
           "name": "deepseek/deepseek-chat",
           "context_window": 128000,
-          "default_max_tokens": 8192
+          "default_max_tokens": 8192,
+          "can_reason": false
         },
         {
           "id": "openai/gpt-5",
           "name": "openai/gpt-5",
-          "context_window": 400000
+          "context_window": 400000,
+          "can_reason": false
         }
       ]
     }

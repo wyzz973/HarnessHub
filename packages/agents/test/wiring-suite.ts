@@ -29,6 +29,7 @@ import {
   WiringError,
   type WiringContext,
 } from "../src/wiring/index.js";
+import { resolveOptions } from "../src/wiring/operations.js";
 import {
   editors,
   type ConfigFormat,
@@ -99,14 +100,20 @@ async function fields(id: string, context: WiringContext) {
     model: TARGET.model,
     models: TARGET.models,
     selected: TARGET.models.find((model) => model.ref === TARGET.model),
+    tiers: {},
+    effort: undefined,
+    options: resolveOptions(adapter, {}),
   };
-  const all = adapter.settings(resolved).flatMap((setting) =>
-    leaves(setting.value, setting.path).map(([leaf, value]) => ({
-      file: files.get(setting.file)!.path,
-      format: files.get(setting.file)!.format,
-      path: leaf,
-      value,
-    })),
+  const located = { path: (fileId: string) => files.get(fileId)!.path };
+  const all = adapter.settings(resolved, located).flatMap((setting) =>
+    ("remove" in setting ? [] : leaves(setting.value, setting.path)).map(
+      ([leaf, value]) => ({
+        file: files.get(setting.file)!.path,
+        format: files.get(setting.file)!.format,
+        path: leaf,
+        value,
+      }),
+    ),
   );
   const field = adapter.baseUrlField;
   const basePath =

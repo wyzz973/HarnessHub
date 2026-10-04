@@ -396,9 +396,10 @@ void test("a user deleting a wired file leaves nothing to unwire", async (t) => 
   assert.deepEqual(emptied.kinds, ["replaced", "unwired"]);
   await rm(record.files[0]!.path);
   const result = await unwire(record, context);
+  // The model catalog that wiring generated beside it is still deleted.
   assert.deepEqual(
     result.files.map((file) => file.action),
-    ["absent"],
+    ["absent", "deleted"],
   );
 });
 

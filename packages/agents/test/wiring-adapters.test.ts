@@ -20,6 +20,7 @@ import {
   WiringError,
   type WiringContext,
 } from "../src/wiring/index.js";
+import { resolveOptions } from "../src/wiring/operations.js";
 import {
   editors,
   type ConfigFormat,
@@ -77,14 +78,22 @@ async function fields(id: string, context: WiringContext) {
     model: TARGET.model,
     models: TARGET.models,
     selected: TARGET.models.find((model) => model.ref === TARGET.model),
+    tiers: {},
+    effort: undefined,
+    options: resolveOptions(adapter, {}),
   };
-  const all = adapter.settings(resolved).flatMap((setting) =>
-    leaves(setting.value, setting.path).map(([leaf, value]) => ({
-      file: files.get(setting.file)!.path,
-      format: files.get(setting.file)!.format,
-      path: leaf,
-      value,
-    })),
+  const located = {
+    path: (fileId: string) => files.get(fileId)!.path,
+  };
+  const all = adapter.settings(resolved, located).flatMap((setting) =>
+    ("remove" in setting ? [] : leaves(setting.value, setting.path)).map(
+      ([leaf, value]) => ({
+        file: files.get(setting.file)!.path,
+        format: files.get(setting.file)!.format,
+        path: leaf,
+        value,
+      }),
+    ),
   );
   const base = all.find(
     (field) =>
@@ -175,12 +184,23 @@ for (const id of ADAPTERS) {
 
     const { record } = await applyWiring(id, TARGET, context);
     assert.deepEqual(await snapshot(context.home), GOLDEN[id]!.existing);
-    assert.ok(record.files.every((file) => file.beforeHash !== undefined));
+    // Files the user had are restored; files wiring created (Codex's model catalog) are deleted.
+    const existed = (file: string) =>
+      Object.hasOwn(EXISTING[id]!, path.relative(context.home, file));
+    assert.ok(
+      record.files.every(
+        (file) => (file.beforeHash !== undefined) === existed(file.path),
+      ),
+    );
     if (process.platform !== "win32")
       assert.equal((await stat(first)).mode & 0o777, 0o640);
 
     const result = await unwire(record, context);
-    assert.ok(result.files.every((file) => file.action === "restored"));
+    assert.ok(
+      result.files.every(
+        (file) => file.action === (existed(file.path) ? "restored" : "deleted"),
+      ),
+    );
     assert.deepEqual(await snapshot(context.home), before);
     if (process.platform !== "win32")
       assert.equal((await stat(first)).mode & 0o777, 0o640);
@@ -197,8 +217,9 @@ for (const id of ADAPTERS) {
       await edit(file.path, (text) =>
         editor.set(text, userEntry(file.format), "kept"),
       );
+      // A file wiring created keeps only the user's entry.
       expected[relative] = editor.set(
-        EXISTING[id]![relative]!,
+        EXISTING[id]![relative] ?? "",
         userEntry(file.format),
         "kept",
       );

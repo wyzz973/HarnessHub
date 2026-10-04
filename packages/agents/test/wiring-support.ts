@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { TestContext } from "node:test";
 import type { GatewayKeyId } from "@harnesshub/core/model-plane";
+import { codexDefaultInstructions } from "../src/configuration/codex-default-instructions.js";
 import type { WiringContext, WiringTarget } from "../src/wiring/index.js";
 
 /** A synthetic agent key; it never reaches a network. */
@@ -27,7 +28,11 @@ export function syntheticKey(
 export const KEY = syntheticKey("abcdefghijkl");
 export const NEW_KEY = syntheticKey("mnopqrstuvwx", "N");
 
-export const TARGET: WiringTarget = {
+export const TARGET: WiringTarget & {
+  keyText: string;
+  keyId: GatewayKeyId;
+  model: string;
+} = {
   baseUrl: "http://127.0.0.1:3180",
   ...KEY,
   model: "deepseek/deepseek-chat",
@@ -69,7 +74,15 @@ export async function writeFiles(
   }
 }
 
-/** Every regular file under `directory`, relative and sorted, with its text. */
+/** Codex's default instructions as they appear, JSON-quoted, in a generated model catalog. */
+const INSTRUCTIONS = JSON.stringify(codexDefaultInstructions);
+
+/**
+ * Every regular file under `directory`, relative and sorted, with its text;
+ * `directory` itself reads as `<home>` and Codex's default instructions in a
+ * generated catalog as `"<codex default instructions>"`, so goldens do not
+ * depend on the temporary directory and stay readable.
+ */
 export async function snapshot(
   directory: string,
 ): Promise<Record<string, string>> {
@@ -88,7 +101,11 @@ export async function snapshot(
   for (const entry of entries)
     if (entry.isFile()) {
       const file = path.join(entry.parentPath, entry.name);
-      result[path.relative(directory, file)] = await readFile(file, "utf8");
+      result[path.relative(directory, file)] = (await readFile(file, "utf8"))
+        .split(INSTRUCTIONS)
+        .join('"<codex default instructions>"')
+        .split(JSON.stringify(directory).slice(1, -1))
+        .join("<home>");
     }
   return Object.fromEntries(
     Object.entries(result).sort(([a], [b]) => a.localeCompare(b)),

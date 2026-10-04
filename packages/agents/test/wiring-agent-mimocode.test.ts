@@ -48,10 +48,16 @@ adapterSuite("mimocode", {
           "limit": {
             "context": 128000,
             "output": 8192
-          }
+          },
+          "variants": {}
         },
         "openai/gpt-5": {
-          "name": "openai/gpt-5"
+          "name": "openai/gpt-5",
+          "limit": {
+            "context": 400000,
+            "output": 0
+          },
+          "variants": {}
         }
       }
     }
@@ -81,10 +87,16 @@ adapterSuite("mimocode", {
           "limit": {
             "context": 128000,
             "output": 8192
-          }
+          },
+          "variants": {}
         },
         "openai/gpt-5": {
-          "name": "openai/gpt-5"
+          "name": "openai/gpt-5",
+          "limit": {
+            "context": 400000,
+            "output": 0
+          },
+          "variants": {}
         }
       }
     },

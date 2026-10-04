@@ -48,6 +48,8 @@ export interface BackupManifest {
   owned: string[][];
   /** The values of the latest wiring, as templates (see `KEY_PLACEHOLDER`). */
   expected: Array<{ path: string[]; value: ConfigValue }>;
+  /** Entries the latest wiring removed so that they cannot override it; absent in older manifests. */
+  absent?: string[][];
 }
 
 /** Stands for the gateway key in stored templates. */
@@ -182,7 +184,9 @@ function validManifest(value: unknown): BackupManifest | undefined {
     Array.isArray(value.expected) &&
     value.expected.every(
       (entry) => isObject(entry) && strings(entry.path) && "value" in entry,
-    );
+    ) &&
+    (value.absent === undefined ||
+      (Array.isArray(value.absent) && value.absent.every(strings)));
   return valid ? (value as unknown as BackupManifest) : undefined;
 }
 

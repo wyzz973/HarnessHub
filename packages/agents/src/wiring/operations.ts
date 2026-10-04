@@ -5,9 +5,13 @@ import {
   isGatewayKeyId,
   parseGatewayKey,
   parseModelRef,
+  reasoningEfforts,
+  wireProtocols,
   type GatewayKeyId,
+  type ReasoningEffort,
   type WireProtocol,
   type WiringRecord,
+  type WiringTier,
 } from "@harnesshub/core/model-plane";
 import {
   wiringAdapter,
@@ -15,6 +19,8 @@ import {
   type AdapterFile,
   type AdapterSetting,
   type AdapterTarget,
+  type FileLocation,
+  type LocatedFiles,
   type WiringAdapter,
   type WiringModel,
 } from "./adapters/index.js";
@@ -65,17 +71,28 @@ import {
   startsWith,
 } from "./formats/values.js";
 
-/** Where the gateway is and which key and model an agent gets. */
+/**
+ * Where the gateway is and which key and models an agent gets. An adapter
+ * that authenticates by itself with these options (`WiringAdapter.keyless`)
+ * takes no key, model, tiers or effort; every other one needs `keyText`,
+ * `keyId` and `model`.
+ */
 export interface WiringTarget {
   /** The gateway origin as agents reach it (`http://127.0.0.1:3180`); `/v1` is appended per protocol. */
   baseUrl: string;
   /** The agent-scoped Gateway Key; written only where the agent reads it, never logged or stored by wiring. */
-  keyText: string;
-  keyId: GatewayKeyId;
+  keyText?: string;
+  keyId?: GatewayKeyId;
   /** The Model Ref or `group/<id>` the agent uses. */
-  model: string;
-  /** Models the gateway exposes to this key, with the metadata of `/v1/models`. */
+  model?: string;
+  /** Models the gateway exposes to this key, with the metadata of `/v1/models`; tiers' models are looked up here too. */
   models: WiringModel[];
+  /** A model per tier the adapter declares (`WiringAdapter.tiers`); an absent tier follows `model`. */
+  tiers?: Partial<Record<WiringTier, string>>;
+  /** One of the adapter's `efforts`; absent leaves the agent's own. */
+  effort?: ReasoningEffort;
+  /** Values of the adapter's options; an absent one takes its default. */
+  options?: Record<string, string>;
 }
 
 /**
@@ -123,8 +140,10 @@ export interface WiringPlan {
   adapterId: string;
   protocol: WireProtocol;
   keyDelivery: WiringAdapter["keyDelivery"];
-  model: string;
-  keyId: GatewayKeyId;
+  /** Absent for an agent that keeps its own model choice (keyless). */
+  model?: string;
+  /** Absent for an agent wired without a key. */
+  keyId?: GatewayKeyId;
   /** False when the agent is already wired exactly so; applying then writes nothing. */
   changed: boolean;
   files: PlannedFile[];
@@ -201,6 +220,15 @@ type Operation =
   | { op: "set"; path: KeyPath; value: ConfigValue }
   | { op: "remove"; path: KeyPath };
 
+/** Stands for the model of a keyless wiring in the target handed to the adapter; it must not reach a file. */
+const MODEL_PLACEHOLDER = "{{harnesshub:model}}";
+
+/** An adapter target with what the operations need besides it. */
+interface ResolvedTarget extends AdapterTarget {
+  keyId: GatewayKeyId | undefined;
+  keyless: boolean;
+}
+
 interface FilePlan {
   spec: AdapterFile;
   editor: FormatEditor;
@@ -232,9 +260,9 @@ export async function planWiring(
   options: WiringOptions = {},
 ): Promise<WiringPlan> {
   const adapter = wiringAdapter(adapterId);
-  const resolved = resolveTarget(target);
+  const resolved = resolveTarget(adapter, target);
   const plans = await planFiles(adapter, resolved, context, options.previous);
-  return preview(adapter, target, resolved, plans);
+  return preview(adapter, resolved, plans);
 }
 
 /**
@@ -254,7 +282,7 @@ export async function applyWiring(
   options: ApplyOptions = {},
 ): Promise<WiringOutcome> {
   const adapter = wiringAdapter(adapterId);
-  const resolved = resolveTarget(target);
+  const resolved = resolveTarget(adapter, target);
   return withAdapterLock(context.dataDir, adapter.id, async () => {
     const plans = await planFiles(adapter, resolved, context, options.previous);
     if (options.expect) checkExpected(plans, options.expect);
@@ -320,12 +348,12 @@ export async function applyWiring(
     return {
       record: {
         adapterId: adapter.id,
-        keyId: target.keyId,
-        model: resolved.model,
+        ...(resolved.keyId !== undefined ? { keyId: resolved.keyId } : {}),
+        ...choiceOf(adapter, resolved),
         files,
         wiredAt: (context.clock?.() ?? new Date()).toISOString(),
       },
-      plan: preview(adapter, target, resolved, plans),
+      plan: preview(adapter, resolved, plans),
     };
   });
 }
@@ -442,6 +470,10 @@ export async function detectDrift(
   checkRecord(record);
   const adapter = wiringAdapter(record.adapterId);
   await checkContext(context);
+  const baseUrlField = baseUrlFieldOf(
+    adapter,
+    resolveOptions(adapter, record.options),
+  );
   const files: DriftReport["files"] = [];
   const findings: DriftFinding[] = [];
   for (const entry of record.files) {
@@ -489,7 +521,7 @@ export async function detectDrift(
       continue;
     }
     files.push({ path: entry.path, state: "modified" });
-    const { file: baseFile, path: basePath } = adapter.baseUrlField;
+    const { file: baseFile, path: basePath } = baseUrlField;
     // A field per model has none for a wiring without a model.
     const baseField =
       baseFile !== manifest.fileId
@@ -526,6 +558,15 @@ export async function detectDrift(
           reason: result,
         });
       }
+    // An entry wiring removed that holds a value again overrides the wiring.
+    for (const absent of manifest.absent ?? [])
+      if (getPath(document, absent) !== undefined)
+        findings.push({
+          path: entry.path,
+          keyPath: [...absent],
+          kind: "replaced",
+          reason: "changed",
+        });
   }
   const kinds = [...new Set(findings.map((finding) => finding.kind))].sort();
   return {
@@ -548,7 +589,7 @@ export function maskGatewayKeys(text: string): string {
 
 async function planFiles(
   adapter: WiringAdapter,
-  target: AdapterTarget,
+  target: ResolvedTarget,
   context: WiringContext,
   previous: WiringRecord | undefined,
 ): Promise<FilePlan[]> {
@@ -562,11 +603,34 @@ async function planFiles(
       );
   }
   const environment = adapterEnvironment(context);
-  const settings = adapter.settings(target);
-  const plans: FilePlan[] = [];
+  const located: Array<{
+    spec: AdapterFile;
+    file: string;
+    location: FileLocation;
+  }> = [];
   for (const spec of adapter.files) {
     const location = spec.locate(environment);
-    const file = await firstExisting(location.candidates, location.create);
+    located.push({
+      spec,
+      file: await firstExisting(location.candidates, location.create),
+      location,
+    });
+  }
+  const paths: LocatedFiles = {
+    path(fileId) {
+      const found = located.find((item) => item.spec.id === fileId);
+      if (!found)
+        throw new WiringError(
+          "WIRING_TARGET_INVALID",
+          `${adapter.name} has no file ${JSON.stringify(fileId)}`,
+        );
+      return found.file;
+    },
+  };
+  const settings = adapter.settings(target, paths);
+  if (target.keyless) checkKeyless(adapter, settings);
+  const plans: FilePlan[] = [];
+  for (const { spec, file, location } of located) {
     const { realPath } = await resolveFile(file, [location.root]);
     const state = await readState(realPath);
     if (!state.exists)
@@ -615,11 +679,11 @@ async function planFiles(
       );
       const operations: Operation[] = [
         ...revertOperations(stale, original ?? document),
-        ...own.map((setting): Operation => ({
-          op: "set",
-          path: setting.path,
-          value: setting.value,
-        })),
+        ...own.map((setting): Operation =>
+          "remove" in setting
+            ? { op: "remove", path: setting.path }
+            : { op: "set", path: setting.path, value: setting.value },
+        ),
       ];
       const edited = applyOperations(editor, current, operations);
       const pruned = pruneEmpty(
@@ -646,7 +710,9 @@ async function planFiles(
       settings: own,
       ...(prior ? { previous: prior } : {}),
       changed:
-        before.text === undefined ? own.length > 0 : after.text !== before.text,
+        before.text === undefined
+          ? own.some((setting) => !("remove" in setting))
+          : after.text !== before.text,
     });
   }
   return plans;
@@ -654,16 +720,15 @@ async function planFiles(
 
 function preview(
   adapter: WiringAdapter,
-  target: WiringTarget,
-  resolved: AdapterTarget,
+  resolved: ResolvedTarget,
   plans: FilePlan[],
 ): WiringPlan {
   return {
     adapterId: adapter.id,
     protocol: adapter.protocol,
     keyDelivery: adapter.keyDelivery,
-    model: resolved.model,
-    keyId: target.keyId,
+    ...(resolved.keyless ? {} : { model: resolved.model }),
+    ...(resolved.keyId !== undefined ? { keyId: resolved.keyId } : {}),
     changed: plans.some((plan) => plan.changed),
     files: plans.map((plan) => {
       const before =
@@ -671,7 +736,9 @@ function preview(
       const after = plan.editor.parse(plan.after);
       // Previous values of entries that carry the key are secrets too.
       const secrets = plan.settings
-        .flatMap((setting) => leaves(setting.value, setting.path))
+        .flatMap((setting) =>
+          "remove" in setting ? [] : leaves(setting.value, setting.path),
+        )
         .filter(
           ([, value]) =>
             typeof value === "string" && value.includes(resolved.keyText),
@@ -690,8 +757,12 @@ function preview(
         changes.push({
           keyPath: [...operation.path],
           op: operation.op,
-          ...(old !== undefined ? { before: mask(JSON.stringify(old)) } : {}),
-          ...(next !== undefined ? { after: mask(JSON.stringify(next)) } : {}),
+          ...(old !== undefined
+            ? { before: shorten(mask(JSON.stringify(old))) }
+            : {}),
+          ...(next !== undefined
+            ? { after: shorten(mask(JSON.stringify(next))) }
+            : {}),
         });
       }
       return {
@@ -701,19 +772,44 @@ function preview(
         exists: plan.state.exists,
         ...(plan.state.exists ? { hash: plan.state.hash } : {}),
         changes,
-        diff: plan.changed
-          ? mask(
-              unifiedDiff(
-                plan.before,
-                plan.after,
-                plan.path,
-                plan.spec.format === "dotenv" ? 0 : 3,
+        diff: !plan.changed
+          ? ""
+          : plan.spec.generated
+            ? generatedDiff(plan)
+            : mask(
+                unifiedDiff(
+                  plan.before,
+                  plan.after,
+                  plan.path,
+                  plan.spec.format === "dotenv" ? 0 : 3,
+                ),
               ),
-            )
-          : "",
       };
     }),
   };
+}
+
+/** Values longer than this are cut in a plan's changes; the diff shows them in full. */
+const CHANGE_VALUE_LIMIT = 2000;
+
+function shorten(text: string): string {
+  return text.length <= CHANGE_VALUE_LIMIT
+    ? text
+    : `${text.slice(0, CHANGE_VALUE_LIMIT)}… (${text.length} characters)`;
+}
+
+/** A generated file is summarised: its size before and after, not its lines. */
+function generatedDiff(plan: FilePlan): string {
+  const size = (text: string | undefined) =>
+    text === undefined
+      ? "absent"
+      : `${Buffer.byteLength(text, "utf8")} bytes, ${text.split("\n").length - (text.endsWith("\n") ? 1 : 0)} lines`;
+  return [
+    `--- ${plan.before === undefined ? "/dev/null" : plan.path}`,
+    `+++ ${plan.path}`,
+    `@@ generated by HarnessHub: ${size(plan.before)} -> ${size(plan.after)} @@`,
+    "",
+  ].join("\n");
 }
 
 function masker(secrets: string[]): (text: string) => string {
@@ -1012,7 +1108,7 @@ async function originalOf(
 function manifestOf(
   adapter: WiringAdapter,
   plan: FilePlan,
-  target: AdapterTarget,
+  target: ResolvedTarget,
   original: OriginalFile,
   created: string[],
 ): BackupManifest {
@@ -1041,10 +1137,14 @@ function manifestOf(
       ...new Set([...(prior?.manifest.createdDirectories ?? []), ...created]),
     ],
     owned: [...owned.values()],
-    expected: plan.settings.map((setting) => ({
-      path: [...setting.path],
-      value: template(setting.value, target),
-    })),
+    expected: plan.settings.flatMap((setting) =>
+      "remove" in setting
+        ? []
+        : [{ path: [...setting.path], value: template(setting.value, target) }],
+    ),
+    absent: plan.settings
+      .filter((setting) => "remove" in setting)
+      .map((setting) => [...setting.path]),
   };
 }
 
@@ -1108,7 +1208,17 @@ function matchTemplate(
     return deepEqual(actual, expected) ? "ok" : "changed";
   }
   if (typeof actual !== "string") return "changed";
-  const pattern = expected
+  const match = templatePattern(expected, baseUrl).exec(actual);
+  if (!match) return "changed";
+  const keys = match.slice(1);
+  return keys.every((key) => parseGatewayKey(key!)?.keyId === keyId)
+    ? "ok"
+    : "other-key";
+}
+
+/** A template string as a pattern whose groups capture the keys in it. */
+function templatePattern(template: string, baseUrl: string): RegExp {
+  const pattern = template
     .split(/(\{\{harnesshub:(?:gateway-key|base-url)\}\})/)
     .map((part) =>
       part === KEY_PLACEHOLDER
@@ -1118,12 +1228,7 @@ function matchTemplate(
           : escapeRegExp(part),
     )
     .join("");
-  const match = new RegExp(`^${pattern}$`).exec(actual);
-  if (!match) return "changed";
-  const keys = match.slice(1);
-  return keys.every((key) => parseGatewayKey(key!)?.keyId === keyId)
-    ? "ok"
-    : "other-key";
+  return new RegExp(`^${pattern}$`);
 }
 
 /** The match of a whole from its parts: another key only when nothing else differs. */
@@ -1174,24 +1279,14 @@ async function originalDocument(
   );
 }
 
-function resolveTarget(target: WiringTarget): AdapterTarget {
+function resolveTarget(
+  adapter: WiringAdapter,
+  target: WiringTarget,
+): ResolvedTarget {
   const invalid = (detail: string) =>
     new WiringError("WIRING_TARGET_INVALID", detail);
   const baseUrl = resolveBaseUrl(target.baseUrl);
-  const key = parseGatewayKey(target.keyText);
-  if (
-    !isGatewayKeyId(target.keyId) ||
-    !key ||
-    key.scope !== "agent" ||
-    key.keyId !== target.keyId
-  )
-    throw invalid(
-      "The key must be an agent-scoped Gateway Key whose id is keyId",
-    );
-  if (!parseModelRef(target.model))
-    throw invalid(
-      "The model must be a Model Ref (provider/model) or group/<id>",
-    );
+  const options = resolveOptions(adapter, target.options);
   const seen = new Set<string>();
   for (const model of target.models) {
     if (!parseModelRef(model.ref) || seen.has(model.ref))
@@ -1200,14 +1295,238 @@ function resolveTarget(target: WiringTarget): AdapterTarget {
     for (const limit of [model.contextWindow, model.maxOutputTokens])
       if (limit !== undefined && (!Number.isSafeInteger(limit) || limit <= 0))
         throw invalid(`The limits of ${model.ref} must be positive integers`);
+    if (
+      !(model.efforts ?? []).every((effort) =>
+        (reasoningEfforts as readonly string[]).includes(effort),
+      ) ||
+      !(model.nativeProtocols ?? []).every((protocol) =>
+        (wireProtocols as readonly string[]).includes(protocol),
+      )
+    )
+      throw invalid(`The metadata of ${model.ref} is invalid`);
   }
+  if (adapter.keyless?.(options)) {
+    if (
+      target.keyText !== undefined ||
+      target.keyId !== undefined ||
+      target.model !== undefined ||
+      Object.keys(target.tiers ?? {}).length ||
+      target.effort !== undefined
+    )
+      throw invalid(
+        `${adapter.name} signs in by itself with these options; it takes no key, model, tiers or effort`,
+      );
+    return {
+      baseUrl,
+      keyText: KEY_PLACEHOLDER,
+      keyId: undefined,
+      model: MODEL_PLACEHOLDER,
+      models: [],
+      selected: undefined,
+      tiers: {},
+      effort: undefined,
+      options,
+      keyless: true,
+    };
+  }
+  const key =
+    target.keyText === undefined ? undefined : parseGatewayKey(target.keyText);
+  if (
+    target.keyId === undefined ||
+    !isGatewayKeyId(target.keyId) ||
+    !key ||
+    key.scope !== "agent" ||
+    key.keyId !== target.keyId
+  )
+    throw invalid(
+      "The key must be an agent-scoped Gateway Key whose id is keyId",
+    );
+  if (target.model === undefined || !parseModelRef(target.model))
+    throw invalid(
+      "The model must be a Model Ref (provider/model) or group/<id>",
+    );
+  const tiers: Partial<Record<WiringTier, string>> = {};
+  for (const [tier, model] of Object.entries(target.tiers ?? {})) {
+    if (!(adapter.tiers ?? []).includes(tier as WiringTier))
+      throw invalid(
+        `${adapter.name} has no model tier ${JSON.stringify(tier)}`,
+      );
+    if (typeof model !== "string" || !parseModelRef(model))
+      throw invalid(`The model of tier ${tier} must be a Model Ref`);
+    tiers[tier as WiringTier] = model;
+  }
+  if (
+    target.effort !== undefined &&
+    !(adapter.efforts ?? []).includes(target.effort)
+  )
+    throw invalid(
+      `${adapter.name} cannot be set to start at effort ${JSON.stringify(target.effort)}`,
+    );
   return {
     baseUrl,
-    keyText: target.keyText,
+    keyText: target.keyText!,
+    keyId: target.keyId,
     model: target.model,
     models: target.models,
     selected: target.models.find((model) => model.ref === target.model),
+    tiers,
+    effort: target.effort,
+    options,
+    keyless: false,
   };
+}
+
+/**
+ * The adapter's options with defaults filled in; an option it does not
+ * declare or a value it does not allow fails with WIRING_TARGET_INVALID.
+ */
+export function resolveOptions(
+  adapter: WiringAdapter,
+  given: Readonly<Record<string, string>> | undefined,
+): Record<string, string> {
+  const declared = adapter.options ?? {};
+  for (const [name, value] of Object.entries(given ?? {}))
+    if (!Object.hasOwn(declared, name) || !declared[name]!.includes(value))
+      throw new WiringError(
+        "WIRING_TARGET_INVALID",
+        Object.hasOwn(declared, name)
+          ? `${adapter.name} option ${name} is one of ${declared[name]!.join(", ")}`
+          : `${adapter.name} has no option ${JSON.stringify(name)}`,
+      );
+  return Object.fromEntries(
+    Object.entries(declared).map(([name, values]) => [
+      name,
+      given?.[name] ?? values[0]!,
+    ]),
+  );
+}
+
+/** Whether the adapter, configured with `options`, is wired without a key and a model. */
+export function isKeyless(
+  adapter: WiringAdapter,
+  options: Readonly<Record<string, string>> | undefined,
+): boolean {
+  return adapter.keyless?.(resolveOptions(adapter, options)) ?? false;
+}
+
+/** The choices a record keeps: the model, tiers and effort unless keyless, and the options. */
+function choiceOf(
+  adapter: WiringAdapter,
+  target: ResolvedTarget,
+): Pick<WiringRecord, "model" | "tiers" | "effort" | "options"> {
+  return {
+    ...(target.keyless ? {} : { model: target.model }),
+    ...(Object.keys(target.tiers).length ? { tiers: { ...target.tiers } } : {}),
+    ...(target.effort !== undefined ? { effort: target.effort } : {}),
+    ...(Object.keys(adapter.options ?? {}).length
+      ? { options: { ...target.options } }
+      : {}),
+  };
+}
+
+function baseUrlFieldOf(
+  adapter: WiringAdapter,
+  options: Readonly<Record<string, string>>,
+): WiringAdapter["baseUrlField"] {
+  return adapter.baseUrlFieldFor?.(options) ?? adapter.baseUrlField;
+}
+
+/** A keyless wiring's settings must use neither the key nor the model. */
+function checkKeyless(
+  adapter: WiringAdapter,
+  settings: readonly AdapterSetting[],
+): void {
+  for (const setting of settings)
+    if (
+      !("remove" in setting) &&
+      (containsPlaceholder(setting.value, KEY_PLACEHOLDER) ||
+        containsPlaceholder(setting.value, MODEL_PLACEHOLDER))
+    )
+      throw new WiringError(
+        "WIRING_TARGET_INVALID",
+        `${adapter.name} writes a key or a model at ${formatPath(setting.path)}, so it cannot be wired without them`,
+      );
+}
+
+/**
+ * The key text of `record` as its files hold it now, so the wiring can be
+ * rewritten (for example with another model list) without issuing a new key.
+ * Undefined when the record has no key or no file holds that key any more
+ * (the user replaced or removed it). Reads only.
+ */
+export async function wiredKeyText(
+  record: WiringRecord,
+  context: WiringContext,
+): Promise<string | undefined> {
+  checkRecord(record);
+  const adapter = wiringAdapter(record.adapterId);
+  await checkContext(context);
+  if (record.keyId === undefined) return undefined;
+  for (const entry of record.files) {
+    const manifest = await readManifest(
+      context.dataDir,
+      adapter.id,
+      entry.backupId!,
+    );
+    const { realPath } = await resolveFile(entry.path, [
+      context.home,
+      manifest.root,
+    ]);
+    const state = await readState(realPath);
+    if (!state.exists) continue;
+    let document: Record<string, unknown>;
+    try {
+      document = editors[manifest.format].parse(
+        decodeText(state.bytes, entry.path).text,
+      );
+    } catch (error) {
+      if (error instanceof WiringError) continue;
+      throw error;
+    }
+    for (const expected of manifest.expected)
+      for (const [leaf, template] of leaves(expected.value, expected.path)) {
+        const found = keyIn(
+          getPath(document, leaf),
+          template,
+          manifest.baseUrl,
+          record.keyId,
+        );
+        if (found) return found;
+      }
+  }
+  return undefined;
+}
+
+/**
+ * The key of `keyId` where `template` has the key placeholder, looking
+ * inside list items and objects as drift matching does.
+ */
+function keyIn(
+  actual: unknown,
+  template: ConfigValue,
+  baseUrl: string,
+  keyId: GatewayKeyId,
+): string | undefined {
+  if (typeof template === "string") {
+    if (!template.includes(KEY_PLACEHOLDER) || typeof actual !== "string")
+      return undefined;
+    return templatePattern(template, baseUrl)
+      .exec(actual)
+      ?.slice(1)
+      .find((key) => parseGatewayKey(key!)?.keyId === keyId);
+  }
+  const pairs: Array<[unknown, ConfigValue]> = Array.isArray(template)
+    ? Array.isArray(actual)
+      ? template.map((item, index) => [actual[index], item])
+      : []
+    : typeof template === "object" && isRecord(actual)
+      ? Object.entries(template).map(([key, item]) => [actual[key], item])
+      : [];
+  for (const [value, item] of pairs) {
+    const found = keyIn(value, item, baseUrl, keyId);
+    if (found) return found;
+  }
+  return undefined;
 }
 
 function resolveBaseUrl(text: string): string {
