@@ -219,7 +219,15 @@ export const messages = {
       }
       for (const block of content)
         if (block.type === "tool_result")
-          messages.push({ role: "tool", callId: block.tool_use_id, path });
+          messages.push({
+            role: "tool",
+            callId: block.tool_use_id,
+            text:
+              typeof block.content === "string"
+                ? block.content
+                : contentText(block.content),
+            path,
+          });
       const text =
         typeof message.content === "string"
           ? message.content

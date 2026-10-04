@@ -137,7 +137,12 @@ export const chat = {
           });
           break;
         case "tool":
-          messages.push({ role: "tool", callId: message.tool_call_id, path });
+          messages.push({
+            role: "tool",
+            callId: message.tool_call_id,
+            text,
+            path,
+          });
           break;
       }
     });

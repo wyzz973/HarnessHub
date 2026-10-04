@@ -243,7 +243,12 @@ export const gemini = {
       for (const part of parts) {
         const result = get(part, "functionResponse", "function_response");
         if (isObject(result))
-          messages.push({ role: "tool", callId: result.id, path });
+          messages.push({
+            role: "tool",
+            callId: result.id,
+            text: JSON.stringify(result.response ?? null),
+            path,
+          });
       }
       const text = textOfParts(parts, false);
       if (text) messages.push({ role: "user", text, path });

@@ -286,6 +286,47 @@ test("script selection: when.contains, when.toolResult, repeat and fallback to t
   );
 });
 
+test("script selection: when.offersTool and when.toolResultContains read the tools offered and the tool result's text in every protocol", async (t) => {
+  for (const protocol of PROTOCOLS) {
+    const fake = await provider(t, {
+      script: {
+        turns: [
+          {
+            when: { offersTool: "read" },
+            toolCalls: [{ name: "read", arguments: { path: "token.txt" } }],
+          },
+          { when: { toolResultContains: "TOKEN-42" }, text: "saw TOKEN-42" },
+          { when: { toolResult: true }, repeat: true, text: "another result" },
+        ],
+      },
+    });
+    // Without the tool offered, the tool turn does not apply.
+    assert.equal((await send(fake, protocol)).answer.text, REPLIES.ok, protocol);
+    const first = await send(fake, protocol, {
+      body: (body) => ({ ...body, tools: shellTools(protocol, "read") }),
+    });
+    assert.deepEqual(
+      first.answer.toolCalls.map((call) => call.name),
+      ["read"],
+      protocol,
+    );
+    const answered = (result) =>
+      send(fake, protocol, {
+        body: followUp(protocol, first.body, first.answer, { result }),
+      });
+    assert.equal(
+      (await answered("other text")).answer.text,
+      "another result",
+      protocol,
+    );
+    assert.equal(
+      (await answered("the file holds TOKEN-42")).answer.text,
+      "saw TOKEN-42",
+      protocol,
+    );
+  }
+});
+
 test("script usage and finish: explicit counts, no usage, and finish reasons mapped per protocol", async (t) => {
   const fake = await provider(t, {
     script: {
@@ -359,6 +400,18 @@ test("scripts are validated with the path of the first invalid setting", async (
     [
       { turns: [{ when: { contains: "" } }] },
       /when.contains must be a non-empty string/,
+    ],
+    [
+      { turns: [{ when: { offersTool: 3 } }] },
+      /when.offersTool must be a non-empty string/,
+    ],
+    [
+      { turns: [{ when: { toolResultContains: "" } }] },
+      /when.toolResultContains must be a non-empty string/,
+    ],
+    [
+      { turns: [{ when: { tool: "read" } }] },
+      /when must be an object with contains, toolResult/,
     ],
     [
       { turns: [{ quirks: { noUsage: 1 } }] },

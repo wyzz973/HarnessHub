@@ -92,13 +92,15 @@ HH_FAKE_KEY=合成的金丝雀值 node tools/fake-provider/index.mjs --port 0 --
     { "when": { "contains": "deploy" }, "reasoning": "Plan first.", "text": ["Deploying", " now."], "chunkDelayMs": 50 },
     { "toolCalls": [{ "name": "bash", "arguments": { "command": "ls" } }] },
     { "when": { "toolResult": true }, "repeat": true, "text": "Done.", "usage": { "input": 10, "output": 2 } },
+    { "when": { "offersTool": "read" }, "toolCalls": [{ "name": "read", "arguments": { "path": "token.txt" } }] },
+    { "when": { "toolResultContains": "TOKEN-1" }, "text": "TOKEN-1" },
     { "status": 503, "error": "maintenance", "firstByteDelayMs": 200 },
     { "quirks": { "retryAfter": { "status": 429, "seconds": 2 } } }
   ]
 }
 ```
 
-回合字段：`reasoning`、`text`（字符串或分块数组）、`toolCalls`、`finish`（`stop`、`length`、`tool_calls`、`content_filter` 按协议映射，其他值原样发送）、`usage`（或 `false`）、`status` 与 `error`（错误响应）、`firstByteDelayMs`（流式先发响应头，非流式连同响应头一起延迟）、`chunkDelayMs`、`quirks`。脚本在启动前校验，错误信息给出第一个无效设置的路径。
+`when` 的条件都满足才匹配：`contains`（本轮用户文字包含）、`toolResult`（请求是否以工具结果结尾）、`toolResultContains`（以包含该文字的工具结果结尾）、`offersTool`（请求提供了该名称的工具）。回合字段：`reasoning`、`text`（字符串或分块数组）、`toolCalls`、`finish`（`stop`、`length`、`tool_calls`、`content_filter` 按协议映射，其他值原样发送）、`usage`（或 `false`）、`status` 与 `error`（错误响应）、`firstByteDelayMs`（流式先发响应头，非流式连同响应头一起延迟）、`chunkDelayMs`、`quirks`。脚本在启动前校验，错误信息给出第一个无效设置的路径。
 
 ## 怪癖
 

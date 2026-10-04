@@ -245,7 +245,15 @@ export const responses = {
           break;
         }
         case "function_call_output":
-          messages.push({ role: "tool", callId: item.call_id, path });
+          messages.push({
+            role: "tool",
+            callId: item.call_id,
+            text:
+              typeof item.output === "string"
+                ? item.output
+                : contentText(item.output),
+            path,
+          });
           break;
       }
     });

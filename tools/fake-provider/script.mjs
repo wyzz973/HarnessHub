@@ -25,7 +25,10 @@
  * up); with none left, the directives apply. A turn has:
  *
  * - `when`: `{"contains": "text"}` matches the user text of the current turn;
- *   `{"toolResult": true|false}` whether the request ends with a tool result.
+ *   `{"toolResult": true|false}` whether the request ends with a tool result;
+ *   `{"toolResultContains": "text"}` a request that ends with a tool result
+ *   holding the text; `{"offersTool": "name"}` a request that offers a tool
+ *   of that name. Every condition given must hold.
  * - `reasoning`, `text`: a string (split into two chunks, text only when longer
  *   than 8 code points) or an array of chunks sent as given.
  * - `toolCalls`: `[{"name", "arguments": object or raw JSON text, "id"?}]`.
@@ -383,20 +386,25 @@ export function parseScript(value) {
         throw new Error(`${at}.${key} is not a known turn setting`);
     const result = {};
     if (turn.when !== undefined) {
+      const conditions = [
+        "contains",
+        "toolResult",
+        "toolResultContains",
+        "offersTool",
+      ];
       if (
         !isObject(turn.when) ||
-        Object.keys(turn.when).some(
-          (key) => key !== "contains" && key !== "toolResult",
-        )
+        Object.keys(turn.when).some((key) => !conditions.includes(key))
       )
         throw new Error(
-          `${at}.when must be an object with contains and/or toolResult`,
+          `${at}.when must be an object with ${conditions.join(", ")}`,
         );
-      if (
-        turn.when.contains !== undefined &&
-        (typeof turn.when.contains !== "string" || !turn.when.contains)
-      )
-        throw new Error(`${at}.when.contains must be a non-empty string`);
+      for (const key of ["contains", "toolResultContains", "offersTool"])
+        if (
+          turn.when[key] !== undefined &&
+          (typeof turn.when[key] !== "string" || !turn.when[key])
+        )
+          throw new Error(`${at}.when.${key} must be a non-empty string`);
       if (
         turn.when.toolResult !== undefined &&
         typeof turn.when.toolResult !== "boolean"
@@ -521,14 +529,20 @@ export function createState(script) {
 function pickTurn(state, view) {
   const turns = state.script?.turns ?? [];
   const text = currentTurnText(view.messages);
-  const toolResult = view.messages.at(-1)?.role === "tool";
+  const last = view.messages.at(-1);
+  const toolResult = last?.role === "tool";
   const index = turns.findIndex(
     (turn, position) =>
       !state.used.has(position) &&
       (turn.when?.contains === undefined ||
         text.includes(turn.when.contains)) &&
       (turn.when?.toolResult === undefined ||
-        turn.when.toolResult === toolResult),
+        turn.when.toolResult === toolResult) &&
+      (turn.when?.toolResultContains === undefined ||
+        (toolResult &&
+          (last.text ?? "").includes(turn.when.toolResultContains))) &&
+      (turn.when?.offersTool === undefined ||
+        view.tools.some((tool) => tool.name === turn.when.offersTool)),
   );
   if (index < 0) return undefined;
   if (!turns[index].repeat) state.used.add(index);
