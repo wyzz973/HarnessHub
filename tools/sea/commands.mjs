@@ -24,8 +24,13 @@
  * `tui` without a terminal (exit 2), `console` (a sign-in link), the console
  * page at `/`, the fake provider's record of those two calls, `provider test`
  * and `provider doctor` against it (they send their own requests, so they come
- * after that record), and SIGTERM stopping `serve` with exit code 0 (not on
- * Windows, where kill() terminates).
+ * after that record), a call to a second provider at
+ * `https://api.upstream.test/v1`, which only a local CONNECT proxy
+ * (tools/fake-proxy) reaches, through a TLS front of the same fake provider:
+ * `serve` runs with `--proxy` and trusts the front's certificate through
+ * NODE_EXTRA_CA_CERTS, as a user behind a TLS-inspecting proxy would (the
+ * loopback provider above stays direct), and SIGTERM stopping `serve` with
+ * exit code 0 (not on Windows, where kill() terminates).
  *
  * `--node` runs the same steps with `node apps/hh/bin/hh.mjs` instead, for
  * comparison. `--runs N` repeats the whole sequence, each time in a new
@@ -50,6 +55,11 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { startFakeProvider } from "../fake-provider/index.mjs";
+import {
+  startConnectProxy,
+  startTlsFront,
+  testCertificate,
+} from "../fake-proxy/index.mjs";
 import { SCRIPT_ASSETS } from "./build.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -101,7 +111,7 @@ async function texts(root) {
   return files.join("\n");
 }
 
-async function chat(url, key) {
+async function chat(url, key, model = MODEL) {
   const response = await fetch(`${url}/v1/chat/completions`, {
     method: "POST",
     headers: {
@@ -109,7 +119,7 @@ async function chat(url, key) {
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      model: MODEL,
+      model,
       messages: [{ role: "user", content: "hello" }],
     }),
   });
@@ -157,6 +167,17 @@ export async function runCommands({ binary, node = false }) {
     models: ["sim"],
     keys: { sea: UPSTREAM_KEY },
     chunkDelayMs: 0,
+  });
+  // An HTTPS upstream that only the proxy reaches: *.upstream.test does not
+  // resolve, and the daemon trusts the front's certificate only through
+  // NODE_EXTRA_CA_CERTS.
+  const tls = testCertificate(["*.upstream.test"]);
+  const certificate = path.join(directory, "upstream-ca.pem");
+  await writeFile(certificate, tls.cert);
+  const front = await startTlsFront(Number(new URL(provider.url).port), tls);
+  const proxy = await startConnectProxy({
+    route: (host, port) =>
+      host.endsWith(".upstream.test") && port === 443 ? front.port : undefined,
   });
   const steps = [];
   let serve;
@@ -256,8 +277,14 @@ export async function runCommands({ binary, node = false }) {
           "file",
           "--wiring-home",
           wiringHome,
+          "--proxy",
+          proxy.url,
         ],
-        { cwd: directory, env, stdio: ["ignore", "pipe", "pipe"] },
+        {
+          cwd: directory,
+          env: { ...env, NODE_EXTRA_CA_CERTS: certificate },
+          stdio: ["ignore", "pipe", "pipe"],
+        },
       );
       serve.stderr.resume();
       for await (const line of createInterface({ input: serve.stdout })) {
@@ -303,7 +330,17 @@ export async function runCommands({ binary, node = false }) {
     let clientKey;
     await command(
       "hh key create",
-      ["key", "create", "--name", "sea", "--allow", "fake/*", "--no-expiry"],
+      [
+        "key",
+        "create",
+        "--name",
+        "sea",
+        "--allow",
+        "fake/*",
+        "--allow",
+        "far/*",
+        "--no-expiry",
+      ],
       (result) => {
         clientKey = result.stdout.trim();
         return result.code !== 0
@@ -404,6 +441,36 @@ export async function runCommands({ binary, node = false }) {
           ? undefined
           : "no doctor summary",
     );
+    await command(
+      "hh provider add far (https, behind the proxy)",
+      [
+        "provider",
+        "add",
+        "far",
+        "--chat",
+        "https://api.upstream.test/v1",
+        "--model",
+        "sim",
+        "--credential-from-stdin",
+      ],
+      exit(0),
+      `${UPSTREAM_KEY}\n`,
+    );
+    await step("gateway call through --proxy (https upstream)", async () => {
+      const before = provider.records().length;
+      const status = await chat(url, clientKey, "far/sim");
+      const tunnelled = proxy.tunnels.includes("api.upstream.test:443");
+      const arrived = provider.records().length > before;
+      return {
+        code: status,
+        ok: status === 200 && tunnelled && arrived,
+        ...(status === 200 && tunnelled && arrived
+          ? {}
+          : {
+              detail: `tunnels ${JSON.stringify(proxy.tunnels)}, upstream ${arrived ? "reached" : "not reached"}`,
+            }),
+      };
+    });
     if (!windows)
       await step("hh serve stops on SIGTERM", async () => {
         const exited = once(serve, "exit");
@@ -417,6 +484,8 @@ export async function runCommands({ binary, node = false }) {
       serve.kill("SIGKILL");
       await exited;
     }
+    await proxy.close();
+    await front.close();
     await provider.close();
     await rm(directory, { recursive: true, force: true, maxRetries: 5 });
   }

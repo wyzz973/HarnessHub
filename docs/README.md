@@ -69,6 +69,7 @@ The documents below are in Chinese unless marked **(English)**; English becomes 
 - [Testing](testing.md): the change matrix, real entry points and the definition of done.
 - [Documentation rules](documentation.md): ownership, examples, links and the generated-documentation checks.
 - [Fake provider](../tools/fake-provider/README.md): the strict stand-in upstream for tests and local development: four protocols, field checks, scripts, quirks and request records.
+- [Fake proxy](../tools/fake-proxy/index.mjs): local HTTP CONNECT and SOCKS5 proxies, a TLS front and a certificate made at run time, for the outbound-proxy tests and the single-executable check.
 - [Contributing](../CONTRIBUTING.md), [governance](../GOVERNANCE.md), [security policy](../SECURITY.md), [code of conduct](../CODE_OF_CONDUCT.md), [support](../SUPPORT.md) and [maintainers](../MAINTAINERS.md) **(English)**.
 - [Third-party notices](../THIRD_PARTY_NOTICES.md) **(English)**: third-party code in the repository and its licenses.
 - [Decision records](decisions/README.md): architecture choices and their reasons.

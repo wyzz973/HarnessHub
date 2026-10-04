@@ -292,6 +292,8 @@ node tools/sea/commands.mjs --runs 5          # hh 命令经可执行文件运�
 | `hh provider doctor fake`（同上；它们自己发请求，所以排在上一行之后） | 0 | 137 | 137 |
 | SIGTERM 停止 `hh serve` | 0 | – | – |
 
+2026-10-05 起序列多两步，检查[出站代理](../../configuration.md#出站代理)在可执行文件中可用：`hh serve` 带 `--proxy` 指向本地 CONNECT 代理（[tools/fake-proxy](../../../tools/fake-proxy/index.mjs)），并经 `NODE_EXTRA_CA_CERTS` 信任运行时生成的证书（与 TLS 检查型代理的用户相同）；在 doctor 之后添加 provider `far`（`https://api.upstream.test/v1`，这个名称不能解析，只有代理把它接到同一个假 provider 的 TLS 前端），再以 `far/sim` 调用网关，要求 200、代理收到 `api.upstream.test:443` 的隧道、假 provider 收到请求。上面各步的回环 provider 仍直连。本机 macOS arm64 单次运行（`ccaccfe` 加本分支）两步都通过（`hh provider add far` 80 ms，调用 200）；去掉 `--proxy` 时调用为 502，代理没有收到隧道，这一步失败。
+
 构建时每个命令的 `--help` 约 36–64 ms，`serve`、`version` 与 `benchmark` 加载 Gateway 模块，约 118–128 ms。macOS 上新签名的可执行文件第一次执行时多出约 1.2 s（构建中排在第一个的 `serve --help` 为 1341 ms，此后同一命令约 120 ms），推测是系统对新签名的评估，安装后的第一次运行会遇到同样的开销；`measure.mjs` 的预热启动吸收了它，没有单独研究。
 
 **体积**：二进制 130,929,200 字节（124.9 MiB），gzip -9 后 41,710,786 字节；bundle 5,752,830 字节，blob 9,935,332 字节。在 `a714682` 上比较：`main` 的构建为 130,453,136 字节、bundle 5,332,793 字节，加入 `hh` 的命令后为 130,715,792 字节，增加 262,656 字节（0.2%）。仍在 ADR-P01 的 150 MB 以内。
