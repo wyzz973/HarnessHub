@@ -334,3 +334,102 @@ test("the model-plane pages build API requests and read problem details", async 
   assert.deepEqual(blocked.references, [{ type: "route-group", id: "fast" }]);
   assert.equal(lib.failureOf(new Error("plain")).message, "plain");
 });
+
+test("the agent pages derive wiring requests, shown models and attention from the API records", async () => {
+  const agents = await consoleModule("lib/agents.ts");
+  const gateway = await consoleModule("lib/gateway-models.ts", {
+    'import { modelPlane } from "./model-plane";': "const modelPlane = undefined;",
+  });
+  const provider = (id, models, expose = "all") => ({
+    id,
+    name: id,
+    preset: id === "deepseek" ? "deepseek" : undefined,
+    models: { source: "manual", list: models, expose },
+  });
+  const models = gateway.gatewayModels(
+    [
+      provider("deepseek", [{ id: "chat", contextWindow: 128000, price: { input: 0.27, output: 1.1 } }, { id: "secret" }], ["chat"]),
+      provider("lab", [{ id: "fast" }, { id: "slow" }]),
+    ],
+    [{ id: "deepseek", icon: "deepseek-color" }],
+    [{ id: "fast", members: ["lab/fast", "deepseek/chat"] }],
+    [{ id: "auto-chat", members: ["a/chat", "b/chat"], hidden: false }, { id: "auto-gone", members: [], hidden: true }],
+  );
+  assert.deepEqual(
+    models.sections.map((section) => [section.id, section.icon, section.options.map((option) => option.ref)]),
+    [
+      ["deepseek", "deepseek-color", ["deepseek/chat"]],
+      ["lab", undefined, ["lab/fast", "lab/slow"]],
+      ["group", undefined, ["group/fast"]],
+      ["auto-group", undefined, ["group/auto-chat"]],
+    ],
+    "unexposed models and hidden automatic groups are left out",
+  );
+  assert.equal(models.byRef.get("deepseek/chat").contextWindow, 128000);
+  assert.equal(gateway.tokenCount(128000), "128K");
+  assert.equal(gateway.tokenCount(1048576), "1M");
+  assert.equal(gateway.tokenCount(undefined), "—");
+  assert.equal(gateway.priceText({ input: 0.27 }), "$0.27 / ?");
+  assert.equal(gateway.priceText(undefined), "价格未知");
+
+  const claude = {
+    id: "claude",
+    name: "Claude Code",
+    installation: { status: "installed", configDirectories: [] },
+    capabilities: { tiers: ["opus", "haiku"], efforts: ["low", "high"], options: {} },
+    wiring: {
+      model: "deepseek/chat",
+      tiers: { haiku: "lab/fast" },
+      effort: "high",
+      options: {},
+      models: ["deepseek/chat", "lab/fast", "group/fast"],
+      hidden: ["lab/slow"],
+      keyState: "active",
+      drift: null,
+    },
+  };
+  const draft = agents.draftOf(claude);
+  assert.deepEqual(
+    agents.wiringInput(claude, { ...draft, tiers: { haiku: undefined } }),
+    { model: "deepseek/chat", tiers: {}, effort: "high" },
+    "a cleared tier is sent as an empty map so the daemon removes it",
+  );
+  assert.deepEqual(
+    agents.wiringInput(claude, { ...draft, effort: undefined }).effort,
+    null,
+  );
+  // The model list no longer holds hidden models: they count towards M, not N.
+  const visibility = agents.modelVisibility(claude, models);
+  assert.deepEqual(visibility.allowed, ["deepseek/chat", "lab/fast", "lab/slow", "group/fast"]);
+  assert.deepEqual(visibility.shown, ["deepseek/chat", "lab/fast", "group/fast"]);
+  assert.deepEqual(agents.attention(claude, models), []);
+  assert.deepEqual(
+    agents.attention(
+      {
+        ...claude,
+        installation: { status: "not-found", configDirectories: [] },
+        wiring: { ...claude.wiring, model: "gone/model", keyState: "revoked", drift: { drifted: true, kinds: ["replaced"], findings: [] } },
+      },
+      models,
+    ),
+    [
+      "已接线，但本机找不到这个 Agent",
+      "配置文件被改动：接线字段被改",
+      "它的 Key 已失效",
+      "网关不再提供 gone/model",
+    ],
+  );
+
+  const codex = {
+    id: "codex",
+    capabilities: { tiers: [], efforts: ["low"], options: { codexAuth: ["gateway-key", "chatgpt"] } },
+    wiring: null,
+  };
+  const codexDraft = agents.draftOf(codex);
+  assert.deepEqual(codexDraft.options, { codexAuth: "gateway-key" }, "options default to the first value");
+  assert.deepEqual(
+    agents.wiringInput(codex, { ...codexDraft, model: "lab/fast", options: { codexAuth: "chatgpt" } }),
+    { options: { codexAuth: "chatgpt" } },
+    "an agent that signs in by itself gets no model, tiers or effort",
+  );
+});

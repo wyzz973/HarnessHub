@@ -179,17 +179,23 @@ export function ConfirmDialog({
 export function PageHeader({
   title,
   lede,
+  icon,
   children,
 }: {
   title: string;
   lede: string;
+  /** A mark shown before the title, e.g. a provider's. */
+  icon?: React.ReactNode;
   children?: React.ReactNode;
 }) {
   return (
     <div className="flex flex-wrap items-start justify-between gap-4">
-      <div>
-        <h1 className="page-title">{title}</h1>
-        <p className="page-lede">{lede}</p>
+      <div className="flex min-w-0 items-start gap-3">
+        {icon}
+        <div className="min-w-0">
+          <h1 className="page-title">{title}</h1>
+          <p className="page-lede">{lede}</p>
+        </div>
       </div>
       {children ? (
         <div className="flex items-center gap-2">{children}</div>
@@ -229,5 +235,51 @@ export function LocalTime({ value }: { value: string | undefined }) {
     <time dateTime={value} title={value}>
       {new Date(value).toLocaleString()}
     </time>
+  );
+}
+
+/**
+ * The panel shown when a list is empty: an icon, what is missing and what
+ * to do, with an optional action. Every page uses it for its empty lists.
+ */
+export function EmptyState({
+  icon: Icon,
+  title,
+  children,
+  action,
+}: {
+  icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
+  title: string;
+  children?: React.ReactNode;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="panel empty-state py-16">
+      <span className="mb-2 grid size-11 place-items-center rounded-2xl bg-muted text-muted-foreground">
+        <Icon className="size-5" strokeWidth={1.7} />
+      </span>
+      <p className="text-[14px] font-medium text-foreground">{title}</p>
+      {children ? <p className="max-w-[460px]">{children}</p> : null}
+      {action ? <div className="mt-3">{action}</div> : null}
+    </div>
+  );
+}
+
+/** The panel of a list that failed to load, with a retry. */
+export function LoadError({
+  message,
+  retry,
+}: {
+  message: string;
+  retry: () => void;
+}) {
+  return (
+    <div role="alert" className="callout error items-center">
+      <CircleAlert className="size-4 shrink-0" />
+      <span className="min-w-0 flex-1">读取失败：{message}</span>
+      <Button size="xs" variant="outline" onClick={retry}>
+        重试
+      </Button>
+    </div>
   );
 }

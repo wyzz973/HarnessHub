@@ -43,6 +43,8 @@ import {
   OtherFieldErrors,
   PageHeader,
   useLoaded,
+  EmptyState,
+  LoadError,
 } from "./model-plane-ui";
 
 function keyState(key: GatewayKeyView, now: number) {
@@ -281,7 +283,7 @@ function CreateKeyDialog({
 }
 
 /** `client:` Gateway Keys (`/api/v1/gateway-keys`). */
-export function KeysPage() {
+export function KeysPage({ tabs }: { tabs?: React.ReactNode }) {
   const load = useCallback(async () => {
     const client = modelPlane();
     const [keys, providers, groups] = await Promise.all([
@@ -302,6 +304,7 @@ export function KeysPage() {
   return (
     <div className="page-body">
       <div className="page-column max-w-[1040px]">
+        {tabs}
         <PageHeader
           title="Gateway Key"
           lede="调用网关的凭据；本机来源同样需要 Key。Key 文本只在创建时显示一次。"
@@ -330,7 +333,7 @@ export function KeysPage() {
               <Skeleton className="h-4 w-2/3" />
             </div>
           ) : data.state === "error" ? (
-            <p className="empty-state text-danger">读取失败：{data.message}</p>
+            <LoadError message={data.message} retry={reload} />
           ) : data.value.keys.length ? (
             <div className="panel overflow-x-auto">
               <table className="data-table min-w-[760px]">
@@ -400,15 +403,9 @@ export function KeysPage() {
               </table>
             </div>
           ) : (
-            <div className="panel empty-state py-16">
-              <span className="mb-2 grid size-11 place-items-center rounded-2xl bg-muted text-muted-foreground">
-                <KeyRound className="size-5" strokeWidth={1.7} />
-              </span>
-              <p className="text-[14px] font-medium text-foreground">
-                还没有 Gateway Key
-              </p>
-              <p>为脚本、IDE 或其他工具创建一个 client Key。</p>
-            </div>
+            <EmptyState icon={KeyRound} title="还没有 Gateway Key">
+              为脚本、IDE 或其他工具创建一个 client Key。
+            </EmptyState>
           )}
         </div>
         {creating && data.state === "ready" ? (

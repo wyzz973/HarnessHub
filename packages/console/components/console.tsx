@@ -52,10 +52,7 @@ import { useGatewayStatus } from "@/lib/gateway-status";
 import { navigate, pagePaths, usePage, type Page } from "@/lib/router";
 import { signOut } from "@/lib/session";
 import { cn } from "@/lib/utils";
-import {
-  parseOutputPaths,
-  projectEvents,
-} from "@/lib/presentation";
+import { parseOutputPaths, projectEvents } from "@/lib/presentation";
 import {
   Composer,
   Greeting,
@@ -74,12 +71,21 @@ import { ModelPage } from "./model-page";
 import { Sidebar, type HistoryItem } from "./sidebar";
 import { ToolPacksPage } from "./tool-packs-page";
 import { ProvidersPage } from "./providers-page";
-import { GroupsPage } from "./groups-page";
-import { KeysPage } from "./keys-page";
+import { RoutingPage } from "./routing-page";
 import { UsagePage } from "./usage-page";
 import { AgentsPage } from "./agents-page";
+import { ProfilesPage } from "./profiles-page";
+import { SettingsPage } from "./settings-page";
 
 type ActiveSelection = { type: "session" | "workflow"; id: string } | null;
+/** Pages of HarnessHub's own tasks, where the unified model matters. */
+const taskPages: ReadonlySet<Page> = new Set([
+  "tasks",
+  "model",
+  "engines",
+  "tools",
+  "observability",
+]);
 const ENGINE_KEY = "harnesshub.engine";
 const SIDEBAR_KEY = "harnesshub.sidebar";
 const panelTransition = { duration: 0.24, ease: [0.22, 0.8, 0.24, 1] } as const;
@@ -792,10 +798,7 @@ export function Console() {
         !earliest || run.createdAt < earliest.createdAt ? run : earliest,
       undefined,
     );
-    return (
-      first?.input.text ??
-      `会话 ${session.id.slice(0, 8)}`
-    );
+    return first?.input.text ?? `会话 ${session.id.slice(0, 8)}`;
   };
   const history: HistoryItem[] = [
     ...workflows.map((item) => ({
@@ -981,7 +984,7 @@ export function Console() {
                     <TooltipContent>工具与权限请求自动批准</TooltipContent>
                   </Tooltip>
                 ) : null}
-                {modelState.state === "ready" ? (
+                {modelState.state === "ready" && taskPages.has(page) ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
@@ -1009,25 +1012,28 @@ export function Console() {
                     </TooltipContent>
                   </Tooltip>
                 ) : null}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      aria-label="刷新"
-                      onClick={() => {
-                        setError(null);
-                        setStreamError(false);
-                        setRefreshEpoch((n) => n + 1);
-                        void refresh().catch(report);
-                        void gateway.reload();
-                      }}
-                    >
-                      <RefreshCw />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>刷新</TooltipContent>
-                </Tooltip>
+                {/* Gateway pages have their own refresh next to their title. */}
+                {taskPages.has(page) ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        size="icon-sm"
+                        variant="ghost"
+                        aria-label="刷新"
+                        onClick={() => {
+                          setError(null);
+                          setStreamError(false);
+                          setRefreshEpoch((n) => n + 1);
+                          void refresh().catch(report);
+                          void gateway.reload();
+                        }}
+                      >
+                        <RefreshCw />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>刷新</TooltipContent>
+                  </Tooltip>
+                ) : null}
                 {page === "tasks" ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -1075,16 +1081,20 @@ export function Console() {
                 onSaved={saveModel}
                 openRun={openRun}
               />
-            ) : page === "providers" ? (
-              <ProvidersPage key={refreshEpoch} />
-            ) : page === "groups" ? (
-              <GroupsPage key={refreshEpoch} />
-            ) : page === "keys" ? (
-              <KeysPage key={refreshEpoch} />
-            ) : page === "usage" ? (
-              <UsagePage key={refreshEpoch} />
             ) : page === "agents" ? (
               <AgentsPage key={refreshEpoch} />
+            ) : page === "profiles" ? (
+              <ProfilesPage key={refreshEpoch} />
+            ) : page === "providers" ? (
+              <ProvidersPage key={refreshEpoch} />
+            ) : page === "routing" ||
+              page === "auto-groups" ||
+              page === "keys" ? (
+              <RoutingPage key={refreshEpoch} tab={page} />
+            ) : page === "usage" || page === "conversations" ? (
+              <UsagePage key={refreshEpoch} tab={page} />
+            ) : page === "settings" ? (
+              <SettingsPage key={refreshEpoch} />
             ) : page === "tools" ? (
               <ToolPacksPage engines={engines} refreshEngines={refresh} />
             ) : page === "engines" ? (

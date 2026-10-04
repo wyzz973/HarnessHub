@@ -2,7 +2,7 @@
 
 全局接线把本机已安装的 Agent 改为经 HarnessHub 网关调用模型：直接改写 Agent 自己的用户配置，并提供预览、备份、原子写、回读校验、逐字节还原与漂移检测。目标设计见 [04 Agent 平面第 4、5 节](proposals/oss/04-agent-plane.md#4-全局接线)；隔离接线（只为 Session 生成私有配置）仍由 [引擎独立配置](engine-configuration.md) 与 [统一模型下的引擎接线](model-gateway-engines.md) 描述，两者互不调用。
 
-现状：库（`packages/agents/src/wiring/`）、守护进程的 `/api/v1/agents` 与 `/api/v1/profiles`、`hh agents|wire|use|unwire|profile` 与控制台的 Agent 页面已实现，并经正式守护进程入口与假上游端到端验证（写入的 Key 能调用网关，轮换与还原后旧 Key 被拒绝，隐藏的模型从该 Key 的 `/v1/models` 与 Agent 文件中消失）。各 Agent 的接线语义（Claude Code 的档位与 `[1m]`、Codex 的模型目录与 ChatGPT 模式、各 Agent 的模型元数据）按 Magpie（`yetone/magpie` `2e340f7`，`internal/agent/`）的写法实现；没有用真实 Agent 读取接线后的配置，也没有在 Windows 上运行过。控制台尚未提供档位、effort、选项、隐藏模型与 Profile 的操作。
+现状：库（`packages/agents/src/wiring/`）、守护进程的 `/api/v1/agents` 与 `/api/v1/profiles`、`hh agents|wire|use|unwire|profile` 与控制台的 Agent 页面已实现，并经正式守护进程入口与假上游端到端验证（写入的 Key 能调用网关，轮换与还原后旧 Key 被拒绝，隐藏的模型从该 Key 的 `/v1/models` 与 Agent 文件中消失）。各 Agent 的接线语义（Claude Code 的档位与 `[1m]`、Codex 的模型目录与 ChatGPT 模式、各 Agent 的模型元数据）按 Magpie（`yetone/magpie` `2e340f7`，`internal/agent/`）的写法实现；没有用真实 Agent 读取接线后的配置，也没有在 Windows 上运行过。控制台的 Agent 首页与详情提供模型、档位、effort、选项、隐藏模型、换 Key 与还原，Profile 页面提供保存、预览应用与删除（[控制台](../packages/console/README.md)）。
 
 ## 使用
 
@@ -20,7 +20,7 @@ pnpm exec hh profile save work                        # 保存所有已接线 Ag
 pnpm exec hh profile apply work                       # 显示改动，确认后一次切换
 ```
 
-`hh wire <agent> [model]` 先打印各文件的统一 diff（Key 显示为 `hhk_a_xxxx…`；HarnessHub 生成的整个文件只显示大小），确认后按这份预览写入：预览之后文件又被改动则以 5 退出、什么都不写；`--yes` 跳过确认，非交互且没有 `--yes` 时以 4 退出。省略的选择沿用当前接线：模型、`--tier NAME=REF`（Claude Code 的 `opus`、`sonnet`、`haiku`、`fable`、`subagent`）、`--effort LEVEL`（`--no-effort` 清除）、`--option NAME=VALUE` 与 `--models`。`--models` 给出 Agent 可列出的模型（`provider/model`、`provider/*`、`group/<id>` 或 `*`），缺省沿用当前列表，首次接线为 `*`：网关的全部模型，包括之后新增的。模型必须是网关提供的 Model Ref（provider 的公开模型）或 `group/<id>`。Agent 只在启动时读取配置，写入后需要重启正在运行的实例。控制台的“Agent”页面提供选择模型与显示的模型、预览改动、确认写入、换 Key、还原，并显示漂移标记。
+`hh wire <agent> [model]` 先打印各文件的统一 diff（Key 显示为 `hhk_a_xxxx…`；HarnessHub 生成的整个文件只显示大小），确认后按这份预览写入：预览之后文件又被改动则以 5 退出、什么都不写；`--yes` 跳过确认，非交互且没有 `--yes` 时以 4 退出。省略的选择沿用当前接线：模型、`--tier NAME=REF`（Claude Code 的 `opus`、`sonnet`、`haiku`、`fable`、`subagent`）、`--effort LEVEL`（`--no-effort` 清除）、`--option NAME=VALUE` 与 `--models`。`--models` 给出 Agent 可列出的模型（`provider/model`、`provider/*`、`group/<id>` 或 `*`），缺省沿用当前列表，首次接线为 `*`：网关的全部模型，包括之后新增的。模型必须是网关提供的 Model Ref（provider 的公开模型）或 `group/<id>`。Agent 只在启动时读取配置，写入后需要重启正在运行的实例。控制台的 Agent 首页提供选择模型、预览改动、确认写入与还原，详情中另有档位、effort、选项、显示的模型与换 Key，并显示漂移与需要处理的标记。
 
 ## 守护进程与 Key
 

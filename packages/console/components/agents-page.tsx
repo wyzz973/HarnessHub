@@ -1,266 +1,213 @@
 // SPDX-License-Identifier: MIT
-import { useCallback, useState } from "react";
-import { Bot, Loader2, RefreshCw } from "lucide-react";
-import type {
-  Agent,
-  AgentWiringPlan,
-  ProviderConfig,
-  RouteGroup,
-} from "@harnesshub/sdk/client";
+import { useCallback, useMemo, useState } from "react";
+import {
+  Bot,
+  ChevronDown,
+  CircleAlert,
+  Layers,
+  RefreshCw,
+  Settings2,
+  Undo2,
+} from "lucide-react";
+import type { Agent, AgentWiringInput } from "@harnesshub/sdk/client";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { failureOf, modelPlane, type Failure } from "@/lib/model-plane";
+import { BrandIcon } from "@/components/brand-icon";
+import { ModelPicker } from "@/components/model-picker";
 import {
-  Checkbox,
+  attention,
+  draftOf,
+  driftText,
+  installationText,
+  keylessOptions,
+  modelVisibility,
+  wiringInput,
+} from "@/lib/agents";
+import { agentIconSlug } from "@/lib/brand-icons";
+import { loadGatewayModels, type GatewayModels } from "@/lib/gateway-models";
+import { modelPlane } from "@/lib/model-plane";
+import { navigate, useSearch } from "@/lib/router";
+import { notify } from "@/lib/toast";
+import { AgentDetail } from "./agent-detail";
+import {
   ConfirmDialog,
-  ErrorCallout,
-  LocalTime,
+  EmptyState,
+  LoadError,
   PageHeader,
   useLoaded,
 } from "./model-plane-ui";
+import { WirePlanDialog } from "./wire-plan-dialog";
 
-const installationText: Record<
-  Agent["installation"]["status"],
-  { label: string; tone: string }
-> = {
-  installed: { label: "已安装", tone: "good" },
-  "configured-only": { label: "只有配置", tone: "" },
-  "not-found": { label: "未发现", tone: "" },
-};
-
-const driftText: Record<string, string> = {
-  unwired: "未接到网关",
-  replaced: "接线字段被改",
-  "foreign-gateway": "指向其他网关",
-};
-
-/** Every model the gateway offers: exposed provider models and route groups. */
-function gatewayModels(providers: ProviderConfig[], groups: RouteGroup[]) {
-  return [
-    ...providers.flatMap((provider) =>
-      provider.models.list
-        .filter(
-          (model) =>
-            provider.models.expose === "all" ||
-            provider.models.expose.includes(model.id),
-        )
-        .map((model) => `${provider.id}/${model.id}`),
-    ),
-    ...groups.map((group) => `group/${group.id}`),
-  ];
-}
-
-function DriftBadge({ agent }: { agent: Agent }) {
+function Badges({ agent, models }: { agent: Agent; models: GatewayModels }) {
   const wiring = agent.wiring;
-  if (!wiring) return <span className="text-subtle">—</span>;
-  if (wiring.driftError)
-    return (
-      <span className="tag error" title={wiring.driftError}>
-        无法检查
-      </span>
-    );
-  if (!wiring.drift?.drifted) return <span className="tag good">一致</span>;
+  const problems = attention(agent, models);
   return (
-    <span
-      className="tag warn"
-      title={wiring.drift.findings
-        .map((finding) => `${finding.path}: ${finding.keyPath.join(".")}`)
-        .join("\n")}
-    >
-      {wiring.drift.kinds.map((kind) => driftText[kind] ?? kind).join("、")}
+    <span className="flex flex-wrap items-center gap-1.5">
+      {wiring ? (
+        wiring.driftError ? (
+          <span className="tag error" title={wiring.driftError}>
+            无法检查
+          </span>
+        ) : wiring.drift?.drifted ? (
+          <span className="tag warn">
+            {wiring.drift.kinds
+              .map((kind) => driftText[kind] ?? kind)
+              .join("、")}
+          </span>
+        ) : (
+          <span className="tag good">一致</span>
+        )
+      ) : null}
+      {problems.length ? (
+        <span className="tag error" title={problems.join("\n")}>
+          <CircleAlert className="size-3" aria-hidden />
+          需要处理
+        </span>
+      ) : null}
     </span>
   );
 }
 
-/** Choose a model and the models the agent lists, preview the file changes, then wire. */
-function WireDialog({
+/** One agent: its mark, installation, current model (a picker) and badges. */
+function AgentRow({
   agent,
   models,
-  onClose,
-  onWired,
+  onModel,
+  onDetail,
+  onUnwire,
 }: {
   agent: Agent;
-  models: string[];
-  onClose: () => void;
-  onWired: () => void;
+  models: GatewayModels;
+  onModel: (ref: string) => void;
+  onDetail: () => void;
+  onUnwire: () => void;
 }) {
-  const [model, setModel] = useState(agent.wiring?.model ?? models[0] ?? "");
-  const [listed, setListed] = useState<string[]>(
-    agent.wiring?.models ?? (models[0] ? [models[0]] : []),
-  );
-  const [plan, setPlan] = useState<AgentWiringPlan | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<Failure | null>(null);
-  const shown = [...new Set([model, ...listed])].filter(Boolean);
-  const run = (action: () => Promise<void>) => {
-    setBusy(true);
-    setFailure(null);
-    action().then(
-      () => setBusy(false),
-      (reason: unknown) => {
-        setBusy(false);
-        setFailure(failureOf(reason));
-      },
-    );
-  };
-  const preview = () =>
-    run(async () => {
-      setPlan(
-        await modelPlane().agents.plan(agent.id, { model, models: shown }),
-      );
-    });
-  const apply = () =>
-    run(async () => {
-      if (!plan) return;
-      await modelPlane().agents.wire(agent.id, {
-        model,
-        models: shown,
-        expect: plan,
-      });
-      onWired();
-      onClose();
-    });
+  const wiring = agent.wiring;
+  const install = installationText[agent.installation.status];
+  const keyless = keylessOptions(wiring?.options);
+  const visibility = wiring ? modelVisibility(agent, models) : undefined;
   return (
-    <Dialog open onOpenChange={(open) => (!open && !busy ? onClose() : null)}>
-      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-[720px]">
-        <DialogHeader>
-          <DialogTitle>
-            {agent.wiring ? "修改" : "接线"} {agent.name}
-          </DialogTitle>
-          <DialogDescription>
-            改写 {agent.name}{" "}
-            自己的用户配置，让它经网关调用所选模型，并获得一把只属于它的
-            Key。写入前先备份，之后可以还原。
-          </DialogDescription>
-        </DialogHeader>
-        {plan ? (
-          // min-w-0: the dialog is a grid, and a long path or diff line
-          // must scroll inside the block instead of widening the dialog.
-          <div className="min-w-0 space-y-3">
-            {plan.files.map((file) => (
-              <section key={file.path} className="min-w-0 space-y-1">
-                <p className="text-[13px] font-medium">
-                  {file.exists ? "修改" : "新建"}{" "}
-                  <span className="font-mono text-[12.5px] break-all">
-                    {file.path}
-                  </span>
-                </p>
-                <pre className="max-h-[40vh] overflow-auto rounded-xl border bg-muted p-3 font-mono text-[12px] leading-5">
-                  {file.diff || "（无改动）"}
-                </pre>
-              </section>
-            ))}
-            <p className="text-[12.5px] text-muted-foreground">
-              Key 以 hhk_a_xxxx… 显示；实际的 Key
-              只写入上面的文件，不会显示或保存在别处。
-            </p>
-          </div>
+    <li className="flex flex-wrap items-center gap-x-4 gap-y-2.5 border-b px-4 py-3.5 last:border-b-0 sm:px-5">
+      <button
+        type="button"
+        className="flex min-w-0 flex-1 basis-[220px] items-center gap-3 rounded-lg text-left"
+        onClick={onDetail}
+      >
+        <BrandIcon slug={agentIconSlug(agent.id)} name={agent.name} />
+        <span className="min-w-0">
+          <span className="flex items-center gap-2">
+            <span className="truncate font-medium">{agent.name}</span>
+            <span className={`tag ${install.tone}`}>{install.label}</span>
+          </span>
+          <span className="block truncate font-mono text-[12px] text-subtle">
+            {agent.id} · {agent.protocol}
+          </span>
+        </span>
+      </button>
+      <div className="w-full min-w-0 sm:w-[300px]">
+        {keyless ? (
+          <p className="flex h-9 items-center rounded-[10px] border border-dashed px-3 text-[12.5px] text-muted-foreground">
+            ChatGPT 登录 · Agent 自选模型
+          </p>
         ) : (
-          <div className="space-y-4">
-            <label className="field-label">
-              模型
-              <select
-                className="field"
-                value={model}
-                onChange={(event) => setModel(event.target.value)}
-              >
-                {models.map((ref) => (
-                  <option key={ref} value={ref}>
-                    {ref}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <fieldset>
-              <legend className="field-label mb-1">
-                在 {agent.name} 中显示的模型（{shown.length}/{models.length}）
-              </legend>
-              <div className="max-h-[34vh] space-y-1 overflow-y-auto rounded-xl border p-2">
-                {models.map((ref) => (
-                  <Checkbox
-                    key={ref}
-                    checked={shown.includes(ref)}
-                    disabled={ref === model}
-                    onChange={(on) =>
-                      setListed((current) =>
-                        on
-                          ? [...current, ref]
-                          : current.filter((item) => item !== ref),
-                      )
-                    }
-                  >
-                    <span className="font-mono text-[12.5px]">{ref}</span>
-                  </Checkbox>
-                ))}
-              </div>
-            </fieldset>
-          </div>
+          <ModelPicker
+            label={`${agent.name} 的模型`}
+            models={models}
+            value={wiring?.model}
+            disabled={!models.sections.length}
+            onChange={(ref) => {
+              if (ref && ref !== wiring?.model) onModel(ref);
+            }}
+          />
         )}
-        <ErrorCallout failure={failure} />
-        <DialogFooter>
-          {plan ? (
-            <>
-              <Button
-                variant="outline"
-                disabled={busy}
-                onClick={() => setPlan(null)}
-              >
-                返回
-              </Button>
-              <Button disabled={busy} onClick={apply}>
-                {busy ? <Loader2 className="animate-spin" /> : null}
-                确认写入
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button variant="outline" disabled={busy} onClick={onClose}>
-                取消
-              </Button>
-              <Button disabled={busy || !model} onClick={preview}>
-                {busy ? <Loader2 className="animate-spin" /> : null}
-                预览改动
-              </Button>
-            </>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        <p className="mt-1 text-[12px] text-subtle">
+          {wiring
+            ? visibility && !keyless
+              ? `显示 ${visibility.shown.length} / ${visibility.allowed.length} 个模型`
+              : null
+            : "未接线，选择模型即可预览接线"}
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center justify-end gap-1.5 max-sm:w-full max-sm:justify-between sm:w-[310px]">
+        <Badges agent={agent} models={models} />
+        <span className="flex items-center">
+          <Button size="xs" variant="ghost" onClick={onDetail}>
+            <Settings2 />
+            详情
+          </Button>
+          {wiring ? (
+            <Button size="xs" variant="ghost" onClick={onUnwire}>
+              <Undo2 />
+              还原
+            </Button>
+          ) : null}
+        </span>
+      </div>
+    </li>
   );
 }
 
-/** The local agents: installation, wiring, drift and the wiring actions. */
+/**
+ * The home page (Magpie's main screen): every agent on this machine with
+ * the model it uses through the gateway. Picking a model previews the file
+ * changes and writes them on confirmation; the detail holds tiers, effort,
+ * adapter options, shown models, the key and the files. `?agent=<id>`
+ * opens an agent's detail.
+ */
 export function AgentsPage() {
   const load = useCallback(async () => {
-    const client = modelPlane();
-    const [agents, providers, groups] = await Promise.all([
-      client.agents.list(),
-      client.providers.list(),
-      client.routeGroups.list(),
+    const [agents, models] = await Promise.all([
+      modelPlane().agents.list(),
+      loadGatewayModels(),
     ]);
-    return {
-      agents: agents.items,
-      models: gatewayModels(providers.items, groups.items),
-    };
+    return { agents: agents.items, models };
   }, []);
   const [data, reload] = useLoaded(load);
-  const [wiring, setWiring] = useState<Agent | null>(null);
-  const [rotating, setRotating] = useState<Agent | null>(null);
+  const [wiring, setWiring] = useState<{
+    agent: Agent;
+    input: AgentWiringInput;
+  } | null>(null);
   const [unwiring, setUnwiring] = useState<Agent | null>(null);
+  const [showMissing, setShowMissing] = useState(false);
+  const search = useSearch();
+  const detailId = new URLSearchParams(search).get("agent");
+  const openDetail = (id: string | null) =>
+    navigate("agents", {
+      search: id ? `?agent=${encodeURIComponent(id)}` : "",
+    });
+  const wire = (agent: Agent, model: string) =>
+    setWiring({
+      agent,
+      input: wiringInput(agent, { ...draftOf(agent), model }),
+    });
+  const lists = useMemo(() => {
+    if (data.state !== "ready") return { here: [], missing: [], needs: [] };
+    const { agents, models } = data.value;
+    const here = agents.filter(
+      (agent) => agent.wiring || agent.installation.status !== "not-found",
+    );
+    // Agents that need attention first, then wired ones, then the rest as listed.
+    const rank = (agent: Agent) =>
+      attention(agent, models).length ? 0 : agent.wiring ? 1 : 2;
+    here.sort((a, b) => rank(a) - rank(b));
+    return {
+      here,
+      missing: agents.filter(
+        (agent) => !agent.wiring && agent.installation.status === "not-found",
+      ),
+      needs: here.filter((agent) => attention(agent, models).length),
+    };
+  }, [data]);
+  const detail =
+    data.state === "ready" && detailId
+      ? data.value.agents.find((agent) => agent.id === detailId)
+      : undefined;
   return (
     <div className="page-body">
       <div className="page-column max-w-[1080px]">
         <PageHeader
           title="Agent"
-          lede="把本机的编码 Agent 接到网关：选择 Agent 与模型，预览配置文件的改动后写入；随时可以还原。"
+          lede="本机的编码 Agent 经网关使用的模型。点模型即可切换：先预览配置文件的改动，确认后写入，随时可以还原。"
         >
           <Button
             size="icon-sm"
@@ -270,145 +217,131 @@ export function AgentsPage() {
           >
             <RefreshCw />
           </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => navigate("profiles")}
+          >
+            <Layers />
+            Profile
+          </Button>
         </PageHeader>
-        <div className="mt-6">
+        <div className="mt-6 space-y-4">
           {data.state === "loading" ? (
-            <div className="panel space-y-3 p-5">
+            <div
+              className="panel space-y-3 p-5"
+              role="status"
+              aria-label="正在读取"
+            >
               <Skeleton className="h-4 w-1/3" />
               <Skeleton className="h-4 w-2/3" />
+              <Skeleton className="h-4 w-1/2" />
             </div>
           ) : data.state === "error" ? (
-            <p className="empty-state text-danger">读取失败：{data.message}</p>
+            <LoadError message={data.message} retry={reload} />
           ) : (
-            <div className="panel overflow-x-auto">
-              <table className="data-table min-w-[820px]">
-                <thead>
-                  <tr>
-                    <th>Agent</th>
-                    <th>安装</th>
-                    <th>模型</th>
-                    <th>漂移</th>
-                    <th>接线时间</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.value.agents.map((agent) => {
-                    const installed =
-                      installationText[agent.installation.status];
-                    return (
-                      <tr key={agent.id}>
-                        <td>
-                          <div className="flex items-center gap-2.5">
-                            <span className="grid size-8 place-items-center rounded-xl bg-muted text-muted-foreground">
-                              <Bot className="size-4" strokeWidth={1.7} />
-                            </span>
-                            <div>
-                              <p className="font-medium">{agent.name}</p>
-                              <p className="font-mono text-[12px] text-subtle">
-                                {agent.id} · {agent.protocol}
-                              </p>
-                            </div>
-                          </div>
-                        </td>
-                        <td>
-                          <span
-                            className={`tag ${installed.tone}`}
-                            title={
-                              agent.installation.executable ??
-                              agent.installation.configDirectories.join("\n")
-                            }
+            <>
+              {!data.value.models.sections.length ? (
+                <div className="callout info items-center">
+                  <span className="min-w-0 flex-1">
+                    网关还没有模型：先添加一个 provider，再给 Agent 选择模型。
+                  </span>
+                  <Button size="xs" onClick={() => navigate("providers")}>
+                    添加 provider
+                  </Button>
+                </div>
+              ) : null}
+              {lists.needs.length ? (
+                <div role="alert" className="callout warn items-start">
+                  <CircleAlert className="mt-0.5 size-4 shrink-0" />
+                  <div className="min-w-0">
+                    <p>{lists.needs.length} 个 Agent 需要处理：</p>
+                    <ul className="mt-1 list-disc pl-5">
+                      {lists.needs.map((agent) => (
+                        <li key={agent.id}>
+                          <button
+                            type="button"
+                            className="underline underline-offset-2"
+                            onClick={() => openDetail(agent.id)}
                           >
-                            {installed.label}
-                          </span>
-                        </td>
-                        <td className="max-w-[280px]">
-                          {agent.wiring ? (
-                            <>
-                              <p className="truncate font-mono text-[12.5px]">
-                                {agent.wiring.model}
-                              </p>
-                              <p
-                                className="text-[12px] text-subtle"
-                                title={agent.wiring.models.join("\n")}
-                              >
-                                显示 {agent.wiring.models.length}/
-                                {data.value.models.length} 个模型
-                                {agent.wiring.keyState !== "active"
-                                  ? ` · Key ${agent.wiring.keyState}`
-                                  : ""}
-                              </p>
-                            </>
-                          ) : (
-                            <span className="text-subtle">未接线</span>
-                          )}
-                        </td>
-                        <td>
-                          <DriftBadge agent={agent} />
-                        </td>
-                        <td className="text-[12.5px] text-muted-foreground">
-                          <LocalTime value={agent.wiring?.wiredAt} />
-                        </td>
-                        <td className="w-[210px] text-right whitespace-nowrap">
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            disabled={!data.value.models.length}
-                            title={
-                              data.value.models.length
-                                ? undefined
-                                : "先在 Provider 页面添加模型"
-                            }
-                            onClick={() => setWiring(agent)}
-                          >
-                            {agent.wiring ? "修改" : "接线"}
-                          </Button>
-                          {agent.wiring ? (
-                            <>
-                              <Button
-                                size="xs"
-                                variant="ghost"
-                                onClick={() => setRotating(agent)}
-                              >
-                                换 Key
-                              </Button>
-                              <Button
-                                size="xs"
-                                variant="ghost"
-                                onClick={() => setUnwiring(agent)}
-                              >
-                                还原
-                              </Button>
-                            </>
-                          ) : null}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                            {agent.name}
+                          </button>
+                          ：{attention(agent, data.value.models).join("；")}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              ) : null}
+              {lists.here.length ? (
+                <ul className="panel" aria-label="本机的 Agent">
+                  {lists.here.map((agent) => (
+                    <AgentRow
+                      key={agent.id}
+                      agent={agent}
+                      models={data.value.models}
+                      onDetail={() => openDetail(agent.id)}
+                      onUnwire={() => setUnwiring(agent)}
+                      onModel={(ref) => wire(agent, ref)}
+                    />
+                  ))}
+                </ul>
+              ) : (
+                <EmptyState icon={Bot} title="本机没有发现 Agent">
+                  安装 Claude Code、Codex、OpenCode 等编码 Agent
+                  后刷新；也可以在下面为尚未安装的 Agent 预先写好配置。
+                </EmptyState>
+              )}
+              {lists.missing.length ? (
+                <section>
+                  <button
+                    type="button"
+                    className="flex min-h-8 items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground"
+                    aria-expanded={showMissing}
+                    onClick={() => setShowMissing((value) => !value)}
+                  >
+                    <ChevronDown
+                      className={`size-4 transition-transform ${showMissing ? "" : "-rotate-90"}`}
+                    />
+                    未发现的 Agent（{lists.missing.length}）
+                  </button>
+                  {showMissing ? (
+                    <ul className="panel mt-2" aria-label="未发现的 Agent">
+                      {lists.missing.map((agent) => (
+                        <AgentRow
+                          key={agent.id}
+                          agent={agent}
+                          models={data.value.models}
+                          onDetail={() => openDetail(agent.id)}
+                          onUnwire={() => setUnwiring(agent)}
+                          onModel={(ref) => wire(agent, ref)}
+                        />
+                      ))}
+                    </ul>
+                  ) : null}
+                </section>
+              ) : null}
+            </>
           )}
         </div>
-        {wiring && data.state === "ready" ? (
-          <WireDialog
-            agent={wiring}
-            models={data.value.models}
+        {wiring ? (
+          <WirePlanDialog
+            agent={wiring.agent}
+            input={wiring.input}
+            title={`${wiring.agent.wiring ? "切换" : "接线"} ${wiring.agent.name}`}
             onClose={() => setWiring(null)}
             onWired={reload}
           />
         ) : null}
-        <ConfirmDialog
-          open={rotating !== null}
-          title={`为 ${rotating?.name ?? ""} 更换 Key`}
-          description="重新写入它的配置文件；旧 Key 立即失效，正在运行的实例需要重启。"
-          action="更换"
-          onClose={() => setRotating(null)}
-          onConfirm={async () => {
-            if (rotating) await modelPlane().agents.rotate(rotating.id);
-            reload();
-          }}
-        />
+        {detail && data.state === "ready" ? (
+          <AgentDetail
+            key={detail.id}
+            agent={detail}
+            models={data.value.models}
+            onClose={() => openDetail(null)}
+            onChanged={reload}
+          />
+        ) : null}
         <ConfirmDialog
           open={unwiring !== null}
           title={`还原 ${unwiring?.name ?? ""}`}
@@ -416,7 +349,11 @@ export function AgentsPage() {
           action="还原"
           onClose={() => setUnwiring(null)}
           onConfirm={async () => {
-            if (unwiring) await modelPlane().agents.unwire(unwiring.id);
+            if (!unwiring) return;
+            const result = await modelPlane().agents.unwire(unwiring.id);
+            notify.success(
+              `${unwiring.name} 已还原（${result.files.length} 个文件）`,
+            );
             reload();
           }}
         />

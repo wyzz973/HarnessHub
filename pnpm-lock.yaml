@@ -136,6 +136,9 @@ importers:
       '@harnesshub/sdk':
         specifier: workspace:*
         version: link:../sdk
+      '@lobehub/icons-static-svg':
+        specifier: 1.95.1
+        version: 1.95.1
       '@radix-ui/react-use-controllable-state':
         specifier: 1.2.6
         version: 1.2.6(@types/react@19.2.18)(react@19.2.8)
@@ -656,6 +659,9 @@ packages:
 
   '@keyv/serialize@1.1.1':
     resolution: {integrity: sha512-dXn3FZhPv0US+7dtJsIi2R+c7qWYiReoEh5zUntWCf4oSpMNib8FDhSoed6m3QyZdx5hK7iLFkYk3rNxwt8vTA==}
+
+  '@lobehub/icons-static-svg@1.95.1':
+    resolution: {integrity: sha512-Hw7EPPgVnC4NZLXBfTNJG6hyQgqECfUPC11VVXodPSr1aebKcFxDZlSpxhWwYNdCc6bhxps/x5TtXoPmfKH2ag==}
 
   '@oxc-project/types@0.152.0':
     resolution: {integrity: sha512-oM/5rLBm2tPkg0iBgkH/FOeR3PCDpY19GTgAZjMFM8h9WI9VW7cLgzp6nwtarYKmovavIQZ+Fe/RKX/8C8O/Rw==}
@@ -3355,6 +3361,8 @@ snapshots:
       keyv: 5.6.0
 
   '@keyv/serialize@1.1.1': {}
+
+  '@lobehub/icons-static-svg@1.95.1': {}
 
   '@oxc-project/types@0.152.0': {}
 

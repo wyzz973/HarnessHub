@@ -3,34 +3,50 @@ import { useSyncExternalStore } from "react";
 
 /** The console's pages; each has one path, served by the daemon's SPA fallback. */
 export type Page =
+  | "agents"
+  | "profiles"
+  | "providers"
+  | "routing"
+  | "auto-groups"
+  | "keys"
+  | "usage"
+  | "conversations"
+  | "settings"
   | "tasks"
   | "model"
   | "tools"
   | "engines"
-  | "observability"
-  | "providers"
-  | "groups"
-  | "keys"
-  | "usage"
-  | "agents";
+  | "observability";
 
 /**
  * Page paths. None may start with a path the daemon keeps for itself
  * (`/api/`, `/v1`, `/health`, `/assets/`, `/openapi.json`) or one the model
  * gateway answers without `/v1` (`/models`, `/responses`, `/messages`,
  * `/chat/completions`): the daemon never falls back to the console there.
+ * The agents are the home page.
  */
 export const pagePaths: Readonly<Record<Page, string>> = {
-  tasks: "/",
+  agents: "/",
+  profiles: "/profiles",
+  providers: "/providers",
+  routing: "/routing",
+  "auto-groups": "/routing/auto-groups",
+  keys: "/routing/keys",
+  usage: "/usage",
+  conversations: "/usage/conversations",
+  settings: "/settings",
+  tasks: "/tasks",
   model: "/model",
   tools: "/tools",
   engines: "/engines",
   observability: "/observability",
-  providers: "/providers",
-  groups: "/groups",
-  keys: "/keys",
-  usage: "/usage",
-  agents: "/agents",
+};
+
+/** Paths of earlier console versions, kept so bookmarks still open their page. */
+const formerPaths: Readonly<Record<string, Page>> = {
+  "/agents": "agents",
+  "/groups": "routing",
+  "/keys": "keys",
 };
 
 const pageOfPath = new Map(
@@ -49,14 +65,41 @@ function subscribe(listener: () => void) {
     window.removeEventListener("popstate", listener);
   };
 }
-/** The page of the current location; an unknown path shows the task page. */
+/** The page of the current location; an unknown path shows the home page. */
 function currentPage(): Page {
-  return pageOfPath.get(window.location.pathname) ?? "tasks";
+  return pageOfPath.get(window.location.pathname) ?? "agents";
+}
+
+/**
+ * Rewrite a former or unknown path to its page's current one, without a new
+ * history entry. A task link from when tasks were the home page
+ * (`/?session=…`) opens the task page. Call once before the first render.
+ */
+export function canonicalizeLocation(): void {
+  const { pathname, search, hash } = window.location;
+  const params = new URLSearchParams(search);
+  const page =
+    pathname === "/" && (params.has("session") || params.has("workflow"))
+      ? "tasks"
+      : (formerPaths[pathname] ?? pageOfPath.get(pathname) ?? "agents");
+  const keepSearch = page === "tasks" || pathname === pagePaths[page];
+  const target = `${pagePaths[page]}${keepSearch ? search : ""}${hash}`;
+  if (target !== `${pathname}${search}${hash}`)
+    window.history.replaceState(window.history.state, "", target);
 }
 
 /** The open page, following `navigate` and the browser's back and forward buttons. */
 export function usePage(): Page {
-  return useSyncExternalStore(subscribe, currentPage, () => "tasks");
+  return useSyncExternalStore(subscribe, currentPage, () => "agents");
+}
+
+/** The current query string, following `navigate` and back and forward. */
+export function useSearch(): string {
+  return useSyncExternalStore(
+    subscribe,
+    () => window.location.search,
+    () => "",
+  );
 }
 
 /**

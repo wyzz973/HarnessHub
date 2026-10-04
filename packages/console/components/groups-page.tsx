@@ -31,6 +31,8 @@ import {
   OtherFieldErrors,
   PageHeader,
   useLoaded,
+  EmptyState,
+  LoadError,
 } from "./model-plane-ui";
 
 const strategies: { id: RouteStrategy; label: string }[] = [
@@ -227,7 +229,7 @@ function GroupDialog({
 }
 
 /** Route groups (`/api/v1/route-groups`). */
-export function GroupsPage() {
+export function GroupsPage({ tabs }: { tabs?: React.ReactNode }) {
   const load = useCallback(async () => {
     const client = modelPlane();
     const [groups, providers] = await Promise.all([
@@ -246,6 +248,7 @@ export function GroupsPage() {
   return (
     <div className="page-body">
       <div className="page-column max-w-[1040px]">
+        {tabs}
         <PageHeader
           title="路由组"
           lede="把多个模型组成 group/ID，按策略路由并在失败时切换。"
@@ -274,7 +277,7 @@ export function GroupsPage() {
               <Skeleton className="h-4 w-2/3" />
             </div>
           ) : data.state === "error" ? (
-            <p className="empty-state text-danger">读取失败：{data.message}</p>
+            <LoadError message={data.message} retry={reload} />
           ) : data.value.groups.length ? (
             <div className="panel overflow-x-auto">
               <table className="data-table min-w-[640px]">
@@ -332,17 +335,9 @@ export function GroupsPage() {
               </table>
             </div>
           ) : (
-            <div className="panel empty-state py-16">
-              <span className="mb-2 grid size-11 place-items-center rounded-2xl bg-muted text-muted-foreground">
-                <Route className="size-5" strokeWidth={1.7} />
-              </span>
-              <p className="text-[14px] font-medium text-foreground">
-                还没有路由组
-              </p>
-              <p>
-                例如把两个 provider 的同类模型组成一组，一个失败时自动切换。
-              </p>
-            </div>
+            <EmptyState icon={Route} title="还没有路由组">
+              例如把两个 provider 的同类模型组成一组，一个失败时自动切换。
+            </EmptyState>
           )}
         </div>
         {editing && data.state === "ready" ? (

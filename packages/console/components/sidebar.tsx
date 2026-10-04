@@ -6,7 +6,7 @@ import {
   BrainCircuit,
   ChartColumn,
   Cpu,
-  KeyRound,
+  Layers,
   Layers2,
   LogOut,
   Moon,
@@ -14,6 +14,7 @@ import {
   Route,
   Search,
   Server,
+  Settings,
   SquarePen,
   Sun,
   Workflow as WorkflowIcon,
@@ -38,19 +39,37 @@ export interface HistoryItem {
   busy: boolean;
   time: number;
 }
-const navigation: {
+interface NavItem {
   page: Exclude<Page, "tasks">;
   label: string;
   icon: LucideIcon;
-}[] = [
-  { page: "model", label: "模型", icon: BrainCircuit },
-  { page: "providers", label: "Provider", icon: Server },
-  { page: "groups", label: "路由组", icon: Route },
-  { page: "keys", label: "Gateway Key", icon: KeyRound },
-  { page: "usage", label: "用量", icon: ChartColumn },
+  /** Other pages that belong to this entry (tabs of the same section). */
+  also?: Page[];
+}
+/** The gateway: agents (the home page), providers, routing, usage and settings. */
+const gatewayNavigation: NavItem[] = [
   { page: "agents", label: "Agent", icon: Bot },
-  { page: "tools", label: "工具", icon: Blocks },
+  { page: "providers", label: "Provider", icon: Server },
+  {
+    page: "routing",
+    label: "路由与 Key",
+    icon: Route,
+    also: ["auto-groups", "keys"],
+  },
+  {
+    page: "usage",
+    label: "用量",
+    icon: ChartColumn,
+    also: ["conversations"],
+  },
+  { page: "profiles", label: "Profile", icon: Layers },
+  { page: "settings", label: "设置", icon: Settings },
+];
+/** Tasks run by HarnessHub itself, and their engines and tools. */
+const taskNavigation: NavItem[] = [
+  { page: "model", label: "统一模型", icon: BrainCircuit },
   { page: "engines", label: "引擎", icon: Cpu },
+  { page: "tools", label: "工具", icon: Blocks },
   { page: "observability", label: "观测", icon: Activity },
 ];
 const healthText: Record<GatewayHealth, string> = {
@@ -182,8 +201,8 @@ export function Sidebar({
         <button
           type="button"
           className="grid size-9 shrink-0 place-items-center rounded-[10px] text-brand hover:bg-sidebar-hover"
-          aria-label={collapsed ? "展开侧栏" : "HarnessHub"}
-          onClick={collapsed ? onToggle : onNewTask}
+          aria-label={collapsed ? "展开侧栏" : "HarnessHub 首页"}
+          onClick={collapsed ? onToggle : () => onOpenPage("agents")}
         >
           <Layers2 className="size-[20px]" strokeWidth={1.8} />
         </button>
@@ -201,9 +220,21 @@ export function Sidebar({
         </button>
       </div>
       <nav className="shrink-0 space-y-0.5 px-3" aria-label="页面">
+        {gatewayNavigation.map((item) => (
+          <Row
+            key={item.page}
+            icon={item.icon}
+            label={item.label}
+            active={page === item.page || (item.also?.includes(page) ?? false)}
+            collapsed={collapsed}
+            onClick={() => onOpenPage(item.page)}
+          />
+        ))}
+        <h2 className="history-group sidebar-label pt-3">任务</h2>
         <Row
           icon={SquarePen}
           label="新建任务"
+          active={page === "tasks" && !activeId}
           collapsed={collapsed}
           onClick={onNewTask}
           trailing={
@@ -212,7 +243,7 @@ export function Sidebar({
             </kbd>
           }
         />
-        {navigation.map((item) => (
+        {taskNavigation.map((item) => (
           <Row
             key={item.page}
             icon={item.icon}
@@ -222,7 +253,7 @@ export function Sidebar({
             onClick={() => onOpenPage(item.page)}
             trailing={
               item.page === "model" && modelMissing ? (
-                <span className="dot warn" aria-label="尚未连接模型" />
+                <span className="dot warn" aria-label="尚未连接统一模型" />
               ) : undefined
             }
           />

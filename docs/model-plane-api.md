@@ -115,6 +115,6 @@ hh provider models office --refresh           # 模型名为 office/<provider>/<
 - `provider remove`、`credential remove`、`group remove`、`key revoke` 与 `import` 需要确认；`--yes` 跳过，非交互且没有 `--yes` 时以 4 退出且不做修改。stdin 不是终端、设置了 `CI` 或给出 `--non-interactive` 时为非交互。
 - 退出码（06 第 5 节）：0 成功；1 内部错误；2 用法错误、输入无效或名称不存在；3 守护进程不可达或数据目录中没有令牌；4 需要确认；5 冲突（409、412、422）；6 认证失败；7 达到上限或未就绪（429、503）；130 中断。
 
-控制台由守护进程在同一端口提供，它的 Provider、路由组、Gateway Key、用量与 Agent 页面以控制台会话经 SDK 调用这些接口，浏览器拿不到管理令牌（见 [控制台](../packages/console/README.md)）。`hh console [--url URL] [--data-dir DIR] [--json]` 打印登录链接，退出码同上。
+控制台由守护进程在同一端口提供，它的 Agent、Profile、Provider、路由与 Key、用量与设置页面以控制台会话经 SDK 调用这些接口，浏览器拿不到管理令牌（见 [控制台](../packages/console/README.md)）。`hh console [--url URL] [--data-dir DIR] [--json]` 打印登录链接，退出码同上。
 
 测试：[api-v1.test.ts](../tests/integration/api-v1.test.ts) 在进程内启动守护进程，经 SDK 验证认证、校验、凭据值不出现在任何响应、日志与数据目录文件中、Key 的签发与吊销、基于写入账本的用量、会话视图与按凭据汇总、自动路由组的派生、隐藏（重启后仍在）与恢复；[hh-cli.test.ts](../tests/integration/hh-cli.test.ts) 对同一守护进程运行真实的 `hh` 入口；[model-metadata.test.ts](../tests/integration/model-metadata.test.ts) 经 SDK 验证预设与快照补齐、覆盖与手工值的优先级、重启后覆盖仍在，以及网关按补齐的价格计算成本，[单元测试](../tests/unit/model-metadata.test.ts) 覆盖解析顺序与来源记录。

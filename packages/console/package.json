@@ -17,6 +17,7 @@
   "dependencies": {
     "@assistant-ui/react": "0.15.18",
     "@harnesshub/sdk": "workspace:*",
+    "@lobehub/icons-static-svg": "1.95.1",
     "@radix-ui/react-use-controllable-state": "1.2.6",
     "ai": "7.0.93",
     "class-variance-authority": "0.7.1",

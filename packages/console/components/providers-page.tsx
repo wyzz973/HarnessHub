@@ -2,6 +2,7 @@
 import { useCallback, useState } from "react";
 import {
   ArrowLeft,
+  Download,
   KeyRound,
   Loader2,
   Pencil,
@@ -43,16 +44,21 @@ import {
   type Failure,
   type ProviderForm,
 } from "@/lib/model-plane";
+import { BrandIcon } from "./brand-icon";
+import { ImportDialog } from "./import-dialog";
 import {
   Checkbox,
   ConfirmDialog,
+  EmptyState,
   ErrorCallout,
   FieldError,
+  LoadError,
   LocalTime,
   OtherFieldErrors,
   PageHeader,
   useLoaded,
 } from "./model-plane-ui";
+import { PresetPane } from "./preset-pane";
 
 const kindName = (kind: ProviderConfig["kind"]) =>
   providerKinds.find((item) => item.id === kind)?.label ?? kind;
@@ -380,230 +386,6 @@ function ProviderDialog({
   );
 }
 
-/** Create a provider from a shipped preset, optionally with its first key. */
-function PresetPane({
-  onSaved,
-  onCancel,
-  onBusy,
-}: {
-  onSaved: (saved: ProviderConfig) => void;
-  onCancel: () => void;
-  onBusy: (busy: boolean) => void;
-}) {
-  const load = useCallback(
-    async () => (await modelPlane().presets.list()).items,
-    [],
-  );
-  const [presets] = useLoaded(load);
-  const [chosen, setChosen] = useState("");
-  const [id, setId] = useState("");
-  const [name, setName] = useState("");
-  const [endpoints, setEndpoints] = useState<Record<string, string>>({});
-  const [key, setKey] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<Failure | null>(null);
-  const list = presets.state === "ready" ? presets.value : [];
-  const preset = list.find((item) => item.id === chosen);
-  function choose(next: string) {
-    const found = list.find((item) => item.id === next);
-    setChosen(next);
-    setId("");
-    setName("");
-    setKey("");
-    setFailure(null);
-    setEndpoints({ ...(found?.endpoints ?? {}) });
-  }
-  async function save() {
-    if (!preset) return;
-    setBusy(true);
-    onBusy(true);
-    setFailure(null);
-    // Only edited endpoints are sent; the rest come from the preset.
-    const changed = Object.fromEntries(
-      Object.entries(endpoints)
-        .map(([protocol, url]) => [protocol, url.trim()] as const)
-        .filter(
-          ([protocol, url]) =>
-            url &&
-            url !== preset.endpoints[protocol as keyof typeof preset.endpoints],
-        ),
-    );
-    try {
-      const created = await modelPlane().providers.create({
-        preset: preset.id,
-        ...(id.trim() ? { id: id.trim() } : {}),
-        ...(name.trim() ? { name: name.trim() } : {}),
-        ...(Object.keys(changed).length ? { endpoints: changed } : {}),
-        ...(key ? { credential: { value: key } } : {}),
-      });
-      setKey("");
-      onSaved(created);
-    } catch (reason) {
-      setFailure(failureOf(reason));
-    } finally {
-      setBusy(false);
-      onBusy(false);
-    }
-  }
-  const kinds = providerKinds.filter((kind) =>
-    list.some((item) => item.kind === kind.id),
-  );
-  return (
-    <>
-      <label className="field-label">
-        预设
-        <select
-          className="field"
-          value={chosen}
-          disabled={presets.state !== "ready"}
-          onChange={(event) => choose(event.target.value)}
-        >
-          <option value="">
-            {presets.state === "loading"
-              ? "正在读取…"
-              : presets.state === "error"
-                ? `读取失败：${presets.message}`
-                : "选择一个预设"}
-          </option>
-          {kinds.map((kind) => (
-            <optgroup key={kind.id} label={kind.label}>
-              {list
-                .filter((item) => item.kind === kind.id)
-                .map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}（{item.id}）
-                  </option>
-                ))}
-            </optgroup>
-          ))}
-        </select>
-        <FieldError failure={failure} pointer="/preset" />
-      </label>
-      {preset ? (
-        <>
-          <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
-            {preset.verified === "unverified" ? (
-              <span className="tag warn">端点未核对</span>
-            ) : (
-              <span className="tag good">已按文档核对 {preset.verified}</span>
-            )}
-            {preset.website ? (
-              <a
-                className="text-brand hover:underline"
-                href={preset.website}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                官网
-              </a>
-            ) : null}
-            {preset.keysUrl ? (
-              <a
-                className="text-brand hover:underline"
-                href={preset.keysUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                获取 API Key
-              </a>
-            ) : null}
-            <span className="text-subtle">
-              模型列表：
-              {preset.models.source === "live" ? "从上游刷新" : "内置"}
-            </span>
-          </div>
-          {preset.notes ? (
-            <p className="callout neutral">{preset.notes}</p>
-          ) : null}
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="field-label">
-              ID
-              <input
-                className="field font-mono text-[13px]"
-                value={id}
-                placeholder={preset.id}
-                autoComplete="off"
-                spellCheck={false}
-                onChange={(event) => setId(event.target.value)}
-              />
-              <FieldError failure={failure} pointer="/id" />
-            </label>
-            <label className="field-label">
-              名称
-              <input
-                className="field"
-                value={name}
-                placeholder={preset.name}
-                autoComplete="off"
-                onChange={(event) => setName(event.target.value)}
-              />
-            </label>
-          </div>
-          {protocols
-            .filter((protocol) => preset.endpoints[protocol] !== undefined)
-            .map((protocol) => (
-              <label key={protocol} className="field-label">
-                {protocolNames[protocol]}
-                <input
-                  className="field font-mono text-[13px]"
-                  value={endpoints[protocol] ?? ""}
-                  autoComplete="off"
-                  spellCheck={false}
-                  onChange={(event) =>
-                    setEndpoints((current) => ({
-                      ...current,
-                      [protocol]: event.target.value,
-                    }))
-                  }
-                />
-                <FieldError
-                  failure={failure}
-                  pointer={`/endpoints/${protocol}`}
-                />
-              </label>
-            ))}
-          {preset.auth.methods.includes("api-key") ? (
-            <label className="field-label">
-              API Key
-              <input
-                className="field font-mono text-[13px]"
-                type="password"
-                value={key}
-                autoComplete="new-password"
-                spellCheck={false}
-                onChange={(event) => setKey(event.target.value)}
-              />
-              <span className="field-hint block">
-                只发送一次，保存在守护进程的秘密存储中；也可以稍后在凭据中添加。
-              </span>
-              <FieldError failure={failure} pointer="/credential/value" />
-            </label>
-          ) : null}
-        </>
-      ) : null}
-      <ErrorCallout failure={failure} />
-      <OtherFieldErrors
-        failure={failure}
-        shown={[
-          "/preset",
-          "/id",
-          "/credential/value",
-          ...protocols.map((protocol) => `/endpoints/${protocol}`),
-        ]}
-      />
-      <DialogFooter>
-        <Button variant="outline" disabled={busy} onClick={onCancel}>
-          取消
-        </Button>
-        <Button disabled={busy || !preset} onClick={() => void save()}>
-          {busy ? <Loader2 className="animate-spin" /> : null}
-          创建
-        </Button>
-      </DialogFooter>
-    </>
-  );
-}
-
 /**
  * Add a credential or rotate one: the value is sent once to the daemon's
  * secret store and cleared from the form; only the reference comes back.
@@ -752,12 +534,15 @@ function referenceText(credential: ProviderCredential) {
 
 function ProviderDetail({
   provider,
+  icon,
   back,
   edit,
   remove,
   reload,
 }: {
   provider: ProviderConfig;
+  /** Lobehub slug of the provider's preset. */
+  icon: string | undefined;
   back: () => void;
   edit: () => void;
   remove: () => void;
@@ -780,8 +565,18 @@ function ProviderDetail({
         全部 provider
       </button>
       <PageHeader
+        icon={<BrandIcon slug={icon} name={provider.name} className="mt-0.5 size-9" />}
         title={provider.name}
-        lede={`${provider.id} · ${kindName(provider.kind)} · 更新于 ${new Date(provider.updatedAt).toLocaleString()}`}
+        lede={[
+          provider.id,
+          kindName(provider.kind),
+          ...(provider.preset
+            ? [
+                `预设 ${provider.preset}${provider.region ? ` · ${provider.region}` : ""}${provider.plan ? ` · ${provider.plan}` : ""}`,
+              ]
+            : []),
+          `更新于 ${new Date(provider.updatedAt).toLocaleString()}`,
+        ].join(" · ")}
       >
         <Button size="sm" variant="outline" onClick={edit}>
           <Pencil />
@@ -964,6 +759,17 @@ export function ProvidersPage() {
     [],
   );
   const [providers, reload] = useLoaded(load);
+  // Only for the marks: a provider is shown without one while they load.
+  const loadPresets = useCallback(
+    async () => (await modelPlane().presets.list()).items,
+    [],
+  );
+  const [presets] = useLoaded(loadPresets);
+  const iconOf = (provider: ProviderConfig) =>
+    presets.state === "ready" && provider.preset
+      ? presets.value.find((preset) => preset.id === provider.preset)?.icon
+      : undefined;
+  const [importing, setImporting] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [editing, setEditing] = useState<{
     provider: ProviderConfig | undefined;
@@ -977,6 +783,7 @@ export function ProvidersPage() {
         {current ? (
           <ProviderDetail
             provider={current}
+            icon={iconOf(current)}
             back={() => setSelected(null)}
             edit={() => setEditing({ provider: current })}
             remove={() => setRemoving(current)}
@@ -998,6 +805,14 @@ export function ProvidersPage() {
               </Button>
               <Button
                 size="sm"
+                variant="outline"
+                onClick={() => setImporting(true)}
+              >
+                <Download />
+                导入
+              </Button>
+              <Button
+                size="sm"
                 onClick={() => setEditing({ provider: undefined })}
               >
                 <Plus />
@@ -1011,12 +826,10 @@ export function ProvidersPage() {
                   <Skeleton className="h-4 w-2/3" />
                 </div>
               ) : providers.state === "error" ? (
-                <p className="empty-state text-danger">
-                  读取失败：{providers.message}
-                </p>
+                <LoadError message={providers.message} retry={reload} />
               ) : list.length ? (
                 <div className="panel overflow-x-auto">
-                  <table className="data-table min-w-[640px]">
+                  <table className="data-table min-w-[760px]">
                     <thead>
                       <tr>
                         <th>Provider</th>
@@ -1035,18 +848,30 @@ export function ProvidersPage() {
                           onClick={() => setSelected(provider.id)}
                         >
                           <td>
-                            <button
-                              type="button"
-                              className="text-left font-medium hover:underline"
-                              onClick={() => setSelected(provider.id)}
-                            >
-                              {provider.name}
-                            </button>
-                            <p className="font-mono text-[12px] text-subtle">
-                              {provider.id}
-                            </p>
+                            <div className="flex items-center gap-2.5">
+                              <BrandIcon
+                                slug={iconOf(provider)}
+                                name={provider.name}
+                              />
+                              <div className="min-w-0">
+                                <button
+                                  type="button"
+                                  className="text-left font-medium hover:underline"
+                                  onClick={() => setSelected(provider.id)}
+                                >
+                                  {provider.name}
+                                </button>
+                                <p className="font-mono text-[12px] text-subtle">
+                                  {provider.id}
+                                  {provider.region
+                                    ? ` · ${provider.region}`
+                                    : ""}
+                                  {provider.plan ? ` · ${provider.plan}` : ""}
+                                </p>
+                              </div>
+                            </div>
                           </td>
-                          <td>{kindName(provider.kind)}</td>
+                          <td className="whitespace-nowrap">{kindName(provider.kind)}</td>
                           <td className="text-[12.5px]">
                             {protocols
                               .filter(
@@ -1074,23 +899,32 @@ export function ProvidersPage() {
                   </table>
                 </div>
               ) : (
-                <div className="panel empty-state py-16">
-                  <span className="mb-2 grid size-11 place-items-center rounded-2xl bg-muted text-muted-foreground">
-                    <Server className="size-5" strokeWidth={1.7} />
-                  </span>
-                  <p className="text-[14px] font-medium text-foreground">
-                    还没有 provider
-                  </p>
-                  <p>添加模型厂商、中转网关或本机模型服务。</p>
-                  <Button
-                    size="sm"
-                    className="mt-3"
-                    onClick={() => setEditing({ provider: undefined })}
-                  >
-                    <Plus />
-                    添加 provider
-                  </Button>
-                </div>
+                <EmptyState
+                  icon={Server}
+                  title="还没有 provider"
+                  action={
+                    <div className="flex flex-wrap justify-center gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => setEditing({ provider: undefined })}
+                      >
+                        <Plus />
+                        添加 provider
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setImporting(true)}
+                      >
+                        <Download />
+                        导入
+                      </Button>
+                    </div>
+                  }
+                >
+                  添加模型厂商、中转网关或本机模型服务；也可以粘贴导入链接，或从
+                  Claude Code、Codex 的配置导入。
+                </EmptyState>
               )}
             </div>
           </>
@@ -1106,6 +940,12 @@ export function ProvidersPage() {
               setSelected(saved.id);
               reload();
             }}
+          />
+        ) : null}
+        {importing ? (
+          <ImportDialog
+            onClose={() => setImporting(false)}
+            onImported={reload}
           />
         ) : null}
         <ConfirmDialog
