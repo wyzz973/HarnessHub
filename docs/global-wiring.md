@@ -190,7 +190,7 @@ Shell 环境中已有的同名变量优先于 dotenv 文件（Gemini、Qwen）�
 ## 与 04 的差异与待做
 
 - Crush 使用 `type: openai-compat`（Crush 对 OpenAI 兼容 Chat 端点的类型；04 写作 `openai`，Crush 以它表示 OpenAI 本身）。
-- 与 Magpie 的差异：Pi 的 `thinkingLevelMap` 不能写 `null` 隐藏模型没有的档位（HarnessHub 的编辑器不写 `null`），改为映射到不高于它的最近档位；Codex 读 `CODEX_HOME`（Magpie 固定 `~/.codex`），且不读 `auth.json` 判断登录状态，模式由用户选择；Claude 的档位不支持 `<model>:<effort>` 固定档位 effort（网关不支持按成员固定 effort）；Pi 不把新模型加入用户的 `enabledModels`；Crush 未知窗口时不写默认值（Magpie 写 200000 与 16384）；Codex 的 ChatGPT 模式不写 `model`，只转发 Codex 自己的模型（Magpie 的 `codex_backend` 也在这条路径上提供它自己的模型）。
+- 与 Magpie 的差异：Pi 的 `thinkingLevelMap` 不能写 `null` 隐藏模型没有的档位（HarnessHub 的编辑器不写 `null`），改为映射到不高于它的最近档位；Codex 读 `CODEX_HOME`（Magpie 固定 `~/.codex`），且不读 `auth.json` 判断登录状态，模式由用户选择；Claude 的档位不支持 `<model>:<effort>` 固定档位 effort（网关只在路由组成员上读取 `:effort`，可以为该档位选一个只有 `<ref>:<effort>` 成员的路由组）；Pi 不把新模型加入用户的 `enabledModels`；Crush 未知窗口时不写默认值（Magpie 写 200000 与 16384）；Codex 的 ChatGPT 模式不用其他 ChatGPT 账号回答 ChatGPT 模型（Magpie 的 `codex_backend` 用它的账号池），也不按订阅缩减 ChatGPT 返回的模型列表。
 - Claude Desktop 与 Magpie 的差异：所有模型都以 `claude-hh-` 别名列出（Magpie 对已像 Claude 的 id 原样列出，并对有推理档位的模型用 `mythos-magpie-…` 或 `….anthropic.claude-…` 别名，让 Desktop 显示 effort 选择器，HarnessHub 尚未实现）；没有实现 Magpie 把 Desktop 的标题等小请求转回会话所选模型的 `desktopTurn`，也没有把这些别名的能力写进 Claude Code 的 `CLAUDE_CODE_MODEL_CAPABILITIES`；Windows 上不按 `Claude…` 前缀查找目录。
 - OpenCode 在设置了 `OPENCODE_CONFIG_DIR` 时写入该目录，因为其中的文件覆盖全局配置。
 - 漂移检测没有区分“另一个 HarnessHub 实例”与其他网关：基址不同一律为 `foreign-gateway`。

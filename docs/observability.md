@@ -65,7 +65,7 @@ ACP 0.13.2 的 reducer 会把最新 breakdown 直接赋给名称为 `cumulative_
 
 守护进程可以把每次模型调用导出为一个 OpenTelemetry span（[08 第 5 节](proposals/oss/08-reliability-observability.md#5-追踪)），默认关闭：没有 `otlp` 配置时不创建导出器，也不发出任何网络请求，环境中的 `OTEL_EXPORTER_OTLP_ENDPOINT` 等标准变量同样不会打开导出。实现见 [otlp-export.ts](../packages/daemon/src/otlp-export.ts)。
 
-开启方式是把 `otlp` 配置块写成 JSON 文件，以 `hh serve --otlp-config <文件>`（或 `node packages/daemon/dist/src/main.js --otlp-config <文件>`）启动；配置无效时拒绝启动。
+开启方式是在配置文件 `config.jsonc` 中写 `otlp` 配置块（[配置](configuration.md#设置)），或把它写成 JSON 文件，以 `hh serve --otlp-config <文件>`（或 `node packages/daemon/dist/src/main.js --otlp-config <文件>`）启动，文件整体代替配置文件中的值；配置无效时拒绝启动。
 
 | 字段 | 说明 |
 |---|---|
@@ -80,7 +80,7 @@ span 在 `model.call` 账本记录提交之后才进入导出队列，账本仍�
 
 导出不阻塞也不影响模型调用：队列上限 2,048 个 span，每批 512 个，每 5 秒刷新；单次请求 10 秒超时；429、502、503、504、超时与网络错误按 `Retry-After`（或 1 s、2 s）重试至多 2 次，间隔上限 60 s；其他状态不重试。队列满或已停止时丢弃并计数，`gateway.log` 中有 `otlp.dropped`、`otlp.export_failed` 记录，停止时 `otlp.stop` 给出导出、丢弃、失败与重试的累计数。守护进程停止时，在模型网关等完最后一批账本记录之后导出剩余队列，最多等 3 秒，到期后中止并把剩余部分计为丢弃。
 
-与 [08 第 5 节](proposals/oss/08-reliability-observability.md#5-追踪) 的设计相比，目前的差异是：配置块名为 `otlp`，经 `--otlp-config` 文件传入（设计中是配置文件的 `observability.otel.*`，配置文件尚无守护进程设置）；编码为 JSON 而不是 protobuf，以免为 protobuf 引入依赖；span 都是根 span（还没有 Run 与 attempt 的 span 可作父子）；尚无内容导出开关 `captureContent`、约定版本选择、采样与指标导出。
+与 [08 第 5 节](proposals/oss/08-reliability-observability.md#5-追踪) 的设计相比，目前的差异是：配置块名为 `otlp`，写在配置文件中或经 `--otlp-config` 文件传入（设计中是配置文件的 `observability.otel.*`）；编码为 JSON 而不是 protobuf，以免为 protobuf 引入依赖；span 都是根 span（还没有 Run 与 attempt 的 span 可作父子）；尚无内容导出开关 `captureContent`、约定版本选择、采样与指标导出。
 
 示例（JSON 文件内容，未在真实后端上验证）：
 

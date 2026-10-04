@@ -100,7 +100,7 @@ pnpm exec hh sync off
 
 ## 与 Magpie 的差异
 
-- 不含 provider 图标、搜索 API 与 provider 排序（HarnessHub 尚无这些数据）。profiles、`library` 与接线选择的新字段是内容版本 1 中的可选成员：没有 `profiles` 或 `library` 的备份不恢复它们，旧版本 HarnessHub 打开新备份时忽略它们。
+- 不含 provider 图标与 provider 排序（HarnessHub 尚无这些数据），也不含[网关功能](gateway-features.md)的设置（搜索后端、出站脱敏规则与视觉兜底模型），恢复后需重新设置。profiles、`library` 与接线选择的新字段是内容版本 1 中的可选成员：没有 `profiles` 或 `library` 的备份不恢复它们，旧版本 HarnessHub 打开新备份时忽略它们。
 - Library 的 MCP 秘密在备份中只有引用或密钥存储中的值；Magpie 以明文保存 MCP 的 env 与 headers，不带 Key 时只清空名称像密钥的值。Magpie 恢复 Library 时整体替换本机的；HarnessHub 的恢复逐条替换与新增，只有同步镜像删除。
 - 网关 Key 从不进入备份；Magpie 带 Key 时导出其网关 Key。
 - 同步有 `providers`、`agents`、`profiles` 与 `library` 四部分；设置不同步；不共享用量。
