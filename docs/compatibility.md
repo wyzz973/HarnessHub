@@ -48,6 +48,8 @@
 - **用量**：98 次成功调用。`deepseek` 计价 $0.0127；`dschat` 是手工添加、没有价格的 provider，33 次调用记为未计价。另有 16 次以错误的 Key 调用而失败（401），是验证脚本本身的错误造成的。
 - **未验证**：其他真实 provider；用户真实配置中的 Agent（需要所有者亲自执行）；以 ChatGPT 登录的 Codex；取消与流式在真实上游上的表现；Windows。
 
+- **以 `pnpm test:real` 复跑**（`a812daa`，同一天）：`--preset deepseek --model deepseek-flash --agents claude,codex,opencode,pi,gemini`，退出码 0。provider 测试 3 个端点均为 200；体检 13 项通过；SDK 矩阵 16 行的文字与工具往返都在第一次尝试就通过，账本中的上游与模式（直通或转换）与端点一致；5 个 Agent 都答出口令，并由各自的 Key 归属。Codex 一行只记为“2 次调用”：Responses 直通的账本只记录响应状态，不记录是否以工具调用结束。上游 Key 与矩阵的 Gateway Key 都不出现在临时目录与任何输出中。
+
 ### 怎样重复
 
 `pnpm test:real`（[tests/real/check.ts](../tests/real/check.ts)）由持有 Key 的人手动运行，不属于 `pnpm check`。Key 只从 `--key-file PATH` 或环境变量 `HH_REAL_KEY` 读取（两者只能给一个），不出现在命令行参数中：
