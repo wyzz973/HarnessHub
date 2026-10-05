@@ -39,7 +39,7 @@
 - 某次服务成功、有用量但模型没有价格的调用（账本中 `cost` 为 null）会提前刷新，距上次尝试至少 6 小时。
 - 刷新结果按上面的格式写入 `<dataDir>/catalog/models-dev.json`（`commit` 为 null，`source` 为实际地址），最近一次尝试写入 `<dataDir>/catalog/refresh.json`，都原子替换；本目录的快照不变。刷新副本比内置快照新时才使用，所以升级到带更新快照的版本后以内置快照为准。
 - 内容有变化时，守护进程在 provider 写入队列中重新解析全部 provider 的模型元数据，网关随即使用新价格。失败（连接、超时、非 2xx、内容无效）保留正在使用的目录，错误只含主机、HTTP 状态或超时。
-- `catalog.autoRefresh: false`（`startHub` 的 `catalog` 选项；配置文件尚未实现）或环境变量 `HH_OFFLINE=1` 关闭后台刷新；`HH_OFFLINE` 只接受 `1`、`0` 或空，其他值使启动失败。关闭后 `hh catalog refresh`（`POST /api/v1/catalog/refresh`）仍可手动刷新。`hh catalog status` 显示使用中的目录、来源地址、上次刷新与是否开启。
+- `catalog.autoRefresh: false`（配置文件 `config.jsonc` 或 `startHub` 的 `catalog` 选项）或环境变量 `HH_OFFLINE=1` 关闭后台刷新；`HH_OFFLINE` 只接受 `1`、`0` 或空，其他值使启动失败。关闭后 `hh catalog refresh`（`POST /api/v1/catalog/refresh`）仍可手动刷新。`hh catalog status` 显示使用中的目录、来源地址、上次刷新与是否开启。
 - 测试不联网：测试启动器为所有测试设置 `HH_OFFLINE=1`，需要刷新的测试把 `catalog.url` 指向本机回环的假服务；`pnpm docs:api` 生成文档时以 `autoRefresh: false` 启动守护进程，SEA 测量脚本同样设置 `HH_OFFLINE=1`。
 
 ## 更新快照

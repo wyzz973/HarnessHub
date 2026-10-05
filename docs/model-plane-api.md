@@ -59,7 +59,7 @@
 - 手工填写：存储的值与记录的推导值不同，就视为用户在 provider 配置中填写的值，之后的写入不覆盖它；把读到的列表原样写回（如控制台编辑）不会把推导值变成手工值。覆盖会替换手工值，删除覆盖后手工值恢复。本功能之前创建的 provider 没有来源记录，其中已有的值都按手工值保留。
 - 覆盖存放在 `model_overrides` 表中，`PUT` 整体替换该 ref 的覆盖，删除 provider 时一并删除。`GET /models/{ref}` 返回 `fields`（每个已知字段的 `value`、`source`、`at`）、`unknown`、`listed`（provider 列表中是否有该模型）与适用的 `overrides`；不在列表中的模型同样可以覆盖与查询。
 - 目录默认在后台刷新：每 24 小时请求一次 `https://models.dev/api.json`，服务了无价格的调用后最早 6 小时提前刷新；结果存放在 `<dataDir>/catalog`，不覆盖内置快照，内容变化后重新解析全部 provider 的元数据。`HH_OFFLINE=1` 或 `catalog.autoRefresh: false` 关闭后台刷新，`hh catalog refresh` 仍可手动刷新。细节见 [模型目录](../packages/gateway/catalog/README.md#运行时刷新)。快照随发行附带 models.dev 的 MIT 许可文本。
-- 尚未实现：推理档位、结构化输出、按上下文分档的价格、“输出上限小于窗口”的统一校验与缺窗口告警，以及 `catalog.autoRefresh` 的配置文件入口（目前是 `startHub` 的选项）。
+- 尚未实现：推理档位、结构化输出、按上下文分档的价格，以及“输出上限小于窗口”的统一校验与缺窗口告警。
 
 ## CLI
 

@@ -66,7 +66,7 @@ codex-acp 缺省的 `agent` 模式用另一个 Guardian 模型自动审批，因
 - 经网关的引擎，Run 出现过上游失败（`runErrors()` 非空），且没有非 thought 文本、工具事件或权限请求，或者本 Run 没有一次成功的模型调用时，结果改为 failed，`MODEL_UPSTREAM_ERROR`，消息形如 `上游模型返回 HTTP 400：<脱敏的上游原因>`。第二个条件覆盖把上游错误当作正文输出的引擎（例如 codex-acp）。取消的 Run 不改写。
 - 经网关的引擎以 completed 结束，但本 Run 没有任何模型调用、文本、工具事件时，改为 failed，`ENGINE_NO_OUTPUT`，消息为“引擎未调用模型也未产生输出”。
 - 非 HubError 异常以 `DRIVER_ERROR` 公开脱敏后的真实原因（含 ACP RequestError 的 message、`data.message`/`details` 与 cause 链，至多 500 个字符），不再使用固定文案。脱敏删除本 Session 已解析的秘密值与网关令牌，以及 Bearer、`sk-`、token/key/secret/password 赋值形态。完整堆栈与 cause 链脱敏后追加写入 `<stateDir>/diagnostics/worker-errors.log`（目录 0700、文件 0600；Windows 依赖 Session 私有目录的 ACL）。
-- Runtime 对 failed 结果回收 Worker 并关闭 ACP Session，改判后的 Run 同样如此；调用方需要为下一轮新建 Session。ACP 驱动在 prompt 失败时仍只返回 `ACP_TURN_FAILED` 固定文案，这部分不在 Worker 内改写。
+- Runtime 对 failed 结果回收 Worker 并关闭 ACP Session，改判后的 Run 同样如此；调用方需要为下一轮新建 Session。ACP 驱动在 prompt 失败时返回 `ACP_TURN_FAILED`，消息取引擎报告的原文（去掉首尾空白，超过 500 个字符时截断），没有原文时用固定文案；这部分不在 Worker 内改写。
 
 ## 验证
 

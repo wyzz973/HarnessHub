@@ -1,6 +1,6 @@
 # HTTP API
 
-正式组合根 `startHub` 注册 **40 个 HTTP 操作**，覆盖引擎、配置、会话、运行、权限、事件、产物、工作流和观测。默认地址为 `http://127.0.0.1:3180`；Console通过同源 `/api/gateway` 代理访问实际Gateway。
+正式组合根 `startHub` 注册的 HTTP 操作分两组：`/api/v1` 管理模型平面与 Agent 平面（provider、凭据、路由组、Key、用量、Agent 接线、Library、备份与同步等，需要管理令牌或控制台会话），旧 `/v1` 覆盖执行平面（引擎、配置、会话、运行、权限、事件、产物、工作流和观测）；全部操作见生成的 [逐接口实现参考](reference.md)。默认地址为 `http://127.0.0.1:3180`；控制台由守护进程在同一端口提供，页面同源访问这些接口（[ADR 0024](../decisions/0024-embedded-console.md)）。
 
 - [逐接口实现参考](reference.md)：每项的输入、返回、处理链路、持久化/副作用、错误和测试入口。
 - [OpenAPI JSON](openapi.json)：可供编辑器与客户端工具读取的生成契约。
