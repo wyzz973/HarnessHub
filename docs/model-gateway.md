@@ -219,6 +219,7 @@ Session 的 Run 经守护进程端口上的共享网关使用模型（03 第 10 
 
 - 请求的模型取自请求体的 `model`（Gemini 取路径中 `/models/` 之后到最后一个 `:` 之前的部分，图像请求同样取 `model`），是 Model Ref `provider/model`、`group/<id>`，或不带 `provider/` 的**裸名称**；provider 或组不存在为 404 `model_not_found`（不是拒绝记录）。provider 列表中没有的模型照常路由，元数据未知。
 - **裸名称**（Magpie 的 `GroupFor` 与 `Resolve`，[bare-names.ts](../packages/gateway/src/bare-names.ts)），供不能写 `provider/model` 的客户端（部分 IDE 插件、写死 `gpt-5` 的脚本）使用，按顺序解析：ID 等于名称小写的路由组（用户组，或该 ID 的自动组），ID 等于名称规范名（`sameModel` 后 `slug`，与自动组相同）的路由组，规范名相同的未隐藏自动组；其后是只有一个 provider 在 `expose` 中提供的该 ID 的模型，再其后是只有一个 provider 列出的该 ID 的模型。几个 provider 都有时不挑选（Magpie 取第一个），返回 400 `model_ambiguous`，消息列出这把 Key 可以使用的候选并说明另有几个它不能用；什么都不匹配时 404 `model_not_found`。解析不看 Key：Key 的 `modelAllow` 与 `modelDeny` 用于解析出的 Ref，不能用时 403 `model_not_allowed`，消息写出名称解析成了什么。账本的 `requestedModel` 保留请求中的名称，`group` 或 `modelRef` 记录解析出的组或模型（被拒绝的调用也是）。`session:` Key 的裸名称仍指向 Run 的目标，Codex 透传中的裸名称仍是 ChatGPT 自己的模型，`count_tokens` 按同样的规则解析。`/v1/models` 不列出裸名称。
+- **Agent 的替代模型**（Magpie 的 `StandIn`，[stand-in.ts](../packages/gateway/src/stand-in.ts)）：接线写入的 `agent:` Key 请求的名称解析不到任何东西时（不是路由组，裸名称没有匹配，或 Model Ref 的 provider 不存在），用该 Agent 接线时选的模型代替，只对 Claude Code 与 Codex，与 Magpie 相同。Claude Code 请求它自己的主模型时用主模型；否则名称中含 `opus`、`sonnet`、`haiku` 或 `fable`（依此顺序）时用该档位的模型，没有设置该档位时用主模型（Claude Code 的档位也跟随主模型）；其他名称用主模型。这让 Claude Code 为标题与小任务按内置 ID 请求的 `claude-haiku-…` 等到达所选档位。Codex 不在 ChatGPT 模式时用它接线的模型。解析得到的名称从不替代；`client:`、`session:` Key 与不是当前接线所写的 `agent:` Key 也不替代。被替代的调用在账本中保留请求的 `requestedModel`，`modelRef` 或 `group` 是替代的模型，`patches[]` 含 `stand-in`；Key 的允许列表用于替代的模型。
 - wire 名依次取模型自己的 `wire`、provider `wire` 中该模型的条目、`*` 条目（`*` 替换为模型名），否则为模型名。
 - 每个启用的 Credential 是一个候选。provider 声明了与入站相同的端点、不是 `translateOnly`、Credential 对该端点有效时直通；否则转换到 provider 的 Chat 端点；没有 Chat 端点时依次转换到它的 Anthropic、Responses 或 Gemini 端点。对 provider 的任何端点都无效的 Credential 被跳过；没有任何候选时返回 400 `unsupported_route`，消息列出被跳过的原因。
 - 端点基址是该厂商官方 SDK 使用的基址，这是对 `ProviderConfig.endpoints` 注释中“不含操作路径”的明确约定，存储的基址校验按同一约定执行：Chat 与 Responses 含版本（OpenAI SDK 的 `baseURL`，如 `https://api.openai.com/v1`，拼接 `/chat/completions`、`/responses`）；Anthropic 不含版本（`ANTHROPIC_BASE_URL` 形式，如 `https://api.deepseek.com/anthropic`，拼接 `/v1/messages`）；Gemini 不含版本（`@google/genai` 的 `baseUrl`，拼接客户端所用的 `v1beta`、`v1` 或 `v1alpha`，再接 `/models/{wire}:{method}`，SSE 时带 `alt=sse`）。基址末尾的斜杠不影响结果。
@@ -329,8 +330,10 @@ Session 的 Run 经守护进程端口上的共享网关使用模型（03 第 10 
 | 等待上游响应头 / 上游空闲（只被数据事件重置） | 300 秒 / 300 秒 |
 | 保活间隔 / 停止保活 / Gemini 响应头提交期限 | 10 秒 / 300 秒 / 45 秒 |
 | 首字节前扣留 | 15 秒或 1 MiB |
-| 每个 Credential 并发上游请求 | 8 个，排队 64 个，再多返回 429 `busy`（转移到其他候选） |
+| 每个 Credential 并发上游请求 | 8 个，排队 64 个，再多返回 429 `busy`（转移到其他候选）；provider 的 `limits` 可以为它的每个 Credential 另设（见下） |
 | 推理回填缓存 | 每个 Gateway Key 256 条、4 MiB；全部 64 MiB |
+
+provider 的 `limits`（Magpie 的 `maxConcurrency`）为它的每个 Credential 另设同时发出的请求数 `concurrentPerCredential`（1–1024）与可以排队的请求数 `queuePerCredential`（0–65536），未设的一项用上表的值；修改对下一个请求生效，调高时排队中的请求随即发出，调低时已发出的照常完成。用 `POST`/`PATCH /api/v1/providers` 的 `limits`（`null` 删除）或 `hh provider limits <id> [--concurrency N] [--queue N] [--clear]` 设置，`hh provider add` 也接受 `--concurrency` 与 `--queue`。
 
 ### 验证
 
@@ -348,12 +351,14 @@ node tools/run-tests.mjs unit packages/gateway/dist/test/*.test.js
 - `/api/v1/model-calls` 的响应 schema 还没有 `generation`，该字段目前只在账本记录与网关内可见。
 - 重试只在最后一个还能尝试的候选上进行，没有 Retry-After 的限流 429 也会在那里重试；03 第 5 节原定的“先同候选重试再转移”与 ADR-P05 的相应部分由 [ADR 0025](decisions/0025-magpie-routing-parity.md) 修订。
 - 转换到 Responses 上游时，第一次请求既没有推理请求、模型元数据也没有声明推理时，不请求 `reasoning.encrypted_content`，放回的推理项只有 `id` 与摘要；`store: false` 的真实 OpenAI 可能拒绝这样的推理项（假 provider 接受）。
-- 尚未对齐 Magpie 的：OpenRouter 免费模型共享池只休息该模型、最后的失败是额度类时返回更早的其他失败；自动组的 `modelSameAs` 手工合并与全局关闭开关；Magpie 把 Agent 自己请求的、网关没有的模型换成该 Agent 所选模型的做法（`standIn`，包括 Claude Code 档位的完整 Claude 模型 ID），HarnessHub 对这些名称按裸名称解析，解析不到时 404。拒绝类的转移（[ADR 0025 补充](decisions/0025-magpie-routing-parity.md#补充拒绝类-400422-与安全拒绝的转移)）与 Magpie 的差别：推理之后才出现的拒绝在推理已送达客户端时不再转移（Magpie 对只有推理的流扣留更久）；Gemini 的 `RECITATION` 也按安全拒绝处理（HarnessHub 把它与 `SAFETY` 一并记为 `content_filter`）；只有 `promptFeedback.blockReason` 而没有候选的 Gemini 回答不识别为拒绝；被拒绝的尝试若有用量，只计在该尝试的上游，不进入这次调用的账本用量（Magpie 单独记一条）。
+- 尚未对齐 Magpie 的：OpenRouter 免费模型共享池只休息该模型、最后的失败是额度类时返回更早的其他失败；自动组的 `modelSameAs` 手工合并与全局关闭开关。Agent 的替代模型与 Magpie 的差别：Magpie 对 Claude Code 的完整 Claude 模型 ID（`claudeTierStandIn`）即使有 provider 或自动组提供也换成档位的模型，HarnessHub 只在名称解析不到时替代；Magpie 读取 Agent 自己的配置文件，HarnessHub 用接线记录；Magpie 的并发上限之外的请求无限排队、从不转移，HarnessHub 的排队有上限，排满时 429 `busy` 并转移。拒绝类的转移（[ADR 0025 补充](decisions/0025-magpie-routing-parity.md#补充拒绝类-400422-与安全拒绝的转移)）与 Magpie 的差别：推理之后才出现的拒绝在推理已送达客户端时不再转移（Magpie 对只有推理的流扣留更久）；Gemini 的 `RECITATION` 也按安全拒绝处理（HarnessHub 把它与 `SAFETY` 一并记为 `content_filter`）；只有 `promptFeedback.blockReason` 而没有候选的 Gemini 回答不识别为拒绝；被拒绝的尝试若有用量，只计在该尝试的上游，不进入这次调用的账本用量（Magpie 单独记一条）。
 - 尚未实现：粘性记录的持久化与账本中的粘性字段（目前写在 `patches[]`）；`route.breaker` 事件（目前只写日志）；provider 声明的请求体上限与 `onUnsupportedMedia`；共享设置目前在数据目录的文件中，以后可能移到存储的设置表；局域网监听器的 TLS（07 第 5.4 节要求 TLS 或反向代理，目前只有明文 HTTP）、`allowLan` Key 的额度要求、按来源 IP 的失败锁定，以及 `hh status` 与控制台中的共享状态；`shape` 等账本扩展字段；入站转换器自身丢弃的提示字段尚未记入 `unmapped[]`；转换到 Gemini 的图片 URL 与 Anthropic 的结构化输出（beta）；拒绝记录的定时汇总（目前在下一次同类拒绝或 `close()` 时写出）。
 - 直通流可能含网关合成的保活事件（见“共享网关的保活”），不再是上游字节的严格子序列；直通用例的逐字节黄金语料比较尚未建立。
 - 响应体上限按原始字节而不是解码后的内容计算；`latency` 只统计本次启动以来的调用，`least-used` 另从账本取最近 8 小时的初值；认证失败的熔断最长 10 分钟后进入半开，而不是一直保持到 Credential 更新。
 
 ## 变更记录
+
+- **2026-10-05：provider 的并发上限与 Agent 的替代模型**。provider 可以用 `limits` 为每个 Credential 另设并发数与排队数（Magpie 的 `maxConcurrency`，排满时仍为 429 `busy` 并转移）；接线的 Claude Code 与 Codex 请求解析不到的名称时，用它接线时选的模型代替（Magpie 的 `StandIn`），账本记 `stand-in`。
 
 - **2026-10-05：裸模型名称**。不带 `provider/` 的模型名称按 Magpie 的顺序解析为路由组、自动路由组或唯一的模型（见“模型解析与列表”），几个 provider 都有时返回 400 `model_ambiguous` 并列出候选；Key 的允许列表用于解析出的 Ref。此前裸名称一律是 400 `model_invalid`，现在解析不到时为 404 `model_not_found`。
 
