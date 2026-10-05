@@ -722,6 +722,7 @@ void test("hh tui marks a wiring without a key and gives it one after y", async 
     await plane.putWiring(legacy);
   } finally {
     plane.close();
+    await plane.whenClosed();
   }
   const tui = session(on.client, { env: { NO_COLOR: "1" } });
   await tui.output.waitFor(listed, "the agents");

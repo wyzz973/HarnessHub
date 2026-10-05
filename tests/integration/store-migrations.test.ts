@@ -242,7 +242,10 @@ void test("a user_version 1 database from the previous build migrates forward wi
     1,
   );
   const plane = new SqliteModelPlaneStore(path);
-  t.after(() => plane.close());
+  t.after(async () => {
+    plane.close();
+    await plane.whenClosed();
+  });
   assert.deepEqual(await plane.listProviders(), []);
 });
 
@@ -297,7 +300,10 @@ void test("a version 2 database gains the model metadata tables and keeps its pr
   );
   store.acquireOwner();
   const plane = new SqliteModelPlaneStore(path);
-  t.after(() => plane.close());
+  t.after(async () => {
+    plane.close();
+    await plane.whenClosed();
+  });
   assert.deepEqual(await plane.listProviders(), [record]);
   assert.deepEqual(await plane.listModelOverrides("alpha"), []);
   assert.deepEqual(await plane.listModelProvenance("alpha"), []);
@@ -358,7 +364,10 @@ void test("a version 3 database keeps its wirings, which may then have no key, a
   assert.equal(userVersion(inspector()), LATEST_SCHEMA_VERSION);
   store.acquireOwner();
   const plane = new SqliteModelPlaneStore(path);
-  t.after(() => plane.close());
+  t.after(async () => {
+    plane.close();
+    await plane.whenClosed();
+  });
   assert.deepEqual(await plane.listWirings(), [wiring]);
   const signedIn = {
     adapterId: "claude",
@@ -462,7 +471,10 @@ void test("a version 4 database gains the ledger attribution columns, filled fro
   );
   store.acquireOwner();
   const plane = new SqliteModelPlaneStore(path);
-  t.after(() => plane.close());
+  t.after(async () => {
+    plane.close();
+    await plane.whenClosed();
+  });
   // The records are unchanged; the columns serve the new filters and buckets.
   assert.deepEqual(
     (await plane.listModelCalls({}, { limit: 10 })).items.map(
@@ -524,7 +536,10 @@ void test("a version 5 database's key quotas become calendar budgets that count 
   assert.equal(userVersion(inspector()), 6);
   store.acquireOwner();
   const plane = new SqliteModelPlaneStore(path);
-  t.after(() => plane.close());
+  t.after(async () => {
+    plane.close();
+    await plane.whenClosed();
+  });
   assert.deepEqual(
     (await plane.listGatewayKeys()).map((record) => [
       record.keyId,

@@ -376,6 +376,7 @@ void test(
       });
     } finally {
       plane.close();
+      await plane.whenClosed();
     }
     const usage = (await ok(["usage", "--by", "provider", "--since", "1d"]))
       .stdout;

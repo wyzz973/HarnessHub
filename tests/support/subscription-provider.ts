@@ -69,6 +69,7 @@ export async function seedSubscription(
     await store.putProvider(provider);
   } finally {
     store.close();
+    await store.whenClosed();
   }
   return provider;
 }

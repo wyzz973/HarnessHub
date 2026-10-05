@@ -760,6 +760,7 @@ async function ledger(
     };
   } finally {
     plane.close();
+    await plane.whenClosed();
     release();
     owner.close();
   }

@@ -110,6 +110,7 @@ import {
   LOG_LEVEL_ENVIRONMENT,
   parseLogLevel,
   type LogLevel,
+  type LogSink,
 } from "@harnesshub/core/logging";
 import { harnessModelEnvironment } from "@harnesshub/core/harness-model";
 import { JsonLogFile } from "./logging/json-log-file.js";
@@ -221,8 +222,9 @@ class CallObservingModelPlaneStore extends SqliteModelPlaneStore {
   constructor(
     file: string,
     private readonly observe: (entry: ModelCallEntry) => void,
+    log: LogSink,
   ) {
-    super(file);
+    super(file, { log });
   }
 
   override async appendModelCall(entry: ModelCallEntry): Promise<void> {
@@ -615,6 +617,7 @@ export async function startHub(options: {
     modelPlane = new CallObservingModelPlaneStore(
       path.join(dataDir, "harnesshub.sqlite"),
       (entry) => catalog?.noteCall(entry),
+      gatewayLog,
     );
     // Session Runs use the shared gateway (03 section 10). A Session's engine
     // is routed when the unified model was applied to its profile, or when it
@@ -1151,6 +1154,8 @@ export async function startHub(options: {
       await outboundToClose.close();
       workflowStore?.close();
       modelPlane?.close();
+      // Its WAL checkpoint worker's connection closes before the owner's.
+      await modelPlane?.whenClosed();
       store.close();
     });
     // onClose hooks run last-registered first: before the stores close,
@@ -1227,6 +1232,7 @@ export async function startHub(options: {
     await outbound?.close();
     workflowStore?.close();
     modelPlane?.close();
+    await modelPlane?.whenClosed();
     store.close();
     throw error;
   }

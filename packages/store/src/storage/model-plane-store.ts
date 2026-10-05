@@ -5,6 +5,8 @@ import {
   type StatementSync,
 } from "node:sqlite";
 import { HubError } from "@harnesshub/core/errors";
+import type { LogSink } from "@harnesshub/core/logging";
+import { WalCheckpoints } from "./wal-checkpoints.js";
 import { AUTO_GROUP_PREFIX } from "@harnesshub/core/auto-groups";
 import {
   parseModelRef,
@@ -236,7 +238,9 @@ function bucketExpression(groupBy: UsageGroupBy): string {
  * owner. Methods run synchronously on the connection and settle their
  * promise afterwards; ledger appends wait for their group commit
  * (`appendModelCall`). Either way a resolved write is committed (WAL with
- * `synchronous = FULL`). Records are validated before writing
+ * `synchronous = FULL`). Commits do not checkpoint the WAL: a worker thread
+ * does, shortly after writes (`WalCheckpoints`); the owner awaits
+ * `whenClosed()` after `close()`. Records are validated before writing
  * (`MODEL_PLANE_RECORD_INVALID`, 400) and when read (`STORAGE_CORRUPT`, 500).
  * After `close()` every method rejects with `STORE_CLOSED` (503).
  *
@@ -267,12 +271,24 @@ export class SqliteModelPlaneStore
 {
   private readonly db: DatabaseSync;
   private closed = false;
+  /** Checkpoints of this connection's writes, off its commits. */
+  private readonly checkpoints: WalCheckpoints;
 
-  constructor(dbPath: string) {
+  /**
+   * @param options.log Where a failed WAL checkpoint is logged
+   *   (`store.checkpoint_failed`).
+   * @param options.checkpointIntervalMs For tests: how often writes are
+   *   looked at for a checkpoint (`CHECKPOINT_INTERVAL_MS` by default).
+   */
+  constructor(
+    dbPath: string,
+    options: { log?: LogSink; checkpointIntervalMs?: number } = {},
+  ) {
     this.db = new DatabaseSync(dbPath);
     try {
+      // Commits never checkpoint: WalCheckpoints does, on another thread.
       this.db.exec(
-        "PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA synchronous = FULL;",
+        "PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA synchronous = FULL; PRAGMA wal_autocheckpoint = 0;",
       );
       const schema = inspectSchema(this.db);
       if (schema.legacy || schema.version !== LATEST_SCHEMA_VERSION)
@@ -303,6 +319,13 @@ export class SqliteModelPlaneStore
       this.db.close();
       throw error;
     }
+    const changes = this.db.prepare("SELECT total_changes() AS changes");
+    this.checkpoints = new WalCheckpoints(
+      dbPath,
+      () => Number(changes.get()!.changes),
+      options.log,
+      options.checkpointIntervalMs,
+    );
   }
 
   private open(): DatabaseSync {
@@ -945,12 +968,25 @@ export class SqliteModelPlaneStore
     return this.remove("DELETE FROM wiring_profiles WHERE name = ?", name);
   }
 
-  /** Commits the pending ledger entries, then closes the connection. Idempotent. */
+  /**
+   * Commits the pending ledger entries, then closes the connection and the
+   * checkpoint worker's ({@link whenClosed}). Idempotent.
+   */
   close(): void {
     if (this.closed) return;
     this.commitGroup();
     this.closed = true;
+    void this.checkpoints.close();
     this.db.close();
+  }
+
+  /**
+   * Resolves once, after {@link close}, the checkpoint worker exited (after
+   * a checkpoint in flight); the owner awaits it before the process ends
+   * or the file is removed.
+   */
+  whenClosed(): Promise<void> {
+    return this.checkpoints.close();
   }
 }
 

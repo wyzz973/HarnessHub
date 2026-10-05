@@ -228,6 +228,7 @@ void test(
       });
     } finally {
       plane.close();
+      await plane.whenClosed();
     }
     const total = FILLER + 3;
 

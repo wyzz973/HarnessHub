@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -40,16 +40,20 @@ function fixture(t: TestContext) {
   const dir = mkdtempSync(join(tmpdir(), "harnesshub-model-plane-"));
   const path = join(dir, "harnesshub.sqlite");
   const owned: Array<{ close(): void }> = [];
-  t.after(() => {
+  const planes: SqliteModelPlaneStore[] = [];
+  t.after(async () => {
     for (const resource of owned.reverse()) resource.close();
+    // The checkpoint workers' connections close before the files go.
+    await Promise.all(planes.map((plane) => plane.whenClosed()));
     rmSync(dir, { recursive: true, force: true });
   });
-  const open = () => {
+  const open = (options?: { checkpointIntervalMs?: number }) => {
     const store = new SqliteStore(path);
     owned.push(store);
     store.acquireOwner();
-    const plane = new SqliteModelPlaneStore(path);
+    const plane = new SqliteModelPlaneStore(path, options);
     owned.push(plane);
+    planes.push(plane);
     return { store, plane };
   };
   const raw = () => {
@@ -862,6 +866,80 @@ void test("appends that resolved before the process was killed are in the ledger
     [...ids].sort(),
     entries.map((entry) => entry.callId).sort(),
   );
+});
+
+void test("commits leave WAL checkpoints to a worker, which keeps the WAL small", async (t) => {
+  const { path, plane: first, store: firstStore, open } = fixture(t);
+  first.close();
+  firstStore.close();
+  const { plane } = open({ checkpointIntervalMs: 20 });
+  const size = (file: string) =>
+    statSync(file, { throwIfNoEntry: false })?.size ?? 0;
+  const before = size(path);
+  for (let burst = 0; burst < 15; burst++) {
+    await Promise.all(
+      Array.from({ length: 200 }, () => plane.appendModelCall(call())),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+  }
+  // The writer does not checkpoint (wal_autocheckpoint = 0): the worker's
+  // checkpoints are what moved the pages into the database file.
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const database = size(path);
+  assert.ok(
+    database - before > 1024 * 1024,
+    `the database grew by ${database - before} bytes`,
+  );
+  assert.ok(
+    size(`${path}-wal`) < database,
+    `the WAL (${size(`${path}-wal`)} bytes) stays smaller than the database`,
+  );
+});
+
+void test("appends that resolved are in the ledger after a kill while checkpoints run", async (t) => {
+  const { dir, path, plane, store, open } = fixture(t);
+  plane.close();
+  store.close();
+  const entries = Array.from({ length: 3000 }, () => call());
+  const file = join(dir, "entries.json");
+  writeFileSync(file, JSON.stringify(entries));
+  // Bursts back to back with the worker checkpointing every millisecond;
+  // the process reports each resolved burst and is killed after the last.
+  const program = `
+    const { readFileSync } = await import("node:fs");
+    const { SqliteStore } = await import(${JSON.stringify(import.meta.resolve("@harnesshub/store/storage/sqlite-store"))});
+    const { SqliteModelPlaneStore } = await import(${JSON.stringify(import.meta.resolve("@harnesshub/store/storage/model-plane-store"))});
+    const store = new SqliteStore(${JSON.stringify(path)});
+    store.acquireOwner();
+    const plane = new SqliteModelPlaneStore(${JSON.stringify(path)}, { checkpointIntervalMs: 1 });
+    const entries = JSON.parse(readFileSync(${JSON.stringify(file)}, "utf8"));
+    for (let at = 0; at < entries.length; at += 100)
+      await Promise.all(entries.slice(at, at + 100).map((entry) => plane.appendModelCall(entry)));
+    process.stdout.write("resolved " + entries.length + "\\n", () => process.kill(process.pid, "SIGKILL"));
+  `;
+  const child = spawnSync(
+    process.execPath,
+    ["--input-type=module", "--eval", program],
+    { encoding: "utf8" },
+  );
+  assert.equal(child.signal, "SIGKILL", child.stderr);
+  assert.equal(child.stdout, "resolved 3000\n");
+  const restarted = open();
+  const check = new DatabaseSync(path);
+  const integrity = check.prepare("PRAGMA integrity_check").get();
+  check.close();
+  assert.equal(integrity?.integrity_check, "ok");
+  let count = 0;
+  let cursor: string | undefined;
+  do {
+    const page = await restarted.plane.listModelCalls(
+      {},
+      { limit: 500, ...(cursor ? { cursor } : {}) },
+    );
+    count += page.items.length;
+    cursor = page.nextCursor;
+  } while (cursor);
+  assert.equal(count, 3000);
 });
 
 void test("ledger pages run newest first with a stable cursor", async (t) => {

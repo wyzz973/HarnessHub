@@ -548,6 +548,7 @@ void test("client keys are shown once, listed without secrets and revoked", asyn
     assert.equal(record?.secretHash, hashGatewayKeySecret(match[2]!));
   } finally {
     plane.close();
+    await plane.whenClosed();
   }
 
   const listed = await client.gatewayKeys.list();
@@ -595,7 +596,10 @@ void test("usage and model calls are served from the ledger", async (t) => {
   const plane = new SqliteModelPlaneStore(
     path.join(dataDir, "harnesshub.sqlite"),
   );
-  t.after(() => plane.close());
+  t.after(async () => {
+    plane.close();
+    await plane.whenClosed();
+  });
   const entry = (
     index: number,
     patch: Partial<ModelCallEntry>,
@@ -745,7 +749,10 @@ void test("conversations and usage by credential are served from the ledger", as
   const plane = new SqliteModelPlaneStore(
     path.join(dataDir, "harnesshub.sqlite"),
   );
-  t.after(() => plane.close());
+  t.after(async () => {
+    plane.close();
+    await plane.whenClosed();
+  });
   const talk = "ab".repeat(32);
   const other = "cd".repeat(32);
   const entry = (
