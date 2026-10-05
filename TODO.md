@@ -18,6 +18,7 @@
 - [ ] 可选：提供两个历史提交署名的邮箱，用于 `.mailmap` 合并作者身份。
 - [ ] 安装 Renovate GitHub App 并授权本仓库（`renovate.json` 已在 #7 合入，App 安装后才生效）。
 - [ ] M1 首次发布前：注册 npm 包名与 `@harnesshub` 组织；macOS Developer ID 与 Windows 代码签名的取得方式（SignPath Foundation 或 Azure Trusted Signing）。
+- [ ] 决定是否允许从其他网站的链接直接打开控制台（2026-10-05 本机验收发现）：守护进程对带 `Sec-Fetch-Site: cross-site` 的请求一律返回 403 `LOCAL_ACCESS_REQUIRED`，包括浏览器整页打开控制台页面（[07 第 5.3 节](docs/proposals/oss/07-data-security.md#53-hostorigin-与-sec-fetch-校验)第 3 条）；从终端 `hh console` 打开不受影响。可选的放宽：只放行 GET 或 HEAD、`Sec-Fetch-Mode: navigate`、`Sec-Fetch-Dest: document`、指向控制台页面路径（`/` 与没有路由的页面路径，不含 `/api`、`/v1`、模型网关与 `/assets`）的整页导航，它只得到不含数据的 `index.html`，会话 Cookie 为 `SameSite=Strict` 不随之发送；其余跨站请求照旧拒绝。这是放宽安全规则，AI 维护者的修改被权限策略拦下，需要所有者确认后再做（同时修订 07 第 5.3 节与 `tests/integration/console.test.ts` 中跨站打开得到 403 的断言）。
 
 ## M0 开源准备与重构
 
@@ -156,6 +157,16 @@
   - I1：接线期间 CC Switch 表中中转站的 `http_headers` 与 `env_http_headers` 整项删除，还原时逐字节恢复。
   - I3：交接之后、隧道里还没有字节回来时的 `EPIPE` 或 `ECONNRESET` 算代理的失败（`PROXY_FAILED`）。
   - 证据：每项都有修改前失败的测试（修改前的结果：N1 另一把 Key 得到 503、I4 记为 `insufficient_balance`、N2 404 回显 Key、N3 不加前缀、N4 每个编造的名字一个序列、N5 `EISDIR` 与 500、N6 保留 100 个窗口、I1 中转站的 `Authorization` 留在表中、I3 得到 `ECONNRESET`），修改后通过；审查脚本 `f-echo-model`、`b-keys`、`csv-formula`、`managed-dir`、`alert-windows` 与重置竞态脚本修复后按预期（竞态脚本 120 次全部是代理失败）。本机完整 `pnpm check` 通过（macOS arm64）。Windows 未验证（N5 的 `C:\ProgramData`）。
+
+## 本机控制台验收（2026-10-05）
+
+所有者在本机控制台上验收（DeepSeek provider、ChatGPT 账号、已接线的 Pi）时发现的问题。
+
+- [x] **任务区不再以统一模型判断能否执行；输入框可选网关的模型**（`6c8fba5`、`4b2949b`，[ADR 0019 补充](docs/decisions/0019-session-runs-on-the-shared-gateway.md#补充控制台的任务按模型平面选择模型2026-10-05)）：任务页不再显示“未连接模型”、不再弹出填写上游地址与 Key 的引导，“统一模型”只在存在旧来源时出现在导航中并标明已弃用；`GET /v1/engines` 增加 `modelSelection`，可以选择模型的引擎在直接执行的输入框中多一个模型选择（缺省不变，选中后 Run 带 `model` 经 `session:` Key 执行，用量与费用记到这次执行上）；观测的“配置模型”取 Run 的 `model`，“实际模型”在账本有记录时取上游报告的模型。
+  - 证据：[共享网关 Session 测试](tests/integration/session-shared-gateway.test.ts) 新增 `modelSelection`、`model.configured` 与 `model.actual` 的断言，前两条对修改前的代码实际运行失败，第三条在旧构建上显示为别名；控制台的类型检查、lint、构建与 i18n、契约、路由检查通过；在本分支构建的演示守护进程上（假上游、可路由的夹具引擎）核对了导航、选择器、继续任务时的锁定与执行详情的用量。本机完整 `pnpm check` 通过（工具 235、单元 993 通过 14 跳过、集成 407 通过 11 跳过、smoke 14、协议 508）。Windows 未验证。
+- [x] **页面标签栏末端的滚动条**（`4cd89ca`）：横向滚动的标签栏因选中标签的负外边距在纵向溢出，路由、用量与设置页的标签栏右端出现一根竖向滚动条；分隔线改为内阴影后消失。证据：演示守护进程上目视核对；控制台 lint、类型检查与构建。
+- [x] **比赛期内部名称**（`3e1b599`、`781860b`，控制台部分在 `4b2949b`）：测试与代码中的内部上游模型名与网关主机名换成中性值，CHANGELOG 不再写比赛接口版本；控制台的模型 ID 示例改为 `deepseek-chat`。路线图“内部信息”中全文检索与开发机路径两项已勾选（[12 第 6 节](docs/proposals/oss/12-roadmap-migration.md#6-开源前检查清单)）。证据：合并以上各项后本机完整 `pnpm check` 通过（工具 235、单元 993 通过 14 跳过、集成 407 通过 11 跳过、smoke 14、协议 508）。未做的一步：没有拿归档分支中比赛期网关配置的真实主机名反向比对（读取被权限策略拦下），代之以全部 URL 主机、仓库链接与内部关键字的检索。
+- [ ] **跨站链接打开控制台得到 403**：需要所有者决定，见上文“需要所有者处理的事项”。
 
 ## M1–M5
 
