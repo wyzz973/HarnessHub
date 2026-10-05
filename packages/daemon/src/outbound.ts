@@ -804,20 +804,21 @@ export class Outbound {
         return;
       }
       // The proxy's failures are logged in full; requests say less.
+      const record = (error: ProxyError) =>
+        log.info("network.proxy_failed", {
+          proxy: displayProxy(via.url),
+          target: authority(host, portNumber),
+          message: error.message,
+        });
       const logged: buildConnector.Callback = (...args) => {
-        if (args[0] instanceof ProxyError)
-          log.info("network.proxy_failed", {
-            proxy: displayProxy(via.url),
-            target: authority(host, portNumber),
-            message: args[0].message,
-          });
+        if (args[0] instanceof ProxyError) record(args[0]);
         callback(...args);
       };
       openTunnel(via, host, portNumber, {
         timeoutMs,
         ...(ca ? { ca } : {}),
       }).then(
-        (socket) => handOver(via, socket, options, logged, direct),
+        (socket) => handOver(via, socket, options, logged, direct, record),
         (error: Error) => logged(error, null),
       );
     };
@@ -889,7 +890,10 @@ export class Outbound {
  * undici sets, which Node then does not set again: a tunnel that fails it is
  * the proxy's failure (PROXY_FAILED), not the upstream's. A throw while
  * handing over is still caught: the socket is destroyed with it, which fails
- * the request.
+ * the request. A reset that comes after the check, while the request is
+ * written and before anything came back through the tunnel (EPIPE, or
+ * ECONNRESET as it reads), is the proxy's too: the error undici reports
+ * gets a cause that says so, and `record` logs it.
  */
 function handOver(
   proxy: ProxyTarget,
@@ -897,6 +901,7 @@ function handOver(
   options: buildConnector.Options,
   callback: buildConnector.Callback,
   direct: buildConnector.connector,
+  record: (error: ProxyError) => void,
 ): void {
   let open = !socket.destroyed;
   if (open)
@@ -917,6 +922,22 @@ function handOver(
     );
     return;
   }
+  const before = socket.bytesRead;
+  // First, so that undici sees the cause it adds.
+  socket.prependOnceListener("error", (error: NodeJS.ErrnoException) => {
+    if (
+      socket.bytesRead === before &&
+      (error.code === "EPIPE" || error.code === "ECONNRESET") &&
+      error.cause === undefined
+    ) {
+      const failure = proxyError(
+        proxy,
+        "closed the tunnel as the request was sent",
+      );
+      error.cause = failure;
+      record(failure);
+    }
+  });
   try {
     if (options.protocol === "https:")
       direct({ ...options, httpSocket: socket }, callback);

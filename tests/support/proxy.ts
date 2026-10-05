@@ -13,9 +13,11 @@ export type ProxyRoute = (host: string, port: number) => number | undefined;
 
 /**
  * How a proxy treats a tunnel request: open it, close without answering,
- * never answer, or answer that it is open and reset the connection at once.
+ * never answer, answer that it is open and reset the connection at once,
+ * or answer and reset it when the first bytes for the upstream arrive.
  */
-export type ProxyBehaviour = "tunnel" | "close" | "silent" | "reset";
+export type ProxyBehaviour =
+  "tunnel" | "close" | "silent" | "reset" | "reset-on-request";
 
 export interface TestProxy {
   /** The proxy's address, without credentials. */

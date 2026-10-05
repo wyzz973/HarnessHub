@@ -534,6 +534,42 @@ void test("a proxy that resets a tunnel as soon as it opens fails the request as
   }
 });
 
+void test("a proxy that resets a tunnel as the request is sent fails it as a proxy failure, and logs it", async (t) => {
+  const proxy = await proxyOf(
+    t,
+    startConnectProxy({
+      route: () => undefined,
+      behaviour: "reset-on-request",
+    }),
+  );
+  const log = memoryLog();
+  const network = outbound(t, proxy.url, { log });
+  for (let n = 1; n <= 5; n++) {
+    const error = await network
+      .fetch(`http://api.upstream.test/${n}`, {
+        method: "POST",
+        body: "x".repeat(256 * 1024),
+        signal: AbortSignal.timeout(5_000),
+      })
+      .then(
+        () => assert.fail("expected the request to fail"),
+        (caught: unknown) => caught,
+      );
+    // The socket's own error (EPIPE or ECONNRESET) says the proxy did it,
+    // as the gateway reads it.
+    assert.match(
+      proxyFailure(error)?.message ?? String(error),
+      /closed the tunnel as the request was sent/,
+    );
+  }
+  assert.equal(proxy.connections, 5);
+  assert.equal(
+    log.records.filter((record) => record.event === "network.proxy_failed")
+      .length,
+    5,
+  );
+});
+
 void test("bytes a proxy sends after its answer fail the tunnel at once, with one connection", async (t) => {
   // Undici once reconnected without end when they came before its request.
   const reply = "HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nhi";

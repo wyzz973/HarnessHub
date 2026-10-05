@@ -105,10 +105,11 @@ export function testCertificate(names) {
  * @typedef {(host: string, port: number) => number | undefined} ProxyRoute
  *   Where a proxy sends a tunnel to `host:port`: a loopback port, or
  *   undefined to refuse it.
- * @typedef {"tunnel" | "close" | "silent" | "reset"} ProxyBehaviour How a
- *   proxy treats a tunnel request: open it, close the connection after
- *   reading the request without answering, read it and never answer, or
- *   answer that the tunnel is open and reset the connection at once.
+ * @typedef {"tunnel" | "close" | "silent" | "reset" | "reset-on-request"} ProxyBehaviour
+ *   How a proxy treats a tunnel request: open it, close the connection after
+ *   reading the request without answering, read it and never answer, answer
+ *   that the tunnel is open and reset the connection at once, or answer and
+ *   reset it when the first bytes for the upstream arrive.
  * @typedef {object} TestProxy
  * @property {string} url The proxy's address, without credentials.
  * @property {number} port
@@ -190,6 +191,10 @@ export async function startConnectProxy(options) {
     if (behaviour === "silent") return;
     if (behaviour === "reset")
       return void client.write("HTTP/1.1 200 Connection Established\r\n\r\n", () => client.resetAndDestroy());
+    if (behaviour === "reset-on-request") {
+      client.once("data", () => client.resetAndDestroy());
+      return void client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+    }
     if (options.credentials !== undefined && sent !== options.credentials)
       return void client.end(
         'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="test"\r\n\r\n',
