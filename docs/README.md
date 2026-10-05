@@ -17,7 +17,7 @@ The documents below are in Chinese unless marked **(English)**; English becomes 
 
 | Document | What it covers |
 |---|---|
-| [Features](features/README.md) | Every implemented feature point, grouped by plane: what it does, where to use it, where it is implemented, how far it is verified, its limits and optimization candidates; a summary of the candidates worth looking at first |
+| [Features](features/README.md) | HarnessHub's [positioning](features/positioning.md) against the current state, then every implemented feature point, grouped by plane: what it does, where to use it, where it is implemented, how far it is verified, its limits and optimization candidates; a summary of the candidates worth looking at first |
 | [Quickstart](quickstart.md) | `hh serve`, a provider from a preset (or the fake provider without a key), a Gateway Key, calls from OpenAI or Anthropic clients, usage and wiring an agent |
 | [Getting started](getting-started.md) | A fresh clone, ports, data directories, the console's pages, real engines and troubleshooting |
 | [Configuration](configuration.md) | `config.jsonc`: settings, precedence (flags, environment, file, defaults), validation, `hh config`, and what stays out of the file |
