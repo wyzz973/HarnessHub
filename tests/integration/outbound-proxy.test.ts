@@ -136,7 +136,7 @@ void test("the daemon's requests to providers, the catalog and OTLP go through n
   const proxy = await proxyOf(t, startConnectProxy({ route }));
   const socks = await proxyOf(t, startSocksProxy({ route }));
   const dead = `http://127.0.0.1:${await closedPort()}`;
-  const { client, ask, close } = await daemon(
+  const { client, ask, close, dataDir } = await daemon(
     t,
     { proxy: proxy.url },
     { otlp: { endpoint: "https://otel.upstream.test/v1/traces" } },
@@ -189,17 +189,16 @@ void test("the daemon's requests to providers, the catalog and OTLP go through n
   assert.deepEqual(socks.tunnels, ["api.upstream.test:443"]);
   assert.equal(proxy.tunnels.length, before);
 
-  // A dead proxy is a clear proxy failure, at once.
+  // A dead proxy is a clear proxy failure, at once. The caller is told
+  // briefly; the daemon's log names the proxy and the target.
   const started = Date.now();
   const failed = await ask(`broken/${MODEL}`);
   assert.ok(Date.now() - started < 5_000);
   assert.equal(failed.status, 502);
   const error = failed.body.error as { code: string; message: string };
   assert.equal(error.code, "proxy_failed");
-  assert.match(
-    error.message,
-    new RegExp(`The proxy ${dead.replace(/\./g, "\\.")} could not be reached`),
-  );
+  assert.equal(error.message, "The outbound proxy could not be reached");
+  assert.ok(!JSON.stringify(failed.body).includes(dead));
   const calls = await client.modelCalls.list({ limit: 1 });
   assert.equal(calls.items[0]!.errorClass, "proxy_failed");
   assert.ok(fake.violations().length === 0, JSON.stringify(fake.violations()));
@@ -209,6 +208,20 @@ void test("the daemon's requests to providers, the catalog and OTLP go through n
   assert.ok(
     proxy.tunnels.includes("otel.upstream.test:443"),
     JSON.stringify(proxy.tunnels),
+  );
+  const logged = (
+    await readFile(path.join(dataDir, "logs", "gateway.log"), "utf8")
+  )
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+    .filter((record) => record.event === "network.proxy_failed");
+  assert.ok(logged.length >= 1, "the proxy failure is logged");
+  assert.equal(logged[0]!.proxy, dead);
+  assert.equal(logged[0]!.target, "api.upstream.test:443");
+  assert.match(
+    String(logged[0]!.message),
+    new RegExp(`The proxy ${dead.replace(/\./g, "\\.")} could not be reached`),
   );
 });
 
@@ -286,7 +299,7 @@ void test("proxy credentials: the user in the address, the password from a secre
   );
 });
 
-void test("hh config show takes the proxy from HTTPS_PROXY and masks its password", async (t) => {
+void test("hh config show takes the proxy from HTTPS_PROXY and masks its password; NO_PROXY entries it cannot read are ignored with a warning", async (t) => {
   const { directory } = await temporaryDirectory(t, "hh-proxy-config-");
   const output = await new Promise<string>((resolve, reject) => {
     const child = spawn(
@@ -303,7 +316,8 @@ void test("hh config show takes the proxy from HTTPS_PROXY and masks its passwor
         env: {
           PATH: process.env.PATH ?? "",
           HTTPS_PROXY: `http://alice:${PROXY_PASSWORD}@proxy.corp:3128`,
-          NO_PROXY: ".corp.example,10.0.0.0/8",
+          // 192.168.* is how other tools write a range: ignored, not fatal.
+          NO_PROXY: ".corp.example,10.0.0.0/8,192.168.*",
         },
         stdio: ["ignore", "pipe", "pipe"],
       },
@@ -318,6 +332,7 @@ void test("hh config show takes the proxy from HTTPS_PROXY and masks its passwor
   assert.ok(!output.includes(PROXY_PASSWORD));
   const shown = JSON.parse(output) as {
     settings: { path: string; value: unknown; source: unknown }[];
+    warnings: string[];
   };
   const setting = (key: string) =>
     shown.settings.find((item) => item.path === key)!;
@@ -332,6 +347,9 @@ void test("hh config show takes the proxy from HTTPS_PROXY and masks its passwor
   assert.deepEqual(setting("network.noProxy").value, [
     ".corp.example",
     "10.0.0.0/8",
+  ]);
+  assert.deepEqual(shown.warnings, [
+    "NO_PROXY: 192.168.* is not a host, domain (.example.com), address or range; HarnessHub ignores that entry",
   ]);
 });
 

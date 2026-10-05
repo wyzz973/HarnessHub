@@ -523,7 +523,7 @@ export async function codexPassthrough(context: CodexRequest): Promise<void> {
     const network = networkFailure(error);
     const proxied = proxyFailure(error);
     if (proxied) {
-      value = failure(502, "proxy_failed", proxied.message);
+      value = failure(502, "proxy_failed", proxied.brief);
       source = "gateway";
     } else if (timedOut)
       value = failure(
@@ -652,7 +652,7 @@ export async function codexModels(
       error instanceof GatewayError
         ? failure(error.status, error.code, sanitize(error.message, secrets))
         : proxied
-          ? failure(502, "proxy_failed", proxied.message)
+          ? failure(502, "proxy_failed", proxied.brief)
           : network
             ? { ...network, message: sanitize(network.message, secrets) }
             : failure(500, "gateway_error", "Model gateway internal error");

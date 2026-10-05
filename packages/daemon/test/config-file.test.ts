@@ -292,6 +292,19 @@ void test("the proxy comes from --proxy, then HTTPS_PROXY and the like, then the
     kind: "env",
     name: "NO_PROXY",
   });
+  assert.deepEqual(environment.warnings, []);
+  // Other programs read NO_PROXY and accept forms HarnessHub does not:
+  // those entries are ignored with a warning, never a refusal to start.
+  const lenient = resolveConfig({
+    config: file,
+    env: { no_proxy: "192.168.*, <local>,a.com" },
+  });
+  assert.deepEqual(entry(lenient, "network.noProxy").value, ["a.com"]);
+  assert.deepEqual(lenient.warnings, [
+    "no_proxy: 192.168.* is not a host, domain (.example.com), address or range; HarnessHub ignores that entry",
+    "no_proxy: <local> is not a host, domain (.example.com), address or range; HarnessHub ignores that entry",
+  ]);
+  // The file is HarnessHub's own: such an entry there is refused (below).
   // A flag wins over the environment; direct turns the proxy off.
   const flagged = resolveConfig({
     config: file,
@@ -348,6 +361,11 @@ void test("the proxy comes from --proxy, then HTTPS_PROXY and the like, then the
       '{"network": {"noProxy": ["bad host"]}}',
       "CONFIG_INVALID",
       /network\.noProxy bad host is not a host/,
+    ],
+    [
+      '{"network": {"noProxy": ["192.168.*"]}}',
+      "CONFIG_INVALID",
+      /network\.noProxy 192\.168\.\* is not a host/,
     ],
     [
       '{"network": {"noProxy": ".corp.example"}}',

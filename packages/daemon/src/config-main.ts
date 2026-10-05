@@ -141,6 +141,7 @@ export async function main(argv: string[]): Promise<number> {
                   description: entry.description,
                 })),
                 runtime,
+                warnings: config.warnings,
               },
               null,
               2,
@@ -164,6 +165,7 @@ export async function main(argv: string[]): Promise<number> {
                 (setting) =>
                   `  ${setting.name}: ${setting.file} (${setting.command})`,
               ),
+              ...config.warnings.map((warning) => `WARNING: ${warning}`),
             ].join("\n"),
           );
         return 0;

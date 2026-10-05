@@ -1593,7 +1593,7 @@ async function send(
       return {
         ok: false,
         error: {
-          failure: failure(502, "proxy_failed", proxied.message),
+          failure: failure(502, "proxy_failed", proxied.brief),
           errorClass: "proxy_failed",
           source: "gateway",
           phase: "connect",

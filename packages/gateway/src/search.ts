@@ -293,9 +293,7 @@ export async function webSearch(
     } catch (error) {
       if (signal.aborted) throw error;
       const proxied = proxyFailure(error);
-      errors.push(
-        `${backend.kind}: ${proxied ? proxied.message : "no answer"}`,
-      );
+      errors.push(`${backend.kind}: ${proxied ? proxied.brief : "no answer"}`);
     } finally {
       timeout.dispose();
     }

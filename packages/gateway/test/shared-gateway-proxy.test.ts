@@ -23,14 +23,20 @@ import {
 
 const MESSAGES = [{ role: "user", content: "hi" }];
 
-/** What undici's fetch rejects with when the daemon's proxy fails. */
+/**
+ * What undici's fetch rejects with when the daemon's proxy fails: the
+ * message for the daemon's log, and the brief one for callers.
+ */
 function proxyDown(): TypeError {
   return new TypeError("fetch failed", {
     cause: Object.assign(
       new Error(
         "The proxy http://127.0.0.1:7890 could not be reached: connect ECONNREFUSED 127.0.0.1:7890",
       ),
-      { code: PROXY_FAILED },
+      {
+        code: PROXY_FAILED,
+        brief: "The outbound proxy could not be reached",
+      },
     ),
   });
 }
@@ -96,16 +102,15 @@ void test("upstream requests go through the outbound fetch with the provider's o
       ["near", undefined, "success"],
     ],
   );
-  // Alone, the proxy's failure is the answer: 502, named, and never a rest.
+  // Alone, the proxy's failure is the answer: 502, said briefly (the
+  // proxy's address is for the daemon's log), and never a rest.
   for (let round = 0; round < 4; round++) {
     const alone = await ask("far/model-a");
     assert.equal(alone.status, 502);
     const error = alone.json().error as { code?: string; message: string };
     assert.equal(error.code, "proxy_failed");
-    assert.match(
-      error.message,
-      /The proxy http:\/\/127\.0\.0\.1:7890 could not be reached/,
-    );
+    assert.equal(error.message, "The outbound proxy could not be reached");
+    assert.ok(!alone.text.includes("7890"), alone.text);
   }
   const calls = (await store.listModelCalls()).items;
   assert.equal(calls.at(-1)!.errorClass, "proxy_failed");
@@ -179,15 +184,13 @@ void test("the Codex passthrough and its model list go out through the outbound 
       "proxy_failed",
       path,
     );
-    assert.match(
-      failed.text,
-      /The proxy http:\/\/127\.0\.0\.1:7890 could not be reached/,
-    );
+    assert.match(failed.text, /The outbound proxy could not be reached/);
+    assert.ok(!failed.text.includes("7890"), failed.text);
   }
   assert.equal(store.entries.at(-1)!.errorClass, "proxy_failed");
 });
 
-void test("web search backends are asked through the outbound fetch, and a failed proxy is the reason given", async () => {
+void test("web search backends are asked through the outbound fetch, and a failed proxy is the reason given, briefly", async () => {
   const sent: string[] = [];
   const answer = await webSearch(
     "weather in Paris",
@@ -206,8 +209,8 @@ void test("web search backends are asked through the outbound fetch, and a faile
     },
   );
   assert.match(sent[0]!, /^https:\/\/search\.upstream\.test\/search\?/);
+  // The model reads this: no address, nothing the proxy wrote.
   assert.deepEqual(answer, {
-    error:
-      "searxng: The proxy http://127.0.0.1:7890 could not be reached: connect ECONNREFUSED 127.0.0.1:7890",
+    error: "searxng: The outbound proxy could not be reached",
   });
 });

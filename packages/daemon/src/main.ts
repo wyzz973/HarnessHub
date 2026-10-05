@@ -588,11 +588,10 @@ export async function startHub(options: {
           400,
         );
       }
-    outbound = new Outbound(
-      networkSettings,
-      proxyPassword,
-      options.outboundCa ? { ca: options.outboundCa } : {},
-    );
+    outbound = new Outbound(networkSettings, proxyPassword, {
+      ...(options.outboundCa ? { ca: options.outboundCa } : {}),
+      log: gatewayLog,
+    });
     const send = outbound.fetch;
     // As /system/info shows it: the user kept, a password in use as ***.
     let shownProxy: string | null = null;
@@ -1317,6 +1316,7 @@ export async function main(argv: string[]): Promise<void> {
       process.exitCode = 2;
       return;
     }
+    for (const warning of config.warnings) console.error(`WARNING: ${warning}`);
     const settings = startOptions(config);
     const { wiringHome, ...rest } = settings;
     const hub = await startHub({

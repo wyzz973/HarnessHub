@@ -10,9 +10,9 @@
 /**
  * `fetch` through the daemon's proxy policy. `options.proxy` is a
  * provider's own choice ({@link ProxyChoice}); absent, the daemon's setting
- * applies. Loopback is never proxied. A failure of the proxy itself rejects
- * like a network failure, a `TypeError` whose `cause.code` is
- * {@link PROXY_FAILED}.
+ * applies. Loopback and private networks are never proxied. A failure of
+ * the proxy itself rejects like a network failure, a `TypeError` whose
+ * `cause.code` is {@link PROXY_FAILED} (see {@link proxyFailure}).
  */
 export type OutboundFetch = (
   input: Parameters<typeof fetch>[0],
@@ -27,16 +27,31 @@ export type OutboundFetch = (
  */
 export const PROXY_FAILED = "PROXY_FAILED";
 
-/** The cause of a fetch failure, when the proxy failed: its message names the proxy without credentials. */
-export function proxyFailure(error: unknown): { message: string } | undefined {
+/**
+ * The cause of a fetch failure, when the proxy failed. `message` names the
+ * proxy (without credentials) and the tunnel's target, for the daemon's
+ * administrator (`hh provider test`, the log); `brief` names neither, for
+ * whoever made the request: a Gateway Key's caller, or a model reading a
+ * search result. Neither repeats text the proxy sent.
+ */
+export function proxyFailure(
+  error: unknown,
+): { message: string; brief: string } | undefined {
   for (let cause = error, depth = 0; cause && depth < 4; depth++) {
     const value = cause as {
       code?: unknown;
       message?: unknown;
+      brief?: unknown;
       cause?: unknown;
     };
     if (value.code === PROXY_FAILED && typeof value.message === "string")
-      return { message: value.message };
+      return {
+        message: value.message,
+        brief:
+          typeof value.brief === "string"
+            ? value.brief
+            : "The outbound proxy failed",
+      };
     cause = value.cause;
   }
   return undefined;

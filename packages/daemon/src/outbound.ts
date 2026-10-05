@@ -5,8 +5,9 @@
  * (provider calls, model lists, the catalog, subscription sign-ins, search,
  * sync, OTLP). Follows Magpie's `internal/netproxy` (yetone/magpie@2e340f7,
  * MIT): one proxy for every vendor, a provider's own proxy or `direct`, and
- * loopback never proxied. HarnessHub also leaves private networks and the
- * `network.noProxy` hosts direct.
+ * loopback never proxied. HarnessHub also leaves private networks direct,
+ * whichever proxy applies, and the `network.noProxy` hosts direct from the
+ * daemon's proxy.
  *
  * Tunnels are opened here rather than by undici's ProxyAgent: a proxy that
  * closes the connection after `CONNECT` without answering makes ProxyAgent
@@ -18,6 +19,7 @@ import { connect as connectTls } from "node:tls";
 import { Agent, buildConnector } from "undici";
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import { HubError } from "@harnesshub/core/errors";
+import { NO_LOG, type LogSink } from "@harnesshub/core/logging";
 import {
   displayProxy,
   parseProxyUrl,
@@ -50,7 +52,36 @@ function invalid(message: string): HubError {
   return new HubError("CONFIG_INVALID", message, 400);
 }
 
-/** One `noProxy` entry's problem, or undefined. */
+/**
+ * A `noProxy` entry's host and port: `[IPv6]:port`, a bare IPv6 address
+ * (which cannot carry a port), or `name:port`; undefined when it is none.
+ */
+function entryParts(
+  entry: string,
+): { name: string; port?: number; bracketed: boolean } | undefined {
+  const bracketed = /^\[([^\]]+)\](?::(\d{1,5}))?$/.exec(entry);
+  if (bracketed)
+    return {
+      name: bracketed[1]!,
+      ...(bracketed[2] !== undefined ? { port: Number(bracketed[2]) } : {}),
+      bracketed: true,
+    };
+  if (isIP(entry) === 6) return { name: entry, bracketed: false };
+  const named = /^([^:]*)(?::(\d{1,5}))?$/.exec(entry);
+  if (!named) return undefined;
+  return {
+    name: named[1]!,
+    ...(named[2] !== undefined ? { port: Number(named[2]) } : {}),
+    bracketed: false,
+  };
+}
+
+/**
+ * One `noProxy` entry's problem, or undefined. What it accepts is what
+ * {@link noProxyMatches} compares: `*`, an address range, an IPv4 or IPv6
+ * address in any notation (bracketed when it has a port), or a host or
+ * domain with an optional leading `.` or `*.`, trailing dot and port.
+ */
 export function noProxyProblem(entry: string): string | undefined {
   if (entry === "*") return undefined;
   const [address, prefix] = entry.split("/");
@@ -63,11 +94,19 @@ export function noProxyProblem(entry: string): string | undefined {
       ? undefined
       : `${entry} is not an address range such as 10.0.0.0/8`;
   }
-  return /^(?:\*?\.)?[A-Za-z0-9_.-]+(?::\d{1,5})?$|^\[[0-9A-Fa-f:.]+\](?::\d{1,5})?$|^[0-9A-Fa-f:]+$/.test(
-    entry,
+  const what = `${entry} is not a host, domain (.example.com), address or range`;
+  const parts = entryParts(entry);
+  if (
+    !parts ||
+    (parts.port !== undefined && (parts.port < 1 || parts.port > 65_535))
   )
+    return what;
+  if (isIP(parts.name)) return undefined;
+  // Brackets hold an IPv6 address only.
+  if (parts.bracketed) return what;
+  return /^(?:\*?\.)?[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.?$/.test(parts.name)
     ? undefined
-    : `${entry} is not a host, domain (.example.com), address or range`;
+    : what;
 }
 
 /**
@@ -130,16 +169,23 @@ export function splitNoProxy(text: string): string[] {
 
 const LOCAL_SUFFIXES = [".localhost", ".local", ".home.arpa", ".internal"];
 
-/** Loopback, private, link-local and shared (CGNAT, Tailscale) addresses. */
+/**
+ * This computer (loopback, and the unspecified addresses, a connection to
+ * which reaches it too), private, link-local and shared (CGNAT, Tailscale)
+ * addresses. BlockList also matches IPv4-mapped IPv6 forms
+ * (`::ffff:127.0.0.1`, `::ffff:7f00:1`) and any IPv6 notation.
+ */
 const PRIVATE = (() => {
   const list = new BlockList();
   list.addSubnet("127.0.0.0", 8, "ipv4");
+  list.addAddress("0.0.0.0", "ipv4");
+  list.addAddress("::1", "ipv6");
+  list.addAddress("::", "ipv6");
   list.addSubnet("10.0.0.0", 8, "ipv4");
   list.addSubnet("172.16.0.0", 12, "ipv4");
   list.addSubnet("192.168.0.0", 16, "ipv4");
   list.addSubnet("169.254.0.0", 16, "ipv4");
   list.addSubnet("100.64.0.0", 10, "ipv4");
-  list.addAddress("::1", "ipv6");
   list.addSubnet("fc00::", 7, "ipv6");
   list.addSubnet("fe80::", 10, "ipv6");
   return list;
@@ -150,31 +196,22 @@ function bare(hostname: string): string {
   return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
 }
 
-/** An IPv4 address an IPv6 one maps (`::ffff:10.0.0.1`), else the address. */
-function unmapped(address: string): string {
-  const match = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address);
-  return match ? match[1]! : address;
-}
-
-/** Whether `hostname` is this computer: `localhost`, `*.localhost` or a loopback address. */
-export function isLoopbackHost(hostname: string): boolean {
-  const host = unmapped(bare(hostname));
-  if (host === "localhost" || host.endsWith(".localhost")) return true;
-  const family = isIP(host);
-  if (family === 4) return host.startsWith("127.");
-  return family === 6 && host === "::1";
+/** Whether `address` is in `list`, in whichever notation; false for a name. */
+function listed(list: BlockList, address: string): boolean {
+  const family = isIP(address);
+  return family !== 0 && list.check(address, family === 4 ? "ipv4" : "ipv6");
 }
 
 /**
- * Whether `hostname` is on this computer or a private network: loopback,
- * a private, link-local or shared address, a name without dots, or a name
- * under `.local`, `.home.arpa` or `.internal`. A public name that resolves
- * to a private address is not known without a lookup; list it in noProxy.
+ * Whether `hostname` is on this computer or a private network: a loopback,
+ * unspecified, private, link-local or shared address in any notation, a
+ * name without dots, or a name under `.localhost`, `.local`, `.home.arpa`
+ * or `.internal`. A public name that resolves to a private address is not
+ * known without a lookup; list it in noProxy.
  */
 export function isPrivateHost(hostname: string): boolean {
-  const host = unmapped(bare(hostname));
-  const family = isIP(host);
-  if (family) return PRIVATE.check(host, family === 4 ? "ipv4" : "ipv6");
+  const host = bare(hostname);
+  if (isIP(host)) return listed(PRIVATE, host);
   return (
     host === "localhost" ||
     !host.includes(".") ||
@@ -182,31 +219,39 @@ export function isPrivateHost(hostname: string): boolean {
   );
 }
 
-/** Whether a `noProxy` entry covers `hostname` on `port`. */
+/**
+ * Whether a `noProxy` entry covers `hostname` on `port`. Addresses and
+ * ranges compare as addresses, so any IPv6 notation and IPv4-mapped forms
+ * match; names compare without case or a trailing dot.
+ */
 export function noProxyMatches(
   entry: string,
   hostname: string,
   port: number,
 ): boolean {
   if (entry === "*") return true;
-  const host = unmapped(bare(hostname));
+  const host = bare(hostname);
   if (entry.includes("/")) {
     const [address, prefix] = entry.split("/") as [string, string];
-    const family = isIP(host);
     const want = isIP(address);
-    if (!family || family !== want) return false;
+    if (!want) return false;
     const range = new BlockList();
     range.addSubnet(address, Number(prefix), want === 4 ? "ipv4" : "ipv6");
-    return range.check(host, family === 4 ? "ipv4" : "ipv6");
+    return listed(range, host);
   }
-  const bracketed = /^\[([^\]]+)\](?::(\d+))?$/.exec(entry);
-  const named = bracketed
-    ? undefined
-    : /^(.*?)(?::(\d+))?$/.exec(isIP(entry) === 6 ? `${entry}:` : entry);
-  const name = (bracketed ? bracketed[1]! : named![1]!).toLowerCase();
-  const wanted = bracketed ? bracketed[2] : named![2];
-  if (wanted !== undefined && Number(wanted) !== port) return false;
-  const base = name.replace(/^\*?\./, "");
+  const parts = entryParts(entry);
+  if (!parts) return false;
+  if (parts.port !== undefined && parts.port !== port) return false;
+  const family = isIP(parts.name);
+  if (family) {
+    const one = new BlockList();
+    one.addAddress(parts.name, family === 4 ? "ipv4" : "ipv6");
+    return listed(one, host);
+  }
+  const base = parts.name
+    .toLowerCase()
+    .replace(/\.$/, "")
+    .replace(/^\*?\./, "");
   return host === base || host.endsWith(`.${base}`);
 }
 
@@ -222,12 +267,33 @@ export interface ProxyTarget {
   password?: string;
 }
 
+/**
+ * A failure of the proxy. `message` names the proxy (without credentials)
+ * and the tunnel's target, for the daemon's log and its administrator;
+ * `brief` names neither, for whoever made the request (a Gateway Key's
+ * caller, a model reading a search result). Neither repeats text the proxy
+ * sent.
+ */
 class ProxyError extends Error {
   readonly code = PROXY_FAILED;
+  constructor(
+    message: string,
+    readonly brief: string,
+  ) {
+    super(message);
+  }
 }
 
-function proxyError(proxy: ProxyTarget, message: string): ProxyError {
-  return new ProxyError(`The proxy ${displayProxy(proxy.url)} ${message}`);
+/** `what` the proxy did; `brief` the same without the target or details. */
+function proxyError(
+  proxy: ProxyTarget,
+  what: string,
+  brief: string = what,
+): ProxyError {
+  return new ProxyError(
+    `The proxy ${displayProxy(proxy.url)} ${what}`,
+    `The outbound proxy ${brief}`,
+  );
 }
 
 function authority(host: string, port: number): string {
@@ -238,7 +304,7 @@ function authority(host: string, port: number): string {
  * Bytes from `socket` as they arrive, `need` at a time, failing on close,
  * error and the deadline the caller's timer enforces by destroying it.
  */
-function reader(socket: Socket, fail: (message: string) => Error) {
+function reader(socket: Socket, fail: (what: string, brief?: string) => Error) {
   let buffered = Buffer.alloc(0);
   let waiting:
     | {
@@ -278,7 +344,7 @@ function reader(socket: Socket, fail: (message: string) => Error) {
     check();
   };
   const onError = (error: Error) => {
-    ended ??= fail(`failed: ${error.message}`);
+    ended ??= fail(`failed: ${error.message}`, "failed");
     check();
   };
   socket.on("data", onData);
@@ -296,13 +362,16 @@ function reader(socket: Socket, fail: (message: string) => Error) {
       buffered = buffered.subarray(n);
       return part;
     },
-    /** Stop reading; bytes already read past the handshake go back to the socket. */
+    /** Bytes read and not taken yet. */
+    get pending(): number {
+      return buffered.length;
+    },
+    /** Stop reading; nothing is left over (a proxy that sent more failed). */
     release(): void {
       socket.off("data", onData);
       socket.off("end", onEnd);
       socket.off("close", onEnd);
       socket.off("error", onError);
-      if (buffered.length) socket.unshift(buffered);
     },
   };
 }
@@ -322,30 +391,36 @@ async function httpTunnel(
       `Proxy-Authorization: Basic ${Buffer.from(`${proxy.username}:${proxy.password ?? ""}`).toString("base64")}`,
     );
   socket.write(`${lines.join("\r\n")}\r\n\r\n`);
+  const notHttp = () =>
+    proxyError(proxy, "did not answer CONNECT as an HTTP proxy");
   const head = await read.take((data) => {
     const end = data.indexOf("\r\n\r\n");
+    // Lines end with CRLF; a bare LF would only be read at the deadline.
+    const lf = data.subarray(0, end >= 0 ? end + 4 : data.length);
+    for (let at = lf.indexOf(10); at >= 0; at = lf.indexOf(10, at + 1))
+      if (at === 0 || lf[at - 1] !== 13) throw notHttp();
     if (end >= 0) return end + 4;
     if (data.length > MAX_PROXY_ANSWER)
       throw proxyError(proxy, "sent an answer to CONNECT that is too long");
     return -1;
   });
-  const status = /^HTTP\/1\.[01] (\d{3})([^\r\n]*)/.exec(
+  // The reason phrase is the proxy's text: it is not repeated.
+  const status = /^HTTP\/1\.[01] (\d{3})(?: [^\r\n]*)?\r\n/.exec(
     head.toString("latin1"),
   );
-  if (!status)
-    throw proxyError(proxy, "did not answer CONNECT as an HTTP proxy");
+  if (!status) throw notHttp();
   const code = Number(status[1]);
   if (code >= 200 && code < 300) return;
-  const reason = status[2]!.trim();
   throw proxyError(
     proxy,
-    `refused the tunnel to ${target}: ${code}${reason ? ` ${reason}` : ""}${
+    `refused the tunnel to ${target}: ${code}${
       code === 407
         ? proxy.username === undefined
           ? " (it wants credentials: put them in the proxy address and network.proxyPassword, or in HTTPS_PROXY)"
           : " (it did not accept the credentials)"
         : ""
     }`,
+    `refused the tunnel: ${code}`,
   );
 }
 
@@ -368,6 +443,13 @@ async function socksTunnel(
   port: number,
   read: ReturnType<typeof reader>,
 ): Promise<void> {
+  // The request gives a name's length in one byte.
+  if (!isIP(host) && Buffer.byteLength(host) > 255)
+    throw proxyError(
+      proxy,
+      `cannot be asked for ${host.slice(0, 32)}…, a host name longer than 255 bytes`,
+      "cannot be asked for a host name longer than 255 bytes",
+    );
   const auth = proxy.username !== undefined;
   socket.write(Buffer.from(auth ? [5, 2, 0, 2] : [5, 1, 0]));
   const choice = await read.take((data) => (data.length >= 2 ? 2 : -1));
@@ -389,15 +471,18 @@ async function socksTunnel(
       ]),
     );
     const status = await read.take((data) => (data.length >= 2 ? 2 : -1));
+    if (status[0] !== 1)
+      throw proxyError(proxy, "sent a reply HarnessHub cannot read");
     if (status[1] !== 0)
       throw proxyError(proxy, "did not accept the credentials");
   } else if (choice[1] !== 0)
-    throw proxyError(
-      proxy,
-      auth
-        ? "accepts none of the sign-in methods offered"
-        : "wants credentials: put them in the proxy address and network.proxyPassword, or in HTTPS_PROXY",
-    );
+    throw auth
+      ? proxyError(proxy, "accepts none of the sign-in methods offered")
+      : proxyError(
+          proxy,
+          "wants credentials: put them in the proxy address and network.proxyPassword, or in HTTPS_PROXY",
+          "wants credentials",
+        );
   const family = isIP(host);
   const address =
     family === 4
@@ -412,6 +497,8 @@ async function socksTunnel(
   portBytes.writeUInt16BE(port);
   socket.write(Buffer.concat([Buffer.from([5, 1, 0]), address, portBytes]));
   const reply = await read.take((data) => {
+    if (data.length && data[0] !== 5)
+      throw proxyError(proxy, "sent a reply HarnessHub cannot read");
     if (data.length < 5) return -1;
     const length =
       data[3] === 1
@@ -425,11 +512,14 @@ async function socksTunnel(
       throw proxyError(proxy, "sent a reply HarnessHub cannot read");
     return data.length >= 4 + length + 2 ? 4 + length + 2 : -1;
   });
-  if (reply[1] !== 0)
+  if (reply[1] !== 0) {
+    const why = SOCKS_REPLIES[reply[1]!] ?? `reply ${reply[1]}`;
     throw proxyError(
       proxy,
-      `refused the tunnel to ${authority(host, port)}: ${SOCKS_REPLIES[reply[1]!] ?? `reply ${reply[1]}`}`,
+      `refused the tunnel to ${authority(host, port)}: ${why}`,
+      `refused the tunnel: ${why}`,
     );
+  }
 }
 
 function ipv6Bytes(address: string): Buffer {
@@ -475,18 +565,25 @@ export async function openTunnel(
       ? connectTls({
           host: proxyHost,
           port: proxyPort,
+          // SNI names a host, never an address (RFC 6066).
+          ...(isIP(proxyHost) ? {} : { servername: proxyHost }),
           ...(options.ca ? { ca: options.ca as string | string[] } : {}),
           ALPNProtocols: ["http/1.1"],
         })
       : connectTcp({ host: proxyHost, port: proxyPort });
-  const read = reader(socket, (message) => proxyError(proxy, message));
+  const read = reader(socket, (what, brief) => proxyError(proxy, what, brief));
   let timer: NodeJS.Timeout | undefined;
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
+      const within =
+        options.timeoutMs >= 1000
+          ? `${Math.round(options.timeoutMs / 1000)} s`
+          : `${options.timeoutMs} ms`;
       reject(
         proxyError(
           proxy,
-          `did not open a tunnel to ${authority(host, port)} within ${options.timeoutMs >= 1000 ? `${Math.round(options.timeoutMs / 1000)} s` : `${options.timeoutMs} ms`}`,
+          `did not open a tunnel to ${authority(host, port)} within ${within}`,
+          `did not open the tunnel within ${within}`,
         ),
       );
     }, options.timeoutMs);
@@ -502,13 +599,24 @@ export async function openTunnel(
             resolve,
           );
           unreachable = (error) =>
-            reject(proxyError(proxy, `could not be reached: ${error.message}`));
+            reject(
+              proxyError(
+                proxy,
+                `could not be reached: ${error.message}`,
+                "could not be reached",
+              ),
+            );
           closed = () => reject(proxyError(proxy, "closed the connection"));
           socket.once("error", unreachable);
           socket.once("close", closed);
         });
         if (socks) await socksTunnel(proxy, socket, host, port, read);
         else await httpTunnel(proxy, socket, host, port, read);
+        // Neither HTTP nor TLS lets the server speak first: bytes after the
+        // answer would be taken for the upstream's, and undici reconnects
+        // without end when an answer comes before its request.
+        if (read.pending > 0)
+          throw proxyError(proxy, "sent more than its answer to the tunnel");
       })(),
       deadline,
     ]);
@@ -519,6 +627,7 @@ export async function openTunnel(
       : proxyError(
           proxy,
           `failed: ${error instanceof Error ? error.message : String(error)}`,
+          "failed",
         );
   } finally {
     clearTimeout(timer);
@@ -540,7 +649,35 @@ export interface OutboundOptions {
    * NODE_EXTRA_CA_CERTS instead.
    */
   ca?: string | readonly string[];
+  /**
+   * Where each proxy failure is recorded as `network.proxy_failed`, with
+   * the proxy (without credentials) and the tunnel's target: the failure
+   * requests report says neither.
+   */
+  log?: LogSink;
 }
+
+/**
+ * `NO_PROXY` of the programs the daemon starts: what the daemon itself
+ * sends directly, in the forms such programs read (curl, npm and Node read
+ * names and suffixes; curl and newer tools also ranges). Names without dots
+ * cannot be written; they may go through the proxy.
+ */
+const CHILD_NO_PROXY = [
+  "localhost",
+  ".localhost",
+  "127.0.0.1",
+  "::1",
+  "127.0.0.0/8",
+  "10.0.0.0/8",
+  "172.16.0.0/12",
+  "192.168.0.0/16",
+  "169.254.0.0/16",
+  "100.64.0.0/10",
+  "fc00::/7",
+  "fe80::/10",
+  ...LOCAL_SUFFIXES.filter((suffix) => suffix !== ".localhost"),
+];
 
 /** Agents kept for providers' own proxies; past this many the oldest closes. */
 const MAX_OWN_AGENTS = 32;
@@ -557,6 +694,7 @@ export class Outbound {
   readonly #noProxy: readonly string[];
   readonly #options: Required<Pick<OutboundOptions, "connectTimeoutMs">> &
     OutboundOptions;
+  readonly #log: LogSink;
   /** The agent of the daemon's proxy, made on first use. */
   #shared: Agent | undefined;
   /** Agents of providers' own proxies, oldest first. */
@@ -581,6 +719,7 @@ export class Outbound {
       ...options,
       connectTimeoutMs: options.connectTimeoutMs ?? PROXY_CONNECT_TIMEOUT_MS,
     };
+    this.#log = options.log ?? NO_LOG;
   }
 
   /** The proxy in effect for the daemon, its password masked; undefined for none. */
@@ -645,13 +784,16 @@ export class Outbound {
     });
     const timeoutMs = this.#options.connectTimeoutMs;
     const ca = this.#options.ca;
+    const log = this.#log;
     const connector: buildConnector.connector = (options, callback) => {
       const host = bare(options.hostname);
       const portNumber =
         Number(options.port) || (options.protocol === "https:" ? 443 : 80);
+      // A provider's own proxy leaves this computer and private networks
+      // direct too: what may be sent there in plain text stays there.
       const via =
         own !== undefined
-          ? isLoopbackHost(host)
+          ? isPrivateHost(host)
             ? undefined
             : own
           : this.#routes(host, portNumber)
@@ -661,12 +803,22 @@ export class Outbound {
         direct(options, callback);
         return;
       }
+      // The proxy's failures are logged in full; requests say less.
+      const logged: buildConnector.Callback = (...args) => {
+        if (args[0] instanceof ProxyError)
+          log.info("network.proxy_failed", {
+            proxy: displayProxy(via.url),
+            target: authority(host, portNumber),
+            message: args[0].message,
+          });
+        callback(...args);
+      };
       openTunnel(via, host, portNumber, {
         timeoutMs,
         ...(ca ? { ca } : {}),
       }).then(
-        (socket) => handOver(via, socket, options, callback, direct),
-        (error: Error) => callback(error, null),
+        (socket) => handOver(via, socket, options, logged, direct),
+        (error: Error) => logged(error, null),
       );
     };
     const agent = new Agent({ connect: connector });
@@ -687,8 +839,9 @@ export class Outbound {
   /**
    * `environment` for a program the daemon starts that reaches the network
    * itself (npm, the Copilot host): its `*_PROXY` variables replaced by the
-   * daemon's proxy, credentials included, and `NO_PROXY` naming loopback and
-   * the `noProxy` hosts; without a proxy they are removed.
+   * daemon's proxy, credentials included, and `NO_PROXY` naming loopback,
+   * the private ranges and suffixes the daemon keeps direct, and the
+   * `noProxy` hosts; without a proxy they are removed.
    */
   childEnvironment(
     environment: Readonly<Record<string, string | undefined>>,
@@ -704,9 +857,7 @@ export class Outbound {
       url.password = encodeURIComponent(this.#proxy.password ?? "");
     }
     const address = `${url.protocol}//${url.username ? `${url.username}${url.password ? `:${url.password}` : ""}@` : ""}${url.host}`;
-    const bypass = ["localhost", "127.0.0.1", "::1", ...this.#noProxy].join(
-      ",",
-    );
+    const bypass = [...CHILD_NO_PROXY, ...this.#noProxy].join(",");
     for (const name of ["HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY"]) {
       result[name] = address;
       result[name.toLowerCase()] = address;

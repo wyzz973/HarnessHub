@@ -76,8 +76,14 @@ interface Setting {
   check(value: unknown): { value: unknown } | { error: string };
   /** The command-line flag of `hh serve` that sets it, and how its text reads. */
   flag?: { name: string; parse(text: string, cwd: string): unknown };
-  /** Documented environment variables that set it, the first one set winning. */
-  env?: readonly { name: string; read(text: string): unknown }[];
+  /**
+   * Documented environment variables that set it, the first one set
+   * winning. `warn` says what of a variable's text is ignored.
+   */
+  env?: readonly {
+    name: string;
+    read(text: string, warn: (message: string) => void): unknown;
+  }[];
   /**
    * Why a value in the file or a flag would expose a secret (flags show in
    * process lists); the environment may carry one.
@@ -282,9 +288,16 @@ const SETTINGS: readonly Setting[] = [
       }
       return ok(value.map((entry: string) => entry.trim()));
     },
+    // Other programs read the same variables and accept forms HarnessHub
+    // does not (192.168.*, <local>): those entries are ignored, not fatal.
     env: ["no_proxy", "NO_PROXY"].map((name) => ({
       name,
-      read: (text: string) => splitNoProxy(text),
+      read: (text: string, warn: (message: string) => void) =>
+        splitNoProxy(text).filter((entry) => {
+          const problem = noProxyProblem(entry);
+          if (problem) warn(`${problem}; HarnessHub ignores that entry`);
+          return problem === undefined;
+        }),
     })),
   },
   {
@@ -350,6 +363,11 @@ export interface ResolvedConfig {
   /** The configuration file read (it may not exist). */
   file: string;
   entries: ConfigEntry[];
+  /**
+   * What of the environment's settings is ignored, each naming its
+   * variable; `hh serve` and `hh config show` print them.
+   */
+  warnings: string[];
 }
 
 /** A configuration file as read: absent, or its text and parsed document. */
@@ -506,7 +524,9 @@ function checkSecrets(file: string, value: unknown, at: string[]): void {
 /**
  * Resolves every setting: a flag given (by its name, as text) wins over the
  * setting's environment variable, which wins over the file, which wins over
- * the default. `cwd` resolves relative paths given as flags.
+ * the default. `cwd` resolves relative paths given as flags. Entries of a
+ * variable that other programs read too and HarnessHub cannot (`NO_PROXY`)
+ * are ignored and reported in `warnings`.
  *
  * @throws HubError `CONFIG_INVALID` naming the flag or variable whose value
  *   is not valid.
@@ -517,6 +537,7 @@ export function resolveConfig(input: {
   flags?: Readonly<Record<string, string | undefined>>;
   cwd?: string;
 }): ResolvedConfig {
+  const warnings: string[] = [];
   const entries = SETTINGS.map((setting): ConfigEntry => {
     const base = { path: setting.path, description: setting.description };
     const flagged = setting.flag ? input.flags?.[setting.flag.name] : undefined;
@@ -537,7 +558,11 @@ export function resolveConfig(input: {
     for (const variable of setting.env ?? []) {
       const raw = input.env[variable.name];
       const fromEnv =
-        raw !== undefined && raw !== "" ? variable.read(raw) : undefined;
+        raw !== undefined && raw !== ""
+          ? variable.read(raw, (message) =>
+              warnings.push(`${variable.name}: ${message}`),
+            )
+          : undefined;
       if (fromEnv === undefined) continue;
       const result = setting.check(fromEnv);
       if ("error" in result)
@@ -553,7 +578,7 @@ export function resolveConfig(input: {
       return { ...base, value: filed, source: { kind: "file" } };
     return { ...base, value: setting.fallback, source: { kind: "default" } };
   });
-  return { file: input.config.file, entries };
+  return { file: input.config.file, entries, warnings };
 }
 
 /** The `startHub` options the configuration sets. */
