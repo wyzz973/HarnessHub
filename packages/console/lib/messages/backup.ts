@@ -88,6 +88,10 @@ export const zh = {
   "backup.restore.visionUnresolved":
     "本机没有这个模型或路由组（{reason}），仍按备份设置。",
   "backup.restore.visionKept": "视觉模型：备份中没有，保持本机的",
+  "backup.restore.alertsSame": "用量提醒：{percent}% 时提醒",
+  "backup.restore.alertsChanged": "用量提醒改为 {percent}% 时提醒",
+  "backup.restore.alertsOff": "用量提醒：关闭",
+  "backup.restore.alertsTurnOff": "用量提醒：由备份关闭",
   "backup.restore.turnsOffPreview":
     "这次恢复会关闭出站脱敏：本机现在开启，备份中是关闭的。恢复后，请求发往上游之前不再把已知的秘密换成占位符。",
   "backup.restore.turnsOffDone":
@@ -295,6 +299,10 @@ export const en: Translation<typeof zh> = {
     "This computer does not have that model or route group ({reason}); it is set as in the backup all the same.",
   "backup.restore.visionKept":
     "Vision model: not in the backup; this computer's stays",
+  "backup.restore.alertsSame": "Usage alerts: at {percent}%",
+  "backup.restore.alertsChanged": "Usage alerts change to {percent}%",
+  "backup.restore.alertsOff": "Usage alerts: off",
+  "backup.restore.alertsTurnOff": "Usage alerts: turned off by the backup",
   "backup.restore.turnsOffPreview":
     "This restore turns outbound redaction off: it is on here and off in the backup. After the restore, known secrets are no longer replaced with placeholders before requests go upstream.",
   "backup.restore.turnsOffDone":

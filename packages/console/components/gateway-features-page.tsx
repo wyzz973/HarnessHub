@@ -26,6 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { ModelPicker } from "@/components/model-picker";
 import {
+  alertPercentOf,
   ruleOf,
   rulesWith,
   searchKinds,
@@ -41,6 +42,7 @@ import {
   Checkbox,
   ConfirmDialog,
   ErrorCallout,
+  FieldError,
   LoadError,
   PageHeader,
   useLoaded,
@@ -334,6 +336,99 @@ function Vision({
   );
 }
 
+/** The usage alert's threshold: a share of an allowance window used, or off. */
+function UsageAlerts({
+  features,
+  onChange,
+}: {
+  features: GatewayFeaturesView;
+  onChange: (features: GatewayFeaturesView) => void;
+}) {
+  const current = features.alerts?.usagePercent;
+  const [text, setText] = useState(current?.toString() ?? "");
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<Failure | null>(null);
+  const run = async (percent: number | undefined) => {
+    setBusy(true);
+    setFailure(null);
+    try {
+      const client = modelPlane().gatewayFeatures;
+      const next =
+        percent === undefined
+          ? await client.clearAlerts()
+          : await client.setAlerts(percent);
+      onChange(next);
+      setText(next.alerts?.usagePercent.toString() ?? "");
+      notify.success(
+        percent === undefined
+          ? t("settings.alerts.turnedOff")
+          : t("settings.alerts.saved", { percent: String(percent) }),
+      );
+    } catch (reason) {
+      setFailure(failureOf(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Card
+      id="features-alerts"
+      title={t("settings.alerts.title")}
+      lede={t("settings.alerts.lede")}
+      aside={
+        <span className={`tag ${current !== undefined ? "good" : ""}`}>
+          {current !== undefined
+            ? t("settings.alerts.on", { percent: String(current) })
+            : t("settings.alerts.off")}
+        </span>
+      }
+    >
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="field-label w-40">
+          {t("settings.alerts.percent")}
+          <input
+            className="field"
+            inputMode="numeric"
+            value={text}
+            placeholder="80"
+            aria-invalid={!!failure?.fields["/usagePercent"]}
+            disabled={busy}
+            onChange={(event) => setText(event.target.value)}
+          />
+        </label>
+        <Button
+          variant="outline"
+          disabled={busy || !text.trim()}
+          onClick={() => {
+            const percent = alertPercentOf(text);
+            if (percent === undefined)
+              setFailure({
+                message: t("settings.alerts.wholeNumber"),
+                fields: { "/usagePercent": t("settings.alerts.wholeNumber") },
+                references: [],
+              });
+            else void run(percent);
+          }}
+        >
+          {busy ? <Loader2 className="animate-spin" /> : null}
+          {t("settings.alerts.save")}
+        </Button>
+        {current !== undefined ? (
+          <Button
+            variant="ghost"
+            disabled={busy}
+            onClick={() => void run(undefined)}
+          >
+            {t("settings.alerts.turnOff")}
+          </Button>
+        ) : null}
+      </div>
+      <FieldError failure={failure} pointer="/usagePercent" />
+      <ErrorCallout failure={failure} />
+    </Card>
+  );
+}
+
 /** Register a search API; its key is sent once and kept in the secret store. */
 function AddSearchDialog({
   onClose,
@@ -608,11 +703,14 @@ export function GatewayFeaturesPage({ tabs }: { tabs: React.ReactNode }) {
   }, []);
   const [data, reload] = useLoaded(load);
   const [features, setFeatures] = useState<GatewayFeaturesView | null>(null);
-  // `?section=redaction` or `?section=search` (from the backup page) opens at that card.
+  // `?section=redaction`, `search` or `alerts` (from the backup and usage pages) opens at that card.
   const section = new URLSearchParams(useSearch()).get("section");
   const ready = data.state === "ready";
   useEffect(() => {
-    if (ready && (section === "redaction" || section === "search"))
+    if (
+      ready &&
+      (section === "redaction" || section === "search" || section === "alerts")
+    )
       document
         .getElementById(`features-${section}`)
         ?.scrollIntoView({ block: "start" });
@@ -661,6 +759,10 @@ export function GatewayFeaturesPage({ tabs }: { tabs: React.ReactNode }) {
                 onChange={setFeatures}
               />
               <WebSearch
+                features={features ?? data.value.features}
+                onChange={setFeatures}
+              />
+              <UsageAlerts
                 features={features ?? data.value.features}
                 onChange={setFeatures}
               />

@@ -591,6 +591,7 @@ test("the restore summary and the sync status show the gateway features, redacti
     rules: { ...none, added: ["codename"] },
     vision: { model: "gone/vision", changed: true, unresolved: "no provider gone" },
     search: { ...none, replaced: ["tavily"], needKey: ["brave", "searxng https://search.example"] },
+    alerts: { usagePercent: null, changed: false },
   });
   assert.deepEqual(off.redaction, { label: "出站脱敏：由备份关闭", tone: "warn" });
   assert.deepEqual(off.vision, {
@@ -610,17 +611,19 @@ test("the restore summary and the sync status show the gateway features, redacti
     rules: none,
     vision: null,
     search: { ...none, needKey: [] },
+    alerts: { usagePercent: null, changed: false },
   });
   assert.deepEqual(same.redaction, { label: "出站脱敏：开启", tone: "" });
   assert.equal(same.vision.label, "视觉模型：备份中没有，保持本机的");
   assert.equal(
-    backup.restoreFeatures({ redaction: { enabled: true, turnsOff: false, turnsOn: true }, rules: none, vision: { model: "lab/v", changed: false }, search: { ...none, needKey: [] } }).redaction.tone,
+    backup.restoreFeatures({ redaction: { enabled: true, turnsOff: false, turnsOn: true }, rules: none, vision: { model: "lab/v", changed: false }, search: { ...none, needKey: [] }, alerts: { usagePercent: null, changed: false } }).redaction.tone,
     "good",
   );
 
   // The links land on the cards: the features page has their IDs and reads ?section=.
   const page = await readFile(new URL("../packages/console/components/gateway-features-page.tsx", import.meta.url), "utf8");
-  for (const [section, search] of Object.entries(backup.featureSections)) {
+  const { featureSections } = await consoleModule("lib/gateway-features.ts");
+  for (const [section, search] of Object.entries(featureSections)) {
     assert.equal(search, `?section=${section}`);
     assert.ok(page.includes(`id="features-${section}"`), section);
   }
@@ -628,6 +631,80 @@ test("the restore summary and the sync status show the gateway features, redacti
   assert.match(view, /gatewayFeatures\?\.redaction\.turnsOff/, "the preview and the result warn when redaction goes off");
   assert.match(view, /notice\?\.redactionOff/, "the sync status warns when redaction went off");
   assert.match(view, /notice\?\.needKey/);
+});
+
+test("usage CSV downloads go through the session client, and usage alerts read and dismiss as the daemon lists them", async () => {
+  const noSession = { 'import { apiClient } from "./session";': "const apiClient = undefined;" };
+  const exporter = await consoleModule("lib/usage-export.ts", noSession);
+  assert.equal(exporter.csvFileName({ kind: "calls" }, new Date(2026, 9, 5, 23, 59)), "harnesshub-calls-2026-10-05.csv");
+  assert.equal(exporter.csvFileName({ kind: "usage", groupBy: "credential" }, new Date(2026, 0, 2)), "harnesshub-usage-by-credential-2026-01-02.csv");
+  // A cookie-only GET is 401 now: the download is the SDK's request with the
+  // tab's token, never a plain link to the API.
+  const source = await readFile(new URL("../packages/console/lib/usage-export.ts", import.meta.url), "utf8");
+  assert.match(source, /client\.modelCalls\.csv\(filter\)/);
+  assert.match(source, /client\.usage\.csv\(\{ \.\.\.filter, groupBy: what\.groupBy \}\)/);
+  const pages = (await Promise.all(
+    ["components/usage-page.tsx", "lib/usage-export.ts"].map((file) => readFile(new URL(`../packages/console/${file}`, import.meta.url), "utf8")),
+  )).join("\n");
+  assert.doesNotMatch(pages, /href=\{?[`"']\/api\/v1/, "no plain link to the API");
+  // The SDK sends the token and asks for CSV.
+  const { HarnessHubClient } = await import(new URL("../packages/sdk/dist/src/client.js", import.meta.url).href);
+  const seen = [];
+  const client = new HarnessHubClient({
+    url: "http://127.0.0.1:1",
+    csrfToken: "t".repeat(43),
+    fetch: async (url, init) => {
+      seen.push({ url: String(url), headers: new Headers(init.headers) });
+      return new Response("model,calls\n", { headers: { "content-type": "text/csv; charset=utf-8" } });
+    },
+  });
+  await (await client.usage.csv({ groupBy: "model", from: "2026-10-01T00:00:00.000Z" })).cancel();
+  assert.equal(new URL(seen[0].url).pathname, "/api/v1/usage");
+  assert.equal(new URL(seen[0].url).searchParams.get("format"), "csv");
+  assert.equal(seen[0].headers.get("x-hh-csrf"), "t".repeat(43));
+
+  const alerts = await consoleModule("lib/usage-alerts.ts", noSession);
+  const list = {
+    usagePercent: 80,
+    items: [
+      { at: "2026-10-05T10:00:00.000Z", provider: "copilot", credential: "acct-1", credentialName: "work", window: "premium_interactions", usedPercent: 91.6, resetsAt: "2026-11-01T00:00:00.000Z" },
+      { at: "2026-10-04T10:00:00.000Z", provider: "lab", credential: "key-1", window: "x-custom", usedPercent: 80 },
+    ],
+  };
+  assert.equal(alerts.freshAlerts(list, undefined).length, 2);
+  assert.deepEqual(alerts.freshAlerts(list, "2026-10-04T10:00:00.000Z").map((item) => item.provider), ["copilot"], "dismissed up to the newest seen");
+  assert.deepEqual(alerts.freshAlerts(list, "2026-10-05T10:00:00.000Z"), []);
+  assert.deepEqual(alerts.freshAlerts(undefined, undefined), []);
+  assert.equal(alerts.alertText(list.items[0]), "copilot/work 的高级请求窗口已用 92%");
+  assert.equal(alerts.alertText(list.items[1]), "lab/key-1 的x-custom窗口已用 80%", "an unknown window and a removed credential show as named");
+  // The daemon's published list has the fields read here.
+  const openapi = JSON.parse(await readFile(new URL("../docs/api/openapi.json", import.meta.url), "utf8"));
+  const item = openapi.paths["/api/v1/usage/alerts"].get.responses["200"].content["application/json"].schema.properties.items.items;
+  for (const field of ["at", "provider", "credential", "credentialName", "window", "usedPercent", "resetsAt"])
+    assert.ok(field in item.properties, field);
+
+  const features = await consoleModule("lib/gateway-features.ts");
+  assert.deepEqual(["80", " 1 ", "100", "0", "101", "8.5", "x", ""].map(features.alertPercentOf), [80, 1, 100, undefined, undefined, undefined, undefined, undefined]);
+  const put = openapi.paths["/api/v1/gateway/features/alerts"].put.requestBody.content["application/json"].schema.properties.usagePercent;
+  assert.deepEqual([put.minimum, put.maximum], [1, 100], "the field's range is the daemon's");
+  const backup = await consoleModule("lib/backup.ts");
+  const base = {
+    redaction: { enabled: true, turnsOff: false, turnsOn: false },
+    rules: { added: [], replaced: [], removed: [] },
+    vision: null,
+    search: { added: [], replaced: [], removed: [], needKey: [] },
+  };
+  assert.deepEqual(
+    [
+      { usagePercent: 80, changed: false },
+      { usagePercent: 90, changed: true },
+      { usagePercent: null, changed: false },
+      { usagePercent: null, changed: true },
+    ].map((value) => backup.restoreFeatures({ ...base, alerts: value }).alerts),
+    ["用量提醒：80% 时提醒", "用量提醒改为 90% 时提醒", "用量提醒：关闭", "用量提醒：由备份关闭"],
+  );
+  const restored = openapi.paths["/api/v1/restore"].post.responses["200"].content["application/json"].schema.properties.gatewayFeatures;
+  assert.deepEqual(restored.properties.alerts.required, ["usagePercent", "changed"]);
 });
 
 test("the Library page sends MCP secrets as references or values and points at the rows a refusal names", async () => {

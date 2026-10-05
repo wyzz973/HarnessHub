@@ -52,7 +52,7 @@ export function failureText(
 }
 
 /** The name of an allowance window that sources report (others show as named). */
-function windowName(window: string): string {
+export function windowName(window: string): string {
   const key = `providers.window.${window}`;
   return isMessageKey(key) ? translate(key) : window;
 }

@@ -89,9 +89,21 @@ export function restoreFeatures(
   redaction: { label: string; tone: "good" | "warn" | "" };
   parts: SummaryPart[];
   vision: { label: string; unresolved?: string };
+  alerts: string;
 } {
-  const { redaction, rules, search, vision } = features;
+  const { redaction, rules, search, vision, alerts } = features;
   return {
+    alerts:
+      alerts.usagePercent === null
+        ? alerts.changed
+          ? t("backup.restore.alertsTurnOff")
+          : t("backup.restore.alertsOff")
+        : t(
+            alerts.changed
+              ? "backup.restore.alertsChanged"
+              : "backup.restore.alertsSame",
+            { percent: String(alerts.usagePercent) },
+          ),
     redaction: redaction.turnsOff
       ? { label: t("backup.restore.redactionTurnsOff"), tone: "warn" }
       : redaction.turnsOn
@@ -131,12 +143,6 @@ export function restoreFeatures(
       : { label: t("backup.restore.visionKept") },
   };
 }
-
-/** Where the restore summary and the sync status send people to add search keys or turn redaction back on. */
-export const featureSections = {
-  redaction: "?section=redaction",
-  search: "?section=search",
-} as const;
 
 /** The editable sync settings; secrets start empty and are sent once. */
 export interface SyncForm {

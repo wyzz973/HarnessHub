@@ -72,7 +72,7 @@ ACP 0.13.2 的 reducer 会把最新 breakdown 直接赋给名称为 `cumulative_
 | `GET /api/v1/model-calls?format=csv` | 同第一行；不分页，`limit` 不起作用，带 `cursor` 时 400 |
 | `GET /api/v1/usage?format=csv&groupBy=…` | 同第二行 |
 
-不带 `format` 时，`Accept` 把 `text/csv` 排在 `application/json`（或通配）之前也返回 CSV；`format=json` 总是 JSON。响应为 `text/csv; charset=utf-8`，带 `Content-Disposition: attachment; filename="harnesshub-calls-<日期>.csv"`（汇总为 `harnesshub-usage-by-<groupBy>-<日期>.csv`），SDK 为 `client.modelCalls.csv()` 与 `client.usage.csv()`（返回响应体的流）。调用 CSV 按每页 200 条流式写出，第一页在响应头之前读取，过滤无效时仍是 400 的 problem+json。控制台的下载按钮尚未提供。
+不带 `format` 时，`Accept` 把 `text/csv` 排在 `application/json`（或通配）之前也返回 CSV；`format=json` 总是 JSON。响应为 `text/csv; charset=utf-8`，带 `Content-Disposition: attachment; filename="harnesshub-calls-<日期>.csv"`（汇总为 `harnesshub-usage-by-<groupBy>-<日期>.csv`），SDK 为 `client.modelCalls.csv()` 与 `client.usage.csv()`（返回响应体的流）。调用 CSV 按每页 200 条流式写出，第一页在响应头之前读取，过滤无效时仍是 400 的 problem+json。控制台的用量页有“下载调用 CSV”与“下载汇总 CSV”（按所选的时间范围与分组），经 SDK 发出带会话令牌的请求后把响应体存为文件，因为只带 Cookie 的 GET 会得到 401。
 
 写法与 Magpie 的 Go `encoding/csv` 相同：UTF-8，没有 BOM（Magpie 也没有），LF 换行；字段含逗号、引号、CR、LF 或以空白开头时加引号，引号写两次。Magpie 没有、HarnessHub 另加的是公式注入防护：以 `=`、`+`、`-`、`@`、制表符或回车开头的字段前加 `'`，纯数字（如 `-5`）除外。
 

@@ -151,6 +151,17 @@ export const zh = {
   "settings.vision.privacy":
     "图片发给视觉模型所在的 provider，而不只是目标模型的 provider。",
 
+  "settings.alerts.title": "用量提醒",
+  "settings.alerts.lede":
+    "某个凭据的额度窗口用到这个百分比时提醒。读数来自上游答复的限流响应头与 Copilot 的额度；守护进程启动 1 分钟后、之后每 5 分钟查看一次，每个窗口每轮只提醒一次。提醒显示在用量页与导航中，也写进 gateway.log。HarnessHub 读不到余额，因此没有余额提醒。",
+  "settings.alerts.percent": "提醒阈值（%）",
+  "settings.alerts.save": "保存",
+  "settings.alerts.turnOff": "关闭提醒",
+  "settings.alerts.on": "{percent}% 时提醒",
+  "settings.alerts.off": "已关闭",
+  "settings.alerts.saved": "用量到 {percent}% 时提醒",
+  "settings.alerts.turnedOff": "用量提醒已关闭",
+  "settings.alerts.wholeNumber": "请填写 1 到 100 的整数",
   "settings.search.addTitle": "添加搜索后端",
   "settings.search.addLede":
     "网关按登记顺序使用后端，前一个失败或没有结果时用下一个。查询发出之前同样经过出站脱敏。",
@@ -338,6 +349,17 @@ export const en: Translation<typeof zh> = {
   "settings.vision.privacy":
     "Images are sent to the vision model's provider, not only to the target model's provider.",
 
+  "settings.alerts.title": "Usage alerts",
+  "settings.alerts.lede":
+    "Alert when a credential's allowance window reaches this share used. The readings come from the rate-limit headers of upstream replies and from Copilot's allowance; the daemon looks one minute after it starts and then every five minutes, and alerts once per run of a window. Alerts show on the Usage page and in the navigation, and go to gateway.log. HarnessHub reads no balances, so there are no balance alerts.",
+  "settings.alerts.percent": "Alert threshold (%)",
+  "settings.alerts.save": "Save",
+  "settings.alerts.turnOff": "Turn alerts off",
+  "settings.alerts.on": "Alerts at {percent}%",
+  "settings.alerts.off": "Off",
+  "settings.alerts.saved": "Usage alerts at {percent}%",
+  "settings.alerts.turnedOff": "Usage alerts are off",
+  "settings.alerts.wholeNumber": "Enter a whole number from 1 to 100",
   "settings.search.addTitle": "Add a search backend",
   "settings.search.addLede":
     "The gateway uses backends in the order they were added, the next one when one fails or finds nothing. Queries also go through outbound redaction before they are sent.",

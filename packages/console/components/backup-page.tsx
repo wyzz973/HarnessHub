@@ -28,7 +28,6 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   backupFileName,
-  featureSections,
   libraryChanged,
   readBackupFile,
   restoreAgentAction,
@@ -38,6 +37,7 @@ import {
   syncSettings,
   type SyncForm,
 } from "@/lib/backup";
+import { featureSections } from "@/lib/gateway-features";
 import { t } from "@/lib/i18n";
 import { tr } from "@/lib/i18n-react";
 import { installedLibraryAgents } from "@/lib/library";
@@ -445,6 +445,7 @@ function RestoreSummaryView({
                   {features.vision.unresolved}
                 </span>
               ) : null}
+              <span className="text-[12.5px]">{features.alerts}</span>
               {features.parts.some((part) => part.items.length) ? (
                 <Changes parts={features.parts} />
               ) : null}

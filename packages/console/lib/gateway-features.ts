@@ -60,3 +60,22 @@ export function rulesWith(
     change.add,
   ];
 }
+
+/** The usage alert's threshold as typed: a whole percent from 1 to 100, else undefined. */
+export function alertPercentOf(text: string): number | undefined {
+  const value = text.trim();
+  if (!/^\d{1,3}$/.test(value)) return undefined;
+  const percent = Number(value);
+  return percent >= 1 && percent <= 100 ? percent : undefined;
+}
+
+/**
+ * Links to one card of the features page (`/settings/features?section=`):
+ * the backup page sends people to turn redaction back on or add search
+ * keys, the usage page to the alert threshold.
+ */
+export const featureSections = {
+  redaction: "?section=redaction",
+  search: "?section=search",
+  alerts: "?section=alerts",
+} as const;

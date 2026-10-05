@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MIT
 import { useCallback, useState } from "react";
 import {
+  BellRing,
   ChevronLeft,
   ChevronRight,
+  Download,
+  Loader2,
   MessagesSquare,
   RefreshCw,
   TriangleAlert,
@@ -19,11 +22,20 @@ import {
   usd,
   type UsageRange,
 } from "@/lib/model-plane";
+import { featureSections } from "@/lib/gateway-features";
 import { t } from "@/lib/i18n";
+import { tr } from "@/lib/i18n-react";
 import { duration, finishReasonText, quantity } from "@/lib/presentation";
 import { errorClassText } from "@/lib/routing-state";
+import { notify } from "@/lib/toast";
+import {
+  alertText,
+  dismissUsageAlerts,
+  useUsageAlerts,
+} from "@/lib/usage-alerts";
+import { downloadUsageCsv } from "@/lib/usage-export";
 import { cn } from "@/lib/utils";
-import type { Page } from "@/lib/router";
+import { navigate, type Page } from "@/lib/router";
 import {
   EmptyState,
   LoadError,
@@ -183,6 +195,101 @@ function CallsTable({ calls }: { calls: readonly ApiModelCall[] }) {
   );
 }
 
+/** Download the calls or the sums shown, as CSV; the request carries the session like every other. */
+function CsvButton({
+  what,
+  from,
+  label,
+}: {
+  what: { kind: "calls" } | { kind: "usage"; groupBy: UsageGroupBy };
+  from: string | undefined;
+  label: string;
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={busy}
+      onClick={() => {
+        setBusy(true);
+        downloadUsageCsv(what, from ? { from } : {}).then(
+          () => setBusy(false),
+          (reason: unknown) => {
+            setBusy(false);
+            notify.error(reason, t("usage.csv.failed"));
+          },
+        );
+      }}
+    >
+      {busy ? <Loader2 className="animate-spin" /> : <Download />}
+      {label}
+    </Button>
+  );
+}
+
+/** Usage alerts not yet dismissed in this browser, with the way to the threshold. */
+function AlertsNotice() {
+  const { list, fresh } = useUsageAlerts();
+  if (!fresh.length) return null;
+  const shown = fresh.slice(0, 5);
+  return (
+    <div role="status" className="callout warn mt-6 items-start">
+      <BellRing className="mt-0.5 size-4 shrink-0" />
+      <div className="min-w-0 flex-1 space-y-1">
+        <p className="font-medium">{t("usage.alerts.title")}</p>
+        <ul className="space-y-0.5">
+          {shown.map((alert) => (
+            <li
+              key={`${alert.at}\u0000${alert.provider}\u0000${alert.credential}\u0000${alert.window}`}
+            >
+              {alertText(alert)}
+              <span className="text-[12px] opacity-80">
+                {" · "}
+                {tr("usage.alerts.at", {
+                  time: <LocalTime value={alert.at} />,
+                })}
+                {alert.resetsAt ? (
+                  <>
+                    {" · "}
+                    {tr("usage.alerts.resets", {
+                      time: <LocalTime value={alert.resetsAt} />,
+                    })}
+                  </>
+                ) : null}
+              </span>
+            </li>
+          ))}
+        </ul>
+        {fresh.length > shown.length ? (
+          <p>{t("usage.alerts.more", { n: fresh.length - shown.length })}</p>
+        ) : null}
+        {list?.usagePercent != null ? (
+          <p className="text-[12px]">
+            {t("usage.alerts.threshold", {
+              percent: String(list.usagePercent),
+            })}
+          </p>
+        ) : null}
+      </div>
+      <div className="flex shrink-0 flex-col gap-1.5 sm:flex-row">
+        <Button
+          size="xs"
+          variant="outline"
+          onClick={() =>
+            navigate("features", { search: featureSections.alerts })
+          }
+        >
+          {t("usage.alerts.settings")}
+        </Button>
+        <Button size="xs" variant="outline" onClick={dismissUsageAlerts}>
+          {t("usage.alerts.dismiss")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /** Recent `model.call` entries, newest first, one cursor page at a time. */
 function RecentCalls({ from }: { from: string | undefined }) {
   const [cursors, setCursors] = useState<(string | undefined)[]>([undefined]);
@@ -202,6 +309,11 @@ function RecentCalls({ from }: { from: string | undefined }) {
       <div className="mt-9 mb-3 flex items-center justify-between gap-3">
         <h2 className="section-title">{t("usage.recent")}</h2>
         <div className="flex shrink-0 items-center gap-1">
+          <CsvButton
+            what={{ kind: "calls" }}
+            from={from}
+            label={t("usage.csv.calls")}
+          />
           <Button
             size="icon-sm"
             variant="ghost"
@@ -314,6 +426,11 @@ function Summary({ from }: { from: string | undefined }) {
       </div>
       <div className="mt-9 mb-3 flex flex-wrap items-center justify-between gap-3">
         <h2 className="section-title">{t("usage.summary")}</h2>
+        <CsvButton
+          what={{ kind: "usage", groupBy }}
+          from={from}
+          label={t("usage.csv.usage")}
+        />
         <div
           className="segmented"
           role="tablist"
@@ -685,6 +802,7 @@ export function UsagePage({
             <RefreshCw />
           </Button>
         </PageHeader>
+        <AlertsNotice />
         {tab === "usage" ? (
           <Summary key={from ?? "all"} from={from} />
         ) : (

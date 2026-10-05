@@ -33,6 +33,7 @@ import { t, type MessageKey } from "@/lib/i18n";
 import type { Page } from "@/lib/router";
 import { useIsMac } from "@/lib/platform";
 import { useTheme } from "@/lib/theme";
+import { useUsageAlerts } from "@/lib/usage-alerts";
 import { cn } from "@/lib/utils";
 
 export interface HistoryItem {
@@ -197,6 +198,7 @@ export function Sidebar({
 }) {
   const [theme, setTheme] = useTheme();
   const mac = useIsMac();
+  const alerts = useUsageAlerts().fresh.length;
   const groups = groupByDay(history, Date.now());
   const healthy = health === "ready" && !syncError;
   return (
@@ -240,6 +242,16 @@ export function Sidebar({
             active={page === item.page || (item.also?.includes(page) ?? false)}
             collapsed={collapsed}
             onClick={() => onOpenPage(item.page)}
+            trailing={
+              item.page === "usage" && alerts ? (
+                <span
+                  className="dot warn"
+                  role="img"
+                  aria-label={t("usage.alerts.nav", { n: alerts })}
+                  title={t("usage.alerts.nav", { n: alerts })}
+                />
+              ) : undefined
+            }
           />
         ))}
         <h2 className="history-group sidebar-label pt-3">
