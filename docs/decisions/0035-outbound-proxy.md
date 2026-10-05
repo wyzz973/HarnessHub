@@ -23,6 +23,7 @@ Magpie 的做法：自己的设置（或 `direct`）优先，其次是 `*_PROXY`
    - **引擎自己的请求**：Session Run 启动的 Claude Code、Codex 等用它们自己的 HTTP 客户端与环境（例如用自己的登录直连厂商）；走共享网关的调用只到回环上的守护进程。
    - 网关对自己的内部调用（视觉兜底、分类器）只走回环；`hh` 命令只连接本机守护进程。
 7. **undici 成为守护进程的依赖**：`undici` 7.29.1（MIT，已经因 `openai` 在锁文件中）列入 `@harnesshub/daemon` 的依赖，只用它的 `Agent` 与 `buildConnector`。Node 24.20.0 自带的 undici 是 7.29.0，`fetch` 接受同一主版本的 dispatcher；两者的类型不同，传入处有一次类型转换。单可执行文件把它打包进去。
+8. **没有代理时也用自己的 `Agent`**（2026-10-05 补充）：不经代理的请求（没有配置代理，或 provider 选 `direct`）共用一个直连的 `Agent`，不用 Node 的全局分发器。Node 24.20.0 自带的 undici 7.29.0 的全局分发器让每个请求多约 1.4 ms：回环上的顺序请求 p50 为 1.46 ms，同一个 `fetch` 带 npm `undici` 7.29.1 的 `Agent` 为 0.054 ms；连接都被复用，一次写出整个应答的原始 TCP 服务也是 1.4–1.6 ms，所以时间在客户端；Node 25.9（自带 undici 7.24.4）为 0.072 ms。网关基准中附加延迟 p50 由 2.35 ms 降到 0.84 ms（[性能基准](../../tests/perf/README.md#回归检查)）。换用更新的 Node 时复测这一点；全局分发器不再慢时这个 `Agent` 也没有坏处。
 
 ## 考虑过的替代方案
 
