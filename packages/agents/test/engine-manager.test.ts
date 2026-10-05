@@ -18,10 +18,10 @@ const ports = {
   inferAdapter: builtinConfigurationAdapter,
 };
 const first: HarnessModel = {
-  model: "GLM-V5_1-DX",
+  model: "Example-Model_1",
   provider: {
     protocol: "openai-completions",
-    baseUrl: "http://aigateway.example/v1",
+    baseUrl: "http://upstream.example/v1",
     apiKey: { kind: "env", value: "UPSTREAM_MODEL_API_KEY" },
   },
 };
@@ -169,7 +169,7 @@ void test("the unified model covers file, reload, API and restored overlay regis
   const effective = byId(setup.manager.list());
   const declared = byId(setup.manager.declared());
   const opencode = effective.get("opencode")!;
-  assert.equal(opencode.model, "GLM-V5_1-DX");
+  assert.equal(opencode.model, "Example-Model_1");
   assert.equal(opencode.credentialEnv, undefined);
   assert.deepEqual(opencode.configuration?.provider, {
     ...first.provider,
@@ -188,11 +188,11 @@ void test("the unified model covers file, reload, API and restored overlay regis
   );
 
   const registered = await setup.manager.register(apiEngine);
-  assert.equal(registered.model, "GLM-V5_1-DX");
+  assert.equal(registered.model, "Example-Model_1");
   assert.equal(registered.credentialEnv, undefined);
   assert.equal(
     registered.configuration?.provider?.baseUrl,
-    "http://aigateway.example/v1",
+    "http://upstream.example/v1",
   );
   assert.equal(
     byId(setup.manager.declared()).get("copilot")!.model,
@@ -212,7 +212,7 @@ void test("the unified model covers file, reload, API and restored overlay regis
   );
   await setup.manager.reload();
   const reloaded = byId(setup.manager.list()).get("hermes")!;
-  assert.equal(reloaded.model, "GLM-V5_1-DX");
+  assert.equal(reloaded.model, "Example-Model_1");
   assert.equal(reloaded.configuration?.adapter, "hermes");
 
   const before = byId(setup.manager.list());
@@ -224,7 +224,7 @@ void test("the unified model covers file, reload, API and restored overlay regis
     assert.equal(after.get(id)!.model, "deepseek-flash", id);
     assert.equal(
       setup.manager.resolve(id, before.get(id)!.revision).model,
-      "GLM-V5_1-DX",
+      "Example-Model_1",
       id,
     );
   }

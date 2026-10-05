@@ -46,7 +46,7 @@ const stub = (id = "stub") => ({
   },
 });
 const firstModel = {
-  model: "GLM-V5_1-DX",
+  model: "Example-Model_1",
   provider: {
     protocol: "openai-completions",
     baseUrl: "http://127.0.0.1:9/v1",
@@ -158,7 +158,7 @@ void test(
     assert.equal(put.value.source, "file");
     assert.equal(
       JSON.parse(await readFile(modelFile, "utf8")).model,
-      "GLM-V5_1-DX",
+      "Example-Model_1",
     );
 
     const registered = await call<EngineProfile>(
@@ -168,7 +168,7 @@ void test(
       stub(),
     );
     assert.equal(registered.status, 201, JSON.stringify(registered.value));
-    assert.equal(registered.value.model, "GLM-V5_1-DX");
+    assert.equal(registered.value.model, "Example-Model_1");
     assert.equal(registered.value.credentialEnv, undefined);
     assert.deepEqual(registered.value.configuration?.provider, {
       ...firstModel.provider,
@@ -222,7 +222,7 @@ void test(
     assert.equal(applied.status, 200, JSON.stringify(applied.value));
     const packed = hub.app.engineProfile("stub");
     assert.equal(packed.revision, applied.value.revision);
-    assert.equal(packed.model, "GLM-V5_1-DX");
+    assert.equal(packed.model, "Example-Model_1");
     assert.equal(packed.credentialEnv, undefined);
     assert.ok(
       packed.configuration?.mcpServers?.some(
@@ -236,7 +236,7 @@ void test(
       })
     ).value;
     assert.equal(oldSession.profileRevision, packed.revision);
-    assert.equal(oldSession.configSnapshot?.model, "GLM-V5_1-DX");
+    assert.equal(oldSession.configSnapshot?.model, "Example-Model_1");
     const firstRun = await execute(hub, oldSession);
     assert.equal(firstRun.configSnapshot?.profileRevision, packed.revision);
 

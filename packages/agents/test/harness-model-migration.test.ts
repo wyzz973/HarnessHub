@@ -21,10 +21,10 @@ import type {
 } from "@harnesshub/core/model-plane";
 
 const unified: HarnessModel = {
-  model: "GLM-V5_1-DX",
+  model: "Example-Model_1",
   provider: {
     protocol: "openai-completions",
-    baseUrl: "http://aigateway.example/v1",
+    baseUrl: "http://upstream.example/v1",
     apiKey: { kind: "keychain", value: "harnesshub/upstream" },
     headers: { "X-Tenant": "contest" },
     contextWindow: 131072,
@@ -44,7 +44,7 @@ void test("the unified model maps to a translate-only provider with the legacy n
     "2026-10-03T00:00:00.000Z",
   );
   assert.ok(!("unsupported" in provider));
-  assert.deepEqual(provider.endpoints, { chat: "http://aigateway.example/v1" });
+  assert.deepEqual(provider.endpoints, { chat: "http://upstream.example/v1" });
   assert.deepEqual(provider.credentials, [
     {
       id: "migrated",
@@ -57,7 +57,7 @@ void test("the unified model maps to a translate-only provider with the legacy n
   assert.deepEqual(provider.models.list, [
     {
       id: "default",
-      wire: "GLM-V5_1-DX",
+      wire: "Example-Model_1",
       contextWindow: 131072,
       maxOutputTokens: 16384,
       inputModalities: ["text", "image"],

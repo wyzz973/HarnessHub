@@ -6,7 +6,7 @@ import type { ModelProviderConfiguration } from "./engine-configuration.js";
  * engines reach it only through the Worker-owned model gateway (ADR 0013).
  */
 export interface HarnessModel {
-  /** Real upstream model id, e.g. `GLM-V5_1-DX`. */
+  /** Real upstream model id, e.g. `deepseek-chat`. */
   model: string;
   /** Model id shown to engines. Defaults to {@link HARNESS_MODEL_ALIAS}. */
   alias?: string;

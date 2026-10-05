@@ -28,10 +28,10 @@ const ports = {
   inferAdapter: builtinConfigurationAdapter,
 };
 const unified: HarnessModel = {
-  model: "GLM-V5_1-DX",
+  model: "Example-Model_1",
   provider: {
     protocol: "openai-completions",
-    baseUrl: "http://aigateway.example/v1",
+    baseUrl: "http://upstream.example/v1",
     apiKey: { kind: "env", value: "UPSTREAM_MODEL_API_KEY" },
     contextWindow: 131072,
     maxOutputTokens: 16384,
@@ -51,17 +51,17 @@ void test("environment source needs HARNESSHUB_MODEL and stores only the key var
   );
   const key = "sk-environment-secret-value-123456";
   const model = harnessModelFromEnvironment({
-    HARNESSHUB_MODEL: " GLM-V5_1-DX ",
-    HARNESSHUB_MODEL_BASE_URL: "http://aigateway.example/v1",
+    HARNESSHUB_MODEL: " Example-Model_1 ",
+    HARNESSHUB_MODEL_BASE_URL: "http://upstream.example/v1",
     HARNESSHUB_MODEL_API_KEY: key,
     HARNESSHUB_MODEL_CONTEXT_WINDOW: "131072",
     HARNESSHUB_MODEL_MAX_OUTPUT_TOKENS: "8192",
   });
   assert.deepEqual(model, {
-    model: "GLM-V5_1-DX",
+    model: "Example-Model_1",
     provider: {
       protocol: "openai-completions",
-      baseUrl: "http://aigateway.example/v1",
+      baseUrl: "http://upstream.example/v1",
       apiKey: { kind: "env", value: "HARNESSHUB_MODEL_API_KEY" },
       contextWindow: 131072,
       maxOutputTokens: 8192,
@@ -354,7 +354,7 @@ void test("applying the unified model overrides vendor model, provider and crede
   const plan = applyHarnessModel(registration, active);
   assert.equal(JSON.stringify(registration), before);
   assert.equal(plan.status, "applied");
-  assert.equal(plan.registration.model, "GLM-V5_1-DX");
+  assert.equal(plan.registration.model, "Example-Model_1");
   assert.equal(plan.registration.credentialEnv, undefined);
   assert.deepEqual(plan.registration.configuration, {
     adapter: "opencode",
@@ -432,7 +432,7 @@ void test("applying the unified model overrides vendor model, provider and crede
     active,
   );
   assert.equal(stopped.status, "disabled");
-  assert.equal(stopped.registration.model, "GLM-V5_1-DX");
+  assert.equal(stopped.registration.model, "Example-Model_1");
 });
 
 void test("evaluation validates with the engine layer, disables rejected registrations and is deterministic", () => {
@@ -539,7 +539,7 @@ void test("the service exempts demo engines, rejects saving while the environmen
   assert.equal(policy.apply(declared[0]!).profile, declared[0]);
   await assert.rejects(service.test({}), code("HARNESS_MODEL_NOT_CONFIGURED"));
   const view = await service.set(unified);
-  assert.deepEqual(refreshed, ["GLM-V5_1-DX"]);
+  assert.deepEqual(refreshed, ["Example-Model_1"]);
   assert.equal(view.source, "file");
   assert.deepEqual(
     view.engines.map((engine) => [engine.engineId, engine.status]),
@@ -559,7 +559,7 @@ void test("the service exempts demo engines, rejects saving while the environmen
     service.set({ ...unified, provider: { ...unified.provider, apiKey: "x" } }),
     code("INVALID_HARNESS_MODEL"),
   );
-  assert.deepEqual(refreshed, ["GLM-V5_1-DX"]);
+  assert.deepEqual(refreshed, ["Example-Model_1"]);
 
   const fromEnvironment = await HarnessModelService.load({
     environment: {
@@ -591,8 +591,8 @@ void test("the service exempts demo engines, rejects saving while the environmen
 
 void test("environment compatibility escape hatches reach the provider and are validated", () => {
   const model = harnessModelFromEnvironment({
-    HARNESSHUB_MODEL: "GLM-V5_1-DX",
-    HARNESSHUB_MODEL_BASE_URL: "http://aigateway.example/v1",
+    HARNESSHUB_MODEL: "Example-Model_1",
+    HARNESSHUB_MODEL_BASE_URL: "http://upstream.example/v1",
     HARNESSHUB_MODEL_DROP_PARAMETERS: " tool_choice, temperature ,",
     HARNESSHUB_MODEL_REASONING: "strip",
     HARNESSHUB_MODEL_IMAGES: "passthrough",

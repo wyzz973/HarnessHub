@@ -7,7 +7,7 @@ All notable changes to HarnessHub are recorded here. The project follows [Semant
 ### Open-source reset (milestone M0)
 
 - HarnessHub becomes an open-source control plane for coding agents under the MIT License. The design is in [docs/proposals/oss](docs/proposals/oss/README.md).
-- Removed from the open-source edition: the competition API (Agent gateway interface v1.1), the Windows portable bundle and its distribution manifest, preinstalled tool packs and the office tool pack, third-party engine source archives, the offline development kit, and their release workflows and tests. They remain on the `archive/competition` branch with their published releases.
+- Removed from the open-source edition: the competition API, the Windows portable bundle and its distribution manifest, preinstalled tool packs and the office tool pack, third-party engine source archives, the offline development kit, and their release workflows and tests. They remain on the `archive/competition` branch with their published releases.
 - `GET /v1/runtime/info` no longer reports `competition` or `competitionEngine`; the default Run deadline is 60 seconds in every mode. `--competition`, `--preinstalled-tool-packs` and `--require-harness-model` are no longer accepted by `src/main.ts`.
 - Added the license, governance, security, contribution and community files, an English README, and issue and pull request templates.
 - Every build records its identity (version, commit, ref, dirty state, build time, CI run) in `dist/build-info.json`. `node dist/src/main.js --version [--json]` prints it, `GET /v1/runtime/info` returns it as `build`, and the Gateway logs it at startup. A missing or invalid file stops startup.

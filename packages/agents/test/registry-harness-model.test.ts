@@ -10,10 +10,10 @@ import { loadConfig, normalizeEngine } from "../src/engine/registry.js";
 import { HubError } from "@harnesshub/core/errors";
 
 const model = {
-  model: "GLM-V5_1-DX",
+  model: "Example-Model_1",
   provider: {
     protocol: "openai-completions",
-    baseUrl: "http://aigateway.example/v1",
+    baseUrl: "http://upstream.example/v1",
     apiKey: { kind: "env", value: "UPSTREAM_MODEL_API_KEY" },
     contextWindow: 131072,
   },
@@ -27,10 +27,10 @@ void test("source configuration files accept a top-level unified model and rejec
     file,
     [
       "model:",
-      "  model: GLM-V5_1-DX",
+      "  model: Example-Model_1",
       "  provider:",
       "    protocol: openai-completions",
-      "    baseUrl: http://aigateway.example/v1",
+      "    baseUrl: http://upstream.example/v1",
       "    apiKey: { kind: env, value: UPSTREAM_MODEL_API_KEY }",
       "    contextWindow: 131072",
       "engines: []",
