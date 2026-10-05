@@ -667,7 +667,7 @@ export function runtimeSettings(config: ResolvedConfig): RuntimeSetting[] {
       command: "hh gateway share",
     },
     {
-      name: "Redaction, vision and search",
+      name: "Redaction, vision, search and the usage alert",
       file: path.join(dataDir, "gateway-features.json"),
       command: "hh gateway features",
     },

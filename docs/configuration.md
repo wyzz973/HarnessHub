@@ -6,7 +6,7 @@
 
 | | 启动设置 | 运行时设置 |
 |---|---|---|
-| 位置 | `<配置根>/config.jsonc` | 数据根下各自的文件：局域网共享的 `<dataDir>/gateway-sharing.json`，脱敏、视觉兜底与联网搜索的 `<dataDir>/gateway-features.json` |
+| 位置 | `<配置根>/config.jsonc` | 数据根下各自的文件：局域网共享的 `<dataDir>/gateway-sharing.json`，脱敏、视觉兜底、联网搜索与用量提醒阈值的 `<dataDir>/gateway-features.json` |
 | 修改方式 | `hh config set`/`unset` 或直接编辑 | API、控制台或 CLI：`/api/v1/gateway/share` 与 `hh gateway share`（[局域网共享](model-gateway.md#局域网共享)），`/api/v1/gateway/features` 与 `hh gateway features`、`redaction`、`vision`、`search`（[网关功能](gateway-features.md)） |
 | 生效 | 下一次 `hh serve` | 立即，由守护进程保存 |
 

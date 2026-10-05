@@ -109,7 +109,7 @@ void test("a flag wins over the environment, which wins over the file, which win
       command: "hh gateway share",
     },
     {
-      name: "Redaction, vision and search",
+      name: "Redaction, vision, search and the usage alert",
       file: path.join(path.resolve("/work", "data"), GATEWAY_FEATURES_FILE),
       command: "hh gateway features",
     },
