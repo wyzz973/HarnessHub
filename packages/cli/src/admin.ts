@@ -8,6 +8,7 @@
  * with the codes of 06 section 5. Secrets are read from a hidden prompt,
  * stdin, an environment variable or a file, never from the command line.
  */
+import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import { parseArgs, type ParseArgsConfig } from "node:util";
 import {
@@ -219,9 +220,9 @@ const COMMAND_USAGE: readonly CommandUsage[] = [
   },
   {
     command: "usage",
-    text: `  hh usage [--by model|provider|day|key|adapter|credential|conversation]
+    text: `  hh usage [--by model|provider|day|key|adapter|credential|conversation|call]
               [--since 7d] [--from TIME] [--to TIME] [--provider P]
-              [--model REF] [--key KEY_ID] [--agent A]`,
+              [--model REF] [--key KEY_ID] [--agent A] [--format text|json|csv]`,
   },
   {
     command: "status",
@@ -1602,6 +1603,22 @@ function since(text: string): string {
 
 /** Conversations shown by `hh usage --by conversation`; `--json` prints the API page. */
 const CONVERSATION_ROWS = 200;
+/** Calls shown by `hh usage --by call`; `--json` prints the API page, `--format csv` every call. */
+const CALL_ROWS = 50;
+
+/** Copy a CSV export to standard output as it arrives. */
+async function writeStream(stream: ReadableStream<Uint8Array>): Promise<void> {
+  const reader = stream.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      if (!process.stdout.write(value)) await once(process.stdout, "drain");
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
 
 async function usageCommand(args: string[]): Promise<void> {
   const { values, positionals: given } = parse(args, {
@@ -1613,16 +1630,26 @@ async function usageCommand(args: string[]): Promise<void> {
     model: { type: "string" },
     key: { type: "string" },
     agent: { type: "string" },
+    format: { type: "string" },
   });
-  const ctx = context(values);
   positionals(given, []);
+  const format = values.format ?? (values.json ? "json" : "text");
+  if (!["text", "json", "csv"].includes(format))
+    throw new UsageError("--format is text, json or csv");
+  if (values.json && format !== "json")
+    throw new UsageError("Use either --json or --format");
+  const ctx = context({ ...values, json: format === "json" });
   if (values.since !== undefined && values.from !== undefined)
     throw new UsageError("Use either --since or --from");
   const by = values.by ?? "model";
   const groups = ["model", "provider", "day", "key", "adapter", "credential"];
-  if (by !== "conversation" && !groups.includes(by))
+  if (by !== "conversation" && by !== "call" && !groups.includes(by))
     throw new UsageError(
-      "--by is model, provider, day, key, adapter, credential or conversation",
+      "--by is model, provider, day, key, adapter, credential, conversation or call",
+    );
+  if (format === "csv" && by === "conversation")
+    throw new UsageError(
+      "--format csv is for the calls (--by call) or their sums, not conversations",
     );
   const from = values.since !== undefined ? since(values.since) : values.from;
   const filter = {
@@ -1634,6 +1661,46 @@ async function usageCommand(args: string[]): Promise<void> {
     ...(values.agent !== undefined ? { agent: values.agent } : {}),
   };
   const client = await ctx.client();
+  if (by === "call") {
+    if (format === "csv")
+      return writeStream(await client.modelCalls.csv(filter));
+    const page = await client.modelCalls.list({ ...filter, limit: CALL_ROWS });
+    return output(ctx, page, () =>
+      [
+        table(
+          [
+            "TIME",
+            "AGENT",
+            "MODEL",
+            "STATUS",
+            "INPUT",
+            "CACHE READ",
+            "OUTPUT",
+            "COST USD",
+            "MS",
+            "CALL",
+          ],
+          page.items.map((item) => [
+            localTime(item.occurredAt),
+            item.agent?.id ?? "-",
+            item.modelRef ?? item.requestedModel ?? "-",
+            String(item.status),
+            String(item.usage?.input ?? 0),
+            String(item.usage?.cacheRead ?? 0),
+            String(item.usage?.output ?? 0),
+            item.cost?.amount ?? "-",
+            String(item.timing.durationMs),
+            item.callId,
+          ]),
+        ),
+        ...(page.nextCursor
+          ? [
+              `Showing the ${CALL_ROWS} latest calls; narrow with --since, --from or --to, or export them all with --format csv.`,
+            ]
+          : []),
+      ].join("\n"),
+    );
+  }
   if (by === "conversation") {
     const page = await client.conversations.list({
       ...filter,
@@ -1682,6 +1749,8 @@ async function usageCommand(args: string[]): Promise<void> {
     );
   }
   const groupBy = by as UsageGroupBy;
+  if (format === "csv")
+    return writeStream(await client.usage.csv({ groupBy, ...filter }));
   const report = await client.usage.aggregate({ groupBy, ...filter });
   output(ctx, report, () =>
     table(

@@ -1012,6 +1012,29 @@ export interface LibraryPlan {
 
 type Query = Record<string, string | number | undefined>;
 
+interface RequestOptions {
+  body?: unknown;
+  query?: Query;
+  contentType?: string;
+  /** Ends the request; it then rejects with the signal's reason. */
+  signal?: AbortSignal;
+}
+
+/** The error of a response that is not 2xx: its problem document, or a generic one. */
+function failure(response: Response, body: unknown): HarnessHubError {
+  return new HarnessHubError(
+    isProblem(body)
+      ? body
+      : {
+          type: "about:blank",
+          title: response.statusText || "Error",
+          status: response.status,
+          code: "UNEXPECTED_RESPONSE",
+          requestId: "",
+        },
+  );
+}
+
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -1060,31 +1083,21 @@ export class HarnessHubClient {
       options.fetch ?? ((input, init) => globalThis.fetch(input, init));
   }
 
-  /**
-   * One request. The response body is decoded as JSON and trusted to match
-   * the documented shape of the operation, which the daemon serializes from
-   * the same schemas that its OpenAPI document publishes.
-   */
-  private async request<T>(
+  /** Sends one request; rejects with `HarnessHubUnavailableError` when the daemon cannot be reached. */
+  private async exchange(
     method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
     path: string,
-    options: {
-      body?: unknown;
-      query?: Query;
-      contentType?: string;
-      /** Ends the request; it then rejects with the signal's reason. */
-      signal?: AbortSignal;
-    } = {},
-  ): Promise<T> {
+    accept: string,
+    options: RequestOptions,
+  ): Promise<Response> {
     const url = new URL(path, this.base);
     for (const [name, value] of Object.entries(options.query ?? {}))
       if (value !== undefined) url.searchParams.set(name, String(value));
-    let response: Response;
     try {
-      response = await this.send(url, {
+      return await this.send(url, {
         method,
         headers: {
-          accept: "application/json",
+          accept,
           ...(this.token !== undefined
             ? { authorization: `Bearer ${this.token}` }
             : {}),
@@ -1104,6 +1117,24 @@ export class HarnessHubClient {
       if (options.signal?.aborted) throw options.signal.reason;
       throw new HarnessHubUnavailableError(this.base.origin, error);
     }
+  }
+
+  /**
+   * One request. The response body is decoded as JSON and trusted to match
+   * the documented shape of the operation, which the daemon serializes from
+   * the same schemas that its OpenAPI document publishes.
+   */
+  private async request<T>(
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+    path: string,
+    options: RequestOptions = {},
+  ): Promise<T> {
+    const response = await this.exchange(
+      method,
+      path,
+      "application/json",
+      options,
+    );
     if (response.status === 204) return undefined as T;
     const text = await response.text();
     let body: unknown;
@@ -1112,18 +1143,7 @@ export class HarnessHubClient {
     } catch {
       body = undefined;
     }
-    if (!response.ok)
-      throw new HarnessHubError(
-        isProblem(body)
-          ? body
-          : {
-              type: "about:blank",
-              title: response.statusText || "Error",
-              status: response.status,
-              code: "UNEXPECTED_RESPONSE",
-              requestId: "",
-            },
-      );
+    if (!response.ok) throw failure(response, body);
     if (body === undefined)
       throw new HarnessHubError({
         type: "about:blank",
@@ -1134,6 +1154,43 @@ export class HarnessHubClient {
         detail: "The daemon answered without a JSON body",
       });
     return body as T;
+  }
+
+  /**
+   * One CSV export (`format=csv`): the body as it streams, once the daemon
+   * answered `text/csv`. Rejects as {@link request} does; the caller reads
+   * or cancels the stream.
+   */
+  private async csv(
+    path: string,
+    query: Query,
+  ): Promise<ReadableStream<Uint8Array>> {
+    const response = await this.exchange("GET", path, "text/csv", {
+      query: { ...query, format: "csv" },
+    });
+    if (
+      response.ok &&
+      response.body &&
+      response.headers.get("content-type")?.startsWith("text/csv")
+    )
+      return response.body;
+    const text = await response.text();
+    let body: unknown;
+    try {
+      body = text ? (JSON.parse(text) as unknown) : undefined;
+    } catch {
+      body = undefined;
+    }
+    throw response.ok
+      ? new HarnessHubError({
+          type: "about:blank",
+          title: "Invalid response",
+          status: response.status,
+          code: "UNEXPECTED_RESPONSE",
+          requestId: "",
+          detail: "The daemon answered without a CSV body",
+        })
+      : failure(response, body);
   }
 
   readonly system = {
@@ -1657,11 +1714,19 @@ export class HarnessHubClient {
       this.request<Page<ApiModelCall>>("GET", "model-calls", {
         query: { ...query },
       }),
+    /**
+     * Every matching call, newest first, as CSV with Magpie's columns
+     * (`magpie usage --csv`): UTF-8 without a byte order mark, LF line ends.
+     */
+    csv: (query: CallFilter = {}) => this.csv("model-calls", { ...query }),
   };
 
   readonly usage = {
     aggregate: (query: CallFilter & { groupBy?: UsageGroupBy } = {}) =>
       this.request<UsageReport>("GET", "usage", { query: { ...query } }),
+    /** The buckets of `aggregate` as CSV: the grouping, then the call CSV's token and cost columns. */
+    csv: (query: CallFilter & { groupBy?: UsageGroupBy } = {}) =>
+      this.csv("usage", { ...query }),
   };
 
   readonly conversations = {

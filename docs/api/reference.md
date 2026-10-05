@@ -1345,27 +1345,27 @@
 
 **GET `/api/v1/model-calls` — model.call 账本**
 
-- 输入：limit（1–200，默认 50）、cursor；过滤 from（含）、to（不含）、keyId、provider、model、sessionId、agent（agent.id，确定或推断的）。
-- 返回：200：items（ModelCallEntry，含 conversationKey 与 agent；cost 为 {amount 十进制字符串, currency, priceSource} 或 null）、nextCursor。
-- 实现链路：ModelPlaneStore.listModelCalls，按 occurredAt 新到旧，游标为不透明字符串。
+- 输入：limit（1–200，默认 50）、cursor；过滤 from（含）、to（不含）、keyId、provider、model、sessionId、agent（agent.id，确定或推断的）；format（json 或 csv；缺省时 Accept 把 text/csv 排在 JSON 之前即为 CSV）。
+- 返回：200：items（ModelCallEntry，含 conversationKey 与 agent；cost 为 {amount 十进制字符串, currency, priceSource} 或 null）、nextCursor。CSV 时为 text/csv; charset=utf-8 附件 harnesshub-calls-<日期>.csv：所有匹配调用（不分页，忽略 limit），列与顺序同 Magpie 的 CSVHeader，无 BOM，LF 换行，以 = + - @ 制表符或回车开头的文本格前加 '。
+- 实现链路：ModelPlaneStore.listModelCalls，按 occurredAt 新到旧，游标为不透明字符串；CSV 每页 200 条流式写出，第一页在响应头之前读取，名称（凭据、Key、provider 地址）取自当前配置（usage-csv.ts）。
 - 持久化与副作用：只读。
-- 失败与边界：400 INVALID_REQUEST、INVALID_CURSOR、INVALID_USAGE_FILTER；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。
-- Schema 参数索引：query: limit；query: cursor；query: from；query: to；query: keyId；query: provider；query: model；query: sessionId；query: agent。
+- 失败与边界：400 INVALID_REQUEST（含 CSV 带 cursor）、INVALID_CURSOR、INVALID_USAGE_FILTER；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。
+- Schema 参数索引：query: limit；query: cursor；query: format；query: from；query: to；query: keyId；query: provider；query: model；query: sessionId；query: agent。
 
-实现入口：[packages/daemon/src/http/model-plane-routes.ts](../../packages/daemon/src/http/model-plane-routes.ts)。验证依据：[tests/integration/api-v1.test.ts](../../tests/integration/api-v1.test.ts)。
+实现入口：[packages/daemon/src/http/model-plane-routes.ts](../../packages/daemon/src/http/model-plane-routes.ts)。验证依据：[tests/integration/api-v1.test.ts](../../tests/integration/api-v1.test.ts)、[tests/integration/usage-csv.test.ts](../../tests/integration/usage-csv.test.ts)。
 
 ## hh_api_v1_get_usage
 
 **GET `/api/v1/usage` — 用量聚合**
 
-- 输入：groupBy（day、provider、model、key、adapter、credential，默认 model；credential 的 key 为 <provider>/<credentialId>）与 /model-calls 相同的过滤。
-- 返回：200：groupBy、items（key、calls、failedCalls、usage、cost 十进制字符串、unpricedCalls）。
+- 输入：groupBy（day、provider、model、key、adapter、credential，默认 model；credential 的 key 为 <provider>/<credentialId>）与 /model-calls 相同的过滤；format 同 /model-calls。
+- 返回：200：groupBy、items（key、calls、failedCalls、usage、cost 十进制字符串、unpricedCalls）。CSV 时为附件 harnesshub-usage-by-<groupBy>-<日期>.csv：列为 groupBy、calls、failed_calls、input_tokens、output_tokens、cache_write_tokens、cache_read_tokens、reasoning_tokens、cost_usd（6 位小数）、unpriced_calls。
 - 实现链路：ModelPlaneStore.aggregateUsage：状态码不低于 400 记为失败，cost 只累加已知成本，null 成本计入 unpricedCalls，missing 用量按 0 计，日期为 UTC。
 - 持久化与副作用：只读。
 - 失败与边界：400 INVALID_REQUEST、INVALID_USAGE_FILTER；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。
-- Schema 参数索引：query: groupBy；query: from；query: to；query: keyId；query: provider；query: model；query: sessionId；query: agent。
+- Schema 参数索引：query: groupBy；query: format；query: from；query: to；query: keyId；query: provider；query: model；query: sessionId；query: agent。
 
-实现入口：[packages/daemon/src/http/model-plane-routes.ts](../../packages/daemon/src/http/model-plane-routes.ts)。验证依据：[tests/integration/api-v1.test.ts](../../tests/integration/api-v1.test.ts)、[tests/integration/hh-cli.test.ts](../../tests/integration/hh-cli.test.ts)。
+实现入口：[packages/daemon/src/http/model-plane-routes.ts](../../packages/daemon/src/http/model-plane-routes.ts)。验证依据：[tests/integration/api-v1.test.ts](../../tests/integration/api-v1.test.ts)、[tests/integration/hh-cli.test.ts](../../tests/integration/hh-cli.test.ts)、[tests/integration/usage-csv.test.ts](../../tests/integration/usage-csv.test.ts)。
 
 ## hh_api_v1_list_conversations
 
@@ -1376,7 +1376,7 @@
 - 实现链路：ModelPlaneStore.listConversations：按 model_calls.conversation_key 分组，规则同 /usage；最后活动时间新到旧，游标为不透明字符串。
 - 持久化与副作用：只读。没有 conversationKey 的调用（如被拒绝的鉴权失败）不属于任何会话。
 - 失败与边界：400 INVALID_REQUEST、INVALID_CURSOR、INVALID_USAGE_FILTER；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。
-- Schema 参数索引：query: limit；query: cursor；query: from；query: to；query: keyId；query: provider；query: model；query: sessionId；query: agent。
+- Schema 参数索引：query: limit；query: cursor；query: format；query: from；query: to；query: keyId；query: provider；query: model；query: sessionId；query: agent。
 
 实现入口：[packages/daemon/src/http/model-plane-routes.ts](../../packages/daemon/src/http/model-plane-routes.ts)。验证依据：[tests/integration/api-v1.test.ts](../../tests/integration/api-v1.test.ts)、[tests/integration/hh-cli.test.ts](../../tests/integration/hh-cli.test.ts)。
 

@@ -140,7 +140,7 @@ Every row was checked against Magpie's source and against HarnessHub's code or d
 | Past costs priced again when a price changes | different by design | — | The ledger keeps what each call cost when it ran; a new price applies to later calls |
 | Unknown prices kept apart from zero | same | Usage shows unpriced calls separately | |
 | Totals by agent, model, key, account and session | same | `hh usage --by model\|provider\|day\|key\|adapter\|credential\|conversation` | Days in UTC; USD only |
-| CSV export | partial | JSON only: `hh usage --json`, `GET /api/v1/model-calls` | |
+| CSV export | same | `hh usage --by call --format csv`, `GET /api/v1/model-calls?format=csv` (or `Accept: text/csv`); totals with `--by <group> --format csv`, `GET /api/v1/usage?format=csv` | Magpie's 36 columns in its order, no BOM; adds a formula guard (`'` before `=`, `+`, `-`, `@`); route and vendor request IDs, session-file columns and the client's own effort stay empty; names come from the current configuration; no console download button yet ([CSV export](observability.md#csv-导出)) |
 | OTLP trace export | same | `otlp` in `config.jsonc` or `hh serve --otlp-config FILE` | Off by default ([OTLP export](observability.md#otlp-导出)) |
 | OTLP metrics, and request and reply bodies for tools such as Langfuse | not covered | — | Prompts and replies are never exported |
 | Request archive to S3, request bodies, agents' session files (`magpie sessions`) | not covered | — | The ledger keeps no prompt text |
@@ -298,9 +298,10 @@ The key in an agent's file is a real credential, but it is limited to that agent
 | `magpie gateway-key list\|add\|remove` | `hh key list\|create\|revoke` |
 | `magpie gateway-key limit <id> …` | `hh key quota <id> --budget …`, `hh key limit <id>` |
 | `magpie usage` | `hh usage --by …` |
+| `magpie usage --csv` | `hh usage --by call --format csv` |
 | `magpie sync` | `hh catalog refresh`, `hh provider models <id> --refresh` |
 | `magpie backup`, `magpie restore` | `hh backup`, `hh restore` (files are not interchangeable) |
 | `magpie webdav …`, `magpie s3 …` | `hh sync webdav on …`, `hh sync s3 on …` |
 | `magpie library …` | `hh library add\|rm\|sync …` |
 | `magpie serve`, `magpie healthcheck` | `hh serve`, `GET /health/ready` |
-| `magpie model name\|efforts`, `magpie sessions`, `magpie mcp image`, `magpie plugin`, `magpie update`, `magpie autostart`, `magpie usage --csv` | Not covered |
+| `magpie model name\|efforts`, `magpie sessions`, `magpie mcp image`, `magpie plugin`, `magpie update`, `magpie autostart` | Not covered |

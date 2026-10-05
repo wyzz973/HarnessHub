@@ -61,6 +61,47 @@ ACP 0.13.2 的 reducer 会把最新 breakdown 直接赋给名称为 `cumulative_
 
 运行中不必打开文件：`GET /v1/sessions/{id}/logs` 按页读取一个 Session 的诊断记录。`source=engine`（默认）返回该 Session 的引擎日志；`source=gateway` 返回 Gateway 日志中含该 Session id 或其 Run id 的行，不含读取本接口自身的访问行。不带 `after` 时返回最新 `limit` 条（默认 200，最多 2000，按写入顺序）；带上一页的 `cursor`（文件身份与字节偏移，轮转后仍有效）时只返回之后写入的完整行。单次最多扫描 32 MiB（含 `.1`～`.3`）、返回 2 MiB；`truncated=true` 表示有记录因数量、大小、扫描预算或游标所在文件已轮转出去而被跳过。每行读出时再次脱敏，无法解析的行计入 `skipped`。接口只读文件、不联系 Worker，未知 Session 返回 404。控制台“执行详情”中的“诊断日志”使用该接口，可切换引擎/Gateway 日志、按级别和关键字筛选，任务运行时每 2 秒增量刷新，并能复制或下载当前显示的记录（JSON Lines）。
 
+## CSV 导出
+
+模型网关的账本可以导出为 CSV，供表格或脚本与厂商账单对照（对应 Magpie 的 `magpie usage --csv`）：
+
+| 入口 | 内容 |
+|---|---|
+| `hh usage --by call --format csv` | 所有匹配调用，每次一行，新到旧；过滤同 `hh usage`（`--since`、`--from`、`--to`、`--provider`、`--model`、`--key`、`--agent`） |
+| `hh usage --by model\|provider\|day\|key\|adapter\|credential --format csv` | 汇总表，每桶一行 |
+| `GET /api/v1/model-calls?format=csv` | 同第一行；不分页，`limit` 不起作用，带 `cursor` 时 400 |
+| `GET /api/v1/usage?format=csv&groupBy=…` | 同第二行 |
+
+不带 `format` 时，`Accept` 把 `text/csv` 排在 `application/json`（或通配）之前也返回 CSV；`format=json` 总是 JSON。响应为 `text/csv; charset=utf-8`，带 `Content-Disposition: attachment; filename="harnesshub-calls-<日期>.csv"`（汇总为 `harnesshub-usage-by-<groupBy>-<日期>.csv`），SDK 为 `client.modelCalls.csv()` 与 `client.usage.csv()`（返回响应体的流）。调用 CSV 按每页 200 条流式写出，第一页在响应头之前读取，过滤无效时仍是 400 的 problem+json。控制台的下载按钮尚未提供。
+
+写法与 Magpie 的 Go `encoding/csv` 相同：UTF-8，没有 BOM（Magpie 也没有），LF 换行；字段含逗号、引号、CR、LF 或以空白开头时加引号，引号写两次。Magpie 没有、HarnessHub 另加的是公式注入防护：以 `=`、`+`、`-`、`@`、制表符或回车开头的字段前加 `'`，纯数字（如 `-5`）除外。
+
+调用 CSV 的列与顺序同 Magpie 的 `CSVHeader`（[usage-csv.ts](../packages/daemon/src/usage-csv.ts)）：
+
+| 列 | 取值 |
+|---|---|
+| `time` | `occurredAt`，守护进程本地时区的 RFC 3339，精确到秒 |
+| `agent`、`requested_model`、`provider`、`served_model` | `agent.id`、`requestedModel`、`provider`、`servedModel` |
+| `host` | 该 provider 当前上游端点的主机 |
+| `model` | 发往上游的模型名（`wireModel`，否则 Model Ref 的模型部分） |
+| `swapped` | 回答的模型不是所发的模型：去掉厂商前缀、日期或版本后缀与上下文标记后仍不同（Magpie 的规则；`auto` 不算） |
+| `effort` | 路由组为该调用选定的推理强度（`member-effort:`、`effort:auto:` 补丁）；客户端自己的设置不进账本，为空 |
+| `input_tokens`、`output_tokens`、`cache_write_tokens`、`cache_read_tokens`、`reasoning_tokens` | 账本用量；`input` 不含缓存，`output` 不含推理；未回报为 0 |
+| `cost_usd` | 六位小数；价格未知时为空 |
+| `duration_ms`、`ttft_ms` | 耗时与首内容时间（没有时为空） |
+| `status`、`error` | 状态码；状态码不低于 400 或有错误文本时为 `true` |
+| `session` | `conversationKey`（按 Key 隔离的会话哈希，不是客户端原始会话 ID） |
+| `kind` | 网关为自身发起的调用的用途（`vision`、`classify`） |
+| `provider_key_id`、`provider_key_name`、`provider_account` | 凭据 ID、凭据当前名称、订阅账号的邮箱（Copilot 为登录名） |
+| `endpoint` | 入站路径；转换协议时加 ` → ` 与上游路径 |
+| `error_message`、`error_type` | 账本中已脱敏的错误文本与错误类别 |
+| `rejected` | 本地拒绝、未联系上游 |
+| `caller_key_id`、`caller_key_name` | Gateway Key ID 与当前名称 |
+| `route_id`、`request_id`、`source`、`session_provider`、`session_account` | 空：账本不记录（`source` 在 Magpie 中标记读自 Agent 会话文件的调用，HarnessHub 没有这类调用） |
+| `session_official_login` | `false` |
+
+账本只存 ID，所以 `host`、凭据名称与账号、Key 名称取自导出时的配置；之后改过名或删除的，显示当前名称或为空。汇总 CSV 的列为分组键（列名即 `groupBy`）、`calls`、`failed_calls`、五个 token 列（顺序同上）、`cost_usd`（已知成本之和，六位小数）与 `unpriced_calls`。
+
 ## OTLP 导出
 
 守护进程可以把每次模型调用导出为一个 OpenTelemetry span（[08 第 5 节](proposals/oss/08-reliability-observability.md#5-追踪)），默认关闭：没有 `otlp` 配置时不创建导出器，也不发出任何网络请求，环境中的 `OTEL_EXPORTER_OTLP_ENDPOINT` 等标准变量同样不会打开导出。实现见 [otlp-export.ts](../packages/daemon/src/otlp-export.ts)。

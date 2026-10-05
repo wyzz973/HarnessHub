@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import path from "node:path";
-import type { FastifyInstance } from "fastify";
+import { Readable } from "node:stream";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import {
   issueGatewayKey,
@@ -67,6 +68,15 @@ import {
   providerFromPreset,
 } from "@harnesshub/core/provider-presets";
 import { registerImportRoutes, type ProviderBody } from "./import-routes.js";
+import {
+  CALL_CSV_COLUMNS,
+  callCsvFields,
+  callCsvNames,
+  csvFileName,
+  csvRecord,
+  usageCsvFields,
+  usageCsvHeader,
+} from "../usage-csv.js";
 import {
   autoGroupSchema,
   catalogStatusSchema,
@@ -218,6 +228,61 @@ function moneyView<T extends { costUsd: number }>({
   ...rest
 }: T): Omit<T, "costUsd"> & { cost: { amount: string; currency: "USD" } } {
   return { ...rest, cost: { amount: decimal(costUsd), currency: "USD" } };
+}
+
+type LedgerFormat = "json" | "csv";
+
+/** Calls read per page of a CSV export. */
+const CSV_PAGE = 200;
+
+/**
+ * Whether a ledger read answers CSV: `format=csv`, or no `format` and an
+ * Accept header that ranks `text/csv` above JSON (equal ranks: the one
+ * listed first); the wildcards, `application/*` and any type, count as JSON.
+ */
+function wantsCsv(
+  format: LedgerFormat | undefined,
+  accept: string | undefined,
+): boolean {
+  if (format !== undefined) return format === "csv";
+  let csv = 0;
+  let json = 0;
+  let csvFirst = false;
+  for (const range of (accept ?? "").split(",")) {
+    const [type = "", ...parameters] = range.split(";");
+    const media = type.trim().toLowerCase();
+    let quality = 1;
+    for (const parameter of parameters) {
+      const [name, value] = parameter.split("=");
+      if (name?.trim().toLowerCase() === "q") {
+        const parsed = Number(value?.trim());
+        quality = Number.isFinite(parsed)
+          ? Math.min(Math.max(parsed, 0), 1)
+          : 0;
+      }
+    }
+    if (media === "text/csv") {
+      if (csv === 0 && json === 0) csvFirst = true;
+      csv = Math.max(csv, quality);
+    } else if (
+      media === "application/json" ||
+      media === "application/*" ||
+      media === "*/*"
+    )
+      json = Math.max(json, quality);
+  }
+  return csv > 0 && (csv > json || (csv === json && csvFirst));
+}
+
+/** `text/csv` headers on `reply`, saved as `harnesshub-<what>-<date>.csv`. */
+function csvReply(reply: FastifyReply, what: string): FastifyReply {
+  return reply
+    .type("text/csv; charset=utf-8")
+    .header(
+      "content-disposition",
+      `attachment; filename="${csvFileName(what, new Date())}"`,
+    )
+    .header("x-content-type-options", "nosniff");
 }
 
 interface CallQuery {
@@ -1452,7 +1517,13 @@ export function registerModelPlaneRoutes(
       }),
   );
 
-  api.get<{ Querystring: CallQuery & { limit: number; cursor?: string } }>(
+  api.get<{
+    Querystring: CallQuery & {
+      limit: number;
+      cursor?: string;
+      format?: LedgerFormat;
+    };
+  }>(
     "/model-calls",
     {
       schema: {
@@ -1460,10 +1531,44 @@ export function registerModelPlaneRoutes(
         response: responses(modelCallPageSchema),
       },
     },
-    async (request) => {
-      const { limit, cursor } = request.query;
+    async (request, reply) => {
+      const { limit, cursor, format } = request.query;
+      const filter = usageFilter(request.query);
+      if (wantsCsv(format, request.headers.accept)) {
+        if (cursor !== undefined)
+          throw invalid(
+            "INVALID_REQUEST",
+            "A CSV export holds every matching call; it takes no cursor",
+            [{ pointer: "/cursor", detail: "must be absent with CSV" }],
+          );
+        // The first page before the headers, so an invalid filter is still a 400.
+        const first = await store.listModelCalls(filter, {
+          limit: CSV_PAGE,
+        });
+        const [providers, keys] = await Promise.all([
+          store.listProviders(),
+          store.listGatewayKeys(),
+        ]);
+        const names = callCsvNames(providers, keys);
+        async function* rows(): AsyncGenerator<string> {
+          yield csvRecord(CALL_CSV_COLUMNS);
+          let page = first;
+          for (;;) {
+            let chunk = "";
+            for (const entry of page.items)
+              chunk += csvRecord(callCsvFields(entry, names));
+            if (chunk) yield chunk;
+            if (!page.nextCursor) return;
+            page = await store.listModelCalls(filter, {
+              limit: CSV_PAGE,
+              cursor: page.nextCursor,
+            });
+          }
+        }
+        return csvReply(reply, "calls").send(Readable.from(rows()));
+      }
       const page = await store.listModelCalls(
-        usageFilter(request.query),
+        filter,
         cursor === undefined ? { limit } : { limit, cursor },
       );
       return {
@@ -1472,7 +1577,9 @@ export function registerModelPlaneRoutes(
       };
     },
   );
-  api.get<{ Querystring: CallQuery & { groupBy: UsageGroupBy } }>(
+  api.get<{
+    Querystring: CallQuery & { groupBy: UsageGroupBy; format?: LedgerFormat };
+  }>(
     "/usage",
     {
       schema: {
@@ -1480,15 +1587,19 @@ export function registerModelPlaneRoutes(
         response: responses(usageSchema),
       },
     },
-    async (request) => ({
-      groupBy: request.query.groupBy,
-      items: (
-        await store.aggregateUsage(
-          usageFilter(request.query),
-          request.query.groupBy,
-        )
-      ).map(moneyView),
-    }),
+    async (request, reply) => {
+      const { groupBy, format } = request.query;
+      const buckets = await store.aggregateUsage(
+        usageFilter(request.query),
+        groupBy,
+      );
+      if (wantsCsv(format, request.headers.accept))
+        return csvReply(reply, `usage-by-${groupBy}`).send(
+          csvRecord(usageCsvHeader(groupBy)) +
+            buckets.map((bucket) => csvRecord(usageCsvFields(bucket))).join(""),
+        );
+      return { groupBy, items: buckets.map(moneyView) };
+    },
   );
   api.get<{ Querystring: CallQuery & { limit: number; cursor?: string } }>(
     "/conversations",

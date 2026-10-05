@@ -1061,12 +1061,15 @@ const callFilter = {
   /** `agent.id` of the call, established or inferred. */
   agent: text(200),
 } as const;
+/** `csv` answers `text/csv` instead of JSON; absent, the Accept header decides. */
+const ledgerFormat = { enum: ["json", "csv"] } as const;
 export const modelCallsQuerySchema = {
   type: "object",
   additionalProperties: false,
   properties: {
     limit: { type: "integer", minimum: 1, maximum: 200, default: 50 },
     cursor: text(200),
+    format: ledgerFormat,
     ...callFilter,
   },
 } as const;
@@ -1078,6 +1081,7 @@ export const usageQuerySchema = {
       enum: ["day", "provider", "model", "key", "adapter", "credential"],
       default: "model",
     },
+    format: ledgerFormat,
     ...callFilter,
   },
 } as const;
