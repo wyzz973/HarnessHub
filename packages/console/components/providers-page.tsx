@@ -43,7 +43,11 @@ import {
   providerInput,
   kindName,
   providerKinds,
+  providerFormFailure,
   providerPatch,
+  gatewayCredentialLimits,
+  limitNames,
+  limitsText,
   proxyModes,
   proxyText,
   type Failure,
@@ -174,6 +178,11 @@ function ProviderDialog({
     setForm((current) => ({ ...current, ...patch }));
   const models = modelIds(form.models);
   async function save() {
+    const local = providerFormFailure(form);
+    if (local) {
+      setFailure(local);
+      return;
+    }
     setBusy(true);
     setFailure(null);
     try {
@@ -196,6 +205,7 @@ function ProviderDialog({
     "/endpoints",
     "/imageEndpoint",
     "/proxy",
+    ...limitNames.map((name) => `/limits/${name}`),
     ...protocols.map((protocol) => `/endpoints/${protocol}`),
   ];
   return (
@@ -405,6 +415,40 @@ function ProviderDialog({
                 <FieldError failure={failure} pointer="/proxy" />
               </div>
             )}
+            <fieldset>
+              <legend className="field-label mb-1">
+                {t("providers.limits.legend")}
+              </legend>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {limitNames.map((name) => (
+                  <label key={name} className="field-label">
+                    {t(`providers.limits.${name}`)}
+                    <input
+                      className="field"
+                      inputMode="numeric"
+                      value={form.limits[name]}
+                      aria-invalid={!!failure?.fields[`/limits/${name}`]}
+                      placeholder={t("providers.limits.placeholder", {
+                        n: String(gatewayCredentialLimits[name]),
+                      })}
+                      autoComplete="off"
+                      onChange={(event) =>
+                        set({
+                          limits: {
+                            ...form.limits,
+                            [name]: event.target.value,
+                          },
+                        })
+                      }
+                    />
+                    <FieldError failure={failure} pointer={`/limits/${name}`} />
+                  </label>
+                ))}
+              </div>
+              <span className="field-hint mt-1 block">
+                {t("providers.limits.hint")}
+              </span>
+            </fieldset>
             <label className="field-label">
               {t("providers.models")}
               <textarea
@@ -726,6 +770,12 @@ function ProviderDetail({
               </dd>
             </div>
           )}
+          {limitsText(provider) ? (
+            <div className="metric-row">
+              <dt>{t("providers.limits.label")}</dt>
+              <dd>{limitsText(provider)}</dd>
+            </div>
+          ) : null}
           <div className="metric-row">
             <dt>{t("providers.apiKeyHeader")}</dt>
             <dd className="font-mono text-[12.5px]">

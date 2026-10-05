@@ -61,7 +61,7 @@ Every row was checked against Magpie's source and against HarnessHub's code or d
 | Decision APIs (System One, Jev; `POST /v1/systemone`) | not covered | — | No decision-API provider kind |
 | Route decisions with long polling (`GET /v1/magpie/route`) | partial | `GET /api/v1/routing/decisions?session=&after=&wait=`; Routing and Keys → Route decisions | On the management API, so an agent cannot read it with its own key |
 | Per-credential state and allowances, lifting a rest (`/v1/magpie/quotas`) | partial | `GET /api/v1/routing/state`; Routing and Keys → Credential state | Read-only: no lifting a rest by hand, no endpoint for agents |
-| Concurrency limit per key or account (`maxConcurrency`) | different by design | A provider's `limits` (`hh provider limits <id> --concurrency N --queue N`); the gateway's `maxConcurrentPerCredential` (8) and `maxQueuedPerCredential` (64) otherwise | The queue is bounded: past it a call is 429 `busy` and fails over, where Magpie's waits without bound and never fails over ([limits](model-gateway.md#资源上限)) |
+| Concurrency limit per key or account (`maxConcurrency`) | different by design | A provider's `limits` (`hh provider limits <id> --concurrency N --queue N`, or the console's provider form); the gateway's `maxConcurrentPerCredential` (8) and `maxQueuedPerCredential` (64) otherwise | The queue is bounded: past it a call is 429 `busy` and fails over, where Magpie's waits without bound and never fails over ([limits](model-gateway.md#资源上限)) |
 
 ## Providers, presets and import
 

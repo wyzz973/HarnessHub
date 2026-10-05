@@ -136,6 +136,76 @@ export interface ProviderForm {
   proxy: ProxyMode;
   /** The provider's own proxy address, sent as typed when `proxy` is "url". */
   proxyUrl: string;
+  /** Per-credential limits as typed; empty follows the gateway's. */
+  limits: Record<LimitName, string>;
+}
+
+export type LimitName = "concurrentPerCredential" | "queuePerCredential";
+export const limitNames: readonly LimitName[] = [
+  "concurrentPerCredential",
+  "queuePerCredential",
+];
+
+/**
+ * The gateway's own per-credential limits by default (`gateway.limits`
+ * `maxConcurrentPerCredential` and `maxQueuedPerCredential`), shown where
+ * a provider has none.
+ */
+export const gatewayCredentialLimits: Readonly<Record<LimitName, number>> = {
+  concurrentPerCredential: 8,
+  queuePerCredential: 64,
+};
+
+/** The typed limits as numbers; a field that is not a whole number is a problem by JSON pointer. */
+function limitsOf(form: ProviderForm): {
+  limits: Partial<Record<LimitName, number>>;
+  problems: Record<string, string>;
+} {
+  const limits: Partial<Record<LimitName, number>> = {};
+  const problems: Record<string, string> = {};
+  for (const name of limitNames) {
+    const text = form.limits[name].trim();
+    if (!text) continue;
+    if (/^\d{1,9}$/.test(text)) limits[name] = Number(text);
+    else problems[`/limits/${name}`] = t("providers.limits.wholeNumber");
+  }
+  return { limits, problems };
+}
+
+/**
+ * The form's problems found before sending (limits that are not whole
+ * numbers), as a failure for its fields; null when it can be sent. Ranges
+ * are the daemon's to check.
+ */
+export function providerFormFailure(form: ProviderForm): Failure | null {
+  const { problems } = limitsOf(form);
+  return Object.keys(problems).length
+    ? {
+        message: t("providers.limits.invalid"),
+        fields: problems,
+        references: [],
+      }
+    : null;
+}
+
+/** A provider's limits on its page; undefined when it follows the gateway's. */
+export function limitsText(provider: ProviderConfig): string | undefined {
+  const limits = provider.limits;
+  if (
+    limits?.concurrentPerCredential === undefined &&
+    limits?.queuePerCredential === undefined
+  )
+    return undefined;
+  return [
+    limits.concurrentPerCredential !== undefined
+      ? t("providers.limits.atOnce", {
+          n: String(limits.concurrentPerCredential),
+        })
+      : t("providers.limits.atOnceGateway"),
+    limits.queuePerCredential !== undefined
+      ? t("providers.limits.waiting", { n: String(limits.queuePerCredential) })
+      : t("providers.limits.waitingGateway"),
+  ].join(t("providers.limits.separator"));
 }
 
 export function emptyProviderForm(): ProviderForm {
@@ -150,6 +220,7 @@ export function emptyProviderForm(): ProviderForm {
     expose: "all",
     proxy: "daemon",
     proxyUrl: "",
+    limits: { concurrentPerCredential: "", queuePerCredential: "" },
   };
 }
 
@@ -178,6 +249,11 @@ export function providerFormOf(provider: ProviderConfig): ProviderForm {
       provider.proxy === undefined || provider.proxy === "direct"
         ? ""
         : provider.proxy,
+    limits: {
+      concurrentPerCredential:
+        provider.limits?.concurrentPerCredential?.toString() ?? "",
+      queuePerCredential: provider.limits?.queuePerCredential?.toString() ?? "",
+    },
   };
 }
 
@@ -258,6 +334,7 @@ export function providerInput(form: ProviderForm): ProviderInput {
   );
   const models = modelsOf(form);
   const proxy = proxyOf(form);
+  const { limits } = limitsOf(form);
   return {
     id: form.id.trim(),
     ...(form.name.trim() ? { name: form.name.trim() } : {}),
@@ -269,6 +346,7 @@ export function providerInput(form: ProviderForm): ProviderInput {
       : {}),
     ...(models.list.length ? { models } : {}),
     ...(proxy !== undefined ? { proxy } : {}),
+    ...(Object.keys(limits).length ? { limits } : {}),
   };
 }
 
@@ -285,6 +363,12 @@ export function providerPatch(
       endpoints[protocol] = null;
   }
   const proxy = proxyOf(form);
+  // A cleared limit becomes null; the daemon drops limits left empty.
+  const typed = limitsOf(form).limits;
+  const limits: Partial<Record<LimitName, number | null>> = {};
+  for (const name of limitNames)
+    if (typed[name] !== undefined) limits[name] = typed[name];
+    else if (previous.limits?.[name] !== undefined) limits[name] = null;
   return {
     name: form.name.trim() || previous.id,
     kind: form.kind,
@@ -301,6 +385,7 @@ export function providerPatch(
       : previous.proxy !== undefined
         ? { proxy: null }
         : {}),
+    ...(Object.keys(limits).length ? { limits } : {}),
   };
 }
 

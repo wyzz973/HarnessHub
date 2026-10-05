@@ -847,6 +847,75 @@ test("the provider form sends the provider's own proxy, Settings shows the daemo
   assert.equal(routing.failureText({ kind: "proxy_failed", status: 502, at: "2026-10-05T00:00:00.000Z" }), "代理连接失败（HTTP 502）");
 });
 
+test("the provider form sends its per-credential limits, clears them with null, and shows the gateway's defaults", async () => {
+  const lib = await consoleModule("lib/model-plane.ts", {
+    'import { apiClient } from "./session";': "const apiClient = undefined;",
+  });
+  const i18n = await consoleModule("lib/i18n.ts");
+  const { providerCreateSchema, providerPatchSchema } = await import(
+    new URL("../packages/daemon/dist/src/http/api-v1-schemas.js", import.meta.url).href
+  );
+  const { DEFAULT_HANDLER_LIMITS } = await import(new URL("../packages/gateway/dist/src/limits.js", import.meta.url).href);
+  const { PROVIDER_LIMIT_RANGES } = await import(new URL("../packages/core/dist/src/model-plane.js", import.meta.url).href);
+  assert.deepEqual(lib.gatewayCredentialLimits, {
+    concurrentPerCredential: DEFAULT_HANDLER_LIMITS.maxConcurrentPerCredential,
+    queuePerCredential: DEFAULT_HANDLER_LIMITS.maxQueuedPerCredential,
+  });
+  assert.deepEqual([...lib.limitNames], Object.keys(providerCreateSchema.properties.limits.properties));
+  for (const name of lib.limitNames)
+    assert.deepEqual(providerPatchSchema.properties.limits.properties[name].type, ["integer", "null"], name);
+  // The hint states the daemon's ranges, in both languages.
+  for (const locale of ["zh-CN", "en"]) {
+    i18n.setLocale(locale);
+    for (const [low, high] of Object.values(PROVIDER_LIMIT_RANGES))
+      assert.ok(i18n.t("providers.limits.hint").includes(`${low}–${high}`), `${locale} ${low}–${high}`);
+  }
+  i18n.setLocale("zh-CN");
+
+  const form = {
+    ...lib.emptyProviderForm(),
+    id: "lab",
+    endpoints: { chat: "https://lab.example/v1", responses: "", anthropic: "", gemini: "" },
+  };
+  assert.equal("limits" in lib.providerInput(form), false, "empty fields follow the gateway");
+  assert.deepEqual(lib.providerInput({ ...form, limits: { concurrentPerCredential: " 2 ", queuePerCredential: "" } }).limits, { concurrentPerCredential: 2 });
+  assert.deepEqual(lib.providerInput({ ...form, limits: { concurrentPerCredential: "1", queuePerCredential: "0" } }).limits, { concurrentPerCredential: 1, queuePerCredential: 0 }, "0 waiting is a limit");
+  for (const typed of ["abc", "1.5", "-1", "2 3"]) {
+    const failure = lib.providerFormFailure({ ...form, limits: { concurrentPerCredential: "", queuePerCredential: typed } });
+    assert.deepEqual(failure.fields, { "/limits/queuePerCredential": "请填写整数" }, typed);
+  }
+  assert.equal(lib.providerFormFailure({ ...form, limits: { concurrentPerCredential: "4096", queuePerCredential: "" } }), null, "the range is the daemon's to refuse");
+
+  const previous = {
+    schemaVersion: 1,
+    id: "lab",
+    name: "Lab",
+    kind: "relay",
+    endpoints: { chat: "https://lab.example/v1" },
+    auth: { apiKeyHeader: "authorization-bearer" },
+    credentials: [],
+    models: { source: "manual", list: [], expose: "all" },
+    limits: { concurrentPerCredential: 2, queuePerCredential: 10 },
+  };
+  const edited = lib.providerFormOf(previous);
+  assert.deepEqual(edited.limits, { concurrentPerCredential: "2", queuePerCredential: "10" });
+  assert.equal(lib.providerPatch(edited, previous).limits.concurrentPerCredential, 2);
+  assert.deepEqual(
+    lib.providerPatch({ ...edited, limits: { concurrentPerCredential: "3", queuePerCredential: "" } }, previous).limits,
+    { concurrentPerCredential: 3, queuePerCredential: null },
+  );
+  assert.deepEqual(
+    lib.providerPatch({ ...edited, limits: { concurrentPerCredential: "", queuePerCredential: "" } }, previous).limits,
+    { concurrentPerCredential: null, queuePerCredential: null },
+    "both cleared: the daemon drops the empty limits",
+  );
+  const { limits: _limits, ...unlimited } = previous;
+  assert.equal("limits" in lib.providerPatch(lib.providerFormOf(unlimited), unlimited), false);
+  assert.equal(lib.limitsText(previous), "每个凭据同时 2 个，排队 10 个");
+  assert.equal(lib.limitsText({ ...previous, limits: { queuePerCredential: 0 } }), "同时发出按网关的上限，排队 0 个");
+  assert.equal(lib.limitsText(unlimited), undefined);
+});
+
 test("the provider check dialog names every doctor check and states the plan's cost", async () => {
   const doctor = await consoleModule("lib/provider-doctor.ts");
   const { doctorChecks } = await import(
