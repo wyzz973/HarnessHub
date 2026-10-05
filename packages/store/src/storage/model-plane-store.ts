@@ -323,6 +323,10 @@ export class SqliteModelPlaneStore
     this.checkpoints = new WalCheckpoints(
       dbPath,
       () => Number(changes.get()!.changes),
+      // Without the worker, commits checkpoint as SQLite does by default.
+      () => {
+        if (!this.closed) this.db.exec("PRAGMA wal_autocheckpoint = 1000");
+      },
       options.log,
       options.checkpointIntervalMs,
     );

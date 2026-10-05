@@ -5,9 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { LogFields, LogSink } from "@harnesshub/core/logging";
-import { WalCheckpoints } from "../src/storage/wal-checkpoints.js";
+import {
+  WalCheckpoints,
+  WORKER_FAILURES,
+} from "../src/storage/wal-checkpoints.js";
 
-void test("a checkpoint that fails is logged and asked for again, and close waits for the worker", async (t) => {
+void test("workers that cannot start are logged, retried, then given up for the writer's own checkpoints", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "harnesshub-checkpoints-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const records: { event: string; fields: LogFields }[] = [];
@@ -17,22 +20,30 @@ void test("a checkpoint that fails is logged and asked for again, and close wait
     debug: () => undefined,
   };
   let changes = 0;
+  let fallbacks = 0;
   // No database can be opened there: every worker fails at once.
   const checkpoints = new WalCheckpoints(
     join(dir, "missing", "harnesshub.sqlite"),
     () => ++changes,
+    () => fallbacks++,
     log,
     10,
   );
   const deadline = Date.now() + 10_000;
-  while (records.length < 2 && Date.now() < deadline)
+  while (fallbacks === 0 && Date.now() < deadline)
     await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.ok(records.length >= 2, "failed, then failed again when retried");
-  assert.ok(
-    records.every((record) => record.event === "store.checkpoint_failed"),
+  assert.equal(fallbacks, 1);
+  assert.deepEqual(
+    records.map((record) => record.event),
+    [
+      ...Array.from(
+        { length: WORKER_FAILURES },
+        () => "store.checkpoint_failed",
+      ),
+      "store.checkpoint_fallback",
+    ],
   );
-  await checkpoints.close();
-  const after = records.length;
   await new Promise((resolve) => setTimeout(resolve, 50));
-  assert.equal(records.length, after, "nothing is asked for after close");
+  assert.equal(records.length, WORKER_FAILURES + 1, "nothing tried after it");
+  await checkpoints.close();
 });

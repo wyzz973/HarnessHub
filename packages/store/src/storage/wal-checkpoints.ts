@@ -33,6 +33,8 @@ type Outcome = { log: number; checkpointed: number } | { message: string };
 
 /** How often the writer's changes are looked at; a checkpoint follows at most this long after a write. */
 export const CHECKPOINT_INTERVAL_MS = 100;
+/** Workers that fail to start or die in a row before checkpoints go back to the writer. */
+export const WORKER_FAILURES = 3;
 
 /**
  * WAL checkpoints of one writing connection, off its commits: the writer
@@ -45,8 +47,12 @@ export const CHECKPOINT_INTERVAL_MS = 100;
  * checkpoint's beyond what was checkpointed. A checkpoint that left frames
  * behind (written meanwhile, or a reader in the way) is asked for again at
  * the next interval; a failed one is logged as `store.checkpoint_failed`
- * and asked for again too; a worker that dies is started again. The worker
- * starts with the first change.
+ * and asked for again too; a worker that dies is started again. When
+ * {@link WORKER_FAILURES} workers in a row fail to start or die before
+ * checkpointing (a runtime without worker threads or `node:sqlite` in them),
+ * this stops, calls `fallback` (the writer turns its automatic checkpoints
+ * back on) and logs `store.checkpoint_fallback` once. The worker starts
+ * with the first change.
  *
  * Crash safety is SQLite's: a checkpoint copies only committed frames and
  * the WAL stays the record until it is complete, so a process killed with
@@ -62,20 +68,26 @@ export class WalCheckpoints {
   #seen = 0;
   #inFlight = false;
   #closed = false;
+  /** Workers that failed to start or died since the last checkpoint. */
+  #failures = 0;
+  readonly #fallback: () => void;
   readonly #timer: NodeJS.Timeout;
 
   /**
    * @param file The database's path, opened again by the worker.
    * @param changes The writer's `total_changes()`.
+   * @param fallback Puts checkpoints back on the writer's commits.
    */
   constructor(
     file: string,
     changes: () => number,
+    fallback: () => void,
     log: LogSink = NO_LOG,
     intervalMs = CHECKPOINT_INTERVAL_MS,
   ) {
     this.#file = file;
     this.#changes = changes;
+    this.#fallback = fallback;
     this.#log = log;
     this.#seen = changes();
     this.#timer = setInterval(() => this.#tick(), intervalMs);
@@ -100,6 +112,7 @@ export class WalCheckpoints {
     worker.unref();
     worker.on("message", (outcome: Outcome) => {
       this.#inFlight = false;
+      this.#failures = 0;
       if ("message" in outcome)
         this.#log.info("store.checkpoint_failed", {
           message: outcome.message.slice(0, 200),
@@ -111,6 +124,13 @@ export class WalCheckpoints {
     worker.on("error", (error) => {
       this.#log.info("store.checkpoint_failed", {
         message: error.message.slice(0, 200),
+      });
+      if (++this.#failures < WORKER_FAILURES || this.#closed) return;
+      this.#closed = true;
+      clearInterval(this.#timer);
+      this.#fallback();
+      this.#log.info("store.checkpoint_fallback", {
+        message: `the checkpoint worker failed ${WORKER_FAILURES} times in a row; checkpoints are made by the writer's commits again`,
       });
     });
     this.#exited = new Promise((resolve) =>
