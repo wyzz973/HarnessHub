@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT
+import { outliveClosedPipes } from "@harnesshub/cli/pipes";
+
 const USAGE = `Usage: hh <command> [arguments]
 
 Commands:
@@ -146,12 +148,15 @@ export const COMMAND_NAMES: readonly string[] = Object.keys(COMMANDS);
  * reach the running daemon over HTTP. `--help` prints the commands on stdout;
  * a missing or unknown command prints them on stderr and fails with exit code 2.
  * A command's own failures keep that command's output and exit code; a
- * `serve` startup failure rejects.
+ * `serve` startup failure rejects. Once the reader of stdout or stderr has
+ * gone, the command's further output there is dropped and it ends with its
+ * own exit code (`outliveClosedPipes`).
  *
  * @param argv The command-line arguments after `hh`.
  * @returns The exit code, or undefined when the command sets it itself.
  */
 export async function main(argv: string[]): Promise<number | undefined> {
+  outliveClosedPipes();
   const [name] = argv;
   if (name === "--help" || name === "-h") {
     console.log(USAGE);

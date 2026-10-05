@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -500,6 +500,33 @@ void test(
     const exported = await hh(["usage", "--by", "call", "--format", "csv"]);
     assert.equal(exported.code, 0, exported.stderr);
     assert.equal(exported.stdout, text);
+    // A reader that has gone before hh writes (`| true`; with `| head` the
+    // pipe's buffer may take it all first): the export stops at the first
+    // write that fails, and hh ends as it would have, with no EPIPE.
+    const headed = await new Promise<{
+      code: number | null;
+      signal: string | null;
+      stderr: string;
+    }>((resolve, reject) => {
+      const child = spawn(
+        process.execPath,
+        [
+          fileURLToPath(HH_ENTRY),
+          ...["usage", "--by", "call", "--format", "csv"],
+          ...["--url", hub.url, "--data-dir", dataDir],
+        ],
+        { cwd: directory, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      let stderr = "";
+      child.stderr
+        .setEncoding("utf8")
+        .on("data", (chunk: string) => (stderr += chunk));
+      child.stdout.destroy();
+      child.once("error", reject);
+      child.once("close", (code, signal) => resolve({ code, signal, stderr }));
+    });
+    assert.deepEqual([headed.code, headed.signal], [0, null], headed.stderr);
+    assert.equal(headed.stderr, "");
     const summed = await hh(["usage", "--by", "provider", "--format", "csv"]);
     assert.equal(summed.code, 0, summed.stderr);
     assert.equal(summed.stdout, usageText);

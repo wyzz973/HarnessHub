@@ -8,7 +8,6 @@
  * with the codes of 06 section 5. Secrets are read from a hidden prompt,
  * stdin, an environment variable or a file, never from the command line.
  */
-import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import { parseArgs, type ParseArgsConfig } from "node:util";
 import {
@@ -55,6 +54,7 @@ import {
   type SearchBackendKind,
 } from "@harnesshub/core/gateway-features";
 import type { ImportPreview } from "@harnesshub/core/import-links";
+import { drained } from "./pipes.js";
 
 const EXIT = {
   ok: 0,
@@ -1709,14 +1709,20 @@ const CONVERSATION_ROWS = 200;
 /** Calls shown by `hh usage --by call`; `--json` prints the API page, `--format csv` every call. */
 const CALL_ROWS = 50;
 
-/** Copy a CSV export to standard output as it arrives. */
+/**
+ * Copy a CSV export to standard output as it arrives; when the reader of
+ * standard output goes away (`… | head`), the rest is not fetched.
+ */
 async function writeStream(stream: ReadableStream<Uint8Array>): Promise<void> {
   const reader = stream.getReader();
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) return;
-      if (!process.stdout.write(value)) await once(process.stdout, "drain");
+      if (!process.stdout.write(value) && !(await drained(process.stdout))) {
+        await reader.cancel();
+        return;
+      }
     }
   } finally {
     reader.releaseLock();

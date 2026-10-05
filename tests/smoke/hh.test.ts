@@ -376,3 +376,66 @@ void test(
       assert.match(summaries.get("usage")!, new RegExp(`\\b${value}\\b`));
   },
 );
+
+/**
+ * Run `hh` with `closed` (stdout or stderr) a pipe whose reader has gone
+ * before hh writes, as in `hh … | true`; the other stream is collected.
+ */
+function hhClosing(
+  cwd: string,
+  args: string[],
+  closed: "stdout" | "stderr",
+): Promise<{ code: number | null; signal: string | null; other: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [fileURLToPath(HH_ENTRY), ...args], {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    child[closed].destroy();
+    let other = "";
+    child[closed === "stdout" ? "stderr" : "stdout"]
+      .setEncoding("utf8")
+      .on("data", (chunk: string) => (other += chunk));
+    const timer = setTimeout(() => child.kill("SIGKILL"), 30_000);
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once("close", (code, signal) => {
+      clearTimeout(timer);
+      resolve({ code, signal, other });
+    });
+  });
+}
+
+void test(
+  "a closed stdout or stderr ends no command early: its output is dropped and its exit code kept",
+  { timeout: 60_000 },
+  async (t) => {
+    const { directory } = await temporaryDirectory(t, "harnesshub-pipes-");
+    // provider --help writes to stdout, an unknown subcommand to stderr.
+    const help = await hhClosing(directory, ["provider", "--help"], "stdout");
+    assert.deepEqual([help.code, help.signal], [0, null], help.other);
+    assert.doesNotMatch(help.other, /EPIPE|Unhandled 'error' event/);
+    const wrong = await hhClosing(
+      directory,
+      ["provider", "bogus", "--data-dir", path.join(directory, "data")],
+      "stderr",
+    );
+    assert.deepEqual([wrong.code, wrong.signal], [2, null]);
+    // The daemon's absence is still reported, with its own exit code.
+    const down = await hhClosing(
+      directory,
+      [
+        "status",
+        "--url",
+        "http://127.0.0.1:9",
+        "--data-dir",
+        path.join(directory, "data"),
+      ],
+      "stdout",
+    );
+    assert.equal(down.code, 3, down.other);
+    assert.match(down.other, /admin token/);
+  },
+);
