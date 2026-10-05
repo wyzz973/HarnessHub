@@ -39,7 +39,10 @@ import {
   type UsageGroupBy,
   type WireProtocol,
 } from "@harnesshub/core/model-plane";
-import { choosePreset } from "@harnesshub/core/provider-presets";
+import {
+  choosePreset,
+  type ProviderPreset,
+} from "@harnesshub/core/provider-presets";
 import {
   parseRule,
   RULE_KEYS,
@@ -554,7 +557,10 @@ function rebase(
   );
 }
 
-async function providerCommand(args: string[]): Promise<void> {
+async function providerCommand(
+  args: string[],
+  options: AdminOptions,
+): Promise<void> {
   const [action = "", ...rest] = args;
   // Loaded on use: doctor.ts uses this module's helpers.
   if (action === "test" || action === "doctor")
@@ -586,7 +592,7 @@ async function providerCommand(args: string[]): Promise<void> {
   switch (action) {
     case "presets": {
       positionals(given, []);
-      const page = await (await ctx.client()).presets.list();
+      const page = await presetPage(ctx, options);
       // Grouped like `magpie presets`: vendors, relays, then local servers.
       const groups = [
         ["vendor", "Vendors"],
@@ -2540,7 +2546,45 @@ async function copilotLogin(
   );
 }
 
-const COMMANDS: Readonly<Record<string, (args: string[]) => Promise<void>>> = {
+/**
+ * The daemon's presets; when no daemon answers and the `hh` app gave the
+ * bundled ones (`AdminOptions.presets`), those, with a note on stderr.
+ */
+async function presetPage(
+  ctx: Context,
+  options: AdminOptions,
+): Promise<{ items: readonly ProviderPreset[]; nextCursor: string | null }> {
+  try {
+    return await (await ctx.client()).presets.list();
+  } catch (error) {
+    if (
+      !options.presets ||
+      !(
+        error instanceof HarnessHubUnavailableError ||
+        error instanceof AdminTokenUnavailableError
+      )
+    )
+      throw error;
+    process.stderr.write(
+      `No daemon answered (${error.message}); listing the presets bundled with this hh, which its daemon serves.\n`,
+    );
+    return { items: await options.presets(), nextCursor: null };
+  }
+}
+
+/** What the `hh` app gives the model-plane commands. */
+export interface AdminOptions {
+  /**
+   * The presets this build ships, which `hh provider presets` lists when no
+   * daemon answers (they are the daemon's own, so nothing else needs it).
+   * Called at most once, only then; it loads the gateway's preset files.
+   */
+  presets?: () => Promise<readonly ProviderPreset[]>;
+}
+
+const COMMANDS: Readonly<
+  Record<string, (args: string[], options: AdminOptions) => Promise<void>>
+> = {
   subscription: subscriptionCommand,
   import: importCommand,
   provider: providerCommand,
@@ -2612,11 +2656,15 @@ function report(error: unknown, json: boolean, usage = USAGE): number {
 /**
  * Run one model-plane command (`argv` starts with the command name).
  *
+ * @param options What the `hh` app gives (the bundled presets).
  * @returns The exit code of 06 section 5: 0, 1 internal, 2 usage or unknown
  *   name, 3 daemon unavailable, 4 confirmation needed, 5 conflict, 6
  *   authentication, 7 limit or not ready, 130 interrupted.
  */
-export async function main(argv: string[]): Promise<number> {
+export async function main(
+  argv: string[],
+  options: AdminOptions = {},
+): Promise<number> {
   const [name, ...args] = argv;
   if (name === undefined || name === "--help" || args.includes("--help")) {
     write(commandUsage(argv));
@@ -2628,7 +2676,7 @@ export async function main(argv: string[]): Promise<number> {
     return EXIT.usage;
   }
   try {
-    await command(args);
+    await command(args, options);
     return EXIT.ok;
   } catch (error) {
     return report(error, args.includes("--json"), commandUsage(argv));

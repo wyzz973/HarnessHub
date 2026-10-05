@@ -4,7 +4,7 @@
 
 ## 列出与选择
 
-前置条件：守护进程在运行（`hh serve`），命令能读到它的数据目录（`--data-dir`，默认 `./data`）。
+守护进程在运行（`hh serve`）且命令能读到它的数据目录（`--data-dir`，默认 `./data`）时列出它提供的预设；连不上守护进程或读不到管理令牌时，`hh provider presets` 列出这个 `hh` 自带的同一份预设（守护进程提供的也是它们），并在标准错误说明原因。添加 provider 需要守护进程。
 
 ```sh
 hh provider presets            # 按 Vendors、Relays、Local 分组

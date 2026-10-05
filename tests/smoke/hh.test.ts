@@ -478,3 +478,30 @@ void test(
     assert.match(alone.stderr, /^Give a command after the options\n/);
   },
 );
+
+void test(
+  "hh provider presets lists the bundled presets when no daemon answers",
+  { timeout: 60_000 },
+  async (t) => {
+    const { directory } = await temporaryDirectory(t, "harnesshub-presets-");
+    const { listPresets } = await import("@harnesshub/gateway/presets");
+    const listed = await hh(directory, ["provider", "presets"]);
+    assert.equal(listed.code, 0, listed.stderr);
+    assert.match(listed.stdout, /^Vendors \(\d+\)\nPRESET /);
+    assert.match(listed.stdout, /\ndeepseek +DeepSeek /);
+    assert.match(
+      listed.stderr,
+      /^No daemon answered \(Cannot read the admin token .+\); listing the presets bundled with this hh, which its daemon serves\.\n$/,
+    );
+    const json = await hh(directory, ["provider", "presets", "--json"]);
+    assert.equal(json.code, 0, json.stderr);
+    assert.deepEqual(
+      (JSON.parse(json.stdout) as { items: Array<{ id: string }> }).items.map(
+        (item) => item.id,
+      ),
+      listPresets().map((preset) => preset.id),
+    );
+    // Other commands still need the daemon.
+    assert.equal((await hh(directory, ["provider", "list"])).code, 3);
+  },
+);

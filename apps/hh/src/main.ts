@@ -126,7 +126,10 @@ const COMMANDS: Readonly<Record<string, Command>> = {
       name,
       async (argv) => {
         const { main } = await import("@harnesshub/cli/admin");
-        return main(argv);
+        return main(argv, {
+          presets: async () =>
+            (await import("@harnesshub/daemon/presets")).listPresets(),
+        });
       },
     ]),
   ),
