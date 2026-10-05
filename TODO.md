@@ -133,7 +133,12 @@
   - 取舍：决定休息的类别从去掉请求自身词语的错误体判断，转移仍按完整错误体；一把 Key 的失败最多休息 1 分钟，另一把 Key 的探测再次失败才给完整时长（只有一把 Key 时每分钟探测一次）；安全拒绝不转给同一厂商（端点主机相同）的其他候选，一次调用至多两个厂商，Key 10 分钟内超过 5 次后不再转移，均为固定行为；排队期限为新的 `gateway.limits.slotWaitMs`（默认 60 秒），按 Key 公平分配并发位。
   - 证据：[路由审查测试](tests/integration/routing-review.test.ts)由审查脚本 f1–f5、b1、b2、c1 改写，8 项在修改前的网关代码上全部失败、修改后通过；网关单元测试（回显与暂定休息、拒绝转移与 Key 上限、被丢弃回答的用量、裸名称、并发位、搜索触发）。
   - 本机完整 `pnpm check` 通过（macOS arm64）。Windows 未验证。
-- [ ] **G 备份与同步**（M5、M6、L8、L9）：构造的备份可让搜索 Key 引用本机任意秘密并发往备份指定的地址；脱敏规则可造成灾难性回溯阻塞守护进程；同步不防回滚；经同步关闭脱敏不需要确认。
+- [x] **G 备份与同步**（M5、M6、L8、L9）：构造的备份可让搜索 Key 引用本机任意秘密并发往备份指定的地址；脱敏规则可造成灾难性回溯阻塞守护进程；同步不防回滚；经同步关闭脱敏不需要确认。
+  已完成（分支 `fix/backup-sync-security`，[ADR 0027 修订](docs/decisions/0027-gateway-features.md#修订2026-10-05第二轮安全审查-g-组)、[备份与同步](docs/backup-sync.md)）：
+  - M6：所有入口以保守的静态检查拒绝会无界回溯的规则（`regex-safety.ts`），一次脱敏有时间预算（`redactionBudgetMs`，默认 1 s），超出时该请求 503 `redaction_timeout`；旧设置文件中不符合的规则启动时不生效并记日志。附带：搜索 `baseUrl` 不得带 `user:password@`。
+  - M5：搜索 Key 只接受存储值（外部引用列入 `search.refused`）；provider 凭证指向 `HH_`/`HARNESSHUB_` 变量或数据、配置目录中文件的永不恢复或同步，其他外部引用列入 `providers.references`（含 Key 的去向），恢复须 `references: true`（否则 409 `BACKUP_REFERENCES`），`hh restore --yes` 另需 `--allow-references`。
+  - L8：同步文件在加密内容中带 `generation`，更旧的文件 409 `SYNC_ROLLBACK`，`hh sync now --accept-older` 接受并写回更新的文件。L9：服务器的网关功能不比本机的新时不关闭脱敏，以 `notice.redactionOffHeld` 询问。
+  - 证据：[安全测试](tests/integration/backup-sync-security.test.ts) 与 core、网关、守护进程的单元测试，各项在修复前失败（对旧代码实际运行确认）；本机完整 `pnpm check` 通过（工具 229、单元 969 通过 14 跳过、集成 390 通过 11 跳过、smoke 10、协议 508）。控制台的引用确认、`refused` 与 `redactionOffHeld` 显示、接受旧文件的操作留给控制台；Windows 未验证。
 
 ## 第三轮安全审查（2026-10-05，`fee4bb5..5194d48`）
 
