@@ -82,11 +82,50 @@ export function searchesNatively(
   return NATIVE_SEARCH[protocol]?.includes(host) === true;
 }
 
-/** Whether a raw request offers its model a server-side web search, or has searches in its history. */
+/** An object's `type` field, when it is a string. */
+const typeOf = (value: unknown): string | undefined => {
+  const type =
+    typeof value === "object" && value !== null
+      ? (value as { type?: unknown }).type
+      : undefined;
+  return typeof type === "string" ? type : undefined;
+};
+
+/**
+ * Whether a raw request offers its model a server-side web search (a tool
+ * of a `web_search…` type), or has such searches in its history (Responses
+ * `web_search_call` items, Anthropic `server_tool_use` blocks of
+ * `web_search` and their results). Only those places count: a message or
+ * tool that merely says "web_search" does not (security review L10).
+ */
 export function searchOffered(protocol: WireProtocol, raw: unknown): boolean {
   if (protocol !== "responses" && protocol !== "anthropic") return false;
-  const text = JSON.stringify(raw);
-  return text.includes("web_search");
+  const request =
+    typeof raw === "object" && raw !== null
+      ? (raw as { tools?: unknown; input?: unknown; messages?: unknown })
+      : {};
+  const list = (value: unknown): unknown[] =>
+    Array.isArray(value) ? value : [];
+  if (
+    list(request.tools).some((tool) => typeOf(tool)?.startsWith("web_search"))
+  )
+    return true;
+  if (protocol === "responses")
+    return list(request.input).some(
+      (item) => typeOf(item) === "web_search_call",
+    );
+  return list(request.messages).some((message) =>
+    list(
+      typeof message === "object" && message !== null
+        ? (message as { content?: unknown }).content
+        : undefined,
+    ).some(
+      (block) =>
+        typeOf(block) === "web_search_tool_result" ||
+        (typeOf(block) === "server_tool_use" &&
+          (block as { name?: unknown }).name === "web_search"),
+    ),
+  );
 }
 
 /** The function tool the model gets, named so the client's own tools leave it free. */

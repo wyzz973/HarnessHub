@@ -41,6 +41,8 @@ export interface HandlerLimits {
   maxConcurrentPerCredential: number;
   /** Calls waiting for a credential slot before new ones get 429 `busy`. */
   maxQueuedPerCredential: number;
+  /** Longest a call waits for a credential slot before it gets 429 `busy` (and fails over). */
+  slotWaitMs: number;
   /** Reasoning replay cache per Gateway Key: entries and UTF-8 bytes. */
   reasoningEntries: number;
   reasoningBytes: number;
@@ -81,6 +83,7 @@ export const DEFAULT_HANDLER_LIMITS: Readonly<HandlerLimits> = Object.freeze({
   holdBytes: MiB,
   maxConcurrentPerCredential: 8,
   maxQueuedPerCredential: 64,
+  slotWaitMs: 60_000,
   reasoningEntries: 256,
   reasoningBytes: 4 * MiB,
   reasoningTotalBytes: 64 * MiB,
@@ -113,6 +116,7 @@ const RANGES: Readonly<Record<keyof HandlerLimits, readonly [number, number]>> =
     holdBytes: [1, MAX],
     maxConcurrentPerCredential: [1, MAX],
     maxQueuedPerCredential: [0, MAX],
+    slotWaitMs: [1, MAX_TIMER_MS],
     reasoningEntries: [0, MAX],
     reasoningBytes: [0, MAX],
     reasoningTotalBytes: [0, MAX],

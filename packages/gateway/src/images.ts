@@ -41,7 +41,9 @@ import { GatewayError, object, record } from "./protocol.js";
 import type { QuotaRefusal } from "./quota.js";
 import {
   classify,
+  echoFree,
   failureKind,
+  hiddenBy,
   KEYLESS_CREDENTIAL,
   type Candidate,
 } from "./routing.js";
@@ -467,7 +469,23 @@ export async function imagesCall(options: {
         admission.refusal,
       );
     release = admission.release;
-    const queue = await candidates(services, requested, drawing);
+    const planned = await candidates(services, requested, drawing);
+    // A model the key hides is not reached through a group either (M4).
+    const queue = planned.filter(
+      (candidate) => !hiddenBy(key.modelDeny, candidate.ref, candidate.path),
+    );
+    if (planned.length && !queue.length)
+      return requested !== given
+        ? fail(
+            404,
+            "model_not_found",
+            `No route group or model is named ${given.slice(0, 200)}; name one as provider/model or group/<id>`,
+          )
+        : fail(
+            403,
+            "model_not_allowed",
+            `This Gateway Key may not use any model of ${requested.slice(0, 200)}`,
+          );
     if (!queue.length)
       return fail(
         404,
@@ -512,7 +530,7 @@ export async function imagesCall(options: {
       // Each upstream request's 5-minute deadline, cleared when the attempt ends.
       const deadlines: { dispose(): void }[] = [];
       try {
-        await slots.acquire(signal);
+        await slots.acquire(signal, key.keyId);
       } catch {
         services.breakers.release(candidate);
         current.decision = "failover";
@@ -700,6 +718,7 @@ export async function imagesCall(options: {
             { kind: "none" },
             failure(502, "upstream_unreachable", "unreachable"),
             "upstream_unreachable",
+            key.keyId,
           );
           current.decision = "failover";
           current.errorClass = "upstream_unreachable";
@@ -707,6 +726,11 @@ export async function imagesCall(options: {
         }
         if (outcome.kind === "failed") {
           const kind = failureKind(outcome.status, outcome.text);
+          // The request's own words decide no rest (routing `echoFree`).
+          const restKind = failureKind(
+            outcome.status,
+            echoFree(outcome.text, drawing),
+          );
           const error = {
             failure: failure(
               outcome.status,
@@ -718,6 +742,7 @@ export async function imagesCall(options: {
             phase: "response" as const,
             status: outcome.status,
             kind,
+            restKind,
           };
           const verdict = classify(error);
           services.breakers.failure(
@@ -725,6 +750,7 @@ export async function imagesCall(options: {
             verdict.breaker,
             error.failure,
             error.errorClass,
+            key.keyId,
           );
           current.errorClass = error.errorClass;
           last = { status: outcome.status, text: outcome.text };
@@ -871,7 +897,7 @@ export async function imagesCall(options: {
         return;
       } finally {
         for (const timeout of deadlines) timeout.dispose();
-        slots.release();
+        slots.release(key.keyId);
       }
     }
     if (last) {

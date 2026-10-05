@@ -13,8 +13,10 @@ import type {
   ProviderId,
 } from "@harnesshub/core/model-plane";
 import {
-  Breakers,
-  matesFirst,
+  dropVendor,
+  POLICY_FAILOVERS,
+  POLICY_WINDOW_MS,
+  PolicyRefusals,
   policyRefusal,
   tokenFloor,
   withTokenFloor,
@@ -114,43 +116,37 @@ void test("the least reply length a vendor takes is read from its 400, as Magpie
   assert.equal(withTokenFloor("not json", 3), undefined);
 });
 
-void test("after a safety refusal the failed model's other credentials go first, resting ones not", () => {
-  const candidate = (
-    provider: string,
-    credential: string,
-    ref = "p/m",
-    effort?: string,
-  ): Candidate =>
+void test("after a safety refusal the vendor's other candidates are dropped, and a key refused often stops failing over", () => {
+  const candidate = (provider: string, endpoint: string, credential: string) =>
     ({
       provider: { id: provider as ProviderId },
       credential: { id: credential as CredentialId },
-      ref: ref as ModelRef,
-      ...(effort ? { effort } : {}),
+      ref: `${provider}/m` as ModelRef,
+      endpoint,
     }) as unknown as Candidate;
-  const failed = candidate("p", "one");
   const queue = [
-    failed,
-    candidate("q", "other"),
-    candidate("p", "two"),
-    candidate("p", "three", "p/n"),
-    candidate("p", "four", "p/m", "high"),
-    candidate("p", "five"),
+    candidate("p", "https://api.vendor.example/v1", "one"),
+    candidate("q", "https://api.other.example/v1", "other"),
+    candidate("p", "https://api.vendor.example/v1", "two"),
+    // Another provider on the same API is the same vendor.
+    candidate("p2", "https://api.vendor.example/v1", "three"),
+    candidate("r", "http://127.0.0.1:8080/v1", "local"),
+    candidate("s", "http://127.0.0.1:8081/v1", "port"),
   ];
-  const breakers = new Breakers(
-    () => 0,
-    () => undefined,
-  );
-  breakers.failure(
-    queue[5]!,
-    { kind: "cooldown", ms: 60_000 },
-    { status: 429, code: "rate", message: "x", contextOverflow: false },
-    "rate_limited",
-  );
-  matesFirst(queue, 0, breakers);
+  dropVendor(queue, 0);
   assert.deepEqual(
     queue.map((item) => item.credential.id),
-    ["one", "two", "other", "three", "four", "five"],
+    ["one", "other", "local", "port"],
   );
+
+  let now = 0;
+  const refusals = new PolicyRefusals(() => now);
+  for (let index = 0; index < POLICY_FAILOVERS; index++)
+    assert.equal(refusals.note("key-1"), true, `refusal ${index + 1}`);
+  assert.equal(refusals.note("key-1"), false, "one too many");
+  assert.equal(refusals.note("key-2"), true, "counted per key");
+  now += POLICY_WINDOW_MS;
+  assert.equal(refusals.note("key-1"), true, "after the window");
 });
 
 /**
@@ -211,7 +207,7 @@ void test("a shape the API cannot read goes to another provider's API, skips the
   assert.equal(a.seen.length, 2);
 });
 
-void test("a safety refusal goes to the model's other credential first and rests nothing", async (t) => {
+void test("a safety refusal goes to another vendor, not to this vendor's other credential, and rests nothing", async (t) => {
   const refusal = json(400, {
     error: {
       type: "invalid_request_error",
@@ -227,17 +223,74 @@ void test("a safety refusal goes to the model's other credential first and rests
   );
   const answer = await chat();
   assert.equal(answer.status, 200, answer.text);
+  // key-b of `a` would apply the same policy to the same prompt: not asked.
   assert.deepEqual(
     a.seen.map((seen) => seen.headers.authorization),
-    [KEY_A, "Bearer sk-upstream-b-0002"],
+    [KEY_A],
   );
-  assert.equal(b.seen.length, 0);
+  assert.equal(b.seen.length, 1);
   assert.deepEqual(attempts(await entry(1)), [
     "a failover safety_refused",
-    "a success -",
+    "b success -",
   ]);
   await chat();
-  assert.equal(a.seen[2]?.headers.authorization, KEY_A, "key-a did not rest");
+  assert.equal(a.seen[1]?.headers.authorization, KEY_A, "key-a did not rest");
+});
+
+void test("a refused request goes to one other vendor at most, and a key refused often gets its refusals as they are", async (t) => {
+  const refusal = json(400, {
+    error: {
+      code: "bio_policy",
+      message: "flagged",
+      type: "invalid_request_error",
+    },
+  });
+  const ups = await Promise.all([1, 2, 3].map(() => upstream(t, refusal)));
+  const ok = await upstream(t, CHAT_REPLY);
+  const store = new MemoryStore();
+  for (const [index, up] of [...ups, ok].entries())
+    await store.putProvider(
+      provider(
+        `p${index}`,
+        { chat: `${up.base}/v1` },
+        { secrets: [["key-a", "key-b", "key-c", "key-a"][index]!] },
+      ),
+    );
+  await store.putRouteGroup(
+    group("g", ["p0/model-a", "p1/model-a", "p2/model-a", "p3/model-a"], {
+      retry: { totalAttempts: 8 },
+    }),
+  );
+  const key = await addKey(store, ["*"]);
+  const gw = await mount(t, store);
+  const chat = () =>
+    send(gw.port, "/v1/chat/completions", {
+      headers: { authorization: `Bearer ${key.text}` },
+      body: { model: "group/g", messages: MESSAGES },
+    });
+  const first = await chat();
+  assert.equal(first.status, 400, "the second vendor's refusal is the answer");
+  assert.equal(at(first.json(), "error", "code"), "safety_refused");
+  assert.deepEqual(
+    [...ups, ok].map((up) => up.seen.length),
+    [1, 1, 0, 0],
+  );
+  await until(() => store.entries.length === 1);
+  assert.deepEqual(attempts(store.entries[0]!), [
+    "p0 failover safety_refused",
+    "p1 stop safety_refused",
+  ]);
+  // Two refusals a call: the fourth call's first is past the key's five.
+  for (let call = 2; call <= 4; call++)
+    assert.equal((await chat()).status, 400);
+  await until(() => store.entries.length === 4);
+  assert.deepEqual(attempts(store.entries[2]!), [
+    "p0 failover safety_refused",
+    "p1 stop safety_refused",
+  ]);
+  assert.deepEqual(attempts(store.entries[3]!), ["p0 stop safety_refused"]);
+  assert.equal(ups[2]!.seen.length + ok.seen.length, 0, "never a third vendor");
+  assert.equal(POLICY_FAILOVERS, 5);
 });
 
 void test("a provider refusing this client, or busy, is failed over and counts towards its breaker", async (t) => {
@@ -357,16 +410,22 @@ void test("a reply that is a safety refusal with nothing said goes to the next c
     at(whole.json(), "choices", 0, "message", "content"),
     "Hello world",
   );
-  assert.deepEqual(attempts(await entry(1)), [
-    "a failover safety_refused",
+  const first = await entry(1);
+  assert.deepEqual(attempts(first), [
     "a failover safety_refused",
     "b success -",
   ]);
+  // The refused reply used 10 tokens, which the vendor bills: counted (M3).
+  assert.deepEqual([first.usage?.input, first.usage?.output], [110, 20]);
+  assert.ok(
+    Math.abs(first.cost!.amountUsd - (110 * 1 + 20 * 2) / 1_000_000) < 1e-12,
+  );
+  assert.ok(first.patches.includes("refused:usage:1"));
   const streamed = await chat({ stream: true });
   assert.equal(streamed.status, 200);
   assert.match(streamed.text, /Hello/);
   assert.equal(b.seen.length, 2);
-  assert.equal(a.seen.length, 4);
+  assert.equal(a.seen.length, 2);
 
   // Nobody left: the client is told it was refused (Magpie #248), not
   // handed an empty reply it would send again, streamed or not.

@@ -4,8 +4,9 @@
  * `provider/model` (an IDE plugin, a script that says the model's name) is
  * served by the automatic group or the one model of that name, in each
  * inbound protocol, Gemini's model path included. Several models of a name
- * are refused with their names, and a key's allowlist applies to what the
- * name resolved to. The upstream is the strict fake provider.
+ * are refused with their names. A name resolves only to what the key may
+ * use; a name of something else answers as an unknown name. The upstream
+ * is the strict fake provider.
  */
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -134,7 +135,7 @@ void test("a bare name is served in every inbound protocol, Gemini's model path 
   ]);
 });
 
-void test("several models of a name are refused with their names, and the allowlist applies to what a name resolved to", async (t) => {
+void test("several models of a name are refused with their names, and a name resolves only to what the key may use", async (t) => {
   const { client, send } = await daemon(t);
   // With the automatic group hidden, two providers' models have the name.
   await client.autoGroups.hide("auto-upstream-sim");
@@ -153,37 +154,27 @@ void test("several models of a name are refused with their names, and the allowl
     );
   }
 
-  // A key for alpha alone: beta-only resolves to beta's model, which it may not use.
+  // A key for alpha alone: beta-only names nothing it may use, and answers
+  // as an unknown name does (security review L6).
   const alpha = await client.gatewayKeys.create({
     name: "alpha",
     modelAllow: ["alpha/*"],
   });
-  const denied = await send(
-    "/v1/chat/completions",
-    { model: "beta-only", messages: MESSAGES },
-    alpha.key,
+  const ask = (model: string) =>
+    send("/v1/chat/completions", { model, messages: MESSAGES }, alpha.key);
+  const denied = await ask("beta-only");
+  const nothing = await ask("nothing-here");
+  assert.deepEqual([denied.status, nothing.status], [404, 404]);
+  assert.equal(
+    JSON.stringify(denied.body).replace("beta-only", "X"),
+    JSON.stringify(nothing.body).replace("nothing-here", "X"),
   );
-  assert.equal(denied.status, 403);
-  assert.match(
-    JSON.stringify(denied.body),
-    /may not use beta\/beta-only \(what beta-only names here\)/,
-  );
-  const [refused] = (await client.modelCalls.list({ limit: 1 })).items;
-  assert.equal(refused!.requestedModel, "beta-only");
-  assert.equal(refused!.modelRef, "beta/beta-only");
-  assert.equal(refused!.rejected, true);
-  assert.equal(refused!.errorClass, "model_not_allowed");
-  // Its ambiguity message names only what it may use.
-  const narrow = await send(
-    "/v1/chat/completions",
-    { model: "upstream-sim", messages: MESSAGES },
-    alpha.key,
-  );
-  assert.equal(narrow.status, 400);
-  assert.match(
-    JSON.stringify(narrow.body),
-    /: alpha\/upstream-sim, and 1 this Gateway Key may not use;/,
-  );
+  // Of the two models of upstream-sim it may use alpha's: the name names it.
+  const narrow = await ask("upstream-sim");
+  assert.equal(narrow.status, 200, JSON.stringify(narrow.body));
+  const [served] = (await client.modelCalls.list({ limit: 1 })).items;
+  assert.equal(served!.requestedModel, "upstream-sim");
+  assert.equal(served!.modelRef, "alpha/upstream-sim");
 
   const unknown = await send("/v1/chat/completions", {
     model: "no-such-model",

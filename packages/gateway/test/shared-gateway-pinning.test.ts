@@ -84,8 +84,8 @@ void test("a pinned call uses only that credential, by ID or by name, and the he
 
 void test("a pinned credential that rests answers 429 and nothing else is tried", async (t) => {
   const { up, store, call, gw } = await setup(t);
-  // cred-1's credit refusal rests it for 30 minutes; pinned, cred-0 does
-  // not take over.
+  // cred-1's credit refusal rests it (a minute, as one key's failure);
+  // pinned, cred-0 does not take over.
   assert.equal((await call("a/model-a", "cred-1")).status, 402);
   assert.equal(up.seen.length, 1);
   const answer = await call("a/model-a", "cred-1");
@@ -95,7 +95,7 @@ void test("a pinned credential that rests answers 429 and nothing else is tried"
   assert.equal(answer.headers["x-hh-error-source"], "gateway");
   assert.match(
     String(at(answer.json(), "error", "message")),
-    /X-HH-Credential: credential "cred-1" rests until 2026-10-02T12:30:00\.000Z \(insufficient_balance\); no other credential is tried in its place/,
+    /X-HH-Credential: credential "cred-1" rests until 2026-10-02T12:01:00\.000Z \(insufficient_balance\); no other credential is tried in its place/,
   );
   const entry = store.entries.at(-1)!;
   assert.deepEqual(
@@ -107,7 +107,7 @@ void test("a pinned credential that rests answers 429 and nothing else is tried"
     200,
     "unpinned, cred-0 serves",
   );
-  gw.clock.now += 30 * 60_000;
+  gw.clock.now += 60_000;
   assert.equal(
     (await call("a/model-a", "cred-1")).status,
     402,

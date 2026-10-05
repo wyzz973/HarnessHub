@@ -20,6 +20,7 @@ import {
 import type {
   CallAttempt,
   CallPurpose,
+  CallUsage,
   GatewayKeyRecord,
   ModelCallEntry,
   ModelPlaneStore,
@@ -131,18 +132,20 @@ import {
   backoff,
   classify,
   failureClass,
+  echoFree,
   failureKind,
   RETRY_BUDGET_MS,
   resetIn,
   retryAfter,
   retryPolicy,
-  matesFirst,
+  dropVendor,
   tokenFloor,
   withTokenFloor,
   type AttemptError,
   type Breakers,
   type Candidate,
   type FailureKind,
+  type PolicyRefusals,
   type Router,
   KEYLESS_CREDENTIAL,
 } from "./routing.js";
@@ -289,6 +292,8 @@ export interface CallServices {
   log: LogSink;
   breakers: Breakers;
   router: Router;
+  /** Safety-filter refusals per key, which stop failing over after a few (M2). */
+  refusals: PolicyRefusals;
   memory: MemoryBudget;
   slots(candidate: Candidate): Slots;
   reasoning: ReasoningCaches;
@@ -395,6 +400,11 @@ export interface Call {
   tokenFloor?: number;
   /** The gateway serves Codex's compaction: an answer without a summary fails (./compacting.js). */
   compaction?: boolean;
+  /**
+   * Replies of earlier attempts that a safety filter refused and the call
+   * dropped: what they used and cost, which the entry counts (M3).
+   */
+  discarded?: { usage: CallUsage; cost: ModelCallEntry["cost"] }[];
 }
 
 type Prepared =
@@ -487,11 +497,14 @@ function copilotFailure(
 /**
  * An upstream refusal or an in-stream error as an attempt error. Its kind
  * comes from the status and `body`, the whole error body when there is one
- * (read for routing only, never stored), else the message.
+ * (read for routing only, never stored), else the message; the kind of its
+ * rest from the same without the words of `request`, the client's request
+ * ({@link echoFree}).
  */
 function upstreamFailure(
   error: GatewayError,
   secrets: readonly string[],
+  request: unknown,
   body?: string,
 ): AttemptError {
   const overflow = error.contextOverflow && error.status !== 429;
@@ -500,6 +513,9 @@ function upstreamFailure(
   const kind: FailureKind = overflow
     ? "request"
     : failureKind(error.status, text);
+  const restKind: FailureKind = overflow
+    ? "request"
+    : failureKind(error.status, echoFree(text, request));
   const errorClass =
     error.code === "upstream_invalid_response" ||
     error.code === "upstream_protocol_error" ||
@@ -519,6 +535,7 @@ function upstreamFailure(
     phase: "response",
     status: error.status,
     kind,
+    ...(restKind !== kind ? { restKind } : {}),
     ...(floor ? { floor } : {}),
   };
 }
@@ -537,6 +554,61 @@ function refusedWithNothingSaid(): GatewayError {
     400,
     "content_filter",
   );
+}
+
+/**
+ * Keeps what a refused reply used (`parts`), which the vendor bills though
+ * the call drops the reply ({@link refusedWithNothingSaid}); the entry
+ * counts it when it is committed (M3).
+ */
+function discardReply(
+  call: Call,
+  candidate: Candidate,
+  parts: UsageParts,
+): void {
+  const usage = callUsage(parts);
+  if (usage.source === "missing") return;
+  (call.discarded ??= []).push({
+    usage,
+    cost: callCost(usage, candidate.model),
+  });
+}
+
+/**
+ * The entry's usage and cost with those of the replies the call dropped
+ * ({@link discardReply}): tokens add up; the cost is known only when every
+ * part's is.
+ */
+function countDiscarded(call: Call): void {
+  const { entry, discarded } = call;
+  if (!discarded?.length) return;
+  const parts = [
+    ...(entry.usage && entry.usage.source !== "missing"
+      ? [{ usage: entry.usage, cost: entry.cost }]
+      : []),
+    ...discarded,
+  ];
+  const sum = (
+    field: "input" | "cacheRead" | "cacheWrite" | "output" | "reasoning",
+  ) => parts.reduce((total, part) => total + part.usage[field], 0);
+  entry.usage = {
+    input: sum("input"),
+    cacheRead: sum("cacheRead"),
+    cacheWrite: sum("cacheWrite"),
+    output: sum("output"),
+    reasoning: sum("reasoning"),
+    source: "reported",
+  };
+  entry.cost = parts.every((part) => part.cost)
+    ? {
+        amountUsd: parts.reduce(
+          (total, part) => total + (part.cost?.amountUsd ?? 0),
+          0,
+        ),
+        priceSource: parts[0]!.cost!.priceSource,
+      }
+    : null;
+  entry.patches.push(`refused:usage:${discarded.length}`);
 }
 
 /** `prepared` asking for at least `floor` tokens of reply where it asked for fewer ({@link withTokenFloor}). */
@@ -1086,6 +1158,7 @@ function commit(call: Call): Promise<boolean> {
   const { entry } = call;
   const previous = committed.get(entry);
   if (previous) return previous;
+  countDiscarded(call);
   entry.timing.durationMs = Math.round(performance.now() - call.started);
   const first = call.writer.firstWrite;
   if (first !== undefined)
@@ -1448,7 +1521,7 @@ async function send(
   const { services } = call;
   const slots = services.slots(candidate);
   try {
-    await slots.acquire(call.signal);
+    await slots.acquire(call.signal, call.key.keyId);
   } catch (error) {
     if (call.signal.aborted)
       return { ok: false, error: cancelled(call), release: () => undefined };
@@ -1460,7 +1533,7 @@ async function send(
       release: () => undefined,
     };
   }
-  const release = () => slots.release();
+  const release = () => slots.release(call.key.keyId);
   const copilot =
     candidate.provider.subscription?.backend === "copilot"
       ? (services.copilot ??
@@ -1566,10 +1639,18 @@ async function send(
         isContextOverflow(reported.code, reported.message),
       ),
       secrets,
+      call.raw,
       text,
     );
     if (wait !== undefined) error.retryAfterMs = wait;
-    const reset = resetIn(text, now);
+    // Claude Code's free-text reset is read on a 429 or a subscription only.
+    const reset = resetIn(
+      text,
+      now,
+      response.status === 429 || candidate.provider.subscription
+        ? echoFree(text, call.raw)
+        : undefined,
+    );
     if (reset !== undefined) error.resetMs = reset;
     return { ok: false, error: usageHint(candidate, error), release };
   } catch (error) {
@@ -1621,7 +1702,11 @@ async function send(
         release,
       };
     if (error instanceof GatewayError)
-      return { ok: false, error: upstreamFailure(error, secrets), release };
+      return {
+        ok: false,
+        error: upstreamFailure(error, secrets, call.raw),
+        release,
+      };
     release();
     throw error;
   }
@@ -1648,7 +1733,8 @@ function readError(
       phase: "response",
       status: 504,
     };
-  if (error instanceof GatewayError) return upstreamFailure(error, secrets);
+  if (error instanceof GatewayError)
+    return upstreamFailure(error, secrets, call.raw);
   const network = networkFailure(error);
   if (network)
     return {
@@ -2004,8 +2090,10 @@ async function translatedAttempt(
       !result.text &&
       !result.reasoning &&
       !result.calls.length
-    )
+    ) {
+      discardReply(call, candidate, sumUsage(parts));
       throw refusedWithNothingSaid();
+    }
     recordSuccess(
       call,
       candidate,
@@ -2352,8 +2440,10 @@ async function passthroughAttempt(
       terminated = true;
       summary?.read(body.toString("utf8"));
     }
-    if (!writer.sent && finish === "content_filter" && !said)
+    if (!writer.sent && finish === "content_filter" && !said) {
+      discardReply(call, candidate, parts);
       throw refusedWithNothingSaid();
+    }
     recordSuccess(call, candidate, attempt, parts, served, finish, terminated);
     const empty = emptyCompaction(call, summary?.text);
     const recorded = await commit(call);
@@ -2444,6 +2534,8 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
   const queue = [...plan.candidates];
   /** Upstream APIs (provider and protocol) that could not read this request's shape. */
   const unreadable = new Set<string>();
+  /** Attempts a safety filter refused. */
+  let refused = 0;
   const api = (candidate: Candidate) =>
     `${candidate.provider.id}\u0000${candidate.upstream}`;
   for (let index = 0; index < queue.length; index++) {
@@ -2557,6 +2649,7 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
             effect,
             result.error.failure,
             result.error.errorClass,
+            call.key.keyId,
           );
         } else {
           services.breakers.success(candidate);
@@ -2627,17 +2720,24 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
         verdict.breaker,
         error.failure,
         error.errorClass,
+        call.key.keyId,
       );
       last = error;
       // Another API may read a shape this one could not; this one won't.
       if (error.kind === "shape") unreadable.add(api(candidate));
-      // What one account's safety filter refused, another account of the
-      // same model may answer: they go first (Magpie `matesFirst`).
-      if (error.kind === "policy") matesFirst(queue, index, services.breakers);
+      // A safety filter's refusal goes to one other vendor at most, not to
+      // this vendor's other accounts, and not for a key refused often (M2).
+      let failover = verdict.failover;
+      if (error.kind === "policy") {
+        refused++;
+        dropVendor(queue, index);
+        if (!services.refusals.note(call.key.keyId) || refused > 1)
+          failover = false;
+      }
       const left = entry.attempts.length < policy.totalAttempts;
       let wait = 0;
       let decision: CallAttempt["decision"] = "stop";
-      if (left && verdict.failover && others()) decision = "failover";
+      if (left && failover && others()) decision = "failover";
       else if (
         left &&
         retries < policy.perCandidate &&
@@ -2676,14 +2776,11 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
     const cause = blocked.last;
     const wait = Math.max(0, blocked.until - services.clock());
     return publishFailure(call, {
+      // The failure may have been another key's: its class, not its text.
       failure: cause
         ? {
             ...cause.failure,
-            message:
-              `All candidates are cooling down; the last failure was: ${cause.failure.message}`.slice(
-                0,
-                500,
-              ),
+            message: `All candidates are cooling down; the last failure was ${cause.errorClass} (HTTP ${cause.failure.status})`,
           }
         : failure(503, "all_candidates_open", blocked.reason),
       errorClass: cause?.errorClass ?? "all_candidates_open",

@@ -4,7 +4,8 @@
  * Magpie's order: the route group of that ID, the group of the name as
  * vendors spell it, its automatic group, the one model of that ID the
  * providers expose, the one a provider lists. Several models refuse with
- * their names; the key's allowlist applies to what the name resolved to.
+ * their names. Only what the key may use counts: a name of something else
+ * answers as an unknown one.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -40,7 +41,8 @@ void test("a bare name resolves to a group of its ID, then its spelling, then it
       },
     ),
   );
-  const resolve = (name: string) => resolveBareName(name, store);
+  const resolve = (name: string, usable = (_ref: string) => true) =>
+    resolveBareName(name, store, async (ref) => usable(ref));
   assert.deepEqual(await resolve("model-a"), {
     kind: "resolved",
     ref: "group/auto-model-a",
@@ -91,6 +93,19 @@ void test("a bare name resolves to a group of its ID, then its spelling, then it
   });
   for (const name of ["nothing", "", "  ", "a b"])
     assert.deepEqual(await resolve(name), { kind: "none" }, name);
+  // Only what the key may use: the next step of the order, or nothing.
+  const onlyB = (ref: string) => ref.startsWith("b/");
+  assert.deepEqual(await resolve("model-b", onlyB), {
+    kind: "resolved",
+    ref: "b/model-b",
+    via: "model",
+  });
+  assert.deepEqual(await resolve("model-a", onlyB), {
+    kind: "resolved",
+    ref: "b/model-a",
+    via: "model",
+  });
+  assert.deepEqual(await resolve("solo", onlyB), { kind: "none" });
 });
 
 void test("through the gateway: the resolved group or model serves, the ledger keeps the name, ambiguity and the allowlist refuse", async (t) => {
@@ -135,25 +150,25 @@ void test("through the gateway: the resolved group or model serves, the ledger k
     String(at(both.json(), "error", "message")),
     /model-b names more than one model: a\/model-b, b\/model-b; name one as provider\/model/,
   );
-  const narrow = await call("model-b", onlyA.text);
-  assert.equal(narrow.status, 400);
-  assert.match(
-    String(at(narrow.json(), "error", "message")),
-    /: a\/model-b, and 1 this Gateway Key may not use;/,
-  );
+  // For a key that may use one of them, the name names that one.
+  assert.equal((await call("model-b", onlyA.text)).status, 200);
+  assert.equal(store.entries.at(-1)!.modelRef, "a/model-b");
 
-  // Resolving does not widen a key's access.
-  const denied = await call("solo", onlyA.text);
-  assert.equal(denied.status, 403);
-  assert.equal(at(denied.json(), "error", "code"), "model_not_allowed");
-  assert.match(
-    String(at(denied.json(), "error", "message")),
-    /may not use c\/solo \(what solo names here\)/,
+  // Resolving does not widen a key's access, and a name of what the key may
+  // not use answers as an unknown name: nothing about what is here (L6).
+  const unknownTo = await call("solo", onlyA.text);
+  const nothing = await call("nothing-there", onlyA.text);
+  assert.deepEqual(
+    [unknownTo.status, nothing.status, at(unknownTo.json(), "error", "code")],
+    [404, 404, "model_not_found"],
   );
-  entry = store.entries.at(-1)!;
-  assert.equal(entry.rejected, true);
-  assert.equal(entry.requestedModel, "solo");
-  assert.equal(entry.modelRef, "c/solo");
+  assert.equal(
+    String(at(unknownTo.json(), "error", "message")).replace("solo", "X"),
+    String(at(nothing.json(), "error", "message")).replace(
+      "nothing-there",
+      "X",
+    ),
+  );
   // What the key does allow resolves and serves.
   assert.equal((await call("model-a", onlyA.text)).status, 200);
 

@@ -8,6 +8,7 @@
 import type { LogSink } from "@harnesshub/core/logging";
 import {
   DEFAULT_RETRY_POLICY,
+  modelAllowed,
   type AllowanceReading,
   type ModelPlaneStore,
   type ModelRef,
@@ -1075,6 +1076,61 @@ export function failureKind(status: number, text: string): FailureKind {
   return "request";
 }
 
+/** A word of {@link echoFree}: one CJK character, or a run of other letters and digits. */
+const WORD =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]|[\p{L}\p{N}]+/gu;
+/**
+ * The key every request has whose name the failure lists need ("model …
+ * not found"); its value, which the gateway sets, is read as any other.
+ */
+const MODEL_KEY = "model";
+/** How much of an error is read for a rest. */
+const REST_TEXT_MAX = 16 * 1024;
+
+/**
+ * `text`, an upstream error, without the words that `request` (the client's
+ * request as parsed JSON: its string values, and its keys but `model`)
+ * also holds; words compare without regard to case, a CJK character as a
+ * word. A vendor that echoes a field name or value of the request
+ * ("Unrecognized request argument supplied: <name>") cannot then be made
+ * to say that a credential is out of credit or quota, or lacks a model.
+ * Removes more than an echo (a word the vendor's message and the prompt
+ * share), so the result decides only rests, which a word removed makes
+ * shorter or none, and never the request's own failover. Reads the first
+ * 16 KiB of `text`.
+ */
+export function echoFree(text: string, request: unknown): string {
+  const head = text.slice(0, REST_TEXT_MAX);
+  const words = new Set<string>();
+  for (const [word] of head.matchAll(WORD)) words.add(word.toLowerCase());
+  const echoed = new Set<string>();
+  const look = (value: string) => {
+    for (const [word] of value.matchAll(WORD)) {
+      const lower = word.toLowerCase();
+      if (words.has(lower)) echoed.add(lower);
+    }
+  };
+  const stack: unknown[] = [request];
+  while (stack.length) {
+    const value = stack.pop();
+    if (typeof value === "string") look(value);
+    else if (Array.isArray(value)) stack.push(...value);
+    else if (typeof value === "object" && value !== null) {
+      const prototype: unknown = Object.getPrototypeOf(value);
+      if (prototype !== Object.prototype && prototype !== null) continue;
+      for (const [key, item] of Object.entries(value)) {
+        if (key !== MODEL_KEY) look(key);
+        stack.push(item);
+      }
+    }
+  }
+  return echoed.size
+    ? head.replace(WORD, (word) =>
+        echoed.has(word.toLowerCase()) ? " " : word,
+      )
+    : head;
+}
+
 /** The ledger's error class of an upstream failure of this kind. */
 export function failureClass(
   kind: FailureKind,
@@ -1122,6 +1178,11 @@ export interface AttemptError {
   status?: number;
   /** Set for upstream answers (`response`); connection failures and timeouts are `other`. */
   kind?: FailureKind;
+  /**
+   * The kind that decides the credential's rest, when it is not `kind`:
+   * the error read without the request's own words ({@link echoFree}).
+   */
+  restKind?: FailureKind;
   /** The vendor's wait from the headers (`retryAfter`). */
   retryAfterMs?: number;
   /** When a used-up allowance comes back, as the vendor's body says (`resetIn`). */
@@ -1153,6 +1214,13 @@ export const REST_MS = {
 
 const TRANSIENT = new Set([408, 500, 502, 503, 504, 529]);
 const OPEN_MAX_MS = 600_000;
+/**
+ * The longest rest one Gateway Key's failure gives a credential (H2): a
+ * longer one is cut to this, and the next failure of a long rest, from
+ * another key (the probe after this rest, as nobody else reaches it
+ * before), gives it in full.
+ */
+export const PROVISIONAL_MS = 60_000;
 
 /**
  * What a failed attempt means for routing. Connection failures, timeouts and
@@ -1166,9 +1234,22 @@ const OPEN_MAX_MS = 600_000;
  * `shape` rest nothing (Magpie: nothing is wrong with the credential), and
  * `proxy`, when the daemon's own proxy failed to connect, is not retried.
  * All of these fail over; a `request` failure is returned as it is.
- * Retries apply only to the last candidate left.
+ * Retries apply only to the last candidate left. The rest (`breaker`) follows
+ * `restKind` when an upstream answer has one: the error read without the
+ * request's own words, which a client cannot make a vendor echo.
  */
 export function classify(error: AttemptError): Classification {
+  const verdict = classifyAs(error, error.kind);
+  // What the request itself put in the error decides no rest (H2).
+  return error.restKind === undefined || error.phase !== "response"
+    ? verdict
+    : { ...verdict, breaker: classifyAs(error, error.restKind).breaker };
+}
+
+function classifyAs(
+  error: AttemptError,
+  given: FailureKind | undefined,
+): Classification {
   switch (error.phase) {
     case "cancelled":
       return { retry: "no", failover: false, breaker: { kind: "none" } };
@@ -1185,7 +1266,7 @@ export function classify(error: AttemptError): Classification {
       break;
   }
   const kind =
-    error.kind ??
+    given ??
     (error.status === undefined
       ? "other"
       : failureKind(error.status, error.failure.message));
@@ -1237,29 +1318,78 @@ export function classify(error: AttemptError): Classification {
 }
 
 /**
- * Put first, of the candidates after `index`, the other credentials of the
- * failed candidate's provider, model and effort that are not resting (Magpie
- * `matesFirst`); the order is otherwise kept.
+ * Whether `modelDeny` (a Gateway Key's, such as an agent's hidden models)
+ * names `ref` or a group of `path`, the groups a member is reached
+ * through: a model the key hides is not reached through a group either.
  */
-export function matesFirst(
-  queue: Candidate[],
-  index: number,
-  breakers: Breakers,
-): void {
-  const failed = queue[index]!;
-  const mate = (next: Candidate) =>
-    next.provider.id === failed.provider.id &&
-    next.ref === failed.ref &&
-    next.effort === failed.effort &&
-    next.credential.id !== failed.credential.id &&
-    !breakers.blocked(next);
+export function hiddenBy(
+  modelDeny: readonly string[] | undefined,
+  ref: string,
+  path: readonly string[] = [],
+): boolean {
+  return (
+    !!modelDeny?.length &&
+    [ref, ...path.filter((step) => step.startsWith("group/"))].some(
+      (step) => !modelAllowed(["*"], step, modelDeny),
+    )
+  );
+}
+
+/**
+ * The vendor a candidate's requests go to: its endpoint's host (two
+ * providers on one API are one vendor), else its provider.
+ */
+export function vendorOf(candidate: Candidate): string {
+  try {
+    return new URL(candidate.endpoint).host;
+  } catch {
+    return `provider:${candidate.provider.id}`;
+  }
+}
+
+/**
+ * After a safety filter refused the request at `queue[index]`, takes the
+ * candidates of that vendor out of the rest of the queue (M2): another
+ * account of the vendor applies the same policy, and asking each would put
+ * the flagged prompt before every one of them.
+ */
+export function dropVendor(queue: Candidate[], index: number): void {
+  const vendor = vendorOf(queue[index]!);
   const left = queue.slice(index + 1);
   queue.splice(
     index + 1,
     left.length,
-    ...left.filter(mate),
-    ...left.filter((next) => !mate(next)),
+    ...left.filter((next) => vendorOf(next) !== vendor),
   );
+}
+
+/** Safety-filter refusals of one key's requests that fail over within {@link POLICY_WINDOW_MS}. */
+export const POLICY_FAILOVERS = 5;
+export const POLICY_WINDOW_MS = 10 * 60_000;
+
+/**
+ * Safety-filter refusals per Gateway Key (M2): a key whose requests were
+ * refused {@link POLICY_FAILOVERS} times within {@link POLICY_WINDOW_MS}
+ * gets the next refusals as they are, without asking another vendor.
+ */
+export class PolicyRefusals {
+  #times = new Map<string, number[]>();
+  constructor(private readonly clock: () => number) {}
+
+  /** Notes a refusal of `keyId`'s request; whether it may still fail over. */
+  note(keyId: string): boolean {
+    const now = this.clock();
+    const recent = (this.#times.get(keyId) ?? []).filter(
+      (at) => now - at < POLICY_WINDOW_MS,
+    );
+    recent.push(now);
+    this.#times.delete(keyId);
+    this.#times.set(keyId, recent);
+    // Keys that went quiet are dropped first.
+    if (this.#times.size > 10_000)
+      this.#times.delete(this.#times.keys().next().value!);
+    return recent.length <= POLICY_FAILOVERS;
+  }
 }
 
 /** The wait before the n-th retry (from 0): `baseBackoffMs × 2^n`, so 1, 2 and 4 s by default. */
@@ -1301,12 +1431,20 @@ export function retryAfter(headers: Headers, now: number): number | undefined {
 
 /**
  * When a used-up allowance comes back, as the refusal's body says, in
- * milliseconds from `now`: Claude Code's `limit reached|<unix>`, ChatGPT's
- * `error.resets_at` (Unix seconds) or `error.resets_in_seconds`, or Google's
- * `RetryInfo.retryDelay` (`"20s"`). Undefined when it says none of these.
+ * milliseconds from `now`: ChatGPT's `error.resets_at` (Unix seconds) or
+ * `error.resets_in_seconds`, Google's `RetryInfo.retryDelay` (`"20s"`), or,
+ * read from `plain` only, Claude Code's `limit reached|<unix>`. That form is
+ * free text a vendor's error may echo from the request, so the caller passes
+ * `plain` only for a 429 or a subscription backend, and without the
+ * request's own words ({@link echoFree}). Undefined when it says none.
  */
-export function resetIn(body: string, now: number): number | undefined {
-  const claude = /limit reached\|(\d{10})\b/i.exec(body);
+export function resetIn(
+  body: string,
+  now: number,
+  plain?: string,
+): number | undefined {
+  const claude =
+    plain === undefined ? null : /limit reached\|(\d{10})\b/i.exec(plain);
   if (claude && Number(claude[1]) * 1000 > now)
     return Number(claude[1]) * 1000 - now;
   let parsed: unknown;
@@ -1342,6 +1480,8 @@ interface BreakerState {
   probing: boolean;
   /** Credential reference when opened by an auth failure; a changed credential closes it. */
   authRef?: string;
+  /** A long rest cut to {@link PROVISIONAL_MS}: the key whose failure asked for it. */
+  provisional?: string;
   last?: { failure: Failure; errorClass: string; at: number };
 }
 
@@ -1367,11 +1507,15 @@ function credentialRef(credential: ProviderCredential): string {
  * until the credential's reference changes. After the open time one probe
  * passes (half-open); its success closes the breaker, a counted failure
  * reopens it. A 404 or model-missing answer marks only that credential and
- * model for 10 minutes.
+ * model for 10 minutes. A rest or mark longer than {@link PROVISIONAL_MS}
+ * is that long at first; only a failure that asks for one again from
+ * another Gateway Key gives the full time, so one key cannot rest a shared
+ * credential for long.
  */
 export class Breakers {
   #states = new Map<string, BreakerState>();
-  #marks = new Map<string, number>();
+  /** Model marks until when, and the key of one cut short; kept after they pass, until a success. */
+  #marks = new Map<string, { until: number; provisional?: string }>();
   constructor(
     private readonly clock: () => number,
     private readonly changed: (change: BreakerChange) => void,
@@ -1389,8 +1533,8 @@ export class Breakers {
   restOf(candidate: Candidate): { until: number; reason: string } | undefined {
     const now = this.clock();
     const mark = this.#marks.get(this.#markKey(candidate));
-    if (mark !== undefined && mark > now)
-      return { until: mark, reason: "model_not_found" };
+    if (mark !== undefined && mark.until > now)
+      return { until: mark.until, reason: "model_not_found" };
     const state = this.#states.get(this.#key(candidate));
     return state?.state === "open" && now < state.until
       ? { until: state.until, reason: state.last?.errorClass ?? "cooldown" }
@@ -1412,15 +1556,12 @@ export class Breakers {
       } {
     const now = this.clock();
     const mark = this.#marks.get(this.#markKey(candidate));
-    if (mark !== undefined) {
-      if (mark > now)
-        return {
-          ok: false,
-          reason: `${candidate.ref} is marked unavailable on credential ${candidate.credential.id}`,
-          until: mark,
-        };
-      this.#marks.delete(this.#markKey(candidate));
-    }
+    if (mark !== undefined && mark.until > now)
+      return {
+        ok: false,
+        reason: `${candidate.ref} is marked unavailable on credential ${candidate.credential.id}`,
+        until: mark.until,
+      };
     const state = this.#states.get(this.#key(candidate));
     if (!state) return { ok: true };
     if (
@@ -1495,12 +1636,13 @@ export class Breakers {
   blocked(candidate: Candidate): boolean {
     const now = this.clock();
     const mark = this.#marks.get(this.#markKey(candidate));
-    if (mark !== undefined && mark > now) return true;
+    if (mark !== undefined && mark.until > now) return true;
     const state = this.#states.get(this.#key(candidate));
     return state?.state === "open" && now < state.until;
   }
 
   success(candidate: Candidate): void {
+    this.#marks.delete(this.#markKey(candidate));
     const state = this.#states.get(this.#key(candidate));
     if (!state) return;
     if (state.state !== "closed") this.#close(candidate, state, "success");
@@ -1513,15 +1655,30 @@ export class Breakers {
     if (state) state.probing = false;
   }
 
+  /**
+   * Applies `effect` of a failed attempt for the Gateway Key `keyId`
+   * (`undefined`: the gateway's own), shortened to {@link PROVISIONAL_MS}
+   * as the class says.
+   */
   failure(
     candidate: Candidate,
     effect: BreakerEffect,
     failure: Failure,
     errorClass: string,
+    keyId: string | undefined,
   ): void {
     const now = this.clock();
+    const by = keyId ?? "";
     if (effect.kind === "model") {
-      this.#marks.set(this.#markKey(candidate), now + effect.ms);
+      const key = this.#markKey(candidate);
+      const previous = this.#marks.get(key)?.provisional;
+      this.#marks.set(
+        key,
+        effect.ms > PROVISIONAL_MS &&
+          (previous === undefined || previous === by)
+          ? { until: now + PROVISIONAL_MS, provisional: by }
+          : { until: now + effect.ms },
+      );
       this.release(candidate);
       return;
     }
@@ -1544,12 +1701,23 @@ export class Breakers {
           this.#open(candidate, state, undefined, errorClass);
         return;
       case "cooldown":
-        this.#open(candidate, state, effect.ms, errorClass);
+      case "auth": {
+        const ms = effect.kind === "auth" ? OPEN_MAX_MS : effect.ms;
+        const previous = state.provisional;
+        if (
+          ms > PROVISIONAL_MS &&
+          (previous === undefined || previous === by)
+        ) {
+          this.#open(candidate, state, PROVISIONAL_MS, errorClass);
+          state.provisional = by;
+        } else {
+          this.#open(candidate, state, ms, errorClass);
+          delete state.provisional;
+        }
+        if (effect.kind === "auth")
+          state.authRef = credentialRef(candidate.credential);
         return;
-      case "auth":
-        this.#open(candidate, state, OPEN_MAX_MS, errorClass);
-        state.authRef = credentialRef(candidate.credential);
-        return;
+      }
     }
   }
 

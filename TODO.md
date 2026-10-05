@@ -127,7 +127,11 @@
 复核：第一轮 A、C 组的修复有效（重跑原复现脚本）。新发现 2 high、6 medium、10 low，按文件归属分组：
 
 - [x] **E 出站代理**（H1、M1、L1–L5）：隧道建立后代理发 RST 会让守护进程退出（undici 在已重置的 socket 上 `setTypeOfService` 抛出，异常逃出回调）；应答后多余的字节导致无上限重连；代理的原因短语原样回显；SOCKS 主机名超过 255 字节时长度回绕；provider 自己的代理对私有地址也走代理；部分 noProxy 写法永不匹配；连接 https 代理时不发 SNI。已修复（分支 `fix/proxy-hardening`，[ADR 0035](docs/decisions/0035-outbound-proxy.md)）：交给 undici 前以它要设的值试设服务类型，重置的隧道以 `PROXY_FAILED` 失败，交接仍抛出时捕获并销毁套接字（没有加全局 `unhandledRejection` 处理）；应答之后多发的数据视为代理故障；完整原因（代理地址、目标）只写网关日志的 `network.proxy_failed` 与 `hh provider test`，Gateway Key 的调用方与搜索结果只得到简短原因，从不转述代理的原因短语；SOCKS 主机名超过 255 字节时不发请求；provider 自己的代理也直连本机与私有地址，本机地址用 `BlockList` 判断（含 `0.0.0.0`、`::` 与映射形式）；`noProxy` 接受的写法与能匹配的一致；`https://` 代理发送 SNI；另外严格读取状态码、CRLF 行与 SOCKS 版本字节，npm 与 Copilot CLI 的 `NO_PROXY` 含私有范围，环境变量 `NO_PROXY` 中无法识别的条目警告后忽略。证据：`tests/unit/outbound.test.ts`（应答后立即重置的 CONNECT 与 SOCKS5 代理，修复前测试以 `unhandledRejection: setTypeOfService EINVAL` 失败；按脚本应答的代理：多发数据只有 1 次连接，审查脚本修复前为 301 次；原因短语、日志、严格读取、长主机名、SNI、私有地址与映射形式、`noProxy` 写法），`packages/daemon/test/config-file.test.ts` 与 `tests/integration/outbound-proxy.test.ts`（正式守护进程的简短原因与网关日志，`hh config show` 的 `NO_PROXY` 警告），`packages/gateway/test/shared-gateway-proxy.test.ts`；审查的复现脚本修复后全部按预期失败或直连；本机完整 `pnpm check` 通过。未验证：Linux 与 Windows 上重置隧道时设置服务类型是否同样失败；真实代理（Clash、Squid）。
-- [ ] **F 路由**（H2、M2、M3、M4、L6、L7、L10）：上游错误回显字段名时任意 Key 可让共享凭据休息至 7 天；策略拒绝的故障转移把被标记的提示发给同一厂商的所有账号；被丢弃的拒绝回复用量不计入预算；Agent Key 隐藏的模型可经自动组或裸名使用；裸名错误泄露名字；凭据槽位按 Key 不公平、排队无截止；搜索模拟按整个请求 JSON 判断。
+- [x] **F 路由**（H2、M2、M3、M4、L6、L7、L10）：上游错误回显字段名时任意 Key 可让共享凭据休息至 7 天；策略拒绝的故障转移把被标记的提示发给同一厂商的所有账号；被丢弃的拒绝回复用量不计入预算；Agent Key 隐藏的模型可经自动组或裸名使用；裸名错误泄露名字；凭据槽位按 Key 不公平、排队无截止；搜索模拟按整个请求 JSON 判断。
+  已完成（分支 `fix/routing-review2`，[ADR 0025 修订](docs/decisions/0025-magpie-routing-parity.md#修订2026-10-05第二轮安全审查)）。
+  - 取舍：决定休息的类别从去掉请求自身词语的错误体判断，转移仍按完整错误体；一把 Key 的失败最多休息 1 分钟，另一把 Key 的探测再次失败才给完整时长（只有一把 Key 时每分钟探测一次）；安全拒绝不转给同一厂商（端点主机相同）的其他候选，一次调用至多两个厂商，Key 10 分钟内超过 5 次后不再转移，均为固定行为；排队期限为新的 `gateway.limits.slotWaitMs`（默认 60 秒），按 Key 公平分配并发位。
+  - 证据：[路由审查测试](tests/integration/routing-review.test.ts)由审查脚本 f1–f5、b1、b2、c1 改写，8 项在修改前的网关代码上全部失败、修改后通过；网关单元测试（回显与暂定休息、拒绝转移与 Key 上限、被丢弃回答的用量、裸名称、并发位、搜索触发）。
+  - 本机完整 `pnpm check` 通过（macOS arm64）。Windows 未验证。
 - [ ] **G 备份与同步**（M5、M6、L8、L9）：构造的备份可让搜索 Key 引用本机任意秘密并发往备份指定的地址；脱敏规则可造成灾难性回溯阻塞守护进程；同步不防回滚；经同步关闭脱敏不需要确认。
 
 ## M1–M5

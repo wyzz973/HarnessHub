@@ -36,60 +36,117 @@ export async function readLimited(
 }
 
 /**
- * FIFO admission of upstream requests; a waiting call leaves the queue when
- * aborted. A full queue rejects with 429 `busy` and `busyMessage`.
+ * Admission of upstream requests to `limit` at once, with up to `queue`
+ * waiting; a full queue rejects with 429 `busy` and `busyMessage`. A slot
+ * that comes free goes to the waiting call of the owner (a Gateway Key)
+ * holding the fewest slots, the earliest of those, so that one key's calls
+ * cannot keep another's waiting behind all of them. A call leaves the queue
+ * when aborted, or with 429 `busy` after `waitMs` without a slot (security
+ * review L7); without `waitMs` it waits until aborted.
  */
 export class Slots {
   #active = 0;
-  #waiting: (() => void)[] = [];
+  /** Slots each owner holds. */
+  #held = new Map<string, number>();
+  #waiting: { owner: string; admit: () => void }[] = [];
   constructor(
     private limit: number,
     private queue: number,
     private readonly busyMessage: string,
+    private waitMs?: number,
   ) {}
   /**
    * New limits, for the next call (a provider's own were changed): a higher
    * limit admits callers already waiting; a lower one lets the calls out
    * finish and admits no more until fewer are out.
    */
-  configure(limit: number, queue: number): void {
+  configure(limit: number, queue: number, waitMs?: number): void {
     this.limit = limit;
     this.queue = queue;
+    this.waitMs = waitMs;
     while (this.#active < this.limit && this.#waiting.length) {
       this.#active++;
-      this.#waiting.shift()!();
+      this.#admit(this.#next()!);
     }
   }
   /** Calls holding a slot plus calls waiting for one. */
   get load(): number {
     return this.#active + this.#waiting.length;
   }
-  acquire(signal: AbortSignal): Promise<void> {
+  /** Takes a slot for `owner`; the caller gives it back with {@link release}. */
+  acquire(signal: AbortSignal, owner = ""): Promise<void> {
     signal.throwIfAborted();
     if (this.#active < this.limit) {
       this.#active++;
+      this.#hold(owner, 1);
       return Promise.resolve();
     }
     if (this.#waiting.length >= this.queue)
       return Promise.reject(new GatewayError(this.busyMessage, 429, "busy"));
+    const waitMs = this.waitMs;
     return new Promise<void>((resolve, reject) => {
-      const admit = () => {
+      let timer: NodeJS.Timeout | undefined;
+      const leave = () => {
+        this.#waiting = this.#waiting.filter((other) => other !== waiter);
         signal.removeEventListener("abort", abort);
-        resolve();
+        clearTimeout(timer);
+      };
+      const waiter = {
+        owner,
+        admit: () => {
+          signal.removeEventListener("abort", abort);
+          clearTimeout(timer);
+          resolve();
+        },
       };
       const abort = () => {
-        this.#waiting = this.#waiting.filter((waiter) => waiter !== admit);
+        leave();
         reject(signal.reason);
       };
+      if (waitMs !== undefined)
+        timer = setTimeout(() => {
+          leave();
+          reject(
+            new GatewayError(
+              `${this.busyMessage}: no slot came free within ${Math.ceil(waitMs / 1000)} s`,
+              429,
+              "busy",
+            ),
+          );
+        }, waitMs);
       signal.addEventListener("abort", abort, { once: true });
-      this.#waiting.push(admit);
+      this.#waiting.push(waiter);
     });
   }
-  release(): void {
+  /** Gives back a slot `owner` took. */
+  release(owner = ""): void {
+    this.#hold(owner, -1);
     // Above a lowered limit, a finished call's slot is not handed on.
-    const next = this.#active <= this.limit ? this.#waiting.shift() : undefined;
-    if (next) next();
+    const next = this.#active <= this.limit ? this.#next() : undefined;
+    if (next) this.#admit(next);
     else this.#active--;
+  }
+  /** The waiting call of the owner holding the fewest slots, the earliest of those. */
+  #next(): { owner: string; admit: () => void } | undefined {
+    let best = -1;
+    let fewest = Infinity;
+    for (const [index, waiter] of this.#waiting.entries()) {
+      const held = this.#held.get(waiter.owner) ?? 0;
+      if (held < fewest) {
+        best = index;
+        fewest = held;
+      }
+    }
+    return best < 0 ? undefined : this.#waiting.splice(best, 1)[0];
+  }
+  #admit(waiter: { owner: string; admit: () => void }): void {
+    this.#hold(waiter.owner, 1);
+    waiter.admit();
+  }
+  #hold(owner: string, change: number): void {
+    const held = (this.#held.get(owner) ?? 0) + change;
+    if (held > 0) this.#held.set(owner, held);
+    else this.#held.delete(owner);
   }
 }
 

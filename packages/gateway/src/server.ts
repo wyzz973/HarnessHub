@@ -106,7 +106,9 @@ import { GatewayError, estimateTokens, object, record } from "./protocol.js";
 import {
   Breakers,
   modelCandidates,
+  hiddenBy,
   planGroup,
+  PolicyRefusals,
   Router,
   type AttemptError,
   type Candidate,
@@ -624,6 +626,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       log.info("gateway.breaker", { ...change }),
     ),
     router: new Router(clock),
+    refusals: new PolicyRefusals(clock),
     memory: new MemoryBudget(limits.maxInflightRequestBytes),
     slots(candidate: Candidate): Slots {
       const name = `${candidate.provider.id}\u0000${candidate.credential.id}`;
@@ -638,9 +641,10 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
           limit,
           queue,
           `Too many concurrent requests on credential ${candidate.credential.id} of ${candidate.provider.id}`,
+          limits.slotWaitMs,
         );
         credentialSlots.set(name, slots);
-      } else slots.configure(limit, queue);
+      } else slots.configure(limit, queue, limits.slotWaitMs);
       return slots;
     },
     reasoning: new ReasoningCaches(limits),
@@ -912,10 +916,35 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     );
   };
 
-  const visibleModels = async (
+  /** Whether the key hides a candidate or member (routing `hiddenBy`, M4). */
+  const hides = (
     key: GatewayKeyRecord,
-    session?: ActiveSessionRun,
-  ): Promise<ListedModel[]> => {
+    ref: string,
+    path: readonly string[] = [],
+  ) => hiddenBy(key.modelDeny, ref, path);
+
+  /** Whether the key hides every model of `group` (M4): a group it cannot use. */
+  const hiddenGroup = (
+    key: GatewayKeyRecord,
+    group: RouteGroup,
+    lookup: (id: RouteGroupId) => RouteGroup | undefined,
+  ) => {
+    if (!key.modelDeny?.length) return false;
+    const members = groupModels(group, lookup);
+    return (
+      members.length > 0 &&
+      members.every((member) =>
+        hides(
+          key,
+          member.ref,
+          member.via.map((inner) => `group/${inner}`),
+        ),
+      )
+    );
+  };
+
+  /** The providers and the route groups requests see: the user's, then the automatic ones not hidden. */
+  const routeGroups = async () => {
     const [providers, userGroups, hidden] = await Promise.all([
       store.listProviders(),
       store.listRouteGroups(),
@@ -931,6 +960,14 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         .filter((group) => !group.hidden)
         .map(autoRouteGroup),
     ];
+    return { providers, groups };
+  };
+
+  const visibleModels = async (
+    key: GatewayKeyRecord,
+    session?: ActiveSessionRun,
+  ): Promise<ListedModel[]> => {
+    const { providers, groups } = await routeGroups();
     const byId = new Map(providers.map((provider) => [provider.id, provider]));
     const metadata = (ref: ModelRef) => {
       const parsed = parseModelRef(ref);
@@ -1015,6 +1052,12 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       if (
         !modelAllowed(key.modelAllow, id, key.modelDeny) &&
         id !== session?.target
+      )
+        continue;
+      // A group whose every model the key hides is not one it can use (M4).
+      if (
+        id !== session?.target &&
+        hiddenGroup(key, group, (inner) => byGroup.get(inner))
       )
         continue;
       listed.push({
@@ -1314,12 +1357,12 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
 
   /**
    * The Model Ref or `group/<id>` a request's model names: itself, or what
-   * a bare name resolves to (./bare-names.ts), before the key's allowlist
-   * is applied to it.
+   * a bare name resolves to among what the key may use (./bare-names.ts).
    *
    * @throws GatewayError 400 `model_ambiguous` when several providers'
-   *   models have the name (the message names those the key may use), 404
-   *   `model_not_found` when nothing has it.
+   *   models the key may use have the name (the message names them), 404
+   *   `model_not_found` when nothing the key may use has it, with the same
+   *   message whether something else has it or not.
    */
   const resolveModel = async (
     model: string,
@@ -1339,28 +1382,37 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       return { ref: model };
     }
     const shown = model.slice(0, 200);
-    const found = await resolveBareName(model, store);
+    let byGroup: Map<RouteGroupId, RouteGroup> | undefined;
+    const found = await resolveBareName(model, store, async (ref) => {
+      if (!modelAllowed(key.modelAllow, ref, key.modelDeny)) return false;
+      const target = parseModelRef(ref);
+      if (target?.kind !== "group" || !key.modelDeny?.length) return true;
+      byGroup ??= new Map(
+        (await routeGroups()).groups.map((group) => [group.id, group]),
+      );
+      const group = byGroup.get(target.group);
+      return !group || !hiddenGroup(key, group, (id) => byGroup!.get(id));
+    });
     if (found.kind === "resolved") return { ref: found.ref };
     if (found.kind === "none") {
       const stood = await agentStandIn(model, key);
       if (stood) return { ref: stood, standIn: true };
     }
-    if (found.kind === "none")
-      throw new GatewayError(
-        `No route group or model is named ${shown}; name one as provider/model or group/<id>`,
-        404,
-        "model_not_found",
-      );
-    const usable = found.refs.filter((ref) =>
-      modelAllowed(key.modelAllow, ref, key.modelDeny),
-    );
-    const others = found.refs.length - usable.length;
+    if (found.kind === "none") throw unknownName(model);
     throw new GatewayError(
-      `${shown} names more than one model${usable.length ? `: ${usable.join(", ")}` : ""}${others ? `${usable.length ? ", and" : ","} ${others} this Gateway Key may not use` : ""}; name one as provider/model`,
+      `${shown} names more than one model: ${found.refs.join(", ")}; name one as provider/model`,
       400,
       "model_ambiguous",
     );
   };
+
+  /** 404 for a bare name that names nothing the key may use. */
+  const unknownName = (model: string) =>
+    new GatewayError(
+      `No route group or model is named ${model.slice(0, 200)}; name one as provider/model or group/<id>`,
+      404,
+      "model_not_found",
+    );
 
   /**
    * The model a wired agent's key stands in for a name nothing here serves
@@ -1654,6 +1706,28 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       }
       release = admission.release;
       const resolved = await plan(requested, route.protocol);
+      // A model the key hides is not reached through a group either (M4).
+      const shown = resolved.candidates.filter(
+        (candidate) => !hides(key, candidate.ref, candidate.path),
+      );
+      if (resolved.candidates.length && !shown.length) {
+        // A bare name answers as one that names nothing (L6).
+        if (requested !== given && !resolution.standIn)
+          throw unknownName(given);
+        await reject(
+          response,
+          entry,
+          "model_not_allowed",
+          failure(
+            403,
+            "model_not_allowed",
+            `This Gateway Key may not use any model of ${requested.slice(0, 200)}`,
+          ),
+          started,
+        );
+        return;
+      }
+      resolved.candidates = shown;
       if (key.allowLan === true) {
         // Subscription accounts serve agents on this computer only (ADR-P09).
         const local = resolved.candidates.filter(

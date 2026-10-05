@@ -673,11 +673,23 @@ void test("a used-up plan rests the account and points at ChatGPT's usage settin
       /^Usage limit reached\. Review your plan or this app's limit in ChatGPT settings: https:\/\/chatgpt\.com\/settings\/usage/,
     );
     assert.equal(store.entries[0]!.errorClass, "quota_exhausted");
+    // One key's failure rests it a minute; another key's probe confirms.
+    const other = await addKey(store, ["chatgpt/*"]);
+    gw.clock.now += 60_000;
+    const probe = await send(gw.port, "/v1/chat/completions", {
+      headers: { authorization: `Bearer ${other.text}` },
+      body: {
+        model: "chatgpt/model-a",
+        messages: [{ role: "user", content: "hi" }],
+      },
+    });
+    assert.equal(probe.status, 429);
+    assert.equal(up.seen.length, 2);
     gw.clock.now += 14 * 60_000;
     await chat({ messages: [{ role: "user", content: "hi" }] });
     assert.equal(
       up.seen.length,
-      1,
+      2,
       "it rests 15 minutes, no reset is inferred",
     );
   }

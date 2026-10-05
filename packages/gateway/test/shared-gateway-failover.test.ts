@@ -15,8 +15,10 @@ import {
 import {
   backoff,
   classify,
+  echoFree,
   FAILURE_WORDS,
   failureKind,
+  PROVISIONAL_MS,
   resetIn,
   retryAfter,
   REST_MS,
@@ -405,10 +407,12 @@ void test("the vendor's wait and reset are read from headers and bodies", () => 
   assert.equal(retryAfter(headers({}), NOW), undefined);
   assert.equal(retryAfter(headers({ "retry-after": "soon" }), NOW), undefined);
 
+  const claude = `usage limit reached|${NOW / 1000 + 3600}`;
+  assert.equal(resetIn(claude, NOW, claude), 3_600_000, "Claude Code");
   assert.equal(
-    resetIn(`usage limit reached|${NOW / 1000 + 3600}`, NOW),
-    3_600_000,
-    "Claude Code",
+    resetIn(claude, NOW),
+    undefined,
+    "Claude Code's form is read only from the plain text given",
   );
   assert.equal(
     resetIn(
@@ -461,14 +465,18 @@ async function twoCredentials(t: test.TestContext, failing: Reply) {
     provider("a", { chat: `${up.base}/v1` }, { secrets: ["key-a", "key-b"] }),
   );
   const key = await addKey(store, ["a/*"]);
+  const other = await addKey(store, ["a/*"]);
   const gw = await mount(t, store);
   const tried = () =>
     up.seen.filter(
       (seen) => seen.headers.authorization === "Bearer sk-upstream-a-0001",
     ).length;
-  const chat = async () => {
+  /** A call with the first key, or with `other`. */
+  const chat = async (by: "key" | "other" = "key") => {
     const answer = await send(gw.port, "/v1/chat/completions", {
-      headers: { authorization: `Bearer ${key.text}` },
+      headers: {
+        authorization: `Bearer ${(by === "key" ? key : other).text}`,
+      },
       body: { model: "a/model-a", messages: MESSAGES },
     });
     assert.equal(answer.status, 200, answer.text);
@@ -545,13 +553,46 @@ void test("a failing credential rests for as long as its kind says, then gets on
     await chat();
     assert.equal(tried(), 1, name);
     assert.equal(store.entries[0]!.attempts[0]!.decision, "failover", name);
+    let probes = 1;
+    if (restMs > PROVISIONAL_MS) {
+      // One key's failure rests it a minute; the probe after it, from
+      // another key, fails too and gives the full rest.
+      gw.clock.now += PROVISIONAL_MS - 1_000;
+      await chat();
+      assert.equal(tried(), 1, `${name}: a minute for one key's failure`);
+      gw.clock.now += 2_000;
+      await chat("other");
+      assert.equal(tried(), 2, `${name}: probed by another key`);
+      probes = 2;
+    }
     gw.clock.now += restMs - 1_000;
     await chat();
-    assert.equal(tried(), 1, `${name}: still resting`);
+    assert.equal(tried(), probes, `${name}: still resting`);
     gw.clock.now += 2_000;
     await chat();
-    assert.equal(tried(), 2, `${name}: probed after the rest`);
+    assert.equal(tried(), probes + 1, `${name}: probed after the rest`);
   }
+});
+
+void test("one key alone rests a credential a minute at a time; another key's failure gives the full rest", async (t) => {
+  const { gw, tried, chat } = await twoCredentials(
+    t,
+    json(402, { error: { message: "Insufficient Balance" } }),
+  );
+  for (let probe = 1; probe <= 3; probe++) {
+    await chat();
+    assert.equal(tried(), probe, "the same key's probe");
+    gw.clock.now += PROVISIONAL_MS - 1_000;
+    await chat();
+    assert.equal(tried(), probe, "resting for the rest of the minute");
+    gw.clock.now += 1_000;
+  }
+  await chat("other");
+  assert.equal(tried(), 4, "another key's probe fails as well");
+  gw.clock.now += REST_MS.credit - 1_000;
+  await chat();
+  await chat("other");
+  assert.equal(tried(), 4, "now resting the full 30 minutes");
 });
 
 void test("a proxy failure rests nothing, and other failures open the breaker after three", async (t) => {
@@ -846,4 +887,70 @@ void test("least-used starts from the ledger's recent calls", async (t) => {
   assert.equal(await recent.served(), "b", "a served 1000 tokens an hour ago");
   const old = await leastUsed(t, usage(1), usage(1), [entry(9, "a", 1_000)]);
   assert.equal(await old.served(), "a", "nine hours back is past the seed");
+});
+
+void test("a rest is decided without the request's own words, which a vendor may echo; the request still fails over", () => {
+  const unknown = (name: string) =>
+    JSON.stringify({
+      error: {
+        message: `Unrecognized request argument supplied: ${name}`,
+        type: "invalid_request_error",
+        param: null,
+        code: null,
+      },
+    });
+  const request = (name: string) => ({
+    model: "m",
+    messages: [{ role: "user", content: "hello" }],
+    [name]: 1,
+  });
+  for (const [name, kind] of [
+    ["the model you asked for does not exist", "model"],
+    ["quota limit reached|1799999999", "quota"],
+    ["insufficient balance, please recharge", "credit"],
+    ["illegal api invocation", "refused"],
+    ["service overloaded", "other"],
+    ["余额不足", "credit"],
+  ] as const) {
+    const text = unknown(name);
+    assert.equal(failureKind(400, text), kind, `${name} as said`);
+    const stripped = echoFree(text, request(name));
+    // What is left is OpenAI's own "Unrecognized request argument": a shape.
+    assert.equal(
+      failureKind(400, stripped),
+      "shape",
+      `${name} without the echo`,
+    );
+    const verdict = classify({
+      failure: {
+        status: 400,
+        code: "x",
+        message: name,
+        contextOverflow: false,
+      },
+      errorClass: "x",
+      source: "upstream",
+      phase: "response",
+      status: 400,
+      kind,
+      restKind: failureKind(400, stripped),
+    });
+    assert.equal(verdict.failover, true, `${name}: the request fails over`);
+    assert.deepEqual(verdict.breaker, { kind: "none" }, `${name}: no rest`);
+  }
+  // The vendor's own words stay: a request that says none of them.
+  const own = '{"error":{"message":"The model gpt-x does not exist"}}';
+  assert.equal(echoFree(own, request("temperature")), own);
+  assert.equal(
+    failureKind(400, echoFree(own, { model: "provider/gpt-x", messages: [] })),
+    "model",
+  );
+  // Words compare without regard to case; a CJK character is a word.
+  assert.equal(
+    echoFree("Quota used: QUOTA 额度", { note: "quota 额" }).replace(
+      / +/g,
+      " ",
+    ),
+    " used: 度",
+  );
 });

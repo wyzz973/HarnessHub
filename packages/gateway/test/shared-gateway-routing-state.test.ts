@@ -46,9 +46,10 @@ void test("routing state shows a resting credential's failure class without its 
   const states = gw.handler.routingState();
   const first = states.find((state) => state.credential === "cred-0")!;
   assert.equal(first.state, "open");
+  // The vendor said two minutes; one key's failure rests it one (H2).
   assert.equal(
     first.restingUntil,
-    new Date(gw.clock.now + 120_000).toISOString(),
+    new Date(gw.clock.now + 60_000).toISOString(),
   );
   assert.deepEqual(first.lastFailure, {
     kind: "rate_limited",

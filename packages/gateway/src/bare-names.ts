@@ -7,8 +7,9 @@
  * then the automatic group of that name, then the one model of that ID that
  * providers expose, then the one model of that ID a provider lists. Where
  * Magpie takes the first of several providers' models, HarnessHub refuses
- * and names them. Resolution does not look at the caller's Gateway Key: the
- * key's allowlist then applies to what the name resolved to.
+ * and names them. Only what the caller's Gateway Key may use counts: a name
+ * of something else resolves as an unknown name does, so that its answer
+ * says nothing about what is configured (security review L6).
  */
 import { autoGroups, sameModel, slug } from "@harnesshub/core/auto-groups";
 import type {
@@ -35,9 +36,10 @@ function exposed(provider: ProviderConfig): string[] {
 }
 
 /**
- * Resolves `name`, a model name that is not a Model Ref or `group/<id>`.
- * The automatic groups are those `/v1/models` lists: a hidden one, or one
- * whose ID a user group took, is not a candidate.
+ * Resolves `name`, a model name that is not a Model Ref or `group/<id>`,
+ * to what `usable` admits (the key's allowlist). The automatic groups are
+ * those `/v1/models` lists: a hidden one, or one whose ID a user group
+ * took, is not a candidate.
  */
 export async function resolveBareName(
   name: string,
@@ -45,6 +47,7 @@ export async function resolveBareName(
     ModelPlaneStore,
     "listProviders" | "listRouteGroups" | "listHiddenAutoGroups"
   >,
+  usable: (ref: string) => Promise<boolean>,
 ): Promise<BareName> {
   const text = name.trim();
   if (!text || text.includes("/")) return { kind: "none" };
@@ -61,7 +64,7 @@ export async function resolveBareName(
   // The group of that ID, then of the name as vendors spell it: a user
   // group, or an automatic one of exactly that ID.
   for (const id of new Set([text.toLowerCase(), slug(spelt)])) {
-    if (!GROUP_ID.test(id)) continue;
+    if (!GROUP_ID.test(id) || !(await usable(`group/${id}`))) continue;
     if (groups.some((group) => group.id === id))
       return { kind: "resolved", ref: `group/${id}`, via: "group" };
     if (found.some((group) => group.id === id))
@@ -69,7 +72,7 @@ export async function resolveBareName(
   }
   // The automatic group of that model.
   const auto = found.find((group) => group.model === spelt);
-  if (auto)
+  if (auto && (await usable(`group/${auto.id}`)))
     return {
       kind: "resolved",
       ref: `group/${auto.id as RouteGroupId}`,
@@ -80,9 +83,13 @@ export async function resolveBareName(
     exposed,
     (provider: ProviderConfig) => provider.models.list.map((model) => model.id),
   ]) {
-    const refs = providers
-      .filter((provider) => models(provider).includes(text))
-      .map((provider) => `${provider.id}/${text}`);
+    const refs: string[] = [];
+    for (const provider of providers)
+      if (
+        models(provider).includes(text) &&
+        (await usable(`${provider.id}/${text}`))
+      )
+        refs.push(`${provider.id}/${text}`);
     if (refs.length === 1)
       return { kind: "resolved", ref: refs[0]!, via: "model" };
     if (refs.length > 1) return { kind: "ambiguous", refs: refs.sort() };

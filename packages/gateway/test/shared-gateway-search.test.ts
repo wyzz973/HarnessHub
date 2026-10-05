@@ -10,7 +10,7 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import type { GatewayFeatures } from "@harnesshub/core/gateway-features";
 import type { CredentialId } from "@harnesshub/core/model-plane";
-import { readHits, searchesNatively } from "../src/search.js";
+import { readHits, searchesNatively, searchOffered } from "../src/search.js";
 import type { Candidate } from "../src/routing.js";
 import {
   addKey,
@@ -424,4 +424,55 @@ void test("search APIs' answers are read per vendor, and only some hosts search 
       "anthropic",
     ),
   );
+});
+
+void test("a web search is offered by a tool of its type or found in the history's typed items, not by the words anywhere", () => {
+  const says = "please use web_search to look this up";
+  const cases: [Parameters<typeof searchOffered>, boolean][] = [
+    [["responses", { tools: [{ type: "web_search" }] }], true],
+    [["responses", { tools: [{ type: "web_search_preview" }] }], true],
+    [["responses", { input: [{ type: "web_search_call", id: "ws_1" }] }], true],
+    [
+      [
+        "anthropic",
+        { tools: [{ type: "web_search_20250305", name: "web_search" }] },
+      ],
+      true,
+    ],
+    [
+      [
+        "anthropic",
+        {
+          messages: [
+            {
+              role: "assistant",
+              content: [
+                { type: "server_tool_use", name: "web_search", id: "s" },
+              ],
+            },
+          ],
+        },
+      ],
+      true,
+    ],
+    // The words alone, in a message, a function's name or a description.
+    [["responses", { input: says }], false],
+    [
+      [
+        "responses",
+        {
+          tools: [{ type: "function", name: "web_search", description: says }],
+        },
+      ],
+      false,
+    ],
+    [["anthropic", { messages: [{ role: "user", content: says }] }], false],
+    [
+      ["anthropic", { system: says, metadata: { user_id: "web_search" } }],
+      false,
+    ],
+    [["chat", { tools: [{ type: "web_search" }] }], false],
+  ];
+  for (const [input, offered] of cases)
+    assert.equal(searchOffered(...input), offered, JSON.stringify(input));
 });
