@@ -119,19 +119,35 @@ const reference = (value: unknown): value is SecretReference =>
 export const SEARCH_URL_CREDENTIALS =
   "baseUrl must not hold credentials (user:password@)";
 
-/** The reason a search backend is invalid, or undefined. */
-export function searchBackendProblem(backend: unknown): string | undefined {
+/**
+ * The member of a search backend that is invalid and why, or undefined;
+ * `field` is absent when the backend is not an object.
+ */
+export function searchBackendIssue(
+  backend: unknown,
+):
+  | { field?: "id" | "kind" | "credential" | "baseUrl"; detail: string }
+  | undefined {
   if (typeof backend !== "object" || backend === null || Array.isArray(backend))
-    return "must be an object";
+    return { detail: "must be an object" };
   const value = backend as Record<string, unknown>;
   if (typeof value.id !== "string" || !/^search-[0-9]{1,6}$/.test(value.id))
-    return "id must be search-<n>";
+    return { field: "id", detail: "id must be search-<n>" };
   if (!searchBackendKinds.includes(value.kind as SearchBackendKind))
-    return `kind must be one of ${searchBackendKinds.join(", ")}`;
+    return {
+      field: "kind",
+      detail: `kind must be one of ${searchBackendKinds.join(", ")}`,
+    };
   if (value.credential !== undefined && !reference(value.credential))
-    return "credential must be a secret reference";
+    return {
+      field: "credential",
+      detail: "credential must be a secret reference",
+    };
   if (value.kind !== "searxng" && value.credential === undefined)
-    return `${String(value.kind)} needs an API key`;
+    return {
+      field: "credential",
+      detail: `${String(value.kind)} needs an API key`,
+    };
   if (value.baseUrl !== undefined) {
     let url: URL | undefined;
     try {
@@ -141,12 +157,24 @@ export function searchBackendProblem(backend: unknown): string | undefined {
       url = undefined;
     }
     if (!url || (url.protocol !== "https:" && url.protocol !== "http:"))
-      return "baseUrl must be an http or https URL";
+      return {
+        field: "baseUrl",
+        detail: "baseUrl must be an http or https URL",
+      };
     // They would show in views and backups; a key goes in the backend's key.
-    if (url.username || url.password) return SEARCH_URL_CREDENTIALS;
+    if (url.username || url.password)
+      return { field: "baseUrl", detail: SEARCH_URL_CREDENTIALS };
   } else if (value.kind === "searxng")
-    return "searxng needs the baseUrl of the instance";
+    return {
+      field: "baseUrl",
+      detail: "searxng needs the baseUrl of the instance",
+    };
   return undefined;
+}
+
+/** The reason a search backend is invalid, or undefined. */
+export function searchBackendProblem(backend: unknown): string | undefined {
+  return searchBackendIssue(backend)?.detail;
 }
 
 /** Whether `value` is a usage alert's threshold: a whole percent from 1 to 100. */

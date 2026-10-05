@@ -42577,7 +42577,7 @@
         "tags": [
           "gateway-features"
         ],
-        "description": "GatewayFeaturesFile.addSearch：先校验，再把密钥写入秘密存储，设置文件只记引用；保存失败时删除刚写入的密钥。\n\n输入：kind（tavily、brave、exa、firecrawl、searxng）；key（API 密钥，searxng 可没有）；baseUrl（searxng 必填，其他可覆盖厂商 API 地址）。\n\n返回：201：与 GET 相同，新后端的 id 为 search-<n>，hasKey 表示是否保存了密钥。\n\n副作用：写入秘密存储与 <dataDir>/gateway-features.json；从不读取未登记的环境变量。\n\n失败与边界：400 GATEWAY_FEATURES_INVALID（缺少密钥、searxng 缺少 baseUrl、地址不是 http(s)）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "description": "GatewayFeaturesFile.addSearch：先校验，再把密钥写入秘密存储，设置文件只记引用；保存失败时删除刚写入的密钥。\n\n输入：kind（tavily、brave、exa、firecrawl、searxng）；key（API 密钥，searxng 可没有）；baseUrl（searxng 必填，其他可覆盖厂商 API 地址）。\n\n返回：201：与 GET 相同，新后端的 id 为 search-<n>，hasKey 表示是否保存了密钥。\n\n副作用：写入秘密存储与 <dataDir>/gateway-features.json；从不读取未登记的环境变量。\n\n失败与边界：400 GATEWAY_FEATURES_INVALID，errors[].pointer 指向请求字段：/key（缺少密钥）、/baseUrl（searxng 缺少地址、地址不是 http(s) 或带 user:password@）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
         "requestBody": {
           "required": true,
           "content": {
@@ -44875,7 +44875,7 @@
         "tags": [
           "backup"
         ],
-        "description": "SyncService.status 读取 <dataDir>/sync/config.json 与 state.json 的内存副本。\n\n输入：无参数。\n\n返回：200：enabled、kind=webdav|s3、url、user、endpoint、region、pathStyle、keys、agents、intervalMs、lastSyncAt、lastError、nextSyncAt、notice（两边都改过时被替换的部分与副本目录，kept、redactionOff、redactionOffHeld、needKey、refused）、secretBackend。\n\n副作用：只读；不返回口令或目标凭证。\n\n失败与边界：需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json。",
+        "description": "SyncService.status 读取 <dataDir>/sync/config.json 与 state.json 的内存副本。\n\n输入：无参数。\n\n返回：200：enabled、kind=webdav|s3、url、user、endpoint、region、pathStyle、keys、agents、intervalMs、lastSyncAt、lastError、lastErrorCode（lastError 的问题代码，如 SYNC_ROLLBACK，后台同步失败时也有）、nextSyncAt、notice（两边都改过时被替换的部分与副本目录，kept、redactionOff、redactionOffHeld、needKey、refused）、secretBackend。\n\n副作用：只读；不返回口令或目标凭证。\n\n失败与边界：需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json。",
         "responses": {
           "200": {
             "description": "Default Response",
@@ -44929,6 +44929,10 @@
                     },
                     "lastError": {
                       "type": "string"
+                    },
+                    "lastErrorCode": {
+                      "type": "string",
+                      "description": "The problem code of lastError, e.g. SYNC_ROLLBACK (then POST /sync/now with acceptOlder takes the older file)"
                     },
                     "nextSyncAt": {
                       "type": "string"
@@ -45239,6 +45243,10 @@
                     "lastError": {
                       "type": "string"
                     },
+                    "lastErrorCode": {
+                      "type": "string",
+                      "description": "The problem code of lastError, e.g. SYNC_ROLLBACK (then POST /sync/now with acceptOlder takes the older file)"
+                    },
                     "nextSyncAt": {
                       "type": "string"
                     },
@@ -45476,6 +45484,10 @@
                     },
                     "lastError": {
                       "type": "string"
+                    },
+                    "lastErrorCode": {
+                      "type": "string",
+                      "description": "The problem code of lastError, e.g. SYNC_ROLLBACK (then POST /sync/now with acceptOlder takes the older file)"
                     },
                     "nextSyncAt": {
                       "type": "string"
@@ -45733,6 +45745,10 @@
                     },
                     "lastError": {
                       "type": "string"
+                    },
+                    "lastErrorCode": {
+                      "type": "string",
+                      "description": "The problem code of lastError, e.g. SYNC_ROLLBACK (then POST /sync/now with acceptOlder takes the older file)"
                     },
                     "nextSyncAt": {
                       "type": "string"

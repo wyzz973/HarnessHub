@@ -438,6 +438,7 @@ void test("sync refuses an older copy of the server's file put back in place, un
   await assert.rejects(b.client.sync.now(), invalid("SYNC_ROLLBACK"));
   const status = await b.client.sync.status();
   assert.match(status.lastError ?? "", /older/);
+  assert.equal(status.lastErrorCode, "SYNC_ROLLBACK");
   assert.deepEqual(await rules(b), ["first", "second"], "nothing was taken");
   await assert.rejects(a.client.sync.now(), invalid("SYNC_ROLLBACK"));
   const cli = await hh(b, ["sync", "status"]);
@@ -446,6 +447,7 @@ void test("sync refuses an older copy of the server's file put back in place, un
   // Told to, B takes it, and what it writes back is newer than both.
   const taken = await hh(b, ["sync", "now", "--accept-older"]);
   assert.equal(taken.code, 0, taken.stdout);
+  assert.equal((await b.client.sync.status()).lastErrorCode, undefined);
   assert.deepEqual(await rules(b), ["first"]);
   assert.equal((await a.client.sync.now()).lastError, undefined);
   assert.deepEqual(await rules(a), ["first"]);

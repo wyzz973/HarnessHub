@@ -46,8 +46,10 @@ export interface GatewayFeaturesControl {
   /**
    * Add a web search backend; its key goes to the secret store.
    *
-   * @throws ApiProblem `GATEWAY_FEATURES_INVALID` (400): a missing key, or
-   *   SearXNG without `baseUrl`.
+   * @throws ApiProblem `GATEWAY_FEATURES_INVALID` (400) with the request
+   *   member in `errors[].pointer`: `/key` for a missing key, `/baseUrl`
+   *   for SearXNG without one or an address that is not http(s) or holds
+   *   credentials.
    */
   addSearch(input: {
     kind: SearchBackendKind;

@@ -1446,7 +1446,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     effects:
       "写入秘密存储与 <dataDir>/gateway-features.json；从不读取未登记的环境变量。",
     errors:
-      "400 GATEWAY_FEATURES_INVALID（缺少密钥、searxng 缺少 baseUrl、地址不是 http(s)）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+      "400 GATEWAY_FEATURES_INVALID，errors[].pointer 指向请求字段：/key（缺少密钥）、/baseUrl（searxng 缺少地址、地址不是 http(s) 或带 user:password@）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/gateway-features-routes.ts",
     tests: ["tests/integration/gateway-features.test.ts"],
     operationId: "hh_api_v1_add_gateway_search",
@@ -2438,7 +2438,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     group: "backup",
     request: "无参数。",
     response:
-      "200：enabled、kind=webdav|s3、url、user、endpoint、region、pathStyle、keys、agents、intervalMs、lastSyncAt、lastError、nextSyncAt、notice（两边都改过时被替换的部分与副本目录，kept、redactionOff、redactionOffHeld、needKey、refused）、secretBackend。",
+      "200：enabled、kind=webdav|s3、url、user、endpoint、region、pathStyle、keys、agents、intervalMs、lastSyncAt、lastError、lastErrorCode（lastError 的问题代码，如 SYNC_ROLLBACK，后台同步失败时也有）、nextSyncAt、notice（两边都改过时被替换的部分与副本目录，kept、redactionOff、redactionOffHeld、needKey、refused）、secretBackend。",
     implementation:
       "SyncService.status 读取 <dataDir>/sync/config.json 与 state.json 的内存副本。",
     effects: "只读；不返回口令或目标凭证。",

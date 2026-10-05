@@ -157,6 +157,8 @@ void test("the loop syncs after a first delay, then every interval, waits longer
   );
   assert.deepEqual(await fire(), [600_000]);
   assert.match(service.status().lastError ?? "", /limiting requests/);
+  // A background sync's failure keeps its code, for a client to act on.
+  assert.equal(service.status().lastErrorCode, "SYNC_RATE_LIMITED");
   // Without Retry-After: twice the last wait.
   answers.push(() => new Response(null, { status: 503 }));
   assert.deepEqual(await fire(), [1_200_000]);
@@ -164,6 +166,7 @@ void test("the loop syncs after a first delay, then every interval, waits longer
   answers.push(() => new Response(null, { status: 304 }));
   assert.deepEqual(await fire(), [INTERVAL]);
   assert.equal(service.status().lastError, undefined);
+  assert.equal(service.status().lastErrorCode, undefined);
   assert.deepEqual(requests, [
     "GET /dav/harnesshub/harnesshub.harnesshub-backup",
     "PUT /dav/harnesshub/harnesshub.harnesshub-backup",

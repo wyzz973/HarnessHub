@@ -436,6 +436,11 @@ const syncStatusSchema = {
     intervalMs: { type: "integer" },
     lastSyncAt: { type: "string" },
     lastError: { type: "string" },
+    lastErrorCode: {
+      type: "string",
+      description:
+        "The problem code of lastError, e.g. SYNC_ROLLBACK (then POST /sync/now with acceptOlder takes the older file)",
+    },
     nextSyncAt: { type: "string" },
     notice: {
       type: "object",

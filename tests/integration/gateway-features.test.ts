@@ -244,12 +244,32 @@ void test(
     assert.deepEqual(searched.search?.backends, [
       { id: "search-1", kind: "tavily", hasKey: true },
     ]);
-    await assert.rejects(
-      client.gatewayFeatures.addSearch({ kind: "searxng" }),
-      (error: unknown) =>
-        error instanceof HarnessHubError &&
-        error.code === "GATEWAY_FEATURES_INVALID",
-    );
+    // Each refusal points at the request member to fix, with its message.
+    for (const [input, pointer, detail] of [
+      [{ kind: "searxng" }, "/baseUrl", /searxng needs the baseUrl/],
+      [{ kind: "brave" }, "/key", /brave needs an API key/],
+      [
+        { kind: "searxng", baseUrl: "ftp://search.example" },
+        "/baseUrl",
+        /http or https/,
+      ],
+      [
+        { kind: "searxng", baseUrl: "https://alice:secret@search.example" },
+        "/baseUrl",
+        /must not hold credentials/,
+      ],
+    ] as const)
+      await assert.rejects(
+        client.gatewayFeatures.addSearch(input),
+        (error: unknown) => {
+          assert.ok(error instanceof HarnessHubError);
+          assert.equal(error.code, "GATEWAY_FEATURES_INVALID");
+          const [problem] = error.problem.errors ?? [];
+          assert.equal(problem?.pointer, pointer, JSON.stringify(input));
+          assert.match(problem?.detail ?? "", detail);
+          return true;
+        },
+      );
     const file = await readFile(
       path.join(dataDir, "gateway-features.json"),
       "utf8",

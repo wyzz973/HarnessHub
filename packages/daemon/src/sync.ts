@@ -133,6 +133,8 @@ interface SyncState {
   key: string;
   last?: string;
   error?: string;
+  /** The problem code of `error` (`SYNC_ROLLBACK`, `SYNC_PASSPHRASE`, …). */
+  errorCode?: string;
   notice?: SyncNotice;
   /** SHA-256 of the server's file as last seen. */
   sum?: string;
@@ -162,6 +164,11 @@ export interface SyncStatus {
   intervalMs: number;
   lastSyncAt?: string;
   lastError?: string;
+  /**
+   * The problem code of `lastError`, so that a client can act on a failure
+   * of a background sync (`SYNC_ROLLBACK`: offer `now({acceptOlder})`).
+   */
+  lastErrorCode?: string;
   nextSyncAt?: string;
   notice?: SyncNotice;
   /** Where the target's secret and the passphrase are kept. */
@@ -289,6 +296,9 @@ export class SyncService {
       intervalMs: this.interval,
       ...(config && state?.last ? { lastSyncAt: state.last } : {}),
       ...(config && state?.error ? { lastError: state.error } : {}),
+      ...(config && state?.error && state.errorCode
+        ? { lastErrorCode: state.errorCode }
+        : {}),
       ...(config && this.nextAt !== undefined
         ? { nextSyncAt: new Date(this.nextAt).toISOString() }
         : {}),
@@ -513,8 +523,13 @@ export class SyncService {
       }
       if (this.config) {
         const state = (this.state ??= { key: "" });
-        if (failure) state.error = failure.message;
-        else delete state.error;
+        if (failure) {
+          state.error = failure.message;
+          state.errorCode = failure.code;
+        } else {
+          delete state.error;
+          delete state.errorCode;
+        }
         if (!failure) state.last = new Date(this.now_()).toISOString();
         await this.writeJson("state.json", state).catch((error: unknown) => {
           failure ??= new HubError(
@@ -1154,6 +1169,7 @@ function isSyncState(value: unknown): value is SyncState {
     typeof state.key === "string" &&
     text(state.last) &&
     text(state.error) &&
+    text(state.errorCode) &&
     text(state.sum) &&
     (version === undefined ||
       (typeof version === "object" &&

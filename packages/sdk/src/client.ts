@@ -944,6 +944,8 @@ export interface SyncStatus {
   intervalMs: number;
   lastSyncAt?: string;
   lastError?: string;
+  /** The problem code of `lastError` (`SYNC_ROLLBACK`: `now({acceptOlder: true})` takes the older file). */
+  lastErrorCode?: string;
   nextSyncAt?: string;
   notice?: {
     at: string;

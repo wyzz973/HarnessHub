@@ -15,6 +15,7 @@ import {
   DEFAULT_GATEWAY_FEATURES,
   gatewayFeaturesProblems,
   redactionRuleProblem,
+  searchBackendIssue,
   searchBackendProblem,
   SEARCH_URL_CREDENTIALS,
   usagePercent as isUsagePercent,
@@ -288,18 +289,31 @@ export class GatewayFeaturesFile implements GatewayFeaturesControl {
         ...(input.baseUrl !== undefined ? { baseUrl: input.baseUrl } : {}),
       };
       // Checked before the key is stored, so a refused backend stores nothing.
-      const problem = searchBackendProblem({
+      const issue = searchBackendIssue({
         ...backend,
         ...(input.key !== undefined
           ? { credential: { kind: "store", value: "unchecked" } }
           : {}),
       });
-      if (problem)
+      if (issue)
         throw new ApiProblem(
           "GATEWAY_FEATURES_INVALID",
           "The search backend is invalid",
           400,
-          { errors: [{ pointer: "", detail: problem }] },
+          {
+            errors: [
+              {
+                // The request's member: the key is `key`, stored as `credential`.
+                pointer:
+                  issue.field === "credential"
+                    ? "/key"
+                    : issue.field
+                      ? `/${issue.field}`
+                      : "",
+                detail: issue.detail,
+              },
+            ],
+          },
         );
       if (input.key !== undefined)
         backend.credential = created = await this.options.secrets.create(

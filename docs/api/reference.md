@@ -1168,7 +1168,7 @@
 - 返回：201：与 GET 相同，新后端的 id 为 search-<n>，hasKey 表示是否保存了密钥。
 - 实现链路：GatewayFeaturesFile.addSearch：先校验，再把密钥写入秘密存储，设置文件只记引用；保存失败时删除刚写入的密钥。
 - 持久化与副作用：写入秘密存储与 <dataDir>/gateway-features.json；从不读取未登记的环境变量。
-- 失败与边界：400 GATEWAY_FEATURES_INVALID（缺少密钥、searxng 缺少 baseUrl、地址不是 http(s)）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。
+- 失败与边界：400 GATEWAY_FEATURES_INVALID，errors[].pointer 指向请求字段：/key（缺少密钥）、/baseUrl（searxng 缺少地址、地址不是 http(s) 或带 user:password@）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。
 
 实现入口：[packages/daemon/src/http/gateway-features-routes.ts](../../packages/daemon/src/http/gateway-features-routes.ts)。验证依据：[tests/integration/gateway-features.test.ts](../../tests/integration/gateway-features.test.ts)。
 
@@ -1848,7 +1848,7 @@
 **GET `/api/v1/sync` — 同步状态**
 
 - 输入：无参数。
-- 返回：200：enabled、kind=webdav|s3、url、user、endpoint、region、pathStyle、keys、agents、intervalMs、lastSyncAt、lastError、nextSyncAt、notice（两边都改过时被替换的部分与副本目录，kept、redactionOff、redactionOffHeld、needKey、refused）、secretBackend。
+- 返回：200：enabled、kind=webdav|s3、url、user、endpoint、region、pathStyle、keys、agents、intervalMs、lastSyncAt、lastError、lastErrorCode（lastError 的问题代码，如 SYNC_ROLLBACK，后台同步失败时也有）、nextSyncAt、notice（两边都改过时被替换的部分与副本目录，kept、redactionOff、redactionOffHeld、needKey、refused）、secretBackend。
 - 实现链路：SyncService.status 读取 <dataDir>/sync/config.json 与 state.json 的内存副本。
 - 持久化与副作用：只读；不返回口令或目标凭证。
 - 失败与边界：需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json。
