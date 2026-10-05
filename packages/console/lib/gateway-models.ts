@@ -65,31 +65,34 @@ export function gatewayModels(
   autoGroups: readonly AutoGroup[],
 ): GatewayModels {
   const icons = new Map(presets.map((preset) => [preset.id, preset.icon]));
-  const sections: ModelSection[] = providers.map((provider) => {
-    const icon = providerIcon(provider, icons);
-    return {
-      id: provider.id,
-      title: provider.name,
-      ...(icon ? { icon } : {}),
-      options: provider.models.list
-        .filter(
-          (model) =>
-            provider.models.expose === "all" ||
-            provider.models.expose.includes(model.id),
-        )
-        .map((model) => ({
-          ref: `${provider.id}/${model.id}`,
-          label: model.id,
-          ...(model.contextWindow !== undefined
-            ? { contextWindow: model.contextWindow }
-            : {}),
-          ...(model.maxOutputTokens !== undefined
-            ? { maxOutputTokens: model.maxOutputTokens }
-            : {}),
-          ...(model.price ? { price: model.price } : {}),
-        })),
-    };
-  });
+  // A provider switched off serves no model: it is neither offered nor counted as there.
+  const sections: ModelSection[] = providers
+    .filter((provider) => provider.enabled !== false)
+    .map((provider) => {
+      const icon = providerIcon(provider, icons);
+      return {
+        id: provider.id,
+        title: provider.name,
+        ...(icon ? { icon } : {}),
+        options: provider.models.list
+          .filter(
+            (model) =>
+              provider.models.expose === "all" ||
+              provider.models.expose.includes(model.id),
+          )
+          .map((model) => ({
+            ref: `${provider.id}/${model.id}`,
+            label: model.id,
+            ...(model.contextWindow !== undefined
+              ? { contextWindow: model.contextWindow }
+              : {}),
+            ...(model.maxOutputTokens !== undefined
+              ? { maxOutputTokens: model.maxOutputTokens }
+              : {}),
+            ...(model.price ? { price: model.price } : {}),
+          })),
+      };
+    });
   if (groups.length)
     sections.push({
       id: "group",

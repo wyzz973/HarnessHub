@@ -643,6 +643,40 @@ test("the switches: credentials and providers on and off, keys renamed, suspende
   assert.deepEqual(agents.attention(agent), ["它的 Key 已暂停，请求会被拒绝"]);
 });
 
+test("an agent needs attention for the daemon's own mark, said once, and a provider switched off offers no model", async () => {
+  const agents = await consoleModule("lib/agents.ts");
+  const { gatewayModels } = await consoleModule("lib/gateway-models.ts");
+  const openapi = JSON.parse(await readFile(new URL("../docs/api/openapi.json", import.meta.url), "utf8"));
+  const mark = openapi.paths["/api/v1/agents/{id}"].get.responses["200"].content["application/json"].schema.properties.wiring.properties.attention;
+  assert.deepEqual(mark.required, ["code", "message", "at"]);
+
+  const wired = (attention, extra = {}) => ({
+    installation: { status: "installed" },
+    wiring: { keyState: "active", drift: null, model: "lab/small", tiers: {}, ...(attention ? { attention } : {}), ...extra },
+  });
+  const at = "2026-10-05T12:00:00.000Z";
+  const said = (code, message = "The daemon's words", extra) => agents.attention(wired({ code, message, at }, extra));
+  assert.deepEqual(said("AGENT_MODEL_UNAVAILABLE"), ["网关不再提供它接线的模型"]);
+  assert.deepEqual(said("AGENT_FILES_CHANGED"), ["它的配置文件被改动"]);
+  assert.deepEqual(said("AGENT_KEY_INACTIVE"), ["它的 Key 已失效"]);
+  assert.deepEqual(said("AGENT_KEY_NOT_IN_FILES"), ["它的配置文件中已不是它的 Key"]);
+  assert.deepEqual(said("WIRING_SYNC_FAILED", "disk full"), ["同步它的接线失败：disk full"]);
+  assert.deepEqual(said("SOMETHING_NEW", "Something new happened"), ["Something new happened"], "an unknown mark as the daemon words it");
+  assert.deepEqual(agents.attention(wired(undefined)), []);
+  // Said once: the console's own reason wins over the same mark.
+  assert.deepEqual(said("AGENT_KEY_INACTIVE", "x", { keyState: "revoked" }), ["它的 Key 已失效"]);
+  assert.deepEqual(said("AGENT_FILES_CHANGED", "x", { drift: { drifted: true, kinds: ["replaced"], findings: [] } }).length, 1);
+
+  // A provider switched off: not offered, and its models count as gone.
+  const provider = (id, enabled) => ({ id, name: id, kind: "custom", endpoints: {}, credentials: [], ...(enabled === undefined ? {} : { enabled }), models: { source: "manual", list: [{ id: "small" }], expose: "all" } });
+  const models = gatewayModels([provider("lab", false), provider("live", undefined), provider("on", true)], [], [], []);
+  assert.deepEqual(models.sections.map((section) => section.id), ["live", "on"]);
+  assert.equal(models.byRef.has("lab/small"), false);
+  assert.equal(models.byRef.has("live/small"), true);
+  const gone = agents.attention(wired({ code: "AGENT_MODEL_UNAVAILABLE", message: "x", at }), models);
+  assert.deepEqual(gone, ["网关不再提供 lab/small"], "the console's own reason names the model, once");
+});
+
 test("the backup page reads backup files and builds sync settings without dropping secrets it must send", async () => {
   const backup = await consoleModule("lib/backup.ts");
   assert.equal(backup.backupFileName(new Date(2026, 9, 4, 23, 59)), "harnesshub-2026-10-04.harnesshub-backup");

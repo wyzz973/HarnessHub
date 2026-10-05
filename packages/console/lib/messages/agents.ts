@@ -50,6 +50,10 @@ export const zh = {
   "agents.attention.keyMissing": "它的 Key 不存在",
   "agents.attention.keyInvalid": "它的 Key 已失效",
   "agents.attention.keySuspended": "它的 Key 已暂停，请求会被拒绝",
+  "agents.attention.modelUnavailable": "网关不再提供它接线的模型",
+  "agents.attention.filesChanged": "它的配置文件被改动",
+  "agents.attention.keyNotInFiles": "它的配置文件中已不是它的 Key",
+  "agents.attention.syncFailed": "同步它的接线失败：{message}",
   "agents.attention.modelGone": "网关不再提供 {models}",
   "agents.attention.managed":
     "管理员的托管设置覆盖了接线写入的项，这些项不会生效",
@@ -313,6 +317,12 @@ export const en: Translation<typeof zh> = {
   "agents.attention.keyInvalid": "Its key no longer works",
   "agents.attention.keySuspended":
     "Its key is suspended, so its requests are refused",
+  "agents.attention.modelUnavailable":
+    "The gateway no longer offers the model it is wired to",
+  "agents.attention.filesChanged": "Its configuration files were changed",
+  "agents.attention.keyNotInFiles":
+    "Its configuration files no longer hold its key",
+  "agents.attention.syncFailed": "Syncing its wiring failed: {message}",
   "agents.attention.modelGone": "The gateway no longer offers {models}",
   "agents.attention.managed":
     "An administrator's managed settings override entries the wiring writes; those have no effect",

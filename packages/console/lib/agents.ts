@@ -95,34 +95,70 @@ export function attention(agent: Agent, models?: GatewayModels): string[] {
   const wiring = agent.wiring;
   if (!wiring) return [];
   const reasons: string[] = [];
+  /** What the reasons below already say, so the daemon's mark is not said twice. */
+  const said = { files: false, key: false, model: false };
   const list = (items: readonly string[]) =>
     items.join(t("agents.listSeparator"));
   if (agent.installation.status === "not-found")
     reasons.push(t("agents.attention.notFound"));
   if (wiring.driftError) reasons.push(t("agents.attention.uncheckable"));
-  else if (wiring.drift?.drifted)
+  else if (wiring.drift?.drifted) {
+    said.files = true;
     reasons.push(
       t("agents.attention.drifted", {
         kinds: list(wiring.drift.kinds.map(driftText)),
       }),
     );
+  }
   if (wiring.managed?.length) reasons.push(t("agents.attention.managed"));
-  if (wiring.keyState === "suspended")
+  if (wiring.keyState === "suspended") {
+    said.key = true;
     reasons.push(t("agents.attention.keySuspended"));
-  if (["revoked", "expired", "missing"].includes(wiring.keyState))
+  }
+  if (["revoked", "expired", "missing"].includes(wiring.keyState)) {
+    said.key = true;
     reasons.push(
       wiring.keyState === "missing"
         ? t("agents.attention.keyMissing")
         : t("agents.attention.keyInvalid"),
     );
+  }
   if (models) {
     const gone = [wiring.model, ...Object.values(wiring.tiers ?? {})].filter(
       (ref): ref is string => ref !== undefined && !models.byRef.has(ref),
     );
-    if (gone.length)
+    if (gone.length) {
+      said.model = true;
       reasons.push(
         t("agents.attention.modelGone", { models: list([...new Set(gone)]) }),
       );
+    }
+  }
+  // The daemon's own mark from its catalog sync (`wiring.attention`).
+  const mark = wiring.attention;
+  if (mark) {
+    switch (mark.code) {
+      case "AGENT_MODEL_UNAVAILABLE":
+        if (!said.model) reasons.push(t("agents.attention.modelUnavailable"));
+        break;
+      case "AGENT_FILES_CHANGED":
+        if (!said.files) reasons.push(t("agents.attention.filesChanged"));
+        break;
+      case "AGENT_KEY_INACTIVE":
+        if (!said.key) reasons.push(t("agents.attention.keyInvalid"));
+        break;
+      case "AGENT_KEY_NOT_IN_FILES":
+        reasons.push(t("agents.attention.keyNotInFiles"));
+        break;
+      case "WIRING_SYNC_FAILED":
+        reasons.push(
+          t("agents.attention.syncFailed", { message: mark.message }),
+        );
+        break;
+      default:
+        // A mark this console does not know yet, as the daemon words it.
+        reasons.push(mark.message);
+    }
   }
   return reasons;
 }
