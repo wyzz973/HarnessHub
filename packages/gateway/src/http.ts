@@ -43,10 +43,23 @@ export class Slots {
   #active = 0;
   #waiting: (() => void)[] = [];
   constructor(
-    private readonly limit: number,
-    private readonly queue: number,
+    private limit: number,
+    private queue: number,
     private readonly busyMessage: string,
   ) {}
+  /**
+   * New limits, for the next call (a provider's own were changed): a higher
+   * limit admits callers already waiting; a lower one lets the calls out
+   * finish and admits no more until fewer are out.
+   */
+  configure(limit: number, queue: number): void {
+    this.limit = limit;
+    this.queue = queue;
+    while (this.#active < this.limit && this.#waiting.length) {
+      this.#active++;
+      this.#waiting.shift()!();
+    }
+  }
   /** Calls holding a slot plus calls waiting for one. */
   get load(): number {
     return this.#active + this.#waiting.length;
@@ -73,7 +86,8 @@ export class Slots {
     });
   }
   release(): void {
-    const next = this.#waiting.shift();
+    // Above a lowered limit, a finished call's slot is not handed on.
+    const next = this.#active <= this.limit ? this.#waiting.shift() : undefined;
     if (next) next();
     else this.#active--;
   }

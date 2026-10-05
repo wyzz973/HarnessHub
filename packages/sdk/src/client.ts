@@ -301,6 +301,8 @@ export interface ProviderFields {
   imageEndpoint?: string;
   /** This provider's own proxy: `direct`, or a proxy address without credentials; absent follows the daemon's. */
   proxy?: string;
+  /** Requests out at once and waiting on each credential; absent follows the gateway's limits. */
+  limits?: { concurrentPerCredential?: number; queuePerCredential?: number };
 }
 
 /** A value to store, or an `env` or `file` reference. */
@@ -335,7 +337,13 @@ export type ProviderInput = ProviderFields & {
 
 /** JSON Merge Patch of a provider: `null` removes an optional member. */
 export type ProviderPatch = {
-  [K in keyof ProviderFields]?: ProviderFields[K] | null;
+  [K in Exclude<keyof ProviderFields, "limits">]?: ProviderFields[K] | null;
+} & {
+  /** null removes both; a member set to null removes that one. */
+  limits?: {
+    concurrentPerCredential?: number | null;
+    queuePerCredential?: number | null;
+  } | null;
 } & {
   /** null detaches the provider from its preset. */
   preset?: null;

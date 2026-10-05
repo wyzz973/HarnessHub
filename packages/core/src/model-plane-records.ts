@@ -14,6 +14,7 @@ import {
   isProviderId,
   parseModelRef,
   maxTokensFields,
+  providerLimitsProblems,
   providerPatches,
   reasoningEfforts,
   wireProtocols,
@@ -300,6 +301,10 @@ export function isProviderConfig(value: unknown): value is ProviderConfig {
       (subscription) =>
         object(subscription) &&
         member(subscriptionBackends)(subscription.backend),
+    ) &&
+    optional(
+      value.limits,
+      (limits) => providerLimitsProblems(limits).length === 0,
     ) &&
     optional(
       value.proxy,

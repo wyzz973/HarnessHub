@@ -62,3 +62,57 @@ void test("provider base URLs follow the official SDK convention", () => {
   for (const [protocol, url, reason] of refused)
     assert.match(endpointProblem(protocol, url) ?? "", reason, url);
 });
+
+void test("a provider's own limits are integers in their ranges, and a provider record with others is invalid", async () => {
+  const { providerLimitsProblems } = await import("../src/model-plane.js");
+  const { isProviderConfig } = await import("../src/model-plane-records.js");
+  assert.deepEqual(providerLimitsProblems({}), []);
+  assert.deepEqual(
+    providerLimitsProblems({
+      concurrentPerCredential: 1,
+      queuePerCredential: 0,
+    }),
+    [],
+  );
+  assert.deepEqual(
+    providerLimitsProblems({
+      concurrentPerCredential: 1024,
+      queuePerCredential: 65_536,
+    }),
+    [],
+  );
+  for (const [value, pointer] of [
+    [{ concurrentPerCredential: 0 }, "/concurrentPerCredential"],
+    [{ concurrentPerCredential: 1025 }, "/concurrentPerCredential"],
+    [{ concurrentPerCredential: 1.5 }, "/concurrentPerCredential"],
+    [{ concurrentPerCredential: "2" }, "/concurrentPerCredential"],
+    [{ queuePerCredential: -1 }, "/queuePerCredential"],
+    [{ queuePerCredential: 65_537 }, "/queuePerCredential"],
+    [{ maxConcurrency: 2 }, "/maxConcurrency"],
+    [[], ""],
+    [null, ""],
+  ] as const)
+    assert.equal(
+      providerLimitsProblems(value)[0]?.pointer,
+      pointer,
+      JSON.stringify(value),
+    );
+  const provider = {
+    schemaVersion: 1,
+    id: "p",
+    name: "p",
+    kind: "custom",
+    endpoints: { chat: "https://api.example.test/v1" },
+    auth: { apiKeyHeader: "authorization-bearer" },
+    credentials: [],
+    models: { source: "manual", list: [], expose: "all" },
+    createdAt: "2026-10-05T00:00:00.000Z",
+    updatedAt: "2026-10-05T00:00:00.000Z",
+  };
+  assert.ok(
+    isProviderConfig({ ...provider, limits: { concurrentPerCredential: 2 } }),
+  );
+  assert.ok(
+    !isProviderConfig({ ...provider, limits: { concurrentPerCredential: 0 } }),
+  );
+});

@@ -5,6 +5,7 @@ import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import {
   issueGatewayKey,
   parseModelRef,
+  providerLimitsProblems,
   wireProtocols,
   type ConversationSummary,
   type CredentialId,
@@ -154,6 +155,12 @@ function checkProvider(candidate: unknown): ProviderConfig {
     object(candidate) &&
     object(candidate.subscription) &&
     candidate.subscription.backend === "copilot";
+  if (object(candidate) && candidate.limits !== undefined)
+    for (const problem of providerLimitsProblems(candidate.limits))
+      errors.push({
+        pointer: `/limits${problem.pointer}`,
+        detail: problem.detail,
+      });
   if (object(candidate) && candidate.proxy !== undefined) {
     const problem =
       proxyChoiceProblem(candidate.proxy) ??
@@ -618,8 +625,12 @@ export function registerModelPlaneRoutes(
           request.body.preset === null
             ? { ...request.body, region: null, plan: null }
             : request.body;
+        const merged = mergePatch(current, patch) as Json;
+        // Limits all removed one by one are no limits.
+        if (object(merged.limits) && !Object.keys(merged.limits).length)
+          delete merged.limits;
         const updated = checkProvider({
-          ...(mergePatch(current, patch) as Json),
+          ...merged,
           id: current.id,
           schemaVersion: 1,
           credentials: current.credentials,

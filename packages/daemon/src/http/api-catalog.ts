@@ -974,7 +974,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     title: "添加 provider",
     group: "providers",
     request:
-      "preset（内置预设 ID，可加 region 与 plan，缺省为预设列出的第一个）或 id（slug）与 endpoints（至少一个）；与 preset 同给的字段覆盖预设（endpoints 按协议覆盖，id 默认为预设 ID）；name、kind、auth、headers、models、wire、patches、capabilities、translateOnly、imageEndpoint（OpenAI 兼容 Images API 的基址，网关的 /v1/images/generations 与 /v1/images/edits 直通到这里）、proxy（该 provider 自己的代理：direct 或不含凭据的 http、https、socks5 代理地址，缺省时按守护进程的 network.proxy）、catalog（models.dev provider id）可选；credential（value 或 env/file ref，name 默认 default）添加第一个凭据；未知字段 400。",
+      "preset（内置预设 ID，可加 region 与 plan，缺省为预设列出的第一个）或 id（slug）与 endpoints（至少一个）；与 preset 同给的字段覆盖预设（endpoints 按协议覆盖，id 默认为预设 ID）；name、kind、auth、headers、models、wire、patches、capabilities、translateOnly、imageEndpoint（OpenAI 兼容 Images API 的基址，网关的 /v1/images/generations 与 /v1/images/edits 直通到这里）、proxy（该 provider 自己的代理：direct 或不含凭据的 http、https、socks5 代理地址，缺省时按守护进程的 network.proxy）、limits（每个 Credential 的并发数 concurrentPerCredential 1–1024 与排队数 queuePerCredential 0–65536，缺省按网关的 gateway.limits）、catalog（models.dev provider id）可选；credential（value 或 env/file ref，name 默认 default）添加第一个凭据；未知字段 400。",
     response:
       "201：ProviderConfig（来自预设时含 preset、region、plan）；带 credential 时含该凭据的引用。",
     implementation:
@@ -982,7 +982,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     effects:
       "在一个事务内写入 providers 记录与各模型元数据的来源（model_provenance）；有 credential.value 时写一个托管秘密。",
     errors:
-      "400 PRESET_NOT_FOUND（/preset）、PRESET_REGION_NOT_FOUND（/region）、PRESET_PLAN_NOT_FOUND（/plan）、PROVIDER_INVALID（errors[] 指向 /id、/endpoints、/endpoints/<协议>、/headers/<名称>、/proxy（不是 direct 或代理地址、含凭据、Copilot provider 设置了代理）或没有 preset 时的 /region、/plan：操作路径、版本段、内嵌凭据、查询串、片段、非 HTTPS 的公网地址、userEndpoint 预设缺少端点、缺少必需的 header）、CREDENTIAL_INVALID、INVALID_SECRET；409 PROVIDER_EXISTS；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+      "400 PRESET_NOT_FOUND（/preset）、PRESET_REGION_NOT_FOUND（/region）、PRESET_PLAN_NOT_FOUND（/plan）、PROVIDER_INVALID（errors[] 指向 /id、/endpoints、/endpoints/<协议>、/headers/<名称>、/proxy（不是 direct 或代理地址、含凭据、Copilot provider 设置了代理）、/limits/<字段>（超出范围或未知的上限）或没有 preset 时的 /region、/plan：操作路径、版本段、内嵌凭据、查询串、片段、非 HTTPS 的公网地址、userEndpoint 预设缺少端点、缺少必需的 header）、CREDENTIAL_INVALID、INVALID_SECRET；409 PROVIDER_EXISTS；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/model-plane-routes.ts",
     tests: [
       "tests/integration/api-v1.test.ts",

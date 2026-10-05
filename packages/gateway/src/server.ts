@@ -568,15 +568,20 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     memory: new MemoryBudget(limits.maxInflightRequestBytes),
     slots(candidate: Candidate): Slots {
       const name = `${candidate.provider.id}\u0000${candidate.credential.id}`;
+      // The provider's own limits (Magpie's maxConcurrency), else the gateway's.
+      const own = candidate.provider.limits;
+      const limit =
+        own?.concurrentPerCredential ?? limits.maxConcurrentPerCredential;
+      const queue = own?.queuePerCredential ?? limits.maxQueuedPerCredential;
       let slots = credentialSlots.get(name);
       if (!slots) {
         slots = new Slots(
-          limits.maxConcurrentPerCredential,
-          limits.maxQueuedPerCredential,
+          limit,
+          queue,
           `Too many concurrent requests on credential ${candidate.credential.id} of ${candidate.provider.id}`,
         );
         credentialSlots.set(name, slots);
-      }
+      } else slots.configure(limit, queue);
       return slots;
     },
     reasoning: new ReasoningCaches(limits),

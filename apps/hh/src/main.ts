@@ -8,7 +8,7 @@ Commands:
   config      Show or edit config.jsonc (show, get, set, unset)
   status      Show the running daemon and its model plane
   console     Print a one-time link that signs a browser in to the console
-  provider    Manage model providers (list, show, presets, models, add, proxy, remove, test, doctor)
+  provider    Manage model providers (list, show, presets, models, add, proxy, limits, remove, test, doctor)
   import      Add providers from an import link or from Claude Code / Codex
   credential  Manage provider credentials (list, add, rotate, remove)
   key         Manage Gateway Keys and their limits (list, create, quota, limit, revoke)

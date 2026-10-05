@@ -9,6 +9,7 @@ import { metadataFields } from "@harnesshub/core/model-metadata";
 import {
   droppableFields,
   maxTokensFields,
+  PROVIDER_LIMIT_RANGES,
   providerPatches,
   wireProtocols,
 } from "@harnesshub/core/model-plane";
@@ -230,6 +231,26 @@ export const credentialSchema = {
   },
 } as const;
 
+/** A provider's own concurrency limits (`ProviderConfig.limits`). */
+const providerLimits = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    concurrentPerCredential: {
+      type: "integer",
+      minimum: PROVIDER_LIMIT_RANGES.concurrentPerCredential[0],
+      maximum: PROVIDER_LIMIT_RANGES.concurrentPerCredential[1],
+      description: "Requests out at once on each credential",
+    },
+    queuePerCredential: {
+      type: "integer",
+      minimum: PROVIDER_LIMIT_RANGES.queuePerCredential[0],
+      maximum: PROVIDER_LIMIT_RANGES.queuePerCredential[1],
+      description: "Requests that may wait for a credential before 429 busy",
+    },
+  },
+} as const;
+
 export const providerSchema = {
   type: "object",
   additionalProperties: false,
@@ -271,6 +292,7 @@ export const providerSchema = {
     translateOnly: { type: "boolean" },
     imageEndpoint: text(2048),
     proxy: text(2048),
+    limits: providerLimits,
     subscription: {
       type: "object",
       additionalProperties: false,
@@ -332,6 +354,7 @@ export const providerCreateSchema = {
     translateOnly: { type: "boolean" },
     imageEndpoint: text(2048),
     proxy: text(2048),
+    limits: providerLimits,
   },
 } as const;
 
@@ -517,6 +540,20 @@ export const providerPatchSchema = {
     translateOnly: { type: ["boolean", "null"] },
     imageEndpoint: { type: ["string", "null"], minLength: 1, maxLength: 2048 },
     proxy: { type: ["string", "null"], minLength: 1, maxLength: 2048 },
+    limits: {
+      ...providerLimits,
+      type: ["object", "null"],
+      properties: {
+        concurrentPerCredential: {
+          ...providerLimits.properties.concurrentPerCredential,
+          type: ["integer", "null"],
+        },
+        queuePerCredential: {
+          ...providerLimits.properties.queuePerCredential,
+          type: ["integer", "null"],
+        },
+      },
+    },
   },
 } as const;
 

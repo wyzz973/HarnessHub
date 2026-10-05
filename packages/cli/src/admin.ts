@@ -124,12 +124,17 @@ const COMMAND_USAGE: readonly CommandUsage[] = [
               | add <id> --chat URL [--responses URL] [--anthropic URL]
                 [--gemini URL] [--image-endpoint URL] [--name N] [--kind K]
                 [--api-key-header H] [--model ID]... [--proxy URL|direct]
+                [--concurrency N] [--queue N]
               | add [<id>] --preset P [--region R] [--plan P] [--name N]
                 [--base URL | --chat URL ...] [--proxy URL|direct]
+                [--concurrency N] [--queue N]
                 [--credential-from-stdin | --credential-from-env VAR
                  | --credential-from-file PATH]
               | proxy <id> [URL|direct|default]   its own proxy; default
                 follows the daemon's (network.proxy)
+              | limits <id> [--concurrency N] [--queue N] [--clear]
+                requests out at once and waiting on each credential;
+                unset follows the gateway's limits
               | remove <id>
               | test <id> [--model M]
               | doctor <id> [--model M] [--deep] [--slow-ms N] [--fix]`,
@@ -467,6 +472,44 @@ function list(value: unknown): string[] {
     : [];
 }
 
+/** `--concurrency N` and `--queue N` as a provider's limits; undefined without either. */
+function limitsOf(
+  values: Record<string, unknown>,
+):
+  | { concurrentPerCredential?: number; queuePerCredential?: number }
+  | undefined {
+  const number = (name: string): number | undefined => {
+    const text = values[name];
+    if (typeof text !== "string") return undefined;
+    if (!/^\d+$/.test(text))
+      throw new UsageError(`--${name} takes a whole number, not ${text}`);
+    return Number(text);
+  };
+  const concurrent = number("concurrency");
+  const queue = number("queue");
+  if (concurrent === undefined && queue === undefined) return undefined;
+  return {
+    ...(concurrent !== undefined
+      ? { concurrentPerCredential: concurrent }
+      : {}),
+    ...(queue !== undefined ? { queuePerCredential: queue } : {}),
+  };
+}
+
+function limitsText(limits: {
+  concurrentPerCredential?: number;
+  queuePerCredential?: number;
+}): string {
+  return [
+    limits.concurrentPerCredential !== undefined
+      ? `${limits.concurrentPerCredential} at once`
+      : "the gateway's number at once",
+    limits.queuePerCredential !== undefined
+      ? `${limits.queuePerCredential} waiting`
+      : "the gateway's queue",
+  ].join(", ");
+}
+
 /**
  * A preset's endpoints moved onto `base` (`--base`): each endpoint's path is
  * appended to the base's path, so `http://10.0.0.2:3180` turns
@@ -516,6 +559,9 @@ async function providerCommand(args: string[]): Promise<void> {
     gemini: { type: "string" },
     "image-endpoint": { type: "string" },
     proxy: { type: "string" },
+    concurrency: { type: "string" },
+    queue: { type: "string" },
+    clear: { type: "boolean" },
     "api-key-header": { type: "string" },
     model: { type: "string", multiple: true },
     preset: { type: "string" },
@@ -636,6 +682,7 @@ async function providerCommand(args: string[]): Promise<void> {
             : []),
           ...(item.catalog !== undefined ? [`Catalog:  ${item.catalog}`] : []),
           ...(item.proxy !== undefined ? [`Proxy:    ${item.proxy}`] : []),
+          ...(item.limits ? [`Limits:   ${limitsText(item.limits)}`] : []),
           `Auth:     ${item.auth.apiKeyHeader}`,
           ...Object.entries(item.endpoints).map(
             ([protocol, url]) => `Endpoint: ${protocol} ${url}`,
@@ -717,6 +764,7 @@ async function providerCommand(args: string[]): Promise<void> {
           ? { imageEndpoint: values["image-endpoint"] }
           : {}),
         ...(typeof values.proxy === "string" ? { proxy: values.proxy } : {}),
+        ...(limitsOf(values) ? { limits: limitsOf(values)! } : {}),
         ...(typeof values.kind === "string"
           ? { kind: values.kind as "vendor" | "relay" | "local" | "custom" }
           : {}),
@@ -761,6 +809,24 @@ async function providerCommand(args: string[]): Promise<void> {
         item.proxy === undefined
           ? `${item.id} follows the daemon's proxy (network.proxy)`
           : `${item.id} uses ${item.proxy === "direct" ? "no proxy (direct)" : `the proxy ${item.proxy}`}`,
+      );
+    }
+    case "limits": {
+      const [id] = positionals(given, ["id"]);
+      const limits = limitsOf(values);
+      if (values.clear && limits)
+        throw new UsageError("Give --clear or limits, not both");
+      const client = await ctx.client();
+      const item =
+        values.clear || limits
+          ? await client.providers.update(id!, {
+              limits: values.clear ? null : limits!,
+            })
+          : await client.providers.get(id!);
+      return output(ctx, item, () =>
+        item.limits
+          ? `${item.id}: ${limitsText(item.limits)} on each credential`
+          : `${item.id} follows the gateway's limits (gateway.limits)`,
       );
     }
     case "remove":

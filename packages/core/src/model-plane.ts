@@ -203,6 +203,14 @@ export interface ProviderConfig {
    */
   proxy?: ProxyChoice;
   /**
+   * How many requests go out at once on each of this provider's credentials
+   * and how many more may wait, in place of the gateway's
+   * `maxConcurrentPerCredential` and `maxQueuedPerCredential` (Magpie's
+   * `maxConcurrency`: some accounts are risk-controlled past a few requests
+   * at once). A request beyond the queue fails over as 429 `busy`.
+   */
+  limits?: ProviderLimits;
+  /**
    * The credentials are accounts of a subscription, used through this
    * backend (ADR-P09). Its requests are always translated, its accounts serve
    * loopback calls only, and an account is used only after the user accepted
@@ -212,6 +220,56 @@ export interface ProviderConfig {
   subscription?: { backend: SubscriptionBackend };
   createdAt: string;
   updatedAt: string;
+}
+
+/** A provider's own concurrency limits ({@link ProviderConfig.limits}). */
+export interface ProviderLimits {
+  /** 1 to {@link PROVIDER_LIMIT_RANGES}; absent follows the gateway's limit. */
+  concurrentPerCredential?: number;
+  /** 0 (none wait) to {@link PROVIDER_LIMIT_RANGES}; absent follows the gateway's limit. */
+  queuePerCredential?: number;
+}
+
+/** The accepted range of each provider limit, inclusive. */
+export const PROVIDER_LIMIT_RANGES: Readonly<
+  Record<keyof ProviderLimits, readonly [number, number]>
+> = Object.freeze({
+  concurrentPerCredential: [1, 1024],
+  queuePerCredential: [0, 65_536],
+});
+
+/**
+ * What is wrong with a provider's `limits`, by JSON pointer below it; empty
+ * when it is valid.
+ */
+export function providerLimitsProblems(
+  value: unknown,
+): { pointer: string; detail: string }[] {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return [{ pointer: "", detail: "must be an object" }];
+  const problems: { pointer: string; detail: string }[] = [];
+  for (const [name, item] of Object.entries(value)) {
+    const range = (
+      PROVIDER_LIMIT_RANGES as Readonly<
+        Record<string, readonly [number, number] | undefined>
+      >
+    )[name];
+    if (!range) {
+      problems.push({ pointer: `/${name}`, detail: "is not a limit" });
+      continue;
+    }
+    if (
+      typeof item !== "number" ||
+      !Number.isInteger(item) ||
+      item < range[0] ||
+      item > range[1]
+    )
+      problems.push({
+        pointer: `/${name}`,
+        detail: `must be an integer from ${range[0]} to ${range[1]}`,
+      });
+  }
+  return problems;
 }
 
 /**
