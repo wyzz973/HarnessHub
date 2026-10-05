@@ -26,6 +26,7 @@ import {
   parseInstructionSet,
   readSkill,
   SKILL_NAME,
+  skillPathsProblem,
   SKIPPED_SKILL_ENTRIES,
   type SkillFile,
 } from "./validate.js";
@@ -253,15 +254,23 @@ export class LibraryStore {
   }
 
   /**
-   * Imports a skill directory (`readSkill` validates it) as a new stored
-   * version, or replaces the agents of the skill of that name when its
-   * content is unchanged.
+   * Imports a skill directory (`readSkill` validates it, and its paths as
+   * `skillPathsProblem` says) as a new stored version. The Library's skill
+   * of that name is replaced only with `options.replace`; otherwise it is
+   * 409 LIBRARY_EXISTS, after the directory was validated and before
+   * anything is stored.
+   *
+   * @throws LibraryError `LIBRARY_SKILL_INVALID`, `LIBRARY_EXISTS`.
    */
   async importSkill(
     source: string,
     agents: LibraryAgent[],
+    options: { replace?: boolean } = {},
   ): Promise<SkillItem> {
     const skill = await readSkill(source);
+    const problem = skillPathsProblem(skill.files.map((file) => file.path));
+    if (problem) throw new LibraryError("LIBRARY_SKILL_INVALID", problem);
+    await this.refuseExisting(skill.name, options.replace);
     await this.storeVersion(skill);
     return this.indexSkill(versionOf(skill), agents);
   }
@@ -269,15 +278,17 @@ export class LibraryStore {
   /**
    * Imports a skill from uploaded files (paths with `/` below the skill
    * directory) as `importSkill` imports a directory: the same validation
-   * through `storeSkillFiles`, then the index. Entries a skill directory
-   * does not hold (`.DS_Store`, `.git`) are dropped first.
+   * through `storeSkillFiles`, then the index, and the same refusal of an
+   * existing name without `options.replace`. Entries a skill directory does
+   * not hold (`.DS_Store`, `.git`) are dropped first.
    *
-   * @throws LibraryError `LIBRARY_SKILL_INVALID`.
+   * @throws LibraryError `LIBRARY_SKILL_INVALID`, `LIBRARY_EXISTS`.
    */
   async importSkillFiles(
     name: string,
     files: ReadonlyArray<{ path: string; bytes: Buffer; executable: boolean }>,
     agents: LibraryAgent[],
+    options: { replace?: boolean } = {},
   ): Promise<SkillItem> {
     const kept = files.filter(
       (file) =>
@@ -285,7 +296,25 @@ export class LibraryStore {
           .split("/")
           .some((segment) => SKIPPED_SKILL_ENTRIES.has(segment)),
     );
-    return this.indexSkill(await this.storeSkillFiles(name, kept), agents);
+    return this.indexSkill(
+      await this.storeSkillFiles(name, kept, () =>
+        this.refuseExisting(name, options.replace),
+      ),
+      agents,
+    );
+  }
+
+  /** 409 LIBRARY_EXISTS when the Library has a skill `name` and `replace` is not set. */
+  private async refuseExisting(
+    name: string,
+    replace: boolean | undefined,
+  ): Promise<void> {
+    if (replace === true) return;
+    if ((await this.index()).skills.some((item) => item.name === name))
+      throw new LibraryError(
+        "LIBRARY_EXISTS",
+        `The Library already has the skill ${JSON.stringify(name)}; replace it with replace: true (hh library add skill --replace)`,
+      );
   }
 
   /** Points the skill of the version's name at it, for `agents`. */
@@ -313,20 +342,26 @@ export class LibraryStore {
   /**
    * Stores a skill version from its files (paths with `/` below the skill
    * directory), validated as `readSkill` validates a directory named
-   * `name`; the index is not changed. A path that leaves the directory, or
-   * that a skill directory cannot hold, fails with LIBRARY_SKILL_INVALID.
+   * `name`, and its paths as `skillPathsProblem` says; the index is not
+   * changed. A path that leaves the directory, that a skill directory or a
+   * file system cannot hold, or that names one file twice where case and
+   * Unicode normalization are ignored, fails with LIBRARY_SKILL_INVALID
+   * before anything is written. `beforeStore` runs once the files are
+   * validated and before the version is stored; its failure stores nothing.
    *
    * @returns The version's fields.
    */
   async storeSkillFiles(
     name: string,
     files: ReadonlyArray<{ path: string; bytes: Buffer; executable: boolean }>,
+    beforeStore?: () => Promise<void>,
   ): Promise<Omit<SkillItem, "agents" | "createdAt" | "updatedAt">> {
+    const fail = (message: string) =>
+      new LibraryError("LIBRARY_SKILL_INVALID", message);
     if (!SKILL_NAME.test(name))
-      throw new LibraryError(
-        "LIBRARY_SKILL_INVALID",
-        `${JSON.stringify(name.slice(0, 64))} is not a skill name`,
-      );
+      throw fail(`${JSON.stringify(name.slice(0, 64))} is not a skill name`);
+    const problem = skillPathsProblem(files.map((file) => file.path));
+    if (problem) throw fail(problem);
     const incoming = path.join(
       this.directory,
       "skills",
@@ -334,29 +369,30 @@ export class LibraryStore {
     );
     try {
       for (const file of files) {
-        const segments = file.path.split("/");
-        if (
-          segments.some(
-            (segment) =>
-              !segment ||
-              segment === "." ||
-              segment === ".." ||
-              /[\\:\0]/.test(segment),
+        const destination = path.join(incoming, name, ...file.path.split("/"));
+        try {
+          await mkdir(path.dirname(destination), {
+            recursive: true,
+            mode: 0o700,
+          });
+          await writeFile(destination, file.bytes, {
+            flag: "wx",
+            mode: file.executable ? 0o700 : 0o600,
+          });
+        } catch (error) {
+          // What this file system still cannot hold is the upload's fault.
+          const code = (error as NodeJS.ErrnoException).code;
+          if (
+            code === "EEXIST" ||
+            code === "ENAMETOOLONG" ||
+            code === "ENOTDIR" ||
+            code === "EISDIR"
           )
-        )
-          throw new LibraryError(
-            "LIBRARY_SKILL_INVALID",
-            `${JSON.stringify(file.path.slice(0, 200))} is not a file inside a skill`,
-          );
-        const destination = path.join(incoming, name, ...segments);
-        await mkdir(path.dirname(destination), {
-          recursive: true,
-          mode: 0o700,
-        });
-        await writeFile(destination, file.bytes, {
-          flag: "wx",
-          mode: file.executable ? 0o700 : 0o600,
-        });
+            throw fail(
+              `${JSON.stringify(file.path.slice(0, 200))} cannot be stored here (${code})`,
+            );
+          throw error;
+        }
       }
       const skill = await readSkill(path.join(incoming, name));
       const read = skill.files.map((file) => file.path).sort();
@@ -366,6 +402,7 @@ export class LibraryStore {
           "LIBRARY_SKILL_INVALID",
           `The files of ${name} include some that a skill does not hold`,
         );
+      await beforeStore?.();
       await this.storeVersion(skill);
       return versionOf(skill);
     } finally {

@@ -137,6 +137,10 @@ export const zh = {
   "library.skill.importAction": "导入",
   "library.skill.uploaded": "已上传 Skill {name}（{count} 个文件）",
   "library.skill.imported": "已导入 Skill {name}（{count} 个文件）",
+  "library.skill.replaceTitle": "替换 Skill {name}？",
+  "library.skill.replaceBody":
+    "Library 中已有名为 {name} 的 Skill。替换后它指向这次的文件，Agent 在下次同步时得到它们。",
+  "library.skill.replace": "替换",
   "library.skill.folderTooMany": "文件夹有 {count} 个文件，超过 {limit} 个",
   "library.skill.folderTooLarge": "文件夹共 {size}，超过 20 MiB",
   "library.skill.agentsTitle": "{name} 去往的 Agent",
@@ -342,6 +346,10 @@ export const en: Translation<typeof zh> = {
     "Uploaded the skill {name} ({count, plural, one {# file} other {# files}})",
   "library.skill.imported":
     "Imported the skill {name} ({count, plural, one {# file} other {# files}})",
+  "library.skill.replaceTitle": "Replace the skill {name}?",
+  "library.skill.replaceBody":
+    "The Library already has a skill named {name}. Replacing it points it at these files; agents get them at the next sync.",
+  "library.skill.replace": "Replace",
   "library.skill.folderTooMany":
     "The folder has {count, plural, one {# file} other {# files}}, more than {limit}",
   "library.skill.folderTooLarge":

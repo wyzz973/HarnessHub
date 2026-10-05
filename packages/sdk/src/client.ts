@@ -1594,23 +1594,39 @@ export class HarnessHubClient {
       list: () => this.request<Page<LibrarySkill>>("GET", "library/skills"),
       get: (name: string) =>
         this.request<LibrarySkill>("GET", `library/skills/${segment(name)}`),
-      /** Imports a skill directory on the daemon's machine (an absolute path). */
-      import: (source: string, agents?: LibraryAgent[]) =>
+      /**
+       * Imports a skill directory on the daemon's machine (an absolute
+       * path). A skill of the same name is replaced only with
+       * `options.replace`; otherwise `LIBRARY_EXISTS` (409).
+       */
+      import: (
+        source: string,
+        agents?: LibraryAgent[],
+        options: { replace?: boolean } = {},
+      ) =>
         this.request<LibrarySkill>("POST", "library/skills", {
-          body: { source, ...(agents ? { agents } : {}) },
+          body: {
+            source,
+            ...(agents ? { agents } : {}),
+            ...(options.replace ? { replace: true } : {}),
+          },
         }),
       /**
        * Uploads a skill's files: `files` maps each path with `/` below the
        * skill directory (named `name`) to its base64 content, `exec` lists
        * the executable ones. Validated like a directory import (at most 500
-       * files and 20 MiB, no path out of the directory);
-       * `LIBRARY_SKILL_INVALID` (400) otherwise.
+       * files and 20 MiB, paths every platform can hold, none twice where
+       * case and Unicode normalization are ignored, none out of the
+       * directory); `LIBRARY_SKILL_INVALID` (400) otherwise. A skill of the
+       * same name is replaced only with `replace: true`; otherwise
+       * `LIBRARY_EXISTS` (409).
        */
       upload: (input: {
         name: string;
         files: Record<string, string>;
         exec?: string[];
         agents?: LibraryAgent[];
+        replace?: boolean;
       }) =>
         this.request<LibrarySkill>("POST", "library/skills", { body: input }),
       setAgents: (name: string, agents: LibraryAgent[]) =>

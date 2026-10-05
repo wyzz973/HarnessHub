@@ -311,8 +311,12 @@ export class LibraryService {
    * skill directory, as backups carry skills) and `input.exec` (the paths
    * that are executable). Either is validated against the Agent Skills
    * specification the same way (400 LIBRARY_SKILL_INVALID): at most 500
-   * files and 20 MiB, no path that leaves the directory; an upload holds
-   * regular files only, so it cannot carry a link.
+   * files and 20 MiB, counted before content is read; paths every platform
+   * can hold, none twice where case and Unicode normalization are ignored,
+   * none out of the directory; an upload holds regular files only, so it
+   * cannot carry a link. A skill of the same name is replaced only with
+   * `input.replace: true`; otherwise 409 LIBRARY_EXISTS, and nothing is
+   * stored.
    */
   importSkill(input: unknown): Promise<SkillItem> {
     return this.serial(async () => {
@@ -323,14 +327,17 @@ export class LibraryService {
         );
       const upload = input.files !== undefined;
       const fields = upload
-        ? ["name", "files", "exec", "agents"]
-        : ["source", "agents"];
+        ? ["name", "files", "exec", "agents", "replace"]
+        : ["source", "agents", "replace"];
       for (const key of Object.keys(input))
         if (!fields.includes(key))
           throw new LibraryError(
             "LIBRARY_INVALID",
             `${key} is not a field of a skill ${upload ? "upload" : "import"}`,
           );
+      if (input.replace !== undefined && typeof input.replace !== "boolean")
+        throw new LibraryError("LIBRARY_INVALID", "replace is true or false");
+      const options = { replace: input.replace === true };
       // Every Library agent has a skills directory.
       const agents = parseAgents(input.agents, () => undefined);
       let item: SkillItem;
@@ -344,6 +351,7 @@ export class LibraryService {
           input.name,
           uploadedFiles(input.files, input.exec),
           agents,
+          options,
         );
       } else {
         if (typeof input.source !== "string")
@@ -351,7 +359,7 @@ export class LibraryService {
             "LIBRARY_INVALID",
             "A skill import needs source, the absolute path of the skill directory, or name and files",
           );
-        item = await this.store.importSkill(input.source, agents);
+        item = await this.store.importSkill(input.source, agents, options);
       }
       await this.store.collect();
       return item;
@@ -961,9 +969,8 @@ export class LibraryService {
 
 /**
  * The files of a skill upload, decoded and checked before anything is
- * written: within the skill limits, strict base64, no path twice (also when
- * only its case differs) and no file where another needs a directory. Path
- * segments are checked when they are written (`storeSkillFiles`).
+ * written: within the skill limits and strict base64. Their paths are
+ * checked before they are written (`storeSkillFiles`).
  *
  * @throws LibraryError `LIBRARY_SKILL_INVALID`, `LIBRARY_INVALID`.
  */
@@ -986,8 +993,6 @@ function uploadedFiles(
   const entries = Object.entries(files);
   if (entries.length > SKILL_LIMITS.files)
     throw fail(`The skill exceeds ${SKILL_LIMITS.files} files`);
-  const seen = new Set<string>();
-  const directories = new Set<string>();
   let total = 0;
   const decoded = entries.map(([file, data]) => {
     const where = JSON.stringify(file.slice(0, 200));
@@ -1001,19 +1006,8 @@ function uploadedFiles(
     total += bytes.length;
     if (total > SKILL_LIMITS.bytes)
       throw fail(`The skill exceeds ${SKILL_LIMITS.bytes} bytes`);
-    const folded = file.toLowerCase();
-    if (seen.has(folded)) throw fail(`${where} is given twice`);
-    seen.add(folded);
-    const segments = folded.split("/");
-    for (let index = 1; index < segments.length; index++)
-      directories.add(segments.slice(0, index).join("/"));
     return { path: file, bytes, executable: false };
   });
-  for (const file of decoded)
-    if (directories.has(file.path.toLowerCase()))
-      throw fail(
-        `${JSON.stringify(file.path.slice(0, 200))} is both a file and a directory`,
-      );
   for (const file of (exec as string[] | undefined) ?? []) {
     const found = decoded.find((item) => item.path === file);
     if (!found)

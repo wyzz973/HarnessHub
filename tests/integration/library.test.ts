@@ -9,6 +9,7 @@ import {
   readFile,
   readlink,
   stat,
+  truncate,
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
@@ -348,8 +349,11 @@ void test("library: a skill uploaded as files is validated like a directory impo
   });
   assert.equal(uploaded.name, "pdf-tools");
   assert.deepEqual(uploaded.agents, ["claude"]);
-  // The same content imported from its directory is the same version.
-  const imported = await client.library.skills.import(skill, ["claude"]);
+  // The same content imported from its directory (in place of the upload)
+  // is the same version.
+  const imported = await client.library.skills.import(skill, ["claude"], {
+    replace: true,
+  });
   assert.equal(imported.sha256, uploaded.sha256);
   const stored = path.join(
     dataDir,
@@ -463,6 +467,164 @@ void test("library: a skill uploaded as files is validated like a directory impo
     ["pdf-tools"],
   );
 });
+
+void test("library: uploaded paths are ones every platform can hold, none twice once normalized and case-folded", async (t) => {
+  const { client, dataDir } = await setup(t, false);
+  const base64 = (text: string) => Buffer.from(text).toString("base64");
+  const manifest = base64(
+    "---\nname: pdf-tools\ndescription: Work with PDF files.\n---\n",
+  );
+  const upload = (files: Record<string, string>) =>
+    client.library.skills.upload({
+      name: "pdf-tools",
+      files: { "SKILL.md": manifest, ...files },
+    });
+  const one = base64("x");
+  const deep = `${Array.from({ length: 16 }, () => "d").join("/")}/f.md`;
+  const long = Array.from({ length: 3 }, () => "n".repeat(200)).join("/");
+  for (const [files, why] of [
+    // One file on macOS (APFS) and Windows: once a 500 from EEXIST.
+    [{ "caf\u00e9.md": one, "cafe\u0301.md": one }, /given twice/],
+    [{ "Notes.md": one, "notes.md": one }, /given twice/],
+    [{ x: one, "X/y.md": one }, /both a file and a directory/],
+    // Once a 500 from ENAMETOOLONG.
+    [{ [`${"a".repeat(300)}.md`]: one }, /longer than 255 bytes/],
+    [{ [deep]: one }, /more than 16 levels deep/],
+    [{ [long]: one }, /longer than 512 bytes/],
+    // Names Windows cannot hold, once stored and synced elsewhere.
+    [{ "CON.md": one }, /Windows cannot hold/],
+    [{ "scripts/lpt1": one }, /Windows cannot hold/],
+    [{ "notes.": one }, /Windows cannot hold/],
+    [{ "notes ": one }, /Windows cannot hold/],
+    [{ "a?b.md": one }, /not a file inside a skill/],
+    [{ "a\u0001b.md": one }, /not a file inside a skill/],
+  ] as const)
+    await assert.rejects(
+      upload(files),
+      (error: unknown) =>
+        problem("LIBRARY_SKILL_INVALID", 400)(error) &&
+        why.test((error as HarnessHubError).problem.detail ?? ""),
+      JSON.stringify(Object.keys(files)),
+    );
+  // What every platform holds is kept as given.
+  const kept = await upload({
+    [`${Array.from({ length: 15 }, () => "d").join("/")}/f.md`]: one,
+    [`${"b".repeat(255)}`]: one,
+    "caf\u00e9.md": one,
+  });
+  assert.equal(kept.files, 4);
+  // Refused uploads left nothing behind.
+  assert.deepEqual(
+    (await readdir(path.join(dataDir, "library", "skills"))).filter((name) =>
+      name.startsWith(".staging"),
+    ),
+    [],
+  );
+});
+
+void test("library: a skill of the same name is replaced only when asked, through the API, the SDK and hh library add --replace", async (t) => {
+  const { client, dataDir, directory, url, skill } = await setup(t, false);
+  const base64 = (text: string) => Buffer.from(text).toString("base64");
+  const files = (description: string) => ({
+    "SKILL.md": base64(
+      `---\nname: pdf-tools\ndescription: ${description}\n---\n`,
+    ),
+  });
+  const first = await client.library.skills.upload({
+    name: "pdf-tools",
+    files: files("First."),
+  });
+  const versions = async () =>
+    (await readdir(path.join(dataDir, "library", "skills"))).filter(
+      (name) => !name.startsWith("."),
+    );
+  const stored = await versions();
+  await assert.rejects(
+    client.library.skills.upload({
+      name: "pdf-tools",
+      files: files("Second."),
+    }),
+    problem("LIBRARY_EXISTS", 409),
+  );
+  await assert.rejects(
+    client.library.skills.import(skill),
+    problem("LIBRARY_EXISTS", 409),
+  );
+  // Refused before anything was stored; the skill is as it was.
+  assert.deepEqual(await versions(), stored);
+  assert.equal(
+    (await client.library.skills.get("pdf-tools")).sha256,
+    first.sha256,
+  );
+  const replaced = await client.library.skills.upload({
+    name: "pdf-tools",
+    files: files("Second."),
+    replace: true,
+  });
+  assert.notEqual(replaced.sha256, first.sha256);
+  const imported = await client.library.skills.import(skill, undefined, {
+    replace: true,
+  });
+  assert.notEqual(imported.sha256, replaced.sha256);
+  // The command line: refused without --replace, with the way to replace it.
+  const common = ["--url", url, "--data-dir", dataDir];
+  const refused = await hh(directory, [
+    "library",
+    "add",
+    "skill",
+    skill,
+    ...common,
+  ]);
+  assert.notEqual(refused.code, 0);
+  assert.match(refused.stderr, /LIBRARY_EXISTS/);
+  assert.match(refused.stderr, /hh library add skill --replace/);
+  const forced = await hh(directory, [
+    "library",
+    "add",
+    "skill",
+    skill,
+    "--replace",
+    ...common,
+  ]);
+  assert.equal(forced.code, 0, forced.stderr);
+  assert.match(forced.stdout, /Imported and replaced skill pdf-tools/);
+});
+
+void test(
+  "library: a directory import counts sizes before it reads content",
+  {
+    skip:
+      process.platform === "win32" &&
+      "a sparse file of 3 GiB would be written in full on NTFS",
+  },
+  async (t) => {
+    const { client, directory } = await setup(t, false);
+    const source = path.join(directory, "big", "big-files");
+    await mkdir(source, { recursive: true });
+    await writeFile(
+      path.join(source, "SKILL.md"),
+      "---\nname: big-files\ndescription: Too big.\n---\n",
+    );
+    // Sparse: 3 GiB that take no disk. Read whole, it was a 500
+    // (ERR_FS_FILE_TOO_LARGE past 2 GiB) after loading it into memory.
+    await writeFile(path.join(source, "huge.bin"), "");
+    await truncate(path.join(source, "huge.bin"), 3 * 1024 ** 3);
+    const started = Date.now();
+    await assert.rejects(
+      client.library.skills.import(source),
+      problem("LIBRARY_SKILL_INVALID", 400),
+    );
+    assert.ok(Date.now() - started < 5_000, "refused without reading it");
+    // Together over 20 MiB, each under it: refused the same way.
+    await truncate(path.join(source, "huge.bin"), 15 * 1024 ** 2);
+    await writeFile(path.join(source, "more.bin"), "");
+    await truncate(path.join(source, "more.bin"), 15 * 1024 ** 2);
+    await assert.rejects(
+      client.library.skills.import(source),
+      problem("LIBRARY_SKILL_INVALID", 400),
+    );
+  },
+);
 
 /** Run the real `hh` launcher with `input` on stdin, so it is never interactive. */
 function hh(

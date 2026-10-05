@@ -7,7 +7,8 @@
  * and `description` are required.
  */
 import { createHash } from "node:crypto";
-import { lstat, readdir, readFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, readdir } from "node:fs/promises";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { LibraryError } from "./errors.js";
@@ -33,6 +34,87 @@ export const SKILL_LIMITS = Object.freeze({
   files: 500,
   bytes: 20 * 1024 * 1024,
 });
+/**
+ * The longest name of one file or directory, the most levels and the
+ * longest path (UTF-8 bytes, `/` between segments) of a file inside a skill:
+ * what every file system HarnessHub stores and syncs skills on can hold
+ * below the directories it adds.
+ */
+export const SKILL_PATH_LIMITS = Object.freeze({
+  segmentBytes: 255,
+  depth: 16,
+  pathBytes: 512,
+});
+
+/** Names Windows reserves for devices, with or without an extension. */
+const WINDOWS_DEVICE =
+  /^(?:con|prn|aux|nul|conin\$|conout\$|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])(?:\.|$)/i;
+
+/** Why one path (with `/`) below a skill directory cannot be a file of it, or undefined. */
+function skillPathProblem(file: string): string | undefined {
+  const where = JSON.stringify(file.slice(0, 200));
+  const segments = file.split("/");
+  if (
+    segments.some(
+      (segment) =>
+        !segment ||
+        segment === "." ||
+        segment === ".." ||
+        /[<>:"\\|?*\u0000-\u001f]/.test(segment),
+    )
+  )
+    return `${where} is not a file inside a skill`;
+  if (segments.length > SKILL_PATH_LIMITS.depth)
+    return `${where} is more than ${SKILL_PATH_LIMITS.depth} levels deep`;
+  if (Buffer.byteLength(file) > SKILL_PATH_LIMITS.pathBytes)
+    return `${where} is longer than ${SKILL_PATH_LIMITS.pathBytes} bytes`;
+  for (const segment of segments) {
+    if (Buffer.byteLength(segment) > SKILL_PATH_LIMITS.segmentBytes)
+      return `${where} has a name longer than ${SKILL_PATH_LIMITS.segmentBytes} bytes`;
+    if (WINDOWS_DEVICE.test(segment) || /[. ]$/.test(segment))
+      return `${where} has a name Windows cannot hold`;
+  }
+  return undefined;
+}
+
+/**
+ * A path as file systems that ignore case and Unicode normalization (APFS,
+ * NTFS) compare it: NFC, then upper case.
+ */
+function skillPathKey(file: string): string {
+  return file.normalize("NFC").toUpperCase();
+}
+
+/**
+ * Why `paths` (with `/`, below a skill directory) cannot be the files of
+ * one skill, or undefined. Each must be a path every platform can hold
+ * ({@link SKILL_PATH_LIMITS}; no `.` or `..`, characters Windows forbids,
+ * device names such as `CON`, or a trailing dot or space), no two may be
+ * one file where case and Unicode normalization are ignored, and none may
+ * be both a file and a directory.
+ */
+export function skillPathsProblem(
+  paths: readonly string[],
+): string | undefined {
+  const keys = new Set<string>();
+  const directories = new Set<string>();
+  for (const file of paths) {
+    const problem = skillPathProblem(file);
+    if (problem) return problem;
+    const key = skillPathKey(file);
+    if (keys.has(key))
+      return `${JSON.stringify(file.slice(0, 200))} is given twice`;
+    keys.add(key);
+    const segments = key.split("/");
+    for (let index = 1; index < segments.length; index++)
+      directories.add(segments.slice(0, index).join("/"));
+  }
+  for (const file of paths)
+    if (directories.has(skillPathKey(file)))
+      return `${JSON.stringify(file.slice(0, 200))} is both a file and a directory`;
+  return undefined;
+}
+
 /** Entries of a skill directory that are not part of it. */
 export const SKIPPED_SKILL_ENTRIES: ReadonlySet<string> = new Set([
   ".DS_Store",
@@ -314,9 +396,61 @@ export interface SkillFile {
 }
 
 /**
+ * A regular file's bytes and mode, or why it cannot be read as a file of a
+ * skill: its size is checked against `room` before anything is read (a
+ * large or sparse file is never loaded), and again on the open handle,
+ * which neither follows a link nor waits on a pipe swapped in meanwhile.
+ */
+async function readSkillFile(
+  file: string,
+  room: number,
+): Promise<{ bytes: Buffer; mode: number } | "too large" | "not a file"> {
+  const before = await lstat(file);
+  if (!before.isFile()) return "not a file";
+  if (before.size > room) return "too large";
+  let handle;
+  try {
+    handle = await open(
+      file,
+      constants.O_RDONLY |
+        (constants.O_NOFOLLOW ?? 0) |
+        (constants.O_NONBLOCK ?? 0),
+    );
+  } catch (error) {
+    // A link swapped in after the directory was read.
+    if ((error as NodeJS.ErrnoException).code === "ELOOP") return "not a file";
+    throw error;
+  }
+  try {
+    const info = await handle.stat();
+    if (!info.isFile()) return "not a file";
+    if (info.size > room) return "too large";
+    const bytes = Buffer.alloc(info.size);
+    let read = 0;
+    while (read < bytes.length) {
+      const { bytesRead } = await handle.read(
+        bytes,
+        read,
+        bytes.length - read,
+        read,
+      );
+      if (bytesRead === 0) break;
+      read += bytesRead;
+    }
+    // A file that grew while it was read may now be over the limit.
+    if ((await handle.read(Buffer.alloc(1), 0, 1, read)).bytesRead > 0)
+      return "too large";
+    return { bytes: bytes.subarray(0, read), mode: info.mode };
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
  * Reads and validates a skill directory: regular files and directories only
  * (no links), at most 500 files and 20 MiB, `SKILL.md` front matter as the
- * specification requires, the directory named as the skill.
+ * specification requires, the directory named as the skill. Sizes count
+ * before content is read, so a directory over the limit costs no memory.
  *
  * @throws LibraryError `LIBRARY_SKILL_INVALID`.
  */
@@ -349,19 +483,22 @@ export async function readSkill(source: string): Promise<{
         continue;
       }
       if (!entry.isFile()) throw fail(`${name} is not a regular file`);
-      const full = path.join(root, name);
-      const bytes = await readFile(full);
-      total += bytes.length;
-      if (files.length >= SKILL_LIMITS.files || total > SKILL_LIMITS.bytes)
-        throw fail(
+      const tooLarge = () =>
+        fail(
           `The skill exceeds ${SKILL_LIMITS.files} files or ${SKILL_LIMITS.bytes} bytes`,
         );
+      if (files.length >= SKILL_LIMITS.files) throw tooLarge();
+      const read = await readSkillFile(
+        path.join(root, name),
+        SKILL_LIMITS.bytes - total,
+      );
+      if (read === "too large") throw tooLarge();
+      if (read === "not a file") throw fail(`${name} is not a regular file`);
+      total += read.bytes.length;
       files.push({
         path: name,
-        bytes,
-        executable:
-          process.platform !== "win32" &&
-          ((await lstat(full)).mode & 0o100) !== 0,
+        bytes: read.bytes,
+        executable: process.platform !== "win32" && (read.mode & 0o100) !== 0,
       });
     }
   };

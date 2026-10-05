@@ -1977,11 +1977,11 @@
 
 **POST `/api/v1/library/skills` — 导入 Skill**
 
-- 输入：source（守护进程所在机器上 Skill 目录的绝对路径），或上传：name（Skill 名，即目录名）、files（目录下以 / 分隔的路径到 base64 内容，最多 500 个）与可选的 exec（可执行文件的路径）；agents 可选。请求体最大 30 MiB。
+- 输入：source（守护进程所在机器上 Skill 目录的绝对路径），或上传：name（Skill 名，即目录名）、files（目录下以 / 分隔的路径到 base64 内容，最多 500 个）与可选的 exec（可执行文件的路径）；agents 可选；replace 为 true 时替换同名 Skill。请求体最大 30 MiB。
 - 返回：201：Skill。
-- 实现链路：LibraryService.importSkill → LibraryStore.importSkill（目录）或 importSkillFiles（上传：先检查文件数、20 MiB 总量、严格 base64、不区分大小写的重复路径与同时作为文件和目录的路径，忽略 .DS_Store 与 .git，再经 storeSkillFiles 写入临时目录：路径段不能为空、. 、..，不能含反斜杠、冒号或 NUL；上传只含普通文件，不能带链接）。两者按同样的 Agent Skills 规范校验（SKILL.md 的 YAML front matter 有 name 与 description，name 为小写字母、数字、单个连字符且等于目录名；不含链接；最多 500 个文件、20 MiB），按内容哈希保存到 library/skills/<sha256>/<name>/（已有版本不重复保存）；同名 Skill 指向新版本。
+- 实现链路：LibraryService.importSkill → LibraryStore.importSkill（目录：先 lstat 各文件，累计大小超过 20 MiB 时不读内容即拒绝）或 importSkillFiles（上传：先检查文件数、20 MiB 总量与严格 base64，忽略 .DS_Store 与 .git，再经 storeSkillFiles 写入临时目录；上传只含普通文件，不能带链接）。两者的路径按 skillPathsProblem 检查：路径段不能为空、. 、..，不能含 Windows 禁用的字符（尖括号、冒号、双引号、反斜杠、竖线、问号、星号与控制字符），不能是 CON、NUL、COM1 等设备名，不能以点或空格结尾；每段最多 255 字节、最多 16 层、整个路径最多 512 字节；按 NFC 与大小写折叠后不能重复，也不能同时作为文件和目录；写入时文件系统仍报 EEXIST、ENAMETOOLONG、ENOTDIR 或 EISDIR 也是 400。两者按同样的 Agent Skills 规范校验（SKILL.md 的 YAML front matter 有 name 与 description，name 为小写字母、数字、单个连字符且等于目录名；不含链接；最多 500 个文件、20 MiB），按内容哈希保存到 library/skills/<sha256>/<name>/（已有版本不重复保存）。已有同名 Skill 时，只有 replace 为 true 才让它指向新版本，否则在校验之后、保存之前以 409 LIBRARY_EXISTS 拒绝。
 - 持久化与副作用：写 <dataDir>/library；回收没有被引用的旧版本。
-- 失败与边界：400 LIBRARY_SKILL_INVALID、LIBRARY_INVALID；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。
+- 失败与边界：400 LIBRARY_SKILL_INVALID、LIBRARY_INVALID；409 LIBRARY_EXISTS（同名 Skill 已存在且没有 replace）；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。
 
 实现入口：[packages/daemon/src/http/library-routes.ts](../../packages/daemon/src/http/library-routes.ts)。验证依据：[tests/integration/library.test.ts](../../tests/integration/library.test.ts)、[packages/agents/test/library.test.ts](../../packages/agents/test/library.test.ts)。
 

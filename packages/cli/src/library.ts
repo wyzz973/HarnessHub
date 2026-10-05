@@ -64,7 +64,7 @@ const COMMAND_USAGE: readonly CommandUsage[] = [
           [--secret-env NAME=SOURCE]... [--agent A]...
   hh library add mcp <name> --http URL | --sse URL [--header NAME=VALUE]...
           [--secret-header NAME=SOURCE]... [--agent A]...
-  hh library add skill <directory> [--agent A]...`,
+  hh library add skill <directory> [--agent A]... [--replace]`,
   },
   {
     command: "library rm",
@@ -287,12 +287,14 @@ async function addCommand(args: string[]): Promise<void> {
     );
   }
   if (kind === "skills") {
-    const item = await client.library.skills.import(path.resolve(key), chosen);
+    const item = await client.library.skills.import(path.resolve(key), chosen, {
+      replace: values.replace === true,
+    });
     return output(
       ctx,
       item,
       () =>
-        `Imported skill ${item.name} (${item.files} files) for ${item.agents.join(", ") || "no agent yet"}; run hh library sync to place it.`,
+        `${values.replace ? "Imported and replaced" : "Imported"} skill ${item.name} (${item.files} files) for ${item.agents.join(", ") || "no agent yet"}; run hh library sync to place it.`,
     );
   }
   const stdin = { used: false };

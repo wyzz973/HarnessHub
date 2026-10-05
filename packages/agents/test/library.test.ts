@@ -417,7 +417,13 @@ void test("library: a skill round-trips as a link, and is replaced when updated"
     path.join(source, "SKILL.md"),
     "---\nname: pdf-tools\ndescription: PDFs, v2.\n---\n",
   );
-  const second = await box.store.importSkill(source, ["claude", "kimi"]);
+  // A skill of the same name is replaced only when that is asked for.
+  await assert.rejects(box.store.importSkill(source, ["claude", "kimi"]), {
+    code: "LIBRARY_EXISTS",
+  });
+  const second = await box.store.importSkill(source, ["claude", "kimi"], {
+    replace: true,
+  });
   assert.notEqual(second.sha256, first.sha256);
   const plan = await box.plan({ agents: ["claude"] });
   assert.deepEqual(

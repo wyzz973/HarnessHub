@@ -224,6 +224,11 @@ const skillImportBody = {
       description: "An upload: the paths of its executable files",
     },
     agents: agentsSchema,
+    replace: {
+      type: "boolean",
+      description:
+        "Replace the Library's skill of the same name; without it, 409 LIBRARY_EXISTS",
+    },
   },
 } as const;
 const skillPatchBody = {

@@ -1036,6 +1036,8 @@ function SkillImportDialog({
   const [agents, setAgents] = useState<LibraryAgent[]>([]);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
+  // The name of a skill the Library already has, while replacing it is asked.
+  const [replacing, setReplacing] = useState<string | null>(null);
   const folderInput = useRef<HTMLInputElement>(null);
   const zipInput = useRef<HTMLInputElement>(null);
   const read = (
@@ -1112,18 +1114,35 @@ function SkillImportDialog({
     onSaved();
     onClose();
   };
+  /** Uploads or imports; only `replace` replaces a skill of the same name. */
+  const send = (replace: boolean): Promise<void> => {
+    const skills = modelPlane().library.skills;
+    return mode === "upload" && picked.state === "ready"
+      ? skills
+          .upload({
+            ...uploadInput(name.trim(), picked.files, agents),
+            ...(replace ? { replace: true } : {}),
+          })
+          .then((skill) => done(skill, true))
+      : skills
+          .import(source.trim(), agents, { replace })
+          .then((skill) => done(skill, false));
+  };
   const save = () => {
     setBusy(true);
     setFailure(null);
-    const skills = modelPlane().library.skills;
-    (mode === "upload" && picked.state === "ready"
-      ? skills
-          .upload(uploadInput(name.trim(), picked.files, agents))
-          .then((skill) => done(skill, true))
-      : skills.import(source.trim(), agents).then((skill) => done(skill, false))
-    ).catch((reason: unknown) => {
+    send(false).catch((reason: unknown) => {
       setBusy(false);
-      setFailure(failureOf(reason));
+      const problem = failureOf(reason);
+      // The daemon replaces a skill only when asked to; ask first.
+      if (problem.code === "LIBRARY_EXISTS")
+        setReplacing(
+          mode === "upload"
+            ? name.trim()
+            : (source.trim().split(/[\\/]/).filter(Boolean).at(-1) ??
+                source.trim()),
+        );
+      else setFailure(problem);
     });
   };
   const ready =
@@ -1313,6 +1332,16 @@ function SkillImportDialog({
               : t("library.skill.importAction")}
           </Button>
         </DialogFooter>
+        <ConfirmDialog
+          open={replacing !== null}
+          title={t("library.skill.replaceTitle", { name: replacing ?? "" })}
+          description={t("library.skill.replaceBody", {
+            name: replacing ?? "",
+          })}
+          action={t("library.skill.replace")}
+          onClose={() => setReplacing(null)}
+          onConfirm={() => send(true)}
+        />
       </DialogContent>
     </Dialog>
   );

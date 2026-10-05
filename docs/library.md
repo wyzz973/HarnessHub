@@ -20,7 +20,7 @@ pnpm exec hh library sync kimi --allow-plaintext-secret   # 同意把秘密值�
 pnpm exec hh library rm mcp github         # 从 Library 删除，下一次 sync 从 Agent 中取出
 ```
 
-`add` 只改 Library，不改 Agent 文件；`--replace` 替换同名条目。`sync [agent]...` 默认同步全部 Agent，先打印每个文件的统一 diff、Skill 的放置、被拒绝的条目与警告，确认后按这份预览写入：预览之后文件又被改动则以 5 退出、该 Agent 什么都不写；`--yes` 跳过确认，非交互且没有 `--yes` 时以 4 退出；有条目被拒绝时其余照常写入，以 5 退出并列出被拒绝的条目。`--copy` 复制 Skill 而不是建立链接。
+`add` 只改 Library，不改 Agent 文件；已有同名条目时被拒绝（409 `LIBRARY_EXISTS`），`--replace` 才替换它，Skill 也是如此。`sync [agent]...` 默认同步全部 Agent，先打印每个文件的统一 diff、Skill 的放置、被拒绝的条目与警告，确认后按这份预览写入：预览之后文件又被改动则以 5 退出、该 Agent 什么都不写；`--yes` 跳过确认，非交互且没有 `--yes` 时以 4 退出；有条目被拒绝时其余照常写入，以 5 退出并列出被拒绝的条目。`--copy` 复制 Skill 而不是建立链接。
 
 ## 条目
 
@@ -30,7 +30,7 @@ pnpm exec hh library rm mcp github         # 从 Library 删除，下一次 sync
 | MCP 服务 | `library.json` 中的 `{name, transport, command, args, url, env, secretEnv, headers, secretHeaders}` | 不支持该传输的 Agent 登记时拒绝（Codex、Pi 没有 SSE） |
 | Skill | 按内容哈希保存的目录 `skills/<sha256>/<name>/`，不再修改 | 每个 Agent 的 Skills 目录，链接或带标记的副本 |
 
-Skill 导入时按 [Agent Skills 规范](https://agentskills.io/specification)校验：`SKILL.md` 以 YAML front matter 开头，`name` 只含小写字母、数字与单个连字符并等于目录名，`description` 必填（最多 1024 个字符）；目录中不能有链接，最多 500 个文件、20 MiB。不合格的目录在导入时就被拒绝（400 `LIBRARY_SKILL_INVALID`），不会同步后被 Agent 静默跳过。Skill 也可以上传（控制台从浏览器选择目录）：`POST /api/v1/library/skills` 以 `name`、`files`（Skill 目录下以 `/` 分隔的路径到 base64 内容，与备份携带 Skill 的格式相同）与 `exec`（可执行文件的路径）代替 `source`，请求体最大 30 MiB；写入前检查文件数、20 MiB 总量、base64、重复路径（不区分大小写）与同时作为文件和目录的路径，再按与目录导入相同的规则校验（路径不能离开目录，不能含 `.`、`..`、反斜杠或冒号）；上传只含普通文件，不能带链接；`.DS_Store` 与 `.git` 被忽略。同名 Skill 再次导入成为新版本；没有被 Library 或任何 Agent 引用的版本在下一次导入、删除或同步后回收。
+Skill 导入时按 [Agent Skills 规范](https://agentskills.io/specification)校验：`SKILL.md` 以 YAML front matter 开头，`name` 只含小写字母、数字与单个连字符并等于目录名，`description` 必填（最多 1024 个字符）；目录中不能有链接，最多 500 个文件、20 MiB；各文件的大小在读取内容之前累计（先 `lstat`），超过上限的目录（包括稀疏或超过 2 GiB 的文件）不读入内存就被拒绝。路径必须是每个平台都能保存的：每段最多 255 字节、最多 16 层、整个路径最多 512 字节；不能含 `.`、`..`、Windows 禁用的字符（`< > : " \ | ? *` 与控制字符），不能是 `CON`、`NUL`、`COM1`、`LPT1` 等设备名（带不带扩展名都算），不能以点或空格结尾；按 NFC 规范化并忽略大小写后不能有两个相同的路径（它们在 macOS 与 Windows 上是同一个文件），也不能同时作为文件和目录。不合格的目录在导入时就被拒绝（400 `LIBRARY_SKILL_INVALID`），不会同步后被 Agent 静默跳过。Skill 也可以上传（控制台从浏览器选择目录）：`POST /api/v1/library/skills` 以 `name`、`files`（Skill 目录下以 `/` 分隔的路径到 base64 内容，与备份携带 Skill 的格式相同）与 `exec`（可执行文件的路径）代替 `source`，请求体最大 30 MiB；写入前检查文件数、20 MiB 总量、base64 与上面的路径规则，再按与目录导入相同的规则校验；写入时文件系统仍报 `EEXIST`、`ENAMETOOLONG`、`ENOTDIR` 或 `EISDIR` 时同样是 400 `LIBRARY_SKILL_INVALID`；上传只含普通文件，不能带链接；`.DS_Store` 与 `.git` 被忽略。Library 已有同名 Skill 时，导入或上传在校验之后、保存任何内容之前以 409 `LIBRARY_EXISTS` 拒绝；带 `replace: true`（`hh library add skill --replace`，控制台在确认后）才让它指向新版本；没有被 Library 或任何 Agent 引用的版本在下一次导入、删除或同步后回收。
 
 ## 秘密
 
@@ -93,7 +93,7 @@ Library 的条目随[备份](backup-sync.md)保存与恢复，并作为同步的
 |---|---|
 | `GET`、`POST /api/v1/library/instructions`；`GET`、`PUT`、`DELETE /api/v1/library/instructions/{id}` | 指令集；`POST` 遇到已有 id 返回 409 `LIBRARY_EXISTS` |
 | `GET`、`POST /api/v1/library/mcp`；`GET`、`PUT`、`DELETE /api/v1/library/mcp/{name}` | MCP 服务；秘密规则见上 |
-| `GET`、`POST /api/v1/library/skills`；`GET`、`PATCH`、`DELETE /api/v1/library/skills/{name}` | `POST` 的 `source` 是守护进程所在机器上 Skill 目录的绝对路径，或以 `name`、`files`、`exec` 上传文件；`PATCH` 只改 `agents` |
+| `GET`、`POST /api/v1/library/skills`；`GET`、`PATCH`、`DELETE /api/v1/library/skills/{name}` | `POST` 的 `source` 是守护进程所在机器上 Skill 目录的绝对路径，或以 `name`、`files`、`exec` 上传文件；已有同名 Skill 时返回 409 `LIBRARY_EXISTS`，除非 `replace: true`；`PATCH` 只改 `agents` |
 | `POST /api/v1/library/sync/plan` | `agents`、`allowPlaintextSecret`、`placement`（`auto`\|`copy`），返回每个 Agent 的文件 diff、Skill 动作、被拒绝的条目与警告；不写文件 |
 | `POST /api/v1/library/sync/apply` | 同上，另需 `expect`（预览响应即可） |
 
