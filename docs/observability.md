@@ -38,7 +38,7 @@ ACP 0.13.2 的 reducer 会把最新 breakdown 直接赋给名称为 `cumulative_
 
 ## 模型、版本与时序
 
-配置模型 `model.configured` 与后端报告模型 `model.actual` 分开。原生 assistant 消息的模型优先于 ACP 会话状态；没有实际模型时不回填配置别名冒充观测值。Driver/profile revision 来自 Run 固定配置，安装快照来自已登记的 `engine.installation`，含启动文件 hash、大小及可读取的所属包版本；不表示所有间接依赖均已识别。
+配置模型 `model.configured` 与后端报告模型 `model.actual` 分开。`model.configured` 优先取 Run 指定的 `model`（Model Ref 或路由组），其次是引擎登记的模型。共享网关的账本记录了这次 Run 的调用时，`model.actual` 是账本中上游报告的模型（经共享网关的引擎只看到别名）；否则原生 assistant 消息的模型优先于 ACP 会话状态；没有实际模型时不回填配置别名冒充观测值。Driver/profile revision 来自 Run 固定配置，安装快照来自已登记的 `engine.installation`，含启动文件 hash、大小及可读取的所属包版本；不表示所有间接依赖均已识别。
 
 `queueMs` 从接收到进入 starting，`startupMs` 从 starting 到 Worker running，`timeToFirstOutputMs` 从接收到首个非思考输出，`durationMs` 从接收到终态，`executionMs` 从 Worker running 到终态。时序均按 Gateway 的持久时间计算，不混合未校准后端时钟。未结束运行的总耗时为 `null`。
 

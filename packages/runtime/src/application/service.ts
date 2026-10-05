@@ -6,6 +6,7 @@ import { HubError } from "@harnesshub/core/errors";
 import type { Runtime } from "../runtime/runtime.js";
 import type {
   ArtifactId,
+  EngineProfile,
   JsonObject,
   ArtifactRecord,
   PermissionId,
@@ -28,6 +29,12 @@ export class HubApplication {
      * engines keep their own Provider configuration (ADR 0013).
      */
     private readonly requireHarnessModel?: () => void,
+    /**
+     * Whether a Run of this engine may name a model (`RunInput.model`): its
+     * Sessions reach models through the shared model gateway. Omitted where
+     * there is no shared gateway; engine views then carry no such field.
+     */
+    private readonly modelSelection?: (profile: EngineProfile) => boolean,
   ) {}
   isReady() {
     return this.runtime.isReady();
@@ -50,6 +57,9 @@ export class HubApplication {
   engines() {
     return this.runtime.listEngines().map((profile) => ({
       ...profile,
+      ...(this.modelSelection
+        ? { modelSelection: this.modelSelection(profile) }
+        : {}),
       capabilities: {
         configured: profile.capabilities,
         observed: this.runtime.engineEvidence(profile.id, profile.revision),

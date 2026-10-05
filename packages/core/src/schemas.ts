@@ -286,6 +286,7 @@ export const enginesResponseSchema = {
           cli: jsonObject,
           acp: acpConfigurationSchema,
           maxConcurrency: timestamp,
+          modelSelection: { type: "boolean" },
           capabilities: jsonObject,
         },
         additionalProperties: false,

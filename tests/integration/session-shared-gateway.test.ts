@@ -206,6 +206,35 @@ void test(
         ).status,
         201,
       );
+    // An adapter that cannot reach the gateway keeps its own login only.
+    assert.equal(
+      (
+        await call("POST", "/v1/engines", {
+          id: "plain",
+          driver: "acp",
+          command: [process.execPath, peer, "plain"],
+          configuration: { adapter: "generic" },
+        })
+      ).status,
+      201,
+    );
+    const listed = (
+      await call<{ engines: Array<{ id: string; modelSelection?: boolean }> }>(
+        "GET",
+        "/v1/engines",
+      )
+    ).value.engines;
+    assert.deepEqual(
+      Object.fromEntries(
+        listed
+          .filter((engine) =>
+            ["claude", "opencode", "plain"].includes(engine.id),
+          )
+          .map((engine) => [engine.id, engine.modelSelection]),
+      ),
+      { claude: true, opencode: true, plain: false },
+      "engine views say whether a Run may name a model",
+    );
     const before = (
       await call<SessionRecord>("POST", "/v1/sessions", { engineId: "claude" })
     ).value;
@@ -307,9 +336,15 @@ void test(
         tokens: Record<string, number>;
         usage: { source: string };
         cost: { amount: number };
+        model: { actual: string | null };
       }>("GET", `/v1/runs/${first.id}/observations`)
     ).value;
     assert.equal(observed.usage.source, "gateway-ledger");
+    assert.equal(
+      observed.model.actual,
+      "served-model",
+      "the model the upstream says it served, from the ledger, not the alias the engine reports",
+    );
     assert.deepEqual(observed.tokens, {
       input: 60,
       output: 8,
@@ -347,6 +382,16 @@ void test(
       model: "fixture/m1",
     });
     assert.equal(explicit.status, "completed", JSON.stringify(explicit.error));
+    assert.equal(
+      (
+        await call<{ model: { configured: string | null } }>(
+          "GET",
+          `/v1/runs/${explicit.id}/observations`,
+        )
+      ).value.model.configured,
+      "fixture/m1",
+      "the Run's own target is its configured model",
+    );
     const missing = await run(session.id, "missing target", {
       model: "nope/x",
     });

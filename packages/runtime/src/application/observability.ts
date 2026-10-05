@@ -281,7 +281,9 @@ export function projectRunObservations(
   const ledger = ledgerUsage(run, events);
   if (ledger) {
     usage = ledger;
-    if (!actualModel && ledger.model) {
+    // The ledger names the upstream model that answered; an engine on the
+    // shared gateway only knows the alias it was configured with.
+    if (ledger.model) {
       actualModel = ledger.model;
       modelSource = ledger.source;
     }
@@ -296,7 +298,8 @@ export function projectRunObservations(
   if (!installation) missingReasons.push("installation-snapshot-not-recorded");
   if (cleanupMs === null) missingReasons.push("cleanup-duration-not-recorded");
   if (usage?.cost.amount == null) missingReasons.push("run-cost-not-reported");
-  const configured = text(run.configSnapshot?.model);
+  // A Run that named a target used it; otherwise the engine's registration says.
+  const configured = run.input.model ?? text(run.configSnapshot?.model);
   return {
     schemaVersion: 1,
     runId: run.id,

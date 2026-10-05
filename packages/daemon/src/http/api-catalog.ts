@@ -66,9 +66,9 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     group: "engines",
     request: "无参数。",
     response:
-      "200：engines 数组。capabilities 分 configured / observed / validated。",
+      "200：engines 数组。capabilities 分 configured / observed / validated；modelSelection 表示该引擎的 Run 能否用 model 指定 Model Ref 或路由组（经共享模型网关）。",
     implementation:
-      "HubApplication.engines → Runtime.listEngines → EngineManager 当前文件+overlay视图；观测按 revision 关联。",
+      "HubApplication.engines → Runtime.listEngines → EngineManager 当前文件+overlay视图；观测按 revision 关联；modelSelection 与守护进程决定 Session 是否走共享网关的规则相同。",
     effects: "只读，包含停用项，不自动发现/注册。",
     errors: "validated 无证据时为 null；不能从 configured 推断验证通过。",
     source: "packages/daemon/src/http/server.ts",

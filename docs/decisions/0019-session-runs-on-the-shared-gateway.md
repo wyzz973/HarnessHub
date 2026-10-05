@@ -33,3 +33,23 @@ ADR 0013 让每个 Session 的 Worker 启动自己的模型网关，由“统一
 ## 验证要求
 
 经 `startHub` 的 Run 在引擎配置中只看到守护进程地址与 `session:` Key；账本记录带该 Run 的 `runId`；Run 结束后的调用返回 409；Session 关闭后 Key 已吊销；迁移只创建一次 provider、凭据引用与 `group/default`。见 [共享网关 Session 测试](../../tests/integration/session-shared-gateway.test.ts)。
+
+## 补充：控制台的任务按模型平面选择模型（2026-10-05）
+
+**问题。** 控制台的任务区仍以统一模型判断“有没有模型”：没有统一模型时每个任务页显示“未连接模型”，导航的“统一模型”带警告点，新建任务弹出填写上游地址与 Key 的引导。可是按上文的决定，Run 的模型来自模型平面（`group/default` 或 Run 的 `model`），没有目标时引擎用自己的登录。2026-10-05 在本机控制台上复现：DeepSeek provider 已配置、Pi 已接线并完成 6 个任务，任务页仍提示“未连接模型”。同时控制台从不提交 Run 的 `model`，没有 `group/default` 时任务只能用引擎自己的设置，调用不带 `runId`，执行详情显示“未提供”用量。
+
+**决定。**
+
+- 引擎视图（`GET /v1/engines`）增加 `modelSelection`：该引擎的 Run 能否用 `model` 指定 Model Ref 或路由组。它由守护进程决定 Session 是否走共享网关的同一函数给出（应用了统一模型，或可接入网关且没有自己的 provider），控制台不复制这条规则。
+- 控制台的任务区不再读统一模型判断能否执行：去掉状态条的模型标记、导航的警告点与连接模型的引导；“统一模型”页只在 `/v1/harness/model` 报告已配置时出现在导航中，页首说明它已弃用并链接到 Provider。
+- `modelSelection` 为真时，直接执行的输入框提供与 Agent 页相同的模型选择。缺省不带 `model`（`group/default` 存在时就是它，否则是引擎自己的设置），所以默认行为不变；选中的 Model Ref 或路由组作为 Run 的 `model` 提交。继续一个 Session 时沿用它最后一个 Run 的 `model` 并锁定选择器，因为一个 Session 不能在共享网关与引擎自己的登录之间切换。
+- 执行观测的“配置模型”优先取 Run 的 `model`，其次是引擎登记的模型；账本记录了这次执行的调用时，“实际模型”取账本中上游报告的模型，因为经共享网关的引擎只看到别名（如 `harnesshub-model`）。
+
+**考虑过的替代方案。**
+
+- **缺省用 Agent 页为同名 Agent 接线的模型**：用量会自动按执行记账，但走共享网关的 Run 由 Worker 写一份私有配置（例如 Pi 的 `PI_CODING_AGENT_DIR`），用户在 Agent 自己配置中的扩展、推理档位等不再生效，会悄悄改变已有任务的行为。改为显式选择。
+- **控制台按适配器列表自行判断能否选择模型**：要复制守护进程的规则（适配器是否可路由、是否声明了 provider、统一模型），两边会走样。
+
+**后果。** 没有统一模型的部署不再看到连接模型的引导；需要按执行记账的任务在输入框中选一个模型即可，执行详情的用量提示也这样说明。`modelSelection` 是引擎视图的新字段，旧客户端忽略它。
+
+**验证。** [共享网关 Session 测试](../../tests/integration/session-shared-gateway.test.ts) 断言可接入网关的引擎 `modelSelection` 为真、`generic` 适配器为假，指定 `model` 的 Run 的观测 `model.configured` 是该目标，以及经共享网关的 Run 的 `model.actual` 是上游报告的模型而不是别名；这些断言在修改前的代码上失败（前两条对旧代码实际运行确认；第三条在旧构建的演示守护进程上显示为别名）。控制台的选择器与导航经类型检查、lint 与构建，并在本机控制台上手工核对。

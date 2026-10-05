@@ -203,8 +203,8 @@
 **GET `/v1/engines` — 已登记引擎**
 
 - 输入：无参数。
-- 返回：200：engines 数组。capabilities 分 configured / observed / validated。
-- 实现链路：HubApplication.engines → Runtime.listEngines → EngineManager 当前文件+overlay视图；观测按 revision 关联。
+- 返回：200：engines 数组。capabilities 分 configured / observed / validated；modelSelection 表示该引擎的 Run 能否用 model 指定 Model Ref 或路由组（经共享模型网关）。
+- 实现链路：HubApplication.engines → Runtime.listEngines → EngineManager 当前文件+overlay视图；观测按 revision 关联；modelSelection 与守护进程决定 Session 是否走共享网关的规则相同。
 - 持久化与副作用：只读，包含停用项，不自动发现/注册。
 - 失败与边界：validated 无证据时为 null；不能从 configured 推断验证通过。
 

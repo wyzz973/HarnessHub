@@ -822,6 +822,8 @@ export async function startHub(options: {
       runtime,
       async (artifact) => readArtifact(artifactRoot, artifact),
       manager,
+      undefined,
+      (profile) => routeSession(profile) !== undefined,
     );
     harnessModel.bind({
       catalog: manager,
