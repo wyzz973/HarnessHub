@@ -147,10 +147,12 @@ export const COMMAND_NAMES: readonly string[] = Object.keys(COMMANDS);
  * `profile`, `library`, `tui`) and `init` to the CLI's, which
  * reach the running daemon over HTTP. `--help` prints the commands on stdout;
  * a missing or unknown command prints them on stderr and fails with exit code 2.
- * A command's own failures keep that command's output and exit code; a
- * `serve` startup failure rejects. Once the reader of stdout or stderr has
- * gone, the command's further output there is dropped and it ends with its
- * own exit code (`outliveClosedPipes`).
+ * The common options (`--url`, `--data-dir`, `--json`, `--yes`,
+ * `--non-interactive`) may also come before the command; another option there
+ * fails with exit code 2. A command's own failures keep that command's
+ * output and exit code; a `serve` startup failure rejects. Once the reader
+ * of stdout or stderr has gone, the command's further output there is
+ * dropped and it ends with its own exit code (`outliveClosedPipes`).
  *
  * @param argv The command-line arguments after `hh`.
  * @returns The exit code, or undefined when the command sets it itself.
@@ -163,6 +165,14 @@ export async function main(argv: string[]): Promise<number | undefined> {
     return 0;
   }
   if (name === "--version") return version(argv);
+  if (name?.startsWith("-")) {
+    const moved = commandFirst(argv);
+    if (typeof moved === "string") {
+      console.error(`${moved}\n${USAGE}`);
+      return 2;
+    }
+    return main(moved);
+  }
   const command =
     name !== undefined && Object.hasOwn(COMMANDS, name)
       ? COMMANDS[name]
@@ -174,4 +184,52 @@ export async function main(argv: string[]): Promise<number | undefined> {
     return 2;
   }
   return command(argv);
+}
+
+/** The common options, which may also come before the command; true when one takes a value. */
+const COMMON_OPTIONS: ReadonlyMap<string, boolean> = new Map([
+  ["--url", true],
+  ["--data-dir", true],
+  ["--json", false],
+  ["--yes", false],
+  ["--non-interactive", false],
+]);
+
+/**
+ * `hh --url URL provider list` as `hh provider list --url URL`: the common
+ * options before the command go after its arguments (before a `--`, which
+ * ends them), where the command reads them as if they were written there,
+ * so a command that does not take one refuses it as usual.
+ *
+ * @returns The arguments with the command first, or why they cannot be.
+ */
+function commandFirst(argv: readonly string[]): string[] | string {
+  const options: string[] = [];
+  let at = 0;
+  while (
+    at < argv.length &&
+    argv[at]!.startsWith("-") &&
+    !["--help", "-h", "--version"].includes(argv[at]!)
+  ) {
+    const word = argv[at]!;
+    const name = word.split("=", 1)[0]!;
+    const takesValue = COMMON_OPTIONS.get(name);
+    if (takesValue === undefined)
+      return `Unknown option before the command: ${word}. Before it, hh takes only ${[...COMMON_OPTIONS.keys()].join(", ")}; give the command first, as in hh <command> ${word}`;
+    if (takesValue && !word.includes("=")) {
+      const value = argv[at + 1];
+      if (value === undefined) return `${word} needs a value`;
+      options.push(word, value);
+      at += 2;
+    } else {
+      options.push(word);
+      at += 1;
+    }
+  }
+  const rest = argv.slice(at);
+  if (!rest.length) return "Give a command after the options";
+  const end = rest.indexOf("--");
+  return end < 0
+    ? [...rest, ...options]
+    : [...rest.slice(0, end), ...options, ...rest.slice(end)];
 }

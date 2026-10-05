@@ -439,3 +439,42 @@ void test(
     assert.match(down.other, /admin token/);
   },
 );
+
+void test(
+  "the common options may come before the command; other options there are refused",
+  { timeout: 60_000 },
+  async (t) => {
+    const { directory } = await temporaryDirectory(t, "harnesshub-options-");
+    const data = path.join(directory, "data");
+    // Read as hh status --url … --data-dir …: the token is looked up there.
+    const before = await hh(directory, [
+      "--url",
+      "http://127.0.0.1:9",
+      `--data-dir=${data}`,
+      "status",
+    ]);
+    assert.equal(before.code, 3, before.stderr);
+    assert.ok(before.stderr.includes(path.join(data, "admin.token")));
+    const json = await hh(directory, ["--json", "--version"]);
+    assert.equal(json.code, 0, json.stderr);
+    assert.deepEqual(
+      JSON.parse(json.stdout),
+      JSON.parse(await readFile(BUILD_INFO, "utf8")),
+    );
+    // A command that does not take one refuses it as written after it.
+    const refused = await hh(directory, ["--url", "http://x", "version"]);
+    assert.equal(refused.code, 2);
+    const other = await hh(directory, ["--port", "1", "status"]);
+    assert.equal(other.code, 2);
+    assert.match(
+      other.stderr,
+      /^Unknown option before the command: --port\. Before it, hh takes only --url, --data-dir, --json, --yes, --non-interactive/,
+    );
+    const valueless = await hh(directory, ["--url"]);
+    assert.equal(valueless.code, 2);
+    assert.match(valueless.stderr, /^--url needs a value\n/);
+    const alone = await hh(directory, ["--json"]);
+    assert.equal(alone.code, 2);
+    assert.match(alone.stderr, /^Give a command after the options\n/);
+  },
+);

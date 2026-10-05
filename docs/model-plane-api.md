@@ -63,7 +63,7 @@
 
 ## CLI
 
-命令经 `--url`（默认 `http://127.0.0.1:3180`）连接守护进程，从 `--data-dir`（默认 `./data`，与 `hh serve` 相同）读取 `admin.token`。默认输出表格，`--json` 输出与 API 响应相同的 JSON；失败时 `--json` 把 problem 对象写到 stdout，并在 stderr 写一行说明。
+命令经 `--url`（默认 `http://127.0.0.1:3180`）连接守护进程，从 `--data-dir`（默认 `./data`，与 `hh serve` 相同）读取 `admin.token`。默认输出表格，`--json` 输出与 API 响应相同的 JSON；失败时 `--json` 把 problem 对象写到 stdout，并在 stderr 写一行说明。这些通用选项（还有 `--yes`、`--non-interactive`）写在命令之后，也可以写在命令之前（`hh --url URL provider list`，见 [apps/hh](../apps/hh/README.md)）。
 
 ```sh
 hh status
