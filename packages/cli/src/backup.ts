@@ -485,7 +485,12 @@ async function restoreCommand(args: string[]): Promise<number> {
     : EXIT.ok;
 }
 
-function statusText(status: SyncStatus): string {
+/**
+ * The sync status. A notice stays until a later sync makes another one, so
+ * it is shown under the time of the sync that made it; with `since` (when
+ * this command asked for a sync), one that sync made says so.
+ */
+function statusText(status: SyncStatus, since?: string): string {
   if (!status.enabled) return "Sync is off.";
   const lines = [
     `Sync to ${status.kind === "s3" ? "S3" : "WebDAV"} ${status.url}${status.user ? ` as ${status.user}` : ""}, every ${Math.round(status.intervalMs / 60000)} min; credential values ${status.keys ? "included" : "left out"}, agent wirings ${status.agents ? "synced" : "not synced"}.`,
@@ -494,33 +499,44 @@ function statusText(status: SyncStatus): string {
   if (status.lastError) lines.push(`Last error: ${status.lastError}`);
   const notice = status.notice;
   if (notice) {
+    const told: string[] = [];
     if (notice.here.length)
-      lines.push(
+      told.push(
         `Changed on both sides; the server's ${notice.here.join(" and ")} replaced this machine's.`,
       );
     if (notice.there.length)
-      lines.push(
+      told.push(
         `Changed on both sides; this machine's ${notice.there.join(" and ")} replaced the server's.`,
       );
-    if (notice.saved) lines.push(`The replaced copies are in ${notice.saved}.`);
+    if (notice.saved) told.push(`The replaced copies are in ${notice.saved}.`);
     if (notice.kept?.length)
-      lines.push(
+      told.push(
         `Kept although the server no longer has them (Gateway Keys allow them): ${notice.kept.join(", ")}`,
       );
     if (notice.redactionOff)
-      lines.push(
+      told.push(
         "WARNING: the server's gateway features turned outbound redaction OFF here. Turn it on again with hh gateway redaction on.",
       );
     if (notice.redactionOffHeld)
-      lines.push(
+      told.push(
         "The server's gateway features turn outbound redaction off, but this machine's settings are as new or newer, so redaction stays on here. If that is what you want, turn it off with hh gateway redaction off.",
       );
     if (notice.needKey?.length)
-      lines.push(
+      told.push(
         `Search backends without a key here, not brought in (add them with hh gateway search add): ${notice.needKey.join(", ")}`,
       );
     if (notice.refused?.length)
-      lines.push(`Not brought in: ${notice.refused.join("; ")}`);
+      told.push(`Not brought in: ${notice.refused.join("; ")}`);
+    const at = localTime(notice.at);
+    if (told.length)
+      lines.push(
+        since === undefined
+          ? `Last notice, from the sync at ${at}:`
+          : notice.at >= since
+            ? `This sync (${at}):`
+            : `Last notice, from an earlier sync at ${at}:`,
+        ...told.map((line) => `  ${line}`),
+      );
   }
   for (const warning of status.warnings ?? []) lines.push(`Note: ${warning}`);
   return lines.join("\n");
@@ -571,13 +587,16 @@ async function syncCommand(args: string[]): Promise<number> {
       output(ctx, status, () => statusText(status));
       return EXIT.ok;
     }
+    const since = new Date().toISOString();
     const status =
       action === "now"
         ? await client.sync.now({
             acceptOlder: values["accept-older"] === true,
           })
         : await client.sync.status();
-    output(ctx, status, () => statusText(status));
+    output(ctx, status, () =>
+      statusText(status, action === "now" ? since : undefined),
+    );
     return EXIT.ok;
   }
   if ((action !== "webdav" && action !== "s3") || rest[0] !== "on" || !rest[1])
@@ -616,8 +635,9 @@ async function syncCommand(args: string[]): Promise<number> {
   if (!ctx.json) write(statusText(configured));
   // The first sync now, so that a wrong address, password or passphrase
   // shows here rather than in the background.
+  const since = new Date().toISOString();
   const synced = await client.sync.now();
-  output(ctx, { configured, synced }, () => statusText(synced));
+  output(ctx, { configured, synced }, () => statusText(synced, since));
   return EXIT.ok;
 }
 

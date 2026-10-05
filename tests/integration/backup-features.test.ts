@@ -392,10 +392,17 @@ void test("sync carries the gateway features as their own part: brought in with 
     ],
   );
   assert.equal(await searchKey(b, "tavily"), TAVILY_KEY);
+  // The notice stays until another; it is shown under its sync's time.
   assert.match(
     (await hh(b, ["sync", "status"])).stdout,
-    /WARNING: the server's gateway features turned outbound redaction OFF here/,
+    /\nLast notice, from the sync at [^\n]+:\n {2}WARNING: the server's gateway features turned outbound redaction OFF here/,
   );
+  const quiet = (await hh(b, ["sync", "now"])).stdout;
+  assert.match(
+    quiet,
+    /\nLast notice, from an earlier sync at [^\n]+:\n {2}WARNING: /,
+  );
+  assert.doesNotMatch(quiet, /This sync/);
 
   // A removal on B is mirrored on A.
   await b.client.gatewayFeatures.removeSearch("search-2");
@@ -420,7 +427,13 @@ void test("sync carries the gateway features as their own part: brought in with 
   await a.client.sync.now();
   await delay(20);
   await b.client.gatewayFeatures.setVision("seer/other");
-  const conflict = await b.client.sync.now();
+  // hh sync now says that this sync made the notice.
+  const conflictText = (await hh(b, ["sync", "now"])).stdout;
+  assert.match(
+    conflictText,
+    /\nThis sync \([^\n]+\):\n {2}Changed on both sides; this machine's features replaced the server's\.\n/,
+  );
+  const conflict = await b.client.sync.status();
   assert.deepEqual(conflict.notice?.there, ["features"]);
   assert.deepEqual(conflict.notice?.here, []);
   const saved = await readdir(path.join(b.dataDir, "sync", "conflicts"));
