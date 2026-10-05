@@ -897,6 +897,37 @@ void test("child programs get the daemon's proxy in their *_PROXY variables", as
   assert.deepEqual(none, { PATH: "/bin" });
 });
 
+void test("with no proxy in effect, requests share one direct agent of their own, not Node's global dispatcher", async (t) => {
+  const ports = await upstreams(t);
+  const network = outbound(t, undefined);
+  // Node 24.20's global dispatcher adds about 1.4 ms to every request
+  // (tests/perf/README.md): the dispatcher each request was sent with.
+  const dispatchers: unknown[] = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = ((
+    input: Parameters<typeof fetch>[0],
+    init?: RequestInit,
+  ) => {
+    dispatchers.push(
+      (init as { dispatcher?: unknown } | undefined)?.dispatcher,
+    );
+    return original(input, init);
+  }) as typeof fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  const url = `http://127.0.0.1:${ports.http}/`;
+  assert.equal((await network.fetch(url)).status, 200);
+  assert.equal((await network.fetch(url, {}, { proxy: "direct" })).status, 200);
+  assert.equal(dispatchers.length, 2);
+  const [first, second] = dispatchers;
+  assert.ok(first !== undefined, "not the global dispatcher");
+  assert.equal((first as object).constructor.name, "Agent");
+  assert.equal(second, first, "one shared agent");
+  await network.close();
+  await assert.rejects(network.fetch(url), /closed/);
+});
+
 void test("a closed outbound network refuses new requests", async (t) => {
   const ports = await upstreams(t);
   const proxy = await proxyOf(t, startConnectProxy({ route: routeTo(ports) }));

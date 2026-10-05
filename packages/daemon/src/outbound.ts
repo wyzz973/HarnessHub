@@ -686,7 +686,10 @@ const MAX_OWN_AGENTS = 32;
  * The daemon's outbound requests (Magpie `netproxy`): {@link fetch} sends
  * through the proxy in effect, or directly to loopback, private networks
  * and `noProxy` hosts. One agent per proxy choice keeps connections made
- * through one proxy from being reused through another. The owner awaits
+ * through one proxy from being reused through another; requests with no
+ * proxy in effect share one direct agent of their own rather than Node's
+ * global dispatcher, which in Node 24.20 (its bundled undici 7.29.0) adds
+ * about 1.4 ms to every request (tests/perf/README.md). The owner awaits
  * {@link close} after every user of {@link fetch} stopped.
  */
 export class Outbound {
@@ -697,6 +700,8 @@ export class Outbound {
   readonly #log: LogSink;
   /** The agent of the daemon's proxy, made on first use. */
   #shared: Agent | undefined;
+  /** The agent of requests with no proxy in effect, made on first use. */
+  #direct: Agent | undefined;
   /** Agents of providers' own proxies, oldest first. */
   readonly #own = new Map<string, Agent>();
   /** Closing agents that were dropped to keep {@link MAX_OWN_AGENTS}. */
@@ -753,7 +758,9 @@ export class Outbound {
         error instanceof Error ? error : new Error(String(error)),
       );
     }
-    if (!agent) return fetch(input, init);
+    agent ??= this.#direct ??= new Agent(
+      this.#options.ca ? { connect: { ca: this.#options.ca as string[] } } : {},
+    );
     // Node's fetch takes an undici dispatcher; its types are undici-types'.
     return fetch(input, {
       ...init,
@@ -873,9 +880,11 @@ export class Outbound {
     this.#closed = true;
     const agents = [
       ...(this.#shared ? [this.#shared] : []),
+      ...(this.#direct ? [this.#direct] : []),
       ...this.#own.values(),
     ];
     this.#shared = undefined;
+    this.#direct = undefined;
     this.#own.clear();
     await Promise.all([...agents.map(finish), ...this.#closing]);
   }
