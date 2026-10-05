@@ -163,12 +163,20 @@ export class MemoryStore implements ModelPlaneStore {
     else this.hidden.delete(id);
     return true;
   }
+  wirings: WiringRecord[] = [];
   async listWirings(): Promise<WiringRecord[]> {
-    return [];
+    return [...this.wirings];
   }
-  async putWiring() {}
-  async deleteWiring() {
-    return false;
+  async putWiring(record: WiringRecord) {
+    this.wirings = [
+      ...this.wirings.filter((item) => item.adapterId !== record.adapterId),
+      record,
+    ];
+  }
+  async deleteWiring(adapterId: string) {
+    const before = this.wirings.length;
+    this.wirings = this.wirings.filter((item) => item.adapterId !== adapterId);
+    return this.wirings.length < before;
   }
 }
 

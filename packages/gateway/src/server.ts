@@ -122,6 +122,7 @@ import { VisionDescriber } from "./vision.js";
 import type { InternalAnswer, InternalCalls } from "./internal.js";
 import { imagesCall } from "./images.js";
 import { resolveBareName } from "./bare-names.js";
+import { standIn } from "./stand-in.js";
 
 /** The Run a `session:` key's calls belong to, and the model target it selected. */
 export interface ActiveSessionRun {
@@ -1124,7 +1125,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     if (typeof requested !== "string" || !requested) return undefined;
     let target: string;
     try {
-      target = await resolveModel(requested, key);
+      target = (await resolveModel(requested, key)).ref;
     } catch (error) {
       if (error instanceof GatewayError) return undefined;
       throw error;
@@ -1258,11 +1259,27 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
   const resolveModel = async (
     model: string,
     key: GatewayKeyRecord,
-  ): Promise<string> => {
-    if (parseModelRef(model)) return model;
+  ): Promise<{ ref: string; standIn?: true }> => {
+    const parsed = parseModelRef(model);
+    if (parsed) {
+      // A Model Ref of a provider that is not here serves nothing (a group's
+      // is taken as served, as in Magpie).
+      if (
+        parsed.kind === "model" &&
+        !(await store.getProvider(parsed.provider))
+      ) {
+        const stood = await agentStandIn(model, key);
+        if (stood) return { ref: stood, standIn: true };
+      }
+      return { ref: model };
+    }
     const shown = model.slice(0, 200);
     const found = await resolveBareName(model, store);
-    if (found.kind === "resolved") return found.ref;
+    if (found.kind === "resolved") return { ref: found.ref };
+    if (found.kind === "none") {
+      const stood = await agentStandIn(model, key);
+      if (stood) return { ref: stood, standIn: true };
+    }
     if (found.kind === "none")
       throw new GatewayError(
         `No route group or model is named ${shown}; name one as provider/model or group/<id>`,
@@ -1278,6 +1295,23 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       400,
       "model_ambiguous",
     );
+  };
+
+  /**
+   * The model a wired agent's key stands in for a name nothing here serves
+   * (./stand-in.ts): only for the `agent:` key its wiring wrote.
+   */
+  const agentStandIn = async (
+    model: string,
+    key: GatewayKeyRecord,
+  ): Promise<string | undefined> => {
+    const { scope } = key;
+    if (scope.kind !== "agent") return undefined;
+    const wiring = (await store.listWirings()).find(
+      (record) =>
+        record.adapterId === scope.adapterId && record.keyId === key.keyId,
+    );
+    return wiring && standIn(wiring, model);
   };
 
   /** The automatic group of this ID, unless it is hidden; user groups were looked up first. */
@@ -1488,7 +1522,10 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         throw new GatewayError("The request requires a model");
       // A bare name is what it resolves to from here on; the ledger keeps
       // the name as requested and records the group or model.
-      const requested = await resolveModel(given, key);
+      const resolution = await resolveModel(given, key);
+      const requested = resolution.ref;
+      // The agent's own model in place of one nothing here serves.
+      if (resolution.standIn) entry.patches.push("stand-in");
       if (requested !== given) {
         const target = parseModelRef(requested);
         if (target?.kind === "group") entry.group = target.group;
@@ -1571,7 +1608,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         key.keyId,
       );
       entry.conversationKey = conversation.key;
-      const routePatches: string[] = [];
+      const routePatches: string[] = resolution.standIn ? ["stand-in"] : [];
       // A call the gateway makes for itself makes none in turn.
       const internals = internal ? undefined : internalCalls(key, entry);
       call = {

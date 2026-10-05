@@ -443,7 +443,9 @@ export async function imagesCall(options: {
     let requested: string;
     try {
       // A bare name is what it resolves to; the allowlist applies to that.
-      requested = await services.resolveModel(given, key);
+      const resolution = await services.resolveModel(given, key);
+      requested = resolution.ref;
+      if (resolution.standIn) entry.patches.push("stand-in");
     } catch (error) {
       if (!(error instanceof GatewayError)) throw error;
       return fail(error.status, error.code, error.message);
@@ -530,7 +532,8 @@ export async function imagesCall(options: {
           }
           services.redactor.remember(secret, "PROVIDER_KEY");
         }
-        entry.patches = [];
+        // Each attempt's own patches, after how the model was named.
+        entry.patches = entry.patches.filter((patch) => patch === "stand-in");
         masked = 0;
         const ask = async (via: Via): Promise<Outcome> => {
           const base =
