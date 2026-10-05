@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { createHash } from "node:crypto";
+import { redactKeyText } from "@harnesshub/core/key-text";
 
 /**
  * A request or upstream failure whose message is already safe to show to an
@@ -19,7 +20,8 @@ export class GatewayError extends Error {
     readonly contextOverflow = false,
     readonly detail?: string,
   ) {
-    super(message);
+    // Gateway Key text a client put in what the message quotes is not echoed.
+    super(redactKeyText(message));
   }
 }
 /** Reject non-object protocol values before accessing their fields. */

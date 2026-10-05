@@ -5,6 +5,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
+import { redactKeyText } from "@harnesshub/core/key-text";
 import { excerpt } from "@harnesshub/core/logging";
 import type {
   InboundProtocol,
@@ -448,7 +449,9 @@ export async function createModelGateway(
       id: `mc_${id}`,
       inbound: route.protocol,
       stream: route.stream === true,
-      ...(route.model ? { requestedModel: route.model.slice(0, 256) } : {}),
+      ...(route.model
+        ? { requestedModel: redactKeyText(route.model).slice(0, 256) }
+        : {}),
       upstreamModel: options.model,
       status: 0,
       ok: false,
@@ -501,7 +504,10 @@ export async function createModelGateway(
       translation = translate(route, raw);
       record.stream = translation.stream;
       if (translation.requestedModel)
-        record.requestedModel = translation.requestedModel.slice(0, 256);
+        record.requestedModel = redactKeyText(translation.requestedModel).slice(
+          0,
+          256,
+        );
       const messages = translation.body.messages;
       if (passReasoning) {
         const restored = restoreReasoning(messages, cache, reasoningField);

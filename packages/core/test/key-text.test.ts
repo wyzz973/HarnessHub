@@ -15,6 +15,9 @@ void test("Gateway Key text is redacted in every form that gives the key away", 
     key.replace("hhk_", "hhk%5F"),
     key.replace("hhk_", "HHK%5f"),
     "hhk_a_garbage",
+    // Without its prefix a key still holds its secret.
+    key.slice("hhk_".length),
+    key.slice("hhk_".length).toUpperCase(),
   ]) {
     const redacted = redactKeyText(`before ${form} after`);
     assert.equal(redacted, "before [REDACTED] after", form);
@@ -25,7 +28,18 @@ void test("Gateway Key text is redacted in every form that gives the key away", 
     path: "/K/[REDACTED]/v1/models",
   });
   // Text without a key is unchanged.
-  for (const plain of ["", "hhk", "hh_k", "/v1/models", "shhk-1"])
+  for (const plain of [
+    "",
+    "hhk",
+    "hh_k",
+    "/v1/models",
+    "shhk-1",
+    // Model names that look a little like the form without a prefix.
+    "gpt-4o-mini_2024-07-18",
+    "a_model_name",
+    "ca_abcdefghijkl_rest",
+    "fake/c_abcdefgh",
+  ])
     assert.equal(redactKeyText(plain), plain);
 });
 

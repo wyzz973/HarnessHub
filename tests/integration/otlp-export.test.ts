@@ -423,6 +423,46 @@ void test(
 );
 
 void test(
+  "Gateway Key text a client puts in a model name reaches no answer, span, metric, ledger row or CSV",
+  { timeout: 60_000 },
+  async (t) => {
+    const stub = await collector(t);
+    const { client, chat, close, key } = await hubWithProvider(t, {
+      endpoint: stub.endpoint,
+      metrics: true,
+    });
+    // The issued form, without its hhk_ and in capitals: each holds the secret.
+    const forms = [key, key.slice("hhk_".length), key.toUpperCase()];
+    for (const model of [...forms, `fake/${key}`]) {
+      const answer = await chat({
+        model,
+        messages: [{ role: "user", content: PROMPT }],
+      });
+      assert.ok(answer.status >= 400, answer.text);
+      for (const form of forms)
+        assert.equal(answer.text.includes(form), false, answer.text);
+    }
+    const ledger = (await client.modelCalls.list({ limit: 10 })).items;
+    assert.equal(ledger.length, 4);
+    const csv = await new Response(await client.modelCalls.csv()).text();
+    await close();
+    const exported = stub.received.map((request) => request.body).join("\n");
+    assert.ok(exported.includes("gen_ai.request.model"), "spans were exported");
+    for (const [where, text] of [
+      ["the ledger", JSON.stringify(ledger)],
+      ["the CSV", csv],
+      ["the OTLP export", exported],
+    ] as const)
+      for (const form of [...forms, key.slice(-43)])
+        assert.equal(
+          text.includes(form),
+          false,
+          `${where}: ${text.slice(0, 400)}`,
+        );
+  },
+);
+
+void test(
   "without an otlp block nothing is exported, even with the standard OTEL variables set",
   { timeout: 60_000 },
   async (t) => {

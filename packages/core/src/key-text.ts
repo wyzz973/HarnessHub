@@ -14,6 +14,11 @@
  * characters (and percent escapes) after it.
  */
 const KEY_TEXT = /hhk(?:_|%5f)[A-Za-z0-9_%-]*/gi;
+/**
+ * A key without its `hhk_`: the scope letter, the key id and the secret,
+ * which is all a key holds.
+ */
+const BARE_KEY = /(?<![A-Za-z0-9])[asc]_[a-z2-7]{12}_[A-Za-z0-9_-]{8,}/gi;
 /** The segment after a `/k/` (a key's place in a path, ADR 0033), `k` in any case or encoded. */
 const KEY_SEGMENT = /(^|\/)(k|%6b)\/[^/?#]+/gi;
 
@@ -21,11 +26,12 @@ const KEY_SEGMENT = /(^|\/)(k|%6b)\/[^/?#]+/gi;
 export const REDACTED_KEY = "[REDACTED]";
 
 /**
- * `text` with every run of Gateway Key text, as described above, replaced
- * by {@link REDACTED_KEY}. Pure; safe on any string.
+ * `text` with every run of Gateway Key text, as described above, and every
+ * key without its `hhk_` prefix, replaced by {@link REDACTED_KEY}. Pure;
+ * safe on any string.
  */
 export function redactKeyText(text: string): string {
-  return text.replace(KEY_TEXT, REDACTED_KEY);
+  return text.replace(KEY_TEXT, REDACTED_KEY).replace(BARE_KEY, REDACTED_KEY);
 }
 
 /**

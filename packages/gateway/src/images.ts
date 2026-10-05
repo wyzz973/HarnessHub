@@ -33,6 +33,7 @@ import {
 } from "@harnesshub/core/model-plane";
 import { providerProxy } from "@harnesshub/core/outbound";
 import { groupModels } from "@harnesshub/core/route-groups";
+import { redactKeyText } from "@harnesshub/core/key-text";
 import { errorResponse, type CallServices } from "./call.js";
 import { deadline, failure, readBody, readLimited } from "./http.js";
 import { callCost, callUsage, type UsageParts } from "./ledger.js";
@@ -433,7 +434,7 @@ export async function imagesCall(options: {
     const drawing = await readDrawing(bytes, request.headers["content-type"]);
     entry.inbound.stream = drawing.stream;
     const given = drawing.model;
-    if (given) entry.requestedModel = given.slice(0, 256);
+    if (given) entry.requestedModel = redactKeyText(given).slice(0, 256);
     if (edit && !drawing.images.length)
       return fail(400, "invalid_request", "An edit needs the image to edit");
     if (!given)

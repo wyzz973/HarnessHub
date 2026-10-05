@@ -7,6 +7,7 @@ import {
   createInflate,
   createZstdDecompress,
 } from "node:zlib";
+import { redactKeyText } from "@harnesshub/core/key-text";
 import type { Failure } from "./output.js";
 import { GatewayError } from "./protocol.js";
 
@@ -16,7 +17,14 @@ export function failure(
   code: string,
   message: string,
 ): Failure {
-  return { status, code, message, contextOverflow: false };
+  // A message may quote what a client sent (a model name), and a client
+  // may have sent its key there: the message goes to the ledger too.
+  return {
+    status,
+    code,
+    message: redactKeyText(message),
+    contextOverflow: false,
+  };
 }
 
 /** Up to `maxBytes` of an upstream error body as text; the rest is not read. */

@@ -25,6 +25,7 @@ import {
   type ProviderId,
 } from "@harnesshub/core/model-plane";
 import { proxyFailure } from "@harnesshub/core/outbound";
+import { redactKeyText } from "@harnesshub/core/key-text";
 import type { CallServices } from "./call.js";
 import { maskBody } from "./redaction.js";
 import { ToolArgumentRestorer } from "./restore.js";
@@ -183,13 +184,17 @@ export interface CodexRequest {
   modelsTag?: string;
 }
 
-/** The ledger fields a forwarded Responses call gets from its body. */
+/**
+ * The ledger fields a forwarded Responses call gets from its body; a model
+ * name with Gateway Key text in it is recorded without it.
+ */
 function attribute(
   entry: ModelCallEntry,
-  model: string,
+  forwarded: string,
   raw: Record<string, unknown>,
   headers: IncomingHttpHeaders,
 ): void {
+  const model = redactKeyText(forwarded);
   entry.requestedModel = model.slice(0, 256);
   const ref = `${CODEX_PROVIDER}/${model}`;
   if (parseModelRef(ref)?.kind === "model") entry.modelRef = ref as ModelRef;

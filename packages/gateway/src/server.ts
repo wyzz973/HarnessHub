@@ -24,7 +24,7 @@ import { isIP } from "node:net";
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import { NO_LOG, type LogSink } from "@harnesshub/core/logging";
 import type { OutboundFetch } from "@harnesshub/core/outbound";
-import { keylessPath } from "@harnesshub/core/key-text";
+import { keylessPath, redactKeyText } from "@harnesshub/core/key-text";
 import {
   gatewayKeyMatches,
   claudeModelAlias,
@@ -662,6 +662,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     resolveModel: (model, key) => resolveModel(model, key),
     bodies: () => deps.calls?.bodies() === true,
     async commit(entry: ModelCallEntry, bodies?: BodySource): Promise<boolean> {
+      keylessEntry(entry);
       try {
         await store.appendModelCall(entry);
         handOver(entry, bodies);
@@ -1626,7 +1627,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
           : raw.stream === true;
       entry.inbound.stream = stream;
       if (typeof asked === "string" && asked)
-        entry.requestedModel = asked.slice(0, 256);
+        entry.requestedModel = redactKeyText(asked).slice(0, 256);
       const named = await unaliased(key, asked);
       // A Session's engine names the alias, or any model name of its own;
       // both mean the target the Run selected.
@@ -2706,4 +2707,28 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       return closing;
     },
   });
+}
+
+/**
+ * `entry` without Gateway Key text where a client's model name or an error
+ * may have put it (the model names asked for, attempted, sent and served,
+ * and the error), so that neither the ledger nor what reads it (its CSV,
+ * the OTLP export) holds a key a client sent as a model.
+ */
+function keylessEntry(entry: ModelCallEntry): void {
+  for (const field of [
+    "requestedModel",
+    "wireModel",
+    "servedModel",
+    "error",
+  ] as const) {
+    const value = entry[field];
+    if (value !== undefined) entry[field] = redactKeyText(value);
+  }
+  if (entry.modelRef !== undefined)
+    entry.modelRef = redactKeyText(entry.modelRef) as ModelRef;
+  for (const attempt of entry.attempts) {
+    attempt.modelRef = redactKeyText(attempt.modelRef) as ModelRef;
+    attempt.wireModel = redactKeyText(attempt.wireModel);
+  }
 }
