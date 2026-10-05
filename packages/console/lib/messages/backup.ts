@@ -13,8 +13,9 @@ export const zh = {
 
   "backup.backup.title": "备份",
   "backup.backup.lede":
-    "把 provider、凭据、路由组、模型覆盖、Agent 接线、Profile 与 Library 打包成一个用口令加密的文件。",
-  "backup.backup.keys": "包含凭据的值（API Key 与 Library 的秘密）",
+    "把 provider、凭据、路由组、模型覆盖、Agent 接线、Profile、Library 与网关功能打包成一个用口令加密的文件。",
+  "backup.backup.keys":
+    "包含凭据的值（API Key、Library 的秘密与搜索后端的 Key）",
   "backup.backup.hintWithKeys":
     "口令只用于这一次加密，页面与守护进程都不保存；忘记口令就无法打开这个文件。文件含有 Key 的值，请像保管 Key 一样保管它。Gateway Key 的文本、用量与会话不在备份中。",
   "backup.backup.hintWithoutKeys":
@@ -68,6 +69,33 @@ export const zh = {
   "backup.restore.incomplete": "缺少大文件",
   "backup.restore.refused": "被拒绝",
   "backup.restore.libraryLeftOut": "不带入",
+  "backup.restore.features": "网关功能",
+  "backup.restore.featuresLeftOut":
+    "备份中没有（较早版本的备份），保持本机的设置",
+  "backup.restore.redactionOn": "出站脱敏：开启",
+  "backup.restore.redactionOff": "出站脱敏：关闭",
+  "backup.restore.redactionTurnsOn": "出站脱敏：由备份开启",
+  "backup.restore.redactionTurnsOff": "出站脱敏：由备份关闭",
+  "backup.restore.addedRules": "新增的脱敏规则",
+  "backup.restore.replacedRules": "替换的脱敏规则",
+  "backup.restore.removedRules": "删除的脱敏规则",
+  "backup.restore.addedSearch": "新增的搜索后端",
+  "backup.restore.replacedSearch": "替换的搜索后端",
+  "backup.restore.removedSearch": "删除的搜索后端",
+  "backup.restore.searchNeedKey": "需要 Key、不带入的搜索后端",
+  "backup.restore.visionSame": "视觉模型：{model}",
+  "backup.restore.visionChanged": "视觉模型改为 {model}",
+  "backup.restore.visionUnresolved":
+    "本机没有这个模型或路由组（{reason}），仍按备份设置。",
+  "backup.restore.visionKept": "视觉模型：备份中没有，保持本机的",
+  "backup.restore.turnsOffPreview":
+    "这次恢复会关闭出站脱敏：本机现在开启，备份中是关闭的。恢复后，请求发往上游之前不再把已知的秘密换成占位符。",
+  "backup.restore.turnsOffDone":
+    "这次恢复关闭了出站脱敏：请求发往上游之前不再把已知的秘密换成占位符。需要时在网关功能中重新开启。",
+  "backup.restore.openRedaction": "打开出站脱敏",
+  "backup.restore.searchNeedKeyHint":
+    "备份和本机都没有 Key 的搜索后端不带入，在{page}中重新添加：",
+  "backup.restore.openSearch": "打开联网搜索",
   "backup.restore.share": "局域网共享",
   "backup.restore.share.apply": "应用备份中的局域网共享设置",
   "backup.restore.share.unchanged": "与本机相同",
@@ -94,7 +122,7 @@ export const zh = {
 
   "backup.sync.title": "同步",
   "backup.sync.lede":
-    "经 WebDAV 或 S3 兼容存储在多台电脑之间自动同步 provider、Agent 接线、Profile 与 Library；两边都改的部分保留最后修改的一边，另一边的副本存在本机。",
+    "经 WebDAV 或 S3 兼容存储在多台电脑之间自动同步 provider、Agent 接线、Profile、Library 与网关功能；两边都改的部分保留最后修改的一边，另一边的副本存在本机。",
   "backup.sync.now": "立即同步",
   "backup.sync.edit": "修改",
   "backup.sync.off": "关闭",
@@ -106,15 +134,19 @@ export const zh = {
   "backup.sync.contentLabel": "内容",
   "backup.sync.content": "{parts}；{keys}",
   "backup.sync.partsWithAgents":
-    "provider 与路由、Profile、Library、Agent 接线",
+    "provider 与路由、Profile、Library、网关功能、Agent 接线",
   "backup.sync.partsWithoutAgents":
-    "provider 与路由、Profile、Library（不含 Agent 接线）",
+    "provider 与路由、Profile、Library、网关功能（不含 Agent 接线）",
   "backup.sync.withKeys": "带凭据的值",
   "backup.sync.withoutKeys": "不带凭据的值",
   "backup.sync.last": "上次同步",
   "backup.sync.next": "下次同步",
   "backup.sync.lastError": "最近一次同步失败：{error}",
   "backup.sync.noticeAt": "{time} 的同步中两边都有改动：",
+  "backup.sync.redactionOff":
+    "{time} 的同步带入了服务器上的网关功能，关闭了本机的出站脱敏：请求发往上游之前不再把已知的秘密换成占位符。",
+  "backup.sync.needKey":
+    "服务器上的这些搜索后端没有 Key，本机也没有，因此没有带入；在{page}中添加 Key：",
   "backup.sync.noticeHere": "本机的{parts}被服务器的版本替换",
   "backup.sync.noticeThere": "服务器的{parts}被本机的版本替换",
   "backup.sync.noticeKept":
@@ -178,9 +210,9 @@ export const en: Translation<typeof zh> = {
 
   "backup.backup.title": "Backup",
   "backup.backup.lede":
-    "Pack providers, credentials, route groups, model overrides, agent wiring, profiles and the Library into one file encrypted with a passphrase.",
+    "Pack providers, credentials, route groups, model overrides, agent wiring, profiles, the Library and the gateway features into one file encrypted with a passphrase.",
   "backup.backup.keys":
-    "Include the credentials' values (API keys and the Library's secrets)",
+    "Include the credentials' values (API keys, the Library's secrets and search backends' keys)",
   "backup.backup.hintWithKeys":
     "The passphrase is used for this encryption only; neither the page nor the daemon keeps it, and without it the file cannot be opened. The file contains key values, so keep it as safe as the keys themselves. Gateway Key texts, usage and sessions are not in the backup.",
   "backup.backup.hintWithoutKeys":
@@ -240,6 +272,37 @@ export const en: Translation<typeof zh> = {
   "backup.restore.incomplete": "Large files missing",
   "backup.restore.refused": "Refused",
   "backup.restore.libraryLeftOut": "Not brought in",
+  "backup.restore.features": "Gateway features",
+  "backup.restore.featuresLeftOut":
+    "Not in the backup (made by an earlier version); this computer's settings stay",
+  "backup.restore.redactionOn": "Outbound redaction: on",
+  "backup.restore.redactionOff": "Outbound redaction: off",
+  "backup.restore.redactionTurnsOn":
+    "Outbound redaction: turned on by the backup",
+  "backup.restore.redactionTurnsOff":
+    "Outbound redaction: turned off by the backup",
+  "backup.restore.addedRules": "Redaction rules added",
+  "backup.restore.replacedRules": "Redaction rules replaced",
+  "backup.restore.removedRules": "Redaction rules removed",
+  "backup.restore.addedSearch": "Search backends added",
+  "backup.restore.replacedSearch": "Search backends replaced",
+  "backup.restore.removedSearch": "Search backends removed",
+  "backup.restore.searchNeedKey":
+    "Search backends that need a key and are not brought in",
+  "backup.restore.visionSame": "Vision model: {model}",
+  "backup.restore.visionChanged": "The vision model changes to {model}",
+  "backup.restore.visionUnresolved":
+    "This computer does not have that model or route group ({reason}); it is set as in the backup all the same.",
+  "backup.restore.visionKept":
+    "Vision model: not in the backup; this computer's stays",
+  "backup.restore.turnsOffPreview":
+    "This restore turns outbound redaction off: it is on here and off in the backup. After the restore, known secrets are no longer replaced with placeholders before requests go upstream.",
+  "backup.restore.turnsOffDone":
+    "This restore turned outbound redaction off: known secrets are no longer replaced with placeholders before requests go upstream. Turn it back on in Gateway features if you need it.",
+  "backup.restore.openRedaction": "Open outbound redaction",
+  "backup.restore.searchNeedKeyHint":
+    "Search backends without a key in the backup or on this computer are not brought in; add them again in {page}:",
+  "backup.restore.openSearch": "Open web search",
   "backup.restore.share": "LAN sharing",
   "backup.restore.share.apply": "The backup's LAN sharing settings are applied",
   "backup.restore.share.unchanged": "The same as on this computer",
@@ -268,7 +331,7 @@ export const en: Translation<typeof zh> = {
 
   "backup.sync.title": "Sync",
   "backup.sync.lede":
-    "Sync providers, agent wiring, profiles and the Library between computers automatically through WebDAV or S3-compatible storage; where both sides changed a part, the side changed last is kept, and a copy of the other side is stored on this computer.",
+    "Sync providers, agent wiring, profiles, the Library and the gateway features between computers automatically through WebDAV or S3-compatible storage; where both sides changed a part, the side changed last is kept, and a copy of the other side is stored on this computer.",
   "backup.sync.now": "Sync now",
   "backup.sync.edit": "Edit",
   "backup.sync.off": "Turn off",
@@ -280,15 +343,19 @@ export const en: Translation<typeof zh> = {
   "backup.sync.contentLabel": "Content",
   "backup.sync.content": "{parts}; {keys}",
   "backup.sync.partsWithAgents":
-    "Providers and routing, profiles, the Library, agent wiring",
+    "Providers and routing, profiles, the Library, gateway features, agent wiring",
   "backup.sync.partsWithoutAgents":
-    "Providers and routing, profiles, the Library (without agent wiring)",
+    "Providers and routing, profiles, the Library, gateway features (without agent wiring)",
   "backup.sync.withKeys": "with the credentials' values",
   "backup.sync.withoutKeys": "without the credentials' values",
   "backup.sync.last": "Last sync",
   "backup.sync.next": "Next sync",
   "backup.sync.lastError": "The last sync failed: {error}",
   "backup.sync.noticeAt": "Both sides had changes in the sync of {time}:",
+  "backup.sync.redactionOff":
+    "The sync of {time} brought in the server's gateway features, which turned outbound redaction off on this computer: known secrets are no longer replaced with placeholders before requests go upstream.",
+  "backup.sync.needKey":
+    "These search backends have no key on the server, and this computer has none for them, so they were not brought in; add their keys in {page}:",
   "backup.sync.noticeHere":
     "This computer's {parts} replaced by the server's version",
   "backup.sync.noticeThere":

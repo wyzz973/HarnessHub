@@ -289,18 +289,21 @@ export function LoadError({
 
 /** A titled section of a settings-like page, with an optional aside (actions). */
 export function Card({
+  id,
   title,
   lede,
   aside,
   children,
 }: {
+  /** The element ID a link scrolls to. */
+  id?: string;
   title: string;
   lede?: string;
   aside?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
-    <section className="panel space-y-4 p-5">
+    <section id={id} className="panel scroll-mt-4 space-y-4 p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="section-title">{title}</h2>

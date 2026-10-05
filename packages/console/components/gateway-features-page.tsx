@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Image as ImageIcon,
   Loader2,
@@ -34,7 +34,7 @@ import {
 import { gatewayModels, type GatewayModels } from "@/lib/gateway-models";
 import { t } from "@/lib/i18n";
 import { failureOf, modelPlane, type Failure } from "@/lib/model-plane";
-import { navigate } from "@/lib/router";
+import { navigate, useSearch } from "@/lib/router";
 import { notify } from "@/lib/toast";
 import {
   Card,
@@ -122,6 +122,7 @@ function Redaction({
   const rules = features.redaction.rules;
   return (
     <Card
+      id="features-redaction"
       title={t("settings.redaction.title")}
       lede={t("settings.redaction.lede")}
       aside={
@@ -464,6 +465,7 @@ function WebSearch({
   const backends = features.search?.backends ?? [];
   return (
     <Card
+      id="features-search"
       title={t("settings.search.title")}
       lede={t("settings.search.lede")}
       aside={
@@ -606,6 +608,15 @@ export function GatewayFeaturesPage({ tabs }: { tabs: React.ReactNode }) {
   }, []);
   const [data, reload] = useLoaded(load);
   const [features, setFeatures] = useState<GatewayFeaturesView | null>(null);
+  // `?section=redaction` or `?section=search` (from the backup page) opens at that card.
+  const section = new URLSearchParams(useSearch()).get("section");
+  const ready = data.state === "ready";
+  useEffect(() => {
+    if (ready && (section === "redaction" || section === "search"))
+      document
+        .getElementById(`features-${section}`)
+        ?.scrollIntoView({ block: "start" });
+  }, [ready, section]);
   return (
     <div className="page-body">
       <div className="page-column max-w-[880px]">

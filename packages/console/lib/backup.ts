@@ -70,6 +70,74 @@ export function libraryChanged(summary: RestoreSummary): boolean {
   );
 }
 
+/** One line of a restore summary's part: a label and the names it lists. */
+export interface SummaryPart {
+  label: string;
+  items: string[];
+  tone?: "warn" | "error";
+}
+
+/**
+ * A restore's gateway features (`summary.gatewayFeatures`) as the summary
+ * shows them: outbound redaction's state, a warning when the backup turns
+ * it off; rules and search backends by change, those needing a key as a
+ * warning; and the vision model, with why it is not here when it is not.
+ */
+export function restoreFeatures(
+  features: NonNullable<RestoreSummary["gatewayFeatures"]>,
+): {
+  redaction: { label: string; tone: "good" | "warn" | "" };
+  parts: SummaryPart[];
+  vision: { label: string; unresolved?: string };
+} {
+  const { redaction, rules, search, vision } = features;
+  return {
+    redaction: redaction.turnsOff
+      ? { label: t("backup.restore.redactionTurnsOff"), tone: "warn" }
+      : redaction.turnsOn
+        ? { label: t("backup.restore.redactionTurnsOn"), tone: "good" }
+        : {
+            label: redaction.enabled
+              ? t("backup.restore.redactionOn")
+              : t("backup.restore.redactionOff"),
+            tone: "",
+          },
+    parts: [
+      { label: t("backup.restore.addedRules"), items: rules.added },
+      { label: t("backup.restore.replacedRules"), items: rules.replaced },
+      { label: t("backup.restore.removedRules"), items: rules.removed },
+      { label: t("backup.restore.addedSearch"), items: search.added },
+      { label: t("backup.restore.replacedSearch"), items: search.replaced },
+      { label: t("backup.restore.removedSearch"), items: search.removed },
+      {
+        label: t("backup.restore.searchNeedKey"),
+        items: search.needKey,
+        tone: "warn",
+      },
+    ],
+    vision: vision
+      ? {
+          label: vision.changed
+            ? t("backup.restore.visionChanged", { model: vision.model })
+            : t("backup.restore.visionSame", { model: vision.model }),
+          ...(vision.unresolved !== undefined
+            ? {
+                unresolved: t("backup.restore.visionUnresolved", {
+                  reason: vision.unresolved,
+                }),
+              }
+            : {}),
+        }
+      : { label: t("backup.restore.visionKept") },
+  };
+}
+
+/** Where the restore summary and the sync status send people to add search keys or turn redaction back on. */
+export const featureSections = {
+  redaction: "?section=redaction",
+  search: "?section=search",
+} as const;
+
 /** The editable sync settings; secrets start empty and are sent once. */
 export interface SyncForm {
   kind: "webdav" | "s3";

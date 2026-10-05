@@ -28,9 +28,11 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   backupFileName,
+  featureSections,
   libraryChanged,
   readBackupFile,
   restoreAgentAction,
+  restoreFeatures,
   syncFormOf,
   syncPartName,
   syncSettings,
@@ -187,6 +189,66 @@ function Names({ items, tone }: { items: string[]; tone?: string }) {
   );
 }
 
+/** Gateway features › {section}, as the summary and the sync status name it. */
+function featuresPage(section: "redaction" | "search"): string {
+  return `${t("settings.tab.features")} › ${t(
+    section === "redaction"
+      ? "settings.redaction.title"
+      : "settings.search.title",
+  )}`;
+}
+
+/** Outbound redaction turned off by a restore or a sync: a security change, shown prominently. */
+function RedactionOffWarning({
+  children,
+  action,
+}: {
+  children: React.ReactNode;
+  action: boolean;
+}) {
+  return (
+    <div role="alert" className="callout warn items-start">
+      <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+      <span className="min-w-0 flex-1 font-medium">{children}</span>
+      {action ? (
+        <Button
+          size="xs"
+          variant="outline"
+          onClick={() =>
+            navigate("features", { search: featureSections.redaction })
+          }
+        >
+          {t("backup.restore.openRedaction")}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+/** Search backends brought in without a key, with the way to add one. */
+function SearchNeedKey({
+  names,
+  text,
+}: {
+  names: string[];
+  text: React.ReactNode;
+}) {
+  return (
+    <div className="callout info items-center">
+      <span className="min-w-0 flex-1">
+        {text} <Names items={names} tone="warn" />
+      </span>
+      <Button
+        size="xs"
+        variant="outline"
+        onClick={() => navigate("features", { search: featureSections.search })}
+      >
+        {t("backup.restore.openSearch")}
+      </Button>
+    </div>
+  );
+}
+
 /** Each part's label and its names (added, replaced, …), with nothing for empty parts. */
 function Changes({
   parts,
@@ -225,8 +287,18 @@ function RestoreSummaryView({
   names: ReadonlyMap<string, string>;
 }) {
   const library = summary.library;
+  const features = summary.gatewayFeatures
+    ? restoreFeatures(summary.gatewayFeatures)
+    : undefined;
   return (
     <div className="space-y-3 rounded-xl border p-4">
+      {summary.gatewayFeatures?.redaction.turnsOff ? (
+        <RedactionOffWarning action={done}>
+          {done
+            ? t("backup.restore.turnsOffDone")
+            : t("backup.restore.turnsOffPreview")}
+        </RedactionOffWarning>
+      ) : null}
       <p className="text-[13px]">
         {tr(
           summary.keys
@@ -353,6 +425,36 @@ function RestoreSummaryView({
             </span>
           )}
         </Row>
+        <Row label={t("backup.restore.features")}>
+          {features ? (
+            <span className="flex flex-col gap-1.5">
+              <span>
+                <span
+                  className={
+                    features.redaction.tone
+                      ? `tag ${features.redaction.tone}`
+                      : undefined
+                  }
+                >
+                  {features.redaction.label}
+                </span>
+              </span>
+              <span className="text-[12.5px]">{features.vision.label}</span>
+              {features.vision.unresolved ? (
+                <span className="text-[12.5px] text-warning">
+                  {features.vision.unresolved}
+                </span>
+              ) : null}
+              {features.parts.some((part) => part.items.length) ? (
+                <Changes parts={features.parts} />
+              ) : null}
+            </span>
+          ) : (
+            <span className="text-subtle">
+              {t("backup.restore.featuresLeftOut")}
+            </span>
+          )}
+        </Row>
         <Row label={t("backup.restore.share")}>
           {t(`backup.restore.share.${summary.gatewayShare.action}`)}
           {summary.gatewayShare.error ? (
@@ -378,6 +480,14 @@ function RestoreSummaryView({
             </li>
           ))}
         </ul>
+      ) : null}
+      {summary.gatewayFeatures?.search.needKey.length ? (
+        <SearchNeedKey
+          names={summary.gatewayFeatures.search.needKey}
+          text={t("backup.restore.searchNeedKeyHint", {
+            page: featuresPage("search"),
+          })}
+        />
       ) : null}
       {summary.agents.length ? (
         <div className="overflow-x-auto rounded-xl border">
@@ -1074,6 +1184,19 @@ function SyncCard({
                 </p>
               ) : null}
             </div>
+          ) : null}
+          {notice?.redactionOff ? (
+            <RedactionOffWarning action>
+              {tr("backup.sync.redactionOff", {
+                time: <LocalTime value={notice.at} />,
+              })}
+            </RedactionOffWarning>
+          ) : null}
+          {notice?.needKey?.length ? (
+            <SearchNeedKey
+              names={notice.needKey}
+              text={t("backup.sync.needKey", { page: featuresPage("search") })}
+            />
           ) : null}
           {status.warnings?.length ? (
             <ul className="callout warn block list-disc pl-8">

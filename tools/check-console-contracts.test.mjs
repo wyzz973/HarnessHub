@@ -570,6 +570,66 @@ test("the backup page reads backup files and builds sync settings without droppi
   assert.equal(backup.libraryChanged(summary({ instructions: { ...none, added: ["team"] }, mcp: { ...none, needSecret: [] }, skills: { ...none, incomplete: [] }, refused: [] })), true);
 });
 
+test("the restore summary and the sync status show the gateway features, redaction turned off and search keys to add", async () => {
+  const backup = await consoleModule("lib/backup.ts");
+  // The daemon's published shapes hold every field the page reads.
+  const openapi = JSON.parse(await readFile(new URL("../docs/api/openapi.json", import.meta.url), "utf8"));
+  const restored = openapi.paths["/api/v1/restore"].post.responses["200"].content["application/json"].schema.properties.gatewayFeatures;
+  assert.equal(restored.nullable, true, "a backup from before the part has none");
+  assert.deepEqual(restored.properties.redaction.required, ["enabled", "turnsOff", "turnsOn"]);
+  assert.deepEqual(restored.properties.rules.required, ["added", "replaced", "removed"]);
+  assert.deepEqual(restored.properties.search.required, ["added", "replaced", "removed", "needKey"]);
+  assert.deepEqual(Object.keys(restored.properties.vision.properties), ["model", "changed", "unresolved"]);
+  const notice = openapi.paths["/api/v1/sync"].get.responses["200"].content["application/json"].schema.properties.notice;
+  assert.ok(notice.properties.redactionOff && notice.properties.needKey);
+  assert.ok(notice.properties.here.items.enum.includes("features"));
+  assert.equal(backup.syncPartName("features"), "网关功能");
+
+  const none = { added: [], replaced: [], removed: [] };
+  const off = backup.restoreFeatures({
+    redaction: { enabled: false, turnsOff: true, turnsOn: false },
+    rules: { ...none, added: ["codename"] },
+    vision: { model: "gone/vision", changed: true, unresolved: "no provider gone" },
+    search: { ...none, replaced: ["tavily"], needKey: ["brave", "searxng https://search.example"] },
+  });
+  assert.deepEqual(off.redaction, { label: "出站脱敏：由备份关闭", tone: "warn" });
+  assert.deepEqual(off.vision, {
+    label: "视觉模型改为 gone/vision",
+    unresolved: "本机没有这个模型或路由组（no provider gone），仍按备份设置。",
+  });
+  assert.deepEqual(
+    off.parts.filter((part) => part.items.length),
+    [
+      { label: "新增的脱敏规则", items: ["codename"] },
+      { label: "替换的搜索后端", items: ["tavily"] },
+      { label: "需要 Key、不带入的搜索后端", items: ["brave", "searxng https://search.example"], tone: "warn" },
+    ],
+  );
+  const same = backup.restoreFeatures({
+    redaction: { enabled: true, turnsOff: false, turnsOn: false },
+    rules: none,
+    vision: null,
+    search: { ...none, needKey: [] },
+  });
+  assert.deepEqual(same.redaction, { label: "出站脱敏：开启", tone: "" });
+  assert.equal(same.vision.label, "视觉模型：备份中没有，保持本机的");
+  assert.equal(
+    backup.restoreFeatures({ redaction: { enabled: true, turnsOff: false, turnsOn: true }, rules: none, vision: { model: "lab/v", changed: false }, search: { ...none, needKey: [] } }).redaction.tone,
+    "good",
+  );
+
+  // The links land on the cards: the features page has their IDs and reads ?section=.
+  const page = await readFile(new URL("../packages/console/components/gateway-features-page.tsx", import.meta.url), "utf8");
+  for (const [section, search] of Object.entries(backup.featureSections)) {
+    assert.equal(search, `?section=${section}`);
+    assert.ok(page.includes(`id="features-${section}"`), section);
+  }
+  const view = await readFile(new URL("../packages/console/components/backup-page.tsx", import.meta.url), "utf8");
+  assert.match(view, /gatewayFeatures\?\.redaction\.turnsOff/, "the preview and the result warn when redaction goes off");
+  assert.match(view, /notice\?\.redactionOff/, "the sync status warns when redaction went off");
+  assert.match(view, /notice\?\.needKey/);
+});
+
 test("the Library page sends MCP secrets as references or values and points at the rows a refusal names", async () => {
   const library = await consoleModule("lib/library.ts");
   const stored = { kind: "store", value: "secret-ref-1" };
