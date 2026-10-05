@@ -68,12 +68,23 @@ const restoreBodySchema = {
       description:
         "Bring the Library's items in (agents' files are synced separately, through /library/sync)",
     },
+    references: {
+      type: "boolean",
+      default: false,
+      description:
+        "Confirms restoring the credentials listed in providers.references, whose keys are read from outside HarnessHub's store; without it such a restore is refused with 409 BACKUP_REFERENCES",
+    },
     dryRun: {
       type: "boolean",
       default: false,
       description: "Only show what the restore would do",
     },
   },
+} as const;
+
+const referenceKind = {
+  type: "string",
+  enum: ["env", "file", "keychain"],
 } as const;
 
 const shareSettings = {
@@ -134,13 +145,55 @@ const restoreSummarySchema = {
     providers: {
       type: "object",
       additionalProperties: false,
-      required: ["added", "replaced", "needKey", "signInAgain", "signedInHere"],
+      required: [
+        "added",
+        "replaced",
+        "needKey",
+        "signInAgain",
+        "signedInHere",
+        "references",
+        "refused",
+      ],
       properties: {
         added: strings,
         replaced: strings,
         needKey: strings,
         signInAgain: strings,
         signedInHere: strings,
+        references: {
+          type: "array",
+          description:
+            "Credentials whose key would be read from an environment variable, a file or a keychain item and sent to the provider's hosts; those read the same way here already are not listed",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["provider", "credential", "kind", "name", "hosts"],
+            properties: {
+              provider: { type: "string" },
+              credential: { type: "string" },
+              kind: referenceKind,
+              name: { type: "string" },
+              hosts: strings,
+            },
+          },
+        },
+        refused: {
+          type: "array",
+          description:
+            "Credentials naming HarnessHub's own variables or files: never restored",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["provider", "credential", "kind", "name", "reason"],
+            properties: {
+              provider: { type: "string" },
+              credential: { type: "string" },
+              kind: referenceKind,
+              name: { type: "string" },
+              reason: { type: "string" },
+            },
+          },
+        },
       },
     },
     groups: {
@@ -250,13 +303,18 @@ const restoreSummarySchema = {
         search: {
           type: "object",
           additionalProperties: false,
-          required: ["added", "replaced", "removed", "needKey"],
+          required: ["added", "replaced", "removed", "needKey", "refused"],
           properties: {
             ...changes.properties,
             needKey: {
               ...strings,
               description:
                 "Backends whose stored key the backup has no value for and this machine lacks: not brought in",
+            },
+            refused: {
+              ...strings,
+              description:
+                "Backends whose key the backup names as a reference to a secret outside HarnessHub's store, with what it names: not brought in",
             },
           },
         },
@@ -400,6 +458,11 @@ const syncStatusSchema = {
           description:
             "Search backends the server carries without a key and this machine has none for: not brought in",
         },
+        refused: {
+          ...strings,
+          description:
+            "Provider credentials naming HarnessHub's own secrets and search keys that are references, left out",
+        },
       },
     },
     secretBackend: { type: "string", enum: ["keychain", "dpapi", "file"] },
@@ -472,6 +535,7 @@ export function registerBackupRoutes(
       passphrase: string;
       agents: boolean;
       library: boolean;
+      references: boolean;
       dryRun: boolean;
     };
   }>(

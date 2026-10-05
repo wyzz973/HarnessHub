@@ -49,11 +49,13 @@ const COMMAND_USAGE: readonly CommandUsage[] = [
   },
   {
     command: "restore",
-    text: `  hh restore [--no-agents] [--no-library] <file>
+    text: `  hh restore [--no-agents] [--no-library] [--allow-references] <file>
                                      show what the backup restores, confirm,
                                      restore; agents installed here are re-wired,
                                      then the Library is synced into them after
-                                     showing the changes`,
+                                     showing the changes; keys the backup reads
+                                     from outside HarnessHub's store need the
+                                     answer in a terminal or --allow-references`,
   },
   {
     command: "sync",
@@ -145,6 +147,15 @@ async function backupCommand(args: string[]): Promise<number> {
   return EXIT.ok;
 }
 
+/** "the environment variable X", "the file X" or "the keychain item X". */
+function referenceText(kind: string, name: string): string {
+  return kind === "env"
+    ? `the environment variable ${name}`
+    : kind === "file"
+      ? `the file ${name}`
+      : `the keychain item ${name}`;
+}
+
 function summaryText(summary: RestoreSummary, done: boolean): string {
   const list = (items: string[]) => items.join(", ");
   const lines = [
@@ -177,6 +188,21 @@ function summaryText(summary: RestoreSummary, done: boolean): string {
   if (providers.signedInHere.length)
     lines.push(
       `  Kept as signed in on this machine, not replaced: ${list(providers.signedInHere)}`,
+    );
+  // Second security review M5: a key read from outside the store goes to
+  // the provider's hosts, which the backup chose.
+  if (providers.references.length) {
+    lines.push(
+      `  Keys read from outside HarnessHub's store and sent to the provider (confirm only if you expect this):`,
+    );
+    for (const item of providers.references)
+      lines.push(
+        `    ${item.provider}/${item.credential}: key read from ${referenceText(item.kind, item.name)}, sent to ${item.hosts.join(", ") || "no endpoint"}`,
+      );
+  }
+  for (const item of providers.refused)
+    lines.push(
+      `  Not restored: ${item.provider}/${item.credential} would read ${referenceText(item.kind, item.name)}: ${item.reason}`,
     );
   if (groups.added.length || groups.replaced.length || groups.skipped.length)
     lines.push(
@@ -281,6 +307,10 @@ function summaryText(summary: RestoreSummary, done: boolean): string {
       lines.push(
         `  Search backends without a key in the backup or here, not restored (add them with hh gateway search add): ${list(features.search.needKey)}`,
       );
+    if (features.search.refused.length)
+      lines.push(
+        `  Search backends not restored: ${features.search.refused.join("; ")}`,
+      );
   }
   const share = summary.gatewayShare;
   if (share.action === "apply" && share.settings)
@@ -381,6 +411,7 @@ async function restoreCommand(args: string[]): Promise<number> {
   const { values, positionals: given } = parse(args, {
     "no-agents": { type: "boolean" },
     "no-library": { type: "boolean" },
+    "allow-references": { type: "boolean" },
   });
   const ctx = context(values);
   const [file] = positionals(given, ["file"]) as [string];
@@ -402,8 +433,27 @@ async function restoreCommand(args: string[]): Promise<number> {
   };
   const plan = await client.backup.restore({ ...input, dryRun: true });
   if (!ctx.json) write(summaryText(plan, false));
-  await confirm(ctx, "Restore this backup?");
-  const result = await client.backup.restore({ ...input, dryRun: false });
+  const outside = plan.providers.references.length;
+  // Answering the question in a terminal confirms them; --yes alone does not.
+  if (
+    outside &&
+    values["allow-references"] !== true &&
+    (ctx.yes || !ctx.interactive)
+  )
+    throw new ConfirmationRequired(
+      `This backup reads ${outside === 1 ? "a key" : `${outside} keys`} from outside HarnessHub's store (listed above); pass --allow-references to restore ${outside === 1 ? "it" : "them"}.`,
+    );
+  await confirm(
+    ctx,
+    outside
+      ? `Restore this backup, with the ${outside === 1 ? "key" : `${outside} keys`} read from outside HarnessHub's store listed above?`
+      : "Restore this backup?",
+  );
+  const result = await client.backup.restore({
+    ...input,
+    ...(outside ? { references: true } : {}),
+    dryRun: false,
+  });
   if (!ctx.json) write(summaryText(result, true));
   let librarySync: LibraryPlan | undefined;
   let libraryError: string | undefined;
@@ -465,6 +515,8 @@ function statusText(status: SyncStatus): string {
       lines.push(
         `Search backends without a key here, not brought in (add them with hh gateway search add): ${notice.needKey.join(", ")}`,
       );
+    if (notice.refused?.length)
+      lines.push(`Not brought in: ${notice.refused.join("; ")}`);
   }
   for (const warning of status.warnings ?? []) lines.push(`Note: ${warning}`);
   return lines.join("\n");

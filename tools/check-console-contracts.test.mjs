@@ -625,7 +625,7 @@ test("the restore summary and the sync status show the gateway features, redacti
   assert.equal(restored.nullable, true, "a backup from before the part has none");
   assert.deepEqual(restored.properties.redaction.required, ["enabled", "turnsOff", "turnsOn"]);
   assert.deepEqual(restored.properties.rules.required, ["added", "replaced", "removed"]);
-  assert.deepEqual(restored.properties.search.required, ["added", "replaced", "removed", "needKey"]);
+  assert.deepEqual(restored.properties.search.required, ["added", "replaced", "removed", "needKey", "refused"]);
   assert.deepEqual(Object.keys(restored.properties.vision.properties), ["model", "changed", "unresolved"]);
   const notice = openapi.paths["/api/v1/sync"].get.responses["200"].content["application/json"].schema.properties.notice;
   assert.ok(notice.properties.redactionOff && notice.properties.needKey);

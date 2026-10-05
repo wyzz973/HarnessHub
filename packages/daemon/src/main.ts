@@ -1051,6 +1051,7 @@ export async function startHub(options: {
         url: catalogSettings.url,
       },
       app: `HarnessHub ${build.version}`,
+      directories: { dataDir, configDir },
     });
     const sync = new SyncService({
       dataDir,

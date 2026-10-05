@@ -2,9 +2,10 @@
 /**
  * The gateway's features as a backup or a sync carries them
  * (docs/backup-sync.md): outbound redaction (on or off, and the user's
- * rules), the vision model, the web search backends and the usage alert. A search backend's
- * API key follows the providers' rules: the value of a stored key only in a
- * backup with keys, an outside reference as it is. Image endpoints are part
+ * rules), the vision model, the web search backends and the usage alert. A
+ * search backend's API key follows the providers' rules when carried (the
+ * value of a stored key only in a backup with keys, an outside reference as
+ * it is), but only stored keys are brought in. Image endpoints are part
  * of the provider records and travel with them.
  *
  * Bringing them in is a restore (additive: the backup's redaction switch,
@@ -27,6 +28,7 @@ import { parseModelRef } from "@harnesshub/core/model-plane";
 import { isTimestamp } from "@harnesshub/core/model-plane-records";
 import type { BackupSecret } from "./backup.js";
 import type { ManagedSecrets } from "./http/api-v1.js";
+import { referenceText } from "./secret-refs.js";
 
 /** A search backend in a backup: its key like a provider credential's secret. */
 export interface BackupSearchBackend {
@@ -76,6 +78,13 @@ export interface FeaturesRestore {
      * backend is not brought in (add it again with hh gateway search add).
      */
     needKey: string[];
+    /**
+     * Backends whose key the backup names as a reference to a secret
+     * outside HarnessHub's store, with what it names: not brought in, since
+     * only stored keys are (second security review M5); a backend of the
+     * same kind and address here stays as it is.
+     */
+    refused: string[];
   };
   /** The usage alert's threshold after bringing them in (null: off), and whether it changes. */
   alerts: { usagePercent: number | null; changed: boolean };
@@ -165,7 +174,13 @@ export class FeaturesBackup {
       },
       rules: { added: [], replaced: [], removed: [] },
       vision: null,
-      search: { added: [], replaced: [], removed: [], needKey: [] },
+      search: {
+        added: [],
+        replaced: [],
+        removed: [],
+        needKey: [],
+        refused: [],
+      },
       alerts: { usagePercent: null, changed: false },
     };
     // Rules by name, as the validator compares them.
@@ -209,9 +224,19 @@ export class FeaturesBackup {
         const at = remaining.findIndex((own) => sameBackend(own, item));
         const own = at >= 0 ? remaining.splice(at, 1)[0] : undefined;
         let credential: SecretReference | undefined;
+        if (item.key?.source === "reference") {
+          // A crafted file could have the key read from any secret here
+          // and sent to the backend's address: only stored keys come in.
+          summary.search.refused.push(
+            `${label(item)}: its key would be read from ${referenceText(item.key.kind, item.key.name)}; only keys stored in HarnessHub are restored`,
+          );
+          if (own) {
+            replaced.set(own, own);
+            brought.push(own);
+          }
+          continue;
+        }
         if (item.key === undefined) credential = undefined;
-        else if (item.key.source === "reference")
-          credential = { kind: item.key.kind, value: item.key.name };
         else if (item.key.value !== undefined) {
           if (
             own?.credential?.kind === "store" &&

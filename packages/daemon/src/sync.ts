@@ -114,6 +114,11 @@ export interface SyncNotice {
   redactionOff?: true;
   /** Search backends the server carries without a key and this machine has none for: not brought in. */
   needKey?: string[];
+  /**
+   * Left out (second security review M5): provider credentials naming
+   * HarnessHub's own secrets, and search keys that are references.
+   */
+  refused?: string[];
 }
 
 /** `<dataDir>/sync/state.json`: what the last sync saw. */
@@ -678,6 +683,7 @@ export class SyncService {
     const kept: string[] = [];
     let redactionOff = false;
     const needKey: string[] = [];
+    const refused: string[] = [];
     for (const part of bring)
       if (part === "features") {
         if (!remoteBundle.gatewayFeatures) continue;
@@ -689,9 +695,12 @@ export class SyncService {
           this.log.info("sync.redaction_off", {});
         }
         needKey.push(...brought.search.needKey);
-      } else if (part === "providers")
-        kept.push(...(await backups.bringProviders(remoteBundle, true)).kept);
-      else if (part === "agents")
+        refused.push(...brought.search.refused);
+      } else if (part === "providers") {
+        const mirrored = await backups.bringProviders(remoteBundle, true);
+        kept.push(...mirrored.kept);
+        refused.push(...mirrored.refused);
+      } else if (part === "agents")
         await backups.bringAgents(remoteBundle.agents, config.agents);
       else if (part === "profiles")
         await backups.bringProfiles(remoteBundle.profiles ?? [], true);
@@ -738,7 +747,8 @@ export class SyncService {
       there.length ||
       kept.length ||
       redactionOff ||
-      needKey.length
+      needKey.length ||
+      refused.length
     )
       state.notice = {
         at: new Date(this.now_()).toISOString(),
@@ -748,6 +758,7 @@ export class SyncService {
         ...(kept.length ? { kept } : {}),
         ...(redactionOff ? { redactionOff: true as const } : {}),
         ...(needKey.length ? { needKey } : {}),
+        ...(refused.length ? { refused } : {}),
       };
     if (!same(M, R)) await push(merged, version.etag);
     state.local = now;

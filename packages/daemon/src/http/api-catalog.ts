@@ -2413,20 +2413,21 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     title: "恢复备份",
     group: "backup",
     request:
-      "backup（备份文件的 JSON）、passphrase；agents 缺省 true，false 时不重新接线；library 缺省 true，false 时不带入 Library；dryRun 缺省 false，true 时只返回摘要。请求体上限 64 MiB。",
+      "backup（备份文件的 JSON）、passphrase；agents 缺省 true，false 时不重新接线；library 缺省 true，false 时不带入 Library；references 缺省 false，true 时确认恢复 providers.references 中从 HarnessHub 秘密存储以外读取 Key 的凭证；dryRun 缺省 false，true 时只返回摘要。请求体上限 64 MiB。",
     response:
-      "200：摘要 providers（added、replaced、needKey）、groups（added、replaced、skipped）、overrides、profiles（added、replaced）、library（instructions、mcp、skills 各 added、replaced、removed，mcp.needSecret、skills.incomplete、refused[]；备份没有或 library=false 时为 null）、gatewayFeatures（redaction 的 enabled、turnsOff（关闭本机开着的出站脱敏，须提示）与 turnsOn，rules 与 search 各 added、replaced、removed，search.needKey，vision 的 model、changed 与 unresolved（恢复后本机没有的模型或路由组，仍设置），alerts 的 usagePercent（恢复后的用量提醒阈值，关闭为 null）与 changed；备份没有时为 null）、gatewayShare（action、settings、error）、catalog（backup、current、differs）、agents[]（agent、model、tiers、effort、options、models、deny 与 action=wire|unchanged|skip-*，恢复后 outcome=wired|failed 与 error）、clientKeys（需重新签发；旧备份的 tokensPerDay 与 costPerMonthUsd 转换为 budgets，值为 0 的上限保留）。",
+      "200：摘要 providers（added、replaced、needKey、signInAgain、signedInHere，references（Key 从环境变量、文件或钥匙串条目读取并发往 provider 的凭证：provider、credential、kind、name、hosts；本机已同样读取的不列）与 refused（指向 HarnessHub 自己的变量或文件、永不恢复的凭证：provider、credential、kind、name、reason））、groups（added、replaced、skipped）、overrides、profiles（added、replaced）、library（instructions、mcp、skills 各 added、replaced、removed，mcp.needSecret、skills.incomplete、refused[]；备份没有或 library=false 时为 null）、gatewayFeatures（redaction 的 enabled、turnsOff（关闭本机开着的出站脱敏，须提示）与 turnsOn，rules 与 search 各 added、replaced、removed，search.needKey，search.refused（备份把 Key 写成外部引用的搜索后端及其指向，不恢复），vision 的 model、changed 与 unresolved（恢复后本机没有的模型或路由组，仍设置），alerts 的 usagePercent（恢复后的用量提醒阈值，关闭为 null）与 changed；备份没有时为 null）、gatewayShare（action、settings、error）、catalog（backup、current、differs）、agents[]（agent、model、tiers、effort、options、models、deny 与 action=wire|unchanged|skip-*，恢复后 outcome=wired|failed 与 error）、clientKeys（需重新签发；旧备份的 tokensPerDay 与 costPerMonthUsd 转换为 budgets，值为 0 的上限保留）。",
     implementation:
       "BackupService.restore：解密并校验内容后逐条写入：同 id 的 provider 与同名 profile 替换、其余新增（不带 Key 的备份保留本机凭证；新凭证先写入密钥存储，provider 写失败则删除），路由组，Library 的条目（LibraryService.bring：逐条按 Library API 的规则与 SECRET_REF_FORBIDDEN 检查，被拒的不写入，没有值的 store 秘密沿用本机同名服务的，保留原时间），网关功能（GatewayFeaturesFile.replace：出站脱敏的开关取备份的，规则按名称、搜索后端按种类与地址替换或新增，搜索 Key 同 provider 凭证的规则，没有值且本机没有的后端不写入并列入 needKey），局域网共享设置（GatewayShare.update），再对本机已安装的 Agent 经 AgentWiringService 的 plan 与 wire（expect 为该预览）按 model、models、tiers、effort 与 options 以新的 agent: Key 接线，隐藏的模型不同时经 setHidden 设置。",
     effects:
       "非 dryRun 时写入 providers、模型覆盖与来源、路由组、接线 profile、<dataDir>/library 与密钥存储，可能改写 gateway-features.json、gateway-sharing.json 与 Agent 配置文件（Library 不写入 Agent，另经 /library/sync）；不删除任何本机记录；单条失败的 Agent 接线不影响其余项。",
     errors:
-      "400 BACKUP_PASSPHRASE（口令错误或文件被改）、BACKUP_INVALID、BACKUP_UNSUPPORTED（更新版本的备份）；413 PAYLOAD_TOO_LARGE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json。",
+      "400 BACKUP_PASSPHRASE（口令错误或文件被改）、BACKUP_INVALID、BACKUP_UNSUPPORTED（更新版本的备份）；409 BACKUP_REFERENCES（有 providers.references 而没有 references: true，什么都不写）；413 PAYLOAD_TOO_LARGE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json。",
     source: "packages/daemon/src/http/backup-routes.ts",
     tests: [
       "tests/integration/backup-restore.test.ts",
       "tests/integration/backup-library.test.ts",
       "tests/integration/groups-budgets.test.ts",
+      "tests/integration/backup-sync-security.test.ts",
     ],
     operationId: "hh_api_v1_restore_backup",
   },

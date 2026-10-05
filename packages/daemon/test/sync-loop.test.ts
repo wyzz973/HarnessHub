@@ -60,7 +60,7 @@ const bundle: BackupBundle = {
 const backups: SyncBackups = {
   collect: async () => structuredClone(bundle),
   lastChange: async () => undefined,
-  bringProviders: async () => ({ kept: [] }),
+  bringProviders: async () => ({ kept: [], refused: [] }),
   bringAgents: async () => [],
   bringProfiles: async () => undefined,
   bringLibrary: async () => ({
@@ -75,7 +75,7 @@ const backups: SyncBackups = {
     redaction: { enabled: true, turnsOff: false, turnsOn: false },
     rules: { added: [], replaced: [], removed: [] },
     vision: null,
-    search: { added: [], replaced: [], removed: [], needKey: [] },
+    search: { added: [], replaced: [], removed: [], needKey: [], refused: [] },
     alerts: { usagePercent: null, changed: false },
   }),
   serial: (action) => action(),

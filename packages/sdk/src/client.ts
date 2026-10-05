@@ -789,6 +789,27 @@ export interface RestoreSummary {
     signInAgain: string[];
     /** The backup's providers whose ID is a subscription provider here, which is kept. */
     signedInHere: string[];
+    /**
+     * Credentials whose key would be read from an environment variable, a
+     * file or a keychain item and sent to the provider's hosts; restoring
+     * them needs `references: true`. Those read the same way here already
+     * are not listed.
+     */
+    references: {
+      provider: string;
+      credential: string;
+      kind: "env" | "file" | "keychain";
+      name: string;
+      hosts: string[];
+    }[];
+    /** Credentials naming HarnessHub's own variables or files: never restored. */
+    refused: {
+      provider: string;
+      credential: string;
+      kind: "env" | "file" | "keychain";
+      name: string;
+      reason: string;
+    }[];
   };
   groups: { added: string[]; replaced: string[]; skipped: string[] };
   overrides: number;
@@ -840,6 +861,8 @@ export interface RestoreSummary {
       removed: string[];
       /** No key in the backup or here: not brought in. */
       needKey: string[];
+      /** Keys the backup names as references outside HarnessHub's store, with what they name: not brought in. */
+      refused: string[];
     };
     /** The usage alert's threshold after the restore (null: off) and whether it changes. */
     alerts: { usagePercent: number | null; changed: boolean };
@@ -928,6 +951,8 @@ export interface SyncStatus {
     redactionOff?: true;
     /** Search backends the server carries without a key and this machine has none for. */
     needKey?: string[];
+    /** Provider credentials naming HarnessHub's own secrets and search keys that are references, left out. */
+    refused?: string[];
   };
   secretBackend: "keychain" | "dpapi" | "file";
   warnings?: string[];
@@ -1795,6 +1820,8 @@ export class HarnessHubClient {
       agents?: boolean;
       /** Bring the Library's items in (default true); agents' files are synced with `library.sync`. */
       library?: boolean;
+      /** Confirms the credentials in `providers.references`; without it such a restore is 409 `BACKUP_REFERENCES`. */
+      references?: boolean;
       dryRun?: boolean;
     }) => this.request<RestoreSummary>("POST", "restore", { body: input }),
   };

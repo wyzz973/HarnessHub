@@ -186,6 +186,7 @@ void test("a backup carries the gateway features, and a restore on a fresh machi
       replaced: [],
       removed: [],
       needKey: [],
+      refused: [],
     },
     alerts: { usagePercent: 75, changed: true },
   });
@@ -251,7 +252,13 @@ void test("a backup carries the gateway features, and a restore on a fresh machi
     redaction: { enabled: false, turnsOff: false, turnsOn: false },
     rules: { added: [], replaced: [], removed: [] },
     vision: { model: "seer/eyes", changed: false },
-    search: { added: [], replaced: [], removed: [], needKey: [] },
+    search: {
+      added: [],
+      replaced: [],
+      removed: [],
+      needKey: [],
+      refused: [],
+    },
     alerts: { usagePercent: 75, changed: false },
   });
 });
@@ -277,6 +284,7 @@ void test("without keys a search backend keeps this machine's key, or is listed 
     replaced: [],
     removed: [],
     needKey: ["tavily"],
+    refused: [],
   });
   assert.deepEqual(
     (await fresh.client.gatewayFeatures.get()).search?.backends.map(

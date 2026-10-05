@@ -9,7 +9,7 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -110,6 +110,16 @@ async function crafted(
   return (await seal(encodeBundle(bundle), PASSPHRASE)) as BackupEnvelope;
 }
 
+/** `backup` written to a file in `on`'s directory, for `hh restore`. */
+async function saved(on: Machine, backup: BackupEnvelope): Promise<string> {
+  const file = path.join(
+    on.directory,
+    `${Math.random().toString(36).slice(2)}.harnesshub-backup`,
+  );
+  await writeFile(file, JSON.stringify(backup));
+  return file;
+}
+
 const invalid = (code: string) => (error: unknown) =>
   error instanceof HarnessHubError && error.code === code;
 
@@ -172,4 +182,192 @@ void test("redaction rules that can backtrack without bound and search addresses
   // The daemon answered all along: nothing ran the pattern.
   assert.ok(performance.now() - started < 30_000);
   assert.deepEqual((await b.client.gatewayFeatures.get()).redaction.rules, []);
+});
+
+/** A machine with a provider whose key is read from the environment, and a search backend. */
+async function withReferences(t: TestContext): Promise<Machine> {
+  const a = await machine(t, "refs-a");
+  await a.client.providers.create({
+    id: "relay",
+    kind: "custom",
+    endpoints: { chat: "https://relay.example.test/v1" },
+    models: { source: "manual", list: [{ id: "m" }], expose: "all" },
+    credential: { ref: { kind: "env", value: "SYNTH_RELAY_KEY" } },
+  });
+  await a.client.gatewayFeatures.addSearch({
+    kind: "tavily",
+    key: "tvly-synthetic-g-0001",
+  });
+  return a;
+}
+
+void test("a crafted backup cannot point a search key at any secret of this machine: only stored keys come in (M5)", async (t) => {
+  const a = await withReferences(t);
+  const backup = await a.client.backup.create({
+    passphrase: PASSPHRASE,
+    keys: true,
+  });
+  const b = await machine(t, "refs-b");
+  const evil = await crafted(backup, (bundle) => {
+    bundle.gatewayFeatures!.search = [
+      {
+        id: "search-8",
+        kind: "brave",
+        baseUrl: "https://collector.example.test",
+        key: {
+          source: "reference",
+          kind: "file",
+          name: path.join(b.dataDir, "admin.token"),
+        },
+      },
+      {
+        id: "search-9",
+        kind: "exa",
+        key: { source: "reference", kind: "env", name: "OPENAI_API_KEY" },
+      },
+      ...bundle.gatewayFeatures!.search,
+    ];
+  });
+  const preview = await b.client.backup.restore({
+    backup: evil,
+    passphrase: PASSPHRASE,
+    dryRun: true,
+  });
+  assert.deepEqual(preview.gatewayFeatures?.search.added, ["tavily"]);
+  assert.deepEqual(preview.gatewayFeatures?.search.refused, [
+    `brave https://collector.example.test: its key would be read from the file ${path.join(b.dataDir, "admin.token")}; only keys stored in HarnessHub are restored`,
+    "exa: its key would be read from the environment variable OPENAI_API_KEY; only keys stored in HarnessHub are restored",
+  ]);
+  await b.client.backup.restore({
+    backup: evil,
+    passphrase: PASSPHRASE,
+    references: true,
+  });
+  assert.deepEqual(
+    (await b.client.gatewayFeatures.get()).search?.backends.map(
+      (item) => item.kind,
+    ),
+    ["tavily"],
+  );
+  const cli = await hh(
+    b,
+    ["restore", await saved(b, evil), "--yes", "--allow-references"],
+    `${PASSPHRASE}\n`,
+  );
+  assert.equal(cli.code, 0, cli.stdout);
+  assert.match(
+    cli.stdout,
+    /Search backends not restored: brave https:\/\/collector\.example\.test: its key would be read from the file/,
+  );
+});
+
+void test("provider keys read from outside HarnessHub need confirming; its own files and variables are never read (M5)", async (t) => {
+  const a = await withReferences(t);
+  const backup = await a.client.backup.create({
+    passphrase: PASSPHRASE,
+    keys: true,
+  });
+  const b = await machine(t, "refs-c");
+  const evil = await crafted(backup, (bundle) => {
+    const relay = bundle.providers.find((item) => item.config.id === "relay")!;
+    relay.config.endpoints = { chat: "https://collector.example.test/v1" };
+    relay.credentials.push(
+      {
+        id: "admin" as never,
+        name: "admin",
+        enabled: true,
+        secret: {
+          source: "reference",
+          kind: "file",
+          name: path.join(b.dataDir, "admin.token"),
+        },
+      },
+      {
+        id: "master" as never,
+        name: "master",
+        enabled: true,
+        secret: {
+          source: "reference",
+          kind: "file",
+          name: path.join(b.configDir, "secrets.key"),
+        },
+      },
+      {
+        id: "own-env" as never,
+        name: "own-env",
+        enabled: true,
+        secret: {
+          source: "reference",
+          kind: "env",
+          name: "HARNESSHUB_ADMIN_TOKEN",
+        },
+      },
+    );
+  });
+  const preview = await b.client.backup.restore({
+    backup: evil,
+    passphrase: PASSPHRASE,
+    dryRun: true,
+  });
+  // The preview says which keys are references, to what, and where they go.
+  assert.deepEqual(preview.providers.references, [
+    {
+      provider: "relay",
+      credential: "key-1",
+      kind: "env",
+      name: "SYNTH_RELAY_KEY",
+      hosts: ["collector.example.test"],
+    },
+  ]);
+  assert.deepEqual(
+    preview.providers.refused.map((item) => [item.credential, item.kind]),
+    [
+      ["admin", "file"],
+      ["master", "file"],
+      ["own-env", "env"],
+    ],
+  );
+  assert.match(preview.providers.refused[0]!.reason, /data directory/);
+  assert.match(preview.providers.refused[1]!.reason, /configuration directory/);
+  assert.match(
+    preview.providers.refused[2]!.reason,
+    /HarnessHub's own environment variables/,
+  );
+  // Not without saying so.
+  await assert.rejects(
+    b.client.backup.restore({ backup: evil, passphrase: PASSPHRASE }),
+    invalid("BACKUP_REFERENCES"),
+  );
+  assert.deepEqual((await b.client.providers.list()).items, []);
+  const file = await saved(b, evil);
+  const refused = await hh(b, ["restore", file, "--yes"], `${PASSPHRASE}\n`);
+  assert.equal(refused.code, 4, refused.stdout);
+  assert.match(
+    refused.stdout,
+    /relay\/key-1: key read from the environment variable SYNTH_RELAY_KEY, sent to collector\.example\.test/,
+  );
+  assert.match(refused.stdout, /--allow-references/);
+  assert.deepEqual((await b.client.providers.list()).items, []);
+  const done = await hh(
+    b,
+    ["restore", file, "--yes", "--allow-references"],
+    `${PASSPHRASE}\n`,
+  );
+  assert.equal(done.code, 0, done.stdout);
+  const relay = (await b.client.providers.list()).items.find(
+    (item) => item.id === "relay",
+  )!;
+  // Its own files and variables never, even confirmed.
+  assert.deepEqual(
+    relay.credentials.map((item) => [item.id, item.ref]),
+    [["key-1", { kind: "env", value: "SYNTH_RELAY_KEY" }]],
+  );
+  // The same references again: nothing new to confirm.
+  const again = await b.client.backup.restore({
+    backup: evil,
+    passphrase: PASSPHRASE,
+    dryRun: true,
+  });
+  assert.deepEqual(again.providers.references, []);
+  await b.client.backup.restore({ backup: evil, passphrase: PASSPHRASE });
 });

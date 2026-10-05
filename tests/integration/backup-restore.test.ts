@@ -130,7 +130,7 @@ async function populate(a: Daemon, fake: FakeProvider): Promise<void> {
   });
   await a.client.credentials.add("fake", {
     name: "from-env",
-    ref: { kind: "env", value: "HH_SYNTHETIC_UNSET_KEY" },
+    ref: { kind: "env", value: "SYNTHETIC_UNSET_PROVIDER_KEY" },
     enabled: false,
   });
   await a.client.providers.create({
@@ -239,7 +239,7 @@ void test("a backup holds providers, keys, groups, overrides, wirings and settin
   assert.deepEqual(bundle.providers[0]!.credentials[1]!.secret, {
     source: "reference",
     kind: "env",
-    name: "HH_SYNTHETIC_UNSET_KEY",
+    name: "SYNTHETIC_UNSET_PROVIDER_KEY",
   });
   assert.deepEqual(
     bundle.providers[0]!.overrides.map((item) => item.ref),
@@ -335,6 +335,17 @@ void test("restore replaces providers with the same id, adds the others and re-w
     needKey: [],
     signInAgain: [],
     signedInHere: [],
+    // An outside reference is shown with where its key goes, and confirmed.
+    references: [
+      {
+        provider: "fake",
+        credential: "key-2",
+        kind: "env",
+        name: "SYNTHETIC_UNSET_PROVIDER_KEY",
+        hosts: [new URL(fake.url).host],
+      },
+    ],
+    refused: [],
   });
   assert.deepEqual(summary.groups, {
     added: ["pair"],
@@ -358,6 +369,7 @@ void test("restore replaces providers with the same id, adds the others and re-w
   const result = await b.client.backup.restore({
     backup: sealed,
     passphrase: PASSPHRASE,
+    references: true,
   });
   assert.deepEqual(
     result.agents.map((agent) => [agent.agent, agent.outcome]),
@@ -445,6 +457,7 @@ void test("a restore without keys keeps this machine's key, flags providers left
   const result = await c.client.backup.restore({
     backup: sealed,
     passphrase: PASSPHRASE,
+    references: true,
   });
   assert.deepEqual(result.providers.needKey, ["second"]);
   assert.deepEqual(
@@ -538,6 +551,7 @@ void test("restore carries tiers, effort, hidden models and wiring profiles thro
   const result = await b.client.backup.restore({
     backup: sealed,
     passphrase: PASSPHRASE,
+    references: true,
   });
   assert.deepEqual(
     result.agents.map((agent) => [agent.agent, agent.outcome, agent.error]),
@@ -655,9 +669,17 @@ void test(
     assert.equal(wrong.code, 2, wrong.stderr);
     assert.match(wrong.stderr, /BACKUP_PASSPHRASE/);
 
-    const done = await hh(
+    // The backup's env-referenced key needs confirming beyond --yes.
+    const outside = await hh(
       b.directory,
       [...restoreArgs, "--yes", "--no-agents"],
+      `${PASSPHRASE}\n`,
+    );
+    assert.equal(outside.code, 4, outside.stderr);
+    assert.match(outside.stderr, /--allow-references/);
+    const done = await hh(
+      b.directory,
+      [...restoreArgs, "--yes", "--no-agents", "--allow-references"],
       `${PASSPHRASE}\n`,
     );
     assert.equal(done.code, 0, done.stderr);
@@ -711,6 +733,8 @@ void test("subscription providers stay on their machine: left out of backups, sk
     needKey: [],
     signInAgain: [],
     signedInHere: [],
+    references: [],
+    refused: [],
   });
   assert.deepEqual(
     (await b.client.providers.list()).items.map((item) => item.id).sort(),
@@ -783,6 +807,8 @@ void test("a backup from before subscriptions were left out restores without the
     needKey: [],
     signInAgain: ["chatgpt"],
     signedInHere: ["copilot"],
+    references: [],
+    refused: [],
   };
   const dry = await b.client.backup.restore({
     backup,

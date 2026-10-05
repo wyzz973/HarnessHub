@@ -78,6 +78,11 @@ import {
   type LibraryRestore,
 } from "./library-backup.js";
 import type { LibraryService } from "./library-service.js";
+import {
+  ownSecretProblem,
+  referenceText,
+  type OwnDirectories,
+} from "./secret-refs.js";
 import type { ManagedSecrets } from "./http/api-v1.js";
 import type {
   GatewayShareControl,
@@ -215,7 +220,28 @@ export interface BackupServiceOptions {
   catalog: CatalogSettingsBackup;
   /** `HarnessHub <version>`. */
   app: string;
+  /** Where HarnessHub's own credentials are: never read for a backup's reference. */
+  directories: OwnDirectories;
   clock?: () => Date;
+}
+
+/** A provider credential whose key a backup reads from outside HarnessHub's store. */
+export interface ReferenceUse {
+  provider: string;
+  credential: string;
+  kind: "env" | "file" | "keychain";
+  name: string;
+  /** Where the provider sends it: its endpoints' hosts. */
+  hosts: string[];
+}
+
+/** A credential left out because its reference names HarnessHub's own secrets. */
+export interface RefusedReference {
+  provider: string;
+  credential: string;
+  kind: "env" | "file" | "keychain";
+  name: string;
+  reason: string;
 }
 
 export type AgentAction =
@@ -246,6 +272,15 @@ export interface RestoreSummary {
      * machine's sign-ins are kept and the backup's provider is not restored.
      */
     signedInHere: string[];
+    /**
+     * Credentials whose key would be read from an environment variable, a
+     * file or a keychain item, and sent to the provider's hosts (second
+     * security review M5); those this machine already has the same way are
+     * not listed. Restoring them must be confirmed (`references`).
+     */
+    references: ReferenceUse[];
+    /** Credentials naming HarnessHub's own secrets: never restored. */
+    refused: RefusedReference[];
   };
   groups: {
     added: string[];
@@ -295,6 +330,8 @@ export interface RestoreSummary {
 export interface MirrorResult {
   /** Providers and groups the server no longer holds, kept because Gateway Keys still allow them. */
   kept: string[];
+  /** `<provider>/<credential>: <reason>` of credentials naming HarnessHub's own secrets, left out. */
+  refused: string[];
 }
 
 /**
@@ -339,9 +376,13 @@ export class BackupService {
    * Opens a sealed backup and shows what restoring it would do
    * (`dryRun`), or restores it: providers, then groups, the sharing
    * settings, and the agents installed here (unless `agents` is false),
-   * each through the agent wiring service's plan and apply.
+   * each through the agent wiring service's plan and apply. Credentials
+   * whose keys the backup reads from outside HarnessHub's store
+   * (`providers.references`) are restored only with `references`.
    *
-   * @throws BackupError for a backup that does not open or is invalid.
+   * @throws BackupError for a backup that does not open or is invalid;
+   *   HubError `BACKUP_REFERENCES` (409) for a restore with such
+   *   credentials without `references`, before anything is written.
    */
   async restore(input: {
     backup: unknown;
@@ -349,13 +390,30 @@ export class BackupService {
     agents: boolean;
     /** Bring the Library in; default true. */
     library?: boolean;
+    /** Confirms the credentials listed in `providers.references`. */
+    references?: boolean;
     dryRun: boolean;
   }): Promise<RestoreSummary> {
     const bundle = decodeBundle(await open(input.backup, input.passphrase));
     const library = input.library !== false;
     return this.serial(async () => {
       const summary = await this.summarize(bundle, input.agents, library);
-      return input.dryRun ? summary : this.apply(bundle, summary, library);
+      if (input.dryRun) return summary;
+      const outside = summary.providers.references;
+      if (outside.length && input.references !== true)
+        throw new HubError(
+          "BACKUP_REFERENCES",
+          `This backup reads ${outside.length === 1 ? "a key" : `${outside.length} keys`} from outside HarnessHub's store and sends ${outside.length === 1 ? "it" : "them"} to the provider: ${outside
+            .map(
+              (item) =>
+                `${item.provider}/${item.credential} from ${referenceText(item.kind, item.name)} to ${item.hosts.join(", ") || "no endpoint"}`,
+            )
+            .join(
+              "; ",
+            )}. Restore with references confirmed only if you expect that.`,
+          409,
+        );
+      return this.apply(bundle, summary, library);
     });
   }
 
@@ -466,9 +524,10 @@ export class BackupService {
         .filter((item) => item.subscription)
         .map((item) => item.id as string),
     );
+    const refused: string[] = [];
     for (const provider of bundle.providers)
       if (!provider.config.subscription && !signedIn.has(provider.config.id))
-        await this.writeProvider(provider, bundle.keys);
+        refused.push(...(await this.writeProvider(provider, bundle.keys)));
     const providers = new Set<string>(
       (await store.listProviders()).map((item) => item.id),
     );
@@ -476,7 +535,7 @@ export class BackupService {
       if (memberProviders(group).every((id) => providers.has(id)))
         await store.putRouteGroup(group);
     const kept: string[] = [];
-    if (!mirror) return { kept };
+    if (!mirror) return { kept, refused };
     const allowed = (await store.listGatewayKeys())
       .filter((key) => key.revokedAt === undefined)
       .flatMap((key) => key.modelAllow);
@@ -506,7 +565,7 @@ export class BackupService {
           await this.options.secrets.delete(credential.ref);
       await store.deleteProvider(provider.id);
     }
-    return { kept };
+    return { kept, refused };
   }
 
   /**
@@ -589,7 +648,13 @@ export class BackupService {
         },
         rules: { added: [], replaced: [], removed: [] },
         vision: null,
-        search: { added: [], replaced: [], removed: [], needKey: [] },
+        search: {
+          added: [],
+          replaced: [],
+          removed: [],
+          needKey: [],
+          refused: [],
+        },
         alerts: { usagePercent: null, changed: false },
       };
     return this.features.bring(part, {
@@ -655,6 +720,8 @@ export class BackupService {
       needKey: [],
       signInAgain: [],
       signedInHere: [],
+      references: [],
+      refused: [],
     };
     for (const provider of bundle.providers) {
       const local = here.get(provider.config.id);
@@ -673,6 +740,34 @@ export class BackupService {
         credentialPlan(provider, local, bundle.keys).length === 0
       )
         providers.needKey.push(provider.config.id);
+      for (const item of provider.credentials) {
+        if (item.secret.source !== "reference") continue;
+        const { kind, name } = item.secret;
+        const reason = await ownSecretProblem(
+          { kind, value: name },
+          this.options.directories,
+        );
+        if (reason) {
+          providers.refused.push({
+            provider: provider.config.id,
+            credential: item.id,
+            kind,
+            name,
+            reason,
+          });
+          continue;
+        }
+        // The same reference this machine already reads: nothing new.
+        const own = local?.credentials.find((entry) => entry.id === item.id);
+        if (own?.ref.kind === kind && own.ref.value === name) continue;
+        providers.references.push({
+          provider: provider.config.id,
+          credential: item.id,
+          kind,
+          name,
+          hosts: endpointHosts(provider.config),
+        });
+      }
     }
     const ids = new Set([
       ...here.keys(),
@@ -985,19 +1080,30 @@ export class BackupService {
   private async writeProvider(
     provider: BackupProvider,
     keys: boolean,
-  ): Promise<void> {
+  ): Promise<string[]> {
     const { store, secrets } = this.options;
     const local = await store.getProvider(provider.config.id);
     const created: SecretReference[] = [];
     const credentials: ProviderCredential[] = [];
+    const refused: string[] = [];
     for (const entry of credentialPlan(provider, local, keys)) {
       if (entry.own && entry.value === undefined && !entry.reference) {
         credentials.push(entry.own);
         continue;
       }
       let ref: SecretReference;
-      if (entry.reference) ref = entry.reference;
-      else if (
+      if (entry.reference) {
+        // Never HarnessHub's own secrets, whoever confirmed the restore.
+        const reason = await ownSecretProblem(
+          entry.reference,
+          this.options.directories,
+        );
+        if (reason) {
+          refused.push(`${provider.config.id}/${entry.item!.id}: ${reason}`);
+          continue;
+        }
+        ref = entry.reference;
+      } else if (
         entry.own?.ref.kind === "store" &&
         (await this.resolve(entry.own.ref)) === entry.value
       )
@@ -1074,6 +1180,7 @@ export class BackupService {
         )
       )
         await secrets.delete(old.ref);
+    return refused;
   }
 
   private async backupCredential(
@@ -1152,6 +1259,21 @@ function sameIntent(left: AgentIntent, right: AgentIntent): boolean {
       }),
     );
   return normal(left) === normal(right);
+}
+
+/** The hosts a provider's endpoints (and image endpoint) send requests to. */
+function endpointHosts(config: Omit<ProviderConfig, "credentials">): string[] {
+  const hosts = new Set<string>();
+  for (const url of [
+    ...Object.values(config.endpoints),
+    ...(config.imageEndpoint ? [config.imageEndpoint] : []),
+  ])
+    try {
+      if (url) hosts.add(new URL(url).host);
+    } catch {
+      // An address the provider check refuses: the restore stops there.
+    }
+  return [...hosts].sort();
 }
 
 /**
