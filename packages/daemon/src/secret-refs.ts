@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: MIT
 /**
- * References to secrets outside HarnessHub's store, as they come from
- * backups and sync (second security review M5). Such a reference makes the
- * daemon read whatever it names and send it to the provider or search
- * backend the same file names, so a crafted file could have it read the
- * admin token, the secret store or an upstream key from the environment.
- * HarnessHub's own variables and directories are never read for one; any
- * other reference is shown and must be confirmed (restore), and search keys
- * come in only as stored values.
+ * References to secrets outside HarnessHub's store that came from somewhere
+ * else: a backup or a sync (second security review M5), or a Library tool
+ * (07 section 4.6). Such a reference makes the daemon read whatever it
+ * names and hand it to a provider, a search backend or an agent's tool, so
+ * a crafted one could read the admin token, the secret store or an
+ * upstream key. {@link ownSecretProblem} is the one rule for HarnessHub's
+ * own variables and directories, which none of them may name.
  */
 import { realpath } from "node:fs/promises";
 import path from "node:path";
@@ -21,7 +20,8 @@ export interface OwnDirectories {
   configDir: string;
 }
 
-async function canonical(file: string): Promise<string> {
+/** The real path of `file`, or its absolute path while it does not exist. */
+export async function canonicalPath(file: string): Promise<string> {
   const absolute = path.resolve(file);
   try {
     return await realpath(absolute);
@@ -55,12 +55,12 @@ export async function ownSecretProblem(
   if (ref.kind === "env" && /^(HH_|HARNESSHUB_)/i.test(ref.value))
     return `${ref.value} is one of HarnessHub's own environment variables`;
   if (ref.kind !== "file") return undefined;
-  const file = await canonical(ref.value);
+  const file = await canonicalPath(ref.value);
   for (const [root, what] of [
     [directories.dataDir, "data"],
     [directories.configDir, "configuration"],
   ] as const)
-    if (within(await canonical(root), file))
+    if (within(await canonicalPath(root), file))
       return `${ref.value} is in HarnessHub's ${what} directory, which holds its own credentials`;
   return undefined;
 }

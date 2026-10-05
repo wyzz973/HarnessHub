@@ -11,7 +11,6 @@
  * one of HarnessHub's credentials.
  */
 import { createHash, timingSafeEqual } from "node:crypto";
-import { realpath } from "node:fs/promises";
 import path from "node:path";
 import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import { HubError } from "@harnesshub/core/errors";
@@ -37,6 +36,7 @@ import {
   type SkillItem,
 } from "@harnesshub/agents/library/index";
 import type { WiringHome } from "./agents-wiring.js";
+import { canonicalPath, ownSecretProblem } from "./secret-refs.js";
 import {
   SKILL_FILE_LIMIT,
   SKILLS_LIMIT,
@@ -104,28 +104,6 @@ function refsOf(server: Pick<McpServerItem, SecretField>): LibrarySecretRef[] {
     ...Object.values(server.secretEnv ?? {}),
     ...Object.values(server.secretHeaders ?? {}),
   ];
-}
-
-/** The real path of `file`, or its absolute path while it does not exist. */
-async function canonical(file: string): Promise<string> {
-  const absolute = path.resolve(file);
-  try {
-    return await realpath(absolute);
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT")
-      return absolute;
-    throw error;
-  }
-}
-
-function within(root: string, file: string): boolean {
-  const relative = path.relative(root, file);
-  return (
-    relative === "" ||
-    (!relative.startsWith(`..${path.sep}`) &&
-      relative !== ".." &&
-      !path.isAbsolute(relative))
-  );
 }
 
 /**
@@ -840,27 +818,25 @@ export class LibraryService {
 
   /**
    * Why `ref` may not be a tool's secret (07 section 4.6), or undefined:
-   * an `HH_` or `HARNESSHUB_` variable, a file in HarnessHub's data or
-   * configuration directory (admin token, secret store and its master key),
-   * or the same reference as a provider credential (same store id, same
-   * variable, same file after resolving links).
+   * one of HarnessHub's own secrets as backups and sync judge them
+   * (`ownSecretProblem`: an `HH_` or `HARNESSHUB_` variable, a file in its
+   * data or configuration directory), or the same reference as a provider
+   * credential (same store id, same variable, same file after resolving
+   * links).
    */
   private async forbiddenRef(
     ref: LibrarySecretRef,
   ): Promise<string | undefined> {
+    const own = await ownSecretProblem(ref, {
+      dataDir: this.options.dataDir,
+      configDir: this.options.configDir,
+    });
+    if (own) return own;
     const caseless = process.platform === "win32";
     const same = (a: string, b: string) =>
       caseless ? a.toUpperCase() === b.toUpperCase() : a === b;
-    if (ref.kind === "env" && /^(HH_|HARNESSHUB_)/i.test(ref.value))
-      return `${ref.value} is one of HarnessHub's own environment variables`;
-    const file = ref.kind === "file" ? await canonical(ref.value) : undefined;
-    if (file)
-      for (const [root, what] of [
-        [this.options.dataDir, "data"],
-        [this.options.configDir, "configuration"],
-      ] as const)
-        if (within(await canonical(root), file))
-          return `${ref.value} is in HarnessHub's ${what} directory, which holds its own credentials`;
+    const file =
+      ref.kind === "file" ? await canonicalPath(ref.value) : undefined;
     for (const provider of await this.options.providers.listProviders())
       for (const credential of provider.credentials) {
         const other = credential.ref;
@@ -869,7 +845,7 @@ export class LibraryService {
           ref.kind === "env"
             ? same(other.value, ref.value)
             : ref.kind === "file"
-              ? (await canonical(other.value)) === file
+              ? (await canonicalPath(other.value)) === file
               : other.value === ref.value;
         if (match)
           return `it is the reference of credential ${credential.id} of provider ${provider.id}`;

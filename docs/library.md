@@ -36,7 +36,7 @@ Skill 导入时按 [Agent Skills 规范](https://agentskills.io/specification)�
 
 Library 不保存秘密值。MCP 的 `secretEnv` 与 `secretHeaders` 是三种引用之一：`env`（变量名）、`file`（绝对路径）、`store`（HarnessHub 秘密库）。经 API 以 `{secret}` 给出的值（`hh library add` 的 `NAME=stdin`）存入秘密库，条目只保留 `store` 引用，任何响应都不返回值；删除或替换条目时删除它不再使用的 `store` 秘密。命令行不接受秘密值。`env` 与 `headers` 中按惯例携带凭据的名称（`…_TOKEN`、`…_API_KEY`、`…_SECRET`、`Authorization`、`Cookie` 等）以及 URL 中的密钥类查询参数都被拒绝，要求改用秘密引用。
 
-**禁止引用 HarnessHub 自身凭据**（[07 第 4.6 节](proposals/oss/07-data-security.md#46-禁止把-harnesshub-自身凭据作为工具秘密)）：登记与同步时，下列引用以 400 `SECRET_REF_FORBIDDEN` 拒绝，什么都不保存：`HH_`、`HARNESSHUB_` 开头的变量；数据目录与配置目录中的文件（管理令牌、秘密库与其主密钥 `secrets.key`）；与任一 provider Credential 相同的变量名、文件（解析链接后）或 `store` ID。`{secret}` 的值以及同意明文写入时解析出的值另与 Gateway Key（`hhk_` 前缀）、管理令牌和各 provider Credential 的值按 SHA-256 摘要比较，相同即拒绝；在本机无法解析的 Credential（变量未设置、文件缺失）没有可比较的值。`{kind: store}` 只能是该服务已经持有的秘密，不能借此引用其他秘密。
+**禁止引用 HarnessHub 自身凭据**（[07 第 4.6 节](proposals/oss/07-data-security.md#46-禁止把-harnesshub-自身凭据作为工具秘密)）：登记与同步时，下列引用以 400 `SECRET_REF_FORBIDDEN` 拒绝，什么都不保存：`HH_`、`HARNESSHUB_` 开头的变量（不分大小写）；数据目录与配置目录中的文件，包括目录本身与经链接或 `..` 指进去的路径（管理令牌、秘密库与其主密钥 `secrets.key`）——这两条与恢复备份、同步时拒绝 provider 凭证引用的是同一条规则（[secret-refs.ts](../packages/daemon/src/secret-refs.ts)，见[备份与同步](backup-sync.md#恢复)）；与任一 provider Credential 相同的变量名、文件（解析链接后）或 `store` ID。`{secret}` 的值以及同意明文写入时解析出的值另与 Gateway Key（`hhk_` 前缀）、管理令牌和各 provider Credential 的值按 SHA-256 摘要比较，相同即拒绝；在本机无法解析的 Credential（变量未设置、文件缺失）没有可比较的值。`{kind: store}` 只能是该服务已经持有的秘密，不能借此引用其他秘密。
 
 **写入 Agent 时**：Agent 支持在配置中引用环境变量时只写引用，值留在 Agent 自己的环境里；否则默认拒绝同步该服务，加 `--allow-plaintext-secret`（API 的 `allowPlaintextSecret`）才把值写入该 Agent 的文件，预览中的值显示为 `<secret>` 并给出警告。`store` 与 `file` 秘密只能以值的形式写入。
 
