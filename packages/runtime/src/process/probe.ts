@@ -172,12 +172,12 @@ export async function probeConfiguration(
         try {
           process.kill(-child.pid, "SIGKILL");
         } catch (error) {
-          if (!(
-            error instanceof Error &&
-            "code" in error &&
-            error.code === "ESRCH"
-          ))
-            throw error;
+          const code =
+            error instanceof Error && "code" in error ? error.code : undefined;
+          // As in stop(): the child itself is then killed, and the group's
+          // end is confirmed below. Thrown here, it would end the daemon.
+          if (code === "EPERM") child.kill("SIGKILL");
+          else if (code !== "ESRCH") throw error;
         }
     }, 1000);
     try {
@@ -193,9 +193,13 @@ export async function probeConfiguration(
         process.kill(-child.pid, 0);
         process.kill(-child.pid, "SIGKILL");
       } catch (error) {
-        if (error instanceof Error && "code" in error && error.code === "ESRCH")
-          break;
-        throw error;
+        const code =
+          error instanceof Error && "code" in error ? error.code : undefined;
+        if (code === "ESRCH") break;
+        // macOS answers EPERM while the group's last members are zombies
+        // not yet reaped: waited out until ESRCH. A member this user may
+        // not signal never ends, and the cleanup fails at the deadline.
+        if (code !== "EPERM") throw error;
       }
       if (Date.now() >= deadline)
         return {
@@ -215,12 +219,15 @@ export async function probeConfiguration(
         message: "Probe process group remains alive",
       };
     } catch (error) {
-      if (!(
-        error instanceof Error &&
-        "code" in error &&
-        error.code === "ESRCH"
-      ))
-        throw error;
+      const code =
+        error instanceof Error && "code" in error ? error.code : undefined;
+      if (code === "EPERM")
+        return {
+          name: "cleanup",
+          status: "failed",
+          message: "Probe process group remains alive",
+        };
+      if (code !== "ESRCH") throw error;
     }
   return result;
 }

@@ -322,6 +322,7 @@ async function terminateLeaseGroup(
   lease: WorkerLease,
   graceMs: number,
 ): Promise<CleanupStatus> {
+  let refused = false;
   for (const signal of ["SIGTERM", "SIGKILL"] as const) {
     const current = await identity(lease);
     if (current === "gone") return "confirmed";
@@ -329,12 +330,13 @@ async function terminateLeaseGroup(
     try {
       process.kill(-lease.pid, signal);
     } catch (error) {
-      if (!(
-        error instanceof Error &&
-        "code" in error &&
-        error.code === "ESRCH"
-      ))
-        return "failed";
+      const code =
+        error instanceof Error && "code" in error ? error.code : undefined;
+      if (code !== "ESRCH" && code !== "EPERM") return "failed";
+      // macOS answers EPERM while the group's last members are zombies not
+      // yet reaped: the wait below sees it end. A member this user may not
+      // signal keeps the group, and the release fails after the wait.
+      if (code === "EPERM") refused = true;
     }
     const deadline = Date.now() + graceMs;
     while (Date.now() < deadline) {
@@ -345,7 +347,6 @@ async function terminateLeaseGroup(
     }
     // The next escalation rechecks the root identity. Orphan groups with a lost root stay unconfirmed.
   }
-  return !exists(lease.pid) && !exists(-lease.pid)
-    ? "confirmed"
-    : "unconfirmed";
+  if (!exists(lease.pid) && !exists(-lease.pid)) return "confirmed";
+  return refused ? "failed" : "unconfirmed";
 }

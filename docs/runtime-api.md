@@ -79,6 +79,7 @@ POSIX 上 Worker 自成会话与进程组，清理先按组发送 SIGTERM、再 
 - Linux 的 `hidepid` 挂载下，无权读取的 `/proc/<pid>` 记录（EACCES/EPERM）被跳过，只记入日志中的 `hidden` 计数，不使结果变为 `unconfirmed`（`hidepid=2` 下它们根本不出现）。因此在 `hidepid` 主机上，`confirmed` 不覆盖 Gateway 读不到的 Worker 后代：其他用户的进程（`sudo`、setuid 执行）与同用户的不可 dump 进程，即使父链完整。快照中看不到 Gateway 自身时按读不到快照处理，结果为 `unconfirmed`。
 - 重启恢复以 lease 中的 token 作为标记执行同一检查；旧 Worker 仍存活并通过身份核实时，同样先记录其进程树。快照显示 Gateway 自身或其祖先在被租用的进程组中，或者读不到快照时，恢复不发送任何信号，直接返回 `unconfirmed`。
 - 不会向未被证明归属的进程发送信号。Gateway 自身及其祖先永不归属，归属也不经由它们向下传递；进程组只在快照显示组长和所有成员都归属时整体发信号；PID 或进程组 0、1 以及 Gateway 自己的进程组在发信号前一律被拒绝。
+- 进程组只剩尚未回收的僵尸时，macOS 对 `kill(-pgid)` 回答 EPERM 而不是 ESRCH（2026-10-05 在 macOS arm64 上 3/3 观察到：组内只剩一个父进程未回收的僵尸时，信号 0 与 SIGKILL 都是 EPERM，僵尸被回收后变为 ESRCH）。Worker 关闭、重启恢复（lease）与配置探测的清理都把 EPERM 当作组还在，在有界的等待中等到 ESRCH；一直是 EPERM（例如组中有其他用户的进程）时，Worker 关闭为 `unconfirmed`，lease 恢复为 `failed`，探测的清理检查失败。探测在 SIGTERM 后 1 秒对组发 SIGKILL，遇到 EPERM 时改为直接结束子进程，不在计时器中抛出。
 
 标记会被 Run 启动的所有进程继承，包括 Run 首次启动的共享守护进程和应用：tmux 或 screen 服务器（及其全部窗格）、ssh 的 ControlPersist 主连接、gpg-agent、Gradle/Bazel/Nx 守护进程、以分离方式启动的 GUI 应用（例如 VS Code 尚未运行时执行的 `code .`），以及它们之后为用户启动的一切。清理时这些进程连同其后代一起被结束；此前它们在调用 setsid 后会留存。在旧 Worker 树中启动的新 Gateway 在恢复时不会结束自己，但同样带有旧标记的兄弟进程（例如同一 IDE 的其他终端）会被结束。
 
