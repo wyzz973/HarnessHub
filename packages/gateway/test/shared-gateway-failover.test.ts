@@ -574,6 +574,32 @@ void test("a failing credential rests for as long as its kind says, then gets on
   }
 });
 
+void test("a model mark one key's failure sets holds for that key alone, until another key's failure confirms it", async (t) => {
+  const { gw, tried, chat } = await twoCredentials(
+    t,
+    json(400, {
+      error: {
+        message: "The model `model-a` does not exist",
+        type: "invalid_request_error",
+      },
+    }),
+  );
+  await chat();
+  assert.equal(tried(), 1, "the first key's failure");
+  await chat();
+  assert.equal(tried(), 1, "marked for that key");
+  await chat("other");
+  assert.equal(tried(), 2, "not for another key, which asks too");
+  // Confirmed by another key: marked for every key, for the full time.
+  await chat();
+  await chat("other");
+  assert.equal(tried(), 2, "now marked for all");
+  gw.clock.now += PROVISIONAL_MS + 1_000;
+  await chat();
+  await chat("other");
+  assert.equal(tried(), 2, "for longer than a minute");
+});
+
 void test("one key alone rests a credential a minute at a time; another key's failure gives the full rest", async (t) => {
   const { gw, tried, chat } = await twoCredentials(
     t,
@@ -938,6 +964,32 @@ void test("a rest is decided without the request's own words, which a vendor may
     assert.equal(verdict.failover, true, `${name}: the request fails over`);
     assert.deepEqual(verdict.breaker, { kind: "none" }, `${name}: no rest`);
   }
+  // A relay that quotes the whole request: "model" is a key of it, and
+  // "invalid" is in the error's type, never in what the vendor said.
+  const quoted = JSON.stringify({
+    error: {
+      message: `Invalid request: ${JSON.stringify(request("foo"))}`,
+      type: "invalid_request_error",
+    },
+  });
+  assert.notEqual(failureKind(400, quoted), "model");
+  assert.notEqual(failureKind(400, echoFree(quoted, request("foo"))), "model");
+  // The vendor's code says it too.
+  assert.equal(
+    failureKind(400, '{"error":{"code":"model_not_found","message":"x"}}'),
+    "model",
+  );
+  // A prompt holding the error JSON's own keys leaves its message readable.
+  assert.equal(
+    failureKind(
+      400,
+      echoFree('{"error":{"message":"The model gpt-x does not exist"}}', {
+        model: "p/gpt-x",
+        messages: [{ role: "user", content: "error message code type" }],
+      }),
+    ),
+    "model",
+  );
   // The vendor's own words stay: a request that says none of them.
   const own = '{"error":{"message":"The model gpt-x does not exist"}}';
   assert.equal(echoFree(own, request("temperature")), own);

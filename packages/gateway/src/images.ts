@@ -505,7 +505,7 @@ export async function imagesCall(options: {
     for (const candidate of queue) {
       if (signal.aborted)
         return fail(499, "client_cancelled", "The call was cancelled");
-      const admitted = services.breakers.admit(candidate);
+      const admitted = services.breakers.admit(candidate, key.keyId);
       if (!admitted.ok) continue;
       entry.provider = candidate.provider.id;
       entry.credentialId = candidate.credential.id;

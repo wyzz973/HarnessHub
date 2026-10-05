@@ -1140,7 +1140,9 @@ export function withTokenFloor(
  * breaker: 401 and 403 as `auth`; 404 as `model`. A 400 or 422 fails over
  * as Magpie's `retryable` and `shapeRefused` say, unless it is the
  * request's own fault for every provider (`clientFault` words): model-
- * missing words as `model`, refusal words as `refused`, busy words as
+ * missing words in the vendor's message, or its code `model_not_found`
+ * (never the rest of the body: its field names, or a request it echoes),
+ * as `model`, refusal words as `refused`, busy words as
  * `other`, shape words as `shape`. A safety filter's refusal (any status but
  * 429, {@link policyRefusal}) comes first, as `policy`. 408 and 5xx are
  * `other`; everything else is `request`. A context overflow is a `request`
@@ -1168,7 +1170,9 @@ export function failureKind(status: number, text: string): FailureKind {
   if (status === 404) return "model";
   if (status === 400 || status === 422) {
     if (words.clientFault.test(text)) return "request";
-    if (words.modelMissing.test(text)) return "model";
+    const said = vendorSaid(text);
+    if (words.modelMissing.test(said.message) || MODEL_CODE.test(said.code))
+      return "model";
     if (words.refused.test(text)) return "refused";
     if (words.busy.test(text)) return "other";
     if (words.shape.test(text)) return "shape";
@@ -1178,22 +1182,63 @@ export function failureKind(status: number, text: string): FailureKind {
   return "request";
 }
 
+/** The code a vendor gives an error for a model it does not serve. */
+const MODEL_CODE = /\bmodel_not_found\b/i;
+
+/**
+ * What a vendor's error says in its own words: `error.message`, and
+ * `error.code`, `error.type` and `error.status` (OpenAI, Anthropic, Gemini
+ * and the relays that copy them), or a body that is no such JSON as its
+ * message. Field names and whatever else the body holds (a request it
+ * echoes; a type such as `invalid_request_error`) are not part of it.
+ */
+function vendorSaid(text: string): { message: string; code: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { message: text, code: "" };
+  }
+  if (typeof parsed !== "object" || parsed === null)
+    return { message: text, code: "" };
+  const outer = parsed as Record<string, unknown>;
+  const error =
+    typeof outer.error === "object" && outer.error !== null
+      ? (outer.error as Record<string, unknown>)
+      : outer;
+  const field = (value: unknown) =>
+    typeof value === "string" || typeof value === "number" ? String(value) : "";
+  return {
+    message: field(error.message),
+    code: [error.code, error.type, error.status].map(field).join(" "),
+  };
+}
+
 /** A word of {@link echoFree}: one CJK character, or a run of other letters and digits. */
 const WORD =
   /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]|[\p{L}\p{N}]+/gu;
 /**
- * The key every request has whose name the failure lists need ("model …
- * not found"); its value, which the gateway sets, is read as any other.
+ * Words {@link echoFree} keeps whatever the request holds: `model`, which
+ * every request has and the failure lists need ("model … not found"), and
+ * the keys of a vendor's error JSON, so that its message and code can
+ * still be read ({@link vendorSaid}). None of them makes a kind alone.
  */
-const MODEL_KEY = "model";
+const KEPT_WORDS: ReadonlySet<string> = new Set([
+  "model",
+  "error",
+  "message",
+  "code",
+  "type",
+  "status",
+]);
 /** How much of an error is read for a rest. */
 const REST_TEXT_MAX = 16 * 1024;
 
 /**
  * `text`, an upstream error, without the words that `request` (the client's
- * request as parsed JSON: its string values, and its keys but `model`)
- * also holds; words compare without regard to case, a CJK character as a
- * word. A vendor that echoes a field name or value of the request
+ * request as parsed JSON: its string values and its keys) also holds, but
+ * those it keeps (`model` and the keys of an error's JSON); words compare
+ * without regard to case, a CJK character as a word. A vendor that echoes a field name or value of the request
  * ("Unrecognized request argument supplied: <name>") cannot then be made
  * to say that a credential is out of credit or quota, or lacks a model.
  * Removes more than an echo (a word the vendor's message and the prompt
@@ -1209,7 +1254,7 @@ export function echoFree(text: string, request: unknown): string {
   const look = (value: string) => {
     for (const [word] of value.matchAll(WORD)) {
       const lower = word.toLowerCase();
-      if (words.has(lower)) echoed.add(lower);
+      if (words.has(lower) && !KEPT_WORDS.has(lower)) echoed.add(lower);
     }
   };
   const stack: unknown[] = [request];
@@ -1221,7 +1266,7 @@ export function echoFree(text: string, request: unknown): string {
       const prototype: unknown = Object.getPrototypeOf(value);
       if (prototype !== Object.prototype && prototype !== null) continue;
       for (const [key, item] of Object.entries(value)) {
-        if (key !== MODEL_KEY) look(key);
+        look(key);
         stack.push(item);
       }
     }
@@ -1628,14 +1673,35 @@ export class Breakers {
   }
 
   /**
-   * Until when the candidate rests and why (the error class that opened it,
-   * or `model_not_found` for a mark); undefined when it may be tried. No
-   * side effects.
+   * The model mark that holds for the Gateway Key `keyId` now (undefined:
+   * the gateway's own): a mark one key's failure set provisionally holds
+   * for that key only, so that it cannot keep the model from the others.
    */
-  restOf(candidate: Candidate): { until: number; reason: string } | undefined {
-    const now = this.clock();
+  #markFor(
+    candidate: Candidate,
+    keyId: string | undefined,
+    now: number,
+  ): { until: number } | undefined {
     const mark = this.#marks.get(this.#markKey(candidate));
-    if (mark !== undefined && mark.until > now)
+    return mark !== undefined &&
+      mark.until > now &&
+      (mark.provisional === undefined || mark.provisional === (keyId ?? ""))
+      ? mark
+      : undefined;
+  }
+
+  /**
+   * Until when the candidate rests for the Gateway Key `keyId` and why (the
+   * error class that opened it, or `model_not_found` for a mark); undefined
+   * when it may be tried. No side effects.
+   */
+  restOf(
+    candidate: Candidate,
+    keyId: string | undefined,
+  ): { until: number; reason: string } | undefined {
+    const now = this.clock();
+    const mark = this.#markFor(candidate, keyId, now);
+    if (mark !== undefined)
       return { until: mark.until, reason: "model_not_found" };
     const state = this.#states.get(this.#key(candidate));
     return state?.state === "open" && now < state.until
@@ -1644,11 +1710,15 @@ export class Breakers {
   }
 
   /**
-   * Whether the candidate may be tried now. A half-open breaker admits one
-   * probe; the caller reports its result through {@link success},
+   * Whether the candidate may be tried now for the Gateway Key `keyId`
+   * (undefined: the gateway's own). A half-open breaker admits one probe;
+   * the caller reports its result through {@link success},
    * {@link failure} or {@link release}.
    */
-  admit(candidate: Candidate):
+  admit(
+    candidate: Candidate,
+    keyId: string | undefined,
+  ):
     | { ok: true }
     | {
         ok: false;
@@ -1657,8 +1727,8 @@ export class Breakers {
         last?: { failure: Failure; errorClass: string; at: number };
       } {
     const now = this.clock();
-    const mark = this.#marks.get(this.#markKey(candidate));
-    if (mark !== undefined && mark.until > now)
+    const mark = this.#markFor(candidate, keyId, now);
+    if (mark !== undefined)
       return {
         ok: false,
         reason: `${candidate.ref} is marked unavailable on credential ${candidate.credential.id}`,
@@ -1734,11 +1804,13 @@ export class Breakers {
     });
   }
 
-  /** Whether the candidate is open or marked right now; no side effects (unlike {@link admit}). */
-  blocked(candidate: Candidate): boolean {
+  /**
+   * Whether the candidate is open, or marked for the Gateway Key `keyId`,
+   * right now; no side effects (unlike {@link admit}).
+   */
+  blocked(candidate: Candidate, keyId: string | undefined): boolean {
     const now = this.clock();
-    const mark = this.#marks.get(this.#markKey(candidate));
-    if (mark !== undefined && mark.until > now) return true;
+    if (this.#markFor(candidate, keyId, now) !== undefined) return true;
     const state = this.#states.get(this.#key(candidate));
     return state?.state === "open" && now < state.until;
   }

@@ -187,6 +187,84 @@ void test(
 );
 
 void test(
+  "an upstream that echoes a whole request marks its model for no other key, and a missing model one key met is marked for it alone",
+  { timeout: 120_000 },
+  async (t) => {
+    const KNOWN = new Set(["model", "messages", "stream", "stream_options"]);
+    const up = await upstream(t, (body) => {
+      if (Object.keys(body).some((name) => !KNOWN.has(name)))
+        // A relay that quotes the request it could not take.
+        return {
+          status: 400,
+          json: {
+            error: {
+              message: `Invalid request: ${JSON.stringify(body)}`,
+              type: "invalid_request_error",
+            },
+          },
+        };
+      return JSON.stringify(body.messages).includes("NOMODEL")
+        ? {
+            status: 400,
+            json: {
+              error: {
+                message: "The model `m` does not exist",
+                type: "invalid_request_error",
+              },
+            },
+          }
+        : ANSWER(body.model);
+    });
+    const { client, chat } = await daemon(t);
+    await client.providers.create({
+      id: "shared",
+      endpoints: { chat: up.url },
+      models: { source: "manual", list: [{ id: "m" }], expose: "all" },
+      credential: { value: KEY },
+    });
+    const key = async (name: string) =>
+      (await client.gatewayKeys.create({ name, modelAllow: ["shared/m"] })).key;
+    const attacker = await key("attacker");
+    const victim = await key("victim");
+    const ask = (key: string, extra: Record<string, unknown> = {}) =>
+      chat(key, { model: "shared/m", messages: HELLO, ...extra });
+    // The echo holds "model" and the error's type "invalid_request_error":
+    // never read as a missing model.
+    assert.equal((await ask(attacker, { foo: 1 })).status, 400);
+    let before = up.bodies.length;
+    const served = await ask(victim);
+    assert.equal(served.status, 200, served.text);
+    assert.equal(up.bodies.length, before + 1, "asked upstream");
+    // A missing model one key ran into is marked for that key alone.
+    const missing = { messages: [{ role: "user", content: "NOMODEL" }] };
+    assert.equal((await ask(attacker, missing)).status, 400);
+    assert.match((await ask(attacker)).text, /marked unavailable/);
+    before = up.bodies.length;
+    assert.equal((await ask(victim)).status, 200, "another key still asks");
+    assert.equal(up.bodies.length, before + 1);
+  },
+);
+
+void test(
+  "the echoing key's own ledger class is what the vendor said, not what its echo says",
+  { timeout: 120_000 },
+  async (t) => {
+    const { client, ask, attacker } = await sharedCredential(t);
+    for (const [field, echoed] of [
+      ["insufficient balance, please recharge", "insufficient_balance"],
+      ["quota limit reached", "quota_exhausted"],
+      ["the model you asked for does not exist", "model_not_found"],
+    ] as const) {
+      assert.equal((await ask(attacker, { [field]: 1 })).status, 400);
+      const [entry] = (await client.modelCalls.list({ limit: 1 })).items;
+      assert.notEqual(entry?.errorClass, echoed, field);
+      // OpenAI said it did not know the field: a shape it cannot read.
+      assert.equal(entry?.errorClass, "request_shape_unsupported", field);
+    }
+  },
+);
+
+void test(
   "one key's failure rests a shared credential a minute, and another key is told its class, not its words",
   { timeout: 120_000 },
   async (t) => {

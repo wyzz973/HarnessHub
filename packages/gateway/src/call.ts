@@ -520,12 +520,19 @@ function upstreamFailure(
   const restKind: FailureKind = overflow
     ? "request"
     : failureKind(error.status, echoFree(text, request));
+  // The ledger says what the vendor said, not what a request it echoes
+  // says; a safety refusal is read from the vendor's code, which no echo
+  // makes (and which removing the request's words, `content`, may break).
   const errorClass =
     error.code === "upstream_invalid_response" ||
     error.code === "upstream_protocol_error" ||
     error.code === "response_too_large"
       ? error.code
-      : failureClass(kind, error.status, overflow);
+      : failureClass(
+          kind === "policy" ? kind : restKind,
+          error.status,
+          overflow,
+        );
   const floor = error.status === 400 ? tokenFloor(text) : 0;
   return {
     failure: {
@@ -2552,7 +2559,8 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
         .slice(index + 1)
         .some(
           (next) =>
-            !services.breakers.blocked(next) && !unreadable.has(api(next)),
+            !services.breakers.blocked(next, call.key.keyId) &&
+            !unreadable.has(api(next)),
         );
     let retries = 0;
     let headerRetries = 0;
@@ -2566,7 +2574,7 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
       // A retry of this call was decided with its wait and the breaker as
       // it was then; only the first try asks the breaker here.
       if (retries === 0) {
-        const admitted = services.breakers.admit(candidate);
+        const admitted = services.breakers.admit(candidate, call.key.keyId);
         if (!admitted.ok) {
           if (!blocked || (admitted.last?.at ?? 0) > (blocked.last?.at ?? 0))
             blocked = admitted;
@@ -2758,7 +2766,8 @@ export async function routeCall(call: Call, plan: CallPlan): Promise<void> {
               ? policy.maxBackoffMs
               : policy.retryAfterWaitCapMs) &&
           performance.now() - began + wait <= RETRY_BUDGET_MS &&
-          (error.kind === "rate" || !services.breakers.blocked(candidate))
+          (error.kind === "rate" ||
+            !services.breakers.blocked(candidate, call.key.keyId))
         )
           decision = "retry";
       }

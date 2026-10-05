@@ -1247,7 +1247,12 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     let resolved: CallPlan;
     try {
       // Configured order: counting must not advance a group's rotation.
-      resolved = await plan(target, "anthropic", (group) => group.members);
+      resolved = await plan(
+        target,
+        "anthropic",
+        key.keyId,
+        (group) => group.members,
+      );
     } catch (error) {
       if (error instanceof GatewayError) return undefined;
       throw error;
@@ -1256,7 +1261,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       (candidate) =>
         candidate.mode === "passthrough" &&
         candidate.upstream === "anthropic" &&
-        !services.breakers.blocked(candidate),
+        !services.breakers.blocked(candidate, key.keyId),
     );
   };
 
@@ -1316,6 +1321,8 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
   const plan = async (
     requested: string,
     protocol: WireProtocol,
+    /** The Gateway Key the plan is for: a model mark it set holds for it alone. */
+    keyId: GatewayKeyId,
     order: (group: RouteGroup) => readonly string[] = (group) =>
       services.router.order(group),
   ): Promise<CallPlan & { group?: RouteGroup }> => {
@@ -1352,7 +1359,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
             await services.router.seed(store, log);
           return services.router.weigh(weighed, list);
         },
-        blocked: (candidate) => services.breakers.blocked(candidate),
+        blocked: (candidate) => services.breakers.blocked(candidate, keyId),
       });
     return { candidates, group, groups, skipped, unlisted, unlistedTried };
   };
@@ -1463,6 +1470,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     pin: string,
     requested: string,
     candidates: Candidate[],
+    keyId: GatewayKeyId,
   ): { candidates: Candidate[] } | { error: AttemptError } => {
     const matches = (credential: ProviderCredential) =>
       credential.id === pin ||
@@ -1486,7 +1494,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     );
     if (serving.length) {
       const rests = serving.map((candidate) =>
-        services.breakers.restOf(candidate),
+        services.breakers.restOf(candidate, keyId),
       );
       if (!rests.every((rest) => rest !== undefined))
         return { candidates: serving };
@@ -1707,7 +1715,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         return;
       }
       release = admission.release;
-      const resolved = await plan(requested, route.protocol);
+      const resolved = await plan(requested, route.protocol, key.keyId);
       // A model the key hides is not reached through a group either (M4).
       const shown = resolved.candidates.filter(
         (candidate) => !hides(key, candidate.ref, candidate.path),
@@ -1788,6 +1796,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
           pin.trim(),
           requested,
           resolved.candidates,
+          key.keyId,
         );
         if ("error" in pinned) {
           await publishFailure(call, pinned.error);
@@ -1801,7 +1810,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         requested,
         stickiness(resolved.group, key),
         resolved.candidates,
-        (candidate) => services.breakers.blocked(candidate),
+        (candidate) => services.breakers.blocked(candidate, key.keyId),
       );
       resolved.candidates = sticky.candidates;
       const ruled = resolved.group
@@ -1818,7 +1827,8 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
             ...(internals ? { internal: internals } : {}),
             signal: abort.signal,
             stuck: sticky.patch === "sticky:hit",
-            blocked: (candidate) => services.breakers.blocked(candidate),
+            blocked: (candidate) =>
+              services.breakers.blocked(candidate, key.keyId),
           })
         : undefined;
       const stuck = ruled?.brokeSticky ? "sticky:broken:rule" : sticky.patch;
