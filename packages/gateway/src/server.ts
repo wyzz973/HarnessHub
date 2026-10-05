@@ -121,6 +121,7 @@ import { Redactor } from "./redaction.js";
 import { VisionDescriber } from "./vision.js";
 import type { InternalAnswer, InternalCalls } from "./internal.js";
 import { imagesCall } from "./images.js";
+import { resolveBareName } from "./bare-names.js";
 
 /** The Run a `session:` key's calls belong to, and the model target it selected. */
 export interface ActiveSessionRun {
@@ -590,6 +591,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     vision: new VisionDescriber(),
     makeId: () => `call_${nonce}${(generated++).toString(36)}`,
     fetch: deps.fetch ?? ((input, init) => fetch(input, init)),
+    resolveModel: (model, key) => resolveModel(model, key),
     async commit(entry: ModelCallEntry): Promise<boolean> {
       try {
         await store.appendModelCall(entry);
@@ -1114,17 +1116,23 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         !parseModelRef(named))
         ? session.target
         : named;
-    if (typeof requested !== "string" || !parseModelRef(requested))
-      return undefined;
+    if (typeof requested !== "string" || !requested) return undefined;
+    let target: string;
+    try {
+      target = await resolveModel(requested, key);
+    } catch (error) {
+      if (error instanceof GatewayError) return undefined;
+      throw error;
+    }
     if (
-      !modelAllowed(key.modelAllow, requested, key.modelDeny) &&
-      requested !== session?.target
+      !modelAllowed(key.modelAllow, target, key.modelDeny) &&
+      target !== session?.target
     )
       return undefined;
     let resolved: CallPlan;
     try {
       // Configured order: counting must not advance a group's rotation.
-      resolved = await plan(requested, "anthropic", (group) => group.members);
+      resolved = await plan(target, "anthropic", (group) => group.members);
     } catch (error) {
       if (error instanceof GatewayError) return undefined;
       throw error;
@@ -1231,6 +1239,40 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       blocked: (candidate) => services.breakers.blocked(candidate),
     });
     return { candidates, group, groups, skipped };
+  };
+
+  /**
+   * The Model Ref or `group/<id>` a request's model names: itself, or what
+   * a bare name resolves to (./bare-names.ts), before the key's allowlist
+   * is applied to it.
+   *
+   * @throws GatewayError 400 `model_ambiguous` when several providers'
+   *   models have the name (the message names those the key may use), 404
+   *   `model_not_found` when nothing has it.
+   */
+  const resolveModel = async (
+    model: string,
+    key: GatewayKeyRecord,
+  ): Promise<string> => {
+    if (parseModelRef(model)) return model;
+    const shown = model.slice(0, 200);
+    const found = await resolveBareName(model, store);
+    if (found.kind === "resolved") return found.ref;
+    if (found.kind === "none")
+      throw new GatewayError(
+        `No route group or model is named ${shown}; name one as provider/model or group/<id>`,
+        404,
+        "model_not_found",
+      );
+    const usable = found.refs.filter((ref) =>
+      modelAllowed(key.modelAllow, ref, key.modelDeny),
+    );
+    const others = found.refs.length - usable.length;
+    throw new GatewayError(
+      `${shown} names more than one model${usable.length ? `: ${usable.join(", ")}` : ""}${others ? `${usable.length ? ", and" : ","} ${others} this Gateway Key may not use` : ""}; name one as provider/model`,
+      400,
+      "model_ambiguous",
+    );
   };
 
   /** The automatic group of this ID, unless it is hidden; user groups were looked up first. */
@@ -1430,15 +1472,23 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       const named = await unaliased(key, asked);
       // A Session's engine names the alias, or any model name of its own;
       // both mean the target the Run selected.
-      const requested =
+      const given =
         session &&
         (typeof named !== "string" ||
           named === HARNESS_MODEL_ALIAS ||
           !parseModelRef(named))
           ? session.target
           : named;
-      if (typeof requested !== "string" || !requested)
+      if (typeof given !== "string" || !given)
         throw new GatewayError("The request requires a model");
+      // A bare name is what it resolves to from here on; the ledger keeps
+      // the name as requested and records the group or model.
+      const requested = await resolveModel(given, key);
+      if (requested !== given) {
+        const target = parseModelRef(requested);
+        if (target?.kind === "group") entry.group = target.group;
+        else if (target) entry.modelRef = target.ref;
+      }
       if (
         route.protocol === "chat" &&
         raw.n !== undefined &&
@@ -1447,12 +1497,6 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       )
         throw new GatewayError(
           "Only one completion choice (n = 1) is supported",
-        );
-      if (!parseModelRef(requested))
-        throw new GatewayError(
-          "The model must be a Model Ref (provider/model) or group/<id>",
-          400,
-          "model_invalid",
         );
       if (
         !modelAllowed(key.modelAllow, requested, key.modelDeny) &&
@@ -1465,7 +1509,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
           failure(
             403,
             "model_not_allowed",
-            `This Gateway Key may not use ${requested.slice(0, 200)}`,
+            `This Gateway Key may not use ${requested.slice(0, 200)}${requested !== given ? ` (what ${given.slice(0, 100)} names here)` : ""}`,
           ),
           started,
         );

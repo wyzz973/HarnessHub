@@ -430,21 +430,29 @@ export async function imagesCall(options: {
     reserved = bytes.length;
     const drawing = await readDrawing(bytes, request.headers["content-type"]);
     entry.inbound.stream = drawing.stream;
-    const requested = drawing.model;
-    if (requested) entry.requestedModel = requested.slice(0, 256);
+    const given = drawing.model;
+    if (given) entry.requestedModel = given.slice(0, 256);
     if (edit && !drawing.images.length)
       return fail(400, "invalid_request", "An edit needs the image to edit");
-    if (!parseModelRef(requested))
+    if (!given)
       return fail(
         400,
         "model_invalid",
-        "The model must be a Model Ref (provider/model) or group/<id>",
+        "The model must be a Model Ref (provider/model), group/<id> or a model's name",
       );
+    let requested: string;
+    try {
+      // A bare name is what it resolves to; the allowlist applies to that.
+      requested = await services.resolveModel(given, key);
+    } catch (error) {
+      if (!(error instanceof GatewayError)) throw error;
+      return fail(error.status, error.code, error.message);
+    }
     if (!modelAllowed(key.modelAllow, requested, key.modelDeny))
       return fail(
         403,
         "model_not_allowed",
-        `This Gateway Key may not use ${requested.slice(0, 200)}`,
+        `This Gateway Key may not use ${requested.slice(0, 200)}${requested !== given ? ` (what ${given.slice(0, 100)} names here)` : ""}`,
       );
     const admission = await services.quotas.admit(key, {
       bytes: bytes.length,

@@ -124,8 +124,13 @@ void test("a failing credential fails over; a chat model that draws nothing, or 
   assert.deepEqual(up.seen.at(-1)!.json().modalities, ["image", "text"]);
   const denied = await call({ model: "other/x", prompt: "x" });
   assert.equal(denied.status, 403);
-  const invalid = await call({ model: "no-ref", prompt: "x" });
-  assert.equal(invalid.status, 400);
+  // A bare name resolves as for chat: the one model of that ID, or nothing.
+  const bare = await call({ model: "gpt-image-1", prompt: "a cat" });
+  assert.equal(bare.status, 200);
+  assert.equal(up.seen.at(-1)!.json().model, "gpt-image-1");
+  const unknown = await call({ model: "no-ref", prompt: "x" });
+  assert.equal(unknown.status, 404);
+  assert.equal(at(unknown.json(), "error", "code"), "model_not_found");
 });
 
 void test("streamed partial images are forwarded, with the completed event's usage", async (t) => {

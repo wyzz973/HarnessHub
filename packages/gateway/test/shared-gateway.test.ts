@@ -311,9 +311,10 @@ void test("the model allowlist admits exact refs, provider/* and groups and reco
   const row = store.entries.at(-1)!;
   assert.equal(row.rejectReason, "model_not_allowed");
   assert.equal(row.requestedModel, "other/model-a");
+  // A bare name that names nothing here (bare-name resolution: shared-gateway-bare-names.test.ts).
   const bad = await call("no-slash-model");
-  assert.equal(bad.status, 400);
-  assert.equal(at(bad.json(), "error", "code"), "model_invalid");
+  assert.equal(bad.status, 404);
+  assert.equal(at(bad.json(), "error", "code"), "model_not_found");
   const missing = await send(gw.port, "/v1/chat/completions", {
     headers: {
       authorization: `Bearer ${(await addKey(store, ["ghost/*"])).text}`,

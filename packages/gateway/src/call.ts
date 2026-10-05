@@ -308,6 +308,12 @@ export interface CallServices {
   vision?: VisionDescriber;
   /** Every request to a provider, a search backend or ChatGPT: the daemon's proxy policy. */
   fetch: OutboundFetch;
+  /**
+   * The Model Ref or `group/<id>` a requested model names: itself, or what a
+   * bare name resolves to. Throws GatewayError `model_ambiguous` (400) or
+   * `model_not_found` (404).
+   */
+  resolveModel(model: string, key: GatewayKeyRecord): Promise<string>;
 }
 
 /** Route parts of a model call. */
