@@ -2,8 +2,9 @@
 /**
  * The shared gateway's optional capabilities (Magpie parity §11), as the
  * user sets them: outbound secret redaction, a vision model that describes
- * images for models without image input, and web search backends that let
- * the gateway emulate server-side search tools. The daemon keeps them in
+ * images for models without image input, web search backends that let the
+ * gateway emulate server-side search tools, and usage alerts on the
+ * credentials' allowance windows. The daemon keeps them in
  * `<dataDir>/gateway-features.json`; search credentials are secret store
  * references, never values.
  */
@@ -57,6 +58,12 @@ export interface GatewayFeatures {
   vision?: { model: string };
   /** Web search emulation; absent or without backends: off. */
   search?: { backends: SearchBackend[] };
+  /**
+   * Usage alerts (Magpie's `usageAlert`): a log line and an entry in
+   * `GET /api/v1/usage/alerts` when a credential's allowance window has
+   * reached this percent used, once per run of the window. Absent: off.
+   */
+  alerts?: { usagePercent: number };
   /**
    * When the settings were last changed (ISO 8601); absent until the first
    * change. Sync compares it when both sides changed them.
@@ -133,6 +140,15 @@ export function searchBackendProblem(backend: unknown): string | undefined {
   return undefined;
 }
 
+/** Whether `value` is a usage alert's threshold: a whole percent from 1 to 100. */
+export function usagePercent(value: unknown): value is number {
+  return (
+    Number.isInteger(value) &&
+    (value as number) >= 1 &&
+    (value as number) <= 100
+  );
+}
+
 /** Every problem of a settings document, by JSON pointer; empty when valid. */
 export function gatewayFeaturesProblems(
   value: unknown,
@@ -191,6 +207,17 @@ export function gatewayFeaturesProblems(
       });
     }
   }
+  if (features.alerts !== undefined) {
+    const alerts = features.alerts as Record<string, unknown> | null;
+    if (typeof alerts !== "object" || alerts === null || Array.isArray(alerts))
+      add("/alerts", "must be an object");
+    else {
+      if (!usagePercent(alerts.usagePercent))
+        add("/alerts/usagePercent", "must be a whole percent from 1 to 100");
+      for (const key of Object.keys(alerts))
+        if (key !== "usagePercent") add(`/alerts/${key}`, "is not a setting");
+    }
+  }
   if (
     features.updatedAt !== undefined &&
     !(
@@ -202,9 +229,14 @@ export function gatewayFeaturesProblems(
     add("/updatedAt", "must be an ISO 8601 time");
   for (const key of Object.keys(features))
     if (
-      !["schemaVersion", "redaction", "vision", "search", "updatedAt"].includes(
-        key,
-      )
+      ![
+        "schemaVersion",
+        "redaction",
+        "vision",
+        "search",
+        "alerts",
+        "updatedAt",
+      ].includes(key)
     )
       add(`/${key}`, "is not a setting");
   return problems;

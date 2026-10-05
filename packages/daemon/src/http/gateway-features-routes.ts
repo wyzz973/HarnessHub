@@ -38,6 +38,12 @@ export interface GatewayFeaturesControl {
    */
   setVision(model: string | null): Promise<GatewayFeaturesView>;
   /**
+   * Set the usage alert's threshold, or `null` for none.
+   *
+   * @throws ApiProblem `GATEWAY_FEATURES_INVALID` (400).
+   */
+  setAlerts(usagePercent: number | null): Promise<GatewayFeaturesView>;
+  /**
    * Add a web search backend; its key goes to the secret store.
    *
    * @throws ApiProblem `GATEWAY_FEATURES_INVALID` (400): a missing key, or
@@ -88,6 +94,12 @@ const featuresSchema = {
       required: ["model"],
       properties: { model: { type: "string" } },
     },
+    alerts: {
+      type: "object",
+      additionalProperties: false,
+      required: ["usagePercent"],
+      properties: { usagePercent: { type: "integer" } },
+    },
     search: {
       type: "object",
       additionalProperties: false,
@@ -113,8 +125,9 @@ const featuresSchema = {
 } as const;
 /**
  * `/api/v1/gateway/features/*` (Magpie parity §11): outbound redaction, the
- * vision model and web search backends of the shared gateway. Registered
- * inside the `/api/v1` plugin, so the admin token and loopback rules apply.
+ * vision model, web search backends and the usage alert of the shared
+ * gateway. Registered inside the `/api/v1` plugin, so the admin token and
+ * loopback rules apply.
  */
 export function registerGatewayFeaturesRoutes(
   api: FastifyInstance,
@@ -159,6 +172,26 @@ export function registerGatewayFeaturesRoutes(
   );
   api.delete("/gateway/features/vision", { schema: ok }, async () =>
     features.setVision(null),
+  );
+  api.put<{ Body: { usagePercent: number } }>(
+    "/gateway/features/alerts",
+    {
+      schema: {
+        ...ok,
+        body: {
+          type: "object",
+          additionalProperties: false,
+          required: ["usagePercent"],
+          properties: {
+            usagePercent: { type: "integer", minimum: 1, maximum: 100 },
+          },
+        },
+      },
+    },
+    async (request) => features.setAlerts(request.body.usagePercent),
+  );
+  api.delete("/gateway/features/alerts", { schema: ok }, async () =>
+    features.setAlerts(null),
   );
   api.post<{
     Body: { kind: SearchBackendKind; key?: string; baseUrl?: string };

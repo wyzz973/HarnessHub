@@ -2,14 +2,14 @@
 /**
  * The gateway's features as a backup or a sync carries them
  * (docs/backup-sync.md): outbound redaction (on or off, and the user's
- * rules), the vision model and the web search backends. A search backend's
+ * rules), the vision model, the web search backends and the usage alert. A search backend's
  * API key follows the providers' rules: the value of a stored key only in a
  * backup with keys, an outside reference as it is. Image endpoints are part
  * of the provider records and travel with them.
  *
  * Bringing them in is a restore (additive: the backup's redaction switch,
- * rules by name and backends by kind and address replace this machine's,
- * the others are added, nothing is removed) or a sync's mirror (the
+ * rules by name, backends by kind and address and usage alert replace this
+ * machine's, the others are added, nothing is removed) or a sync's mirror (the
  * server's settings exactly). Turning redaction off is a security change:
  * the result says so, for the restore summary and the sync notice to show.
  */
@@ -17,6 +17,7 @@ import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import {
   redactionRuleProblem,
   searchBackendProblem,
+  usagePercent,
   type GatewayFeatures,
   type RedactionRule,
   type SearchBackend,
@@ -43,6 +44,8 @@ export interface BackupGatewayFeatures {
   /** The vision model (a Model Ref or `group/<id>`). */
   vision?: { model: string };
   search: BackupSearchBackend[];
+  /** The usage alert's threshold; absent when off. */
+  alerts?: { usagePercent: number };
 }
 
 /** What bringing the features in does (a dry run) or did. */
@@ -74,6 +77,8 @@ export interface FeaturesRestore {
      */
     needKey: string[];
   };
+  /** The usage alert's threshold after bringing them in (null: off), and whether it changes. */
+  alerts: { usagePercent: number | null; changed: boolean };
 }
 
 /** The features file as backups use it (`GatewayFeaturesFile`). */
@@ -123,6 +128,7 @@ export class FeaturesBackup {
       redaction: structuredClone(current.redaction),
       ...(current.vision ? { vision: { ...current.vision } } : {}),
       search,
+      ...(current.alerts ? { alerts: { ...current.alerts } } : {}),
     };
   }
 
@@ -160,6 +166,7 @@ export class FeaturesBackup {
       rules: { added: [], replaced: [], removed: [] },
       vision: null,
       search: { added: [], replaced: [], removed: [], needKey: [] },
+      alerts: { usagePercent: null, changed: false },
     };
     // Rules by name, as the validator compares them.
     const name = (rule: RedactionRule) => rule.name.toUpperCase();
@@ -260,11 +267,22 @@ export class FeaturesBackup {
           ...(unresolved ? { unresolved } : {}),
         };
       }
+      // A restore keeps this machine's alert when the backup has none.
+      const alerts = part.alerts
+        ? { ...part.alerts }
+        : options.mirror
+          ? undefined
+          : here.alerts;
+      summary.alerts = {
+        usagePercent: alerts?.usagePercent ?? null,
+        changed: alerts?.usagePercent !== here.alerts?.usagePercent,
+      };
       const settings: GatewayFeatures = {
         schemaVersion: 1,
         redaction: { enabled: part.redaction.enabled, rules },
         ...(vision ? { vision } : {}),
         ...(backends.length ? { search: { backends } } : {}),
+        ...(alerts ? { alerts } : {}),
       };
       const { updatedAt: _before, ...current } = here;
       const changed = sorted(settings) !== sorted(current);
@@ -362,6 +380,15 @@ export function isBackupGatewayFeatures(
     )
   )
     return false;
+  if (
+    value.alerts !== undefined &&
+    !(
+      object(value.alerts) &&
+      usagePercent(value.alerts.usagePercent) &&
+      Object.keys(value.alerts).every((key) => key === "usagePercent")
+    )
+  )
+    return false;
   if (!Array.isArray(value.search) || value.search.length > 16) return false;
   const ids = new Set<string>();
   for (const item of value.search) {
@@ -381,7 +408,7 @@ export function isBackupGatewayFeatures(
     const allowed = ["id", "kind", "baseUrl", "key"];
     if (Object.keys(item).some((key) => !allowed.includes(key))) return false;
   }
-  const allowed = ["updatedAt", "redaction", "vision", "search"];
+  const allowed = ["updatedAt", "redaction", "vision", "search", "alerts"];
   return (
     Object.keys(value).every((key) => allowed.includes(key)) &&
     Object.keys(redaction).every((key) => ["enabled", "rules"].includes(key))
@@ -421,7 +448,8 @@ export function emptyFeatures(
     (features.redaction.enabled &&
       features.redaction.rules.length === 0 &&
       features.vision === undefined &&
-      features.search.length === 0)
+      features.search.length === 0 &&
+      features.alerts === undefined)
   );
 }
 

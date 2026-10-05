@@ -1319,7 +1319,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     group: "gateway-features",
     request: "无参数。",
     response:
-      "200：schemaVersion、redaction（enabled、rules[] 的 name、pattern、flags）、vision（model，未设置时没有）、search（backends[] 的 id、kind、baseUrl、hasKey；没有后端时没有），从不含密钥或其引用。",
+      "200：schemaVersion、redaction（enabled、rules[] 的 name、pattern、flags）、vision（model，未设置时没有）、search（backends[] 的 id、kind、baseUrl、hasKey；没有后端时没有）、alerts（usagePercent，用量提醒的阈值，未设置时没有），从不含密钥或其引用。",
     implementation:
       "GatewayFeaturesFile.view：<dataDir>/gateway-features.json 中的设置（文件不存在时为缺省值：脱敏开启、没有用户规则、没有视觉模型、没有搜索后端）。",
     effects: "只读。",
@@ -1377,6 +1377,39 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     source: "packages/daemon/src/http/gateway-features-routes.ts",
     tests: ["tests/integration/gateway-features.test.ts"],
     operationId: "hh_api_v1_delete_gateway_vision",
+  },
+  {
+    method: "PUT",
+    path: "/api/v1/gateway/features/alerts",
+    title: "设置用量提醒",
+    group: "gateway-features",
+    request: "usagePercent：1–100 的整数，凭据的额度窗口用到这个百分比时提醒。",
+    response: "200：与 GET 相同，alerts 为 {usagePercent}。",
+    implementation:
+      "GatewayFeaturesFile.setAlerts 写入设置文件；阈值变化后用量提醒立即检查一次（UsageAlerts.wake）。",
+    effects:
+      "写入 <dataDir>/gateway-features.json；之后每 5 分钟按网关的额度读数检查，到线的窗口每轮只提醒一次（gateway.log 的 usage.alert 与 GET /api/v1/usage/alerts）。",
+    errors:
+      "400 INVALID_REQUEST、GATEWAY_FEATURES_INVALID；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/gateway-features-routes.ts",
+    tests: ["tests/integration/usage-alerts.test.ts"],
+    operationId: "hh_api_v1_put_gateway_alerts",
+  },
+  {
+    method: "DELETE",
+    path: "/api/v1/gateway/features/alerts",
+    title: "关闭用量提醒",
+    group: "gateway-features",
+    request: "无参数。",
+    response: "200：与 GET 相同（没有 alerts）。",
+    implementation: "GatewayFeaturesFile.setAlerts(null)。",
+    effects:
+      "写入 <dataDir>/gateway-features.json；之后不再检查，已记下的提醒与标记保留。",
+    errors:
+      "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/gateway-features-routes.ts",
+    tests: ["tests/integration/usage-alerts.test.ts"],
+    operationId: "hh_api_v1_delete_gateway_alerts",
   },
   {
     method: "POST",
@@ -1723,6 +1756,23 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "tests/integration/usage-csv.test.ts",
     ],
     operationId: "hh_api_v1_list_model_calls",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/usage/alerts",
+    title: "用量提醒",
+    group: "usage",
+    request: "无参数。",
+    response:
+      "200：usagePercent（阈值，未设置为 null）、items（最近 40 天的提醒，新到旧，最多 100 条：at、provider、credential、credentialName（凭据仍在时的当前名称）、window、usedPercent、resetsAt）。",
+    implementation:
+      "UsageAlerts.list：读数来自网关的限流响应头与 Copilot 额度（同 /routing/state），已提醒的窗口记在 <dataDir>/usage-alerts.json。",
+    effects: "只读。",
+    errors:
+      "需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/usage-alerts-routes.ts",
+    tests: ["tests/integration/usage-alerts.test.ts"],
+    operationId: "hh_api_v1_get_usage_alerts",
   },
   {
     method: "GET",
@@ -2287,7 +2337,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     request:
       "backup（备份文件的 JSON）、passphrase；agents 缺省 true，false 时不重新接线；library 缺省 true，false 时不带入 Library；dryRun 缺省 false，true 时只返回摘要。请求体上限 64 MiB。",
     response:
-      "200：摘要 providers（added、replaced、needKey）、groups（added、replaced、skipped）、overrides、profiles（added、replaced）、library（instructions、mcp、skills 各 added、replaced、removed，mcp.needSecret、skills.incomplete、refused[]；备份没有或 library=false 时为 null）、gatewayFeatures（redaction 的 enabled、turnsOff（关闭本机开着的出站脱敏，须提示）与 turnsOn，rules 与 search 各 added、replaced、removed，search.needKey，vision 的 model、changed 与 unresolved（恢复后本机没有的模型或路由组，仍设置）；备份没有时为 null）、gatewayShare（action、settings、error）、catalog（backup、current、differs）、agents[]（agent、model、tiers、effort、options、models、deny 与 action=wire|unchanged|skip-*，恢复后 outcome=wired|failed 与 error）、clientKeys（需重新签发；旧备份的 tokensPerDay 与 costPerMonthUsd 转换为 budgets，值为 0 的上限保留）。",
+      "200：摘要 providers（added、replaced、needKey）、groups（added、replaced、skipped）、overrides、profiles（added、replaced）、library（instructions、mcp、skills 各 added、replaced、removed，mcp.needSecret、skills.incomplete、refused[]；备份没有或 library=false 时为 null）、gatewayFeatures（redaction 的 enabled、turnsOff（关闭本机开着的出站脱敏，须提示）与 turnsOn，rules 与 search 各 added、replaced、removed，search.needKey，vision 的 model、changed 与 unresolved（恢复后本机没有的模型或路由组，仍设置），alerts 的 usagePercent（恢复后的用量提醒阈值，关闭为 null）与 changed；备份没有时为 null）、gatewayShare（action、settings、error）、catalog（backup、current、differs）、agents[]（agent、model、tiers、effort、options、models、deny 与 action=wire|unchanged|skip-*，恢复后 outcome=wired|failed 与 error）、clientKeys（需重新签发；旧备份的 tokensPerDay 与 costPerMonthUsd 转换为 budgets，值为 0 的上限保留）。",
     implementation:
       "BackupService.restore：解密并校验内容后逐条写入：同 id 的 provider 与同名 profile 替换、其余新增（不带 Key 的备份保留本机凭证；新凭证先写入密钥存储，provider 写失败则删除），路由组，Library 的条目（LibraryService.bring：逐条按 Library API 的规则与 SECRET_REF_FORBIDDEN 检查，被拒的不写入，没有值的 store 秘密沿用本机同名服务的，保留原时间），网关功能（GatewayFeaturesFile.replace：出站脱敏的开关取备份的，规则按名称、搜索后端按种类与地址替换或新增，搜索 Key 同 provider 凭证的规则，没有值且本机没有的后端不写入并列入 needKey），局域网共享设置（GatewayShare.update），再对本机已安装的 Agent 经 AgentWiringService 的 plan 与 wire（expect 为该预览）按 model、models、tiers、effort 与 options 以新的 agent: Key 接线，隐藏的模型不同时经 setHidden 设置。",
     effects:

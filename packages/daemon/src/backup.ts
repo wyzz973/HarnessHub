@@ -590,6 +590,7 @@ export class BackupService {
         rules: { added: [], replaced: [], removed: [] },
         vision: null,
         search: { added: [], replaced: [], removed: [], needKey: [] },
+        alerts: { usagePercent: null, changed: false },
       };
     return this.features.bring(part, {
       mirror: true,

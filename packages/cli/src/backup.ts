@@ -266,6 +266,12 @@ function summaryText(summary: RestoreSummary, done: boolean): string {
       parts.push(
         `vision model: ${verb("set", "set")} ${features.vision.model}`,
       );
+    if (features.alerts.changed)
+      parts.push(
+        features.alerts.usagePercent === null
+          ? `usage alert: ${verb("turn off", "turned off")}`
+          : `usage alert: ${verb("set", "set")} at ${features.alerts.usagePercent}%`,
+      );
     lines.push(`Gateway features: ${parts.join("; ") || "nothing to change"}`);
     if (features.vision?.unresolved)
       lines.push(

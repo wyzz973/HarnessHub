@@ -1,6 +1,6 @@
-# 网关功能：脱敏、视觉兜底、联网搜索、图像、工具搜索与压缩
+# 网关功能：脱敏、视觉兜底、联网搜索、用量提醒、图像、工具搜索与压缩
 
-共享模型网关的可选能力（对标 Magpie 网关的脱敏、视觉兜底、搜索模拟与画图；取舍见 [ADR 0027](decisions/0027-gateway-features.md)），以及总是生效、没有设置的[工具搜索](#工具搜索)与[上下文压缩](#上下文压缩)。设置保存在 `<dataDir>/gateway-features.json`（0600，原子替换），由 `/api/v1/gateway/features/*` 与 `hh gateway …` 修改，网关对每个请求读取当前值，修改对下一个请求生效。文件不是有效设置时守护进程拒绝启动（`GATEWAY_FEATURES_INVALID`），不会因为手工改错而悄悄关闭脱敏。每次修改记录时间 `updatedAt`（接口不返回），供同步在两边都改时比较；这些设置与搜索 Key 随[备份与同步](backup-sync.md)一起带走。
+共享模型网关的可选能力（对标 Magpie 网关的脱敏、视觉兜底、搜索模拟、用量提醒与画图；取舍见 [ADR 0027](decisions/0027-gateway-features.md)），以及总是生效、没有设置的[工具搜索](#工具搜索)与[上下文压缩](#上下文压缩)。设置保存在 `<dataDir>/gateway-features.json`（0600，原子替换），由 `/api/v1/gateway/features/*` 与 `hh gateway …` 修改，网关对每个请求读取当前值，修改对下一个请求生效。文件不是有效设置时守护进程拒绝启动（`GATEWAY_FEATURES_INVALID`），不会因为手工改错而悄悄关闭脱敏。每次修改记录时间 `updatedAt`（接口不返回），供同步在两边都改时比较；这些设置与搜索 Key 随[备份与同步](backup-sync.md)一起带走。
 
 这些是运行时管理的设置：经管理接口、控制台或命令修改，立即生效，保存在数据目录中，与局域网共享的设置文件一样。启动时读取、改后需重启的设置（例如监听地址）属于统一的启动配置文件 `<configDir>/config.jsonc`（由 `hh config` 编辑，随该文件一起落地）；两者不重叠。
 
@@ -11,6 +11,8 @@ hh gateway features                                  # 当前设置
 hh gateway redaction off                             # 关闭出站脱敏（缺省开启）
 hh gateway redaction rule add codename 'falcon-[0-9]+' [--ignore-case]
 hh gateway redaction rule remove codename
+hh gateway alert 80                                  # 额度窗口用到 80% 时提醒；off 关闭
+hh gateway alert                                     # 当前阈值与最近 40 天的提醒
 ```
 
 ## 出站脱敏
@@ -57,6 +59,16 @@ hh gateway search remove search-1
 - **客户端看到的**：Anthropic 为 `server_tool_use`（id 为 `srvtoolu_hh_…`）与 `web_search_tool_result`（标题与 URL，`encrypted_content` 为空）块；Responses 为 `web_search_call` 项（id 为 `ws_hh_…`，`action` 带 `query` 与 `sources`）。这两种标记的块在之后的请求中转成给模型看的文字。Chat 的 `web_search_options` 与 Gemini 的 `googleSearch` 不在范围内。
 - **记录**：`patches[]` 记 `search:emulated`、`search:rounds:<n>`、`search:queries:<n>`（执行的查询数），以及有查询未执行时的 `search:refused:<n>`；搜索 API 的调用本身不是单独的账本条目，其费用不计入 Key 的预算（HarnessHub 不知道各搜索 API 的价格）。
 - **接线的 Codex**：没有搜索后端时，全局接线为不原生接收 Responses 的模型写入 `web_search = "disabled"`；登记第一个后端或删除最后一个后，目录同步随之改写已接线 Codex 的文件（[全局接线](global-wiring.md#codex-的两种模式)）。
+
+## 用量提醒
+
+对应 Magpie 的 `usageAlert`（`magpie quota alert 80`）：设置 `alerts.usagePercent`（1–100 的整数，`hh gateway alert <百分比>|off`、`PUT|DELETE /api/v1/gateway/features/alerts`）后，守护进程在启动 1 分钟后、之后每 5 分钟（与 Magpie 相同）查看网关持有的每个凭据的额度读数，即 `GET /api/v1/routing/state` 中的 `readings`：来自上游答复的限流响应头（`x-ratelimit-*`、`anthropic-ratelimit-*`）与 Copilot 的额度。阈值设置或改变时立即查看一次。
+
+- **何时提醒**：某个窗口的已用百分比不低于阈值时提醒一次；同一轮窗口（重置时间与提醒时记下的相差不到 10 分钟，或两次都没有重置时间）不再提醒，窗口重置后再次到线时再提醒；用量回落到阈值以下后记下的标记删除。读数描述的窗口已经重置（重置时间已过，或没有重置时间而读数时间加窗口长度已过）时既不提醒也不清除标记。
+- **怎样提醒**：`gateway.log` 中一行 `usage.alert`（provider、凭据 ID、窗口、已用百分比、阈值、重置时间，不含凭据值），以及 `GET /api/v1/usage/alerts`（阈值与最近 40 天的提醒，新到旧，最多 100 条，凭据仍在时带当前名称）；`hh gateway alert` 不带参数时显示两者。控制台的提醒显示由控制台负责，尚未提供。Magpie 的系统通知由它的菜单栏应用发出，HarnessHub 没有菜单栏应用。
+- **记在哪里**：已提醒的窗口与提醒列表保存在 `<dataDir>/usage-alerts.json`（0600，原子替换），重启后不重复提醒；文件读不出或不是有效内容时记 `usage.alerts_invalid` 并按空文件处理，从不阻止启动（此后可能再提醒一次）。不再出现的窗口（例如凭据被删除）的标记与提醒在 40 天后删除。阈值随网关功能进入[备份与同步](backup-sync.md)，已提醒的记录不随同。
+- **与 Magpie 的差别**：没有余额提醒（HarnessHub 不读取中转站的余额）；HarnessHub 不主动查询厂商的用量接口，只用调用中得到的读数，因此没有调用过的凭据没有读数，ChatGPT 账号也没有；Magpie 跳过的“不影响使用”的窗口在 HarnessHub 中没有对应。
+- **验证**：[单元测试](../packages/daemon/test/usage-alerts.test.ts) 覆盖到线、同一轮不重复、窗口重置后再提醒、回落后清除、已过期的读数、40 天删除标记、关闭时不读不写、0600 文件与重启后不重复、四种损坏或无效的文件按空处理且重新写好、设置的校验；[集成测试](../tests/integration/usage-alerts.test.ts) 经正式守护进程与带限流响应头的本地上游：50% 时不提醒，95% 时 `gateway.log` 一行、列表一条（带凭据名称），同一轮再次调用不重复，`hh gateway alert` 的显示、设置、关闭与 150 的用法错误，备份恢复带回阈值，重启后不重复，损坏的文件记录日志后按空处理、再次提醒并写好文件。未验证：真实厂商的限流响应头与 Copilot 额度、Windows。
 
 ## 图像生成
 

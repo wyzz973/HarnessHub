@@ -101,7 +101,7 @@ void test(
     // A command's line names its subcommands, gateway's features too.
     assert.match(
       help.stdout,
-      /\n {2}gateway +.*\(features, redaction, vision, search, share on\|off\|status\)\n/,
+      /\n {2}gateway +.*\(features, redaction, vision, search, alert, share on\|off\|status\)\n/,
     );
   },
 );

@@ -210,9 +210,9 @@ const restoreSummarySchema = {
       type: "object",
       nullable: true,
       description:
-        "Redaction, the vision model and the search backends brought in; null when the backup has none (an older HarnessHub)",
+        "Redaction, the vision model, the search backends and the usage alert brought in; null when the backup has none (an older HarnessHub)",
       additionalProperties: false,
-      required: ["redaction", "rules", "vision", "search"],
+      required: ["redaction", "rules", "vision", "search", "alerts"],
       properties: {
         redaction: {
           type: "object",
@@ -258,6 +258,20 @@ const restoreSummarySchema = {
               description:
                 "Backends whose stored key the backup has no value for and this machine lacks: not brought in",
             },
+          },
+        },
+        alerts: {
+          type: "object",
+          additionalProperties: false,
+          required: ["usagePercent", "changed"],
+          properties: {
+            usagePercent: {
+              type: "integer",
+              nullable: true,
+              description:
+                "The usage alert's threshold after the restore; null: off",
+            },
+            changed: { type: "boolean" },
           },
         },
       },

@@ -122,6 +122,7 @@ import {
   startModelCallExport,
   type ModelCallExporter,
 } from "./otlp-export.js";
+import { UsageAlerts } from "./usage-alerts.js";
 import type { Store } from "@harnesshub/core/ports";
 import type { EngineProfile } from "@harnesshub/core/types";
 
@@ -544,6 +545,7 @@ export async function startHub(options: {
   };
   /** OTLP export of committed model calls; only with an `otlp` block. */
   let otlp: ModelCallExporter | undefined;
+  let usageAlerts: UsageAlerts | undefined;
   let shareToClose: GatewayShare | undefined;
   let syncToClose: SyncService | undefined;
   let server: Awaited<ReturnType<typeof createGateway>> | undefined;
@@ -761,6 +763,16 @@ export async function startHub(options: {
       ...(options.codexBackend ? { codexBackend: options.codexBackend } : {}),
       fetch: send,
     });
+    // Usage alerts on the gateway's allowance readings (Magpie's usageAlert).
+    const gatewayForAlerts = modelGateway;
+    usageAlerts = new UsageAlerts({
+      dataDir,
+      readings: () => gatewayForAlerts.routingState(),
+      percent: () => gatewayFeatures.current().alerts?.usagePercent,
+      log: gatewayLog,
+    });
+    await usageAlerts.load();
+    usageAlerts.start();
     manager = new EngineManager({
       config,
       persistence: store,
@@ -950,7 +962,9 @@ export async function startHub(options: {
     // exporter's shutdown deadline.
     const gatewayToClose = modelGateway;
     const copilotToClose = copilotHosts;
+    const alertsToClose = usageAlerts;
     server.addHook("preClose", async () => {
+      await alertsToClose.close();
       await gatewayToClose.close();
       // The bridge closed its sessions; the hosts and their CLIs stop.
       await copilotToClose.close();
@@ -985,7 +999,15 @@ export async function startHub(options: {
     // Codex keeps its hosted web search only while the gateway can answer
     // it, so wired agents follow search backends coming and going.
     let searching = gatewaySearch();
+    let alerting = gatewayFeatures.current().alerts?.usagePercent;
+    const alertsToWake = usageAlerts;
     gatewayFeatures.changed = () => {
+      // A threshold set or changed is looked at right away.
+      const percent = gatewayFeatures.current().alerts?.usagePercent;
+      if (percent !== alerting) {
+        alerting = percent;
+        if (percent !== undefined) alertsToWake.wake();
+      }
       if (gatewaySearch() === searching) return;
       searching = !searching;
       agents.catalogChanged();
@@ -1077,6 +1099,10 @@ export async function startHub(options: {
       library,
       gatewayShare: share,
       gatewayFeatures,
+      usageAlerts: {
+        list: () => alertsToWake.list(),
+        percent: () => gatewayFeatures.current().alerts?.usagePercent,
+      },
       routing: {
         state: () => modelGateway?.routingState() ?? [],
         decisions: async (query, signal) => {
@@ -1186,6 +1212,7 @@ export async function startHub(options: {
     } catch {
       /* Unconfirmed process leases remain available to the next startup. */
     }
+    await usageAlerts?.close();
     await modelGateway?.close();
     await copilotHosts?.close();
     await catalog?.close();

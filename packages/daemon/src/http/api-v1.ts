@@ -41,6 +41,10 @@ import {
   type RoutingStateSource,
 } from "./routing-state-routes.js";
 import {
+  registerUsageAlertsRoutes,
+  type UsageAlertsSource,
+} from "./usage-alerts-routes.js";
+import {
   registerSubscriptionRoutes,
   type SubscriptionControl,
 } from "./subscription-routes.js";
@@ -176,6 +180,8 @@ export interface ApiV1Options {
   gatewayFeatures?: GatewayFeaturesControl;
   /** The gateway's per-credential routing state; without it `/routing/state` is absent. */
   routing?: RoutingStateSource;
+  /** Usage alerts on allowance windows; without them `/usage/alerts` is absent. */
+  usageAlerts?: UsageAlertsSource;
   /**
    * Gateway Key budgets as the gateway holds them (`GatewayHandler.keyLimit`):
    * what each key used of its windows, with requests in flight; without it
@@ -386,6 +392,8 @@ export function registerApiV1(
         registerGatewayFeaturesRoutes(api, options.gatewayFeatures);
       if (options.routing)
         registerRoutingStateRoutes(api, options.modelPlane, options.routing);
+      if (options.usageAlerts)
+        registerUsageAlertsRoutes(api, options.modelPlane, options.usageAlerts);
       if (options.backup)
         registerBackupRoutes(api, options.backup.backups, options.backup.sync);
       if (options.subscriptions)

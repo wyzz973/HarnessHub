@@ -76,6 +76,7 @@ const backups: SyncBackups = {
     rules: { added: [], replaced: [], removed: [] },
     vision: null,
     search: { added: [], replaced: [], removed: [], needKey: [] },
+    alerts: { usagePercent: null, changed: false },
   }),
   serial: (action) => action(),
 };

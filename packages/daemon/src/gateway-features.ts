@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 /**
  * The shared gateway's features as the user sets them (redaction, the
- * vision model, web search backends), kept in
+ * vision model, web search backends, usage alerts), kept in
  * `<dataDir>/gateway-features.json` (mode 0600, replaced atomically). The
  * gateway reads the current value for every request; changes apply to the
  * next request. Search API keys go to the secret store; the file holds
@@ -15,6 +15,7 @@ import {
   gatewayFeaturesProblems,
   redactionRuleProblem,
   searchBackendProblem,
+  usagePercent as isUsagePercent,
   type GatewayFeatures,
   type RedactionRule,
   type SearchBackend,
@@ -204,6 +205,29 @@ export class GatewayFeaturesFile implements GatewayFeaturesControl {
             },
           );
         draft.vision = { model };
+      }
+    });
+  }
+
+  setAlerts(usagePercent: number | null): Promise<GatewayFeaturesView> {
+    return this.#change((draft) => {
+      if (usagePercent === null) delete draft.alerts;
+      else {
+        if (!isUsagePercent(usagePercent))
+          throw new ApiProblem(
+            "GATEWAY_FEATURES_INVALID",
+            "A usage alert is at a whole percent from 1 to 100",
+            400,
+            {
+              errors: [
+                {
+                  pointer: "/usagePercent",
+                  detail: "must be a whole percent from 1 to 100",
+                },
+              ],
+            },
+          );
+        draft.alerts = { usagePercent };
       }
     });
   }

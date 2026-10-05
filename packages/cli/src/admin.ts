@@ -18,6 +18,7 @@ import {
   type SubscriptionBackend,
   type SubscriptionNoticeView,
   type GatewayFeaturesView,
+  type UsageAlertList,
   type GatewayShareStatus,
   type HarnessHubClient,
   type MetadataField,
@@ -168,7 +169,8 @@ const COMMAND_USAGE: readonly CommandUsage[] = [
               [--ignore-case] | redaction rule remove NAME | vision MODEL|off
               | search add tavily|brave|exa|firecrawl|searxng [--base-url URL]
               [--key | --key-from-stdin | --key-from-env VAR
-              | --key-from-file PATH] | search remove ID`,
+              | --key-from-file PATH] | search remove ID
+              | alert [PERCENT|off]`,
   },
   {
     command: "gateway share",
@@ -1853,15 +1855,37 @@ function featuresText(features: GatewayFeaturesView): string {
       (backend) =>
         `  ${backend.id} ${backend.kind}${backend.baseUrl ? ` ${backend.baseUrl}` : ""}${backend.hasKey ? " (key stored)" : ""}`,
     ),
+    `Usage alert: ${features.alerts ? `when an allowance window reaches ${features.alerts.usagePercent}% used, once each time it runs` : "off"}`,
   ];
   return lines.join("\n");
+}
+
+/** The usage alert and the alerts of the last 40 days. */
+function alertsText(alerts: UsageAlertList): string {
+  return [
+    `Usage alert: ${alerts.usagePercent === null ? "off" : `at ${alerts.usagePercent}% of an allowance window`}`,
+    alerts.items.length
+      ? table(
+          ["TIME", "PROVIDER", "CREDENTIAL", "WINDOW", "USED", "RESETS"],
+          alerts.items.map((alert) => [
+            localTime(alert.at),
+            alert.provider,
+            alert.credentialName ?? alert.credential,
+            alert.window,
+            `${Math.round(alert.usedPercent * 10) / 10}%`,
+            localTime(alert.resetsAt),
+          ]),
+        )
+      : "No alerts in the last 40 days.",
+  ].join("\n");
 }
 
 /**
  * `hh gateway features | redaction on|off | redaction rule add <name>
  * <pattern> [--ignore-case] | redaction rule remove <name> | vision
  * <model>|off | search add <kind> [--base-url URL] [key source] | search
- * remove <id>`: the gateway's optional capabilities (Magpie parity §11).
+ * remove <id> | alert [<percent>|off]`: the gateway's optional
+ * capabilities (Magpie parity §11).
  * A search key is read like a credential secret, never from the command
  * line itself and never from an environment variable that is not named.
  */
@@ -1884,6 +1908,22 @@ async function gatewayFeaturesCommand(
   if (group === "features") {
     positionals(given, []);
     return show(await client.gatewayFeatures.get());
+  }
+  if (group === "alert") {
+    const [value] = given;
+    if (given.length > 1)
+      throw new UsageError("hh gateway alert [<percent>|off]");
+    if (value === undefined) {
+      const alerts = await client.usage.alerts();
+      return output(ctx, alerts, () => alertsText(alerts));
+    }
+    if (value === "off")
+      return show(await client.gatewayFeatures.clearAlerts());
+    if (!/^\d{1,3}$/.test(value) || Number(value) < 1 || Number(value) > 100)
+      throw new UsageError(
+        "A usage alert is at a whole percent from 1 to 100, or off",
+      );
+    return show(await client.gatewayFeatures.setAlerts(Number(value)));
   }
   if (group === "vision") {
     const [model] = positionals(given, ["model or off"]);
@@ -1971,7 +2011,7 @@ async function gatewayFeaturesCommand(
 
 async function gatewayCommand(args: string[]): Promise<void> {
   const [group = "", action = "", ...rest] = args;
-  if (["features", "redaction", "vision", "search"].includes(group))
+  if (["features", "redaction", "vision", "search", "alert"].includes(group))
     return gatewayFeaturesCommand(group, args.slice(1));
   if (group !== "share")
     throw new UsageError(`Unknown gateway command: ${group || "(none)"}`);

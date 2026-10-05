@@ -124,7 +124,7 @@ Every row was checked against Magpie's source and against HarnessHub's code or d
 | Allowances polled from vendors' usage endpoints; `magpie quota` | different by design | Routing and Keys → Credential state; `GET /api/v1/routing/state` | Readings only from rate-limit headers and the Copilot SDK; ChatGPT accounts have none; no CLI view ([ADR 0026](decisions/0026-subscription-accounts.md)) |
 | Balances of API-key relays | not covered | — | |
 | Warm-up requests, spending Codex reset credits, switching to the next account | different by design | — | Left out on purpose ([ADR 0026](decisions/0026-subscription-accounts.md)) |
-| Quota and balance alerts (`magpie quota alert`) | not covered | — | |
+| Quota and balance alerts (`magpie quota alert`) | partial | `hh gateway alert 80`; `PUT /api/v1/gateway/features/alerts`; `GET /api/v1/usage/alerts`; `usage.alert` in `gateway.log` | Window alerts only, with Magpie's threshold, cadence (1 minute, then every 5) and once-per-run rule; marks in `usage-alerts.json`, the setting in the gateway features (backed up and synced). No balance alerts, no OS notification (no menu bar app) and no console notice yet; readings come only from calls, not from polling vendors ([usage alerts](gateway-features.md#用量提醒)) |
 | A risk notice before adding an account | different by design | `hh subscription notice`; shown before every sign-in | A notice for each kind of account, versioned; an account accepted under an older version is not used until accepted again |
 | Subscription accounts used from the LAN | different by design | — | LAN keys never reach subscription providers, since vendors' terms forbid sharing |
 
@@ -295,6 +295,7 @@ The key in an agent's file is a real credential, but it is limited to that agent
 | `magpie groups`, `magpie group add … routing=… stays=…` | `hh group list`, `hh group add <id> --member … --strategy … --stickiness …` |
 | `magpie accounts`, `magpie accounts add` | `hh subscription list`, `hh subscription login chatgpt\|copilot` |
 | `magpie quota` | Routing and Keys → Credential state |
+| `magpie quota alert <percent>` | `hh gateway alert <percent>` |
 | `magpie gateway-key list\|add\|remove` | `hh key list\|create\|revoke` |
 | `magpie gateway-key limit <id> …` | `hh key quota <id> --budget …`, `hh key limit <id>` |
 | `magpie usage` | `hh usage --by …` |

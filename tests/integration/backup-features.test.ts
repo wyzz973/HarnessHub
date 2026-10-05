@@ -104,7 +104,7 @@ function hh(
   });
 }
 
-/** A machine with redaction off and a rule, a vision model and two search backends. */
+/** A machine with redaction off and a rule, a vision model, two search backends and a usage alert. */
 async function configured(t: TestContext): Promise<Machine> {
   const a = await machine(t, "a");
   await a.client.providers.create({
@@ -124,6 +124,7 @@ async function configured(t: TestContext): Promise<Machine> {
     kind: "searxng",
     baseUrl: SEARXNG,
   });
+  await a.client.gatewayFeatures.setAlerts(75);
   return a;
 }
 
@@ -166,6 +167,7 @@ void test("a backup carries the gateway features, and a restore on a fresh machi
         },
         { id: "search-2", kind: "searxng", baseUrl: SEARXNG },
       ],
+      alerts: { usagePercent: 75 },
     },
   );
 
@@ -185,6 +187,7 @@ void test("a backup carries the gateway features, and a restore on a fresh machi
       removed: [],
       needKey: [],
     },
+    alerts: { usagePercent: 75, changed: true },
   });
   assert.equal(
     (await b.client.gatewayFeatures.get()).redaction.enabled,
@@ -200,6 +203,7 @@ void test("a backup carries the gateway features, and a restore on a fresh machi
   const restored = await b.client.gatewayFeatures.get();
   assert.deepEqual(restored.redaction, { enabled: false, rules: [RULE] });
   assert.deepEqual(restored.vision, { model: "seer/eyes" });
+  assert.deepEqual(restored.alerts, { usagePercent: 75 });
   assert.deepEqual(
     restored.search?.backends.map((item) => [
       item.kind,
@@ -235,6 +239,7 @@ void test("a backup carries the gateway features, and a restore on a fresh machi
     cli.stdout,
     /Gateway features: redaction rules: added TICKET; search backends: added tavily, searxng/,
   );
+  assert.match(cli.stdout, /usage alert: set at 75%/);
 
   // The same backup again changes nothing.
   const again = await b.client.backup.restore({
@@ -247,6 +252,7 @@ void test("a backup carries the gateway features, and a restore on a fresh machi
     rules: { added: [], replaced: [], removed: [] },
     vision: { model: "seer/eyes", changed: false },
     search: { added: [], replaced: [], removed: [], needKey: [] },
+    alerts: { usagePercent: 75, changed: false },
   });
 });
 

@@ -26,6 +26,7 @@ const valid: BackupGatewayFeatures = {
       key: { source: "reference", kind: "env", name: "BRAVE_KEY" },
     },
   ],
+  alerts: { usagePercent: 80 },
 };
 
 void test("a bundle's gateway features are checked as the settings are, keys as provider secrets", () => {
@@ -119,6 +120,14 @@ void test("a bundle's gateway features are checked as the settings are, keys as 
       broken((copy) => (search(copy)[0]!.key = { source: "store", value: "" })),
     ],
     ["an id used twice", broken((copy) => (search(copy)[1]!.id = "search-1"))],
+    [
+      "a usage alert past 100%",
+      broken((copy) => (copy.alerts = { usagePercent: 101 })),
+    ],
+    [
+      "a usage alert with another member",
+      broken((copy) => (copy.alerts = { usagePercent: 80, balance: 5 })),
+    ],
     [
       "a backend member that is not one",
       broken(

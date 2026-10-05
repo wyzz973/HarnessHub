@@ -12,7 +12,7 @@ Commands:
   import      Add providers from an import link or from Claude Code / Codex
   credential  Manage provider credentials (list, add, rotate, remove)
   key         Manage Gateway Keys and their limits (list, create, quota, limit, revoke)
-  gateway     Gateway features and LAN sharing (features, redaction, vision, search, share on|off|status)
+  gateway     Gateway features and LAN sharing (features, redaction, vision, search, alert, share on|off|status)
   group       Manage route groups and their rules (list, add, remove, auto, hide, restore, rule)
   model       Show model metadata with its sources; set overrides
   catalog     Show or refresh the models.dev catalog (status, refresh)

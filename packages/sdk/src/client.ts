@@ -445,11 +445,13 @@ export interface GatewayShareStatus {
   error?: string;
 }
 
-/** `GET /gateway/features`: redaction, the vision model and search backends, without keys. */
+/** `GET /gateway/features`: redaction, the vision model, search backends and the usage alert, without keys. */
 export interface GatewayFeaturesView {
   schemaVersion: 1;
   redaction: RedactionSettings;
   vision?: { model: string };
+  /** The usage alert's threshold in percent; absent when off. */
+  alerts?: { usagePercent: number };
   search?: {
     backends: {
       id: string;
@@ -494,6 +496,21 @@ export interface Money {
 export type ApiModelCall = Omit<ModelCallEntry, "cost"> & {
   cost: (Money & { priceSource: string }) | null;
 };
+
+/** `GET /usage/alerts`: allowance windows that reached the usage alert's threshold. */
+export interface UsageAlertList {
+  usagePercent: number | null;
+  items: {
+    at: string;
+    provider: string;
+    credential: string;
+    /** The credential's current name, when it still exists. */
+    credentialName?: string;
+    window: string;
+    usedPercent: number;
+    resetsAt?: string;
+  }[];
+}
 
 export interface CallFilter {
   /** Inclusive RFC 3339 time. */
@@ -771,7 +788,7 @@ export interface RestoreSummary {
       reason: string;
     }>;
   } | null;
-  /** Redaction, the vision model and the search backends; null when the backup has none. */
+  /** Redaction, the vision model, the search backends and the usage alert; null when the backup has none. */
   gatewayFeatures: {
     redaction: {
       /** Outbound redaction after the restore. */
@@ -796,6 +813,8 @@ export interface RestoreSummary {
       /** No key in the backup or here: not brought in. */
       needKey: string[];
     };
+    /** The usage alert's threshold after the restore (null: off) and whether it changes. */
+    alerts: { usagePercent: number | null; changed: boolean };
   } | null;
   gatewayShare: {
     action: "apply" | "unchanged" | "absent" | "unavailable";
@@ -1676,6 +1695,13 @@ export class HarnessHubClient {
         "DELETE",
         `gateway/features/search/${segment(id)}`,
       ),
+    /** Alert when a credential's allowance window reaches `usagePercent` (1 to 100) used. */
+    setAlerts: (usagePercent: number) =>
+      this.request<GatewayFeaturesView>("PUT", "gateway/features/alerts", {
+        body: { usagePercent },
+      }),
+    clearAlerts: () =>
+      this.request<GatewayFeaturesView>("DELETE", "gateway/features/alerts"),
   };
 
   readonly backup = {
@@ -1727,6 +1753,8 @@ export class HarnessHubClient {
     /** The buckets of `aggregate` as CSV: the grouping, then the call CSV's token and cost columns. */
     csv: (query: CallFilter & { groupBy?: UsageGroupBy } = {}) =>
       this.csv("usage", { ...query }),
+    /** The usage alert's threshold (null: off) and the alerts of the last 40 days, newest first. */
+    alerts: () => this.request<UsageAlertList>("GET", "usage/alerts"),
   };
 
   readonly conversations = {

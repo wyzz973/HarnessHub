@@ -102,6 +102,8 @@ ACP 0.13.2 的 reducer 会把最新 breakdown 直接赋给名称为 `cumulative_
 
 账本只存 ID，所以 `host`、凭据名称与账号、Key 名称取自导出时的配置；之后改过名或删除的，显示当前名称或为空。汇总 CSV 的列为分组键（列名即 `groupBy`）、`calls`、`failed_calls`、五个 token 列（顺序同上）、`cost_usd`（已知成本之和，六位小数）与 `unpriced_calls`。
 
+凭据额度窗口的用量提醒（Magpie 的 `magpie quota alert`）见 [网关功能](gateway-features.md#用量提醒)。
+
 ## OTLP 导出
 
 守护进程可以把每次模型调用导出为一个 OpenTelemetry span（[08 第 5 节](proposals/oss/08-reliability-observability.md#5-追踪)），可选另导出 GenAI 指标与每次调用的请求和回答，默认关闭：没有 `otlp` 配置时不创建导出器，也不发出任何网络请求，环境中的 `OTEL_EXPORTER_OTLP_ENDPOINT` 等标准变量同样不会打开导出。实现见 [otlp-export.ts](../packages/daemon/src/otlp-export.ts)。
