@@ -21,6 +21,21 @@ export const zh = {
   "providers.add": "添加 provider",
   "providers.apiKeyHeader": "Key 的发送方式",
   "providers.disabled": "已停用",
+  "providers.switch.enable": "启用",
+  "providers.switch.disable": "停用",
+  "providers.switch.label": "启用 {name}",
+  "providers.switch.offTitle": "停用 {name}？",
+  "providers.switch.offBody":
+    "停用后它不再服务任何请求：它的模型从 /v1/models、自动路由组与 Agent 的模型列表中消失，路由组跳过它。接线到它的模型的 Agent 会标为需要处理，但它们的配置文件不会被改写。凭据与设置都保留，随时可以重新启用。",
+  "providers.switch.offBanner":
+    "这个 provider 已停用：它的模型不在 /v1/models 与路由中，接线到这些模型的 Agent 需要处理。",
+  "providers.switch.enabled": "{name} 已启用",
+  "providers.switch.disabled": "{name} 已停用",
+  "providers.switch.credentialLabel": "启用凭据 {name}",
+  "providers.switch.credentialOn": "凭据 {name} 已启用",
+  "providers.switch.credentialOff": "凭据 {name} 已停用",
+  "providers.switch.instead": "改为停用 provider",
+  "providers.switch.column": "启用",
   "providers.all": "全部",
 
   "providers.table.upstreamName": "上游名称",
@@ -306,6 +321,21 @@ export const en: Translation<typeof zh> = {
   "providers.add": "Add provider",
   "providers.apiKeyHeader": "How the key is sent",
   "providers.disabled": "Disabled",
+  "providers.switch.enable": "Switch on",
+  "providers.switch.disable": "Switch off",
+  "providers.switch.label": "{name} is on",
+  "providers.switch.offTitle": "Switch {name} off?",
+  "providers.switch.offBody":
+    "While off it serves no request: its models leave /v1/models, the automatic groups and agents' model lists, and route groups pass over it. Agents wired to its models are flagged as needing attention, but their configuration files are not rewritten. Its credentials and settings are kept, and you can switch it back on at any time.",
+  "providers.switch.offBanner":
+    "This provider is off: its models are not in /v1/models or routing, and agents wired to them need attention.",
+  "providers.switch.enabled": "{name} is on",
+  "providers.switch.disabled": "{name} is off",
+  "providers.switch.credentialLabel": "Credential {name} is on",
+  "providers.switch.credentialOn": "Credential {name} is on",
+  "providers.switch.credentialOff": "Credential {name} is off",
+  "providers.switch.instead": "Switch the provider off instead",
+  "providers.switch.column": "On",
   "providers.all": "All",
 
   "providers.table.upstreamName": "Upstream name",

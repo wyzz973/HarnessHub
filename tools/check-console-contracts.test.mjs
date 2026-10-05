@@ -577,6 +577,72 @@ test("the agent pages show the restart notice and an administrator's managed set
   assert.match(await read("first-run.tsx"), /notice: wired\.notice/);
 });
 
+test("the switches: credentials and providers on and off, keys renamed, suspended and resumed, through the SDK", async () => {
+  const lib = await consoleModule("lib/model-plane.ts", {
+    'import { apiClient } from "./session";': "const apiClient = undefined;",
+  });
+  const agents = await consoleModule("lib/agents.ts");
+  const openapi = JSON.parse(await readFile(new URL("../docs/api/openapi.json", import.meta.url), "utf8"));
+  const body = (route, method) => openapi.paths[route][method].requestBody.content[Object.keys(openapi.paths[route][method].requestBody.content)[0]].schema;
+  const response = (route, method) => Object.values(openapi.paths[route][method].responses).find((item) => item.content)?.content["application/json"].schema;
+  // The daemon's published shapes hold what the controls send and read.
+  assert.ok("enabled" in body("/api/v1/providers/{id}", "patch").properties);
+  assert.ok("enabled" in body("/api/v1/providers/{id}/credentials/{credentialId}", "patch").properties);
+  assert.ok("suspendedAt" in response("/api/v1/gateway-keys/{id}", "get").properties);
+  assert.ok("name" in body("/api/v1/gateway-keys/{id}", "patch").properties);
+  assert.ok(response("/api/v1/agents/{id}", "get").properties.wiring.properties.keyState.enum.includes("suspended"));
+  // The SDK calls the controls make.
+  const { HarnessHubClient, HarnessHubError } = await import(new URL("../packages/sdk/dist/src/client.js", import.meta.url).href);
+  const sent = [];
+  const client = new HarnessHubClient({
+    url: "http://127.0.0.1:1",
+    csrfToken: "t".repeat(43),
+    fetch: async (url, init) => {
+      sent.push(`${init.method} ${new URL(String(url)).pathname} ${init.body ?? ""}`);
+      return Response.json({}, { status: 200 });
+    },
+  });
+  await client.credentials.setEnabled("lab", "key-1", false);
+  await client.providers.update("lab", { enabled: false });
+  await client.gatewayKeys.rename("k1", "ci");
+  await client.gatewayKeys.suspend("k1");
+  await client.gatewayKeys.resume("k1");
+  assert.deepEqual(sent, [
+    'PATCH /api/v1/providers/lab/credentials/key-1 {"enabled":false}',
+    'PATCH /api/v1/providers/lab {"enabled":false}',
+    'PATCH /api/v1/gateway-keys/k1 {"name":"ci"}',
+    "POST /api/v1/gateway-keys/k1/suspend {}",
+    "POST /api/v1/gateway-keys/k1/resume {}",
+  ]);
+  const read = (file) => readFile(new URL(`../packages/console/components/${file}`, import.meta.url), "utf8");
+  const providersPage = await read("providers-page.tsx");
+  assert.match(providersPage, /credentials\.setEnabled\(provider\.id, credential\.id, enabled\)/);
+  assert.match(providersPage, /providers\.update\(provider\.id, \{ enabled \}\)/);
+  const keysPage = await read("keys-page.tsx");
+  for (const call of [/gatewayKeys\.rename\(/, /gatewayKeys\.suspend\(/, /gatewayKeys\.resume\(/]) assert.match(keysPage, call);
+  const detail = await read("agent-detail.tsx");
+  assert.match(detail, /gatewayKeys\.suspend\(wiring\.keyId\)/);
+  assert.match(detail, /gatewayKeys\.resume\(keyId\)/);
+
+  // What the controls show.
+  assert.equal(lib.providerOn({}), true);
+  assert.equal(lib.providerOn({ enabled: true }), true);
+  assert.equal(lib.providerOn({ enabled: false }), false);
+  const now = Date.parse("2026-10-05T12:00:00.000Z");
+  const status = (key) => lib.keyStatus(key, now).status;
+  assert.equal(status({}), "active");
+  assert.equal(status({ suspendedAt: "2026-10-05T11:00:00.000Z" }), "suspended");
+  assert.equal(lib.keyStatus({ suspendedAt: "2026-10-05T11:00:00.000Z" }, now).label, "已暂停");
+  assert.equal(status({ suspendedAt: "2026-10-05T11:00:00.000Z", expiresAt: "2026-10-05T11:30:00.000Z" }), "expired", "resuming would not help");
+  assert.equal(status({ suspendedAt: "2026-10-05T11:00:00.000Z", revokedAt: "2026-10-05T11:30:00.000Z" }), "revoked");
+  const refusal = (code) => lib.failureOf(new HarnessHubError({ type: "x", title: "Conflict", status: 409, code, requestId: "r" }));
+  assert.equal(refusal("CREDENTIAL_LAST_ENABLED").message, "这是这个 provider 唯一启用的凭据，不能关闭；要停用它，请改为停用整个 provider。");
+  assert.equal(refusal("CREDENTIAL_LAST_ENABLED").code, "CREDENTIAL_LAST_ENABLED", "the page offers the provider switch on this code");
+  assert.match(refusal("GATEWAY_KEY_REVOKED").message, /已吊销/);
+  const agent = { installation: { status: "installed" }, wiring: { keyState: "suspended", drift: null } };
+  assert.deepEqual(agents.attention(agent), ["它的 Key 已暂停，请求会被拒绝"]);
+});
+
 test("the backup page reads backup files and builds sync settings without dropping secrets it must send", async () => {
   const backup = await consoleModule("lib/backup.ts");
   assert.equal(backup.backupFileName(new Date(2026, 9, 4, 23, 59)), "harnesshub-2026-10-04.harnesshub-backup");

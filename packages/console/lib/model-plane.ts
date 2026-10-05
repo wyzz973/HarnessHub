@@ -7,6 +7,7 @@
 import {
   type GatewayKeyInput,
   type GatewayKeyQuota,
+  type GatewayKeyView,
   type HarnessHubClient,
   HarnessHubError,
   HarnessHubUnavailableError,
@@ -288,6 +289,36 @@ export function outboundProxyView(network: SystemInfo["network"]): {
           : "—",
     noProxy: network.noProxy.length ? network.noProxy.join(", ") : "—",
   };
+}
+
+/** Whether a provider serves requests: it is on unless it was switched off. */
+export function providerOn(provider: Pick<ProviderConfig, "enabled">): boolean {
+  return provider.enabled !== false;
+}
+
+/**
+ * A Gateway Key's state as the keys list shows it: revoked, expired,
+ * suspended (kept, refused until resumed) or active, in that order.
+ */
+export function keyStatus(
+  key: Pick<GatewayKeyView, "revokedAt" | "expiresAt" | "suspendedAt">,
+  now: number,
+): {
+  status: "revoked" | "expired" | "suspended" | "active";
+  label: string;
+  tone: "" | "warn" | "good";
+} {
+  if (key.revokedAt)
+    return { status: "revoked", label: t("routing.key.revoked"), tone: "" };
+  if (key.expiresAt && Date.parse(key.expiresAt) <= now)
+    return { status: "expired", label: t("routing.key.expired"), tone: "warn" };
+  if (key.suspendedAt)
+    return {
+      status: "suspended",
+      label: t("routing.key.suspended"),
+      tone: "warn",
+    };
+  return { status: "active", label: t("routing.key.active"), tone: "good" };
 }
 
 /** How a provider's proxy reads on its page. */

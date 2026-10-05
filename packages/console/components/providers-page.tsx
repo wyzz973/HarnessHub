@@ -29,6 +29,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import {
   apiKeyHeaders,
   emptyProviderForm,
@@ -44,6 +45,7 @@ import {
   kindName,
   providerKinds,
   providerFormFailure,
+  providerOn,
   providerPatch,
   gatewayCredentialLimits,
   limitNames,
@@ -58,6 +60,7 @@ import { providerIcon } from "@/lib/gateway-models";
 import { formatDateTime, t } from "@/lib/i18n";
 import { stateKey } from "@/lib/routing-state";
 import { navigate } from "@/lib/router";
+import { notify } from "@/lib/toast";
 import { BrandIcon } from "./brand-icon";
 import { ImportDialog } from "./import-dialog";
 import {
@@ -678,6 +681,34 @@ function ProviderDetail({
     rotating: ProviderCredential | undefined;
   } | null>(null);
   const [deleting, setDeleting] = useState<ProviderCredential | null>(null);
+  const providerSwitch = useProviderSwitch(provider, reload);
+  /** A credential switch the daemon refused, such as the provider's last enabled credential. */
+  const [switchFailure, setSwitchFailure] = useState<Failure | null>(null);
+  const [switching, setSwitching] = useState<string | null>(null);
+  const switchCredential = (
+    credential: ProviderCredential,
+    enabled: boolean,
+  ) => {
+    setSwitching(credential.id);
+    setSwitchFailure(null);
+    modelPlane()
+      .credentials.setEnabled(provider.id, credential.id, enabled)
+      .then(
+        () => {
+          notify.success(
+            t(
+              enabled
+                ? "providers.switch.credentialOn"
+                : "providers.switch.credentialOff",
+              { name: credential.name },
+            ),
+          );
+          reload();
+        },
+        (reason: unknown) => setSwitchFailure(failureOf(reason)),
+      )
+      .finally(() => setSwitching(null));
+  };
   const [refreshing, setRefreshing] = useState(false);
   const [refreshFailure, setRefreshFailure] = useState<Failure | null>(null);
   const [checking, setChecking] = useState(false);
@@ -734,7 +765,28 @@ function ProviderDetail({
           <Trash2 />
           {t("providers.delete")}
         </Button>
+        <label className="flex items-center gap-2 text-[13px]">
+          {providerSwitch.control}
+          {providerSwitch.on
+            ? t("providers.switch.column")
+            : t("providers.disabled")}
+        </label>
       </PageHeader>
+      {providerSwitch.dialog}
+      {providerSwitch.on ? null : (
+        <div className="callout warn mt-4 items-center">
+          <span className="min-w-0 flex-1">
+            {t("providers.switch.offBanner")}
+          </span>
+          <Button
+            size="xs"
+            variant="outline"
+            onClick={() => providerSwitch.request(true)}
+          >
+            {t("providers.switch.enable")}
+          </Button>
+        </div>
+      )}
       <h2 className="section-title mt-7 mb-3">{t("providers.endpoints")}</h2>
       <div className="panel px-5 py-2">
         <dl>
@@ -810,6 +862,21 @@ function ProviderDetail({
           </Button>
         )}
       </div>
+      {switchFailure ? (
+        <div role="alert" className="callout error mb-3 items-center">
+          <span className="min-w-0 flex-1">{switchFailure.message}</span>
+          {switchFailure.code === "CREDENTIAL_LAST_ENABLED" &&
+          providerSwitch.on ? (
+            <Button
+              size="xs"
+              variant="outline"
+              onClick={() => providerSwitch.request(false)}
+            >
+              {t("providers.switch.instead")}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       <div className="panel overflow-x-auto">
         <table className="data-table min-w-[760px]">
           <thead>
@@ -866,7 +933,21 @@ function ProviderDetail({
                     <span className="text-subtle">—</span>
                   )}
                 </td>
-                <td className="w-[132px] text-right">
+                <td className="w-[172px] text-right whitespace-nowrap">
+                  {provider.subscription ? null : (
+                    <span className="mr-1 inline-flex align-middle">
+                      <Switch
+                        checked={credential.enabled}
+                        disabled={switching === credential.id}
+                        aria-label={t("providers.switch.credentialLabel", {
+                          name: credential.name,
+                        })}
+                        onCheckedChange={(enabled) =>
+                          switchCredential(credential, enabled)
+                        }
+                      />
+                    </span>
+                  )}
                   {credential.ref.kind === "store" && !provider.subscription ? (
                     <Button
                       size="icon-sm"
@@ -984,6 +1065,78 @@ function ProviderDetail({
   );
 }
 
+/**
+ * A provider's on/off switch (`PATCH /providers/{id}` `{enabled}`). Off asks
+ * first, since agents wired to its models are then flagged; on does not.
+ * `request(false)` opens the same question from elsewhere on the page.
+ */
+function useProviderSwitch(provider: ProviderConfig, onChanged: () => void) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const on = providerOn(provider);
+  const set = async (enabled: boolean) => {
+    await modelPlane().providers.update(provider.id, { enabled });
+    notify.success(
+      t(enabled ? "providers.switch.enabled" : "providers.switch.disabled", {
+        name: provider.name,
+      }),
+    );
+    onChanged();
+  };
+  const request = (enabled: boolean) => {
+    if (!enabled) {
+      setConfirming(true);
+      return;
+    }
+    setBusy(true);
+    set(true)
+      .catch((reason: unknown) =>
+        notify.error(reason, t("providers.switch.enable")),
+      )
+      .finally(() => setBusy(false));
+  };
+  const control = (
+    <Switch
+      checked={on}
+      disabled={busy}
+      aria-label={t("providers.switch.label", { name: provider.name })}
+      onCheckedChange={request}
+    />
+  );
+  const dialog = (
+    <ConfirmDialog
+      open={confirming}
+      title={t("providers.switch.offTitle", { name: provider.name })}
+      description={t("providers.switch.offBody")}
+      action={t("providers.switch.disable")}
+      onClose={() => setConfirming(false)}
+      onConfirm={() => set(false)}
+    />
+  );
+  return { on, control, dialog, request };
+}
+
+/** The switch in a provider's list row; clicks and its dialog stay out of the row's own click. */
+function ProviderRowSwitch({
+  provider,
+  onChanged,
+}: {
+  provider: ProviderConfig;
+  onChanged: () => void;
+}) {
+  const { control, dialog } = useProviderSwitch(provider, onChanged);
+  return (
+    <span
+      className="inline-flex"
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      {control}
+      {dialog}
+    </span>
+  );
+}
+
 /** Providers and their credentials and models (`/api/v1/providers`). */
 export function ProvidersPage() {
   const load = useCallback(
@@ -1074,6 +1227,7 @@ export function ProvidersPage() {
                         <th>{t("providers.credentials")}</th>
                         <th>{t("providers.models")}</th>
                         <th>{t("providers.list.updated")}</th>
+                        <th>{t("providers.switch.column")}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1097,6 +1251,11 @@ export function ProvidersPage() {
                                 >
                                   {provider.name}
                                 </button>
+                                {providerOn(provider) ? null : (
+                                  <span className="tag warn ml-2">
+                                    {t("providers.disabled")}
+                                  </span>
+                                )}
                                 <p className="font-mono text-[12px] text-subtle">
                                   {provider.id}
                                   {provider.region
@@ -1143,6 +1302,12 @@ export function ProvidersPage() {
                           </td>
                           <td className="text-[12.5px] text-muted-foreground">
                             <LocalTime value={provider.updatedAt} />
+                          </td>
+                          <td>
+                            <ProviderRowSwitch
+                              provider={provider}
+                              onChanged={reload}
+                            />
                           </td>
                         </tr>
                       ))}

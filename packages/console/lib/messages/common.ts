@@ -41,6 +41,9 @@ export const zh = {
   "common.code.GATEWAY_KEY_INVALID": "Key 设置不正确",
   "common.code.GATEWAY_KEY_NOT_FOUND": "Key 不存在",
   "common.code.INVALID_REQUEST": "输入不符合接口要求",
+  "common.code.CREDENTIAL_LAST_ENABLED":
+    "这是这个 provider 唯一启用的凭据，不能关闭；要停用它，请改为停用整个 provider。",
+  "common.code.GATEWAY_KEY_REVOKED": "这把 Key 已吊销，不能暂停、恢复或改名",
   "common.code.CONSOLE_SESSION_INVALID":
     "控制台会话已结束，请运行 hh console 重新登录",
   "common.code.ADMIN_TOKEN_REQUIRED":
@@ -216,6 +219,10 @@ export const en: Translation<typeof zh> = {
   "common.code.GATEWAY_KEY_NOT_FOUND": "The key does not exist",
   "common.code.INVALID_REQUEST":
     "The input does not match what the API accepts",
+  "common.code.CREDENTIAL_LAST_ENABLED":
+    "This is the provider's last enabled credential and cannot be switched off; switch the provider off instead.",
+  "common.code.GATEWAY_KEY_REVOKED":
+    "This key is revoked; it cannot be suspended, resumed or renamed",
   "common.code.CONSOLE_SESSION_INVALID":
     "The console session has ended; run hh console to sign in again",
   "common.code.ADMIN_TOKEN_REQUIRED":

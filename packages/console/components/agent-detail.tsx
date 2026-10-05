@@ -1,6 +1,15 @@
 // SPDX-License-Identifier: MIT
 import { useMemo, useState } from "react";
-import { Eye, EyeOff, KeyRound, Loader2, Search, Undo2 } from "lucide-react";
+import {
+  Eye,
+  EyeOff,
+  KeyRound,
+  Loader2,
+  Pause,
+  Play,
+  Search,
+  Undo2,
+} from "lucide-react";
 import type { Agent, AgentWiringInput } from "@harnesshub/sdk/client";
 import { Button } from "@/components/ui/button";
 import {
@@ -337,7 +346,24 @@ export function AgentDetail({
   onChanged: (agent: Agent) => void;
 }) {
   const [plan, setPlan] = useState<AgentWiringInput | null>(null);
-  const [confirm, setConfirm] = useState<"rotate" | "unwire" | null>(null);
+  const [confirm, setConfirm] = useState<
+    "rotate" | "unwire" | "suspend" | null
+  >(null);
+  const [resuming, setResuming] = useState(false);
+  /** Resume a suspended agent key at once; suspending asks first. */
+  const resume = (keyId: string) => {
+    setResuming(true);
+    modelPlane()
+      .gatewayKeys.resume(keyId)
+      .then(
+        async () => {
+          notify.success(t("agents.key.resumed", { name: agent.name }));
+          onChanged(await modelPlane().agents.get(agent.id));
+        },
+        (reason: unknown) => notify.error(reason, t("agents.key.resume")),
+      )
+      .finally(() => setResuming(false));
+  };
   const wiring = agent.wiring;
   const legacy = legacyKeyless(agent);
   const install = installationText(agent.installation.status);
@@ -428,14 +454,38 @@ export function AgentDetail({
           <Section
             title="Key"
             aside={
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setConfirm("rotate")}
-              >
-                <KeyRound />
-                {legacy ? t("agents.key.issue") : t("agents.key.rotate")}
-              </Button>
+              <span className="flex flex-wrap gap-2">
+                {wiring.keyId !== undefined &&
+                wiring.keyState === "suspended" ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={resuming}
+                    onClick={() => resume(wiring.keyId!)}
+                  >
+                    <Play />
+                    {t("agents.key.resume")}
+                  </Button>
+                ) : wiring.keyId !== undefined &&
+                  wiring.keyState === "active" ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setConfirm("suspend")}
+                  >
+                    <Pause />
+                    {t("agents.key.suspend")}
+                  </Button>
+                ) : null}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setConfirm("rotate")}
+                >
+                  <KeyRound />
+                  {legacy ? t("agents.key.issue") : t("agents.key.rotate")}
+                </Button>
+              </span>
             }
           >
             {legacy ? (
@@ -549,6 +599,19 @@ export function AgentDetail({
                 rotated.notice,
               ),
             );
+          }}
+        />
+        <ConfirmDialog
+          open={confirm === "suspend"}
+          title={t("agents.key.suspendTitle", { name: agent.name })}
+          description={t("agents.key.suspendDescription", { name: agent.name })}
+          action={t("agents.key.suspend")}
+          onClose={() => setConfirm(null)}
+          onConfirm={async () => {
+            if (wiring?.keyId === undefined) return;
+            await modelPlane().gatewayKeys.suspend(wiring.keyId);
+            notify.success(t("agents.key.suspended", { name: agent.name }));
+            onChanged(await modelPlane().agents.get(agent.id));
           }}
         />
         <ConfirmDialog

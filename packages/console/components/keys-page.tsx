@@ -7,6 +7,9 @@ import {
   Gauge,
   KeyRound,
   Loader2,
+  Pause,
+  Pencil,
+  Play,
   Plus,
   RefreshCw,
   TriangleAlert,
@@ -34,12 +37,14 @@ import {
   expiryLabel,
   failureOf,
   keyCreateInput,
+  keyStatus,
   modelPlane,
   modelRefChoices,
   type ExpiryChoice,
   type Failure,
 } from "@/lib/model-plane";
 import { quotaFormOf, quotaOf, quotaSummary } from "@/lib/routing";
+import { notify } from "@/lib/toast";
 import { LimitDialog, QuotaDialog, QuotaFields } from "./key-budgets";
 import {
   Checkbox,
@@ -54,11 +59,73 @@ import {
   LoadError,
 } from "./model-plane-ui";
 
-function keyState(key: GatewayKeyView, now: number) {
-  if (key.revokedAt) return { label: t("routing.key.revoked"), tone: "" };
-  if (key.expiresAt && Date.parse(key.expiresAt) <= now)
-    return { label: t("routing.key.expired"), tone: "warn" };
-  return { label: t("routing.key.active"), tone: "good" };
+/** Give a key another name; its text, limits and allowed models stay. */
+function RenameKeyDialog({
+  gatewayKey,
+  onClose,
+  onSaved,
+}: {
+  gatewayKey: GatewayKeyView;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(gatewayKey.name);
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<Failure | null>(null);
+  const save = () => {
+    setBusy(true);
+    setFailure(null);
+    modelPlane()
+      .gatewayKeys.rename(gatewayKey.keyId, name.trim())
+      .then(
+        (renamed) => {
+          setBusy(false);
+          notify.success(t("routing.keys.renamed", { name: renamed.name }));
+          onSaved();
+        },
+        (reason: unknown) => {
+          setBusy(false);
+          setFailure(failureOf(reason));
+        },
+      );
+  };
+  return (
+    <Dialog open onOpenChange={(next) => (!next && !busy ? onClose() : null)}>
+      <DialogContent className="sm:max-w-[440px]">
+        <DialogHeader>
+          <DialogTitle>
+            {t("routing.keys.renameTitle", { name: gatewayKey.name })}
+          </DialogTitle>
+          <DialogDescription>{t("routing.keys.renameHint")}</DialogDescription>
+        </DialogHeader>
+        <label className="field-label">
+          {t("routing.key.name")}
+          <input
+            className="field"
+            value={name}
+            autoFocus
+            autoComplete="off"
+            onChange={(event) => setName(event.target.value)}
+          />
+          <FieldError failure={failure} pointer="/name" />
+        </label>
+        <ErrorCallout failure={failure} />
+        <OtherFieldErrors failure={failure} shown={["/name"]} />
+        <DialogFooter>
+          <Button variant="outline" disabled={busy} onClick={onClose}>
+            {t("common.cancel")}
+          </Button>
+          <Button
+            disabled={busy || !name.trim() || name.trim() === gatewayKey.name}
+            onClick={save}
+          >
+            {busy ? <Loader2 className="animate-spin" /> : null}
+            {t("routing.keys.rename")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 /** The new key's text, shown once with a copy button. */
@@ -353,6 +420,8 @@ export function KeysPage({ tabs }: { tabs?: React.ReactNode }) {
   const [revoking, setRevoking] = useState<GatewayKeyView | null>(null);
   const [quotaOfKey, setQuotaOfKey] = useState<GatewayKeyView | null>(null);
   const [limitOfKey, setLimitOfKey] = useState<GatewayKeyView | null>(null);
+  const [renaming, setRenaming] = useState<GatewayKeyView | null>(null);
+  const [suspending, setSuspending] = useState<GatewayKeyView | null>(null);
   const now = Date.now();
   return (
     <div className="page-body">
@@ -404,7 +473,7 @@ export function KeysPage({ tabs }: { tabs?: React.ReactNode }) {
                 </thead>
                 <tbody>
                   {data.value.keys.map((key) => {
-                    const state = keyState(key, now);
+                    const state = keyStatus(key, now);
                     return (
                       <tr key={key.keyId}>
                         <td>
@@ -476,6 +545,62 @@ export function KeysPage({ tabs }: { tabs?: React.ReactNode }) {
                               <Button
                                 size="icon-sm"
                                 variant="ghost"
+                                aria-label={t("routing.keys.renameOf", {
+                                  name: key.name,
+                                })}
+                                title={t("routing.keys.rename")}
+                                onClick={() => setRenaming(key)}
+                              >
+                                <Pencil />
+                              </Button>
+                              {key.suspendedAt ? (
+                                <Button
+                                  size="icon-sm"
+                                  variant="ghost"
+                                  aria-label={t("routing.keys.resumeOf", {
+                                    name: key.name,
+                                  })}
+                                  title={t("routing.keys.resume")}
+                                  onClick={() => {
+                                    modelPlane()
+                                      .gatewayKeys.resume(key.keyId)
+                                      .then(
+                                        () => {
+                                          notify.success(
+                                            t("routing.keys.resumed", {
+                                              name: key.name,
+                                            }),
+                                          );
+                                          reload();
+                                        },
+                                        (reason: unknown) =>
+                                          notify.error(
+                                            reason,
+                                            t("routing.keys.resumeOf", {
+                                              name: key.name,
+                                            }),
+                                          ),
+                                      );
+                                  }}
+                                >
+                                  <Play />
+                                </Button>
+                              ) : (
+                                <Button
+                                  size="icon-sm"
+                                  variant="ghost"
+                                  aria-label={t("routing.keys.suspendOf", {
+                                    name: key.name,
+                                  })}
+                                  title={t("routing.keys.suspend")}
+                                  onClick={() => setSuspending(key)}
+                                >
+                                  <Pause />
+                                </Button>
+                              )}
+                              <Button
+                                size="icon-sm"
+                                variant="ghost"
                                 aria-label={t("routing.keys.limitsOf", {
                                   name: key.name,
                                 })}
@@ -532,6 +657,34 @@ export function KeysPage({ tabs }: { tabs?: React.ReactNode }) {
             onClose={() => setLimitOfKey(null)}
           />
         ) : null}
+        {renaming ? (
+          <RenameKeyDialog
+            key={renaming.keyId}
+            gatewayKey={renaming}
+            onClose={() => setRenaming(null)}
+            onSaved={() => {
+              setRenaming(null);
+              reload();
+            }}
+          />
+        ) : null}
+        <ConfirmDialog
+          open={suspending !== null}
+          title={t("routing.keys.suspendTitle", {
+            name: suspending?.name ?? "",
+          })}
+          description={t("routing.keys.suspendHint")}
+          action={t("routing.keys.suspend")}
+          onClose={() => setSuspending(null)}
+          onConfirm={async () => {
+            if (!suspending) return;
+            await modelPlane().gatewayKeys.suspend(suspending.keyId);
+            notify.success(
+              t("routing.keys.suspended", { name: suspending.name }),
+            );
+            reload();
+          }}
+        />
         <ConfirmDialog
           open={revoking !== null}
           title={t("routing.keys.revokeTitle", { name: revoking?.name ?? "" })}

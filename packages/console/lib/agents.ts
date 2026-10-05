@@ -107,6 +107,8 @@ export function attention(agent: Agent, models?: GatewayModels): string[] {
       }),
     );
   if (wiring.managed?.length) reasons.push(t("agents.attention.managed"));
+  if (wiring.keyState === "suspended")
+    reasons.push(t("agents.attention.keySuspended"));
   if (["revoked", "expired", "missing"].includes(wiring.keyState))
     reasons.push(
       wiring.keyState === "missing"

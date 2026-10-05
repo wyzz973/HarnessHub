@@ -49,6 +49,7 @@ export const zh = {
   "agents.attention.drifted": "配置文件被改动：{kinds}",
   "agents.attention.keyMissing": "它的 Key 不存在",
   "agents.attention.keyInvalid": "它的 Key 已失效",
+  "agents.attention.keySuspended": "它的 Key 已暂停，请求会被拒绝",
   "agents.attention.modelGone": "网关不再提供 {models}",
   "agents.attention.managed":
     "管理员的托管设置覆盖了接线写入的项，这些项不会生效",
@@ -137,6 +138,13 @@ export const zh = {
     "以当前的模型与列表重新接线并签发新 Key，旧 Key 立即失效。正在运行的实例要重启后才用新 Key。",
   "agents.key.issued": "{name} 已有 Key",
   "agents.key.rotated": "{name} 已换用新 Key",
+  "agents.key.suspend": "暂停 Key",
+  "agents.key.resume": "恢复 Key",
+  "agents.key.suspendTitle": "暂停 {name} 的 Key？",
+  "agents.key.suspendDescription":
+    "暂停后 {name} 经网关的请求以 401 key_suspended 被拒绝，直到恢复；Key 与配置文件都不变。",
+  "agents.key.suspended": "{name} 的 Key 已暂停",
+  "agents.key.resumed": "{name} 的 Key 已恢复",
   "agents.findings.file": "文件",
   "agents.findings.field": "字段",
   "agents.findings.change": "变化",
@@ -303,6 +311,8 @@ export const en: Translation<typeof zh> = {
   "agents.attention.drifted": "Its configuration files were changed: {kinds}",
   "agents.attention.keyMissing": "Its key does not exist",
   "agents.attention.keyInvalid": "Its key no longer works",
+  "agents.attention.keySuspended":
+    "Its key is suspended, so its requests are refused",
   "agents.attention.modelGone": "The gateway no longer offers {models}",
   "agents.attention.managed":
     "An administrator's managed settings override entries the wiring writes; those have no effect",
@@ -398,6 +408,13 @@ export const en: Translation<typeof zh> = {
     "Wires again with the current model and list and issues a new key; the old key stops working at once. Running instances use the new key only after a restart.",
   "agents.key.issued": "{name} now has a key",
   "agents.key.rotated": "{name} now uses a new key",
+  "agents.key.suspend": "Suspend key",
+  "agents.key.resume": "Resume key",
+  "agents.key.suspendTitle": "Suspend {name}'s key?",
+  "agents.key.suspendDescription":
+    "While suspended, {name}'s requests through the gateway are refused with 401 key_suspended until you resume it; the key and the configuration files stay as they are.",
+  "agents.key.suspended": "{name}'s key is suspended",
+  "agents.key.resumed": "{name}'s key is resumed",
   "agents.findings.file": "File",
   "agents.findings.field": "Field",
   "agents.findings.change": "Change",

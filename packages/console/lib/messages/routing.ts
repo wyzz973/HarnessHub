@@ -243,6 +243,7 @@ export const zh = {
   "routing.key.revoked": "已吊销",
   "routing.key.expired": "已过期",
   "routing.key.active": "可用",
+  "routing.key.suspended": "已暂停",
   "routing.key.createdTitle": "已创建 {name}",
   "routing.key.createdLede":
     "复制后交给使用它的脚本或工具，调用网关时作为 API Key 发送。",
@@ -287,6 +288,21 @@ export const zh = {
   "routing.keys.emptyHint": "为脚本、IDE 或其他工具创建一个 client Key。",
   "routing.keys.revokeTitle": "吊销 {name}",
   "routing.keys.revokeHint": "吊销后新请求立即被拒绝，无法撤销。",
+  "routing.keys.rename": "改名",
+  "routing.keys.renameOf": "给 {name} 改名",
+  "routing.keys.renameTitle": "给 Key {name} 改名",
+  "routing.keys.renameHint":
+    "只改显示的名称，Key 文本、额度与允许的模型都不变。",
+  "routing.keys.renamed": "Key 已改名为 {name}",
+  "routing.keys.suspend": "暂停",
+  "routing.keys.resume": "恢复",
+  "routing.keys.suspendOf": "暂停 {name}",
+  "routing.keys.resumeOf": "恢复 {name}",
+  "routing.keys.suspendTitle": "暂停 Key {name}？",
+  "routing.keys.suspendHint":
+    "暂停后使用这把 Key 的请求以 401 key_suspended 被拒绝，直到恢复；与吊销不同，Key 保留，恢复后照常可用。",
+  "routing.keys.suspended": "{name} 已暂停",
+  "routing.keys.resumed": "{name} 已恢复",
 } as const;
 
 export const en: Translation<typeof zh> = {
@@ -547,6 +563,7 @@ export const en: Translation<typeof zh> = {
   "routing.key.revoked": "Revoked",
   "routing.key.expired": "Expired",
   "routing.key.active": "Active",
+  "routing.key.suspended": "Suspended",
   "routing.key.createdTitle": "Created {name}",
   "routing.key.createdLede":
     "Copy it and give it to the script or tool that uses it; it is sent as the API key when calling the gateway.",
@@ -593,6 +610,21 @@ export const en: Translation<typeof zh> = {
   "routing.keys.emptyHint":
     "Create a client key for a script, an IDE or another tool.",
   "routing.keys.revokeTitle": "Revoke {name}",
+  "routing.keys.rename": "Rename",
+  "routing.keys.renameOf": "Rename {name}",
+  "routing.keys.renameTitle": "Rename key {name}",
+  "routing.keys.renameHint":
+    "Only the name shown changes; the key text, its limits and its allowed models stay as they are.",
+  "routing.keys.renamed": "The key is now named {name}",
+  "routing.keys.suspend": "Suspend",
+  "routing.keys.resume": "Resume",
+  "routing.keys.suspendOf": "Suspend {name}",
+  "routing.keys.resumeOf": "Resume {name}",
+  "routing.keys.suspendTitle": "Suspend key {name}?",
+  "routing.keys.suspendHint":
+    "While suspended, requests with this key are refused with 401 key_suspended until you resume it; unlike revoking, the key is kept and works again once resumed.",
+  "routing.keys.suspended": "{name} is suspended",
+  "routing.keys.resumed": "{name} is resumed",
   "routing.keys.revokeHint":
     "Once revoked, new requests are refused at once; this cannot be undone.",
 };
