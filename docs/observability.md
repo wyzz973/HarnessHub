@@ -130,7 +130,7 @@ span 在 `model.call` 账本记录提交之后才进入导出队列，账本仍�
 | `gen_ai.client.operation.duration` | `s` | 每次调用的耗时（含被拒绝的调用）；边界 0.01、0.02、0.04 … 81.92（逐级翻倍） |
 | `gen_ai.client.token.usage` | `{token}` | 每次调用两个点，`gen_ai.token.type` 为 `input`（含缓存读写）与 `output`（含推理）；上游未回报用量时不记，不记 0；边界 1、4、16 … 1,048,576（逐级乘 4） |
 
-数据点的属性只有 Magpie 的白名单对应项：`gen_ai.operation.name`、`gen_ai.provider.name`、`gen_ai.request.model`、`gen_ai.response.model`（有时）、`hh.agent`（Agent ID，有时；Magpie 为 `magpie.agent`）与 `error.type`（失败时，同 span），不含调用、Key、会话或 Run 的 ID，序列数量有限。指标与 span 走同一队列、同一批次与刷新、同一重试：每批先发 span，再把这一批的调用汇总成一个指标请求。
+数据点的属性只有 Magpie 的白名单对应项：`gen_ai.operation.name`、`gen_ai.provider.name`、`gen_ai.request.model`（网关解析出的 Model Ref 或路由组，不是客户端写的名字，客户端可以随意变换它；没有解析出、或上游不认识这个模型时为 `unknown`；span 上仍是客户端请求的名字）、`gen_ai.response.model`（有时）、`hh.agent`（Agent ID，有时；Magpie 为 `magpie.agent`）与 `error.type`（失败时，同 span），不含调用、Key、会话或 Run 的 ID，序列数量有限。指标与 span 走同一队列、同一批次与刷新、同一重试：每批先发 span，再把这一批的调用汇总成一个指标请求。
 
 **请求与回答（`bodies`）**：打开后，每个 span 多两个属性：`langfuse.observation.input` 为客户端发来的请求（JSON 重新序列化），`langfuse.observation.output` 为回答，流式回答取各事件中的文字拼成一段（Chat 的 `delta.content`、Responses 的 `response.output_text.delta`、Anthropic 的 `content_block_delta`、Gemini 的 `parts[].text`，不含思考；只有工具调用时按原样），非流式回答按原样。两者在网关中先经出站脱敏的同一套规则遮蔽（已知的 provider 凭据与订阅令牌、Gateway Key、管理令牌和用户自己的规则，换成 `{{HH_…}}` 占位符），**即使出站脱敏被关闭也会遮蔽**，再各截到 256 KiB 并以 `… (cut here by HarnessHub)` 标记（同 Magpie）。回答在响应结束后才交给导出器，因此是完整的。图像端点、本地拒绝（没有读到可路由的请求）的调用不带内容。导出器的队列最多保存 128 MiB 的内容，超过时该 span 不带内容导出并计入 `bodiesDropped`；一个请求中的内容最多 16 MiB，超过时拆成多个请求（同 Magpie）。
 

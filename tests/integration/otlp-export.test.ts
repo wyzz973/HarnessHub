@@ -423,7 +423,7 @@ void test(
 );
 
 void test(
-  "Gateway Key text a client puts in a model name reaches no answer, span, metric, ledger row or CSV",
+  "Gateway Key text a client puts in a model name reaches no answer, span, metric, ledger row or CSV, and made-up names are one metric series",
   { timeout: 60_000 },
   async (t) => {
     const stub = await collector(t);
@@ -459,6 +459,16 @@ void test(
           false,
           `${where}: ${text.slice(0, 400)}`,
         );
+    // Names a client made up are one metric series, not one each.
+    const requested = new Set(
+      metricPoints(stub.received, "gen_ai.client.operation.duration").map(
+        (point) =>
+          point.attributes.find(
+            ({ key: name }) => name === "gen_ai.request.model",
+          )?.value.stringValue,
+      ),
+    );
+    assert.deepEqual([...requested], ["unknown"]);
   },
 );
 

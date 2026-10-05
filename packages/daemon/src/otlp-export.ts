@@ -407,6 +407,25 @@ function keyValues(
 }
 
 /**
+ * The model a call asked for, as a metric names it: the Model Ref or route
+ * group the gateway resolved, never the name as the client wrote it, which
+ * a client may vary at will; `unknown` when the gateway resolved none or
+ * the upstream knew no such model (a Model Ref under a provider may name
+ * anything).
+ */
+function metricModel(entry: ModelCallEntry): string | undefined {
+  if (
+    entry.requestedModel === undefined &&
+    entry.modelRef === undefined &&
+    entry.group === undefined
+  )
+    return undefined;
+  if (entry.errorClass === "model_not_found") return "unknown";
+  if (entry.modelRef !== undefined) return clip(entry.modelRef);
+  return entry.group !== undefined ? clip(`group/${entry.group}`) : "unknown";
+}
+
+/**
  * The metric attributes of a ledger entry (Magpie's allowlist), without
  * `gen_ai.provider.name` (added at export): bounded values only, so the
  * series stay few.
@@ -417,8 +436,8 @@ export function modelCallMetricAttributes(
   const attributes: [string, AttributeValue][] = [
     ["gen_ai.operation.name", operation(entry)],
   ];
-  const requested = entry.requestedModel ?? entry.modelRef;
-  if (requested) attributes.push(["gen_ai.request.model", clip(requested)]);
+  const requested = metricModel(entry);
+  if (requested) attributes.push(["gen_ai.request.model", requested]);
   if (entry.servedModel)
     attributes.push(["gen_ai.response.model", clip(entry.servedModel)]);
   if (entry.agent) attributes.push(["hh.agent", clip(entry.agent.id)]);

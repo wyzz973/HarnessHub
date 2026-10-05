@@ -16,6 +16,7 @@ import type {
 import type { RunId, SessionId } from "@harnesshub/core/types";
 import {
   DURATION_BOUNDS,
+  modelCallMetricAttributes,
   resolveOtlpConfig,
   startModelCallExport,
   TOKEN_BOUNDS,
@@ -840,4 +841,50 @@ void test("bodies go on spans as Langfuse's observation input and output only wh
     metricsFailed: 0,
     bodiesDropped: 1,
   });
+});
+
+void test("a metric names the model the gateway resolved, never the name a client made up", () => {
+  const model = (fields: Partial<ModelCallEntry>, asked = true) => {
+    const entry: ModelCallEntry = { ...fullEntry(), ...fields };
+    for (const field of ["modelRef", "group", "servedModel"] as const)
+      if (!(field in fields)) delete entry[field];
+    if (!asked) delete entry.requestedModel;
+    return Object.fromEntries(modelCallMetricAttributes(entry))[
+      "gen_ai.request.model"
+    ];
+  };
+  // Each made-up name would be a series of its own.
+  for (let n = 0; n < 3; n++)
+    assert.equal(
+      model({
+        requestedModel: `made-up-${n}`,
+        status: 404,
+        errorClass: "model_not_found",
+      }),
+      "unknown",
+    );
+  assert.equal(model({ requestedModel: "anything" }), "unknown");
+  // A Model Ref under a provider the upstream did not know.
+  assert.equal(
+    model({
+      requestedModel: "deepseek/made-up",
+      modelRef: "deepseek/made-up" as ModelRef,
+      status: 404,
+      errorClass: "model_not_found",
+    }),
+    "unknown",
+  );
+  // An alias or a bare name: what it resolved to.
+  assert.equal(
+    model({
+      requestedModel: "chat",
+      modelRef: "deepseek/deepseek-chat" as ModelRef,
+    }),
+    "deepseek/deepseek-chat",
+  );
+  assert.equal(
+    model({ requestedModel: "fast", group: "fast" as RouteGroupId }),
+    "group/fast",
+  );
+  assert.equal(model({}, false), undefined);
 });
