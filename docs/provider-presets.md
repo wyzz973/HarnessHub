@@ -30,7 +30,7 @@ hh provider add team --preset azure --base https://team.openai.azure.com
 
 - 不给 `--region`、`--plan` 时取预设列出的第一个。不存在的地域或套餐以退出码 2 失败（`PRESET_REGION_NOT_FOUND`、`PRESET_PLAN_NOT_FOUND`），错误信息列出可选值。
 - `--base URL` 把所选组合的每个端点路径接到 `URL` 之后；`--chat` 等显式端点优先。需要你自己地址的预设（Azure、`harnesshub-remote`、`magpie-remote`）没有 `--base` 或端点时以退出码 2 失败（`PROVIDER_INVALID`，指向 `/endpoints`）。
-- 套餐带有模型列表时（如火山方舟、千帆、华为云的套餐），新 provider 以这些模型开始；有列表接口的厂商仍可以 `hh provider models <id> --refresh`。模型的窗口、输出上限与价格按所选组合的 models.dev 目录 ID 补齐，例如 GLM Coding Plan 的模型价格为 0。
+- 套餐带有模型列表时（如火山方舟、千帆、华为云的套餐），新 provider 以这些模型开始；有列表接口的厂商仍可以 `hh provider models <id> --refresh`。添加时不请求上游，第一次刷新之前 `hh provider models <id>` 显示 `Source: live, not refreshed yet; run hh provider models <id> --refresh`，列表是预设给出的（`harnesshub-remote` 等没有预设模型的为空）。模型的窗口、输出上限与价格按所选组合的 models.dev 目录 ID 补齐，例如 GLM Coding Plan 的模型价格为 0。
 - 预设的 `headerHints` 列出厂商文档中由你填写的请求头，例如 Anthropic 多工作区 Key 需要的 `anthropic-workspace-id`、OpenRouter 的署名头 `HTTP-Referer` 与 `X-OpenRouter-Title`。经 API 创建时放在 `headers` 中；标为必需的 header 缺少时创建失败。
 
 API：`POST /api/v1/providers` 的 `preset`、`region`、`plan`，见 [模型平面 API](model-plane-api.md)。`PATCH /api/v1/providers/{id}` 以 `preset: null` 解除预设时一并清除地域与套餐；`catalog` 可以单独设置或以 `null` 清除。

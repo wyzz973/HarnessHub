@@ -767,6 +767,13 @@ void test(
     assert.equal((await run(["import"])).code, 2);
     assert.equal((await run(["import", link, "--from", "codex"])).code, 2);
 
+    // Before its first refresh, a live list says so.
+    const unrefreshed = await run(["provider", "models", "deepseek"]);
+    assert.equal(unrefreshed.code, 0, unrefreshed.stderr);
+    assert.match(
+      unrefreshed.stdout,
+      /^Source: live, not refreshed yet; run hh provider models deepseek --refresh\n/,
+    );
     const refreshed = await run([
       "provider",
       "models",

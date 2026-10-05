@@ -652,7 +652,7 @@ async function providerCommand(
         models.expose === "all" || models.expose.includes(model);
       return output(ctx, models, () =>
         [
-          `Source: ${models.source}${models.refreshedAt ? `, refreshed ${localTime(models.refreshedAt)}` : ""}${models.stale ? " (stale: the last refresh failed)" : ""}`,
+          `Source: ${models.source}${models.refreshedAt ? `, refreshed ${localTime(models.refreshedAt)}` : models.source === "live" ? `, not refreshed yet; run hh provider models ${item.id} --refresh` : ""}${models.stale ? " (stale: the last refresh failed)" : ""}`,
           "",
           table(
             ["MODEL", "CONTEXT", "EXPOSED"],
