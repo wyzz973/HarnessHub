@@ -159,6 +159,7 @@ void test("Codex's own request reaches ChatGPT unchanged, credentials byte for b
       mode: entry.mode,
       status: entry.status,
       completion: entry.completion,
+      finishReason: entry.finishReason,
       usage: entry.usage,
       cost: entry.cost,
     },
@@ -176,6 +177,7 @@ void test("Codex's own request reaches ChatGPT unchanged, credentials byte for b
       mode: "passthrough",
       status: 200,
       completion: "explicit",
+      finishReason: "stop",
       usage: {
         input: 40,
         cacheRead: 10,
@@ -193,6 +195,36 @@ void test("Codex's own request reaches ChatGPT unchanged, credentials byte for b
     assert.ok(!text.includes(TOKEN), "the sign-in token is never kept");
     assert.ok(!text.includes("codex-conversation-1"));
   }
+});
+
+void test("a tool turn whose response.completed lists no output is recorded as tool_calls", async (t) => {
+  // ChatGPT's backend streams the call as items and ends with an empty output.
+  const call = {
+    type: "function_call",
+    id: "fc_1",
+    call_id: "call_1",
+    name: "shell",
+    arguments: '{"command":["ls"]}',
+  };
+  const events = [
+    { type: "response.output_item.added", sequence_number: 1, item: call },
+    { type: "response.output_item.done", sequence_number: 2, item: call },
+    COMPLETED,
+  ]
+    .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+    .join("");
+  const { store, gw } = await setup(t, (response) => {
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.end(events);
+  });
+  const answer = await send(gw.port, "/backend-api/codex/responses", {
+    headers: HEADERS,
+    body: BODY,
+  });
+  assert.equal(answer.text, events);
+  const entry = store.entries[0]!;
+  assert.ok(isModelCallEntry(entry));
+  assert.equal(entry.finishReason, "tool_calls");
 });
 
 void test("the terminal event waits for the ledger commit", async (t) => {

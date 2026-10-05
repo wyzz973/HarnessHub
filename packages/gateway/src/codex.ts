@@ -43,6 +43,7 @@ import { ClientClosed, HttpWriter, sse, type Failure } from "./output.js";
 import {
   observeEvent,
   observeJson,
+  settleFinish,
   SseSegmenter,
   type Observation,
 } from "./passthrough.js";
@@ -420,12 +421,14 @@ export async function codexPassthrough(context: CodexRequest): Promise<void> {
     const observed: UsageParts = {};
     let served: string | undefined;
     let finish: string | undefined;
+    let toolCall = false;
     let terminal = false;
     let streamError: GatewayError | undefined;
     const observe = (observation: Observation) => {
       Object.assign(observed, observation.usage);
       if (observation.model) served ??= observation.model;
       if (observation.finish) finish = observation.finish;
+      if (observation.toolCall) toolCall = true;
       if (observation.content && entry)
         entry.timing.firstContentMs ??= Math.round(performance.now() - started);
       if (observation.error) streamError ??= observation.error;
@@ -507,6 +510,7 @@ export async function codexPassthrough(context: CodexRequest): Promise<void> {
     entry.usage = callUsage(observed);
     entry.cost = null;
     if (served) entry.servedModel = served.slice(0, 256);
+    finish = settleFinish(finish, toolCall);
     if (finish) entry.finishReason = finish.slice(0, 64);
     entry.completion = terminal ? "explicit" : "inferred";
     if (!(await commit())) {
