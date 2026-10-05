@@ -6,7 +6,8 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   applyWiring,
@@ -69,6 +70,39 @@ void test("claude: managed settings that set an entry wiring writes are reported
     await managedOverrides("codex", [["model"]], { systemRoot }),
     [],
   );
+});
+
+void test("claude: a managed path that is no regular file is reported as unreadable, never a failure or a wait", async (t) => {
+  const context = await sandbox(t);
+  const systemRoot = path.join(context.root, "system");
+  const file = managedFile(systemRoot);
+  const [managed] = wiringAdapter("claude").managedFiles!(process.platform);
+  const unreadable = [{ path: managed, keyPaths: [] }];
+  const read = () =>
+    managedOverrides("claude", [["env", "ANTHROPIC_BASE_URL"]], {
+      systemRoot,
+    });
+  // A directory in its place (another user may make one in a shared path).
+  await mkdir(file, { recursive: true });
+  assert.deepEqual(await read(), unreadable);
+  await rm(file, { recursive: true });
+  // Larger than any policy.
+  await writeFile(file, " ".repeat(1024 * 1024 + 1));
+  assert.deepEqual(await read(), unreadable);
+  await rm(file);
+  // A link, which it does not follow.
+  const target = path.join(context.root, "elsewhere.json");
+  await writeFile(target, JSON.stringify({ env: { ANTHROPIC_BASE_URL: "x" } }));
+  await symlink(target, file);
+  assert.deepEqual(await read(), unreadable);
+  await rm(file);
+  if (process.platform !== "win32") {
+    // A named pipe nothing writes to: answered at once, not waited on.
+    execFileSync("mkfifo", [file]);
+    const started = Date.now();
+    assert.deepEqual(await read(), unreadable);
+    assert.ok(Date.now() - started < 2_000);
+  }
 });
 
 void test("claude and codex say what to do after a change: restart them", () => {

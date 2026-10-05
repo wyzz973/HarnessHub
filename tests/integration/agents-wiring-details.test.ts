@@ -8,7 +8,7 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import type { TestContext } from "node:test";
@@ -122,6 +122,16 @@ void test("the restart notice and Claude Code's managed settings are in the prev
   );
   assert.ok(cli.stdout.includes(plan.notice!), cli.stdout);
   assert.equal(await readFile(policy, "utf8"), POLICY);
+
+  // A directory where the policy should be (another user may make one in a
+  // shared system path): a warning that it could not be read, not a 500.
+  await rm(policy);
+  await mkdir(policy);
+  const again = await client.agents.plan("claude", { model: "fake/small" });
+  assert.deepEqual(again.managed, [{ path: managed, keyPaths: [] }]);
+  assert.deepEqual((await client.agents.get("claude")).wiring?.managed, [
+    { path: managed, keyPaths: [] },
+  ]);
 });
 
 void test("Codex keeps its provider table after unwire, follows the wired model for subagents, offers the levels the models take and takes CC Switch's table along", async (t) => {
