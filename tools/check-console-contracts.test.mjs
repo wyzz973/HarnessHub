@@ -820,6 +820,73 @@ test("usage CSV downloads go through the session client, and usage alerts read a
   assert.deepEqual(restored.properties.alerts.required, ["usagePercent", "changed"]);
 });
 
+test("security group G: a restore names keys read on this computer and needs them confirmed; sync names what it held back or refused", async () => {
+  const backup = await consoleModule("lib/backup.ts");
+  const openapi = JSON.parse(await readFile(new URL("../docs/api/openapi.json", import.meta.url), "utf8"));
+  const restore = openapi.paths["/api/v1/restore"].post;
+  assert.ok("references" in restore.requestBody.content["application/json"].schema.properties);
+  const summary = restore.responses["200"].content["application/json"].schema.properties;
+  assert.deepEqual(summary.providers.properties.references.items.required, ["provider", "credential", "kind", "name", "hosts"]);
+  assert.deepEqual(summary.providers.properties.refused.items.required, ["provider", "credential", "kind", "name", "reason"]);
+  assert.ok(summary.gatewayFeatures.properties.search.required.includes("refused"));
+  const notice = openapi.paths["/api/v1/sync"].get.responses["200"].content["application/json"].schema.properties.notice.properties;
+  assert.ok(notice.redactionOffHeld && notice.refused);
+  assert.ok("acceptOlder" in openapi.paths["/api/v1/sync/now"].post.requestBody.content["application/json"].schema.properties);
+
+  const none = { added: [], replaced: [], removed: [] };
+  const restored = {
+    providers: {
+      references: [{ provider: "relay", credential: "key-1", kind: "env", name: "SYNTH_RELAY_KEY", hosts: ["collector.example.test", "backup.example.test"] }],
+      refused: [{ provider: "relay", credential: "admin", kind: "file", name: "/data/admin.token", reason: "it is in HarnessHub's data directory" }],
+    },
+    gatewayFeatures: { search: { ...none, needKey: [], refused: ["exa: its key would be read from the environment variable OPENAI_API_KEY; only keys stored in HarnessHub are restored"] } },
+  };
+  assert.deepEqual(backup.referenceLines(restored), [
+    "relay/key-1：Key 从环境变量 SYNTH_RELAY_KEY 读取，发往 collector.example.test、backup.example.test",
+  ]);
+  assert.deepEqual(backup.refusedLines(restored), [
+    "relay/admin（Key 来自文件 /data/admin.token）：it is in HarnessHub's data directory",
+    "搜索后端 exa: its key would be read from the environment variable OPENAI_API_KEY; only keys stored in HarnessHub are restored",
+  ]);
+  assert.deepEqual(backup.referenceLines({ providers: { references: [], refused: [] } }), []);
+  assert.deepEqual(backup.refusedLines({ providers: { references: [], refused: [] }, gatewayFeatures: null }), []);
+
+  // The page confirms before it sends references: true, and only for a restore.
+  const page = await readFile(new URL("../packages/console/components/backup-page.tsx", import.meta.url), "utf8");
+  assert.match(page, /\.\.\.\(!dryRun && allowReferences \? \{ references: true \} : \{\}\)/);
+  assert.match(page, /phase\.summary\.providers\.references\.length > 0 &&\s*!allowReferences/);
+  assert.match(page, /failure\.code === "SYNC_ROLLBACK"/);
+  assert.match(page, /sync\.now\(\{ acceptOlder: true \}\)/);
+  assert.match(page, /notice\?\.redactionOffHeld/);
+  assert.match(page, /notice\?\.refused/);
+  const { HarnessHubClient } = await import(new URL("../packages/sdk/dist/src/client.js", import.meta.url).href);
+  const sent = [];
+  const client = new HarnessHubClient({
+    url: "http://127.0.0.1:1",
+    csrfToken: "t".repeat(43),
+    fetch: async (url, init) => {
+      sent.push(init.body);
+      return Response.json({ enabled: true, intervalMs: 1, secretBackend: "file" });
+    },
+  });
+  await client.sync.now({ acceptOlder: true });
+  await client.sync.now();
+  assert.deepEqual(sent, ['{"acceptOlder":true}', "{}"]);
+
+  // The add-search form puts the daemon's words on their field.
+  const features = await consoleModule("lib/gateway-features.ts");
+  const { searchBackendProblem, SEARCH_URL_CREDENTIALS } = await import(
+    new URL("../packages/core/dist/src/gateway-features.js", import.meta.url).href
+  );
+  assert.equal(features.searchProblemField(SEARCH_URL_CREDENTIALS), "baseUrl");
+  assert.equal(features.searchProblemField(searchBackendProblem({ id: "search-1", kind: "searxng" })), "baseUrl");
+  assert.equal(features.searchProblemField(searchBackendProblem({ id: "search-1", kind: "searxng", baseUrl: "ftp://x" })), "baseUrl");
+  assert.equal(features.searchProblemField(searchBackendProblem({ id: "search-1", kind: "tavily" })), "key");
+  assert.equal(features.searchProblemField("something else"), undefined);
+  const featuresPage = await readFile(new URL("../packages/console/components/gateway-features-page.tsx", import.meta.url), "utf8");
+  assert.match(featuresPage, /failure\?\.fields\[`\/rules\/\$\{adding\}`\]/, "a refused rule's words sit on its pattern");
+});
+
 test("the Library page sends MCP secrets as references or values and points at the rows a refusal names", async () => {
   const library = await consoleModule("lib/library.ts");
   const stored = { kind: "store", value: "secret-ref-1" };

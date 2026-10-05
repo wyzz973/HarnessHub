@@ -79,3 +79,17 @@ export const featureSections = {
   search: "?section=search",
   alerts: "?section=alerts",
 } as const;
+
+/**
+ * The field of the add-search form a daemon refusal is about. The daemon
+ * names the backend as a whole (pointer ""), and its words name the field:
+ * `baseUrl …` or `searxng needs the baseUrl …` for the address, `… needs
+ * an API key` for the key.
+ */
+export function searchProblemField(
+  detail: string,
+): "baseUrl" | "key" | undefined {
+  if (/\bbaseUrl\b/.test(detail)) return "baseUrl";
+  if (/needs an API key/.test(detail)) return "key";
+  return undefined;
+}

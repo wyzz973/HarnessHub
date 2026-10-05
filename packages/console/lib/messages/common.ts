@@ -48,6 +48,8 @@ export const zh = {
     "控制台会话已结束，请运行 hh console 重新登录",
   "common.code.ADMIN_TOKEN_REQUIRED":
     "控制台尚未登录，请运行 hh console 打开登录链接",
+  "common.code.BACKUP_REFERENCES":
+    "这个备份中有从本机读取 Key 的凭据：先预览，确认这些位置与主机后再恢复。",
   "common.code.BACKUP_PASSPHRASE": "口令不对，或者文件被改动过",
   "common.code.BACKUP_UNSUPPORTED":
     "这个备份来自更新版本的 HarnessHub，请先升级",
@@ -227,6 +229,8 @@ export const en: Translation<typeof zh> = {
     "The console session has ended; run hh console to sign in again",
   "common.code.ADMIN_TOKEN_REQUIRED":
     "The console is not signed in; run hh console to open a sign-in link",
+  "common.code.BACKUP_REFERENCES":
+    "This backup has credentials whose keys are read on this computer: preview it and confirm those sources and hosts before restoring.",
   "common.code.BACKUP_PASSPHRASE":
     "The passphrase is wrong, or the file has been changed",
   "common.code.BACKUP_UNSUPPORTED":

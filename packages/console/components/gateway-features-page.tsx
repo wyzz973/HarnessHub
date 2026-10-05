@@ -27,6 +27,7 @@ import { Switch } from "@/components/ui/switch";
 import { ModelPicker } from "@/components/model-picker";
 import {
   alertPercentOf,
+  searchProblemField,
   ruleOf,
   rulesWith,
   searchKinds,
@@ -65,8 +66,17 @@ function Implications({ cost, privacy }: { cost: string; privacy: string }) {
 }
 
 /** The details of a refused change, without the JSON Pointers. */
-function Details({ failure }: { failure: Failure | null }) {
-  const details = Object.values(failure?.fields ?? {});
+function Details({
+  failure,
+  shown = [],
+}: {
+  failure: Failure | null;
+  /** Details already shown on their field. */
+  shown?: readonly string[];
+}) {
+  const details = Object.values(failure?.fields ?? {}).filter(
+    (detail) => !shown.includes(detail),
+  );
   if (!details.length) return null;
   return (
     <ul className="callout error block list-disc space-y-0.5 pl-8">
@@ -97,6 +107,10 @@ function Redaction({
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [disabling, setDisabling] = useState(false);
+  /** Where the rule being added sits in the list sent, for the daemon's word on its pattern. */
+  const [adding, setAdding] = useState<number | null>(null);
+  const addedProblem =
+    adding === null ? undefined : failure?.fields[`/rules/${adding}`];
   const save = (
     input: Parameters<
       ReturnType<typeof modelPlane>["gatewayFeatures"]["setRedaction"]
@@ -232,15 +246,23 @@ function Redaction({
                 pattern: event.target.value,
               }))
             }
+            aria-invalid={!!addedProblem}
           />
+          {addedProblem ? (
+            <span className="block text-[12.5px] text-danger">
+              {addedProblem}
+            </span>
+          ) : null}
         </label>
         <Button
           variant="outline"
           disabled={busy || !form.name.trim() || !form.pattern}
           onClick={() => {
             const rule = ruleOf(form);
+            const next = rulesWith(features, { add: rule });
+            setAdding(next.length - 1);
             void save(
-              { rules: rulesWith(features, { add: rule }) },
+              { rules: next },
               t("settings.redaction.saved", { name: rule.name }),
             ).then((saved) => {
               if (saved) setForm({ name: "", pattern: "", ignoreCase: false });
@@ -261,7 +283,7 @@ function Redaction({
       </Checkbox>
       <p className="field-hint">{t("settings.redaction.hint")}</p>
       <ErrorCallout failure={failure} />
-      <Details failure={failure} />
+      <Details failure={failure} shown={addedProblem ? [addedProblem] : []} />
       <ConfirmDialog
         open={disabling}
         title={t("settings.redaction.offTitle")}
@@ -443,6 +465,10 @@ function AddSearchDialog({
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
   const info = searchKinds[kind];
+  // The daemon's words, on the field they are about.
+  const problems = Object.values(failure?.fields ?? {});
+  const onField = (field: "baseUrl" | "key") =>
+    problems.filter((detail) => searchProblemField(detail) === field);
   const ready =
     (info.key === "optional" || key.length > 0) &&
     (info.baseUrl === "optional" || baseUrl.trim().length > 0);
@@ -483,10 +509,16 @@ function AddSearchDialog({
             autoComplete="new-password"
             spellCheck={false}
             onChange={(event) => setKey(event.target.value)}
+            aria-invalid={onField("key").length > 0}
           />
           <span className="field-hint block">
             {t("settings.search.keyHint")}
           </span>
+          {onField("key").map((detail) => (
+            <span key={detail} className="block text-[12.5px] text-danger">
+              {detail}
+            </span>
+          ))}
         </label>
         <label className="field-label">
           {info.baseUrl === "required"
@@ -503,10 +535,19 @@ function AddSearchDialog({
                 : t("settings.search.defaultUrl", { name: info.name })
             }
             onChange={(event) => setBaseUrl(event.target.value)}
+            aria-invalid={onField("baseUrl").length > 0}
           />
+          {onField("baseUrl").map((detail) => (
+            <span key={detail} className="block text-[12.5px] text-danger">
+              {detail}
+            </span>
+          ))}
         </label>
         <ErrorCallout failure={failure} />
-        <Details failure={failure} />
+        <Details
+          failure={failure}
+          shown={[...onField("baseUrl"), ...onField("key")]}
+        />
         <DialogFooter>
           <Button variant="outline" disabled={busy} onClick={onClose}>
             {t("common.cancel")}

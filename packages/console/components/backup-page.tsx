@@ -30,6 +30,8 @@ import {
   backupFileName,
   libraryChanged,
   readBackupFile,
+  referenceLines,
+  refusedLines,
   restoreAgentAction,
   restoreFeatures,
   syncFormOf,
@@ -290,8 +292,43 @@ function RestoreSummaryView({
   const features = summary.gatewayFeatures
     ? restoreFeatures(summary.gatewayFeatures)
     : undefined;
+  const references = referenceLines(summary);
+  const refused = refusedLines(summary);
   return (
     <div className="space-y-3 rounded-xl border p-4">
+      {references.length ? (
+        <div
+          role="alert"
+          className={`callout ${done ? "info" : "warn"} block space-y-1`}
+        >
+          <p className="flex items-center gap-2 font-medium">
+            <TriangleAlert className="size-4 shrink-0" />
+            {done
+              ? t("backup.restore.referencesDone")
+              : t("backup.restore.referencesTitle")}
+          </p>
+          {done ? null : <p>{t("backup.restore.referencesLede")}</p>}
+          <ul className="list-disc space-y-0.5 pl-5">
+            {references.map((line) => (
+              <li key={line} className="break-all">
+                {line}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {refused.length ? (
+        <div className="callout error block space-y-1">
+          <p className="font-medium">{t("backup.restore.refusedTitle")}</p>
+          <ul className="list-disc space-y-0.5 pl-5">
+            {refused.map((line) => (
+              <li key={line} className="break-all">
+                {line}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {summary.gatewayFeatures?.redaction.turnsOff ? (
         <RedactionOffWarning action={done}>
           {done
@@ -585,9 +622,12 @@ function RestoreCard() {
   const [phase, setPhase] = useState<RestorePhase>({ step: "idle" });
   const [failure, setFailure] = useState<Failure | null>(null);
   const [agentList, setAgentList] = useState<Agent[] | null>(null);
+  /** The preview's credentials read on this computer, confirmed by the person. */
+  const [allowReferences, setAllowReferences] = useState(false);
   const reset = () => {
     setPhase({ step: "idle" });
     setFailure(null);
+    setAllowReferences(false);
   };
   const choose = (chosen: File | undefined) => {
     reset();
@@ -620,6 +660,7 @@ function RestoreCard() {
         passphrase,
         agents,
         library,
+        ...(!dryRun && allowReferences ? { references: true } : {}),
         dryRun,
       })
       .then(
@@ -743,6 +784,11 @@ function RestoreCard() {
           )}
         </section>
       ) : null}
+      {phase.step === "preview" && phase.summary.providers.references.length ? (
+        <Checkbox checked={allowReferences} onChange={setAllowReferences}>
+          {t("backup.restore.referencesConfirm")}
+        </Checkbox>
+      ) : null}
       {phase.step !== "done" ? (
         <div className="flex flex-wrap justify-end gap-2">
           <Button
@@ -754,7 +800,12 @@ function RestoreCard() {
             {t("backup.restore.preview")}
           </Button>
           <Button
-            disabled={busy || phase.step !== "preview"}
+            disabled={
+              busy ||
+              phase.step !== "preview" ||
+              (phase.summary.providers.references.length > 0 &&
+                !allowReferences)
+            }
             onClick={() => run(false)}
           >
             {busy && !phase.dryRun ? (
@@ -1027,8 +1078,12 @@ function SyncCard({
   const [editing, setEditing] = useState(false);
   const [disabling, setDisabling] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  /** The daemon refused an older server file (409 `SYNC_ROLLBACK`); its words are in `lastError`. */
+  const [rollback, setRollback] = useState(false);
+  const [acceptingOlder, setAcceptingOlder] = useState(false);
   const syncNow = () => {
     setSyncing(true);
+    setRollback(false);
     const client = modelPlane();
     client.sync.now().then(
       (synced) => {
@@ -1038,7 +1093,9 @@ function SyncCard({
       },
       (reason: unknown) => {
         setSyncing(false);
-        notify.error(reason, t("backup.sync.failed"));
+        const failure = failureOf(reason);
+        if (failure.code === "SYNC_ROLLBACK") setRollback(true);
+        else notify.error(reason, t("backup.sync.failed"));
         void client.sync.status().then(onStatus, () => undefined);
       },
     );
@@ -1186,6 +1243,51 @@ function SyncCard({
               ) : null}
             </div>
           ) : null}
+          {rollback ? (
+            <div role="alert" className="callout error items-center">
+              <span className="min-w-0 flex-1 font-medium">
+                {t("backup.sync.rollback")}
+              </span>
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => setAcceptingOlder(true)}
+              >
+                {t("backup.sync.acceptOlder")}
+              </Button>
+            </div>
+          ) : null}
+          {notice?.redactionOffHeld ? (
+            <div className="callout warn items-start">
+              <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+              <span className="min-w-0 flex-1">
+                {tr("backup.sync.redactionOffHeld", {
+                  time: <LocalTime value={notice.at} />,
+                })}
+              </span>
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() =>
+                  navigate("features", { search: featureSections.redaction })
+                }
+              >
+                {t("backup.restore.openRedaction")}
+              </Button>
+            </div>
+          ) : null}
+          {notice?.refused?.length ? (
+            <div className="callout error block space-y-1">
+              <p>{t("backup.sync.refused")}</p>
+              <ul className="list-disc space-y-0.5 pl-5">
+                {notice.refused.map((item) => (
+                  <li key={item} className="break-all">
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           {notice?.redactionOff ? (
             <RedactionOffWarning action>
               {tr("backup.sync.redactionOff", {
@@ -1212,6 +1314,19 @@ function SyncCard({
           {t("backup.sync.disabled")}
         </p>
       )}
+      <ConfirmDialog
+        open={acceptingOlder}
+        title={t("backup.sync.acceptOlderTitle")}
+        description={t("backup.sync.acceptOlderBody")}
+        action={t("backup.sync.acceptOlder")}
+        onClose={() => setAcceptingOlder(false)}
+        onConfirm={async () => {
+          const synced = await modelPlane().sync.now({ acceptOlder: true });
+          setRollback(false);
+          onStatus(synced);
+          notify.success(t("backup.sync.acceptedOlder"));
+        }}
+      />
       {editing ? (
         <SyncDialog
           status={status}

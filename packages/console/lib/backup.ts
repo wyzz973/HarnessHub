@@ -144,6 +144,50 @@ export function restoreFeatures(
   };
 }
 
+type Credential = { provider: string; credential: string };
+type Source = { kind: "env" | "file" | "keychain"; name: string };
+
+function sourceText(source: Source): string {
+  return t(`backup.restore.source.${source.kind}`, { name: source.name });
+}
+
+/**
+ * The credentials of a backup whose keys would be read on this computer
+ * (`providers.references`), one line each with where they go; restoring
+ * them takes an explicit confirmation (`references: true`).
+ */
+export function referenceLines(summary: RestoreSummary): string[] {
+  return summary.providers.references.map((item) =>
+    t("backup.restore.referenceLine", {
+      credential: `${item.provider}/${item.credential}`,
+      source: sourceText(item),
+      hosts: item.hosts.join(t("backup.listSeparator")),
+    }),
+  );
+}
+
+/**
+ * What a restore never brings in, with the daemon's reason: credentials
+ * naming HarnessHub's own secrets (`providers.refused`) and search keys
+ * that are references (`gatewayFeatures.search.refused`, as the daemon
+ * words them).
+ */
+export function refusedLines(summary: RestoreSummary): string[] {
+  return [
+    ...summary.providers.refused.map(
+      (item: Credential & Source & { reason: string }) =>
+        t("backup.restore.refusedCredential", {
+          credential: `${item.provider}/${item.credential}`,
+          source: sourceText(item).trim(),
+          reason: item.reason,
+        }),
+    ),
+    ...(summary.gatewayFeatures?.search.refused ?? []).map((detail) =>
+      t("backup.restore.refusedSearch", { detail }),
+    ),
+  ];
+}
+
 /** The editable sync settings; secrets start empty and are sent once. */
 export interface SyncForm {
   kind: "webdav" | "s3";

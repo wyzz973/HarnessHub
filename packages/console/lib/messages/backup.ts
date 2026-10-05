@@ -97,6 +97,21 @@ export const zh = {
   "backup.restore.turnsOffDone":
     "这次恢复关闭了出站脱敏：请求发往上游之前不再把已知的秘密换成占位符。需要时在网关功能中重新开启。",
   "backup.restore.openRedaction": "打开出站脱敏",
+  "backup.restore.referencesTitle": "这些凭据的 Key 从本机读取",
+  "backup.restore.referencesLede":
+    "恢复后，HarnessHub 会读取下列位置的值，作为 Key 发往列出的主机。只在你认识这些位置与主机时恢复：被改动的备份可以借此把本机的秘密发往别处。",
+  "backup.restore.referencesDone": "已按确认恢复，这些凭据的 Key 从本机读取：",
+  "backup.restore.referenceLine":
+    "{credential}：Key 从{source}读取，发往 {hosts}",
+  "backup.restore.referencesConfirm":
+    "我确认：从上述位置读取 Key，并发往列出的主机",
+  "backup.restore.source.env": "环境变量 {name} ",
+  "backup.restore.source.file": "文件 {name} ",
+  "backup.restore.source.keychain": "钥匙串项 {name} ",
+  "backup.restore.refusedTitle": "这些不会恢复",
+  "backup.restore.refusedCredential":
+    "{credential}（Key 来自{source}）：{reason}",
+  "backup.restore.refusedSearch": "搜索后端 {detail}",
   "backup.restore.searchNeedKeyHint":
     "备份和本机都没有 Key 的搜索后端不带入，在{page}中重新添加：",
   "backup.restore.openSearch": "打开联网搜索",
@@ -149,6 +164,17 @@ export const zh = {
   "backup.sync.noticeAt": "{time} 的同步中两边都有改动：",
   "backup.sync.redactionOff":
     "{time} 的同步带入了服务器上的网关功能，关闭了本机的出站脱敏：请求发往上游之前不再把已知的秘密换成占位符。",
+  "backup.sync.redactionOffHeld":
+    "{time} 的同步中，服务器上的网关功能关闭了出站脱敏，但本机的设置同样新或更新，所以本机仍然开启。如果确实要关闭，请自己在网关功能中关闭。",
+  "backup.sync.refused":
+    "同步时没有带入这些（它们的 Key 来自本机的秘密或外部引用）：",
+  "backup.sync.rollback":
+    "服务器上的文件比本机已经同步过的版本旧：可能有人把旧的副本放了回去。本机什么都没有改动。请先检查服务器上的文件。",
+  "backup.sync.acceptOlder": "接受较旧的文件",
+  "backup.sync.acceptOlderTitle": "接受服务器上较旧的文件？",
+  "backup.sync.acceptOlderBody":
+    "接受后按这个较旧的文件同步：本机较新的改动（例如删掉的凭据、关闭的设置或新的规则）可能被它替换，之后本机写回的文件比两者都新，其他电脑也会随之同步。只在你确认是自己放回了这个文件时这样做。",
+  "backup.sync.acceptedOlder": "已接受较旧的文件并同步",
   "backup.sync.needKey":
     "服务器上的这些搜索后端没有 Key，本机也没有，因此没有带入；在{page}中添加 Key：",
   "backup.sync.noticeHere": "本机的{parts}被服务器的版本替换",
@@ -308,6 +334,23 @@ export const en: Translation<typeof zh> = {
   "backup.restore.turnsOffDone":
     "This restore turned outbound redaction off: known secrets are no longer replaced with placeholders before requests go upstream. Turn it back on in Gateway features if you need it.",
   "backup.restore.openRedaction": "Open outbound redaction",
+  "backup.restore.referencesTitle":
+    "These credentials' keys are read on this computer",
+  "backup.restore.referencesLede":
+    "After the restore, HarnessHub reads the values at these sources and sends them as keys to the hosts listed. Restore only if you know these sources and hosts: a changed backup could use this to send this computer's secrets elsewhere.",
+  "backup.restore.referencesDone":
+    "Restored as confirmed; these credentials' keys are read on this computer:",
+  "backup.restore.referenceLine":
+    "{credential}: key read from {source}, sent to {hosts}",
+  "backup.restore.referencesConfirm":
+    "I confirm: read the keys from these sources and send them to the hosts listed",
+  "backup.restore.source.env": "the environment variable {name}",
+  "backup.restore.source.file": "the file {name}",
+  "backup.restore.source.keychain": "the keychain item {name}",
+  "backup.restore.refusedTitle": "Not restored",
+  "backup.restore.refusedCredential":
+    "{credential} (key from {source}): {reason}",
+  "backup.restore.refusedSearch": "Search backend {detail}",
   "backup.restore.searchNeedKeyHint":
     "Search backends without a key in the backup or on this computer are not brought in; add them again in {page}:",
   "backup.restore.openSearch": "Open web search",
@@ -362,6 +405,17 @@ export const en: Translation<typeof zh> = {
   "backup.sync.noticeAt": "Both sides had changes in the sync of {time}:",
   "backup.sync.redactionOff":
     "The sync of {time} brought in the server's gateway features, which turned outbound redaction off on this computer: known secrets are no longer replaced with placeholders before requests go upstream.",
+  "backup.sync.redactionOffHeld":
+    "In the sync of {time}, the server's gateway features turn outbound redaction off, but this computer's settings are as new or newer, so it stays on here. If you meant to turn it off, do so yourself in Gateway features.",
+  "backup.sync.refused":
+    "The sync left these out (their keys come from this computer's secrets or outside references):",
+  "backup.sync.rollback":
+    "The file on the server is older than one this computer already synced: someone may have put an old copy back. Nothing was changed here. Check the file on the server first.",
+  "backup.sync.acceptOlder": "Accept the older file",
+  "backup.sync.acceptOlderTitle": "Accept the older file on the server?",
+  "backup.sync.acceptOlderBody":
+    "Accepting syncs from this older file: newer changes here (such as a credential removed, a setting turned off or a new rule) may be replaced by it; the file this computer writes back is newer than both, and other computers follow it. Do this only if you know you put this file back yourself.",
+  "backup.sync.acceptedOlder": "Accepted the older file and synced",
   "backup.sync.needKey":
     "These search backends have no key on the server, and this computer has none for them, so they were not brought in; add their keys in {page}:",
   "backup.sync.noticeHere":
