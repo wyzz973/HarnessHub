@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: MIT
 import { useId, useMemo, useRef, useState } from "react";
-import { Check, ChevronsUpDown, Search } from "lucide-react";
+import {
+  BrainCircuit,
+  Check,
+  ChevronDown,
+  ChevronsUpDown,
+  Search,
+} from "lucide-react";
 import {
   Popover,
   PopoverContent,
@@ -172,7 +178,8 @@ function filterSections(models: GatewayModels, query: string) {
  * with each model's context window and price (USD per million input and
  * output tokens), then route groups. `none` adds a first entry that clears
  * the choice (e.g. "follow the main model"). Arrow keys move, Enter chooses, Escape
- * closes.
+ * closes. `variant="pill"` draws the trigger as a composer pill instead of a
+ * form field.
  */
 export function ModelPicker({
   models,
@@ -182,6 +189,7 @@ export function ModelPicker({
   label,
   disabled,
   className,
+  variant = "field",
 }: {
   models: GatewayModels;
   value: string | undefined;
@@ -191,6 +199,7 @@ export function ModelPicker({
   label: string;
   disabled?: boolean;
   className?: string;
+  variant?: "field" | "pill";
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -222,35 +231,57 @@ export function ModelPicker({
       }}
     >
       <PopoverTrigger asChild>
-        <button
-          type="button"
-          disabled={disabled}
-          aria-label={t("agents.picker.trigger", {
-            label,
-            value: value ?? none ?? t("agents.picker.unset"),
-          })}
-          className={cn(
-            "flex h-9 w-full min-w-0 items-center gap-2 rounded-[10px] border border-input bg-background px-3 text-left text-[13px] outline-none hover:border-border-strong focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:opacity-50",
-            className,
-          )}
-        >
-          <span className="min-w-0 flex-1 truncate font-mono text-[12.5px]">
-            {value ?? (
-              <span className="font-sans text-subtle">
-                {none ?? t("agents.picker.choose")}
-              </span>
-            )}
-          </span>
-          {current?.contextWindow !== undefined ? (
-            <span className="hidden shrink-0 text-[11.5px] text-subtle sm:inline">
-              {tokenCount(current.contextWindow)}
+        {variant === "pill" ? (
+          <button
+            type="button"
+            disabled={disabled}
+            aria-label={t("agents.picker.trigger", {
+              label,
+              value: value ?? none ?? t("agents.picker.unset"),
+            })}
+            title={value ?? none}
+            className={cn("pill max-w-[220px]", className)}
+          >
+            <BrainCircuit className="size-[15px] shrink-0" strokeWidth={1.7} />
+            <span className="truncate">
+              {value ?? none ?? t("agents.picker.choose")}
             </span>
-          ) : null}
-          <ChevronsUpDown className="size-3.5 shrink-0 text-subtle" />
-        </button>
+            {disabled ? null : (
+              <ChevronDown className="size-3.5 shrink-0 opacity-60" />
+            )}
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={disabled}
+            aria-label={t("agents.picker.trigger", {
+              label,
+              value: value ?? none ?? t("agents.picker.unset"),
+            })}
+            className={cn(
+              "flex h-9 w-full min-w-0 items-center gap-2 rounded-[10px] border border-input bg-background px-3 text-left text-[13px] outline-none hover:border-border-strong focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:opacity-50",
+              className,
+            )}
+          >
+            <span className="min-w-0 flex-1 truncate font-mono text-[12.5px]">
+              {value ?? (
+                <span className="font-sans text-subtle">
+                  {none ?? t("agents.picker.choose")}
+                </span>
+              )}
+            </span>
+            {current?.contextWindow !== undefined ? (
+              <span className="hidden shrink-0 text-[11.5px] text-subtle sm:inline">
+                {tokenCount(current.contextWindow)}
+              </span>
+            ) : null}
+            <ChevronsUpDown className="size-3.5 shrink-0 text-subtle" />
+          </button>
+        )}
       </PopoverTrigger>
       <PopoverContent
         className="w-[min(440px,calc(100vw-24px))] p-0"
+        {...(variant === "pill" ? { side: "top" as const } : {})}
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           input.current?.focus();

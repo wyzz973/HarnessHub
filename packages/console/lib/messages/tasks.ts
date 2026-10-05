@@ -50,7 +50,7 @@ export const zh = {
   "tasks.observation.run-cost-not-reported": "引擎未提供本次费用",
   "tasks.observation.backend-cost-not-reported": "引擎未提供费用",
   "tasks.observation.run-token-usage-not-reported":
-    "引擎未提供可归属到本次执行的用量",
+    "引擎未提供可归属到本次执行的用量；可以选择模型的引擎，在输入框中选一个 HarnessHub 的模型后，用量按执行记账",
   "tasks.observation.acp-token-usage-not-reported": "协议未提供用量",
   "tasks.observation.actual-model-not-reported": "引擎未报告实际模型",
   "tasks.observation.installation-snapshot-not-recorded":
@@ -188,6 +188,9 @@ export const zh = {
   "tasks.model.testFailed": "测试请求失败",
   "tasks.model.title": "模型",
   "tasks.model.lede": "所有引擎共用这一个模型。",
+  "tasks.model.deprecated":
+    "统一模型是旧版的配置入口，已弃用：每次启动时它被同步为 provider migrated 与路由组 group/default。新的模型请在 Provider 与路由组中配置，任务在输入框中选择模型。",
+  "tasks.model.openProviders": "打开 Provider",
   "tasks.model.reload": "重新读取",
   "tasks.model.unsupported": "当前服务版本不支持统一模型，请升级。",
   "tasks.model.settings": "模型配置",
@@ -289,6 +292,9 @@ export const zh = {
   "tasks.composer.manageEngines": "管理引擎",
   "tasks.composer.workspace": "工作目录",
   "tasks.composer.outputs": "完成后保存的文件",
+  "tasks.composer.model": "模型",
+  "tasks.composer.modelOwn": "Agent 自己的设置",
+  "tasks.composer.modelDefaultGroup": "默认（group/default）",
   "tasks.composer.outputPaths": "预期产物路径",
   "tasks.composer.outputsHint":
     "每行一个相对工作目录的路径，任务完成后可在结果中下载。",
@@ -490,22 +496,6 @@ export const zh = {
   "tasks.logs.title": "诊断日志",
   "tasks.logs.session": "会话 {id}",
   "tasks.logs.autoRefresh": "，执行中自动刷新",
-  "tasks.connect.title": "连接模型",
-  "tasks.connect.lede": "所有引擎共用这一个模型",
-  "tasks.connect.keyPlaceholder": "无需密钥可留空",
-  "tasks.connect.hideKey": "隐藏密钥",
-  "tasks.connect.showKey": "显示密钥",
-  "tasks.connect.advanced": "高级",
-  "tasks.connect.failed": "已保存，但 {engine} 未能通过模型拿到回复。",
-  "tasks.connect.viewTest": "查看测试任务",
-  "tasks.connect.continueAnyway": "仍然继续",
-  "tasks.connect.saving": "正在保存",
-  "tasks.connect.testing": "正在用 {engine} 测试",
-  "tasks.connect.connected": "连接成功",
-  "tasks.connect.saved": "已保存",
-  "tasks.connect.saveAndTest": "保存并测试",
-  "tasks.connect.saveOnly": "仅保存",
-  "tasks.connect.later": "稍后设置",
 } as const;
 
 export const en: Translation<typeof zh> = {
@@ -555,7 +545,7 @@ export const en: Translation<typeof zh> = {
   "tasks.observation.backend-cost-not-reported":
     "The engine did not report a cost",
   "tasks.observation.run-token-usage-not-reported":
-    "The engine did not report usage that can be attributed to this run",
+    "The engine did not report usage that can be attributed to this run; for engines that can choose a model, pick a HarnessHub model in the composer to have usage recorded per run",
   "tasks.observation.acp-token-usage-not-reported":
     "The protocol does not report usage",
   "tasks.observation.actual-model-not-reported":
@@ -722,6 +712,9 @@ export const en: Translation<typeof zh> = {
   "tasks.model.testFailed": "The test request failed",
   "tasks.model.title": "Model",
   "tasks.model.lede": "Every engine shares this one model.",
+  "tasks.model.deprecated":
+    "The unified model is the legacy way to set a model and is deprecated: at every start it is copied into provider migrated and route group group/default. Set up new models under Providers and route groups; a task picks its model in the composer.",
+  "tasks.model.openProviders": "Open Providers",
   "tasks.model.reload": "Reload",
   "tasks.model.unsupported":
     "This service version does not support the unified model; please upgrade.",
@@ -829,6 +822,9 @@ export const en: Translation<typeof zh> = {
   "tasks.composer.manageEngines": "Manage engines",
   "tasks.composer.workspace": "Working directory",
   "tasks.composer.outputs": "Files to keep when done",
+  "tasks.composer.model": "Model",
+  "tasks.composer.modelOwn": "The agent's own settings",
+  "tasks.composer.modelDefaultGroup": "Default (group/default)",
   "tasks.composer.outputPaths": "Expected output paths",
   "tasks.composer.outputsHint":
     "One path per line, relative to the working directory; download them from the result when the task is done.",
@@ -1048,21 +1044,4 @@ export const en: Translation<typeof zh> = {
   "tasks.logs.title": "Diagnostic logs",
   "tasks.logs.session": "Session {id}",
   "tasks.logs.autoRefresh": ", refreshed automatically while running",
-  "tasks.connect.title": "Connect a model",
-  "tasks.connect.lede": "Every engine shares this one model",
-  "tasks.connect.keyPlaceholder": "Leave empty if no key is needed",
-  "tasks.connect.hideKey": "Hide the key",
-  "tasks.connect.showKey": "Show the key",
-  "tasks.connect.advanced": "Advanced",
-  "tasks.connect.failed":
-    "Saved, but {engine} did not get a reply through the model.",
-  "tasks.connect.viewTest": "View the test task",
-  "tasks.connect.continueAnyway": "Continue anyway",
-  "tasks.connect.saving": "Saving",
-  "tasks.connect.testing": "Testing with {engine}",
-  "tasks.connect.connected": "Connected",
-  "tasks.connect.saved": "Saved",
-  "tasks.connect.saveAndTest": "Save and test",
-  "tasks.connect.saveOnly": "Save only",
-  "tasks.connect.later": "Set up later",
 };

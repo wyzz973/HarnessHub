@@ -49,6 +49,7 @@ import {
 } from "@/lib/contracts";
 import { engineName } from "@/lib/engines";
 import { useGatewayStatus } from "@/lib/gateway-status";
+import { loadGatewayModels, type GatewayModels } from "@/lib/gateway-models";
 import { t } from "@/lib/i18n";
 import { navigate, pagePaths, usePage, type Page } from "@/lib/router";
 import { signOut } from "@/lib/session";
@@ -63,7 +64,6 @@ import {
   Suggestions,
   WorkflowPlan,
 } from "./thread";
-import { ConnectModel } from "./onboarding";
 import { Inspector, type RunPanelTab } from "./inspector";
 import { EnginePage } from "./engine-page";
 import { LogPanel } from "./log-panel";
@@ -81,7 +81,7 @@ import { SubscriptionsPage } from "./subscriptions-page";
 import { LibraryPage } from "./library-page";
 
 type ActiveSelection = { type: "session" | "workflow"; id: string } | null;
-/** Pages of HarnessHub's own tasks, where the unified model matters. */
+/** Pages of HarnessHub's own tasks, with the task history's refresh button. */
 const taskPages: ReadonlySet<Page> = new Set([
   "tasks",
   "model",
@@ -90,6 +90,8 @@ const taskPages: ReadonlySet<Page> = new Set([
   "observability",
 ]);
 const ENGINE_KEY = "harnesshub.engine";
+/** The model each engine's new tasks last named, as a JSON object by engine id. */
+const RUN_MODEL_KEY = "harnesshub.runModel";
 const SIDEBAR_KEY = "harnesshub.sidebar";
 const panelTransition = { duration: 0.24, ease: [0.22, 0.8, 0.24, 1] } as const;
 const overlayQuery = "(max-width: 1100px)";
@@ -103,6 +105,20 @@ function stored(key: string) {
     return localStorage.getItem(key);
   } catch {
     return null;
+  }
+}
+/** The remembered model of each engine's new tasks; anything unreadable is forgotten. */
+function storedRunModels(): Record<string, string> {
+  try {
+    const value: unknown = JSON.parse(stored(RUN_MODEL_KEY) ?? "{}");
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(
+      Object.entries(value).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
+    );
+  } catch {
+    return {};
   }
 }
 function store(key: string, value: string) {
@@ -138,19 +154,12 @@ export function Console() {
     gateway.runtime.state === "ready" ? gateway.runtime.value : undefined;
   const unifiedModel =
     gateway.model.state === "ready" ? gateway.model.value : undefined;
-  const modelMissing =
-    gateway.model.state === "ready" && !gateway.model.value.configured;
   const page = usePage();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [panelTab, setPanelTab] = useState<RunPanelTab>("overview");
   const [logsRunId, setLogsRunId] = useState<string | null>(null);
-  // The card stays open from the moment a missing model is seen until the person finishes
-  // or skips; saving alone must not close it because the connection check is still running.
-  const [onboarding, setOnboarding] = useState<"idle" | "open" | "closed">(
-    "idle",
-  );
   const overlayPanel = useSyncExternalStore(
     subscribeOverlay,
     () => window.matchMedia(overlayQuery).matches,
@@ -193,10 +202,6 @@ export function Console() {
     setEngineIdState(id);
     store(ENGINE_KEY, id);
   }, []);
-  useEffect(() => {
-    if (modelMissing)
-      setOnboarding((current) => (current === "idle" ? "open" : current));
-  }, [modelMissing]);
   const toggleSidebar = useCallback(() => {
     setMobileNav(false);
     setSidebarCollapsed((value) => {
@@ -212,7 +217,10 @@ export function Console() {
       engineChosen.current = true;
       setEngineIdState(remembered);
     }
+    setRunModels(storedRunModels());
   }, []);
+  // The model each engine's new tasks use; absent means the engine's default.
+  const [runModels, setRunModels] = useState<Record<string, string>>({});
   const [workspaceId, setWorkspaceId] = useState("");
   const [outputPaths, setOutputPaths] = useState("");
   const [overview, setOverview] = useState<Overview | null>(null);
@@ -221,6 +229,24 @@ export function Console() {
   const activeRef = useRef(active);
   activeRef.current = active;
   const report = useCallback((err: unknown) => setError(messageOf(err)), []);
+  // The gateway's models for the composer's model choice, reread with the task history.
+  const [gatewayModels, setGatewayModels] = useState<GatewayModels | null>(
+    null,
+  );
+  useEffect(() => {
+    if (page !== "tasks") return;
+    let current = true;
+    loadGatewayModels()
+      .then((models) => {
+        if (current) setGatewayModels(models);
+      })
+      .catch((err: unknown) => {
+        if (current) report(err);
+      });
+    return () => {
+      current = false;
+    };
+  }, [page, refreshEpoch, report]);
 
   const applyHistory = useCallback(
     (sessionList: Session[], runList: Run[], workflowList: Workflow[]) => {
@@ -625,6 +651,28 @@ export function Console() {
     active?.type === "session"
       ? sessions.find((session) => session.id === active.id)
       : undefined;
+  const composerEngineId = boundSession?.engineId ?? engineId;
+  const composerEngine = engines.find(
+    (engine) => engine.id === composerEngineId,
+  );
+  // A continued Session keeps the target of its runs: the daemon refuses a
+  // Session that switches between the gateway and the engine's own login.
+  const rememberedModel = runModels[composerEngineId];
+  const taskModel =
+    active?.type === "session"
+      ? currentRuns.at(-1)?.input.model
+      : composerEngine?.modelSelection &&
+          rememberedModel !== undefined &&
+          gatewayModels?.byRef.has(rememberedModel)
+        ? rememberedModel
+        : undefined;
+  const chooseTaskModel = (ref: string | undefined) => {
+    const next = { ...runModels };
+    if (ref === undefined) delete next[composerEngineId];
+    else next[composerEngineId] = ref;
+    setRunModels(next);
+    store(RUN_MODEL_KEY, JSON.stringify(next));
+  };
   async function submit(message: AppendMessage) {
     const text = message.content
       .flatMap((part) => (part.type === "text" ? [part.text] : []))
@@ -670,6 +718,7 @@ export function Console() {
           text,
           crypto.randomUUID(),
           parseOutputPaths(outputPaths),
+          taskModel,
         );
         if (active?.id !== opened.id)
           choose({ type: "session", id: opened.id });
@@ -900,13 +949,6 @@ export function Console() {
     ? (currentRuns.find((run) => run.id === logsRunId) ??
       allRuns.find((run) => run.id === logsRunId))
     : undefined;
-  const modelState = gateway.model;
-  const needsModel =
-    modelState.state === "ready" && !modelState.value.configured;
-  const showOnboarding = onboarding === "open";
-  // Until the model state is known the slot stays empty, so the composer never flashes
-  // before the connection card on a first run.
-  const modelKnown = modelState.state !== "loading";
   const emptyThread = !messages.length && !workflow && !active;
   const panel = (
     <Inspector
@@ -954,7 +996,7 @@ export function Console() {
             onSearch={setSearch}
             health={health}
             syncError={syncError}
-            modelMissing={needsModel}
+            legacyModel={unifiedModel?.configured ?? false}
           />
           <main id="main-content" className="main-shell">
             <header className="topbar">
@@ -989,35 +1031,6 @@ export function Console() {
                     </TooltipTrigger>
                     <TooltipContent>
                       {t("common.shell.fullAccessHint")}
-                    </TooltipContent>
-                  </Tooltip>
-                ) : null}
-                {modelState.state === "ready" && taskPages.has(page) ? (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        type="button"
-                        className="status-chip max-sm:hidden"
-                        onClick={() => openPage("model")}
-                      >
-                        <span
-                          className={cn(
-                            "dot",
-                            modelState.value.configured ? "good" : "warn",
-                          )}
-                        />
-                        <span className="truncate">
-                          {modelState.value.configured
-                            ? (modelState.value.model ??
-                              t("common.shell.model"))
-                            : t("common.shell.noModel")}
-                        </span>
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      {modelState.value.configured
-                        ? t("common.shell.modelHint")
-                        : t("common.shell.noModelHint")}
                     </TooltipContent>
                   </Tooltip>
                 ) : null}
@@ -1200,105 +1213,98 @@ export function Console() {
                       </div>
                     )}
                     <AnimatePresence mode="popLayout" initial={false}>
-                      {emptyThread && !modelKnown ? null : emptyThread &&
-                        showOnboarding ? (
-                        <motion.div
-                          key="onboarding"
-                          className="thread-column flex justify-center"
-                          initial={{ opacity: 0, y: 8 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, scale: 0.98 }}
-                          transition={{ duration: 0.2, ease: "easeOut" }}
-                        >
-                          <ConnectModel
-                            onSaved={saveModel}
-                            onDone={() => setOnboarding("closed")}
-                            onSkip={() => setOnboarding("closed")}
-                            openRun={openRun}
-                          />
-                        </motion.div>
-                      ) : (
-                        <motion.div
-                          key="composer"
-                          layout="position"
-                          className="thread-column shrink-0 pb-5"
-                          initial={{ opacity: 0, y: 8 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{
-                            layout: {
-                              type: "spring",
-                              stiffness: 420,
-                              damping: 40,
-                            },
-                            duration: 0.2,
-                          }}
-                        >
-                          {emptyThread ? (
-                            <div className="mb-7">
-                              <Greeting />
-                            </div>
-                          ) : null}
-                          {streamError ? (
-                            <p className="mb-2 px-4 text-[12.5px] text-warning">
-                              {t("common.shell.streamLost")}
-                              <button
-                                className="ml-1 underline"
-                                onClick={() => {
-                                  setStreamError(false);
-                                  setRefreshEpoch((n) => n + 1);
-                                }}
-                              >
-                                {t("common.shell.reconnect")}
-                              </button>
+                      <motion.div
+                        key="composer"
+                        layout="position"
+                        className="thread-column shrink-0 pb-5"
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{
+                          layout: {
+                            type: "spring",
+                            stiffness: 420,
+                            damping: 40,
+                          },
+                          duration: 0.2,
+                        }}
+                      >
+                        {emptyThread ? (
+                          <div className="mb-7">
+                            <Greeting />
+                          </div>
+                        ) : null}
+                        {streamError ? (
+                          <p className="mb-2 px-4 text-[12.5px] text-warning">
+                            {t("common.shell.streamLost")}
+                            <button
+                              className="ml-1 underline"
+                              onClick={() => {
+                                setStreamError(false);
+                                setRefreshEpoch((n) => n + 1);
+                              }}
+                            >
+                              {t("common.shell.reconnect")}
+                            </button>
+                          </p>
+                        ) : null}
+                        {boundSession?.status === "closed" ? (
+                          <div className="flex items-center gap-3 rounded-2xl border bg-muted/50 py-3 pr-3 pl-4">
+                            <p className="min-w-0 flex-1 text-[13.5px] text-muted-foreground">
+                              {t("common.shell.sessionEnded")}
                             </p>
-                          ) : null}
-                          {boundSession?.status === "closed" ? (
-                            <div className="flex items-center gap-3 rounded-2xl border bg-muted/50 py-3 pr-3 pl-4">
-                              <p className="min-w-0 flex-1 text-[13.5px] text-muted-foreground">
-                                {t("common.shell.sessionEnded")}
-                              </p>
-                              <Button size="sm" onClick={newTask}>
-                                <SquarePen />
-                                {t("common.nav.newTask")}
-                              </Button>
-                            </div>
-                          ) : (
-                            <Composer
-                              mode={mode}
-                              setMode={setMode}
-                              engineId={boundSession?.engineId ?? engineId}
-                              setEngineId={setEngineId}
-                              workspaceId={
-                                boundSession?.workspaceId ?? workspaceId
-                              }
-                              setWorkspaceId={setWorkspaceId}
-                              engines={engines}
-                              workspaces={workspaces}
-                              running={running}
-                              workflowActive={!!workflow}
-                              sessionBound={active?.type === "session"}
-                              onStop={stop}
-                              outputPaths={outputPaths}
-                              setOutputPaths={setOutputPaths}
-                              fullAccess={runtimeInfo?.fullAccess ?? false}
-                              onManageEngines={() => openPage("engines")}
-                              autoFocus
-                              {...(boundSession
-                                ? { sessionCwd: boundSession.cwd }
-                                : {})}
-                            />
-                          )}
-                          {emptyThread ? (
-                            <div className="mt-6">
-                              <Suggestions
-                                onPick={(text) =>
-                                  runtime.thread.composer.setText(text)
+                            <Button size="sm" onClick={newTask}>
+                              <SquarePen />
+                              {t("common.nav.newTask")}
+                            </Button>
+                          </div>
+                        ) : (
+                          <Composer
+                            mode={mode}
+                            setMode={setMode}
+                            engineId={boundSession?.engineId ?? engineId}
+                            setEngineId={setEngineId}
+                            workspaceId={
+                              boundSession?.workspaceId ?? workspaceId
+                            }
+                            setWorkspaceId={setWorkspaceId}
+                            engines={engines}
+                            workspaces={workspaces}
+                            running={running}
+                            workflowActive={!!workflow}
+                            sessionBound={active?.type === "session"}
+                            onStop={stop}
+                            outputPaths={outputPaths}
+                            setOutputPaths={setOutputPaths}
+                            fullAccess={runtimeInfo?.fullAccess ?? false}
+                            onManageEngines={() => openPage("engines")}
+                            autoFocus
+                            {...(boundSession
+                              ? { sessionCwd: boundSession.cwd }
+                              : {})}
+                            {...(composerEngine?.modelSelection &&
+                            gatewayModels &&
+                            (gatewayModels.sections.length ||
+                              taskModel !== undefined)
+                              ? {
+                                  modelChoice: {
+                                    models: gatewayModels,
+                                    value: taskModel,
+                                    onChange: chooseTaskModel,
+                                  },
                                 }
-                              />
-                            </div>
-                          ) : null}
-                        </motion.div>
-                      )}
+                              : {})}
+                          />
+                        )}
+                        {emptyThread ? (
+                          <div className="mt-6">
+                            <Suggestions
+                              onPick={(text) =>
+                                runtime.thread.composer.setText(text)
+                              }
+                            />
+                          </div>
+                        ) : null}
+                      </motion.div>
                     </AnimatePresence>
                     {emptyThread ? <div className="flex-[1.35]" /> : null}
                   </ThreadPrimitive.Root>

@@ -31,6 +31,7 @@ import { engineName } from "@/lib/engines";
 import { duration } from "@/lib/presentation";
 import { EngineAvatar } from "./engine-avatar";
 import { t } from "@/lib/i18n";
+import { navigate } from "@/lib/router";
 
 function referenceLabel(reference: SecretReference) {
   return reference.kind === "keychain"
@@ -196,6 +197,18 @@ export function ModelPage({
             {t("tasks.model.reload")}
           </Button>
         </div>
+        <div className="callout mt-6">
+          <span>
+            {t("tasks.model.deprecated")}{" "}
+            <button
+              type="button"
+              className="underline underline-offset-2"
+              onClick={() => navigate("providers")}
+            >
+              {t("tasks.model.openProviders")}
+            </button>
+          </span>
+        </div>
         {unsupported ? (
           <div className="callout warn mt-6">
             {t("tasks.model.unsupported")}
@@ -245,7 +258,7 @@ export function ModelPage({
                   <input
                     className="field font-mono text-[13px]"
                     value={form.model}
-                    placeholder="GLM-V5_1-DX"
+                    placeholder="deepseek-chat"
                     autoComplete="off"
                     spellCheck={false}
                     onChange={(event) => update({ model: event.target.value })}
@@ -269,9 +282,7 @@ export function ModelPage({
                         <option value="keep">{t("tasks.model.keyKeep")}</option>
                       ) : null}
                       <option value="new">{t("tasks.model.keyNew")}</option>
-                      <option value="env">
-                        {t("tasks.model.keyFromEnv")}
-                      </option>
+                      <option value="env">{t("tasks.model.keyFromEnv")}</option>
                       <option value="none">{t("tasks.model.keyNone")}</option>
                     </select>
                     {form.keyMode === "new" ? (
@@ -606,9 +617,7 @@ export function ModelPage({
                   </select>
                 ) : null}
                 {dirty && view.configured ? (
-                  <p className="field-hint">
-                    {t("tasks.model.testUsesSaved")}
-                  </p>
+                  <p className="field-hint">{t("tasks.model.testUsesSaved")}</p>
                 ) : null}
                 {tested ? (
                   <div
@@ -624,8 +633,7 @@ export function ModelPage({
                       {tested.ok
                         ? t("tasks.model.testOk")
                         : t("tasks.model.testNotOk")}{" "}
-                      ·{" "}
-                      {duration(tested.durationMs)}
+                      · {duration(tested.durationMs)}
                       {tested.error ? (
                         <span className="mt-1 block text-[12.5px] break-words">
                           {tested.error.message}

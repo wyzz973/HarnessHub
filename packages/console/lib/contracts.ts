@@ -57,7 +57,12 @@ export const runSchema = z.object({
   sessionId: z.string(),
   generation: z.number(),
   status: runStatusSchema,
-  input: z.object({ text: z.string(), timeoutMs: z.number() }),
+  input: z.object({
+    text: z.string(),
+    timeoutMs: z.number(),
+    /** Model Ref or `group/<id>` the Run named; absent for the engine's default. */
+    model: z.string().optional(),
+  }),
   createdAt: z.number(),
   deadlineAt: z.number(),
   startedAt: z.number().optional(),
@@ -98,6 +103,8 @@ export const engineSchema = z.object({
   configuration: configurationSchema.optional(),
   credentialEnv: z.array(z.string()).optional(),
   maxConcurrency: z.number(),
+  /** Whether a Run of this engine may name a model of the gateway. */
+  modelSelection: z.boolean().optional(),
   cli: z
     .object({
       inputMode: z.enum(["stdin", "argv"]),

@@ -218,9 +218,14 @@ export const api = {
     text: string,
     key: string,
     outputs: { path: string; name: string }[] = [],
+    model?: string,
   ) =>
     request(`/v1/sessions/${encodeURIComponent(id)}/runs`, runSchema, {
-      ...post({ text, ...(outputs.length ? { outputs } : {}) }),
+      ...post({
+        text,
+        ...(outputs.length ? { outputs } : {}),
+        ...(model !== undefined ? { model } : {}),
+      }),
       headers: { "Idempotency-Key": key },
     }),
   cancel: (id: string) =>

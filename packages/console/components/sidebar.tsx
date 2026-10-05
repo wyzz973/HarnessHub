@@ -174,7 +174,7 @@ export function Sidebar({
   onSearch,
   health,
   syncError,
-  modelMissing,
+  legacyModel,
 }: {
   page: Page;
   collapsed: boolean;
@@ -193,8 +193,11 @@ export function Sidebar({
   health: GatewayHealth;
   /** Last history synchronization failure; shown on the connection row. */
   syncError: string | null;
-  /** The unified model still has to be connected. */
-  modelMissing: boolean;
+  /**
+   * A deprecated unified model is configured (ADR 0019): only then is its
+   * page offered, as the place where that source is changed.
+   */
+  legacyModel: boolean;
 }) {
   const [theme, setTheme] = useTheme();
   const mac = useIsMac();
@@ -269,24 +272,18 @@ export function Sidebar({
             </kbd>
           }
         />
-        {taskNavigation.map((item) => (
-          <Row
-            key={item.page}
-            icon={item.icon}
-            label={t(item.label)}
-            active={page === item.page}
-            collapsed={collapsed}
-            onClick={() => onOpenPage(item.page)}
-            trailing={
-              item.page === "model" && modelMissing ? (
-                <span
-                  className="dot warn"
-                  aria-label={t("common.nav.modelMissing")}
-                />
-              ) : undefined
-            }
-          />
-        ))}
+        {taskNavigation
+          .filter((item) => item.page !== "model" || legacyModel)
+          .map((item) => (
+            <Row
+              key={item.page}
+              icon={item.icon}
+              label={t(item.label)}
+              active={page === item.page}
+              collapsed={collapsed}
+              onClick={() => onOpenPage(item.page)}
+            />
+          ))}
       </nav>
       <div className="sidebar-only-open mt-4 flex min-h-0 flex-1 flex-col">
         <label className="mx-3 flex h-9 shrink-0 items-center gap-2 rounded-[9px] px-2.5 text-subtle focus-within:bg-sidebar-hover focus-within:text-foreground hover:bg-sidebar-hover">

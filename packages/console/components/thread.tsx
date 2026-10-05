@@ -65,9 +65,11 @@ import type {
 } from "@/lib/contracts";
 import { isTerminal } from "@/lib/contracts";
 import { engineName, selectableEngines } from "@/lib/engines";
+import type { GatewayModels } from "@/lib/gateway-models";
 import { bytes, duration, projectEvents } from "@/lib/presentation";
 import { cn } from "@/lib/utils";
 import { EngineAvatar } from "./engine-avatar";
+import { ModelPicker } from "./model-picker";
 import { Status } from "./status";
 import { ToolSteps } from "./tool-call-card";
 import { t } from "@/lib/i18n";
@@ -302,7 +304,10 @@ export function Messages() {
 }
 
 /** Starting points; their labels and prompts are in the console's language. */
-const suggestions: { icon: LucideIcon; key: "report" | "excel" | "slides" | "files" | "outlook" }[] = [
+const suggestions: {
+  icon: LucideIcon;
+  key: "report" | "excel" | "slides" | "files" | "outlook";
+}[] = [
   { icon: FileText, key: "report" },
   { icon: FileSpreadsheet, key: "excel" },
   { icon: Presentation, key: "slides" },
@@ -509,6 +514,7 @@ export function Composer({
   sessionCwd,
   onManageEngines,
   autoFocus = false,
+  modelChoice,
 }: {
   mode: "auto" | "direct";
   setMode: (mode: "auto" | "direct") => void;
@@ -530,6 +536,16 @@ export function Composer({
   sessionCwd?: string;
   onManageEngines: () => void;
   autoFocus?: boolean;
+  /**
+   * The gateway model this task uses, offered when its engine may name one;
+   * `value` undefined is the engine's default (`group/default` when it exists,
+   * otherwise the agent's own settings).
+   */
+  modelChoice?: {
+    models: GatewayModels;
+    value: string | undefined;
+    onChange: (ref: string | undefined) => void;
+  };
 }) {
   const [engineOpen, setEngineOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
@@ -539,8 +555,9 @@ export function Composer({
   );
   const locked = sessionBound || running || workflowActive;
   const workspace = workspaces.find((item) => item.id === workspaceId);
-  const outputCount = outputPaths.split("\n").filter((line) => line.trim())
-    .length;
+  const outputCount = outputPaths
+    .split("\n")
+    .filter((line) => line.trim()).length;
   return (
     <div>
       <ComposerPrimitive.Root className="composer-surface">
@@ -636,7 +653,10 @@ export function Composer({
                 disabled={locked}
                 title={sessionCwd ?? workspace?.path}
               >
-                <FolderClosed className="size-[15px] shrink-0" strokeWidth={1.7} />
+                <FolderClosed
+                  className="size-[15px] shrink-0"
+                  strokeWidth={1.7}
+                />
                 <span className="truncate">
                   {workspaceLabel(
                     workspace,
@@ -683,6 +703,21 @@ export function Composer({
               </div>
             </PopoverContent>
           </Popover>
+          {modelChoice && mode === "direct" && !workflowActive ? (
+            <ModelPicker
+              variant="pill"
+              models={modelChoice.models}
+              value={modelChoice.value}
+              onChange={modelChoice.onChange}
+              none={
+                modelChoice.models.byRef.has("group/default")
+                  ? t("tasks.composer.modelDefaultGroup")
+                  : t("tasks.composer.modelOwn")
+              }
+              label={t("tasks.composer.model")}
+              disabled={locked}
+            />
+          ) : null}
           {mode === "direct" && !workflowActive ? (
             <Popover>
               <Tooltip>
@@ -719,9 +754,7 @@ export function Composer({
                   placeholder={"report.docx\noutput/data.xlsx"}
                   onChange={(event) => setOutputPaths(event.target.value)}
                 />
-                <p className="field-hint">
-                  {t("tasks.composer.outputsHint")}
-                </p>
+                <p className="field-hint">{t("tasks.composer.outputsHint")}</p>
               </PopoverContent>
             </Popover>
           ) : null}
