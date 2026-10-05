@@ -845,13 +845,26 @@ async function providerCommand(args: string[]): Promise<void> {
     case "disable":
     case "enable": {
       const [id] = positionals(given, ["id"]);
-      const item = await (
-        await ctx.client()
-      ).providers.update(id!, { enabled: action === "enable" });
+      const client = await ctx.client();
+      const item = await client.providers.update(id!, {
+        enabled: action === "enable",
+      });
+      // The daemon marks them as soon as the change is committed; one
+      // started without a wiring home has no agents to mark.
+      const marked = ctx.json ? undefined : await modelless(client);
       return output(ctx, item, () =>
-        item.enabled === false
-          ? `Switched ${item.id} off: it serves no calls and offers no models; agents wired to them are marked for attention`
-          : `Switched ${item.id} on`,
+        [
+          item.enabled === false
+            ? `Switched ${item.id} off: it serves no calls and offers no models`
+            : `Switched ${item.id} on`,
+          ...(marked === undefined
+            ? []
+            : [
+                marked.length
+                  ? `Marked for attention, a model they are wired to gone: ${marked.join(", ")} (hh agents)`
+                  : "No wired agent is left without a model",
+              ]),
+        ].join("\n"),
       );
     }
     case "remove":
@@ -863,6 +876,29 @@ async function providerCommand(args: string[]): Promise<void> {
     }
     default:
       throw new UsageError(`Unknown provider command: ${action || "(none)"}`);
+  }
+}
+
+/**
+ * The wired agents a model they are wired to has left the gateway
+ * (`AGENT_MODEL_UNAVAILABLE`); undefined when the daemon has no wiring home.
+ */
+async function modelless(
+  client: HarnessHubClient,
+): Promise<string[] | undefined> {
+  try {
+    return (await client.agents.list()).items
+      .filter(
+        (agent) => agent.wiring?.attention?.code === "AGENT_MODEL_UNAVAILABLE",
+      )
+      .map((agent) => agent.id);
+  } catch (error) {
+    if (
+      error instanceof HarnessHubError &&
+      error.code === "AGENT_WIRING_UNAVAILABLE"
+    )
+      return undefined;
+    throw error;
   }
 }
 
@@ -1819,10 +1855,21 @@ async function usageCommand(args: string[]): Promise<void> {
   if (format === "csv")
     return writeStream(await client.usage.csv({ groupBy, ...filter }));
   const report = await client.usage.aggregate({ groupBy, ...filter });
+  // Keys by name too: an ID alone says little.
+  const keyNames =
+    groupBy === "key" && !ctx.json
+      ? new Map(
+          (await client.gatewayKeys.list()).items.map((key) => [
+            key.keyId as string,
+            key.name,
+          ]),
+        )
+      : undefined;
   output(ctx, report, () =>
     table(
       [
         groupBy.toUpperCase(),
+        ...(keyNames ? ["NAME"] : []),
         "CALLS",
         "FAILED",
         "INPUT",
@@ -1835,6 +1882,7 @@ async function usageCommand(args: string[]): Promise<void> {
       ],
       report.items.map((bucket) => [
         bucket.key || "(none)",
+        ...(keyNames ? [keyNames.get(bucket.key) ?? "-"] : []),
         String(bucket.calls),
         String(bucket.failedCalls),
         String(bucket.usage.input),

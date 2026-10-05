@@ -8,26 +8,26 @@ Commands:
   config      Show or edit config.jsonc (show, get, set, unset)
   status      Show the running daemon and its model plane
   console     Print a one-time link that signs a browser in to the console
-  provider    Manage model providers (list, show, presets, models, add, proxy, limits, remove, test, doctor)
+  provider    Manage model providers (list, show, presets, models, add, proxy, limits, disable, enable, remove, test, doctor)
   import      Add providers from an import link or from Claude Code / Codex
-  credential  Manage provider credentials (list, add, rotate, remove)
-  key         Manage Gateway Keys and their limits (list, create, quota, limit, revoke)
+  credential  Manage provider credentials (list, add, rotate, disable, enable, remove)
+  key         Manage Gateway Keys and their limits (list, create, quota, limit, rename, suspend, resume, revoke)
   gateway     Gateway features and LAN sharing (features, redaction, vision, search, alert, share on|off|status)
   group       Manage route groups and their rules (list, add, remove, auto, hide, restore, rule)
   model       Show model metadata with its sources; set overrides
   catalog     Show or refresh the models.dev catalog (status, refresh)
-  usage       Summarize model-call usage by model, provider or day
+  usage       Summarize model-call usage by model, provider, day, key, adapter, credential, conversation or call
   subscription  Sign in a subscription account (login chatgpt|copilot, setup copilot, list, logout, notice)
   agents      List local agents: installed, wired, model and drift
   wire        Point an agent at the gateway (hh wire codex deepseek/deepseek-chat)
   use         The same as wire: hh use <agent> <model>
   unwire      Restore an agent's configuration and revoke its key
-  profile     Save and apply every wired agent's model choices (save, list, apply, rm)
+  profile     Save and apply every wired agent's model choices (save, list, show, apply, rm)
   tui         The agents in the terminal: pick models, tiers and effort, apply profiles
   backup      Seal providers, keys, groups and agent wirings into a file
   restore     Restore a backup (hh restore --help)
   sync        Sync with other machines through WebDAV or S3 (hh sync --help)
-  library     Keep instructions, MCP servers and skills; sync them into agents (list, add, rm, sync)
+  library     Keep instructions, MCP servers and skills; sync them into agents (list, show, add, rm, sync)
   benchmark   Run, regrade or report a benchmark (hh benchmark --help)
   tools       Manage Tool Packs (hh tools --root <directory> <command>)
   rollout     Export a run's rollout (hh rollout --help)`;

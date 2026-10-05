@@ -315,3 +315,64 @@ void test(
     await exited;
   },
 );
+
+/**
+ * The subcommands a command's `--help` names: the first word of each of its
+ * usage entries (`hh <command> <word>`), and the alternatives after ` | `
+ * of an entry whose first word is not followed by another word (`hh gateway
+ * share status | off` names only `share`).
+ */
+function helpSubcommands(command: string, help: string): Set<string> {
+  const found = new Set<string>();
+  const entries = help.split(new RegExp(`^ +hh ${command} `, "m")).slice(1);
+  for (const entry of entries) {
+    const first = /^([a-z][a-z-]*)( +[a-z][a-z-]*(?=\s))?/.exec(entry);
+    if (!first) continue;
+    found.add(first[1]!);
+    if (first[2] !== undefined) continue;
+    for (const match of entry.matchAll(/(?:^|\s)\| +([a-z][a-z-]*)(?=\s|$)/gm))
+      found.add(match[1]!);
+  }
+  return found;
+}
+
+void test(
+  "hh --help names each command's subcommands as its --help does, and every hh usage --by",
+  { timeout: 60_000 },
+  async (t) => {
+    const { directory } = await temporaryDirectory(t, "harnesshub-hh-help-");
+    const top = await hh(directory, ["--help"]);
+    assert.equal(top.code, 0, top.stderr);
+    const summaries = new Map(
+      [...top.stdout.matchAll(/^ {2}([a-z]+) +(.+)$/gm)].map((match) => [
+        match[1]!,
+        match[2]!,
+      ]),
+    );
+    let checked = 0;
+    for (const [command, summary] of summaries) {
+      // A list of subcommands in parentheses, not a pointer to more help.
+      const listed = /\(([^)]*)\)$/.exec(summary)?.[1];
+      if (
+        listed === undefined ||
+        !/^[a-z][a-z |-]*(?:, [a-z][a-z |-]*)*$/.test(listed) ||
+        listed.startsWith("hh ")
+      )
+        continue;
+      const help = await hh(directory, [command, "--help"]);
+      assert.equal(help.code, 0, `${command}: ${help.stderr}`);
+      assert.deepEqual(
+        new Set(listed.split(", ").map((item) => item.split(/[ |]/)[0]!)),
+        helpSubcommands(command, help.stdout),
+        `hh --help's summary of ${command}`,
+      );
+      checked++;
+    }
+    assert.ok(checked >= 10, `only ${checked} summaries list subcommands`);
+    const usage = await hh(directory, ["usage", "--help"]);
+    const by = /--by ([a-z|]+)\]/.exec(usage.stdout)?.[1]?.split("|");
+    assert.ok(by && by.length > 3, usage.stdout);
+    for (const value of by)
+      assert.match(summaries.get("usage")!, new RegExp(`\\b${value}\\b`));
+  },
+);

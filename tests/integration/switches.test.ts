@@ -9,14 +9,17 @@
  * is the strict fake provider; every key is synthetic.
  */
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import type { TestContext } from "node:test";
+import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { startHub } from "@harnesshub/daemon/main";
 import { HarnessHubError } from "@harnesshub/sdk/client";
 import { connectLocal } from "@harnesshub/sdk/local";
+import { HH_ENTRY } from "../support/entries.js";
 import { startFakeProvider } from "../support/fake-provider.js";
 import { temporaryDirectory } from "../support/temporary.js";
 
@@ -24,8 +27,8 @@ const FIRST = "sk-synthetic-switches-first-0001";
 const SECOND = "sk-synthetic-switches-second-0002";
 const FIELDS = { chat: { allowed: { topLevel: ["stream_options"] } } };
 
-/** A daemon with a temporary wiring home. */
-async function daemon(t: TestContext) {
+/** A daemon with a temporary wiring home, and the real `hh` launcher pointed at it. */
+async function daemon(t: TestContext, wiring?: { autoSync: boolean }) {
   const { directory, defer } = await temporaryDirectory(t, "hh-switches-");
   const home = path.join(directory, "home");
   await mkdir(home, { recursive: true });
@@ -40,11 +43,36 @@ async function daemon(t: TestContext) {
     host: "127.0.0.1",
     catalog: { autoRefresh: false },
     wiringHome: { home, env: { PATH: path.join(directory, "bin") } },
+    ...(wiring ? { wiring } : {}),
   });
   defer(() => hub.server.close());
   const client = await connectLocal({ dataDir, url: hub.url });
   const v1 = (await client.system.info()).gateway!.openaiBaseUrl;
-  return { client, home, v1 };
+  const hh = (...args: string[]) =>
+    new Promise<{ code: number; stdout: string; stderr: string }>(
+      (resolve, reject) =>
+        execFile(
+          process.execPath,
+          [
+            fileURLToPath(HH_ENTRY),
+            ...args,
+            "--url",
+            hub.url,
+            "--data-dir",
+            dataDir,
+          ],
+          { cwd: directory, timeout: 30_000 },
+          (error, stdout, stderr) =>
+            error !== null && typeof error.code !== "number"
+              ? reject(error)
+              : resolve({
+                  code: error === null ? 0 : Number(error.code),
+                  stdout,
+                  stderr,
+                }),
+        ),
+    );
+  return { client, home, v1, hh };
 }
 
 function problem(code: string, status: number) {
@@ -85,18 +113,6 @@ async function models(v1: string, key: string) {
       : [],
     text: response.ok ? "" : await response.text(),
   };
-}
-
-/** Polls `check` until it holds or ten seconds pass. */
-async function eventually(
-  check: () => Promise<boolean>,
-  what: string,
-): Promise<void> {
-  const deadline = Date.now() + 10_000;
-  while (!(await check())) {
-    if (Date.now() > deadline) assert.fail(`timed out waiting for ${what}`);
-    await delay(50);
-  }
 }
 
 void test(
@@ -258,6 +274,11 @@ void test(
 
     const off = await client.providers.update("fake", { enabled: false });
     assert.equal(off.enabled, false);
+    // The agent is marked as soon as the change is committed, not after the
+    // catalog sync that follows it.
+    const marked = (await client.agents.get("opencode")).wiring?.attention;
+    assert.equal(marked?.code, "AGENT_MODEL_UNAVAILABLE");
+    assert.match(marked!.message, /"fake\/big"/);
     assert.equal((await client.providers.get("fake")).enabled, false);
     // Only spare serves small now: the automatic group of two is gone.
     assert.deepEqual((await models(v1, key)).ids, ["group/g", "spare/small"]);
@@ -279,23 +300,93 @@ void test(
       client.agents.plan("crush", { model: "fake/small" }),
       problem("AGENT_MODEL_UNAVAILABLE", 400),
     );
-    await eventually(
-      async () =>
-        (await client.agents.get("opencode")).wiring?.attention?.code ===
-        "AGENT_MODEL_UNAVAILABLE",
-      "the agent wired to its model marked",
-    );
+    // The sync after the change leaves its files alone, and the mark as it was.
+    await delay(1_500);
     assert.equal(await readFile(config, "utf8"), wired, "not rewritten");
+    assert.deepEqual(
+      (await client.agents.get("opencode")).wiring?.attention,
+      marked,
+    );
 
     const on = await client.providers.update("fake", { enabled: true });
     assert.equal(on.enabled, undefined, "on is stored as no flag");
+    assert.equal(
+      (await client.agents.get("opencode")).wiring?.attention,
+      undefined,
+      "the mark goes at once",
+    );
     assert.deepEqual(await served("fake/small"), ["fake"]);
     assert.ok((await models(v1, key)).ids.includes("group/auto-small"));
-    await eventually(
-      async () =>
-        (await client.agents.get("opencode")).wiring?.attention === undefined,
-      "the mark cleared",
+  },
+);
+
+void test(
+  "hh provider disable names the agents it leaves without a model, and hh agents and the API show the mark at once, catalog sync or not",
+  { timeout: 120_000 },
+  async (t) => {
+    const fake = await startFakeProvider({
+      models: ["big", "small"],
+      keys: { upstream: FIRST },
+      fields: FIELDS,
+      chunkDelayMs: 0,
+    });
+    t.after(() => fake.close());
+    // No catalog sync at all: the mark must not depend on one.
+    const { client, hh } = await daemon(t, { autoSync: false });
+    for (const [id, list] of [
+      ["fake", [{ id: "big" }]],
+      ["spare", [{ id: "small" }]],
+    ] as const)
+      await client.providers.create({
+        id,
+        endpoints: { chat: `${fake.url}/v1` },
+        models: { source: "manual", list: [...list], expose: "all" },
+        credential: { value: FIRST },
+      });
+    for (const [agent, model] of [
+      ["claude", "fake/big"],
+      ["codex", "fake/big"],
+      ["opencode", "spare/small"],
+    ] as const)
+      await client.agents.wire(agent, {
+        model,
+        expect: await client.agents.plan(agent, { model }),
+      });
+    const marks = async () =>
+      Object.fromEntries(
+        (await client.agents.list()).items
+          .filter((agent) => agent.wiring)
+          .map((agent) => [agent.id, agent.wiring!.attention?.code ?? "ok"]),
+      );
+
+    const disabled = await hh("provider", "disable", "fake");
+    assert.equal(disabled.code, 0, disabled.stderr);
+    assert.equal(
+      disabled.stdout,
+      "Switched fake off: it serves no calls and offers no models\nMarked for attention, a model they are wired to gone: claude, codex (hh agents)\n",
     );
+    assert.deepEqual(await marks(), {
+      claude: "AGENT_MODEL_UNAVAILABLE",
+      codex: "AGENT_MODEL_UNAVAILABLE",
+      opencode: "ok",
+    });
+    const listed = await hh("agents");
+    assert.match(
+      listed.stdout,
+      /\nclaude +.+ +fake\/big +\d+ +attention \(AGENT_MODEL_UNAVAILABLE\)\n/,
+    );
+    assert.match(listed.stdout, /\nopencode +.+ +spare\/small +\d+ +ok\n/);
+
+    const enabled = await hh("provider", "enable", "fake");
+    assert.equal(
+      enabled.stdout,
+      "Switched fake on\nNo wired agent is left without a model\n",
+    );
+    assert.deepEqual(await marks(), {
+      claude: "ok",
+      codex: "ok",
+      opencode: "ok",
+    });
   },
 );
 

@@ -149,8 +149,12 @@ export interface AgentWiringView extends WiringChoice {
   driftError?: string;
   /**
    * Why the last catalog sync left this agent's files as they were (the
-   * user changed them, its key is gone or its model left the gateway), until
-   * a sync or a wiring operation succeeds.
+   * user changed them, or its key is gone), until a sync or a wiring
+   * operation succeeds; or that a model it is wired to or allowed has left
+   * the gateway (`AGENT_MODEL_UNAVAILABLE`, its provider switched off or the
+   * model removed), which is read from the catalog as the view is made and
+   * so shows as soon as the change is committed. `at` is when the mark was
+   * first made.
    */
   attention?: { code: string; message: string; at: string };
   /** Entries written that an administrator's policy overrides, so that they have no effect. */
@@ -315,7 +319,7 @@ export class AgentWiringService {
         const code =
           error instanceof HubError ? error.code : "WIRING_SYNC_FAILED";
         const message = error instanceof Error ? error.message : String(error);
-        this.attention.set(record.adapterId, { code, message, at: this.now() });
+        this.mark(record.adapterId, code, message);
         this.log.info("wiring.sync_skipped", {
           adapterId: record.adapterId,
           code,
@@ -858,20 +862,8 @@ export class AgentWiringService {
       : [...new Set([...chosen, ...listed])];
     const denied = deny ?? key?.modelDeny ?? [];
     const catalog = await gatewayModels(this.options.store);
-    const unknown = [...chosen, ...listed].filter(
-      (ref) => ref !== "*" && !ref.endsWith("/*") && !catalog.has(ref),
-    );
-    if (unknown.length)
-      throw new HubError(
-        "AGENT_MODEL_UNAVAILABLE",
-        `The gateway does not offer ${[...new Set(unknown)]
-          .slice(0, 5)
-          .map((ref) => JSON.stringify(ref.slice(0, 200)))
-          .join(
-            ", ",
-          )} for ${adapterId}; use a model of a provider or a route group`,
-        400,
-      );
+    const unknown = unoffered([...chosen, ...listed], catalog);
+    if (unknown.length) throw modelUnavailable(adapterId, unknown);
     const hidden = [
       ...new Set(chosen.filter((ref) => !modelAllowed(allow, ref, denied))),
     ];
@@ -985,6 +977,7 @@ export class AgentWiringService {
       if (!(error instanceof HubError)) throw error;
       driftError = `${error.code}: ${error.message}`;
     }
+    const attention = this.attentionOf(record, key, catalog);
     let managed: ManagedOverride[] = [];
     try {
       managed = await managedOverrides(
@@ -1010,10 +1003,55 @@ export class AgentWiringService {
       files: record.files.map((file) => file.path),
       drift,
       ...(driftError ? { driftError } : {}),
-      ...(this.attention.has(record.adapterId)
-        ? { attention: this.attention.get(record.adapterId)! }
-        : {}),
+      ...(attention ? { attention } : {}),
     };
+  }
+
+  /** Marks the agent, keeping the time of the same mark made before. */
+  private mark(
+    adapterId: string,
+    code: string,
+    message: string,
+  ): { code: string; message: string; at: string } {
+    const previous = this.attention.get(adapterId);
+    const mark =
+      previous?.code === code && previous.message === message
+        ? previous
+        : { code, message, at: this.now() };
+    this.attention.set(adapterId, mark);
+    return mark;
+  }
+
+  /**
+   * The agent's mark: the last catalog sync's, except that whether the
+   * models it is wired to and allowed are offered is read from `catalog`
+   * now, as a sync would find it, so a provider switched off shows at once
+   * rather than after the sync's delay (or never, without `autoSync`).
+   */
+  private attentionOf(
+    record: WiringRecord,
+    key: GatewayKeyRecord | undefined,
+    catalog: ReadonlyMap<string, WiringModel>,
+  ): { code: string; message: string; at: string } | undefined {
+    const stored = this.attention.get(record.adapterId);
+    if (stored && stored.code !== "AGENT_MODEL_UNAVAILABLE") return stored;
+    const unknown = unoffered(
+      [
+        ...(record.model !== undefined ? [record.model] : []),
+        ...Object.values(record.tiers ?? {}),
+        ...(key?.modelAllow ?? []),
+      ],
+      catalog,
+    );
+    if (!unknown.length) {
+      this.attention.delete(record.adapterId);
+      return undefined;
+    }
+    return this.mark(
+      record.adapterId,
+      "AGENT_MODEL_UNAVAILABLE",
+      modelUnavailable(record.adapterId, unknown).message,
+    );
   }
 
   private async wiringOf(adapterId: string): Promise<WiringRecord | undefined> {
@@ -1107,6 +1145,34 @@ function profileName(name: string): string {
       400,
     );
   return name;
+}
+
+/** The entries of `refs` that name a model or group `catalog` lacks; wildcards are always offered. */
+function unoffered(
+  refs: readonly string[],
+  catalog: ReadonlyMap<string, unknown>,
+): string[] {
+  return [
+    ...new Set(
+      refs.filter(
+        (ref) => ref !== "*" && !ref.endsWith("/*") && !catalog.has(ref),
+      ),
+    ),
+  ];
+}
+
+/** `AGENT_MODEL_UNAVAILABLE` (400): the gateway does not offer the first five of `unknown`. */
+function modelUnavailable(adapterId: string, unknown: string[]): HubError {
+  return new HubError(
+    "AGENT_MODEL_UNAVAILABLE",
+    `The gateway does not offer ${unknown
+      .slice(0, 5)
+      .map((ref) => JSON.stringify(ref.slice(0, 200)))
+      .join(
+        ", ",
+      )} for ${adapterId}; use a model of a provider or a route group`,
+    400,
+  );
 }
 
 /** The choices of a wiring, as a profile keeps them. */

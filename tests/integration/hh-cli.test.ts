@@ -7,6 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import type {
   CredentialId,
+  GatewayKeyId,
   ModelCallEntry,
   ModelCallId,
   ModelRef,
@@ -400,6 +401,7 @@ void test(
         modelRef: "alpha/chat-1" as ModelRef,
         provider: "alpha" as ProviderId,
         credentialId: "key-1" as CredentialId,
+        keyId: ciId as GatewayKeyId,
         conversationKey: "c0".repeat(32),
         agent: { id: "claude", source: "user-agent" },
         patches: [],
@@ -454,6 +456,11 @@ void test(
     assert.match(
       (await ok(["usage", "--by", "credential"])).stdout,
       /^CREDENTIAL +CALLS .*\nalpha\/key-1 +2 +1 /,
+    );
+    // Keys by ID and name.
+    assert.match(
+      (await ok(["usage", "--by", "key"])).stdout,
+      new RegExp(`^KEY +NAME +CALLS .*\\n${ciId} +ci-2 +2 +1 `),
     );
     const conversations = (
       await ok(["usage", "--by", "conversation", "--agent", "claude"])

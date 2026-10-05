@@ -1018,7 +1018,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     response:
       "200：更新后的 ProviderConfig；关闭时带 enabled=false，打开时不带 enabled。",
     implementation:
-      "合并后按创建时的规则整体校验，重新解析各模型的元数据（手工设置的值保留，与记录的推导值不同即视为手工设置），再整体替换；同一守护进程内的写入串行执行。关闭的 provider 不产生路由候选，不出现在 /v1/models、自动路由组与 Agent 接线目录中，路由组跳过它；接到它模型上的 Agent 由目录同步标记 attention（AGENT_MODEL_UNAVAILABLE），文件不改写。重新打开时 GatewayHandler.liftRest 清除其各凭据的休息与模型标记。",
+      "合并后按创建时的规则整体校验，重新解析各模型的元数据（手工设置的值保留，与记录的推导值不同即视为手工设置），再整体替换；同一守护进程内的写入串行执行。关闭的 provider 不产生路由候选，不出现在 /v1/models、自动路由组与 Agent 接线目录中，路由组跳过它；接到它模型上的 Agent 立即标记 attention（AGENT_MODEL_UNAVAILABLE，Agent 视图按当时的目录判断，不等目录同步），文件不改写。重新打开时 GatewayHandler.liftRest 清除其各凭据的休息与模型标记。",
     effects:
       "在一个事务内更新 providers 记录、updatedAt 与元数据来源；触发 Agent 目录同步。尚无 ETag/If-Match。",
     errors:
@@ -2175,7 +2175,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     group: "agents",
     request: "无参数。",
     response:
-      "200：items（Agent：id、name、protocol、keyDelivery、capabilities{tiers、efforts、options（各选项可取值，默认值在前）}、notice?（接线改动后要怎样 Agent 才会用上，如重启）、installation{status=installed|configured-only|not-found、executable、configDirectories}、wiring{model?、tiers?、effort?、options?、models（Agent 列出且 Key 可用的模型）、hidden（隐藏的模型）、keyId?、keyState=active|suspended|revoked|expired|missing|none、wiredAt、files、drift、driftError、attention?{code、message、at}（上次目录同步没有改写它的文件的原因）、managed?[]{path、keyPaths}（管理员的策略文件——Claude Code 的 managed settings——设置了接线写的哪些项，这些项因此不生效；无法解析的文件 keyPaths 为空）}|null）、nextCursor=null。保留自己模型的 Agent（Codex 的 codexAuth=chatgpt 且未指定模型）没有 model；在 Codex 的 ChatGPT 模式开始签发 Key 之前接线的记录没有 keyId，keyState 为 none。",
+      "200：items（Agent：id、name、protocol、keyDelivery、capabilities{tiers、efforts、options（各选项可取值，默认值在前）}、notice?（接线改动后要怎样 Agent 才会用上，如重启）、installation{status=installed|configured-only|not-found、executable、configDirectories}、wiring{model?、tiers?、effort?、options?、models（Agent 列出且 Key 可用的模型）、hidden（隐藏的模型）、keyId?、keyState=active|suspended|revoked|expired|missing|none、wiredAt、files、drift、driftError、attention?{code、message、at}（上次目录同步没有改写它的文件的原因；AGENT_MODEL_UNAVAILABLE 在生成视图时按当时的目录判断，不等同步）、managed?[]{path、keyPaths}（管理员的策略文件——Claude Code 的 managed settings——设置了接线写的哪些项，这些项因此不生效；无法解析的文件 keyPaths 为空）}|null）、nextCursor=null。保留自己模型的 Agent（Codex 的 codexAuth=chatgpt 且未指定模型）没有 model；在 Codex 的 ChatGPT 模式开始签发 Key 之前接线的记录没有 keyId，keyState 为 none。",
     implementation:
       "AgentWiringService.list：对每个支持的 Adapter 调用 detectAgent（只查 PATH 与配置目录，不执行 Agent）、读取 WiringRecord 与其 Key，并以当前网关地址调用 detectDrift。",
     effects: "只读；不读取 Agent 的认证文件，不返回 Key 文本。",
