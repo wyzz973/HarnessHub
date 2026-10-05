@@ -55,7 +55,8 @@ export const CODEX_BACKEND_PATH = "/backend-api/codex";
  *   levels stay; nothing is written when nothing is missing.
  * - CC Switch's provider tables (`custom`, `cc-switch`, `cc-switch-<n>`, not
  *   named by a profile) are pointed at the gateway with the key, as threads
- *   CC Switch moved onto them reopen there; unwire puts their values back.
+ *   CC Switch moved onto them reopen there, without the relay's headers;
+ *   unwire puts their values back.
  */
 export const codex: WiringAdapter = {
   id: "codex",
@@ -303,8 +304,12 @@ const CC_SWITCH = /^(custom|cc-switch(-[0-9]+)?)$/;
 
 /**
  * CC Switch's provider tables pointed at the gateway: its base URL with the
- * key as the bearer token, the relay's own authentication removed. A table
- * that a profile names is the user's to pick and stays as it is.
+ * key as the bearer token, the relay's own authentication removed, and with
+ * it the relay's headers (`http_headers`, `env_http_headers`), which may
+ * carry its credentials and would go to the gateway instead. They go whole:
+ * the TOML editor does not edit inside an inline table, the gateway needs
+ * none of them, and unwire puts them back as they were. A table that a
+ * profile names is the user's to pick and stays as it is.
  */
 function ccSwitchSettings(
   target: AdapterTarget,
@@ -337,7 +342,7 @@ function ccSwitchSettings(
         path: at("experimental_bearer_token"),
         value: target.keyText,
       },
-      ...["env_key", "requires_openai_auth"]
+      ...["env_key", "requires_openai_auth", "http_headers", "env_http_headers"]
         .filter((key) => table[key] !== undefined)
         .map((key) => ({
           file: "config",

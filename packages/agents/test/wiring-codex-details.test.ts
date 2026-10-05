@@ -226,11 +226,15 @@ void test("codex: CC Switch's provider tables go through the gateway with the ke
     `base_url = "https://relay.example.test/v1"`,
     `wire_api = "responses"`,
     `requires_openai_auth = true`,
+    `http_headers = { "Authorization" = "Bearer relay-secret-7c1e", "X-Org" = "team" }`,
     ``,
     `[model_providers.cc-switch-2]`,
     `name = "older"`,
     `base_url = "https://older.example.test/v1"`,
     `env_key = "OLDER_KEY"`,
+    ``,
+    `[model_providers.cc-switch-2.env_http_headers]`,
+    `"X-Api-Key" = "OLDER_HEADER_KEY"`,
     ``,
     `[model_providers.cc-switch-official]`,
     `name = "official"`,
@@ -264,6 +268,11 @@ void test("codex: CC Switch's provider tables go through the gateway with the ke
     ...gateway,
   });
   assert.deepEqual(providers["cc-switch-2"], { name: "older", ...gateway });
+  // The relay's headers, which may carry its credentials, went with it.
+  assert.ok(
+    !JSON.stringify(providers).includes("relay-secret-7c1e") &&
+      !JSON.stringify(providers).includes("OLDER_HEADER_KEY"),
+  );
   // CC Switch's own proxy to OpenAI, and a table a profile picks: left alone.
   assert.deepEqual(providers["cc-switch-official"], {
     name: "official",
