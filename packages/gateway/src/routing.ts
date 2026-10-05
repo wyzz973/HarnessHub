@@ -9,6 +9,7 @@ import type { LogSink } from "@harnesshub/core/logging";
 import {
   credentialUnlisted,
   DEFAULT_RETRY_POLICY,
+  providerEnabled,
   modelAllowed,
   type AllowanceReading,
   type ModelPlaneStore,
@@ -139,7 +140,7 @@ const limitedTo = (credential: ProviderCredential) =>
  * translated to the provider's Chat endpoint, else to its Anthropic,
  * Responses or Gemini endpoint in that order. Credentials valid for none of
  * the provider's endpoints are reported in `skipped`. A provider without
- * credentials has one keyless candidate.
+ * credentials has one keyless candidate; one switched off has none.
  *
  * A credential whose own model list is known to lack the model
  * (`credentialUnlisted`, Magpie `Serves`) is left out and counted in
@@ -163,6 +164,13 @@ export function modelCandidates(
   const wireModel = wireName(provider, modelId);
   const candidates: Candidate[] = [];
   const skipped: string[] = [];
+  if (!providerEnabled(provider))
+    return {
+      candidates: [],
+      skipped: [`${ref}: the provider is switched off`],
+      unlisted: 0,
+      unlistedTried: false,
+    };
   const credentials = provider.credentials.length
     ? provider.credentials
     : [KEYLESS_CREDENTIAL];
@@ -1857,6 +1865,30 @@ export class Breakers {
   release(candidate: Candidate): void {
     const state = this.#states.get(this.#key(candidate));
     if (state) state.probing = false;
+  }
+
+  /**
+   * Forgets the rests and model marks of credential `credential` of
+   * `provider`, or of all its credentials (Magpie `Unrest`): the next
+   * request tries them as credentials that never failed. A breaker that was
+   * not closed is reported closed for `reason`. A request in flight on one
+   * reports to the fresh state.
+   */
+  lift(provider: string, credential: string | undefined, reason: string): void {
+    const prefix = `${provider}\u0000${credential === undefined ? "" : `${credential}\u0000`}`;
+    for (const mark of this.#marks.keys())
+      if (mark.startsWith(prefix)) this.#marks.delete(mark);
+    for (const [key, state] of this.#states) {
+      if (!`${key}\u0000`.startsWith(prefix)) continue;
+      this.#states.delete(key);
+      if (state.state !== "closed")
+        this.changed({
+          provider,
+          credential: key.slice(provider.length + 1),
+          state: "closed",
+          reason,
+        });
+    }
   }
 
   /**

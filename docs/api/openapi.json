@@ -15761,6 +15761,10 @@
                               }
                             }
                           },
+                          "enabled": {
+                            "type": "boolean",
+                            "description": "false: switched off; it serves no calls and offers no models. Absent: on"
+                          },
                           "subscription": {
                             "type": "object",
                             "additionalProperties": false,
@@ -17117,6 +17121,10 @@
                           "description": "Requests that may wait for a credential before 429 busy"
                         }
                       }
+                    },
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "false: switched off; it serves no calls and offers no models. Absent: on"
                     },
                     "subscription": {
                       "type": "object",
@@ -19020,6 +19028,10 @@
                                   }
                                 }
                               },
+                              "enabled": {
+                                "type": "boolean",
+                                "description": "false: switched off; it serves no calls and offers no models. Absent: on"
+                              },
                               "subscription": {
                                 "type": "object",
                                 "additionalProperties": false,
@@ -19816,6 +19828,10 @@
                         }
                       }
                     },
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "false: switched off; it serves no calls and offers no models. Absent: on"
+                    },
                     "subscription": {
                       "type": "object",
                       "additionalProperties": false,
@@ -19931,7 +19947,7 @@
         "tags": [
           "providers"
         ],
-        "description": "合并后按创建时的规则整体校验，重新解析各模型的元数据（手工设置的值保留，与记录的推导值不同即视为手工设置），再整体替换；同一守护进程内的写入串行执行。\n\n输入：JSON Merge Patch（application/merge-patch+json 或 application/json）：null 删除可选成员；id、credentials、时间戳不可改。\n\n返回：200：更新后的 ProviderConfig。\n\n副作用：在一个事务内更新 providers 记录、updatedAt 与元数据来源。尚无 ETag/If-Match。\n\n失败与边界：400 PROVIDER_INVALID 或 INVALID_REQUEST；404 PROVIDER_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "description": "合并后按创建时的规则整体校验，重新解析各模型的元数据（手工设置的值保留，与记录的推导值不同即视为手工设置），再整体替换；同一守护进程内的写入串行执行。关闭的 provider 不产生路由候选，不出现在 /v1/models、自动路由组与 Agent 接线目录中，路由组跳过它；接到它模型上的 Agent 由目录同步标记 attention（AGENT_MODEL_UNAVAILABLE），文件不改写。重新打开时 GatewayHandler.liftRest 清除其各凭据的休息与模型标记。\n\n输入：JSON Merge Patch（application/merge-patch+json 或 application/json）：null 删除可选成员；id、credentials、时间戳不可改。enabled=false 关闭 provider（Magpie provider off），true 重新打开。\n\n返回：200：更新后的 ProviderConfig；关闭时带 enabled=false，打开时不带 enabled。\n\n副作用：在一个事务内更新 providers 记录、updatedAt 与元数据来源；触发 Agent 目录同步。尚无 ETag/If-Match。\n\n失败与边界：400 PROVIDER_INVALID 或 INVALID_REQUEST；404 PROVIDER_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
         "requestBody": {
           "required": true,
           "content": {
@@ -20413,6 +20429,9 @@
                   "translateOnly": {
                     "type": "boolean",
                     "nullable": true
+                  },
+                  "enabled": {
+                    "type": "boolean"
                   },
                   "imageEndpoint": {
                     "type": "string",
@@ -21124,6 +21143,10 @@
                           "description": "Requests that may wait for a credential before 429 busy"
                         }
                       }
+                    },
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "false: switched off; it serves no calls and offers no models. Absent: on"
                     },
                     "subscription": {
                       "type": "object",
@@ -22030,6 +22053,10 @@
                           "description": "Requests that may wait for a credential before 429 busy"
                         }
                       }
+                    },
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "false: switched off; it serves no calls and offers no models. Absent: on"
                     },
                     "subscription": {
                       "type": "object",
@@ -25035,14 +25062,14 @@
         }
       }
     },
-    "/api/v1/providers/{id}/credentials/{credentialId}/secret": {
-      "put": {
-        "operationId": "hh_api_v1_rotate_credential",
-        "summary": "轮换凭据",
+    "/api/v1/providers/{id}/credentials/{credentialId}": {
+      "patch": {
+        "operationId": "hh_api_v1_set_credential_enabled",
+        "summary": "开关凭据",
         "tags": [
           "credentials"
         ],
-        "description": "SecretStore.rotate 在同一引用下替换值。\n\n输入：value 必填。\n\n返回：200：凭据（引用不变）。\n\n副作用：替换托管秘密的值。\n\n失败与边界：409 CREDENTIAL_NOT_MANAGED（env/file 引用不能在此轮换）；404 CREDENTIAL_NOT_FOUND；400 INVALID_SECRET；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "description": "按 Magpie SetKeyOn：provider 最后一个启用的凭据不能关闭（要停用整个 provider 用 PATCH /providers/{id} enabled=false）。重新打开时 GatewayHandler.liftRest 清除该凭据的休息与模型标记，下一次请求立即再试；额度读数保留。\n\n输入：路径参数 id、credentialId；请求体 {enabled: boolean}（必填，无其他字段）。\n\n返回：200：更新后的凭据；状态未变时原样返回。\n\n副作用：更新 providers 记录与 updatedAt；关闭的凭据不再被路由。\n\n失败与边界：409 CREDENTIAL_LAST_ENABLED；404 PROVIDER_NOT_FOUND、CREDENTIAL_NOT_FOUND；400 请求体不合 schema；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
         "requestBody": {
           "required": true,
           "content": {
@@ -25051,13 +25078,11 @@
                 "type": "object",
                 "additionalProperties": false,
                 "required": [
-                  "value"
+                  "enabled"
                 ],
                 "properties": {
-                  "value": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 8192
+                  "enabled": {
+                    "type": "boolean"
                   }
                 }
               }
@@ -25300,9 +25325,7 @@
             }
           }
         }
-      }
-    },
-    "/api/v1/providers/{id}/credentials/{credentialId}": {
+      },
       "delete": {
         "operationId": "hh_api_v1_delete_credential",
         "summary": "删除凭据",
@@ -25335,6 +25358,273 @@
         "responses": {
           "204": {
             "description": "No content"
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers/{id}/credentials/{credentialId}/secret": {
+      "put": {
+        "operationId": "hh_api_v1_rotate_credential",
+        "summary": "轮换凭据",
+        "tags": [
+          "credentials"
+        ],
+        "description": "SecretStore.rotate 在同一引用下替换值。\n\n输入：value 必填。\n\n返回：200：凭据（引用不变）。\n\n副作用：替换托管秘密的值。\n\n失败与边界：409 CREDENTIAL_NOT_MANAGED（env/file 引用不能在此轮换）；404 CREDENTIAL_NOT_FOUND；400 INVALID_SECRET；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "value"
+                ],
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8192
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "in": "path",
+            "name": "credentialId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "name",
+                    "ref",
+                    "enabled"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "ref": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "kind",
+                        "value"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "enum": [
+                            "env",
+                            "file",
+                            "keychain",
+                            "store"
+                          ]
+                        },
+                        "value": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 8192
+                        }
+                      }
+                    },
+                    "protocols": {
+                      "type": "array",
+                      "items": {
+                        "enum": [
+                          "chat",
+                          "responses",
+                          "anthropic",
+                          "gemini"
+                        ]
+                      }
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "account": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "backend",
+                        "subject",
+                        "consent"
+                      ],
+                      "properties": {
+                        "backend": {
+                          "type": "string",
+                          "enum": [
+                            "siwc",
+                            "copilot"
+                          ]
+                        },
+                        "subject": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512
+                        },
+                        "email": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 320
+                        },
+                        "clientId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512
+                        },
+                        "auth": {
+                          "type": "string",
+                          "enum": [
+                            "login",
+                            "token"
+                          ]
+                        },
+                        "host": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512
+                        },
+                        "consent": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "notice",
+                            "acceptedAt"
+                          ],
+                          "properties": {
+                            "notice": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "acceptedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        "signedOutAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           },
           "default": {
             "description": "Default Response",
@@ -27236,6 +27526,11 @@
                             "type": "string",
                             "format": "date-time"
                           },
+                          "suspendedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "description": "The key is refused (401 key_suspended) from then until it is resumed"
+                          },
                           "lastUsedAt": {
                             "type": "string",
                             "format": "date-time"
@@ -27619,6 +27914,11 @@
                           "type": "string",
                           "format": "date-time"
                         },
+                        "suspendedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "The key is refused (401 key_suspended) from then until it is resumed"
+                        },
                         "lastUsedAt": {
                           "type": "string",
                           "format": "date-time"
@@ -27900,6 +28200,315 @@
                     "revokedAt": {
                       "type": "string",
                       "format": "date-time"
+                    },
+                    "suspendedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "The key is refused (401 key_suspended) from then until it is resumed"
+                    },
+                    "lastUsedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "hh_api_v1_rename_gateway_key",
+        "summary": "重命名 Gateway Key",
+        "tags": [
+          "gateway-keys"
+        ],
+        "description": "ModelPlaneStore.setGatewayKeyName；client Key 的 scope.name 一并更新。Key 文本与权限不变。\n\n输入：路径参数 id；请求体 {name}（1–200 字符，必填）。\n\n返回：200：GatewayKeyView。\n\n副作用：更新 gateway_keys 记录。\n\n失败与边界：404 GATEWAY_KEY_NOT_FOUND；400 请求体不合 schema；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "keyId",
+                    "name",
+                    "scope",
+                    "modelAllow",
+                    "createdAt"
+                  ],
+                  "properties": {
+                    "keyId": {
+                      "type": "string",
+                      "pattern": "^[a-z2-7]{12}$"
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "scope": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "kind"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "enum": [
+                            "agent",
+                            "session",
+                            "client"
+                          ]
+                        },
+                        "adapterId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      }
+                    },
+                    "modelAllow": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 3,
+                            "maxLength": 600,
+                            "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                          },
+                          {
+                            "enum": [
+                              "*"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "modelDeny": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 3,
+                            "maxLength": 600,
+                            "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                          },
+                          {
+                            "enum": [
+                              "*"
+                            ]
+                          }
+                        ]
+                      },
+                      "description": "Entries the key may not use although modelAllow admits them: the models hidden from a wired agent"
+                    },
+                    "modelIdStyle": {
+                      "enum": [
+                        "claude-alias"
+                      ],
+                      "description": "The key lists and takes models by Claude-style aliases (claude-hh-<digits>), for a client that keeps only Anthropic-looking ids"
+                    },
+                    "quota": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestsPerMinute": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "budgets": {
+                          "type": "array",
+                          "maxItems": 3,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "period"
+                            ],
+                            "properties": {
+                              "period": {
+                                "enum": [
+                                  "day",
+                                  "week",
+                                  "month"
+                                ]
+                              },
+                              "tokens": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "description": "Uncached input, output, reasoning and cache-write tokens in the window; cache reads too with cacheReads. 0 refuses every call"
+                              },
+                              "costUsd": {
+                                "type": "number",
+                                "minimum": 0,
+                                "description": "Estimated cost in USD at the ledger's prices. 0 refuses every call"
+                              },
+                              "cacheReads": {
+                                "type": "boolean"
+                              }
+                            },
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "tokens"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "costUsd"
+                                ]
+                              }
+                            ]
+                          },
+                          "description": "At most one per period; windows are calendar ones in the daemon's local time zone"
+                        }
+                      }
+                    },
+                    "allowLan": {
+                      "type": "boolean"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "revokedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "suspendedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "The key is refused (401 key_suspended) from then until it is resumed"
                     },
                     "lastUsedAt": {
                       "type": "string",
@@ -28243,6 +28852,605 @@
                     "revokedAt": {
                       "type": "string",
                       "format": "date-time"
+                    },
+                    "suspendedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "The key is refused (401 key_suspended) from then until it is resumed"
+                    },
+                    "lastUsedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/gateway-keys/{id}/suspend": {
+      "post": {
+        "operationId": "hh_api_v1_suspend_gateway_key",
+        "summary": "暂停 Gateway Key",
+        "tags": [
+          "gateway-keys"
+        ],
+        "description": "ModelPlaneStore.setGatewayKeySuspended；已暂停的 Key 保留第一次的时间。网关每次请求都读 Key 记录，暂停后的下一个请求即返回 401 key_suspended（在吊销之后、过期之前判断）。与吊销不同，Key 保留并可恢复；Agent 的 Key 也可暂停，接线视图 keyState=suspended，解除接线照常吊销。\n\n输入：路径参数 id；请求体为空对象。\n\n返回：200：带 suspendedAt 的 GatewayKeyView。\n\n副作用：更新 gateway_keys 记录；在途调用不中断。\n\n失败与边界：409 GATEWAY_KEY_REVOKED；404 GATEWAY_KEY_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {}
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "keyId",
+                    "name",
+                    "scope",
+                    "modelAllow",
+                    "createdAt"
+                  ],
+                  "properties": {
+                    "keyId": {
+                      "type": "string",
+                      "pattern": "^[a-z2-7]{12}$"
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "scope": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "kind"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "enum": [
+                            "agent",
+                            "session",
+                            "client"
+                          ]
+                        },
+                        "adapterId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      }
+                    },
+                    "modelAllow": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 3,
+                            "maxLength": 600,
+                            "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                          },
+                          {
+                            "enum": [
+                              "*"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "modelDeny": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 3,
+                            "maxLength": 600,
+                            "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                          },
+                          {
+                            "enum": [
+                              "*"
+                            ]
+                          }
+                        ]
+                      },
+                      "description": "Entries the key may not use although modelAllow admits them: the models hidden from a wired agent"
+                    },
+                    "modelIdStyle": {
+                      "enum": [
+                        "claude-alias"
+                      ],
+                      "description": "The key lists and takes models by Claude-style aliases (claude-hh-<digits>), for a client that keeps only Anthropic-looking ids"
+                    },
+                    "quota": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestsPerMinute": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "budgets": {
+                          "type": "array",
+                          "maxItems": 3,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "period"
+                            ],
+                            "properties": {
+                              "period": {
+                                "enum": [
+                                  "day",
+                                  "week",
+                                  "month"
+                                ]
+                              },
+                              "tokens": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "description": "Uncached input, output, reasoning and cache-write tokens in the window; cache reads too with cacheReads. 0 refuses every call"
+                              },
+                              "costUsd": {
+                                "type": "number",
+                                "minimum": 0,
+                                "description": "Estimated cost in USD at the ledger's prices. 0 refuses every call"
+                              },
+                              "cacheReads": {
+                                "type": "boolean"
+                              }
+                            },
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "tokens"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "costUsd"
+                                ]
+                              }
+                            ]
+                          },
+                          "description": "At most one per period; windows are calendar ones in the daemon's local time zone"
+                        }
+                      }
+                    },
+                    "allowLan": {
+                      "type": "boolean"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "revokedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "suspendedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "The key is refused (401 key_suspended) from then until it is resumed"
+                    },
+                    "lastUsedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "title",
+                    "status",
+                    "code",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "detail"
+                        ],
+                        "properties": {
+                          "pointer": {
+                            "type": "string"
+                          },
+                          "parameter": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "references": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "type",
+                          "id"
+                        ],
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/gateway-keys/{id}/resume": {
+      "post": {
+        "operationId": "hh_api_v1_resume_gateway_key",
+        "summary": "恢复 Gateway Key",
+        "tags": [
+          "gateway-keys"
+        ],
+        "description": "ModelPlaneStore.setGatewayKeySuspended(undefined) 去掉 suspendedAt；未暂停的 Key 原样返回。\n\n输入：路径参数 id；请求体为空对象。\n\n返回：200：不带 suspendedAt 的 GatewayKeyView。\n\n副作用：更新 gateway_keys 记录。\n\n失败与边界：409 GATEWAY_KEY_REVOKED；404 GATEWAY_KEY_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {}
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "keyId",
+                    "name",
+                    "scope",
+                    "modelAllow",
+                    "createdAt"
+                  ],
+                  "properties": {
+                    "keyId": {
+                      "type": "string",
+                      "pattern": "^[a-z2-7]{12}$"
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "scope": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "kind"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "enum": [
+                            "agent",
+                            "session",
+                            "client"
+                          ]
+                        },
+                        "adapterId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "sessionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      }
+                    },
+                    "modelAllow": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 3,
+                            "maxLength": 600,
+                            "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                          },
+                          {
+                            "enum": [
+                              "*"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "modelDeny": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 3,
+                            "maxLength": 600,
+                            "pattern": "^[a-z0-9][a-z0-9-]{0,62}/\\S+$"
+                          },
+                          {
+                            "enum": [
+                              "*"
+                            ]
+                          }
+                        ]
+                      },
+                      "description": "Entries the key may not use although modelAllow admits them: the models hidden from a wired agent"
+                    },
+                    "modelIdStyle": {
+                      "enum": [
+                        "claude-alias"
+                      ],
+                      "description": "The key lists and takes models by Claude-style aliases (claude-hh-<digits>), for a client that keeps only Anthropic-looking ids"
+                    },
+                    "quota": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestsPerMinute": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "budgets": {
+                          "type": "array",
+                          "maxItems": 3,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "period"
+                            ],
+                            "properties": {
+                              "period": {
+                                "enum": [
+                                  "day",
+                                  "week",
+                                  "month"
+                                ]
+                              },
+                              "tokens": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "description": "Uncached input, output, reasoning and cache-write tokens in the window; cache reads too with cacheReads. 0 refuses every call"
+                              },
+                              "costUsd": {
+                                "type": "number",
+                                "minimum": 0,
+                                "description": "Estimated cost in USD at the ledger's prices. 0 refuses every call"
+                              },
+                              "cacheReads": {
+                                "type": "boolean"
+                              }
+                            },
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "tokens"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "costUsd"
+                                ]
+                              }
+                            ]
+                          },
+                          "description": "At most one per period; windows are calendar ones in the daemon's local time zone"
+                        }
+                      }
+                    },
+                    "allowLan": {
+                      "type": "boolean"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "revokedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "suspendedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "The key is refused (401 key_suspended) from then until it is resumed"
                     },
                     "lastUsedAt": {
                       "type": "string",
@@ -28746,6 +29954,11 @@
                     "revokedAt": {
                       "type": "string",
                       "format": "date-time"
+                    },
+                    "suspendedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "The key is refused (401 key_suspended) from then until it is resumed"
                     },
                     "lastUsedAt": {
                       "type": "string",
@@ -30928,7 +32141,7 @@
         "tags": [
           "agents"
         ],
-        "description": "AgentWiringService.list：对每个支持的 Adapter 调用 detectAgent（只查 PATH 与配置目录，不执行 Agent）、读取 WiringRecord 与其 Key，并以当前网关地址调用 detectDrift。\n\n输入：无参数。\n\n返回：200：items（Agent：id、name、protocol、keyDelivery、capabilities{tiers、efforts、options（各选项可取值，默认值在前）}、notice?（接线改动后要怎样 Agent 才会用上，如重启）、installation{status=installed|configured-only|not-found、executable、configDirectories}、wiring{model?、tiers?、effort?、options?、models（Agent 列出且 Key 可用的模型）、hidden（隐藏的模型）、keyId?、keyState=active|revoked|expired|missing|none、wiredAt、files、drift、driftError、attention?{code、message、at}（上次目录同步没有改写它的文件的原因）、managed?[]{path、keyPaths}（管理员的策略文件——Claude Code 的 managed settings——设置了接线写的哪些项，这些项因此不生效；无法解析的文件 keyPaths 为空）}|null）、nextCursor=null。保留自己模型的 Agent（Codex 的 codexAuth=chatgpt 且未指定模型）没有 model；在 Codex 的 ChatGPT 模式开始签发 Key 之前接线的记录没有 keyId，keyState 为 none。\n\n副作用：只读；不读取 Agent 的认证文件，不返回 Key 文本。\n\n失败与边界：守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+        "description": "AgentWiringService.list：对每个支持的 Adapter 调用 detectAgent（只查 PATH 与配置目录，不执行 Agent）、读取 WiringRecord 与其 Key，并以当前网关地址调用 detectDrift。\n\n输入：无参数。\n\n返回：200：items（Agent：id、name、protocol、keyDelivery、capabilities{tiers、efforts、options（各选项可取值，默认值在前）}、notice?（接线改动后要怎样 Agent 才会用上，如重启）、installation{status=installed|configured-only|not-found、executable、configDirectories}、wiring{model?、tiers?、effort?、options?、models（Agent 列出且 Key 可用的模型）、hidden（隐藏的模型）、keyId?、keyState=active|suspended|revoked|expired|missing|none、wiredAt、files、drift、driftError、attention?{code、message、at}（上次目录同步没有改写它的文件的原因）、managed?[]{path、keyPaths}（管理员的策略文件——Claude Code 的 managed settings——设置了接线写的哪些项，这些项因此不生效；无法解析的文件 keyPaths 为空）}|null）、nextCursor=null。保留自己模型的 Agent（Codex 的 codexAuth=chatgpt 且未指定模型）没有 model；在 Codex 的 ChatGPT 模式开始签发 Key 之前接线的记录没有 keyId，keyState 为 none。\n\n副作用：只读；不读取 Agent 的认证文件，不返回 Key 文本。\n\n失败与边界：守护进程未设置接线目录（startHub 未传 wiringHome；只有 hh serve 传入本机用户目录）时 503 AGENT_WIRING_UNAVAILABLE；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
         "responses": {
           "200": {
             "description": "Default Response",
@@ -31156,6 +32369,7 @@
                               "keyState": {
                                 "enum": [
                                   "active",
+                                  "suspended",
                                   "revoked",
                                   "expired",
                                   "missing",
@@ -31620,6 +32834,7 @@
                         "keyState": {
                           "enum": [
                             "active",
+                            "suspended",
                             "revoked",
                             "expired",
                             "missing",
@@ -32570,6 +33785,7 @@
                         "keyState": {
                           "enum": [
                             "active",
+                            "suspended",
                             "revoked",
                             "expired",
                             "missing",
@@ -33033,6 +34249,7 @@
                             "keyState": {
                               "enum": [
                                 "active",
+                                "suspended",
                                 "revoked",
                                 "expired",
                                 "missing",
@@ -33539,6 +34756,7 @@
                         "keyState": {
                           "enum": [
                             "active",
+                            "suspended",
                             "revoked",
                             "expired",
                             "missing",
@@ -34033,6 +35251,7 @@
                         "keyState": {
                           "enum": [
                             "active",
+                            "suspended",
                             "revoked",
                             "expired",
                             "missing",
@@ -35758,6 +36977,7 @@
                                   "keyState": {
                                     "enum": [
                                       "active",
+                                      "suspended",
                                       "revoked",
                                       "expired",
                                       "missing",

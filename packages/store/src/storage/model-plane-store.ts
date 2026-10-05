@@ -624,6 +624,41 @@ export class SqliteModelPlaneStore
   }
 
   /**
+   * A `client:` key's scope takes the name too. Validated with the whole
+   * record (`MODEL_PLANE_RECORD_INVALID`, 400).
+   */
+  async setGatewayKeyName(keyId: GatewayKeyId, name: string): Promise<boolean> {
+    return this.updateKey(keyId, (record) => ({
+      ...record,
+      name,
+      ...(record.scope.kind === "client"
+        ? { scope: { kind: "client" as const, name } }
+        : {}),
+    }));
+  }
+
+  /**
+   * Suspends from `at` (an already suspended key keeps its first
+   * `suspendedAt`) or resumes (`undefined`). `at` is checked as for
+   * `revokeGatewayKey`.
+   */
+  async setGatewayKeySuspended(
+    keyId: GatewayKeyId,
+    at: string | undefined,
+  ): Promise<boolean> {
+    if (at !== undefined) time(at, "at", "INVALID_TIMESTAMP");
+    return this.updateKey(keyId, (record) => {
+      if (at !== undefined)
+        return record.suspendedAt === undefined
+          ? { ...record, suspendedAt: at }
+          : undefined;
+      if (record.suspendedAt === undefined) return undefined;
+      const { suspendedAt: _suspended, ...resumed } = record;
+      return resumed;
+    });
+  }
+
+  /**
    * Moves `lastUsedAt` forward to `at`, never back; a key that does not exist
    * is ignored. `at` is checked as for `revokeGatewayKey`.
    */

@@ -42,6 +42,7 @@ export const zh = {
   "agents.keyState.expired": "已过期",
   "agents.keyState.missing": "不存在",
   "agents.keyState.none": "无 Key",
+  "agents.keyState.suspended": "已暂停",
 
   "agents.attention.notFound": "已接线，但本机找不到这个 Agent",
   "agents.attention.uncheckable": "无法检查配置文件",
@@ -294,6 +295,7 @@ export const en: Translation<typeof zh> = {
   "agents.keyState.expired": "Expired",
   "agents.keyState.missing": "Does not exist",
   "agents.keyState.none": "No key",
+  "agents.keyState.suspended": "Suspended",
 
   "agents.attention.notFound":
     "Wired, but this agent cannot be found on this computer",

@@ -170,7 +170,14 @@ const agentSchema = {
           description: "Absent for an agent that signs in by itself",
         },
         keyState: {
-          enum: ["active", "revoked", "expired", "missing", "none"],
+          enum: [
+            "active",
+            "suspended",
+            "revoked",
+            "expired",
+            "missing",
+            "none",
+          ],
         },
         wiredAt: { type: "string", format: "date-time" },
         files: { type: "array", items: { type: "string" } },

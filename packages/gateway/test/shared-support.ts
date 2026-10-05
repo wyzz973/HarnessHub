@@ -93,6 +93,20 @@ export class MemoryStore implements ModelPlaneStore {
   async touchGatewayKey(keyId: GatewayKeyId) {
     this.touches.push(keyId);
   }
+  async setGatewayKeyName(keyId: GatewayKeyId, name: string) {
+    const key = this.keys.get(keyId);
+    if (!key) return false;
+    key.name = name;
+    if (key.scope.kind === "client") key.scope = { kind: "client", name };
+    return true;
+  }
+  async setGatewayKeySuspended(keyId: GatewayKeyId, at: string | undefined) {
+    const key = this.keys.get(keyId);
+    if (!key) return false;
+    if (at === undefined) delete key.suspendedAt;
+    else key.suspendedAt ??= at;
+    return true;
+  }
   async setGatewayKeyQuota(
     keyId: GatewayKeyId,
     quota: GatewayKeyQuota | undefined,

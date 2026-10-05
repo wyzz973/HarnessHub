@@ -23,6 +23,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   modelAllowed,
   parseModelRef,
+  providerEnabled,
   type CallAttempt,
   type GatewayKeyRecord,
   type ModelCallEntry,
@@ -337,8 +338,13 @@ async function candidates(
     const provider = await services.store.getProvider(
       id as ProviderConfig["id"],
     );
-    // Subscription accounts serve model calls only.
-    if (!provider || provider.subscription || !ways(provider, drawing).length)
+    // Subscription accounts serve model calls only; one switched off nothing.
+    if (
+      !provider ||
+      !providerEnabled(provider) ||
+      provider.subscription ||
+      !ways(provider, drawing).length
+    )
       continue;
     const credentials = provider.credentials.length
       ? provider.credentials.filter((credential) => credential.enabled)
@@ -491,7 +497,7 @@ export async function imagesCall(options: {
       return fail(
         404,
         "images_unavailable",
-        `No provider of ${requested.slice(0, 200)} declares an images endpoint, or a Chat endpoint to draw at most ${CHAT_DRAWINGS} images through`,
+        `No provider of ${requested.slice(0, 200)} that is switched on declares an images endpoint, or a Chat endpoint to draw at most ${CHAT_DRAWINGS} images through`,
       );
     const settings = services.features().redaction;
     let masked = 0;

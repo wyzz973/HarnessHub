@@ -29,10 +29,12 @@ import {
   gatewayKeyMatches,
   claudeModelAlias,
   modelAllowed,
+  providerEnabled,
   parseGatewayKey,
   parseModelRef,
   type AllowanceReading,
   type CallPurpose,
+  type CredentialId,
   type GatewayKeyId,
   type GatewayKeyRecord,
   type KeyLimitStatus,
@@ -42,6 +44,7 @@ import {
   type ModelRef,
   type ProviderConfig,
   type ProviderCredential,
+  type ProviderId,
   type ProviderModel,
   type ReasoningEffort,
   type RouteGroup,
@@ -298,6 +301,15 @@ export interface GatewayHandler {
    */
   routingState(): CredentialRoutingState[];
   /**
+   * Forgets the rests and model marks this handler holds for a credential
+   * of `provider`, or for all of them without `credential` (Magpie
+   * `Unrest`), as when it or its provider is switched back on: the next
+   * request tries them as if they never failed. Allowance readings stay;
+   * they are what the vendor said. Synchronous; a call in flight reports
+   * its result to the fresh state.
+   */
+  liftRest(provider: ProviderId, credential?: CredentialId): void;
+  /**
    * A key's limits and what it used of its budgets now, from the ledger,
    * with the requests in flight that this handler holds reservations for;
    * undefined when the key does not exist. Rejects when the ledger cannot be
@@ -464,7 +476,7 @@ type Authentication =
   | { ok: true; key: GatewayKeyRecord }
   | {
       ok: false;
-      reason: "invalid_key" | "key_revoked" | "key_expired";
+      reason: "invalid_key" | "key_revoked" | "key_suspended" | "key_expired";
       message: string;
       key?: GatewayKeyRecord;
     };
@@ -888,6 +900,13 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         message: "This Gateway Key was revoked",
         key,
       };
+    if (key.suspendedAt !== undefined)
+      return {
+        ok: false,
+        reason: "key_suspended",
+        message: "This Gateway Key is suspended",
+        key,
+      };
     if (key.expiresAt !== undefined && Date.parse(key.expiresAt) <= clock())
       return {
         ok: false,
@@ -1021,6 +1040,8 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       });
     }
     for (const provider of providers) {
+      // A provider switched off offers nothing.
+      if (!providerEnabled(provider)) continue;
       // Subscription accounts serve agents on this computer only.
       if (provider.subscription && key.allowLan === true) continue;
       const exposed =
@@ -2678,6 +2699,9 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       for (const stored of services.router.snapshot())
         of(stored.provider, stored.credential).readings.push(stored.reading);
       return [...states.values()];
+    },
+    liftRest(provider: ProviderId, credential?: CredentialId): void {
+      services.breakers.lift(provider, credential, "switched on");
     },
     async keyLimit(keyId: GatewayKeyId) {
       const key = await store.getGatewayKey(keyId);

@@ -57,7 +57,7 @@ pnpm exec hh tui                                      # 终端界面：以上操
 | `PUT /api/v1/agents/{id}/models` | `{hidden}`：设置隐藏的模型，见下文 |
 | `GET /api/v1/profiles`、`GET`/`PUT`/`DELETE /api/v1/profiles/{name}`、`POST .../{name}/plan`、`POST .../{name}/apply` | Profile，见下文 |
 
-每次接线签发一把新的 `agent:<id>` Key，不过期：`modelAllow` 为模型列表（未含 `*` 时加上所选模型与各档模型），`modelDeny` 沿用当前的隐藏列表。Key 文本只经库写入 Agent 的配置文件，守护进程不保存（存储中只有哈希）。文件写入并回读校验、`WiringRecord`（含档位、effort 与选项）提交之后才吊销上一把 Key；任何一步失败都吊销新 Key，写入失败时已写文件恢复为写前字节（写入后又被别人改动的文件保持原样，见下）。还原先恢复文件，再吊销 Key、删除记录；还原失败时记录与 Key 保留，可以重试。接线、换 Key、隐藏模型、Profile 与还原在守护进程内串行执行，库的跨进程锁另外阻止两个进程同时改写同一 Agent。
+每次接线签发一把新的 `agent:<id>` Key，不过期：`modelAllow` 为模型列表（未含 `*` 时加上所选模型与各档模型），`modelDeny` 沿用当前的隐藏列表。Key 文本只经库写入 Agent 的配置文件，守护进程不保存（存储中只有哈希）。文件写入并回读校验、`WiringRecord`（含档位、effort 与选项）提交之后才吊销上一把 Key；任何一步失败都吊销新 Key，写入失败时已写文件恢复为写前字节（写入后又被别人改动的文件保持原样，见下）。还原先恢复文件，再吊销 Key、删除记录；还原失败时记录与 Key 保留，可以重试。接线、换 Key、隐藏模型、Profile 与还原在守护进程内串行执行，库的跨进程锁另外阻止两个进程同时改写同一 Agent。Agent 的 Key 也可以暂停（`hh key suspend <keyId>`）：它的请求得到 401 `key_suspended`，接线视图的 `keyState` 为 `suspended`（终端界面显示 `! key suspended`），文件不变，`hh key resume` 恢复；还原照常吊销它。
 
 ### 每个 Agent 的模型列表
 

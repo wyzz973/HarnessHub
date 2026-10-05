@@ -1014,12 +1014,13 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     title: "修改 provider",
     group: "providers",
     request:
-      "JSON Merge Patch（application/merge-patch+json 或 application/json）：null 删除可选成员；id、credentials、时间戳不可改。",
-    response: "200：更新后的 ProviderConfig。",
+      "JSON Merge Patch（application/merge-patch+json 或 application/json）：null 删除可选成员；id、credentials、时间戳不可改。enabled=false 关闭 provider（Magpie provider off），true 重新打开。",
+    response:
+      "200：更新后的 ProviderConfig；关闭时带 enabled=false，打开时不带 enabled。",
     implementation:
-      "合并后按创建时的规则整体校验，重新解析各模型的元数据（手工设置的值保留，与记录的推导值不同即视为手工设置），再整体替换；同一守护进程内的写入串行执行。",
+      "合并后按创建时的规则整体校验，重新解析各模型的元数据（手工设置的值保留，与记录的推导值不同即视为手工设置），再整体替换；同一守护进程内的写入串行执行。关闭的 provider 不产生路由候选，不出现在 /v1/models、自动路由组与 Agent 接线目录中，路由组跳过它；接到它模型上的 Agent 由目录同步标记 attention（AGENT_MODEL_UNAVAILABLE），文件不改写。重新打开时 GatewayHandler.liftRest 清除其各凭据的休息与模型标记。",
     effects:
-      "在一个事务内更新 providers 记录、updatedAt 与元数据来源。尚无 ETag/If-Match。",
+      "在一个事务内更新 providers 记录、updatedAt 与元数据来源；触发 Agent 目录同步。尚无 ETag/If-Match。",
     errors:
       "400 PROVIDER_INVALID 或 INVALID_REQUEST；404 PROVIDER_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
     source: "packages/daemon/src/http/model-plane-routes.ts",
@@ -1082,6 +1083,26 @@ export const apiCatalog: readonly ApiDocumentation[] = [
       "tests/integration/hh-cli.test.ts",
     ],
     operationId: "hh_api_v1_add_credential",
+  },
+  {
+    method: "PATCH",
+    path: "/api/v1/providers/{id}/credentials/{credentialId}",
+    title: "开关凭据",
+    group: "credentials",
+    request:
+      "路径参数 id、credentialId；请求体 {enabled: boolean}（必填，无其他字段）。",
+    response: "200：更新后的凭据；状态未变时原样返回。",
+    implementation:
+      "按 Magpie SetKeyOn：provider 最后一个启用的凭据不能关闭（要停用整个 provider 用 PATCH /providers/{id} enabled=false）。重新打开时 GatewayHandler.liftRest 清除该凭据的休息与模型标记，下一次请求立即再试；额度读数保留。",
+    effects: "更新 providers 记录与 updatedAt；关闭的凭据不再被路由。",
+    errors:
+      "409 CREDENTIAL_LAST_ENABLED；404 PROVIDER_NOT_FOUND、CREDENTIAL_NOT_FOUND；400 请求体不合 schema；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/switches.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_set_credential_enabled",
   },
   {
     method: "PUT",
@@ -1701,6 +1722,63 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     operationId: "hh_api_v1_set_gateway_key_quota",
   },
   {
+    method: "PATCH",
+    path: "/api/v1/gateway-keys/{id}",
+    title: "重命名 Gateway Key",
+    group: "gateway-keys",
+    request: "路径参数 id；请求体 {name}（1–200 字符，必填）。",
+    response: "200：GatewayKeyView。",
+    implementation:
+      "ModelPlaneStore.setGatewayKeyName；client Key 的 scope.name 一并更新。Key 文本与权限不变。",
+    effects: "更新 gateway_keys 记录。",
+    errors:
+      "404 GATEWAY_KEY_NOT_FOUND；400 请求体不合 schema；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/switches.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_rename_gateway_key",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/gateway-keys/{id}/suspend",
+    title: "暂停 Gateway Key",
+    group: "gateway-keys",
+    request: "路径参数 id；请求体为空对象。",
+    response: "200：带 suspendedAt 的 GatewayKeyView。",
+    implementation:
+      "ModelPlaneStore.setGatewayKeySuspended；已暂停的 Key 保留第一次的时间。网关每次请求都读 Key 记录，暂停后的下一个请求即返回 401 key_suspended（在吊销之后、过期之前判断）。与吊销不同，Key 保留并可恢复；Agent 的 Key 也可暂停，接线视图 keyState=suspended，解除接线照常吊销。",
+    effects: "更新 gateway_keys 记录；在途调用不中断。",
+    errors:
+      "409 GATEWAY_KEY_REVOKED；404 GATEWAY_KEY_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/switches.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_suspend_gateway_key",
+  },
+  {
+    method: "POST",
+    path: "/api/v1/gateway-keys/{id}/resume",
+    title: "恢复 Gateway Key",
+    group: "gateway-keys",
+    request: "路径参数 id；请求体为空对象。",
+    response: "200：不带 suspendedAt 的 GatewayKeyView。",
+    implementation:
+      "ModelPlaneStore.setGatewayKeySuspended(undefined) 去掉 suspendedAt；未暂停的 Key 原样返回。",
+    effects: "更新 gateway_keys 记录。",
+    errors:
+      "409 GATEWAY_KEY_REVOKED；404 GATEWAY_KEY_NOT_FOUND；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json（code、requestId、errors[] 指向字段）。",
+    source: "packages/daemon/src/http/model-plane-routes.ts",
+    tests: [
+      "tests/integration/switches.test.ts",
+      "tests/integration/hh-cli.test.ts",
+    ],
+    operationId: "hh_api_v1_resume_gateway_key",
+  },
+  {
     method: "GET",
     path: "/api/v1/gateway-keys/{id}/limit",
     title: "Gateway Key 预算用量",
@@ -2097,7 +2175,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     group: "agents",
     request: "无参数。",
     response:
-      "200：items（Agent：id、name、protocol、keyDelivery、capabilities{tiers、efforts、options（各选项可取值，默认值在前）}、notice?（接线改动后要怎样 Agent 才会用上，如重启）、installation{status=installed|configured-only|not-found、executable、configDirectories}、wiring{model?、tiers?、effort?、options?、models（Agent 列出且 Key 可用的模型）、hidden（隐藏的模型）、keyId?、keyState=active|revoked|expired|missing|none、wiredAt、files、drift、driftError、attention?{code、message、at}（上次目录同步没有改写它的文件的原因）、managed?[]{path、keyPaths}（管理员的策略文件——Claude Code 的 managed settings——设置了接线写的哪些项，这些项因此不生效；无法解析的文件 keyPaths 为空）}|null）、nextCursor=null。保留自己模型的 Agent（Codex 的 codexAuth=chatgpt 且未指定模型）没有 model；在 Codex 的 ChatGPT 模式开始签发 Key 之前接线的记录没有 keyId，keyState 为 none。",
+      "200：items（Agent：id、name、protocol、keyDelivery、capabilities{tiers、efforts、options（各选项可取值，默认值在前）}、notice?（接线改动后要怎样 Agent 才会用上，如重启）、installation{status=installed|configured-only|not-found、executable、configDirectories}、wiring{model?、tiers?、effort?、options?、models（Agent 列出且 Key 可用的模型）、hidden（隐藏的模型）、keyId?、keyState=active|suspended|revoked|expired|missing|none、wiredAt、files、drift、driftError、attention?{code、message、at}（上次目录同步没有改写它的文件的原因）、managed?[]{path、keyPaths}（管理员的策略文件——Claude Code 的 managed settings——设置了接线写的哪些项，这些项因此不生效；无法解析的文件 keyPaths 为空）}|null）、nextCursor=null。保留自己模型的 Agent（Codex 的 codexAuth=chatgpt 且未指定模型）没有 model；在 Codex 的 ChatGPT 模式开始签发 Key 之前接线的记录没有 keyId，keyState 为 none。",
     implementation:
       "AgentWiringService.list：对每个支持的 Adapter 调用 detectAgent（只查 PATH 与配置目录，不执行 Agent）、读取 WiringRecord 与其 Key，并以当前网关地址调用 detectDrift。",
     effects: "只读；不读取 Agent 的认证文件，不返回 Key 文本。",

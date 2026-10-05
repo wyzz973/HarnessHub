@@ -249,8 +249,20 @@ export interface ProviderConfig {
    * user's installed Copilot client answers.
    */
   subscription?: { backend: SubscriptionBackend };
+  /**
+   * `false`: the provider is switched off (Magpie `provider off`): it serves
+   * no calls, offers no model in `/v1/models` or to wired agents, and route
+   * groups pass over it; its configuration, credentials and the agents wired
+   * to its models stay. Absent or `true`: on.
+   */
+  enabled?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Whether a provider is switched on ({@link ProviderConfig.enabled}). */
+export function providerEnabled(provider: Pick<ProviderConfig, "enabled">) {
+  return provider.enabled !== false;
 }
 
 /** A provider's own concurrency limits ({@link ProviderConfig.limits}). */
@@ -635,6 +647,12 @@ export interface GatewayKeyRecord {
   createdAt: string;
   expiresAt?: string;
   revokedAt?: string;
+  /**
+   * When the key was suspended: refused with 401 `key_suspended` until it
+   * is resumed (the field removed). Unlike a revoked key, a suspended one
+   * comes back unchanged.
+   */
+  suspendedAt?: string;
   lastUsedAt?: string;
 }
 
@@ -959,6 +977,16 @@ export interface ModelPlaneStore {
   listGatewayKeys(): Promise<GatewayKeyRecord[]>;
   revokeGatewayKey(keyId: GatewayKeyId, at: string): Promise<boolean>;
   touchGatewayKey(keyId: GatewayKeyId, at: string): Promise<void>;
+  /** Renames the key (and a `client:` key's scope); false when it does not exist. */
+  setGatewayKeyName(keyId: GatewayKeyId, name: string): Promise<boolean>;
+  /**
+   * Suspends the key from `at`, or resumes it (`undefined`); a key already
+   * suspended keeps its first `suspendedAt`. False when it does not exist.
+   */
+  setGatewayKeySuspended(
+    keyId: GatewayKeyId,
+    at: string | undefined,
+  ): Promise<boolean>;
   /** Replaces the key's quota, or removes it; false when the key does not exist. */
   setGatewayKeyQuota(
     keyId: GatewayKeyId,

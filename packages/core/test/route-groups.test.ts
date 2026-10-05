@@ -276,4 +276,11 @@ void test("key quotas take budgets: one per period, caps of 0 or more, no fields
     { requestsPerMinute: 0 },
   ])
     assert.ok(!isGatewayKeyRecord(key(quota)), JSON.stringify(quota));
+  // A suspended key keeps the time it was suspended.
+  assert.ok(isGatewayKeyRecord({ ...key({}), suspendedAt: STAMP }));
+  for (const suspendedAt of ["yesterday", true, null])
+    assert.ok(
+      !isGatewayKeyRecord({ ...key({}), suspendedAt }),
+      String(suspendedAt),
+    );
 });

@@ -8,6 +8,7 @@
  */
 import {
   parseModelRef,
+  providerEnabled,
   type ModelRef,
   type ProviderConfig,
   type RouteGroup,
@@ -90,11 +91,12 @@ function exposed(provider: ProviderConfig) {
     : provider.models.list.filter((model) => expose.includes(model.id));
 }
 
-/** A provider can serve a call: it is keyless, or has an enabled credential. */
+/** A provider can serve a call: it is switched on, and keyless or with an enabled credential. */
 function ready(provider: ProviderConfig): boolean {
   return (
-    provider.credentials.length === 0 ||
-    provider.credentials.some((credential) => credential.enabled)
+    providerEnabled(provider) &&
+    (provider.credentials.length === 0 ||
+      provider.credentials.some((credential) => credential.enabled))
   );
 }
 

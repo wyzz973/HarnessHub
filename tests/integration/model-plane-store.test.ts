@@ -517,6 +517,57 @@ void test("Gateway Keys keep only the secret hash and support revoke and touch",
     code("INVALID_TIMESTAMP"),
   );
 
+  // Renaming a client key renames its scope; an agent key keeps its scope.
+  assert.equal(
+    await plane.setGatewayKeyName(client.record.keyId, "ci-2"),
+    true,
+  );
+  const renamed = await plane.getGatewayKey(client.record.keyId);
+  assert.equal(renamed?.name, "ci-2");
+  assert.deepEqual(renamed?.scope, { kind: "client", name: "ci-2" });
+  assert.equal(await plane.setGatewayKeyName(agent.record.keyId, "mine"), true);
+  assert.deepEqual((await plane.getGatewayKey(agent.record.keyId))?.scope, {
+    kind: "agent",
+    adapterId: "claude-code",
+  });
+  await assert.rejects(
+    plane.setGatewayKeyName(client.record.keyId, ""),
+    code("MODEL_PLANE_RECORD_INVALID"),
+  );
+  assert.equal(
+    await plane.setGatewayKeyName("aaaaaaaaaaaa" as GatewayKeyId, "x"),
+    false,
+  );
+  // Suspending keeps the first time; resuming removes it; neither deletes.
+  const suspended = async () =>
+    (await plane.getGatewayKey(client.record.keyId))?.suspendedAt;
+  assert.equal(
+    await plane.setGatewayKeySuspended(client.record.keyId, AT),
+    true,
+  );
+  await plane.setGatewayKeySuspended(
+    client.record.keyId,
+    "2026-10-03T08:00:00.000Z",
+  );
+  assert.equal(await suspended(), AT);
+  assert.equal(
+    await plane.setGatewayKeySuspended(client.record.keyId, undefined),
+    true,
+  );
+  assert.equal(await suspended(), undefined);
+  assert.equal(
+    await plane.setGatewayKeySuspended(client.record.keyId, undefined),
+    true,
+  );
+  await assert.rejects(
+    plane.setGatewayKeySuspended(client.record.keyId, "now"),
+    code("INVALID_TIMESTAMP"),
+  );
+  assert.equal(
+    await plane.setGatewayKeySuspended("aaaaaaaaaaaa" as GatewayKeyId, AT),
+    false,
+  );
+
   const fresh = key({ kind: "session", sessionId: "s-1" as SessionId });
   const invalid: unknown[] = [
     { ...fresh.record, secretHash: fresh.record.secretHash.toUpperCase() },

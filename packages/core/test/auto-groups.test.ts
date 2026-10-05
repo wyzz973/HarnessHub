@@ -93,6 +93,8 @@ void test("a model two ready providers serve under one name becomes group/auto-<
         },
       ],
     }),
+    // Not ready either: switched off, though its credential is on.
+    provider("switched-off", ["claude-opus-5-5"], { enabled: false }),
     // Keyless (a local server) is ready; an unexposed model does not count.
     provider("local", ["claude-opus-5.5", "only-here"], {
       credentials: [],

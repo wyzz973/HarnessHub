@@ -14,6 +14,7 @@ import {
   issueGatewayKey,
   modelAllowed,
   parseModelRef,
+  providerEnabled,
   type AgentWiringStore,
   type GatewayKeyId,
   type GatewayKeyRecord,
@@ -139,7 +140,8 @@ export interface AgentWiringView extends WiringChoice {
   hidden: string[];
   /** Absent when the agent signs in by itself and has no key. */
   keyId?: GatewayKeyId;
-  keyState: "active" | "revoked" | "expired" | "missing" | "none";
+  /** `suspended`: the key is refused until it is resumed (`hh key resume`); unwiring still revokes it. */
+  keyState: "active" | "suspended" | "revoked" | "expired" | "missing" | "none";
   wiredAt: string;
   files: string[];
   drift: Pick<DriftReport, "drifted" | "kinds" | "findings"> | null;
@@ -962,7 +964,9 @@ export class AgentWiringService {
             ? "revoked"
             : key.expiresAt && Date.parse(key.expiresAt) <= now
               ? "expired"
-              : "active";
+              : key.suspendedAt
+                ? "suspended"
+                : "active";
     let drift: AgentWiringView["drift"] = null;
     let driftError: string | undefined;
     try {
@@ -1179,7 +1183,7 @@ async function gatewayModels(
 ): Promise<Map<string, WiringModel>> {
   const catalog = new Map<string, WiringModel>();
   const metadata = new Map<string, ProviderModel>();
-  const providers = await store.listProviders();
+  const providers = (await store.listProviders()).filter(providerEnabled);
   for (const provider of providers) {
     const exposed =
       provider.models.expose === "all"

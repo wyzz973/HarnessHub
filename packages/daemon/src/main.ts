@@ -1113,6 +1113,8 @@ export async function startHub(options: {
       },
       routing: {
         state: () => modelGateway?.routingState() ?? [],
+        liftRest: (provider, credential) =>
+          modelGateway?.liftRest(provider, credential),
         decisions: async (query, signal) => {
           if (!modelGateway)
             throw new HubError(

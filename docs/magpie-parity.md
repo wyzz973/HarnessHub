@@ -11,13 +11,13 @@ Every row was checked against Magpie's source and against HarnessHub's code or d
 | partial | Part of Magpie's behavior exists; the note says which part is missing |
 | not covered | HarnessHub has nothing equivalent today |
 
-**Summary.** The 12 area tables below have 165 rows: 54 same, 34 different by design, 47 partial and 30 not covered.
+**Summary.** The 12 area tables below have 165 rows: 55 same, 34 different by design, 47 partial and 29 not covered.
 
 | Area | same | different by design | partial | not covered |
 |---|---|---|---|---|
 | [Gateway and protocols](#gateway-and-protocols) | 5 | 4 | 6 | 1 |
 | [Routing, route groups and rules](#routing-route-groups-and-rules) | 7 | 4 | 9 | 3 |
-| [Providers, presets and import](#providers-presets-and-import) | 5 | 3 | 6 | 3 |
+| [Providers, presets and import](#providers-presets-and-import) | 6 | 3 | 6 | 2 |
 | [Agents and wiring](#agents-and-wiring) | 7 | 4 | 7 | 4 |
 | [Subscriptions](#subscriptions) | 2 | 8 | 1 | 3 |
 | [Usage and observability](#usage-and-observability) | 7 | 2 | 4 | 1 |
@@ -27,7 +27,7 @@ Every row was checked against Magpie's source and against HarnessHub's code or d
 | [Profiles](#profiles) | 3 | 0 | 1 | 1 |
 | [Terminal UI and console](#terminal-ui-and-console) | 2 | 1 | 1 | 4 |
 | [Packaging and operations](#packaging-and-operations) | 0 | 2 | 5 | 4 |
-| Total | 54 | 34 | 47 | 30 |
+| Total | 55 | 34 | 47 | 29 |
 
 **Not verified.** Windows is unverified throughout ([Windows](windows.md)). Most adapters that follow Magpie have not been run against the real agent; [compatibility](compatibility.md) lists the agents the conformance suite has run for real. Sync was tested only against fake WebDAV and S3 servers, the Copilot add-on only against a fake SDK, and OTLP export only against a local receiver.
 
@@ -79,7 +79,7 @@ Every row was checked against Magpie's source and against HarnessHub's code or d
 | Classifier model for `intent` and `effort=auto` | same | `hh group rule classifier <id> <ref>\|off`, `hh group rule effort <id> auto\|off`; Route groups → Rules | |
 | Decision APIs (System One, Jev; `POST /v1/systemone`) | not covered | — | No decision-API provider kind |
 | Route decisions with long polling (`GET /v1/magpie/route`) | partial | `GET /api/v1/routing/decisions?session=&after=&wait=`; Routing and keys → Route decisions | On the management API, so an agent cannot read it with its own key |
-| Per-credential state and allowances, lifting a rest (`/v1/magpie/quotas`) | partial | `GET /api/v1/routing/state`; Routing and keys → Credential state | Read-only: no lifting a rest by hand, no endpoint for agents |
+| Per-credential state and allowances, lifting a rest (`/v1/magpie/quotas`) | partial | `GET /api/v1/routing/state`; Routing and keys → Credential state | Read-only, no endpoint for agents. A rest is lifted only by switching the credential, or its provider, off and on again (`hh credential disable\|enable`, `hh provider disable\|enable`), not by a lift of its own |
 | Concurrency limit per key or account (`maxConcurrency`) | different by design | A provider's `limits` (`hh provider limits <id> --concurrency N --queue N`, or the console's provider form); the gateway's `maxConcurrentPerCredential` (8) and `maxQueuedPerCredential` (64) otherwise | The queue is bounded: past it, or after 60 s of waiting (`slotWaitMs`), a call is 429 `busy` and fails over, and a freed slot goes to the waiting key that holds the fewest; Magpie's queue waits without bound and never fails over. No endpoint shows the calls in flight (Magpie's `GET /v1/magpie/concurrency`) ([limits](model-gateway.md#资源上限)) |
 
 ## Providers, presets and import
@@ -90,8 +90,8 @@ Every row was checked against Magpie's source and against HarnessHub's code or d
 | Regions and plans in one option list | different by design | `--region` and `--plan` | Regions (sites) and plans (products) are separate, each with its own endpoints, key page and model list ([choosing](provider-presets.md#列出与选择)) |
 | Header hints, your own endpoint (Azure, remote Magpie), no key for local servers | same | `--base URL`; Providers → add from a preset | HarnessHub enforces required header hints |
 | Brand icons, uploaded icons, icons from import links | partial | Preset icons are bundled | No icon for custom providers; an import link's `icon` is never downloaded |
-| Several keys per provider, each on or off, optionally limited to one API | partial | `hh credential add\|rotate\|remove`, `hh credential add --protocol P` to limit one; Providers → Credentials | A credential is off only when added so through the API (`enabled: false` in `POST /api/v1/providers/{id}/credentials`); nothing switches one on or off later. Each credential is its own routing candidate; a credential limited to APIs is ordered by how well its API fits the model, as Magpie's `keyFit` orders keys ([candidates](model-gateway.md#模型解析与列表)) |
-| A provider switched off or renamed, its groups and agents moved along (`magpie provider off\|on`, `set id=`) | not covered | — | A provider has no off switch and keeps its ID; removing one that a route group or Gateway Key names is refused (409 `PROVIDER_IN_USE`) |
+| Several keys per provider, each on or off, optionally limited to one API | same | `hh credential add\|rotate\|remove\|enable\|disable`, `hh credential add --protocol P` to limit one; Providers → Credentials (no on/off control in the console yet) | `PATCH /api/v1/providers/{id}/credentials/{credentialId}` `{enabled}` switches one on or off at any time; as in Magpie's `SetKeyOn` the last one on stays on (409 `CREDENTIAL_LAST_ENABLED`). One switched back on has its rest and model marks lifted and is asked at once; unlike Magpie, its own model list is not fetched there and then (a credential whose list was not read is taken to serve everything until the next refresh). Each credential is its own routing candidate; a credential limited to APIs is ordered by how well its API fits the model, as Magpie's `keyFit` orders keys ([candidates](model-gateway.md#模型解析与列表)) |
+| A provider switched off or renamed, its groups and agents moved along (`magpie provider off\|on`, `set id=`) | partial | `hh provider disable\|enable <id>` (`PATCH /api/v1/providers/{id}` `{"enabled": false}`) | A provider switched off keeps its configuration; it has no candidates (a call for its model gets 400 `unsupported_route` "…: the provider is switched off"), is gone from `/v1/models`, automatic groups, bare names, image requests and the wiring catalog, and route groups pass over it. Agents wired to its models are marked for attention (`AGENT_MODEL_UNAVAILABLE`) rather than reseated onto another model as Magpie does; switched back on, they are served again and the mark clears. No rename: a provider keeps its ID, and removing one that a route group or Gateway Key names is refused (409 `PROVIDER_IN_USE`) |
 | A model list per key or account | partial | `hh provider models <id> --refresh` reads each credential's own list | The refresh records which credentials list each model, and routing leaves out a credential whose list lacks the model (Magpie's `Model.Keys`); `GET /api/v1/routing/state` shows each credential's `unlistedModels`. Subscription accounts keep one list, and a model list narrowed by hand per credential (Magpie's `accountModels`) is not covered ([candidates](model-gateway.md#模型解析与列表)) |
 | Live model lists from the vendor | partial | `hh provider models <id> --refresh`; Providers → refresh | One fixed path per API; with several credentials each one's list is read and merged, a credential whose list cannot be read keeping what it listed last time. The old list is kept and marked stale when none can be read. No URL probing |
 | models.dev catalog, refreshed daily and earlier for unpriced models | same | Background refresh; `hh catalog status\|refresh` | A snapshot is bundled; `HH_OFFLINE=1` or `catalog.autoRefresh: false` turns background refresh off |
@@ -193,7 +193,7 @@ Every row was checked against Magpie's source and against HarnessHub's code or d
 | LAN sharing by binding the gateway to all interfaces | different by design | `hh gateway share on --host IP [--port N] [--name HOST]… [--public-base-url URL]`, `share status\|off`; Settings → General | A separate listener serves only the model paths; the management API is not on it. Listening on every address needs `--name` or `--public-base-url`, which the Host header is checked against ([LAN sharing](model-gateway.md#局域网共享), [ADR 0021](decisions/0021-gateway-lan-sharing.md)) |
 | Remote callers need a named gateway key | same | `hh key create --name N --allow REF… --lan [--expires-at TIME]` | A LAN key must expire (after 90 days unless `--expires-at` says otherwise; `--no-expiry` is refused); the console's key form (Routing and keys → Gateway Keys) has the same LAN option |
 | Key text kept and shown again later | different by design | Shown once (`hhk_…`); only a hash is stored | A copied data directory or backup holds no usable key |
-| Rename, disable, rotate and remove keys | partial | `hh key list\|create\|quota\|limit\|revoke`; Routing and keys → Gateway Keys | No rename, disable or rotate for client keys (agents: `hh wire <agent> --rotate`); client keys expire after 90 days by default |
+| Rename, disable, rotate and remove keys | partial | `hh key list\|create\|rename\|suspend\|resume\|quota\|limit\|revoke`; Routing and keys → Gateway Keys | Client and agent keys can be renamed (`PATCH /api/v1/gateway-keys/{id}`) and suspended and resumed (`POST …/suspend\|resume`): a suspended key gets 401 `key_suspended` and is kept, and the wiring view shows an agent's key as `suspended`. No rotate for client keys (agents: `hh wire <agent> --rotate`); client keys expire after 90 days by default |
 | Public URL behind a reverse proxy (`MAGPIE_PUBLIC_URL`) | same | `--public-base-url` | Also widens the accepted Host header |
 | Budgets per key in local calendar windows, tokens or cost | same | `hh key create … --budget day:tokens=N,cost=USD,cache-reads`, `hh key quota <id> --budget … --rpm N` | Several budgets per key (one per period) plus requests per minute ([CLI](model-plane-api.md#cli)) |
 | Reservation per request, 429 with `Retry-After` when over | same | Automatic | The reset time is in `x-hh-limit-reset` |
@@ -311,6 +311,7 @@ The key in an agent's file is a real credential, but it is limited to that agent
 | `magpie providers`, `magpie presets` | `hh provider list`, `hh provider presets` |
 | `magpie provider add <preset> <key>` | `hh provider add --preset <preset> --credential-from-stdin` |
 | `magpie provider key <id>` | `hh credential add\|rotate\|remove <provider> …` |
+| `magpie provider off\|on <id>` | `hh provider disable\|enable <id>` |
 | `magpie provider models\|test\|rm <id>` | `hh provider models <id> --refresh`, `hh provider test <id>`, `hh provider remove <id>` |
 | `magpie provider fallback <id> <model>…` | A route group: `hh group add <id> --member … --strategy order` |
 | `magpie import <link>` | `hh import <link>` |
@@ -328,4 +329,4 @@ The key in an agent's file is a real credential, but it is limited to that agent
 | `magpie webdav …`, `magpie s3 …` | `hh sync webdav on …`, `hh sync s3 on …` |
 | `magpie library …` | `hh library add\|rm\|sync …` |
 | `magpie serve`, `magpie healthcheck` | `hh serve`, `GET /health/ready` |
-| `magpie model name\|efforts`, `magpie provider off\|on`, `magpie gateway-key rotate`, `magpie sessions`, `magpie mcp image`, `magpie plugin`, `magpie update`, `magpie tray`, `magpie panel`, `magpie autostart` | Not covered |
+| `magpie model name\|efforts`, `magpie gateway-key rotate`, `magpie sessions`, `magpie mcp image`, `magpie plugin`, `magpie update`, `magpie tray`, `magpie panel`, `magpie autostart` | Not covered |

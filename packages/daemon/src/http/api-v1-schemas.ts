@@ -295,6 +295,11 @@ export const providerSchema = {
     imageEndpoint: text(2048),
     proxy: text(2048),
     limits: providerLimits,
+    enabled: {
+      type: "boolean",
+      description:
+        "false: switched off; it serves no calls and offers no models. Absent: on",
+    },
     subscription: {
       type: "object",
       additionalProperties: false,
@@ -540,6 +545,8 @@ export const providerPatchSchema = {
     },
     capabilities: { ...capabilities, type: ["object", "null"] },
     translateOnly: { type: ["boolean", "null"] },
+    /** false switches the provider off, true on again. */
+    enabled: { type: "boolean" },
     imageEndpoint: { type: ["string", "null"], minLength: 1, maxLength: 2048 },
     proxy: { type: ["string", "null"], minLength: 1, maxLength: 2048 },
     limits: {
@@ -581,6 +588,13 @@ export const credentialCreateSchema = {
     },
     enabled: { type: "boolean" },
   },
+} as const;
+/** `PATCH /providers/{id}/credentials/{credentialId}`. */
+export const credentialPatchSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["enabled"],
+  properties: { enabled: { type: "boolean" } },
 } as const;
 export const credentialSecretSchema = {
   type: "object",
@@ -821,8 +835,20 @@ export const gatewayKeySchema = {
     createdAt: timestamp,
     expiresAt: timestamp,
     revokedAt: timestamp,
+    suspendedAt: {
+      ...timestamp,
+      description:
+        "The key is refused (401 key_suspended) from then until it is resumed",
+    },
     lastUsedAt: timestamp,
   },
+} as const;
+/** `PATCH /gateway-keys/{id}`. */
+export const gatewayKeyPatchSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["name"],
+  properties: { name: text(200) },
 } as const;
 export const gatewayKeyCreateSchema = {
   type: "object",

@@ -9,7 +9,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import type { RouteGroupId } from "@harnesshub/core/model-plane";
+import type { ProviderId, RouteGroupId } from "@harnesshub/core/model-plane";
 import { resolveBareName } from "../src/bare-names.js";
 import {
   addKey,
@@ -106,6 +106,21 @@ void test("a bare name resolves to a group of its ID, then its spelling, then it
     via: "model",
   });
   assert.deepEqual(await resolve("solo", onlyB), { kind: "none" });
+  // A provider switched off names nothing: b alone has model-b.
+  const off = async (id: string) =>
+    store.putProvider({
+      ...(await store.getProvider(id as ProviderId))!,
+      enabled: false,
+    });
+  await off("a");
+  assert.deepEqual(await resolve("model-b"), {
+    kind: "resolved",
+    ref: "b/model-b",
+    via: "model",
+  });
+  assert.deepEqual((await resolve("solo")).kind, "resolved");
+  await off("c");
+  assert.deepEqual(await resolve("solo"), { kind: "none" });
 });
 
 void test("through the gateway: the resolved group or model serves, the ledger keeps the name, ambiguity and the allowlist refuse", async (t) => {

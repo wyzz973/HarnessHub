@@ -142,8 +142,8 @@ void test(
     assert.match(invalid.stderr, /\/endpoints\/chat: must be the base URL/);
     await fails(["provider", "add", "beta"], 2);
     const list = (await ok(["provider", "list"])).stdout;
-    assert.match(list, /^ID +NAME +KIND +ENDPOINTS +CREDENTIALS +MODELS\n/);
-    assert.match(list, /\nalpha +Alpha +custom +chat +0 +2\n/);
+    assert.match(list, /^ID +NAME +KIND +ENDPOINTS +CREDENTIALS +MODELS +ON\n/);
+    assert.match(list, /\nalpha +Alpha +custom +chat +0 +2 +yes\n/);
     await fails(["provider", "show", "missing"], 2);
 
     // Secrets come from stdin or the environment, never from argv or a prompt here.
@@ -187,6 +187,38 @@ void test(
     );
     const shown = (await ok(["provider", "show", "alpha"])).stdout;
     assert.match(shown, /key-1 +main +store:[0-9a-f-]{36} +all +yes/);
+    // Credentials switch off and on; the last one on stays on.
+    assert.equal(
+      (await ok(["credential", "disable", "alpha", "backup"])).stdout,
+      "Credential backup of alpha is off\n",
+    );
+    assert.match(
+      (await ok(["credential", "list", "alpha"])).stdout,
+      /\nbackup +default +store:[0-9a-f-]{36} +all +no\n/,
+    );
+    const last = await fails(["credential", "disable", "alpha", "key-1"], 5);
+    assert.match(last.stderr, /CREDENTIAL_LAST_ENABLED/);
+    assert.equal(
+      (await ok(["credential", "enable", "alpha", "backup"])).stdout,
+      "Credential backup of alpha is on\n",
+    );
+    // A provider switched off keeps its configuration.
+    assert.match(
+      (await ok(["provider", "disable", "alpha"])).stdout,
+      /^Switched alpha off: it serves no calls and offers no models/,
+    );
+    assert.match(
+      (await ok(["provider", "list"])).stdout,
+      /\nalpha +Alpha +custom +chat +2 +2 +no\n/,
+    );
+    assert.match(
+      (await ok(["provider", "show", "alpha"])).stdout,
+      /\nState: +switched off \(hh provider enable alpha\)\n/,
+    );
+    assert.equal(
+      (await ok(["provider", "enable", "alpha"])).stdout,
+      "Switched alpha on\n",
+    );
     // Removal needs confirmation; without a terminal it stops with 4 and changes nothing.
     const kept = await fails(["credential", "remove", "alpha", "backup"], 4);
     assert.equal(
@@ -218,6 +250,24 @@ void test(
       keyMatch[1],
     );
     await fails(["key", "create", "--name", "ci"], 2);
+    // Renamed, suspended and resumed: the key stays, and so does its text.
+    const ciId = keyMatch[1]!;
+    assert.equal(
+      (await ok(["key", "rename", ciId, "ci-2"])).stdout,
+      `Key ${ciId} is named ci-2\n`,
+    );
+    assert.equal(
+      (await ok(["key", "suspend", ciId])).stdout,
+      `Suspended key ${ciId}: it is refused until hh key resume ${ciId}\n`,
+    );
+    assert.match(
+      (await ok(["key", "list"])).stdout,
+      new RegExp(`\\n${ciId} +ci-2 +client +alpha/\\* +.+ +- +suspended\\n`),
+    );
+    assert.equal(
+      (await ok(["key", "resume", ciId])).stdout,
+      `Resumed key ${ciId}\n`,
+    );
 
     // Keys for the LAN listener, and sharing it.
     const lanCreated = await ok([
@@ -254,7 +304,7 @@ void test(
     );
     assert.match(
       keyList,
-      /\n[a-z2-7]{12} +ci +client +alpha\/\* +.+ +- +active\n/,
+      /\n[a-z2-7]{12} +ci-2 +client +alpha\/\* +.+ +- +active\n/,
     );
     assert.match(
       (await ok(["gateway", "share", "status"])).stdout,

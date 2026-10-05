@@ -347,6 +347,11 @@ export type ProviderPatch = {
 } & {
   /** null detaches the provider from its preset. */
   preset?: null;
+  /**
+   * false switches the provider off: it serves no calls, offers no models
+   * and route groups pass over it; true switches it on again.
+   */
+  enabled?: boolean;
 };
 
 export interface RouteGroupInput {
@@ -632,7 +637,8 @@ export interface AgentWiring extends WiringChoice {
   keyId?: string;
   /** Why the last catalog sync left the agent's files as they were. */
   attention?: { code: string; message: string; at: string };
-  keyState: "active" | "revoked" | "expired" | "missing" | "none";
+  /** `suspended`: refused until resumed (`gatewayKeys.resume`); unwiring still revokes it. */
+  keyState: "active" | "suspended" | "revoked" | "expired" | "missing" | "none";
   wiredAt: string;
   files: string[];
   drift: {
@@ -1400,6 +1406,17 @@ export class HarnessHubClient {
         `providers/${segment(providerId)}/credentials`,
         { body: input },
       ),
+    /**
+     * Switches the credential on or off. The provider's last enabled
+     * credential cannot be switched off (`CREDENTIAL_LAST_ENABLED`, 409);
+     * one switched back on is tried again at once, without its old rests.
+     */
+    setEnabled: (providerId: string, credentialId: string, enabled: boolean) =>
+      this.request<ProviderCredential>(
+        "PATCH",
+        `providers/${segment(providerId)}/credentials/${segment(credentialId)}`,
+        { body: { enabled } },
+      ),
     /** Replaces the stored value; the reference stays the same. */
     rotate: (providerId: string, credentialId: string, value: string) =>
       this.request<ProviderCredential>(
@@ -1440,6 +1457,27 @@ export class HarnessHubClient {
       this.request<GatewayKeyView>(
         "POST",
         `gateway-keys/${segment(keyId)}/revoke`,
+        { body: {} },
+      ),
+    rename: (keyId: string, name: string) =>
+      this.request<GatewayKeyView>("PATCH", `gateway-keys/${segment(keyId)}`, {
+        body: { name },
+      }),
+    /**
+     * Refuses the key (401 `key_suspended`) until {@link resume}; unlike
+     * revoking, it is kept. A revoked key cannot be suspended or resumed
+     * (`GATEWAY_KEY_REVOKED`, 409).
+     */
+    suspend: (keyId: string) =>
+      this.request<GatewayKeyView>(
+        "POST",
+        `gateway-keys/${segment(keyId)}/suspend`,
+        { body: {} },
+      ),
+    resume: (keyId: string) =>
+      this.request<GatewayKeyView>(
+        "POST",
+        `gateway-keys/${segment(keyId)}/resume`,
         { body: {} },
       ),
     /** Replaces the key's quota; `{}` removes it. Budgets apply from the key's next request. */

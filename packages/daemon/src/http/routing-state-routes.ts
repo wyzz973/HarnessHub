@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 import type { FastifyInstance } from "fastify";
 import type {
+  CredentialId,
   ModelPlaneStore,
+  ProviderId,
   RouteDecisionPage,
   RouteDecisionQuery,
 } from "@harnesshub/core/model-plane";
@@ -34,6 +36,12 @@ export interface CredentialRoutingView {
 /** Where the routing state comes from: the shared gateway (`GatewayHandler.routingState`). */
 export interface RoutingStateSource {
   state(): CredentialRoutingView[];
+  /**
+   * Forgets the rests and model marks of a credential of `provider`, or of
+   * all of them (`GatewayHandler.liftRest`), for a credential or provider
+   * switched back on. Synchronous; a gateway that is not running holds none.
+   */
+  liftRest(provider: ProviderId, credential?: CredentialId): void;
   /**
    * The latest routing decisions (`GatewayHandler.routeDecisions`), waiting
    * for one with `query.wait` until `signal` aborts; without it

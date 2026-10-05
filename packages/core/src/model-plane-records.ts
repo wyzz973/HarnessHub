@@ -290,6 +290,7 @@ export function isProviderConfig(value: unknown): value is ProviderConfig {
         optional(capabilities.requiresReasoningReplay, bool),
     ) &&
     optional(value.translateOnly, bool) &&
+    optional(value.enabled, bool) &&
     optional(
       value.imageEndpoint,
       (url) =>
@@ -494,6 +495,7 @@ export function isGatewayKeyRecord(value: unknown): value is GatewayKeyRecord {
     isTimestamp(value.createdAt) &&
     optional(value.expiresAt, isTimestamp) &&
     optional(value.revokedAt, isTimestamp) &&
+    optional(value.suspendedAt, isTimestamp) &&
     optional(value.lastUsedAt, isTimestamp)
   );
 }

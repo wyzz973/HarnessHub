@@ -2,6 +2,7 @@
 /** Images: generations and edits on a provider's images endpoint, or drawn through chat, one way after the other. */
 import test from "node:test";
 import assert from "node:assert/strict";
+import type { ProviderId } from "@harnesshub/core/model-plane";
 import {
   addKey,
   at,
@@ -131,6 +132,17 @@ void test("a failing credential fails over; a chat model that draws nothing, or 
   const unknown = await call({ model: "no-ref", prompt: "x" });
   assert.equal(unknown.status, 404);
   assert.equal(at(unknown.json(), "error", "code"), "model_not_found");
+  // A provider switched off draws nothing; its upstream is not asked.
+  const asked = up.seen.length;
+  await store.putProvider({
+    ...(await store.getProvider("img" as ProviderId))!,
+    enabled: false,
+  });
+  const off = await call({ model: "img/gpt-image-1", prompt: "x" });
+  assert.equal(off.status, 404);
+  assert.equal(at(off.json(), "error", "code"), "images_unavailable");
+  assert.match(String(at(off.json(), "error", "message")), /switched on/);
+  assert.equal(up.seen.length, asked);
 });
 
 void test("streamed partial images are forwarded, with the completed event's usage", async (t) => {

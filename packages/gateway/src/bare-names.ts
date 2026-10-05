@@ -12,10 +12,11 @@
  * says nothing about what is configured (security review L6).
  */
 import { autoGroups, sameModel, slug } from "@harnesshub/core/auto-groups";
-import type {
-  ModelPlaneStore,
-  ProviderConfig,
-  RouteGroupId,
+import {
+  providerEnabled,
+  type ModelPlaneStore,
+  type ProviderConfig,
+  type RouteGroupId,
 } from "@harnesshub/core/model-plane";
 
 /** What a bare name names here. */
@@ -86,6 +87,7 @@ export async function resolveBareName(
     const refs: string[] = [];
     for (const provider of providers)
       if (
+        providerEnabled(provider) &&
         models(provider).includes(text) &&
         (await usable(`${provider.id}/${text}`))
       )

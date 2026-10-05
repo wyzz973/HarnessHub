@@ -137,6 +137,8 @@ const COMMAND_USAGE: readonly CommandUsage[] = [
               | limits <id> [--concurrency N] [--queue N] [--clear]
                 requests out at once and waiting on each credential;
                 unset follows the gateway's limits
+              | disable <id> | enable <id>   a provider switched off serves
+                no calls and offers no models; it keeps its configuration
               | remove <id>
               | test <id> [--model M]
               | doctor <id> [--model M] [--deep] [--slow-ms N] [--fix]`,
@@ -150,6 +152,7 @@ const COMMAND_USAGE: readonly CommandUsage[] = [
     command: "credential",
     text: `  hh credential list <provider> | add <provider> [--name N] [--id ID]
               [--protocol P]... | rotate <provider> <credential>
+              | disable <provider> <credential> | enable <provider> <credential>
               | remove <provider> <credential>
               secret from a hidden prompt, --from-stdin, --from-env VAR or --from-file PATH`,
   },
@@ -158,7 +161,10 @@ const COMMAND_USAGE: readonly CommandUsage[] = [
     text: `  hh key list | create --name N --allow REF... [--expires-at TIME | --no-expiry]
               [--lan] [--rpm N] [--budget PERIOD:tokens=N,cost=USD,cache-reads]...
               | quota <keyId> [--rpm N] [--budget ...]... | quota <keyId> --clear
-              | limit <keyId> | revoke <keyId>
+              | limit <keyId> | rename <keyId> <name>
+              | suspend <keyId> | resume <keyId> | revoke <keyId>
+              a suspended key is refused until it is resumed; a revoked
+              one for good
               budgets are per calendar day, week or month in the daemon's
               local time; tokens count input, output and cache writes (and
               cache reads with cache-reads), cost is the ledger's estimate`,
@@ -658,7 +664,7 @@ async function providerCommand(args: string[]): Promise<void> {
       const page = await (await ctx.client()).providers.list();
       return output(ctx, page, () =>
         table(
-          ["ID", "NAME", "KIND", "ENDPOINTS", "CREDENTIALS", "MODELS"],
+          ["ID", "NAME", "KIND", "ENDPOINTS", "CREDENTIALS", "MODELS", "ON"],
           page.items.map((item) => [
             item.id,
             item.name,
@@ -666,6 +672,7 @@ async function providerCommand(args: string[]): Promise<void> {
             Object.keys(item.endpoints).join(","),
             String(item.credentials.length),
             String(item.models.list.length),
+            item.enabled === false ? "no" : "yes",
           ]),
         ),
       );
@@ -678,6 +685,9 @@ async function providerCommand(args: string[]): Promise<void> {
           `ID:       ${item.id}`,
           `Name:     ${item.name}`,
           `Kind:     ${item.kind}`,
+          ...(item.enabled === false
+            ? [`State:    switched off (hh provider enable ${item.id})`]
+            : []),
           ...(item.preset !== undefined
             ? [
                 `Preset:   ${item.preset}${item.region !== undefined ? `, region ${item.region}` : ""}${item.plan !== undefined ? `, plan ${item.plan}` : ""}`,
@@ -832,6 +842,18 @@ async function providerCommand(args: string[]): Promise<void> {
           : `${item.id} follows the gateway's limits (gateway.limits)`,
       );
     }
+    case "disable":
+    case "enable": {
+      const [id] = positionals(given, ["id"]);
+      const item = await (
+        await ctx.client()
+      ).providers.update(id!, { enabled: action === "enable" });
+      return output(ctx, item, () =>
+        item.enabled === false
+          ? `Switched ${item.id} off: it serves no calls and offers no models; agents wired to them are marked for attention`
+          : `Switched ${item.id} on`,
+      );
+    }
     case "remove":
     case "rm": {
       const [id] = positionals(given, ["id"]);
@@ -904,6 +926,22 @@ async function credentialCommand(args: string[]): Promise<void> {
         ctx,
         rotated,
         () => `Rotated credential ${rotated.id} of ${provider}`,
+      );
+    }
+    case "disable":
+    case "enable": {
+      const [provider, credential] = positionals(given, [
+        "provider",
+        "credential",
+      ]);
+      const updated = await (
+        await ctx.client()
+      ).credentials.setEnabled(provider!, credential!, action === "enable");
+      return output(
+        ctx,
+        updated,
+        () =>
+          `Credential ${updated.id} of ${provider} is ${updated.enabled ? "on" : "off"}`,
       );
     }
     case "remove":
@@ -1051,7 +1089,9 @@ async function keyCommand(args: string[]): Promise<void> {
               ? "revoked"
               : item.expiresAt && Date.parse(item.expiresAt) <= now
                 ? "expired"
-                : "active",
+                : item.suspendedAt
+                  ? "suspended"
+                  : "active",
           ]),
         ),
       );
@@ -1132,6 +1172,31 @@ async function keyCommand(args: string[]): Promise<void> {
             ]),
           ),
         ].join("\n"),
+      );
+    }
+    case "rename": {
+      const [keyId, name] = positionals(given, ["keyId", "name"]);
+      const renamed = await (
+        await ctx.client()
+      ).gatewayKeys.rename(keyId!, name!);
+      return output(
+        ctx,
+        renamed,
+        () => `Key ${renamed.keyId} is named ${renamed.name}`,
+      );
+    }
+    case "suspend":
+    case "resume": {
+      const [keyId] = positionals(given, ["keyId"]);
+      const client = await ctx.client();
+      const updated =
+        action === "suspend"
+          ? await client.gatewayKeys.suspend(keyId!)
+          : await client.gatewayKeys.resume(keyId!);
+      return output(ctx, updated, () =>
+        updated.suspendedAt
+          ? `Suspended key ${updated.keyId}: it is refused until hh key resume ${updated.keyId}`
+          : `Resumed key ${updated.keyId}`,
       );
     }
     case "revoke": {
@@ -1795,7 +1860,9 @@ async function statusCommand(args: string[]): Promise<void> {
     client.routeGroups.list(),
     client.gatewayKeys.list(),
   ]);
-  const activeKeys = keys.items.filter((key) => !key.revokedAt).length;
+  const activeKeys = keys.items.filter(
+    (key) => !key.revokedAt && !key.suspendedAt,
+  ).length;
   const status = {
     daemon: info,
     providers: providers.items.length,

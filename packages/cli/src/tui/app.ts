@@ -1115,6 +1115,8 @@ export class AgentsScreen {
     if (wiring.attention) return wiring.attention.message;
     if (wiring.keyState === "none")
       return `Wired without a Gateway Key (before ${agent.name} took one), so HarnessHub's models refuse it; R gives it one.`;
+    if (wiring.keyState === "suspended")
+      return `Its Gateway Key is suspended: hh key resume ${wiring.keyId ?? ""} lets it in again; R issues a new one.`;
     if (wiring.keyState !== "active")
       return `Its Gateway Key is ${wiring.keyState}; R issues a new one.`;
     if (wiring.driftError) return `Drift unknown: ${wiring.driftError}`;

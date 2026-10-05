@@ -144,6 +144,14 @@ void test("every Gateway Key rejection uses the inbound format, the gateway sour
   const expired = await addKey(store, ["prov/*"], {
     expiresAt: "2026-10-02T11:00:00.000Z",
   });
+  const suspended = await addKey(store, ["prov/*"], {
+    suspendedAt: "2026-10-01T00:00:00.000Z",
+  });
+  // Revoked wins over suspended: a revoked key never comes back.
+  const both = await addKey(store, ["prov/*"], {
+    suspendedAt: "2026-10-01T00:00:00.000Z",
+    revokedAt: "2026-10-01T01:00:00.000Z",
+  });
   const gw = await mount(t, store);
   // A different last character, so the secret never matches by chance.
   const tampered =
@@ -199,6 +207,22 @@ void test("every Gateway Key rejection uses the inbound format, the gateway sour
       reason: "key_revoked",
       keyed: true,
       shape: "openai",
+    },
+    {
+      path: "/v1/chat/completions",
+      headers: { authorization: `Bearer ${suspended.text}` },
+      status: 401,
+      reason: "key_suspended",
+      keyed: true,
+      shape: "openai",
+    },
+    {
+      path: "/v1/messages",
+      headers: { "x-api-key": both.text },
+      status: 401,
+      reason: "key_revoked",
+      keyed: true,
+      shape: "anthropic",
     },
     {
       path: `/v1beta/models/prov/model-a:generateContent?key=${expired.text}`,

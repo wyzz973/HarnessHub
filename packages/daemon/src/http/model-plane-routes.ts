@@ -6,6 +6,7 @@ import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import {
   issueGatewayKey,
   parseModelRef,
+  providerEnabled,
   providerLimitsProblems,
   wireProtocols,
   type ConversationSummary,
@@ -88,12 +89,14 @@ import {
   conversationsQuerySchema,
   credentialCreateSchema,
   credentialParams,
+  credentialPatchSchema,
   credentialSchema,
   credentialSecretSchema,
   emptyBodySchema,
   gatewayKeyCreatedSchema,
   gatewayKeyCreateSchema,
   gatewayKeyLimitSchema,
+  gatewayKeyPatchSchema,
   gatewayKeySchema,
   idParams,
   listOf,
@@ -420,6 +423,7 @@ export function registerModelPlaneRoutes(
     | "serialize"
     | "keyLimits"
     | "outbound"
+    | "routing"
   >,
 ): void {
   const store: ModelPlaneStore = options.modelPlane;
@@ -696,6 +700,8 @@ export function registerModelPlaneRoutes(
         // Limits all removed one by one are no limits.
         if (object(merged.limits) && !Object.keys(merged.limits).length)
           delete merged.limits;
+        // On is stored as no flag.
+        if (merged.enabled === true) delete merged.enabled;
         const updated = checkProvider({
           ...merged,
           id: current.id,
@@ -704,7 +710,11 @@ export function registerModelPlaneRoutes(
           createdAt: current.createdAt,
           updatedAt: new Date().toISOString(),
         });
-        return writeEnriched(updated);
+        const written = await writeEnriched(updated);
+        // Switched back on, its credentials start without the rests they had.
+        if (!providerEnabled(current) && providerEnabled(written))
+          options.routing?.liftRest(written.id);
+        return written;
       }),
   );
   api.delete<{ Params: { id: string } }>(
@@ -1137,6 +1147,53 @@ export function registerModelPlaneRoutes(
           }),
         );
         return reply.code(201).send(added);
+      }),
+  );
+  /**
+   * Switches a credential on or off (Magpie `SetKeyOn`). The provider's
+   * last enabled credential stays on (409 `CREDENTIAL_LAST_ENABLED`): the
+   * provider is switched off instead. One switched back on starts without
+   * the rest and model marks it had.
+   */
+  api.patch<{
+    Params: { id: string; credentialId: string };
+    Body: { enabled: boolean };
+  }>(
+    "/providers/:id/credentials/:credentialId",
+    {
+      schema: {
+        params: credentialParams,
+        body: credentialPatchSchema,
+        response: responses(credentialSchema),
+      },
+    },
+    async (request) =>
+      serialized(async () => {
+        const current = await provider(request.params.id);
+        const found = credential(current, request.params.credentialId);
+        const enabled = request.body.enabled;
+        if (found.enabled === enabled) return found;
+        if (
+          !enabled &&
+          !current.credentials.some((item) => item !== found && item.enabled)
+        )
+          throw new ApiProblem(
+            "CREDENTIAL_LAST_ENABLED",
+            `${found.id} is the only enabled credential of ${current.id}; enable another first, or switch the provider off`,
+            409,
+          );
+        const updated: ProviderCredential = { ...found, enabled };
+        await store.putProvider(
+          checkProvider({
+            ...current,
+            credentials: current.credentials.map((item) =>
+              item === found ? updated : item,
+            ),
+            updatedAt: new Date().toISOString(),
+          }),
+        );
+        if (enabled) options.routing?.liftRest(current.id, found.id);
+        return updated;
       }),
   );
   api.put<{
@@ -1590,6 +1647,53 @@ export function registerModelPlaneRoutes(
         return view(await gatewayKey(id));
       }),
   );
+  api.patch<{ Params: { id: string }; Body: { name: string } }>(
+    "/gateway-keys/:id",
+    {
+      schema: {
+        params: idParams,
+        body: gatewayKeyPatchSchema,
+        response: responses(gatewayKeySchema),
+      },
+    },
+    async (request) =>
+      serialized(async () => {
+        const id = (await gatewayKey(request.params.id)).keyId;
+        await store.setGatewayKeyName(id, request.body.name);
+        return view(await gatewayKey(id));
+      }),
+  );
+  /**
+   * Suspend and resume: a suspended key is refused (401 `key_suspended`)
+   * and kept, unlike a revoked one, until it is resumed. A revoked key can
+   * be neither (409 `GATEWAY_KEY_REVOKED`); repeating either is a no-op.
+   */
+  for (const action of ["suspend", "resume"] as const)
+    api.post<{ Params: { id: string } }>(
+      `/gateway-keys/:id/${action}`,
+      {
+        schema: {
+          params: idParams,
+          body: emptyBodySchema,
+          response: responses(gatewayKeySchema),
+        },
+      },
+      async (request) =>
+        serialized(async () => {
+          const found = await gatewayKey(request.params.id);
+          if (found.revokedAt !== undefined)
+            throw new ApiProblem(
+              "GATEWAY_KEY_REVOKED",
+              "A revoked Gateway Key cannot be suspended or resumed",
+              409,
+            );
+          await store.setGatewayKeySuspended(
+            found.keyId,
+            action === "suspend" ? new Date().toISOString() : undefined,
+          );
+          return view(await gatewayKey(found.keyId));
+        }),
+    );
   const keyLimits = options.keyLimits;
   if (keyLimits)
     api.get<{ Params: { id: string } }>(

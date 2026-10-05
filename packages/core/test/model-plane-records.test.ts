@@ -115,4 +115,9 @@ void test("a provider's own limits are integers in their ranges, and a provider 
   assert.ok(
     !isProviderConfig({ ...provider, limits: { concurrentPerCredential: 0 } }),
   );
+  // Switched off is `enabled: false`; on is stored as no flag, or true.
+  for (const enabled of [false, true])
+    assert.ok(isProviderConfig({ ...provider, enabled }));
+  for (const enabled of ["false", 0, null])
+    assert.ok(!isProviderConfig({ ...provider, enabled }), String(enabled));
 });
