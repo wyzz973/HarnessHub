@@ -8,6 +8,7 @@ import path from "node:path";
 import test from "node:test";
 import type { TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
+import { wiringAdapter } from "@harnesshub/agents/wiring/index";
 import { runTui } from "@harnesshub/cli/tui";
 import { startHub } from "@harnesshub/daemon/main";
 import type { HarnessHubClient } from "@harnesshub/sdk/client";
@@ -30,15 +31,31 @@ interface Machine {
   dataDir: string;
   home: string;
   directory: string;
+  /** Claude Code's managed settings, when `policy` was given. */
+  policy?: { file: string; shown: string };
 }
 
 /**
  * A daemon whose wiring home has `claude` and `codex` commands (never run)
  * on its PATH and a Codex configuration directory, a provider on the strict
- * fake upstream with two priced models, and a route group over them.
+ * fake upstream with two priced models, and a route group over them. With
+ * `policy`, an administrator's Claude Code managed settings with that text,
+ * where this platform keeps them, under a system root of its own.
  */
-async function machine(t: TestContext): Promise<Machine> {
+async function machine(
+  t: TestContext,
+  options: { policy?: string } = {},
+): Promise<Machine> {
   const { directory, defer } = await temporaryDirectory(t, "hh-tui-");
+  const systemRoot = path.join(directory, "system");
+  let policy: Machine["policy"];
+  if (options.policy !== undefined) {
+    const [shown] = wiringAdapter("claude").managedFiles!(process.platform);
+    const file = path.join(systemRoot, shown!.replace(/^[A-Za-z]:/, ""));
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, options.policy);
+    policy = { file, shown: shown! };
+  }
   const home = path.join(directory, "home");
   const bin = path.join(directory, "bin");
   await mkdir(path.join(home, ".codex"), { recursive: true });
@@ -67,7 +84,11 @@ async function machine(t: TestContext): Promise<Machine> {
     port: 0,
     host: "127.0.0.1",
     catalog: { autoRefresh: false },
-    wiringHome: { home, env: { PATH: bin } },
+    wiringHome: {
+      home,
+      env: { PATH: bin },
+      ...(policy ? { systemRoot } : {}),
+    },
   });
   defer(() => hub.server.close());
   const client = await connectLocal({ dataDir, url: hub.url });
@@ -95,7 +116,14 @@ async function machine(t: TestContext): Promise<Machine> {
     credential: { value: KEY },
   });
   await client.routeGroups.create({ id: "fast", members: [SMALL, LARGE] });
-  return { client, url: hub.url, dataDir, home, directory };
+  return {
+    client,
+    url: hub.url,
+    dataDir,
+    home,
+    directory,
+    ...(policy ? { policy } : {}),
+  };
 }
 
 interface Session {
@@ -818,4 +846,122 @@ void test("hh tui shows what route groups' rules reach, the automatic groups, an
   await tui.press(KEYS.escape, (text) => !text.includes("❯"), "the list");
   await tui.press("q", () => true, "quit");
   assert.equal(await tui.done, 0);
+});
+
+/** The screen's text with lines joined by spaces, for sentences the screen wrapped. */
+function flat(screen: string): string {
+  return screen
+    .split("\n")
+    .map((line) => line.trim())
+    .join(" ")
+    .replace(/ +/g, " ");
+}
+
+void test("hh tui shows each agent's notice around a write, and Claude Code's managed settings on its row and status line", async (t) => {
+  const on = await machine(t, {
+    policy: JSON.stringify({
+      env: { ANTHROPIC_BASE_URL: "https://llm-proxy.corp.example" },
+    }),
+  });
+  const before = await readFile(on.policy!.file, "utf8");
+  const claude = await on.client.agents.get("claude");
+  const codex = await on.client.agents.get("codex");
+  assert.match(claude.notice ?? "", /restart/i);
+  assert.match(codex.notice ?? "", /restart/i);
+  // 80 columns: the notices are longer than a line and are wrapped, not cut.
+  const tui = session(on.client, { env: { NO_COLOR: "1" }, columns: 80 });
+  await tui.output.waitFor(listed, "the agents");
+  await tui.press(KEYS.enter, (text) => text.includes("❯"), "the picker");
+  await tui.press(
+    "small",
+    (text) => text.includes("❯ small") && !text.includes(LARGE),
+    "the filtered models",
+  );
+  let screen = await tui.press(
+    KEYS.enter,
+    (text) => text.includes("Write these changes"),
+    "the plan",
+  );
+  // The preview warns about the policy and says what to do after writing.
+  screen = await tui.press(
+    KEYS.pageDown + KEYS.pageDown + KEYS.pageDown,
+    (text) => text.includes("After writing:"),
+    "the end of the plan",
+  );
+  assert.ok(
+    flat(screen).includes(
+      `Warning: ${on.policy!.shown} (an administrator's managed settings) sets env.ANTHROPIC_BASE_URL, which wins over the wiring.`,
+    ),
+    flat(screen),
+  );
+  assert.ok(
+    flat(screen).includes(`After writing: ${claude.notice}`),
+    flat(screen),
+  );
+  screen = await tui.press(
+    "y",
+    (text) => text.includes("✓ Claude Code: model fake/sim-small."),
+    "the wired agent",
+  );
+  assert.ok(
+    flat(screen).includes(
+      `Claude Code: model fake/sim-small. ${claude.notice}`,
+    ),
+    flat(screen),
+  );
+  assert.doesNotMatch(screen, /Restart running/);
+  // The row marks the policy; the status line names the file and its entries.
+  assert.match(selected(screen), /Claude Code +! managed/);
+  screen = await tui.press(
+    KEYS.right + KEYS.left,
+    (text) => text.includes("Managed settings win over the wiring"),
+    "the status line",
+  );
+  assert.ok(
+    flat(screen).includes(
+      `Managed settings win over the wiring: ${on.policy!.shown} sets env.ANTHROPIC_BASE_URL.`,
+    ),
+    flat(screen),
+  );
+  // Unwiring says the same before and after.
+  screen = await tui.press(
+    "u",
+    (text) => text.includes("Unwire Claude Code"),
+    "the unwire question",
+  );
+  assert.ok(flat(screen).includes(`After writing: ${claude.notice}`));
+  screen = await tui.press(
+    "y",
+    (text) => text.includes("✓ Unwired Claude Code"),
+    "the unwired agent",
+  );
+  assert.ok(flat(screen).includes(claude.notice!), flat(screen));
+  // Codex's own words after its write.
+  await select(tui, "Codex CLI");
+  await tui.press(KEYS.enter, (text) => text.includes("❯"), "the picker");
+  await tui.press(
+    "small",
+    (text) => text.includes("❯ small") && !text.includes(LARGE),
+    "the filtered models",
+  );
+  await tui.press(
+    KEYS.enter,
+    (text) => text.includes("Write these changes"),
+    "the plan",
+  );
+  screen = await tui.press(
+    "y",
+    (text) => text.includes("✓ Codex CLI: model fake/sim-small."),
+    "the wired Codex",
+  );
+  assert.ok(
+    flat(screen).includes(`Codex CLI: model fake/sim-small. ${codex.notice}`),
+    flat(screen),
+  );
+  assert.match(selected(screen), /Codex CLI +✓ wired/, "no policy for Codex");
+  // Read only: the policy is as it was.
+  assert.equal(await readFile(on.policy!.file, "utf8"), before);
+  await tui.press("q", () => true, "quit");
+  assert.equal(await tui.done, 0);
+  assertRestored(tui);
 });

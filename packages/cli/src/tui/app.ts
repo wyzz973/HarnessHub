@@ -68,6 +68,8 @@ interface Picker {
 interface Question {
   crumbs: string[];
   lines: string[];
+  /** How many lines the last view made of `lines` once long notes were wrapped. */
+  shown?: number;
   scroll: number;
   question: string;
   yes: () => Promise<void>;
@@ -186,6 +188,35 @@ function unset(field: Field): string {
   return field.kind === "tier" ? "(follows model)" : "(not set)";
 }
 
+/** What the agents say to do after a write, each once, as the confirmation shows it. */
+function afterWriting(notices: ReadonlyArray<string | undefined>): string[] {
+  return [
+    ...new Set(notices.filter((notice): notice is string => !!notice)),
+  ].map((notice) => `After writing: ${notice}`);
+}
+
+/** A status line with the agent's notice after it, such as restarting it. */
+function withNotice(text: string, notice: string | undefined): string {
+  return notice ? `${text} ${notice}` : text;
+}
+
+/**
+ * Entries an administrator's policy (Claude Code's managed settings) sets
+ * over the wiring's, for the status line: each file and its dotted key
+ * paths. Read only; nothing here writes those files.
+ */
+function managedDetail(agent: Agent): string | undefined {
+  const managed = agent.wiring?.managed ?? [];
+  if (!managed.length) return undefined;
+  return `Managed settings win over the wiring: ${managed
+    .map((file) =>
+      file.keyPaths.length
+        ? `${tilde(file.path)} sets ${file.keyPaths.map((keyPath) => keyPath.join(".")).join(", ")}`
+        : `${tilde(file.path)} could not be read`,
+    )
+    .join("; ")}.`;
+}
+
 /** Wired, with an active key, no drift and nothing to look at. */
 function healthy(agent: Agent): boolean {
   const wiring = agent.wiring;
@@ -262,6 +293,27 @@ function tilde(file: string): string {
     ? `~${path.sep}${relative}`
     : file;
 }
+
+/** Plain `text` broken at spaces into lines of at most `columns`; a longer word is left to the screen to cut. */
+function wrapWords(text: string, columns: number): string[] {
+  const lines: string[] = [];
+  let line = "";
+  for (const word of text.split(" ")) {
+    const next = line ? `${line} ${word}` : word;
+    if (line && width(next) > columns) {
+      lines.push(line);
+      line = word;
+    } else line = next;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+/** A plan's notes that are sentences, not file contents: wrapped instead of cut. */
+const NOTE = /^(Warning|After writing): /;
+
+/** Status lines at most: a long notice wraps, and a longer one is cut. */
+const STATUS_LINES = 3;
 
 /** The hints joined by `·`, wrapped to `columns`. */
 function wrap(hints: string[], columns: number): string[] {
@@ -545,7 +597,10 @@ export class AgentsScreen {
   }
 
   async #confirmKey(question: Question, key: Key): Promise<KeyResult> {
-    const most = Math.max(0, question.lines.length - this.#page);
+    const most = Math.max(
+      0,
+      (question.shown ?? question.lines.length) - this.#page,
+    );
     switch (key.name === "char" ? key.text.toLowerCase() : key.name) {
       case "y":
         this.#mode = { kind: "list" };
@@ -832,17 +887,21 @@ export class AgentsScreen {
       kind: "confirm",
       question: {
         crumbs,
-        lines: planText(plan).split("\n"),
+        lines: [...planText(plan).split("\n"), ...afterWriting([plan.notice])],
         scroll: 0,
         question: `Write these changes to ${files === 1 ? "the file" : `${files} files`} of ${agent.name}?`,
         yes: async () => {
           const wired = await this.#call(`Writing ${agent.name}…`, async () => {
-            await this.client.agents.wire(agent.id, { ...input, expect: plan });
+            const view = await this.client.agents.wire(agent.id, {
+              ...input,
+              expect: plan,
+            });
             await this.load();
+            return view;
           });
           if (wired)
             this.#succeed(
-              `${agent.name}: ${what}. Restart running ${agent.name} sessions to use it.`,
+              withNotice(`${agent.name}: ${what}.`, wired.value.notice),
             );
         },
       },
@@ -865,6 +924,7 @@ export class AgentsScreen {
             ? `Issues ${agent.name} its first Gateway Key and writes it into its files; it was wired before it took one, so HarnessHub's models refuse it until then:`
             : `Issues a new Gateway Key for ${agent.name}, writes it into its files and revokes key ${wiring.keyId}:`,
           ...wiring.files.map((file) => `  ${file}`),
+          ...afterWriting([agent.notice]),
         ],
         scroll: 0,
         question: first
@@ -881,7 +941,10 @@ export class AgentsScreen {
           );
           if (rotated)
             this.#succeed(
-              `${agent.name} has key ${rotated.value.wiring?.keyId ?? "?"}${first ? "" : `; ${wiring.keyId} is revoked`}. Restart running ${agent.name} sessions to use it.`,
+              withNotice(
+                `${agent.name} has key ${rotated.value.wiring?.keyId ?? "?"}${first ? "" : `; ${wiring.keyId} is revoked`}.`,
+                rotated.value.notice,
+              ),
             );
         },
       },
@@ -901,6 +964,7 @@ export class AgentsScreen {
         lines: [
           `Restores these files as they were before wiring (${localTime(wiring.wiredAt)}):`,
           ...wiring.files.map((file) => `  ${file}`),
+          ...afterWriting([agent.notice]),
         ],
         scroll: 0,
         question: `Unwire ${agent.name}${wiring.keyId ? ` and revoke key ${wiring.keyId}` : ""}?`,
@@ -918,7 +982,10 @@ export class AgentsScreen {
           for (const file of result.value.files)
             actions.set(file.action, (actions.get(file.action) ?? 0) + 1);
           this.#succeed(
-            `Unwired ${agent.name}: ${[...actions].map(([action, count]) => `${count} ${action}`).join(", ") || "no files"}${wiring.keyId ? `; key ${wiring.keyId} revoked` : ""}.`,
+            withNotice(
+              `Unwired ${agent.name}: ${[...actions].map(([action, count]) => `${count} ${action}`).join(", ") || "no files"}${wiring.keyId ? `; key ${wiring.keyId} revoked` : ""}.`,
+              result.value.agent.notice,
+            ),
           );
         },
       },
@@ -967,7 +1034,10 @@ export class AgentsScreen {
       kind: "confirm",
       question: {
         crumbs: ["profiles", name],
-        lines: profileText(plan).split("\n"),
+        lines: [
+          ...profileText(plan).split("\n"),
+          ...afterWriting(changed.map((agent) => agent.plan?.notice)),
+        ],
         scroll: 0,
         question: `Switch ${changed.map((agent) => agent.adapterId).join(", ")} to profile ${name}?`,
         yes: async () => {
@@ -979,13 +1049,24 @@ export class AgentsScreen {
               return result;
             },
           );
-          if (applied)
-            this.#succeed(
-              `Applied profile ${name}: ${applied.value.agents
-                .filter((agent) => agent.outcome === "applied")
-                .map((agent) => agent.adapterId)
-                .join(", ")}. Restart running agent sessions to use it.`,
-            );
+          if (!applied) return;
+          const switched = applied.value.agents
+            .filter((agent) => agent.outcome === "applied")
+            .map((agent) => agent.adapterId);
+          // The agents' own notices, each once, from the views just reloaded.
+          const notices = [
+            ...new Set(
+              this.#agents
+                .filter((agent) => switched.includes(agent.id))
+                .flatMap((agent) => (agent.notice ? [agent.notice] : [])),
+            ),
+          ];
+          this.#succeed(
+            [
+              `Applied profile ${name}: ${switched.join(", ")}.`,
+              ...notices,
+            ].join(" "),
+          );
         },
       },
     };
@@ -1001,7 +1082,7 @@ export class AgentsScreen {
     const footer = wrap(this.#hints(), columns - PAD.length).map(
       (line) => PAD + line,
     );
-    const bottom = [PAD + this.#status(), ...footer];
+    const bottom = [...this.#statusLines(columns), ...footer];
     const height = Math.max(1, rows - bottom.length - 1);
     const body = this.#body(columns, height).slice(0, height);
     return [
@@ -1043,28 +1124,46 @@ export class AgentsScreen {
         return [
           hint("y", "yes"),
           hint("n", "no"),
-          ...(this.#mode.question.lines.length > this.#page
+          ...((this.#mode.question.shown ?? this.#mode.question.lines.length) >
+          this.#page
             ? [hint("↑↓", "scroll")]
             : []),
         ];
     }
   }
 
-  #status(): string {
+  /** The status: a mark, its text and the text's style. */
+  #status(): { mark: string; text: string; style: (text: string) => string } {
     const s = this.style;
-    if (this.#busy) return s.muted(`… ${this.#busy}`);
+    const plain = (text: string) => text;
+    if (this.#busy)
+      return { mark: "", text: `… ${this.#busy}`, style: s.muted };
     if (this.#flash)
       return this.#flash.ok
-        ? `${s.ok("✓")} ${this.#flash.text}`
-        : `${s.bad("✗")} ${this.#flash.text}`;
+        ? { mark: `${s.ok("✓")} `, text: this.#flash.text, style: plain }
+        : { mark: `${s.bad("✗")} `, text: this.#flash.text, style: plain };
     if (this.#mode.kind === "confirm")
-      return s.bold(this.#mode.question.question);
+      return { mark: "", text: this.#mode.question.question, style: s.bold };
     if (this.#mode.kind === "list") {
       const agent = this.#rows()[this.#row];
       const detail = agent && this.#detail(agent);
-      if (detail) return s.bad(detail);
+      if (detail) return { mark: "", text: detail, style: s.bad };
     }
-    return "";
+    return { mark: "", text: "", style: plain };
+  }
+
+  /** The status wrapped to `columns` in up to {@link STATUS_LINES} lines, so a notice is read whole. */
+  #statusLines(columns: number): string[] {
+    const { mark, text, style } = this.#status();
+    const indent = " ".repeat(width(mark));
+    const lines = wrapWords(text, columns - PAD.length - width(mark));
+    const kept = lines.slice(0, STATUS_LINES);
+    // What does not fit stays on the last line, for the screen to cut.
+    if (lines.length > STATUS_LINES)
+      kept[STATUS_LINES - 1] = lines.slice(STATUS_LINES - 1).join(" ");
+    return (kept.length ? kept : [""]).map(
+      (line, index) => `${PAD}${index ? indent : mark}${style(line)}`,
+    );
   }
 
   #header(crumbs: string[]): string {
@@ -1105,6 +1204,7 @@ export class AgentsScreen {
     if (wiring.driftError) return s.bad("? drift unknown");
     if (wiring.drift?.drifted)
       return s.bad(`! drift ${wiring.drift.kinds.join(",")}`);
+    if (wiring.managed?.length) return s.bad("! managed");
     return s.ok("✓ wired");
   }
 
@@ -1121,7 +1221,7 @@ export class AgentsScreen {
       return `Its Gateway Key is ${wiring.keyState}; R issues a new one.`;
     if (wiring.driftError) return `Drift unknown: ${wiring.driftError}`;
     const [first, ...more] = wiring.drift?.drifted ? wiring.drift.findings : [];
-    if (!first) return undefined;
+    if (!first) return managedDetail(agent);
     return `Changed since wiring: ${first.path} ${first.keyPath.join(".")} (${first.reason})${more.length ? ` and ${more.length} more` : ""}.`;
   }
 
@@ -1287,11 +1387,33 @@ export class AgentsScreen {
     const lines = [this.#header(question.crumbs), ""];
     const visible = Math.max(1, height - lines.length);
     this.#page = visible;
+    // Warnings and notices are sentences: wrapped, where file lines are cut.
+    const display = question.lines.flatMap<{
+      text: string;
+      note: string | undefined;
+    }>((text) => {
+      const note = NOTE.exec(text)?.[1];
+      return note
+        ? wrapWords(text, columns - PAD.length - 2).map((line, index) => ({
+            text: index ? `  ${line}` : line,
+            note,
+          }))
+        : [{ text, note: undefined }];
+    });
+    question.shown = display.length;
     const start = Math.min(
       question.scroll,
-      Math.max(0, question.lines.length - visible),
+      Math.max(0, display.length - visible),
     );
-    for (const text of question.lines.slice(start, start + visible)) {
+    for (const { text, note } of display.slice(start, start + visible)) {
+      if (note === "Warning") {
+        lines.push(PAD + s.bad(text));
+        continue;
+      }
+      if (note) {
+        lines.push(PAD + s.bold(text));
+        continue;
+      }
       // File names stay visible: paths are cut in the middle.
       const line = /^(Change |Create |--- |\+\+\+ )/.test(text)
         ? shorten(text, columns - PAD.length)
