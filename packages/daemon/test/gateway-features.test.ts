@@ -126,3 +126,66 @@ void test("each change stamps updatedAt, which the view leaves out; replace keep
     );
   assert.equal(file.current().updatedAt, "2026-10-01T00:00:00.000Z");
 });
+
+void test("a file from before the stricter checks starts without its slow rules and its addresses with credentials", async (t) => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "hh-features-old-"));
+  t.after(() => rm(dataDir, { recursive: true, force: true }));
+  const { secrets } = memorySecrets();
+  await writeFile(
+    path.join(dataDir, GATEWAY_FEATURES_FILE),
+    JSON.stringify({
+      schemaVersion: 1,
+      redaction: {
+        enabled: true,
+        rules: [
+          { name: "slow", pattern: String.raw`(\w+\s?)+$` },
+          { name: "ticket", pattern: "TCK-[0-9]+" },
+        ],
+      },
+      search: {
+        backends: [
+          {
+            id: "search-1",
+            kind: "searxng",
+            baseUrl: "https://alice:secret@search.example",
+          },
+          {
+            id: "search-2",
+            kind: "searxng",
+            baseUrl: "https://search.example",
+          },
+        ],
+      },
+    }),
+  );
+  const logged: [string, Record<string, unknown>][] = [];
+  const file = new GatewayFeaturesFile({
+    dataDir,
+    secrets,
+    log: {
+      info: (event: string, data: Record<string, unknown> = {}) =>
+        void logged.push([event, data]),
+      debug: () => undefined,
+    } as never,
+  });
+  await file.load();
+  assert.deepEqual(
+    file.current().redaction.rules.map((rule) => rule.name),
+    ["ticket"],
+  );
+  assert.deepEqual(
+    file.current().search?.backends.map((backend) => backend.id),
+    ["search-2"],
+  );
+  assert.deepEqual(
+    logged.map(([event, data]) => [event, data.setting]),
+    [
+      ["gateway.features_dropped", "/redaction/rules/0"],
+      ["gateway.features_dropped", "/search/backends/0"],
+    ],
+  );
+  assert.ok(
+    !JSON.stringify(logged).includes("secret@"),
+    "no credentials logged",
+  );
+});

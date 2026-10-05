@@ -583,7 +583,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
   const tasks = new Set<Promise<void>>();
   let closing: Promise<void> | undefined;
   const throttle = new RejectionThrottle(clock);
-  const redactor = new Redactor();
+  const redactor = new Redactor({ budgetMs: limits.redactionBudgetMs });
   for (const secret of deps.secrets ?? [])
     redactor.remember(secret, "ADMIN_TOKEN");
   const features = deps.features ?? (() => DEFAULT_GATEWAY_FEATURES);

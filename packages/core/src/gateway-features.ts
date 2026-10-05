@@ -10,6 +10,7 @@
  */
 import type { SecretReference } from "./engine-configuration.js";
 import { parseModelRef } from "./model-plane.js";
+import { regexHazard } from "./regex-safety.js";
 
 /** A user's own redaction pattern: what it finds becomes `{{HH_<NAME>_…}}`. */
 export interface RedactionRule {
@@ -95,6 +96,8 @@ export function redactionRuleProblem(rule: unknown): string | undefined {
   try {
     if (new RegExp(pattern, typeof flags === "string" ? flags : "").test(""))
       return "pattern must not match the empty string";
+    const hazard = regexHazard(pattern, typeof flags === "string" ? flags : "");
+    if (hazard) return `pattern can take too long: ${hazard}`;
   } catch (error) {
     return `pattern is not a valid regular expression: ${error instanceof Error ? error.message : "invalid"}`;
   }
@@ -111,6 +114,10 @@ const reference = (value: unknown): value is SecretReference =>
     (value as { kind?: unknown }).kind as string,
   ) &&
   typeof (value as { value?: unknown }).value === "string";
+
+/** Why a search backend's address with `user:password@` is refused. */
+export const SEARCH_URL_CREDENTIALS =
+  "baseUrl must not hold credentials (user:password@)";
 
 /** The reason a search backend is invalid, or undefined. */
 export function searchBackendProblem(backend: unknown): string | undefined {
@@ -135,6 +142,8 @@ export function searchBackendProblem(backend: unknown): string | undefined {
     }
     if (!url || (url.protocol !== "https:" && url.protocol !== "http:"))
       return "baseUrl must be an http or https URL";
+    // They would show in views and backups; a key goes in the backend's key.
+    if (url.username || url.password) return SEARCH_URL_CREDENTIALS;
   } else if (value.kind === "searxng")
     return "searxng needs the baseUrl of the instance";
   return undefined;

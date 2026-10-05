@@ -23,6 +23,7 @@ hh gateway alert                                     # 当前阈值与最近 40 
 - **占位符**：`{{HH_<种类>_<8 位 base32>}}`，是值在本进程随机密钥下的 HMAC：同一个值在每个请求中得到同一个占位符，所以对话历史逐轮一致（上游的提示缓存不受影响），占位符本身不透露值。值只在内存中按占位符保存，重启后由下一个请求重新带来。
 - **范围**：出站请求体中的每个字符串（消息、system、工具结果、历史中的工具调用参数），翻译后的与直通的都一样，也包括 `count_tokens` 与 Codex 透传；标识、模型名、类型、签名、加密内容、`data:` URL 与 base64 数据保持原样。直通请求只在确有替换时重新序列化。
 - **还原**：只在答复中模型把占位符写进**工具调用参数**的地方还原为原值，工具因此仍能使用真实的秘密；写给人看的文本保留占位符。按客户端的协议处理：Chat 的 `tool_calls[].function.arguments`，Responses 的函数与自定义工具调用（`*_arguments.*`、`custom_tool_call_input.*` 与输出项），Anthropic 的 `tool_use.input` 与 `input_json_delta`，Gemini 的 `functionCall.args`。流式参数中被切开的占位符会暂扣到同一调用的下一个片段，调用结束前写出；JSON 参数文本中的值按 JSON 字符串转义。
+- **规则的限制**（2026-10-05，第二轮安全审查 M6）：用户规则在守护进程的事件循环上对每个请求的每个字符串运行，一条会灾难性回溯的规则（如 `(\w+\s?)+$`，45 个字符就超过 40 秒）能让守护进程停住。因此在每个入口（接口、`hh gateway redaction rule add`、恢复备份、同步与读取设置文件）拒绝：反向引用；重复多于一次、里面还有重复、可选部分或分支的分组（`(a+)+`、`(a|ab)*`、`(ab?)+`，改用字符类）；两个无上限的重复之间只有可选部分且字符可能重叠（`\w+\w+`、`[a-z]+-?[a-z0-9]+`，跨分组也算）。检查见 [regex-safety.ts](../packages/core/src/regex-safety.ts)，偏保守。另外一个请求的脱敏总时长有上限（`gateway.limits.redactionBudgetMs`，默认 1000 ms），超过时这个请求以 503 `redaction_timeout` 失败、不发往上游，守护进程继续服务；预算在字符串与规则之间检查，单次匹配不会被打断，这一点靠上面的规则限制。更早版本写下的设置文件中不符合的规则在启动时不生效并记日志 `gateway.features_dropped`，文件在下次修改时更新。
 - **记录**：账本的 `patches[]` 记 `redact:<个数>`，只有个数，从不记值。
 - **OTLP 内容导出**：`otlp.bodies` 打开时，导出的请求与回答用同一个脱敏器与同一组规则遮蔽，关闭出站脱敏不影响这一步（[OTLP 导出](observability.md#otlp-导出)）。
 
@@ -53,7 +54,7 @@ hh gateway search add searxng --base-url http://127.0.0.1:8888
 hh gateway search remove search-1
 ```
 
-- **后端**：Tavily、Brave、Exa、Firecrawl 与 SearXNG，按登记顺序使用，前一个失败或没有结果时用下一个。密钥只在秘密存储中，设置文件记引用；HarnessHub 从不隐式读取环境变量，`--key-from-env` 只读取命令中指名的那一个。`--base-url` 用于 SearXNG（必填）或替换厂商的 API 地址。每个后端至多 30 秒、取 6 个结果，每个结果至多 1500 个字符。查询发出之前同样经过出站脱敏。没有后端时功能关闭：翻译时这类工具仍被拒绝（`Hosted Responses tool web_search is unsupported`），直通时原样发送。
+- **后端**：Tavily、Brave、Exa、Firecrawl 与 SearXNG，按登记顺序使用，前一个失败或没有结果时用下一个。密钥只在秘密存储中，设置文件记引用；HarnessHub 从不隐式读取环境变量，`--key-from-env` 只读取命令中指名的那一个。`--base-url` 用于 SearXNG（必填）或替换厂商的 API 地址，不能带 `user:password@`（它会出现在设置视图与备份中；Key 用 `--key`）。每个后端至多 30 秒、取 6 个结果，每个结果至多 1500 个字符。查询发出之前同样经过出站脱敏。没有后端时功能关闭：翻译时这类工具仍被拒绝（`Hosted Responses tool web_search is unsupported`），直通时原样发送。
 - **何时生效**：请求带这类工具（`tools` 中类型以 `web_search` 开头的项），或历史中有这类搜索（Responses 的 `web_search_call` 项、Anthropic 名为 `web_search` 的 `server_tool_use` 与 `web_search_tool_result` 块），且候选的上游不会自己执行它时；消息或函数工具中出现 `web_search` 字样不算（安全审查 L10）。直通到 `api.anthropic.com`（Anthropic）或 `api.openai.com`、`api.x.ai`、`api.deepseek.com`（Responses）的请求保留厂商自己的搜索；其他直通请求改为翻译。历史中有网关自己的搜索（下文的标记）时，请求总是由网关处理，不会把厂商不认识的块发给厂商。
 - **过程**：网关把客户端的搜索工具换成函数工具 `web_search(query)`（客户端已有同名工具时为 `hh_web_search`），模型调用它时并行执行查询，把结果作为工具结果再问模型一轮；至多 6 轮，第 7 次要搜索时回答“No more searches”，模型据此作答。每轮至多执行 `gateway.limits.maxSearchesPerRound`（默认 5）次、每个请求至多 `maxSearchesPerRequest`（默认 20）次查询，每次查询占用发出请求的 Key 的一个每分钟请求；超出或 Key 的每分钟请求已用完时这次查询不执行，工具结果告诉模型原因（“Not run: …”）。只调用搜索的回合对客户端不可见；模型同时调用客户端自己的工具时，这些调用交给客户端，搜索调用被丢弃。各轮的文本连成一个答复，用量合计。
 - **客户端看到的**：Anthropic 为 `server_tool_use`（id 为 `srvtoolu_hh_…`）与 `web_search_tool_result`（标题与 URL，`encrypted_content` 为空）块；Responses 为 `web_search_call` 项（id 为 `ws_hh_…`，`action` 带 `query` 与 `sources`）。这两种标记的块在之后的请求中转成给模型看的文字。Chat 的 `web_search_options` 与 Gemini 的 `googleSearch` 不在范围内。

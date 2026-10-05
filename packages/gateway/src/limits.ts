@@ -63,6 +63,11 @@ export interface HandlerLimits {
   maxSearchesPerRound: number;
   /** …and for the whole request; the model is told when a search is not run. */
   maxSearchesPerRequest: number;
+  /**
+   * How long masking one body's secrets may take (user redaction rules run
+   * on the event loop); past it the request fails with 503 `redaction_timeout`.
+   */
+  redactionBudgetMs: number;
 }
 
 const MiB = 1024 * 1024;
@@ -91,6 +96,7 @@ export const DEFAULT_HANDLER_LIMITS: Readonly<HandlerLimits> = Object.freeze({
   maxInternalCalls: 20,
   maxSearchesPerRound: 5,
   maxSearchesPerRequest: 20,
+  redactionBudgetMs: 1000,
 });
 
 /** Longest delay Node timers accept. */
@@ -124,6 +130,7 @@ const RANGES: Readonly<Record<keyof HandlerLimits, readonly [number, number]>> =
     maxInternalCalls: [0, MAX],
     maxSearchesPerRound: [0, MAX],
     maxSearchesPerRequest: [0, MAX],
+    redactionBudgetMs: [1, 60_000],
   };
 
 /**

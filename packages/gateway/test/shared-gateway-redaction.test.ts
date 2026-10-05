@@ -503,3 +503,52 @@ void test("a passed-through Anthropic request is masked and its tool input resto
   assert.deepEqual(JSON.parse(input), { token: ADMIN });
   assert.match(answer.text, /event: message_stop/);
 });
+
+void test("redaction that runs past its time budget fails that request, never the handler", async (t) => {
+  // Second security review M6: user rules run on the event loop for every string.
+  const many = Array.from({ length: 3000 }, (_, index) => ({
+    role: "user",
+    content: `${"lorem ipsum dolor sit amet ".repeat(20)} ticket ${index}`,
+  }));
+  const rules = [
+    { name: "ticket", pattern: "TCK-[0-9]+" },
+    { name: "word", pattern: "[a-z]+@[a-z]+" },
+  ];
+  const quick = new Redactor({ budgetMs: 1 });
+  assert.throws(
+    () => quick.maskJson({ messages: many }, rules),
+    (error: Error & { code?: string; status?: number }) =>
+      error.code === "redaction_timeout" && error.status === 503,
+  );
+  // A small body fits the same budget.
+  assert.equal(quick.maskJson({ content: "TCK-12 here" }, rules).count, 1);
+
+  const up = await upstream(t, CHAT_REPLY);
+  const store = new MemoryStore();
+  await store.putProvider(provider("a", { chat: `${up.base}/v1` }));
+  const key = await addKey(store, ["a/*"]);
+  const gw = await mount(
+    t,
+    store,
+    { redactionBudgetMs: 1 },
+    {
+      features: () => ({
+        schemaVersion: 1,
+        redaction: { enabled: true, rules },
+      }),
+    },
+  );
+  const call = (messages: unknown[]) =>
+    send(gw.port, "/v1/chat/completions", {
+      headers: { authorization: `Bearer ${key.text}` },
+      body: { model: "a/model-a", messages },
+    });
+  const slow = await call(many);
+  assert.equal(slow.status, 503, slow.text);
+  assert.equal(at(slow.json(), "error", "code"), "redaction_timeout");
+  assert.equal(up.seen.length, 0, "nothing went upstream unmasked");
+  assert.equal(store.entries.at(-1)?.errorClass, "redaction_timeout");
+  const fine = await call([{ role: "user", content: "TCK-1" }]);
+  assert.equal(fine.status, 200, fine.text);
+  assert.equal(up.seen.length, 1);
+});

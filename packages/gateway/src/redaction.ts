@@ -15,11 +15,13 @@
  * values are held in memory by placeholder, for {@link Redactor.restore}.
  */
 import { createHmac, randomBytes } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import {
   redactionRuleProblem,
   type RedactionRule,
   type RedactionSettings,
 } from "@harnesshub/core/gateway-features";
+import { GatewayError } from "./protocol.js";
 
 export type { RedactionRule, RedactionSettings };
 
@@ -79,15 +81,47 @@ interface Span {
   kind: string;
 }
 
+/** How long one masking may take by default: a body's strings together. */
+export const REDACTION_BUDGET_MS = 1000;
+
+/** When the masking under way must stop: `performance.now()` milliseconds. */
+interface Budget {
+  until: number;
+  ms: number;
+}
+
 /**
  * The redaction state of one gateway handler: the key, the known values and
- * the placeholders made so far.
+ * the placeholders made so far. One {@link mask} or {@link maskJson} may
+ * take `budgetMs` (user rules run on the event loop for every string); past
+ * it, it throws GatewayError `redaction_timeout` (503), so that request
+ * fails and nothing goes upstream unmasked. Rules that can backtrack without
+ * bound are refused before they run (`redactionRuleProblem`), so one rule on
+ * one string cannot hold the loop for long either.
  */
 export class Redactor {
   #key = randomBytes(32);
   #known = new Map<string, SecretKind>();
   #values = new Map<string, string>();
   #compiled = new Map<string, RegExp>();
+  readonly #budgetMs: number;
+
+  constructor(options: { budgetMs?: number } = {}) {
+    this.#budgetMs = options.budgetMs ?? REDACTION_BUDGET_MS;
+  }
+
+  #budget(): Budget {
+    return { until: performance.now() + this.#budgetMs, ms: this.#budgetMs };
+  }
+
+  #spent(budget: Budget): void {
+    if (performance.now() > budget.until)
+      throw new GatewayError(
+        `Redacting secrets in the request took longer than ${budget.ms} ms; the redaction rules are too slow for a request this large`,
+        503,
+        "redaction_timeout",
+      );
+  }
 
   /** Treat `value` as a secret from now on; short values are ignored. */
   remember(value: string, kind: SecretKind): void {
@@ -132,10 +166,15 @@ export class Redactor {
     return compiled;
   }
 
-  /** `text` with every secret replaced; `count` is how many were. */
+  /**
+   * `text` with every secret replaced; `count` is how many were.
+   *
+   * @throws GatewayError `redaction_timeout` (503) past the time budget.
+   */
   mask(
     text: string,
     rules: readonly RedactionRule[] = [],
+    budget: Budget = this.#budget(),
   ): { text: string; count: number } {
     if (text.length < MIN_SECRET) return { text, count: 0 };
     const found: Span[] = [];
@@ -156,6 +195,7 @@ export class Redactor {
     for (const rule of rules) {
       const pattern = this.#rule(rule);
       if (!pattern) continue;
+      this.#spent(budget);
       for (const match of text.matchAll(pattern)) {
         const value = match[1] ?? match[0];
         if (!value) continue;
@@ -169,6 +209,7 @@ export class Redactor {
           kind: rule.name.toUpperCase(),
         });
       }
+      this.#spent(budget);
     }
     if (!found.length) return { text, count: 0 };
     // Nothing inside a placeholder already there; earlier and longer first.
@@ -197,17 +238,21 @@ export class Redactor {
   /**
    * A JSON value with every string masked, except under {@link KEPT} keys
    * and `data:` URLs. The value is copied only where something changed.
+   *
+   * @throws GatewayError `redaction_timeout` (503) when all its strings
+   *   together take longer than the time budget.
    */
   maskJson(
     value: unknown,
     rules: readonly RedactionRule[] = [],
   ): { value: unknown; count: number } {
+    const budget = this.#budget();
     let count = 0;
     const walk = (item: unknown, key: string | undefined): unknown => {
       if (typeof item === "string") {
         if ((key !== undefined && KEPT.has(key)) || item.startsWith("data:"))
           return item;
-        const masked = this.mask(item, rules);
+        const masked = this.mask(item, rules, budget);
         count += masked.count;
         return masked.text;
       }

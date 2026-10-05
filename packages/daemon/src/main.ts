@@ -736,7 +736,11 @@ export async function startHub(options: {
     shareToClose = share;
     await share.load();
     // Redaction, vision and search settings (Magpie parity §11).
-    const gatewayFeatures = new GatewayFeaturesFile({ dataDir, secrets });
+    const gatewayFeatures = new GatewayFeaturesFile({
+      dataDir,
+      secrets,
+      log: gatewayLog,
+    });
     await gatewayFeatures.load();
     const gatewaySearch = () =>
       (gatewayFeatures.current().search?.backends.length ?? 0) > 0;

@@ -10,11 +10,13 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { HubError } from "@harnesshub/core/errors";
+import type { LogSink } from "@harnesshub/core/logging";
 import {
   DEFAULT_GATEWAY_FEATURES,
   gatewayFeaturesProblems,
   redactionRuleProblem,
   searchBackendProblem,
+  SEARCH_URL_CREDENTIALS,
   usagePercent as isUsagePercent,
   type GatewayFeatures,
   type RedactionRule,
@@ -48,6 +50,8 @@ export class GatewayFeaturesFile implements GatewayFeaturesControl {
       secrets: ManagedSecrets;
       /** Stamps `updatedAt` on each change; the system clock by default. */
       clock?: () => Date;
+      /** Where settings left out at load are named. */
+      log?: LogSink;
     },
   ) {}
 
@@ -56,11 +60,15 @@ export class GatewayFeaturesFile implements GatewayFeaturesControl {
   }
 
   /**
-   * Read the file; a missing file is the defaults.
+   * Read the file; a missing file is the defaults. Redaction rules that can
+   * backtrack without bound and search addresses with credentials, which
+   * files written before those checks may hold, are left out of the
+   * settings in force and logged (`gateway.features_dropped`); the file
+   * keeps them until the next change.
    *
    * @throws HubError `GATEWAY_FEATURES_INVALID` (500) for a file that is
-   *   not valid settings, so a hand-edited mistake does not silently turn
-   *   redaction off.
+   *   not valid settings otherwise, so a hand-edited mistake does not
+   *   silently turn redaction off.
    */
   async load(): Promise<void> {
     let text: string;
@@ -76,6 +84,7 @@ export class GatewayFeaturesFile implements GatewayFeaturesControl {
     } catch {
       value = undefined;
     }
+    this.#dropUnsafe(value);
     const problems = gatewayFeaturesProblems(value);
     if (problems.length)
       throw new HubError(
@@ -87,6 +96,37 @@ export class GatewayFeaturesFile implements GatewayFeaturesControl {
         500,
       );
     this.#current = value as GatewayFeatures;
+  }
+
+  /**
+   * Removes from a loaded document the rules and backends that only the
+   * checks added after it was written refuse (second security review M6
+   * and the search address finding), naming each in the log.
+   */
+  #dropUnsafe(value: unknown): void {
+    if (typeof value !== "object" || value === null) return;
+    const features = value as Partial<Record<string, unknown>>;
+    const dropped = (setting: string, reason: string) =>
+      this.options.log?.info("gateway.features_dropped", { setting, reason });
+    const redaction = features.redaction as { rules?: unknown } | undefined;
+    if (Array.isArray(redaction?.rules))
+      redaction.rules = redaction.rules.filter((rule: unknown, index) => {
+        const problem = redactionRuleProblem(rule);
+        if (!problem?.startsWith("pattern can take too long")) return true;
+        dropped(`/redaction/rules/${index}`, problem);
+        return false;
+      });
+    const search = features.search as { backends?: unknown } | undefined;
+    if (search && Array.isArray(search.backends)) {
+      const kept = search.backends.filter((backend: unknown, index) => {
+        const problem = searchBackendProblem(backend);
+        if (problem !== SEARCH_URL_CREDENTIALS) return true;
+        dropped(`/search/backends/${index}`, problem);
+        return false;
+      });
+      if (kept.length) search.backends = kept;
+      else delete features.search;
+    }
   }
 
   /** The settings in force; the gateway reads this for each request. */

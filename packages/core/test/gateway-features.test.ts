@@ -6,6 +6,8 @@ import {
   DEFAULT_GATEWAY_FEATURES,
   gatewayFeaturesProblems,
   isGatewayFeatures,
+  redactionRuleProblem,
+  searchBackendProblem,
 } from "../src/gateway-features.js";
 
 const pointers = (value: unknown) =>
@@ -96,5 +98,81 @@ void test("invalid settings are refused with the field", () => {
       "/search/backends/3",
       "/other",
     ],
+  );
+});
+
+void test("rules that can backtrack without bound are refused; ordinary secret patterns pass", () => {
+  // Second security review M6: 45 characters of prose took over 40 s.
+  for (const pattern of [
+    String.raw`(\w+\s?)+$`,
+    "(a+)+b",
+    "(a|aa)*c",
+    "(a|b)+c",
+    "(ab?)+c",
+    String.raw`(?:\d+,?){2,}x`,
+    String.raw`(.*a){12}`,
+    String.raw`([a-z])\1`,
+    String.raw`(?<w>\w)\k<w>`,
+    String.raw`\w+\w+!`,
+    ".*.*=",
+    String.raw`\s*\s*x`,
+    "[a-z]+-?[a-z0-9]+!",
+    String.raw`\w+(?:\s?\w+)?!`,
+    String.raw`(?:x\w*)\d+y`,
+    "[A-Z]+[a-z]*[a-z]{20,}",
+  ]) {
+    const problem = redactionRuleProblem({ name: "slow", pattern });
+    assert.ok(problem, pattern);
+    assert.match(problem, /nested|repetitions|backreferences/, pattern);
+  }
+  for (const pattern of [
+    "TCK-[0-9]+",
+    "sk-[A-Za-z0-9]{20,}",
+    String.raw`(?:token|key)=([^&\s]+)`,
+    "[a-z]+(?:-[0-9]+)?",
+    String.raw`\s*=\s*\S+`,
+    "falcon-([0-9]+)",
+    String.raw`AKIA[0-9A-Z]{16}`,
+    String.raw`ghp_[A-Za-z0-9]{36}`,
+    String.raw`(?:ab)+c`,
+    String.raw`\d{3}-\d{4}`,
+    String.raw`(?=\w*\d)\w{12,}`,
+    String.raw`[a-z]+@[a-z]+\.[a-z]{2,}`,
+  ])
+    assert.equal(
+      redactionRuleProblem({ name: "ok", pattern }),
+      undefined,
+      pattern,
+    );
+  // Case folding is taken into account: `[a-z]+` and `[A-Z]+` overlap with i.
+  assert.equal(
+    redactionRuleProblem({ name: "ok", pattern: "[a-z]+[A-Z]+!" }),
+    undefined,
+  );
+  assert.ok(
+    redactionRuleProblem({
+      name: "slow",
+      pattern: "[a-z]+[A-Z]+!",
+      flags: "i",
+    }),
+  );
+});
+
+void test("a search backend's address carries no credentials", () => {
+  assert.match(
+    searchBackendProblem({
+      id: "search-1",
+      kind: "searxng",
+      baseUrl: "https://alice:secret@search.example",
+    }) ?? "",
+    /credentials/,
+  );
+  assert.equal(
+    searchBackendProblem({
+      id: "search-1",
+      kind: "searxng",
+      baseUrl: "https://search.example/searx",
+    }),
+    undefined,
   );
 });
