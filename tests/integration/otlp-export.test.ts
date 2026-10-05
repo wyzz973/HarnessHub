@@ -291,6 +291,137 @@ void test(
   },
 );
 
+interface MetricPoint {
+  attributes: { key: string; value: Value }[];
+  count: string;
+  sum: number;
+  bucketCounts: string[];
+}
+
+function metricPoints(received: Received[], name: string): MetricPoint[] {
+  return received
+    .filter((request) => request.path === "/v1/metrics")
+    .flatMap((request) =>
+      (
+        JSON.parse(request.body) as {
+          resourceMetrics: {
+            scopeMetrics: {
+              metrics: {
+                name: string;
+                histogram: { dataPoints: MetricPoint[] };
+              }[];
+            }[];
+          }[];
+        }
+      ).resourceMetrics[0]!.scopeMetrics[0]!.metrics.filter(
+        (metric) => metric.name === name,
+      ),
+    )
+    .flatMap((metric) => metric.histogram.dataPoints);
+}
+
+void test(
+  "with metrics and bodies on, the collector also gets GenAI metrics and each call's masked request and reply",
+  { timeout: 60_000 },
+  async (t) => {
+    const stub = await collector(t);
+    const { client, chat, close, key, provider } = await hubWithProvider(t, {
+      endpoint: stub.endpoint,
+      metrics: true,
+      bodies: true,
+    });
+    const plain = await chat({
+      model: "fake/chat-1",
+      messages: [{ role: "user", content: `${PROMPT}; my key is ${key}` }],
+    });
+    assert.equal(plain.status, 200, plain.text);
+    const streamed = await chat({
+      model: "fake/chat-1",
+      stream: true,
+      messages: [{ role: "user", content: PROMPT }],
+    });
+    assert.equal(streamed.status, 200, streamed.text);
+    const ledger = (await client.modelCalls.list({ limit: 10 })).items;
+    assert.equal(ledger.length, 2);
+    await close();
+    await provider.idle();
+    assert.deepEqual(provider.violations(), []);
+
+    assert.deepEqual(
+      [...new Set(stub.received.map((request) => request.path))].sort(),
+      ["/v1/metrics", "/v1/traces"],
+    );
+    // Bodies on: the prompt and the reply leave the machine, masked.
+    const byCall = new Map(
+      spans(
+        stub.received.filter((request) => request.path === "/v1/traces"),
+      ).map((span) => [
+        (view(span)["hh.model_call.id"] as Value).stringValue as string,
+        view(span),
+      ]),
+    );
+    for (const entry of ledger) {
+      const attributes = byCall.get(entry.callId)!;
+      const input = (attributes["langfuse.observation.input"] as Value)
+        .stringValue as string;
+      const output = (attributes["langfuse.observation.output"] as Value)
+        .stringValue as string;
+      assert.equal(
+        (JSON.parse(input) as { model: string }).model,
+        "fake/chat-1",
+      );
+      assert.ok(input.includes(PROMPT), input);
+      // The streamed reply as its text, the other as the JSON it was.
+      if (entry.inbound.stream) assert.equal(output, "OK");
+      else assert.match(output, /^\{.*"OK"/s);
+    }
+    assert.match(
+      (
+        byCall.get(ledger.find((entry) => !entry.inbound.stream)!.callId)![
+          "langfuse.observation.input"
+        ] as Value
+      ).stringValue as string,
+      /my key is \{\{HH_GATEWAY_KEY_[a-z2-7]{8}\}\}/,
+    );
+    const payload = stub.received.map((request) => request.body).join("\n");
+    for (const secret of [UPSTREAM_KEY, key, KEY_NAME])
+      assert.equal(payload.includes(secret), false, secret);
+
+    // Metrics: one duration per call, and every token the ledger counted.
+    const durations = metricPoints(
+      stub.received,
+      "gen_ai.client.operation.duration",
+    );
+    assert.equal(
+      durations.reduce((sum, point) => sum + Number(point.count), 0),
+      2,
+    );
+    const tokens = metricPoints(stub.received, "gen_ai.client.token.usage");
+    const sumOf = (type: string) =>
+      tokens
+        .filter((point) =>
+          point.attributes.some(
+            ({ key: name, value }) =>
+              name === "gen_ai.token.type" && value.stringValue === type,
+          ),
+        )
+        .reduce((sum, point) => sum + point.sum, 0);
+    const counted = ledger.map((entry) => entry.usage!);
+    assert.equal(
+      sumOf("input"),
+      counted.reduce(
+        (sum, usage) => sum + usage.input + usage.cacheRead + usage.cacheWrite,
+        0,
+      ),
+    );
+    assert.equal(
+      sumOf("output"),
+      counted.reduce((sum, usage) => sum + usage.output + usage.reasoning, 0),
+    );
+    assert.ok(sumOf("output") > 0);
+  },
+);
+
 void test(
   "without an otlp block nothing is exported, even with the standard OTEL variables set",
   { timeout: 60_000 },

@@ -118,7 +118,6 @@ import { createSessionLogReader } from "./logging/session-log-reader.js";
 import { createRedactor } from "./worker/diagnostics.js";
 import { ModelSessions, type ModelRouting } from "./model-sessions.js";
 import {
-  exportCommittedCalls,
   resolveOtlpConfig,
   startModelCallExport,
   type ModelCallExporter,
@@ -735,11 +734,17 @@ export async function startHub(options: {
     // The shared model gateway on this listener (03-model-plane); it reads
     // providers, keys and the ledger from the store and resolves credentials
     // per upstream attempt. With OTLP export, each committed ledger entry
-    // is also queued as a span.
+    // is also queued as a span, with its masked bodies when they are on.
     modelGateway = createGatewayHandler({
-      store: exporter
-        ? exportCommittedCalls(modelPlane, (entry) => exporter.record(entry))
-        : modelPlane,
+      store: modelPlane,
+      ...(exporter
+        ? {
+            calls: {
+              bodies: () => exporter.bodies,
+              committed: (entry, bodies) => exporter.record(entry, bodies),
+            },
+          }
+        : {}),
       resolveSecret: (ref) => secrets.resolve(ref, environment),
       clock: Date.now,
       limits: gatewayLimits,

@@ -43,7 +43,7 @@
 | `network.proxyPassword` | 代理地址写了用户名而没有密码时的密码，秘密引用 `{"kind": "env" \| "file" \| "keychain" \| "store", "value": ...}` | 无 | | |
 | `network.noProxy` | 直连、不经守护进程代理的主机：主机名（含子域名，末尾的点可有可无）、`.example.com`、`*.example.com`、`主机:端口`、IPv4 或 IPv6 地址（任意写法，带端口时 IPv6 写在方括号中）、地址范围（`10.0.0.0/8`）或 `*` | 无 | | `no_proxy`、`NO_PROXY`（逗号或空格分隔；其他程序接受而 HarnessHub 不识别的条目，例如 `192.168.*` 与 `<local>`，警告后忽略） |
 | `gateway.limits` | 模型网关上限的覆盖，键与范围见 [`limits.ts`](../packages/gateway/src/limits.ts) | 无覆盖 | | |
-| `otlp` | 模型调用的 OTLP 导出（[观测](observability.md)），缺省关闭 | 无 | `--otlp-config FILE`（文件内容整体代替） | |
+| `otlp` | 模型调用的 OTLP 导出（[观测](observability.md#otlp-导出)：span，可选 `metrics` 与 `bodies`），缺省关闭 | 无 | `--otlp-config FILE`（文件内容整体代替） | |
 
 示例：
 

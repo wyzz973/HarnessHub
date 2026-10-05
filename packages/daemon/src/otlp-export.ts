@@ -5,16 +5,22 @@
  * span after `appendModelCall` resolved, so the ledger stays the only source
  * of truth and a span is its exported view. Attributes follow the
  * OpenTelemetry GenAI semantic conventions; HarnessHub's own fields use
- * `hh.*`. Spans never carry prompts, outputs, tool arguments, error texts,
- * credentials, key text or key names: only ids, model names, counts, codes
- * and times from the ledger entry.
+ * `hh.*`. Spans never carry error texts, credentials, key text or key names:
+ * only ids, model names, counts, codes and times from the ledger entry, and
+ * the call's request and reply only with the opt-in `bodies` (Magpie's
+ * Langfuse observation input and output), masked by the gateway first.
  *
- * Transport: OTLP/HTTP with the JSON encoding to `<endpoint>/v1/traces`
- * (https://opentelemetry.io/docs/specs/otlp/#otlphttp). The protobuf encoding
- * would need a protobuf dependency or a hand-written encoder; it is rejected
- * as unsupported until then. Export never blocks or fails a model call: a
- * bounded queue drops (and counts) spans when full, and failures are counted
- * and logged, never thrown.
+ * With `metrics`, each exported batch is also sent as the GenAI client
+ * metrics Magpie exports (`gen_ai.client.operation.duration` and
+ * `gen_ai.client.token.usage`, delta histograms with Magpie's bounds),
+ * through the same queue, batches, flushes and retries as the spans.
+ *
+ * Transport: OTLP/HTTP with the JSON encoding to `<endpoint>/v1/traces` and
+ * `<endpoint>/v1/metrics` (https://opentelemetry.io/docs/specs/otlp/#otlphttp).
+ * The protobuf encoding would need a protobuf dependency or a hand-written
+ * encoder; it is rejected as unsupported until then. Export never blocks or
+ * fails a model call: a bounded queue drops (and counts) spans when full, and
+ * failures are counted and logged, never thrown.
  */
 import { randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
@@ -22,26 +28,40 @@ import type { SecretReference } from "@harnesshub/core/engine-configuration";
 import { deadline } from "@harnesshub/gateway/http";
 import { HubError } from "@harnesshub/core/errors";
 import { NO_LOG, type LogSink } from "@harnesshub/core/logging";
-import type {
-  ModelCallEntry,
-  ModelPlaneStore,
-  ProviderId,
-} from "@harnesshub/core/model-plane";
+import type { ModelCallEntry, ProviderId } from "@harnesshub/core/model-plane";
 
 /** Only the JSON encoding is implemented. */
 export type OtlpProtocol = "http/json";
 
 /** The resolved `otlp` block; header values may still be secret references. */
 export interface OtlpConfig {
-  /** Collector base URL without a trailing slash; spans go to `<endpoint>/v1/traces`. */
+  /**
+   * Collector base URL without a trailing slash or a trailing `/v1/traces`
+   * or `/v1/metrics`; spans go to `<endpoint>/v1/traces`.
+   */
   endpoint: string;
   protocol: OtlpProtocol;
   headers: Readonly<Record<string, string | SecretReference>>;
   /** Resource attributes added to (and overriding) `service.name` and `service.version`. */
   resource: Readonly<Record<string, string | number | boolean>>;
+  /** Also send the GenAI client metrics to `<endpoint>/v1/metrics`; off by default. */
+  metrics: boolean;
+  /**
+   * Put each call's request and reply on its span as Langfuse's
+   * `langfuse.observation.input` and `.output`; off by default. Prompts and
+   * replies then leave the machine (masked, cut at 256 KiB each).
+   */
+  bodies: boolean;
 }
 
-const SETTINGS = new Set(["endpoint", "protocol", "headers", "resource"]);
+const SETTINGS = new Set([
+  "endpoint",
+  "protocol",
+  "headers",
+  "resource",
+  "metrics",
+  "bodies",
+]);
 const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 /** Headers the exporter sets itself or that HTTP owns. */
 const RESERVED_HEADERS = new Set([
@@ -66,7 +86,8 @@ function plainObject(value: unknown): value is Record<string, unknown> {
  * Resolve the `otlp` block. Absent means export is off: no exporter, no
  * timer and no network. Header values are strings or secret references
  * (`{"kind": "env" | "file" | "keychain" | "store", "value": ...}`),
- * resolved once when the exporter starts.
+ * resolved once when the exporter starts. `metrics` and `bodies` are
+ * booleans, false when absent.
  *
  * @throws HubError `INVALID_CONFIG` naming the first invalid setting,
  *   including `protocol: "http/protobuf"`, which is not supported yet.
@@ -144,11 +165,19 @@ export function resolveOtlpConfig(input: unknown): OtlpConfig | undefined {
       resource[name] = value;
     }
   }
+  for (const name of ["metrics", "bodies"] as const)
+    if (input[name] !== undefined && typeof input[name] !== "boolean")
+      throw invalid(`${name} must be true or false`);
   return Object.freeze({
-    endpoint: url.href.replace(/\/+$/, ""),
+    // A signal's own URL names the base, as Magpie takes it.
+    endpoint: url.href
+      .replace(/\/+$/, "")
+      .replace(/\/v1\/(?:traces|metrics)$/, ""),
     protocol,
     headers: Object.freeze(headers),
     resource: Object.freeze(resource),
+    metrics: input.metrics === true,
+    bodies: input.bodies === true,
   });
 }
 
@@ -165,6 +194,10 @@ export interface OtlpLimits {
   maxBackoffMs: number;
   /** Longest wait of `shutdown` for the queue to drain. */
   shutdownMs: number;
+  /** Bytes of request and reply bodies the queue holds at most (Magpie's 128 MiB); past it a span goes without them. */
+  maxQueuedBodyBytes: number;
+  /** Bytes of bodies in one traces request at most (Magpie's 16 MiB), so a collector's size limit holds. */
+  maxBodyBytesPerRequest: number;
 }
 
 export const DEFAULT_OTLP_LIMITS: Readonly<OtlpLimits> = Object.freeze({
@@ -175,6 +208,8 @@ export const DEFAULT_OTLP_LIMITS: Readonly<OtlpLimits> = Object.freeze({
   maxRetries: 2,
   maxBackoffMs: 60_000,
   shutdownMs: 3000,
+  maxQueuedBodyBytes: 128 * 1024 * 1024,
+  maxBodyBytesPerRequest: 16 * 1024 * 1024,
 });
 
 /** Counters since the exporter started; `queued` is the current queue length. */
@@ -185,16 +220,32 @@ export interface OtlpExportStats {
   dropped: number;
   /** Spans in batches the collector rejected or that failed after every retry. */
   failed: number;
+  /** Retried requests, of spans and of metrics. */
   retries: number;
+  /** Calls whose metrics the collector accepted; 0 without `metrics`. */
+  metricsExported: number;
+  /** Calls whose metrics the collector rejected or that failed after every retry. */
+  metricsFailed: number;
+  /** Spans queued without their bodies because the queue held `maxQueuedBodyBytes` of them. */
+  bodiesDropped: number;
+}
+
+/** A call's request and reply, already masked and cut by the gateway (`CallBodies`). */
+export interface ExportedBodies {
+  request: string;
+  reply: string;
 }
 
 /** Export of committed model calls. */
 export interface ModelCallExporter {
+  /** The config's `bodies`: whether the gateway should keep calls' bodies for {@link record}. */
+  readonly bodies: boolean;
   /**
-   * Queue the span of one committed ledger entry. Never throws and never
-   * waits; a full queue or a stopped exporter drops the span and counts it.
+   * Queue the span of one committed ledger entry, with its bodies when the
+   * config has `bodies` (ignored otherwise). Never throws and never waits; a
+   * full queue or a stopped exporter drops the span and counts it.
    */
-  record(entry: ModelCallEntry): void;
+  record(entry: ModelCallEntry, bodies?: ExportedBodies): void;
   /** Export everything queued now; resolves when done. Failures are counted, never thrown. */
   flush(): Promise<void>;
   /**
@@ -355,10 +406,54 @@ function keyValues(
   }));
 }
 
+/**
+ * The metric attributes of a ledger entry (Magpie's allowlist), without
+ * `gen_ai.provider.name` (added at export): bounded values only, so the
+ * series stay few.
+ */
+export function modelCallMetricAttributes(
+  entry: ModelCallEntry,
+): [string, AttributeValue][] {
+  const attributes: [string, AttributeValue][] = [
+    ["gen_ai.operation.name", operation(entry)],
+  ];
+  const requested = entry.requestedModel ?? entry.modelRef;
+  if (requested) attributes.push(["gen_ai.request.model", clip(requested)]);
+  if (entry.servedModel)
+    attributes.push(["gen_ai.response.model", clip(entry.servedModel)]);
+  if (entry.agent) attributes.push(["hh.agent", clip(entry.agent.id)]);
+  const error =
+    entry.errorClass ??
+    (entry.status >= 400 ? String(entry.status) : undefined);
+  if (error) attributes.push(["error.type", error]);
+  return attributes;
+}
+
+/** `gen_ai.client.operation.duration` bucket bounds in seconds, as Magpie sends them. */
+export const DURATION_BOUNDS: readonly number[] = [
+  0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48,
+  40.96, 81.92,
+];
+/** `gen_ai.client.token.usage` bucket bounds, as Magpie sends them. */
+export const TOKEN_BOUNDS: readonly number[] = [
+  1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576,
+];
+
+interface MetricSample {
+  attributes: [string, AttributeValue][];
+  seconds: number;
+  /** Absent when the upstream reported no usage: no token points, not zeros. */
+  tokens?: { input: number; output: number };
+}
+
 interface QueuedSpan {
   span: Record<string, unknown>;
   attributes: [string, AttributeValue][];
   provider?: ProviderId;
+  metric: MetricSample;
+  bodies?: ExportedBodies;
+  /** UTF-8 bytes of `bodies`, held against `maxQueuedBodyBytes`. */
+  bodyBytes: number;
 }
 
 function queuedSpan(entry: ModelCallEntry): QueuedSpan {
@@ -367,6 +462,7 @@ function queuedSpan(entry: ModelCallEntry): QueuedSpan {
   const startMs = Number.isFinite(started) ? started : Date.now();
   const failed = entry.status >= 400 || entry.errorClass !== undefined;
   const requested = entry.requestedModel ?? entry.modelRef;
+  const usage = entry.usage?.source === "missing" ? undefined : entry.usage;
   return {
     span: {
       traceId: randomBytes(16).toString("hex"),
@@ -391,7 +487,120 @@ function queuedSpan(entry: ModelCallEntry): QueuedSpan {
     },
     attributes,
     ...(entry.provider ? { provider: entry.provider } : {}),
+    metric: {
+      attributes: modelCallMetricAttributes(entry),
+      seconds: Math.max(0, entry.timing.durationMs) / 1000,
+      // As the span counts them: every input and every output token.
+      ...(usage
+        ? {
+            tokens: {
+              input: usage.input + usage.cacheRead + usage.cacheWrite,
+              output: usage.output + usage.reasoning,
+            },
+          }
+        : {}),
+    },
+    bodyBytes: 0,
   };
+}
+
+/** `attributes` with `gen_ai.provider.name` right after `gen_ai.operation.name`. */
+function withProvider(
+  attributes: [string, AttributeValue][],
+  name: string | undefined,
+): [string, AttributeValue][] {
+  if (!name) return attributes;
+  const all = [...attributes];
+  all.splice(1, 0, ["gen_ai.provider.name", name]);
+  return all;
+}
+
+interface HistogramPoint {
+  attributes: [string, AttributeValue][];
+  count: number;
+  sum: number;
+  buckets: number[];
+}
+
+/**
+ * The OTLP metrics of one batch: delta histograms (aggregation temporality
+ * 1) over `[start, end)`, one data point per attribute set in Magpie's
+ * order, counts and times as decimal strings. A value on a bound falls in
+ * the bucket that bound closes.
+ */
+export function metricsPayload(
+  samples: readonly MetricSample[],
+  startNs: bigint,
+  endNs: bigint,
+): Record<string, unknown>[] {
+  const histogram = (bounds: readonly number[]) => {
+    const points = new Map<string, HistogramPoint>();
+    return {
+      add(attributes: [string, AttributeValue][], value: number) {
+        const key = JSON.stringify(attributes);
+        let point = points.get(key);
+        if (!point) {
+          point = {
+            attributes,
+            count: 0,
+            sum: 0,
+            buckets: new Array<number>(bounds.length + 1).fill(0),
+          };
+          points.set(key, point);
+        }
+        point.count++;
+        point.sum += value;
+        const index = bounds.findIndex((bound) => value <= bound);
+        point.buckets[index < 0 ? bounds.length : index]!++;
+      },
+      dataPoints: () =>
+        [...points.entries()]
+          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+          .map(([, point]) => ({
+            attributes: keyValues(point.attributes),
+            startTimeUnixNano: String(startNs),
+            timeUnixNano: String(endNs),
+            count: String(point.count),
+            sum: point.sum,
+            explicitBounds: bounds,
+            bucketCounts: point.buckets.map(String),
+          })),
+    };
+  };
+  const duration = histogram(DURATION_BOUNDS);
+  const tokens = histogram(TOKEN_BOUNDS);
+  for (const sample of samples) {
+    duration.add(sample.attributes, sample.seconds);
+    if (!sample.tokens) continue;
+    for (const [type, count] of [
+      ["input", sample.tokens.input],
+      ["output", sample.tokens.output],
+    ] as const)
+      tokens.add([...sample.attributes, ["gen_ai.token.type", type]], count);
+  }
+  const metrics: Record<string, unknown>[] = [];
+  for (const [name, unit, description, points] of [
+    [
+      "gen_ai.client.operation.duration",
+      "s",
+      "GenAI operation duration",
+      duration.dataPoints(),
+    ],
+    [
+      "gen_ai.client.token.usage",
+      "{token}",
+      "Number of input and output tokens used",
+      tokens.dataPoints(),
+    ],
+  ] as const)
+    if (points.length)
+      metrics.push({
+        name,
+        unit,
+        description,
+        histogram: { aggregationTemporality: 1, dataPoints: points },
+      });
+  return metrics;
 }
 
 const RETRYABLE = new Set([429, 502, 503, 504]);
@@ -422,7 +631,10 @@ export async function startModelCallExport(
     headers[name] =
       typeof value === "string" ? value : await deps.resolveSecret(value);
   headers["content-type"] = "application/json";
-  const target = `${config.endpoint}/v1/traces`;
+  const targets = {
+    traces: `${config.endpoint}/v1/traces`,
+    metrics: `${config.endpoint}/v1/metrics`,
+  };
   const resource = keyValues(
     Object.entries({
       "service.name": "harnesshub",
@@ -436,12 +648,23 @@ export async function startModelCallExport(
   };
 
   const queue: QueuedSpan[] = [];
-  const counters = { exported: 0, dropped: 0, failed: 0, retries: 0 };
+  const counters = {
+    exported: 0,
+    dropped: 0,
+    failed: 0,
+    retries: 0,
+    metricsExported: 0,
+    metricsFailed: 0,
+    bodiesDropped: 0,
+  };
   const stop = new AbortController();
   let accepting = true;
   let chain: Promise<void> = Promise.resolve();
   let drainScheduled = false;
   let lastDropLog = 0;
+  let queuedBodyBytes = 0;
+  // Delta metrics cover the time since the previous metrics request.
+  let metricsFrom = BigInt(Date.now()) * 1_000_000n;
   let shutdown: Promise<OtlpExportStats> | undefined;
 
   const stats = (): OtlpExportStats => ({ queued: queue.length, ...counters });
@@ -472,38 +695,22 @@ export async function startModelCallExport(
     return names;
   };
 
-  /** Export one batch; never throws. */
-  const exportBatch = async (batch: QueuedSpan[]): Promise<void> => {
-    const names = await providerNames(batch);
-    const body = JSON.stringify({
-      resourceSpans: [
-        {
-          resource: { attributes: resource },
-          scopeSpans: [
-            {
-              scope,
-              spans: batch.map(({ span, attributes, provider }) => {
-                const all = [...attributes];
-                const name = provider && names.get(provider);
-                // Right after gen_ai.operation.name.
-                if (name) all.splice(1, 0, ["gen_ai.provider.name", name]);
-                return { ...span, attributes: keyValues(all) };
-              }),
-            },
-          ],
-        },
-      ],
-    });
+  /**
+   * POST one OTLP request with the retries. `aborted` when the exporter
+   * stopped first; never throws.
+   */
+  const post = async (
+    signal: keyof typeof targets,
+    body: string,
+    items: number,
+  ): Promise<"accepted" | "failed" | "aborted"> => {
     for (let attempt = 0; ; attempt++) {
-      if (stop.signal.aborted) {
-        drop(batch.length);
-        return;
-      }
+      if (stop.signal.aborted) return "aborted";
       let status: number | undefined;
       let retryAfterMs: number | undefined;
       const timeout = deadline(stop.signal, limits.exportTimeoutMs);
       try {
-        const response = await send(target, {
+        const response = await send(targets[signal], {
           method: "POST",
           headers,
           body,
@@ -516,32 +723,28 @@ export async function startModelCallExport(
         // Read (and drop) the answer so the connection can be reused.
         await response.arrayBuffer();
       } catch (error) {
-        if (stop.signal.aborted) {
-          drop(batch.length);
-          return;
-        }
+        if (stop.signal.aborted) return "aborted";
         // A timeout or a network error is retried like a 503.
         log.debug("otlp.export_error", {
+          signal,
           error: error instanceof Error ? error.name : "unknown",
         });
       } finally {
         timeout.dispose();
       }
-      if (status !== undefined && status >= 200 && status < 300) {
-        counters.exported += batch.length;
-        return;
-      }
+      if (status !== undefined && status >= 200 && status < 300)
+        return "accepted";
       if (
         attempt >= limits.maxRetries ||
         (status !== undefined && !RETRYABLE.has(status))
       ) {
-        counters.failed += batch.length;
         log.info("otlp.export_failed", {
-          spans: batch.length,
+          signal,
+          items,
           status: status ?? null,
           attempts: attempt + 1,
         });
-        return;
+        return "failed";
       }
       counters.retries++;
       const backoff = Math.min(
@@ -551,10 +754,98 @@ export async function startModelCallExport(
       try {
         await delay(backoff, undefined, { signal: stop.signal });
       } catch {
-        drop(batch.length);
-        return;
+        return "aborted";
       }
     }
+  };
+
+  /** Spans in requests of at most `maxBodyBytesPerRequest` of bodies, at least one span each. */
+  const traceRequests = (batch: QueuedSpan[]): QueuedSpan[][] => {
+    const requests: QueuedSpan[][] = [];
+    let current: QueuedSpan[] = [];
+    let bytes = 0;
+    for (const item of batch) {
+      if (
+        current.length &&
+        bytes + item.bodyBytes > limits.maxBodyBytesPerRequest
+      ) {
+        requests.push(current);
+        current = [];
+        bytes = 0;
+      }
+      current.push(item);
+      bytes += item.bodyBytes;
+    }
+    if (current.length) requests.push(current);
+    return requests;
+  };
+
+  /** Export one batch: its spans, then its metrics; never throws. */
+  const exportBatch = async (batch: QueuedSpan[]): Promise<void> => {
+    const names = await providerNames(batch);
+    const nameOf = (item: QueuedSpan) =>
+      item.provider && names.get(item.provider);
+    const requests = traceRequests(batch);
+    for (const [index, spans] of requests.entries()) {
+      const body = JSON.stringify({
+        resourceSpans: [
+          {
+            resource: { attributes: resource },
+            scopeSpans: [
+              {
+                scope,
+                spans: spans.map((item) => {
+                  const all = withProvider(item.attributes, nameOf(item));
+                  if (item.bodies)
+                    all.push(
+                      ["langfuse.observation.input", item.bodies.request],
+                      ["langfuse.observation.output", item.bodies.reply],
+                    );
+                  return { ...item.span, attributes: keyValues(all) };
+                }),
+              },
+            ],
+          },
+        ],
+      });
+      const outcome = await post("traces", body, spans.length);
+      if (outcome === "aborted") {
+        drop(requests.slice(index).reduce((sum, rest) => sum + rest.length, 0));
+        return;
+      }
+      if (outcome === "accepted") counters.exported += spans.length;
+      else counters.failed += spans.length;
+    }
+    if (!config.metrics) return;
+    const end = BigInt(Date.now()) * 1_000_000n;
+    const start = metricsFrom < end ? metricsFrom : end;
+    metricsFrom = end;
+    const body = JSON.stringify({
+      resourceMetrics: [
+        {
+          resource: { attributes: resource },
+          scopeMetrics: [
+            {
+              scope,
+              metrics: metricsPayload(
+                batch.map((item) => ({
+                  ...item.metric,
+                  attributes: withProvider(
+                    item.metric.attributes,
+                    nameOf(item),
+                  ),
+                })),
+                start,
+                end,
+              ),
+            },
+          ],
+        },
+      ],
+    });
+    const outcome = await post("metrics", body, batch.length);
+    if (outcome === "accepted") counters.metricsExported += batch.length;
+    else counters.metricsFailed += batch.length;
   };
 
   /** Export queued batches one at a time: all of them, or only full ones. */
@@ -564,8 +855,14 @@ export async function startModelCallExport(
         queue.length > 0 &&
         (all || queue.length >= limits.maxBatch) &&
         !stop.signal.aborted
-      )
-        await exportBatch(queue.splice(0, limits.maxBatch));
+      ) {
+        const batch = queue.splice(0, limits.maxBatch);
+        try {
+          await exportBatch(batch);
+        } finally {
+          for (const item of batch) queuedBodyBytes -= item.bodyBytes;
+        }
+      }
     });
     chain = run;
     return run;
@@ -586,14 +883,18 @@ export async function startModelCallExport(
     endpoint: config.endpoint,
     protocol: config.protocol,
     headers: Object.keys(config.headers),
+    metrics: config.metrics,
+    bodies: config.bodies,
   });
 
   return {
-    record(entry) {
+    bodies: config.bodies,
+    record(entry, bodies) {
       if (!accepting) return drop(1);
       if (queue.length >= limits.maxQueue) return drop(1);
+      let item: QueuedSpan;
       try {
-        queue.push(queuedSpan(entry));
+        item = queuedSpan(entry);
       } catch (error) {
         // A malformed entry must not reach the model call; count it as dropped.
         log.info("otlp.span_failed", {
@@ -601,6 +902,19 @@ export async function startModelCallExport(
         });
         return drop(1);
       }
+      if (config.bodies && bodies) {
+        const bytes =
+          Buffer.byteLength(bodies.request) + Buffer.byteLength(bodies.reply);
+        // Telemetry never holds more than its share of memory: the span goes without them.
+        if (queuedBodyBytes + bytes > limits.maxQueuedBodyBytes)
+          counters.bodiesDropped++;
+        else {
+          item.bodies = bodies;
+          item.bodyBytes = bytes;
+          queuedBodyBytes += bytes;
+        }
+      }
+      queue.push(item);
       if (queue.length >= limits.maxBatch && !drainScheduled) {
         drainScheduled = true;
         void schedule(false).finally(() => {
@@ -620,7 +934,11 @@ export async function startModelCallExport(
         } finally {
           clearTimeout(deadline);
         }
-        if (queue.length) drop(queue.splice(0).length);
+        if (queue.length) {
+          const left = queue.splice(0);
+          for (const item of left) queuedBodyBytes -= item.bodyBytes;
+          drop(left.length);
+        }
         const final = stats();
         log.info("otlp.stop", { ...final });
         return final;
@@ -629,28 +947,4 @@ export async function startModelCallExport(
     },
     stats,
   };
-}
-
-/**
- * A store whose `appendModelCall` also hands each committed entry to
- * `committed` after the commit resolved. Every other member is the
- * store's own. `committed` must not throw; a failed commit is not exported.
- */
-export function exportCommittedCalls(
-  store: ModelPlaneStore,
-  committed: (entry: ModelCallEntry) => void,
-): ModelPlaneStore {
-  const appendModelCall = async (entry: ModelCallEntry): Promise<void> => {
-    await store.appendModelCall(entry);
-    committed(entry);
-  };
-  return new Proxy(store, {
-    get(target, property) {
-      if (property === "appendModelCall") return appendModelCall;
-      const value: unknown = Reflect.get(target, property, target);
-      return typeof value === "function"
-        ? (value as (...args: unknown[]) => unknown).bind(target)
-        : value;
-    },
-  });
 }

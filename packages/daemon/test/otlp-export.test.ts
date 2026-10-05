@@ -9,16 +9,16 @@ import type {
   GatewayKeyId,
   ModelCallEntry,
   ModelCallId,
-  ModelPlaneStore,
   ModelRef,
   ProviderId,
   RouteGroupId,
 } from "@harnesshub/core/model-plane";
 import type { RunId, SessionId } from "@harnesshub/core/types";
 import {
-  exportCommittedCalls,
+  DURATION_BOUNDS,
   resolveOtlpConfig,
   startModelCallExport,
+  TOKEN_BOUNDS,
   type ModelCallExportDeps,
   type OtlpConfig,
 } from "../src/otlp-export.js";
@@ -201,9 +201,30 @@ void test("the otlp block is off when absent and validated when present", () => 
         "x-honeycomb-dataset": "harnesshub",
       },
       resource: { "deployment.environment": "dev", "host.cpus": 8 },
+      metrics: false,
+      bodies: false,
     },
   );
+  const both = resolveOtlpConfig({
+    endpoint: "http://c",
+    metrics: true,
+    bodies: true,
+  });
+  assert.equal(both?.metrics, true);
+  assert.equal(both?.bodies, true);
+  // A signal's own URL names the base, as Magpie takes it.
+  for (const endpoint of [
+    "https://otel.example/otlp/v1/traces",
+    "https://otel.example/otlp/v1/metrics/",
+    "https://otel.example/otlp/",
+  ])
+    assert.equal(
+      resolveOtlpConfig({ endpoint })?.endpoint,
+      "https://otel.example/otlp",
+    );
   const rejected: [unknown, RegExp][] = [
+    [{ endpoint: "http://c", metrics: "yes" }, /metrics must be true or false/],
+    [{ endpoint: "http://c", bodies: 1 }, /bodies must be true or false/],
     ["http://localhost:4318", /the block must be an object/],
     [{}, /endpoint must be a URL/],
     [{ endpoint: "localhost:4318" }, /endpoint must use http or https/],
@@ -413,6 +434,9 @@ void test("a full queue drops and counts spans; recording never waits for the co
     dropped: 7,
     failed: 0,
     retries: 0,
+    metricsExported: 0,
+    metricsFailed: 0,
+    bodiesDropped: 0,
   });
   // The first full batch is in flight and the collector never answers.
   while (stub.received.length === 0)
@@ -426,6 +450,9 @@ void test("a full queue drops and counts spans; recording never waits for the co
     dropped: 11,
     failed: 0,
     retries: 0,
+    metricsExported: 0,
+    metricsFailed: 0,
+    bodiesDropped: 0,
   });
   exporter.record(fullEntry());
   assert.equal(exporter.stats().dropped, 12);
@@ -447,6 +474,9 @@ void test("429 and 5xx answers are retried after Retry-After; other statuses fai
     dropped: 0,
     failed: 0,
     retries: 1,
+    metricsExported: 0,
+    metricsFailed: 0,
+    bodiesDropped: 0,
   });
   const refusing = await collector(t, () => ({ status: 400 }));
   const refused = await startModelCallExport(config(refusing.endpoint), deps());
@@ -459,6 +489,9 @@ void test("429 and 5xx answers are retried after Retry-After; other statuses fai
     dropped: 0,
     failed: 1,
     retries: 0,
+    metricsExported: 0,
+    metricsFailed: 0,
+    bodiesDropped: 0,
   });
 });
 
@@ -499,32 +532,312 @@ void test("shutdown exports the queued spans before the periodic flush would", a
     dropped: 0,
     failed: 0,
     retries: 0,
+    metricsExported: 0,
+    metricsFailed: 0,
+    bodiesDropped: 0,
   });
   assert.equal(spans(stub.received).length, 3);
   // Idempotent.
   assert.equal((await exporter.shutdown()).exported, 3);
 });
 
-void test("only entries whose ledger commit succeeded are handed to the exporter", async () => {
-  const committed: string[] = [];
-  const store = {
-    calls: 0,
-    async appendModelCall(entry: ModelCallEntry) {
-      this.calls++;
-      if (entry.callId === ("mc_rejected" as ModelCallId))
-        throw new Error("SQLITE_FULL");
-    },
-    async getProvider(this: { calls: number }) {
-      return this.calls;
-    },
-  };
-  const wrapped = exportCommittedCalls(
-    store as unknown as ModelPlaneStore,
-    (entry) => committed.push(entry.callId),
+interface DataPoint {
+  attributes: { key: string; value: Value }[];
+  startTimeUnixNano: string;
+  timeUnixNano: string;
+  count: string;
+  sum: number;
+  explicitBounds: number[];
+  bucketCounts: string[];
+}
+interface MetricsPayload {
+  resourceMetrics: {
+    resource: { attributes: { key: string; value: Value }[] };
+    scopeMetrics: {
+      scope: { name: string; version: string };
+      metrics: {
+        name: string;
+        unit: string;
+        histogram: { aggregationTemporality: number; dataPoints: DataPoint[] };
+      }[];
+    }[];
+  }[];
+}
+
+/** A bucket count list with one call in bucket `index`. */
+const oneIn = (bounds: readonly number[], index: number) =>
+  bounds
+    .map((_, i) => (i === index ? "1" : "0"))
+    .concat(index === bounds.length ? "1" : "0");
+
+void test("with metrics, each batch also goes to /v1/metrics as Magpie's GenAI delta histograms", async (t) => {
+  const stub = await collector(t);
+  const exporter = await startModelCallExport(
+    config(stub.endpoint, { metrics: true }),
+    deps({
+      providerPreset: async (id) =>
+        id === "deepseek" ? "deepseek" : undefined,
+    }),
   );
-  await wrapped.appendModelCall(fullEntry());
-  await assert.rejects(wrapped.appendModelCall(rejectedEntry()), /SQLITE_FULL/);
-  assert.deepEqual(committed, ["mc_full"]);
-  // Other members run on the store itself.
-  assert.equal(await wrapped.getProvider("p" as ProviderId), 2);
+  const { servedModel: _served, ...unserved } = fullEntry();
+  const before = BigInt(Date.now()) * 1_000_000n;
+  exporter.record({ ...fullEntry(), agent: { id: "claude", source: "key" } });
+  exporter.record(rejectedEntry());
+  // 54 output and 10 reasoning tokens: 64, on a bound, closes that bucket.
+  exporter.record({
+    ...unserved,
+    callId: "mc_bound" as ModelCallId,
+    usage: { ...fullEntry().usage!, output: 54 },
+    timing: { durationMs: 82_000 },
+  });
+  // No usage reported: a duration point, no token points.
+  exporter.record({
+    ...unserved,
+    callId: "mc_missing" as ModelCallId,
+    usage: { ...fullEntry().usage!, source: "missing" },
+    timing: { durationMs: 10 },
+  });
+  await exporter.flush();
+  assert.deepEqual(
+    stub.received.map((request) => request.path),
+    ["/v1/traces", "/v1/metrics"],
+  );
+  const metricsRequest = stub.received[1]!;
+  assert.equal(metricsRequest.headers["content-type"], "application/json");
+  const payload = JSON.parse(metricsRequest.body) as MetricsPayload;
+  assert.deepEqual(payload.resourceMetrics[0]!.scopeMetrics[0]!.scope, {
+    name: "harnesshub.model-gateway",
+    version: "0.1.0-test",
+  });
+  const metrics = payload.resourceMetrics[0]!.scopeMetrics[0]!.metrics;
+  assert.deepEqual(
+    metrics.map((metric) => [metric.name, metric.unit]),
+    [
+      ["gen_ai.client.operation.duration", "s"],
+      ["gen_ai.client.token.usage", "{token}"],
+    ],
+  );
+  const after = BigInt(Date.now()) * 1_000_000n;
+  for (const metric of metrics) {
+    assert.equal(metric.histogram.aggregationTemporality, 1);
+    for (const point of metric.histogram.dataPoints) {
+      assert.ok(BigInt(point.startTimeUnixNano) >= before - 1_000_000n);
+      assert.ok(BigInt(point.timeUnixNano) <= after);
+      assert.ok(BigInt(point.startTimeUnixNano) <= BigInt(point.timeUnixNano));
+    }
+  }
+  const view = (point: DataPoint) => ({
+    attributes: attributes(point),
+    count: point.count,
+    sum: point.sum,
+    buckets: point.bucketCounts,
+    bounds: point.explicitBounds,
+  });
+  const text = (value: string) => ({ stringValue: value });
+  const full = {
+    "gen_ai.operation.name": text("chat"),
+    "gen_ai.provider.name": text("deepseek"),
+    "gen_ai.request.model": text("deepseek/deepseek-chat"),
+  };
+  const [duration, tokens] = metrics;
+  // Sorted by their attributes as Magpie sorts them; only Magpie's allowlist.
+  assert.deepEqual(
+    duration!.histogram.dataPoints.map(view).sort((a, b) => a.sum - b.sum),
+    [
+      {
+        attributes: {
+          "gen_ai.operation.name": text("generate_content"),
+          "error.type": text("model_not_allowed"),
+        },
+        count: "1",
+        sum: 0.003,
+        buckets: oneIn(DURATION_BOUNDS, 0),
+        bounds: DURATION_BOUNDS,
+      },
+      {
+        attributes: {
+          ...full,
+          "gen_ai.response.model": text("deepseek-chat-v3"),
+          "hh.agent": text("claude"),
+        },
+        count: "1",
+        sum: 1.5,
+        buckets: oneIn(DURATION_BOUNDS, 8),
+        bounds: DURATION_BOUNDS,
+      },
+      {
+        attributes: full,
+        count: "2",
+        sum: 82.01,
+        // 0.01 s on the first bound; 82 s past the last.
+        buckets: DURATION_BOUNDS.map((_, i) => (i === 0 ? "1" : "0")).concat(
+          "1",
+        ),
+        bounds: DURATION_BOUNDS,
+      },
+    ],
+  );
+  assert.deepEqual(
+    tokens!.histogram.dataPoints
+      .map(view)
+      .map(({ attributes: kept, sum, buckets }) => ({
+        model: String(kept["gen_ai.response.model"]?.stringValue ?? ""),
+        type: kept["gen_ai.token.type"]?.stringValue,
+        sum,
+        buckets,
+      }))
+      .sort((a, b) => a.model.localeCompare(b.model) || a.sum - b.sum),
+    [
+      // Every input token, cached ones included, and every output token.
+      { model: "", type: "output", sum: 64, buckets: oneIn(TOKEN_BOUNDS, 3) },
+      { model: "", type: "input", sum: 125, buckets: oneIn(TOKEN_BOUNDS, 4) },
+      {
+        model: "deepseek-chat-v3",
+        type: "output",
+        sum: 50,
+        buckets: oneIn(TOKEN_BOUNDS, 3),
+      },
+      {
+        model: "deepseek-chat-v3",
+        type: "input",
+        sum: 125,
+        buckets: oneIn(TOKEN_BOUNDS, 4),
+      },
+    ],
+  );
+  // No prompt text, error text or key reached the metrics.
+  for (const secret of [ERROR_TEXT, "hk_key1", "ses_1"])
+    assert.equal(metricsRequest.body.includes(secret), false, secret);
+  assert.deepEqual(await exporter.shutdown(), {
+    queued: 0,
+    exported: 4,
+    dropped: 0,
+    failed: 0,
+    retries: 0,
+    metricsExported: 4,
+    metricsFailed: 0,
+    bodiesDropped: 0,
+  });
+});
+
+void test("metrics are off by default and share the retries of the spans", async (t) => {
+  const plain = await collector(t);
+  const off = await startModelCallExport(config(plain.endpoint), deps());
+  off.record(fullEntry());
+  await off.flush();
+  assert.deepEqual(
+    plain.received.map((request) => request.path),
+    ["/v1/traces"],
+  );
+  await off.shutdown();
+
+  // The metrics request is answered 503, then 200; a second batch's metrics 400.
+  let metricsSeen = 0;
+  const flaky = await collector(t, (index) => {
+    if (index === 0 || index === 3) return { status: 200 };
+    metricsSeen++;
+    return metricsSeen === 1
+      ? { status: 503, headers: { "retry-after": "0" } }
+      : metricsSeen === 2
+        ? { status: 200 }
+        : { status: 400 };
+  });
+  const on = await startModelCallExport(
+    config(flaky.endpoint, { metrics: true }),
+    deps({ limits: { maxBatch: 1 } }),
+  );
+  on.record(fullEntry());
+  on.record(rejectedEntry());
+  await on.flush();
+  assert.deepEqual(
+    flaky.received.map((request) => request.path),
+    ["/v1/traces", "/v1/metrics", "/v1/metrics", "/v1/traces", "/v1/metrics"],
+  );
+  // Each request's window starts where the one before it ended.
+  const windows = flaky.received
+    .filter((request) => request.path === "/v1/metrics")
+    .map((request) => {
+      const point = (JSON.parse(request.body) as MetricsPayload)
+        .resourceMetrics[0]!.scopeMetrics[0]!.metrics[0]!.histogram
+        .dataPoints[0]!;
+      return [BigInt(point.startTimeUnixNano), BigInt(point.timeUnixNano)];
+    });
+  assert.equal(windows[2]![0], windows[1]![1]);
+  assert.deepEqual(await on.shutdown(), {
+    queued: 0,
+    exported: 2,
+    dropped: 0,
+    failed: 0,
+    retries: 1,
+    metricsExported: 1,
+    metricsFailed: 1,
+    bodiesDropped: 0,
+  });
+});
+
+void test("bodies go on spans as Langfuse's observation input and output only when the config asks", async (t) => {
+  const bodies = {
+    request: '{"messages":[{"role":"user","content":"prompt-canary-3f1c"}]}',
+    reply: "the answer text",
+  };
+  const off = await collector(t);
+  const plain = await startModelCallExport(config(off.endpoint), deps());
+  assert.equal(plain.bodies, false);
+  plain.record(fullEntry(), bodies);
+  await plain.shutdown();
+  assert.equal(off.received[0]!.body.includes(PROMPT), false);
+  assert.equal(off.received[0]!.body.includes("langfuse."), false);
+
+  const on = await collector(t);
+  const exporter = await startModelCallExport(
+    config(on.endpoint, { bodies: true }),
+    deps({
+      limits: {
+        // Two spans' bodies fit the queue, not three; one request holds one span's.
+        maxQueuedBodyBytes: 2 * 100,
+        maxBodyBytesPerRequest: 100,
+      },
+    }),
+  );
+  assert.equal(exporter.bodies, true);
+  const sized = { request: "q".repeat(60), reply: "r".repeat(40) };
+  exporter.record(fullEntry(), bodies);
+  exporter.record({ ...fullEntry(), callId: "mc_2" as ModelCallId }, sized);
+  exporter.record({ ...fullEntry(), callId: "mc_3" as ModelCallId }, sized);
+  exporter.record(rejectedEntry());
+  await exporter.flush();
+  const all = spans(on.received);
+  const byId = (id: string) =>
+    attributes(
+      all.find(
+        (span) => attributes(span)["hh.model_call.id"]?.stringValue === id,
+      )!,
+    );
+  assert.deepEqual(byId("mc_full")["langfuse.observation.input"], {
+    stringValue: bodies.request,
+  });
+  assert.deepEqual(byId("mc_full")["langfuse.observation.output"], {
+    stringValue: bodies.reply,
+  });
+  assert.deepEqual(byId("mc_2")["langfuse.observation.input"], {
+    stringValue: sized.request,
+  });
+  // Past the queue's share of bodies: the span goes without them.
+  assert.equal(byId("mc_3")["langfuse.observation.input"], undefined);
+  assert.equal(byId("mc_rejected")["langfuse.observation.input"], undefined);
+  // The first two spans' bodies do not fit one request together.
+  assert.deepEqual(
+    on.received.map((request) => spans([request]).length),
+    [1, 3],
+  );
+  assert.deepEqual(await exporter.shutdown(), {
+    queued: 0,
+    exported: 4,
+    dropped: 0,
+    failed: 0,
+    retries: 0,
+    metricsExported: 0,
+    metricsFailed: 0,
+    bodiesDropped: 1,
+  });
 });

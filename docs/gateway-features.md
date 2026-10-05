@@ -22,6 +22,7 @@ hh gateway redaction rule remove codename
 - **范围**：出站请求体中的每个字符串（消息、system、工具结果、历史中的工具调用参数），翻译后的与直通的都一样，也包括 `count_tokens` 与 Codex 透传；标识、模型名、类型、签名、加密内容、`data:` URL 与 base64 数据保持原样。直通请求只在确有替换时重新序列化。
 - **还原**：只在答复中模型把占位符写进**工具调用参数**的地方还原为原值，工具因此仍能使用真实的秘密；写给人看的文本保留占位符。按客户端的协议处理：Chat 的 `tool_calls[].function.arguments`，Responses 的函数与自定义工具调用（`*_arguments.*`、`custom_tool_call_input.*` 与输出项），Anthropic 的 `tool_use.input` 与 `input_json_delta`，Gemini 的 `functionCall.args`。流式参数中被切开的占位符会暂扣到同一调用的下一个片段，调用结束前写出；JSON 参数文本中的值按 JSON 字符串转义。
 - **记录**：账本的 `patches[]` 记 `redact:<个数>`，只有个数，从不记值。
+- **OTLP 内容导出**：`otlp.bodies` 打开时，导出的请求与回答用同一个脱敏器与同一组规则遮蔽，关闭出站脱敏不影响这一步（[OTLP 导出](observability.md#otlp-导出)）。
 
 ## 视觉兜底
 

@@ -104,24 +104,39 @@ ACP 0.13.2 的 reducer 会把最新 breakdown 直接赋给名称为 `cumulative_
 
 ## OTLP 导出
 
-守护进程可以把每次模型调用导出为一个 OpenTelemetry span（[08 第 5 节](proposals/oss/08-reliability-observability.md#5-追踪)），默认关闭：没有 `otlp` 配置时不创建导出器，也不发出任何网络请求，环境中的 `OTEL_EXPORTER_OTLP_ENDPOINT` 等标准变量同样不会打开导出。实现见 [otlp-export.ts](../packages/daemon/src/otlp-export.ts)。
+守护进程可以把每次模型调用导出为一个 OpenTelemetry span（[08 第 5 节](proposals/oss/08-reliability-observability.md#5-追踪)），可选另导出 GenAI 指标与每次调用的请求和回答，默认关闭：没有 `otlp` 配置时不创建导出器，也不发出任何网络请求，环境中的 `OTEL_EXPORTER_OTLP_ENDPOINT` 等标准变量同样不会打开导出。实现见 [otlp-export.ts](../packages/daemon/src/otlp-export.ts)。
 
 开启方式是在配置文件 `config.jsonc` 中写 `otlp` 配置块（[配置](configuration.md#设置)），或把它写成 JSON 文件，以 `hh serve --otlp-config <文件>`（或 `node packages/daemon/dist/src/main.js --otlp-config <文件>`）启动，文件整体代替配置文件中的值；配置无效时拒绝启动。
 
 | 字段 | 说明 |
 |---|---|
-| `endpoint` | 收集端基础地址（http 或 https，不含凭据、查询与片段）；span 发往 `<endpoint>/v1/traces` |
+| `endpoint` | 收集端基础地址（http 或 https，不含凭据、查询与片段）；span 发往 `<endpoint>/v1/traces`，指标发往 `<endpoint>/v1/metrics`。写成以 `/v1/traces` 或 `/v1/metrics` 结尾的地址时去掉这一段作为基础地址（同 Magpie） |
 | `protocol` | 只支持 `http/json`（默认）。`http/protobuf` 需要 protobuf 编码依赖，目前明确拒绝；常见收集端都接受 JSON |
 | `headers` | 可选，请求头；值为字符串或秘密引用 `{"kind": "env"\|"file"\|"keychain"\|"store", "value": ...}`，启动时解析一次，只用于请求头 |
 | `resource` | 可选，资源属性（字符串、数字或布尔），覆盖默认的 `service.name`（`harnesshub`）与 `service.version` |
+| `metrics` | 可选，`true` 时另把 GenAI 指标发往 `<endpoint>/v1/metrics`；默认 `false`（同 Magpie） |
+| `bodies` | 可选，`true` 时把每次调用的请求与回答放进 span（Langfuse 的 `langfuse.observation.input`/`output`）；默认 `false`（同 Magpie）。**打开后提示词、代码与回答会离开本机**，见下文 |
 
 span 在 `model.call` 账本记录提交之后才进入导出队列，账本仍是唯一事实来源；账本写失败的调用不导出。每个调用一个 SERVER span，名称为 `chat <请求模型>`（Gemini 入口为 `generate_content`），时间取账本的开始时间与耗时，失败时状态为 ERROR、消息为错误类别。属性按 GenAI 语义约定：`gen_ai.operation.name`、`gen_ai.provider.name`（预设映射到约定值，如 `openai`、`anthropic`、`gcp.gemini`、`mistral_ai`、`x_ai`；其他预设用预设 ID，自定义 provider 用其 ID）、`gen_ai.request.model`、`gen_ai.response.model`、`gen_ai.conversation.id`（Session ID）、`gen_ai.response.finish_reasons`、`gen_ai.usage.input_tokens`（含缓存读写）与 `gen_ai.usage.output_tokens`（含推理），以及 `http.response.status_code`、`error.type`。HarnessHub 自有字段用 `hh.` 前缀：调用、Model Ref、provider、路由组、入站与上游协议、是否流式、`hh.mode`（passthrough 或 translated）、Key ID 与作用域种类（agent 作用域另有 Adapter ID）、Session、Run 与 generation、缓存读写与推理 token、用量来源、费用（美元金额与价格来源，未知时 `hh.cost.source=unknown`）、首字节与首内容时间、尝试次数、错误来源、拒绝原因。上游未回报用量时不写 token 属性，不写 0。
 
-从不导出：提示词、回答、推理内容、工具参数与结果、账本中的错误文本、凭据与请求头的值、Gateway Key 文本与 Key 名称（名称可能含邮箱），以及 provider 凭据 ID。
+不开 `bodies` 时从不导出：提示词、回答、推理内容、工具参数与结果、账本中的错误文本、凭据与请求头的值、Gateway Key 文本与 Key 名称（名称可能含邮箱），以及 provider 凭据 ID。账本中的错误文本、凭据、请求头的值、Key 名称与凭据 ID 在任何设置下都不导出。
 
-导出不阻塞也不影响模型调用：队列上限 2,048 个 span，每批 512 个，每 5 秒刷新；单次请求 10 秒超时；429、502、503、504、超时与网络错误按 `Retry-After`（或 1 s、2 s）重试至多 2 次，间隔上限 60 s；其他状态不重试。队列满或已停止时丢弃并计数，`gateway.log` 中有 `otlp.dropped`、`otlp.export_failed` 记录，停止时 `otlp.stop` 给出导出、丢弃、失败与重试的累计数。守护进程停止时，在模型网关等完最后一批账本记录之后导出剩余队列，最多等 3 秒，到期后中止并把剩余部分计为丢弃。
+**指标（`metrics`）**：与 Magpie 导出的相同，两个 GenAI 客户端直方图，聚合方式为 delta（`aggregationTemporality` 1），每个请求覆盖上一个指标请求之后的时间：
 
-与 [08 第 5 节](proposals/oss/08-reliability-observability.md#5-追踪) 的设计相比，目前的差异是：配置块名为 `otlp`，写在配置文件中或经 `--otlp-config` 文件传入（设计中是配置文件的 `observability.otel.*`）；编码为 JSON 而不是 protobuf，以免为 protobuf 引入依赖；span 都是根 span（还没有 Run 与 attempt 的 span 可作父子）；尚无内容导出开关 `captureContent`、约定版本选择、采样与指标导出。
+| 指标 | 单位 | 值与桶边界 |
+|---|---|---|
+| `gen_ai.client.operation.duration` | `s` | 每次调用的耗时（含被拒绝的调用）；边界 0.01、0.02、0.04 … 81.92（逐级翻倍） |
+| `gen_ai.client.token.usage` | `{token}` | 每次调用两个点，`gen_ai.token.type` 为 `input`（含缓存读写）与 `output`（含推理）；上游未回报用量时不记，不记 0；边界 1、4、16 … 1,048,576（逐级乘 4） |
+
+数据点的属性只有 Magpie 的白名单对应项：`gen_ai.operation.name`、`gen_ai.provider.name`、`gen_ai.request.model`、`gen_ai.response.model`（有时）、`hh.agent`（Agent ID，有时；Magpie 为 `magpie.agent`）与 `error.type`（失败时，同 span），不含调用、Key、会话或 Run 的 ID，序列数量有限。指标与 span 走同一队列、同一批次与刷新、同一重试：每批先发 span，再把这一批的调用汇总成一个指标请求。
+
+**请求与回答（`bodies`）**：打开后，每个 span 多两个属性：`langfuse.observation.input` 为客户端发来的请求（JSON 重新序列化），`langfuse.observation.output` 为回答，流式回答取各事件中的文字拼成一段（Chat 的 `delta.content`、Responses 的 `response.output_text.delta`、Anthropic 的 `content_block_delta`、Gemini 的 `parts[].text`，不含思考；只有工具调用时按原样），非流式回答按原样。两者在网关中先经出站脱敏的同一套规则遮蔽（已知的 provider 凭据与订阅令牌、Gateway Key、管理令牌和用户自己的规则，换成 `{{HH_…}}` 占位符），**即使出站脱敏被关闭也会遮蔽**，再各截到 256 KiB 并以 `… (cut here by HarnessHub)` 标记（同 Magpie）。回答在响应结束后才交给导出器，因此是完整的。图像端点、本地拒绝（没有读到可路由的请求）的调用不带内容。导出器的队列最多保存 128 MiB 的内容，超过时该 span 不带内容导出并计入 `bodiesDropped`；一个请求中的内容最多 16 MiB，超过时拆成多个请求（同 Magpie）。
+
+> **警告**：`bodies` 会把提示词、源代码、文件内容与模型回答发给收集端，离开本机。遮蔽只覆盖 HarnessHub 知道的秘密与你的规则，不能识别其他敏感内容；只把它指向你信任、能控制保留期限的后端（如自己部署的 Langfuse）。默认关闭。
+
+导出不阻塞也不影响模型调用：队列上限 2,048 个 span，每批 512 个，每 5 秒刷新；单次请求 10 秒超时；429、502、503、504、超时与网络错误按 `Retry-After`（或 1 s、2 s）重试至多 2 次，间隔上限 60 s；其他状态不重试。队列满或已停止时丢弃并计数（丢弃的调用也不进入指标），`gateway.log` 中有 `otlp.dropped`、`otlp.export_failed`（带 `signal` 为 `traces` 或 `metrics`）记录，停止时 `otlp.stop` 给出导出、丢弃、失败、重试、指标导出与失败、未带内容的累计数。守护进程停止时，在模型网关等完最后一批账本记录（以及等待响应结束的内容）之后导出剩余队列，最多等 3 秒，到期后中止并把剩余部分计为丢弃。
+
+与 [08 第 5 节](proposals/oss/08-reliability-observability.md#5-追踪) 的设计相比，目前的差异是：配置块名为 `otlp`，写在配置文件中或经 `--otlp-config` 文件传入（设计中是配置文件的 `observability.otel.*`）；编码为 JSON 而不是 protobuf，以免为 protobuf 引入依赖；span 都是根 span（还没有 Run 与 attempt 的 span 可作父子）；内容导出开关按 Magpie 叫 `bodies`、属性是 Langfuse 的（设计中为 `captureContent` 与 GenAI 的消息属性）；尚无约定版本选择与采样。与 Magpie 相比：没有 `MAGPIE_OTEL_*` 这类环境变量覆盖；没有 `bodiesWhole`（不截断的内容）；`metrics` 在 Magpie 中按刷新周期汇总，这里按批次汇总（同一周期内批次不满 512 时相同）。
 
 示例（JSON 文件内容，未在真实后端上验证）：
 
@@ -139,12 +154,23 @@ span 在 `model.call` 账本记录提交之后才进入导出队列，账本仍�
 }
 ```
 
-Grafana Cloud 的 OTLP 入口（`<region>` 与凭据见 Grafana Cloud 的 OTLP 连接页面；`GRAFANA_OTLP_AUTH` 的值为 `Basic <base64(实例 ID:令牌)>`）：
+Grafana Cloud 的 OTLP 入口（`<region>` 与凭据见 Grafana Cloud 的 OTLP 连接页面；`GRAFANA_OTLP_AUTH` 的值为 `Basic <base64(实例 ID:令牌)>`），同时导出指标：
 
 ```json
 {
   "endpoint": "https://otlp-gateway-prod-<region>.grafana.net/otlp",
-  "headers": { "Authorization": { "kind": "env", "value": "GRAFANA_OTLP_AUTH" } }
+  "headers": { "Authorization": { "kind": "env", "value": "GRAFANA_OTLP_AUTH" } },
+  "metrics": true
+}
+```
+
+自己部署的 Langfuse（OTLP 入口为 `/api/public/otel`；`LANGFUSE_OTLP_AUTH` 的值为 `Basic <base64(公钥:私钥)>`），带请求与回答。Langfuse 只接收 trace，不要同时打开 `metrics`：
+
+```json
+{
+  "endpoint": "https://langfuse.example.internal/api/public/otel",
+  "headers": { "Authorization": { "kind": "env", "value": "LANGFUSE_OTLP_AUTH" } },
+  "bodies": true
 }
 ```
 
@@ -156,6 +182,8 @@ Grafana Cloud 的 OTLP 入口（`<region>` 与凭据见 Grafana Cloud 的 OTLP �
 
 诊断日志由 [日志单元测试](../packages/daemon/test/diagnostic-log.test.ts)与 [集成测试](../tests/integration/diagnostic-logs.test.ts) 验证：后者经正式 Gateway/Worker、ACP fixture 和本地上游，以 info 与 debug 各运行一次含工具调用、权限和 stderr 的任务，检查两份日志的必备记录、推理回填计数与 debug 摘录，并确认上游模型密钥与 Session token 都未写入。
 
-OTLP 导出由 [导出器单元测试](../packages/daemon/test/otlp-export.test.ts)（配置校验与拒绝样例、属性逐项相等、未回报用量不写 0、队列满时丢弃而 `record` 不等待、收集端不应答时停止仍守期限、重试与不重试的状态、停止时导出队列、只有提交成功的记录进入导出）和 [集成测试](../tests/integration/otlp-export.test.ts)（经正式守护进程、共享网关与假 provider 完成普通、流式工具与被拒绝三次调用，停止守护进程后回环收集端收到三个 span，属性与账本记录逐项一致，载荷中没有提示词、工具参数、推理文本、上游 Key、Gateway Key 文本与名称和请求头秘密；没有 `otlp` 配置时即使设置了 `OTEL_EXPORTER_OTLP_ENDPOINT` 也没有任何导出请求；`http/protobuf` 配置拒绝启动）验证。未验证：真实的 Jaeger、Grafana 与 Honeycomb 后端。
+OTLP 导出由 [导出器单元测试](../packages/daemon/test/otlp-export.test.ts)（配置校验与拒绝样例、属性逐项相等、未回报用量不写 0、队列满时丢弃而 `record` 不等待、收集端不应答时停止仍守期限、重试与不重试的状态、停止时导出队列；指标的名称、单位、边界、落在边界上的值、按属性分点与排序、没有用量时无 token 点、默认关闭、指标请求的重试与失败计数、相邻请求的时间窗首尾相接；内容只在配置打开时附上、队列内容上限与单个请求的拆分）、[网关测试](../packages/gateway/test/shared-gateway-bodies.test.ts)（不要内容时提交后立即交出；要内容时在响应结束后交出，请求与回答都经遮蔽，出站脱敏关闭时也遮蔽，跨两个事件的秘密也被遮蔽，非流式回答原样，256 KiB 截断与标记，账本写失败时不交出；四种协议的流式文字拼接）和 [集成测试](../tests/integration/otlp-export.test.ts)（经正式守护进程、共享网关与假 provider 完成普通、流式工具与被拒绝三次调用，停止守护进程后回环收集端收到三个 span，属性与账本记录逐项一致，载荷中没有提示词、工具参数、推理文本、上游 Key、Gateway Key 文本与名称和请求头秘密；打开 `metrics` 与 `bodies` 后收集端另收到指标，耗时计数与 token 合计同账本，span 带请求与回答而 Gateway Key 被换成占位符；没有 `otlp` 配置时即使设置了 `OTEL_EXPORTER_OTLP_ENDPOINT` 也没有任何导出请求；`http/protobuf` 配置拒绝启动）验证。未验证：真实的 Jaeger、Grafana、Honeycomb 与 Langfuse 后端。
+
+CSV 导出由 [写法单元测试](../packages/daemon/test/usage-csv.test.ts)（加引号的规则、公式前缀与纯数字、时间格式、换了模型的判断）与 [集成测试](../tests/integration/usage-csv.test.ts)（经正式守护进程写入 208 条调用后，以独立的 RFC 4180 解析器读回 API、SDK 与 `hh` 的输出：表头与 Magpie 逐列相同、无 BOM、新到旧跨页、每列取值、公式前缀、引号与换行、`Accept` 协商、带 `cursor` 与无效过滤时 400、汇总 CSV 与 JSON 一致、`hh` 的用法错误）验证；去掉公式防护时集成测试失败。
 
 真实模型的最新验收以对应 `docs/verification/` 记录为准；读取历史原生文件能确认格式和已有用量，不等于新 Driver 已完成真实模型调用。Windows 原生采集仍需单独验证。
