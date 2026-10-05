@@ -2438,7 +2438,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     group: "backup",
     request: "无参数。",
     response:
-      "200：enabled、kind=webdav|s3、url、user、endpoint、region、pathStyle、keys、agents、intervalMs、lastSyncAt、lastError、nextSyncAt、notice（两边都改过时被替换的部分与副本目录）、secretBackend。",
+      "200：enabled、kind=webdav|s3、url、user、endpoint、region、pathStyle、keys、agents、intervalMs、lastSyncAt、lastError、nextSyncAt、notice（两边都改过时被替换的部分与副本目录，kept、redactionOff、redactionOffHeld、needKey、refused）、secretBackend。",
     implementation:
       "SyncService.status 读取 <dataDir>/sync/config.json 与 state.json 的内存副本。",
     effects: "只读；不返回口令或目标凭证。",
@@ -2486,16 +2486,20 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     path: "/api/v1/sync/now",
     title: "立即同步",
     group: "backup",
-    request: "请求体为空对象。",
+    request:
+      "acceptOlder（可选，true 时接受比本机已同步过的更旧的服务器文件，写回的文件比两者都新）；其余为空对象。",
     response: "200：同步后的状态。",
     implementation:
-      "SyncService.now：条件读取服务器文件（If-None-Match），按 providers、agents、profiles、library 与 features（网关功能）五部分三方比较，只改了一边的取该边，两边都改的取最后修改的一边并保存被替换的副本，带入的部分逐条写入本机（library 带入后在 agents=yes 时同步到已安装的 Agent），合并结果只在服务器仍是读到的版本时写回（WebDAV If-Match；S3 If-Match，或不支持时先比较 ETag 并在有版本时核对前一版本），被抢先写入时读入对方版本重来一次。",
+      "SyncService.now：条件读取服务器文件（If-None-Match），解密后先比较文件中的 generation（加密内容的一部分，每次写回加一）与 state.json 记下的最高值，更旧的拒绝（L8），按 providers、agents、profiles、library 与 features（网关功能）五部分三方比较，只改了一边的取该边，两边都改的取最后修改的一边并保存被替换的副本，带入的部分逐条写入本机（library 带入后在 agents=yes 时同步到已安装的 Agent），合并结果只在服务器仍是读到的版本时写回（WebDAV If-Match；S3 If-Match，或不支持时先比较 ETag 并在有版本时核对前一版本），被抢先写入时读入对方版本重来一次。",
     effects:
-      "可能写入 providers、路由组、密钥存储与 Agent 配置文件，删除服务器上已没有的 provider、路由组（Gateway Key 仍允许的保留并列入 notice.kept）与 profile；按服务器替换网关功能（gateway-features.json），因此关闭出站脱敏时 notice.redactionOff 为 true；服务器只收到加密文件。",
+      "可能写入 providers、路由组、密钥存储与 Agent 配置文件，删除服务器上已没有的 provider、路由组（Gateway Key 仍允许的保留并列入 notice.kept）与 profile；按服务器替换网关功能（gateway-features.json），关闭出站脱敏时 notice.redactionOff 为 true，但服务器的网关功能不比本机的新时出站脱敏保持开启并以 notice.redactionOffHeld 提示（L9）；指向 HarnessHub 自己秘密的凭证与外部引用的搜索 Key 不带入，列入 notice.refused；服务器只收到加密文件。",
     errors:
-      "409 SYNC_DISABLED、SYNC_PASSPHRASE（服务器文件不是用此口令加密的）、SYNC_CONFLICT（重试后仍被抢先写入）；502 SYNC_REMOTE_FAILED；503 SYNC_RATE_LIMITED；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json。",
+      "409 SYNC_DISABLED、SYNC_PASSPHRASE（服务器文件不是用此口令加密的）、SYNC_CONFLICT（重试后仍被抢先写入）、SYNC_ROLLBACK（服务器文件比本机已同步过的旧，可能被放回了旧副本；acceptOlder 时接受）；502 SYNC_REMOTE_FAILED；503 SYNC_RATE_LIMITED；需本机管理令牌（Authorization: Bearer，<dataDir>/admin.token）与回环连接，否则 401 ADMIN_TOKEN_REQUIRED/ADMIN_TOKEN_INVALID 或 403 LOCAL_ACCESS_REQUIRED；错误一律为 application/problem+json。",
     source: "packages/daemon/src/http/backup-routes.ts",
-    tests: ["tests/integration/sync.test.ts"],
+    tests: [
+      "tests/integration/sync.test.ts",
+      "tests/integration/backup-sync-security.test.ts",
+    ],
     operationId: "hh_api_v1_sync_now",
   },
   {

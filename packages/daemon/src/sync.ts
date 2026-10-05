@@ -112,6 +112,12 @@ export interface SyncNotice {
    * security change, shown until the next notice.
    */
   redactionOff?: true;
+  /**
+   * The server's gateway features turn outbound redaction off, but this
+   * machine's are as new or newer (second security review L9): it stays on
+   * here, and the user is asked to turn it off by hand if they meant it.
+   */
+  redactionOffHeld?: true;
   /** Search backends the server carries without a key and this machine has none for: not brought in. */
   needKey?: string[];
   /**
@@ -133,6 +139,13 @@ interface SyncState {
   server?: RemoteVersion;
   local?: Partial<Record<SyncPart, string>>;
   remote?: Partial<Record<SyncPart, string>>;
+  /**
+   * The highest generation of the server's file this machine has read or
+   * written, and the latest creation time (for files without one): a file
+   * older than these was put back (second security review L8).
+   */
+  generation?: number;
+  createdAt?: string;
 }
 
 /** `GET /api/v1/sync`. */
@@ -395,19 +408,22 @@ export class SyncService {
   }
 
   /**
-   * Syncs once now and reschedules the loop.
+   * Syncs once now and reschedules the loop. With `acceptOlder`, a server
+   * file older than one this machine already synced is taken (and the file
+   * written back is newer than both).
    *
-   * @throws HubError `SYNC_DISABLED` (409) when sync is off; the sync's own
-   *   failure otherwise (also kept as `lastError`).
+   * @throws HubError `SYNC_DISABLED` (409) when sync is off; `SYNC_ROLLBACK`
+   *   (409) for an older file without `acceptOlder`; the sync's own failure
+   *   otherwise (also kept as `lastError`).
    */
-  async now(): Promise<SyncStatus> {
+  async now(options: { acceptOlder?: boolean } = {}): Promise<SyncStatus> {
     if (!this.config)
       throw new HubError(
         "SYNC_DISABLED",
         "Sync is off; turn it on with hh sync <webdav|s3> on",
         409,
       );
-    const error = await this.run();
+    const error = await this.run(options.acceptOlder === true);
     if (error) throw error;
     return this.status();
   }
@@ -460,7 +476,7 @@ export class SyncService {
   }
 
   /** One sync with its bookkeeping; resolves to its error, never rejects. */
-  private run(): Promise<HubError | undefined> {
+  private run(acceptOlder = false): Promise<HubError | undefined> {
     return this.serial(async () => {
       if (!this.config || this.closed) return undefined;
       this.stopTimer();
@@ -470,7 +486,7 @@ export class SyncService {
       let failure: HubError | undefined;
       try {
         await this.options.backups.serial(() =>
-          this.syncWithRetry(abort.signal),
+          this.syncWithRetry(abort.signal, acceptOlder),
         );
         this.wait = this.interval;
       } catch (error) {
@@ -513,7 +529,10 @@ export class SyncService {
     });
   }
 
-  private async syncWithRetry(signal: AbortSignal): Promise<void> {
+  private async syncWithRetry(
+    signal: AbortSignal,
+    acceptOlder: boolean,
+  ): Promise<void> {
     const config = this.config!;
     const secret = config.secret
       ? await this.options.secrets.resolve(
@@ -529,7 +548,7 @@ export class SyncService {
     if (this.state?.key !== key) this.state = { key };
     const remote = this.remoteFor(config.kind, config, secret);
     try {
-      await this.syncOnce(config, remote, passphrase, signal);
+      await this.syncOnce(config, remote, passphrase, signal, acceptOlder);
     } catch (error) {
       if (!(error instanceof RemoteChanged)) throw error;
       // Another machine wrote in between: once more, over its version.
@@ -539,6 +558,7 @@ export class SyncService {
           remote,
           passphrase,
           signal,
+          acceptOlder,
           error.intervening,
         );
       } catch (again) {
@@ -558,6 +578,7 @@ export class SyncService {
     remote: SyncRemote,
     passphrase: string,
     signal: AbortSignal,
+    acceptOlder: boolean,
     intervening?: { data: Buffer; version: RemoteVersion },
   ): Promise<void> {
     const state = this.state!;
@@ -585,18 +606,21 @@ export class SyncService {
         );
     }
     const push = async (bundle: BackupBundle, base: string | undefined) => {
+      // Newer than every file this machine has seen, the one merged included.
+      const generation =
+        Math.max(state.generation ?? 0, bundle.generation ?? 0) + 1;
+      const createdAt = new Date(this.now_()).toISOString();
       const sealed = Buffer.from(
         formatEnvelope(
           await seal(
-            encodeBundle({
-              ...bundle,
-              createdAt: new Date(this.now_()).toISOString(),
-            }),
+            encodeBundle({ ...bundle, createdAt, generation }),
             passphrase,
           ),
         ),
       );
       const version = await remote.put(sealed, base, signal);
+      state.generation = generation;
+      state.createdAt = latest(state.createdAt, createdAt);
       state.sum = sha256(sealed);
       state.server = version;
       state.remote = this.hashes(bundle);
@@ -626,6 +650,24 @@ export class SyncService {
         );
       throw error;
     }
+    const tookOlder = older(remoteBundle, state);
+    if (tookOlder) {
+      if (!acceptOlder)
+        throw new HubError(
+          "SYNC_ROLLBACK",
+          `The file on the server is older than one this machine already synced (generation ${remoteBundle.generation ?? "none"} of ${remoteBundle.createdAt}; this machine has seen generation ${state.generation ?? "none"}): someone may have put an old copy back. Check the server; to take it anyway, run hh sync now --accept-older`,
+          409,
+        );
+      this.log.info("sync.older_taken", {
+        generation: remoteBundle.generation ?? null,
+        seen: state.generation ?? null,
+      });
+    }
+    state.generation = Math.max(
+      state.generation ?? 0,
+      remoteBundle.generation ?? 0,
+    );
+    state.createdAt = latest(state.createdAt, remoteBundle.createdAt);
     const R = this.hashes(remoteBundle);
     const first = state.local === undefined;
     const merged: BackupBundle = { ...remoteBundle };
@@ -682,6 +724,14 @@ export class SyncService {
     }
     const kept: string[] = [];
     let redactionOff = false;
+    let redactionOffHeld = false;
+    // L9: the server turns redaction off here only with settings changed
+    // strictly later than this machine's.
+    const theirs = remoteBundle.gatewayFeatures?.updatedAt;
+    const ours = local.gatewayFeatures?.updatedAt;
+    const newerFeatures =
+      theirs !== undefined &&
+      (ours === undefined || Date.parse(theirs) > Date.parse(ours));
     const needKey: string[] = [];
     const refused: string[] = [];
     for (const part of bring)
@@ -689,10 +739,15 @@ export class SyncService {
         if (!remoteBundle.gatewayFeatures) continue;
         const brought = await backups.bringFeatures(
           remoteBundle.gatewayFeatures,
+          { holdRedactionOff: !newerFeatures },
         );
         if (brought.redaction.turnsOff) {
           redactionOff = true;
           this.log.info("sync.redaction_off", {});
+        }
+        if (brought.redaction.held) {
+          redactionOffHeld = true;
+          this.log.info("sync.redaction_off_held", {});
         }
         needKey.push(...brought.search.needKey);
         refused.push(...brought.search.refused);
@@ -747,6 +802,7 @@ export class SyncService {
       there.length ||
       kept.length ||
       redactionOff ||
+      redactionOffHeld ||
       needKey.length ||
       refused.length
     )
@@ -757,10 +813,13 @@ export class SyncService {
         ...(saved ? { saved } : {}),
         ...(kept.length ? { kept } : {}),
         ...(redactionOff ? { redactionOff: true as const } : {}),
+        ...(redactionOffHeld ? { redactionOffHeld: true as const } : {}),
         ...(needKey.length ? { needKey } : {}),
         ...(refused.length ? { refused } : {}),
       };
-    if (!same(M, R)) await push(merged, version.etag);
+    // An older file taken is written back newer than every one seen, so
+    // that the machines that saw those do not refuse it in turn.
+    if (!same(M, R) || tookOlder) await push(merged, version.etag);
     state.local = now;
   }
 
@@ -1056,6 +1115,29 @@ function parseConfigure(input: unknown): ConfigureRequest {
   return request;
 }
 
+/**
+ * Whether `bundle` is older than a server file this machine already read
+ * or wrote: a lower generation, or, both without one (a HarnessHub from
+ * before them), an earlier creation time.
+ */
+function older(bundle: BackupBundle, state: SyncState): boolean {
+  const seen = state.generation ?? 0;
+  const generation = bundle.generation ?? 0;
+  if (generation !== seen) return generation < seen;
+  return (
+    generation === 0 &&
+    state.createdAt !== undefined &&
+    Date.parse(bundle.createdAt) < Date.parse(state.createdAt)
+  );
+}
+
+/** The later of two ISO times; `next` when there is none yet. */
+function latest(current: string | undefined, next: string): string {
+  return current !== undefined && Date.parse(current) >= Date.parse(next)
+    ? current
+    : next;
+}
+
 function isSyncState(value: unknown): value is SyncState {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     return false;
@@ -1080,6 +1162,10 @@ function isSyncState(value: unknown): value is SyncState {
         text(version.modified))) &&
     hashes(state.local) &&
     hashes(state.remote) &&
+    (state.generation === undefined ||
+      (Number.isSafeInteger(state.generation) &&
+        (state.generation as number) >= 0)) &&
+    text(state.createdAt) &&
     (state.notice === undefined ||
       (typeof state.notice === "object" && state.notice !== null))
   );

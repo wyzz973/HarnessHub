@@ -453,6 +453,12 @@ const syncStatusSchema = {
           description:
             "The server's gateway features turned outbound redaction off here",
         },
+        redactionOffHeld: {
+          type: "boolean",
+          enum: [true],
+          description:
+            "The server's gateway features turn outbound redaction off, but this machine's are as new or newer: it stays on here until turned off by hand",
+        },
         needKey: {
           ...strings,
           description:
@@ -565,11 +571,25 @@ export function registerBackupRoutes(
     { schema: { response: responses(syncStatusSchema) } },
     async () => sync.disable(),
   );
-  api.post(
+  api.post<{ Body: { acceptOlder?: boolean } }>(
     "/sync/now",
     {
-      schema: { body: emptyBodySchema, response: responses(syncStatusSchema) },
+      schema: {
+        body: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            acceptOlder: {
+              type: "boolean",
+              description:
+                "Take a server file older than one this machine already synced (otherwise 409 SYNC_ROLLBACK)",
+            },
+          },
+        },
+        response: responses(syncStatusSchema),
+      },
     },
-    async () => sync.now(),
+    async (request) =>
+      sync.now({ acceptOlder: request.body.acceptOlder === true }),
   );
 }

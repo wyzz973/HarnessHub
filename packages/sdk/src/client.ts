@@ -949,6 +949,12 @@ export interface SyncStatus {
     kept?: string[];
     /** The server's gateway features turned outbound redaction off here. */
     redactionOff?: true;
+    /**
+     * The server's gateway features turn outbound redaction off, but this
+     * machine's settings are as new or newer: it stays on here until turned
+     * off by hand.
+     */
+    redactionOffHeld?: true;
     /** Search backends the server carries without a key and this machine has none for. */
     needKey?: string[];
     /** Provider credentials naming HarnessHub's own secrets and search keys that are references, left out. */
@@ -1833,8 +1839,15 @@ export class HarnessHubClient {
       this.request<SyncStatus>("PUT", "sync", { body: settings }),
     /** Turns sync off and forgets its secrets. */
     disable: () => this.request<SyncStatus>("DELETE", "sync"),
-    /** Syncs once; rejects with the sync's failure. */
-    now: () => this.request<SyncStatus>("POST", "sync/now", { body: {} }),
+    /**
+     * Syncs once; rejects with the sync's failure. A server file older than
+     * one this machine already synced is refused with 409 `SYNC_ROLLBACK`
+     * unless `acceptOlder`.
+     */
+    now: (options: { acceptOlder?: boolean } = {}) =>
+      this.request<SyncStatus>("POST", "sync/now", {
+        body: options.acceptOlder ? { acceptOlder: true } : {},
+      }),
   };
 
   readonly modelCalls = {

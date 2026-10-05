@@ -152,6 +152,14 @@ export interface CatalogSettingsBackup {
 export interface BackupBundle {
   version: 1;
   createdAt: string;
+  /**
+   * Sync only: one more than the generation of the server's file this one
+   * was merged from, so that an older copy put back in its place is told
+   * apart (second security review L8). Sealed with the rest, so it cannot
+   * be changed without the passphrase. Absent in backups and in sync files
+   * of a HarnessHub from before it.
+   */
+  generation?: number;
   /** The HarnessHub that made it (`HarnessHub <version>`). */
   app: string;
   /** Whether credential values are included. */
@@ -635,10 +643,14 @@ export class BackupService {
   /**
    * Mirrors the server's gateway features here (sync): its redaction switch
    * and rules, vision model and search backends exactly, keeping this
-   * machine's key of a backend the server carries without a value. The
-   * result says whether redaction was turned off.
+   * machine's key of a backend the server carries without a value. With
+   * `holdRedactionOff`, redaction that is on here stays on. The result says
+   * whether redaction was turned off, or held on.
    */
-  async bringFeatures(part: BackupGatewayFeatures): Promise<FeaturesRestore> {
+  async bringFeatures(
+    part: BackupGatewayFeatures,
+    options: { holdRedactionOff?: boolean } = {},
+  ): Promise<FeaturesRestore> {
     if (!this.features)
       return {
         redaction: {
@@ -661,6 +673,7 @@ export class BackupService {
       mirror: true,
       dryRun: false,
       unresolved: (model) => this.unresolved(model),
+      ...(options.holdRedactionOff ? { holdRedactionOff: true } : {}),
     });
   }
 
@@ -1339,6 +1352,14 @@ export function decodeBundle(bytes: Buffer): BackupBundle {
   if (value.version !== 1) throw invalidBundle("has no supported version");
   if (!isTimestamp(value.createdAt) || typeof value.app !== "string")
     throw invalidBundle("has no creation time or application");
+  if (
+    value.generation !== undefined &&
+    !(
+      Number.isSafeInteger(value.generation) &&
+      (value.generation as number) >= 1
+    )
+  )
+    throw invalidBundle("has an invalid generation");
   if (typeof value.keys !== "boolean") throw invalidBundle("lacks keys");
   if (
     !Array.isArray(value.providers) ||

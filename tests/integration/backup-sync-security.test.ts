@@ -24,9 +24,11 @@ import {
   HarnessHubError,
   type BackupEnvelope,
   type HarnessHubClient,
+  type SyncSettings,
 } from "@harnesshub/sdk/client";
 import { connectLocal } from "@harnesshub/sdk/local";
 import { HH_ENTRY } from "../support/entries.js";
+import { startFakeWebDav } from "../support/fake-storage.js";
 import { temporaryDirectory } from "../support/temporary.js";
 
 // Synthetic values only.
@@ -370,4 +372,119 @@ void test("provider keys read from outside HarnessHub need confirming; its own f
   });
   assert.deepEqual(again.providers.references, []);
   await b.client.backup.restore({ backup: evil, passphrase: PASSPHRASE });
+});
+
+const DAV_USER = "sync-user";
+const DAV_PASSWORD = "synthetic-dav-password";
+const SYNC_FILE = "/dav/harnesshub/harnesshub.harnesshub-backup";
+
+/** Two machines syncing through one fake WebDAV folder. */
+async function syncing(t: TestContext) {
+  const storage = await startFakeWebDav({
+    user: DAV_USER,
+    password: DAV_PASSWORD,
+  });
+  t.after(() => storage.close());
+  const settings: SyncSettings = {
+    kind: "webdav",
+    url: `${storage.url}/dav`,
+    user: DAV_USER,
+    secret: DAV_PASSWORD,
+    passphrase: PASSPHRASE,
+  };
+  const a = await machine(t, "sync-a");
+  const b = await machine(t, "sync-b");
+  await a.client.sync.configure(settings);
+  await b.client.sync.configure(settings);
+  /** Puts `data` on the server as someone with write access to it could. */
+  const replace = async (data: Buffer) => {
+    const response = await fetch(`${storage.url}${SYNC_FILE}`, {
+      method: "PUT",
+      headers: {
+        authorization: `Basic ${Buffer.from(`${DAV_USER}:${DAV_PASSWORD}`).toString("base64")}`,
+      },
+      body: data,
+    });
+    assert.ok(response.ok, String(response.status));
+  };
+  return { storage, a, b, replace };
+}
+
+const rules = async (on: Machine) =>
+  (await on.client.gatewayFeatures.get()).redaction.rules.map(
+    (rule) => rule.name,
+  );
+
+void test("sync refuses an older copy of the server's file put back in place, unless told to take it (L8)", async (t) => {
+  const { storage, a, b, replace } = await syncing(t);
+  await a.client.gatewayFeatures.setRedaction({
+    rules: [{ name: "first", pattern: "FIRST-[0-9]+" }],
+  });
+  assert.equal((await a.client.sync.now()).lastError, undefined);
+  const old = storage.object(SYNC_FILE)!.data;
+  await a.client.gatewayFeatures.setRedaction({
+    rules: [
+      { name: "first", pattern: "FIRST-[0-9]+" },
+      { name: "second", pattern: "SECOND-[0-9]+" },
+    ],
+  });
+  assert.equal((await a.client.sync.now()).lastError, undefined);
+  assert.equal((await b.client.sync.now()).lastError, undefined);
+  assert.deepEqual(await rules(b), ["first", "second"]);
+
+  // Someone with write access to the folder, but not the passphrase, puts
+  // the older file back: it opens, so only its age gives it away.
+  await replace(old);
+  await assert.rejects(b.client.sync.now(), invalid("SYNC_ROLLBACK"));
+  const status = await b.client.sync.status();
+  assert.match(status.lastError ?? "", /older/);
+  assert.deepEqual(await rules(b), ["first", "second"], "nothing was taken");
+  await assert.rejects(a.client.sync.now(), invalid("SYNC_ROLLBACK"));
+  const cli = await hh(b, ["sync", "status"]);
+  assert.match(cli.stdout, /hh sync now --accept-older/);
+
+  // Told to, B takes it, and what it writes back is newer than both.
+  const taken = await hh(b, ["sync", "now", "--accept-older"]);
+  assert.equal(taken.code, 0, taken.stdout);
+  assert.deepEqual(await rules(b), ["first"]);
+  assert.equal((await a.client.sync.now()).lastError, undefined);
+  assert.deepEqual(await rules(a), ["first"]);
+});
+
+void test("sync turns redaction off only from settings strictly newer than this machine's; otherwise it asks (L9)", async (t) => {
+  const { a, b } = await syncing(t);
+  assert.equal((await a.client.sync.now()).lastError, undefined);
+  assert.equal((await b.client.sync.now()).lastError, undefined);
+  // A turns redaction off; B changes its features after that, but A's push
+  // comes later still, so B takes A's part in the conflict.
+  await a.client.gatewayFeatures.setRedaction({ enabled: false });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await b.client.gatewayFeatures.setRedaction({
+    rules: [{ name: "late", pattern: "LATE-[0-9]+" }],
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal((await a.client.sync.now()).lastError, undefined);
+  const held = await b.client.sync.now();
+  assert.equal(held.lastError, undefined);
+  assert.deepEqual(held.notice?.here, ["features"]);
+  assert.equal(held.notice?.redactionOff, undefined);
+  assert.equal(held.notice?.redactionOffHeld, true);
+  assert.equal(
+    (await b.client.gatewayFeatures.get()).redaction.enabled,
+    true,
+    "older settings do not turn it off",
+  );
+  const cli = await hh(b, ["sync", "status"]);
+  assert.match(cli.stdout, /redaction stays on here/);
+  assert.match(cli.stdout, /hh gateway redaction off/);
+
+  // Turned off later than this machine's last change: it applies, and says so.
+  await a.client.gatewayFeatures.setRedaction({ enabled: true });
+  assert.equal((await a.client.sync.now()).lastError, undefined);
+  assert.equal((await b.client.sync.now()).lastError, undefined);
+  await a.client.gatewayFeatures.setRedaction({ enabled: false });
+  assert.equal((await a.client.sync.now()).lastError, undefined);
+  const off = await b.client.sync.now();
+  assert.equal(off.notice?.redactionOff, true);
+  assert.equal((await b.client.gatewayFeatures.get()).redaction.enabled, false);
 });

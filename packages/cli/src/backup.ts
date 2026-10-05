@@ -59,7 +59,7 @@ const COMMAND_USAGE: readonly CommandUsage[] = [
   },
   {
     command: "sync",
-    text: `  hh sync status | now | off
+    text: `  hh sync status | now [--accept-older] | off
   hh sync webdav on <https://…> [user=NAME] [keys=yes|no] [agents=yes|no]
   hh sync s3 on <s3://bucket[/prefix]> access-key-id=ID [endpoint=URL]
               [region=R] [path-style=yes|no] [keys=yes|no] [agents=yes|no]`,
@@ -511,6 +511,10 @@ function statusText(status: SyncStatus): string {
       lines.push(
         "WARNING: the server's gateway features turned outbound redaction OFF here. Turn it on again with hh gateway redaction on.",
       );
+    if (notice.redactionOffHeld)
+      lines.push(
+        "The server's gateway features turn outbound redaction off, but this machine's settings are as new or newer, so redaction stays on here. If that is what you want, turn it off with hh gateway redaction off.",
+      );
     if (notice.needKey?.length)
       lines.push(
         `Search backends without a key here, not brought in (add them with hh gateway search add): ${notice.needKey.join(", ")}`,
@@ -548,9 +552,13 @@ function yes(value: string | undefined, name: string): boolean | undefined {
 }
 
 async function syncCommand(args: string[]): Promise<number> {
-  const { values, positionals: given } = parse(args, {});
+  const { values, positionals: given } = parse(args, {
+    "accept-older": { type: "boolean" },
+  });
   const ctx = context(values);
   const [action, ...rest] = given;
+  if (values["accept-older"] && action !== "now")
+    throw new UsageError("--accept-older belongs to hh sync now");
   if (action === "status" || action === "now" || action === "off") {
     positionals(rest, []);
     const client = await ctx.client();
@@ -564,7 +572,11 @@ async function syncCommand(args: string[]): Promise<number> {
       return EXIT.ok;
     }
     const status =
-      action === "now" ? await client.sync.now() : await client.sync.status();
+      action === "now"
+        ? await client.sync.now({
+            acceptOlder: values["accept-older"] === true,
+          })
+        : await client.sync.status();
     output(ctx, status, () => statusText(status));
     return EXIT.ok;
   }

@@ -58,6 +58,11 @@ export interface FeaturesRestore {
     /** It is on here and the backup turns it off: a security change to show. */
     turnsOff: boolean;
     turnsOn: boolean;
+    /**
+     * Sync only: the part turns redaction off, but this machine's settings
+     * are as new or newer, so it stays on (second security review L9).
+     */
+    held?: true;
   };
   /** The user's redaction rules, by name. */
   rules: { added: string[]; replaced: string[]; removed: string[] };
@@ -148,7 +153,8 @@ export class FeaturesBackup {
 
   /**
    * Brings `part` in: with `mirror` (sync) the settings become the part's
-   * exactly, otherwise (restore) the part's switch, rules and backends
+   * exactly (redaction staying on with `holdRedactionOff`), otherwise
+   * (restore) the part's switch, rules and backends
    * replace or add to this machine's. New keys go to the secret store
    * first and are removed again when the settings cannot be written; keys
    * of this machine that no backend refers to any more are removed after.
@@ -160,17 +166,25 @@ export class FeaturesBackup {
       mirror: boolean;
       dryRun: boolean;
       unresolved: (model: string) => Promise<string | undefined>;
+      /** Keep redaction on here if the part turns it off. */
+      holdRedactionOff?: boolean;
     },
   ): Promise<FeaturesRestore> {
     const { features, secrets } = this.options;
     const here = features.current();
     const local = [...(here.search?.backends ?? [])];
     const remaining = [...local];
+    const held =
+      options.holdRedactionOff === true &&
+      here.redaction.enabled &&
+      !part.redaction.enabled;
+    const enabled = held || part.redaction.enabled;
     const summary: FeaturesRestore = {
       redaction: {
-        enabled: part.redaction.enabled,
-        turnsOff: here.redaction.enabled && !part.redaction.enabled,
-        turnsOn: !here.redaction.enabled && part.redaction.enabled,
+        enabled,
+        turnsOff: here.redaction.enabled && !enabled,
+        turnsOn: !here.redaction.enabled && enabled,
+        ...(held ? { held: true as const } : {}),
       },
       rules: { added: [], replaced: [], removed: [] },
       vision: null,
@@ -304,7 +318,7 @@ export class FeaturesBackup {
       };
       const settings: GatewayFeatures = {
         schemaVersion: 1,
-        redaction: { enabled: part.redaction.enabled, rules },
+        redaction: { enabled, rules },
         ...(vision ? { vision } : {}),
         ...(backends.length ? { search: { backends } } : {}),
         ...(alerts ? { alerts } : {}),
