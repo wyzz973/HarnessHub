@@ -28,7 +28,35 @@ export class HttpWriter {
   #firstWrite: number | undefined;
   #pending = 0;
   #transforms: OutputTransform[] = [];
+  #tap:
+    | { chunks: Buffer[]; bytes: number; limit: number; cut: boolean }
+    | undefined;
   constructor(private readonly response: ServerResponse) {}
+  /**
+   * Keep a copy of the body as the gateway produced it, before the
+   * rewrites, up to `limit` bytes: the reply of an opt-in body export
+   * (./bodies.js). Set before the first body write.
+   */
+  tap(limit: number): void {
+    this.#tap = { chunks: [], bytes: 0, limit, cut: false };
+  }
+  /** The copy {@link tap} kept and whether it was cut; undefined without a tap. */
+  get tapped(): { body: Buffer; cut: boolean } | undefined {
+    return this.#tap
+      ? { body: Buffer.concat(this.#tap.chunks), cut: this.#tap.cut }
+      : undefined;
+  }
+  #keep(chunk: string | Uint8Array): void {
+    const tap = this.#tap;
+    if (!tap || tap.cut || chunk.length === 0) return;
+    const bytes =
+      typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk);
+    const room = tap.limit - tap.bytes;
+    if (bytes.length > room) tap.cut = true;
+    const kept = bytes.subarray(0, room);
+    tap.chunks.push(kept);
+    tap.bytes += kept.length;
+  }
   /**
    * Rewrite the body from now on, after the rewrites added before, each
    * taking the output of the one before it: redacted secrets restored in
@@ -92,6 +120,7 @@ export class HttpWriter {
   async write(chunk: string | Uint8Array): Promise<void> {
     if (this.closed) throw new ClientClosed();
     this.#mark();
+    this.#keep(chunk);
     let text = chunk;
     for (const transform of this.#transforms) text = transform.push(text);
     if (this.#transforms.length && text.length === 0) return;
@@ -109,6 +138,7 @@ export class HttpWriter {
   async end(chunk: string | Uint8Array = ""): Promise<void> {
     if (this.closed) throw new ClientClosed();
     this.#mark();
+    this.#keep(chunk);
     let text = chunk;
     for (const transform of this.#transforms)
       text = transform.push(text) + transform.end();

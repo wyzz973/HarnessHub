@@ -53,6 +53,7 @@ import type { Quotas } from "./quota.js";
 import type { Conversation, StickyRoutes } from "./sticky.js";
 import { callCost, callUsage, usageParts, type UsageParts } from "./ledger.js";
 import type { HandlerLimits } from "./limits.js";
+import type { BodySource } from "./bodies.js";
 import type { HttpWriter } from "./output.js";
 import { ClientClosed, sse, type Failure, type OutputSink } from "./output.js";
 import {
@@ -294,8 +295,14 @@ export interface CallServices {
   sticky: StickyRoutes;
   quotas: Quotas;
   makeId(): string;
-  /** Append to the ledger; false when the store rejected it (the failure is logged). */
-  commit(entry: ModelCallEntry): Promise<boolean>;
+  /**
+   * Append to the ledger; false when the store rejected it (the failure is
+   * logged). `bodies` is where an opt-in body export reads the call's
+   * request and reply from (./bodies.js).
+   */
+  commit(entry: ModelCallEntry, bodies?: BodySource): Promise<boolean>;
+  /** Whether a model call starting now keeps its request and reply for the export. */
+  bodies(): boolean;
   /** Access tokens of subscription accounts; without it their candidates fail as unavailable. */
   subscriptions?: SubscriptionTokens;
   /** Answers Copilot accounts' calls; without it their candidates fail as unavailable. */
@@ -1083,7 +1090,7 @@ function commit(call: Call): Promise<boolean> {
   const first = call.writer.firstWrite;
   if (first !== undefined)
     entry.timing.firstByteMs = Math.round(first - call.started);
-  const result = call.services.commit(entry);
+  const result = call.services.commit(entry, call);
   committed.set(entry, result);
   return result;
 }

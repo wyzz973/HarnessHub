@@ -37,6 +37,7 @@ import {
 } from "./http.js";
 import { callUsage, type UsageParts } from "./ledger.js";
 import { openAiErrorResponse } from "./chat.js";
+import { BODY_LIMIT } from "./bodies.js";
 import { ClientClosed, HttpWriter, sse, type Failure } from "./output.js";
 import {
   observeEvent,
@@ -226,9 +227,15 @@ export async function codexPassthrough(context: CodexRequest): Promise<void> {
   response.once("close", onClose);
   const signal = AbortSignal.any([context.shutdown, abort.signal]);
   const writer = new HttpWriter(response);
+  const bodies = services.bodies();
+  if (bodies) writer.tap(BODY_LIMIT);
+  const closed = new Promise<void>((resolve) =>
+    response.once("close", () => resolve()),
+  );
   const secrets = clientSecrets(request.headers);
   const method = request.method ?? "GET";
   let reserved = 0;
+  let read: Buffer = Buffer.alloc(0);
   let entry: ModelCallEntry | undefined;
   const timers = new Set<NodeJS.Timeout>();
   let timedOut: "headers" | "idle" | undefined;
@@ -237,7 +244,10 @@ export async function codexPassthrough(context: CodexRequest): Promise<void> {
     entry.timing.durationMs = Math.round(performance.now() - started);
     if (writer.firstWrite !== undefined)
       entry.timing.firstByteMs = Math.round(writer.firstWrite - started);
-    const committed = await services.commit(entry);
+    const committed = await services.commit(
+      entry,
+      bodies ? { bytes: read, writer, closed } : undefined,
+    );
     entry = undefined;
     return committed;
   };
@@ -273,6 +283,7 @@ export async function codexPassthrough(context: CodexRequest): Promise<void> {
       });
       reserved = body.length;
     }
+    if (body) read = body;
     if (method === "POST" && body?.length) {
       let raw: Record<string, unknown> | undefined;
       try {

@@ -119,6 +119,13 @@ import {
   type GatewayFeatures,
 } from "@harnesshub/core/gateway-features";
 import { Redactor } from "./redaction.js";
+import {
+  BODY_LIMIT,
+  callBodies,
+  type BodySource,
+  type CallBodies,
+  type CommittedCalls,
+} from "./bodies.js";
 import { VisionDescriber } from "./vision.js";
 import type { InternalAnswer, InternalCalls } from "./internal.js";
 import { imagesCall } from "./images.js";
@@ -238,6 +245,12 @@ export interface GatewayHandlerDeps {
    * `fetch` without it. The gateway's calls to itself stay on loopback.
    */
   fetch?: OutboundFetch;
+  /**
+   * Sees each committed call, with its request and reply when it asks for
+   * them (the daemon's OTLP export, ./bodies.js). A hand-off waiting for a
+   * response to close is awaited by `close()`.
+   */
+  calls?: CommittedCalls;
 }
 
 /**
@@ -559,6 +572,39 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
   const redactor = new Redactor();
   for (const secret of deps.secrets ?? [])
     redactor.remember(secret, "ADMIN_TOKEN");
+  const features = deps.features ?? (() => DEFAULT_GATEWAY_FEATURES);
+  /** Hand a committed entry to `deps.calls`, with its bodies once its response closed. */
+  const handOver = (entry: ModelCallEntry, source?: BodySource) => {
+    const calls = deps.calls;
+    if (!calls) return;
+    const give = (bodies?: CallBodies) => {
+      try {
+        calls.committed(entry, bodies);
+      } catch (error) {
+        log.info("gateway.export.failed", {
+          callId: entry.callId,
+          error:
+            error instanceof Error ? error.message.slice(0, 200) : "unknown",
+        });
+      }
+    };
+    if (!source?.writer.tapped) return give();
+    track(
+      source.closed.then(() => {
+        let bodies: CallBodies | undefined;
+        try {
+          bodies = callBodies(source, redactor, features().redaction.rules);
+        } catch (error) {
+          // Never the bodies unmasked: the entry goes without them.
+          log.info("gateway.export.bodies_failed", {
+            callId: entry.callId,
+            error: error instanceof Error ? error.name : "unknown",
+          });
+        }
+        give(bodies);
+      }),
+    );
+  };
   /** In-flight model calls of `session:` keys, per Session. */
   const sessionCalls = new Map<
     SessionId,
@@ -605,14 +651,16 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       ? { copilot: new CopilotBridge(deps.copilot, clock) }
       : {}),
     redactor,
-    features: deps.features ?? (() => DEFAULT_GATEWAY_FEATURES),
+    features,
     vision: new VisionDescriber(),
     makeId: () => `call_${nonce}${(generated++).toString(36)}`,
     fetch: deps.fetch ?? ((input, init) => fetch(input, init)),
     resolveModel: (model, key) => resolveModel(model, key),
-    async commit(entry: ModelCallEntry): Promise<boolean> {
+    bodies: () => deps.calls?.bodies() === true,
+    async commit(entry: ModelCallEntry, bodies?: BodySource): Promise<boolean> {
       try {
         await store.appendModelCall(entry);
+        handOver(entry, bodies);
         services.quotas.record(entry);
         if (entry.scope?.kind === "session" && deps.sessions?.committed)
           try {
@@ -1453,9 +1501,12 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
     shutdown.signal.addEventListener("abort", onShutdown, { once: true });
     if (shutdown.signal.aborted) abort.abort();
     const writer = new HttpWriter(response);
+    if (services.bodies()) writer.tap(BODY_LIMIT);
     let reserved = 0;
     let release = () => {};
     let call: Call | undefined;
+    // The request once read, for a failure's body export too.
+    let read: Buffer = Buffer.alloc(0);
     const answer = async (error: unknown) => {
       const stub: Call = call ?? {
         services,
@@ -1469,7 +1520,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
         closed,
         disconnected: () => disconnected,
         writer,
-        bytes: Buffer.alloc(0),
+        bytes: read,
         raw: {},
         requested: entry.requestedModel ?? "",
         stream: entry.inbound.stream,
@@ -1513,6 +1564,7 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
           memory: services.memory,
         }));
       reserved = bytes.length;
+      read = bytes;
       const raw = object(parseJsonBody(bytes));
       const asked = route.gemini?.model ?? raw.model;
       const stream =
