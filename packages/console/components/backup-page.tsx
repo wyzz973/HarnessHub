@@ -1078,12 +1078,9 @@ function SyncCard({
   const [editing, setEditing] = useState(false);
   const [disabling, setDisabling] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  /** The daemon refused an older server file (409 `SYNC_ROLLBACK`); its words are in `lastError`. */
-  const [rollback, setRollback] = useState(false);
   const [acceptingOlder, setAcceptingOlder] = useState(false);
   const syncNow = () => {
     setSyncing(true);
-    setRollback(false);
     const client = modelPlane();
     client.sync.now().then(
       (synced) => {
@@ -1093,14 +1090,16 @@ function SyncCard({
       },
       (reason: unknown) => {
         setSyncing(false);
-        const failure = failureOf(reason);
-        if (failure.code === "SYNC_ROLLBACK") setRollback(true);
-        else notify.error(reason, t("backup.sync.failed"));
+        // An older server file is shown on the card, from the status's code.
+        if (failureOf(reason).code !== "SYNC_ROLLBACK")
+          notify.error(reason, t("backup.sync.failed"));
         void client.sync.status().then(onStatus, () => undefined);
       },
     );
   };
   const notice = status.notice;
+  /** The last sync, manual or in the background, refused an older server file (409 `SYNC_ROLLBACK`); its words are in `lastError`. */
+  const rollback = status.lastErrorCode === "SYNC_ROLLBACK";
   return (
     <Card
       title={t("backup.sync.title")}
@@ -1322,7 +1321,6 @@ function SyncCard({
         onClose={() => setAcceptingOlder(false)}
         onConfirm={async () => {
           const synced = await modelPlane().sync.now({ acceptOlder: true });
-          setRollback(false);
           onStatus(synced);
           notify.success(t("backup.sync.acceptedOlder"));
         }}

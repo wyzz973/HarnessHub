@@ -27,7 +27,6 @@ import { Switch } from "@/components/ui/switch";
 import { ModelPicker } from "@/components/model-picker";
 import {
   alertPercentOf,
-  searchProblemField,
   ruleOf,
   rulesWith,
   searchKinds,
@@ -465,10 +464,11 @@ function AddSearchDialog({
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
   const info = searchKinds[kind];
-  // The daemon's words, on the field they are about.
-  const problems = Object.values(failure?.fields ?? {});
-  const onField = (field: "baseUrl" | "key") =>
-    problems.filter((detail) => searchProblemField(detail) === field);
+  // The daemon's words, on the field its pointer names.
+  const onField = (field: "baseUrl" | "key") => {
+    const detail = failure?.fields[`/${field}`];
+    return detail === undefined ? [] : [detail];
+  };
   const ready =
     (info.key === "optional" || key.length > 0) &&
     (info.baseUrl === "optional" || baseUrl.trim().length > 0);

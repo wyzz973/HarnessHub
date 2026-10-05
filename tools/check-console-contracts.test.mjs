@@ -889,7 +889,9 @@ test("security group G: a restore names keys read on this computer and needs the
   const page = await readFile(new URL("../packages/console/components/backup-page.tsx", import.meta.url), "utf8");
   assert.match(page, /\.\.\.\(!dryRun && allowReferences \? \{ references: true \} : \{\}\)/);
   assert.match(page, /phase\.summary\.providers\.references\.length > 0 &&\s*!allowReferences/);
-  assert.match(page, /failure\.code === "SYNC_ROLLBACK"/);
+  assert.match(page, /status\.lastErrorCode === "SYNC_ROLLBACK"/, "a background sync's rollback offers the older file too");
+  const syncStatus = openapi.paths["/api/v1/sync"].get.responses["200"].content["application/json"].schema.properties;
+  assert.equal(syncStatus.lastErrorCode.type, "string");
   assert.match(page, /sync\.now\(\{ acceptOlder: true \}\)/);
   assert.match(page, /notice\?\.redactionOffHeld/);
   assert.match(page, /notice\?\.refused/);
@@ -907,18 +909,21 @@ test("security group G: a restore names keys read on this computer and needs the
   await client.sync.now();
   assert.deepEqual(sent, ['{"acceptOlder":true}', "{}"]);
 
-  // The add-search form puts the daemon's words on their field.
-  const features = await consoleModule("lib/gateway-features.ts");
-  const { searchBackendProblem, SEARCH_URL_CREDENTIALS } = await import(
+  // The add-search form puts the daemon's words on the field its pointer names.
+  const { searchBackendIssue } = await import(
     new URL("../packages/core/dist/src/gateway-features.js", import.meta.url).href
   );
-  assert.equal(features.searchProblemField(SEARCH_URL_CREDENTIALS), "baseUrl");
-  assert.equal(features.searchProblemField(searchBackendProblem({ id: "search-1", kind: "searxng" })), "baseUrl");
-  assert.equal(features.searchProblemField(searchBackendProblem({ id: "search-1", kind: "searxng", baseUrl: "ftp://x" })), "baseUrl");
-  assert.equal(features.searchProblemField(searchBackendProblem({ id: "search-1", kind: "tavily" })), "key");
-  assert.equal(features.searchProblemField("something else"), undefined);
+  // The fields the daemon names (credential is the request's key) are the form's two inputs.
+  for (const backend of [
+    { id: "search-1", kind: "searxng" },
+    { id: "search-1", kind: "searxng", baseUrl: "https://alice:secret@search.example" },
+    { id: "search-1", kind: "tavily" },
+  ])
+    assert.ok(["baseUrl", "credential"].includes(searchBackendIssue(backend).field), JSON.stringify(backend));
   const featuresPage = await readFile(new URL("../packages/console/components/gateway-features-page.tsx", import.meta.url), "utf8");
   assert.match(featuresPage, /failure\?\.fields\[`\/rules\/\$\{adding\}`\]/, "a refused rule's words sit on its pattern");
+  assert.match(featuresPage, /failure\?\.fields\[`\/\$\{field\}`\]/, "a refused backend's words sit on the field its pointer names");
+  assert.doesNotMatch(featuresPage, /searchProblemField/, "no reading of the daemon's wording");
 });
 
 test("the Library page sends MCP secrets as references or values and points at the rows a refusal names", async () => {
