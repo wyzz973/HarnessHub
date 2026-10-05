@@ -665,11 +665,7 @@ export class Outbound {
         timeoutMs,
         ...(ca ? { ca } : {}),
       }).then(
-        (socket) => {
-          if (options.protocol === "https:")
-            direct({ ...options, httpSocket: socket }, callback);
-          else callback(null, socket);
-        },
+        (socket) => handOver(via, socket, options, callback, direct),
         (error: Error) => callback(error, null),
       );
     };
@@ -730,6 +726,52 @@ export class Outbound {
     this.#shared = undefined;
     this.#own.clear();
     await Promise.all([...agents.map(finish), ...this.#closing]);
+  }
+}
+
+/**
+ * Gives undici an open tunnel. Undici sets the type of service on the socket
+ * of every request it writes, synchronously and outside any catch of its
+ * own; on a socket the proxy reset right after its answer that fails
+ * (EINVAL on macOS), and thrown from here it would be an unhandled rejection
+ * that ends the daemon. So the socket is checked first, with the value
+ * undici sets, which Node then does not set again: a tunnel that fails it is
+ * the proxy's failure (PROXY_FAILED), not the upstream's. A throw while
+ * handing over is still caught: the socket is destroyed with it, which fails
+ * the request.
+ */
+function handOver(
+  proxy: ProxyTarget,
+  socket: Socket,
+  options: buildConnector.Options,
+  callback: buildConnector.Callback,
+  direct: buildConnector.connector,
+): void {
+  let open = !socket.destroyed;
+  if (open)
+    try {
+      // Node 24 has it; @types/node does not declare it yet. Undici checks too.
+      (
+        socket as Socket & { setTypeOfService?: (tos: number) => unknown }
+      ).setTypeOfService?.(0);
+    } catch {
+      // The connection is gone (EINVAL after a reset); nothing else fails it.
+      open = false;
+    }
+  if (!open) {
+    socket.destroy();
+    callback(
+      proxyError(proxy, "closed the connection as soon as the tunnel opened"),
+      null,
+    );
+    return;
+  }
+  try {
+    if (options.protocol === "https:")
+      direct({ ...options, httpSocket: socket }, callback);
+    else callback(null, socket);
+  } catch (error) {
+    socket.destroy(error instanceof Error ? error : new Error(String(error)));
   }
 }
 

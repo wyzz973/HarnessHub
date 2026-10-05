@@ -14,7 +14,7 @@ Magpie 的做法：自己的设置（或 `direct`）优先，其次是 `*_PROXY`
 ## 决定
 
 1. **一个出站策略**：守护进程的组合根（`startHub`）创建一个 `Outbound`（[outbound.ts](../../packages/daemon/src/outbound.ts)），把它的 `fetch`（`@harnesshub/core/outbound` 的 `OutboundFetch`）交给共享网关、模型列表、`hh provider test` 与体检、目录刷新、Sign in with ChatGPT（令牌、撤销与 JWKS）、Codex 透传、联网搜索、WebDAV 与 S3 同步和 OTLP 导出；为某个 provider 发出的请求带上它自己的代理。`Outbound` 在所有使用者停止后最后关闭。npm 与 Copilot CLI 自己联网，它们的 `*_PROXY` 与 `NO_PROXY` 按守护进程的代理设置（含凭据）。
-2. **自己建立隧道，不用 undici 的 `ProxyAgent`**：`fetch` 的 `dispatcher` 是一个 undici `Agent`，它的连接函数按目标决定直连还是经代理；经代理时由我们打开隧道：HTTP 代理用 `CONNECT`（经 TCP，或 `https://` 代理时经 TLS），SOCKS5 按 RFC 1928 与 RFC 1929，主机名交给代理解析。到上游的 TLS 仍由 undici 的 `buildConnector` 以原主机名在隧道内协商，证书校验与直连时相同。隧道 10 秒内没有建立、代理连不上、拒绝隧道（含 407）或在应答前关闭连接时，请求以 `TypeError` 失败，其 `cause.code` 为 `PROXY_FAILED`，消息指出代理（不含凭据）。
+2. **自己建立隧道，不用 undici 的 `ProxyAgent`**：`fetch` 的 `dispatcher` 是一个 undici `Agent`，它的连接函数按目标决定直连还是经代理；经代理时由我们打开隧道：HTTP 代理用 `CONNECT`（经 TCP，或 `https://` 代理时经 TLS），SOCKS5 按 RFC 1928 与 RFC 1929，主机名交给代理解析。到上游的 TLS 仍由 undici 的 `buildConnector` 以原主机名在隧道内协商，证书校验与直连时相同。隧道 10 秒内没有建立、代理连不上、拒绝隧道（含 407）、在应答前关闭连接，或应答隧道已打开后立即重置连接时，请求以 `TypeError` 失败，其 `cause.code` 为 `PROXY_FAILED`，消息指出代理（不含凭据）。最后一种情况下 undici 写请求时对套接字设置服务类型会同步抛出（macOS 上为 EINVAL），而且发生在 undici 自己的 catch 之外；交给 undici 之前先以同样的值设置一次，失败即算代理的失败，交接中仍抛出的异常被捕获并销毁套接字，不会成为结束守护进程的未处理 rejection。
 3. **取值顺序与 HarnessHub 的其他设置相同**：`hh serve --proxy`（地址或 `direct`）优先，其次是 `https_proxy`、`HTTPS_PROXY`、`http_proxy`、`HTTP_PROXY`，再次是 `config.jsonc` 的 `network.proxy`；`network.noProxy` 同样由 `no_proxy`/`NO_PROXY` 优先。这与 Magpie（设置优先于环境变量）不同；需要在环境中有代理时关闭它，用 `--proxy direct`。系统代理设置不读。代理的密码只来自环境变量中的地址，或 `network.proxyPassword` 的秘密引用；文件与 `--proxy` 中带密码的地址是 `CONFIG_SECRET`，`hh config show` 显示为 `***`。
 4. **私有网络直连**：回环地址从不经过代理（与 Magpie 相同）；另外默认直连私有与链路本地地址（`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`169.254.0.0/16`、`100.64.0.0/10`、`fc00::/7`、`fe80::/10`）、不带点的主机名与 `.local`、`.home.arpa`、`.internal` 下的名称，以及 `network.noProxy` 中的条目。是否私有只按地址字面量与名称判断，不查询 DNS。provider 自己的代理（`direct` 或不含凭据的地址）只排除回环，用户为它指定的代理连私有地址也用。
 5. **代理失败不算凭据的失败**：网关把 `PROXY_FAILED` 记为 `proxy_failed`（类别 `proxy`，来源 `gateway`），答复 502 `proxy_failed`；它立即转移到下一个候选，不在最后一个候选上重试，也不计入凭据的熔断（Magpie 的 `proxy` 同样不休息）。`count_tokens` 转发失败时改用本地估算，搜索后端的失败原因写进工具结果。
@@ -45,7 +45,7 @@ Magpie 的做法：自己的设置（或 `direct`）优先，其次是 `*_PROXY`
 
 ## 验证要求
 
-- 单元测试（[outbound.test.ts](../../tests/unit/outbound.test.ts)，本地 `CONNECT` 与 SOCKS5 代理，证书在运行时生成）：HTTP 与 HTTPS 上游经隧道，TLS 在隧道内以上游的名称完成；回环、私有地址与 `noProxy` 直连；用户名与秘密中的密码、407；连不上、关闭与不应答的代理快速失败且只有 1 次连接；`https://` 代理；provider 自己的代理；子进程的环境变量。
+- 单元测试（[outbound.test.ts](../../tests/unit/outbound.test.ts)，本地 `CONNECT` 与 SOCKS5 代理，证书在运行时生成）：HTTP 与 HTTPS 上游经隧道，TLS 在隧道内以上游的名称完成；回环、私有地址与 `noProxy` 直连；用户名与秘密中的密码、407；连不上、关闭与不应答的代理快速失败且只有 1 次连接；应答后立即重置连接的 CONNECT 与 SOCKS5 代理以 `PROXY_FAILED` 失败，测试进程不崩溃；`https://` 代理；provider 自己的代理；子进程的环境变量。
 - 网关测试（[shared-gateway-proxy.test.ts](../../packages/gateway/test/shared-gateway-proxy.test.ts)）：代理失败为 `proxy_failed`、转移、不重试、不休息（去掉这条分类时测试失败），provider 的代理随请求传入，Codex 透传与搜索经注入的 `fetch`。
 - 正式守护进程入口（[outbound-proxy.test.ts](../../tests/integration/outbound-proxy.test.ts)）：只能经代理到达的 HTTPS provider 的调用、模型列表与测试，目录刷新与 OTLP 导出经代理，回环 provider 直连，provider 自己的 SOCKS5 代理，失效代理的 502 `proxy_failed`，文件秘密中的密码不出现在数据目录中，`hh config show` 的掩码，`hh provider proxy`。
 - 单可执行文件（[commands.mjs](../../tools/sea/commands.mjs)，`pnpm test:sea`）：`hh serve --proxy` 经本地 CONNECT 代理调用只能经代理到达的 HTTPS provider，上游证书经 `NODE_EXTRA_CA_CERTS` 信任；去掉 `--proxy` 时这一步失败。只在 macOS arm64 上运行过。

@@ -105,9 +105,10 @@ export function testCertificate(names) {
  * @typedef {(host: string, port: number) => number | undefined} ProxyRoute
  *   Where a proxy sends a tunnel to `host:port`: a loopback port, or
  *   undefined to refuse it.
- * @typedef {"tunnel" | "close" | "silent"} ProxyBehaviour How a proxy treats
- *   a tunnel request: open it, close the connection after reading the
- *   request without answering, or read it and never answer.
+ * @typedef {"tunnel" | "close" | "silent" | "reset"} ProxyBehaviour How a
+ *   proxy treats a tunnel request: open it, close the connection after
+ *   reading the request without answering, read it and never answer, or
+ *   answer that the tunnel is open and reset the connection at once.
  * @typedef {object} TestProxy
  * @property {string} url The proxy's address, without credentials.
  * @property {number} port
@@ -187,6 +188,8 @@ export async function startConnectProxy(options) {
     const behaviour = options.behaviour ?? "tunnel";
     if (behaviour === "close") return void client.destroy();
     if (behaviour === "silent") return;
+    if (behaviour === "reset")
+      return void client.write("HTTP/1.1 200 Connection Established\r\n\r\n", () => client.resetAndDestroy());
     if (options.credentials !== undefined && sent !== options.credentials)
       return void client.end(
         'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="test"\r\n\r\n',
@@ -218,9 +221,10 @@ export async function startConnectProxy(options) {
 
 /**
  * A SOCKS5 proxy (RFC 1928); with `credentials` (`user:password`) it asks
- * for them (RFC 1929).
+ * for them (RFC 1929). With `behaviour: "reset"` it answers a tunnel request
+ * with success and resets the connection at once.
  *
- * @param {{ route: ProxyRoute, credentials?: string }} options
+ * @param {{ route: ProxyRoute, credentials?: string, behaviour?: "tunnel" | "reset" }} options
  * @returns {Promise<TestProxy>}
  */
 export async function startSocksProxy(options) {
@@ -277,6 +281,7 @@ export async function startSocksProxy(options) {
           credentials.push(sent);
           const target = options.route(host, port);
           const reply = (code) => Buffer.from([5, code, 0, 1, 0, 0, 0, 0, 0, 0]);
+          if (options.behaviour === "reset") return void client.write(reply(0), () => client.resetAndDestroy());
           if (target === undefined) return void client.end(reply(4));
           pipeTo(target, client, head, () => client.write(reply(0)), () => client.end(reply(5)));
           return;

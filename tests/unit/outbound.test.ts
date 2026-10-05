@@ -417,6 +417,28 @@ void test("a dead or misbehaving proxy fails fast as a proxy failure, without re
     /refused the tunnel to api\.upstream\.test:443: 502/,
   );
 });
+void test("a proxy that resets a tunnel as soon as it opens fails the request as a proxy failure, never this process", async (t) => {
+  // Undici sets a socket option on every request it writes; on a reset
+  // socket that throws, which once ended the daemon from a promise callback.
+  for (const start of [
+    startConnectProxy({ route: () => undefined, behaviour: "reset" }),
+    startSocksProxy({ route: () => undefined, behaviour: "reset" }),
+  ]) {
+    const proxy = await proxyOf(t, start);
+    const network = outbound(t, proxy.url);
+    for (let n = 1; n <= 3; n++)
+      assert.match(
+        await failure(
+          network.fetch(`http://api.upstream.test/${n}`, {
+            signal: AbortSignal.timeout(5_000),
+          }),
+        ),
+        /closed the connection as soon as the tunnel opened/,
+      );
+    assert.equal(proxy.connections, 3);
+  }
+});
+
 void test("SOCKS5: tunnels with and without credentials, remote names, refusals", async (t) => {
   const ports = await upstreams(t);
   const socks = await proxyOf(t, startSocksProxy({ route: routeTo(ports) }));

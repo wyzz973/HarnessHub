@@ -11,8 +11,11 @@ const TOOL = new URL("../../../tools/fake-proxy/index.mjs", import.meta.url);
 /** Where a proxy sends a tunnel to `host:port`: a loopback port, or undefined to refuse. */
 export type ProxyRoute = (host: string, port: number) => number | undefined;
 
-/** How a proxy treats a tunnel request: open it, close without answering, or never answer. */
-export type ProxyBehaviour = "tunnel" | "close" | "silent";
+/**
+ * How a proxy treats a tunnel request: open it, close without answering,
+ * never answer, or answer that it is open and reset the connection at once.
+ */
+export type ProxyBehaviour = "tunnel" | "close" | "silent" | "reset";
 
 export interface TestProxy {
   /** The proxy's address, without credentials. */
@@ -38,6 +41,7 @@ interface ProxyModule {
   startSocksProxy(options: {
     route: ProxyRoute;
     credentials?: string;
+    behaviour?: "tunnel" | "reset";
   }): Promise<TestProxy>;
   startTlsFront(
     target: number,
@@ -54,7 +58,7 @@ const tool = (await import(TOOL.href)) as ProxyModule;
 export const testCertificate = tool.testCertificate;
 /** An HTTP proxy that answers only CONNECT; 407 without `credentials`, HTTPS with `tls`. */
 export const startConnectProxy = tool.startConnectProxy;
-/** A SOCKS5 proxy; with `credentials` (`user:password`) it asks for them. */
+/** A SOCKS5 proxy; with `credentials` (`user:password`) it asks for them; it can reset a tunnel it opened. */
 export const startSocksProxy = tool.startSocksProxy;
 /** A TLS server passing each connection, decrypted, to the HTTP server on `target`. */
 export const startTlsFront = tool.startTlsFront;
