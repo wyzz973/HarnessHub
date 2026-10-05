@@ -135,6 +135,21 @@
   - 本机完整 `pnpm check` 通过（macOS arm64）。Windows 未验证。
 - [ ] **G 备份与同步**（M5、M6、L8、L9）：构造的备份可让搜索 Key 引用本机任意秘密并发往备份指定的地址；脱敏规则可造成灾难性回溯阻塞守护进程；同步不防回滚；经同步关闭脱敏不需要确认。
 
+## 第三轮安全审查（2026-10-05，`fee4bb5..5194d48`）
+
+复核：第二轮 E、F 与第一轮 D 的修复有效（重跑原复现脚本）。新代码中没有 high 或 medium，6 个 low 与 4 个 info。
+
+- [x] **第三轮的 low 与 info**（N1–N6、I1、I3、I4；分支 `fix/review3-lows`，每项一个提交，N1 与 I4 合为一个）：
+  - N1：400/422 的“模型不存在”只读厂商的 `error.message` 或 code `model_not_found`；一把 Key 设下的暂定模型标记只对它自己生效。I4：回显请求的 Key 自己的 `errorClass` 也按去掉回显后的类别（安全拒绝除外）；`echoFree` 保留错误 JSON 的键。
+  - N2：写进 `model` 的 Key 不出现在错误答复、账本（含各次尝试）、CSV 与 OTLP 导出中；`redactKeyText` 也识别去掉 `hhk_` 的 Key（只有密钥本身的 43 个字符不识别，见 [模型网关](docs/model-gateway.md)）。
+  - N3：CSV 公式防护也检查去掉开头空白（含 Unicode 空白）之后的值。
+  - N4：GenAI 指标的 `gen_ai.request.model` 是解析出的 Model Ref 或路由组，没有解析出或上游不认识时为 `unknown`。
+  - N5：托管配置先 `lstat`，只读不超过 1 MiB 的普通文件，打开时不跟随链接、不阻塞；其他情况报告为无法读取，不再 500 或挂起。
+  - N6：每个 Credential 最多 16 个限流窗口，提醒标记最多 2048 条，每次检查只记一行 `usage.alert`。
+  - I1：接线期间 CC Switch 表中中转站的 `http_headers` 与 `env_http_headers` 整项删除，还原时逐字节恢复。
+  - I3：交接之后、隧道里还没有字节回来时的 `EPIPE` 或 `ECONNRESET` 算代理的失败（`PROXY_FAILED`）。
+  - 证据：每项都有修改前失败的测试（修改前的结果：N1 另一把 Key 得到 503、I4 记为 `insufficient_balance`、N2 404 回显 Key、N3 不加前缀、N4 每个编造的名字一个序列、N5 `EISDIR` 与 500、N6 保留 100 个窗口、I1 中转站的 `Authorization` 留在表中、I3 得到 `ECONNRESET`），修改后通过；审查脚本 `f-echo-model`、`b-keys`、`csv-formula`、`managed-dir`、`alert-windows` 与重置竞态脚本修复后按预期（竞态脚本 120 次全部是代理失败）。本机完整 `pnpm check` 通过（macOS arm64）。Windows 未验证（N5 的 `C:\ProgramData`）。
+
 ## M1–M5
 
 各里程碑的交付与验收标准见 [12 第 2 节](docs/proposals/oss/12-roadmap-migration.md#2-里程碑)。进入对应里程碑时，在本文件中展开为带编号的任务。
