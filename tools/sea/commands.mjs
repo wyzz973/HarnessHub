@@ -29,8 +29,11 @@
  * (tools/fake-proxy) reaches, through a TLS front of the same fake provider:
  * `serve` runs with `--proxy` and trusts the front's certificate through
  * NODE_EXTRA_CA_CERTS, as a user behind a TLS-inspecting proxy would (the
- * loopback provider above stays direct), and SIGTERM stopping `serve` with
- * exit code 0 (not on Windows, where kill() terminates).
+ * loopback provider above stays direct), a gateway call after which the
+ * model-plane store's checkpoint worker writes the database file within 3 s
+ * with a WAL under 4 MiB and no checkpoint failure or fallback in the
+ * gateway log, and SIGTERM stopping `serve` with exit code 0 within 15 s
+ * (not on Windows, where kill() terminates).
  *
  * `--node` runs the same steps with `node apps/hh/bin/hh.mjs` instead, for
  * comparison. `--runs N` repeats the whole sequence, each time in a new
@@ -46,6 +49,7 @@ import {
   readdir,
   readFile,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -471,12 +475,50 @@ export async function runCommands({ binary, node = false }) {
             }),
       };
     });
+    await step("WAL checkpointed off the commits", async () => {
+      // In WAL mode only a checkpoint writes the database file. The
+      // model-plane connection does not checkpoint its commits (a worker
+      // thread does), and nothing here brings the WAL to SQLite's automatic
+      // 1000 pages: the file changing after a call is the worker's work.
+      const database = path.join(dataDir, "harnesshub.sqlite");
+      const before = (await stat(database)).mtimeMs;
+      const status = await chat(url, clientKey, MODEL);
+      let checkpointed = false;
+      for (let waited = 0; waited < 3000 && !checkpointed; waited += 50) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        checkpointed = (await stat(database)).mtimeMs > before;
+      }
+      const wal = (await stat(`${database}-wal`)).size;
+      const log = await readFile(
+        path.join(dataDir, "logs", "gateway.log"),
+        "utf8",
+      );
+      const failed = /store\.checkpoint_(?:failed|fallback)/.test(log);
+      const ok =
+        status === 200 && checkpointed && wal < 4 * 1024 * 1024 && !failed;
+      return {
+        code: status,
+        ok,
+        ...(ok
+          ? {}
+          : {
+              detail: `database ${checkpointed ? "checkpointed" : "not checkpointed"}, WAL ${wal} bytes${failed ? ", checkpoint failure logged" : ""}`,
+            }),
+      };
+    });
     if (!windows)
       await step("hh serve stops on SIGTERM", async () => {
         const exited = once(serve, "exit");
         serve.kill("SIGTERM");
-        const [code] = await exited;
-        return { code, ok: code === 0 };
+        // Shutdown waits for the checkpoint worker (whenClosed); not forever.
+        const timer = setTimeout(() => serve.kill("SIGKILL"), 15_000);
+        const [code, signal] = await exited;
+        clearTimeout(timer);
+        return {
+          code,
+          ok: code === 0,
+          ...(signal ? { detail: `still running after 15 s: ${signal}` } : {}),
+        };
       });
   } finally {
     if (serve && serve.exitCode === null && serve.signalCode === null) {
