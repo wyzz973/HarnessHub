@@ -153,6 +153,7 @@ const providerModel = {
       items: { enum: ["text", "image", "pdf", "audio", "video"] },
     },
     price,
+    credentials: strings(200, 100),
   },
 } as const;
 const providerModels = {
@@ -168,6 +169,7 @@ const providerModels = {
     refreshedAt: timestamp,
     stale: { type: "boolean" },
     listPath: { type: "string", pattern: "^/\\S{0,511}$" },
+    listedFor: strings(200, 100),
   },
 } as const;
 const patchSet = {

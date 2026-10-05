@@ -59,8 +59,10 @@ import type { SessionId } from "@harnesshub/core/types";
 import { ApiProblem, type ApiV1Options, type ProblemItem } from "./api-v1.js";
 import { createModelEnrichment, type LiveModels } from "./model-enrichment.js";
 import {
+  credentialListing,
   fetchModelList,
   listingProtocol,
+  mergeCredentialLists,
   ModelListError,
 } from "./model-list.js";
 import {
@@ -744,6 +746,92 @@ export function registerModelPlaneRoutes(
       }),
   );
 
+  /**
+   * Refreshes the list of a provider whose credentials (`asks`, each with
+   * the protocol it is asked at) each have a list of their own, asking
+   * them in parallel (`mergeCredentialLists`). Fails as one list does when
+   * none could be read: 409 `CREDENTIAL_UNAVAILABLE` when no credential's
+   * value could, else 502 `MODELS_REFRESH_FAILED`; the old list is kept,
+   * marked stale.
+   */
+  const refreshPerCredential = async (
+    listed: ProviderConfig,
+    asks: { credential: ProviderCredential; protocol: WireProtocol }[],
+  ): Promise<ProviderConfig> => {
+    const send = options.outbound && viaProvider(options.outbound, listed);
+    const read = await Promise.all(
+      asks.map(async ({ credential, protocol }) => {
+        let key: string;
+        try {
+          key = await secrets.resolve(credential.ref, options.environment);
+        } catch {
+          return { credential: credential.id, failure: undefined };
+        }
+        try {
+          return {
+            credential: credential.id,
+            models: await fetchModelList(listed, key, send, protocol),
+          };
+        } catch (error) {
+          if (!(error instanceof ModelListError)) throw error;
+          return { credential: credential.id, failure: error.message };
+        }
+      }),
+    );
+    return serialized(async () => {
+      const current = await provider(listed.id);
+      const now = new Date().toISOString();
+      if (!read.some((item) => item.models)) {
+        await store.putProvider(
+          checkProvider({
+            ...current,
+            models: { ...current.models, stale: true },
+            updatedAt: now,
+          }),
+        );
+        const listing = read.find((item) => item.failure)?.failure;
+        throw listing === undefined
+          ? new ApiProblem(
+              "CREDENTIAL_UNAVAILABLE",
+              "No credential of the provider could be read",
+              409,
+            )
+          : new ApiProblem(
+              "MODELS_REFRESH_FAILED",
+              `The model list could not be refreshed: ${listing}`,
+              502,
+            );
+      }
+      const merged = mergeCredentialLists(current.models, read);
+      const previous = new Map(
+        current.models.list.map((model) => [model.id, model]),
+      );
+      const { stale: _stale, ...rest } = current.models;
+      // Values set by hand on a model stay, as in a single list's refresh.
+      return writeEnriched(
+        checkProvider({
+          ...current,
+          models: {
+            ...rest,
+            source: "live",
+            list: merged.list.map((model) => {
+              const { credentials: _old, ...kept } = previous.get(model.id) ?? {
+                id: model.id,
+              };
+              return model.credentials
+                ? { ...kept, credentials: model.credentials }
+                : kept;
+            }),
+            listedFor: merged.listedFor,
+            refreshedAt: now,
+          },
+          updatedAt: now,
+        }),
+        { models: merged.fresh, at: now },
+      );
+    });
+  };
+
   api.post<{ Params: { id: string } }>(
     "/providers/:id/models/refresh",
     {
@@ -757,6 +845,17 @@ export function registerModelPlaneRoutes(
       // The upstream request runs outside the write queue; its result is
       // merged into the provider as it is when the request ends.
       const listed = await provider(request.params.id);
+      // A vendor whose keys may each see models of their own is asked with
+      // each (Magpie `fetchPerKey`); one credential, an account or none as before.
+      const asks = listed.subscription
+        ? []
+        : listed.credentials.flatMap((credential) => {
+            const at = credential.enabled
+              ? credentialListing(listed, credential)
+              : undefined;
+            return at ? [{ credential, protocol: at }] : [];
+          });
+      if (asks.length > 1) return refreshPerCredential(listed, asks);
       const protocol = listingProtocol(listed);
       const credential = listed.credentials.find(
         (item) =>
@@ -828,7 +927,12 @@ export function registerModelPlaneRoutes(
         const previous = new Map(
           current.models.list.map((model) => [model.id, model]),
         );
-        const { stale: _stale, ...rest } = current.models;
+        // One list: no credential's own list is known any more.
+        const {
+          stale: _stale,
+          listedFor: _listedFor,
+          ...rest
+        } = current.models;
         // Values set by hand on a model stay; the list's own values replace
         // what an earlier list, the preset or the catalog supplied.
         return writeEnriched(
@@ -837,9 +941,12 @@ export function registerModelPlaneRoutes(
             models: {
               ...rest,
               source: "live",
-              list: models.map(
-                (model) => previous.get(model.id) ?? { id: model.id },
-              ),
+              list: models.map((model) => {
+                const { credentials: _credentials, ...kept } = previous.get(
+                  model.id,
+                ) ?? { id: model.id };
+                return kept;
+              }),
               refreshedAt: now,
             },
             updatedAt: now,

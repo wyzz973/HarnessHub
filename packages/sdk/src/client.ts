@@ -478,6 +478,11 @@ export interface CredentialRoutingState {
   lastFailure?: { kind: string; status: number; at: string };
   /** The latest reading of each allowance window (`smart` and `pace` use them). */
   readings: AllowanceReading[];
+  /**
+   * When the last refresh read this credential's own model list: the
+   * provider's models it lacks, which the gateway does not send it.
+   */
+  unlistedModels?: string[];
 }
 
 /** `POST /gateway-keys`: `key` is the key text, returned only by this call. */

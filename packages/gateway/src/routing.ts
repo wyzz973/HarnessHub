@@ -7,6 +7,7 @@
  */
 import type { LogSink } from "@harnesshub/core/logging";
 import {
+  credentialUnlisted,
   DEFAULT_RETRY_POLICY,
   modelAllowed,
   type AllowanceReading,
@@ -55,6 +56,12 @@ export interface Candidate {
    * Model Ref asked for directly.
    */
   path?: string[];
+  /**
+   * The credential is limited to protocols other than those of the
+   * best-fitting credential of its model ({@link modelCandidates}): a
+   * weighed group tries it after the others.
+   */
+  aside?: true;
 }
 
 function validFor(credential: ProviderCredential, protocol: WireProtocol) {
@@ -80,6 +87,51 @@ export const KEYLESS_CREDENTIAL: ProviderCredential = Object.freeze({
 const TRANSLATION_TARGETS = ["anthropic", "responses", "gemini"] as const;
 
 /**
+ * The protocol a model is at home in, when its name says (Magpie
+ * `modelFamily`): Anthropic's for Claude, Chat (OpenAI's) for GPT, Codex
+ * and the o-series.
+ */
+function modelFamily(model: string): "anthropic" | "chat" | undefined {
+  const name = model.toLowerCase().slice(model.lastIndexOf("/") + 1);
+  if (name.startsWith("claude")) return "anthropic";
+  if (name.startsWith("gpt-") || name.includes("codex") || /^o[1-9]/.test(name))
+    return "chat";
+  return undefined;
+}
+
+/**
+ * How well a credential suits a request, best first (Magpie `keyFit`): 0
+ * fits, 1 needs the request translated, 2 is made for another vendor's
+ * models. A credential not limited to protocols fits; one limited fits a
+ * Claude model when it takes Anthropic's protocol, a GPT model when it
+ * takes another, and any other model when it takes the inbound protocol
+ * at an endpoint the provider has.
+ */
+function keyFit(
+  candidate: Candidate,
+  modelId: string,
+  inbound: WireProtocol,
+): number {
+  const { protocols } = candidate.credential;
+  if (protocols === undefined) return 0;
+  switch (modelFamily(modelId)) {
+    case "anthropic":
+      return protocols.includes("anthropic") ? 0 : 2;
+    case "chat":
+      return protocols.some((protocol) => protocol !== "anthropic") ? 0 : 2;
+    case undefined:
+      return candidate.provider.endpoints[inbound] !== undefined &&
+        protocols.includes(inbound)
+        ? 0
+        : 1;
+  }
+}
+
+/** The protocols a credential is limited to, as one comparable value. */
+const limitedTo = (credential: ProviderCredential) =>
+  credential.protocols ? [...credential.protocols].sort().join(",") : "";
+
+/**
  * Candidates of one Model Ref for an inbound protocol, one per enabled
  * credential in configuration order. A credential serves the inbound
  * protocol natively (passthrough) when the provider declares that endpoint,
@@ -88,12 +140,24 @@ const TRANSLATION_TARGETS = ["anthropic", "responses", "gemini"] as const;
  * Responses or Gemini endpoint in that order. Credentials valid for none of
  * the provider's endpoints are reported in `skipped`. A provider without
  * credentials has one keyless candidate.
+ *
+ * A credential whose own model list is known to lack the model
+ * (`credentialUnlisted`, Magpie `Serves`) is left out and counted in
+ * `unlisted`; when every credential's list lacks it, they are all tried
+ * the same (`unlistedTried`). The candidates are then in Magpie's `keyFit`
+ * order, best first; those limited to other protocols than the first are
+ * moved after the rest and marked `aside`.
  */
 export function modelCandidates(
   provider: ProviderConfig,
   modelId: string,
   inbound: WireProtocol,
-): { candidates: Candidate[]; skipped: string[] } {
+): {
+  candidates: Candidate[];
+  skipped: string[];
+  unlisted: number;
+  unlistedTried: boolean;
+} {
   const ref = `${provider.id}/${modelId}` as ModelRef;
   const model = provider.models.list.find((entry) => entry.id === modelId);
   const wireModel = wireName(provider, modelId);
@@ -177,7 +241,32 @@ export function modelCandidates(
         );
     }
   }
-  return { candidates, skipped };
+  // A credential whose own list lacks the model would only refuse it; when
+  // every list lacks it, they are all asked the same.
+  const listing = candidates.filter(
+    (candidate) =>
+      !credentialUnlisted(provider, candidate.credential.id, modelId),
+  );
+  const unlisted = candidates.length - listing.length;
+  const unlistedTried = unlisted > 0 && listing.length === 0;
+  const kept = unlistedTried ? candidates : listing;
+  const fit = new Map(
+    kept.map((candidate) => [candidate, keyFit(candidate, modelId, inbound)]),
+  );
+  kept.sort((a, b) => fit.get(a)! - fit.get(b)!);
+  const first = kept[0] && limitedTo(kept[0].credential);
+  const pool = kept.filter(
+    (candidate) => limitedTo(candidate.credential) === first,
+  );
+  const aside = kept
+    .filter((candidate) => limitedTo(candidate.credential) !== first)
+    .map((candidate): Candidate => ({ ...candidate, aside: true }));
+  return {
+    candidates: [...pool, ...aside],
+    skipped,
+    unlisted: unlistedTried ? 0 : unlisted,
+    unlistedTried,
+  };
 }
 
 /** What {@link planGroup} reads and weighs with. */
@@ -217,8 +306,14 @@ export async function planGroup(
   skipped: string[];
   /** The groups inside the group that were planned, by ID. */
   groups: Map<RouteGroupId, RouteGroup>;
+  /** Credentials left out because their own lists lack a member's model ({@link modelCandidates}). */
+  unlisted: number;
+  /** Members whose every credential's list lacks the model, all asked the same. */
+  unlistedTried: boolean;
 }> {
   const skipped: string[] = [];
+  let unlisted = 0;
+  let unlistedTried = false;
   const groups = new Map<RouteGroupId, RouteGroup>();
   const seen = new Set<string>();
   const providers = new Map<string, Promise<ProviderConfig | undefined>>();
@@ -236,6 +331,8 @@ export async function planGroup(
     path: string[],
   ): Promise<Candidate[]> => {
     const units: Candidate[][] = [];
+    /** Candidates limited to other protocols than their model's best: after the weighed ones. */
+    const late: Candidate[] = [];
     for (const text of planning.order(current)) {
       const named = parseGroupMember(text);
       if (!named) {
@@ -277,6 +374,8 @@ export async function planGroup(
       if (member?.kind !== "model") continue;
       const result = modelCandidates(found, member.model, inbound);
       skipped.push(...result.skipped);
+      unlisted += result.unlisted;
+      unlistedTried ||= result.unlistedTried;
       for (const candidate of result.candidates) {
         const key = `${credentialKey(candidate)}\u0000${candidate.ref}\u0000${member.effort ?? ""}`;
         if (seen.has(key)) continue;
@@ -291,20 +390,23 @@ export async function planGroup(
               `${text}: ${candidate.ref} has no fast mode on its ${candidate.upstream} endpoint; sent as it is`,
             );
         }
-        units.push([candidate]);
+        if (candidate.aside && WEIGHED.has(current.strategy))
+          late.push(candidate);
+        else units.push([candidate]);
       }
     }
-    if (!WEIGHED.has(current.strategy) || units.length < 2) return units.flat();
+    if (!WEIGHED.has(current.strategy) || units.length < 2)
+      return [...units.flat(), ...late];
     const heads = units.map(
       (unit) =>
         unit.find((candidate) => !planning.blocked(candidate)) ?? unit[0]!,
     );
     const order = await planning.weigh(current, heads);
     const byHead = new Map(heads.map((head, index) => [head, units[index]!]));
-    return order.flatMap((head) => byHead.get(head) ?? [head]);
+    return [...order.flatMap((head) => byHead.get(head) ?? [head]), ...late];
   };
   const candidates = await level(group, [], []);
-  return { candidates, skipped, groups };
+  return { candidates, skipped, groups, unlisted, unlistedTried };
 }
 
 /** The group's retry policy over the defaults; `totalAttempts` never exceeds the hard cap of 8. */

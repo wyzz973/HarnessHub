@@ -229,7 +229,8 @@ const providerModel: Check = (value) =>
     value.inputModalities,
     list(member(["text", "image", "pdf", "audio", "video"])),
   ) &&
-  optional(value.price, price);
+  optional(value.price, price) &&
+  optional(value.credentials, list(text(200), 100));
 
 const providerModels: Check = (value) =>
   object(value) &&
@@ -241,7 +242,8 @@ const providerModels: Check = (value) =>
   optional(
     value.listPath,
     (path) => typeof path === "string" && /^\/\S{0,511}$/.test(path),
-  );
+  ) &&
+  optional(value.listedFor, list(text(200), 100));
 
 const patchSet: Check = (value) =>
   object(value) &&

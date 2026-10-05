@@ -86,6 +86,7 @@ const item = {
       },
     },
     readings: { type: "array", items: reading },
+    unlistedModels: { type: "array", items: { type: "string" } },
   },
 } as const;
 
@@ -94,7 +95,10 @@ const item = {
  * gateway's in-memory routing state (breaker, rest, last failure class,
  * allowance readings). A credential the gateway knows nothing about is
  * closed with no readings. The state lives in the daemon's memory and
- * starts empty after a restart, except readings, which persist.
+ * starts empty after a restart, except readings, which persist. A
+ * credential whose own model list the last refresh read has
+ * `unlistedModels`: the provider's models its list lacks, which the
+ * gateway does not send it.
  */
 export function registerRoutingStateRoutes(
   api: FastifyInstance,
@@ -128,6 +132,17 @@ export function registerRoutingStateRoutes(
               : {}),
             ...(state?.lastFailure ? { lastFailure: state.lastFailure } : {}),
             readings: state?.readings ?? [],
+            ...(provider.models.listedFor?.includes(credential.id)
+              ? {
+                  unlistedModels: provider.models.list
+                    .filter(
+                      (model) =>
+                        model.credentials !== undefined &&
+                        !model.credentials.includes(credential.id),
+                    )
+                    .map((model) => model.id),
+                }
+              : {}),
           });
         }
       return { items, nextCursor: null };

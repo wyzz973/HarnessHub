@@ -347,6 +347,10 @@ export interface CallPlan {
   groups?: Map<RouteGroupId, RouteGroup>;
   /** Candidates that cannot serve this inbound protocol, with reasons. */
   skipped: string[];
+  /** Credentials left out because their own model lists lack the model (routing `modelCandidates`). */
+  unlisted?: number;
+  /** No credential's own list has the model: they were all kept. */
+  unlistedTried?: boolean;
 }
 
 /** One model call; created after the body was read and the model allowed. */

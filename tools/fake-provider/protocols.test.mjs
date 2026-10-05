@@ -586,6 +586,20 @@ test("field manifests and options are validated before listening", async () => {
     startFakeProvider({ apiKey: KEY }),
     /Unknown fake provider option apiKey/,
   );
+  for (const [keyModels, message] of [
+    [{ main: ["upstream-sim"] }, /keyModels must map ids of keys/],
+    [[], /keyModels must map ids of keys/],
+  ])
+    await assert.rejects(startFakeProvider({ keyModels }), message);
+  for (const [keyModels, message] of [
+    [{ other: ["upstream-sim"] }, /keyModels names key other/],
+    [{ main: [] }, /keyModels.main must be a non-empty array/],
+    [{ main: ["not-served"] }, /keyModels.main must be a non-empty array/],
+  ])
+    await assert.rejects(
+      startFakeProvider({ keys: { main: KEY }, keyModels }),
+      message,
+    );
   for (const forbiddenHeaders of ["authorization", ["Authorization"], [""]])
     await assert.rejects(
       startFakeProvider({ forbiddenHeaders }),
@@ -605,6 +619,45 @@ test("field manifests and options are validated before listening", async () => {
     "128.0.0.1",
   ])
     assert.equal(isLoopback(host), false, host);
+});
+
+test("a key with models of its own lists and serves only those", async (t) => {
+  const fake = await provider(t, {
+    models: ["upstream-sim", "wide-only"],
+    keys: { main: KEY, narrow: "synthetic-narrow-key-0002" },
+    keyModels: { narrow: ["upstream-sim"] },
+  });
+  const listed = async (key) => {
+    const response = await fetch(`${fake.url}/v1/models`, {
+      headers: { authorization: `Bearer ${key}` },
+    });
+    return (await response.json()).data.map((item) => item.id);
+  };
+  assert.deepEqual(await listed(KEY), ["upstream-sim", "wide-only"]);
+  assert.deepEqual(await listed("synthetic-narrow-key-0002"), ["upstream-sim"]);
+  const ask = (key, model) =>
+    fetch(`${fake.url}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${key}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+  assert.equal((await ask(KEY, "wide-only")).status, 200);
+  assert.equal((await ask("synthetic-narrow-key-0002", "wide-only")).status, 404);
+  assert.equal(
+    (await ask("synthetic-narrow-key-0002", "upstream-sim")).status,
+    200,
+  );
+  await fake.idle();
+  assert.deepEqual(
+    fake.violations().map((violation) => violation.rule),
+    ["model"],
+  );
 });
 
 test("a forbidden request header is a violation in every protocol, with its path", async (t) => {

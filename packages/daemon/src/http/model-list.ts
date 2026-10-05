@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT
 import type {
+  CredentialId,
   ProviderConfig,
+  ProviderCredential,
   ProviderModel,
+  ProviderModels,
   WireProtocol,
 } from "@harnesshub/core/model-plane";
 
@@ -23,20 +26,82 @@ function object(value: unknown): value is Json {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const LISTING_ORDER = ["chat", "responses", "anthropic", "gemini"] as const;
+
 /** The protocol whose list endpoint is used: chat or responses, else anthropic, else gemini. */
 export function listingProtocol(
   provider: ProviderConfig,
 ): WireProtocol | undefined {
-  const endpoints = provider.endpoints;
-  return endpoints.chat !== undefined
-    ? "chat"
-    : endpoints.responses !== undefined
-      ? "responses"
-      : endpoints.anthropic !== undefined
-        ? "anthropic"
-        : endpoints.gemini !== undefined
-          ? "gemini"
-          : undefined;
+  return LISTING_ORDER.find(
+    (protocol) => provider.endpoints[protocol] !== undefined,
+  );
+}
+
+/**
+ * The protocol whose list endpoint `credential` is asked at: as
+ * {@link listingProtocol}, among the endpoints it is valid for.
+ */
+export function credentialListing(
+  provider: ProviderConfig,
+  credential: ProviderCredential,
+): WireProtocol | undefined {
+  return LISTING_ORDER.find(
+    (protocol) =>
+      provider.endpoints[protocol] !== undefined &&
+      (credential.protocols === undefined ||
+        credential.protocols.includes(protocol)),
+  );
+}
+
+/**
+ * The provider's model list from lists read per credential (Magpie
+ * `fetchPerKey`): each model in the order first listed, with the
+ * credentials whose list has it in `credentials`, omitted when all of
+ * `listedFor` do. `listedFor` is the credentials whose list was read now,
+ * and those whose list could not be read now (`models` undefined) but was
+ * last time: they keep the models they listed then (`previous`), which have
+ * no fresh metadata (`fresh` has those read now).
+ */
+export function mergeCredentialLists(
+  previous: ProviderModels,
+  read: readonly { credential: CredentialId; models?: ProviderModel[] }[],
+): {
+  list: ProviderModel[];
+  fresh: Map<string, ProviderModel>;
+  listedFor: CredentialId[];
+} {
+  const merged = new Map<
+    string,
+    { model: ProviderModel; by: CredentialId[] }
+  >();
+  const fresh = new Map<string, ProviderModel>();
+  const listedFor: CredentialId[] = [];
+  const add = (model: ProviderModel, credential: CredentialId) => {
+    const entry = merged.get(model.id) ?? { model: { id: model.id }, by: [] };
+    merged.set(model.id, entry);
+    if (!entry.by.includes(credential)) entry.by.push(credential);
+  };
+  for (const { credential, models } of read) {
+    if (models) {
+      listedFor.push(credential);
+      for (const model of models) {
+        if (!fresh.has(model.id)) fresh.set(model.id, model);
+        add(model, credential);
+      }
+    } else if (previous.listedFor?.includes(credential)) {
+      listedFor.push(credential);
+      for (const model of previous.list)
+        if (!model.credentials || model.credentials.includes(credential))
+          add(model, credential);
+    }
+  }
+  return {
+    list: [...merged.values()].map(({ model, by }) =>
+      by.length < listedFor.length ? { ...model, credentials: by } : model,
+    ),
+    fresh,
+    listedFor,
+  };
 }
 
 /** Headers and query of the provider's key scheme, plus its non-secret headers. */
@@ -139,7 +204,8 @@ function listedMetadata(item: Json): Omit<ProviderModel, "id"> {
  * `anthropic-version`, or `GET {gemini base}/v1beta/models` (models that
  * support `generateContent`). Follows the vendor's pagination up to 20 pages.
  * `key` is sent by the provider's key scheme; without one the request is
- * unauthenticated (local servers).
+ * unauthenticated (local servers). `protocol` picks the endpoint, by
+ * default {@link listingProtocol}.
  *
  * @throws ModelListError on any failure, with a message that names only the
  *   host and the HTTP status.
@@ -148,8 +214,8 @@ export async function fetchModelList(
   provider: ProviderConfig,
   key: string | undefined,
   send: typeof fetch = (input, init) => globalThis.fetch(input, init),
+  protocol: WireProtocol | undefined = listingProtocol(provider),
 ): Promise<ProviderModel[]> {
-  const protocol = listingProtocol(provider);
   if (!protocol) throw new ModelListError("the provider has no endpoint");
   const base = provider.endpoints[protocol]!.replace(/\/+$/, "");
   const models = new Map<string, ProviderModel>();

@@ -1453,7 +1453,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     group: "providers",
     request: "无参数。",
     response:
-      "200：items[] 每个 provider 的每个 Credential 一项（provider、credential、credentialName、enabled、state 为 closed/open/half-open、restingUntil（打开的熔断再次放行的时间）、lastFailure（kind 为失败类别如 rate_limited、quota_exhausted、auth_failed，status，at；从不含错误消息）、readings（各额度窗口最新的读数）），nextCursor 为 null。",
+      "200：items[] 每个 provider 的每个 Credential 一项（provider、credential、credentialName、enabled、state 为 closed/open/half-open、restingUntil（打开的熔断再次放行的时间）、lastFailure（kind 为失败类别如 rate_limited、quota_exhausted、auth_failed，status，at；从不含错误消息）、readings（各额度窗口最新的读数）、unlistedModels（上次刷新按 Credential 读了它自己的模型列表时，provider 的模型中它的列表没有的那些，网关不把它们发给它）），nextCursor 为 null。",
     implementation:
       "共享网关处理函数的 routingState：Breakers.snapshot 与 Router 的额度读数，与模型平面存储中的 provider 合并；网关不知道的 Credential 为 closed、没有读数。",
     effects: "只读；状态在守护进程内存中，重启后为空（额度读数会恢复）。",
@@ -1947,7 +1947,7 @@ export const apiCatalog: readonly ApiDocumentation[] = [
     response:
       "200：更新后的 ProviderConfig，models.source=live、refreshedAt；各模型元数据按覆盖、手工设置、实时列表、预设、models.dev 快照的顺序解析，手工设置的值保留。",
     implementation:
-      "用第一个可用于所选端点的启用凭据（经 SecretStore 解析；没有凭据时不带 Key）请求上游：chat/responses 基址 + listPath（默认 /models）、anthropic 基址 + /v1/models（anthropic-version 头，按 after_id 翻页）或 gemini 基址 + /v1beta/models（只取支持 generateContent 的模型，按 pageToken 翻页）；15 秒超时，至多 20 页。上游请求在写入队列之外执行。",
+      "有两个以上可用于某个列表端点的启用凭据时（订阅账号除外），用每个凭据分别请求它所适用的端点（同下文的顺序），合并为一个列表：models.listedFor 为读到列表的凭据，模型的 credentials 为列表中有它的凭据（全部都有时省略）；一个凭据这次读不到时保留它上次列出的模型，全部读不到时按失败处理（凭据都无法读取为 409，否则 502）。否则用第一个可用于所选端点的启用凭据（经 SecretStore 解析；没有凭据时不带 Key）请求上游，清除 listedFor 与各模型的 credentials：chat/responses 基址 + listPath（默认 /models）、anthropic 基址 + /v1/models（anthropic-version 头，按 after_id 翻页）或 gemini 基址 + /v1beta/models（只取支持 generateContent 的模型，按 pageToken 翻页）；15 秒超时，至多 20 页。上游请求在写入队列之外执行。",
     effects:
       "成功时在一个事务内替换模型列表与元数据来源；失败时保留原列表并标记 models.stale=true。",
     errors:

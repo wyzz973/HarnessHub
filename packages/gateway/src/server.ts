@@ -1341,18 +1341,19 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       (id.startsWith(AUTO_GROUP_PREFIX) ? await autoGroup(id) : undefined);
     const group = await find(parsed.group);
     if (!group) throw notFound();
-    const { candidates, skipped, groups } = await planGroup(group, protocol, {
-      provider: (id) => store.getProvider(id),
-      group: find,
-      order,
-      weigh: async (weighed, list) => {
-        if (weighed.strategy === "least-used")
-          await services.router.seed(store, log);
-        return services.router.weigh(weighed, list);
-      },
-      blocked: (candidate) => services.breakers.blocked(candidate),
-    });
-    return { candidates, group, groups, skipped };
+    const { candidates, skipped, groups, unlisted, unlistedTried } =
+      await planGroup(group, protocol, {
+        provider: (id) => store.getProvider(id),
+        group: find,
+        order,
+        weigh: async (weighed, list) => {
+          if (weighed.strategy === "least-used")
+            await services.router.seed(store, log);
+          return services.router.weigh(weighed, list);
+        },
+        blocked: (candidate) => services.breakers.blocked(candidate),
+      });
+    return { candidates, group, groups, skipped, unlisted, unlistedTried };
   };
 
   /**
@@ -1749,6 +1750,11 @@ export function createGatewayHandler(deps: GatewayHandlerDeps): GatewayHandler {
       );
       entry.conversationKey = conversation.key;
       const routePatches: string[] = resolution.standIn ? ["stand-in"] : [];
+      // Credentials whose own model lists lack the model (vendors whose
+      // keys each see models of their own), or none of them has it.
+      if (resolved.unlisted)
+        routePatches.push(`credential:unlisted:${resolved.unlisted}`);
+      if (resolved.unlistedTried) routePatches.push("credential:unlisted:all");
       // A call the gateway makes for itself makes none in turn.
       const internals = internal ? undefined : internalCalls(key, entry);
       call = {

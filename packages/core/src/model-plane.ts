@@ -146,6 +146,12 @@ export interface ProviderModel {
     cacheRead?: number;
     cacheWrite?: number;
   };
+  /**
+   * The credentials whose own list has this model, when the provider's
+   * list was read per credential ({@link ProviderModels.listedFor}): a
+   * vendor whose keys each see models of their own (Magpie `Model.Keys`).
+   */
+  credentials?: CredentialId[];
 }
 
 export interface ProviderModels {
@@ -158,6 +164,31 @@ export interface ProviderModels {
   stale?: boolean;
   /** Path appended to the chat or anthropic base URL for a live list; default `/models`. */
   listPath?: string;
+  /**
+   * The credentials whose own lists the last refresh read, when it read one
+   * per credential: a model without one of them in its `credentials` is
+   * known not to be served by it. A credential not here (added since, or
+   * whose list could not be read) is not known either way.
+   */
+  listedFor?: CredentialId[];
+}
+
+/**
+ * Whether `credential` is known not to list `modelId`: the provider's list
+ * was read with it and its list lacks the model (an unlisted model is not
+ * known either way).
+ */
+export function credentialUnlisted(
+  provider: Pick<ProviderConfig, "models">,
+  credential: CredentialId,
+  modelId: string,
+): boolean {
+  const { listedFor, list } = provider.models;
+  if (!listedFor?.includes(credential)) return false;
+  const model = list.find((entry) => entry.id === modelId);
+  return (
+    model?.credentials !== undefined && !model.credentials.includes(credential)
+  );
 }
 
 export interface ProviderConfig {

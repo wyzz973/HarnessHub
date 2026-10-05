@@ -46,7 +46,7 @@ HH_FAKE_KEY=合成的金丝雀值 node tools/fake-provider/index.mjs --port 0 --
 | `--stream-only` | 关 | 拒绝非流式请求 |
 | `--no-reasoning-replay` | 关 | 不要求工具结果回传推理内容 |
 
-程序接口另有 `forbiddenHeaders`（小写请求头名的列表）：带有其中任何一个请求头的请求是 `header:<名称>` 处的 `forbidden` 违规，按该协议返回 400，用于证明客户端自己的登录（如 Codex 的 `Authorization` 与 `ChatGPT-Account-Id`）没有被转发给这个上游。
+程序接口另有 `keyModels`（键为 `keys` 中的 Key ID，值为 `models` 的非空子集）：这把 Key 的模型列表只有这些模型，调用其他模型按该协议返回 404 并记 `model` 违规，用于模拟每把 Key 看到不同模型的厂商（按套餐分组的中转、OpenRouter 的 Key）；没有列出的 Key 看到全部 `models`。程序接口另有 `forbiddenHeaders`（小写请求头名的列表）：带有其中任何一个请求头的请求是 `header:<名称>` 处的 `forbidden` 违规，按该协议返回 400，用于证明客户端自己的登录（如 Codex 的 `Authorization` 与 `ChatGPT-Account-Id`）没有被转发给这个上游。
 
 ## 协议
 

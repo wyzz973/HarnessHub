@@ -219,6 +219,9 @@ function sendJson(response, status, value, headers = {}) {
  *   set, a request without one of them in its protocol's native place gets the
  *   native authentication error; records name the key id, never the value.
  *   Without keys every request is accepted (`auth: "not-required"`).
+ * @param {Record<string, string[]>} [options.keyModels] The models a key
+ *   (by id in `keys`) lists and serves, a subset of `models`, as a vendor
+ *   whose keys each see models of their own; other keys see all of `models`.
  * @param {unknown} [options.fields] Field manifest added to the lists (fields.mjs).
  * @param {unknown} [options.script] Scripted turns (script.mjs).
  * @param {unknown} [options.quirks] Quirks for every request (quirks.mjs).
@@ -363,6 +366,8 @@ export async function startFakeProvider(options = {}) {
         entry.keyId = id;
       }
 
+      // The models this key lists and serves.
+      const served = settings.keyModels.get(entry.keyId) ?? settings.models;
       if (routed.kind === "models") {
         entry.turn = "models";
         const created = Math.floor(Date.now() / 1000);
@@ -370,19 +375,19 @@ export async function startFakeProvider(options = {}) {
           200,
           protocolName === "messages"
             ? {
-                data: settings.models.map((id) => ({
+                data: served.map((id) => ({
                   type: "model",
                   id,
                   display_name: id,
                   created_at: new Date(created * 1000).toISOString(),
                 })),
                 has_more: false,
-                first_id: settings.models[0],
-                last_id: settings.models.at(-1),
+                first_id: served[0],
+                last_id: served.at(-1),
               }
             : {
                 object: "list",
-                data: settings.models.map((id) => ({
+                data: served.map((id) => ({
                   id,
                   object: "model",
                   created,
@@ -463,12 +468,12 @@ export async function startFakeProvider(options = {}) {
         const failure = protocol.invalid(violations);
         return reply(failure.status, failure.body);
       }
-      if (!settings.models.includes(model)) {
+      if (!served.includes(model)) {
         entry.violations = [
           {
             path: "model",
             rule: "model",
-            message: `model ${entry.model} is not served here (${settings.models.join(", ")})`,
+            message: `model ${entry.model} is not served here (${served.join(", ")})`,
           },
         ];
         return reply(

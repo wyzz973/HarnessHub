@@ -32,6 +32,7 @@ const KEYS = [
   "mode",
   "models",
   "keys",
+  "keyModels",
   "fields",
   "script",
   "quirks",
@@ -63,6 +64,7 @@ function boolean(value, name) {
  * @param {unknown} raw See `startFakeProvider`.
  * @returns {Readonly<{host: string, port: number, mode: "blacklist" | "whitelist",
  *   models: readonly string[], keys: ReadonlyMap<string, string>,
+ *   keyModels: ReadonlyMap<string, readonly string[]>,
  *   fields: ReturnType<typeof resolveFields>, script: ReturnType<typeof parseScript> | null,
  *   quirks: typeof NO_QUIRKS, chunkDelayMs: number, slowMs: number, streamOnly: boolean,
  *   reasoningReplay: boolean, maxBodyBytes: number, logFile: string | undefined,
@@ -102,6 +104,24 @@ export function resolveOptions(raw = {}) {
       keys.set(id, value);
     }
   }
+  const keyModels = new Map();
+  if (raw.keyModels !== undefined) {
+    if (!isObject(raw.keyModels) || !keys.size)
+      throw new Error("keyModels must map ids of keys to model ids");
+    for (const [id, list] of Object.entries(raw.keyModels)) {
+      if (!keys.has(id))
+        throw new Error(`keyModels names key ${id}, which keys does not have`);
+      if (
+        !Array.isArray(list) ||
+        !list.length ||
+        !list.every((model) => models.includes(model))
+      )
+        throw new Error(
+          `keyModels.${id} must be a non-empty array of ids from models`,
+        );
+      keyModels.set(id, Object.freeze([...list]));
+    }
+  }
   if (
     raw.logFile !== undefined &&
     (typeof raw.logFile !== "string" || !raw.logFile)
@@ -124,6 +144,7 @@ export function resolveOptions(raw = {}) {
     mode,
     models: Object.freeze([...models]),
     keys,
+    keyModels,
     fields: resolveFields(raw.fields ?? {}),
     script: raw.script === undefined ? null : parseScript(raw.script),
     quirks: Object.freeze({ ...NO_QUIRKS, ...resolveQuirks(raw.quirks ?? {}) }),
