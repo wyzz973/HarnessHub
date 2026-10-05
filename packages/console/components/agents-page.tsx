@@ -21,8 +21,10 @@ import {
   installationText,
   legacyKeyless,
   modelOptional,
+  managedLines,
   modelVisibility,
   wiringInput,
+  withNotice,
 } from "@/lib/agents";
 import { agentIconSlug } from "@/lib/brand-icons";
 import { loadGatewayModels, type GatewayModels } from "@/lib/gateway-models";
@@ -58,6 +60,14 @@ function Badges({ agent, models }: { agent: Agent; models: GatewayModels }) {
         ) : (
           <span className="tag good">{t("agents.badge.consistent")}</span>
         )
+      ) : null}
+      {wiring?.managed?.length ? (
+        <span
+          className="tag warn"
+          title={managedLines(wiring.managed).join("\n")}
+        >
+          {t("agents.badge.managed")}
+        </span>
       ) : null}
       {problems.length ? (
         <span className="tag error" title={problems.join("\n")}>
@@ -399,10 +409,13 @@ export function AgentsPage() {
             if (!unwiring) return;
             const result = await modelPlane().agents.unwire(unwiring.id);
             notify.success(
-              t("agents.restored", {
-                name: unwiring.name,
-                n: result.files.length,
-              }),
+              withNotice(
+                t("agents.restored", {
+                  name: unwiring.name,
+                  n: result.files.length,
+                }),
+                result.agent.notice,
+              ),
             );
             reload();
           }}

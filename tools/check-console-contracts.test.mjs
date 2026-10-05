@@ -530,6 +530,53 @@ test("the agent pages derive wiring requests, shown models and attention from th
   assert.equal(agents.legacyKeyless({ ...codex, wiring: null }), false);
 });
 
+test("the agent pages show the restart notice and an administrator's managed settings where the daemon sends them", async () => {
+  const agents = await consoleModule("lib/agents.ts");
+  // The fields as the daemon publishes them.
+  const openapi = JSON.parse(await readFile(new URL("../docs/api/openapi.json", import.meta.url), "utf8"));
+  const schema = (route, method, status = "200") => openapi.paths[route][method].responses[status].content["application/json"].schema;
+  const view = schema("/api/v1/agents/{id}", "get");
+  assert.equal(view.properties.notice.type, "string");
+  assert.deepEqual(view.properties.wiring.properties.managed.items.required, ["path", "keyPaths"]);
+  const plan = schema("/api/v1/agents/{id}/wiring/plan", "post");
+  assert.ok(plan.properties.notice && plan.properties.managed);
+  const wired = Object.values(openapi.paths["/api/v1/agents/{id}/wiring"].post.responses).find((item) => item.content)?.content["application/json"].schema;
+  assert.ok(wired.properties.notice && wired.properties.wiring.properties.managed, "the wiring result");
+  assert.ok(schema("/api/v1/agents/{id}/wiring", "delete").properties.agent.properties.notice, "the unwire result");
+
+  const managed = [
+    { path: "/Library/Application Support/ClaudeCode/managed-settings.json", keyPaths: [["env", "ANTHROPIC_BASE_URL"], ["model"]] },
+    { path: "/etc/claude-code/managed-settings.json", keyPaths: [] },
+  ];
+  assert.deepEqual(agents.managedLines(managed), [
+    "/Library/Application Support/ClaudeCode/managed-settings.json 设置了 env.ANTHROPIC_BASE_URL、model，接线写入的这些项不会生效。",
+    "/etc/claude-code/managed-settings.json 无法解析，其中的设置可能覆盖接线。",
+  ]);
+  assert.deepEqual(agents.managedLines(undefined), []);
+  const agent = {
+    id: "claude",
+    name: "Claude Code",
+    installation: { status: "installed", configDirectories: [] },
+    wiring: { keyState: "active", drift: null, managed },
+  };
+  assert.ok(agents.attention(agent).includes("管理员的托管设置覆盖了接线写入的项，这些项不会生效"));
+  assert.deepEqual(agents.attention({ ...agent, wiring: { ...agent.wiring, managed: [] } }), []);
+  assert.equal(agents.withNotice("Claude Code 已接线", "Restart it."), "Claude Code 已接线。Restart it.");
+  assert.equal(agents.withNotice("Claude Code 已接线", undefined), "Claude Code 已接线");
+  // Every place that changes wiring passes the daemon's notice on.
+  const read = (file) => readFile(new URL(`../packages/console/components/${file}`, import.meta.url), "utf8");
+  const dialog = await read("wire-plan-dialog.tsx");
+  assert.match(dialog, /notice=\{plan\.changed \? plan\.notice : undefined\}/);
+  assert.match(dialog, /managed=\{plan\.managed\}/);
+  assert.match(dialog, /notice=\{wired\.notice\}/);
+  assert.match(dialog, /managed=\{wired\.wiring\?\.managed\}/);
+  const detail = await read("agent-detail.tsx");
+  for (const used of [/agent\.notice/, /managed=\{wiring\?\.managed\}/, /rotated\.notice/, /updated\.notice/, /result\.agent\.notice/])
+    assert.match(detail, used);
+  assert.match(await read("agents-page.tsx"), /result\.agent\.notice/);
+  assert.match(await read("first-run.tsx"), /notice: wired\.notice/);
+});
+
 test("the backup page reads backup files and builds sync settings without dropping secrets it must send", async () => {
   const backup = await consoleModule("lib/backup.ts");
   assert.equal(backup.backupFileName(new Date(2026, 9, 4, 23, 59)), "harnesshub-2026-10-04.harnesshub-backup");

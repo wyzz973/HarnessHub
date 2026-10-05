@@ -22,6 +22,7 @@ import { failureOf, modelPlane, type Failure } from "@/lib/model-plane";
 import { notify } from "@/lib/toast";
 import { ErrorCallout } from "./model-plane-ui";
 import { PlanFiles } from "./plan-files";
+import { WiringNotes } from "./wiring-notes";
 
 /**
  * Preview what wiring `agent` with `input` would write, then write exactly
@@ -45,6 +46,8 @@ export function WirePlanDialog({
   const [plan, setPlan] = useState<AgentWiringPlan | null>(null);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
+  /** The agent as wired, kept open when it has something to say (a notice, managed settings). */
+  const [wired, setWired] = useState<Agent | null>(null);
   useEffect(() => {
     let current = true;
     modelPlane()
@@ -68,11 +71,14 @@ export function WirePlanDialog({
     modelPlane()
       .agents.wire(agent.id, { ...input, expect: plan })
       .then(
-        (wired) => {
+        (result) => {
           setBusy(false);
-          notify.success(t("agents.wire.done", { name: agent.name }));
-          onWired(wired);
-          onClose();
+          onWired(result);
+          if (result.notice || result.wiring?.managed?.length) setWired(result);
+          else {
+            notify.success(t("agents.wire.done", { name: agent.name }));
+            onClose();
+          }
         },
         (reason: unknown) => {
           setBusy(false);
@@ -92,12 +98,29 @@ export function WirePlanDialog({
               : ""}
           </DialogDescription>
         </DialogHeader>
-        {plan ? (
-          plan.changed ? (
-            <PlanFiles files={plan.files} />
-          ) : (
-            <p className="callout neutral">{t("agents.wire.unchanged")}</p>
-          )
+        {wired ? (
+          <>
+            <p className="callout good">
+              {t("agents.wire.result", { name: agent.name })}
+            </p>
+            <WiringNotes
+              notice={wired.notice}
+              managed={wired.wiring?.managed}
+            />
+          </>
+        ) : plan ? (
+          <>
+            {plan.changed ? (
+              <PlanFiles files={plan.files} />
+            ) : (
+              <p className="callout neutral">{t("agents.wire.unchanged")}</p>
+            )}
+            <WiringNotes
+              notice={plan.changed ? plan.notice : undefined}
+              managed={plan.managed}
+              after
+            />
+          </>
         ) : failure ? null : (
           <div
             className="space-y-2"
@@ -110,13 +133,19 @@ export function WirePlanDialog({
         )}
         <ErrorCallout failure={failure} />
         <DialogFooter>
-          <Button variant="outline" disabled={busy} onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button disabled={busy || !plan?.changed} onClick={apply}>
-            {busy ? <Loader2 className="animate-spin" /> : null}
-            {t("agents.wire.confirm")}
-          </Button>
+          {wired ? (
+            <Button onClick={onClose}>{t("agents.wire.finish")}</Button>
+          ) : (
+            <>
+              <Button variant="outline" disabled={busy} onClick={onClose}>
+                {t("common.cancel")}
+              </Button>
+              <Button disabled={busy || !plan?.changed} onClick={apply}>
+                {busy ? <Loader2 className="animate-spin" /> : null}
+                {t("agents.wire.confirm")}
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

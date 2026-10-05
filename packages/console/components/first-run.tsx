@@ -28,6 +28,7 @@ import { notify } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { Checkbox, ErrorCallout } from "./model-plane-ui";
 import { PlanFiles } from "./plan-files";
+import { WiringNotes } from "./wiring-notes";
 import { PresetPane } from "./preset-pane";
 
 interface Planned {
@@ -40,6 +41,8 @@ interface Outcome {
   agent: Agent;
   outcome: "wired" | "unchanged" | "failed";
   error?: string;
+  /** What to do for the wiring to take effect, as the daemon words it. */
+  notice?: string;
 }
 
 function Steps({ current }: { current: FirstRunStep }) {
@@ -184,8 +187,15 @@ export function FirstRun({
         continue;
       }
       try {
-        await modelPlane().agents.wire(agent.id, { model, expect: plan });
-        results.push({ agent, outcome: "wired" });
+        const wired = await modelPlane().agents.wire(agent.id, {
+          model,
+          expect: plan,
+        });
+        results.push({
+          agent,
+          outcome: "wired",
+          ...(wired.notice ? { notice: wired.notice } : {}),
+        });
       } catch (reason) {
         results.push({
           agent,
@@ -424,6 +434,11 @@ export function FirstRun({
                             error: item.error ?? "",
                           })}
                   </span>
+                  {item.notice ? (
+                    <span className="basis-full pl-6 text-[12.5px] text-muted-foreground">
+                      {item.notice}
+                    </span>
+                  ) : null}
                 </li>
               ))}
             </ul>
@@ -450,6 +465,11 @@ export function FirstRun({
                   {plan?.changed ? (
                     <PlanFiles files={plan.files} keyNote={false} />
                   ) : null}
+                  <WiringNotes
+                    notice={plan?.changed ? plan.notice : undefined}
+                    managed={plan?.managed}
+                    after
+                  />
                 </section>
               ))}
               <p className="text-[12.5px] text-muted-foreground">

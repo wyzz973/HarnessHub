@@ -2,6 +2,7 @@
 /** Presentation rules of the agent pages; pure functions over `/api/v1/agents` records. */
 import type {
   Agent,
+  AgentManagedOverride,
   AgentWiringInput,
   ReasoningEffort,
   WiringTier,
@@ -105,6 +106,7 @@ export function attention(agent: Agent, models?: GatewayModels): string[] {
         kinds: list(wiring.drift.kinds.map(driftText)),
       }),
     );
+  if (wiring.managed?.length) reasons.push(t("agents.attention.managed"));
   if (["revoked", "expired", "missing"].includes(wiring.keyState))
     reasons.push(
       wiring.keyState === "missing"
@@ -121,6 +123,34 @@ export function attention(agent: Agent, models?: GatewayModels): string[] {
       );
   }
   return reasons;
+}
+
+/**
+ * The files of an administrator's policy (Claude Code's managed settings)
+ * that set entries the wiring writes, one line each: the file and its
+ * entries as dotted paths, or that it does not parse.
+ */
+export function managedLines(
+  managed: readonly AgentManagedOverride[] | undefined,
+): string[] {
+  return (managed ?? []).map((file) =>
+    file.keyPaths.length
+      ? t("agents.managed.keys", {
+          path: file.path,
+          keys: file.keyPaths
+            .map((keyPath) => keyPath.join("."))
+            .join(t("agents.listSeparator")),
+        })
+      : t("agents.managed.unreadable", { path: file.path }),
+  );
+}
+
+/** A success message with the agent's notice after it, such as restarting it; the message alone without one. */
+export function withNotice(
+  message: string,
+  notice: string | undefined,
+): string {
+  return notice ? t("agents.withNotice", { message, notice }) : message;
 }
 
 /** Whether `ref` matches one entry of a wiring's model list (`*`, `provider/*` or a Ref). */

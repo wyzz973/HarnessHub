@@ -49,6 +49,8 @@ export const zh = {
   "agents.attention.keyMissing": "它的 Key 不存在",
   "agents.attention.keyInvalid": "它的 Key 已失效",
   "agents.attention.modelGone": "网关不再提供 {models}",
+  "agents.attention.managed":
+    "管理员的托管设置覆盖了接线写入的项，这些项不会生效",
 
   "agents.title": "Agent",
   "agents.lede":
@@ -56,6 +58,17 @@ export const zh = {
   "agents.badge.uncheckable": "无法检查",
   "agents.badge.consistent": "一致",
   "agents.badge.attention": "需要处理",
+  "agents.badge.managed": "被托管设置覆盖",
+  "agents.managed.title": "管理员的托管设置",
+  "agents.managed.lede":
+    "这些文件由系统管理员维护，其中的设置优先于接线写入的；HarnessHub 只读取，从不修改。",
+  "agents.managed.keys": "{path} 设置了 {keys}，接线写入的这些项不会生效。",
+  "agents.managed.unreadable": "{path} 无法解析，其中的设置可能覆盖接线。",
+  "agents.notice.label": "改动生效",
+  "agents.notice.after": "应用之后：{notice}",
+  "agents.withNotice": "{message}。{notice}",
+  "agents.wire.result": "{name} 已接线。",
+  "agents.wire.finish": "完成",
   "agents.row.modelOf": "{name} 的模型",
   "agents.ownModel": "{name} 自己的模型",
   "agents.row.legacy": "ChatGPT 登录 · 旧接线没有 Key",
@@ -129,7 +142,7 @@ export const zh = {
   "agents.findings.item": "{kind}（{reason}）",
   "agents.findings.none": "与接线时写入的内容一致。",
 
-  "agents.wire.done": "{name} 已接线，重启正在运行的 {name} 后生效",
+  "agents.wire.done": "{name} 已接线",
   "agents.wire.description":
     "确认后写入 {name} 自己的配置文件；写入前先备份，之后可以还原。每次接线都签发一把新 Key，旧 Key 随即失效。",
   "agents.wire.chatgpt":
@@ -289,6 +302,8 @@ export const en: Translation<typeof zh> = {
   "agents.attention.keyMissing": "Its key does not exist",
   "agents.attention.keyInvalid": "Its key no longer works",
   "agents.attention.modelGone": "The gateway no longer offers {models}",
+  "agents.attention.managed":
+    "An administrator's managed settings override entries the wiring writes; those have no effect",
 
   "agents.title": "Agents",
   "agents.lede":
@@ -296,6 +311,19 @@ export const en: Translation<typeof zh> = {
   "agents.badge.uncheckable": "Cannot check",
   "agents.badge.consistent": "In sync",
   "agents.badge.attention": "Needs attention",
+  "agents.badge.managed": "Overridden by managed settings",
+  "agents.managed.title": "Administrator's managed settings",
+  "agents.managed.lede":
+    "A system administrator maintains these files, and their settings take precedence over the wiring's; HarnessHub only reads them and never changes them.",
+  "agents.managed.keys":
+    "{path} sets {keys}; the wiring's entries there have no effect.",
+  "agents.managed.unreadable":
+    "{path} does not parse; its settings may override the wiring.",
+  "agents.notice.label": "Taking effect",
+  "agents.notice.after": "After applying: {notice}",
+  "agents.withNotice": "{message}. {notice}",
+  "agents.wire.result": "{name} is wired.",
+  "agents.wire.finish": "Done",
   "agents.row.modelOf": "{name}'s model",
   "agents.ownModel": "{name}'s own model",
   "agents.row.legacy": "ChatGPT login · older wiring without a key",
@@ -374,8 +402,7 @@ export const en: Translation<typeof zh> = {
   "agents.findings.item": "{kind} ({reason})",
   "agents.findings.none": "Matches what the wiring wrote.",
 
-  "agents.wire.done":
-    "{name} is wired; restart a running {name} for it to take effect",
+  "agents.wire.done": "{name} is wired",
   "agents.wire.description":
     "Once you confirm, this is written to {name}'s own configuration files; they are backed up first and can be restored later. Every wiring issues a new key, and the old key stops working at once.",
   "agents.wire.chatgpt":

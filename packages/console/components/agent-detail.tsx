@@ -26,6 +26,7 @@ import {
   optionValueText,
   tierText,
   wiringInput,
+  withNotice,
   type WiringDraft,
 } from "@/lib/agents";
 import { agentIconSlug } from "@/lib/brand-icons";
@@ -35,6 +36,7 @@ import { modelPlane } from "@/lib/model-plane";
 import { notify } from "@/lib/toast";
 import { ConfirmDialog, LocalTime } from "./model-plane-ui";
 import { WirePlanDialog } from "./wire-plan-dialog";
+import { WiringNotes } from "./wiring-notes";
 
 /** The state of an agent's key as a tag. */
 function keyStateText(state: NonNullable<Agent["wiring"]>["keyState"]): {
@@ -231,7 +233,10 @@ function ModelVisibility({
         (updated) => {
           setBusy(false);
           notify.success(
-            t("agents.visibility.saved", { name: agent.name, n: shown }),
+            withNotice(
+              t("agents.visibility.saved", { name: agent.name, n: shown }),
+              updated.notice,
+            ),
           );
           onChanged(updated);
         },
@@ -393,7 +398,14 @@ export function AgentDetail({
               </dd>
             </div>
           ) : null}
+          {agent.notice ? (
+            <div className="metric-row">
+              <dt>{t("agents.notice.label")}</dt>
+              <dd className="max-w-[460px]">{agent.notice}</dd>
+            </div>
+          ) : null}
         </dl>
+        <WiringNotes managed={wiring?.managed} />
         <Section
           title={wiring ? t("agents.detail.wiring") : t("agents.detail.wireUp")}
         >
@@ -527,11 +539,15 @@ export function AgentDetail({
           action={legacy ? t("agents.key.issue") : t("agents.key.rotate")}
           onClose={() => setConfirm(null)}
           onConfirm={async () => {
-            onChanged(await modelPlane().agents.rotate(agent.id));
+            const rotated = await modelPlane().agents.rotate(agent.id);
+            onChanged(rotated);
             notify.success(
-              t(legacy ? "agents.key.issued" : "agents.key.rotated", {
-                name: agent.name,
-              }),
+              withNotice(
+                t(legacy ? "agents.key.issued" : "agents.key.rotated", {
+                  name: agent.name,
+                }),
+                rotated.notice,
+              ),
             );
           }}
         />
@@ -544,10 +560,13 @@ export function AgentDetail({
           onConfirm={async () => {
             const result = await modelPlane().agents.unwire(agent.id);
             notify.success(
-              t("agents.restored", {
-                name: agent.name,
-                n: result.files.length,
-              }),
+              withNotice(
+                t("agents.restored", {
+                  name: agent.name,
+                  n: result.files.length,
+                }),
+                result.agent.notice,
+              ),
             );
             onChanged(result.agent);
           }}
