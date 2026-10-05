@@ -10,6 +10,7 @@ import type {
 } from "@harnesshub/core/model-plane";
 import { SUBSCRIPTION_NOTICES } from "@harnesshub/core/subscriptions";
 import {
+  MAX_WINDOWS,
   modelCandidates,
   Router,
   type Candidate,
@@ -124,6 +125,42 @@ void test("smart: fine before low before spent; among the fine the soonest renew
   const later = new Router(() => NOW + 2 * HOUR);
   later.report(spent, [reading(99, 1, 168)]);
   assert.equal(later.share(spent), 0);
+});
+
+void test("a credential keeps 16 windows however many names an upstream makes up; one that stopped counting makes room", () => {
+  let now = NOW;
+  const router = new Router(() => now);
+  const a = candidate("a");
+  const named = (count: number, from = 0, hours = 1) =>
+    Array.from({ length: count }, (_, index) =>
+      reading(10, hours, undefined, `made-up-${from + index}`),
+    );
+  router.report(a, named(200));
+  assert.equal(router.readings(a).length, MAX_WINDOWS);
+  assert.equal(router.snapshot().length, MAX_WINDOWS);
+  // A window it keeps is still updated.
+  router.report(a, [{ ...reading(70, 1), window: "made-up-0" }]);
+  assert.equal(
+    router.readings(a).find((item) => item.window === "made-up-0")?.usedPercent,
+    70,
+  );
+  // Past their renewal the made-up windows make room for a real one.
+  now += 2 * HOUR;
+  router.report(a, [reading(40, 5, undefined, "requests")]);
+  assert.deepEqual(
+    router.readings(a).map((item) => item.window),
+    ["requests"],
+  );
+  // Restored readings keep to the same bound.
+  const restored = new Router(() => NOW);
+  restored.restore(
+    named(40).map((item) => ({
+      provider: "a",
+      credential: "key-1",
+      reading: item,
+    })),
+  );
+  assert.equal(restored.snapshot().length, MAX_WINDOWS);
 });
 
 void test("pace: most allowance left per hour first, in bands; keys after accounts", () => {

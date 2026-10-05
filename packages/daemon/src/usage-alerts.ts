@@ -53,6 +53,13 @@ const SAME_RUN_MS = 10 * 60_000;
 const KEEP_MS = 40 * 24 * 60 * 60_000;
 /** Alerts listed at most. */
 const MAX_ALERTS = 100;
+/**
+ * Marks kept at most (the gateway keeps 16 windows a credential): past it
+ * the oldest go, and their windows may be said again.
+ */
+export const MAX_MARKS = 2048;
+/** Alerts one check's log line names; it counts them all. */
+const LOGGED_ALERTS = 16;
 /** The first look after the start, then every five minutes (Magpie's cadence). */
 export const FIRST_CHECK_MS = 60_000;
 export const CHECK_EVERY_MS = 5 * 60_000;
@@ -130,6 +137,12 @@ export function dueAlerts(
   for (const [key, mark] of Object.entries(marks))
     if (!seen.has(key) && now - Date.parse(mark.at) > KEEP_MS)
       delete marks[key];
+  const kept = Object.entries(marks);
+  if (kept.length > MAX_MARKS)
+    for (const [key] of kept
+      .sort(([, a], [, b]) => Date.parse(a.at) - Date.parse(b.at))
+      .slice(0, kept.length - MAX_MARKS))
+      delete marks[key];
   return due;
 }
 
@@ -166,6 +179,7 @@ export function isAlertsFile(value: unknown): value is AlertsFile {
     object(value) &&
     value.schemaVersion === 1 &&
     object(value.marks) &&
+    Object.keys(value.marks).length <= MAX_MARKS &&
     Object.values(value.marks).every(isMark) &&
     Array.isArray(value.alerts) &&
     value.alerts.length <= MAX_ALERTS &&
@@ -275,14 +289,18 @@ export class UsageAlerts {
         });
         return [];
       }
-      for (const alert of due)
+      // One line a check, however many windows an upstream names.
+      if (due.length)
         this.#log.info("usage.alert", {
-          provider: alert.provider,
-          credential: alert.credential,
-          window: alert.window,
-          usedPercent: alert.usedPercent,
           threshold: percent,
-          resetsAt: alert.resetsAt ?? null,
+          count: due.length,
+          alerts: due.slice(0, LOGGED_ALERTS).map((alert) => ({
+            provider: alert.provider,
+            credential: alert.credential,
+            window: alert.window,
+            usedPercent: alert.usedPercent,
+            resetsAt: alert.resetsAt ?? null,
+          })),
         });
       const alerts = [...due]
         .reverse()

@@ -54,6 +54,45 @@ async function upstream(t: TestContext, state: { remaining: number }) {
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
 }
 
+/** An upstream whose every answer names `count` made-up rate-limit windows, each 90% used. */
+async function manyWindows(t: TestContext, count: number) {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+  };
+  for (let index = 0; index < count; index++) {
+    headers[`x-ratelimit-limit-w${index}`] = "100";
+    headers[`x-ratelimit-remaining-w${index}`] = "10";
+    headers[`x-ratelimit-reset-w${index}`] = "6m0s";
+  }
+  const server = createServer((request, response) => {
+    request.resume();
+    request.on("end", () => {
+      response.writeHead(200, headers);
+      response.end(
+        JSON.stringify({
+          id: "chatcmpl-windows",
+          object: "chat.completion",
+          model: "chat-1",
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: "OK" },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+        }),
+      );
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+  return `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+}
+
 async function until<T>(read: () => Promise<T>, done: (value: T) => boolean) {
   const deadline = Date.now() + 10_000;
   for (;;) {
@@ -253,5 +292,78 @@ void test(
     );
     assert.equal((JSON.parse(saved) as { alerts: unknown[] }).alerts.length, 1);
     await stop();
+  },
+);
+
+void test(
+  "an upstream that makes up window names gets 16 kept, 16 alerts and one log line, not one each",
+  { timeout: 120_000 },
+  async (t) => {
+    const { directory, defer } = await temporaryDirectory(t, "hh-windows-");
+    const dataDir = path.join(directory, "data");
+    const base = await manyWindows(t, 100);
+    const hub = await startHub({
+      dataDir,
+      configDir: path.join(directory, "config"),
+      secretsBackend: "file",
+      demo: true,
+      cwd: directory,
+      port: 0,
+      host: "127.0.0.1",
+    });
+    defer(() => hub.server.close());
+    const client = await connectLocal({ dataDir, url: hub.url });
+    await client.providers.create({
+      id: "alpha",
+      endpoints: { chat: base },
+      models: { source: "manual", list: [{ id: "chat-1" }], expose: "all" },
+      credential: { name: "work", value: UPSTREAM_KEY },
+    });
+    const { key } = await client.gatewayKeys.create({
+      name: "windows",
+      modelAllow: ["alpha/*"],
+    });
+    const gateway = (await client.system.info()).gateway!;
+    for (let call = 0; call < 3; call++) {
+      const response = await fetch(
+        `${gateway.openaiBaseUrl}/chat/completions`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${key}`,
+          },
+          body: JSON.stringify({
+            model: "alpha/chat-1",
+            messages: [{ role: "user", content: "hi" }],
+          }),
+        },
+      );
+      assert.equal(response.status, 200, await response.text());
+    }
+    const [state] = (await client.routing.state()).items;
+    assert.equal(state?.readings.length, 16);
+    await client.gatewayFeatures.setAlerts(50);
+    const listed = await until(
+      () => client.usage.alerts(),
+      (value) => value.items.length > 0,
+    );
+    assert.equal(listed.items.length, 16);
+    // Saved after the list: wait for the file.
+    const saved = await until(
+      () =>
+        readFile(path.join(dataDir, "usage-alerts.json"), "utf8").catch(
+          () => "",
+        ),
+      (text) => text.length > 0,
+    );
+    const marks = (JSON.parse(saved) as { marks: Record<string, unknown> })
+      .marks;
+    assert.equal(Object.keys(marks).length, 16);
+    const logged = (await readFile(hub.logFile, "utf8"))
+      .split("\n")
+      .filter((line) => line.includes('"usage.alert"'));
+    assert.equal(logged.length, 1);
+    assert.match(logged[0]!, /"count":16/);
   },
 );

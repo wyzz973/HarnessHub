@@ -508,6 +508,39 @@ function rateWindows(
 
 /** A reading without a renewal time counts for this long after it was taken. */
 const READING_TTL_MS = 24 * 3_600_000;
+/**
+ * The most windows kept for one credential. A vendor has a few (requests,
+ * tokens, input and output tokens, a day's); an upstream that makes up
+ * names in its headers must not grow the readings, their file and the
+ * usage alerts without end.
+ */
+export const MAX_WINDOWS = 16;
+
+/** Whether a reading still counts: its window not renewed, or a day since it was taken. */
+function current(reading: AllowanceReading, now: number): boolean {
+  return reading.resetsAt !== undefined
+    ? Date.parse(reading.resetsAt) > now
+    : Date.parse(reading.observedAt) + READING_TTL_MS > now;
+}
+
+/**
+ * Keeps `reading` in `windows`, a credential's, within {@link MAX_WINDOWS}:
+ * a new window takes the place of one that no longer counts, else waits
+ * until one does. Whether it was kept.
+ */
+function keepReading(
+  windows: Map<string, AllowanceReading>,
+  reading: AllowanceReading,
+  now: number,
+): boolean {
+  if (!windows.has(reading.window) && windows.size >= MAX_WINDOWS) {
+    for (const [name, known] of windows)
+      if (!current(known, now)) windows.delete(name);
+    if (windows.size >= MAX_WINDOWS) return false;
+  }
+  windows.set(reading.window, reading);
+  return true;
+}
 /** Allowance shares: below `low` an account is fine, from `spent` on it is all but used up (Magpie). */
 export const SHARE_LOW = 90;
 export const SHARE_SPENT = 98;
@@ -682,11 +715,7 @@ export class Router {
     const now = this.clock();
     return [
       ...(this.#readings.get(credentialKey(candidate))?.values() ?? []),
-    ].filter((reading) =>
-      reading.resetsAt !== undefined
-        ? Date.parse(reading.resetsAt) > now
-        : Date.parse(reading.observedAt) + READING_TTL_MS > now,
-    );
+    ].filter((reading) => current(reading, now));
   }
 
   /** Whole percent of the fullest current allowance window; 0 without readings. */
@@ -754,9 +783,10 @@ export class Router {
     if (!readings.length) return;
     const key = credentialKey(candidate as Candidate);
     const windows = this.#readings.get(key) ?? new Map();
-    for (const reading of readings) windows.set(reading.window, reading);
+    const now = this.clock();
+    for (const reading of readings)
+      if (keepReading(windows, reading, now)) this.#changed = true;
     this.#readings.set(key, windows);
-    this.#changed = true;
   }
 
   /** Every reading, for persisting the last values. */
@@ -780,7 +810,7 @@ export class Router {
         !known ||
         Date.parse(known.observedAt) < Date.parse(reading.observedAt)
       )
-        windows.set(reading.window, reading);
+        keepReading(windows, reading, this.clock());
       this.#readings.set(key, windows);
     }
   }

@@ -10,6 +10,7 @@ import type { LogSink } from "@harnesshub/core/logging";
 import type { CredentialRoutingView } from "../src/http/routing-state-routes.js";
 import {
   dueAlerts,
+  MAX_MARKS,
   USAGE_ALERTS_FILE,
   UsageAlerts,
 } from "../src/usage-alerts.js";
@@ -178,12 +179,17 @@ void test("what was said is kept in a 0600 file, so a restart does not say it ag
       [
         "usage.alert",
         {
-          provider: "alpha",
-          credential: "cred-0",
-          window: "requests",
-          usedPercent: 90,
           threshold: 80,
-          resetsAt: minutes(60),
+          count: 1,
+          alerts: [
+            {
+              provider: "alpha",
+              credential: "cred-0",
+              window: "requests",
+              usedPercent: 90,
+              resetsAt: minutes(60),
+            },
+          ],
         },
       ],
     ],
@@ -276,4 +282,41 @@ void test("the setting is a whole percent from 1 to 100 with nothing else", () =
     }).map((item) => item.pointer),
     ["/alerts/balance"],
   );
+});
+
+void test("one check is one log line however many windows are due, and the marks stay bounded", async (t) => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), "hh-alerts-many-"));
+  t.after(() => rm(dataDir, { recursive: true, force: true }));
+  const windows = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      ...reading(95),
+      window: `w-${index}`,
+    }));
+  const { log, lines } = recorder();
+  const alerts = new UsageAlerts({
+    dataDir,
+    readings: () => [credential(windows(40))],
+    percent: () => 80,
+    log,
+    clock: () => NOW,
+  });
+  await alerts.load();
+  assert.equal((await alerts.check()).length, 40);
+  const logged = lines.filter(([event]) => event === "usage.alert");
+  assert.equal(logged.length, 1);
+  const fields = logged[0]![1] as { count: number; alerts: unknown[] };
+  assert.equal(fields.count, 40);
+  assert.equal(fields.alerts.length, 16);
+  await alerts.close();
+  // However many marks one check makes, the oldest go past the bound.
+  const marks = {};
+  dueAlerts(
+    Array.from({ length: 300 }, (_, index) =>
+      credential(windows(10), `cred-${index}`),
+    ),
+    marks,
+    80,
+    NOW,
+  );
+  assert.equal(Object.keys(marks).length, MAX_MARKS);
 });
