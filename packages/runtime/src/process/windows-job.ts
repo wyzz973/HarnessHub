@@ -50,6 +50,11 @@ export function superviseWindowsWorker(
   let buffer = "";
   child.stdout.setEncoding("utf8");
   child.stderr.resume();
+  // Unheard, a failed pipe would end the daemon. Without stdout the Job can
+  // neither be confirmed ready nor empty: readiness fails and `exited`
+  // reports an unconfirmed Job. Stderr is not used.
+  child.stdout.on("error", (error) => ready.reject(error));
+  child.stderr.on("error", () => undefined);
   child.stdout.on("data", (chunk: string) => {
     buffer += chunk;
     const lines = buffer.split(/\r?\n/);
@@ -109,17 +114,21 @@ export function superviseWindowsWorker(
 
 /** Named Job identity, never a recovered PID, authorizes Windows descendant termination. */
 export async function closeWindowsJob(token: string): Promise<CleanupStatus> {
+  let unread = false;
   try {
-    const result = await execute(
-      helper,
-      ["close", token, String(cleanupTimeoutMs)],
-      {
-        timeout: cleanupTimeoutMs + 1_000,
-        maxBuffer: 16_384,
-        windowsHide: true,
-      },
-    );
-    return result.stderr.length === 0 ? "confirmed" : "failed";
+    const close = execute(helper, ["close", token, String(cleanupTimeoutMs)], {
+      timeout: cleanupTimeoutMs + 1_000,
+      maxBuffer: 16_384,
+      windowsHide: true,
+    });
+    // execFile does not listen on its child's pipes, and unheard a failed one
+    // would end the daemon. An unread stderr cannot confirm the close.
+    for (const stream of [close.child.stdout, close.child.stderr])
+      stream?.on("error", () => {
+        unread = true;
+      });
+    const result = await close;
+    return !unread && result.stderr.length === 0 ? "confirmed" : "failed";
   } catch {
     return "failed";
   }

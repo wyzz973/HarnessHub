@@ -59,11 +59,12 @@ export interface BoundedExit {
 }
 
 /**
- * Run `file` with no shell and settle by `timeoutMs`. On expiry or when stdout
- * exceeds `maxBuffer`, the child gets SIGKILL and the promise rejects at once,
- * without waiting for an exit that a read blocked in the kernel can delay; the
- * child's streams are destroyed and its handle unreferenced so it cannot keep
- * the caller alive. Stderr is counted, never kept.
+ * Run `file` with no shell and settle by `timeoutMs`. On expiry, when stdout
+ * exceeds `maxBuffer` or fails to be read, the child gets SIGKILL and the
+ * promise rejects at once, without waiting for an exit that a read blocked in
+ * the kernel can delay; the child's streams are destroyed and its handle
+ * unreferenced so it cannot keep the caller alive. Stderr is counted, never
+ * kept.
  */
 export function runBounded(
   label: string,
@@ -105,8 +106,8 @@ export function runBounded(
     child.stderr.on("data", (chunk: Buffer) => {
       stderrBytes += chunk.length;
     });
-    // Stream errors surface as a failed exit below.
-    child.stdout.on("error", () => undefined);
+    // Stdout that was not read whole is no snapshot; stderr is only counted.
+    child.stdout.on("error", () => fail("output could not be read"));
     child.stderr.on("error", () => undefined);
     child.once("error", (error) => {
       const code =

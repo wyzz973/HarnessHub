@@ -126,13 +126,14 @@ function fakeHost(stdin: Writable, stdout = new PassThrough()) {
   return { child, killed: () => killed };
 }
 
-async function hosts(t: test.TestContext, child: LaunchedProcess) {
+async function hosts(
+  t: test.TestContext,
+  child: LaunchedProcess,
+  run: ProcessLauncher["run"] = () => Promise.reject(new Error("not used")),
+) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "hh-copilot-host-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const launcher: ProcessLauncher = {
-    launch: () => child,
-    run: () => Promise.reject(new Error("not used")),
-  };
+  const launcher: ProcessLauncher = { launch: () => child, run };
   const copilot = new CopilotHosts({
     launcher,
     secrets: {} as ManagedSecrets,
@@ -141,6 +142,7 @@ async function hosts(t: test.TestContext, child: LaunchedProcess) {
       addon: path.join(directory, "addon"),
       directory,
       cli: path.join(directory, "copilot"),
+      npm: path.join(directory, "npm"),
     },
     clock: () => Date.parse("2026-10-05T12:00:00.000Z"),
     log: NO_LOG,
@@ -190,4 +192,28 @@ void test("a host whose output fails is gone too, and its stderr's failure is ig
       /output failed/.test(error.message),
   );
   assert.ok(killed() >= 1);
+});
+
+void test("an add-on install whose npm output could not be read says so, not that npm could not start", async (t) => {
+  const copilot = await hosts(t, fakeHost(new PassThrough()).child, () =>
+    Promise.resolve({
+      code: null,
+      signal: "SIGTERM",
+      timedOut: false,
+      aborted: false,
+      error: new Error("The process's stdout could not be read to its end"),
+      streamFailure: { stream: "stdout", error: new Error("read ECONNRESET") },
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.alloc(0),
+    }),
+  );
+  await assert.rejects(copilot.install(), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.equal(
+      (error as Error & { code?: string }).code,
+      "COPILOT_SDK_INSTALL_FAILED",
+    );
+    assert.match(error.message, /failed \(its stdout could not be read\)$/);
+    return true;
+  });
 });

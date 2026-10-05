@@ -11,6 +11,7 @@ import type {
   ProcessOutput,
   ProcessRun,
   ProcessRunResult,
+  ProcessStreamFailure,
 } from "@harnesshub/core/process-launcher";
 
 /**
@@ -28,6 +29,17 @@ export interface OwnedProcessLauncher extends ProcessLauncher {
    * exited; later `launch` calls throw PROCESS_LAUNCHER_CLOSED. Idempotent.
    */
   close(): Promise<void>;
+}
+
+/** The `error` of a run whose stdout or stderr failed. */
+function outputFailed(failure: ProcessStreamFailure): HubError {
+  const error = new HubError(
+    "PROCESS_OUTPUT_FAILED",
+    `The process's ${failure.stream} could not be read to its end`,
+    500,
+  );
+  error.cause = failure.error;
+  return error;
 }
 
 function closedError(): HubError {
@@ -106,6 +118,7 @@ class NodeProcessLauncher implements OwnedProcessLauncher {
     let timedOut = false;
     let aborted = false;
     let failure: Error | undefined;
+    let streamFailure: ProcessStreamFailure | undefined;
     let escalation: NodeJS.Timeout | undefined;
     const exit = Promise.withResolvers<ProcessExit>();
     const closed = Promise.withResolvers<ProcessExit>();
@@ -118,6 +131,7 @@ class NodeProcessLauncher implements OwnedProcessLauncher {
       ...(failure ? { error: failure } : {}),
       timedOut,
       aborted,
+      ...(streamFailure ? { streamFailure } : {}),
     });
     const kill = (signal: NodeJS.Signals = "SIGTERM") => {
       if (exited || child.pid === undefined) return;
@@ -156,6 +170,17 @@ class NodeProcessLauncher implements OwnedProcessLauncher {
       settle(outcome(null, null));
       closed.resolve(outcome(null, null));
     });
+    // A failed pipe reports 'error' on its stream (EPIPE on a stdin the
+    // process closed, a failed read), which unheard would end this process.
+    // The holder decides what it means; the outcome reports the first.
+    for (const [stream, name] of [
+      [child.stdin, "stdin"],
+      [child.stdout, "stdout"],
+      [child.stderr, "stderr"],
+    ] as const)
+      stream?.on("error", (error) => {
+        streamFailure ??= { stream: name, error };
+      });
     child.once("exit", (code, signal) => settle(outcome(code, signal)));
     child.once("close", (code, signal) =>
       closed.resolve(
@@ -200,6 +225,7 @@ class NodeProcessLauncher implements OwnedProcessLauncher {
     }
     const { handle, terminate } = started;
     let exceeded: "stdout" | "stderr" | undefined;
+    let unread: ProcessStreamFailure | undefined;
     const collect = (
       stream: ProcessOutput | null,
       name: "stdout" | "stderr",
@@ -218,6 +244,11 @@ class NodeProcessLauncher implements OwnedProcessLauncher {
         chunks.push(chunk);
         size += chunk.length;
       });
+      // The output is incomplete: the run fails whatever the exit.
+      stream?.on("error", (error) => {
+        unread ??= { stream: name, error };
+        terminate();
+      });
       return chunks;
     };
     const stdout = collect(handle.stdout, "stdout");
@@ -230,6 +261,10 @@ class NodeProcessLauncher implements OwnedProcessLauncher {
     const result = await handle.closed;
     return {
       ...result,
+      // A failed output decides the run, even after a failed stdin.
+      ...(unread && !result.error
+        ? { error: outputFailed(unread), streamFailure: unread }
+        : {}),
       stdout: Buffer.concat(stdout),
       stderr: Buffer.concat(stderr),
       ...(exceeded ? { exceeded } : {}),

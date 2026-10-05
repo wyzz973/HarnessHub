@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import test from "node:test";
-import type { ProcessOutput } from "@harnesshub/core/process-launcher";
+import type {
+  ProcessOutput,
+  ProcessStreamFailure,
+} from "@harnesshub/core/process-launcher";
 import { createProcessLauncher } from "../src/process/launcher.js";
+import { failPipes } from "./pipe-failure.js";
 
 const posix = process.platform !== "win32";
 const forever = "setInterval(() => {}, 1000);";
@@ -18,6 +23,20 @@ function alive(pid: number): boolean {
       return false;
     throw error;
   }
+}
+
+/** Checks a reported stream failure: the injected read failure of `stream`. */
+function failedRead(
+  failure: ProcessStreamFailure | undefined,
+  stream: ProcessStreamFailure["stream"],
+): void {
+  assert.ok(failure, "a stream failure is reported");
+  assert.equal(failure.stream, stream);
+  assert.equal(
+    (failure.error as NodeJS.ErrnoException).code,
+    "ECONNRESET",
+    failure.error.message,
+  );
 }
 
 /** Collects a stream's text; `line(text)` settles once that line was seen. */
@@ -246,4 +265,69 @@ void test("closing the owner leaves no process behind and refuses new ones", asy
     () => launcher.launch({ file: process.execPath, args: [], env: "inherit" }),
     { code: "PROCESS_LAUNCHER_CLOSED" },
   );
+});
+
+void test("a run whose output fails terminates the process and fails, never ending this process", async (t) => {
+  const launcher = createProcessLauncher();
+  t.after(() => launcher.close());
+  const marker = randomUUID();
+  const failed = failPipes(t, marker, ["stdout"]);
+  const result = await launcher.run({
+    file: process.execPath,
+    args: ["-e", `${forever} // ${marker}`],
+    env: "inherit",
+    maxBuffer: 1024,
+  });
+  await failed;
+  assert.equal(result.timedOut, false);
+  assert.notEqual(result.code, 0);
+  if (posix) assert.equal(result.signal, "SIGTERM");
+  assert.equal(
+    (result.error as (Error & { code?: string }) | undefined)?.code,
+    "PROCESS_OUTPUT_FAILED",
+  );
+  failedRead(result.streamFailure, "stdout");
+});
+
+void test("a run whose stderr fails after a clean exit still fails: its output is incomplete", async (t) => {
+  const launcher = createProcessLauncher();
+  t.after(() => launcher.close());
+  const marker = randomUUID();
+  const failed = failPipes(t, marker, ["stderr"], "exit");
+  const result = await launcher.run({
+    file: process.execPath,
+    args: ["-e", `process.stdout.write("done") // ${marker}`],
+    env: "inherit",
+    maxBuffer: 1024,
+  });
+  await failed;
+  assert.equal(result.code, 0);
+  assert.equal(
+    (result.error as (Error & { code?: string }) | undefined)?.code,
+    "PROCESS_OUTPUT_FAILED",
+  );
+  failedRead(result.streamFailure, "stderr");
+});
+
+void test("a launched process's failed streams are its holder's: reported, never ending this process, and the process goes on", async (t) => {
+  const launcher = createProcessLauncher();
+  t.after(() => launcher.close());
+  const marker = randomUUID();
+  const failed = failPipes(t, marker, ["stdin", "stdout", "stderr"]);
+  // The holder listens on none of the streams.
+  const child = launcher.launch({
+    file: process.execPath,
+    args: ["-e", `${forever} // ${marker}`],
+    env: "inherit",
+  });
+  await failed;
+  assert.ok(
+    child.pid !== undefined && alive(child.pid),
+    "the launcher left it running",
+  );
+  child.kill();
+  const closed = await child.closed;
+  assert.equal(closed.error, undefined);
+  failedRead(closed.streamFailure, "stdin");
+  failedRead((await child.exit).streamFailure, "stdin");
 });

@@ -10,6 +10,13 @@ import { access } from "node:fs/promises";
 import type { PreparedConfiguration } from "@harnesshub/agents/configuration/prepare";
 import type { ConfigurationCheck } from "@harnesshub/core/engine-configuration";
 import { ACP_INITIALIZE_TIMEOUT_LIMIT_MS } from "@harnesshub/core/engines";
+/** The probe's result when the peer's reply could not be read. */
+const UNREADABLE: ConfigurationCheck = {
+  name: "protocol",
+  status: "failed",
+  message: "The ACP initialize reply could not be read",
+};
+
 /** Read-only ACP initialize probe. Owns a process group, bounded output/time and awaited cleanup; never prompts. */
 export async function probeConfiguration(
   prepared: PreparedConfiguration,
@@ -66,7 +73,8 @@ export async function probeConfiguration(
     message: "ACP initialize did not complete",
   };
   let bytes = 0,
-    buffer = "";
+    buffer = "",
+    replied = false;
   const settled = Promise.withResolvers<void>();
   const closed = new Promise<void>((resolve) => {
     child.once("error", () => {
@@ -98,6 +106,11 @@ export async function probeConfiguration(
   child.stdin.on("error", () => {
     /* process termination settles the probe */
   });
+  // Unheard, a failed read would end the daemon; the reply can no longer come.
+  child.stdout.on("error", () => {
+    if (!replied) result = UNREADABLE;
+    stop();
+  });
   child.stdout.on("data", (chunk: Buffer) => {
     bytes += chunk.length;
     if (bytes > 262144) {
@@ -115,6 +128,7 @@ export async function probeConfiguration(
         continue;
       }
       if (raw && typeof raw === "object" && "id" in raw && raw.id === 1) {
+        replied = true;
         if (
           "result" in raw &&
           raw.result &&
@@ -269,7 +283,13 @@ async function probeWindowsConfiguration(
   });
   child.stdin.on("error", () => settled.resolve());
   let bytes = 0,
-    buffer = "";
+    buffer = "",
+    replied = false;
+  // Unheard, a failed read would end the daemon; the reply can no longer come.
+  child.stdout.on("error", () => {
+    if (!replied) result = UNREADABLE;
+    settled.resolve();
+  });
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => {
     bytes += Buffer.byteLength(chunk);
@@ -288,6 +308,7 @@ async function probeWindowsConfiguration(
         continue;
       }
       if (raw && typeof raw === "object" && "id" in raw && raw.id === 1) {
+        replied = true;
         if (
           "result" in raw &&
           raw.result &&
@@ -330,11 +351,15 @@ async function probeWindowsConfiguration(
     signal.removeEventListener("abort", stop);
     // The named Job handles all adapter/tool descendants; direct helper exit is insufficient evidence.
     try {
-      await promisify(execFile)(helper, ["close", token, "5000"], {
+      const close = promisify(execFile)(helper, ["close", token, "5000"], {
         timeout: 6000,
         maxBuffer: 16_384,
         windowsHide: true,
       });
+      // execFile does not listen on its child's pipes; its exit decides.
+      close.child.stdout?.on("error", () => undefined);
+      close.child.stderr?.on("error", () => undefined);
+      await close;
     } catch {
       result = {
         name: "cleanup",

@@ -208,7 +208,7 @@ async function identity(
 ): Promise<"owned" | "gone" | "unknown"> {
   if (!exists(lease.pid) && !exists(-lease.pid)) return "gone";
   try {
-    const { stdout } = await exec(
+    const ps = exec(
       "/bin/ps",
       ["-ww", "-p", String(lease.pid), "-o", "pid=,pgid=,command="],
       {
@@ -217,7 +217,17 @@ async function identity(
         env: { PATH: "/usr/bin:/bin", LC_ALL: "C" },
       },
     );
-    const match = /^\s*(\d+)\s+(\d+)\s+([^\r\n]+)\s*$/.exec(stdout);
+    // execFile does not listen on its child's pipes, and unheard a failed one
+    // would end the daemon. Output that was not read whole proves nothing.
+    let unread = false;
+    for (const stream of [ps.child.stdout, ps.child.stderr])
+      stream?.on("error", () => {
+        unread = true;
+      });
+    const { stdout } = await ps;
+    const match = unread
+      ? null
+      : /^\s*(\d+)\s+(\d+)\s+([^\r\n]+)\s*$/.exec(stdout);
     const expected = `${lease.executable} ${lease.workerPath} --harnesshub-owner=${lease.ownerToken}`;
     if (
       match &&

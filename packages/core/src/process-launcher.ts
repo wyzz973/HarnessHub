@@ -68,6 +68,16 @@ export interface ProcessLaunch {
   readonly windowsVerbatimArguments?: boolean;
 }
 
+/**
+ * A standard stream of a launched process that reported an error: EPIPE or
+ * ECONNRESET on a stdin whose reading end the process closed, or a failed
+ * read of its stdout or stderr.
+ */
+export interface ProcessStreamFailure {
+  readonly stream: "stdin" | "stdout" | "stderr";
+  readonly error: Error;
+}
+
 /** How a launched process ended. */
 export interface ProcessExit {
   /** Exit code, or null when a signal ended the process or it never started. */
@@ -79,6 +89,13 @@ export interface ProcessExit {
   readonly timedOut: boolean;
   /** The process was terminated, or never started, because `signal` aborted. */
   readonly aborted: boolean;
+  /**
+   * The first of the process's standard streams to fail before this outcome
+   * settled, if one did. `closed` settles after stdout and stderr have
+   * closed, so it reports any failure of theirs; `exit` only one that came
+   * before the exit. A write to stdin after `closed` fails only that write.
+   */
+  readonly streamFailure?: ProcessStreamFailure;
 }
 
 /** The writable end of a piped stdin. */
@@ -91,7 +108,16 @@ export interface ProcessOutput extends NodeJS.ReadableStream {
   destroy(error?: Error): unknown;
 }
 
-/** A started process. Streams are null when not piped or when it never started. */
+/**
+ * A started process. Streams are null when not piped or when it never started.
+ *
+ * The launcher listens for `error` on every stream it hands out, so a failed
+ * pipe never becomes an unhandled `error` event that would end the launching
+ * process; it is reported as `streamFailure`. The launcher does not act on it:
+ * the holder owns the streams, may listen for `error` itself to learn of a
+ * failure at once, and decides whether the process must stop. A stdin closed
+ * by a process that does not read all its input is often harmless.
+ */
 export interface LaunchedProcess {
   readonly pid: number | undefined;
   readonly stdin: ProcessInput | null;
@@ -121,6 +147,13 @@ export interface ProcessRun extends Omit<ProcessLaunch, "stdio"> {
 
 /** The outcome of `run`. */
 export interface ProcessRunResult extends ProcessExit {
+  /**
+   * Why the process could not start, or why its output could not be
+   * collected: `streamFailure` then names the stdout or stderr that failed,
+   * the process was terminated and the output is incomplete whatever its
+   * exit.
+   */
+  readonly error?: Error;
   readonly stdout: Buffer;
   readonly stderr: Buffer;
   /** The stream that exceeded `maxBuffer`, if one did. */
@@ -136,13 +169,19 @@ export interface ProcessLauncher {
    * started without `cmd.exe`, and throws INVALID_PROCESS_LAUNCH for
    * `windowsVerbatimArguments` with another program; reports failures to
    * start asynchronously in `exit`. Throws once the launcher's owner has
-   * closed it.
+   * closed it. Errors of the process's streams are the holder's to act on
+   * and never end the launching process (see `LaunchedProcess`).
    */
   launch(spec: ProcessLaunch): LaunchedProcess;
   /**
    * Runs a process to completion: writes `input`, collects bounded output and
    * settles after the process has exited and its streams have closed. Never
-   * rejects; failures to start are reported in `error`.
+   * rejects; failures to start are reported in `error`. A failed stdout or
+   * stderr terminates the process and is reported in `error` and
+   * `streamFailure`. A failed stdin (the process closed it before reading all
+   * of `input`) terminates the process too, but its exit decides the outcome:
+   * a process that exited before it failed may not have needed the rest.
+   * Stream errors never end the launching process.
    */
   run(spec: ProcessRun): Promise<ProcessRunResult>;
 }

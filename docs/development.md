@@ -64,6 +64,8 @@ HTTP、配置文件、Worker IPC、引擎输出和持久记录入口使用 `unkn
 
 子进程只经 `@harnesshub/core/process-launcher` 的 `ProcessLauncher` 启动（OSS-010 F08）。实现在 runtime 的 `process/`，那里也是 Worker 宿主、Job 辅助程序、配置探测与进程表扫描的位置，是唯一可以导入 `node:child_process` 的包内位置；`tools/` 与 agents 的 `assets/`（引擎按路径运行的启动器）不在边界检查的扫描范围内。每个进程入口（`startHub`、Worker、command MCP 入口、工具包命令）创建并注入本进程的启动器：drivers 与 secrets 由调用方传入，agents 的 command MCP 服务器由其入口传入，store 的 Windows 文件原语由组合根启动时设置一次。启动器不经 shell、不在 Windows 上打开控制台窗口；环境必须显式给出，只有写明 `"inherit"` 才继承当前进程环境；超时、`AbortSignal` 与 `maxBuffer` 由启动器执行，终止信号发出 2 秒后进程仍在运行则发 SIGKILL；Windows 上 libuv 会为显式环境补上一组必需的系统变量（见 `ProcessEnvironment`），不能依靠显式环境隐藏它们。启动器只向它启动的进程发信号，进程留在 Worker 的进程组或 Job Object 中，后代由它们与 F07 的回收负责；acpx 启动的 ACP 引擎与 agents `assets/` 中的启动器也在其中运行，但不经启动器。每个启动的进程有所有者：调用方等待 `exit`（或 `run` 的结果），启动器的所有者在关闭时终止并等待仍在运行的进程。
 
+子进程的管道出错（读取失败，或写入进程已关闭的 stdin 得到 `EPIPE`）时，所在的流报告 `error` 事件，没有监听者就会结束整个守护进程。启动器因此给它交出的每个管道都挂上监听：`launch` 不替持有者处理，第一次失败记入 `exit`/`closed` 的 `streamFailure`，持有者需要立即知道时自己监听，并决定是否结束进程（不读完输入的进程关闭 stdin 往往无害）；`run` 的 stdout 或 stderr 出错时终止进程并以 `error`（`PROCESS_OUTPUT_FAILED`）报告，无论退出码如何，因为收集到的输出不完整；stdin 出错时同样终止进程，结果由退出决定。runtime `process/` 中不经启动器、直接用 `spawn` 或 `execFile` 的代码（配置探测、Windows Job 辅助程序、进程表扫描、lease 身份检查）自己给每个管道挂监听，`execFile` 也不监听它子进程的管道；没有读完的输出不能当作完整结果。这条规则靠人工审查，由 [启动器测试](../packages/runtime/test/launcher.test.ts) 与 [管道故障测试](../packages/runtime/test/pipe-errors.test.ts) 覆盖现有位置，没有自动检查。
+
 状态变更的校验、提交和事件发布各有明确顺序。不能用“先通知再补写 DB”的方式改善响应速度。跨数据库和文件的操作定义发布、重试和孤儿清理策略，不假定跨介质事务存在。
 
 错误在所属层规范化，保留内部 cause，公开输出去除凭证及敏感路径。best-effort catch 只能包住预期可失败的一项操作，并说明丢弃的错误类别及不影响主结果的原因。观察者异常需要隔离；状态提交、权限或进程归属错误不能按普通观察者错误吞掉。

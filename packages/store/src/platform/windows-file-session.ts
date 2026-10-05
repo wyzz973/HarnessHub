@@ -51,7 +51,9 @@ export class WindowsFileSession {
         }
       }
     });
+    // A failed pipe ends the session: its exit then fails the pending request.
     stdin.on("error", () => this.child.kill());
+    stdout.on("error", () => this.child.kill());
     // Only a fixed failure marker is emitted; response and exit own the outcome.
     stderr.resume();
     // Settles after the helper exited and its streams closed, or failed to start.

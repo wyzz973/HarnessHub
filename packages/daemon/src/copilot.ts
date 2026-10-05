@@ -625,7 +625,9 @@ export class CopilotHosts implements CopilotRuntime {
     });
     if (result.error || result.timedOut || result.code !== 0) {
       const reason = result.error
-        ? "could not start"
+        ? result.streamFailure
+          ? `its ${result.streamFailure.stream} could not be read`
+          : "could not start"
         : result.timedOut
           ? "timed out"
           : `exit code ${result.code ?? result.signal ?? "unknown"}`;
