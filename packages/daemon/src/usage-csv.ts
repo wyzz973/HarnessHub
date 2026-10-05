@@ -76,9 +76,17 @@ export const USAGE_CSV_COLUMNS = [
 const FORMULA = /^[=+\-@\t\r]/;
 const NUMBER = /^[+-]?\d+(\.\d+)?$/;
 
-/** One field as encoding/csv writes it, guarded against formula injection. */
+/**
+ * One field as encoding/csv writes it, guarded against formula injection:
+ * also after leading whitespace (Unicode's too), which a spreadsheet may
+ * trim on import.
+ */
 export function csvField(value: string): string {
-  const text = FORMULA.test(value) && !NUMBER.test(value) ? `'${value}` : value;
+  const head = value.trimStart();
+  const text =
+    (FORMULA.test(value) || FORMULA.test(head)) && !NUMBER.test(head)
+      ? `'${value}`
+      : value;
   // encoding/csv also quotes `\.` alone, which PostgreSQL reads as the end of data.
   return /[",\r\n]/.test(text) || /^\s/u.test(text) || text === "\\."
     ? `"${text.replaceAll('"', '""')}"`

@@ -74,7 +74,7 @@ ACP 0.13.2 的 reducer 会把最新 breakdown 直接赋给名称为 `cumulative_
 
 不带 `format` 时，`Accept` 把 `text/csv` 排在 `application/json`（或通配）之前也返回 CSV；`format=json` 总是 JSON。响应为 `text/csv; charset=utf-8`，带 `Content-Disposition: attachment; filename="harnesshub-calls-<日期>.csv"`（汇总为 `harnesshub-usage-by-<groupBy>-<日期>.csv`），SDK 为 `client.modelCalls.csv()` 与 `client.usage.csv()`（返回响应体的流）。调用 CSV 按每页 200 条流式写出，第一页在响应头之前读取，过滤无效时仍是 400 的 problem+json。控制台的用量页有“下载调用 CSV”与“下载汇总 CSV”（按所选的时间范围与分组），经 SDK 发出带会话令牌的请求后把响应体存为文件，因为只带 Cookie 的 GET 会得到 401。
 
-写法与 Magpie 的 Go `encoding/csv` 相同：UTF-8，没有 BOM（Magpie 也没有），LF 换行；字段含逗号、引号、CR、LF 或以空白开头时加引号，引号写两次。Magpie 没有、HarnessHub 另加的是公式注入防护：以 `=`、`+`、`-`、`@`、制表符或回车开头的字段前加 `'`，纯数字（如 `-5`）除外。
+写法与 Magpie 的 Go `encoding/csv` 相同：UTF-8，没有 BOM（Magpie 也没有），LF 换行；字段含逗号、引号、CR、LF 或以空白开头时加引号，引号写两次。Magpie 没有、HarnessHub 另加的是公式注入防护：以 `=`、`+`、`-`、`@`、制表符或回车开头的字段前加 `'`，先有空白（包括不换行空格、全角空格等 Unicode 空白）再是这些字符时同样如此，因为电子表格导入时可能去掉开头的空白；纯数字（如 `-5`）除外。
 
 调用 CSV 的列与顺序同 Magpie 的 `CSVHeader`（[usage-csv.ts](../packages/daemon/src/usage-csv.ts)）：
 

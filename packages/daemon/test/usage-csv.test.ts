@@ -39,6 +39,21 @@ void test("a field a spreadsheet would read as a formula is prefixed; a plain nu
     assert.equal(csvField(value), value);
   assert.equal(csvField("-5e3"), "'-5e3");
   assert.equal(csvField("a=b"), "a=b");
+  // After leading whitespace, which a spreadsheet may trim on import.
+  for (const value of [
+    ' =HYPERLINK("http://x","y")',
+    "  +cmd",
+    "\u00a0=1+1",
+    "\u3000@SUM(A1)",
+    "\ufeff-cmd",
+  ])
+    assert.equal(
+      csvField(value).replace(/^"|"$/g, "").startsWith("'"),
+      true,
+      JSON.stringify(value),
+    );
+  assert.equal(csvField(" =1"), "' =1");
+  assert.equal(csvField(" 12"), '" 12"');
 });
 
 void test("times are RFC 3339 to the second with the local offset", () => {
