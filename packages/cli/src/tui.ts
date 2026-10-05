@@ -24,10 +24,11 @@ import {
 const USAGE = `Usage: hh tui [--url URL] [--data-dir DIR]
 
 The agents of this machine in the terminal: ↑↓ chooses an agent, ←→ a field
-(model, Claude Code's tiers, effort, options), ↵ opens a picker (type to
-filter); a choice shows the file changes, with keys masked, and asks y/n
-before writing. s saves a profile, p previews and applies one, r refreshes,
-u unwires, f shows the agents not installed here, q quits.
+(model, tiers, effort, options), ↵ opens a picker (type to filter); a
+choice shows the file changes, with keys masked, and asks y/n before
+writing. s saves a profile, p previews and applies one, r refreshes,
+u unwires, R gives the agent a new key, f shows the agents not installed
+here, q quits.
 
 It needs a terminal and the running daemon (hh serve); for scripts use
 hh agents, hh wire and hh profile. NO_COLOR turns colors off.`;

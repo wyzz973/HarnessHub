@@ -82,7 +82,7 @@ Windows 用原生环境验证中文/空格路径、env 大小写、cmd/PowerShel
 | `test:protocol` | 已接入，属于 `pnpm test` 与 `pnpm check`：`conformance/protocols/` 以固定版本的官方 SDK（openai、Anthropic、Google）为客户端，经 `hh serve` 访问白名单模式的假上游，覆盖 16 个协议方向的对话、工具、失败与保活，严格上游零违规，见[一致性套件](../conformance/README.md) |
 | `bench` | 已接入，不属于 `pnpm check`：网关附加延迟、转换路径单块开销、200 个并发流的 CPU 与内存、账本提交，对照 03 第 11 节的目标写出 `dist/bench/bench.{json,md}`，只报告不设门槛；尚未与 main 的历史结果比较 |
 | `test:real` | 已接入，不属于 `pnpm check`，由持有 Key 的人手动运行：对真实 provider 运行 `provider test`、体检、官方 SDK 矩阵与可选的真实 Agent，核对账本并扫描 Key 明文，见[兼容性](compatibility.md#怎样重复)；脚本逻辑由集成测试对假上游验证 |
-| `test:conformance` | 已接入，不属于 `pnpm check`：本机安装的真实 Agent 经全局接线、在 macOS 沙箱中离线运行一次并到达假上游，结果写入[兼容性](compatibility.md)；未安装的 Agent 跳过并列为未安装，没有沙箱的平台整组跳过 |
+| `test:conformance` | 已接入，不属于 `pnpm check`：本机安装的真实 Agent 经全局接线、在 macOS 沙箱中离线运行一次并到达假上游，打印结果表格；加 `--write-docs` 时写入[兼容性](compatibility.md)；未安装的 Agent 跳过并列为未安装，没有沙箱的平台整组跳过 |
 | `test:sea` | 已接入，不属于 `pnpm check`：构建单可执行文件（构建本身要求 `hh` 的每个命令在可执行文件中回答 `--help`），再经它运行 `version`、`config`、`serve`、模型平面与接线命令、两次网关调用、`tui`、`console`、控制台页面与 `provider test|doctor`，全部在一个临时目录中、只连回环地址的假 provider（[SEA 可行性验证第 10 节](proposals/oss/sea-spike.md#10-hh-的全部命令2026-10-04)） |
 | `test:windows` | 首个 ProcessHost 路径建立时接入 Windows 原生执行；发布前必需 |
 

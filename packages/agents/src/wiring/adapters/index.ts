@@ -58,6 +58,19 @@ export const wiringAdapters: ReadonlyMap<string, WiringAdapter> = new Map(
   ].map((adapter) => [adapter.id, adapter]),
 );
 
+/**
+ * What to do after a change for the agent to use it: the adapter's own
+ * notice, or to restart running sessions; undefined for an agent that picks
+ * changes up by itself (`restartNotice: null`).
+ */
+export function restartNotice(adapter: WiringAdapter): string | undefined {
+  if (adapter.restartNotice === null) return undefined;
+  return (
+    adapter.restartNotice ??
+    `Restart running ${adapter.name} sessions to use the new configuration.`
+  );
+}
+
 /** The adapter with this id; an unknown id fails with WIRING_ADAPTER_UNKNOWN. */
 export function wiringAdapter(id: string): WiringAdapter {
   const adapter = wiringAdapters.get(id);

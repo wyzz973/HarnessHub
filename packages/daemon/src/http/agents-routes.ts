@@ -88,7 +88,7 @@ const managedSchema = {
 const noticeSchema = {
   type: "string",
   description:
-    "What to do after a wiring change for the agent to use it, such as restarting it",
+    "What to do after a wiring change for the agent to use it, such as restarting it; absent when the agent picks changes up by itself",
 } as const;
 
 const agentSchema = {

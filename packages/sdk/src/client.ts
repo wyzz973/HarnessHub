@@ -676,7 +676,11 @@ export interface Agent {
      */
     ownModel: Array<Record<string, string>>;
   };
-  /** What to do after a wiring change for the agent to use it, such as restarting it. */
+  /**
+   * What to do after a wiring change for the agent to use it, such as
+   * restarting it; absent when the agent picks changes up by itself. Every
+   * output of a change shows this text.
+   */
   notice?: string;
   installation: AgentInstallation;
   wiring: AgentWiring | null;
@@ -706,7 +710,7 @@ export interface AgentWiringPlan {
   /** Absent for an agent that keeps its own models. */
   model?: string;
   keyId?: string;
-  /** What to do after applying it for the agent to use it, such as restarting it. */
+  /** What to do after applying it for the agent to use it, such as restarting it; absent when it picks changes up by itself. */
   notice?: string;
   /** Entries it writes that an administrator's policy overrides, so that they would have no effect. */
   managed?: AgentManagedOverride[];

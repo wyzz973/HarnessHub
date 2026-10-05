@@ -214,6 +214,13 @@ void test("hh init without a terminal: preset, key from the environment, agents 
     new RegExp(`Wired claude to ${MODEL} \\(haiku=${MODEL}\\)\\.`),
   );
   assert.match(done.stdout, new RegExp(`Wired codex to ${MODEL}\\.`));
+  // Each agent's own words for what to do next, as hh wire prints them.
+  for (const id of ["claude", "codex"]) {
+    const { notice } = await on.client.agents.get(id);
+    assert.ok(notice && done.stdout.includes(notice), done.stdout);
+  }
+  assert.match(done.stdout, /restart the Codex app/);
+  assert.doesNotMatch(done.stdout, /Restart running agent sessions/);
   assert.match(done.stdout, /Next: hh usage/);
   assert.doesNotMatch(
     done.stdout + done.stderr + unconfirmed.stdout,

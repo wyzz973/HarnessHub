@@ -200,11 +200,13 @@ export interface WiringAdapter {
   /** Adapter options and their allowed values; the first value is the default. */
   readonly options?: Readonly<Record<string, readonly string[]>>;
   /**
-   * What the user must do after a change for the agent to use it, such as
-   * restarting it because it reads its configuration at start-up (Magpie's
-   * Notice); none when the agent picks changes up by itself.
+   * What the user must do after a change for the agent to use it (Magpie's
+   * Notice), such as restarting the Codex app too; `null` when the agent
+   * picks changes up by itself. Absent, running sessions are to be
+   * restarted, as an agent reads its configuration at start-up; read it
+   * through `restartNotice(adapter)`, which every output uses.
    */
-  readonly restartNotice?: string;
+  readonly restartNotice?: string | null;
   /**
    * Files of an administrator's policy that the agent applies over the
    * user's (Claude Code's managed settings), by absolute path for the

@@ -34,6 +34,7 @@ import { fileURLToPath } from "node:url";
 import { startHub } from "@harnesshub/daemon/main";
 import type { ApiModelCall } from "@harnesshub/sdk/client";
 import { connectLocal } from "@harnesshub/sdk/local";
+import { codexUnwired } from "../support/codex-config.js";
 import { HH_ENTRY } from "../support/entries.js";
 import { startFakeProvider } from "../support/fake-provider.js";
 import { AGENTS } from "./agents.js";
@@ -596,7 +597,9 @@ for (const spec of AGENTS)
         cancel = notRun("no read tool to tell its request apart");
 
       // Unwiring restores the files; an agent that rewrote one keeps its
-      // changes, and only HarnessHub's entries are taken out.
+      // changes, and only HarnessHub's entries are taken out. Codex keeps
+      // its provider table, without the key, for threads started on it:
+      // that table and nothing else may differ.
       const changed = new Map<string, string>();
       for (const file of plan.files) {
         const bytes = await bytesOf(file.path);
@@ -604,9 +607,13 @@ for (const spec of AGENTS)
         if (bytes === undefined ? then !== undefined : !then?.equals(bytes))
           changed.set(file.path, addedKeys(then, bytes));
       }
-      await client.agents.unwire(spec.id);
+      const { openaiBaseUrl } = (await client.system.info()).gateway!;
+      const unwired = await client.agents.unwire(spec.id);
       for (const file of plan.files) {
         const after = await bytesOf(file.path);
+        const kept = unwired.files.find(
+          (entry) => entry.path === file.path,
+        )?.kept;
         if (changed.has(file.path)) {
           notes.push(
             `the agent rewrote ${scrub(file.path, sandbox).replace("<sandbox>/home", "~")} while running${changed.get(file.path)}; unwiring took out HarnessHub's entries and kept the rest`,
@@ -614,6 +621,20 @@ for (const spec of AGENTS)
           assert.ok(
             !after?.toString("utf8").includes("hhk_"),
             `${file.path} holds no Gateway Key after unwiring`,
+          );
+        } else if (kept) {
+          assert.deepEqual(
+            [spec.id, kept],
+            ["codex", [["model_providers", "harnesshub"]]],
+            `${file.path} keeps only Codex's provider table`,
+          );
+          assert.equal(
+            after?.toString("utf8"),
+            codexUnwired(
+              before.get(file.path)?.toString("utf8") ?? "",
+              openaiBaseUrl,
+            ),
+            `${file.path} is restored byte for byte but for the kept provider table`,
           );
         } else
           assert.deepEqual(

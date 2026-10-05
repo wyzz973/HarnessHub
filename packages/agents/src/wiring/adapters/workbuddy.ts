@@ -33,6 +33,7 @@ const VENDOR = "harnesshub";
  */
 export const workbuddy: WiringAdapter = {
   id: "workbuddy",
+  restartNotice: null,
   name: "WorkBuddy",
   protocol: "chat",
   keyDelivery: "config-file",

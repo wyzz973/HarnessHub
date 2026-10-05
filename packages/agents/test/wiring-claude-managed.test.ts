@@ -12,8 +12,10 @@ import path from "node:path";
 import {
   applyWiring,
   managedOverrides,
+  restartNotice,
   wiredEntries,
   wiringAdapter,
+  wiringAdapters,
 } from "../src/wiring/index.js";
 import { sandbox, TARGET } from "./wiring-support.js";
 
@@ -108,6 +110,23 @@ void test("claude: a managed path that is no regular file is reported as unreada
 void test("claude and codex say what to do after a change: restart them", () => {
   for (const id of ["claude", "codex"])
     assert.match(wiringAdapter(id).restartNotice ?? "", /restart/i, id);
+  // One source for every output: the adapter's words, the generic line, or
+  // none for an agent that picks changes up by itself.
+  assert.equal(
+    restartNotice(wiringAdapter("codex")),
+    wiringAdapter("codex").restartNotice,
+  );
+  assert.equal(
+    restartNotice(wiringAdapter("pi")),
+    "Restart running Pi sessions to use the new configuration.",
+  );
+  assert.deepEqual(
+    [...wiringAdapters.values()]
+      .filter((adapter) => restartNotice(adapter) === undefined)
+      .map((adapter) => adapter.id)
+      .sort(),
+    ["t3code", "workbuddy"],
+  );
   const platforms = ["darwin", "linux", "win32"] as const;
   assert.deepEqual(
     platforms.map((platform) =>

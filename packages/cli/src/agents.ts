@@ -140,6 +140,18 @@ export function planText(plan: AgentWiringPlan): string {
   ].join("\n");
 }
 
+/**
+ * What to do after a change for these agents to use it: each agent's own
+ * notice from the daemon, once; none for an agent that picks changes up by
+ * itself. Every output of a wiring change (hh wire, use, unwire, agents
+ * models, profile apply, init and the TUI) shows these and no other.
+ */
+export function notices(agents: ReadonlyArray<{ notice?: string }>): string[] {
+  return [
+    ...new Set(agents.flatMap((agent) => (agent.notice ? [agent.notice] : []))),
+  ];
+}
+
 /** Warnings for entries an administrator's policy sets over the wiring's. */
 function managedText(
   managed: AgentWiringPlan["managed"] | undefined,
@@ -163,8 +175,7 @@ function summary(agent: Agent, done: string): string {
     ...(wiring.effort ? [`  effort: ${wiring.effort}`] : []),
     ...wiring.files.map((file) => `  ${file}`),
     ...managedText(wiring.managed),
-    agent.notice ??
-      `Restart running ${agent.name} sessions to use the new configuration.`,
+    ...notices([agent]),
   ].join("\n");
 }
 
@@ -273,7 +284,7 @@ async function unwireCommand(args: string[]): Promise<void> {
         ),
       ]),
       `Unwired ${result.agent.name}; key ${current.wiring?.keyId ?? "-"} revoked.`,
-      ...(result.agent.notice ? [result.agent.notice] : []),
+      ...notices([result.agent]),
     ].join("\n"),
   );
 }
@@ -307,9 +318,7 @@ async function modelsCommand(args: string[]): Promise<void> {
           ...wiring.models.map(
             (ref) => `  ${ref}${ref === wiring.model ? "  (model)" : ""}`,
           ),
-          ...(hide.length || show.length
-            ? [`Restart running ${agent.name} sessions to see the new list.`]
-            : []),
+          ...(hide.length || show.length ? notices([agent]) : []),
         ].join("\n"),
   );
 }
@@ -397,7 +406,11 @@ async function profileCommand(args: string[]): Promise<void> {
             (item) =>
               `${item.outcome.padEnd(9)} ${item.adapterId}${item.agent.wiring?.model ? ` ${item.agent.wiring.model}` : ""}`,
           ),
-          "Restart running agent sessions to use the new configuration.",
+          ...notices(
+            applied.agents
+              .filter((item) => item.outcome === "applied")
+              .map((item) => item.agent),
+          ),
         ].join("\n"),
       );
     }

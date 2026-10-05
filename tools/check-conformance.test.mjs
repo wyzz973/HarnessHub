@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import test from "node:test";
-import { BEGIN, END, renderTable, replaceBlock } from "./conformance.mjs";
+import {
+  BEGIN,
+  END,
+  parseArguments,
+  renderTable,
+  replaceBlock,
+} from "./conformance.mjs";
 
 const row = {
   agent: "codex",
@@ -43,4 +49,11 @@ test("only the generated block of the document is replaced; a document without i
   );
   assert.throws(() => replaceBlock("# Title\n", "new table"), /lacks the/);
   assert.throws(() => replaceBlock(`${END}\n${BEGIN}\n`, "x"), /lacks the/);
+});
+
+test("the runner writes docs/compatibility.md only when asked, and refuses other arguments", () => {
+  assert.deepEqual(parseArguments([]), { writeDocs: false });
+  assert.deepEqual(parseArguments(["--write-docs"]), { writeDocs: true });
+  // The old opt-out is gone with the default it opted out of.
+  assert.throws(() => parseArguments(["--no-docs"]), /Unknown argument --no-docs/);
 });

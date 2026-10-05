@@ -24,7 +24,7 @@ pnpm exec hh init --preset deepseek --credential-from-env DEEPSEEK_API_KEY \
   --agents claude,codex --model deepseek/deepseek-chat --tier haiku=deepseek/deepseek-chat --yes
 ```
 
-`--region`、`--plan` 默认取预设的第一个；`--base URL` 把预设的地址移到另一个基址（需要用户自填地址的预设，如另一台 HarnessHub，必须给出，同 id 的 provider 已存在时除外）；同 id 的 provider 已存在且这些选项与它不同时，以 2 退出并列出差异，不做任何改动；`--agents` 也接受 `all`（已安装的全部）与 `none`；没有 `--yes` 时只显示改动并以 4 退出，provider 已添加、Agent 不变；某个 Agent 接线失败时其余照常，命令以 1 退出。`--json` 输出 `{provider: {id, created, updated, keyUnused, models}, agents: [{agent, model, tiers, outcome}]}`（`updated` 表示已有的 provider 改到了给出的基址，`keyUnused` 表示它已有 Key、没有使用给出的 Key，两者只在为真时出现）。每一步都经 SDK 调用 `/api/v1` 的现有接口（预设、provider、模型刷新、Agent 预览与接线），与 `hh provider add` 和 `hh wire` 相同。
+`--region`、`--plan` 默认取预设的第一个；`--base URL` 把预设的地址移到另一个基址（需要用户自填地址的预设，如另一台 HarnessHub，必须给出，同 id 的 provider 已存在时除外）；同 id 的 provider 已存在且这些选项与它不同时，以 2 退出并列出差异，不做任何改动；`--agents` 也接受 `all`（已安装的全部）与 `none`；没有 `--yes` 时只显示改动并以 4 退出，provider 已添加、Agent 不变；某个 Agent 接线失败时其余照常，命令以 1 退出。`--json` 输出 `{provider: {id, created, updated, keyUnused, models}, agents: [{agent, model, tiers, outcome, notice}]}`（`updated` 表示已有的 provider 改到了给出的基址，`keyUnused` 表示它已有 Key、没有使用给出的 Key，两者只在为真时出现）。每一步都经 SDK 调用 `/api/v1` 的现有接口（预设、provider、模型刷新、Agent 预览与接线），与 `hh provider add` 和 `hh wire` 相同。
 
 ## 没有 API Key 时
 

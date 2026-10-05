@@ -2,18 +2,19 @@
 // SPDX-License-Identifier: MIT
 /**
  * Run the real-agent conformance suite and write its compatibility table.
- * Usage: node tools/conformance.mjs [--no-docs] (after pnpm build)
+ * Usage: node tools/conformance.mjs [--write-docs] (after pnpm build)
  *
  * Runs `node tools/run-tests.mjs conformance` (tests/conformance: real
  * agents wired by the daemon and run offline in a sandbox, see
  * tests/conformance/support.ts), collects each agent's row from the results
- * file the tests append to (HARNESSHUB_TEST_CONFORMANCE_RESULTS), and
- * replaces the generated block of docs/compatibility.md with the table:
- * agent, version, a column per item (chat, tools, stream, cancel, usage),
- * date, platform and what was observed. The text
- * around the block is kept. `--no-docs` prints the table instead. Exits
- * with the suite's status; the table is written either way, since a failing
- * agent is a row of it.
+ * file the tests append to (HARNESSHUB_TEST_CONFORMANCE_RESULTS), and prints
+ * the table: agent, version, a column per item (chat, tools, stream,
+ * cancel, usage), date, platform and what was observed. `--write-docs`
+ * replaces the generated block of docs/compatibility.md with it instead,
+ * keeping the text around the block; without it the working tree is left
+ * as it was. Exits with the suite's status, 2 for an unknown argument; the
+ * table is printed or written either way, since a failing agent is a row
+ * of it.
  */
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -90,8 +91,30 @@ export function replaceBlock(document, table) {
   return `${document.slice(0, start + BEGIN.length)}\n\n${table}\n\n${document.slice(end)}`;
 }
 
+/**
+ * The runner's options from its arguments.
+ *
+ * @param {readonly string[]} argv
+ * @returns {{writeDocs: boolean}}
+ * @throws {Error} For an argument other than `--write-docs`.
+ */
+export function parseArguments(argv) {
+  for (const argument of argv)
+    if (argument !== "--write-docs")
+      throw new Error(
+        `Unknown argument ${argument}; usage: node tools/conformance.mjs [--write-docs]`,
+      );
+  return { writeDocs: argv.includes("--write-docs") };
+}
+
 async function main(argv) {
-  const docs = !argv.includes("--no-docs");
+  let writeDocs;
+  try {
+    ({ writeDocs } = parseArguments(argv));
+  } catch (error) {
+    process.stderr.write(`conformance: ${error.message}\n`);
+    return 2;
+  }
   const directory = await mkdtemp(
     path.join(os.tmpdir(), "hh-conformance-results-"),
   );
@@ -118,7 +141,7 @@ async function main(argv) {
     const table = renderTable(rows);
     if (!rows.length)
       process.stderr.write("conformance: no agent row was recorded\n");
-    else if (docs) {
+    else if (writeDocs) {
       await writeFile(
         DOCUMENT,
         replaceBlock(await readFile(DOCUMENT, "utf8"), table),

@@ -1,6 +1,6 @@
 # 真实 Agent 兼容性
 
-本页记录 HarnessHub 的全局接线在本机实际安装的 Agent 上是否有效：守护进程把 Agent 接到网关，Agent 以自己的非交互模式真实运行，经网关到达假上游，逐项检查对话、工具往返、流式、取消与用量。表格由一致性套件生成（`pnpm test:conformance`，即 `pnpm build` 后运行 `node tools/conformance.mjs`），套件不属于 `pnpm check`。设计见 [10 第 3.3 节](proposals/oss/10-engineering.md#33-三类一致性套件)的 Adapter 套件在线部分。
+本页记录 HarnessHub 的全局接线在本机实际安装的 Agent 上是否有效：守护进程把 Agent 接到网关，Agent 以自己的非交互模式真实运行，经网关到达假上游，逐项检查对话、工具往返、流式、取消与用量。表格由一致性套件生成：`pnpm test:conformance`（`pnpm build` 后运行 `node tools/conformance.mjs`）只打印表格，工作区不变；`pnpm test:conformance --write-docs` 才把表格写进本页的生成区块（其余文字不动），之后的构建因此标为 `(dirty)`，直到提交。其他参数以 2 退出。套件不属于 `pnpm check`。设计见 [10 第 3.3 节](proposals/oss/10-engineering.md#33-三类一致性套件)的 Adapter 套件在线部分。
 
 ## 怎样运行
 
@@ -17,7 +17,7 @@
    - **Cancel**：上游每 400 毫秒发一个词，Agent 收到几个词后整个进程组被杀死；网关须关闭上游的响应（假上游记为中断，之后没有进行中的响应与计时器），账本中记下 499 与 `client_cancelled` 或 `engine_disconnected`。能否在 Agent 的输出中看到已流出的词也一并记录。
    - **Usage**：Chat 的每个回答在账本中为输入 1200、输出 50、推理 30（Chat 的输出含推理，账本把推理分开记），真实的 `hh usage --by key --json` 对该 Agent 的 Key 求和一致。
 6. **诊断**：设置 `HARNESSHUB_TEST_CONFORMANCE_DEBUG=1` 时打印 Tools 那次运行的输出。
-7. **还原**：取消接线后，接线写过的每个文件与接线前逐字节相同（Agent 运行时自己改写了的文件除外，此时只检查 HarnessHub 的条目已去掉，并记入表格）。
+7. **还原**：取消接线后，接线写过的每个文件与接线前逐字节相同。例外：Codex 的 `config.toml` 只多出还原时留下的、不带 Key 的 `[model_providers.harnesshub]`（还原结果的 `kept` 须正好是这一项，文件须等于原文加上这张表，见[全局接线](global-wiring.md#codex-的其他设置)）；Agent 运行时自己改写了的文件只检查 HarnessHub 的条目已去掉、没有 Key，并记入表格。
 
 ## 结果
 

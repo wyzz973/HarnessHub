@@ -17,6 +17,7 @@ import { overridable, withSelected, type WiringAdapter } from "./types.js";
 export const t3code: WiringAdapter = {
   id: "t3code",
   name: "T3 Code",
+  restartNotice: null,
   protocol: "anthropic",
   keyDelivery: "config-file",
   executables: [],

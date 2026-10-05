@@ -37,14 +37,15 @@ interface Machine {
 
 /**
  * A daemon whose wiring home has `claude` and `codex` commands (never run)
- * on its PATH and a Codex configuration directory, a provider on the strict
- * fake upstream with two priced models, and a route group over them. With
- * `policy`, an administrator's Claude Code managed settings with that text,
- * where this platform keeps them, under a system root of its own.
+ * on its PATH, and those of `commands`, and a Codex configuration
+ * directory, a provider on the strict fake upstream with two priced models,
+ * and a route group over them. With `policy`, an administrator's Claude
+ * Code managed settings with that text, where this platform keeps them,
+ * under a system root of its own.
  */
 async function machine(
   t: TestContext,
-  options: { policy?: string } = {},
+  options: { policy?: string; commands?: string[] } = {},
 ): Promise<Machine> {
   const { directory, defer } = await temporaryDirectory(t, "hh-tui-");
   const systemRoot = path.join(directory, "system");
@@ -60,7 +61,7 @@ async function machine(
   const bin = path.join(directory, "bin");
   await mkdir(path.join(home, ".codex"), { recursive: true });
   await mkdir(bin);
-  for (const name of ["claude", "codex"]) {
+  for (const name of ["claude", "codex", ...(options.commands ?? [])]) {
     const command = path.join(
       bin,
       process.platform === "win32" ? `${name}.cmd` : name,
@@ -965,3 +966,111 @@ void test("hh tui shows each agent's notice around a write, and Claude Code's ma
   assert.equal(await tui.done, 0);
   assertRestored(tui);
 });
+
+void test("an agent without words of its own gets the same restart line from the TUI and from hh wire, and one that reloads by itself gets none", async (t) => {
+  const on = await machine(t, { commands: ["pi"] });
+  const pi = await on.client.agents.get("pi");
+  assert.equal(
+    pi.notice,
+    "Restart running Pi sessions to use the new configuration.",
+  );
+  // WorkBuddy and T3 Code pick a change up on their own.
+  for (const id of ["workbuddy", "t3code"])
+    assert.equal((await on.client.agents.get(id)).notice, undefined, id);
+
+  const tui = session(on.client, { env: { NO_COLOR: "1" } });
+  await tui.output.waitFor(listed, "the agents");
+  await select(tui, "Pi");
+  await tui.press(KEYS.enter, (text) => text.includes("❯"), "the picker");
+  await tui.press(
+    "small",
+    (text) => text.includes("❯ small") && !text.includes(LARGE),
+    "the filtered models",
+  );
+  let screen = await tui.press(
+    KEYS.enter,
+    (text) => text.includes("Write these changes"),
+    "the plan",
+  );
+  screen = await tui.press(
+    KEYS.pageDown + KEYS.pageDown + KEYS.pageDown,
+    (text) => text.includes("After writing:"),
+    "the end of the plan",
+  );
+  assert.ok(flat(screen).includes(`After writing: ${pi.notice}`));
+  screen = await tui.press(
+    "y",
+    (text) => text.includes("✓ Pi: model fake/sim-small."),
+    "the wired agent",
+  );
+  assert.ok(
+    flat(screen).includes(`Pi: model fake/sim-small. ${pi.notice}`),
+    flat(screen),
+  );
+  await tui.press("q", () => true, "quit");
+  assert.equal(await tui.done, 0);
+
+  // The real hh wire prints the very same line, once.
+  const wired = await hh(on, ["wire", "pi", LARGE, "--yes"]);
+  assert.equal(wired.code, 0, wired.stderr);
+  assert.equal(wired.stdout.split(pi.notice!).length, 2, wired.stdout);
+});
+
+void test("hh tui --help names every key the agent list offers", async (t) => {
+  const on = await machine(t);
+  const tui = session(on.client, { env: { NO_COLOR: "1" }, columns: 160 });
+  const screen = await tui.output.waitFor(listed, "the agents");
+  await tui.press("q", () => true, "quit");
+  assert.equal(await tui.done, 0);
+  // The hint lines: "key what  ·  key what …".
+  const keys = screen
+    .split("\n")
+    .filter((line) => line.includes("  ·  "))
+    .flatMap((line) => line.trim().split("  ·  "))
+    .map((hint) => hint.split(" ")[0]!);
+  assert.ok(keys.includes("R"), keys.join(" "));
+  const help = await hh(on, ["tui", "--help"]);
+  assert.equal(help.code, 0, help.stderr);
+  for (const key of keys)
+    assert.match(
+      help.stdout,
+      new RegExp(
+        `(^|[\\s(,])${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[\\s,]`,
+      ),
+      `hh tui --help mentions ${key}`,
+    );
+});
+
+/** Runs the real `hh` launcher against `on`'s daemon, never interactive. */
+function hh(
+  on: Machine,
+  args: string[],
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [
+        fileURLToPath(HH_ENTRY),
+        ...args,
+        "--url",
+        on.url,
+        "--data-dir",
+        on.dataDir,
+      ],
+      { cwd: on.directory, stdio: ["pipe", "pipe", "pipe"] },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout
+      .setEncoding("utf8")
+      .on("data", (chunk: string) => (stdout += chunk));
+    child.stderr
+      .setEncoding("utf8")
+      .on("data", (chunk: string) => (stderr += chunk));
+    child.once("error", reject);
+    child.once("close", (code) =>
+      resolve({ code: code ?? -1, stdout, stderr }),
+    );
+    child.stdin.end("");
+  });
+}

@@ -36,7 +36,11 @@ export {
   wiredEntries,
   type ManagedOverride,
 } from "./managed.js";
-export { wiringAdapter, wiringAdapters } from "./adapters/index.js";
+export {
+  restartNotice,
+  wiringAdapter,
+  wiringAdapters,
+} from "./adapters/index.js";
 export type { WiringAdapter, WiringModel } from "./adapters/index.js";
 export {
   WiringError,

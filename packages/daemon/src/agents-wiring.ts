@@ -42,6 +42,7 @@ import {
   managedOverrides,
   planWiring,
   resolveOptions,
+  restartNotice,
   unwire,
   wiredEntries,
   wiredKeyText,
@@ -180,7 +181,7 @@ export interface AgentView {
      */
     ownModel: Array<Record<string, string>>;
   };
-  /** What to do after wiring changes for the agent to use them, such as restarting it. */
+  /** What to do after wiring changes for the agent to use them (`restartNotice`); absent when it picks them up by itself. */
   notice?: string;
   installation: AgentInstallation;
   wiring: AgentWiringView | null;
@@ -442,9 +443,10 @@ export class AgentWiringService {
       ],
       context,
     );
+    const notice = restartNotice(adapter);
     return {
       ...plan,
-      ...(adapter.restartNotice ? { notice: adapter.restartNotice } : {}),
+      ...(notice ? { notice } : {}),
       ...(managed.length ? { managed } : {}),
     };
   }
@@ -909,6 +911,7 @@ export class AgentWiringService {
     catalog?: Map<string, WiringModel>,
   ): Promise<AgentView> {
     const adapter = wiringAdapter(adapterId);
+    const notice = restartNotice(adapter);
     return {
       id: adapter.id,
       name: adapter.name,
@@ -925,7 +928,7 @@ export class AgentWiringService {
         ),
         ownModel: ownModelOptions(adapter),
       },
-      ...(adapter.restartNotice ? { notice: adapter.restartNotice } : {}),
+      ...(notice ? { notice } : {}),
       installation: await detectAgent(adapterId, context),
       wiring: record
         ? await this.wiringView(

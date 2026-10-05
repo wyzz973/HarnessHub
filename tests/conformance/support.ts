@@ -230,16 +230,16 @@ export async function startSandboxed(
   child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
     stderr += chunk;
   });
+  let closed = false;
   const killGroup = () => {
     try {
       process.kill(-child.pid!, "SIGKILL");
     } catch (error) {
-      if (!(
-        error instanceof Error &&
-        "code" in error &&
-        error.code === "ESRCH"
-      ))
-        throw error;
+      const code = error instanceof Error && "code" in error ? error.code : "";
+      // After the child has closed, macOS answers EPERM, not ESRCH, while
+      // the group's only members are zombies not yet reaped (a descendant
+      // whose parent left the group): nothing is left to kill.
+      if (!(code === "ESRCH" || (code === "EPERM" && closed))) throw error;
     }
   };
   let timedOut = false;
@@ -254,6 +254,7 @@ export async function startSandboxed(
     },
   ).then(([code, signal]): AgentRun => {
     clearTimeout(timer);
+    closed = true;
     killGroup();
     return { code, signal, timedOut, stdout, stderr };
   });

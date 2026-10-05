@@ -42,7 +42,7 @@ import {
   UsageError,
   write,
 } from "./admin.js";
-import { planText } from "./agents.js";
+import { notices, planText } from "./agents.js";
 
 const USAGE = `Usage: hh init [options]
 
@@ -131,6 +131,8 @@ export interface InitResult {
     tiers?: Partial<Record<WiringTier, string>>;
     outcome: "wired" | "unchanged" | "failed";
     error?: string;
+    /** What to do for the wired agent to use it, such as restarting it (`Agent.notice`). */
+    notice?: string;
   }>;
 }
 
@@ -799,8 +801,15 @@ export async function runInit(
       continue;
     }
     try {
-      await client.agents.wire(agent.id, { ...input, expect: plan });
-      result.agents.push({ ...entry, outcome: "wired" });
+      const wired = await client.agents.wire(agent.id, {
+        ...input,
+        expect: plan,
+      });
+      result.agents.push({
+        ...entry,
+        outcome: "wired",
+        ...(wired.notice ? { notice: wired.notice } : {}),
+      });
     } catch (error) {
       if (!(error instanceof HarnessHubError)) throw error;
       result.agents.push({
@@ -843,9 +852,7 @@ function summary(result: InitResult): string {
               : ""
           }.`,
     ),
-    ...(result.agents.some((item) => item.outcome === "wired")
-      ? ["Restart running agent sessions to use the new configuration."]
-      : []),
+    ...notices(result.agents.filter((item) => item.outcome === "wired")),
     "Next: hh usage shows the calls and tokens, hh console opens the console, hh agents shows the agents.",
   ].join("\n");
 }
