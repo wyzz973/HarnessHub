@@ -1,0 +1,14 @@
+.research-cache/
+.tmp/
+data/
+artifacts/
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+__pycache__/
+*.pyc

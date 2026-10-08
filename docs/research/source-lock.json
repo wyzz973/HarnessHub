@@ -1,0 +1,630 @@
+{
+  "reviewed_on": "2026-10-09",
+  "repositories": [
+    {
+      "repo": "OpenHands/OpenHands",
+      "url": "https://github.com/OpenHands/OpenHands",
+      "default_branch": "main",
+      "commit": "7af57f8a54115a84d7215192f822850707369122",
+      "commit_date": "2026-10-08T14:44:59Z",
+      "archived": false,
+      "license": "MIT",
+      "reviewed_on": "2026-10-09",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "e34ea61a6b6b1d1c2651c12a20a0ef83008c42190c400d6e93e54196d94f89b7",
+          "bytes": 12836,
+          "url": "https://github.com/OpenHands/OpenHands/blob/7af57f8a54115a84d7215192f822850707369122/README.md"
+        },
+        {
+          "path": "src/api/agent-server-adapter.ts",
+          "sha256": "af608efd981a3e8a3a47cb54cc249b9f521a59fac95fe7d009af177180824ebd",
+          "bytes": 65187,
+          "url": "https://github.com/OpenHands/OpenHands/blob/7af57f8a54115a84d7215192f822850707369122/src/api/agent-server-adapter.ts"
+        },
+        {
+          "path": "src/types/agent-server/session-frames.ts",
+          "sha256": "fc1abe30dc8fe7d42d0f403982628ebfbb47e35fea51372b07892d82a0f4e960",
+          "bytes": 2792,
+          "url": "https://github.com/OpenHands/OpenHands/blob/7af57f8a54115a84d7215192f822850707369122/src/types/agent-server/session-frames.ts"
+        }
+      ],
+      "review_scope": "selected_source_and_docs"
+    },
+    {
+      "repo": "OpenHands/software-agent-sdk",
+      "url": "https://github.com/OpenHands/software-agent-sdk",
+      "default_branch": "main",
+      "commit": "16662b0bd2c1a93d3c5e282b48da05b95e90a0c8",
+      "commit_date": "2026-10-08T15:42:23Z",
+      "archived": false,
+      "license": "MIT",
+      "reviewed_on": "2026-10-09",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "95094c9745c7cc58136d4eaa1688fb6038aafefec2be05344293f6df7e55dbf8",
+          "bytes": 10835,
+          "url": "https://github.com/OpenHands/software-agent-sdk/blob/16662b0bd2c1a93d3c5e282b48da05b95e90a0c8/README.md"
+        },
+        {
+          "path": "openhands-agent-server/openhands/agent_server/session_protocol.py",
+          "sha256": "0bb4b454429bebab380156eee80f2cd9bb9edc525ef18be91a2b5d9e1f33289f",
+          "bytes": 4996,
+          "url": "https://github.com/OpenHands/software-agent-sdk/blob/16662b0bd2c1a93d3c5e282b48da05b95e90a0c8/openhands-agent-server/openhands/agent_server/session_protocol.py"
+        },
+        {
+          "path": "examples/01_standalone_sdk/40_acp_agent_example.py",
+          "sha256": "d4ff505ef67b079e8d0964cbe9a6584740b5b6cd630086869fcd7e56477afcb8",
+          "bytes": 2400,
+          "url": "https://github.com/OpenHands/software-agent-sdk/blob/16662b0bd2c1a93d3c5e282b48da05b95e90a0c8/examples/01_standalone_sdk/40_acp_agent_example.py"
+        },
+        {
+          "path": "openhands-agent-server/openhands/agent_server/conversation_router.py",
+          "sha256": "e83670c8aff962de673aca92774235b4d29ecab2b4a1aed964ca1c235e0a6430",
+          "bytes": 32381,
+          "url": "https://github.com/OpenHands/software-agent-sdk/blob/16662b0bd2c1a93d3c5e282b48da05b95e90a0c8/openhands-agent-server/openhands/agent_server/conversation_router.py"
+        }
+      ],
+      "review_scope": "selected_source_and_docs"
+    },
+    {
+      "repo": "a2aproject/A2A",
+      "url": "https://github.com/a2aproject/A2A",
+      "default_branch": "main",
+      "commit": "12e9d2fbb9badfe98f8ab4f660697870eeb1940b",
+      "commit_date": "2026-10-07T19:29:07Z",
+      "archived": false,
+      "license": "Apache-2.0",
+      "reviewed_on": "2026-10-09",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "440930f051475027fc54f0747c1f8ee84a12b36c343f585cdb0a54e6436abc1d",
+          "bytes": 8586,
+          "url": "https://github.com/a2aproject/A2A/blob/12e9d2fbb9badfe98f8ab4f660697870eeb1940b/README.md"
+        }
+      ],
+      "review_scope": "readme_and_metadata"
+    },
+    {
+      "repo": "ag-ui-protocol/ag-ui",
+      "url": "https://github.com/ag-ui-protocol/ag-ui",
+      "default_branch": "main",
+      "commit": "4c3e36d31dc1adedd48b03126ffbb737e8251118",
+      "commit_date": "2026-10-08T15:46:43Z",
+      "archived": false,
+      "license": "MIT",
+      "reviewed_on": "2026-10-09",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "7a5ca7d6de259ec5e0fb144febb7977f1d132d07f33df955da0553d9197fc5e5",
+          "bytes": 13039,
+          "url": "https://github.com/ag-ui-protocol/ag-ui/blob/4c3e36d31dc1adedd48b03126ffbb737e8251118/README.md"
+        }
+      ],
+      "review_scope": "readme_and_metadata"
+    },
+    {
+      "repo": "agentclientprotocol/agent-client-protocol",
+      "url": "https://github.com/agentclientprotocol/agent-client-protocol",
+      "default_branch": "main",
+      "commit": "5ed386e81033918fe5e3a0503beaa6030280666e",
+      "commit_date": "2026-10-08T09:54:00Z",
+      "archived": false,
+      "license": "Apache-2.0",
+      "reviewed_on": "2026-10-09",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "56f5d88d99567098850f27a25f97f45f49c43899097ae9bf988f79c0d66adf13",
+          "bytes": 5444,
+          "url": "https://github.com/agentclientprotocol/agent-client-protocol/blob/5ed386e81033918fe5e3a0503beaa6030280666e/README.md"
+        },
+        {
+          "path": "docs/protocol/v1/initialization.mdx",
+          "sha256": "b9c0b10a73abd1acf8d9ce80e4603594dfc277b7d77d5e49a2e1c5d531a2da79",
+          "bytes": 10040,
+          "url": "https://github.com/agentclientprotocol/agent-client-protocol/blob/5ed386e81033918fe5e3a0503beaa6030280666e/docs/protocol/v1/initialization.mdx"
+        },
+        {
+          "path": "docs/protocol/v1/tool-calls.mdx",
+          "sha256": "19165c2e4b4b8c7395aa85a139d3ac5dbd7ac80bbac54743c3fd59f17218b78b",
+          "bytes": 9385,
+          "url": "https://github.com/agentclientprotocol/agent-client-protocol/blob/5ed386e81033918fe5e3a0503beaa6030280666e/docs/protocol/v1/tool-calls.mdx"
+        },
+        {
+          "path": "docs/protocol/v1/session-config-options.mdx",
+          "sha256": "5f2d90d1e44db5c3f40e0d635516a46fcf37335f45cbb2fcc0dc2ba54064b155",
+          "bytes": 11699,
+          "url": "https://github.com/agentclientprotocol/agent-client-protocol/blob/5ed386e81033918fe5e3a0503beaa6030280666e/docs/protocol/v1/session-config-options.mdx"
+        },
+        {
+          "path": "docs/protocol/v1/session-setup.mdx",
+          "sha256": "d8a407f297f8c07ed6746282d9a4ac92dc9becca38e116a2000acb006f5c84a7",
+          "bytes": 15462,
+          "url": "https://github.com/agentclientprotocol/agent-client-protocol/blob/5ed386e81033918fe5e3a0503beaa6030280666e/docs/protocol/v1/session-setup.mdx"
+        },
+        {
+          "path": "docs/protocol/v1/transports.mdx",
+          "sha256": "dbd4a4607e63cc785427ca2a2b5f307724a5f2ec52575d4988bd613db53dcf02",
+          "bytes": 2336,
+          "url": "https://github.com/agentclientprotocol/agent-client-protocol/blob/5ed386e81033918fe5e3a0503beaa6030280666e/docs/protocol/v1/transports.mdx"
+        },
+        {
+          "path": "docs/protocol/v1/prompt-turn.mdx",
+          "sha256": "eb6367b607b5b55347de704018362d6ae9b3cf0f37c71506a11bd1d1b8889901",
+          "bytes": 13689,
+          "url": "https://github.com/agentclientprotocol/agent-client-protocol/blob/5ed386e81033918fe5e3a0503beaa6030280666e/docs/protocol/v1/prompt-turn.mdx"
+        },
+        {
+          "path": "schema/v1/meta.json",
+          "sha256": "061edb6efa8fb2aa2792459a86ec7268de5fe665bba48b2ffe7939df01481f88",
+          "bytes": 1159,
+          "url": "https://github.com/agentclientprotocol/agent-client-protocol/blob/5ed386e81033918fe5e3a0503beaa6030280666e/schema/v1/meta.json"
+        }
+      ],
+      "review_scope": "selected_source_and_docs"
+    },
+    {
+      "repo": "agentclientprotocol/typescript-sdk",
+      "url": "https://github.com/agentclientprotocol/typescript-sdk",
+      "default_branch": "main",
+      "commit": "17720e4d24d89af34a05f11d1fe77d1d70b97dd6",
+      "commit_date": "2026-10-05T09:28:48Z",
+      "archived": false,
+      "license": "Apache-2.0",
+      "reviewed_on": "2026-10-09",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "e442ac0f0fd26b14ccb7c836d5e23fcd4bb100bd5a1b3cea9293a1db030676a0",
+          "bytes": 3607,
+          "url": "https://github.com/agentclientprotocol/typescript-sdk/blob/17720e4d24d89af34a05f11d1fe77d1d70b97dd6/README.md"
+        },
+        {
+          "path": "src/stream.ts",
+          "sha256": "de9ae9f2213cf12c96f17b3f8a65b5c0fc6c0be7216517d18e3465f071df8ad5",
+          "bytes": 4510,
+          "url": "https://github.com/agentclientprotocol/typescript-sdk/blob/17720e4d24d89af34a05f11d1fe77d1d70b97dd6/src/stream.ts"
+        },
+        {
+          "path": "package.json",
+          "sha256": "23d03ece54a8d289f0af7a26e5a3a9e526ce33c34d60cb2d8c32ff2c756c9070",
+          "bytes": 3625,
+          "url": "https://github.com/agentclientprotocol/typescript-sdk/blob/17720e4d24d89af34a05f11d1fe77d1d70b97dd6/package.json"
+        },
+        {
+          "path": "src/connection.ts",
+          "sha256": "41c6ff253fba4dbe547a7fcc242fc0ef386cd1e1ef6f3d93e0b026e10f4874e7",
+          "bytes": 37252,
+          "url": "https://github.com/agentclientprotocol/typescript-sdk/blob/17720e4d24d89af34a05f11d1fe77d1d70b97dd6/src/connection.ts"
+        }
+      ],
+      "review_scope": "selected_source_and_docs"
+    },
+    {
+      "repo": "agentgateway/agentgateway",
+      "url": "https://github.com/agentgateway/agentgateway",
+      "default_branch": "main",
+      "commit": "1170b64ad4568e479f8671a02c9c56f53b8686f5",
+      "commit_date": "2026-10-08T13:56:45Z",
+      "archived": false,
+      "license": "Apache-2.0",
+      "reviewed_on": "2026-10-09",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "8a7ac2c178edebeae442961d8222acaf3dec9bcc1419cec43059e6c544b45f4d",
+          "bytes": 6443,
+          "url": "https://github.com/agentgateway/agentgateway/blob/1170b64ad4568e479f8671a02c9c56f53b8686f5/README.md"
+        },
+        {
+          "path": "crates/agentgateway/src/mcp/README.md",
+          "sha256": "cf8b04459a56992bf8258b08a6b587f99326ed75cece37cf0aa57064193f791a",
+          "bytes": 8238,
+          "url": "https://github.com/agentgateway/agentgateway/blob/1170b64ad4568e479f8671a02c9c56f53b8686f5/crates/agentgateway/src/mcp/README.md"
+        },
+        {
+          "path": "crates/agentgateway/src/a2a/mod.rs",
+          "sha256": "0d0b92cbdca6bebcd290797e84666d134a8830e0263f536c5cb30480247dedb4",
+          "bytes": 11312,
+          "url": "https://github.com/agentgateway/agentgateway/blob/1170b64ad4568e479f8671a02c9c56f53b8686f5/crates/agentgateway/src/a2a/mod.rs"
+        }
+      ],
+      "review_scope": "selected_source_and_docs"
+    },
+    {
+      "repo": "anomalyco/opencode",
+      "url": "https://github.com/anomalyco/opencode",
+      "default_branch": "dev",
+      "commit": "687664c63b2bb4eb9b9c7e0dc37227869282ed80",
+      "commit_date": "2026-10-08T14:22:25Z",
+      "archived": false,
+      "license": "MIT",
+      "reviewed_on": "2026-10-09",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "400890a3082e225c440561825270a911cd7df90a9f64f85166aed330201e50ba",
+          "bytes": 5402,
+          "url": "https://github.com/anomalyco/opencode/blob/687664c63b2bb4eb9b9c7e0dc37227869282ed80/README.md"
+        },
+        {
+          "path": "packages/opencode/src/acp/session.ts",
+          "sha256": "cc73f70f7d7071fd6bf808871c65bcb87d9f737f9e292be5e279ee51f5c9507e",
+          "bytes": 7944,
+          "url": "https://github.com/anomalyco/opencode/blob/687664c63b2bb4eb9b9c7e0dc37227869282ed80/packages/opencode/src/acp/session.ts"
+        },
+        {
+          "path": "packages/opencode/src/acp/permission.ts",
+          "sha256": "b83f1b30015f92f432e56a444a7304e131b1824b06870e7842c70db6bd969743",
+          "bytes": 7694,
+          "url": "https://github.com/anomalyco/opencode/blob/687664c63b2bb4eb9b9c7e0dc37227869282ed80/packages/opencode/src/acp/permission.ts"
+        },
+        {
+          "path": "packages/opencode/src/acp/config-option.ts",
+          "sha256": "4545cf9639b12b4a9a0bd28d9a5f61b3d8e7e6706558f04c66454773813ed1a1",
+          "bytes": 6163,
+          "url": "https://github.com/anomalyco/opencode/blob/687664c63b2bb4eb9b9c7e0dc37227869282ed80/packages/opencode/src/acp/config-option.ts"
+        },
+        {
+          "path": "packages/opencode/src/server/routes/instance/httpapi/groups/session.ts",
+          "sha256": "3fd2ae22b6bbc211adc45011243a42fa869862355ad08c086c591792d8fa91dc",
+          "bytes": 20340,
+          "url": "https://github.com/anomalyco/opencode/blob/687664c63b2bb4eb9b9c7e0dc37227869282ed80/packages/opencode/src/server/routes/instance/httpapi/groups/session.ts"
+        }
+      ],
+      "review_scope": "selected_source_and_docs"
+    },
+    {
+      "repo": "anthropics/claude-agent-sdk-typescript",
+      "url": "https://github.com/anthropics/claude-agent-sdk-typescript",
+      "default_branch": "main",
+      "commit": "799dc78749f5568e2965699c6ed4d2542031082d",
+      "commit_date": "2026-10-08T05:03:35Z",
+      "archived": false,
+      "license": null,
+      "reviewed_on": "2026-10-09",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "d7f8965afea6198e0448bb8a3f3e0806d4dd6cfb3696cab21b1ee36faaef2065",
+          "bytes": 2502,
+          "url": "https://github.com/anthropics/claude-agent-sdk-typescript/blob/799dc78749f5568e2965699c6ed4d2542031082d/README.md"
+        },
+        {
+          "path": "LICENSE.md",
+          "sha256": "728158fd1037143fad6907e8fa34804177e598b7326519503fe83cafdef849e6",
+          "bytes": 150,
+          "url": "https://github.com/anthropics/claude-agent-sdk-typescript/blob/799dc78749f5568e2965699c6ed4d2542031082d/LICENSE.md"
+        },
+        {
+          "path": "CHANGELOG.md",
+          "sha256": "adfe6e18149c66093a1a432c9b58a1efc817c788306c4feaa8aaf51310b064a5",
+          "bytes": 87501,
+          "url": "https://github.com/anthropics/claude-agent-sdk-typescript/blob/799dc78749f5568e2965699c6ed4d2542031082d/CHANGELOG.md"
+        }
+      ],
+      "review_scope": "selected_source_and_docs",
+      "license_evidence": "LICENSE.md states Anthropic commercial terms; not assumed open-source or redistributable"
+    },
+    {
+      "repo": "badlogic/pi-mono",
+      "url": "https://github.com/earendil-works/pi",
+      "default_branch": "main",
+      "commit": "6fb2e7815167e6b19006fc526d1a5d0f5f998787",
+      "commit_date": "2026-10-08T15:26:34Z",
+      "archived": false,
+      "license": "MIT",
+      "reviewed_on": "2026-10-09",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "d4f05a91fe0de78d1b99d8b8d69c66e7522c493814cc4bd2ed344e4d60b10ce1",
+          "bytes": 10627,
+          "url": "https://github.com/badlogic/pi-mono/blob/6fb2e7815167e6b19006fc526d1a5d0f5f998787/README.md"
+        },
+        {
+          "path": "packages/coding-agent/docs/rpc.md",
+          "sha256": "37a03d180115460a0a275022f4aeabef1e5345458df6a9b6e8a6de18474de720",
+          "bytes": 8897,
+          "url": "https://github.com/badlogic/pi-mono/blob/6fb2e7815167e6b19006fc526d1a5d0f5f998787/packages/coding-agent/docs/rpc.md"
+        },
+        {
+          "path": "packages/coding-agent/src/modes/rpc/rpc-types.ts",
+          "sha256": "be06a1d53916e03e9274cce9e4833692b235494e4047f1f7139d7f0147daae1a",
+          "bytes": 10456,
+          "url": "https://github.com/badlogic/pi-mono/blob/6fb2e7815167e6b19006fc526d1a5d0f5f998787/packages/coding-agent/src/modes/rpc/rpc-types.ts"
+        },
+        {
+          "path": "packages/coding-agent/src/modes/rpc/rpc-mode.ts",
+          "sha256": "d534e0fa1484844a097963d5f4fb4df9397c5a1b5e29e42aed7575ab6f67989b",
+          "bytes": 24168,
+          "url": "https://github.com/badlogic/pi-mono/blob/6fb2e7815167e6b19006fc526d1a5d0f5f998787/packages/coding-agent/src/modes/rpc/rpc-mode.ts"
+        }
+      ],
+      "review_scope": "selected_source_and_docs"
+    },
+    {
+      "repo": "coder/agentapi",
+      "url": "https://github.com/coder/agentapi",
+      "default_branch": "main",
+      "commit": "7c468d5b25ec9d3d76c41313cf4e08904ff5968d",
+      "commit_date": "2026-09-13T21:00:46Z",
+      "archived": true,
+      "license": "MIT",
+      "reviewed_on": "2026-10-09",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "4b2076143d03f8e3fa64eea998710d6627810851c23732af1039ae22ef2d6cf3",
+          "bytes": 9074,
+          "url": "https://github.com/coder/agentapi/blob/7c468d5b25ec9d3d76c41313cf4e08904ff5968d/README.md"
+        }
+      ],
+      "review_scope": "readme_and_metadata"
+    },
+    {
+      "repo": "modelcontextprotocol/modelcontextprotocol",
+      "url": "https://github.com/modelcontextprotocol/modelcontextprotocol",
+      "default_branch": "main",
+      "commit": "c518f7a927cff918bce35d3522fcdb046d264d7c",
+      "commit_date": "2026-10-08T12:57:38Z",
+      "archived": false,
+      "license": "NOASSERTION",
+      "reviewed_on": "2026-10-09",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "7e98444c73ed5d923a3b02b1247e9cdf678d31a30cc32b1503bdcd906aa984e2",
+          "bytes": 876,
+          "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/c518f7a927cff918bce35d3522fcdb046d264d7c/README.md"
+        },
+        {
+          "path": "LICENSE",
+          "sha256": "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a",
+          "bytes": 12227,
+          "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/blob/c518f7a927cff918bce35d3522fcdb046d264d7c/LICENSE"
+        }
+      ],
+      "review_scope": "readme_and_metadata",
+      "license_evidence": "LICENSE describes MIT to Apache-2.0 transition; verify per-file license before reuse"
+    },
+    {
+      "repo": "openai/codex",
+      "url": "https://github.com/openai/codex",
+      "default_branch": "main",
+      "commit": "9b738582b13c2cdbeff54af0afd04c50c3e7ba09",
+      "commit_date": "2026-10-08T13:45:19Z",
+      "archived": false,
+      "license": "Apache-2.0",
+      "reviewed_on": "2026-10-09",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "ba4e1f69ff48386e72a9c5e1edaf76aad64a475c2d51af79ccba6d1128261ba7",
+          "bytes": 3334,
+          "url": "https://github.com/openai/codex/blob/9b738582b13c2cdbeff54af0afd04c50c3e7ba09/README.md"
+        },
+        {
+          "path": "codex-rs/app-server/README.md",
+          "sha256": "7b5ae91d818bfcfc19d9503a3d6850584bb5ad07c1299fbe68a339cbd289ff12",
+          "bytes": 35732,
+          "url": "https://github.com/openai/codex/blob/9b738582b13c2cdbeff54af0afd04c50c3e7ba09/codex-rs/app-server/README.md"
+        },
+        {
+          "path": "codex-rs/app-server-protocol/src/protocol/v2/mod.rs",
+          "sha256": "295bb0b5e8145382bca2b4b31ab209311085613f4094dad8e4fa23a938be6e53",
+          "bytes": 1577,
+          "url": "https://github.com/openai/codex/blob/9b738582b13c2cdbeff54af0afd04c50c3e7ba09/codex-rs/app-server-protocol/src/protocol/v2/mod.rs"
+        },
+        {
+          "path": "codex-rs/app-server-protocol/src/protocol/v2/thread.rs",
+          "sha256": "e8b5d12e4adb809ae5b1580fa44999b7acfaac4e631591ffa1576d1c750adaf4",
+          "bytes": 79861,
+          "url": "https://github.com/openai/codex/blob/9b738582b13c2cdbeff54af0afd04c50c3e7ba09/codex-rs/app-server-protocol/src/protocol/v2/thread.rs"
+        },
+        {
+          "path": "codex-rs/app-server-protocol/src/protocol/v2/turn.rs",
+          "sha256": "eb1a99cc72a65af84f933073881bfc0440288fb629de7ec92b7c1b50d3530779",
+          "bytes": 22775,
+          "url": "https://github.com/openai/codex/blob/9b738582b13c2cdbeff54af0afd04c50c3e7ba09/codex-rs/app-server-protocol/src/protocol/v2/turn.rs"
+        }
+      ],
+      "retrieval_failures": [
+        {
+          "path": "codex-rs/app-server-protocol/src/protocol/v2.rs",
+          "error": "HTTP Error 404: Not Found",
+          "resolved_by": [
+            "codex-rs/app-server-protocol/src/protocol/v2/mod.rs",
+            "codex-rs/app-server-protocol/src/protocol/v2/thread.rs",
+            "codex-rs/app-server-protocol/src/protocol/v2/turn.rs"
+          ]
+        }
+      ],
+      "review_scope": "selected_source_and_docs"
+    },
+    {
+      "repo": "openclaw/acpx",
+      "url": "https://github.com/openclaw/acpx",
+      "default_branch": "main",
+      "commit": "b3cd84337952e0d2cadd094f564612e89d71daa5",
+      "commit_date": "2026-10-07T05:33:28Z",
+      "archived": false,
+      "license": "MIT",
+      "reviewed_on": "2026-10-09",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "e03a925153c2289ac3d4696c6f2e42c7da2de1e1a0ab6770a58a924ebb1ef913",
+          "bytes": 5557,
+          "url": "https://github.com/openclaw/acpx/blob/b3cd84337952e0d2cadd094f564612e89d71daa5/README.md"
+        },
+        {
+          "path": "package.json",
+          "sha256": "bdce73cad2c7ca8f23f0ae8f7465971c6052fa42ae4e3ec5a743efc68fae8827",
+          "bytes": 6380,
+          "url": "https://github.com/openclaw/acpx/blob/b3cd84337952e0d2cadd094f564612e89d71daa5/package.json"
+        },
+        {
+          "path": "src/runtime.ts",
+          "sha256": "a65c6ed8f33244bf4cd7cf3914047c399729be578bdb1886fcc3774690b9c53e",
+          "bytes": 14699,
+          "url": "https://github.com/openclaw/acpx/blob/b3cd84337952e0d2cadd094f564612e89d71daa5/src/runtime.ts"
+        },
+        {
+          "path": "src/runtime/engine/prompt-turn.ts",
+          "sha256": "4fc28353af8befd98f338f0d5819ec8c854a38b7fe4e64c8c3330b68138b1b6c",
+          "bytes": 4473,
+          "url": "https://github.com/openclaw/acpx/blob/b3cd84337952e0d2cadd094f564612e89d71daa5/src/runtime/engine/prompt-turn.ts"
+        },
+        {
+          "path": "src/runtime/engine/controls.ts",
+          "sha256": "de1cb870be577355464c1c2d3b99cbc3a0fbac329ccf3f2db00b7a0b56c47f38",
+          "bytes": 1729,
+          "url": "https://github.com/openclaw/acpx/blob/b3cd84337952e0d2cadd094f564612e89d71daa5/src/runtime/engine/controls.ts"
+        },
+        {
+          "path": "src/runtime/engine/reuse-policy.ts",
+          "sha256": "7d1f53fdae6516ce19b3e1b7ac91511b42b49d08d417d90a3dbbb7616cf28d90",
+          "bytes": 1073,
+          "url": "https://github.com/openclaw/acpx/blob/b3cd84337952e0d2cadd094f564612e89d71daa5/src/runtime/engine/reuse-policy.ts"
+        }
+      ],
+      "review_scope": "selected_source_and_docs"
+    },
+    {
+      "repo": "rivet-dev/sandbox-agent",
+      "url": "https://github.com/rivet-dev/agents",
+      "default_branch": "main",
+      "commit": "d00849b2a3914a9d771f5f4c2b6a6e876e0edf16",
+      "commit_date": "2026-10-08T16:05:59Z",
+      "archived": false,
+      "license": "Apache-2.0",
+      "reviewed_on": "2026-10-09",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "ddebe42babafc8373dc35524ec42c3a3e6cb47eeffe8b92d40291768fc4b5412",
+          "bytes": 915,
+          "url": "https://github.com/rivet-dev/sandbox-agent/blob/d00849b2a3914a9d771f5f4c2b6a6e876e0edf16/README.md"
+        },
+        {
+          "path": "sandbox-agent/README.md",
+          "sha256": "7300396108c34bc6afc48ea27798eff64608059c0add053dde288e67606a158a",
+          "bytes": 11462,
+          "url": "https://github.com/rivet-dev/sandbox-agent/blob/d00849b2a3914a9d771f5f4c2b6a6e876e0edf16/sandbox-agent/README.md"
+        },
+        {
+          "path": "sandbox-agent/docs/content/docs/session-persistence.mdx",
+          "sha256": "233f25d6203ab155aa06e3a11ba549576956f9a261b83417591b479314ec9bf3",
+          "bytes": 3626,
+          "url": "https://github.com/rivet-dev/sandbox-agent/blob/d00849b2a3914a9d771f5f4c2b6a6e876e0edf16/sandbox-agent/docs/content/docs/session-persistence.mdx"
+        },
+        {
+          "path": "sandbox-agent/docs/content/docs/session-restoration.mdx",
+          "sha256": "b075884e1358561407406b2e3f0c604359265bd14067bbdfa28bfa9c7dab3efd",
+          "bytes": 1153,
+          "url": "https://github.com/rivet-dev/sandbox-agent/blob/d00849b2a3914a9d771f5f4c2b6a6e876e0edf16/sandbox-agent/docs/content/docs/session-restoration.mdx"
+        },
+        {
+          "path": "sandbox-agent/server/packages/acp-http-adapter/src/process.rs",
+          "sha256": "b83b8ead68df122b1f8f6fda44db735a7be6ed0110c4da0d7c00d16b97afec2a",
+          "bytes": 22789,
+          "url": "https://github.com/rivet-dev/sandbox-agent/blob/d00849b2a3914a9d771f5f4c2b6a6e876e0edf16/sandbox-agent/server/packages/acp-http-adapter/src/process.rs"
+        },
+        {
+          "path": "sandbox-agent/server/packages/sandbox-agent/src/acp_proxy_runtime.rs",
+          "sha256": "470245e5a2e017790baae9fbcb65ef8f8138491b1c86000b4937c8fd1e478bf7",
+          "bytes": 22150,
+          "url": "https://github.com/rivet-dev/sandbox-agent/blob/d00849b2a3914a9d771f5f4c2b6a6e876e0edf16/sandbox-agent/server/packages/sandbox-agent/src/acp_proxy_runtime.rs"
+        }
+      ],
+      "review_scope": "selected_source_and_docs"
+    },
+    {
+      "repo": "yetone/magpie",
+      "url": "https://github.com/yetone/magpie",
+      "default_branch": "main",
+      "commit": "ed31293c0ee1bc57f2ff26b50ebd3876fddd8df9",
+      "commit_date": "2026-10-08T16:10:23Z",
+      "archived": false,
+      "license": "MIT",
+      "reviewed_on": "2026-10-09",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "92483e7f9519afb680642701d3cf7843249e86338f3f19fa5def8f57f91a7273",
+          "bytes": 17663,
+          "url": "https://github.com/yetone/magpie/blob/ed31293c0ee1bc57f2ff26b50ebd3876fddd8df9/README.md"
+        }
+      ],
+      "review_scope": "readme_and_metadata"
+    }
+  ],
+  "web_documents": [
+    {
+      "id": "mcp-2026",
+      "url": "https://modelcontextprotocol.io/specification/2026-07-28",
+      "resolved_url": "https://modelcontextprotocol.io/specification/2026-07-28",
+      "reviewed_on": "2026-10-09",
+      "sha256": "f7d087eb8ca79eb2172871b8178da394973cf3771d67d7100016a32e67d19435",
+      "bytes": 323612,
+      "cache_path": "web/mcp-2026.html",
+      "scope": "official_spec_page_snapshot"
+    },
+    {
+      "id": "mcp-2026-transports",
+      "url": "https://modelcontextprotocol.io/specification/2026-07-28/basic/transports",
+      "resolved_url": "https://modelcontextprotocol.io/specification/2026-07-28/basic/transports",
+      "reviewed_on": "2026-10-09",
+      "sha256": "e4b8595ac41f857bb31755fc6dadfe997d6d037715aa131671eea0cb52e047c7",
+      "bytes": 300831,
+      "cache_path": "web/mcp-2026-transports.html",
+      "scope": "official_spec_page_snapshot"
+    },
+    {
+      "id": "mcp-2025-transports",
+      "url": "https://modelcontextprotocol.io/specification/2025-11-25/basic/transports",
+      "resolved_url": "https://modelcontextprotocol.io/specification/2025-11-25/basic/transports",
+      "reviewed_on": "2026-10-09",
+      "sha256": "5f8d8f3dcae4979bae129a80a562f8f548df984a3e401f44a537f6724d674406",
+      "bytes": 373773,
+      "cache_path": "web/mcp-2025-transports.html",
+      "scope": "official_spec_page_snapshot"
+    },
+    {
+      "id": "acp-tck",
+      "url": "https://agentclientprotocol.com/libraries/testing",
+      "resolved_url": "https://agentclientprotocol.com/libraries/testing",
+      "reviewed_on": "2026-10-09",
+      "sha256": "f2de3c58cd6c74e8689281f3da6276cc6ff0d6af864fd3c46a9f24d2450f1580",
+      "bytes": 252911,
+      "cache_path": "web/acp-tck.html",
+      "scope": "official_spec_page_snapshot"
+    },
+    {
+      "id": "a2a-1",
+      "url": "https://a2a-protocol.org/latest/specification/",
+      "resolved_url": "https://a2a-protocol.org/latest/specification/",
+      "reviewed_on": "2026-10-09",
+      "sha256": "5edc0cf64b959df84017a1bc1f3320d1e02862426ce3707d9529fe3806e9b3e0",
+      "bytes": 618408,
+      "cache_path": "web/a2a-1.html",
+      "scope": "official_spec_page_snapshot"
+    },
+    {
+      "id": "ag-ui-events",
+      "url": "https://docs.ag-ui.com/concepts/events",
+      "resolved_url": "https://docs.ag-ui.com/concepts/events",
+      "reviewed_on": "2026-10-09",
+      "sha256": "c63ed836e30ebdc1a62e877033bf9939f7f55637c4db3b01c043b6050e915f5c",
+      "bytes": 609573,
+      "cache_path": "web/ag-ui-events.html",
+      "scope": "official_spec_page_snapshot"
+    }
+  ]
+}

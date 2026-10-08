@@ -1,0 +1,187 @@
+{
+  "version": 1,
+  "requirements": [
+    {
+      "id": "R01",
+      "title": "统一入口",
+      "statement": "用户仅向网关对话或发送命令；界面和程序接口共享语义",
+      "origin": "user",
+      "priority": "must"
+    },
+    {
+      "id": "R02",
+      "title": "公共Session",
+      "statement": "公共Session身份独立于Harness及原生会话",
+      "origin": "user",
+      "priority": "must"
+    },
+    {
+      "id": "R03",
+      "title": "接入生命周期",
+      "statement": "可增加、排空、停用和移除Harness，并保留版本与历史",
+      "origin": "user",
+      "priority": "must"
+    },
+    {
+      "id": "R04",
+      "title": "能力证据",
+      "statement": "安装、声明、观察、验证和平台能力分别表达",
+      "origin": "derived",
+      "priority": "must"
+    },
+    {
+      "id": "R05",
+      "title": "自动分配",
+      "statement": "按任务约束、能力、版本化策略选择并解释候选",
+      "origin": "user",
+      "priority": "must"
+    },
+    {
+      "id": "R06",
+      "title": "用户指定",
+      "statement": "允许指定Harness；不可用时明确失败，不静默换目标",
+      "origin": "user",
+      "priority": "must"
+    },
+    {
+      "id": "R07",
+      "title": "持久输入",
+      "statement": "消息有序、幂等、可恢复，持久受理和执行分开",
+      "origin": "derived",
+      "priority": "must"
+    },
+    {
+      "id": "R08",
+      "title": "上下文接续",
+      "statement": "有来源、预算和水位的公共上下文供新执行者接续",
+      "origin": "user",
+      "priority": "must"
+    },
+    {
+      "id": "R09",
+      "title": "独立切换",
+      "statement": "同一Session可切Harness、Provider/模型，运行中请求有明确边界",
+      "origin": "user",
+      "priority": "must"
+    },
+    {
+      "id": "R10",
+      "title": "模型资源独立",
+      "statement": "Provider/模型与Harness独立，调用路径和目标可验证",
+      "origin": "user",
+      "priority": "must"
+    },
+    {
+      "id": "R11",
+      "title": "执行生命周期",
+      "statement": "Agent启动、执行、结果、停止、清理有明确责任",
+      "origin": "derived",
+      "priority": "must"
+    },
+    {
+      "id": "R12",
+      "title": "权限与工具",
+      "statement": "实际选项、决定、送达、应用和工具结果分别记录",
+      "origin": "derived",
+      "priority": "must"
+    },
+    {
+      "id": "R13",
+      "title": "期限与取消",
+      "statement": "总期限覆盖所有阶段，取消幂等，清理单独表达",
+      "origin": "derived",
+      "priority": "must"
+    },
+    {
+      "id": "R14",
+      "title": "未知结果恢复",
+      "statement": "重启核对归属，未知副作用不自动重跑",
+      "origin": "derived",
+      "priority": "must"
+    },
+    {
+      "id": "R15",
+      "title": "持久事件",
+      "statement": "可重放有界事件，断线不取消，慢客户端不阻塞执行",
+      "origin": "derived",
+      "priority": "must"
+    },
+    {
+      "id": "R16",
+      "title": "结果与产物",
+      "statement": "执行、质量、文件完整性、模型证据和清理分别表达",
+      "origin": "derived",
+      "priority": "must"
+    },
+    {
+      "id": "R17",
+      "title": "身份与秘密",
+      "statement": "执行/管理认证、所有权、最小秘密作用域和脱敏",
+      "origin": "derived",
+      "priority": "must"
+    },
+    {
+      "id": "R18",
+      "title": "工作区归属",
+      "statement": "受管理工作区单写租约，切换前确认旧写者静止",
+      "origin": "derived",
+      "priority": "must"
+    },
+    {
+      "id": "R19",
+      "title": "契约与版本",
+      "statement": "schema、SDK、协议和持久格式各自版本化且可追溯",
+      "origin": "user",
+      "priority": "must"
+    },
+    {
+      "id": "R20",
+      "title": "平台隔离边界",
+      "statement": "POSIX与Windows能力分别设计验证，不虚构隔离",
+      "origin": "derived",
+      "priority": "must"
+    },
+    {
+      "id": "R21",
+      "title": "择优证据",
+      "statement": "任务质量排名基于独立评测；证据不足时不声称最佳",
+      "origin": "derived",
+      "priority": "must"
+    },
+    {
+      "id": "R22",
+      "title": "应用服务一致",
+      "statement": "CLI/UI/SDK仅适配相同应用入口，不另建执行循环",
+      "origin": "user",
+      "priority": "must"
+    },
+    {
+      "id": "R23",
+      "title": "原子工程任务",
+      "statement": "每项任务单一职责、唯一文件所有权、明确依赖和验收",
+      "origin": "user",
+      "priority": "must"
+    },
+    {
+      "id": "R24",
+      "title": "全面可信测试",
+      "statement": "有效/无效/边界/竞态/故障/恢复/真实组合与平台分层覆盖",
+      "origin": "user",
+      "priority": "must"
+    },
+    {
+      "id": "R25",
+      "title": "协议防腐",
+      "statement": "ACP和原生协议独立适配，第三方类型不污染领域",
+      "origin": "user",
+      "priority": "must"
+    },
+    {
+      "id": "R26",
+      "title": "有界可诊断运行",
+      "statement": "配置集中、队列与流有上限，日志与事件可定位失败",
+      "origin": "derived",
+      "priority": "must"
+    }
+  ]
+}
