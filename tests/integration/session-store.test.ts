@@ -19,7 +19,7 @@ function directory(t: TestContext): string {
 function draft(type = "session.created"): readonly EventDraft[] { return [{ type, data: {} }]; }
 function initial(root: string, suffix = "one", key = "create-one", fingerprint = "a".repeat(64)): SessionSnapshot {
   const id = sessionId("session-" + suffix);
-  return { schemaVersion: 1, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
+  return { schemaVersion: 2, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
     configuration: { workspace: root, manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: false },
     selection: { harnessId: "fixture", controlId: "fixture-acp" }, activeRunId: null, pendingSwitchId: null,
     runs: [], messages: [], switches: [], commands: [{ id: commandId(key), kind: "create", fingerprint, resultId: id }] };
@@ -37,6 +37,37 @@ function completedHistory(store: SqliteSessionStore, root: string): SessionSnaps
     commands: [...current.commands, { id: commandId("send-history"), kind: "send", fingerprint: "b".repeat(64), resultId: run }],
   }, events: [{ type: "message.accepted", data: { runId: run } }, { type: "run.ended", data: { runId: run, status: "completed", fixtureOnly: true } }] })).session;
 }
+
+test("numbered v1-to-v2 migration preserves public identities, history, commands and event cursors", t => {
+  const root = directory(t), original = new SqliteSessionStore(root);
+  const state = completedHistory(original, root), events = original.events(state.id, 0); original.close();
+  const legacy = { ...state, schemaVersion: 1 };
+  const db = database(root); db.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify(legacy), state.id);
+  db.exec("PRAGMA user_version=1"); db.close();
+  const reader = new SqliteSessionReader(root); assert.equal(reader.get(state.id).schemaVersion, 1); reader.close();
+  const upgraded = new SqliteSessionStore(root);
+  try {
+    assert.deepEqual(upgraded.get(state.id), { ...state, schemaVersion: 2 });
+    assert.deepEqual(upgraded.events(state.id, 0), events);
+    assert.equal(upgraded.findByCreateKey(commandId("create-one"))?.id, state.id);
+    const verify = database(root); assert.equal(verify.prepare("PRAGMA user_version").get()?.user_version, 2); verify.close();
+  } finally { upgraded.close(); }
+});
+
+test("corruption in a later legacy Session rolls back every migrated row and the format version", t => {
+  const root = directory(t), original = new SqliteSessionStore(root);
+  const one = original.create(initial(root), draft()).session;
+  const two = original.create(initial(root, "two", "create-two"), draft()).session; original.close();
+  const db = database(root);
+  db.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify({ ...one, schemaVersion: 1 }), one.id);
+  db.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify({ ...two, schemaVersion: 1, unexpected: true }), two.id);
+  db.exec("PRAGMA user_version=1"); db.close();
+  assert.throws(() => new SqliteSessionStore(root), code("INVALID_DATA"));
+  const verify = database(root);
+  assert.equal(verify.prepare("PRAGMA user_version").get()?.user_version, 1);
+  assert.equal(JSON.parse(String(verify.prepare("SELECT snapshot FROM sessions WHERE id=?").get(one.id)?.snapshot)).schemaVersion, 1);
+  assert.equal(verify.prepare("SELECT COUNT(*) AS total FROM events").get()?.total, 2); verify.close();
+});
 interface PeerMessage { readonly type: string; readonly code?: string; readonly generation?: number }
 async function peer(t: TestContext, root: string, mode = "hold"): Promise<{ readonly child: ChildProcess; readonly message: PeerMessage }> {
   const child = spawn(process.execPath, [peerPath, root, mode], { stdio: ["ignore", "ignore", "pipe", "ipc"] });
@@ -265,7 +296,7 @@ test("SQLite event write failure rolls back snapshot and disables new operations
 test("corrupt persisted aggregate and unknown migration version never become empty Sessions", t => {
   const root = directory(t), store = new SqliteSessionStore(root), created = store.create(initial(root), draft()); store.close();
   const outsider = database(root);
-  outsider.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify({ ...created.session, schemaVersion: 2 }), created.session.id); outsider.close();
+  outsider.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify({ ...created.session, schemaVersion: 3 }), created.session.id); outsider.close();
   assert.throws(() => new SqliteSessionStore(root), code("INVALID_DATA"));
   const badVersion = database(root); badVersion.exec("PRAGMA user_version=99"); badVersion.close();
   assert.throws(() => new SqliteSessionReader(root), code("INVALID_DATA"));

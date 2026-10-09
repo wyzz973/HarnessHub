@@ -126,6 +126,8 @@ export async function main(args: readonly string[]): Promise<number> {
     if (app) {
       try { shutdown ??= app.runtime.close(); await shutdown; }
       catch (error) { report(error); }
+      try { await app.providers.shutdown(); }
+      catch (error) { report(error); }
       try { app.store.close(); }
       catch (error) { report(error); }
     }

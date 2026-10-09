@@ -120,6 +120,58 @@
       ],
       "implementation_state": "implemented",
       "verification_record": "docs/verification/public-session-2026-10-09.md"
+    },
+    {
+      "id": "provider-web",
+      "status": "accepted",
+      "scope": "手动Provider版本/私有凭据/受管配置/静止切换与本机同源图形界面；自动择优后置；无模型代理账本/云发布",
+      "task_ids": [
+        "G010",
+        "G016",
+        "G047",
+        "G050",
+        "G054",
+        "G001",
+        "G004",
+        "G008",
+        "G059",
+        "G060"
+      ],
+      "decision": "docs/decisions/0011-provider-web-mvp.md",
+      "allowed_files": [
+        "src/infrastructure/provider/vault.ts",
+        "src/infrastructure/session/redacted-control.ts",
+        "src/contracts/provider.ts",
+        "src/contexts/provider/domain/provider.ts",
+        "src/infrastructure/provider/service.ts",
+        "tests/unit/provider-contract.test.ts",
+        "tests/integration/provider-service.test.ts",
+        "src/adapters/provider/materialize.ts",
+        "tests/real/provider-switch.real.ts",
+        "src/contracts/web.ts",
+        "src/web/server.ts",
+        "src/cli/web.ts",
+        "tests/integration/web-server.test.ts",
+        "web/index.html",
+        "web/tsconfig.json",
+        "web/vite.config.ts",
+        "web/src/main.tsx",
+        "web/src/api.ts",
+        "web/src/App.tsx",
+        "web/src/styles.css",
+        "web/src/components/common.tsx",
+        "web/src/components/Sidebar.tsx",
+        "web/src/components/ChatPage.tsx",
+        "web/src/components/ProvidersPage.tsx",
+        "web/src/components/HarnessesPage.tsx",
+        "tests/browser/web.browser.ts",
+        "tests/fixtures/web-harness-peer.mjs",
+        "tests/unit/session-redaction.test.ts",
+        "tests/real/gemini-provider.real.ts",
+        "tests/real/harness-provider-switch.real.ts"
+      ],
+      "implementation_state": "implemented",
+      "verification_record": "docs/verification/provider-web-2026-10-09.md"
     }
   ]
 }

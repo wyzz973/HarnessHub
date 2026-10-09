@@ -1,0 +1,54 @@
+import type { ProviderView } from "./provider.js";
+import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, SelectionRequest, SessionEvent, SessionSnapshot } from "./session.js";
+
+/** Browser-safe observations. Available means resolved control, not task acceptance. */
+export interface HarnessView {
+  readonly id: string;
+  readonly name: string;
+  readonly installed: boolean;
+  readonly controls: readonly { readonly id: string; readonly protocol: string; readonly available: boolean; readonly reason: string | null }[];
+  readonly providerProtocols: readonly string[];
+}
+export interface SessionSummary {
+  readonly id: string;
+  readonly title: string;
+  readonly status: SessionSnapshot["status"];
+  readonly workspace: string;
+  readonly selection: HarnessSelection;
+  readonly updatedSeq: number;
+  readonly activeRunId: string | null;
+}
+/** Public history excludes admission fingerprints and private configuration references. */
+export interface SessionView {
+  readonly id: string;
+  readonly version: number;
+  readonly lastSeq: number;
+  readonly epoch: number;
+  readonly status: SessionSnapshot["status"];
+  readonly workspace: string;
+  readonly selection: HarnessSelection;
+  readonly activeRunId: string | null;
+  readonly pendingSwitchId: string | null;
+  readonly messages: readonly PublicMessage[];
+  readonly runs: readonly PublicRun[];
+  readonly switches: readonly PublicSwitch[];
+}
+export interface WebState {
+  readonly workspace: string;
+  readonly providers: readonly ProviderView[];
+  readonly harnesses: readonly HarnessView[];
+  readonly sessions: readonly SessionSummary[];
+}
+export interface EventPage {
+  readonly events: readonly SessionEvent[];
+  readonly nextSeq: number;
+  readonly hasMore: boolean;
+}
+export interface CreateWebSession {
+  readonly workspace?: string;
+  readonly selection: SelectionRequest;
+  readonly commandId: string;
+}
+export interface SwitchWebSession { readonly selection: SelectionRequest; readonly commandId: string }
+export interface WebError { readonly code: string; readonly message: string }
+export interface AuthSession { readonly csrfToken: string }

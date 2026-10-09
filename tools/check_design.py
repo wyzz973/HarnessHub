@@ -246,9 +246,9 @@ def check_files(root: Path, views: dict[str, str], verify_cache: bool) -> list[s
                     errors.append("slice path lacks task ownership: " + file)
                 else:
                     allowed.add(file)
-    for directory in ["src", "ui", "native"]:
+    for directory in ["src", "ui", "native", "web"]:
         if (root / directory).exists():
-            files = [file for file in (root / directory).rglob("*") if file.is_file()]
+            files = [file for file in (root / directory).rglob("*") if file.is_file() and not (directory == "web" and file.relative_to(root / directory).parts[0] == "dist")]
             if not files and not allowed:
                 errors.append("application source exists while implementation gate is closed: " + directory)
             for file in files:

@@ -174,6 +174,22 @@ class DesignChecks(unittest.TestCase):
         errors = self.file_fixture_errors(mutate)
         self.assertTrue(any("outside approved slice" in item for item in errors))
 
+    def test_rejects_web_source_outside_approved_slice(self):
+        def mutate(root, views):
+            self.approved_slice(root, views)
+            (root / "web").mkdir()
+            (root / "web/App.tsx").write_text("unapproved\n")
+        errors = self.file_fixture_errors(mutate)
+        self.assertTrue(any("outside approved slice: web/App.tsx" in item for item in errors))
+
+    def test_web_dist_exception_cannot_hide_nested_application_source(self):
+        def mutate(root, views):
+            self.approved_slice(root, views)
+            (root / "web/src/dist").mkdir(parents=True)
+            (root / "web/src/dist/hidden.ts").write_text("unapproved\n")
+        errors = self.file_fixture_errors(mutate)
+        self.assertTrue(any("outside approved slice: web/src/dist/hidden.ts" in item for item in errors))
+
     def test_rejects_unowned_slice_permission(self):
         def mutate(root, views):
             self.approved_slice(root, views)

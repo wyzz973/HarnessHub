@@ -1,3 +1,4 @@
+import { parseProviderTarget } from "../../../contracts/provider.js";
 import type { BackendResult, CleanupEvidence, ControlEvent, ControlRun } from "../../../contracts/control.js";
 import {
   SessionError, commandId, messageId, runId, sessionId, switchId,
@@ -20,11 +21,12 @@ interface ActiveExecution {
 }
 const MAX_PENDING_CREATES = 16;
 function requested(value: SelectionRequest): SelectionRequest {
-  if (value === null || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => key !== "harnessId" && key !== "controlId") ||
+  if (value === null || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => key !== "harnessId" && key !== "controlId" && key !== "provider") ||
     typeof value.harnessId !== "string" || !/^[a-z][a-z0-9-]{0,95}$/u.test(value.harnessId) ||
     (value.controlId !== undefined && (typeof value.controlId !== "string" || !/^[a-z][a-z0-9-]{0,95}$/u.test(value.controlId))))
     throw new SessionError("INVALID_INPUT", "selection must name bounded catalog identities");
-  return { harnessId: value.harnessId, ...(value.controlId === undefined ? {} : { controlId: value.controlId }) };
+  return { harnessId: value.harnessId, ...(value.controlId === undefined ? {} : { controlId: value.controlId }),
+    ...(value.provider === undefined ? {} : { provider: value.provider === null ? null : parseProviderTarget(value.provider) }) };
 }
 function fault(error: unknown): { readonly code: string; readonly message: string } {
   if (error instanceof SessionError) return { code: error.code.slice(0, 128), message: error.message.slice(0, 512) };
@@ -79,7 +81,7 @@ export class SessionRuntime {
     const concurrent = this.store.findByCreateKey(command);
     if (concurrent) { replayCommand(concurrent, command, "create", fingerprint); return concurrent; }
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 1, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
+    const state: SessionSnapshot = { schemaVersion: 2, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
       configuration: config, selection: validated, activeRunId: null, pendingSwitchId: null,
       runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }] };
     try {
@@ -307,7 +309,7 @@ export class SessionRuntime {
     const state = this.load(execution.sessionId);
     if (this.active !== execution || state.activeRunId !== execution.runId) throw new SessionError("OWNERSHIP_LOST", "active Run ownership changed");
     const run = state.runs.find(run => run.id === execution.runId);
-    if (!run || run.epoch !== state.epoch || run.selection.harnessId !== state.selection.harnessId || run.selection.controlId !== state.selection.controlId)
+    if (!run || run.epoch !== state.epoch || JSON.stringify(run.selection) !== JSON.stringify(state.selection))
       throw new SessionError("OWNERSHIP_LOST", "active Run epoch or selection no longer belongs to its Session");
     return state;
   }
@@ -315,7 +317,7 @@ export class SessionRuntime {
     const state = this.owned(execution), run = state.runs.find(run => run.id === execution.runId)!;
     if (this.fatal) throw this.fatal;
     if (run.cancelRequested || !this.accepting || this.closingSessions.has(state.id)) throw new SessionError("CANCELLED", "Run cancelled before dispatch");
-    if (run.epoch !== state.epoch || run.selection.harnessId !== state.selection.harnessId || run.selection.controlId !== state.selection.controlId)
+    if (run.epoch !== state.epoch || JSON.stringify(run.selection) !== JSON.stringify(state.selection))
       throw new SessionError("OWNERSHIP_LOST", "Run selection changed after authorization");
     return run;
   }
@@ -440,7 +442,9 @@ export class SessionRuntime {
     const initial = this.load(id), pending = initial.switches.find(sw => sw.id === targetId);
     if (!pending || initial.pendingSwitchId !== targetId || initial.activeRunId !== null) return;
     try {
-      const target = await this.factory.validate(pending.requested, initial.configuration);
+      const request = pending.requested.provider === undefined && initial.selection.provider !== undefined
+        ? { ...pending.requested, provider: initial.selection.provider } : pending.requested;
+      const target = await this.factory.validate(request, initial.configuration);
       this.store.assertOwner(); let current = this.load(id);
       if (current.pendingSwitchId !== targetId || this.closingSessions.has(id) || !this.accepting) return;
       const sources = current.runs.filter(run => terminal(run.status) && current.messages.some(message => message.id === run.userMessageId && message.seq < pending.requestedSeq)).map(run => run.id);

@@ -10,7 +10,7 @@ function run(index: number, status: RunStatus): PublicRun {
     contextThroughSeq: 0, sourceRunIds: [], backend: null, cleanup: null, error: null, stopRequested: false, awaitingSwitchId: null };
 }
 function state(runs: readonly PublicRun[]): SessionSnapshot {
-  return { schemaVersion: 1, id: sessionId("session-fixture"), version: 1, lastSeq: 50, epoch: 1, status: "open",
+  return { schemaVersion: 2, id: sessionId("session-fixture"), version: 1, lastSeq: 50, epoch: 1, status: "open",
     configuration: { workspace: "/tmp/context-fixture", manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: true },
     selection: { harnessId: "fixture", controlId: "fixture-acp" }, activeRunId: null, pendingSwitchId: null, runs,
     messages: runs.flatMap((entry, index) => [

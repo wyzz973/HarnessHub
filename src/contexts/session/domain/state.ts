@@ -1,3 +1,4 @@
+import { parseProviderTarget, type ProviderTarget } from "../../../contracts/provider.js";
 import {
   SessionError, commandId, messageId, runId, sessionId, switchId,
   type CommandRecord, type HarnessSelection, type PublicMessage, type PublicRun,
@@ -47,11 +48,15 @@ function path(value: unknown, label: string): string {
   if (!result.startsWith("/") || /[\r\n]/u.test(result) || result.split("/").includes("..")) throw new SessionError("INVALID_DATA", label + " must be a bounded absolute path");
   return result;
 }
+function providerTarget(value: unknown): ProviderTarget {
+  try { return parseProviderTarget(value); }
+  catch { throw new SessionError("INVALID_DATA", "invalid or unknown Provider target fields"); }
+}
 export function parseSelection(value: unknown): HarnessSelection {
-  const item = record(value, "selection"); keys(item, ["harnessId", "controlId"], "selection");
+  const item = record(value, "selection"); keys(item, ["harnessId", "controlId", "provider"], "selection");
   const harnessId = text(item.harnessId, "harnessId", 96), controlId = text(item.controlId, "controlId", 96);
   if (![harnessId, controlId].every(id => /^[a-z][a-z0-9-]*$/u.test(id))) throw new SessionError("INVALID_DATA", "selection must name catalog identities");
-  return { harnessId, controlId };
+  return { harnessId, controlId, ...(item.provider === undefined ? {} : { provider: providerTarget(item.provider) }) };
 }
 export function parseConfiguration(value: unknown): SessionConfiguration {
   const item = record(value, "configuration");
@@ -104,12 +109,13 @@ function publicMessage(value: unknown): PublicMessage {
 }
 function publicSwitch(value: unknown): PublicSwitch {
   const item = record(value, "switch"); keys(item, ["id", "commandId", "requested", "requestedSeq", "target", "status", "throughSeq", "sourceRunIds", "error"], "switch");
-  const requested = record(item.requested, "requested selection"); keys(requested, ["harnessId", "controlId"], "requested selection");
+  const requested = record(item.requested, "requested selection"); keys(requested, ["harnessId", "controlId", "provider"], "requested selection");
   const harnessId = text(requested.harnessId, "requested harness", 96);
   const controlId = requested.controlId === undefined ? undefined : text(requested.controlId, "requested control", 96);
   if (![harnessId, ...(controlId === undefined ? [] : [controlId])].every(id => /^[a-z][a-z0-9-]*$/u.test(id))) throw new SessionError("INVALID_DATA", "invalid requested selection");
   if (item.status !== "requested" && item.status !== "validated" && item.status !== "effective" && item.status !== "failed") throw new SessionError("INVALID_DATA", "unknown switch status");
-  return { id: switchId(item.id), commandId: commandId(item.commandId), requested: { harnessId, ...(controlId === undefined ? {} : { controlId }) },
+  return { id: switchId(item.id), commandId: commandId(item.commandId), requested: { harnessId, ...(controlId === undefined ? {} : { controlId }),
+      ...(requested.provider === undefined ? {} : { provider: requested.provider === null ? null : providerTarget(requested.provider) }) },
     requestedSeq: number(item.requestedSeq, "switch requestedSeq", 1), target: item.target === null ? null : parseSelection(item.target), status: item.status,
     throughSeq: number(item.throughSeq, "switch throughSeq"), sourceRunIds: array(item.sourceRunIds, "switch sourceRunIds", MAX_RUNS, runId), error: fault(item.error) };
 }
@@ -127,13 +133,16 @@ function unique(values: readonly string[], label: string): void {
 export function parseSession(value: unknown): SessionSnapshot {
   const item = record(value, "Session");
   keys(item, ["schemaVersion", "id", "version", "lastSeq", "epoch", "status", "configuration", "selection", "activeRunId", "pendingSwitchId", "runs", "messages", "switches", "commands"], "Session");
-  if (item.schemaVersion !== 1) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
+  if (item.schemaVersion !== 1 && item.schemaVersion !== 2) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
   if (item.status !== "open" && item.status !== "closed" && item.status !== "blocked") throw new SessionError("INVALID_DATA", "unknown Session status");
-  const result: SessionSnapshot = { schemaVersion: 1, id: sessionId(item.id), version: number(item.version, "version"), lastSeq: number(item.lastSeq, "lastSeq"),
+  const result: SessionSnapshot = { schemaVersion: item.schemaVersion, id: sessionId(item.id), version: number(item.version, "version"), lastSeq: number(item.lastSeq, "lastSeq"),
     epoch: number(item.epoch, "epoch", 1), status: item.status, configuration: parseConfiguration(item.configuration), selection: parseSelection(item.selection),
     activeRunId: item.activeRunId === null ? null : runId(item.activeRunId), pendingSwitchId: item.pendingSwitchId === null ? null : switchId(item.pendingSwitchId),
     runs: array(item.runs, "runs", MAX_RUNS, publicRun), messages: array(item.messages, "messages", MAX_RUNS * 2, publicMessage),
     switches: array(item.switches, "switches", MAX_COMMANDS, publicSwitch), commands: array(item.commands, "commands", MAX_COMMANDS, command) };
+  if (item.schemaVersion === 1 && (result.selection.provider !== undefined || result.runs.some(run => run.selection.provider !== undefined) ||
+      result.switches.some(entry => entry.requested.provider !== undefined || entry.target?.provider !== undefined)))
+    throw new SessionError("INVALID_DATA", "legacy Session schema cannot contain Provider targets");
   unique(result.runs.map(run => run.id), "Run"); unique(result.messages.map(message => message.id), "message");
   unique(result.runs.flatMap(run => [run.userMessageId, run.assistantMessageId]), "declared message identity");
   unique(result.switches.map(entry => entry.id), "switch"); unique(result.commands.map(entry => entry.id), "command");
@@ -177,7 +186,7 @@ export function parseSession(value: unknown): SessionSnapshot {
   const effective = result.switches.filter(entry => entry.status === "effective");
   if (result.epoch !== effective.length + 1) throw new SessionError("INVALID_DATA", "epoch does not match effective switch facts");
   const last = effective.at(-1);
-  if (last?.target !== undefined && last.target !== null && (last.target.harnessId !== result.selection.harnessId || last.target.controlId !== result.selection.controlId)) throw new SessionError("INVALID_DATA", "selection does not match last effective switch");
+  if (last?.target !== undefined && last.target !== null && !same(last.target, result.selection)) throw new SessionError("INVALID_DATA", "selection does not match last effective switch");
   if (result.commands.filter(entry => entry.kind === "create").length !== 1 || !result.commands.every(entry =>
     entry.kind === "send" ? result.runs.some(run => run.id === entry.resultId) : entry.kind === "switch" ? result.switches.some(sw => sw.id === entry.resultId) : entry.kind === "cancel" ? entry.resultId === "none" || result.runs.some(run => run.id === entry.resultId) : entry.resultId === result.id)) throw new SessionError("INVALID_DATA", "command relation is inconsistent");
   if (utf8Bytes(JSON.stringify(result)) > MAX_SESSION_BYTES) throw new SessionError("SESSION_LIMIT", "Session aggregate byte limit reached");
@@ -194,7 +203,7 @@ export function replayCommand(state: SessionSnapshot, id: CommandRecord["id"], k
 function same(left: unknown, right: unknown): boolean { return JSON.stringify(left) === JSON.stringify(right); }
 /** Persisted history is append-only; an application bug cannot silently erase prior public facts. */
 export function assertSessionTransition(before: SessionSnapshot, after: SessionSnapshot): void {
-  if (before.id !== after.id || !same(before.configuration, after.configuration)) throw new SessionError("INVALID_TRANSITION", "Session identity/configuration reference is immutable");
+  if (before.schemaVersion !== after.schemaVersion || before.id !== after.id || !same(before.configuration, after.configuration)) throw new SessionError("INVALID_TRANSITION", "Session identity/configuration reference is immutable");
   if ((before.status === "closed" && after.status !== "closed") || (before.status === "blocked" && after.status === "open")) throw new SessionError("INVALID_TRANSITION", "closed or blocked Session cannot reopen implicitly");
   if (after.epoch < before.epoch || after.epoch > before.epoch + 1 ||
       (after.epoch === before.epoch && !same(before.selection, after.selection))) throw new SessionError("INVALID_TRANSITION", "selection can change only with one effective switch epoch");

@@ -1,3 +1,5 @@
+import type { LocalProviderService } from "../provider/service.js";
+import { RedactedHarnessControl } from "./redacted-control.js";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, mkdtemp, open, realpath, rm, stat, writeFile } from "node:fs/promises";
@@ -96,21 +98,28 @@ async function observe(request: SelectionRequest, configuration: SessionConfigur
 async function privateHome(root: string, configuration: SessionConfiguration): Promise<string> {
   if (configuration.configHome !== null) return configuration.configHome;
   const home = join(root, "home");
-  await mkdir(home);
+  await mkdir(home, { mode: 0o700 });
   for (const child of ["config", "data", "state", "cache", "codex", "claude", "opencode"])
-    await mkdir(join(home, child));
+    await mkdir(join(home, child), { mode: 0o700 });
   return home;
 }
 /** Fresh per-Turn control with a real workspace lease; this is public-context rehydration, not native resume. */
 export class DirectorySessionBindingFactory implements SessionBindingFactory {
-  constructor(private readonly workspaces: WorkspaceLeaseProvider, private readonly assertOwner: () => void) {}
+  constructor(private readonly workspaces: WorkspaceLeaseProvider, private readonly assertOwner: () => void, private readonly providers?: LocalProviderService) {}
   async validate(request: SelectionRequest, configuration: SessionConfiguration): Promise<HarnessSelection> {
     this.assertOwner();
-    const root = await mkdtemp(join(tmpdir(), "harness-session-validation-"));
+    const root = await realpath(await mkdtemp(join(tmpdir(), "harness-session-validation-")));
     try {
       const { harnessId, selected } = await observe(request, configuration, root);
       this.assertOwner();
-      return { harnessId, controlId: selected.id };
+      if (request.provider !== undefined && request.provider !== null) {
+        if (!this.providers) throw new SessionError("PROVIDER_UNAVAILABLE", "Provider management is unavailable");
+        if (configuration.configHome !== null) throw new SessionError("INCOMPATIBLE_CONFIGURATION", "managed Provider selection requires a private generated configuration home");
+        if ((harnessId === "codex" && selected.protocol !== "codex-app-server") || (harnessId === "gemini" && selected.protocol !== "acp-v1"))
+          throw new SessionError("UNSUPPORTED_PROVIDER", "this control recipe cannot use the managed Provider adapter");
+        this.providers.validate(request.provider, harnessId);
+      }
+      return { harnessId, controlId: selected.id, ...(request.provider == null ? {} : { provider: request.provider }) };
     } finally { await rm(root, { recursive: true, force: true }); }
   }
   async prepare(selection: HarnessSelection, configuration: SessionConfiguration, session: SessionId, run: string): Promise<PreparedSessionBinding> {
@@ -118,7 +127,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
     const lease = this.workspaces.acquire(configuration.workspace, session, run);
     let root: string | undefined, control: HarnessControl | undefined;
     try {
-      root = await mkdtemp(join(tmpdir(), "harness-session-binding-"));
+      root = await realpath(await mkdtemp(join(tmpdir(), "harness-session-binding-")));
       const observed = await observe(selection, configuration, root);
       if (observed.harnessId !== selection.harnessId || observed.selected.id !== selection.controlId || observed.selected.command === null)
         throw new SessionError("HARNESS_UNAVAILABLE", "the admitted control is no longer available");
@@ -128,6 +137,13 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
         XDG_STATE_HOME: join(home, "state"), XDG_CACHE_HOME: join(home, "cache"),
         CODEX_HOME: join(home, "codex"), CLAUDE_CONFIG_DIR: join(home, "claude"), OPENCODE_CONFIG_DIR: join(home, "opencode"),
         OPENCODE_DISABLE_AUTOUPDATE: "true", TMPDIR: root };
+      if (selection.provider !== undefined) {
+        if (!this.providers) throw new SessionError("PROVIDER_UNAVAILABLE", "Provider management is unavailable");
+        if (configuration.configHome !== null) throw new SessionError("INCOMPATIBLE_CONFIGURATION", "managed Provider selection requires a private generated configuration home");
+        if ((selection.harnessId === "codex" && observed.selected.protocol !== "codex-app-server") || (selection.harnessId === "gemini" && observed.selected.protocol !== "acp-v1"))
+          throw new SessionError("UNSUPPORTED_PROVIDER", "this control recipe cannot use the managed Provider adapter");
+        Object.assign(environment, await this.providers.materialize(selection.provider, selection.harnessId, home));
+      }
       const protocol = observed.selected.protocol;
       if (protocol !== "acp-v1" && protocol !== "codex-app-server") throw new SessionError("UNSUPPORTED_CONTROL", "unsupported control protocol");
       const launch: ControlLaunch = { ...observed.selected.command, env: environment, protocol };
@@ -135,6 +151,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
         maxFrameBytes: 2 * 1024 * 1024, maxDiagnosticBytes: 64 * 1024, closeGraceMs: 500 };
       this.assertOwner(); lease.assertOwned();
       control = protocol === "acp-v1" ? new AcpControl(launch, options) : new CodexControl(launch, options);
+      if (selection.provider !== undefined && this.providers) control = new RedactedHarnessControl(control, text => this.providers!.redact(text), () => this.providers!.createTextRedactor());
       return new DirectoryPreparedBinding(control, configuration.workspace, lease, root, this.assertOwner);
     } catch (error) {
       let cleanupError: unknown;

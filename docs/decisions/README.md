@@ -6,6 +6,8 @@
 
 [ADR-010](0010-public-session-mvp.md)采纳本机公共Session、SQLite事实日志与每轮public_context_rehydrate、静止Harness切换；不自动采纳整套未来HTTP/模型转发/路由方案。
 
+[ADR-011](0011-provider-web-mvp.md)采纳本机Provider资源、不可变revision、私有配置与同源图形工作台；自动择优由用户明确后置。
+
 | ADR | 建议 | 替代/代价 | 关闭条件 |
 |---|---|---|---|
 | ADR-001 | 公共 Session 与原生 BackendBinding 分离 | 直接暴露原生 ID 简单，但锁定 Harness，无法承载公共连续性 | D-02 与 D-04 冻结 |

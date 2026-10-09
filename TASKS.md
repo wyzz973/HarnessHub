@@ -31,13 +31,13 @@
 | G007 | 定义防腐Adapter端口与关闭责任 | G003, G005, G006, V002, V003, C008, G063 | G1 | in_progress |
 | G008 | 建立事务存储与编号迁移基础 | G004, G005, G006, C008 | G1 | in_progress |
 | G009 | 实现本机认证与Session作用域 | G002, G004, G008 | G1 | planned |
-| G010 | 实现作用域秘密引用解析 | G008, G009 | G1 | planned |
+| G010 | 实现作用域秘密引用解析 | G008, G009 | G1 | in_progress |
 | G011 | 登记Harness不可变revision | G003, G008, G009 | G1 | in_progress |
 | G012 | 只读发现已安装Harness | G003, G011 | G1 | in_progress |
 | G013 | 收集版本化能力证据 | G007, G011, V002, V003, G033, G034 | G1 | planned |
 | G014 | 停用准入并排空Harness | G011, G013 | G1 | planned |
 | G015 | 移除Harness并保留历史引用 | G014, G008 | G1 | planned |
-| G016 | 登记Provider与模型资源 | G003, G010, C010 | G1 | planned |
+| G016 | 登记Provider与模型资源 | G003, G010, C010 | G1 | in_progress |
 | G017 | 集中解析运行预算与上限 | G001, G005 | G1 | planned |
 | G018 | 创建持久公共Session | G004, G008, G009 | G1 | in_progress |
 | G019 | 持久接收消息与执行意图 | G018, G017 | G1 | planned |
@@ -68,14 +68,14 @@
 | G044 | 提供持久事件游标与有界SSE | G019, G043, G009 | G1 | planned |
 | G045 | 提交idle切换并准备目标绑定 | G023, G025, G033, G034, G043 | G1 | planned |
 | G046 | 协调busy切换的静止交接 | G045, G041, G026 | G1 | planned |
-| G047 | 切换Provider模型并记录接续等级 | G045, G035 | G1 | planned |
+| G047 | 切换Provider模型并记录接续等级 | G045, G035 | G1 | in_progress |
 | G048 | 重启核对执行与绑定归属 | G028, G043, G046, G008, G029 | G1 | planned |
 | G049 | 关闭公共Session并收敛资源 | G041, G046, G020 | G1 | planned |
-| G050 | 接通Session类HTTP应用入口 | G019, G045, G046, G047, G049, G009, C009 | G1 | planned |
+| G050 | 接通Session类HTTP应用入口 | G019, G045, G046, G047, G049, G009, C009 | G1 | in_progress |
 | G051 | 接通执行控制与权限HTTP入口 | G043, G044, G039, G041, G009, C009 | G1 | planned |
 | G052 | 发布契约生成客户端与流重连 | G050, G051, G061, G062, C009 | G1 | planned |
 | G053 | 建立CLI对话命令入口 | G052, G059 | G1 | planned |
-| G054 | 建立薄Chat交互视图 | G052, G059 | G1 | planned |
+| G054 | 建立薄Chat交互视图 | G052, G059 | G1 | in_progress |
 | G055 | 建立路由质量基线与保留集 | G059, V007 | G1 | planned |
 | G056 | 执行完整切换故障与容量矩阵 | G059, G055 | G1 | planned |
 | G057 | 提供有界脱敏诊断与证据导出 | G043, G046, G048 | G1 | planned |
@@ -621,7 +621,7 @@
 - 只有一个取得业务写入权
 - 恢复数据与outbox一致
 
-场景：G008-C01, G008-C02, G008-C03, G008-C04, G008-C05。
+场景：G008-C01, G008-C02, G008-C03, G008-C04, G008-C05, G008-P01, G008-P02。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -658,6 +658,9 @@
 - src/infrastructure/secrets/local-store.ts
 - tests/security/g010.test.ts
 - tests/platform/g010.test.ts
+- src/infrastructure/provider/vault.ts
+- src/infrastructure/session/redacted-control.ts
+- tests/unit/session-redaction.test.ts
 
 验收：
 - 仅授权边界取得所需值
@@ -797,13 +800,18 @@
 - src/infrastructure/storage/provider-repository.ts
 - tests/integration/g016.test.ts
 - tests/security/g016.test.ts
+- src/contracts/provider.ts
+- src/contexts/provider/domain/provider.ts
+- src/infrastructure/provider/service.ts
+- tests/unit/provider-contract.test.ts
+- tests/integration/provider-service.test.ts
 
 验收：
 - 可按稳定身份选择
 - 拒绝风险输入
 - 旧计划不被改写
 
-场景：G016-C01, G016-C02, G016-C03。
+场景：G016-C01, G016-C02, G016-C03, G016-P01, G016-P02, G016-P03, G016-P04。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1442,13 +1450,15 @@
 - src/contexts/interaction/application/change-model.ts
 - tests/integration/g047.test.ts
 - tests/protocol/g047.test.ts
+- src/adapters/provider/materialize.ts
+- tests/real/provider-switch.real.ts
 
 验收：
 - 独立选择且实际调用目标正确
 - 原地或显式重建，不声称全组合热切换
 - 状态真实，公共Session不丢失
 
-场景：G047-C01, G047-C02, G047-C03。
+场景：G047-C01, G047-C02, G047-C03, G047-P01。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1502,13 +1512,17 @@
 - src/infrastructure/http/session-routes.ts
 - tests/integration/g050.test.ts
 - tests/security/g050.test.ts
+- src/contracts/web.ts
+- src/web/server.ts
+- src/cli/web.ts
+- tests/integration/web-server.test.ts
 
 验收：
 - 复用应用语义，202只表受理
 - 统一problem错误且无副作用
 - 遗漏/重复/过期内容能被拒绝
 
-场景：G050-C01, G050-C02, G050-C03。
+场景：G050-C01, G050-C02, G050-C03, G050-P01, G050-P02。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1584,13 +1598,26 @@
 - ui/chat.tsx
 - ui/session-view.tsx
 - tests/e2e/g054.test.ts
+- web/index.html
+- web/tsconfig.json
+- web/vite.config.ts
+- web/src/main.tsx
+- web/src/api.ts
+- web/src/App.tsx
+- web/src/styles.css
+- web/src/components/common.tsx
+- web/src/components/Sidebar.tsx
+- web/src/components/ChatPage.tsx
+- web/src/components/ProvidersPage.tsx
+- web/src/components/HarnessesPage.tsx
+- tests/browser/web.browser.ts
 
 验收：
 - 公共Session身份与历史保留
 - 不提前展示新Harness已生效
 - 可操作且不持有独立业务状态
 
-场景：G054-C01, G054-C02, G054-C03。
+场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1731,6 +1758,9 @@
 - tests/e2e/g060.test.ts
 - tests/real/codex-local-provider.real.ts
 - tests/real/codex-session.real.ts
+- tests/fixtures/web-harness-peer.mjs
+- tests/real/gemini-provider.real.ts
+- tests/real/harness-provider-switch.real.ts
 
 验收：
 - 记录通过/失败/未覆盖，不能称全协议认证
@@ -1739,7 +1769,7 @@
 - 真实HTTP/Store/IPC/原生进程与产物/清理完整可核对
 - 真实HTTP/Store/IPC/原生进程与产物/清理完整可核对
 
-场景：G060-C01, G060-C02, G060-C03, G060-C04, G060-C05。
+场景：G060-C01, G060-C02, G060-C03, G060-C04, G060-C05, G060-P01, G060-P02。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 

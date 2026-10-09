@@ -14,7 +14,7 @@ function run(suffix: string, sources: string[] = [], through = 0) {
 }
 function seed() {
   const one = run("one"), two = run("two", [one.id], 2);
-  return { schemaVersion: 1, id: "session-unit", version: 4, lastSeq: 4, epoch: 1, status: "open",
+  return { schemaVersion: 2, id: "session-unit", version: 4, lastSeq: 4, epoch: 1, status: "open",
     configuration: { workspace: "/workspace", manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: true },
     selection, activeRunId: null, pendingSwitchId: null, runs: [one, two],
     messages: [
@@ -32,7 +32,7 @@ test("valid public snapshot keeps independent public identities and exact causal
 });
 test("unknown schemas, properties and inconsistent public ownership are rejected", () => {
   const state = seed();
-  for (const value of [null, {}, { ...state, schemaVersion: 2 }, { ...state, secret: "not-a-field" },
+  for (const value of [null, {}, { ...state, schemaVersion: 3 }, { ...state, secret: "not-a-field" },
     { ...state, activeRunId: "run-one" }, { ...state, lastSeq: 3 }, { ...state, status: "unknown" },
     { ...state, configuration: { ...state.configuration, workspace: "relative" } }]) assert.throws(() => parseSession(value), SessionError);
 });
@@ -121,4 +121,14 @@ test("blocking is valid but implicit reopening is not a recovery procedure", () 
   const open = parseSession(seed()), blocked = parseSession({ ...seed(), status: "blocked" });
   assertSessionTransition(open, blocked);
   assert.throws(() => assertSessionTransition(blocked, open), /cannot reopen/);
+});
+
+test("Provider target is a v2 public reference with immutable dispatched selection", () => {
+  const state = seed(), target = { providerId: "provider-11111111-1111-4111-8111-111111111111", revision: 1, model: "model-a" };
+  const current = parseSession({ ...state, selection: { ...selection, provider: target } });
+  assert.deepEqual(current.selection.provider, target);
+  assert.throws(() => parseSession({ ...state, schemaVersion: 1, selection: { ...selection, provider: target } }), /legacy/);
+  assert.throws(() => parseSession({ ...state, selection: { ...selection, provider: { ...target, apiKey: "not-public" } } }), /unknown Provider/);
+  assert.throws(() => assertSessionTransition(current, { ...current, selection }), /selection can change/);
+  assert.throws(() => assertSessionTransition(current, { ...current, runs: [{ ...current.runs[0]!, selection: { ...selection, provider: target } }, current.runs[1]!] }), /terminal Run/);
 });

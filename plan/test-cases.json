@@ -5639,6 +5639,215 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "spikes/v008/verification.json"
+    },
+    {
+      "id": "G008-P01",
+      "task": "G008",
+      "requirements": [
+        "R07",
+        "R14",
+        "R19"
+      ],
+      "invariants": [],
+      "layer": "integration",
+      "scenario": "合法v1快照编号升级到v2",
+      "expected": "身份、commands/create_key、事件序号和业务version完全保留",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/session-store.test.ts"
+    },
+    {
+      "id": "G008-P02",
+      "task": "G008",
+      "requirements": [
+        "R07",
+        "R14",
+        "R19"
+      ],
+      "invariants": [],
+      "layer": "integration",
+      "scenario": "后一个legacy快照损坏导致迁移失败",
+      "expected": "所有先前row与user_version原子回滚，不清库",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/session-store.test.ts"
+    },
+    {
+      "id": "G016-P01",
+      "task": "G016",
+      "requirements": [
+        "R10",
+        "R17"
+      ],
+      "invariants": [],
+      "layer": "unit",
+      "scenario": "协议/URL/models/default/key/target严格输入与精确边界",
+      "expected": "拒绝未知字段、错误类型、超限、重复模型和无所属模型",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/unit/provider-contract.test.ts"
+    },
+    {
+      "id": "G016-P02",
+      "task": "G016",
+      "requirements": [
+        "R10",
+        "R17"
+      ],
+      "invariants": [],
+      "layer": "integration",
+      "scenario": "不可变revision/CAS/幂等与密钥rotate或保留",
+      "expected": "旧revision不变，冲突拒绝，密钥不进明文metadata",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/provider-service.test.ts"
+    },
+    {
+      "id": "G016-P03",
+      "task": "G016",
+      "requirements": [
+        "R10",
+        "R17"
+      ],
+      "invariants": [],
+      "layer": "integration",
+      "scenario": "真实SQLite/vault故障、links、损坏与事务中止",
+      "expected": "身份、大小、GCM和关系拒绝；metadata/key/command整事务回滚",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/provider-service.test.ts"
+    },
+    {
+      "id": "G016-P04",
+      "task": "G016",
+      "requirements": [
+        "R10",
+        "R17"
+      ],
+      "invariants": [],
+      "layer": "security",
+      "scenario": "模型probe错误/redirect/超限/断连/关闭与流式分片密钥",
+      "expected": "有界失败，无诊断泄密；关闭等待probe；每个分片位置过滤key",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/provider-service.test.ts"
+    },
+    {
+      "id": "G047-P01",
+      "task": "G047",
+      "requirements": [
+        "R09",
+        "R10"
+      ],
+      "invariants": [],
+      "layer": "probe",
+      "scenario": "真实Codex运行中编辑A，静止切换B再切换新A",
+      "expected": "确证恰好3个本地请求的endpoint/model/key/history及pinned旧revision",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/real/provider-switch.real.ts"
+    },
+    {
+      "id": "G050-P01",
+      "task": "G050",
+      "requirements": [
+        "R01",
+        "R07",
+        "R09",
+        "R19",
+        "R22"
+      ],
+      "invariants": [],
+      "layer": "security",
+      "scenario": "Host/Origin/cookie/CSRF/一次token/UTF8/超限并发与静态路径",
+      "expected": "正式HTTP明确拒绝非法访问，资源有界，不返回秘密",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/web-server.test.ts"
+    },
+    {
+      "id": "G050-P02",
+      "task": "G050",
+      "requirements": [
+        "R01",
+        "R07",
+        "R09",
+        "R19",
+        "R22"
+      ],
+      "invariants": [],
+      "layer": "integration",
+      "scenario": "真实HTTP+SQLite+Driver/IPC的对话切换取消断轮询与重开",
+      "expected": "各公共事实可读，幂等不重派，失败目标不回退，协议未知阻塞",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/web-server.test.ts"
+    },
+    {
+      "id": "G054-P01",
+      "task": "G054",
+      "requirements": [
+        "R01",
+        "R02",
+        "R09",
+        "R22"
+      ],
+      "invariants": [],
+      "layer": "e2e",
+      "scenario": "真实浏览器新增编辑probe启停Provider，chat switch/reload/cancel",
+      "expected": "页面操作使用正式HTTP/SQLite/IPC且实际state一致，无console错误或key泄漏",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G054-P02",
+      "task": "G054",
+      "requirements": [
+        "R01",
+        "R02",
+        "R09",
+        "R22"
+      ],
+      "invariants": [],
+      "layer": "e2e",
+      "scenario": "桌面/手机/320宽键盘与IME界面检查",
+      "expected": "无横向溢出，输入键盘语义正确，unsupported组合有明确解释",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G060-P01",
+      "task": "G060",
+      "requirements": [
+        "R04",
+        "R24",
+        "R25"
+      ],
+      "invariants": [],
+      "layer": "probe",
+      "scenario": "真实Gemini受管API-key/Gemini协议私有配置与文本分片脱敏",
+      "expected": "核对真实HTTP路径/model/key/公共输入与历史/唯一请求和cleanup；外部模型仍本地确定性夹具",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/real/gemini-provider.real.ts"
+    },
+    {
+      "id": "G060-P02",
+      "task": "G060",
+      "requirements": [
+        "R04",
+        "R24",
+        "R25"
+      ],
+      "invariants": [],
+      "layer": "probe",
+      "scenario": "真实Codex→Gemini→Codex同Session双本地Provider的跨协议上下文接续",
+      "expected": "核对真实HTTP路径/model/key/公共输入与历史/唯一请求和cleanup；外部模型仍本地确定性夹具",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/real/harness-provider-switch.real.ts"
     }
   ]
 }

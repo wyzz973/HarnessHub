@@ -1,6 +1,6 @@
 # 设计就绪与开始开发的门禁
 
-更新：2026-10-09。当前按本机MVP推进。ADR-008/009及[ADR-010](../decisions/0010-public-session-mvp.md)认可S01–S04限定范围，目录/控制/公共Session/手动切换已实现。下文完整G1仍是未来完整模型/路由/HTTP等工程地图，不阻塞已冻结独立切片。
+更新：2026-10-09。当前按本机MVP推进。ADR-008/009及[ADR-010](../decisions/0010-public-session-mvp.md)认可S01–S04限定范围，目录/控制/公共Session/手动切换已实现。另[ADR-011](../decisions/0011-provider-web-mvp.md)认可Provider/本机HTTP工作台，自动择优明确后置。下文完整G1仍是未来完整模型/路由/HTTP等工程地图，不阻塞已冻结独立切片。
 
 当前范围见 plan/slices.json 与 [MVP](mvp.md)。切片认可只允许所列 owner 路径，不能自动解锁 Session/执行/切换；设计检查有合法范围与越界源码拒绝样例。
 

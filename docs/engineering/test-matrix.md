@@ -289,3 +289,16 @@
 | G063-C03 | G063 | integration | 漏扫描目录或工具吞错 | 必需检查非零退出，不虚构覆盖 | planned |
 | V008-C04 | V008 | review | 所有核心ADR及其契约/版本/验证引用 | accepted有来源与范围、索引与独立文件一致、未决项明确阻塞 | planned |
 | V008-C05 | V008 | review | 核心ADR仍proposed、缺独立记录或缺验证证据 | G1保持关闭，不能凭计划结构通过自动采纳设计 | planned |
+| G008-P01 | G008 | integration | 合法v1快照编号升级到v2 | 身份、commands/create_key、事件序号和业务version完全保留 | planned |
+| G008-P02 | G008 | integration | 后一个legacy快照损坏导致迁移失败 | 所有先前row与user_version原子回滚，不清库 | planned |
+| G016-P01 | G016 | unit | 协议/URL/models/default/key/target严格输入与精确边界 | 拒绝未知字段、错误类型、超限、重复模型和无所属模型 | planned |
+| G016-P02 | G016 | integration | 不可变revision/CAS/幂等与密钥rotate或保留 | 旧revision不变，冲突拒绝，密钥不进明文metadata | planned |
+| G016-P03 | G016 | integration | 真实SQLite/vault故障、links、损坏与事务中止 | 身份、大小、GCM和关系拒绝；metadata/key/command整事务回滚 | planned |
+| G016-P04 | G016 | security | 模型probe错误/redirect/超限/断连/关闭与流式分片密钥 | 有界失败，无诊断泄密；关闭等待probe；每个分片位置过滤key | planned |
+| G047-P01 | G047 | probe | 真实Codex运行中编辑A，静止切换B再切换新A | 确证恰好3个本地请求的endpoint/model/key/history及pinned旧revision | planned |
+| G050-P01 | G050 | security | Host/Origin/cookie/CSRF/一次token/UTF8/超限并发与静态路径 | 正式HTTP明确拒绝非法访问，资源有界，不返回秘密 | planned |
+| G050-P02 | G050 | integration | 真实HTTP+SQLite+Driver/IPC的对话切换取消断轮询与重开 | 各公共事实可读，幂等不重派，失败目标不回退，协议未知阻塞 | planned |
+| G054-P01 | G054 | e2e | 真实浏览器新增编辑probe启停Provider，chat switch/reload/cancel | 页面操作使用正式HTTP/SQLite/IPC且实际state一致，无console错误或key泄漏 | planned |
+| G054-P02 | G054 | e2e | 桌面/手机/320宽键盘与IME界面检查 | 无横向溢出，输入键盘语义正确，unsupported组合有明确解释 | planned |
+| G060-P01 | G060 | probe | 真实Gemini受管API-key/Gemini协议私有配置与文本分片脱敏 | 核对真实HTTP路径/model/key/公共输入与历史/唯一请求和cleanup；外部模型仍本地确定性夹具 | planned |
+| G060-P02 | G060 | probe | 真实Codex→Gemini→Codex同Session双本地Provider的跨协议上下文接续 | 核对真实HTTP路径/model/key/公共输入与历史/唯一请求和cleanup；外部模型仍本地确定性夹具 | planned |

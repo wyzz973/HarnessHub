@@ -48,7 +48,7 @@ function selection(request: SelectionRequest): HarnessSelection {
   if (request.harnessId !== "alpha" && request.harnessId !== "bravo") throw new SessionError("HARNESS_UNAVAILABLE", "fixture target is unavailable");
   const controlId = request.harnessId === "alpha" ? "alpha-acp" : "bravo-codex";
   if (request.controlId !== undefined && request.controlId !== controlId) throw new SessionError("CONTROL_UNAVAILABLE", "fixture control is unavailable");
-  return { harnessId: request.harnessId, controlId };
+  return { harnessId: request.harnessId, controlId, ...(request.provider == null ? {} : { provider: request.provider }) };
 }
 class PeerFactory implements SessionBindingFactory {
   readonly prepared: { readonly run: string; readonly selection: HarnessSelection; readonly trace: string; readonly pid: string; closed: boolean }[] = [];
@@ -448,4 +448,31 @@ test("shutdown owns one Promise before committed-event callbacks can reenter clo
   const state = await app.create(f.configuration, { harnessId: "alpha" }, "create"); app.send(state.id, "cancel before launch", "send");
   const closing = app.close(); assert.equal(app.close(), closing); await closing;
   assert.equal(reentered, closing); assert.equal(factory.prepared.length, 0); assert.equal(app.read(state.id).runs[0]?.status, "cancelled");
+});
+
+const providerA = { providerId: "provider-11111111-1111-4111-8111-111111111111", revision: 1, model: "model-a" };
+const providerB = { providerId: "provider-22222222-2222-4222-8222-222222222222", revision: 2, model: "model-b" };
+test("Provider switch pins the current Turn and waits for cleanup before changing the next Turn", async t => {
+  const f = await fixture(t), first = controlled({ holdResult: true, holdClose: true }), factory = new ControlledFactory([first]), app = runtime(f, factory);
+  const state = await app.create(f.configuration, { harnessId: "alpha", provider: providerA }, "provider-create");
+  const initial = app.send(state.id, "on A", "provider-first"); await first.started.promise;
+  app.switch(state.id, { harnessId: "alpha", provider: providerB }, "provider-switch");
+  const next = app.send(state.id, "on B", "provider-next");
+  assert.deepEqual(app.read(state.id).selection.provider, providerA);
+  first.result.resolve({ status: "completed", reason: "fixture" }); await first.closing.promise;
+  assert.equal(factory.prepared.length, 1); assert.deepEqual(app.read(state.id).runs[0]?.selection.provider, providerA);
+  first.closed.resolve(clean); await app.wait(state.id);
+  const final = app.read(state.id);
+  assert.equal(final.runs.find(run => run.id === initial.runId)?.selection.provider?.model, "model-a");
+  assert.deepEqual(final.runs.find(run => run.id === next.runId)?.selection.provider, providerB);
+  assert.deepEqual(final.selection.provider, providerB); assert.equal(final.epoch, 2);
+});
+test("Harness-only switch inherits Provider and an explicit null clears managed configuration", async t => {
+  const f = await fixture(t), factory = new ControlledFactory([]), app = runtime(f, factory);
+  const state = await app.create(f.configuration, { harnessId: "alpha", provider: providerA }, "inherit-create");
+  app.switch(state.id, { harnessId: "bravo" }, "inherit-switch"); await app.wait(state.id);
+  assert.deepEqual(app.read(state.id).selection.provider, providerA);
+  assert.deepEqual(factory.prepared[0]?.selection.provider, providerA);
+  app.switch(state.id, { harnessId: "alpha", provider: null }, "clear-switch"); await app.wait(state.id);
+  assert.equal(app.read(state.id).selection.provider, undefined);
 });
