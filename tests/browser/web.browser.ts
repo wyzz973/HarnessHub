@@ -33,11 +33,12 @@ test("real browser validates Provider management, public chat switching, cancell
   await mkdir(artifact, { recursive: true });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const page = await context.newPage(), errors: string[] = [];
-  let droppedSwitchResponse = false, expectedNetworkErrors = 0;
+  let droppedSwitchResponse = false, expectedNetworkErrors = 0, reusedLaunch = false, expectedAuthErrors = 0;
   page.on("pageerror", error => errors.push(error.message));
   page.on("console", message => {
     if (message.type() !== "error") return;
     if (droppedSwitchResponse && message.text().includes("net::ERR_CONNECTION_RESET")) expectedNetworkErrors++;
+    else if (reusedLaunch && message.location().url.endsWith("/api/v1/auth/bootstrap") && message.text().includes("401")) expectedAuthErrors++;
     else errors.push(message.text());
   });
   await page.goto(fixture.gateway.url); await page.waitForLoadState("networkidle");
@@ -175,6 +176,10 @@ test("real browser validates Provider management, public chat switching, cancell
     await page.screenshot({ path: join(artifact, `harnesses-${width}.png`), fullPage: true, animations: "disabled" });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "mobile layout has horizontal overflow");
   }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  reusedLaunch = true; await page.goto(fixture.gateway.url); await page.reload();
+  await expect(page.getByRole("heading", { name: "今天，想完成什么？", exact: true })).toBeVisible();
+  assert.equal(expectedAuthErrors, 1, "reusing a launch token is denied even though the authenticated cookie remains valid");
   assert.equal(errors.length, 0, errors.join("\n"));
   assert.equal(expectedNetworkErrors, 1, "only the deliberately lost transport may log a network error");
   assert.ok(!(await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }))).includes("browser-fixture-key"));

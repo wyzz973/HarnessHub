@@ -120,9 +120,16 @@ export class GatewayApi {
     try { await this.authentication; } finally { this.authentication = null; }
   }
   private async authenticateOnce(signal?: AbortSignal): Promise<void> {
-    const auth = this.bootstrapToken === null
-      ? await this.request("/auth/session", "GET", undefined, decodeAuth, signal)
-      : await this.request("/auth/bootstrap", "POST", { token: this.bootstrapToken }, decodeAuth, signal);
+    let auth: AuthSession;
+    if (this.bootstrapToken === null) auth = await this.request("/auth/session", "GET", undefined, decodeAuth, signal);
+    else {
+      try { auth = await this.request("/auth/bootstrap", "POST", { token: this.bootstrapToken }, decodeAuth, signal); }
+      catch (error: unknown) {
+        if (!(error instanceof ApiError) || error.code !== "AUTH_REQUIRED") throw error;
+        // A reused launch URL cannot consume its token again; an existing authenticated cookie may still be valid.
+        auth = await this.request("/auth/session", "GET", undefined, decodeAuth, signal);
+      }
+    }
     this.csrfToken = auth.csrfToken;
     this.bootstrapToken = null;
     pageBootstrapToken = null;

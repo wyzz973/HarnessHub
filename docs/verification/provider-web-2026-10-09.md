@@ -15,10 +15,10 @@
 | 命令 | 结果 |
 |---|---|
 | pnpm build | 严格NodeNext TypeScript通过 |
-| pnpm web:build | 严格前端TypeScript/Vite生产构建通过；CSS31.35KB/gzip7.26KB，JS402.52KB/gzip124.45KB |
+| pnpm web:build | 严格前端TypeScript/Vite生产构建通过；CSS31.35KB/gzip7.26KB，JS402.66KB/gzip124.49KB |
 | node --test dist/tests/*/*.test.js | **318通过，0失败、0跳过**，约6.3s |
 | node --test dist/tests/real/*.real.js | **5通过，0失败、0跳过**，约4.9s并行wall时间 |
-| pnpm test:web | **1个完整浏览器场景通过，0跳过**，约12.1s；生产资产+真实HTTP/SQLite/Driver/进程，仅外部Harness与模型目录是夹具 |
+| pnpm test:web | **1个完整浏览器场景通过，0跳过**，约13.6s；生产资产+真实HTTP/SQLite/Driver/进程，仅外部Harness与模型目录是夹具 |
 | python3 tools/check_design.py --write | 设计检查通过；26需求、81任务、298 planned场景；4个获准切片，完整实现门禁false |
 | python3 -m unittest discover -s tools -p 'test_*.py' | **33通过**，含web源码越界与嵌套dist绕过反例 |
 | git diff --check | 通过 |
@@ -37,7 +37,7 @@ Node25.9.0、pnpm10.12.3、TypeScript5.9.3；新依赖exact/许可证见[调研]
 
 本地模型端点使用完整Responses SSE/Gemini SSE生命周期，**没有运行真实云模型**。两种Harness故意跨chunk回显测试key，公开回复、事件、后续上下文及metadata均过滤；密文DB未出现明文key。测试workspace仅keep.txt且内容/目录未改，不能从该空配置workspace结果推断所有既有Gemini项目配置迁移行为。
 
-浏览器从空页面真实操作：新增2个Provider、模型目录probe、A/B切换、编辑空key保留、新revision/model应用、刷新同Session、无输出取消、停用禁止新发送、第三种协议连接保存但Codex选项禁用并有原因、Harness重新检测。IME Enter不派发、Shift+Enter换行、普通Enter发送；无pageerror/非预期consoleerror；另故意丢掉已提交切换的HTTP响应并延迟读响应，显式重试复用同commandId且只生效一个epoch，唯一预期网络错误单独断言。local/session storage无测试key。初始/编辑/列表/聊天/Harness页均检查320和390宽，无页面横向溢出；桌面截图实际审阅。原生option禁用用真实DOM属性与可见原因核实，未把浏览器平台特定End键行为作为产品契约。
+浏览器从空页面真实操作：新增2个Provider、模型目录probe、A/B切换、编辑空key保留、新revision/model应用、刷新同Session、无输出取消、停用禁止新发送、第三种协议连接保存但Codex选项禁用并有原因、Harness重新检测。IME Enter不派发、Shift+Enter换行、普通Enter发送；无pageerror/非预期consoleerror；另故意丢掉已提交切换的HTTP响应并延迟读响应，显式重试复用同commandId且只生效一个epoch，唯一预期网络错误单独断言。重复加载已使用启动链接时，服务器仍拒绝重兑token，但客户端可用已有cookie恢复登录；401也单独断言，不提升未认证权限。local/session storage无测试key。初始/编辑/列表/聊天/Harness页均检查320和390宽，无页面横向溢出；桌面截图实际审阅。原生option禁用用真实DOM属性与可见原因核实，未把浏览器平台特定End键行为作为产品契约。
 
 ## 修正过的具体问题
 
