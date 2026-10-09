@@ -1,6 +1,6 @@
 # S01：只读检测契约
 
-状态：accepted，仅限当前检测切片。输入校验与类型的权威实现见 [领域值与解析](../../src/contexts/catalog/domain/discovery.ts)，应用入口见 [DiscoverHarnesses](../../src/contexts/catalog/application/discover.ts)，配方见 [内置表](../../src/adapters/recipes.ts)。
+状态：accepted，保留 v1 检测契约；通过 discover --legacy 使用。默认 v2 与主动控制见[当前契约](catalog-control.md)。v1 输入校验见[领域值与解析](../../src/contexts/catalog/domain/discovery.ts)，应用入口见[DiscoverHarnesses](../../src/contexts/catalog/application/discover.ts)，配方见[旧内置表](../../src/adapters/recipes.ts)。
 
 ## 行为
 

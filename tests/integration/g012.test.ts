@@ -119,7 +119,7 @@ test("manifest reads enforce regular files, size and UTF-8 JSON", async (t) => {
 test("compiled CLI detects without executing or querying the candidate", async (t) => {
   const root = await fixture(t), sentinel = join(root, "launched");
   await executable(join(root, "codex"), "#!/bin/sh\nprintf launched > '" + sentinel + "'\nexit 91\n");
-  const result = spawnSync(process.execPath, [cli, "--json", "--path-only"], {
+  const result = spawnSync(process.execPath, [cli, "--legacy", "--json", "--path-only"], {
     env: { PATH: root, HOME: root, LANG: "C" }, encoding: "utf8", timeout: 5000, maxBuffer: 2 * 1024 * 1024,
   });
   assert.equal(result.status, 0, result.stderr);
@@ -136,7 +136,7 @@ test("compiled CLI loads a custom Harness and honors its full path", async (t) =
   const root = await fixture(t), manifest = join(root, "manifest.json"), binary = join(root, "custom");
   await executable(binary);
   await writeFile(manifest, JSON.stringify({ version: 1, recipes: [{ ...recipe, id: "custom", binary: "not-on-path" }], overrides: { custom: { binary } } }));
-  const result = spawnSync(process.execPath, [cli, "--json", "--path-only", "--manifest", manifest], {
+  const result = spawnSync(process.execPath, [cli, "--legacy", "--json", "--path-only", "--manifest", manifest], {
     env: { PATH: "", HOME: root }, encoding: "utf8", timeout: 5000, maxBuffer: 2 * 1024 * 1024,
   });
   assert.equal(result.status, 0, result.stderr);
@@ -149,7 +149,7 @@ test("compiled CLI rejects invalid or oversized manifests with a nonzero exit", 
   const root = await fixture(t), manifest = join(root, "bad.json");
   for (const content of ["broken", JSON.stringify({ version: 9 }), " ".repeat(MAX_MANIFEST_BYTES + 1)]) {
     await writeFile(manifest, content);
-    const result = spawnSync(process.execPath, [cli, "--json", "--path-only", "--manifest", manifest], {
+    const result = spawnSync(process.execPath, [cli, "--legacy", "--json", "--path-only", "--manifest", manifest], {
       env: { PATH: "", HOME: root }, encoding: "utf8", timeout: 5000,
     });
     assert.equal(result.status, 2);
@@ -161,7 +161,7 @@ test("compiled CLI rejects invalid or oversized manifests with a nonzero exit", 
 test("compiled CLI help and invalid options do not scan or launch candidates", async (t) => {
   const root = await fixture(t);
   for (const [args, expected] of [[["--help"], 0], [["--unknown"], 2]] as const) {
-    const result = spawnSync(process.execPath, [cli, ...args], {
+    const result = spawnSync(process.execPath, [cli, "--legacy", ...args], {
       env: { PATH: "", HOME: root }, encoding: "utf8", timeout: 5000,
     });
     assert.equal(result.status, expected);
@@ -173,7 +173,7 @@ test("compiled CLI help and invalid options do not scan or launch candidates", a
 test("compiled CLI rejects an explicitly empty manifest instead of using defaults", async (t) => {
   const root = await fixture(t);
   for (const args of [["--manifest="], ["--manifest", ""]]) {
-    const result = spawnSync(process.execPath, [cli, "--json", "--path-only", ...args], {
+    const result = spawnSync(process.execPath, [cli, "--legacy", "--json", "--path-only", ...args], {
       env: { PATH: "", HOME: root }, encoding: "utf8", timeout: 5000,
     });
     assert.equal(result.status, 2);

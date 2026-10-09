@@ -1,10 +1,10 @@
 # 工程文档与阅读顺序
 
-当前以本机 MVP 切片推进；完整蓝图中的方案按各自状态管理，不等于已实现。ADR-008 与 S01 检测契约已认可，当前只读检测已实现；其他执行/切换契约仍 proposed。
+当前以本机 MVP 切片推进；完整蓝图按各自状态管理。ADR-008/009 与对应检测/控制契约已认可，目录与受控原生控制连接已实现；公共 Session/完整执行/切换契约仍 proposed。
 
 最新推进方式：先读 [MVP 顺序](engineering/mvp.md)与 [S01 检测契约](contracts/discovery.md)。用户明确本机核心优先；后续完整设计仍保留，但不以平台、发布或多发行版矩阵阻塞独立切片。[Harness 检测调研](research/harness-discovery.md)记录当前实现依据。
 
-最新扩展提案：[Harness 发现与适配](proposals/harness-discovery-adaptation.md)，核对 CC Switch v4.0.5、Magpie 最新主分支和 ACP 官方目录；方案尚未进入应用实现，当前仍是 S01 的 8 项描述。
+最新：[目录与控制契约](contracts/catalog-control.md)、[验证记录](verification/catalog-control-2026-10-09.md)；[Harness 发现与适配方案](proposals/harness-discovery-adaptation.md)保留来源与后续顺序。默认目录为 43 个产品/47 个控制入口；目录数量、协议握手和真实任务验证分别记录。
 
 1. [第一阶段产品范围](product/phase-1.md) → [需求清单](product/requirements.md)。
 2. [调研方法与结论](research/README.md) → [协议](research/protocols.md) → [开源实现](research/repositories.md) → [固定来源](research/source-lock.json)。

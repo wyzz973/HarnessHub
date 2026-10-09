@@ -856,7 +856,7 @@
       "title": "从冻结契约生成Harness能力类型",
       "context": "contracts",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G002",
@@ -867,7 +867,10 @@
       "owns": [
         "src/contracts/harness.ts",
         "tests/unit/g003.test.ts",
-        "tests/property/g003.test.ts"
+        "tests/property/g003.test.ts",
+        "src/contexts/catalog/domain/catalog.ts",
+        "src/contexts/catalog/domain/catalog-parser.ts",
+        "tests/unit/catalog-contract.test.ts"
       ],
       "requirements": [
         "R03",
@@ -892,7 +895,8 @@
         "G003-C01",
         "G003-C02",
         "G003-C03"
-      ]
+      ],
+      "active_slice": "catalog-control"
     },
     {
       "id": "G004",
@@ -1029,7 +1033,7 @@
       "title": "定义防腐Adapter端口与关闭责任",
       "context": "contracts",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G003",
@@ -1042,7 +1046,8 @@
       ],
       "owns": [
         "src/contracts/adapter.ts",
-        "tests/unit/g007.test.ts"
+        "tests/unit/g007.test.ts",
+        "src/contracts/control.ts"
       ],
       "requirements": [
         "R11",
@@ -1068,7 +1073,8 @@
         "G007-C01",
         "G007-C02",
         "G007-C03"
-      ]
+      ],
+      "active_slice": "catalog-control"
     },
     {
       "id": "G008",
@@ -1210,7 +1216,7 @@
       "title": "登记Harness不可变revision",
       "context": "catalog",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G003",
@@ -1220,7 +1226,11 @@
       "owns": [
         "src/contexts/catalog/domain/register-harness.ts",
         "src/infrastructure/storage/catalog-repository.ts",
-        "tests/integration/g011.test.ts"
+        "tests/integration/g011.test.ts",
+        "src/adapters/catalog.ts",
+        "src/infrastructure/catalog/registry.ts",
+        "src/infrastructure/catalog/acp-registry.json",
+        "tests/unit/catalog-import.test.ts"
       ],
       "requirements": [
         "R03",
@@ -1244,7 +1254,8 @@
         "G011-C01",
         "G011-C02",
         "G011-C03"
-      ]
+      ],
+      "active_slice": "catalog-control"
     },
     {
       "id": "G012",
@@ -1266,7 +1277,15 @@
         "src/adapters/recipes.ts",
         "src/cli/discover.ts",
         "tests/unit/g012.test.ts",
-        "examples/discovery-manifest.json"
+        "examples/discovery-manifest.json",
+        "src/contexts/catalog/application/inventory.ts",
+        "src/infrastructure/discovery/search.ts",
+        "src/infrastructure/discovery/installation-enumerator.ts",
+        "src/infrastructure/discovery/packages.ts",
+        "src/infrastructure/discovery/configuration.ts",
+        "tests/integration/discovery-v2.test.ts",
+        "tests/unit/inventory.test.ts",
+        "tests/integration/discovery-cli.test.ts"
       ],
       "requirements": [
         "R03",
@@ -1290,7 +1309,7 @@
         "G012-C02",
         "G012-C03"
       ],
-      "active_slice": "catalog-discovery"
+      "active_slice": "catalog-control"
     },
     {
       "id": "G013",
@@ -2062,7 +2081,7 @@
       "title": "实现ACP v1连接与有界framing",
       "context": "adapters",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G007",
@@ -2071,7 +2090,10 @@
       ],
       "owns": [
         "src/adapters/acp/connection.ts",
-        "tests/protocol/g031.test.ts"
+        "tests/protocol/g031.test.ts",
+        "src/infrastructure/control/json-rpc-process.ts",
+        "tests/protocol/process.test.ts",
+        "tests/fixtures/control-peer.mjs"
       ],
       "requirements": [
         "R25",
@@ -2096,14 +2118,15 @@
         "G031-C01",
         "G031-C02",
         "G031-C03"
-      ]
+      ],
+      "active_slice": "catalog-control"
     },
     {
       "id": "G032",
       "title": "实现ACP执行证据映射",
       "context": "adapters",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G031",
@@ -2113,7 +2136,9 @@
       ],
       "owns": [
         "src/adapters/acp/driver.ts",
-        "tests/protocol/g032.test.ts"
+        "tests/protocol/g032.test.ts",
+        "src/adapters/control/acp.ts",
+        "tests/protocol/acp.test.ts"
       ],
       "requirements": [
         "R11",
@@ -2142,7 +2167,8 @@
         "G032-C02",
         "G032-C03",
         "G032-C04"
-      ]
+      ],
+      "active_slice": "catalog-control"
     },
     {
       "id": "G033",
@@ -2192,7 +2218,7 @@
       "title": "实现Codex App Server防腐适配",
       "context": "adapters",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G007",
@@ -2204,7 +2230,9 @@
       "owns": [
         "src/adapters/codex/client.ts",
         "src/adapters/codex/driver.ts",
-        "tests/protocol/g034.test.ts"
+        "tests/protocol/g034.test.ts",
+        "src/adapters/control/codex.ts",
+        "tests/protocol/codex.test.ts"
       ],
       "requirements": [
         "R10",
@@ -2234,7 +2262,8 @@
         "G034-C02",
         "G034-C03",
         "G034-C04"
-      ]
+      ],
+      "active_slice": "catalog-control"
     },
     {
       "id": "G035",
@@ -3326,7 +3355,7 @@
       "title": "组合单体与正式运行入口",
       "context": "bootstrap",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G001",
@@ -3351,7 +3380,10 @@
       ],
       "owns": [
         "src/bootstrap/main.ts",
-        "tests/integration/g059.test.ts"
+        "tests/integration/g059.test.ts",
+        "src/cli/control.ts",
+        "src/cli/catalog.ts",
+        "tests/integration/control-cli.test.ts"
       ],
       "requirements": [
         "R01",
@@ -3378,14 +3410,15 @@
         "G059-C01",
         "G059-C02",
         "G059-C03"
-      ]
+      ],
+      "active_slice": "catalog-control"
     },
     {
       "id": "G060",
       "title": "运行真实协议与平台兼容验收",
       "context": "verification",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G059"
@@ -3395,7 +3428,8 @@
         "docs/verification/compatibility.md",
         "tests/protocol/g060.test.ts",
         "tests/platform/g060.test.ts",
-        "tests/e2e/g060.test.ts"
+        "tests/e2e/g060.test.ts",
+        "tests/real/codex-local-provider.real.ts"
       ],
       "requirements": [
         "R04",
@@ -3428,7 +3462,8 @@
         "G060-C03",
         "G060-C04",
         "G060-C05"
-      ]
+      ],
+      "active_slice": "catalog-control"
     },
     {
       "id": "G061",

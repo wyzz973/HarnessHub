@@ -7,8 +7,12 @@
   "packageManager": "pnpm@10.12.3",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "pnpm build && node --test dist/tests/unit/g012.test.js dist/tests/integration/g012.test.js",
+    "test": "pnpm build && node --test dist/tests/*/*.test.js",
+    "catalog": "node dist/src/cli/catalog.js",
     "discover": "node dist/src/cli/discover.js",
+    "probe": "node dist/src/cli/control.js probe",
+    "run:harness": "node dist/src/cli/control.js run",
+    "test:real:codex": "pnpm build && node --test dist/tests/real/codex-local-provider.real.js",
     "check:design": "python3 tools/check_design.py"
   },
   "devDependencies": {

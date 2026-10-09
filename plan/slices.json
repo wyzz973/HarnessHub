@@ -26,6 +26,55 @@
       ],
       "implementation_state": "implemented",
       "verification_record": "docs/verification/discovery-2026-10-09.md"
+    },
+    {
+      "id": "catalog-control",
+      "status": "accepted",
+      "scope": "目录v2与受控本机ACP/Codex控制连接；原生会话不代替公共Session；无下载/全局配置/自动路由",
+      "task_ids": [
+        "G003",
+        "G007",
+        "G011",
+        "G012",
+        "G031",
+        "G032",
+        "G034",
+        "G059",
+        "G060"
+      ],
+      "decision": "docs/decisions/0009-catalog-control-slice.md",
+      "allowed_files": [
+        "src/contexts/catalog/domain/catalog.ts",
+        "src/contexts/catalog/domain/catalog-parser.ts",
+        "tests/unit/catalog-contract.test.ts",
+        "src/contracts/control.ts",
+        "src/adapters/catalog.ts",
+        "src/infrastructure/catalog/registry.ts",
+        "src/infrastructure/catalog/acp-registry.json",
+        "tests/unit/catalog-import.test.ts",
+        "src/contexts/catalog/application/inventory.ts",
+        "src/infrastructure/discovery/search.ts",
+        "src/infrastructure/discovery/installation-enumerator.ts",
+        "src/infrastructure/discovery/packages.ts",
+        "src/infrastructure/discovery/configuration.ts",
+        "tests/integration/discovery-v2.test.ts",
+        "tests/unit/inventory.test.ts",
+        "tests/integration/discovery-cli.test.ts",
+        "src/infrastructure/control/json-rpc-process.ts",
+        "tests/protocol/process.test.ts",
+        "tests/fixtures/control-peer.mjs",
+        "src/adapters/control/acp.ts",
+        "tests/protocol/acp.test.ts",
+        "src/adapters/control/codex.ts",
+        "tests/protocol/codex.test.ts",
+        "src/cli/control.ts",
+        "src/cli/catalog.ts",
+        "tests/integration/control-cli.test.ts",
+        "src/cli/discover.ts",
+        "tests/real/codex-local-provider.real.ts"
+      ],
+      "implementation_state": "implemented",
+      "verification_record": "docs/verification/catalog-control-2026-10-09.md"
     }
   ]
 }

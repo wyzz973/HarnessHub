@@ -24,15 +24,15 @@
 | C010 | 冻结Provider模型资源契约 | C001, V002, V003 | G0 | planned |
 | G001 | 建立精确可重复的应用工具链 | V001, V008 | G1 | in_progress |
 | G002 | 定义公共身份与错误值类型 | G001, C001 | G1 | planned |
-| G003 | 从冻结契约生成Harness能力类型 | G002, V002, V003, C002 | G1 | planned |
+| G003 | 从冻结契约生成Harness能力类型 | G002, V002, V003, C002 | G1 | in_progress |
 | G004 | 从冻结契约生成Session命令类型 | G002, V005, C003 | G1 | planned |
 | G005 | 从冻结契约生成执行事件类型 | G002, C004, C005 | G1 | planned |
 | G006 | 从冻结契约生成上下文类型 | G002, V004, C006 | G1 | planned |
-| G007 | 定义防腐Adapter端口与关闭责任 | G003, G005, G006, V002, V003, C008, G063 | G1 | planned |
+| G007 | 定义防腐Adapter端口与关闭责任 | G003, G005, G006, V002, V003, C008, G063 | G1 | in_progress |
 | G008 | 建立事务存储与编号迁移基础 | G004, G005, G006, C008 | G1 | planned |
 | G009 | 实现本机认证与Session作用域 | G002, G004, G008 | G1 | planned |
 | G010 | 实现作用域秘密引用解析 | G008, G009 | G1 | planned |
-| G011 | 登记Harness不可变revision | G003, G008, G009 | G1 | planned |
+| G011 | 登记Harness不可变revision | G003, G008, G009 | G1 | in_progress |
 | G012 | 只读发现已安装Harness | G003, G011 | G1 | in_progress |
 | G013 | 收集版本化能力证据 | G007, G011, V002, V003, G033, G034 | G1 | planned |
 | G014 | 停用准入并排空Harness | G011, G013 | G1 | planned |
@@ -52,10 +52,10 @@
 | G028 | 按持久意图幂等派发执行 | G020, G023, G025, G027 | G1 | planned |
 | G029 | 实现POSIX进程监督与回收 | G007, G017, G027 | G1 | planned |
 | G030 | 实现Windows Job监督 | G007, G017, G027, V006 | G1 | deferred |
-| G031 | 实现ACP v1连接与有界framing | G007, G017, G029 | G1 | planned |
-| G032 | 实现ACP执行证据映射 | G031, G027, G037, G039 | G1 | planned |
+| G031 | 实现ACP v1连接与有界framing | G007, G017, G029 | G1 | in_progress |
+| G032 | 实现ACP执行证据映射 | G031, G027, G037, G039 | G1 | in_progress |
 | G033 | 配置并验证OpenCode ACP绑定 | G032, G035, V002 | G1 | planned |
-| G034 | 实现Codex App Server防腐适配 | G007, G029, G035, G039, V003 | G1 | planned |
+| G034 | 实现Codex App Server防腐适配 | G007, G029, G035, G039, V003 | G1 | in_progress |
 | G035 | 签发执行作用域模型访问身份 | G009, G010, G016, G027 | G1 | planned |
 | G036 | 实现最小兼容Provider转发 | G016, G017 | G1 | planned |
 | G037 | 持久模型账本并等待结算屏障 | G035, G036, G008 | G1 | planned |
@@ -80,8 +80,8 @@
 | G056 | 执行完整切换故障与容量矩阵 | G059, G055 | G1 | planned |
 | G057 | 提供有界脱敏诊断与证据导出 | G043, G046, G048 | G1 | planned |
 | G058 | 接入不可跳过的CI与发行门禁 | G056, G060, V008, G063 | G1 | planned |
-| G059 | 组合单体与正式运行入口 | G001, G014, G015, G028, G030, G033, G034, G043, G044, G046, G047, G048, G049, G050, G051, G052, G057, G061, G062 | G1 | planned |
-| G060 | 运行真实协议与平台兼容验收 | G059 | G1 | planned |
+| G059 | 组合单体与正式运行入口 | G001, G014, G015, G028, G030, G033, G034, G043, G044, G046, G047, G048, G049, G050, G051, G052, G057, G061, G062 | G1 | in_progress |
+| G060 | 运行真实协议与平台兼容验收 | G059 | G1 | in_progress |
 | G061 | 接通Harness管理HTTP入口 | G009, G011, G012, G013, G014, G015, C009 | G1 | planned |
 | G062 | 接通Provider管理HTTP入口 | G009, G010, G016, C009 | G1 | planned |
 | G063 | 建立依赖与公共类型边界检查 | G001, C008 | G1 | planned |
@@ -503,6 +503,9 @@
 - src/contracts/harness.ts
 - tests/unit/g003.test.ts
 - tests/property/g003.test.ts
+- src/contexts/catalog/domain/catalog.ts
+- src/contexts/catalog/domain/catalog-parser.ts
+- tests/unit/catalog-contract.test.ts
 
 验收：
 - 证据等级不混淆
@@ -582,6 +585,7 @@
 唯一交付物：
 - src/contracts/adapter.ts
 - tests/unit/g007.test.ts
+- src/contracts/control.ts
 
 验收：
 - 资源所有者与可等待关闭清楚
@@ -668,6 +672,10 @@
 - src/contexts/catalog/domain/register-harness.ts
 - src/infrastructure/storage/catalog-repository.ts
 - tests/integration/g011.test.ts
+- src/adapters/catalog.ts
+- src/infrastructure/catalog/registry.ts
+- src/infrastructure/catalog/acp-registry.json
+- tests/unit/catalog-import.test.ts
 
 验收：
 - 发布新revision并保留历史
@@ -694,6 +702,14 @@
 - src/cli/discover.ts
 - tests/unit/g012.test.ts
 - examples/discovery-manifest.json
+- src/contexts/catalog/application/inventory.ts
+- src/infrastructure/discovery/search.ts
+- src/infrastructure/discovery/installation-enumerator.ts
+- src/infrastructure/discovery/packages.ts
+- src/infrastructure/discovery/configuration.ts
+- tests/integration/discovery-v2.test.ts
+- tests/unit/inventory.test.ts
+- tests/integration/discovery-cli.test.ts
 
 验收：
 - 返回安装观察，不自动注册
@@ -1080,6 +1096,9 @@
 唯一交付物：
 - src/adapters/acp/connection.ts
 - tests/protocol/g031.test.ts
+- src/infrastructure/control/json-rpc-process.ts
+- tests/protocol/process.test.ts
+- tests/fixtures/control-peer.mjs
 
 验收：
 - 按wire v1与能力协商
@@ -1099,6 +1118,8 @@
 唯一交付物：
 - src/adapters/acp/driver.ts
 - tests/protocol/g032.test.ts
+- src/adapters/control/acp.ts
+- tests/protocol/acp.test.ts
 
 验收：
 - 各事实关联正确Attempt与generation
@@ -1140,6 +1161,8 @@
 - src/adapters/codex/client.ts
 - src/adapters/codex/driver.ts
 - tests/protocol/g034.test.ts
+- src/adapters/control/codex.ts
+- tests/protocol/codex.test.ts
 
 验收：
 - 原生ID与公共ID分离并正确相关
@@ -1659,6 +1682,9 @@
 唯一交付物：
 - src/bootstrap/main.ts
 - tests/integration/g059.test.ts
+- src/cli/control.ts
+- src/cli/catalog.ts
+- tests/integration/control-cli.test.ts
 
 验收：
 - 端口注入、owner lease和资源等待完整
@@ -1681,6 +1707,7 @@
 - tests/protocol/g060.test.ts
 - tests/platform/g060.test.ts
 - tests/e2e/g060.test.ts
+- tests/real/codex-local-provider.real.ts
 
 验收：
 - 记录通过/失败/未覆盖，不能称全协议认证

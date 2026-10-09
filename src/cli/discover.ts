@@ -13,36 +13,49 @@ import {
   type DiscoveryManifest,
 } from "../contexts/catalog/domain/discovery.js";
 import { LocalExecutableLocator, searchDirectories } from "../infrastructure/discovery/local.js";
+import { loadBuiltinCatalog } from "../adapters/catalog.js";
+import { migrateLegacyManifest, parseCatalogManifest, validateDefinitions } from "../contexts/catalog/domain/catalog-parser.js";
+import { MAX_CATALOG_BYTES, type CatalogManifest, type HarnessDefinition, type InventoryReport } from "../contexts/catalog/domain/catalog.js";
+import { DiscoverInventory } from "../contexts/catalog/application/inventory.js";
+import { discoverSearchDirectories } from "../infrastructure/discovery/search.js";
+import { LocalInstallationEnumerator } from "../infrastructure/discovery/installation-enumerator.js";
+import { LocalInstalledPackageResolver } from "../infrastructure/discovery/packages.js";
+import { LocalConfigurationLocator } from "../infrastructure/discovery/configuration.js";
+import { catalogTarget } from "./catalog.js";
 
 /** Read one explicit regular manifest with a byte cap before and during reading. */
 export async function readManifest(path: string): Promise<DiscoveryManifest> {
+  return parseDiscoveryManifest((await readJsonDocument(path, MAX_MANIFEST_BYTES)).value);
+}
+
+async function readJsonDocument(path: string, limit: number): Promise<{ readonly value: unknown; readonly bytes: number }> {
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const info = await handle.stat();
-    if (!info.isFile() || info.size > MAX_MANIFEST_BYTES)
-      throw new DiscoveryInputError("manifest must be a regular file of at most 64 KiB");
-    const buffer = Buffer.alloc(MAX_MANIFEST_BYTES + 1);
+    if (!info.isFile() || info.size > limit)
+      throw new DiscoveryInputError("manifest must be a regular file of at most " + (limit / 1024) + " KiB");
+    const buffer = Buffer.alloc(limit + 1);
     let bytesRead = 0;
     while (bytesRead < buffer.length) {
       const chunk = await handle.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead);
       if (chunk.bytesRead === 0) break;
       bytesRead += chunk.bytesRead;
     }
-    if (bytesRead > MAX_MANIFEST_BYTES)
-      throw new DiscoveryInputError("manifest grew beyond 64 KiB");
+    if (bytesRead > limit)
+      throw new DiscoveryInputError("manifest grew beyond " + (limit / 1024) + " KiB");
     let value: unknown;
     try {
       value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, bytesRead))) as unknown;
     } catch {
       throw new DiscoveryInputError("manifest must contain valid UTF-8 JSON");
     }
-    return parseDiscoveryManifest(value);
+    return { value, bytes: bytesRead };
   } finally {
     await handle.close();
   }
 }
 
-export async function main(args: readonly string[]): Promise<number> {
+async function legacyMain(args: readonly string[]): Promise<number> {
   try {
     const { values } = parseArgs({
       args: [...args],
@@ -93,6 +106,85 @@ export async function main(args: readonly string[]): Promise<number> {
     return 0;
   } catch (error: unknown) {
     process.stderr.write("HarnessGateway: " + (error instanceof Error ? error.message : "discovery failed") + "\n");
+    return 2;
+  }
+}
+
+export interface InventoryInput {
+  readonly manifest?: string;
+  readonly searchDirs: readonly string[];
+  readonly packageRoots: readonly string[];
+  readonly pathOnly: boolean;
+}
+
+/** Shared CLI composition; callers receive one immutable catalog and its read-only observations. */
+export async function inventory(input: InventoryInput): Promise<{
+  readonly definitions: readonly HarnessDefinition[];
+  readonly report: InventoryReport;
+  readonly searchDiagnostics: Awaited<ReturnType<typeof discoverSearchDirectories>>["diagnostics"];
+  readonly searchPath: string;
+}> {
+  const builtins = loadBuiltinCatalog(catalogTarget());
+  if (input.manifest === "") throw new DiscoveryInputError("--manifest must name a file");
+  let manifest: CatalogManifest = { version: 2, definitions: [], overrides: new Map(), installationOverrides: new Map() };
+  if (input.manifest !== undefined) {
+    const document = await readJsonDocument(resolve(input.manifest), MAX_CATALOG_BYTES);
+    const value = document.value;
+    if (value !== null && typeof value === "object" && "version" in value && value.version === 1) {
+      if (document.bytes > MAX_MANIFEST_BYTES) throw new DiscoveryInputError("v1 manifest exceeds 64 KiB");
+      manifest = migrateLegacyManifest(parseDiscoveryManifest(value), builtins);
+    } else manifest = parseCatalogManifest(value);
+  }
+  const definitions = [...builtins, ...manifest.definitions];
+  validateDefinitions(definitions);
+  const search = await discoverSearchDirectories({
+    path: process.env.PATH ?? "", home: homedir(), extra: input.searchDirs,
+    pathOnly: input.pathOnly, environment: process.env,
+  });
+  const enumerator = new LocalInstallationEnumerator(search.directories);
+  const service = new DiscoverInventory(
+    enumerator, new LocalInstalledPackageResolver(input.packageRoots, enumerator),
+    new LocalConfigurationLocator(homedir()), () => new Date(),
+  );
+  return {
+    definitions, report: await service.execute(definitions, manifest.overrides, manifest.installationOverrides),
+    searchDiagnostics: search.diagnostics,
+    searchPath: search.directories.map((directory) => directory.path).join(":") ,
+  };
+}
+
+export async function main(args: readonly string[]): Promise<number> {
+  if (args.includes("--legacy")) return legacyMain(args.filter((arg) => arg !== "--legacy"));
+  try {
+    const { values } = parseArgs({ args: [...args], options: {
+      json: { type: "boolean" }, manifest: { type: "string" },
+      "search-dir": { type: "string", multiple: true }, "package-root": { type: "string", multiple: true },
+      "path-only": { type: "boolean" }, help: { type: "boolean", short: "h" },
+    }, strict: true, allowPositionals: false });
+    if (values.help) {
+      process.stdout.write("HarnessGateway · Harness发现\n--json 结构化v2报告；--legacy 保留v1输出\n--manifest <file> v1/v2描述\n--search-dir <absolute> 指定搜索目录\n--package-root <absolute> 已安装npm包的根，可重复\n--path-only 仅PATH与指定目录\n只读检测，不启动程序、不查询登录、不下载依赖。\n");
+      return 0;
+    }
+    const result = await inventory({
+      ...(values.manifest === undefined ? {} : { manifest: values.manifest }),
+      searchDirs: values["search-dir"] ?? [], packageRoots: values["package-root"] ?? [], pathOnly: values["path-only"] ?? false,
+    });
+    const report = { ...result.report, searchDiagnostics: result.searchDiagnostics };
+    if (values.json) process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+    else {
+      process.stdout.write("HarnessGateway · 本机Harness发现（" + report.harnesses.length + "个产品描述）\n");
+      for (const harness of report.harnesses) {
+        const ready = harness.controls.filter((control) => control.state === "candidate");
+        const blocked = harness.controls.some((control) => control.state === "blocked");
+        const label = ready.length > 0 ? "控制入口已解析，协议待探测" : blocked ? "默认入口损坏，需明确处理" : harness.installation.candidates.length > 0 ? "发现程序，缺控制依赖" : harness.configuration.length > 0 ? "仅发现配置线索" : "未发现本地入口";
+        process.stdout.write(harness.name + " [" + harness.id + "] — " + label + "\n");
+      }
+      if (result.searchDiagnostics.some((note) => note.code === "scan_truncated")) process.stdout.write("搜索范围达到上限，本次结果为部分观察。\n");
+      process.stdout.write("\n本次未启动程序、未验证协议、未调用模型。\n");
+    }
+    return 0;
+  } catch (error: unknown) {
+    process.stderr.write("HarnessGateway: " + (error instanceof Error ? error.message : "inventory failed") + "\n");
     return 2;
   }
 }
