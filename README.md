@@ -33,6 +33,7 @@ pnpm discover --manifest examples/discovery-manifest.json
 - [工程文档入口](docs/README.md)：按产品、研究、DDD、契约、工程、任务和门禁顺序阅读。
 - [第一阶段范围](docs/product/phase-1.md)：统一入口、公共 Session、自动分配和安全接续。
 - [调研与固定证据](docs/research/README.md)：16 个仓库、68 份固定文件，以及 6 份官方协议网页快照。
+- [发现与适配扩展方案](docs/proposals/harness-discovery-adaptation.md)：最新 CC Switch/Magpie 研究、ACP 目录与实现顺序；当前为提案，没有增加已可调用的 Harness。
 - [DDD 上下文](docs/domain/context-map.md)与[运行不变量](docs/domain/invariants.md)。
 - [当前 MVP 顺序](docs/engineering/mvp.md)：先检测，再接通控制面和统一对话；切片范围在 plan/slices.json 明确。
 - [完整任务地图](TASKS.md)：保留未来工程分解，不让后置平台/发布事项阻塞已冻结的独立本机切片。

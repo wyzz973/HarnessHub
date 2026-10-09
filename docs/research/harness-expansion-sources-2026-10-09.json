@@ -1,0 +1,605 @@
+{
+  "version": 1,
+  "reviewed_on": "2026-10-09",
+  "purpose": "latest CC Switch/Magpie detection and ACP catalog expansion proposal",
+  "cache_root": ".research-cache/harness-expansion-2026-10-09",
+  "snapshots": [
+    {
+      "repo": "farion1231/cc-switch",
+      "reviewed_on": "2026-10-09",
+      "default_branch_head": "b4a079430ce85a604e10d97d4b7530774e00e112",
+      "default_branch_head_date": "2026-10-09T08:44:34Z",
+      "review_commit": "2db86e94da13365caae55bb08d09295e31500d21",
+      "review_ref": "v4.0.5",
+      "latest_release_observation": {
+        "tag_name": "v4.0.5",
+        "published_at": "2026-10-08T15:22:44Z",
+        "html_url": "https://github.com/farion1231/cc-switch/releases/tag/v4.0.5",
+        "prerelease": false,
+        "http_error": null
+      },
+      "scope": "selected_source_and_manifest_review; no upstream execution",
+      "files": [
+        {
+          "path": "README.md",
+          "bytes": 66559,
+          "sha256": "8cc48606cd070d28b43582774a500358891cf374fa2e35e9502e5658f1633d78",
+          "url": "https://github.com/farion1231/cc-switch/blob/2db86e94da13365caae55bb08d09295e31500d21/README.md"
+        },
+        {
+          "path": "README_ZH.md",
+          "bytes": 60023,
+          "sha256": "40b0f671842d10223d64f21290c30cf2d5acc691485978a630e9144f4e3ce138",
+          "url": "https://github.com/farion1231/cc-switch/blob/2db86e94da13365caae55bb08d09295e31500d21/README_ZH.md"
+        },
+        {
+          "path": "src-tauri/src/app_config.rs",
+          "bytes": 44989,
+          "sha256": "a88309055eb3a221f77eb701ecb01fcec6fd0f24eaffc5dc670a3756fba6aaa4",
+          "url": "https://github.com/farion1231/cc-switch/blob/2db86e94da13365caae55bb08d09295e31500d21/src-tauri/src/app_config.rs"
+        },
+        {
+          "path": "src-tauri/src/commands/misc.rs",
+          "bytes": 370029,
+          "sha256": "f6423b952f9ed3887fa27be81ce2ec4ed266c481786977c14d8e0a8888fdc25b",
+          "url": "https://github.com/farion1231/cc-switch/blob/2db86e94da13365caae55bb08d09295e31500d21/src-tauri/src/commands/misc.rs"
+        },
+        {
+          "path": "src-tauri/src/commands/config.rs",
+          "bytes": 13796,
+          "sha256": "43f6a8f08b1b10e2534d13f3d30c124349b2e25d745ea02ed95427bbb5b238e1",
+          "url": "https://github.com/farion1231/cc-switch/blob/2db86e94da13365caae55bb08d09295e31500d21/src-tauri/src/commands/config.rs"
+        },
+        {
+          "path": "src-tauri/src/commands/settings.rs",
+          "bytes": 27768,
+          "sha256": "188c9a81ab3621fad6405f8b20d6c89cdf47665574c7ebb55863e35628c75263",
+          "url": "https://github.com/farion1231/cc-switch/blob/2db86e94da13365caae55bb08d09295e31500d21/src-tauri/src/commands/settings.rs"
+        },
+        {
+          "path": "src-tauri/src/services/env_checker.rs",
+          "bytes": 8387,
+          "sha256": "4fbc52462f256e614039034b5a18191cbdbb7b21a56f794837414af9b23b4228",
+          "url": "https://github.com/farion1231/cc-switch/blob/2db86e94da13365caae55bb08d09295e31500d21/src-tauri/src/services/env_checker.rs"
+        },
+        {
+          "path": "src-tauri/src/config.rs",
+          "bytes": 38274,
+          "sha256": "15159022b441a36f9ad2a6d2cdecb2770395e47ab9f3f51407873298c02b5180",
+          "url": "https://github.com/farion1231/cc-switch/blob/2db86e94da13365caae55bb08d09295e31500d21/src-tauri/src/config.rs"
+        },
+        {
+          "path": "src-tauri/src/settings.rs",
+          "bytes": 43400,
+          "sha256": "458cc5f57f673b44deb96f4a94ea3768bdb1f5e47423062b4d63bf2aa2a791de",
+          "url": "https://github.com/farion1231/cc-switch/blob/2db86e94da13365caae55bb08d09295e31500d21/src-tauri/src/settings.rs"
+        },
+        {
+          "path": "src-tauri/src/codex_config.rs",
+          "bytes": 226643,
+          "sha256": "6bf5430c1616026c9699383ac51e5b5a3aefe6b97e83ccc4dbe49f5f6d4abeaa",
+          "url": "https://github.com/farion1231/cc-switch/blob/2db86e94da13365caae55bb08d09295e31500d21/src-tauri/src/codex_config.rs"
+        },
+        {
+          "path": "src-tauri/src/opencode_config.rs",
+          "bytes": 57627,
+          "sha256": "f6d5e463ce4b118b6feb2551a3a3a716869181b5bf76b701e7b8bbba0684a53a",
+          "url": "https://github.com/farion1231/cc-switch/blob/2db86e94da13365caae55bb08d09295e31500d21/src-tauri/src/opencode_config.rs"
+        },
+        {
+          "path": "src-tauri/src/services/provider/live.rs",
+          "bytes": 64667,
+          "sha256": "182345e97bd1e7d26cf54d71eb2c3a033fb92db40b701cb22a77edc0f8630a74",
+          "url": "https://github.com/farion1231/cc-switch/blob/2db86e94da13365caae55bb08d09295e31500d21/src-tauri/src/services/provider/live.rs"
+        },
+        {
+          "path": "src-tauri/src/commands/session_manager.rs",
+          "bytes": 9541,
+          "sha256": "df512608b6bd51128c1f0a07a0a759101a4a1def5e5513be46e0f98371001650",
+          "url": "https://github.com/farion1231/cc-switch/blob/2db86e94da13365caae55bb08d09295e31500d21/src-tauri/src/commands/session_manager.rs"
+        },
+        {
+          "path": "src/lib/api/types.ts",
+          "bytes": 247,
+          "sha256": "b2bfe687219f7be996dd2fee0e476a7d4e4a737a6a872772472fbe3480063a97",
+          "url": "https://github.com/farion1231/cc-switch/blob/2db86e94da13365caae55bb08d09295e31500d21/src/lib/api/types.ts"
+        },
+        {
+          "path": "src/lib/api/settings.ts",
+          "bytes": 11224,
+          "sha256": "d09786cc1e46a3000c3c616f8e830f0d7411041a4e4fb7399261a30c4ca15a8b",
+          "url": "https://github.com/farion1231/cc-switch/blob/2db86e94da13365caae55bb08d09295e31500d21/src/lib/api/settings.ts"
+        }
+      ]
+    },
+    {
+      "repo": "yetone/magpie",
+      "reviewed_on": "2026-10-09",
+      "default_branch_head": "62b1c995ffaebb223ad040b4c54ebabab0078c7a",
+      "default_branch_head_date": "2026-10-09T06:24:50Z",
+      "review_commit": "62b1c995ffaebb223ad040b4c54ebabab0078c7a",
+      "review_ref": "default_branch_snapshot",
+      "latest_release_observation": {
+        "tag_name": null,
+        "published_at": null,
+        "html_url": null,
+        "prerelease": null,
+        "http_error": 404
+      },
+      "scope": "selected_source_and_manifest_review; no upstream execution",
+      "files": [
+        {
+          "path": "README.md",
+          "bytes": 16462,
+          "sha256": "4bbafb7ca81a329cfa609317bea5abdb2ce695bb815c09d1e6efc022940dfb09",
+          "url": "https://github.com/yetone/magpie/blob/62b1c995ffaebb223ad040b4c54ebabab0078c7a/README.md"
+        },
+        {
+          "path": "internal/agent/agent.go",
+          "bytes": 18161,
+          "sha256": "e3265873fa8cb8541cd1663bf00c8bf10d675de02a7099cefe7398951a753cbe",
+          "url": "https://github.com/yetone/magpie/blob/62b1c995ffaebb223ad040b4c54ebabab0078c7a/internal/agent/agent.go"
+        },
+        {
+          "path": "internal/agent/agents.go",
+          "bytes": 43265,
+          "sha256": "0887f1d1ab7316a3c86e2b9d917fd6232fc840ed01b06e9353fff4ef2cdb67bd",
+          "url": "https://github.com/yetone/magpie/blob/62b1c995ffaebb223ad040b4c54ebabab0078c7a/internal/agent/agents.go"
+        },
+        {
+          "path": "internal/agent/rescan.go",
+          "bytes": 936,
+          "sha256": "b93aaa0c797af0f95df79f5d0e11b93b1a23415e2eb8f7386a917c0e624b18da",
+          "url": "https://github.com/yetone/magpie/blob/62b1c995ffaebb223ad040b4c54ebabab0078c7a/internal/agent/rescan.go"
+        },
+        {
+          "path": "internal/agent/gemini.go",
+          "bytes": 9310,
+          "sha256": "c45363cbe29749279fdf136b3fe81764b4808f4e22efa934e63f389a1a271089",
+          "url": "https://github.com/yetone/magpie/blob/62b1c995ffaebb223ad040b4c54ebabab0078c7a/internal/agent/gemini.go"
+        },
+        {
+          "path": "internal/agent/gemini_detect_test.go",
+          "bytes": 1694,
+          "sha256": "d3f39541cddf89690585afca8768f54c4af1d388755b8b532327ff7cbc027735",
+          "url": "https://github.com/yetone/magpie/blob/62b1c995ffaebb223ad040b4c54ebabab0078c7a/internal/agent/gemini_detect_test.go"
+        },
+        {
+          "path": "internal/agent/vscode_detect_test.go",
+          "bytes": 5102,
+          "sha256": "0965cf16133271f7c6b672f9fb883be6cd51696ee9990a0c3e1afa858f02b07d",
+          "url": "https://github.com/yetone/magpie/blob/62b1c995ffaebb223ad040b4c54ebabab0078c7a/internal/agent/vscode_detect_test.go"
+        },
+        {
+          "path": "internal/agent/reasonix_detect.go",
+          "bytes": 2505,
+          "sha256": "5ee578a7556f70866150bdcd1356875a2b0d05deaeac5c11578e0f34e3a5b7c5",
+          "url": "https://github.com/yetone/magpie/blob/62b1c995ffaebb223ad040b4c54ebabab0078c7a/internal/agent/reasonix_detect.go"
+        },
+        {
+          "path": "internal/agent/own_path_test.go",
+          "bytes": 4017,
+          "sha256": "bbbe6e4e5069afc39e111d803df125e71163171cfc1c9c753371cf56125a640c",
+          "url": "https://github.com/yetone/magpie/blob/62b1c995ffaebb223ad040b4c54ebabab0078c7a/internal/agent/own_path_test.go"
+        },
+        {
+          "path": "internal/agent/install.go",
+          "bytes": 8727,
+          "sha256": "1f74227e0260d8ac594732dc297b3f6b2b005de2c9ac1229eb658b0715056f76",
+          "url": "https://github.com/yetone/magpie/blob/62b1c995ffaebb223ad040b4c54ebabab0078c7a/internal/agent/install.go"
+        },
+        {
+          "path": "internal/agent/cline.go",
+          "bytes": 14706,
+          "sha256": "0d60be76a578c86a9f627d5ff65bc44f0c5fdce2b9f305a43e0ccc7a3d670f9d",
+          "url": "https://github.com/yetone/magpie/blob/62b1c995ffaebb223ad040b4c54ebabab0078c7a/internal/agent/cline.go"
+        },
+        {
+          "path": "internal/agent/desktopapp.go",
+          "bytes": 3589,
+          "sha256": "db1eb1d3f9697acc0c2979ba1bcdcb617e08409721c077a3d90540243ef1c20e",
+          "url": "https://github.com/yetone/magpie/blob/62b1c995ffaebb223ad040b4c54ebabab0078c7a/internal/agent/desktopapp.go"
+        },
+        {
+          "path": "internal/agent/codex.go",
+          "bytes": 54061,
+          "sha256": "382e400cbc15d372ac2e5678e305d3366b0a72b7350998d4fd008dca4d0049a7",
+          "url": "https://github.com/yetone/magpie/blob/62b1c995ffaebb223ad040b4c54ebabab0078c7a/internal/agent/codex.go"
+        },
+        {
+          "path": "internal/agent/pi.go",
+          "bytes": 5563,
+          "sha256": "a025ebb46577d5618bea3f0170b76121013101c1941d0598b5abde7b705002c4",
+          "url": "https://github.com/yetone/magpie/blob/62b1c995ffaebb223ad040b4c54ebabab0078c7a/internal/agent/pi.go"
+        },
+        {
+          "path": "internal/proc/path_other.go",
+          "bytes": 9722,
+          "sha256": "96dd61e841fb21d7d16516c45a4cdbadeb53ab5c26e07bc52ac7e1d38e925e04",
+          "url": "https://github.com/yetone/magpie/blob/62b1c995ffaebb223ad040b4c54ebabab0078c7a/internal/proc/path_other.go"
+        },
+        {
+          "path": "internal/proc/path_other_test.go",
+          "bytes": 6806,
+          "sha256": "f6c498e222f02920aa1c8ad83ed43c5485ad6fb613535862991835e6b120d409",
+          "url": "https://github.com/yetone/magpie/blob/62b1c995ffaebb223ad040b4c54ebabab0078c7a/internal/proc/path_other_test.go"
+        },
+        {
+          "path": "internal/proc/probe_other.go",
+          "bytes": 359,
+          "sha256": "e40dc28d9556a6ad7953fcb2e5054336821e287907cdf1d3ed2751fc4e247c3d",
+          "url": "https://github.com/yetone/magpie/blob/62b1c995ffaebb223ad040b4c54ebabab0078c7a/internal/proc/probe_other.go"
+        },
+        {
+          "path": "internal/agent/vscode.go",
+          "bytes": 20971,
+          "sha256": "c695bb616b4c27d9d37ca56414e8c3adfb4cc7e61abe460ccc275b3cb8c901d6",
+          "url": "https://github.com/yetone/magpie/blob/62b1c995ffaebb223ad040b4c54ebabab0078c7a/internal/agent/vscode.go"
+        },
+        {
+          "path": "internal/agent/cursorlocal.go",
+          "bytes": 11369,
+          "sha256": "2b45e78ec3187be535455cfeb8cc3be8ec4fe259499d8f617eaa77d3d8c13761",
+          "url": "https://github.com/yetone/magpie/blob/62b1c995ffaebb223ad040b4c54ebabab0078c7a/internal/agent/cursorlocal.go"
+        }
+      ]
+    },
+    {
+      "repo": "agentclientprotocol/registry",
+      "reviewed_on": "2026-10-09",
+      "default_branch_head": "c56a2b3f94c98b14f8145eb93d87359470c930d8",
+      "default_branch_head_date": "2026-10-09T09:30:13Z",
+      "review_commit": "c56a2b3f94c98b14f8145eb93d87359470c930d8",
+      "review_ref": "default_branch_snapshot",
+      "latest_release_observation": {
+        "tag_name": "v2026.10.09-c56a2b3",
+        "published_at": "2026-10-09T09:32:54Z",
+        "html_url": "https://github.com/agentclientprotocol/registry/releases/tag/v2026.10.09-c56a2b3",
+        "prerelease": false,
+        "http_error": null
+      },
+      "scope": "selected_source_and_manifest_review; no upstream execution",
+      "files": [
+        {
+          "path": "README.md",
+          "bytes": 1981,
+          "sha256": "fcfa9f0127b087a0aa69b4bb95591befb83ffdf962dafb44616ad75b4e9e695f",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/README.md"
+        },
+        {
+          "path": "FORMAT.md",
+          "bytes": 6149,
+          "sha256": "23af74c799373641a50aeefc5c6901af9b0304117a9df773cd76610af72ac237",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/FORMAT.md"
+        },
+        {
+          "path": "agent.schema.json",
+          "bytes": 5604,
+          "sha256": "d1e3a6095920d4326a4ee52cf979c915800eaad5ac28386cfa39596002ce16b5",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/agent.schema.json"
+        },
+        {
+          "path": "AUTHENTICATION.md",
+          "bytes": 3593,
+          "sha256": "59972bbb22c119cf9a9d08dc5afcf9c50ac04598cf5f519a5949b5a1a76479a2",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/AUTHENTICATION.md"
+        },
+        {
+          "path": "agoragentic-acp/agent.json",
+          "bytes": 579,
+          "sha256": "33348a2e0eccc52864a2fce3d4b67bcb6cfd646a6dfcbecd56acdade52c3c61a",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/agoragentic-acp/agent.json"
+        },
+        {
+          "path": "amp-acp/agent.json",
+          "bytes": 1740,
+          "sha256": "829bd05fe9de760ffe774f5fdb3f91ee4334a1315fb683d40121403372c7a37e",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/amp-acp/agent.json"
+        },
+        {
+          "path": "antigravity-acp/agent.json",
+          "bytes": 1528,
+          "sha256": "d6d05fcd3d9781719d7535584f66168007a3f6ffcf78dfd513e0130bb7599b28",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/antigravity-acp/agent.json"
+        },
+        {
+          "path": "auggie/agent.json",
+          "bytes": 666,
+          "sha256": "956afab9d7feb6817aaef2cad5f59f0cb23f6053ac81e572a2f6033d31d90502",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/auggie/agent.json"
+        },
+        {
+          "path": "autohand/agent.json",
+          "bytes": 486,
+          "sha256": "e2e934c738c6c4352fa8c1553b6b3b105e355d41fe52c65234d4096a2abb2309",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/autohand/agent.json"
+        },
+        {
+          "path": "claude-acp/agent.json",
+          "bytes": 691,
+          "sha256": "76a1c04840b3ab9cc5e7ff9c6bec0b5786adc7ef9d0538c5cf5345391ab11c0d",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/claude-acp/agent.json"
+        },
+        {
+          "path": "cline/agent.json",
+          "bytes": 559,
+          "sha256": "a0376a9f95e3be3fcc7d2848c72faa72cf12336e461b323f0f005ef155151fde",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/cline/agent.json"
+        },
+        {
+          "path": "codebuddy-code/agent.json",
+          "bytes": 459,
+          "sha256": "e543d8229e337901e3df9591ff1f3e890812effd8358be0c06446018b763b648",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/codebuddy-code/agent.json"
+        },
+        {
+          "path": "codex-acp/agent.json",
+          "bytes": 660,
+          "sha256": "b7e125a21c36d564823068de04fb3c5fe2902fc11c15e777975608685f4e873c",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/codex-acp/agent.json"
+        },
+        {
+          "path": "cortex-code/agent.json",
+          "bytes": 2267,
+          "sha256": "94f4aebd5241c2667059ff75322a33d042fa826287346551ae9bba5752c38071",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/cortex-code/agent.json"
+        },
+        {
+          "path": "corust-agent/agent.json",
+          "bytes": 1232,
+          "sha256": "441b732df2226f08778a492e97949a5524613c4f73b1b1e8f0f733796b77d72e",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/corust-agent/agent.json"
+        },
+        {
+          "path": "crow-cli/agent.json",
+          "bytes": 1514,
+          "sha256": "65ef0367c7e96ec3b748c688a48b0fbb9a7c7571200f4f346311921c72ea2673",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/crow-cli/agent.json"
+        },
+        {
+          "path": "cursor/agent.json",
+          "bytes": 1610,
+          "sha256": "46b7373f82fd15eb728c044b32b4bb98ec659169469f6f3c232a88ed620efcec",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/cursor/agent.json"
+        },
+        {
+          "path": "deepagents/agent.json",
+          "bytes": 551,
+          "sha256": "2ab6fd37ab8df817aea5746d4ef076c0a5fe1a48bc9476bac92fb2dc37d131aa",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/deepagents/agent.json"
+        },
+        {
+          "path": "devin/agent.json",
+          "bytes": 1681,
+          "sha256": "5a85d68de68fcaf448d419ad1656bb7df83c47d651ee005dde099be8dbd0e54e",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/devin/agent.json"
+        },
+        {
+          "path": "dimcode/agent.json",
+          "bytes": 419,
+          "sha256": "e5c90bde627f895a537647587b28e10830dc2d536c31efef6b862c1db5d5f681",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/dimcode/agent.json"
+        },
+        {
+          "path": "dirac/agent.json",
+          "bytes": 639,
+          "sha256": "103d6b6482003496680517f5a61569e1bcaa91b63aa459474672b61b130f92f7",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/dirac/agent.json"
+        },
+        {
+          "path": "factory-droid/agent.json",
+          "bytes": 604,
+          "sha256": "d7bd78145db8ff17cc225faec5e37a16b518be9a514baed2ede6f4fddcea8baa",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/factory-droid/agent.json"
+        },
+        {
+          "path": "fast-agent/agent.json",
+          "bytes": 596,
+          "sha256": "19bccb5c3864356c1d7046ade8f1b076e3fb57b059754ef0954f743da66ce734",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/fast-agent/agent.json"
+        },
+        {
+          "path": "gemini/agent.json",
+          "bytes": 494,
+          "sha256": "99dbbfdf8e63c1b7535604bdcb93e7dd8d670214cd2e7933a7b93493eb28c865",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/gemini/agent.json"
+        },
+        {
+          "path": "github-copilot-cli/agent.json",
+          "bytes": 513,
+          "sha256": "88e6ea812cc378e6f5c05895b904daced8f08be3230f4dc1e35f7ff9829015d1",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/github-copilot-cli/agent.json"
+        },
+        {
+          "path": "github-copilot/agent.json",
+          "bytes": 564,
+          "sha256": "b6ae0dd1d39d52854cbef07737c2ebf261801a2729404950f5201671bc8af549",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/github-copilot/agent.json"
+        },
+        {
+          "path": "glm-acp-agent/agent.json",
+          "bytes": 680,
+          "sha256": "06790148ecd85d579ce1d07457b3a98e08c3f973e31a62cba7336e73eaea14ff",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/glm-acp-agent/agent.json"
+        },
+        {
+          "path": "goose/agent.json",
+          "bytes": 1974,
+          "sha256": "533f42526dbd4700985c31ab80e73a32572f0318fd78b46a40514bcaf81cb98f",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/goose/agent.json"
+        },
+        {
+          "path": "grok-build/agent.json",
+          "bytes": 413,
+          "sha256": "9e70aaf0b0c6b42bfac0e076eb9ccdcce08d85e80f8d0019859daf155ac2c1d1",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/grok-build/agent.json"
+        },
+        {
+          "path": "harn/agent.json",
+          "bytes": 2076,
+          "sha256": "c346a5aa17c324709bd34ac3246f6b8b79173a69f0950e69559a6ab58836b896",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/harn/agent.json"
+        },
+        {
+          "path": "junie/agent.json",
+          "bytes": 4236,
+          "sha256": "0746464e4c3bba5b1f2f9096bb440e15338f2489ccf1f1acfadf8e463af6a7a4",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/junie/agent.json"
+        },
+        {
+          "path": "kilo/agent.json",
+          "bytes": 1975,
+          "sha256": "73470fc726693c71f9de424ba03caa7d30d8671acea63d310f816db3d9dccb77",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/kilo/agent.json"
+        },
+        {
+          "path": "kimchi/agent.json",
+          "bytes": 2031,
+          "sha256": "5cd9fe8d5b731cf3788a7440a13cfc97bb37a0d72ceeefb4d8bafd498140eb61",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/kimchi/agent.json"
+        },
+        {
+          "path": "kimi/agent.json",
+          "bytes": 2003,
+          "sha256": "19138a88833cbc24e6636853f651adf16db649e653c911264b34295a137a2d67",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/kimi/agent.json"
+        },
+        {
+          "path": "minimax-code/agent.json",
+          "bytes": 460,
+          "sha256": "f7de240a053d4b8980557f0e077023c9b90491805336901fbe0ab82e2a57dd62",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/minimax-code/agent.json"
+        },
+        {
+          "path": "minion-code/agent.json",
+          "bytes": 491,
+          "sha256": "9b20df14cfeda918ef3551967363227744421f7c3e7805ebece4d535737a73b4",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/minion-code/agent.json"
+        },
+        {
+          "path": "mistral-vibe/agent.json",
+          "bytes": 1837,
+          "sha256": "ab48227c7e390b8c9bc5eeced7d7d5abc5719d4d9803df4a13ebaabf9d1c6c8a",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/mistral-vibe/agent.json"
+        },
+        {
+          "path": "nova/agent.json",
+          "bytes": 582,
+          "sha256": "7619491b1225a526d552f5b381ee8029923d1af713c7c844135b8a5e3c117194",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/nova/agent.json"
+        },
+        {
+          "path": "opencode/agent.json",
+          "bytes": 2253,
+          "sha256": "e790304e9e88dc61002f76a8a57a26a5188a9730a9eb67c89ed47e9fd459e966",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/opencode/agent.json"
+        },
+        {
+          "path": "pi-acp/agent.json",
+          "bytes": 397,
+          "sha256": "37756495f686f065ea56a4d6be411220f7445129bf169f2c7e310a571689e337",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/pi-acp/agent.json"
+        },
+        {
+          "path": "poolside/agent.json",
+          "bytes": 2173,
+          "sha256": "21031de82e86eeae0cc123dd814de827c1b2f646c888700a84eb9067540f7448",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/poolside/agent.json"
+        },
+        {
+          "path": "qoder/agent.json",
+          "bytes": 445,
+          "sha256": "3114018b05f7dc8ef3bba4e7332f5529fd9fca0de217c43ff446dde8fff978be",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/qoder/agent.json"
+        },
+        {
+          "path": "qwen-code/agent.json",
+          "bytes": 561,
+          "sha256": "f252e7e71755461c952a1f08036491da25c820a4446f83fd77f91b709e53c50c",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/qwen-code/agent.json"
+        },
+        {
+          "path": "sigit/agent.json",
+          "bytes": 2071,
+          "sha256": "6df3ca18345c4df9eb756d8f3a9b9d901d66b99f853debb9a1a75224b18e2c6e",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/sigit/agent.json"
+        },
+        {
+          "path": "stakpak/agent.json",
+          "bytes": 1550,
+          "sha256": "be0bf0eac4021d166532bb88b82dbfd39cd05330359f88eec88ed348c5b750e1",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/stakpak/agent.json"
+        },
+        {
+          "path": "vtcode/agent.json",
+          "bytes": 1788,
+          "sha256": "0a5a635fcc5c887815300db51caf7724537b024c80565489ea2fc999eddd93bf",
+          "url": "https://github.com/agentclientprotocol/registry/blob/c56a2b3f94c98b14f8145eb93d87359470c930d8/vtcode/agent.json"
+        }
+      ]
+    },
+    {
+      "repo": "openclaw/acpx",
+      "reviewed_on": "2026-10-09",
+      "default_branch_head": "b3cd84337952e0d2cadd094f564612e89d71daa5",
+      "default_branch_head_date": "2026-10-07T05:33:28Z",
+      "review_commit": "b3cd84337952e0d2cadd094f564612e89d71daa5",
+      "review_ref": "default_branch_snapshot",
+      "latest_release_observation": {
+        "tag_name": "v0.19.4",
+        "published_at": "2026-10-01T03:07:30Z",
+        "html_url": "https://github.com/openclaw/acpx/releases/tag/v0.19.4",
+        "prerelease": false,
+        "http_error": null
+      },
+      "scope": "selected_source_and_manifest_review; no upstream execution",
+      "files": [
+        {
+          "path": "src/agent-registry.ts",
+          "bytes": 17478,
+          "sha256": "5d71c2edcd97e674a0a751f709f6692d4bceb69c801f9e784ca58439c9990add",
+          "url": "https://github.com/openclaw/acpx/blob/b3cd84337952e0d2cadd094f564612e89d71daa5/src/agent-registry.ts"
+        },
+        {
+          "path": "test/agent-registry.test.ts",
+          "bytes": 15771,
+          "sha256": "1e424bbbdb502cc9c440eeef9f6b6a14631d889f482cd745b9e9a0f58b6f4309",
+          "url": "https://github.com/openclaw/acpx/blob/b3cd84337952e0d2cadd094f564612e89d71daa5/test/agent-registry.test.ts"
+        }
+      ]
+    }
+  ],
+  "observations": {
+    "cc_switch_cli_entries": 9,
+    "cc_switch_app_types": 10,
+    "magpie_static_agent_constructors": 50,
+    "magpie_count_excludes": "dynamic omp profiles, WSL mirrors, non-agent request clients",
+    "acp_agent_entries": 42,
+    "acp_distribution_counts": {
+      "binary": 19,
+      "npx": 23,
+      "uvx": 2
+    },
+    "acp_distribution_counts_are_not_disjoint": true
+  },
+  "official_documents": [
+    {
+      "url": "https://agentclientprotocol.com/protocol/v1/initialization",
+      "reviewed_on": "2026-10-09",
+      "scope": "initialize, capabilities, authMethods and baseline session methods"
+    },
+    {
+      "url": "https://agentclientprotocol.com/protocol/v1/session-setup",
+      "reviewed_on": "2026-10-09",
+      "scope": "new/load session and configOptions"
+    },
+    {
+      "url": "https://agentclientprotocol.com/protocol/v1/session-config-options",
+      "reviewed_on": "2026-10-09",
+      "scope": "configOptions model selection and set_config_option; no arbitrary provider guarantee"
+    }
+  ],
+  "application_changes": false,
+  "upstream_execution_tests_run": 0,
+  "scope_note": "82 files downloaded and fixed; selected implementation sections and all 42 agent manifests reviewed; other cached files retained for reference, not a complete source audit"
+}
