@@ -15,4 +15,3 @@ export function chooseControl(controls: readonly ControlObservation[], id?: stri
     : "multiple available controls; specify --control explicitly");
   return available[0]!;
 }
-

@@ -82,4 +82,3 @@ export async function inventory(input: InventoryInput): Promise<{
     searchPath: search.directories.map((directory) => directory.path).join(":") ,
   };
 }
-

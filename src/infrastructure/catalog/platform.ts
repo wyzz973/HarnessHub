@@ -6,4 +6,3 @@ export function catalogTarget(platform: string = process.platform, architecture:
     throw new Error("unsupported catalog host: " + platform + "/" + architecture);
   return os + "-" + arch;
 }
-
