@@ -50,8 +50,12 @@ def check_plan(requirements: dict, task_plan: dict, test_plan: dict) -> list[str
             errors.append(str(tid) + " invalid phase")
         if task.get("gate") != ("G0" if task.get("phase") in {"verification", "contract"} else "G1"):
             errors.append(str(tid) + " has inconsistent readiness gate")
-        if task.get("status") != "planned":
+        if task.get("status") not in {"planned", "in_progress", "deferred"}:
             errors.append(str(tid) + " cannot be claimed done by a design check")
+        if task.get("status") == "in_progress" and not task.get("active_slice"):
+            errors.append(str(tid) + " in-progress work needs an approved slice")
+        if task.get("status") == "deferred" and not task.get("defer_reason"):
+            errors.append(str(tid) + " deferred work needs a reason")
         for field in ["owns", "requirements", "acceptance", "test_cases", "out_of_scope"]:
             if not isinstance(task.get(field), list) or not task[field]:
                 errors.append(str(tid) + " missing non-empty " + field)
@@ -92,8 +96,10 @@ def check_plan(requirements: dict, task_plan: dict, test_plan: dict) -> list[str
                 errors.append(str(cid) + " missing " + field)
         if case.get("layer") not in LAYERS:
             errors.append(str(cid) + " invalid test layer")
-        if case.get("status") != "planned" or case.get("evidence") is not None:
+        if case.get("status") not in {"planned", "deferred"} or case.get("evidence") is not None:
             errors.append(str(cid) + " cannot claim runtime evidence in design phase")
+        if case.get("status") == "deferred" and not case.get("defer_reason"):
+            errors.append(str(cid) + " deferred case needs a reason")
         if cid not in task.get("test_cases", []):
             errors.append(str(cid) + " is not referenced by its task")
         if case.get("planned_file") not in task.get("owns", []):
@@ -138,10 +144,10 @@ def render_views(requirements: dict, tasks: dict, cases: dict) -> dict[str, str]
                  "| ID | 需求 | 行为 | 来源 |", "|---|---|---|---|"]
     for req in requirements["requirements"]:
         req_lines.append("| " + " | ".join(cell(req[k]) for k in ["id", "title", "statement", "origin"]) + " |")
-    task_lines = ["# 原子任务与唯一交付物", "", "生成自 plan/tasks.json；全部 planned。V 为受控验证/评审，C 为 G1 前的精确契约冻结，G 为应用实现任务。V008 汇总已冻结契约的就绪证据后才能开始 G 任务。文件路径是未来交付物，不表示文件已存在。结构检查证明依赖/路径关系，职责原子性仍需人工评审。", "",
-                  "| ID | 职责 | 前置任务 | 门禁 |", "|---|---|---|---|"]
+    task_lines = ["# 原子任务与唯一交付物", "", "生成自 plan/tasks.json。完整工程地图保留；当前小切片优先级与允许路径见 plan/slices.json 和 docs/engineering/mvp.md。V 为验证/评审，C 为契约，G 为实现。状态不代表真实验证通过，延期不算通过；路径也不表示均已存在。", "",
+                  "| ID | 职责 | 前置任务 | 门禁 | 状态 |", "|---|---|---|---|---|"]
     for task in tasks["tasks"]:
-        task_lines.append("| " + " | ".join([task["id"], cell(task["title"]), ", ".join(task["depends_on"]) or "无", task["gate"]]) + " |")
+        task_lines.append("| " + " | ".join([task["id"], cell(task["title"]), ", ".join(task["depends_on"]) or "无", task["gate"], task["status"]]) + " |")
     for task in tasks["tasks"]:
         task_lines += ["", "## " + task["id"] + " " + task["title"], "",
                        "范围：" + task["scope"] + "。", "",
@@ -151,10 +157,10 @@ def render_views(requirements: dict, tasks: dict, cases: dict) -> dict[str, str]
         task_lines += ["", "验收："] + ["- " + item for item in task["acceptance"]]
         task_lines += ["", "场景：" + ", ".join(task["test_cases"]) + "。", "",
                        "禁止范围：" + "；".join(task["out_of_scope"]) + "。"]
-    case_lines = ["# 计划测试矩阵", "", "生成自 plan/test-cases.json。所有场景均 planned，尚未运行；关联不等于充分覆盖证明。真实存储/HTTP/IPC、外部夹具、真实 Harness/Provider 和各平台分别验收。", "",
-                  "| 场景 | 所属任务 | 层 | 输入/交错 | 必须观察到的结果 |", "|---|---|---|---|---|"]
+    case_lines = ["# 计划测试矩阵", "", "生成自 plan/test-cases.json。这是完整规划，不作为运行测试结果；planned/deferred 均不算通过。当前切片的实际测试另见验证记录，关联也不等于充分覆盖证明。", "",
+                  "| 场景 | 所属任务 | 层 | 输入/交错 | 必须观察到的结果 | 状态 |", "|---|---|---|---|---|---|"]
     for case in cases["cases"]:
-        case_lines.append("| " + " | ".join(cell(case[k]) for k in ["id", "task", "layer", "scenario", "expected"]) + " |")
+        case_lines.append("| " + " | ".join(cell(case[k]) for k in ["id", "task", "layer", "scenario", "expected", "status"]) + " |")
     return {"docs/product/requirements.md": "\n".join(req_lines) + "\n",
             "TASKS.md": "\n".join(task_lines) + "\n",
             "docs/engineering/test-matrix.md": "\n".join(case_lines) + "\n"}
@@ -213,10 +219,42 @@ def check_files(root: Path, views: dict[str, str], verify_cache: bool) -> list[s
         errors.append("invariant lacks a planned case: " + missing)
     for unknown in sorted(planned - invariants):
         errors.append("unknown planned invariant: " + unknown)
-    # No production scaffold may slip through a successful design-only check.
+    # Only explicitly approved, task-owned slice paths can pass the source gate.
+    allowed: set[str] = set()
+    slice_file = root / "plan/slices.json"
+    if slice_file.exists():
+        slices = json.loads(slice_file.read_text())
+        task_records = json.loads((root / "plan/tasks.json").read_text())["tasks"]
+        by_id = {task["id"]: task for task in task_records}
+        accepted_slices = {item["id"]: item for item in slices.get("slices", []) if item.get("status") == "accepted"}
+        for task in task_records:
+            if task.get("status") == "in_progress":
+                active = accepted_slices.get(task.get("active_slice"))
+                if active is None or task["id"] not in active.get("task_ids", []):
+                    errors.append("in-progress task lacks accepted slice: " + task["id"])
+        if slices.get("gateway_execution_implementation_allowed") is not False:
+            errors.append("a local slice cannot unlock gateway execution")
+        for item in slices.get("slices", []):
+            if item.get("status") != "accepted":
+                continue
+            owned = {file for tid in item.get("task_ids", []) for file in by_id.get(tid, {}).get("owns", [])}
+            decision = (root / item.get("decision", "")).resolve()
+            if not decision.is_file() or root.resolve() not in decision.parents:
+                errors.append("slice lacks a project decision")
+            for file in item.get("allowed_files", []):
+                if file not in owned:
+                    errors.append("slice path lacks task ownership: " + file)
+                else:
+                    allowed.add(file)
     for directory in ["src", "ui", "native"]:
         if (root / directory).exists():
-            errors.append("application source exists while implementation gate is closed: " + directory)
+            files = [file for file in (root / directory).rglob("*") if file.is_file()]
+            if not files and not allowed:
+                errors.append("application source exists while implementation gate is closed: " + directory)
+            for file in files:
+                relative = file.relative_to(root).as_posix()
+                if relative not in allowed:
+                    errors.append("application source outside approved slice: " + relative)
     return errors
 
 
@@ -248,7 +286,8 @@ def main() -> int:
                           "tasks": len(tasks["tasks"]),
                           "planned_test_scenarios": len(cases["cases"]),
                           "application_implementation_allowed": False,
-                          "runtime_tests_executed": 0,
+                          "approved_slices": [item["id"] for item in json.loads((ROOT / "plan/slices.json").read_text()).get("slices", []) if item.get("status") == "accepted"] if (ROOT / "plan/slices.json").exists() else [],
+                          "runtime_tests_executed_by_this_check": 0,
                           "cache_verified": args.verify_cache}, ensure_ascii=False))
         return 0
     except (ValueError, KeyError, TypeError, OSError) as error:

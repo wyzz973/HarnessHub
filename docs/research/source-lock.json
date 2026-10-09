@@ -28,6 +28,12 @@
           "sha256": "fc1abe30dc8fe7d42d0f403982628ebfbb47e35fea51372b07892d82a0f4e960",
           "bytes": 2792,
           "url": "https://github.com/OpenHands/OpenHands/blob/7af57f8a54115a84d7215192f822850707369122/src/types/agent-server/session-frames.ts"
+        },
+        {
+          "path": "docs/ACP_AGENTS.md",
+          "sha256": "127274eef59969388e1c6905f8b69e989daaae300d07062e94b5ce06aff7cb38",
+          "bytes": 12829,
+          "url": "https://github.com/OpenHands/OpenHands/blob/7af57f8a54115a84d7215192f822850707369122/docs/ACP_AGENTS.md"
         }
       ],
       "review_scope": "selected_source_and_docs"
@@ -492,6 +498,18 @@
           "sha256": "7d1f53fdae6516ce19b3e1b7ac91511b42b49d08d417d90a3dbbb7616cf28d90",
           "bytes": 1073,
           "url": "https://github.com/openclaw/acpx/blob/b3cd84337952e0d2cadd094f564612e89d71daa5/src/runtime/engine/reuse-policy.ts"
+        },
+        {
+          "path": "src/agent-registry.ts",
+          "sha256": "5d71c2edcd97e674a0a751f709f6692d4bceb69c801f9e784ca58439c9990add",
+          "bytes": 17478,
+          "url": "https://github.com/openclaw/acpx/blob/b3cd84337952e0d2cadd094f564612e89d71daa5/src/agent-registry.ts"
+        },
+        {
+          "path": "docs/2026-02-17-agent-registry.md",
+          "sha256": "9b1aace66989184aec0b569cf40fb8be7b3594e676b3a57a05fc56a597cd130e",
+          "bytes": 1878,
+          "url": "https://github.com/openclaw/acpx/blob/b3cd84337952e0d2cadd094f564612e89d71daa5/docs/2026-02-17-agent-registry.md"
         }
       ],
       "review_scope": "selected_source_and_docs"
@@ -541,6 +559,24 @@
           "sha256": "470245e5a2e017790baae9fbcb65ef8f8138491b1c86000b4937c8fd1e478bf7",
           "bytes": 22150,
           "url": "https://github.com/rivet-dev/sandbox-agent/blob/d00849b2a3914a9d771f5f4c2b6a6e876e0edf16/sandbox-agent/server/packages/sandbox-agent/src/acp_proxy_runtime.rs"
+        },
+        {
+          "path": "sandbox-agent/server/packages/agent-management/src/agents.rs",
+          "sha256": "fff18d3ac6febd53026342f9bef242beed7fdf2d7a01debef18ca2f0eebed566",
+          "bytes": 72833,
+          "url": "https://github.com/rivet-dev/sandbox-agent/blob/d00849b2a3914a9d771f5f4c2b6a6e876e0edf16/sandbox-agent/server/packages/agent-management/src/agents.rs"
+        },
+        {
+          "path": "sandbox-agent/server/packages/acp-http-adapter/src/registry.rs",
+          "sha256": "891f1e599030ffc4b832ef2f2f37a2c8cb49ec85cba159b840b4673eb8199be2",
+          "bytes": 4495,
+          "url": "https://github.com/rivet-dev/sandbox-agent/blob/d00849b2a3914a9d771f5f4c2b6a6e876e0edf16/sandbox-agent/server/packages/acp-http-adapter/src/registry.rs"
+        },
+        {
+          "path": "sandbox-agent/server/packages/acp-http-adapter/README.md",
+          "sha256": "44c1c786f71d2fbe88758f2f124457468464ce75e2468fe98518a014d89d7e02",
+          "bytes": 1080,
+          "url": "https://github.com/rivet-dev/sandbox-agent/blob/d00849b2a3914a9d771f5f4c2b6a6e876e0edf16/sandbox-agent/server/packages/acp-http-adapter/README.md"
         }
       ],
       "review_scope": "selected_source_and_docs"
@@ -560,6 +596,36 @@
           "sha256": "92483e7f9519afb680642701d3cf7843249e86338f3f19fa5def8f57f91a7273",
           "bytes": 17663,
           "url": "https://github.com/yetone/magpie/blob/ed31293c0ee1bc57f2ff26b50ebd3876fddd8df9/README.md"
+        },
+        {
+          "path": "internal/agent/agent.go",
+          "sha256": "b670a308b5132a1dcc06b5bfce3eb68b9b222344cfedd24b2501699ed33888eb",
+          "bytes": 17820,
+          "url": "https://github.com/yetone/magpie/blob/ed31293c0ee1bc57f2ff26b50ebd3876fddd8df9/internal/agent/agent.go"
+        },
+        {
+          "path": "internal/agent/agents.go",
+          "sha256": "0887f1d1ab7316a3c86e2b9d917fd6232fc840ed01b06e9353fff4ef2cdb67bd",
+          "bytes": 43265,
+          "url": "https://github.com/yetone/magpie/blob/ed31293c0ee1bc57f2ff26b50ebd3876fddd8df9/internal/agent/agents.go"
+        },
+        {
+          "path": "internal/agent/gemini.go",
+          "sha256": "c45363cbe29749279fdf136b3fe81764b4808f4e22efa934e63f389a1a271089",
+          "bytes": 9310,
+          "url": "https://github.com/yetone/magpie/blob/ed31293c0ee1bc57f2ff26b50ebd3876fddd8df9/internal/agent/gemini.go"
+        },
+        {
+          "path": "internal/agent/own_path_test.go",
+          "sha256": "bbbe6e4e5069afc39e111d803df125e71163171cfc1c9c753371cf56125a640c",
+          "bytes": 4017,
+          "url": "https://github.com/yetone/magpie/blob/ed31293c0ee1bc57f2ff26b50ebd3876fddd8df9/internal/agent/own_path_test.go"
+        },
+        {
+          "path": "internal/agent/rescan.go",
+          "sha256": "b93aaa0c797af0f95df79f5d0e11b93b1a23415e2eb8f7386a917c0e624b18da",
+          "bytes": 936,
+          "url": "https://github.com/yetone/magpie/blob/ed31293c0ee1bc57f2ff26b50ebd3876fddd8df9/internal/agent/rescan.go"
         }
       ],
       "review_scope": "readme_and_metadata"

@@ -1,6 +1,8 @@
 # 工程文档与阅读顺序
 
-当前阶段为研究与设计；以下文档中的方案均为 proposed，除产品需求来源明确标注用户确认外，不等于实现或验收。
+当前以本机 MVP 切片推进；完整蓝图中的方案按各自状态管理，不等于已实现。ADR-008 与 S01 检测契约已认可，当前只读检测已实现；其他执行/切换契约仍 proposed。
+
+最新推进方式：先读 [MVP 顺序](engineering/mvp.md)与 [S01 检测契约](contracts/discovery.md)。用户明确本机核心优先；后续完整设计仍保留，但不以平台、发布或多发行版矩阵阻塞独立切片。[Harness 检测调研](research/harness-discovery.md)记录当前实现依据。
 
 1. [第一阶段产品范围](product/phase-1.md) → [需求清单](product/requirements.md)。
 2. [调研方法与结论](research/README.md) → [协议](research/protocols.md) → [开源实现](research/repositories.md) → [固定来源](research/source-lock.json)。

@@ -2,6 +2,8 @@
 
 以下全部为 proposed，记录建议、替代与代价；没有因生成文档而自动变为 accepted。
 
+例外：[ADR-008](0008-local-first-mvp.md)已依据用户最新优先级 accepted，仅开放本机只读检测小切片；下表七项完整架构议程仍 proposed。
+
 | ADR | 建议 | 替代/代价 | 关闭条件 |
 |---|---|---|---|
 | ADR-001 | 公共 Session 与原生 BackendBinding 分离 | 直接暴露原生 ID 简单，但锁定 Harness，无法承载公共连续性 | D-02 与 D-04 冻结 |

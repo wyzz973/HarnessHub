@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "recipes": [
+    {
+      "id": "my-harness",
+      "name": "My Harness",
+      "binary": "my-harness",
+      "protocol": "acp-v1",
+      "args": ["--acp"]
+    }
+  ],
+  "overrides": {}
+}

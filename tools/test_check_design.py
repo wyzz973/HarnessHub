@@ -93,6 +93,12 @@ class DesignChecks(unittest.TestCase):
     def test_rejects_incorrect_gate(self):
         self.rejected(lambda r, t, c: t["tasks"][0].update(gate="G0"), "inconsistent readiness gate")
 
+    def test_rejects_progress_without_slice(self):
+        self.rejected(lambda r, t, c: t["tasks"][0].update(status="in_progress"), "needs an approved slice")
+
+    def test_rejects_deferred_work_without_reason(self):
+        self.rejected(lambda r, t, c: t["tasks"][0].update(status="deferred"), "needs a reason")
+
     def test_rejects_case_insensitive_path_overlap(self):
         self.rejected(lambda r, t, c: t["tasks"][0]["owns"].append("src/ACCEPT.ts"),
                       "overlapping ownership")
@@ -144,6 +150,39 @@ class DesignChecks(unittest.TestCase):
     def test_rejects_production_code_before_gate(self):
         errors = self.file_fixture_errors(lambda root, views: (root / "src").mkdir())
         self.assertTrue(any("implementation gate is closed" in item for item in errors))
+
+    def approved_slice(self, root, views):
+        (root / "src").mkdir()
+        (root / "src/accept.ts").write_text("export const readonly = true;\n")
+        (root / "decision.md").write_text("accepted read-only slice\n")
+        records = self.records()[1]
+        records["tasks"][0].update(status="in_progress", active_slice="read-only")
+        (root / "plan/tasks.json").write_text(json.dumps(records))
+        (root / "plan/slices.json").write_text(json.dumps({
+            "gateway_execution_implementation_allowed": False,
+            "slices": [{"id": "read-only", "status": "accepted", "task_ids": ["A"],
+                        "decision": "decision.md", "allowed_files": ["src/accept.ts"]}]
+        }))
+
+    def test_accepts_only_owned_approved_source(self):
+        self.assertEqual(self.file_fixture_errors(self.approved_slice), [])
+
+    def test_rejects_source_outside_approved_slice(self):
+        def mutate(root, views):
+            self.approved_slice(root, views)
+            (root / "src/execute.ts").write_text("unapproved\n")
+        errors = self.file_fixture_errors(mutate)
+        self.assertTrue(any("outside approved slice" in item for item in errors))
+
+    def test_rejects_unowned_slice_permission(self):
+        def mutate(root, views):
+            self.approved_slice(root, views)
+            path = root / "plan/slices.json"
+            data = json.loads(path.read_text())
+            data["slices"][0]["allowed_files"].append("src/execute.ts")
+            path.write_text(json.dumps(data))
+        errors = self.file_fixture_errors(mutate)
+        self.assertTrue(any("lacks task ownership" in item for item in errors))
 
     def test_cli_returns_nonzero_for_invalid_plan(self):
         with TemporaryDirectory(prefix="harness-design-cli-") as directory:

@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "gateway_execution_implementation_allowed": false,
+  "slices": [
+    {
+      "id": "catalog-discovery",
+      "status": "accepted",
+      "scope": "只读本机检测与控制配方；不启动发现的程序，不运行模型或Session",
+      "task_ids": [
+        "G001",
+        "G012"
+      ],
+      "decision": "docs/decisions/0008-local-first-mvp.md",
+      "allowed_files": [
+        "package.json",
+        "pnpm-lock.yaml",
+        "tsconfig.json",
+        "src/contexts/catalog/domain/discovery.ts",
+        "src/contexts/catalog/application/discover.ts",
+        "src/infrastructure/discovery/local.ts",
+        "src/adapters/recipes.ts",
+        "src/cli/discover.ts",
+        "tests/unit/g012.test.ts",
+        "tests/integration/g012.test.ts",
+        "examples/discovery-manifest.json"
+      ],
+      "implementation_state": "implemented",
+      "verification_record": "docs/verification/discovery-2026-10-09.md"
+    }
+  ]
+}

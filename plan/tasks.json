@@ -224,7 +224,7 @@
         "INV-12",
         "INV-26"
       ],
-      "scope": "验证平台监督边界与首发支持范围；仅交付所列文件与对应行为",
+      "scope": "仅核对当前宿主的进程归属、停止与owner排他边界；其他平台和发行后置",
       "out_of_scope": [
         "不修改其他任务所有权文件",
         "不把局部通过提升为完整链路或真实Harness通过"
@@ -772,7 +772,7 @@
       "title": "建立精确可重复的应用工具链",
       "context": "engineering",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "V001",
@@ -807,7 +807,8 @@
         "G001-C01",
         "G001-C02",
         "G001-C03"
-      ]
+      ],
+      "active_slice": "catalog-discovery"
     },
     {
       "id": "G002",
@@ -1250,7 +1251,7 @@
       "title": "只读发现已安装Harness",
       "context": "catalog",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G003",
@@ -1260,7 +1261,12 @@
         "src/contexts/catalog/application/discover.ts",
         "src/infrastructure/discovery/local.ts",
         "tests/integration/g012.test.ts",
-        "tests/security/g012.test.ts"
+        "tests/security/g012.test.ts",
+        "src/contexts/catalog/domain/discovery.ts",
+        "src/adapters/recipes.ts",
+        "src/cli/discover.ts",
+        "tests/unit/g012.test.ts",
+        "examples/discovery-manifest.json"
       ],
       "requirements": [
         "R03",
@@ -1283,7 +1289,8 @@
         "G012-C01",
         "G012-C02",
         "G012-C03"
-      ]
+      ],
+      "active_slice": "catalog-discovery"
     },
     {
       "id": "G013",
@@ -2011,7 +2018,7 @@
       "title": "实现Windows Job监督",
       "context": "execution",
       "phase": "implementation",
-      "status": "planned",
+      "status": "deferred",
       "gate": "G1",
       "depends_on": [
         "G007",
@@ -2047,7 +2054,8 @@
         "G030-C01",
         "G030-C02",
         "G030-C03"
-      ]
+      ],
+      "defer_reason": "用户明确平台适配后置，当前先完成本机核心"
     },
     {
       "id": "G031",

@@ -5,7 +5,8 @@
 ## 1. 已完成的研究
 
 - [协议层次与版本](protocols.md)：ACP、MCP、A2A、AG-UI、原生 API、JSON-RPC、HTTP/SSE、OpenAPI 与 JSON Schema。
-- [实现比较](repositories.md)：16 个仓库的 commit/许可元数据；其中关键客户端、聚合网关、原生 Harness 和恢复实现选读源码。固定文件与 SHA-256 共 57 份，见 [来源锁](source-lock.json)。
+- [实现比较](repositories.md)：16 个仓库的 commit/许可元数据；其中关键客户端、聚合网关、原生 Harness 和恢复实现选读源码。加上本机检测专题新增选读文件，固定文件与 SHA-256 共 68 份，见 [来源锁](source-lock.json)。
+- [检测与适配配方](harness-discovery.md)：Magpie、sandbox-agent、acpx、OpenHands 的安装线索、可执行解析、适配器与后端职责。
 - 公开文档定位、DDD 原则、存储、进程监督、AI 协作与测试实践。
 
 来源锁表示抓取快照与选读范围，不表示全部源码审计。完整外部内容仅在被忽略的 .research-cache 中用于研究，不作为项目代码或依赖发布。曾抓取的 Codex v2.rs 路径已经拆分，404 记录保留并指向实际的 v2/mod.rs、thread.rs、turn.rs，不假称旧路径仍存在。

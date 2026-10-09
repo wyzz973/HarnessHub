@@ -318,9 +318,10 @@
       "layer": "probe",
       "scenario": "Windows Job/breakaway与ACL宿主",
       "expected": "在真实宿主记录结果，没有宿主标未验证",
-      "status": "planned",
+      "status": "deferred",
       "evidence": null,
-      "planned_file": "spikes/v006/verification.json"
+      "planned_file": "spikes/v006/verification.json",
+      "defer_reason": "用户优先级：平台与发布后置，不计为通过"
     },
     {
       "id": "V006-C03",
@@ -417,7 +418,7 @@
       ],
       "invariants": [],
       "layer": "integration",
-      "scenario": "错误Node版本与依赖漂移",
+      "scenario": "不支持的Node主版本与依赖漂移",
       "expected": "必需检查非零拒绝",
       "status": "planned",
       "evidence": null,
@@ -2135,9 +2136,10 @@
       "layer": "platform",
       "scenario": "Job内孙进程及主进程崩溃",
       "expected": "整树归属与关闭可核验",
-      "status": "planned",
+      "status": "deferred",
       "evidence": null,
-      "planned_file": "tests/platform/g030.test.ts"
+      "planned_file": "tests/platform/g030.test.ts",
+      "defer_reason": "用户优先级：平台与发布后置，不计为通过"
     },
     {
       "id": "G030-C02",
@@ -2154,9 +2156,10 @@
       "layer": "platform",
       "scenario": "breakaway/已有Job/权限不足",
       "expected": "显式失败或unconfirmed",
-      "status": "planned",
+      "status": "deferred",
       "evidence": null,
-      "planned_file": "tests/platform/g030.test.ts"
+      "planned_file": "tests/platform/g030.test.ts",
+      "defer_reason": "用户优先级：平台与发布后置，不计为通过"
     },
     {
       "id": "G030-C03",
@@ -2173,9 +2176,10 @@
       "layer": "platform",
       "scenario": "中文空格路径/cmd参数/启动中取消",
       "expected": "原生行为正确，无窗口残留",
-      "status": "planned",
+      "status": "deferred",
       "evidence": null,
-      "planned_file": "tests/platform/g030.test.ts"
+      "planned_file": "tests/platform/g030.test.ts",
+      "defer_reason": "用户优先级：平台与发布后置，不计为通过"
     },
     {
       "id": "G031-C01",
@@ -4007,9 +4011,10 @@
       "layer": "platform",
       "scenario": "macOS/Linux/Windows原生进程与权限",
       "expected": "平台证据独立，缺宿主不能算通过",
-      "status": "planned",
+      "status": "deferred",
       "evidence": null,
-      "planned_file": "tests/platform/g060.test.ts"
+      "planned_file": "tests/platform/g060.test.ts",
+      "defer_reason": "用户优先级：平台与发布后置，不计为通过"
     },
     {
       "id": "G060-C03",
@@ -4084,9 +4089,10 @@
       "layer": "platform",
       "scenario": "各发行平台缺签名/兼容记录",
       "expected": "不发布未验证平台，设计通过不冒充发行通过",
-      "status": "planned",
+      "status": "deferred",
       "evidence": null,
-      "planned_file": "tests/platform/g058.test.ts"
+      "planned_file": "tests/platform/g058.test.ts",
+      "defer_reason": "用户优先级：平台与发布后置，不计为通过"
     },
     {
       "id": "G056-C05",
