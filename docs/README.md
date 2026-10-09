@@ -1,10 +1,12 @@
 # 工程文档与阅读顺序
 
-当前以本机 MVP 切片推进；完整蓝图按各自状态管理。ADR-008/009 与对应检测/控制契约已认可，目录与受控原生控制连接已实现；公共 Session/完整执行/切换契约仍 proposed。
+当前以本机MVP切片推进；完整蓝图按各自状态管理。ADR-008/009/010及对应本机契约已认可，目录、控制和公共Session/静止切换已实现；完整未来Provider/自动路由/HTTP等仍proposed。
 
 最新推进方式：先读 [MVP 顺序](engineering/mvp.md)与 [S01 检测契约](contracts/discovery.md)。用户明确本机核心优先；后续完整设计仍保留，但不以平台、发布或多发行版矩阵阻塞独立切片。[Harness 检测调研](research/harness-discovery.md)记录当前实现依据。
 
 最新：[目录与控制契约](contracts/catalog-control.md)、[验证记录](verification/catalog-control-2026-10-09.md)；[Harness 发现与适配方案](proposals/harness-discovery-adaptation.md)保留来源与后续顺序。默认目录为 43 个产品/47 个控制入口；目录数量、协议握手和真实任务验证分别记录。
+
+持续对话从[公共Session契约](contracts/public-session-mvp.md)与[Session验证](verification/public-session-2026-10-09.md)开始阅读：公共身份、SQLite历史、幂等、排队、切换、生效水位、崩溃unknown与CLI资源预算。
 
 1. [第一阶段产品范围](product/phase-1.md) → [需求清单](product/requirements.md)。
 2. [调研方法与结论](research/README.md) → [协议](research/protocols.md) → [开源实现](research/repositories.md) → [固定来源](research/source-lock.json)。

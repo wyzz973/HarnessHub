@@ -2,7 +2,7 @@
 
 工作名，2026-10-09 建立。目标是一个统一的 Harness 聚合网关：用户通过一个入口持续对话或发送命令，网关管理不同 Harness 的接入、选择、执行和交接；公共 Session 不绑定某个厂商的原生会话。
 
-当前先做本机核心 MVP。已实现离线目录 v2、只读安装发现、通用 ACP 与 Codex App Server 控制连接，以及 probe/run 命令。默认目录含 43 个产品、47 个控制入口，数量不代表全部已可执行。公共 Session、持久历史、自动路由与切换尚未实现。研究、实现、合成测试与真实 Harness 验收分别记录。
+当前先做本机核心 MVP。已实现目录/安装发现、ACP/Codex控制、持久公共Session、多轮历史、同Session手动切换Harness、取消与有界命令行入口。默认目录含43产品/47控制描述，数量不代表全部已可执行。自动择优、统一Provider管理/切换和图形界面尚未实现。真实模型与模拟Provider验收分别记录。
 
 ## 第一阶段
 
@@ -28,6 +28,7 @@ pnpm probe --harness codex --json
 pnpm probe --harness gemini --json
 pnpm test
 pnpm test:real:codex
+pnpm test:real:session
 ~~~
 
 discover 默认输出 schemaVersion=2，分别展示配置线索、多个安装和控制依赖；它不执行找到的程序或下载包。v1 描述可显式迁移；旧 JSON 使用方可用 --legacy 保留 schemaVersion=1。通过 v2 描述和 --package-root 指定已有包可扩展目录。详见[当前契约](docs/contracts/catalog-control.md)与[旧 v1 契约](docs/contracts/discovery.md)。
@@ -35,6 +36,27 @@ discover 默认输出 schemaVersion=2，分别展示配置线索、多个安装�
 probe 主动启动所选控制入口并初始化，输出 NDJSON 协议观察与独立清理证据；它不发送 prompt。run:harness 明确发送一次文本，输出流/后端结果/清理，不创建公共 Session，也不承诺任务正确性。多个可用控制入口必须 --control 指定，不自动替换。默认配置与工作目录临时隔离；实际模型调用需 --config-home 指向已准备的私有配置根，并按需要给 --cwd 绝对路径。
 
 pnpm test 使用真实文件系统与协议子进程夹具；test:real:codex 是独立显式验收，需要本机已安装 Codex，使用真实 Harness 和本地模拟 Responses Provider、临时配置与测试 key，不使用个人登录。当前实际结果见[验证记录](docs/verification/catalog-control-2026-10-09.md)。
+
+## 持续会话
+
+~~~sh
+pnpm chat --harness codex --data-dir data --cwd /absolute/workspace --config-home /absolute/private-profile
+pnpm chat --session session-ID --data-dir data
+pnpm sessions list --data-dir data --json
+pnpm sessions show --session session-ID --data-dir data --json
+pnpm sessions events --session session-ID --data-dir data --after-seq 0 --limit 50 --json
+pnpm sessions close --session session-ID --data-dir data
+~~~
+
+将示例路径/Session ID替换为自己的值。新会话输出公共Session ID；续接使用相同数据根。真实模型调用仍需要自己准备私有配置根，Codex配置在该根的codex目录；没有配置时默认临时隔离环境可能需要登录/模型配置，不能借用个人默认登录冒充验收。
+
+在chat中输入文本发送消息，使用 :harness gemini（或id:controlId）提出切换，:cancel取消当前工作，:history查看公共历史，:quit停止本次入口。切换先requested、旧执行与先前准入输入结束后再effective；等待失败切换的消息明确不派发。:quit保留可续接Session；sessions close才持久关闭准入。
+
+单条消息也可 pnpm chat --harness codex --prompt "hello" --command-id request-1；续接同公共Session重试相同key不会重复调用，同key不同输入明确冲突。每轮均重建原生会话并注入完整有界公共历史，接续等级为public_context_rehydrate，不是厂商native_resume。
+
+SQLite数据和命令幂等/事件先提交再发布；多个入口不能同时持有同数据根owner或同工作区writer。owner崩溃后未知执行/工作区残留会blocked/quarantined，历史仍可读，不自动重跑、清库或按PID杀未知进程。当前没有绕过未知状态的恢复命令。私有配置目录仅固定引用，目录内Provider/model内容不是本阶段的不可变资源快照。
+
+test:real:session会运行真实Codex三轮、两个独立入口并检查实际收到前两轮公共上下文，Provider为本地模拟服务，不读取个人凭据。详见[当前Session验证](docs/verification/public-session-2026-10-09.md)。
 
 ## 从这里阅读
 
@@ -46,7 +68,7 @@ pnpm test 使用真实文件系统与协议子进程夹具；test:real:codex 是
 - [当前 MVP 顺序](docs/engineering/mvp.md)：先检测，再接通控制面和统一对话；切片范围在 plan/slices.json 明确。
 - [完整任务地图](TASKS.md)：保留未来工程分解，不让后置平台/发布事项阻塞已冻结的独立本机切片。
 - [测试计划](docs/engineering/testing.md)与[场景矩阵](docs/engineering/test-matrix.md)：保留 285 个完整蓝图场景，含后置项目；当前实际测试见[验证记录](docs/verification/catalog-control-2026-10-09.md)。
-- [范围与门禁](docs/engineering/readiness.md)：目录与受控控制连接已开放，公共 Session/完整执行/切换仍需各自最小契约。
+- [范围与门禁](docs/engineering/readiness.md)：本机目录、控制与公共Session切片已开放；完整未来模型/路由/HTTP仍按各自契约推进。
 - [目录与控制验证](docs/verification/catalog-control-2026-10-09.md)：当前实现、测试和未验证范围；[旧检测记录](docs/verification/discovery-2026-10-09.md)与[初始设计记录](docs/verification/design-review-2026-10-09.md)保留基线证据。
 
 ## 现在可运行的检查

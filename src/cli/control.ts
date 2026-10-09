@@ -1,14 +1,15 @@
+import { chooseControl } from "../contexts/catalog/application/select-control.js";
+export { chooseControl } from "../contexts/catalog/application/select-control.js";
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import type { ControlEvent, ControlLaunch, ControlRun, HarnessControl } from "../contracts/control.js";
-import type { ControlObservation } from "../contexts/catalog/domain/catalog.js";
 import { DiscoveryInputError } from "../contexts/catalog/domain/discovery.js";
 import { AcpControl } from "../adapters/control/acp.js";
 import { CodexControl } from "../adapters/control/codex.js";
-import { inventory } from "./discover.js";
+import { inventory } from "../infrastructure/catalog/inventory-composition.js";
 
 function timeout(value: string | undefined): number {
   if (value === undefined) return 30000;
@@ -22,20 +23,6 @@ function boundedPath(value: string): string {
   if (!isAbsolute(value) || value.length > 4096 || /[\0\r\n]/u.test(value))
     throw new DiscoveryInputError("paths must be bounded and absolute");
   return resolve(value);
-}
-export function chooseControl(controls: readonly ControlObservation[], id?: string): ControlObservation {
-  if (id !== undefined) {
-    const explicit = controls.find((item) => item.id === id);
-    if (explicit === undefined) throw new DiscoveryInputError("unknown control for this Harness: " + id);
-    if (explicit.state !== "candidate" || explicit.command === null)
-      throw new DiscoveryInputError("selected control is unavailable: " + id + " (" + explicit.state + ")");
-    return explicit;
-  }
-  const available = controls.filter((item) => item.state === "candidate");
-  if (available.length !== 1) throw new DiscoveryInputError(available.length === 0
-    ? "no available control; use discover to inspect missing dependencies"
-    : "multiple available controls; specify --control explicitly");
-  return available[0]!;
 }
 
 /** Explicit controlled invocation. It never substitutes another Harness or retries unknown results. */

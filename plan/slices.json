@@ -75,6 +75,51 @@
       ],
       "implementation_state": "implemented",
       "verification_record": "docs/verification/catalog-control-2026-10-09.md"
+    },
+    {
+      "id": "public-session",
+      "status": "accepted",
+      "scope": "本机公共Session/历史/幂等/有界排队/public_context_rehydrate/静止Harness切换；无HTTP/模型资源管理/自动路由/未知重放",
+      "task_ids": [
+        "G004",
+        "G006",
+        "G008",
+        "G018",
+        "G026",
+        "G059",
+        "G060",
+        "G021",
+        "G028"
+      ],
+      "decision": "docs/decisions/0010-public-session-mvp.md",
+      "allowed_files": [
+        "src/contracts/session.ts",
+        "src/contexts/session/domain/state.ts",
+        "tests/unit/session-state.test.ts",
+        "src/contexts/session/domain/context.ts",
+        "tests/unit/session-context.test.ts",
+        "src/infrastructure/session/sqlite-store.ts",
+        "tests/integration/session-store.test.ts",
+        "tests/fixtures/session-store-peer.mjs",
+        "src/contexts/session/application/runtime.ts",
+        "tests/integration/session-runtime.test.ts",
+        "src/infrastructure/session/workspace-lease.ts",
+        "tests/integration/workspace-lease.test.ts",
+        "src/infrastructure/session/binding-factory.ts",
+        "src/cli/chat.ts",
+        "src/cli/sessions.ts",
+        "tests/integration/session-cli.test.ts",
+        "tests/fixtures/session-peer.mjs",
+        "tests/real/codex-session.real.ts",
+        "src/cli/session-application.ts",
+        "src/infrastructure/catalog/inventory-composition.ts",
+        "src/infrastructure/catalog/platform.ts",
+        "src/contexts/catalog/application/select-control.ts",
+        "src/cli/bounded-streams.ts",
+        "tests/integration/session-io.test.ts"
+      ],
+      "implementation_state": "implemented",
+      "verification_record": "docs/verification/public-session-2026-10-09.md"
     }
   ]
 }

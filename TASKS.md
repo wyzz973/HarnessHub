@@ -25,11 +25,11 @@
 | G001 | 建立精确可重复的应用工具链 | V001, V008 | G1 | in_progress |
 | G002 | 定义公共身份与错误值类型 | G001, C001 | G1 | planned |
 | G003 | 从冻结契约生成Harness能力类型 | G002, V002, V003, C002 | G1 | in_progress |
-| G004 | 从冻结契约生成Session命令类型 | G002, V005, C003 | G1 | planned |
+| G004 | 从冻结契约生成Session命令类型 | G002, V005, C003 | G1 | in_progress |
 | G005 | 从冻结契约生成执行事件类型 | G002, C004, C005 | G1 | planned |
-| G006 | 从冻结契约生成上下文类型 | G002, V004, C006 | G1 | planned |
+| G006 | 从冻结契约生成上下文类型 | G002, V004, C006 | G1 | in_progress |
 | G007 | 定义防腐Adapter端口与关闭责任 | G003, G005, G006, V002, V003, C008, G063 | G1 | in_progress |
-| G008 | 建立事务存储与编号迁移基础 | G004, G005, G006, C008 | G1 | planned |
+| G008 | 建立事务存储与编号迁移基础 | G004, G005, G006, C008 | G1 | in_progress |
 | G009 | 实现本机认证与Session作用域 | G002, G004, G008 | G1 | planned |
 | G010 | 实现作用域秘密引用解析 | G008, G009 | G1 | planned |
 | G011 | 登记Harness不可变revision | G003, G008, G009 | G1 | in_progress |
@@ -39,17 +39,17 @@
 | G015 | 移除Harness并保留历史引用 | G014, G008 | G1 | planned |
 | G016 | 登记Provider与模型资源 | G003, G010, C010 | G1 | planned |
 | G017 | 集中解析运行预算与上限 | G001, G005 | G1 | planned |
-| G018 | 创建持久公共Session | G004, G008, G009 | G1 | planned |
+| G018 | 创建持久公共Session | G004, G008, G009 | G1 | in_progress |
 | G019 | 持久接收消息与执行意图 | G018, G017 | G1 | planned |
 | G020 | 实现Session单执行权与有界队列 | G019, G017 | G1 | planned |
-| G021 | 过滤Harness候选硬约束 | G013, G016, G017, C007 | G1 | planned |
+| G021 | 过滤Harness候选硬约束 | G013, G016, G017, C007 | G1 | in_progress |
 | G022 | 按版本化规则确定性排序 | G021, V007 | G1 | planned |
 | G023 | 保存路由决策与准入复核 | G022, G008 | G1 | planned |
 | G024 | 构建有界公共ContextManifest | G006, G019, G017 | G1 | planned |
 | G025 | 验证交接水位与绑定新鲜度 | G024, G026 | G1 | planned |
-| G026 | 授予工作区单写租约 | G008, G017 | G1 | planned |
+| G026 | 授予工作区单写租约 | G008, G017 | G1 | in_progress |
 | G027 | 仲裁Attempt状态与唯一终态 | G005, G008, G017 | G1 | planned |
-| G028 | 按持久意图幂等派发执行 | G020, G023, G025, G027 | G1 | planned |
+| G028 | 按持久意图幂等派发执行 | G020, G023, G025, G027 | G1 | in_progress |
 | G029 | 实现POSIX进程监督与回收 | G007, G017, G027 | G1 | planned |
 | G030 | 实现Windows Job监督 | G007, G017, G027, V006 | G1 | deferred |
 | G031 | 实现ACP v1连接与有界framing | G007, G017, G029 | G1 | in_progress |
@@ -526,6 +526,8 @@
 - src/contracts/session.ts
 - tests/unit/g004.test.ts
 - tests/property/g004.test.ts
+- src/contexts/session/domain/state.ts
+- tests/unit/session-state.test.ts
 
 验收：
 - 语义区分且输入有界
@@ -566,6 +568,8 @@
 - src/contracts/context.ts
 - tests/unit/g006.test.ts
 - tests/security/g006.test.ts
+- src/contexts/session/domain/context.ts
+- tests/unit/session-context.test.ts
 
 验收：
 - manifest完整可核对
@@ -607,6 +611,9 @@
 - src/infrastructure/storage/unit-of-work.ts
 - src/infrastructure/storage/migrations/001-initial.sql
 - tests/integration/g008.test.ts
+- src/infrastructure/session/sqlite-store.ts
+- tests/integration/session-store.test.ts
+- tests/fixtures/session-store-peer.mjs
 
 验收：
 - 状态与迁移记录原子一致
@@ -892,6 +899,7 @@
 - src/contexts/selection/domain/filter-candidates.ts
 - tests/unit/g021.test.ts
 - tests/property/g021.test.ts
+- src/contexts/catalog/application/select-control.ts
 
 验收：
 - 仅满足全部约束者留下
@@ -994,6 +1002,8 @@
 - src/infrastructure/storage/workspace-repository.ts
 - tests/integration/g026.test.ts
 - tests/platform/g026.test.ts
+- src/infrastructure/session/workspace-lease.ts
+- tests/integration/workspace-lease.test.ts
 
 验收：
 - 同一时刻只有一个有效写者
@@ -1036,6 +1046,8 @@
 - src/contexts/execution/application/dispatch.ts
 - src/infrastructure/storage/outbox.ts
 - tests/integration/g028.test.ts
+- src/contexts/session/application/runtime.ts
+- tests/integration/session-runtime.test.ts
 
 验收：
 - 同一意图只取得一次有效执行权
@@ -1685,6 +1697,16 @@
 - src/cli/control.ts
 - src/cli/catalog.ts
 - tests/integration/control-cli.test.ts
+- src/infrastructure/session/binding-factory.ts
+- src/cli/chat.ts
+- src/cli/sessions.ts
+- tests/integration/session-cli.test.ts
+- tests/fixtures/session-peer.mjs
+- src/cli/session-application.ts
+- src/infrastructure/catalog/inventory-composition.ts
+- src/infrastructure/catalog/platform.ts
+- src/cli/bounded-streams.ts
+- tests/integration/session-io.test.ts
 
 验收：
 - 端口注入、owner lease和资源等待完整
@@ -1708,6 +1730,7 @@
 - tests/platform/g060.test.ts
 - tests/e2e/g060.test.ts
 - tests/real/codex-local-provider.real.ts
+- tests/real/codex-session.real.ts
 
 验收：
 - 记录通过/失败/未覆盖，不能称全协议认证

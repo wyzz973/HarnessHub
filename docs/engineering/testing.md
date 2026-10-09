@@ -1,6 +1,6 @@
 # 测试与验收策略
 
-状态：完整工程测试设计。目录/控制切片的实际测试与真实 Codex+模拟 Provider 验收见[当前验证](../verification/catalog-control-2026-10-09.md)。蓝图场景唯一来源为 plan/test-cases.json，生成的[矩阵](test-matrix.md)不作为运行结果；场景数量不等于覆盖已达成。
+状态：完整工程测试设计。当前[公共Session验证](../verification/public-session-2026-10-09.md)与[目录/控制基线](../verification/catalog-control-2026-10-09.md)分别记录实际运行。蓝图场景唯一来源为plan/test-cases.json，生成矩阵不作为运行结果；数量不等于覆盖已达成。
 
 ## 1. 分层证据
 

@@ -1,6 +1,6 @@
 # 设计就绪与开始开发的门禁
 
-更新：2026-10-09。当前按本机 MVP 切片推进。用户明确平台、发布与多发行版适配后置；[ADR-008](../decisions/0008-local-first-mvp.md)与[ADR-009](../decisions/0009-catalog-control-slice.md)认可 S01/S02 本机范围，目录与受控控制连接已实现。下文完整 G1 是后续公共 Session/完整执行工程地图，不能阻塞已冻结独立切片。
+更新：2026-10-09。当前按本机MVP推进。ADR-008/009及[ADR-010](../decisions/0010-public-session-mvp.md)认可S01–S04限定范围，目录/控制/公共Session/手动切换已实现。下文完整G1仍是未来完整模型/路由/HTTP等工程地图，不阻塞已冻结独立切片。
 
 当前范围见 plan/slices.json 与 [MVP](mvp.md)。切片认可只允许所列 owner 路径，不能自动解锁 Session/执行/切换；设计检查有合法范围与越界源码拒绝样例。
 
@@ -15,10 +15,10 @@
 | ID | 问题 | 关闭证据 | 当前 |
 |---|---|---|---|
 | D-01 | OpenCode ACP 与 Codex App Server 的实际接入版本、模型配置、权限与停止能力 | 固定 schema；受控 probe 报告与实际记录 | Codex/Gemini握手、Codex+本地模拟Provider通过；OpenCode本机SIGKILL未通过，真实模型/完整权限仍未验证 |
-| D-02 | 公共 Session/Turn/Attempt、ExecutionGrant、controlSeq 与消息/outbox 的精确 schema 和错误码 | 单一 schema、有效/无效样例、取消先于旧启动/控制重排场景与独立评审 | 设计建议，待冻结 |
-| D-03 | busy switch 默认 wait_current 还是 cancel_current，失败恢复与并发请求 | 场景评审、转换表、模型性质/竞态用例设计 | 建议 wait_current，待契约评审冻结 |
-| D-04 | ContextManifest 初版取材、大小/保留、原生绑定复用与水位规则 | 两个目标 Harness 的可导入材料、边界样例与能力报告 | 待验证 |
-| D-05 | 当前宿主的进程监督、owner 排他与 fencing | 在公共执行/持久写入切片前核对当前宿主；其他平台后置 | S02自有POSIX进程组/清理已测试；公共owner排他/fencing待S03验证 |
+| D-02 | 公共Session/Run/命令/日志与执行控制 | 本机切片单一schema、反例、事务/CAS/幂等与Owner验证 | 本机S03已实现；完整跨上下文outbox/模型账本仍未来 |
+| D-03 | busy switch模式与失败/并发 | FIFO wait_current、source IDs、目标失败不回退、barrier竞态 | ADR010本机已采纳实现，其他模式后续 |
+| D-04 | 公共上下文/大小/水位 | 完整有界已终结历史、未来输入拒绝、重开真实Codex验证 | public_context_rehydrate已实现，不是native_resume |
+| D-05 | 当前宿主监督、owner排他/fencing | 进程组/SQLite长期OS锁/代次/跨根workspace lease | 本机已验证；未知writer quarantine不自动修复；其他平台后置 |
 | D-06 | 当前宿主工具链及实际接入依赖 | 记录实际版本与锁文件，按使用到的依赖验证；不建立多发行版矩阵 | S01 工具链已建立；执行依赖后续逐项引入 |
 | D-07 | 自动路由的质量声明与基线 | G1 前冻结规则、评测方案与无质量证据时的文案限制；宣称质量择优前取得真实保留集结果与不确定性 | 方案待冻结，质量未实测 |
 

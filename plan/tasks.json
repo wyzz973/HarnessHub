@@ -903,7 +903,7 @@
       "title": "从冻结契约生成Session命令类型",
       "context": "contracts",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G002",
@@ -913,7 +913,9 @@
       "owns": [
         "src/contracts/session.ts",
         "tests/unit/g004.test.ts",
-        "tests/property/g004.test.ts"
+        "tests/property/g004.test.ts",
+        "src/contexts/session/domain/state.ts",
+        "tests/unit/session-state.test.ts"
       ],
       "requirements": [
         "R01",
@@ -941,7 +943,8 @@
         "G004-C01",
         "G004-C02",
         "G004-C03"
-      ]
+      ],
+      "active_slice": "public-session"
     },
     {
       "id": "G005",
@@ -992,7 +995,7 @@
       "title": "从冻结契约生成上下文类型",
       "context": "contracts",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G002",
@@ -1002,7 +1005,9 @@
       "owns": [
         "src/contracts/context.ts",
         "tests/unit/g006.test.ts",
-        "tests/security/g006.test.ts"
+        "tests/security/g006.test.ts",
+        "src/contexts/session/domain/context.ts",
+        "tests/unit/session-context.test.ts"
       ],
       "requirements": [
         "R08",
@@ -1026,7 +1031,8 @@
         "G006-C01",
         "G006-C02",
         "G006-C03"
-      ]
+      ],
+      "active_slice": "public-session"
     },
     {
       "id": "G007",
@@ -1081,7 +1087,7 @@
       "title": "建立事务存储与编号迁移基础",
       "context": "storage",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G004",
@@ -1093,7 +1099,10 @@
         "src/infrastructure/storage/database.ts",
         "src/infrastructure/storage/unit-of-work.ts",
         "src/infrastructure/storage/migrations/001-initial.sql",
-        "tests/integration/g008.test.ts"
+        "tests/integration/g008.test.ts",
+        "src/infrastructure/session/sqlite-store.ts",
+        "tests/integration/session-store.test.ts",
+        "tests/fixtures/session-store-peer.mjs"
       ],
       "requirements": [
         "R07",
@@ -1123,7 +1132,8 @@
         "G008-C03",
         "G008-C04",
         "G008-C05"
-      ]
+      ],
+      "active_slice": "public-session"
     },
     {
       "id": "G009",
@@ -1520,7 +1530,7 @@
       "title": "创建持久公共Session",
       "context": "interaction",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G004",
@@ -1556,7 +1566,8 @@
         "G018-C01",
         "G018-C02",
         "G018-C03"
-      ]
+      ],
+      "active_slice": "public-session"
     },
     {
       "id": "G019",
@@ -1652,7 +1663,7 @@
       "title": "过滤Harness候选硬约束",
       "context": "selection",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G013",
@@ -1663,7 +1674,8 @@
       "owns": [
         "src/contexts/selection/domain/filter-candidates.ts",
         "tests/unit/g021.test.ts",
-        "tests/property/g021.test.ts"
+        "tests/property/g021.test.ts",
+        "src/contexts/catalog/application/select-control.ts"
       ],
       "requirements": [
         "R04",
@@ -1689,7 +1701,8 @@
         "G021-C01",
         "G021-C02",
         "G021-C03"
-      ]
+      ],
+      "active_slice": "public-session"
     },
     {
       "id": "G022",
@@ -1860,7 +1873,7 @@
       "title": "授予工作区单写租约",
       "context": "execution",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G008",
@@ -1870,7 +1883,9 @@
         "src/contexts/execution/domain/workspace-lease.ts",
         "src/infrastructure/storage/workspace-repository.ts",
         "tests/integration/g026.test.ts",
-        "tests/platform/g026.test.ts"
+        "tests/platform/g026.test.ts",
+        "src/infrastructure/session/workspace-lease.ts",
+        "tests/integration/workspace-lease.test.ts"
       ],
       "requirements": [
         "R18",
@@ -1894,7 +1909,8 @@
         "G026-C01",
         "G026-C02",
         "G026-C03"
-      ]
+      ],
+      "active_slice": "public-session"
     },
     {
       "id": "G027",
@@ -1946,7 +1962,7 @@
       "title": "按持久意图幂等派发执行",
       "context": "execution",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G020",
@@ -1957,7 +1973,9 @@
       "owns": [
         "src/contexts/execution/application/dispatch.ts",
         "src/infrastructure/storage/outbox.ts",
-        "tests/integration/g028.test.ts"
+        "tests/integration/g028.test.ts",
+        "src/contexts/session/application/runtime.ts",
+        "tests/integration/session-runtime.test.ts"
       ],
       "requirements": [
         "R07",
@@ -1986,7 +2004,8 @@
         "G028-C02",
         "G028-C03",
         "G028-C04"
-      ]
+      ],
+      "active_slice": "public-session"
     },
     {
       "id": "G029",
@@ -3383,7 +3402,17 @@
         "tests/integration/g059.test.ts",
         "src/cli/control.ts",
         "src/cli/catalog.ts",
-        "tests/integration/control-cli.test.ts"
+        "tests/integration/control-cli.test.ts",
+        "src/infrastructure/session/binding-factory.ts",
+        "src/cli/chat.ts",
+        "src/cli/sessions.ts",
+        "tests/integration/session-cli.test.ts",
+        "tests/fixtures/session-peer.mjs",
+        "src/cli/session-application.ts",
+        "src/infrastructure/catalog/inventory-composition.ts",
+        "src/infrastructure/catalog/platform.ts",
+        "src/cli/bounded-streams.ts",
+        "tests/integration/session-io.test.ts"
       ],
       "requirements": [
         "R01",
@@ -3411,7 +3440,7 @@
         "G059-C02",
         "G059-C03"
       ],
-      "active_slice": "catalog-control"
+      "active_slice": "public-session"
     },
     {
       "id": "G060",
@@ -3429,7 +3458,8 @@
         "tests/protocol/g060.test.ts",
         "tests/platform/g060.test.ts",
         "tests/e2e/g060.test.ts",
-        "tests/real/codex-local-provider.real.ts"
+        "tests/real/codex-local-provider.real.ts",
+        "tests/real/codex-session.real.ts"
       ],
       "requirements": [
         "R04",
@@ -3463,7 +3493,7 @@
         "G060-C04",
         "G060-C05"
       ],
-      "active_slice": "catalog-control"
+      "active_slice": "public-session"
     },
     {
       "id": "G061",

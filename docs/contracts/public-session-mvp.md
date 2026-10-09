@@ -1,0 +1,21 @@
+# 公共Session本机切片
+
+状态：accepted，仅限ADR-010的S03/S04。
+
+身份分别为SessionId、RunId、MessageId、SwitchId、CommandId；存储格式schemaVersion=1，严格校验未知字段、关系与上限。公共Session保存workspace、私有配置引用、实际selection/epoch、命令幂等、Run与消息；不保存配置正文/凭据/原生内部状态。聚合最多256Run/1024命令、每输入64KiB、每输出1MiB、完整context1MiB、最多8排队输入；超限明确拒绝/失败，不裁剪历史。
+
+所有Store操作同步且事务内不await；commit通过expectedVersion CAS，聚合和非空事件同事务，seq连续。命令/历史append-only，已终结证据不能改写，关系/来源/水位/epoch严格校验。事件单条2MiB+4096，Session日志32MiB；读页1..100项/8MiB，超限不裁掉同一历史。Runtime同步回调提交control事实后才emit；发布失败不重跑，持久游标可查询。
+
+一个数据根一个OS owner，owner锁rollback journal+BEGIN EXCLUSIVE；业务库WAL/FULL。新owner须验证旧owner已不活跃或显式正常释放，不能因TTL过期接管。路径身份变化/事务丢失/generation不匹配fail-closed。workspace锁跨数据根按canonical路径键排他，只有关闭确认后清除held状态；异常遗留held不自动认作可执行。
+
+Runtime准入send/switch/cancel/close先查commandId和fingerprint；同请求返回原身份，不再派发。每turn一个active writer与新native conversation；fresh context包含所有已terminal Turn的public user/assistant及状态，再加本turn输入，排队的其他用户输入不能提前进入prompt。完整历史超预算在启动前拒绝。
+
+switch请求先记录pending/requestedSeq，默认wait_current并遵循FIFO准入：请求前queued保留原选择且先执行；请求后输入记录awaitingSwitchId，只有该切换effective才执行新目标，失败则明确未派发，不自动回退。确认旧结果/cleanup后，用请求前已终结Run限定sourceRunIds，目标fresh初始化/open/close后才effective、epoch+1并更新throughSeq。后来的输入即使被cancel成terminal也不进入旧水位；不同pending冲突。
+
+cancel queued持久tombstone后不启动；preparing在await后核对；active取消仅受理/发送回执。公共cancelled表示用户撤回且资源已收敛，竞态中backend仍可能completed，事实必须同时保留，不能以公共标签声称后端没执行。backend未结算或cleanup未知进入unknown/blocked；已completed后protocolFailure仍保留backend事实但阻断公共成功。
+
+重新打开Store，将preparing/running/settling记unknown/block，queued取消，pending switch失败，不重放。普通Session以同公共ID续接并public_context_rehydrate；closed/blocked不接收执行或切换。CLIEOF/:quit先停止准入，取消未执行队列并关闭active资源后释放owner锁；Session历史仍在。
+
+关闭等待在途create/validate（最多16个），验证finally清理完才允许释放Store。CLI stdin在readline之前2MiB原始字节守卫；stdout/每条记录与排队均16MiB限额，slow consumer明确停止而不无限缓存；退出时关闭自有输入handle。CLI consumer退出属于当前入口shutdown，不等于未来HTTP SSE订阅断开策略。
+
+本阶段没有HTTP/图形UI、原生checkpoint、自动最优路由、Provider选择/配置内容快照、任意工具权限覆盖或崩溃未知结果自动修复。configHome仅私有目录引用；内部模型内容由用户管理，Provider层后续冻结。默认控制执行30秒、初始化10秒；完整可配置运行预算后续扩展，不把字节预算当模型token窗口证明。

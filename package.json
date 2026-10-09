@@ -12,6 +12,9 @@
     "discover": "node dist/src/cli/discover.js",
     "probe": "node dist/src/cli/control.js probe",
     "run:harness": "node dist/src/cli/control.js run",
+    "chat": "node dist/src/cli/chat.js",
+    "sessions": "node dist/src/cli/sessions.js",
+    "test:real:session": "pnpm build && node --test dist/tests/real/codex-session.real.js",
     "test:real:codex": "pnpm build && node --test dist/tests/real/codex-local-provider.real.js",
     "check:design": "python3 tools/check_design.py"
   },

@@ -24,6 +24,11 @@ function emit(message) {
   } else process.stdout.write(bytes);
 }
 function answer(id, result) { emit({ id, result }); }
+function emitAtomicBatch(messages) {
+  // Submit both negative frames in one small write, rather than allowing a
+  // legitimate owner to begin closing between two separate writes.
+  process.stdout.write(messages.map(message => JSON.stringify(protocol === "acp-v1" ? { jsonrpc: "2.0", ...message } : message) + "\n").join(""));
+}
 function notification(method, params) { emit({ method, params }); }
 function acpOutput(sessionId = "session-fixture") {
   if (scenario === "chunks") {
@@ -113,9 +118,13 @@ lines.on("line", line => {
       if (scenario === "slow-start") setTimeout(() => answer(message.id, { turn: { id: `turn-${turn}`, status: "inProgress" } }), 50);
       return;
     }
+    if (scenario === "duplicate-complete") {
+      const terminal = protocol === "acp-v1" ? { id: promptId, result: { stopReason: "end_turn" } }
+        : { method: "turn/completed", params: { threadId: "thread-fixture", turn: { id: `turn-${turn}`, status: "completed" } } };
+      emitAtomicBatch([terminal, terminal]); return;
+    }
     if (!pendingPermission) finish();
     if (scenario === "early-complete") answer(message.id, { turn: { id: `turn-${turn}`, status: "inProgress" } });
-    if (scenario === "duplicate-complete") finish();
     return;
   }
   if (message.method === "session/cancel" || message.method === "turn/interrupt") {
