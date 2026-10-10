@@ -6213,6 +6213,56 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G061-N01",
+      "task": "G061",
+      "requirements": [
+        "R03",
+        "R04",
+        "R17",
+        "R22"
+      ],
+      "invariants": [],
+      "layer": "integration",
+      "scenario": "本机原生配置继承、模型发现/选择及认证HTTP投影",
+      "expected": "真实进程接收原配置与原生模型RPC；无prompt发现、错误模型拒绝、DTO无凭据、查询和取消边界",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/native-models.test.ts"
+    },
+    {
+      "id": "G008-N01",
+      "task": "G008",
+      "requirements": [
+        "R07",
+        "R14",
+        "R19"
+      ],
+      "invariants": [],
+      "layer": "integration",
+      "scenario": "v3到v4真实SQLite升级及历史水位不变",
+      "expected": "保留身份/消息/Run/命令/事件；新字段仅v4允许，损坏拒绝且不清库",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/session-store.test.ts"
+    },
+    {
+      "id": "G054-N01",
+      "task": "G054",
+      "requirements": [
+        "R01",
+        "R02",
+        "R09",
+        "R22"
+      ],
+      "invariants": [],
+      "layer": "e2e",
+      "scenario": "读取所选Harness原生模型、直接切换与快速连续改选",
+      "expected": "无Apply，最新意图最终生效，输入仅发往有效目标，同Session历史保留，小屏重试不竖排",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
     }
   ]
 }

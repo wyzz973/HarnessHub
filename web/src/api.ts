@@ -3,6 +3,7 @@ import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput
 import type { AuthSession, HarnessView, InstallationLogPage, SessionSummary, SessionView, SessionStreamFrame, WebState } from "../../src/contracts/web.js";
 import type { HarnessManagementView, InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
 import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
+import type { NativeModelCatalog } from "../../src/contracts/control.js";
 import { commandId, messageId, runId, switchId } from "../../src/contracts/session.js";
 
 export class ApiError extends Error {
@@ -35,12 +36,14 @@ function target(value: unknown): ProviderTarget {
 }
 function selection(value: unknown): HarnessSelection {
   const row = record(value);
-  return { harnessId: text(row.harnessId), controlId: text(row.controlId), ...(row.provider === undefined ? {} : { provider: target(row.provider) }) };
+  if (row.provider !== undefined && row.nativeModel !== undefined) return invalid();
+  return { harnessId: text(row.harnessId), controlId: text(row.controlId), ...(row.provider === undefined ? {} : { provider: target(row.provider) }),
+    ...(row.nativeModel === undefined ? {} : { nativeModel: text(row.nativeModel) }) };
 }
 function requestedSelection(value: unknown): SelectionRequest {
   const row = record(value);
   return { harnessId: text(row.harnessId), ...(row.controlId === undefined ? {} : { controlId: text(row.controlId) }),
-    ...(row.provider === undefined ? {} : { provider: row.provider === null ? null : target(row.provider) }) };
+    ...(row.provider === undefined ? {} : { provider: row.provider === null ? null : target(row.provider) }), ...(row.nativeModel === undefined ? {} : { nativeModel: text(row.nativeModel) }) };
 }
 function publicError(value: unknown): { code: string; message: string } | null {
   if (value === null) return null;
@@ -86,7 +89,8 @@ function decodeRun(value: unknown): PublicRun {
   return { id: runId(row.id), commandId: commandId(row.commandId), input: text(row.input), userMessageId: messageId(row.userMessageId),
     assistantMessageId: messageId(row.assistantMessageId), selection: selection(row.selection), epoch: number(row.epoch),
     status: choice(row.status, RUN_STATES), cancelRequested: bool(row.cancelRequested), contextThroughSeq: number(row.contextThroughSeq),
-    sourceRunIds: list(row.sourceRunIds, runId, 256), backend: backend === null ? null : { status: choice(backend.status, ["completed", "cancelled", "failed"]), reason: text(backend.reason) },
+    sourceRunIds: list(row.sourceRunIds, runId, 256), backend: backend === null ? null : { status: choice(backend.status, ["completed", "cancelled", "failed"]), reason: text(backend.reason),
+      ...(backend.error === undefined ? {} : { error: publicError(backend.error) ?? invalid() }) },
     cleanup: cleanup === null ? null : { closed: true, exitCode: nullableNumber(cleanup.exitCode), signal: nullableText(cleanup.signal), protocolFailure: publicError(cleanup.protocolFailure) },
     error: publicError(row.error), stopRequested: bool(row.stopRequested), awaitingSwitchId: row.awaitingSwitchId === null ? null : switchId(row.awaitingSwitchId) };
 }
@@ -170,6 +174,14 @@ export class GatewayApi {
     pageBootstrapToken = null;
   }
   state(signal?: AbortSignal): Promise<WebState> { return this.request("/state", "GET", undefined, decodeState, signal); }
+  nativeModels(harness: string, control: string, workspace: string, signal: AbortSignal): Promise<NativeModelCatalog> {
+    const query = new URLSearchParams({ controlId: control, workspace });
+    return this.request(`/harnesses/${encodeURIComponent(harness)}/models?${query}`, "GET", undefined, value => {
+      const row = record(value), models = list(row.models, value => { const model = record(value); return { id: text(model.id), name: text(model.name) }; }, 4096);
+      if (new Set(models.map(model => model.id)).size !== models.length) return invalid();
+      return { models, defaultModel: nullableText(row.defaultModel), authentication: choice(row.authentication, ["ready", "missing", "unknown"]), canSelect: bool(row.canSelect) };
+    }, signal);
+  }
   session(id: string, signal?: AbortSignal): Promise<SessionView> { return this.request(`/sessions/${encodeURIComponent(id)}`, "GET", undefined, decodeSession, signal); }
   /** Owns one cancellable fact stream; reconnecting never submits a conversation command. */
   async streamSession(id: string, afterSeq: number, signal: AbortSignal, onFrame: (frame: SessionStreamFrame) => void): Promise<void> {
@@ -284,6 +296,7 @@ export function errorMessage(error: unknown): string {
 export function failureMessage(failure: { readonly code: string; readonly message: string }): string {
   const labels: Readonly<Record<string, string>> = {
     GATEWAY_AUTH_REQUIRED: "这个 Harness 尚未配置 Gateway 认证。请补充连接配置，或选择另一个 Harness 继续。",
+    NATIVE_CONFIGURATION_INVALID: "本机配置与这个 Harness 的安装版本不兼容。请使用兼容的本机版本，或选择其他 Harness 继续。",
     PROCESS_EXITED: "Harness 提前退出了。历史已保留，可以重试或选择其他 Harness。",
     REMOTE_ERROR: "Harness 拒绝了这次请求。请检查连接配置，或选择其他 Harness。",
     SWITCH_NOT_EFFECTIVE: "这条消息尚未执行，因为选择切换失败。重新选择后，可明确重发这条消息。",

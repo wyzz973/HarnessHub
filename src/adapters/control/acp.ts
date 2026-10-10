@@ -1,7 +1,7 @@
 import { isAbsolute } from "node:path";
 import { nativeConversationId, type BackendResult, type CleanupEvidence, type ControlEvent,
   type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl,
-  type NativeConversationId, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
+  type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
 import { ControlError, errorFrom, JsonRpcProcess, object, string, text, type RpcRequest } from "../../infrastructure/control/json-rpc-process.js";
 
 interface ActivePrompt {
@@ -22,6 +22,9 @@ export class AcpControl implements HarnessControl {
   private opening = false;
   private active: ActivePrompt | null = null;
   private failure: Error | null = null;
+  private catalog: NativeModelCatalog = { models: [], defaultModel: null, authentication: "unknown", canSelect: false };
+  private modelConfigId: string | null = null;
+  private legacyModels = false;
 
   constructor(launch: ControlLaunch, private readonly options: ControlOptions) {
     if (launch.protocol !== "acp-v1") throw new ControlError("INVALID_INPUT", "ACP control requires an ACP launch");
@@ -55,7 +58,41 @@ export class AcpControl implements HarnessControl {
       return observation;
     } catch (error) { this.rpc.abort(errorFrom(error)); throw error; }
   }
-  async open(cwd: string): Promise<NativeConversationId> {
+  private readModels(response: Record<string, unknown>): void {
+    if (response.configOptions !== undefined) {
+      if (!Array.isArray(response.configOptions) || response.configOptions.length > 128) throw new ControlError("INVALID_PROTOCOL", "invalid ACP configuration options");
+      for (const value of response.configOptions) {
+        const option = object(value, "ACP config option");
+        if (option.category !== "model" || option.type !== "select") continue;
+        const id = string(option.id, "model config identity"), selected = string(option.currentValue, "current model", 1024);
+        if (!Array.isArray(option.options)) throw new ControlError("INVALID_PROTOCOL", "model options must be an array");
+        const models: { id: string; name: string }[] = [];
+        for (const value of option.options) {
+          const item = object(value, "model option"), options = item.options === undefined ? [item] : item.options;
+          if (!Array.isArray(options)) throw new ControlError("INVALID_PROTOCOL", "model group must contain options");
+          for (const value of options) { const model = object(value, "model value"); models.push({ id: string(model.value, "model value", 1024), name: string(model.name, "model name", 1024) }); }
+          if (models.length > 4096) throw new ControlError("MODEL_LIMIT", "native models exceed catalog budget");
+        }
+        if (new Set(models.map(row => row.id)).size !== models.length || !models.some(row => row.id === selected)) throw new ControlError("INVALID_PROTOCOL", "ACP models have duplicate or unknown default values");
+        this.modelConfigId = id; this.legacyModels = false;
+        this.catalog = { models, defaultModel: selected, authentication: "unknown", canSelect: true }; return;
+      }
+    }
+    if (response.models !== undefined) {
+      const value = object(response.models, "legacy ACP models");
+      if (!Array.isArray(value.availableModels) || value.availableModels.length > 4096) throw new ControlError("INVALID_PROTOCOL", "invalid ACP models");
+      const models = value.availableModels.map(value => { const row = object(value, "ACP model"); return { id: string(row.modelId, "model id", 1024), name: string(row.name, "model name", 1024) }; });
+      const selected = string(value.currentModelId, "current model", 1024);
+      if (new Set(models.map(row => row.id)).size !== models.length) throw new ControlError("INVALID_PROTOCOL", "ACP model identity mismatch");
+      // Installed Gemini can report a configured model outside its suggested catalog.
+      // Retain the peer's actual current model; never invent a replacement default.
+      if (!models.some(row => row.id === selected)) models.push({ id: selected, name: selected });
+      if (models.length > 4096) throw new ControlError("MODEL_LIMIT", "native models exceed catalog budget");
+      this.legacyModels = true; this.catalog = { models, defaultModel: selected, authentication: "unknown", canSelect: models.length > 0 };
+    }
+  }
+  async models(): Promise<NativeModelCatalog> { this.assertInitialized(); if (this.conversation === null) throw new ControlError("INVALID_STATE", "ACP model catalog requires a session"); return this.catalog; }
+  async open(cwd: string, model?: string): Promise<NativeConversationId> {
     this.assertInitialized();
     if (!isAbsolute(cwd)) throw new ControlError("INVALID_INPUT", "conversation cwd must be absolute");
     if (this.conversation !== null || this.opening) throw new ControlError("INVALID_STATE", "this connection already owns a conversation");
@@ -63,6 +100,18 @@ export class AcpControl implements HarnessControl {
     try {
       const response = object(await this.rpc.request("session/new", { cwd, mcpServers: [] }), "session/new result");
       this.conversation = nativeConversationId(response.sessionId);
+      this.readModels(response);
+      if (model !== undefined) {
+        if (!this.catalog.canSelect || !this.catalog.models.some(row => row.id === model)) throw new ControlError("MODEL_UNAVAILABLE", "selected model is unavailable in this Harness");
+        if (this.modelConfigId !== null) {
+          const selected = object(await this.rpc.request("session/set_config_option", { sessionId: this.conversation, configId: this.modelConfigId, value: model }), "model selection result");
+          this.readModels(selected);
+          if (this.catalog.defaultModel !== model) throw new ControlError("MODEL_MISMATCH", "Harness did not apply the selected model");
+        } else if (this.legacyModels) {
+          await this.rpc.request("session/set_model", { sessionId: this.conversation, modelId: model });
+          this.catalog = { ...this.catalog, defaultModel: model };
+        }
+      }
       return this.conversation;
     } catch (error) { this.rpc.abort(errorFrom(error)); throw error; }
     finally { this.opening = false; }
@@ -120,6 +169,7 @@ export class AcpControl implements HarnessControl {
     const params = object(raw, "ACP notification params"); this.scope(params);
     const update = object(params.update, "ACP session update");
     const kind = string(update.sessionUpdate, "ACP update kind");
+    if (kind === "config_option_update") { this.readModels(update); return; }
     if (metadataUpdates.has(kind)) return;
     const active = this.active;
     if (!active || active.settled) throw new ControlError("INVALID_STATE", "ACP output arrived without an active prompt");

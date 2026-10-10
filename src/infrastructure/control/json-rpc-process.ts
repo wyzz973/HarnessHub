@@ -149,6 +149,8 @@ export class JsonRpcProcess {
   }
   private exitFailure(status: number | NodeJS.Signals | null): ControlError {
     // Classify known startup failures without forwarding arbitrary stderr or credentials.
+    if (/config(?:uration)? is invalid/iu.test(this.diagnostics))
+      return new ControlError("NATIVE_CONFIGURATION_INVALID", "Harness rejected its local configuration; use a compatible installed version");
     if (/unauthorized:\s*gateway token missing|gateway auth.*token.*missing/iu.test(this.diagnostics))
       return new ControlError("GATEWAY_AUTH_REQUIRED", "Harness Gateway authentication is required; configure its connection or choose another Harness");
     return new ControlError("PROCESS_EXITED", `process exited before connection close (${status})`);

@@ -14,6 +14,7 @@ import { prepareConfiguration } from "../infrastructure/session/binding-factory.
 import { supportedProviderProtocols } from "../contexts/provider/domain/provider.js";
 import { observedPackageVersion } from "../infrastructure/management/system-version.js";
 import { SessionStreamError, SessionStreamHub } from "./session-stream.js";
+import { HarnessModels } from "./harness-models.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -55,16 +56,18 @@ function cursor(value: string | null, fallback: number, minimum: number, maximum
   return integer(Number(value), minimum, maximum, "cursor or limit");
 }
 function select(value: unknown): SelectionRequest {
-  const item = record(value, ["harnessId", "controlId", "provider"], ["harnessId"]);
+  const item = record(value, ["harnessId", "controlId", "provider", "nativeModel"], ["harnessId"]);
   if (typeof item.harnessId !== "string" || !/^[a-z][a-z0-9-]{0,95}$/u.test(item.harnessId) ||
       (item.controlId !== undefined && (typeof item.controlId !== "string" || !/^[a-z][a-z0-9-]{0,95}$/u.test(item.controlId)))) throw new HttpError(400, "INVALID_INPUT", "Invalid Harness selection");
   // The domain parser validates the Provider target; this boundary never casts it into a target.
   if (item.provider !== undefined && item.provider !== null) {
+    if (item.nativeModel !== undefined) throw new HttpError(400, "INVALID_INPUT", "Native model and managed Provider are mutually exclusive");
     const target = record(item.provider, ["providerId", "revision", "model"], ["providerId", "revision", "model"]);
     const providerId = text(target.providerId, "Provider identity", 96), revision = integer(target.revision, 1, Number.MAX_SAFE_INTEGER, "Provider revision"), model = text(target.model, "model", 256);
     return { harnessId: item.harnessId, ...(item.controlId === undefined ? {} : { controlId: item.controlId }), provider: { providerId, revision, model } };
   }
-  return { harnessId: item.harnessId, ...(item.controlId === undefined ? {} : { controlId: item.controlId }), ...(item.provider === null ? { provider: null } : {}) };
+  return { harnessId: item.harnessId, ...(item.controlId === undefined ? {} : { controlId: item.controlId }), ...(item.provider === null ? { provider: null } : {}),
+    ...(item.nativeModel === undefined ? {} : { nativeModel: text(item.nativeModel, "native model", 1024) }) };
 }
 function equal(left: string, right: string): boolean {
   const a = Buffer.from(left), b = Buffer.from(right);
@@ -175,6 +178,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     process.stderr.write("HarnessGateway: SESSION_STREAM_READ_FAILED (" + app.providers.redact(fault.code).slice(0, 128) + ")\n");
   });
   app = (options.application ?? composeApplication)(options.root, event => streams.publish(event));
+  const nativeModels = new HarnessModels(app.factory);
   let origin = "", host = "", running = 0, stopping = false, closing: Promise<void> | null = null;
   const bootstrap = randomBytes(32).toString("hex"), bootstrapExpires = Date.now() + BOOTSTRAP_MS;
   let bootstrapAvailable = true;
@@ -222,7 +226,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     const receivedOrigin = request.headers.origin;
     if (receivedOrigin !== undefined && receivedOrigin !== origin) throw new HttpError(403, "ORIGIN_REJECTED", "Cross-origin request rejected");
     if (request.headers["sec-fetch-site"] === "cross-site") throw new HttpError(403, "ORIGIN_REJECTED", "Cross-site request rejected");
-    if (!request.url || !request.url.startsWith("/") || request.url.startsWith("//") || request.url.length > 4096 || /%(?:2f|5c|00)|\\/iu.test(request.url)) throw new HttpError(400, "INVALID_PATH", "Invalid request path");
+    if (!request.url || !request.url.startsWith("/") || request.url.startsWith("//") || request.url.length > 4096 || /%(?:2f|5c|00)|\\/iu.test(request.url.split("?", 1)[0]!)) throw new HttpError(400, "INVALID_PATH", "Invalid request path");
     const url = new URL(request.url, origin), path = url.pathname, method = request.method ?? "GET";
     if (!path.startsWith("/api/")) {
       if (method !== "GET" && method !== "HEAD") throw new HttpError(405, "METHOD_NOT_ALLOWED", "Method not allowed");
@@ -248,6 +252,23 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       queries(url, []); const output: WebState = { workspace: options.configuration.workspace, providers: app.providers.list(), harnesses: await rescan(), sessions: app.store.list(100).map(summary), jobs: app.management.listJobs().slice(0, 50) }; json(response, 200, output); return;
     }
     if (path === "/api/v1/harnesses" && method === "GET") { queries(url, []); json(response, 200, await rescan()); return; }
+    const modelsRoute = /^\/api\/v1\/harnesses\/([a-z][a-z0-9-]{0,95})\/models$/u.exec(path);
+    if (modelsRoute && method === "GET") {
+      queries(url, ["controlId", "workspace"]);
+      const controlId = url.searchParams.get("controlId"), workspace = url.searchParams.get("workspace");
+      const configuration = workspace === null ? options.configuration : await prepareConfiguration({ workspace,
+        ...(options.configuration.configHome === null ? {} : { configHome: options.configuration.configHome }),
+        ...(options.configuration.manifestPath === null ? {} : { manifestPath: options.configuration.manifestPath }),
+        packageRoots: options.configuration.packageRoots, searchDirs: options.configuration.searchDirs, pathOnly: options.configuration.pathOnly });
+      const selected = select({ harnessId: modelsRoute[1], ...(controlId === null ? {} : { controlId }) });
+      try { json(response, 200, await nativeModels.read(selected, configuration)); }
+      catch (error) {
+        const code = error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "MODEL_DISCOVERY_FAILED";
+        if (code === "GATEWAY_AUTH_REQUIRED" || code === "HARNESS_AUTH_REQUIRED") { json(response, 200, { models: [], defaultModel: null, authentication: "missing", canSelect: false }); return; }
+        throw new HttpError(502, code, "无法读取这个 Harness 的本机模型列表。请检查它的登录和配置后刷新。");
+      }
+      return;
+    }
     if (path === "/api/v1/harnesses/rescan" && method === "POST") { queries(url, []); record(await body(request), []); json(response, 200, await rescan()); return; }
     if (path === "/api/v1/harnesses/check-updates" && method === "POST") {
       queries(url, []); const input = record(await body(request), ["harnessIds"]);
@@ -366,6 +387,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       server.closeIdleConnections();
       let failure: unknown = streams.readFailure?.error ?? streams.diagnosticFailure;
       try { await app.runtime.close(); } catch (error) { failure = error; }
+      try { await nativeModels.close(); } catch (error) { failure ??= error; }
       try { await listener; } catch (error) { failure ??= error; } finally { clearTimeout(deadline); }
       try { await app.management.shutdown(); } catch (error) { failure ??= error; }
       try { await app.providers.shutdown(); } catch (error) { failure ??= error; }
@@ -384,6 +406,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     return { url: origin + "/#token=" + bootstrap, close };
   } catch (error) {
     streams.close();
+    await nativeModels.close();
     try { await app.runtime.close(); } finally { try { await app.management.shutdown(); } finally { try { await app.providers.shutdown(); } finally { app.store.close(); } } }
     throw error;
   }

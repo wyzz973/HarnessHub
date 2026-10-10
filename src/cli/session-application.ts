@@ -1,3 +1,4 @@
+import type { NativeEnvironment } from "../infrastructure/session/native-environment.js";
 import { LocalHarnessManagement, type ManagementOptions } from "../infrastructure/management/service.js";
 import { LocalProviderService } from "../infrastructure/provider/service.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -35,7 +36,7 @@ function workspaceLockRoot(): string {
   if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== uid || (info.mode & 0o077) !== 0) throw new SessionError("INVALID_STORAGE", "workspace lock namespace is not privately owned");
   return path;
 }
-export function application(root: string, publish: (event: SessionEvent) => void, options: { readonly management?: Pick<ManagementOptions, "metadata" | "installer" | "recipes"> } = {}): { readonly management: LocalHarnessManagement; readonly providers: LocalProviderService; readonly store: SqliteSessionStore; readonly factory: DirectorySessionBindingFactory; readonly runtime: SessionRuntime } {
+export function application(root: string, publish: (event: SessionEvent) => void, options: { readonly management?: Pick<ManagementOptions, "metadata" | "installer" | "recipes">; readonly nativeEnvironment?: NativeEnvironment } = {}): { readonly management: LocalHarnessManagement; readonly providers: LocalProviderService; readonly store: SqliteSessionStore; readonly factory: DirectorySessionBindingFactory; readonly runtime: SessionRuntime } {
   const store = new SqliteSessionStore(root);
   let providers: LocalProviderService | undefined;
   let management: LocalHarnessManagement | undefined;
@@ -43,7 +44,7 @@ export function application(root: string, publish: (event: SessionEvent) => void
     const workspaces = new SqliteWorkspaceLeaseProvider(workspaceLockRoot());
     providers = new LocalProviderService(root, () => store.assertOwner());
     management = new LocalHarnessManagement(root, { ...options.management, assertOwner: () => store.assertOwner(), ownerGeneration: store.ownerGeneration, redactor: text => providers!.redact(text) });
-    const factory = new DirectorySessionBindingFactory(workspaces, () => store.assertOwner(), providers, management);
+    const factory = new DirectorySessionBindingFactory(workspaces, () => store.assertOwner(), providers, management, options.nativeEnvironment);
     const runtime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: hash, publish });
     return { store, factory, runtime, providers, management };
   } catch (error) { try { management?.close(); } finally { try { providers?.close(); } finally { store.close(); } } throw error; }

@@ -10,6 +10,8 @@ v1 描述继续通过原解析器校验，再显式转换；v1 binary/adapter ov
 
 控制端口统一 initialize/open/startText/close；ControlRun.result 与 requestStop 分开。NativeConversationId 是独立品牌类型，只属于该连接。ACP初始化只声明空客户端能力；Codex read-only/untrusted/ephemeral。权限默认拒绝并输出事件；没有实现 fs/terminal 注入。不读/改用户全局配置；CLI通过受控私有配置运行真实探测。
 
+上述空私有native默认已由ADR-015覆盖：所有接入程序使用本机既有配置和登录，配置只读，模型通过会话RPC参数覆盖。显式私有fixture/config-home仍保持所属来源；系统/代理/目录变量与所选Harness前缀及配置显式引用的凭据变量传入，其他宿主秘密不转发。Codex读取实际model/list/config/read/account/read，ACP读取实际模型配置项；可选models()是只读目录端口，open(cwd,nativeModel)验证并应用。没有声明的模型能力明确不支持，不猜接口。
+
 ACP原 prompt.stopReason 和Codex匹配turn/completed是后端结果；spawn成功、exit0、interrupt ACK均不是执行终态。单连接只有一个active run；未知/wrong身份事件拒绝，不重跑。close必须可等待、幂等、限期升级停止、清理自有进程组；回调抛错也释放资源。帧2MiB、连接双向累计wire16MiB、诊断64KiB；请求、执行和关闭期限有界。
 
 CleanupEvidence.closed 只表资源确认关闭，protocolFailure独立保留连接故障。收到completed后再遇重复终态不能把故障抹掉，CLI必须非零。清理结束前保留SIGINT/SIGTERM守护；未确认资源关闭时保留自有临时目录，不删除活跃路径。CLI不继承宿主秘密，描述中的HOME/XDG/CODEX_HOME等不能覆盖隔离配置。

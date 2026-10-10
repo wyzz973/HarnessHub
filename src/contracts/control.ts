@@ -36,6 +36,13 @@ export type ControlEvent =
 export interface BackendResult {
   readonly status: "completed" | "cancelled" | "failed";
   readonly reason: string;
+  readonly error?: { readonly code: string; readonly message: string };
+}
+export interface NativeModelCatalog {
+  readonly models: readonly { readonly id: string; readonly name: string }[];
+  readonly defaultModel: string | null;
+  readonly authentication: "ready" | "missing" | "unknown";
+  readonly canSelect: boolean;
 }
 export interface StopRequestReceipt { readonly requested: true }
 export interface CleanupEvidence {
@@ -53,7 +60,8 @@ export interface ControlRun {
 /** One native conversation and active run per connection; all resources are owned by close(). */
 export interface HarnessControl {
   initialize(): Promise<ProtocolObservation>;
-  open(cwd: string): Promise<NativeConversationId>;
+  open(cwd: string, model?: string): Promise<NativeConversationId>;
+  models?(): Promise<NativeModelCatalog>;
   startText(id: NativeConversationId, text: string, onEvent: (event: ControlEvent) => void): Promise<ControlRun>;
   close(): Promise<CleanupEvidence>;
 }

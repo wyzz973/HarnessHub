@@ -623,7 +623,7 @@
 - 只有一个取得业务写入权
 - 恢复数据与outbox一致
 
-场景：G008-C01, G008-C02, G008-C03, G008-C04, G008-C05, G008-P01, G008-P02, G008-R01。
+场景：G008-C01, G008-C02, G008-C03, G008-C04, G008-C05, G008-P01, G008-P02, G008-R01, G008-N01。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1025,6 +1025,7 @@
 - tests/platform/g026.test.ts
 - src/infrastructure/session/workspace-lease.ts
 - tests/integration/workspace-lease.test.ts
+- src/infrastructure/session/native-environment.ts
 
 验收：
 - 同一时刻只有一个有效写者
@@ -1537,6 +1538,7 @@
 - src/cli/web.ts
 - tests/integration/web-server.test.ts
 - src/web/session-stream.ts
+- src/web/harness-models.ts
 
 验收：
 - 复用应用语义，202只表受理
@@ -1650,7 +1652,7 @@
 - 不提前展示新Harness已生效
 - 可操作且不持有独立业务状态
 
-场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01。
+场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1823,13 +1825,14 @@
 - tests/integration/web-session-stream.test.ts
 - tests/unit/web-session-stream.test.ts
 - tests/unit/web-api.test.ts
+- tests/integration/native-models.test.ts
 
 验收：
 - 操作复用Catalog服务且管理身份正确
 - 明确拒绝或幂等，不绕过排空规则
 - 旧执行保留版本，新准入遵循新状态
 
-场景：G061-C01, G061-C02, G061-C03, G061-M01, G061-M02, G061-M03, G061-S01, G061-S02, G061-S03。
+场景：G061-C01, G061-C02, G061-C03, G061-M01, G061-M02, G061-M03, G061-S01, G061-S02, G061-S03, G061-N01。
 
 禁止范围：不修改其他任务所有权文件；契约冻结不表示应用实现或真实链路验收。
 

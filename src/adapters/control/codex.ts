@@ -1,7 +1,7 @@
 import { isAbsolute } from "node:path";
 import { nativeConversationId, type BackendResult, type CleanupEvidence, type ControlEvent,
   type ControlLaunch, type ControlOptions, type ControlRun, type HarnessControl,
-  type NativeConversationId, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
+  type NativeConversationId, type NativeModelCatalog, type ProtocolObservation, type StopRequestReceipt } from "../../contracts/control.js";
 import { ControlError, errorFrom, JsonRpcProcess, object, string, text, type RpcRequest } from "../../infrastructure/control/json-rpc-process.js";
 
 interface ActiveTurn {
@@ -62,14 +62,43 @@ export class CodexControl implements HarnessControl {
         authenticationMethods: [], capabilities: { userAgent, experimentalApi: false } };
     } catch (error) { this.rpc.abort(errorFrom(error)); throw error; }
   }
-  async open(cwd: string): Promise<NativeConversationId> {
+  async models(): Promise<NativeModelCatalog> {
+    this.assertInitialized();
+    const config = object(await this.rpc.request("config/read", { includeLayers: false, cwd: this.options.cwd }), "native configuration");
+    const configured = object(config.config, "effective native configuration");
+    const account = object(await this.rpc.request("account/read", { refreshToken: false }), "native account status");
+    const models: { id: string; name: string }[] = [], seen = new Set<string>();
+    let cursor: string | undefined;
+    for (let page = 0; page < 64; page++) {
+      const response = object(await this.rpc.request("model/list", { limit: 100, includeHidden: false, ...(cursor === undefined ? {} : { cursor }) }), "native models");
+      if (!Array.isArray(response.data) || response.data.length > 100) throw new ControlError("INVALID_PROTOCOL", "invalid native model page");
+      for (const value of response.data) {
+        const row = object(value, "native model"), id = string(row.model, "model", 1024), name = string(row.displayName, "model name", 1024);
+        if (seen.has(id)) throw new ControlError("INVALID_PROTOCOL", "duplicate native model");
+        seen.add(id); models.push({ id, name });
+        if (models.length > 4095) throw new ControlError("MODEL_LIMIT", "native model catalog exceeds its bounds");
+      }
+      if (response.nextCursor === null || response.nextCursor === undefined) break;
+      const next = string(response.nextCursor, "model cursor", 1024);
+      if (next === cursor || models.length >= 4096 || page === 63) throw new ControlError("MODEL_LIMIT", "native model catalog exceeds its bounds");
+      cursor = next;
+    }
+    const defaultModel = configured.model == null ? null : string(configured.model, "configured model", 1024);
+    if (defaultModel !== null && !seen.has(defaultModel)) models.unshift({ id: defaultModel, name: defaultModel });
+    return { models, defaultModel, canSelect: models.length > 0, authentication: account.requiresOpenaiAuth === false || account.account != null ? "ready" : account.requiresOpenaiAuth === true ? "missing" : "unknown" };
+  }
+  async open(cwd: string, model?: string): Promise<NativeConversationId> {
     this.assertInitialized();
     if (!isAbsolute(cwd)) throw new ControlError("INVALID_INPUT", "conversation cwd must be absolute");
     if (this.conversation || this.opening) throw new ControlError("INVALID_STATE", "this connection already owns a thread");
     this.opening = true;
     try {
+      if (model !== undefined) {
+        const catalog = await this.models();
+        if (!catalog.models.some(row => row.id === model)) throw new ControlError("MODEL_UNAVAILABLE", "selected model is not in this Harness native catalog");
+      }
       const response = object(await this.rpc.request("thread/start", {
-        cwd, sandbox: "read-only", approvalPolicy: "untrusted", ephemeral: true,
+        cwd, sandbox: "read-only", approvalPolicy: "untrusted", ephemeral: true, ...(model === undefined ? {} : { model }),
       }), "thread/start result");
       const thread = object(response.thread, "Codex thread");
       const received = nativeConversationId(thread.id);
@@ -167,7 +196,14 @@ export class CodexControl implements HarnessControl {
       switch (status) {
         case "completed": result = { status: "completed", reason: "completed" }; break;
         case "interrupted": result = { status: "cancelled", reason: "interrupted" }; break;
-        case "failed": result = { status: "failed", reason: "failed" }; break;
+        case "failed": {
+          const error = turn.error == null ? {} : object(turn.error, "native turn error");
+          const message = typeof error.message === "string" ? error.message : "";
+          const auth = /unauthorized|not logged|authentication|api key|401/iu.test(message);
+          const rate = /rate limit|quota|429/iu.test(message);
+          result = { status: "failed", reason: "failed", error: { code: auth ? "HARNESS_AUTH_REQUIRED" : rate ? "MODEL_RATE_LIMIT" : "MODEL_REQUEST_FAILED",
+            message: auth ? "本机 Codex 登录或模型认证不可用，请检查它的登录状态。" : rate ? "模型服务当前达到额度或调用限制，请稍后再试。" : "Codex 的模型请求未完成，请检查本机配置或更换模型。" } }; break;
+        }
         default: throw new ControlError("INVALID_PROTOCOL", "turn/completed contains a nonterminal status");
       }
       this.settleTurn(active); active.resolve(result); return;

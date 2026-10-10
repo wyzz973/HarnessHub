@@ -14,6 +14,8 @@
 
 [ADR-014](0014-conversation-failure-recovery.md)按用户审查要求区分连接失败/执行未知/清理未知，保留对话与草稿，加入显式恢复和结束确认；存储v3保留历史与未知事实，未知任务不自动重跑。
 
+[ADR-015](0015-native-harness-models-and-switching.md)按用户明确要求沿用所有本机Harness既有配置/登录，读取原生模型，并直接切换选择；覆盖先前native空HOME默认，追加v4格式。
+
 | ADR | 建议 | 替代/代价 | 关闭条件 |
 |---|---|---|---|
 | ADR-001 | 公共 Session 与原生 BackendBinding 分离 | 直接暴露原生 ID 简单，但锁定 Harness，无法承载公共连续性 | D-02 与 D-04 冻结 |

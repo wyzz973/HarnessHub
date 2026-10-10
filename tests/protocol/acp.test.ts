@@ -137,3 +137,19 @@ test("an explicit ACP prompt rejection is a failed backend result with a cleanly
     assert.equal((await driver.close()).protocolFailure, null);
   } finally { await driver.close(); }
 });
+
+test("ACP preserves an installed peer's configured model outside its suggested catalog", async () => {
+  const driver = control("legacy-configured-model");
+  try {
+    await driver.initialize(); const id = await driver.open(process.cwd(), "configured-model");
+    const catalog = await driver.models();
+    assert.equal(catalog.defaultModel, "configured-model"); assert.equal(catalog.canSelect, true);
+    assert.deepEqual(catalog.models.map(row => row.id), ["suggested-model", "configured-model"]);
+    assert.equal((await (await driver.startText(id, "keep the configured model", () => {})).result).status, "completed");
+  } finally { assert.equal((await driver.close()).closed, true); }
+});
+test("ACP model discovery still rejects duplicate model identities", async () => {
+  const driver = control("duplicate-models");
+  try { await driver.initialize(); await assert.rejects(driver.open(process.cwd()), /identity mismatch/); }
+  finally { assert.equal((await driver.close()).closed, true); }
+});

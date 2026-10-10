@@ -26,8 +26,8 @@ export function commandId(value: unknown): CommandId {
 export class SessionError extends Error {
   constructor(readonly code: string, message: string) { super(message); this.name = "SessionError"; }
 }
-export interface HarnessSelection { readonly harnessId: string; readonly controlId: string; readonly provider?: ProviderTarget }
-export interface SelectionRequest { readonly harnessId: string; readonly controlId?: string; readonly provider?: ProviderTarget | null }
+export interface HarnessSelection { readonly harnessId: string; readonly controlId: string; readonly provider?: ProviderTarget; readonly nativeModel?: string }
+export interface SelectionRequest { readonly harnessId: string; readonly controlId?: string; readonly provider?: ProviderTarget | null; readonly nativeModel?: string }
 export interface SessionConfiguration {
   readonly workspace: string;
   readonly manifestPath: string | null;
@@ -82,7 +82,7 @@ export interface CommandRecord {
   readonly resultId: string;
 }
 export interface SessionSnapshot {
-  readonly schemaVersion: 1 | 2 | 3;
+  readonly schemaVersion: 1 | 2 | 3 | 4;
   readonly id: SessionId;
   readonly version: number;
   readonly lastSeq: number;

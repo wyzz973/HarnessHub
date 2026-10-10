@@ -325,3 +325,6 @@
 | G050-R01 | G050 | integration | 认证HTTP恢复旧误阻塞会话与幂等/无效输入 | 202对应新switch，验证无prompt，CSRF与不安全恢复拒绝 | planned |
 | G031-R01 | G031 | protocol | Gateway认证缺失分类、RPC业务拒绝和清理证据分离 | 已知错误有稳定码，凭据不反射；explicit rejection为failed，close仍独立确认 | planned |
 | G054-R01 | G054 | e2e | 失败Harness选择后原对话可用、重试和草稿/结束确认 | 同Session继续，未知不一键重跑，往返/刷新草稿保留，结束需明确选择 | planned |
+| G061-N01 | G061 | integration | 本机原生配置继承、模型发现/选择及认证HTTP投影 | 真实进程接收原配置与原生模型RPC；无prompt发现、错误模型拒绝、DTO无凭据、查询和取消边界 | planned |
+| G008-N01 | G008 | integration | v3到v4真实SQLite升级及历史水位不变 | 保留身份/消息/Run/命令/事件；新字段仅v4允许，损坏拒绝且不清库 | planned |
+| G054-N01 | G054 | e2e | 读取所选Harness原生模型、直接切换与快速连续改选 | 无Apply，最新意图最终生效，输入仅发往有效目标，同Session历史保留，小屏重试不竖排 | planned |

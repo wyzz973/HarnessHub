@@ -7,7 +7,7 @@ try {
   store = new SqliteSessionStore(root);
   if (mode === "unfinished") {
     const id = sessionId("session-peer");
-    const created = store.create({ schemaVersion: 3, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
+    const created = store.create({ schemaVersion: 4, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
       configuration: { workspace: root, manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: false },
       selection: { harnessId: "fixture", controlId: "fixture-acp" }, activeRunId: null, pendingSwitchId: null,
       runs: [], messages: [], switches: [], commands: [{ id: commandId("peer-create"), kind: "create", fingerprint: "a".repeat(64), resultId: id }] },

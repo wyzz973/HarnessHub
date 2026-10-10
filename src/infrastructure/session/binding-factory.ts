@@ -15,6 +15,8 @@ import { SessionError, type HarnessSelection, type PreparedSessionBinding, type 
   type SessionBindingFactory, type SessionConfiguration, type SessionId, type WorkspaceLease,
   type WorkspaceLeaseProvider } from "../../contracts/session.js";
 import { MAX_CATALOG_BYTES, type ControlObservation } from "../../contexts/catalog/domain/catalog.js";
+import { captureNativeEnvironment, referencedNativeValues, nativeValues, type NativeEnvironment } from "./native-environment.js";
+import type { NativeModelCatalog } from "../../contracts/control.js";
 
 export interface ConfigurationInput {
   readonly workspace: string;
@@ -111,7 +113,8 @@ async function privateHome(root: string, configuration: SessionConfiguration): P
 }
 /** Fresh per-Turn control with a real workspace lease; this is public-context rehydration, not native resume. */
 export class DirectorySessionBindingFactory implements SessionBindingFactory {
-  constructor(private readonly workspaces: WorkspaceLeaseProvider, private readonly assertOwner: () => void, private readonly providers?: LocalProviderService, private readonly management?: ManagedResolver) {}
+  constructor(private readonly workspaces: WorkspaceLeaseProvider, private readonly assertOwner: () => void, private readonly providers?: LocalProviderService, private readonly management?: ManagedResolver,
+    private readonly nativeEnvironment: NativeEnvironment = captureNativeEnvironment()) {}
   async validate(request: SelectionRequest, configuration: SessionConfiguration): Promise<HarnessSelection> {
     this.assertOwner();
     const root = await realpath(await mkdtemp(join(tmpdir(), "harness-session-validation-")));
@@ -125,7 +128,9 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
           throw new SessionError("UNSUPPORTED_PROVIDER", "this control recipe cannot use the managed Provider adapter");
         this.providers.validate(request.provider, harnessId);
       }
-      return { harnessId, controlId: selected.id, ...(request.provider == null ? {} : { provider: request.provider }) };
+      if (request.nativeModel !== undefined && request.provider != null) throw new SessionError("INVALID_INPUT", "native model and managed Provider are mutually exclusive");
+      return { harnessId, controlId: selected.id, ...(request.provider == null ? {} : { provider: request.provider }),
+        ...(request.nativeModel === undefined ? {} : { nativeModel: request.nativeModel }) };
     } finally { await rm(root, { recursive: true, force: true }); }
   }
   async prepare(selection: HarnessSelection, configuration: SessionConfiguration, session: SessionId, run: string): Promise<PreparedSessionBinding> {
@@ -137,18 +142,16 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       const observed = await observe(selection, configuration, root, this.management);
       if (observed.harnessId !== selection.harnessId || observed.selected.id !== selection.controlId || observed.selected.command === null)
         throw new SessionError("HARNESS_UNAVAILABLE", "the admitted control is no longer available");
-      const home = await privateHome(root, configuration);
-      const environment: Record<string, string> = { ...observed.selected.command.env, PATH: observed.managed?.command.env.PATH ? observed.managed.command.env.PATH + ":" + observed.searchPath : observed.searchPath, LANG: "C.UTF-8",
-        HOME: home, XDG_CONFIG_HOME: join(home, "config"), XDG_DATA_HOME: join(home, "data"),
-        XDG_STATE_HOME: join(home, "state"), XDG_CACHE_HOME: join(home, "cache"),
-        CODEX_HOME: join(home, "codex"), CLAUDE_CONFIG_DIR: join(home, "claude"), OPENCODE_CONFIG_DIR: join(home, "opencode"),
-        OPENCODE_DISABLE_AUTOUPDATE: "true", TMPDIR: root };
+      const home = selection.provider === undefined ? configuration.configHome : await privateHome(root, configuration);
+      const environment: Record<string, string> = { ...await referencedNativeValues(this.nativeEnvironment, home, selection.harnessId, configuration.workspace), ...observed.selected.command.env,
+        ...nativeValues(this.nativeEnvironment, home), PATH: observed.managed?.command.env.PATH ? observed.managed.command.env.PATH + ":" + observed.searchPath : observed.searchPath,
+        OPENCODE_DISABLE_AUTOUPDATE: "true", TMPDIR: root, PWD: configuration.workspace };
       if (selection.provider !== undefined) {
         if (!this.providers) throw new SessionError("PROVIDER_UNAVAILABLE", "Provider management is unavailable");
         if (configuration.configHome !== null) throw new SessionError("INCOMPATIBLE_CONFIGURATION", "managed Provider selection requires a private generated configuration home");
         if ((selection.harnessId === "codex" && observed.selected.protocol !== "codex-app-server") || (selection.harnessId === "gemini" && observed.selected.protocol !== "acp-v1"))
           throw new SessionError("UNSUPPORTED_PROVIDER", "this control recipe cannot use the managed Provider adapter");
-        Object.assign(environment, await this.providers.materialize(selection.provider, selection.harnessId, home));
+        Object.assign(environment, await this.providers.materialize(selection.provider, selection.harnessId, home!));
       }
       const protocol = observed.selected.protocol;
       if (protocol !== "acp-v1" && protocol !== "codex-app-server") throw new SessionError("UNSUPPORTED_CONTROL", "unsupported control protocol");
@@ -167,6 +170,38 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       if (root && quiescent) try { await rm(root, { recursive: true, force: true }); } catch (failure) { cleanupError ??= failure; }
       if (cleanupError) throw new SessionError("BINDING_CLEANUP_FAILED", "binding preparation failed and cleanup could not be confirmed");
       throw error;
+    }
+  }
+  /** Read-only native catalog probe; no prompt and no workspace writer lease. */
+  async discoverModels(request: SelectionRequest, configuration: SessionConfiguration, signal: AbortSignal): Promise<NativeModelCatalog> {
+    this.assertOwner();
+    const root = await realpath(await mkdtemp(join(tmpdir(), "harness-native-models-")));
+    let control: HarnessControl | undefined, close: Promise<CleanupEvidence> | null = null;
+    const abort = () => { if (control) { close ??= control.close(); void close.catch(() => {}); } };
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      if (signal.aborted) throw new SessionError("CANCELLED", "model discovery was cancelled");
+      const observed = await observe(request, configuration, root, this.management);
+      if (observed.selected.command === null) throw new SessionError("HARNESS_UNAVAILABLE", "native control is unavailable");
+      const env = { ...await referencedNativeValues(this.nativeEnvironment, configuration.configHome, observed.harnessId, configuration.workspace), ...observed.selected.command.env, ...nativeValues(this.nativeEnvironment, configuration.configHome),
+        PATH: observed.managed?.command.env.PATH ? observed.managed.command.env.PATH + ":" + observed.searchPath : observed.searchPath,
+        TMPDIR: root, PWD: configuration.workspace, OPENCODE_DISABLE_AUTOUPDATE: "true" };
+      const protocol = observed.selected.protocol;
+      if (protocol !== "acp-v1" && protocol !== "codex-app-server") throw new SessionError("UNSUPPORTED_CONTROL", "native model discovery is unavailable");
+      const launch: ControlLaunch = { ...observed.selected.command, protocol, env };
+      const options = { cwd: configuration.workspace, env, requestTimeoutMs: 10000, runTimeoutMs: 30000, maxFrameBytes: 2 * 1024 * 1024, maxDiagnosticBytes: 64 * 1024, closeGraceMs: 500 };
+      control = protocol === "acp-v1" ? new AcpControl(launch, options) : new CodexControl(launch, options);
+      if (signal.aborted) { abort(); throw new SessionError("CANCELLED", "model discovery was cancelled"); }
+      await control.initialize();
+      if (protocol === "acp-v1") await control.open(configuration.workspace);
+      if (!control.models) throw new SessionError("UNSUPPORTED_MODEL_SELECTION", "this Harness does not expose models");
+      const catalog = await control.models(); this.assertOwner();
+      if (signal.aborted) throw new SessionError("CANCELLED", "model discovery was cancelled");
+      return catalog;
+    } finally {
+      signal.removeEventListener("abort", abort);
+      if (control) { close ??= control.close(); await close; }
+      await rm(root, { recursive: true, force: true });
     }
   }
 }

@@ -2,7 +2,7 @@
 
 状态：accepted，仅限ADR-010的S03/S04。
 
-身份分别为SessionId、RunId、MessageId、SwitchId、CommandId；当前存储格式schemaVersion=3（v1为初始切片，v2加入Provider引用，v3加入明确恢复语义），严格校验未知字段、关系与上限。公共Session保存workspace、私有配置引用、实际selection/epoch、命令幂等、Run与消息；不保存配置正文/凭据/原生内部状态。聚合最多256Run/1024命令、每输入64KiB、每输出1MiB、完整context1MiB、最多8排队输入；超限明确拒绝/失败，不裁剪历史。
+身份分别为SessionId、RunId、MessageId、SwitchId、CommandId；当前存储格式schemaVersion=4（v1为初始切片，v2加入Provider引用，v3加入明确恢复语义，v4加入nativeModel和安全backend.error），严格校验未知字段、关系与上限。公共Session保存workspace、私有配置引用、实际selection/epoch、命令幂等、Run与消息；不保存配置正文/凭据/原生内部状态。聚合最多256Run/1024命令、每输入64KiB、每输出1MiB、完整context1MiB、最多8排队输入；超限明确拒绝/失败，不裁剪历史。
 
 所有Store操作同步且事务内不await；commit通过expectedVersion CAS，聚合和非空事件同事务，seq连续。命令/历史append-only，已终结证据不能改写，关系/来源/水位/epoch严格校验。事件单条2MiB+4096，Session日志32MiB；读页1..100项/8MiB，超限不裁掉同一历史。Runtime同步回调提交control事实后才emit；发布失败不重跑，持久游标可查询。
 
@@ -18,7 +18,7 @@ cancel queued持久tombstone后不启动；preparing在await后核对；active�
 
 按[ADR-014](../decisions/0014-conversation-failure-recovery.md)，blocked允许显式resume：验证持久阻断与close证据，unknown必须closed且明确acknowledgeUnknown；所有权/存储/发布故障、缺证据或资源不明拒绝。以新的switch命令及recovery标记重新获取工作区租约、初始化/open/close目标；成功后同Session新epoch变open，旧终态不改写，原排队输入取消，不重跑旧Run。失败目标保留旧选择；失败切换期间的输入明确未派发，不自动回退。closed仍不可重开，但blocked可明确结束并保留未知事实，结束不清除工作区隔离状态。
 
-v3只允许带已关闭资源及有效交接来源证据的unknown历史在显式恢复后继续open。Store保留既有v1→v2迁移，追加全事务v2→v3升级，保留身份/历史/命令/事件与业务水位；blocked不自动重开。未知版本/损坏失败，不能用删库修复；回退旧程序需先停止服务并恢复升级前备份。
+v3只允许带已关闭资源及有效交接来源证据的unknown历史在显式恢复后继续open。Store保留既有v1→v2→v3迁移，追加全事务v3→v4升级；nativeModel与受管provider互斥，保留身份/历史/命令/事件与业务水位；blocked不自动重开。未知版本/损坏失败，不能用删库修复；回退旧程序需先停止服务并恢复升级前备份。
 
 关闭等待在途create/validate（最多16个），验证finally清理完才允许释放Store。CLI stdin在readline之前2MiB原始字节守卫；stdout/每条记录与排队均16MiB限额，slow consumer明确停止而不无限缓存；退出时关闭自有输入handle。CLI consumer退出属于当前入口shutdown，不等于未来HTTP SSE订阅断开策略。
 

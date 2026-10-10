@@ -1,3 +1,4 @@
+import { captureNativeEnvironment, referencedNativeValues, nativeValues } from "../infrastructure/session/native-environment.js";
 import { chooseControl } from "../contexts/catalog/application/select-control.js";
 export { chooseControl } from "../contexts/catalog/application/select-control.js";
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
@@ -69,7 +70,7 @@ export async function main(args: readonly string[]): Promise<number> {
     }, strict: true, allowPositionals: false });
     json = values.json ?? false;
     if (values.help) {
-      process.stdout.write("HarnessGateway " + action + " --harness <id> [--control <id>]\nrun另需 --prompt <text>；--json 输出NDJSON事件\n--manifest <file> 指定目录覆盖；--package-root <absolute> 已安装包根\n--cwd <absolute> 工作目录；--config-home <absolute> 已准备的私有配置根\n--timeout-ms <100..300000> 预算（默认30000）\n默认新建隔离配置/工作目录；不使用已有登录、不安装依赖。probe只初始化，run明确发送一条消息。\n");
+      process.stdout.write("HarnessGateway " + action + " --harness <id> [--control <id>]\nrun另需 --prompt <text>；--json 输出NDJSON事件\n--manifest <file> 指定目录覆盖；--package-root <absolute> 已安装包根\n--cwd <absolute> 工作目录；--config-home <absolute> 已准备的私有配置根\n--timeout-ms <100..300000> 预算（默认30000）\n默认沿用本机已有配置和登录；不安装依赖。probe只初始化，run明确发送一条消息。\n");
       return 0;
     }
     if (!values.harness || !/^[a-z][a-z0-9-]{0,95}$/u.test(values.harness)) throw new DiscoveryInputError("--harness must name a catalog id or alias");
@@ -92,23 +93,11 @@ export async function main(args: readonly string[]): Promise<number> {
       throw new DiscoveryInputError("this control Driver is not implemented: " + selected.protocol);
     if (selected.command === null) throw new DiscoveryInputError("selected control has no resolved command");
     ownedRoot = await mkdtemp(join(tmpdir(), "harness-control-"));
-    const home = explicitHome ?? join(ownedRoot, "home");
+    const native = captureNativeEnvironment();
     const cwd = explicitCwd ?? join(ownedRoot, "workspace");
-    if (explicitHome === undefined) {
-      await mkdir(home, { recursive: true });
-      for (const directory of ["config", "data", "state", "cache", "codex", "claude", "opencode"])
-        await mkdir(join(home, directory));
-    }
     if (explicitCwd === undefined) await mkdir(cwd);
-    // Only explicit Binding settings and required execution environment are inherited.
-    // The isolation variables win over recipe metadata, so a descriptor cannot redirect login reads.
-    const environment: Record<string, string> = {
-      ...selected.command.env, PATH: observed.searchPath, LANG: "C.UTF-8",
-      HOME: home, XDG_CONFIG_HOME: join(home, "config"), XDG_DATA_HOME: join(home, "data"),
-      XDG_STATE_HOME: join(home, "state"), XDG_CACHE_HOME: join(home, "cache"),
-      CODEX_HOME: join(home, "codex"), CLAUDE_CONFIG_DIR: join(home, "claude"),
-      OPENCODE_CONFIG_DIR: join(home, "opencode"), OPENCODE_DISABLE_AUTOUPDATE: "true",
-    };
+    const environment: Record<string, string> = { ...await referencedNativeValues(native, explicitHome ?? null, harness.id, cwd), ...selected.command.env, ...nativeValues(native, explicitHome ?? null),
+      PATH: observed.searchPath, OPENCODE_DISABLE_AUTOUPDATE: "true", PWD: cwd };
     const launch: ControlLaunch = { ...selected.command, env: environment, protocol: selected.protocol };
     const options = { cwd, env: environment, requestTimeoutMs: Math.min(10000, budget), runTimeoutMs: budget, maxFrameBytes: 2 * 1024 * 1024, maxDiagnosticBytes: 64 * 1024, closeGraceMs: 500 };
     control = launch.protocol === "acp-v1" ? new AcpControl(launch, options) : new CodexControl(launch, options);

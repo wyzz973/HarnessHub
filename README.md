@@ -19,9 +19,11 @@ pnpm web --cwd /absolute/workspace --data-dir data --port 4317
 
 对话现通过已提交事实的SSE实时显示回复，刷新或重连不会重新执行消息。消息区支持流式Markdown、生成反馈、阅读时暂停滚动、复制与执行详情；停止后保留部分内容。输入区为自动增长文本框和紧凑选择器，高级配置按需展开。短回复若模型几乎同时返回，仍可能一次显示；没有人工打字延迟。验收见[实时对话记录](docs/verification/live-chat-2026-10-10.md)，可单独运行 `pnpm test:real:stream` 验证真实Codex和本地确定性Provider的首块/重连。
 
-Harness连接或目标切换失败时，历史与原选择保留，可继续使用当前选择或明确重试。草稿在当前标签页按对话保存，刷新也可恢复。旧blocked会话可选择Harness并“检查连接并恢复对话”；未知结果需明确确认，清理未确认仍需先处理资源，不自动重跑旧任务。结束会话前说明后果并确认。审查见[对话恢复记录](docs/verification/conversation-recovery-2026-10-10.md)。本轮业务存储升级为v3；更新前备份本机data，回退旧程序前停止服务并恢复旧备份。
+Harness连接或目标切换失败时，历史与原选择保留，可继续使用当前选择或明确重试。草稿在当前标签页按对话保存，刷新也可恢复。旧blocked会话可选择Harness并“检查连接并恢复对话”；未知结果需明确确认，清理未确认仍需先处理资源，不自动重跑旧任务。结束会话前说明后果并确认。审查见[对话恢复记录](docs/verification/conversation-recovery-2026-10-10.md)。当前业务存储为v4（保留v1→v2→v3→v4事务迁移）；更新前备份本机data，回退旧程序前停止服务并恢复旧备份。
 
-在 Providers 添加名称、协议、Base URL、模型 ID/默认模型与API Key，保存后“测试连接”只验证模型目录可达。新对话选择Harness、Provider、Model再发送。中途改选需点击“应用选择”，当前一轮收敛后才下一轮生效；编辑Provider不会自动改变已有会话的固定版本，可显式“使用最新”再应用。
+所有接入的Harness使用本机已安装入口，默认沿用本机模型配置和登录。模型列表由所选Harness原生接口读取，未指定时跟随其本机默认；不写全局模型配置，不创建空native HOME。选择Harness、Provider或模型后直接提出切换，不再点“应用”；当前回复保持原选择，新消息等待最后一次选择生效。失败保留原选择与草稿，快速改选只推进最新未受理选择。
+
+Providers仍支持用户明确配置的独立连接覆盖：保存后“测试连接”只读取模型目录；这不是原生模式的默认来源。编辑Provider不会自动改变已有会话的固定版本，可显式“使用最新”。本轮原生接入/模型选择/直接切换见[ADR-015](docs/decisions/0015-native-harness-models-and-switching.md)、[Multica调研](docs/research/multica-native-models.md)及[验收](docs/verification/native-models-2026-10-11.md)。业务格式现为v4，升级前备份，回退旧程序前恢复旧备份。
 
 当前受管组合为 **Codex + OpenAI Responses**、**Gemini CLI + Gemini（API Key）**。其他产品继续检测，但协议/受管配置能力单独标明。OpenAI/Anthropic连接地址通常含/v1；Gemini填写API服务根。密钥只写入本机加密vault，不回显到UI/Session；同OS用户可访问主密钥，本版不宣称系统钥匙串隔离。
 
@@ -71,7 +73,7 @@ pnpm test:web
 
 discover 默认输出 schemaVersion=2，分别展示配置线索、多个安装和控制依赖；它不执行找到的程序或下载包。v1 描述可显式迁移；旧 JSON 使用方可用 --legacy 保留 schemaVersion=1。通过 v2 描述和 --package-root 指定已有包可扩展目录。详见[当前契约](docs/contracts/catalog-control.md)与[旧 v1 契约](docs/contracts/discovery.md)。
 
-probe 主动启动所选控制入口并初始化，输出 NDJSON 协议观察与独立清理证据；它不发送 prompt。run:harness 明确发送一次文本，输出流/后端结果/清理，不创建公共 Session，也不承诺任务正确性。多个可用控制入口必须 --control 指定，不自动替换。默认配置与工作目录临时隔离；实际模型调用需 --config-home 指向已准备的私有配置根，并按需要给 --cwd 绝对路径。
+probe 主动启动所选控制入口并初始化，输出 NDJSON 协议观察与独立清理证据；它不发送 prompt。run:harness 明确发送一次文本，输出流/后端结果/清理，不创建公共 Session，也不承诺任务正确性。多个可用控制入口必须 --control 指定，不自动替换。默认沿用本机已有配置与登录，未指定工作区时使用自有临时工作区；--config-home只用于调用者明确准备的配置来源，测试使用私有fixture来源。
 
 pnpm test 使用真实文件系统与协议子进程夹具；test:real:codex 是独立显式验收，需要本机已安装 Codex，使用真实 Harness 和本地模拟 Responses Provider、临时配置与测试 key，不使用个人登录。当前实际结果见[验证记录](docs/verification/catalog-control-2026-10-09.md)。
 
@@ -87,7 +89,7 @@ pnpm sessions close --session session-ID --data-dir data
 pnpm sessions resume --session session-ID --data-dir data --harness codex
 ~~~
 
-将示例路径/Session ID替换为自己的值。新会话输出公共Session ID；续接使用相同数据根。真实模型调用仍需要自己准备私有配置根，Codex配置在该根的codex目录；没有配置时默认临时隔离环境可能需要登录/模型配置，不能借用个人默认登录冒充验收。
+将示例路径/Session ID替换为自己的值。新会话输出公共Session ID；续接使用相同数据根。默认原生模式沿用本机已有模型/登录；显式--config-home的Codex配置在该根codex目录。真实本机登录、云模型和私有合成模型验收分别记录，不能互相替代。
 
 在chat中输入文本发送消息，使用 :harness gemini（或id:controlId）提出切换，:cancel取消当前工作，:history查看公共历史，:quit停止本次入口。切换先requested、旧执行与先前准入输入结束后再effective；等待失败切换的消息明确不派发。:quit保留可续接Session；sessions close才持久关闭准入。
 

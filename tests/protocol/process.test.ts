@@ -116,3 +116,11 @@ test("Gateway authentication failure is classified from private stderr without r
     assert.equal(evidence.protocolFailure?.code, "GATEWAY_AUTH_REQUIRED"); assert.equal(JSON.stringify(evidence).includes("never-public"), false);
   }
 });
+test("an incompatible native configuration reports a safe cause and independently confirms process closure", async () => {
+  const rpc = peer("invalid-native-config");
+  try { await assert.rejects(rpc.request("initialize", {}), error => error instanceof ControlError && error.code === "NATIVE_CONFIGURATION_INVALID" && !error.message.includes("never-public")); }
+  finally {
+    const cleanup = await rpc.close(); assert.equal(cleanup.closed, true); assert.equal(cleanup.exitCode, 1);
+    assert.equal(cleanup.protocolFailure?.code, "NATIVE_CONFIGURATION_INVALID"); assert.equal(JSON.stringify(cleanup).includes("never-public"), false);
+  }
+});

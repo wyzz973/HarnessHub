@@ -114,7 +114,7 @@ test("real Codex→Gemini→Codex uses the same public Session with explicit Pro
   }
   await send(0);
   app.runtime.switch(session.id, { harnessId: "gemini", controlId: geminiControl.id, provider: target(geminiProvider) }, "cross-switch-gemini"); await app.runtime.wait(session.id);
-  assert.equal(app.runtime.read(session.id).selection.harnessId, "gemini"); await send(1);
+  assert.equal(app.runtime.read(session.id).selection.harnessId, "gemini", JSON.stringify(app.runtime.read(session.id).switches)); await send(1);
   app.runtime.switch(session.id, { harnessId: "codex", controlId: codexControl.id, provider: target(codexProvider) }, "cross-switch-codex"); await app.runtime.wait(session.id);
   assert.equal(app.runtime.read(session.id).selection.harnessId, "codex"); await send(2);
   assert.deepEqual(errors, []); assert.equal(calls.length, 3); assert.deepEqual(calls.map(call => call.harness), ["codex", "gemini", "codex"]);

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-let active = null, counter = 0;
+let active = null, counter = 0, nativeModel = null;
 const native = "browser-native-" + process.pid;
 const send = value => process.stdout.write(JSON.stringify(value) + "\n");
 const reply = (id, result) => send({ id, result });
@@ -10,12 +10,15 @@ createInterface({ input: process.stdin }).on("line", line => {
   const value = JSON.parse(line);
   if (value.method === "initialize") return reply(value.id, { userAgent: "browser-external-peer/1.0" });
   if (value.method === "initialized") return;
-  if (value.method === "thread/start") { notify("thread/started", { thread: { id: native } }); return reply(value.id, { thread: { id: native } }); }
+  if (value.method === "config/read") return reply(value.id, { config: { model: "native-a" } });
+  if (value.method === "account/read") return reply(value.id, { account: { type: "chatgpt" }, requiresOpenaiAuth: true });
+  if (value.method === "model/list") return reply(value.id, { data: [{ model: "native-a", displayName: "Native A" }, { model: "native-b", displayName: "Native B" }], nextCursor: null });
+  if (value.method === "thread/start") { nativeModel = value.params.model ?? null; notify("thread/started", { thread: { id: native } }); return reply(value.id, { thread: { id: native } }); }
   if (value.method === "turn/start") {
     const context = JSON.parse(value.params.input[0].text.split("\n").slice(1).join("\n"));
     const text = context.currentInput.text;
-    const config = readFileSync(join(process.env.CODEX_HOME, "config.toml"), "utf8");
-    const model = JSON.parse(config.match(/^model = (.+)$/mu)[1]);
+    const config = process.env.HARNESS_GATEWAY_PROVIDER_KEY ? readFileSync(join(process.env.CODEX_HOME, "config.toml"), "utf8") : null;
+    const model = nativeModel ?? (config ? JSON.parse(config.match(/^model = (.+)$/mu)[1]) : "native-a");
     active = { id: "browser-turn-" + ++counter };
     notify("turn/started", { threadId: native, turn: { id: active.id, status: "inProgress" } }); reply(value.id, { turn: { id: active.id, status: "inProgress" } });
     if (text.startsWith("STREAM_RENDER") || text.startsWith("STREAM_CANCEL")) {

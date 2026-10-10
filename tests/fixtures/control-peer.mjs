@@ -16,6 +16,7 @@ if (scenario === "descendant") {
 }
 const lines = createInterface({ input: process.stdin });
 let promptId = null, turn = 0, initialized = false, pendingPermission = false;
+let selectedModel = "native-model-a";
 function emit(message) {
   const envelope = protocol === "acp-v1" ? { jsonrpc: "2.0", ...message } : message;
   const bytes = Buffer.from(`${JSON.stringify(envelope)}\n`);
@@ -53,6 +54,7 @@ lines.on("line", line => {
   if (process.env.FIXTURE_TRACE) appendFileSync(process.env.FIXTURE_TRACE, `${JSON.stringify(message)}\n`);
   if (message.method === "initialize") {
     if (scenario === "gateway-auth-failure") { process.stderr.write("unauthorized: gateway token missing\nprivate synthetic credential: never-public\n"); process.exit(1); }
+    if (scenario === "invalid-native-config") { process.stderr.write("Harness config is invalid\nprivate synthetic credential: never-public\nUnrecognized key\n"); process.exit(1); }
     if (scenario === "timeout" || scenario === "resist") return;
     if (scenario === "bad-json") { process.stdout.write("not-json\n"); return; }
     if (scenario === "bad-utf8") { process.stdout.write(Buffer.from([0xff, 0x0a])); return; }
@@ -83,7 +85,13 @@ lines.on("line", line => {
     return;
   }
   if (message.method === "initialized") { initialized = true; return; }
-  if (message.method === "session/new") { answer(message.id, { sessionId: "session-fixture" }); return; }
+  if (message.method === "config/read") { answer(message.id, { config: { model: "native-model-a", privateCredential: "synthetic-never-public" } }); return; }
+  if (message.method === "account/read") { answer(message.id, { account: { type: "chatgpt", email: "private-account@example.invalid" }, requiresOpenaiAuth: true }); return; }
+  if (message.method === "model/list") { answer(message.id, { data: ["native-model-a", "native-model-b"].map(model => ({ model, displayName: model })), nextCursor: null }); return; }
+  if (message.method === "session/new") { answer(message.id, { sessionId: "session-fixture", ...(scenario === "native-models" ? { configOptions: [{ id: "native-model", category: "model", type: "select", currentValue: selectedModel, options: [{ value: "native-model-a", name: "Native A" }, { value: "native-model-b", name: "Native B" }] }] } : {}),
+    ...(["legacy-configured-model", "duplicate-models"].includes(scenario) ? { models: { currentModelId: "configured-model", availableModels: [{ modelId: "suggested-model", name: "Suggested" }, ...(scenario === "duplicate-models" ? [{ modelId: "suggested-model", name: "Duplicate" }] : [])] } } : {}) }); return; }
+  if (message.method === "session/set_model") { selectedModel = message.params.modelId; answer(message.id, {}); return; }
+  if (message.method === "session/set_config_option") { selectedModel = message.params.value; answer(message.id, { configOptions: [{ id: "native-model", category: "model", type: "select", currentValue: selectedModel, options: [{ value: "native-model-a", name: "Native A" }, { value: "native-model-b", name: "Native B" }] }] }); return; }
   if (message.method === "thread/start") {
     if (!initialized) { emit({ id: message.id, error: { code: -32600, message: "Not initialized" } }); return; }
     notification("thread/started", { thread: { id: "thread-fixture" } });

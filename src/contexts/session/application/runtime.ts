@@ -21,12 +21,16 @@ interface ActiveExecution {
 }
 const MAX_PENDING_CREATES = 16;
 function requested(value: SelectionRequest): SelectionRequest {
-  if (value === null || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => key !== "harnessId" && key !== "controlId" && key !== "provider") ||
+  if (value === null || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => key !== "harnessId" && key !== "controlId" && key !== "provider" && key !== "nativeModel") ||
     typeof value.harnessId !== "string" || !/^[a-z][a-z0-9-]{0,95}$/u.test(value.harnessId) ||
     (value.controlId !== undefined && (typeof value.controlId !== "string" || !/^[a-z][a-z0-9-]{0,95}$/u.test(value.controlId))))
     throw new SessionError("INVALID_INPUT", "selection must name bounded catalog identities");
+  if (value.nativeModel !== undefined && (typeof value.nativeModel !== "string" || !value.nativeModel.trim() || value.nativeModel.length > 1024 || /[\0\r\n]/u.test(value.nativeModel)))
+    throw new SessionError("INVALID_INPUT", "invalid native model identity");
+  if (value.nativeModel !== undefined && value.provider != null) throw new SessionError("INVALID_INPUT", "native model and managed Provider are mutually exclusive");
   return { harnessId: value.harnessId, ...(value.controlId === undefined ? {} : { controlId: value.controlId }),
-    ...(value.provider === undefined ? {} : { provider: value.provider === null ? null : parseProviderTarget(value.provider) }) };
+    ...(value.provider === undefined ? {} : { provider: value.provider === null ? null : parseProviderTarget(value.provider) }),
+    ...(value.nativeModel === undefined ? {} : { nativeModel: value.nativeModel }) };
 }
 function fault(error: unknown): { readonly code: string; readonly message: string } {
   if (error instanceof SessionError) return { code: error.code.slice(0, 128), message: error.message.slice(0, 512) };
@@ -81,7 +85,7 @@ export class SessionRuntime {
     const concurrent = this.store.findByCreateKey(command);
     if (concurrent) { replayCommand(concurrent, command, "create", fingerprint); return concurrent; }
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 3, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
+    const state: SessionSnapshot = { schemaVersion: 4, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
       configuration: config, selection: validated, activeRunId: null, pendingSwitchId: null,
       runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }] };
     try {
@@ -451,7 +455,7 @@ export class SessionRuntime {
       }
       const observation = await execution.binding.control.initialize(); this.continue(execution);
       this.commit(id, current => ({ next: current, events: [event("run.protocol", { runId: target, observation })] }));
-      const native = await execution.binding.control.open(execution.binding.workspace); this.continue(execution);
+      const native = await execution.binding.control.open(execution.binding.workspace, run.selection.nativeModel); this.continue(execution);
       this.commit(id, current => ({ next: updatedRun(current, target, { status: "running" }), events: [event("run.authorized", { runId: target, epoch: run.epoch })] }));
       this.continue(execution);
       execution.dispatched = true;
@@ -475,7 +479,7 @@ export class SessionRuntime {
         this.store.assertOwner();
         const current = this.load(id), run = current.runs.find(run => run.id === target)!;
         const unsafe = (execution.dispatched && backend === null) || (execution.binding !== null && cleanup === null) || this.fatal !== null || this.unknownOwnership(problem);
-        const failure = problem ?? cleanup?.protocolFailure ?? null;
+        const failure = problem ?? cleanup?.protocolFailure ?? backend?.error ?? null;
         const status = unsafe ? "unknown" : run.cancelRequested || problem?.code === "CANCELLED" ? "cancelled" : failure ? "failed" : backend?.status ?? "failed";
         this.commit(id, current => {
           let next: SessionSnapshot = { ...updatedRun(current, target, { status, backend, cleanup,
@@ -515,7 +519,7 @@ export class SessionRuntime {
       if (current.pendingSwitchId !== targetId || this.closingSessions.has(id) || !this.accepting || this.fatal) throw new SessionError("CANCELLED", "switch cancelled before target initialization");
       await binding.control.initialize(); this.store.assertOwner(); binding.assertOwned();
       if (this.load(id).pendingSwitchId !== targetId || this.closingSessions.has(id) || !this.accepting || this.fatal) throw new SessionError("CANCELLED", "switch cancelled before target conversation");
-      await binding.control.open(binding.workspace); this.store.assertOwner(); binding.assertOwned();
+      await binding.control.open(binding.workspace, target.nativeModel); this.store.assertOwner(); binding.assertOwned();
     } catch (error) { problem = fault(error); }
     finally {
       if (binding) {

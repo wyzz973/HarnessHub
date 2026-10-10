@@ -179,7 +179,7 @@ test("formal CLI rejects bad invocation arguments and unsupported Pi without lau
   assert.deepEqual(await readdir(f.temporary), []);
 });
 
-test("formal CLI private home overrides descriptor login paths and excludes synthetic host secrets", async (t) => {
+test("formal CLI default reuses the native host profile without forwarding unrelated host secrets", async (t) => {
   const f = await fixture(t), wrapper = join(f.root, "isolation-wrapper.mjs"), hostConfig = join(f.hostHome, "user-config.json");
   await writeFile(hostConfig, "unchanged private user fixture\n");
   await writeFile(wrapper, "import {writeFileSync} from 'node:fs';import {join} from 'node:path';\nwriteFileSync(" + JSON.stringify(f.capture) + ",JSON.stringify({home:process.env.HOME,cwd:process.cwd(),codexHome:process.env.CODEX_HOME,claudeHome:process.env.CLAUDE_CONFIG_DIR,opencodeHome:process.env.OPENCODE_CONFIG_DIR,config:process.env.XDG_CONFIG_HOME,hostSecretPresent:process.env.TEST_HOST_SECRET!==undefined,bindingValue:process.env.TEST_BINDING_VALUE}));\nwriteFileSync(join(process.env.HOME,'fixture-created-config'),'fixture');await import(" + JSON.stringify(pathToFileURL(peer).href) + ");\n");
@@ -189,13 +189,13 @@ test("formal CLI private home overrides descriptor login paths and excludes synt
   const capture: unknown = JSON.parse(await readFile(f.capture, "utf8"));
   assert.ok(capture && typeof capture === "object" && "home" in capture && typeof capture.home === "string" && "cwd" in capture && typeof capture.cwd === "string");
   const home = capture.home, cwd = capture.cwd;
-  assert.notEqual(home, f.hostHome); assert.notEqual(cwd, f.root);
+  assert.equal(home, f.hostHome); assert.notEqual(cwd, f.root);
   assert.ok("hostSecretPresent" in capture && capture.hostSecretPresent === false);
   assert.ok("bindingValue" in capture && capture.bindingValue === "explicit-binding");
-  for (const [field, suffix] of [["codexHome", "codex"], ["claudeHome", "claude"], ["opencodeHome", "opencode"], ["config", "config"]] as const)
-    assert.equal(field in capture ? capture[field as keyof typeof capture] : undefined, join(home, suffix));
+  for (const [field, suffix] of [["codexHome", ".codex"], ["claudeHome", ".claude"], ["opencodeHome", ".config/opencode"], ["config", ".config"]] as const)
+    assert.equal(field in capture ? capture[field as keyof typeof capture] : undefined, join(f.hostHome, suffix));
   assert.equal(await readFile(hostConfig, "utf8"), "unchanged private user fixture\n");
-  await assert.rejects(() => stat(home), (error: unknown) => errorCode(error) === "ENOENT");
+  assert.equal((await stat(home)).isDirectory(), true);
   await assert.rejects(() => stat(cwd), (error: unknown) => errorCode(error) === "ENOENT");
   await assertClosed(f);
 });

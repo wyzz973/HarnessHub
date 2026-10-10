@@ -27,7 +27,7 @@ export class RedactedHarnessControl implements HarnessControl {
       agentVersion: value.agentVersion === null ? null : this.redact(value.agentVersion),
       authenticationMethods: value.authenticationMethods.map(item => this.redact(item)), capabilities: capabilities as Readonly<Record<string, unknown>> };
   }
-  open(cwd: string): Promise<NativeConversationId> { return this.safe(() => this.inner.open(cwd)); }
+  open(cwd: string, model?: string): Promise<NativeConversationId> { return this.safe(() => this.inner.open(cwd, model)); }
   async startText(id: NativeConversationId, text: string, onEvent: (event: ControlEvent) => void): Promise<ControlRun> {
     const redactor = this.stream();
     const run = await this.safe(() => this.inner.startText(id, text, value => {
@@ -36,7 +36,7 @@ export class RedactedHarnessControl implements HarnessControl {
     }));
     return { result: this.safe(() => run.result).then(value => {
       const tail = redactor.flush(); if (tail) onEvent({ type: "text", text: tail });
-      return { ...value, reason: this.redact(value.reason) };
+      return { ...value, reason: this.redact(value.reason), ...(value.error === undefined ? {} : { error: { code: this.redact(value.error.code), message: this.redact(value.error.message) } }) };
     }),
       requestStop: () => this.safe(() => run.requestStop()) };
   }

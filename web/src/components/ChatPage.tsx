@@ -4,6 +4,7 @@ import type { Dispatch, SetStateAction } from "react";
 import type { ProviderView } from "../../../src/contracts/provider.js";
 import type { HarnessSelection, SelectionRequest } from "../../../src/contracts/session.js";
 import type { HarnessView, SessionView } from "../../../src/contracts/web.js";
+import type { NativeModelCatalog } from "../../../src/contracts/control.js";
 import { failureMessage, runStatusLabel } from "../api.js";
 import { BrandMark, EmptyState, ErrorNotice, Spinner, StatusBadge } from "./common.js";
 import { MobileMenu } from "./Sidebar.js";
@@ -14,11 +15,11 @@ import { ChatMessage } from "./ChatMessage.js";
 export interface SelectionDraft { harnessId: string; controlId: string; providerId: string; providerRevision: number | null; model: string }
 export const EMPTY_SELECTION: SelectionDraft = { harnessId: "", controlId: "", providerId: "", providerRevision: null, model: "" };
 export function selectionDraft(selection: HarnessSelection): SelectionDraft {
-  return { harnessId: selection.harnessId, controlId: selection.controlId, providerId: selection.provider?.providerId ?? "", providerRevision: selection.provider?.revision ?? null, model: selection.provider?.model ?? "" };
+  return { harnessId: selection.harnessId, controlId: selection.controlId, providerId: selection.provider?.providerId ?? "", providerRevision: selection.provider?.revision ?? null, model: selection.provider?.model ?? selection.nativeModel ?? "" };
 }
 export function selectionRequest(draft: SelectionDraft): SelectionRequest {
   return { harnessId: draft.harnessId, controlId: draft.controlId, provider: draft.providerId && draft.providerRevision !== null
-    ? { providerId: draft.providerId, revision: draft.providerRevision, model: draft.model } : null };
+    ? { providerId: draft.providerId, revision: draft.providerRevision, model: draft.model } : null, ...(!draft.providerId && draft.model ? { nativeModel: draft.model } : {}) };
 }
 export function selectionProblem(draft: SelectionDraft, harnesses: readonly HarnessView[], providers: readonly ProviderView[]): string | null {
   const harness = harnesses.find(row => row.id === draft.harnessId);
@@ -43,6 +44,7 @@ function draftMatches(draft: SelectionDraft, selection: HarnessSelection): boole
   return JSON.stringify(draft) === JSON.stringify(selectionDraft(selection));
 }
 export interface ChatProps {
+  nativeModels: NativeModelCatalog | null; nativeModelsLoading: boolean; nativeModelsError: string | null; onRefreshModels: () => void;
   session: SessionView | null; sessionRequested: boolean; sessionError: string | null; loading: boolean; draft: SelectionDraft; providers: readonly ProviderView[]; harnesses: readonly HarnessView[];
   workspace: string; mutation: string | null; error: string | null; connectionError: string | null;
   messageDraft: string; onMessageDraft: Dispatch<SetStateAction<string>>;
@@ -171,7 +173,7 @@ export function ChatPage(props: ChatProps) {
             <ChatMessage message={message} run={runs.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft} onRetry={canRetry ? text => { void send(text).catch(() => {}); } : undefined}/>
             {message.role === "user" && !assistantRuns.has(message.runId) && runs.has(message.runId) ? <ChatMessage message={undefined} run={runs.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft} onRetry={canRetry ? text => { void send(text).catch(() => {}); } : undefined}/> : null}
           </Fragment>)}
-          {session.switches.length > 0 ? <details className="selection-history"><summary>选择记录 <span>{session.switches.length}</span></summary>{session.switches.map(item => <div className={`switch-record ${item.status}`} key={item.id}><span>{harnesses.find(harness => harness.id === item.requested.harnessId)?.name ?? item.requested.harnessId}</span><StatusBadge tone={item.status === "failed" ? "danger" : item.status === "effective" ? "success" : "warning"}>{item.status === "effective" ? "已生效" : item.status === "failed" ? "切换失败" : "等待生效"}</StatusBadge>{item.requested.provider ? <small>{providers.find(provider => provider.id === item.requested.provider?.providerId)?.name ?? "Provider"} · {item.requested.provider.model}</small> : null}{item.error ? <small className="error-text">{item.error.message}</small> : null}</div>)}</details> : null}
+          {session.switches.length > 0 ? <details className="selection-history"><summary>选择记录 <span>{session.switches.length}</span></summary>{session.switches.map(item => <div className={`switch-record ${item.status}`} key={item.id}><span>{harnesses.find(harness => harness.id === item.requested.harnessId)?.name ?? item.requested.harnessId}</span><StatusBadge tone={item.status === "failed" ? "danger" : item.status === "effective" ? "success" : "warning"}>{item.status === "effective" ? "已生效" : item.status === "failed" ? "切换失败" : "等待生效"}</StatusBadge>{item.requested.provider ? <small>{providers.find(provider => provider.id === item.requested.provider?.providerId)?.name ?? "Provider"} · {item.requested.provider.model}</small> : null}{item.error ? <small className="error-text">{failureMessage(item.error)}</small> : null}</div>)}</details> : null}
         </div>}
     </div>
     {session !== null && !props.loading ? <footer className="chat-composer-footer">{!followBottom ? <button className="follow-stream" onClick={resumeFollowing} aria-label="回到最新回复"><ArrowDown size={14} aria-hidden="true"/><span>回到最新回复</span></button> : null}{composer}</footer> : null}

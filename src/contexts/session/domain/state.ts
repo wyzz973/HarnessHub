@@ -53,10 +53,12 @@ function providerTarget(value: unknown): ProviderTarget {
   catch { throw new SessionError("INVALID_DATA", "invalid or unknown Provider target fields"); }
 }
 export function parseSelection(value: unknown): HarnessSelection {
-  const item = record(value, "selection"); keys(item, ["harnessId", "controlId", "provider"], "selection");
+  const item = record(value, "selection"); keys(item, ["harnessId", "controlId", "provider", "nativeModel"], "selection");
   const harnessId = text(item.harnessId, "harnessId", 96), controlId = text(item.controlId, "controlId", 96);
   if (![harnessId, controlId].every(id => /^[a-z][a-z0-9-]*$/u.test(id))) throw new SessionError("INVALID_DATA", "selection must name catalog identities");
-  return { harnessId, controlId, ...(item.provider === undefined ? {} : { provider: providerTarget(item.provider) }) };
+  if (item.provider !== undefined && item.nativeModel !== undefined) throw new SessionError("INVALID_DATA", "native model and managed Provider are mutually exclusive");
+  return { harnessId, controlId, ...(item.provider === undefined ? {} : { provider: providerTarget(item.provider) }),
+    ...(item.nativeModel === undefined ? {} : { nativeModel: text(item.nativeModel, "nativeModel", 1024) }) };
 }
 export function parseConfiguration(value: unknown): SessionConfiguration {
   const item = record(value, "configuration");
@@ -79,9 +81,10 @@ function fault(value: unknown): PublicRun["error"] {
 }
 function backend(value: unknown): BackendResult | null {
   if (value === null) return null;
-  const item = record(value, "backend"); keys(item, ["status", "reason"], "backend");
+  const item = record(value, "backend"); keys(item, ["status", "reason", "error"], "backend");
   if (item.status !== "completed" && item.status !== "cancelled" && item.status !== "failed") throw new SessionError("INVALID_DATA", "unknown backend status");
-  return { status: item.status, reason: text(item.reason, "backend reason", 4096) };
+  const error = item.error === undefined ? null : fault(item.error);
+  return { status: item.status, reason: text(item.reason, "backend reason", 4096), ...(error === null ? {} : { error }) };
 }
 function cleanup(value: unknown): CleanupEvidence | null {
   if (value === null) return null;
@@ -109,13 +112,14 @@ function publicMessage(value: unknown): PublicMessage {
 }
 function publicSwitch(value: unknown): PublicSwitch {
   const item = record(value, "switch"); keys(item, ["id", "commandId", "requested", "requestedSeq", "target", "status", "throughSeq", "sourceRunIds", "error"], "switch");
-  const requested = record(item.requested, "requested selection"); keys(requested, ["harnessId", "controlId", "provider"], "requested selection");
+  const requested = record(item.requested, "requested selection"); keys(requested, ["harnessId", "controlId", "provider", "nativeModel"], "requested selection");
   const harnessId = text(requested.harnessId, "requested harness", 96);
   const controlId = requested.controlId === undefined ? undefined : text(requested.controlId, "requested control", 96);
   if (![harnessId, ...(controlId === undefined ? [] : [controlId])].every(id => /^[a-z][a-z0-9-]*$/u.test(id))) throw new SessionError("INVALID_DATA", "invalid requested selection");
   if (item.status !== "requested" && item.status !== "validated" && item.status !== "effective" && item.status !== "failed") throw new SessionError("INVALID_DATA", "unknown switch status");
   return { id: switchId(item.id), commandId: commandId(item.commandId), requested: { harnessId, ...(controlId === undefined ? {} : { controlId }),
-      ...(requested.provider === undefined ? {} : { provider: requested.provider === null ? null : providerTarget(requested.provider) }) },
+      ...(requested.provider === undefined ? {} : { provider: requested.provider === null ? null : providerTarget(requested.provider) }),
+      ...(requested.nativeModel === undefined ? {} : { nativeModel: text(requested.nativeModel, "requested native model", 1024) }) },
     requestedSeq: number(item.requestedSeq, "switch requestedSeq", 1), target: item.target === null ? null : parseSelection(item.target), status: item.status,
     throughSeq: number(item.throughSeq, "switch throughSeq"), sourceRunIds: array(item.sourceRunIds, "switch sourceRunIds", MAX_RUNS, runId), error: fault(item.error) };
 }
@@ -133,7 +137,7 @@ function unique(values: readonly string[], label: string): void {
 export function parseSession(value: unknown): SessionSnapshot {
   const item = record(value, "Session");
   keys(item, ["schemaVersion", "id", "version", "lastSeq", "epoch", "status", "configuration", "selection", "activeRunId", "pendingSwitchId", "runs", "messages", "switches", "commands"], "Session");
-  if (item.schemaVersion !== 1 && item.schemaVersion !== 2 && item.schemaVersion !== 3) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
+  if (item.schemaVersion !== 1 && item.schemaVersion !== 2 && item.schemaVersion !== 3 && item.schemaVersion !== 4) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
   if (item.status !== "open" && item.status !== "closed" && item.status !== "blocked") throw new SessionError("INVALID_DATA", "unknown Session status");
   const result: SessionSnapshot = { schemaVersion: item.schemaVersion, id: sessionId(item.id), version: number(item.version, "version"), lastSeq: number(item.lastSeq, "lastSeq"),
     epoch: number(item.epoch, "epoch", 1), status: item.status, configuration: parseConfiguration(item.configuration), selection: parseSelection(item.selection),
@@ -143,6 +147,9 @@ export function parseSession(value: unknown): SessionSnapshot {
   if (item.schemaVersion === 1 && (result.selection.provider !== undefined || result.runs.some(run => run.selection.provider !== undefined) ||
       result.switches.some(entry => entry.requested.provider !== undefined || entry.target?.provider !== undefined)))
     throw new SessionError("INVALID_DATA", "legacy Session schema cannot contain Provider targets");
+  if (item.schemaVersion < 4 && (result.selection.nativeModel !== undefined || result.runs.some(run => run.selection.nativeModel !== undefined || run.backend?.error !== undefined) ||
+      result.switches.some(entry => entry.requested.nativeModel !== undefined || entry.target?.nativeModel !== undefined)))
+    throw new SessionError("INVALID_DATA", "legacy Session schema cannot contain native model targets or backend errors");
   unique(result.runs.map(run => run.id), "Run"); unique(result.messages.map(message => message.id), "message");
   unique(result.runs.flatMap(run => [run.userMessageId, run.assistantMessageId]), "declared message identity");
   unique(result.switches.map(entry => entry.id), "switch"); unique(result.commands.map(entry => entry.id), "command");
@@ -151,7 +158,7 @@ export function parseSession(value: unknown): SessionSnapshot {
   if (active.length > 1 || (result.activeRunId === null ? active.length !== 0 : active.length !== 1 || active[0]?.id !== result.activeRunId)) throw new SessionError("INVALID_DATA", "active Run ownership is inconsistent");
   if (result.runs.filter(run => run.status === "queued").length > MAX_QUEUE) throw new SessionError("QUEUE_FULL", "Session queued input limit reached");
   if (result.status === "closed" && (result.activeRunId !== null || result.pendingSwitchId !== null || result.runs.some(run => run.status === "queued"))) throw new SessionError("INVALID_DATA", "closed Session still admits work");
-  if (result.status === "open" && result.runs.some(run => run.status === "unknown" && (result.schemaVersion !== 3 || run.cleanup?.closed !== true ||
+  if (result.status === "open" && result.runs.some(run => run.status === "unknown" && (result.schemaVersion < 3 || run.cleanup?.closed !== true ||
       !result.switches.some(sw => sw.status === "effective" && sw.sourceRunIds.includes(run.id)))))
     throw new SessionError("INVALID_DATA", "unknown execution requires a blocked Session or explicit quiescent recovery");
   const pending = result.switches.filter(entry => entry.status === "requested" || entry.status === "validated");

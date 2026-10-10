@@ -83,6 +83,7 @@ export const ChatMessage = memo(function ChatMessage({ message, run, harnesses, 
     {details && run ? <div className="execution-details" id={detailsId}>
       <dl><div><dt>执行者</dt><dd>{harness}</dd></div><div><dt>模型连接</dt><dd>{provider?.name ?? (run.selection.provider ? "Provider" : "Harness 原生连接")}</dd></div>{run.selection.provider ? <><div><dt>模型</dt><dd>{run.selection.provider.model}</dd></div><div><dt>配置版本</dt><dd>v{run.selection.provider.revision}</dd></div></> : null}<div><dt>控制入口</dt><dd><code>{run.selection.controlId}</code></dd></div><div><dt>执行状态</dt><dd>{runStatusLabel(status)}</dd></div><div><dt>执行标识</dt><dd><code>{run.id}</code></dd></div></dl>
       {run.error ? <p>错误代码：<code>{run.error.code}</code></p> : null}
+      {!run.selection.provider && run.selection.nativeModel ? <p>本机模型：<code>{run.selection.nativeModel}</code></p> : null}
       {status === "unknown" ? <p>请先核实执行结果。这个请求不会自动重新执行。</p> : status === "completed" ? <p>本轮执行已结束，结果仍需由你确认。</p> : null}
     </div> : null}
   </article>;

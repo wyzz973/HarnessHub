@@ -28,9 +28,13 @@ export function ChatComposer(props: ComposerProps) {
   const controls = harness?.controls.filter(control => control.available) ?? [];
   const selectedControl = harness?.controls.find(control => control.id === draft.controlId);
   const readonly = session?.status === "closed";
-  const disabled = props.mutation !== null || props.loading || props.sessionError !== null || pending || readonly;
-  const disableSend = disabled || blocked || active !== null || dirty || problem !== null || bytes > 64 * 1024 || !props.messageDraft.trim();
+  const disabled = props.mutation !== null && props.mutation !== "switching" || props.loading || props.sessionError !== null || readonly;
+  const disableSend = disabled || props.mutation !== null || pending || blocked || active !== null || dirty || problem !== null || !draft.providerId && props.nativeModels?.authentication === "missing" || bytes > 64 * 1024 || !props.messageDraft.trim();
   const unknown = session?.runs.filter(run => run.status === "unknown") ?? [];
+  const lastSwitch = session?.switches.at(-1);
+  const selectionFailed = props.error !== null || lastSwitch?.status === "failed" && JSON.stringify(lastSwitch.requested) === JSON.stringify({ harnessId: draft.harnessId, controlId: draft.controlId,
+    provider: draft.providerId && draft.providerRevision !== null ? { providerId: draft.providerId, revision: draft.providerRevision, model: draft.model } : null,
+    ...(!draft.providerId && draft.model ? { nativeModel: draft.model } : {}) });
   const resourcesUnconfirmed = unknown.some(run => run.cleanup?.closed !== true);
   const outdated = provider !== undefined && draft.providerRevision !== null && provider.revision !== draft.providerRevision;
   useLayoutEffect(() => {
@@ -74,7 +78,10 @@ export function ChatComposer(props: ComposerProps) {
       reason: !row.enabled ? "已停用" : !supported ? "当前 Harness 暂不支持这个协议" : missingKey ? "缺少 Gemini API Key" : "",
     };
   })];
-  const modelOptions: PickerOption[] = provider ? provider.models.map(model => ({ value: model, label: model, group: provider.name })) : [{ value: "", label: "跟随 Harness 配置", description: "由执行者自身配置决定" }];
+  const modelOptions: PickerOption[] = provider ? provider.models.map(model => ({ value: model, label: model, group: provider.name })) : [
+    { value: "", label: props.nativeModels?.defaultModel ?? (props.nativeModelsLoading ? "读取本机模型…" : "跟随本机配置"), description: "本机当前默认模型", group: "跟随 Harness" },
+    ...(props.nativeModels?.models.map(model => ({ value: model.id, label: model.name, description: model.id, group: harness?.name ?? "本机模型" })) ?? []),
+  ];
   if (provider && draft.model && !provider.models.includes(draft.model)) {
     modelOptions.unshift({ value: draft.model, label: draft.model, description: `固定配置 v${draft.providerRevision}`, group: "会话当前版本" });
   }
@@ -84,7 +91,8 @@ export function ChatComposer(props: ComposerProps) {
     : active?.cancelRequested ? "停止已受理，正在等待执行结束和资源清理。"
     : blocked && !readonly ? resourcesUnconfirmed ? "资源停止还未确认。你可以编辑草稿、查看历史；核实后再恢复执行。" : "选择可用的 Harness 后，检查连接并继续这次对话。"
     : pending ? active ? "当前回复结束后应用新选择，草稿已保留。" : "正在连接并验证新选择，草稿已保留。"
-    : dirty ? problem ?? "应用选择后，继续这次对话。"
+    : dirty ? problem ?? (selectionFailed ? "所选连接未生效，可以重试切换或选择其他 Harness。" : "正在切换所选 Harness 或模型，草稿已保留。")
+    : !draft.providerId && props.nativeModels?.authentication === "missing" ? "本机 Harness 尚未登录，请先在它的原生入口完成登录。"
     : problem;
 
   return <div className="composer-wrap">
@@ -103,13 +111,14 @@ export function ChatComposer(props: ComposerProps) {
         <div className="composer-pickers" aria-label="下一次任务的执行选择">
           <div className="composer-chip harness-chip"><SearchPicker label="选择 Harness" value={draft.harnessId} placeholder="选择 Harness" options={harnessOptions} disabled={disabled} onChange={value => {
             const next = harnesses.find(row => row.id === value);
-            props.onDraft({ ...draft, harnessId: value, controlId: next?.controls.find(row => row.id === next.defaultControlId && row.available)?.id ?? next?.controls.find(row => row.available)?.id ?? "" });
+            props.onDraft({ ...draft, harnessId: value, controlId: next?.controls.find(row => row.id === next.defaultControlId && row.available)?.id ?? next?.controls.find(row => row.available)?.id ?? "", model: draft.providerId ? draft.model : "" });
           }}/></div>
           <div className="composer-chip provider-chip"><SearchPicker label="选择 Provider" value={draft.providerId} placeholder="选择 Provider" options={providerOptions} disabled={disabled} onChange={value => {
             const next = providers.find(row => row.id === value);
             props.onDraft({ ...draft, providerId: next?.id ?? "", providerRevision: next?.revision ?? null, model: next?.defaultModel ?? "" });
           }} footer={<button type="button" className="text-button" onClick={props.onProviders}>管理模型连接 <ArrowRight size={13}/></button>}/></div>
-          <div className="composer-chip model-chip"><SearchPicker label="选择模型" value={draft.model} placeholder="选择模型" options={modelOptions} disabled={disabled || !provider} onChange={value => props.onDraft({ ...draft, model: value })}/></div>
+          <div className="composer-chip model-chip"><SearchPicker label="选择模型" value={draft.model} placeholder="选择模型" options={modelOptions} disabled={disabled || !provider && (props.nativeModelsLoading || !props.nativeModels?.canSelect)} onChange={value => props.onDraft({ ...draft, model: value })}
+            footer={!provider ? <button type="button" className="text-button" onClick={props.onRefreshModels}>刷新本机模型</button> : undefined}/></div>
         </div>
         <Popover.Root><Popover.Trigger asChild><button type="button" className={`composer-settings-trigger ${outdated ? "has-update" : ""}`} aria-label="高级配置" title="控制入口与配置版本" disabled={disabled}><SlidersHorizontal size={15}/>{outdated ? <span className="settings-update-dot"/> : null}</button></Popover.Trigger>
           <Popover.Portal><Popover.Content className="composer-settings-panel" side="top" align="end" sideOffset={12} collisionPadding={16}>
@@ -117,16 +126,18 @@ export function ChatComposer(props: ComposerProps) {
             {controls.length > 1 ? <div className="advanced-control"><SearchPicker label="选择控制入口" value={draft.controlId} placeholder="控制入口" options={controls.map(control => ({ value: control.id, label: protocolLabel(control.protocol), description: control.id }))} disabled={disabled} onChange={value => props.onDraft({ ...draft, controlId: value })}/></div>
               : <div className="execution-setting"><span>控制入口</span><strong>{selectedControl ? protocolLabel(selectedControl.protocol) : "尚未选择"}</strong>{draft.controlId ? <code>{draft.controlId}</code> : null}</div>}
             {provider && draft.providerRevision !== null ? <div className="execution-setting"><span>Provider 配置</span><strong>{provider.name} · v{draft.providerRevision}</strong>{outdated ? <button type="button" className="revision-update" disabled={disabled} onClick={() => props.onDraft({ ...draft, providerRevision: provider.revision, model: provider.models.includes(draft.model) ? draft.model : provider.defaultModel })}>使用最新 v{provider.revision} <ArrowRight size={12}/></button> : <small>会话固定使用这个版本。</small>}</div>
-              : <p className="settings-native-note">使用 Harness 的原生模型连接。安装完成后仍可能需要单独配置或认证。</p>}
-            <p className="settings-help">更改选择后，请先应用。正在执行的任务继续使用原配置。</p>
+              : <p className="settings-native-note">沿用本机已安装 Harness 的模型配置和登录状态。</p>}
+            <p className="settings-help">选择后直接切换；当前回复继续使用原配置，下一次发送使用新选择。</p>
           </Popover.Content></Popover.Portal>
         </Popover.Root>
         {active ? <button type="button" className="send-button stop-button" aria-label="停止当前回复" title="停止当前回复" disabled={active.cancelRequested || props.mutation !== null} onClick={props.onCancel}>{props.mutation === "cancelling" || active.cancelRequested ? <Spinner label="正在停止"/> : <Square size={13} fill="currentColor"/>}</button>
           : <button type="submit" className="send-button" aria-label="发送消息" title="发送消息" disabled={disableSend}>{props.mutation === "sending" ? <Spinner/> : <ArrowUp size={19}/>}</button>}
       </div>
-      {dirty || pending || blocked && !readonly ? <div className="composer-change" role="status">{pending ? <><Spinner/><span>{active ? "当前回复结束后生效" : "正在验证新选择"}</span></> : <><span>{blocked ? "恢复会检查连接，不会重跑旧任务" : "执行选择尚未应用"}</span><button type="button" className="apply-selection" onClick={props.onApply} disabled={disabled || problem !== null || resourcesUnconfirmed}>{props.mutation === "switching" ? <Spinner/> : <RefreshCw size={12}/>} {blocked ? unknown.length ? "确认保留未知结果并继续" : "检查连接并恢复对话" : "应用选择"}</button></>}</div> : null}
+      {pending || dirty && !blocked ? <div className="composer-change" role="status">{selectionFailed && !pending ? <><span>{problem ?? "所选连接尚未生效"}</span><button type="button" className="text-button" onClick={props.onApply} disabled={props.mutation !== null || problem !== null}>重试切换</button></> : <><Spinner/><span>{problem ?? (active ? "当前回复结束后自动切换" : "正在连接新选择")}</span></>}</div> : null}
+      {blocked && !readonly ? <div className="composer-change" role="status"><span>恢复会检查连接，不会重跑旧任务</span><button type="button" className="apply-selection" onClick={props.onApply} disabled={disabled || pending || props.mutation !== null || problem !== null || resourcesUnconfirmed}><RefreshCw size={12}/>{unknown.length ? "确认保留未知结果并继续" : "检查连接并恢复对话"}</button></div> : null}
     </form>
     {note ? <p id="composer-notice" className={`composer-note ${noteDanger ? "error-text" : ""}`} role={problem || bytes > 64 * 1024 ? "status" : undefined}>{note}</p> : null}
+    {!draft.providerId && props.nativeModelsError && !selectionFailed ? <p className="composer-note" role="status">{props.nativeModelsError} <button type="button" className="text-button" onClick={props.onRefreshModels}>刷新模型</button></p> : null}
     <span id="composer-keyboard-hint" className="sr-only">Enter 发送，Shift 加 Enter 换行。</span>
   </div>;
 }

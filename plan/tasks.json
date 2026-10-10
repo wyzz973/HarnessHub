@@ -947,7 +947,7 @@
         "G004-C02",
         "G004-C03"
       ],
-      "active_slice": "conversation-recovery"
+      "active_slice": "native-models-switching"
     },
     {
       "id": "G005",
@@ -1083,7 +1083,7 @@
         "G007-C02",
         "G007-C03"
       ],
-      "active_slice": "catalog-control"
+      "active_slice": "native-models-switching"
     },
     {
       "id": "G008",
@@ -1137,9 +1137,10 @@
         "G008-C05",
         "G008-P01",
         "G008-P02",
-        "G008-R01"
+        "G008-R01",
+        "G008-N01"
       ],
-      "active_slice": "conversation-recovery"
+      "active_slice": "native-models-switching"
     },
     {
       "id": "G009",
@@ -1229,7 +1230,7 @@
         "G010-C03",
         "G010-C04"
       ],
-      "active_slice": "provider-web"
+      "active_slice": "native-models-switching"
     },
     {
       "id": "G011",
@@ -1920,7 +1921,8 @@
         "tests/integration/g026.test.ts",
         "tests/platform/g026.test.ts",
         "src/infrastructure/session/workspace-lease.ts",
-        "tests/integration/workspace-lease.test.ts"
+        "tests/integration/workspace-lease.test.ts",
+        "src/infrastructure/session/native-environment.ts"
       ],
       "requirements": [
         "R18",
@@ -1945,7 +1947,7 @@
         "G026-C02",
         "G026-C03"
       ],
-      "active_slice": "public-session"
+      "active_slice": "native-models-switching"
     },
     {
       "id": "G027",
@@ -2042,7 +2044,7 @@
         "G028-R01",
         "G028-R02"
       ],
-      "active_slice": "conversation-recovery"
+      "active_slice": "native-models-switching"
     },
     {
       "id": "G029",
@@ -2186,7 +2188,7 @@
         "G031-C03",
         "G031-R01"
       ],
-      "active_slice": "conversation-recovery"
+      "active_slice": "native-models-switching"
     },
     {
       "id": "G032",
@@ -2235,7 +2237,7 @@
         "G032-C03",
         "G032-C04"
       ],
-      "active_slice": "conversation-recovery"
+      "active_slice": "native-models-switching"
     },
     {
       "id": "G033",
@@ -2330,7 +2332,7 @@
         "G034-C03",
         "G034-C04"
       ],
-      "active_slice": "conversation-recovery"
+      "active_slice": "native-models-switching"
     },
     {
       "id": "G035",
@@ -3007,7 +3009,8 @@
         "src/web/server.ts",
         "src/cli/web.ts",
         "tests/integration/web-server.test.ts",
-        "src/web/session-stream.ts"
+        "src/web/session-stream.ts",
+        "src/web/harness-models.ts"
       ],
       "requirements": [
         "R01",
@@ -3039,7 +3042,7 @@
         "G050-P02",
         "G050-R01"
       ],
-      "active_slice": "conversation-recovery"
+      "active_slice": "native-models-switching"
     },
     {
       "id": "G051",
@@ -3246,9 +3249,10 @@
         "G054-P02",
         "G054-M01",
         "G054-S01",
-        "G054-R01"
+        "G054-R01",
+        "G054-N01"
       ],
-      "active_slice": "conversation-recovery"
+      "active_slice": "native-models-switching"
     },
     {
       "id": "G055",
@@ -3532,7 +3536,7 @@
         "G059-C02",
         "G059-C03"
       ],
-      "active_slice": "conversation-recovery"
+      "active_slice": "native-models-switching"
     },
     {
       "id": "G060",
@@ -3595,7 +3599,7 @@
         "G060-M01",
         "G060-S01"
       ],
-      "active_slice": "conversation-recovery"
+      "active_slice": "native-models-switching"
     },
     {
       "id": "G061",
@@ -3620,7 +3624,8 @@
         "tests/integration/managed-discovery.test.ts",
         "tests/integration/web-session-stream.test.ts",
         "tests/unit/web-session-stream.test.ts",
-        "tests/unit/web-api.test.ts"
+        "tests/unit/web-api.test.ts",
+        "tests/integration/native-models.test.ts"
       ],
       "requirements": [
         "R03",
@@ -3652,9 +3657,10 @@
         "G061-M03",
         "G061-S01",
         "G061-S02",
-        "G061-S03"
+        "G061-S03",
+        "G061-N01"
       ],
-      "active_slice": "conversation-recovery"
+      "active_slice": "native-models-switching"
     },
     {
       "id": "G062",

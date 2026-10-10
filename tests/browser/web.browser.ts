@@ -33,7 +33,7 @@ async function launchFixture() {
     return { command: { executable: process.execPath, args: [join(ctx.stage, "node_modules", spec.recipe.packageName, "entry.mjs"), ...spec.recipe.args], env: {} }, observedVersion: spec.version, artifactSha256: null };
   } };
   const gateway = await startWebServer({ root: join(root, "data"), configuration: await prepareConfiguration({ workspace, manifestPath: manifest, pathOnly: true }), port: 0,
-    application: (data, publish) => application(data, publish, { management: { metadata, installer } }) });
+    application: (data, publish) => application(data, publish, { management: { metadata, installer }, nativeEnvironment: { home: root, values: { HOME: root, PATH: process.env.PATH ?? "/usr/bin:/bin" } } }) });
   return { root, gateway, setVersion: (value: string) => { fixtureVersion = value; }, baseUrl: `http://127.0.0.1:${address.port}/v1`, close: async () => { await gateway.close(); modelServer.closeAllConnections(); await new Promise<void>(done => modelServer.close(() => done())); await rm(root, { recursive: true, force: true }); } };
 }
 
@@ -189,9 +189,8 @@ test("real browser validates Provider management, public chat switching, cancell
     } else await route.continue();
   });
   await pick("选择 Provider", "工作模型 B");
-  await page.getByRole("button", { name: "应用选择", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("暂时无法连接本机网关");
-  await page.getByRole("button", { name: "应用选择", exact: true }).click();
+  await page.getByRole("button", { name: "重试切换", exact: true }).click();
   await expect.poll(() => switchKeys.length).toBe(2); assert.equal(switchKeys[0], switchKeys[1]);
   holdReads = false; releaseReads();
   await page.evaluate(() => { const hold = Reflect.get(window, "__holdFactDelivery"); if (typeof hold === "function") hold(false); });
@@ -217,7 +216,6 @@ test("real browser validates Provider management, public chat switching, cancell
   await page.getByRole("button", { name: "使用最新 v2", exact: true }).click();
   await page.getByRole("button", { name: "收起高级配置", exact: true }).click();
   await pick("选择模型", "model-b2");
-  await page.getByRole("button", { name: "应用选择", exact: true }).click();
   await composer.fill("第三轮使用新版本"); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
   await expect(log).toContainText("已由 model-b2 处理");
   current = await snapshot(); assert.equal(current.runs[1]!.selection.provider.revision, 1); assert.equal(current.runs[2]!.selection.provider.revision, 2);
@@ -447,13 +445,17 @@ test("failed Harness selection keeps the same conversation usable, shows recover
   await expect.poll(async () => (await current()).runs[0].status).toBe("completed"); const first = await current();
   await composer.fill("选择失败也要保留这条草稿");
   await pick("选择 Harness", "OpenClaw"); await pick("选择 Provider", "Harness 原生连接");
-  await page.getByRole("button", { name: "应用选择", exact: true }).click();
   await expect(page.getByText("未能切换到 OpenClaw", { exact: true })).toBeVisible();
-  await expect(page.getByText(/尚未配置 Gateway 认证/)).toBeVisible();
+  await expect(page.locator(".selection-failure").getByText(/尚未配置 Gateway 认证/)).toBeVisible();
   await expect(composer).toBeEnabled(); await expect(composer).toHaveValue("选择失败也要保留这条草稿");
   const failed = await current(); assert.equal(failed.id, first.id); assert.equal(failed.status, "open"); assert.equal(failed.runs.length, 1);
   assert.equal(failed.selection.harnessId, "codex"); assert.equal(failed.switches[0].error.code, "GATEWAY_AUTH_REQUIRED");
   await page.screenshot({ path: join(artifact, "harness-selection-failed.png"), fullPage: true, animations: "disabled" });
+  const modelReload = page.waitForResponse(response => response.url().includes("/harnesses/openclaw/models"));
+  await page.reload(); await modelReload;
+  await expect(page.getByText("未能切换到 OpenClaw", { exact: true })).toBeVisible();
+  await expect(composer).toHaveValue("选择失败也要保留这条草稿");
+  assert.equal((await current()).switches.length, failed.switches.length, "refresh must not retry an already failed selection");
   await page.getByRole("button", { name: "继续使用当前选择", exact: true }).click();
   await expect(page.getByRole("button", { name: "选择 Harness", exact: true })).toContainText("Codex");
   await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled();
@@ -488,4 +490,35 @@ test("failed Harness selection keeps the same conversation usable, shows recover
   await page.reload(); await expect(composer).toHaveValue("");
   const unchanged = await (await context.request.get(origin + "/api/v1/sessions")).json(); assert.equal(unchanged.length, 2, "invalid cached drafts cannot create or submit a conversation");
   assert.deepEqual(errors, []);
+});
+
+test("native model selection follows the installed Harness and rapid choices switch directly without Apply", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true }); const context = await browser.newContext({ viewport: { width: 943, height: 1079 } }), page = await context.newPage();
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true });
+  const pick = async (label: string, value: string) => { await page.getByRole("button", { name: label, exact: true }).click(); await page.getByRole("option", { name: value, exact: true }).click(); };
+  await pick("选择 Harness", "Codex"); await expect(page.getByRole("button", { name: "选择模型", exact: true })).toBeEnabled();
+  await pick("选择模型", "Native B"); await composer.fill("NATIVE_FIRST：沿用本机配置"); await composer.press("Enter");
+  await expect(page.getByRole("log", { name: "对话历史" })).toContainText("已由 native-b 处理");
+  const origin = new URL(fixture.gateway.url).origin;
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  await expect.poll(async () => (await current()).runs[0].status).toBe("completed"); const first = await current(); assert.equal(first.selection.nativeModel, "native-b");
+  await composer.fill("切换期间保留这个草稿");
+  await pick("选择模型", "Native A"); await pick("选择模型", "Native B");
+  await expect.poll(async () => { const value = await current(); return value.pendingSwitchId === null && value.selection.nativeModel === "native-b"; }).toBe(true);
+  await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "应用选择", exact: true })).toHaveCount(0); await expect(composer).toHaveValue("切换期间保留这个草稿");
+  await composer.press("Enter"); await expect.poll(async () => (await current()).runs[1]?.status).toBe("completed");
+  const latest = await current(); assert.equal(latest.id, first.id); assert.equal(latest.runs[1].selection.nativeModel, "native-b");
+  await composer.fill("FAIL_ONCE：检查重试按钮布局"); await composer.press("Enter"); await expect.poll(async () => (await current()).runs[2]?.status).toBe("failed");
+  await page.locator(".assistant-message").last().hover();
+  for (const width of [943, 390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    const retry = page.getByRole("button", { name: "重试回复", exact: true }).last();
+    const box = await retry.boundingBox(); assert.ok(box && box.width >= 90 && box.height <= 36, "retry label remains horizontal");
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await page.screenshot({ path: join(artifact, `native-models-${width}.png`), fullPage: true, animations: "disabled" });
+  }
 });

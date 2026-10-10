@@ -4,6 +4,7 @@ import type { SelectionRequest } from "../../src/contracts/session.js";
 import type { ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
 import { parseProviderTarget } from "../../src/contracts/provider.js";
 import type { HarnessView, SessionView, WebState } from "../../src/contracts/web.js";
+import type { NativeModelCatalog } from "../../src/contracts/control.js";
 import type { InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
 import { sessionId as validateSessionId } from "../../src/contracts/session.js";
 import { applySessionStreamFrame } from "./session-stream.js";
@@ -53,10 +54,11 @@ function savedChatDraft(workspace: string, id: string): ChatDraft | null {
           !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(item.key) || typeof item.recovery !== "boolean" || typeof item.acknowledgeUnknown !== "boolean" ||
           input === null || typeof input !== "object" || Array.isArray(input)) return null;
       const target = input as Record<string, unknown>;
-      if (Object.keys(target).some(key => !["harnessId", "controlId", "provider"].includes(key)) || typeof target.harnessId !== "string" || !/^[a-z][a-z0-9-]{0,95}$/u.test(target.harnessId) ||
+      if (Object.keys(target).some(key => !["harnessId", "controlId", "provider", "nativeModel"].includes(key)) || typeof target.harnessId !== "string" || !/^[a-z][a-z0-9-]{0,95}$/u.test(target.harnessId) ||
           typeof target.controlId !== "string" || !/^[a-z][a-z0-9-]{0,95}$/u.test(target.controlId)) return null;
       selectionIntent = { sessionId: id, selection: { harnessId: target.harnessId, controlId: target.controlId,
-        ...(target.provider === undefined ? {} : { provider: target.provider === null ? null : parseProviderTarget(target.provider) }) }, key: item.key, recovery: item.recovery, acknowledgeUnknown: item.acknowledgeUnknown };
+        ...(target.provider === undefined ? {} : { provider: target.provider === null ? null : parseProviderTarget(target.provider) }),
+        ...(target.nativeModel === undefined ? {} : { nativeModel: typeof target.nativeModel === "string" && target.nativeModel.length <= 1024 ? target.nativeModel : (() => { throw new Error("invalid native model"); })() }) }, key: item.key, recovery: item.recovery, acknowledgeUnknown: item.acknowledgeUnknown };
     }
     return { message: row.message, selection: { harnessId: String(selection.harnessId), controlId: String(selection.controlId), providerId: String(selection.providerId),
       providerRevision: selection.providerRevision, model: String(selection.model) }, epoch: row.epoch, messageIntent: parseMessage(row.messageIntent), selectionIntent };
@@ -93,6 +95,10 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [streamAttempt, setStreamAttempt] = useState(0);
+  const [nativeCatalog, setNativeCatalog] = useState<NativeModelCatalog | null>(null);
+  const [nativeLoading, setNativeLoading] = useState(false);
+  const [nativeError, setNativeError] = useState<string | null>(null);
+  const [modelAttempt, setModelAttempt] = useState(0);
   const [draftStorageError, setDraftStorageError] = useState<string | null>(null);
   const [editor, setEditor] = useState<ProviderView | "new" | null>(null);
   const [editorDirty, setEditorDirty] = useState(false);
@@ -116,6 +122,8 @@ export function App() {
   const pendingMessage = useRef<PendingMessage | null>(null);
   const pendingSwitchWrite = useRef<PendingSelection | null>(null);
   const chatDrafts = useRef(new Map<string, ChatDraft>());
+  const selectionWish = useRef<{ id: string; draft: SelectionDraft } | null>(null);
+  const lastAutoSelection = useRef<string | null>(null);
   const pendingProviderWrite = useRef<PendingProviderWrite | null>(null);
   const observedSelection = useRef("");
   const observedVersion = useRef<{ id: string; version: number } | null>(null);
@@ -161,7 +169,15 @@ export function App() {
     if (observedSelection.current !== key) {
       observedSelection.current = key;
       const saved = chatDrafts.current.get(value.id);
-      setDraft(saved?.epoch === value.epoch ? saved.selection : selectionDraft(value.selection));
+      const wish = selectionWish.current;
+      const restored = wish?.id === value.id ? wish.draft : saved?.epoch === value.epoch ? saved.selection : selectionDraft(value.selection);
+      const latest = value.switches.at(-1);
+      if (saved && latest?.status === "failed" && JSON.stringify(selectionRequest(restored)) === JSON.stringify(latest.requested))
+        lastAutoSelection.current = JSON.stringify({ id: value.id, selection: latest.requested });
+      if (wish?.id === value.id) {
+        if (JSON.stringify(wish.draft) === JSON.stringify(selectionDraft(value.selection))) selectionWish.current = null;
+        setDraft(wish.draft);
+      } else setDraft(restored);
     }
     if (pendingMessage.current?.sessionId === value.id && value.runs.some(run => run.commandId === pendingMessage.current?.sendKey)) pendingMessage.current.committed = true;
     setState(current => {
@@ -265,6 +281,7 @@ export function App() {
   };
   useEffect(() => { if (state && !sessionLoading && !sessionError) saveChatDraft(); }, [messageDraft, draft, session?.epoch, mutation, state !== null, sessionLoading, sessionError]);
   const newChat = () => leave(() => {
+    selectionWish.current = null; lastAutoSelection.current = null;
     saveChatDraft(); const saved = chatDrafts.current.get("new"); pendingSwitchWrite.current = saved?.selectionIntent ?? null;
     sessionIdRef.current = null; liveSession.current = null; observedSelection.current = ""; pendingMessage.current = null;
     pendingMessage.current = saved?.messageIntent ?? null;
@@ -275,6 +292,7 @@ export function App() {
     if (sessionIdRef.current !== id) {
       saveChatDraft(); const saved = chatDrafts.current.get(id) ?? savedChatDraft(state?.workspace ?? workspace, id);
       if (saved) chatDrafts.current.set(id, saved);
+      selectionWish.current = saved ? { id, draft: saved.selection } : null; lastAutoSelection.current = null;
       sessionIdRef.current = id; liveSession.current = null; observedSelection.current = "";
       pendingMessage.current = saved?.messageIntent ?? null; pendingSwitchWrite.current = saved?.selectionIntent ?? null;
       writeSessionRoute(id); setSessionId(id); setSession(null); setSessionLoading(true); setSessionError(null);
@@ -283,6 +301,7 @@ export function App() {
     setPage("chat"); setEditor(null); setEditorDirty(false); setSidebarOpen(false); setError(null); setConnectionError(null);
   });
   const chooseHarness = (harness: HarnessView) => leave(() => {
+    selectionWish.current = null; lastAutoSelection.current = null;
     const control = harness.controls.find(row => row.id === harness.defaultControlId && row.available) ?? harness.controls.find(row => row.available); if (!control) return;
     saveChatDraft(); pendingSwitchWrite.current = null;
     sessionIdRef.current = null; liveSession.current = null; observedSelection.current = ""; pendingMessage.current = null;
@@ -299,8 +318,11 @@ export function App() {
   const startOperation = (label: string): boolean => { if (operation.current) return false; operation.current = true; setMutation(label); setError(null); return true; };
   const endOperation = () => { operation.current = false; if (mounted.current) setMutation(null); };
   const send = async (value: string) => {
-    if (!state || !startOperation("sending")) return;
+    if (!state) throw new ApiError("NOT_READY", "工作空间尚未连接。");
+    if (!startOperation("sending")) throw new ApiError("OPERATION_PENDING", "正在处理当前选择，请稍候；草稿已保留。");
     try {
+      if (session && (session.pendingSwitchId !== null || JSON.stringify(draft) !== JSON.stringify(selectionDraft(session.selection))))
+        throw new ApiError("SELECTION_PENDING", "正在切换到所选 Harness 或模型，请稍候；草稿已保留。");
       const isEffective = session !== null && JSON.stringify(draft) === JSON.stringify(selectionDraft(session.selection));
       const problem = (isEffective && session ? effectiveProviderProblem(session.selection, state.providers) : null) ?? selectionProblem(draft, state.harnesses, state.providers); if (problem) throw new ApiError("INVALID_SELECTION", problem);
       const previous = pendingMessage.current;
@@ -336,11 +358,10 @@ export function App() {
     let submittedKey: string | null = null;
     try {
       const target = selectionRequest(draft), previous = pendingSwitchWrite.current;
-      if (previous?.sessionId === sessionId && JSON.stringify(previous.selection) !== JSON.stringify(target))
-        throw new ApiError("UNCONFIRMED_REQUEST", "上一次切换的接收结果还未确认。请保留原选择重试，或等待对话更新。");
       const recovery = session?.status === "blocked", acknowledgeUnknown = recovery && session.runs.some(run => run.status === "unknown");
       const request = previous?.sessionId === sessionId ? previous : { sessionId, selection: target, key: requestKey(), recovery, acknowledgeUnknown };
       pendingSwitchWrite.current = request; submittedKey = request.key;
+      lastAutoSelection.current = JSON.stringify({ id: sessionId, selection: request.selection });
       saveChatDraft();
       if (request.recovery) await api.resumeSelection(sessionId, request.selection, request.key, request.acknowledgeUnknown);
       else await api.switchSelection(sessionId, request.selection, request.key);
@@ -357,6 +378,27 @@ export function App() {
     }
     finally { endOperation(); }
   };
+  const changeSelection = (value: SelectionDraft) => {
+    lastAutoSelection.current = null;
+    if (sessionIdRef.current !== null) selectionWish.current = { id: sessionIdRef.current, draft: value };
+    setDraft(value);
+  };
+  useEffect(() => {
+    if (!state || !session || session.status !== "open" || session.pendingSwitchId !== null || mutation !== null || operation.current ||
+        JSON.stringify(draft) === JSON.stringify(selectionDraft(session.selection)) || selectionProblem(draft, state.harnesses, state.providers)) return;
+    const key = JSON.stringify({ id: session.id, selection: selectionRequest(draft) });
+    if (lastAutoSelection.current === key) return;
+    void applySelection();
+  }, [draft, session?.id, session?.version, mutation, state?.harnesses, state?.providers]);
+  useEffect(() => {
+    setNativeCatalog(null); setNativeError(null); setNativeLoading(false);
+    if (!state || draft.providerId || !draft.harnessId || !draft.controlId) return;
+    const controller = new AbortController(); setNativeLoading(true);
+    void api.nativeModels(draft.harnessId, draft.controlId, session?.workspace ?? workspace, controller.signal).then(value => {
+      if (!controller.signal.aborted) setNativeCatalog(value);
+    }, (failure: unknown) => { if (!controller.signal.aborted) setNativeError(errorMessage(failure)); }).finally(() => { if (!controller.signal.aborted) setNativeLoading(false); });
+    return () => controller.abort();
+  }, [api, state !== null, draft.harnessId, draft.controlId, draft.providerId, session?.workspace, workspace, modelAttempt]);
   const cancel = async () => {
     if (!sessionId || !startOperation("cancelling")) return;
     try { await api.cancel(sessionId, requestKey()); acceptSession(await api.session(sessionId, AbortSignal.timeout(15_000))); }
@@ -444,7 +486,7 @@ export function App() {
   if (!state) return <div className="boot-screen"><BrandMark/><h1>Harness<span>Hub</span></h1>{bootError ? <><div className="boot-error" role="alert"><AlertCircle size={18}/><p>{bootError}</p></div><p className="boot-help">请使用本机网关启动时提供的入口链接。验证完成后，页面会自动隐藏链接中的令牌。</p><button className="button secondary" onClick={() => setBootAttempt(value => value + 1)}><RefreshCw size={15}/>重新连接</button></> : <div className="boot-progress" role="status"><Spinner/>正在连接你的工作空间</div>}</div>;
   return <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`} data-page={page}><a className="skip-link" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>跳到主要内容</a><Sidebar page={page} sessions={state.sessions} currentId={sessionId} open={sidebarOpen} collapsed={sidebarCollapsed} activeJobs={state.jobs.filter(installationActive).length} interactionBusy={mutation !== null} onCollapse={() => setSidebarCollapsed(value => !value)} onToggle={() => setSidebarOpen(value => !value)} onPage={navigate} onNew={newChat} onSession={selectSession}/>
     <main id="main-content" className="app-main" tabIndex={-1}>
-      {page === "chat" ? <ChatPage key={chatKey} session={session} sessionRequested={sessionId !== null} sessionError={sessionError} loading={sessionLoading} draft={draft} messageDraft={messageDraft} onMessageDraft={setMessageDraft} providers={state.providers} harnesses={state.harnesses} workspace={workspace} mutation={mutation} error={error ?? draftStorageError} connectionError={connectionError} onRetryConnection={() => setStreamAttempt(value => value + 1)} onDraft={setDraft} onWorkspace={setWorkspace} onSend={send} onApply={() => void applySelection()} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }} onProviders={() => navigate("providers")} onNew={newChat} onMenu={() => setSidebarOpen(value => !value)}/>
+      {page === "chat" ? <ChatPage nativeModels={nativeCatalog} nativeModelsLoading={nativeLoading} nativeModelsError={nativeError} onRefreshModels={() => setModelAttempt(value => value + 1)} key={chatKey} session={session} sessionRequested={sessionId !== null} sessionError={sessionError} loading={sessionLoading} draft={draft} messageDraft={messageDraft} onMessageDraft={setMessageDraft} providers={state.providers} harnesses={state.harnesses} workspace={workspace} mutation={mutation} error={error ?? draftStorageError} connectionError={connectionError} onRetryConnection={() => setStreamAttempt(value => value + 1)} onDraft={changeSelection} onWorkspace={setWorkspace} onSend={send} onApply={() => { lastAutoSelection.current = null; void applySelection(); }} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }} onProviders={() => navigate("providers")} onNew={newChat} onMenu={() => setSidebarOpen(value => !value)}/>
         : page === "providers" ? <ProvidersPage providers={state.providers} editor={editor} saving={mutation === "saving"} probes={probes} error={error} onEdit={provider => { setEditor(provider); setError(null); }} onBack={() => leave(() => { setEditor(null); setEditorDirty(false); setError(null); })} onSave={saveProvider} onProbe={provider => void probeProvider(provider)} onDirty={dirtyChanged} onDismissError={() => setError(null)} onMenu={() => setSidebarOpen(value => !value)}/>
           : <HarnessesPage api={api} harnesses={state.harnesses} jobs={state.jobs} scanning={mutation === "scanning"} checking={checkingUpdates} submitting={submittingInstallations} cancelling={cancellingInstallations} unconfirmed={unconfirmedInstallations} error={error} connectionError={managementConnectionError} onRescan={() => void rescan()} onCheckUpdates={ids => void checkUpdates(ids)} onInstall={install} onConfirm={confirmInstallation} onCancelJob={job => void cancelInstallation(job)} onDismissError={() => setError(null)} onMenu={() => setSidebarOpen(value => !value)} onChoose={chooseHarness}/>}
     </main>

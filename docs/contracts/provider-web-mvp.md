@@ -8,6 +8,10 @@
 
 改变 Harness 或 Provider/模型先提出切换请求；当前一轮及此前已准入消息收敛后，网关验证目标、初始化并关闭控制连接，才提交下一 epoch。界面区分已生效与等待切换。仅换 Harness 继承现有 Provider，无法兼容时拒绝；选择原生配置模式必须显式传 provider:null。失败切换后的排队输入不能改用旧目标。
 
+ADR-015后，选择器变化即提出意图，不再另点Apply。快速选择时只提交最新尚未受理选择，已受理请求使用原幂等键确认后收敛；期间新消息禁止发给中间目标。界面保留最新用户选择，不被较早切换快照覆盖；失败不自动重试，用户可明确重试或继续原有效选择。
+
+所有native入口沿用本机已安装Harness的配置目录、模型与登录，不创建空配置或写全局模型。选择nativeModel与managed provider互斥；native模型通过原生RPC传给新会话。`GET /api/v1/harnesses/:id/models?controlId=...&workspace=...`读取相同入口/配置的模型、默认和安全认证状态；Codex config/read/account/read/model/list，ACP声明的model配置项或明确的旧models接口。没有原生选择能力就明确说明由Harness管理，不伪造静态目录。后台最多8个读探测、同请求共享、20s期限，关闭取消并等待进程；认证缺失返回missing，异常不缓存空目录。
+
 Provider 保存名称、协议、Base URL、模型列表、默认模型、启用状态和 hasCredential。新增/编辑都使用命令幂等键；更新要求 expectedRevision。空白密钥字段在前端转换为省略，保留旧密钥；显式空字符串无效。当前不做删除/复用身份，停用后保留全部历史 revision；已准入 Run 保留旧配置，新的准备过程拒绝停用目标。编辑不自动改变当前 Session 的固定 revision，用户需显式应用新版本。
 
 ## 兼容矩阵
@@ -28,7 +32,7 @@ Provider 保存名称、协议、Base URL、模型列表、默认模型、启用
 
 已知密钥在公开 control metadata、事件、诊断、错误与结算中清洗；文本跨delta分片使用前缀缓冲，不能通过分片逃逸。模型探测禁止redirect，响应≤1MiB，期限5s，同时≤16；shutdown停止准入、取消并等待所有探测，才释放vault/database。
 
-业务SQLite在独占owner内全事务执行既有user_version1→2以及新增2→3迁移，保留全部命令、fingerprint、events、水位和业务version；坏数据整笔回滚。新Session必须v3，未知格式拒绝；只读Reader支持已知旧版本但不迁移。旧Session无法凭空获得模型目标，需要显式切换。旧程序不能读取v3；回退前停止服务并恢复升级前备份。
+业务SQLite在独占owner内全事务执行既有user_version1→2→3及新增3→4迁移，保留全部命令、fingerprint、events、水位和业务version；坏数据整笔回滚。新Session必须v4，未知格式拒绝；只读Reader支持已知旧版本但不迁移。旧Session无法凭空获得模型目标，需要明确选择。旧程序不能读取v4；回退前停止服务并恢复升级前备份。
 
 ## HTTP 与浏览器
 
