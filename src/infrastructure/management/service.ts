@@ -105,7 +105,7 @@ export class LocalHarnessManagement {
   private recipe(harness: string, control?: string): ManagementRecipe | null {
     const candidates = this.recipes.filter(item => item.harnessId === harness);
     if (control !== undefined) return candidates.find(item => item.controlId === control) ?? null;
-    return candidates.find(item => item.controlId === "codex-native" || item.controlId === "openclaw-native") ?? candidates.find(item => item.kind === "npm") ?? candidates[0] ?? null;
+    return candidates.find(item => item.controlId === "codex-native" || item.controlId === "openclaw-native" || item.controlId === "pi-native") ?? candidates.find(item => item.kind === "npm") ?? candidates[0] ?? null;
   }
   capability(harnessId: string): InstallCapability | null {
     this.own(); const recipe = this.recipe(managementSlug(harnessId)); if (!recipe) return null;

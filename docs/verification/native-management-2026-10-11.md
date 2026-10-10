@@ -4,7 +4,7 @@
 
 ## 实现与责任
 
-生产安装沿本机原渠道与位置。npm读取原HOME及已有npm prefix配置，核实精确目标版本的元数据/bin，拒绝覆盖其他程序入口；uv读取原工具/入口目录；审核归档先在私有目录解包和验证，再发布用户程序入口。已有开发目录保留，不换成另一个安装。旧私有版本槽及任务只保留历史与显式测试模式。页面的版本列标明接入口版本，适配器版本不能冒充原CLI版本。
+生产安装沿本机原渠道与位置。npm读取原HOME及已有npm prefix配置，核实精确目标版本的元数据/bin，拒绝覆盖其他程序入口；uv读取原工具/入口目录；审核归档先在私有目录解包和验证，再发布用户程序入口。已有开发目录保留，不换成另一个安装。Pi管理以原生CLI作为默认对象，不提示为已可用原生入口安装多余ACP适配器。旧私有版本槽及任务只保留历史与显式测试模式。页面的版本列标明接入口版本，适配器版本不能冒充原CLI版本。
 
 模型与登录由原Harness读取。Claude ACP绑定原Claude Code可执行文件，未设置CLAUDE_CONFIG_DIR时保持未设置；本机设置该变量会改变登录文件位置，因此不能强行补默认。Pi直接连接原CLI，读取本机模型，以启动参数选择模型，禁止调用会写全局默认的set_model；实际协议等待agent_settled，prompt受理、后端结果、静止与清理分开。当前生产Web的统一Provider导航后置，原生接入没有创建Hub Provider或替换原配置。
 
@@ -40,4 +40,4 @@ Codex、OpenClaw、Gemini、OpenCode、Claude settings配置摘要均与本轮�
 - 真实Codex→Gemini→Codex的受控模型服务回归、真实Web SSE回归各1项通过。真实npm私有版本安装/升级回归1项通过，测试使用隔离HOME/PATH，不能把它称为本机系统升级；本机安装证据来自Claude ACP的原npm位置任务。
 - `python3 tools/check_design.py --write`、`pnpm check:design`与`git diff --check`通过。蓝图场景仍为planned，数量不是运行结果；完整未来架构门禁仍关闭。
 
-Homebrew升级、本机Cursor认证/旧协议、Gemini服务端停用、Claude额度是当前明确限制。未验收所有43个目录项、所有归档/Python真实安装与全平台；不为了扩大通过数量改变用户原安装/原配置。统一Provider管理后续另按Magpie链路实现。
+Homebrew升级、本机Cursor认证/旧协议、Gemini服务端停用、Claude额度是当前明确限制。OpenClaw旧版ACP未暴露运行时模型切换，当前沿用其本机默认DeepSeek；未伪造可选模型或改全局默认。未验收所有43个目录项、所有归档/Python真实安装与全平台；不为了扩大通过数量改变用户原安装/原配置。统一Provider管理后续另按Magpie链路实现。

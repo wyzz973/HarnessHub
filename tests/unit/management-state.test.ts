@@ -52,7 +52,8 @@ test("builtin management recipes cover reviewed native package identities and mu
   const recipes = builtinManagementRecipes();
   assert.equal(recipes.find(recipe => recipe.controlId === "codex-native")?.packageName, "@openai/codex");
   assert.equal(recipes.find(recipe => recipe.controlId === "openclaw-native")?.packageName, "openclaw");
-  assert.deepEqual(recipes.find(recipe => recipe.harnessId === "pi")?.dependencies, [{ packageName: "@earendil-works/pi-coding-agent", binName: "pi" }]);
+  assert.equal(recipes.find(recipe => recipe.controlId === "pi-native")?.packageName, "@earendil-works/pi-coding-agent");
+  assert.deepEqual(recipes.find(recipe => recipe.harnessId === "pi" && recipe.controlId !== "pi-native")?.dependencies, [{ packageName: "@earendil-works/pi-coding-agent", binName: "pi" }]);
   for (const [harness, bin] of [["codebuddy-code", "codebuddy"], ["dimcode", "dimcode"], ["nova", "nova"], ["minion-code", "minion-code"]]) assert.equal(recipes.find(recipe => recipe.harnessId === harness)?.binName, bin);
   assert.equal(recipes.filter(recipe => recipe.kind === "binary").length, 19);
 });

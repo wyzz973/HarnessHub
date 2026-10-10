@@ -14,6 +14,7 @@ export function builtinManagementRecipes(): readonly ManagementRecipe[] {
     if (control.distribution === null) {
       const native: Readonly<Record<string, { packageName: string; bin: string }>> = {
         "codex-native": { packageName: "@openai/codex", bin: "codex" }, "openclaw-native": { packageName: "openclaw", bin: "openclaw" },
+        "pi-native": { packageName: "@earendil-works/pi-coding-agent", bin: "pi" },
       };
       const source = native[control.id];
       if (source) result.push({ harnessId: definition.id, controlId: control.id, kind: "npm", packageName: source.packageName,

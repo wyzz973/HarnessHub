@@ -494,7 +494,8 @@
         "src/infrastructure/management/metadata.ts",
         "web/src/styles.css",
         "src/infrastructure/catalog/registry.ts",
-        "src/infrastructure/management/system-version.ts"
+        "src/infrastructure/management/system-version.ts",
+        "src/adapters/management/recipes.ts"
       ],
       "implementation_state": "implemented",
       "verification_record": "docs/verification/native-management-2026-10-11.md"
