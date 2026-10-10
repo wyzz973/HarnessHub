@@ -25,21 +25,31 @@
     "test:real:provider": "pnpm build && node --test dist/tests/real/provider-switch.real.js",
     "test:web": "pnpm build && pnpm web:build && node --test dist/tests/browser/web.browser.js",
     "test:real:gemini-provider": "pnpm build && node --test dist/tests/real/gemini-provider.real.js",
-    "test:real:switch": "pnpm build && node --test dist/tests/real/harness-provider-switch.real.js"
+    "test:real:switch": "pnpm build && node --test dist/tests/real/harness-provider-switch.real.js",
+    "test:real:install": "pnpm build && node --test dist/tests/real/managed-install.real.js"
   },
   "devDependencies": {
     "@playwright/test": "1.64.0",
     "@types/node": "24.13.3",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
+    "@types/semver": "7.8.0",
+    "@types/unbzip2-stream": "1.4.3",
+    "@types/yauzl": "3.4.0",
     "@vitejs/plugin-react": "6.1.2",
     "typescript": "5.9.3",
     "vite": "8.3.4"
   },
   "dependencies": {
+    "@lobehub/icons-static-svg": "1.95.1",
+    "@radix-ui/react-popover": "1.2.0",
     "lucide-react": "1.54.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "react-markdown": "10.1.0"
+    "react-markdown": "10.1.0",
+    "semver": "7.8.5",
+    "tar": "7.5.22",
+    "unbzip2-stream": "1.4.3",
+    "yauzl": "3.4.0"
   }
 }

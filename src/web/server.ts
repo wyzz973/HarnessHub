@@ -6,11 +6,13 @@ import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url";
 import { application as composeApplication } from "../cli/session-application.js";
 import { ProviderError } from "../contracts/provider.js";
+import { ManagementError } from "../contracts/management.js";
 import { SessionError, sessionId, type SelectionRequest, type SessionConfiguration, type SessionSnapshot } from "../contracts/session.js";
-import type { EventPage, HarnessView, SessionSummary, SessionView, WebState } from "../contracts/web.js";
+import type { EventPage, HarnessView, InstallationLogPage, SessionSummary, SessionView, WebState } from "../contracts/web.js";
 import { inventory } from "../infrastructure/catalog/inventory-composition.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
 import { supportedProviderProtocols } from "../contexts/provider/domain/provider.js";
+import { observedPackageVersion } from "../infrastructure/management/system-version.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -117,10 +119,10 @@ function view(snapshot: SessionSnapshot): SessionView {
 }
 function publicFailure(error: unknown): { readonly status: number; readonly code: string; readonly message: string } {
   if (error instanceof HttpError) return error;
-  if (error instanceof SessionError || error instanceof ProviderError) {
+  if (error instanceof SessionError || error instanceof ProviderError || error instanceof ManagementError) {
     const code = error.code;
     const status = code.includes("NOT_FOUND") ? 404 : code === "INVALID_INPUT" ? 400 : code.includes("LIMIT") || code === "QUEUE_FULL" ? 429
-      : code.includes("UNAVAILABLE") || code.includes("CLOSED") || code.includes("BLOCKED") || code.includes("CONFLICT") || code.includes("PENDING") || code.includes("REVISION") || code.includes("UNSUPPORTED") ? 409 : 502;
+      : code.includes("UNAVAILABLE") || code.includes("CLOSED") || code.includes("BLOCKED") || code.includes("CONFLICT") || code.includes("PENDING") || code.includes("REVISION") || code.includes("UNSUPPORTED") || code.includes("BUSY") || code.includes("ACTIVE") || code === "STALE_DEFAULT" || code === "DEFAULT_CHANGED" ? 409 : 502;
     return { status, code, message: error.message.slice(0, 512) };
   }
   return { status: 500, code: "GATEWAY_FAILED", message: "Gateway operation failed" };
@@ -176,12 +178,27 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   const rescan = (): Promise<readonly HarnessView[]> => {
     if (scan) return scan;
     const pending = inventory({ ...(options.configuration.manifestPath === null ? {} : { manifest: options.configuration.manifestPath }),
-      searchDirs: options.configuration.searchDirs, packageRoots: options.configuration.packageRoots, pathOnly: options.configuration.pathOnly }).then(observed => {
-      harnesses = observed.report.harnesses.map(item => ({ id: item.id, name: item.name,
-        installed: item.installation.candidates.length > 0,
+      searchDirs: options.configuration.searchDirs, packageRoots: options.configuration.packageRoots, pathOnly: options.configuration.pathOnly,
+      managedResolver: app.management }).then(observed => {
+      app.management.setSystemObservations(observed.report.harnesses.flatMap(harness => harness.controls.flatMap(control => {
+        if (control.state !== "candidate" || control.command === null || observed.managedBindings.has(control.id)) return [];
+        const packageVersion = observedPackageVersion(control.diagnostics);
+        return [{ harnessId: harness.id, controlId: control.id, command: control.command, ...(packageVersion === undefined ? {} : { packageVersion }) }];
+      })));
+      const management = new Map(app.management.views(observed.report.harnesses.map(item => item.id)).map(item => [item.harnessId, item]));
+      harnesses = observed.report.harnesses.map(item => {
+        const managed = management.get(item.id);
+        if (!managed) throw new HttpError(503, "MANAGEMENT_UNAVAILABLE", "Harness management observation is unavailable");
+        const installed = item.installation.candidates.length > 0 || item.controls.some(control => control.state === "candidate");
+        const available = item.controls.filter(control => control.state === "candidate" && (control.protocol === "acp-v1" || control.protocol === "codex-app-server"));
+        const managedControls = available.filter(control => observed.managedBindings.has(control.id));
+        const defaultControlId = managedControls.length === 1 ? managedControls[0]!.id : managedControls.length === 0 && available.length === 1 ? available[0]!.id : null;
+        return { id: item.id, name: item.name, installed, defaultControlId,
         controls: item.controls.map(control => ({ id: control.id, protocol: control.protocol, available: control.state === "candidate" && (control.protocol === "acp-v1" || control.protocol === "codex-app-server"),
           reason: control.state === "candidate" ? (control.protocol === "acp-v1" || control.protocol === "codex-app-server" ? null : "Control Driver is not implemented") : control.missingDependencies.length ? "Missing: " + control.missingDependencies.join(", ") : "Control entry unavailable" })),
-        providerProtocols: item.controls.some(control => control.state === "candidate" && ((item.id === "codex" && control.protocol === "codex-app-server") || (item.id === "gemini" && control.protocol === "acp-v1"))) ? supportedProviderProtocols(item.id) : [] }));
+        providerProtocols: item.controls.some(control => control.state === "candidate" && ((item.id === "codex" && control.protocol === "codex-app-server") || (item.id === "gemini" && control.protocol === "acp-v1"))) ? supportedProviderProtocols(item.id) : [],
+        management: { ...managed, source: managed.source === "managed" ? "managed" : installed ? "system" : "missing" } };
+      });
       return harnesses;
     });
     scan = pending;
@@ -222,10 +239,42 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (write && (typeof request.headers["x-csrf-token"] !== "string" || !equal(request.headers["x-csrf-token"], login.csrf))) throw new HttpError(403, "CSRF_REJECTED", "Invalid write token");
     if (path === "/api/v1/auth/session" && method === "GET") { queries(url, []); json(response, 200, { csrfToken: login.csrf }); return; }
     if (path === "/api/v1/state" && method === "GET") {
-      queries(url, []); const output: WebState = { workspace: options.configuration.workspace, providers: app.providers.list(), harnesses, sessions: app.store.list(100).map(summary) }; json(response, 200, output); return;
+      queries(url, []); const output: WebState = { workspace: options.configuration.workspace, providers: app.providers.list(), harnesses: await rescan(), sessions: app.store.list(100).map(summary), jobs: app.management.listJobs().slice(0, 50) }; json(response, 200, output); return;
     }
-    if (path === "/api/v1/harnesses" && method === "GET") { queries(url, []); json(response, 200, harnesses); return; }
+    if (path === "/api/v1/harnesses" && method === "GET") { queries(url, []); json(response, 200, await rescan()); return; }
     if (path === "/api/v1/harnesses/rescan" && method === "POST") { queries(url, []); record(await body(request), []); json(response, 200, await rescan()); return; }
+    if (path === "/api/v1/harnesses/check-updates" && method === "POST") {
+      queries(url, []); const input = record(await body(request), ["harnessIds"]);
+      let ids: readonly string[] | undefined;
+      if (input.harnessIds !== undefined) {
+        if (!Array.isArray(input.harnessIds) || input.harnessIds.length > 128 || input.harnessIds.some(value => typeof value !== "string" || !/^[a-z][a-z0-9-]{0,95}$/u.test(value)) || new Set(input.harnessIds).size !== input.harnessIds.length)
+          throw new HttpError(400, "INVALID_INPUT", "Expected a bounded unique list of Harness identities");
+        ids = input.harnessIds.map(value => text(value, "Harness identity", 96));
+      }
+      await app.management.checkUpdates(ids); json(response, 200, await rescan()); return;
+    }
+    if (path === "/api/v1/installation-jobs") {
+      if (method === "GET") { queries(url, ["limit"]); json(response, 200, app.management.listJobs().slice(0, cursor(url.searchParams.get("limit"), 50, 1, 100))); return; }
+      if (method === "POST") {
+        queries(url, []); const input = record(await body(request), ["harnessId", "controlId", "action", "commandId", "expectedDefaultRevision"], ["harnessId", "action", "commandId"]);
+        if (input.action !== "install" && input.action !== "upgrade") throw new HttpError(400, "INVALID_INPUT", "Expected install or upgrade action");
+        json(response, 202, app.management.submit({ harnessId: text(input.harnessId, "Harness identity", 96), action: input.action, commandId: command(input.commandId),
+          ...(input.controlId === undefined ? {} : { controlId: text(input.controlId, "control identity", 96) }),
+          ...(input.expectedDefaultRevision === undefined ? {} : { expectedDefaultRevision: integer(input.expectedDefaultRevision, 0, Number.MAX_SAFE_INTEGER, "default revision") }) })); return;
+      }
+    }
+    const jobRoute = /^\/api\/v1\/installation-jobs\/([^/]+)(?:\/(logs|cancel))?$/u.exec(path);
+    if (jobRoute) {
+      const id = jobRoute[1]!, action = jobRoute[2];
+      if (action === undefined && method === "GET") { queries(url, []); json(response, 200, app.management.readJob(id)); return; }
+      if (action === "logs" && method === "GET") {
+        queries(url, ["afterSeq", "limit"]);
+        const after = cursor(url.searchParams.get("afterSeq"), 0, 0, Number.MAX_SAFE_INTEGER), entries = app.management.logs(id, after, cursor(url.searchParams.get("limit"), 50, 1, 100));
+        const nextSeq = entries.at(-1)?.seq ?? after;
+        const output: InstallationLogPage = { entries, nextSeq, hasMore: app.management.readJob(id).logCursor > nextSeq }; json(response, 200, output); return;
+      }
+      if (action === "cancel" && method === "POST") { queries(url, []); const input = record(await body(request), ["commandId"], ["commandId"]); json(response, 202, app.management.cancel(id, command(input.commandId))); return; }
+    }
     if (path === "/api/v1/providers") {
       queries(url, []);
       if (method === "GET") { json(response, 200, app.providers.list()); return; }
@@ -292,6 +341,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       let failure: unknown;
       try { await app.runtime.close(); } catch (error) { failure = error; }
       try { await listener; } catch (error) { failure ??= error; } finally { clearTimeout(deadline); }
+      try { await app.management.shutdown(); } catch (error) { failure ??= error; }
       try { await app.providers.shutdown(); } catch (error) { failure ??= error; }
       try { app.store.close(); } catch (error) { failure ??= error; }
       logins.clear();
@@ -307,7 +357,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     host = "127.0.0.1:" + address.port; origin = "http://" + host;
     return { url: origin + "/#token=" + bootstrap, close };
   } catch (error) {
-    try { await app.runtime.close(); } finally { try { await app.providers.shutdown(); } finally { app.store.close(); } }
+    try { await app.runtime.close(); } finally { try { await app.management.shutdown(); } finally { try { await app.providers.shutdown(); } finally { app.store.close(); } } }
     throw error;
   }
 }

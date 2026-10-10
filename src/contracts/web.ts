@@ -1,4 +1,5 @@
 import type { ProviderView } from "./provider.js";
+import type { HarnessManagementView, InstallationJobView, InstallationLog } from "./management.js";
 import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, SelectionRequest, SessionEvent, SessionSnapshot } from "./session.js";
 
 /** Browser-safe observations. Available means resolved control, not task acceptance. */
@@ -6,8 +7,10 @@ export interface HarnessView {
   readonly id: string;
   readonly name: string;
   readonly installed: boolean;
+  readonly defaultControlId: string | null;
   readonly controls: readonly { readonly id: string; readonly protocol: string; readonly available: boolean; readonly reason: string | null }[];
   readonly providerProtocols: readonly string[];
+  readonly management: HarnessManagementView;
 }
 export interface SessionSummary {
   readonly id: string;
@@ -38,9 +41,15 @@ export interface WebState {
   readonly providers: readonly ProviderView[];
   readonly harnesses: readonly HarnessView[];
   readonly sessions: readonly SessionSummary[];
+  readonly jobs: readonly InstallationJobView[];
 }
 export interface EventPage {
   readonly events: readonly SessionEvent[];
+  readonly nextSeq: number;
+  readonly hasMore: boolean;
+}
+export interface InstallationLogPage {
+  readonly entries: readonly InstallationLog[];
   readonly nextSeq: number;
   readonly hasMore: boolean;
 }

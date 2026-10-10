@@ -1,3 +1,4 @@
+import type { ResolvedManagedControl } from "../../contracts/management.js";
 import type { LocalProviderService } from "../provider/service.js";
 import { RedactedHarnessControl } from "./redacted-control.js";
 import { createHash } from "node:crypto";
@@ -73,8 +74,9 @@ export async function prepareConfiguration(input: ConfigurationInput): Promise<S
   if (input.pathOnly !== undefined && typeof input.pathOnly !== "boolean") throw new SessionError("INVALID_INPUT", "pathOnly must be boolean");
   return { workspace, configHome, manifestPath, manifestSha256, packageRoots, searchDirs, pathOnly: input.pathOnly ?? false };
 }
-interface Observation { readonly harnessId: string; readonly selected: ControlObservation; readonly searchPath: string }
-async function observe(request: SelectionRequest, configuration: SessionConfiguration, root: string): Promise<Observation> {
+interface ManagedResolver { resolveControl(harnessId: string, controlId: string): ResolvedManagedControl | null }
+interface Observation { readonly harnessId: string; readonly selected: ControlObservation; readonly searchPath: string; readonly managed: ResolvedManagedControl | null }
+async function observe(request: SelectionRequest, configuration: SessionConfiguration, root: string, managedResolver?: ManagedResolver): Promise<Observation> {
   await pinnedDirectory(configuration.workspace, "workspace");
   if (configuration.configHome !== null) await pinnedDirectory(configuration.configHome, "configuration home");
   for (const path of configuration.packageRoots) await pinnedDirectory(path, "package root");
@@ -87,13 +89,17 @@ async function observe(request: SelectionRequest, configuration: SessionConfigur
     await writeFile(snapshot, bytes, { flag: "wx", mode: 0o600 });
   } else if (configuration.manifestSha256 !== null) throw new SessionError("INVALID_INPUT", "manifest fingerprint requires a manifest reference");
   const observed = await inventory({ ...(snapshot === undefined ? {} : { manifest: snapshot }),
-    packageRoots: configuration.packageRoots, searchDirs: configuration.searchDirs, pathOnly: configuration.pathOnly });
+    packageRoots: configuration.packageRoots, searchDirs: configuration.searchDirs, pathOnly: configuration.pathOnly, ...(managedResolver === undefined ? {} : { managedResolver }) });
   const harness = observed.report.harnesses.find(item => item.id === request.harnessId || item.aliases.includes(request.harnessId));
   if (!harness) throw new SessionError("HARNESS_UNAVAILABLE", "unknown Harness: " + request.harnessId);
-  const selected = chooseControl(harness.controls, request.controlId);
+  // A published managed default is an explicit installation choice for this Harness.
+  // An admitted/requested control still remains exclusive across future observations.
+  const managedChoices = harness.controls.filter(control => observed.managedBindings.has(control.id));
+  const preferred = request.controlId ?? (managedChoices.length === 1 ? managedChoices[0]!.id : undefined);
+  const selected = chooseControl(harness.controls, preferred);
   if (selected.protocol !== "acp-v1" && selected.protocol !== "codex-app-server")
     throw new SessionError("UNSUPPORTED_CONTROL", "this control Driver is not implemented: " + selected.protocol);
-  return { harnessId: harness.id, selected, searchPath: observed.searchPath };
+  return { harnessId: harness.id, selected, searchPath: observed.searchPath, managed: observed.managedBindings.get(selected.id) ?? null };
 }
 async function privateHome(root: string, configuration: SessionConfiguration): Promise<string> {
   if (configuration.configHome !== null) return configuration.configHome;
@@ -105,12 +111,12 @@ async function privateHome(root: string, configuration: SessionConfiguration): P
 }
 /** Fresh per-Turn control with a real workspace lease; this is public-context rehydration, not native resume. */
 export class DirectorySessionBindingFactory implements SessionBindingFactory {
-  constructor(private readonly workspaces: WorkspaceLeaseProvider, private readonly assertOwner: () => void, private readonly providers?: LocalProviderService) {}
+  constructor(private readonly workspaces: WorkspaceLeaseProvider, private readonly assertOwner: () => void, private readonly providers?: LocalProviderService, private readonly management?: ManagedResolver) {}
   async validate(request: SelectionRequest, configuration: SessionConfiguration): Promise<HarnessSelection> {
     this.assertOwner();
     const root = await realpath(await mkdtemp(join(tmpdir(), "harness-session-validation-")));
     try {
-      const { harnessId, selected } = await observe(request, configuration, root);
+      const { harnessId, selected } = await observe(request, configuration, root, this.management);
       this.assertOwner();
       if (request.provider !== undefined && request.provider !== null) {
         if (!this.providers) throw new SessionError("PROVIDER_UNAVAILABLE", "Provider management is unavailable");
@@ -128,11 +134,11 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
     let root: string | undefined, control: HarnessControl | undefined;
     try {
       root = await realpath(await mkdtemp(join(tmpdir(), "harness-session-binding-")));
-      const observed = await observe(selection, configuration, root);
+      const observed = await observe(selection, configuration, root, this.management);
       if (observed.harnessId !== selection.harnessId || observed.selected.id !== selection.controlId || observed.selected.command === null)
         throw new SessionError("HARNESS_UNAVAILABLE", "the admitted control is no longer available");
       const home = await privateHome(root, configuration);
-      const environment: Record<string, string> = { ...observed.selected.command.env, PATH: observed.searchPath, LANG: "C.UTF-8",
+      const environment: Record<string, string> = { ...observed.selected.command.env, PATH: observed.managed?.command.env.PATH ? observed.managed.command.env.PATH + ":" + observed.searchPath : observed.searchPath, LANG: "C.UTF-8",
         HOME: home, XDG_CONFIG_HOME: join(home, "config"), XDG_DATA_HOME: join(home, "data"),
         XDG_STATE_HOME: join(home, "state"), XDG_CACHE_HOME: join(home, "cache"),
         CODEX_HOME: join(home, "codex"), CLAUDE_CONFIG_DIR: join(home, "claude"), OPENCODE_CONFIG_DIR: join(home, "opencode"),
@@ -152,7 +158,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       this.assertOwner(); lease.assertOwned();
       control = protocol === "acp-v1" ? new AcpControl(launch, options) : new CodexControl(launch, options);
       if (selection.provider !== undefined && this.providers) control = new RedactedHarnessControl(control, text => this.providers!.redact(text), () => this.providers!.createTextRedactor());
-      return new DirectoryPreparedBinding(control, configuration.workspace, lease, root, this.assertOwner);
+      return new DirectoryPreparedBinding(control, configuration.workspace, lease, root, this.assertOwner, observed.managed === null ? { source: "system" } : { source: "managed", id: observed.managed.installationId, revision: observed.managed.revision, version: observed.managed.version });
     } catch (error) {
       let cleanupError: unknown;
       let quiescent = control === undefined;
@@ -168,7 +174,7 @@ class DirectoryPreparedBinding implements PreparedSessionBinding {
   private closing: Promise<CleanupEvidence> | null = null;
   private closed = false;
   constructor(readonly control: HarnessControl, readonly workspace: string, private readonly lease: WorkspaceLease,
-    private readonly root: string, private readonly owner: () => void) {}
+    private readonly root: string, private readonly owner: () => void, readonly installation: NonNullable<PreparedSessionBinding["installation"]>) {}
   assertOwned(): void {
     if (this.closed || this.closing !== null) throw new SessionError("BINDING_CLOSED", "binding is closing or closed");
     this.owner(); this.lease.assertOwned();

@@ -68,6 +68,7 @@ test("real Codex→Gemini→Codex uses the same public Session with explicit Pro
     let failure: unknown;
     if (ownedApplication) {
       try { await ownedApplication.runtime.close(); } catch (error) { failure = error; }
+      try { await ownedApplication.management.shutdown(); } catch (error) { failure ??= error; }
       try { await ownedApplication.providers.shutdown(); } catch (error) { failure ??= error; }
       try { ownedApplication.store.close(); } catch (error) { failure ??= error; }
     }

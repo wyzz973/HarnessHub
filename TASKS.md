@@ -50,7 +50,7 @@
 | G026 | 授予工作区单写租约 | G008, G017 | G1 | in_progress |
 | G027 | 仲裁Attempt状态与唯一终态 | G005, G008, G017 | G1 | planned |
 | G028 | 按持久意图幂等派发执行 | G020, G023, G025, G027 | G1 | in_progress |
-| G029 | 实现POSIX进程监督与回收 | G007, G017, G027 | G1 | planned |
+| G029 | 实现POSIX进程监督与回收 | G007, G017, G027 | G1 | in_progress |
 | G030 | 实现Windows Job监督 | G007, G017, G027, V006 | G1 | deferred |
 | G031 | 实现ACP v1连接与有界framing | G007, G017, G029 | G1 | in_progress |
 | G032 | 实现ACP执行证据映射 | G031, G027, G037, G039 | G1 | in_progress |
@@ -82,7 +82,7 @@
 | G058 | 接入不可跳过的CI与发行门禁 | G056, G060, V008, G063 | G1 | planned |
 | G059 | 组合单体与正式运行入口 | G001, G014, G015, G028, G030, G033, G034, G043, G044, G046, G047, G048, G049, G050, G051, G052, G057, G061, G062 | G1 | in_progress |
 | G060 | 运行真实协议与平台兼容验收 | G059 | G1 | in_progress |
-| G061 | 接通Harness管理HTTP入口 | G009, G011, G012, G013, G014, G015, C009 | G1 | planned |
+| G061 | 接通Harness管理HTTP入口 | G009, G011, G012, G013, G014, G015, C009 | G1 | in_progress |
 | G062 | 接通Provider管理HTTP入口 | G009, G010, G016, C009 | G1 | planned |
 | G063 | 建立依赖与公共类型边界检查 | G001, C008 | G1 | planned |
 
@@ -686,13 +686,24 @@
 - src/infrastructure/catalog/registry.ts
 - src/infrastructure/catalog/acp-registry.json
 - tests/unit/catalog-import.test.ts
+- src/contracts/management.ts
+- src/contexts/management/domain/input.ts
+- src/adapters/management/recipes.ts
+- src/infrastructure/management/metadata.ts
+- src/infrastructure/management/storage.ts
+- src/infrastructure/management/service.ts
+- src/contexts/management/domain/state.ts
+- tests/unit/management-state.test.ts
+- tests/integration/management-service.test.ts
+- src/infrastructure/management/system-version.ts
+- tests/integration/management-system-version.test.ts
 
 验收：
 - 发布新revision并保留历史
 - 提交前拒绝
 - 内存目录不先更新
 
-场景：G011-C01, G011-C02, G011-C03。
+场景：G011-C01, G011-C02, G011-C03, G011-M01, G011-M02, G011-M03, G011-M04。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1076,6 +1087,13 @@
 - src/infrastructure/process/posix-host.ts
 - tests/platform/g029.test.ts
 - tests/performance/g029.test.ts
+- src/infrastructure/management/process.ts
+- src/infrastructure/management/download.ts
+- src/infrastructure/management/archive.ts
+- src/infrastructure/management/installer.ts
+- tests/integration/management-archive.test.ts
+- tests/integration/management-process.test.ts
+- tests/fixtures/management-installer.mjs
 
 验收：
 - 错误有归属并等待资源释放
@@ -1083,7 +1101,7 @@
 - 升级终止和清理状态真实
 - 句柄/内存有界
 
-场景：G029-C01, G029-C02, G029-C03, G029-C04。
+场景：G029-C01, G029-C02, G029-C03, G029-C04, G029-M01, G029-M02。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1611,13 +1629,21 @@
 - web/src/components/ProvidersPage.tsx
 - web/src/components/HarnessesPage.tsx
 - tests/browser/web.browser.ts
+- web/src/components/BrandIcon.tsx
+- web/src/components/SearchPicker.tsx
+- web/THIRD_PARTY_ASSETS.md
+- web/src/assets/factory.svg
+- web/src/assets/auggie.svg
+- web/src/assets/dirac.svg
+- web/src/assets/nova.svg
+- web/src/assets/stakpak.svg
 
 验收：
 - 公共Session身份与历史保留
 - 不提前展示新Harness已生效
 - 可操作且不持有独立业务状态
 
-场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02。
+场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1761,6 +1787,8 @@
 - tests/fixtures/web-harness-peer.mjs
 - tests/real/gemini-provider.real.ts
 - tests/real/harness-provider-switch.real.ts
+- tests/fixtures/managed-inventory-peer.mjs
+- tests/real/managed-install.real.ts
 
 验收：
 - 记录通过/失败/未覆盖，不能称全协议认证
@@ -1769,7 +1797,7 @@
 - 真实HTTP/Store/IPC/原生进程与产物/清理完整可核对
 - 真实HTTP/Store/IPC/原生进程与产物/清理完整可核对
 
-场景：G060-C01, G060-C02, G060-C03, G060-C04, G060-C05, G060-P01, G060-P02。
+场景：G060-C01, G060-C02, G060-C03, G060-C04, G060-C05, G060-P01, G060-P02, G060-M01。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1782,13 +1810,15 @@
 唯一交付物：
 - src/infrastructure/http/harness-routes.ts
 - tests/integration/g061.test.ts
+- tests/integration/web-management.test.ts
+- tests/integration/managed-discovery.test.ts
 
 验收：
 - 操作复用Catalog服务且管理身份正确
 - 明确拒绝或幂等，不绕过排空规则
 - 旧执行保留版本，新准入遵循新状态
 
-场景：G061-C01, G061-C02, G061-C03。
+场景：G061-C01, G061-C02, G061-C03, G061-M01, G061-M02, G061-M03。
 
 禁止范围：不修改其他任务所有权文件；契约冻结不表示应用实现或真实链路验收。
 

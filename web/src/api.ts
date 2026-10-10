@@ -1,5 +1,6 @@
 import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
-import type { AuthSession, HarnessView, SessionSummary, SessionView, WebState } from "../../src/contracts/web.js";
+import type { AuthSession, HarnessView, InstallationLogPage, SessionSummary, SessionView, WebState } from "../../src/contracts/web.js";
+import type { HarnessManagementView, InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
 import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
 import { commandId, messageId, runId, switchId } from "../../src/contracts/session.js";
 
@@ -51,8 +52,21 @@ export function decodeProvider(value: unknown): ProviderView {
 }
 function decodeHarness(value: unknown): HarnessView {
   const row = record(value);
-  return { id: text(row.id), name: text(row.name), installed: bool(row.installed), providerProtocols: list(row.providerProtocols, text, 16),
+  return { id: text(row.id), name: text(row.name), installed: bool(row.installed), defaultControlId: nullableText(row.defaultControlId), providerProtocols: list(row.providerProtocols, text, 16), management: decodeManagement(row.management),
     controls: list(row.controls, value => { const control = record(value); return { id: text(control.id), protocol: text(control.protocol), available: bool(control.available), reason: nullableText(control.reason) }; }, 64) };
+}
+function decodeManagement(value: unknown): HarnessManagementView {
+  const row = record(value), recipe = row.recipe === null ? null : record(row.recipe);
+  return { harnessId: text(row.harnessId), recipe: recipe === null ? null : { controlId: text(recipe.controlId), kind: choice(recipe.kind, ["npm", "python", "binary"]), sourceLabel: text(recipe.sourceLabel), packageName: nullableText(recipe.packageName), referenceVersion: nullableText(recipe.referenceVersion), canInstall: bool(recipe.canInstall), reason: nullableText(recipe.reason) },
+    source: choice(row.source, ["managed", "system", "missing"]), installedVersion: nullableText(row.installedVersion), latestVersion: nullableText(row.latestVersion), updateStatus: choice(row.updateStatus, ["unchecked", "checking", "available", "current", "failed", "unsupported"]), checkedAt: nullableText(row.checkedAt), activeJobId: nullableText(row.activeJobId), installationId: nullableText(row.installationId), defaultRevision: number(row.defaultRevision), error: publicError(row.error) };
+}
+export function decodeInstallationJob(value: unknown): InstallationJobView {
+  const row = record(value);
+  return { id: text(row.id), harnessId: text(row.harnessId), controlId: text(row.controlId), action: choice(row.action, ["install", "upgrade"]), status: choice(row.status, ["queued", "resolving", "installing", "verifying", "activating", "completed", "cancelled", "failed", "unknown"]), phase: text(row.phase), cancelRequested: bool(row.cancelRequested), createdAt: text(row.createdAt), updatedAt: text(row.updatedAt), resolvedVersion: nullableText(row.resolvedVersion), installationId: nullableText(row.installationId), error: publicError(row.error), logCursor: number(row.logCursor) };
+}
+function decodeLogPage(value: unknown): InstallationLogPage {
+  const row = record(value);
+  return { entries: list(row.entries, value => { const item = record(value); return { seq: number(item.seq), time: text(item.time), stream: choice(item.stream, ["stdout", "stderr", "system"]), text: text(item.text) }; }, 256), nextSeq: number(row.nextSeq), hasMore: bool(row.hasMore) };
 }
 function decodeSummary(value: unknown): SessionSummary {
   const row = record(value);
@@ -89,7 +103,7 @@ export function decodeSession(value: unknown): SessionView {
 }
 function decodeState(value: unknown): WebState {
   const row = record(value);
-  return { workspace: text(row.workspace), providers: list(row.providers, decodeProvider, 256), harnesses: list(row.harnesses, decodeHarness, 256), sessions: list(row.sessions, decodeSummary, 1000) };
+  return { workspace: text(row.workspace), providers: list(row.providers, decodeProvider, 256), harnesses: list(row.harnesses, decodeHarness, 256), sessions: list(row.sessions, decodeSummary, 1000), jobs: list(row.jobs, decodeInstallationJob, 100) };
 }
 function decodeAuth(value: unknown): AuthSession { return { csrfToken: text(record(value).csrfToken) }; }
 function acknowledge(value: unknown): void { record(value); }
@@ -156,9 +170,16 @@ export class GatewayApi {
       const row = record(value); if (row.status !== "models_reachable") return invalid(); return list(row.models, text, 1024);
     });
   }
-  async rescan(): Promise<readonly HarnessView[]> {
-    return this.request("/harnesses/rescan", "POST", {}, value => list(value, decodeHarness, 256));
+  async rescan(signal?: AbortSignal): Promise<readonly HarnessView[]> {
+    return this.request("/harnesses/rescan", "POST", {}, value => list(value, decodeHarness, 256), signal);
   }
+  checkUpdates(harnessIds?: readonly string[]): Promise<readonly HarnessView[]> {
+    return this.request("/harnesses/check-updates", "POST", harnessIds ? { harnessIds } : {}, value => list(value, decodeHarness, 256));
+  }
+  submitInstallation(input: ManagementJobInput): Promise<InstallationJobView> { return this.request("/installation-jobs", "POST", input, decodeInstallationJob); }
+  jobs(signal?: AbortSignal): Promise<readonly InstallationJobView[]> { return this.request("/installation-jobs?limit=50", "GET", undefined, value => list(value, decodeInstallationJob, 100), signal); }
+  cancelInstallation(id: string, key: string): Promise<InstallationJobView> { return this.request(`/installation-jobs/${encodeURIComponent(id)}/cancel`, "POST", { commandId: key }, decodeInstallationJob); }
+  installationLogs(id: string, afterSeq: number, signal?: AbortSignal): Promise<InstallationLogPage> { return this.request(`/installation-jobs/${encodeURIComponent(id)}/logs?afterSeq=${afterSeq}&limit=50`, "GET", undefined, decodeLogPage, signal); }
   private async request<T>(path: string, method: "GET" | "POST" | "PATCH", body: unknown, decode: (value: unknown) => T, signal?: AbortSignal): Promise<T> {
     let response: Response;
     try {

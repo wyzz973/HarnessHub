@@ -50,7 +50,7 @@ export interface CatalogManifest {
   readonly overrides: ReadonlyMap<string, ControlOverride>;
   readonly installationOverrides: ReadonlyMap<string, string>;
 }
-export type InstallationSource = "override" | "path" | "configured-directory" | "known-directory" | "manager-directory" | "local-package";
+export type InstallationSource = "override" | "path" | "configured-directory" | "known-directory" | "manager-directory" | "local-package" | "managed";
 export interface InstallationEntry {
   readonly path: string;
   readonly source: InstallationSource;

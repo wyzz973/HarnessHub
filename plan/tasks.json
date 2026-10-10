@@ -1246,7 +1246,18 @@
         "src/adapters/catalog.ts",
         "src/infrastructure/catalog/registry.ts",
         "src/infrastructure/catalog/acp-registry.json",
-        "tests/unit/catalog-import.test.ts"
+        "tests/unit/catalog-import.test.ts",
+        "src/contracts/management.ts",
+        "src/contexts/management/domain/input.ts",
+        "src/adapters/management/recipes.ts",
+        "src/infrastructure/management/metadata.ts",
+        "src/infrastructure/management/storage.ts",
+        "src/infrastructure/management/service.ts",
+        "src/contexts/management/domain/state.ts",
+        "tests/unit/management-state.test.ts",
+        "tests/integration/management-service.test.ts",
+        "src/infrastructure/management/system-version.ts",
+        "tests/integration/management-system-version.test.ts"
       ],
       "requirements": [
         "R03",
@@ -1269,9 +1280,13 @@
       "test_cases": [
         "G011-C01",
         "G011-C02",
-        "G011-C03"
+        "G011-C03",
+        "G011-M01",
+        "G011-M02",
+        "G011-M03",
+        "G011-M04"
       ],
-      "active_slice": "catalog-control"
+      "active_slice": "management-workbench"
     },
     {
       "id": "G012",
@@ -2028,7 +2043,7 @@
       "title": "实现POSIX进程监督与回收",
       "context": "execution",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G007",
@@ -2038,7 +2053,14 @@
       "owns": [
         "src/infrastructure/process/posix-host.ts",
         "tests/platform/g029.test.ts",
-        "tests/performance/g029.test.ts"
+        "tests/performance/g029.test.ts",
+        "src/infrastructure/management/process.ts",
+        "src/infrastructure/management/download.ts",
+        "src/infrastructure/management/archive.ts",
+        "src/infrastructure/management/installer.ts",
+        "tests/integration/management-archive.test.ts",
+        "tests/integration/management-process.test.ts",
+        "tests/fixtures/management-installer.mjs"
       ],
       "requirements": [
         "R11",
@@ -2064,8 +2086,11 @@
         "G029-C01",
         "G029-C02",
         "G029-C03",
-        "G029-C04"
-      ]
+        "G029-C04",
+        "G029-M01",
+        "G029-M02"
+      ],
+      "active_slice": "management-workbench"
     },
     {
       "id": "G030",
@@ -3169,7 +3194,15 @@
         "web/src/components/ChatPage.tsx",
         "web/src/components/ProvidersPage.tsx",
         "web/src/components/HarnessesPage.tsx",
-        "tests/browser/web.browser.ts"
+        "tests/browser/web.browser.ts",
+        "web/src/components/BrandIcon.tsx",
+        "web/src/components/SearchPicker.tsx",
+        "web/THIRD_PARTY_ASSETS.md",
+        "web/src/assets/factory.svg",
+        "web/src/assets/auggie.svg",
+        "web/src/assets/dirac.svg",
+        "web/src/assets/nova.svg",
+        "web/src/assets/stakpak.svg"
       ],
       "requirements": [
         "R01",
@@ -3197,9 +3230,10 @@
         "G054-C02",
         "G054-C03",
         "G054-P01",
-        "G054-P02"
+        "G054-P02",
+        "G054-M01"
       ],
-      "active_slice": "provider-web"
+      "active_slice": "management-workbench"
     },
     {
       "id": "G055",
@@ -3505,7 +3539,9 @@
         "tests/real/codex-session.real.ts",
         "tests/fixtures/web-harness-peer.mjs",
         "tests/real/gemini-provider.real.ts",
-        "tests/real/harness-provider-switch.real.ts"
+        "tests/real/harness-provider-switch.real.ts",
+        "tests/fixtures/managed-inventory-peer.mjs",
+        "tests/real/managed-install.real.ts"
       ],
       "requirements": [
         "R04",
@@ -3539,7 +3575,8 @@
         "G060-C04",
         "G060-C05",
         "G060-P01",
-        "G060-P02"
+        "G060-P02",
+        "G060-M01"
       ],
       "active_slice": "public-session"
     },
@@ -3548,7 +3585,7 @@
       "title": "接通Harness管理HTTP入口",
       "context": "http",
       "phase": "implementation",
-      "status": "planned",
+      "status": "in_progress",
       "gate": "G1",
       "depends_on": [
         "G009",
@@ -3561,7 +3598,9 @@
       ],
       "owns": [
         "src/infrastructure/http/harness-routes.ts",
-        "tests/integration/g061.test.ts"
+        "tests/integration/g061.test.ts",
+        "tests/integration/web-management.test.ts",
+        "tests/integration/managed-discovery.test.ts"
       ],
       "requirements": [
         "R03",
@@ -3587,8 +3626,12 @@
       "test_cases": [
         "G061-C01",
         "G061-C02",
-        "G061-C03"
-      ]
+        "G061-C03",
+        "G061-M01",
+        "G061-M02",
+        "G061-M03"
+      ],
+      "active_slice": "management-workbench"
     },
     {
       "id": "G062",

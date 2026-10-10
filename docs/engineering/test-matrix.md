@@ -302,3 +302,14 @@
 | G054-P02 | G054 | e2e | 桌面/手机/320宽键盘与IME界面检查 | 无横向溢出，输入键盘语义正确，unsupported组合有明确解释 | planned |
 | G060-P01 | G060 | probe | 真实Gemini受管API-key/Gemini协议私有配置与文本分片脱敏 | 核对真实HTTP路径/model/key/公共输入与历史/唯一请求和cleanup；外部模型仍本地确定性夹具 | planned |
 | G060-P02 | G060 | probe | 真实Codex→Gemini→Codex同Session双本地Provider的跨协议上下文接续 | 核对真实HTTP路径/model/key/公共输入与历史/唯一请求和cleanup；外部模型仍本地确定性夹具 | planned |
+| G011-M01 | G011 | unit | 管理输入/持久状态/安装身份与字段严格校验 | 拒绝未知状态/字段/无效ID/类型/路径/预算，不信任泛型JSON断言 | planned |
+| G011-M02 | G011 | integration | 真实SQLite命令幂等/CAS/日志/全量恢复与默认指针损坏 | queued取消、active未知不重跑；缺或坏事实拒绝；旧默认不被替换 | planned |
+| G029-M01 | G029 | security | 真实gzip/bzip2/ZIP解包、合法内部链接与越界路径/类型 | 安全格式可解包，traversal/绝对/链接逃逸/特殊文件拒绝 | planned |
+| G029-M02 | G029 | integration | 真实外部安装进程与TERM/KILL/输出/父退出子孙 | 资源关闭独立确认，stdout/stderr分离，预算/取消/cleanup错误不冒充成功 | planned |
+| G061-M01 | G061 | integration | 正式HTTP提交/取消/日志/checkupdates/真实管理与Driver升级 | 命令冲突409，安装后发现，V1运行中升级V2不改V1，下轮用V2 | planned |
+| G061-M02 | G061 | security | Owner inode被替换时关闭服务 | 即使持久Owner失败，自己拥有的安装PID也必须被清理并报告OwnerLost | planned |
+| G061-M03 | G061 | integration | 系统PATH与已发布受管版本同时存在、显式override阻塞 | 优先managed；明确override不fallback；不执行任何发现的程序 | planned |
+| G060-M01 | G060 | probe | 官方npm真实Codex0.160私有安装再升级0.162.1并实际两轮调用 | 新旧目录独立、旧字节不变、SRI匹配、actual安装事件/完整历史/cleanup准确；模型仍本地模拟 | planned |
+| G054-M01 | G054 | e2e | 新版搜索品牌选择器/模型切换/安装升级日志与响应丢失 | 真UI/HTTP/SQLite/进程，条件按真实状态，幂等不重复；桌面/小屏无溢出、reduced-motion | planned |
+| G011-M03 | G011 | integration | 系统包版本观察与明确检查时的有界版本探测 | 已观察package无需启动；native/Node入口分开；未知/期限/预算/取消/owner丢失有真实进程证据 | planned |
+| G011-M04 | G011 | integration | 已检查最新版本之后安装/升级与重开缓存比较 | 默认版本变化后可更新状态重新派生，checking/failed保持事实；相同已安装版显示current | planned |

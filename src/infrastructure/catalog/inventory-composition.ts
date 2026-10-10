@@ -1,7 +1,8 @@
+import type { ResolvedManagedControl } from "../../contracts/management.js";
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { loadBuiltinCatalog } from "../../adapters/catalog.js";
 import { migrateLegacyManifest, parseCatalogManifest, validateDefinitions } from "../../contexts/catalog/domain/catalog-parser.js";
 import { MAX_CATALOG_BYTES, type CatalogManifest, type HarnessDefinition, type InventoryReport } from "../../contexts/catalog/domain/catalog.js";
@@ -45,10 +46,12 @@ export interface InventoryInput {
   readonly searchDirs: readonly string[];
   readonly packageRoots: readonly string[];
   readonly pathOnly: boolean;
+  readonly managedResolver?: { resolveControl(harnessId: string, controlId: string): ResolvedManagedControl | null };
 }
 
 /** Shared CLI composition; callers receive one immutable catalog and its read-only observations. */
 export async function inventory(input: InventoryInput): Promise<{
+  readonly managedBindings: ReadonlyMap<string, ResolvedManagedControl>;
   readonly definitions: readonly HarnessDefinition[];
   readonly report: InventoryReport;
   readonly searchDiagnostics: Awaited<ReturnType<typeof discoverSearchDirectories>>["diagnostics"];
@@ -76,8 +79,23 @@ export async function inventory(input: InventoryInput): Promise<{
     enumerator, new LocalInstalledPackageResolver(input.packageRoots, enumerator),
     new LocalConfigurationLocator(homedir()), () => new Date(),
   );
+  const initial = await service.execute(definitions, manifest.overrides, manifest.installationOverrides);
+  const managedBindings = new Map<string, ResolvedManagedControl>();
+  const report: InventoryReport = input.managedResolver === undefined ? initial : { ...initial,
+    harnesses: initial.harnesses.map(harness => ({ ...harness, controls: harness.controls.map(control => {
+      // User overrides remain exclusive, including invalid or blocked entries. They never fall back.
+      if (manifest.overrides.has(control.id)) return control;
+      const managed = input.managedResolver!.resolveControl(harness.id, control.id);
+      if (managed === null) return control;
+      const path = managed.command.args[0] !== undefined && isAbsolute(managed.command.args[0]) ? managed.command.args[0] : managed.command.executable;
+      const entry = { path, resolvedPath: path, source: "managed" as const, entries: [{ path, source: "managed" as const, name: control.id }] };
+      managedBindings.set(control.id, managed);
+      return { ...control, state: "candidate" as const, command: managed.command, missingDependencies: [],
+        installation: { candidates: [entry], selected: entry, defaultResolution: "located" as const, diagnostics: [] },
+        diagnostics: [{ code: "package_version_observed" as const, path, detail: "managed=" + managed.version + "; installation=" + managed.installationId }] };
+    }) })) };
   return {
-    definitions, report: await service.execute(definitions, manifest.overrides, manifest.installationOverrides),
+    managedBindings, definitions, report,
     searchDiagnostics: search.diagnostics,
     searchPath: search.directories.map((directory) => directory.path).join(":") ,
   };

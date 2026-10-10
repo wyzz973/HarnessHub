@@ -6,7 +6,7 @@
 
 ## 图形工作台
 
-界面采用 Claude 的暖白对话布局与 CC Switch 的 Provider 行列表/配置表单，使用自有 HarnessHub 品牌。先启动本机页面：
+界面已重做为紧凑的原生工作台：真实品牌图标、可搜索选择器、清晰字号、可折叠侧栏、安装任务与详情侧板，并结合Magpie/CC Switch管理流程。使用自有HarnessHub品牌。先启动本机页面：
 
 ~~~sh
 pnpm install --frozen-lockfile --ignore-scripts
@@ -22,6 +22,16 @@ pnpm web --cwd /absolute/workspace --data-dir data --port 4317
 当前受管组合为 **Codex + OpenAI Responses**、**Gemini CLI + Gemini（API Key）**。其他产品继续检测，但协议/受管配置能力单独标明。OpenAI/Anthropic连接地址通常含/v1；Gemini填写API服务根。密钥只写入本机加密vault，不回显到UI/Session；同OS用户可访问主密钥，本版不宣称系统钥匙串隔离。
 
 详见[工作台与Provider契约](docs/contracts/provider-web-mvp.md)、[取舍](docs/decisions/0011-provider-web-mvp.md)、[实际验证](docs/verification/provider-web-2026-10-09.md)。
+
+## Harness 集中安装与升级
+
+在 Harnesses 查看全部支持目录、已安装、待安装或可更新项。点击安装会在后台执行已审核配方；详情中查看实际阶段、日志和取消。安装完成后验证包/入口/版本并重新发现，才启用受管默认；不会把打开下载页面或exit 0算作成功。
+
+点击“检查更新”读取发行方版本。系统安装可“更新并管理”：新版写入HarnessHub私有版本目录，系统安装保留；后续网关使用受管默认。每次升级创建独立版本，旧版运行仍使用捕获的路径，下一轮记录实际安装身份。不同版本文件不互相覆盖。
+
+当前实现npm、Python/uv与归档安装方式；Codex原生采用官方npm包，ACP包装器单独描述。运行环境不匹配时可为目标准备一个私有Node24；不改宿主Node或个人配置。未登记、缺运行时、上游迁移或当前不支持的配方会明确解释，不能把43个目录项叫43个已验收安装/执行组合。安装成功后登录/Provider兼容与真实任务仍需分别验证。
+
+管理任务和默认版本独立持久保存；刷新/关浏览器不会重跑或取消。结果未知不自动恢复执行，旧默认保留。详细契约和证据见[ADR-012](docs/decisions/0012-harness-management-workbench.md)、[调研](docs/research/harness-management.md)、[验证](docs/verification/harness-management-2026-10-10.md)。
 
 ## 第一阶段
 

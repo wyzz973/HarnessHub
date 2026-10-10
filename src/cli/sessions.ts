@@ -43,6 +43,8 @@ export async function main(args: readonly string[]): Promise<number> {
     if (app) {
       try { await app.runtime.close(); }
       catch (error) { const fault = errorRecord(error); process.stderr.write("HarnessGateway: " + fault.code + " — " + fault.message + "\n"); code = 1; }
+      try { await app.management.shutdown(); }
+      catch (error) { const fault = errorRecord(error); process.stderr.write("HarnessGateway: " + fault.code + " — " + fault.message + "\n"); code = 1; }
       try { await app.providers.shutdown(); }
       catch (error) { const fault = errorRecord(error); process.stderr.write("HarnessGateway: " + fault.code + " — " + fault.message + "\n"); code = 1; }
       try { app.store.close(); }

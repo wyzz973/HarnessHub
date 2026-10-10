@@ -394,6 +394,10 @@ export class SessionRuntime {
         events: [event("run.context_prepared", { runId: target, throughSeq: context.throughSeq, sourceRunIds: context.sourceRunIds, continuity: context.continuity })] }));
       execution.binding = await this.factory.prepare(run.selection, current.configuration, id, target);
       this.continue(execution);
+      if (execution.binding.installation !== undefined) {
+        const installation = execution.binding.installation;
+        this.commit(id, current => ({ next: current, events: [event("run.installation_resolved", { runId: target, installation })] }));
+      }
       const observation = await execution.binding.control.initialize(); this.continue(execution);
       this.commit(id, current => ({ next: current, events: [event("run.protocol", { runId: target, observation })] }));
       const native = await execution.binding.control.open(execution.binding.workspace); this.continue(execution);

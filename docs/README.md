@@ -1,6 +1,8 @@
 # 工程文档与阅读顺序
 
-当前以本机MVP切片推进；完整蓝图按各自状态管理。ADR-008/009/010/011及对应本机契约已认可，目录、控制和公共Session/静止切换已实现；本机Provider和HTTP/工作台按ADR-011实现；完整未来代理账本/自动路由等仍proposed。
+当前以本机MVP切片推进；完整蓝图按各自状态管理。ADR-008/009/010/011/012及对应本机契约已认可，目录、控制和公共Session/静止切换已实现；本机Provider和HTTP/工作台按ADR-011实现；完整未来代理账本/自动路由等仍proposed。
+
+最新Harness管理与UI重做：[ADR-012](decisions/0012-harness-management-workbench.md)、[管理调研](research/harness-management.md)、[实际验证](verification/harness-management-2026-10-10.md)。本机私有安装、升级与动态图形操作作为新切片，完整自动择优仍后置。
 
 最新工作台：[Provider与本机页面契约](contracts/provider-web-mvp.md)、[调研](research/provider-web.md)、[ADR-011](decisions/0011-provider-web-mvp.md)与[验证](verification/provider-web-2026-10-09.md)。自动择优按用户要求后置。
 

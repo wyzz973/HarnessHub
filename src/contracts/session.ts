@@ -122,6 +122,7 @@ export interface WorkspaceLease { assertOwned(): void; release(quiescent: boolea
 export interface WorkspaceLeaseProvider { acquire(workspace: string, session: SessionId, run: string): WorkspaceLease }
 /** Per-Turn owner; close also releases the workspace lease and only its own private directories. */
 export interface PreparedSessionBinding {
+  readonly installation?: { readonly source: "system" } | { readonly source: "managed"; readonly id: string; readonly revision: number; readonly version: string };
   readonly control: HarnessControl;
   readonly workspace: string;
   assertOwned(): void;
