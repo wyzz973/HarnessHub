@@ -2,6 +2,8 @@
 
 状态：ADR-011 accepted。本切片在现有公共 Session 基础上实现独立模型目标和实际本机页面；自动择优后置。
 
+当前用户链路由ADR-017限定为本机Harness原生配置。生产CLI Web设置providerManagement=false，Provider导航和新对话Provider选择后置；Web DTO返回该显式能力。旧资源/API及明确的旧Provider会话仍保留其选择，不静默替换。实验入口可显式启用Provider界面；以下独立模型链路属于该实验能力，不能作为当前原生接入的模型来源。
+
 ## 用户链路
 
 用户在工作台新建对话，选择工作区与 Harness；选择一个 Provider 的具体 revision/model，提交消息。Session 准入输入，Run 固定完整选择，Binding 获取工作区租约并生成私有模型配置，Driver 驱动 Harness，Harness 访问用户指定的模型端点；结果/取消/清理分别持久化。浏览器显示这些实际事实。

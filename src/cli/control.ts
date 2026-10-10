@@ -1,4 +1,4 @@
-import { captureNativeEnvironment, referencedNativeValues, nativeValues } from "../infrastructure/session/native-environment.js";
+import { captureNativeEnvironment, referencedNativeValues, nativeDescriptorValues } from "../infrastructure/session/native-environment.js";
 import { chooseControl } from "../contexts/catalog/application/select-control.js";
 export { chooseControl } from "../contexts/catalog/application/select-control.js";
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
@@ -10,6 +10,7 @@ import type { ControlEvent, ControlLaunch, ControlRun, HarnessControl } from "..
 import { DiscoveryInputError } from "../contexts/catalog/domain/discovery.js";
 import { createNativeControl } from "../adapters/control/factory.js";
 import { inventory } from "../infrastructure/catalog/inventory-composition.js";
+import { NativeInstallationLocks, type NativeUsageLease } from "../infrastructure/management/native-lock.js";
 
 function timeout(value: string | undefined): number {
   if (value === undefined) return 30000;
@@ -28,6 +29,7 @@ function boundedPath(value: string): string {
 /** Explicit controlled invocation. It never substitutes another Harness or retries unknown results. */
 export async function main(args: readonly string[]): Promise<number> {
   let control: HarnessControl | undefined;
+  let nativeUsage: NativeUsageLease | undefined;
   let ownedRoot: string | undefined;
   let interrupted = false;
   let activeRun: ControlRun | undefined;
@@ -88,18 +90,19 @@ export async function main(args: readonly string[]): Promise<number> {
     const harness = observed.report.harnesses.find((item) => item.id === values.harness || item.aliases.includes(values.harness!));
     if (!harness) throw new DiscoveryInputError("unknown Harness: " + values.harness);
     const selected = chooseControl(harness.controls, values.control);
-    if (selected.protocol !== "acp-v1" && selected.protocol !== "codex-app-server")
+    if (selected.protocol !== "acp-v1" && selected.protocol !== "codex-app-server" && selected.protocol !== "pi-rpc")
       throw new DiscoveryInputError("this control Driver is not implemented: " + selected.protocol);
     if (selected.command === null) throw new DiscoveryInputError("selected control has no resolved command");
     ownedRoot = await mkdtemp(join(tmpdir(), "harness-control-"));
     const native = captureNativeEnvironment();
     const cwd = explicitCwd ?? join(ownedRoot, "workspace");
     if (explicitCwd === undefined) await mkdir(cwd);
-    const environment: Record<string, string> = { ...await referencedNativeValues(native, explicitHome ?? null, harness.id, cwd), ...selected.command.env, ...nativeValues(native, explicitHome ?? null),
+    const environment: Record<string, string> = { ...await referencedNativeValues(native, explicitHome ?? null, harness.id, cwd), ...nativeDescriptorValues(native, explicitHome ?? null, selected.command.env),
       PATH: observed.searchPath, OPENCODE_DISABLE_AUTOUPDATE: "true", PWD: cwd };
     const launch: ControlLaunch = { ...selected.command, env: environment, protocol: selected.protocol };
     const options = { cwd, env: environment, requestTimeoutMs: Math.min(10000, budget), runTimeoutMs: budget, maxFrameBytes: 2 * 1024 * 1024, maxDiagnosticBytes: 64 * 1024, closeGraceMs: 500 };
-    control = createNativeControl(harness.id, launch, options);
+    nativeUsage = new NativeInstallationLocks().read(harness.id);
+    control = await createNativeControl(harness.id, launch, options);
     process.on("SIGINT", onSignal); process.on("SIGTERM", onSignal);
     const protocol = await control.initialize();
     if (json) process.stdout.write(JSON.stringify({ type: "protocol", harnessId: harness.id, controlId: selected.id, observation: protocol }) + "\n");
@@ -142,6 +145,7 @@ export async function main(args: readonly string[]): Promise<number> {
         process.stderr.write("HarnessGateway: cleanup failed: " + (error instanceof Error ? error.message : "unknown") + "\n"); exitCode = 1;
       }
     }
+    nativeUsage?.release(resourcesClosed);
     if (ownedRoot && resourcesClosed) {
       try { await rm(ownedRoot, { recursive: true, force: true }); }
       catch { process.stderr.write("HarnessGateway: private temporary directory cleanup failed\n"); exitCode = 1; }

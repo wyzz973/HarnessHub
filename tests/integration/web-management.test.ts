@@ -76,7 +76,7 @@ class ExternalInstallFixture {
     return (root, publish) => {
       const store = new SqliteSessionStore(root), owner = () => store.assertOwner();
       const providers = new LocalProviderService(root, owner);
-      const management = this.management = new LocalHarnessManagement(root, { assertOwner: owner, ownerGeneration: store.ownerGeneration, metadata: this.metadata, installer: this.installer, nodeExecutable: process.execPath });
+      const management = this.management = new LocalHarnessManagement(root, { installationMode: "private-fixture", assertOwner: owner, ownerGeneration: store.ownerGeneration, metadata: this.metadata, installer: this.installer, nodeExecutable: process.execPath });
       const factory = new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(root, "workspace-locks")), owner, providers, management,
         { home: root, values: { HOME: root, PATH: dirname(process.execPath) + ":/usr/bin:/bin" } });
       const runtime = new SessionRuntime(store, factory, { id: randomUUID, now: () => new Date(), fingerprint: value => createHash("sha256").update(value).digest("hex"), publish });

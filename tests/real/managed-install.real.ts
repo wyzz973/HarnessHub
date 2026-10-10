@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { setTimeout as pause } from "node:timers/promises";
 import test from "node:test";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
@@ -45,8 +45,11 @@ test("real npm installs and upgrades private Codex versions, then the gateway ex
     const engines = record(item.engines), engine: Record<string, string> = {}; for (const [key, value] of Object.entries(engines)) { assert.equal(typeof value, "string"); if (typeof value === "string") engine[key] = value; }
     return { recipe, version: desired, artifactUrl: null, integrity: String(distribution.integrity), engines: engine, dependencies: [] };
   } };
-  const management = new LocalHarnessManagement(data, { assertOwner: () => store.assertOwner(), ownerGeneration: store.ownerGeneration, metadata, redactor: text => providers.redact(text) });
-  const runtime = new SessionRuntime(store, new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(root, "leases")), () => store.assertOwner(), providers, management), { id: randomUUID, now: () => new Date(), publish: () => {}, fingerprint: text => createHash("sha256").update(text).digest("hex") });
+  const management = new LocalHarnessManagement(data, { installationMode: "private-fixture", assertOwner: () => store.assertOwner(), ownerGeneration: store.ownerGeneration, metadata, redactor: text => providers.redact(text) });
+  // This legacy private-installer fixture must not discover the user's actual system Codex.
+  // Production correctly gives that original local install priority over a private version slot.
+  const nativeEnvironment = { home: root, values: { HOME: root, PATH: dirname(process.execPath) + ":/usr/bin:/bin" } };
+  const runtime = new SessionRuntime(store, new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(root, "leases")), () => store.assertOwner(), providers, management, nativeEnvironment), { id: randomUUID, now: () => new Date(), publish: () => {}, fingerprint: text => createHash("sha256").update(text).digest("hex") });
   const calls: Record<string, unknown>[] = [], errors: Error[] = [];
   const endpoint = createServer((request, response) => { void (async () => { assert.equal(request.url, "/v1/responses"); assert.equal(request.headers.authorization, "Bearer " + KEY); const input = await body(request); assert.equal(input.model, MODEL); calls.push(input); answer(response, calls.length); })().catch((error: unknown) => { errors.push(error instanceof Error ? error : new Error("model fixture failed")); response.writeHead(500); response.end(); }); });
   t.after(async () => { let failure: unknown; try { await runtime.close(); } catch (e) { failure = e; } try { await management.shutdown(); } catch (e) { failure ??= e; } try { await providers.shutdown(); store.close(); } catch (e) { failure ??= e; } endpoint.closeAllConnections(); if (endpoint.listening) await new Promise<void>(done => endpoint.close(() => done())); await rm(root, { recursive: true, force: true }); if (failure) throw failure; });

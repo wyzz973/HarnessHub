@@ -102,7 +102,7 @@ test("owner loss during version output closes the child before surfacing the own
 
 test("real manager update check detects an observed system version and preserves managed defaults and job history", async t => {
   const f = await fixture(t), store = new SqliteSessionStore(join(f.root, "data"));
-  const manager = new LocalHarnessManagement(join(f.root, "data"), { assertOwner: () => store.assertOwner(), ownerGeneration: store.ownerGeneration,
+  const manager = new LocalHarnessManagement(join(f.root, "data"), { installationMode: "private-fixture", assertOwner: () => store.assertOwner(), ownerGeneration: store.ownerGeneration,
     metadata: { resolve: async (recipe, signal) => { signal.throwIfAborted(); return { recipe, version: "2.0.0", artifactUrl: null, integrity: null, engines: {}, dependencies: [] }; } } });
   f.cleanup.push(async () => { try { await manager.shutdown(); } finally { store.close(); } });
   manager.setSystemObservations([observation(f)]);

@@ -699,13 +699,16 @@
 - tests/integration/management-service.test.ts
 - src/infrastructure/management/system-version.ts
 - tests/integration/management-system-version.test.ts
+- src/infrastructure/management/native.ts
+- src/infrastructure/management/native-lock.ts
+- tests/integration/native-management.test.ts
 
 验收：
 - 发布新revision并保留历史
 - 提交前拒绝
 - 内存目录不先更新
 
-场景：G011-C01, G011-C02, G011-C03, G011-M01, G011-M02, G011-M03, G011-M04, G011-L01。
+场景：G011-C01, G011-C02, G011-C03, G011-M01, G011-M02, G011-M03, G011-M04, G011-L01, G011-N01, G011-N02, G011-N03。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1162,6 +1165,10 @@
 - src/adapters/control/acp.ts
 - tests/protocol/acp.test.ts
 - src/adapters/control/factory.ts
+- src/adapters/control/native-dependencies.ts
+- src/adapters/control/pi.ts
+- tests/protocol/pi.test.ts
+- tests/fixtures/pi-rpc-peer.mjs
 
 验收：
 - 各事实关联正确Attempt与generation
@@ -1169,7 +1176,7 @@
 - 明确拒绝，不空会话fallback
 - 不把结果称官方认证
 
-场景：G032-C01, G032-C02, G032-C03, G032-C04, G032-L01。
+场景：G032-C01, G032-C02, G032-C03, G032-C04, G032-L01, G032-N01, G032-N02。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1846,7 +1853,7 @@
 - 明确拒绝或幂等，不绕过排空规则
 - 旧执行保留版本，新准入遵循新状态
 
-场景：G061-C01, G061-C02, G061-C03, G061-M01, G061-M02, G061-M03, G061-S01, G061-S02, G061-S03, G061-N01, G061-L01。
+场景：G061-C01, G061-C02, G061-C03, G061-M01, G061-M02, G061-M03, G061-S01, G061-S02, G061-S03, G061-L01, G061-N01, G061-N02。
 
 禁止范围：不修改其他任务所有权文件；契约冻结不表示应用实现或真实链路验收。
 

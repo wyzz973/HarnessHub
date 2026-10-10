@@ -35,3 +35,4 @@ ADR-001 由 C003，ADR-002/003 由 C008，ADR-004 由 C007，ADR-005 由 C004，
 V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/验证证据、独立文件与索引一致性以及阻塞项。核心记录仍 proposed、缺证据或未交付时 G1 不通过；不能因为依赖图与格式检查通过就自动接受决定。
 
 - [0016：本机原安装优先与OpenClaw原生接入](0016-local-installation-and-openclaw.md)（accepted）。
+- [0017：原渠道安装管理与原生接入](0017-native-installation-management.md)（accepted）：覆盖生产私有安装默认；真实本机管理、配置保护和明确能力边界，统一Provider管理后置。

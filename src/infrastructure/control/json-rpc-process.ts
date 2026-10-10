@@ -4,7 +4,15 @@ import { performance } from "node:perf_hooks";
 import type { CleanupEvidence, ControlLaunch, ControlOptions } from "../../contracts/control.js";
 
 export class ControlError extends Error {
-  constructor(readonly code: string, message: string) { super(message); this.name = "ControlError"; }
+  constructor(readonly code: string, message: string, readonly remoteFailure?: { readonly code: string; readonly message: string }) { super(message); this.name = "ControlError"; }
+}
+/** Recognize actionable failures without publishing arbitrary provider text or credentials. */
+export function classifyRemoteFailure(message: string): { readonly code: string; readonly message: string } | undefined {
+  if (/this client is no longer supported|unsupported client version/iu.test(message)) return { code: "NATIVE_CLIENT_UNSUPPORTED", message: "模型服务已停止支持这个本机客户端。原配置已保留，可以选择其他 Harness 继续。" };
+  if (/authentication required|not (?:logged|signed) in|login required|unauthorized|API key.*(?:missing|not configured)|no API key/iu.test(message)) return { code: "NATIVE_AUTH_REQUIRED", message: "这个 Harness 的本机登录或密钥不可用，请在本机完成认证后再试。" };
+  if (/weekly limit|daily limit|quota (?:exceeded|exhausted)|usage limit|hit your .*limit/iu.test(message)) return { code: "NATIVE_QUOTA_EXCEEDED", message: "这个 Harness 的账号额度已用完。可等待额度恢复，或选择其他 Harness 继续。" };
+  if (/connection error|fetch failed|ECONNREFUSED|ENOTFOUND/iu.test(message)) return { code: "NATIVE_CONNECTION_FAILED", message: "这个 Harness 配置的模型服务无法连接。请检查它本机的模型配置，或选择其他模型继续。" };
+  return undefined;
 }
 export type RpcId = string | number;
 export interface RpcRequest { readonly id: RpcId; readonly method: string; readonly params: unknown }
@@ -12,6 +20,11 @@ export interface RpcHandlers {
   readonly notification: (method: string, params: unknown) => void;
   readonly request: (request: RpcRequest) => Promise<unknown> | unknown;
   readonly failure: (error: Error) => void;
+}
+/** Adapter-owned wire translation; framing, deadlines and process cleanup keep one owner. */
+export interface RpcWireCodec {
+  encode(message: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>>;
+  decode(message: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>>;
 }
 interface Pending {
   readonly resolve: (value: unknown) => void;
@@ -64,7 +77,7 @@ export class JsonRpcProcess {
   private wireBytes = 0;
   private readonly decoder = new TextDecoder("utf-8", { fatal: true });
 
-  constructor(readonly launch: ControlLaunch, readonly options: ControlOptions, private readonly handlers: RpcHandlers) {
+  constructor(readonly launch: ControlLaunch, readonly options: ControlOptions, private readonly handlers: RpcHandlers, private readonly codec?: RpcWireCodec) {
     if (!isAbsolute(launch.executable) || !isAbsolute(options.cwd))
       throw new ControlError("INVALID_INPUT", "executable and cwd must be absolute paths");
     for (const argument of launch.args) if (typeof argument !== "string" || argument.includes("\0"))
@@ -156,7 +169,7 @@ export class JsonRpcProcess {
     return new ControlError("PROCESS_EXITED", `process exited before connection close (${status})`);
   }
   private async write(message: Record<string, unknown>): Promise<void> {
-    const wire = JSON.stringify(this.launch.protocol === "acp-v1" ? { jsonrpc: "2.0", ...message } : message);
+    const wire = JSON.stringify(this.codec ? this.codec.encode(message) : this.launch.protocol === "acp-v1" ? { jsonrpc: "2.0", ...message } : message);
     if (Buffer.byteLength(wire) > this.options.maxFrameBytes)
       throw new ControlError("FRAME_LIMIT", "outbound frame exceeds its byte limit");
     this.accountWire(Buffer.byteLength(wire) + 1);
@@ -187,7 +200,7 @@ export class JsonRpcProcess {
         this.input = Buffer.alloc(0);
         parsed = JSON.parse(frame);
       } catch { this.abort(new ControlError("INVALID_FRAME", "stdout is not valid UTF-8 JSON")); return; }
-      try { this.dispatch(object(parsed, "RPC frame")); }
+      try { const message = object(parsed, "RPC frame"); this.dispatch(this.codec ? this.codec.decode(message) : message); }
       catch (error) { this.abort(errorFrom(error)); return; }
       if (this.failed || this.closing) return;
       offset = newline + 1;
@@ -225,7 +238,7 @@ export class JsonRpcProcess {
       if (!Number.isSafeInteger(remote.code) || typeof remote.message !== "string")
         throw new ControlError("INVALID_PROTOCOL", "RPC error payload is invalid");
       this.pending.delete(responseKey); clearTimeout(pending.timer);
-      pending.reject(new ControlError("REMOTE_ERROR", `Harness rejected the protocol request (${remote.code})`));
+      pending.reject(new ControlError("REMOTE_ERROR", `Harness rejected the protocol request (${remote.code})`, classifyRemoteFailure(remote.message)));
     } else {
       this.pending.delete(responseKey); clearTimeout(pending.timer); pending.resolve(message.result);
     }

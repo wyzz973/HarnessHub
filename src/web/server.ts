@@ -28,6 +28,7 @@ class HttpError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); }
 }
 export interface WebServerOptions {
+  readonly providerManagement?: boolean;
   readonly root: string;
   readonly configuration: SessionConfiguration;
   readonly port?: number;
@@ -197,17 +198,18 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         return [{ harnessId: harness.id, controlId: control.id, command: control.command, ...(packageVersion === undefined ? {} : { packageVersion }) }];
       })));
       await app.management.refreshSystemVersions();
+      await app.management.refreshNativeCapabilities();
       const management = new Map(app.management.views(observed.report.harnesses.map(item => item.id)).map(item => [item.harnessId, item]));
       harnesses = observed.report.harnesses.map(item => {
         const managed = management.get(item.id);
         if (!managed) throw new HttpError(503, "MANAGEMENT_UNAVAILABLE", "Harness management observation is unavailable");
         const installed = item.installation.candidates.length > 0 || item.controls.some(control => control.state === "candidate");
-        const available = item.controls.filter(control => control.state === "candidate" && (control.protocol === "acp-v1" || control.protocol === "codex-app-server"));
+        const available = item.controls.filter(control => control.state === "candidate" && (control.protocol === "acp-v1" || control.protocol === "codex-app-server" || control.protocol === "pi-rpc"));
         const managedControls = available.filter(control => observed.managedBindings.has(control.id));
         const defaultControlId = managedControls.length === 1 ? managedControls[0]!.id : managedControls.length === 0 && available.length === 1 ? available[0]!.id : null;
         return { id: item.id, name: item.name, installed, defaultControlId,
-        controls: item.controls.map(control => ({ id: control.id, protocol: control.protocol, available: control.state === "candidate" && (control.protocol === "acp-v1" || control.protocol === "codex-app-server"),
-          reason: control.state === "candidate" ? (control.protocol === "acp-v1" || control.protocol === "codex-app-server" ? null : "Control Driver is not implemented") : control.missingDependencies.length ? "Missing: " + control.missingDependencies.join(", ") : "Control entry unavailable" })),
+        controls: item.controls.map(control => ({ id: control.id, protocol: control.protocol, available: control.state === "candidate" && (control.protocol === "acp-v1" || control.protocol === "codex-app-server" || control.protocol === "pi-rpc"),
+          reason: control.state === "candidate" ? (control.protocol === "acp-v1" || control.protocol === "codex-app-server" || control.protocol === "pi-rpc" ? null : "Control Driver is not implemented") : control.missingDependencies.length ? "Missing: " + control.missingDependencies.join(", ") : "Control entry unavailable" })),
         providerProtocols: item.controls.some(control => control.state === "candidate" && ((item.id === "codex" && control.protocol === "codex-app-server") || (item.id === "gemini" && control.protocol === "acp-v1"))) ? supportedProviderProtocols(item.id) : [],
         management: { ...managed, source: managed.source === "managed" ? "managed" : installed ? "system" : "missing" } };
       });
@@ -251,7 +253,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (write && (typeof request.headers["x-csrf-token"] !== "string" || !equal(request.headers["x-csrf-token"], login.csrf))) throw new HttpError(403, "CSRF_REJECTED", "Invalid write token");
     if (path === "/api/v1/auth/session" && method === "GET") { queries(url, []); json(response, 200, { csrfToken: login.csrf }); return; }
     if (path === "/api/v1/state" && method === "GET") {
-      queries(url, []); const output: WebState = { workspace: options.configuration.workspace, providers: app.providers.list(), harnesses: await rescan(), sessions: app.store.list(100).map(summary), jobs: app.management.listJobs().slice(0, 50) }; json(response, 200, output); return;
+      queries(url, []); const output: WebState = { providerManagement: options.providerManagement ?? true, workspace: options.configuration.workspace, providers: app.providers.list(), harnesses: await rescan(), sessions: app.store.list(100).map(summary), jobs: app.management.listJobs().slice(0, 50) }; json(response, 200, output); return;
     }
     if (path === "/api/v1/harnesses" && method === "GET") { queries(url, []); json(response, 200, await rescan()); return; }
     const modelsRoute = /^\/api\/v1\/harnesses\/([a-z][a-z0-9-]{0,95})\/models$/u.exec(path);
@@ -285,15 +287,16 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (path === "/api/v1/installation-jobs") {
       if (method === "GET") { queries(url, ["limit"]); json(response, 200, app.management.listJobs().slice(0, cursor(url.searchParams.get("limit"), 50, 1, 100))); return; }
       if (method === "POST") {
-        queries(url, []); const input = record(await body(request), ["harnessId", "controlId", "action", "commandId", "expectedDefaultRevision"], ["harnessId", "action", "commandId"]);
+        queries(url, []); const input = record(await body(request), ["harnessId", "controlId", "action", "commandId", "expectedDefaultRevision", "expectedNativeFingerprint"], ["harnessId", "action", "commandId"]);
         if (input.action !== "install" && input.action !== "upgrade") throw new HttpError(400, "INVALID_INPUT", "Expected install or upgrade action");
         await rescan();
         json(response, 202, app.management.submit({ harnessId: text(input.harnessId, "Harness identity", 96), action: input.action, commandId: command(input.commandId),
           ...(input.controlId === undefined ? {} : { controlId: text(input.controlId, "control identity", 96) }),
-          ...(input.expectedDefaultRevision === undefined ? {} : { expectedDefaultRevision: integer(input.expectedDefaultRevision, 0, Number.MAX_SAFE_INTEGER, "default revision") }) })); return;
+          ...(input.expectedDefaultRevision === undefined ? {} : { expectedDefaultRevision: integer(input.expectedDefaultRevision, 0, Number.MAX_SAFE_INTEGER, "default revision") }),
+          ...(input.expectedNativeFingerprint === undefined ? {} : { expectedNativeFingerprint: text(input.expectedNativeFingerprint, "native fingerprint", 64) }) })); return;
       }
     }
-    const jobRoute = /^\/api\/v1\/installation-jobs\/([^/]+)(?:\/(logs|cancel))?$/u.exec(path);
+    const jobRoute = /^\/api\/v1\/installation-jobs\/([^/]+)(?:\/(logs|cancel|inspect))?$/u.exec(path);
     if (jobRoute) {
       const id = jobRoute[1]!, action = jobRoute[2];
       if (action === undefined && method === "GET") { queries(url, []); json(response, 200, app.management.readJob(id)); return; }
@@ -304,6 +307,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         const output: InstallationLogPage = { entries, nextSeq, hasMore: app.management.readJob(id).logCursor > nextSeq }; json(response, 200, output); return;
       }
       if (action === "cancel" && method === "POST") { queries(url, []); const input = record(await body(request), ["commandId"], ["commandId"]); json(response, 202, app.management.cancel(id, command(input.commandId))); return; }
+      if (action === "inspect" && method === "POST") { queries(url, []); record(await body(request), []); json(response, 200, await app.management.inspectNativeResult(id)); return; }
     }
     if (path === "/api/v1/providers") {
       queries(url, []);

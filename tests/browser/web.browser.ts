@@ -14,7 +14,7 @@ import { prepareConfiguration } from "../../src/infrastructure/session/binding-f
 
 const peer = fileURLToPath(new URL("../../../tests/fixtures/web-harness-peer.mjs", import.meta.url));
 const artifact = resolve("artifacts/chat-v3");
-async function launchFixture() {
+async function launchFixture(providerManagement = true) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "harness-web-browser-")));
   const workspace = join(root, "workspace"), shim = join(root, "codex-fixture.mjs"); await mkdir(workspace);
   await writeFile(shim, "#!" + process.execPath + "\nimport " + JSON.stringify(pathToFileURL(peer).href) + ";\n", { mode: 0o700 });
@@ -32,8 +32,8 @@ async function launchFixture() {
     await runManagementProcess(process.execPath, ["--input-type=module", "-e", code, ctx.stage, spec.recipe.packageName, spec.version, spec.recipe.binName], ctx.stage, { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: ctx.stage }, ctx);
     return { command: { executable: process.execPath, args: [join(ctx.stage, "node_modules", spec.recipe.packageName, "entry.mjs"), ...spec.recipe.args], env: {} }, observedVersion: spec.version, artifactSha256: null };
   } };
-  const gateway = await startWebServer({ root: join(root, "data"), configuration: await prepareConfiguration({ workspace, manifestPath: manifest, pathOnly: true }), port: 0,
-    application: (data, publish) => application(data, publish, { management: { metadata, installer }, nativeEnvironment: { home: root, values: { HOME: root, PATH: dirname(process.execPath) + ":/usr/bin:/bin" } } }) });
+  const gateway = await startWebServer({ root: join(root, "data"), configuration: await prepareConfiguration({ workspace, manifestPath: manifest, pathOnly: true }), port: 0, providerManagement,
+    application: (data, publish) => application(data, publish, { management: { installationMode: "private-fixture", metadata, installer }, nativeEnvironment: { home: root, values: { HOME: root, PATH: dirname(process.execPath) + ":/usr/bin:/bin" } } }) });
   return { root, gateway, setVersion: (value: string) => { fixtureVersion = value; }, baseUrl: `http://127.0.0.1:${address.port}/v1`, close: async () => { await gateway.close(); modelServer.closeAllConnections(); await new Promise<void>(done => modelServer.close(() => done())); await rm(root, { recursive: true, force: true }); } };
 }
 
@@ -269,7 +269,7 @@ test("real browser validates Provider management, public chat switching, cancell
   }).toBe(true);
   await expect(detail.getByText("2.0.0", { exact: true }).first()).toBeVisible();
   await expect(detail.getByRole("status").filter({ hasText: "安装完成" })).toBeVisible();
-  await expect(detail.getByText("当前已是最新", { exact: true })).toBeVisible();
+  await expect(detail.getByText("当前渠道无需升级", { exact: true })).toBeVisible();
   await expect(detail.getByRole("button", { name: "已是最新", exact: true })).toBeDisabled();
   await page.screenshot({ path: join(artifact, "upgrade-detail.png"), fullPage: true, animations: "disabled" });
   await detail.getByRole("button", { name: "关闭 Harness 详情", exact: true }).click();
@@ -496,10 +496,12 @@ test("failed Harness selection keeps the same conversation usable, shows recover
 });
 
 test("native model selection follows the installed Harness and rapid choices switch directly without Apply", { timeout: 120000 }, async t => {
-  const fixture = await launchFixture(); let browser: Browser | null = null;
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
   t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
   browser = await chromium.launch({ headless: true }); const context = await browser.newContext({ viewport: { width: 943, height: 1079 } }), page = await context.newPage();
   await page.goto(fixture.gateway.url);
+  await expect(page.getByRole("button", { name: "Providers", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "选择 Provider", exact: true })).toHaveCount(0);
   const composer = page.getByRole("textbox", { name: "发送消息", exact: true });
   const pick = async (label: string, value: string) => { await page.getByRole("button", { name: label, exact: true }).click(); await page.getByRole("option", { name: value, exact: true }).click(); };
   await pick("选择 Harness", "Codex"); await expect(page.getByRole("button", { name: "选择模型", exact: true })).toBeEnabled();

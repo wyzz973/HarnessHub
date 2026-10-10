@@ -19,3 +19,5 @@ CleanupEvidence.closed 只表资源确认关闭，protocolFailure独立保留连
 测试分开：领域描述接受/拒绝；真实目录/包/链接；真实子进程和IPC，外部模型用确定性协议对端；编译后CLI；真实Harness的initialize与清理。真实prompt缺模型/认证时记未验证。公共Session、Provider热切换和任务正确性不由Driver证明。
 
 ADR-016：原PATH/显式控制入口优先于旧受管副本；candidate/blocked不被覆盖，只有缺失控制可使用已安装私有入口。OpenClaw专属Driver处理其普通Gateway会话键扩展，ACP有界延迟验证session/new前的初始化元数据；错误身份/早到输出仍拒绝。
+
+ADR-017：ControlLaunch新增pi-rpc。Pi原CLI有界JSON行由Adapter翻译，复用同一进程监督所有者；读get_state/get_available_models，不调用会写全局默认的set_model。指定模型时，静止关闭读探测，再以原CLI启动参数覆盖并核对实际模型。prompt成功响应只是受理，agent_end保留后端结果，agent_settled才允许结算；重试、取消回执与清理分开。当前真实验证为Pi0.85.1；没有静止回执的旧版本不算支持。Claude ACP通过CLAUDE_CODE_EXECUTABLE指向原CLI，原生CLAUDE_CONFIG_DIR未设置时保持未设置，以沿用原登录文件。认证/额度/客户端不支持错误只发布稳定分类，不转发任意远端错误文本。

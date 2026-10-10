@@ -23,7 +23,7 @@ Harness连接或目标切换失败时，历史与原选择保留，可继续使�
 
 所有接入的Harness使用本机已安装入口，默认沿用本机模型配置和登录。模型列表由所选Harness原生接口读取，未指定时跟随其本机默认；不写全局模型配置，不创建空native HOME。选择Harness、Provider或模型后直接提出切换，不再点“应用”；当前回复保持原选择，新消息等待最后一次选择生效。失败保留原选择与草稿，快速改选只推进最新未受理选择。
 
-Providers仍支持用户明确配置的独立连接覆盖：保存后“测试连接”只读取模型目录；这不是原生模式的默认来源。编辑Provider不会自动改变已有会话的固定版本，可显式“使用最新”。本轮原生接入/模型选择/直接切换见[ADR-015](docs/decisions/0015-native-harness-models-and-switching.md)、[Multica调研](docs/research/multica-native-models.md)及[验收](docs/verification/native-models-2026-10-11.md)。业务格式现为v4，升级前备份，回退旧程序前恢复旧备份。
+当前生产页面只使用各Harness本机已配置的模型，统一Provider管理后置。旧Provider接口与实验验收保留，已有显式Provider会话不会静默改成原生模式。原生模型选择/直接切换见[ADR-015](docs/decisions/0015-native-harness-models-and-switching.md)、[Multica调研](docs/research/multica-native-models.md)及[验收](docs/verification/native-models-2026-10-11.md)。业务格式现为v4，升级前备份，回退旧程序前恢复旧备份。
 
 当前受管组合为 **Codex + OpenAI Responses**、**Gemini CLI + Gemini（API Key）**。其他产品继续检测，但协议/受管配置能力单独标明。OpenAI/Anthropic连接地址通常含/v1；Gemini填写API服务根。密钥只写入本机加密vault，不回显到UI/Session；同OS用户可访问主密钥，本版不宣称系统钥匙串隔离。
 
@@ -31,7 +31,9 @@ Providers仍支持用户明确配置的独立连接覆盖：保存后“测试�
 
 ## 本机原安装与版本管理
 
-2026-10-11起，已发现的本机PATH/显式入口优先，原安装和既有配置/登录作为当前执行来源，旧私有副本不能覆盖它。页面读取实际版本，OpenClaw原安装2026.3.23-2已通过DeepSeek及当前公共对话接续。已安装程序的原生升级配方尚未完成，本轮不执行系统升级；界面/HTTP已阻止以“更新并管理”创建副本冒充原生升级。详见[ADR-016](docs/decisions/0016-local-installation-and-openclaw.md)与[验收](docs/verification/local-openclaw-2026-10-11.md)。
+已发现的本机PATH/显式入口优先，原安装和既有配置/登录作为当前执行来源，旧私有副本不能覆盖它。生产管理任务使用原npm/uv位置或已审核用户程序目录，真实CLI版本、原配置保护与未知结果分别记录。Homebrew本机升级因嵌套沙箱限制明确不可用，保留原程序；用户开发目录不自动替换。管理库v1→v2追加冻结计划，先备份业务库和管理库；业务会话仍为v4。旧私有版本槽只保留历史及显式测试模式。详见[ADR-017](docs/decisions/0017-native-installation-management.md)与[本轮验收](docs/verification/native-management-2026-10-11.md)。
+
+原版OpenClaw2026.3.23-2、Codex0.160.0、OpenCode1.18.35、Pi0.85.1已通过本机真实模型回复；OpenClaw/Pi使用原生DeepSeek。Claude接入口绑定原Claude Code2.1.296及既有登录，账号周额度已用完。Gemini0.62.0被服务端拒绝，Cursor旧本机版本尚未登录；这些情况不能算回复通过。所有接入口版本与原程序版本分开解释，不把ACP适配器版本当原CLI版本。
 
 Provider统一管理仍是用户→HarnessHub→不同Harness→Provider统一管理的后续环节；当前原生接入直接使用各Harness已配置模型，不通过本项目Provider来完成DeepSeek测试。
 

@@ -18,6 +18,7 @@ export interface InstallationJobView {
   readonly installationId: string | null;
   readonly error: { readonly code: string; readonly message: string } | null;
   readonly logCursor: number;
+  readonly native?: { readonly channel: string; readonly location: string; readonly beforeVersion: string | null; readonly actualVersion: string | null; readonly dispatched: boolean; readonly configurationPreserved: boolean | null };
 }
 export interface InstallationLog {
   readonly seq: number;
@@ -46,7 +47,37 @@ export interface HarnessManagementView {
   readonly installationId: string | null;
   readonly defaultRevision: number;
   readonly error: { readonly code: string; readonly message: string } | null;
+  readonly native?: NativeManagementCapability;
 }
+export interface NativeManagementCapability {
+  readonly channel: string;
+  readonly location: string;
+  readonly fingerprint: string;
+  readonly canInstall: boolean;
+  readonly canUpgrade: boolean;
+  readonly reason: string | null;
+}
+/** Private frozen installation plan. It contains program references, never configuration contents or credentials. */
+export interface NativeInstallPlan {
+  readonly harnessId: string;
+  readonly controlId: string;
+  readonly channel: "npm" | "brew-formula" | "brew-cask" | "uv" | "archive" | "native-cli" | "unsupported";
+  readonly manager: string;
+  readonly reference: string;
+  readonly prefix: string;
+  readonly entry: string;
+  readonly actualEntry: string;
+  readonly beforeVersion: string | null;
+  readonly fingerprint: string;
+  readonly reason: string | null;
+}
+export interface NativeManagementPort {
+  describe(recipe: ManagementRecipe, observation: SystemInstallationObservation | undefined, version: string | null, context: ManagementInstallContext): Promise<NativeInstallPlan>;
+  latest(plan: NativeInstallPlan, recipe: ManagementRecipe, context: ManagementInstallContext): Promise<string>;
+  execute(plan: NativeInstallPlan, recipe: ManagementRecipe, version: string, context: NativeInstallContext): Promise<{ readonly version: string; readonly configurationPreserved: boolean }>;
+  inspect(plan: NativeInstallPlan, context: ManagementInstallContext): Promise<string>;
+}
+export interface NativeInstallContext extends ManagementInstallContext { beginMutation(): void }
 export interface ResolvedManagedControl {
   readonly installationId: string;
   readonly revision: number;
@@ -59,6 +90,7 @@ export interface ManagementJobInput {
   readonly action: "install" | "upgrade";
   readonly commandId: string;
   readonly expectedDefaultRevision?: number;
+  readonly expectedNativeFingerprint?: string;
 }
 export interface ManagementRecipe {
   readonly harnessId: string;
@@ -81,10 +113,11 @@ export interface ResolvedInstallSpec {
   readonly artifactUrl: string | null;
   readonly integrity: string | null;
   readonly engines: Readonly<Record<string, string>>;
+  readonly binNames?: readonly string[];
   readonly dependencies: readonly { readonly packageName: string; readonly version: string; readonly binName: string }[];
 }
 export interface ManagementMetadataPort {
-  resolve(recipe: ManagementRecipe, signal: AbortSignal): Promise<ResolvedInstallSpec>;
+  resolve(recipe: ManagementRecipe, signal: AbortSignal, exactVersion?: string): Promise<ResolvedInstallSpec>;
 }
 export interface ManagementInstallContext {
   readonly stage: string;

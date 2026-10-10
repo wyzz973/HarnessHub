@@ -89,6 +89,7 @@ lines.on("line", line => {
   if (message.method === "account/read") { answer(message.id, { account: { type: "chatgpt", email: "private-account@example.invalid" }, requiresOpenaiAuth: true }); return; }
   if (message.method === "model/list") { answer(message.id, { data: ["native-model-a", "native-model-b"].map(model => ({ model, displayName: model })), nextCursor: null }); return; }
   if (message.method === "session/new") {
+    if (scenario === "unsupported-client") { emit({ id: message.id, error: { code: -32000, message: "This client is no longer supported for Gemini Code Assist. private-synthetic-key" } }); return; }
     if (["opening-metadata", "opening-wrong-identity", "opening-flood", "opening-text"].includes(scenario)) {
       const sessionId = scenario === "opening-wrong-identity" ? "wrong-session" : "session-fixture";
       for (let i = 0; i < (scenario === "opening-flood" ? 129 : 1); i++) notification("session/update", { sessionId, update: { sessionUpdate: "session_info_update", title: "new session" } });
@@ -106,6 +107,7 @@ lines.on("line", line => {
   }
   if (message.method === "ping") { answer(message.id, { echoed: message.params }); return; }
   if (message.method === "session/prompt" || message.method === "turn/start") {
+    if (scenario === "quota-rejected" || scenario === "auth-rejected") { emit({ id: message.id, error: { code: -32001, message: (scenario === "quota-rejected" ? "You've hit your weekly limit" : "Authentication required") + " private-synthetic-key" } }); return; }
     if (scenario === "prompt-rejected") { emit({ id: message.id, error: { code: -32001, message: "private rejected request synthetic-key" } }); return; }
     promptId = message.id; turn += 1;
     if (scenario === "exit-zero") { process.exit(0); }

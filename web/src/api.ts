@@ -62,11 +62,13 @@ function decodeHarness(value: unknown): HarnessView {
 function decodeManagement(value: unknown): HarnessManagementView {
   const row = record(value), recipe = row.recipe === null ? null : record(row.recipe);
   return { harnessId: text(row.harnessId), recipe: recipe === null ? null : { controlId: text(recipe.controlId), kind: choice(recipe.kind, ["npm", "python", "binary"]), sourceLabel: text(recipe.sourceLabel), packageName: nullableText(recipe.packageName), referenceVersion: nullableText(recipe.referenceVersion), canInstall: bool(recipe.canInstall), reason: nullableText(recipe.reason) },
-    source: choice(row.source, ["managed", "system", "missing"]), installedVersion: nullableText(row.installedVersion), latestVersion: nullableText(row.latestVersion), updateStatus: choice(row.updateStatus, ["unchecked", "checking", "available", "current", "failed", "unsupported"]), checkedAt: nullableText(row.checkedAt), activeJobId: nullableText(row.activeJobId), installationId: nullableText(row.installationId), defaultRevision: number(row.defaultRevision), error: publicError(row.error) };
+    source: choice(row.source, ["managed", "system", "missing"]), installedVersion: nullableText(row.installedVersion), latestVersion: nullableText(row.latestVersion), updateStatus: choice(row.updateStatus, ["unchecked", "checking", "available", "current", "failed", "unsupported"]), checkedAt: nullableText(row.checkedAt), activeJobId: nullableText(row.activeJobId), installationId: nullableText(row.installationId), defaultRevision: number(row.defaultRevision), error: publicError(row.error),
+    ...(row.native === undefined ? {} : { native: (() => { const native = record(row.native); return { channel: text(native.channel), location: text(native.location), fingerprint: text(native.fingerprint), canInstall: bool(native.canInstall), canUpgrade: bool(native.canUpgrade), reason: nullableText(native.reason) }; })() }) };
 }
 export function decodeInstallationJob(value: unknown): InstallationJobView {
   const row = record(value);
-  return { id: text(row.id), harnessId: text(row.harnessId), controlId: text(row.controlId), action: choice(row.action, ["install", "upgrade"]), status: choice(row.status, ["queued", "resolving", "installing", "verifying", "activating", "completed", "cancelled", "failed", "unknown"]), phase: text(row.phase), cancelRequested: bool(row.cancelRequested), createdAt: text(row.createdAt), updatedAt: text(row.updatedAt), resolvedVersion: nullableText(row.resolvedVersion), installationId: nullableText(row.installationId), error: publicError(row.error), logCursor: number(row.logCursor) };
+  return { id: text(row.id), harnessId: text(row.harnessId), controlId: text(row.controlId), action: choice(row.action, ["install", "upgrade"]), status: choice(row.status, ["queued", "resolving", "installing", "verifying", "activating", "completed", "cancelled", "failed", "unknown"]), phase: text(row.phase), cancelRequested: bool(row.cancelRequested), createdAt: text(row.createdAt), updatedAt: text(row.updatedAt), resolvedVersion: nullableText(row.resolvedVersion), installationId: nullableText(row.installationId), error: publicError(row.error), logCursor: number(row.logCursor),
+    ...(row.native === undefined ? {} : { native: (() => { const native = record(row.native); return { channel: text(native.channel), location: text(native.location), beforeVersion: nullableText(native.beforeVersion), actualVersion: nullableText(native.actualVersion), dispatched: bool(native.dispatched), configurationPreserved: native.configurationPreserved === null ? null : bool(native.configurationPreserved) }; })() }) };
 }
 function decodeLogPage(value: unknown): InstallationLogPage {
   const row = record(value);
@@ -119,7 +121,7 @@ export function decodeSessionStreamFrame(value: unknown): SessionStreamFrame {
 }
 function decodeState(value: unknown): WebState {
   const row = record(value);
-  return { workspace: text(row.workspace), providers: list(row.providers, decodeProvider, 256), harnesses: list(row.harnesses, decodeHarness, 256), sessions: list(row.sessions, decodeSummary, 1000), jobs: list(row.jobs, decodeInstallationJob, 100) };
+  return { ...(row.providerManagement === undefined ? {} : { providerManagement: bool(row.providerManagement) }), workspace: text(row.workspace), providers: list(row.providers, decodeProvider, 256), harnesses: list(row.harnesses, decodeHarness, 256), sessions: list(row.sessions, decodeSummary, 1000), jobs: list(row.jobs, decodeInstallationJob, 100) };
 }
 function decodeAuth(value: unknown): AuthSession { return { csrfToken: text(record(value).csrfToken) }; }
 function acknowledge(value: unknown, session: string, result: "runId" | "switchId" | "target"): void {
@@ -245,6 +247,7 @@ export class GatewayApi {
   submitInstallation(input: ManagementJobInput): Promise<InstallationJobView> { return this.request("/installation-jobs", "POST", input, decodeInstallationJob); }
   jobs(signal?: AbortSignal): Promise<readonly InstallationJobView[]> { return this.request("/installation-jobs?limit=50", "GET", undefined, value => list(value, decodeInstallationJob, 100), signal); }
   cancelInstallation(id: string, key: string): Promise<InstallationJobView> { return this.request(`/installation-jobs/${encodeURIComponent(id)}/cancel`, "POST", { commandId: key }, decodeInstallationJob); }
+  inspectInstallation(id: string): Promise<InstallationJobView> { return this.request(`/installation-jobs/${encodeURIComponent(id)}/inspect`, "POST", {}, decodeInstallationJob); }
   installationLogs(id: string, afterSeq: number, signal?: AbortSignal): Promise<InstallationLogPage> { return this.request(`/installation-jobs/${encodeURIComponent(id)}/logs?afterSeq=${afterSeq}&limit=50`, "GET", undefined, decodeLogPage, signal); }
   private async request<T>(path: string, method: "GET" | "POST" | "PATCH", body: unknown, decode: (value: unknown) => T, signal?: AbortSignal): Promise<T> {
     const deadline = new AbortController();
@@ -299,6 +302,15 @@ export function failureMessage(failure: { readonly code: string; readonly messag
     NATIVE_CONFIGURATION_INVALID: "本机配置与这个 Harness 的安装版本不兼容。请使用兼容的本机版本，或选择其他 Harness 继续。",
     PROCESS_EXITED: "Harness 提前退出了。历史已保留，可以重试或选择其他 Harness。",
     REMOTE_ERROR: "Harness 拒绝了这次请求。请检查连接配置，或选择其他 Harness。",
+    NATIVE_AUTH_REQUIRED: "这个 Harness 尚未登录。请在本机完成登录后再试，也可以选择其他 Harness 继续。",
+    NATIVE_QUOTA_EXCEEDED: "这个 Harness 的账号额度已用完。可等待额度恢复，或选择其他 Harness 继续。",
+    NATIVE_CLIENT_UNSUPPORTED: "模型服务已停止支持这个本机客户端。原配置已保留，可以选择其他 Harness 继续。",
+    NATIVE_CONNECTION_FAILED: "这个 Harness 配置的模型服务无法连接。请检查它本机的模型配置，或选择其他模型继续。",
+    NATIVE_DEPENDENCY_UNAVAILABLE: "这个接入口需要本机已安装的 Harness。请到 Harnesses 检查原程序。",
+    HARNESS_BUSY: "这个 Harness 还有任务在运行。结束对应任务后可以升级，其他对话可以继续。",
+    NATIVE_INSTALLATION_UNKNOWN: "本机安装结果尚待核实。请到 Harnesses 核实结果，也可以切换其他 Harness。",
+    NATIVE_INSTALLATION_CHANGED: "本机程序已变化。请重新扫描后再操作。",
+    CONFIGURATION_PROTECTION_UNAVAILABLE: "当前安装渠道无法保证保留原配置，暂不能在这里升级。",
     SWITCH_NOT_EFFECTIVE: "这条消息尚未执行，因为选择切换失败。重新选择后，可明确重发这条消息。",
     HARNESS_UNAVAILABLE: "这个 Harness 当前不可用。请选择其他 Harness，或到 Harnesses 检查安装。",
     PROVIDER_DISABLED: "所选 Provider 已停用。请选择其他连接，或到 Providers 启用它。",

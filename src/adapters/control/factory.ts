@@ -7,6 +7,8 @@ import type { ControlLaunch, ControlOptions, HarnessControl, NativeModelCatalog 
 import { AcpControl } from "./acp.js";
 import { CodexControl } from "./codex.js";
 import { ControlError, object } from "../../infrastructure/control/json-rpc-process.js";
+import { bindNativeDependencies } from "./native-dependencies.js";
+import { PiControl } from "./pi.js";
 
 /** The installed OpenClaw bridge accepts sessionKey in _meta. A normal chat key avoids its ACP-runtime namespace. */
 export class OpenClawControl extends AcpControl {
@@ -44,7 +46,9 @@ export class OpenClawControl extends AcpControl {
   }
 }
 /** Vendor extensions remain in the adapter layer; Gateway owns only the common control contract. */
-export function createNativeControl(harnessId: string, launch: ControlLaunch, options: ControlOptions): HarnessControl {
+export async function createNativeControl(harnessId: string, launch: ControlLaunch, options: ControlOptions): Promise<HarnessControl> {
+  launch = await bindNativeDependencies(harnessId, launch);
+  if (launch.protocol === "pi-rpc") return new PiControl(launch, options);
   if (launch.protocol === "codex-app-server") return new CodexControl(launch, options);
   return harnessId === "openclaw" ? new OpenClawControl(launch, options) : new AcpControl(launch, options);
 }

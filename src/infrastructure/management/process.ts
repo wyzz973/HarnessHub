@@ -30,8 +30,8 @@ export function runManagementProcess(executable: string, args: readonly string[]
       if (stream === "stdout") captured.push(bytes);
       try {
         context.assertOwned(); lines[stream] += decoders[stream].write(bytes);
-        if (Buffer.byteLength(lines[stream], "utf8") > 65536) throw new ManagementError("OUTPUT_LIMIT", "installer output line exceeded its byte budget");
         const complete = lines[stream].split(/[\r\n]/u); lines[stream] = complete.pop() ?? "";
+        if (Buffer.byteLength(lines[stream], "utf8") > 65536 || complete.some(line => Buffer.byteLength(line, "utf8") > 65536)) throw new ManagementError("OUTPUT_LIMIT", "installer output line exceeded its byte budget");
         for (const line of complete) if (line) context.log(stream, line);
       } catch (error) { failure = error; stop(); }
     };

@@ -1,14 +1,22 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import type { ControlEvent, ControlOptions } from "../../src/contracts/control.js";
 import { AcpControl } from "../../src/adapters/control/acp.js";
 import { OpenClawControl } from "../../src/adapters/control/factory.js";
+import { bindNativeDependencies } from "../../src/adapters/control/native-dependencies.js";
 
 const options: ControlOptions = { cwd: process.cwd(), env: {}, requestTimeoutMs: 1000, runTimeoutMs: 1500,
   maxFrameBytes: 65536, maxDiagnosticBytes: 1024, closeGraceMs: 150 };
+test("Claude ACP resolves the original native executable and never substitutes a bundled CLI for a missing explicit path", async t => {
+  const root = await mkdtemp(join(tmpdir(), "claude-native-dependency-")); t.after(() => rm(root, { recursive: true, force: true }));
+  await symlink(process.execPath, join(root, "claude"));
+  const launch = { executable: process.execPath, args: [], env: { PATH: root, HOME: root }, protocol: "acp-v1" as const };
+  assert.equal((await bindNativeDependencies("claude", launch)).env.CLAUDE_CODE_EXECUTABLE, process.execPath);
+  await assert.rejects(bindNativeDependencies("claude", { ...launch, env: { ...launch.env, CLAUDE_CODE_EXECUTABLE: join(root, "absent") } }), /explicitly selected native/);
+});
 function control(scenario = "basic", env: Record<string, string> = {}, overrides: Partial<ControlOptions> = {}): AcpControl {
   return new AcpControl({ protocol: "acp-v1", executable: process.execPath,
     args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", scenario], env }, { ...options, ...overrides });
@@ -136,6 +144,23 @@ test("an explicit ACP prompt rejection is a failed backend result with a cleanly
     const id = await ready(driver), output: ControlEvent[] = [], run = await driver.startText(id, "rejected request", value => output.push(value));
     assert.deepEqual(await run.result, { status: "failed", reason: "request_rejected" }); assert.deepEqual(output, []);
     assert.equal((await driver.close()).protocolFailure, null);
+  } finally { await driver.close(); }
+});
+for (const [scenario, code] of [["quota-rejected", "NATIVE_QUOTA_EXCEEDED"], ["auth-rejected", "NATIVE_AUTH_REQUIRED"]] as const)
+  test(`ACP ${scenario} exposes an actionable category without remote secrets`, async () => {
+    const driver = control(scenario);
+    try {
+      const result = await (await driver.startText(await ready(driver), "test", () => {})).result;
+      assert.equal(result.status, "failed"); assert.equal(result.error?.code, code);
+      assert.equal(JSON.stringify(result).includes("private-synthetic-key"), false);
+      assert.equal((await driver.close()).protocolFailure, null);
+    } finally { await driver.close(); }
+  });
+test("an unsupported native client fails session creation with a safe reason and awaited cleanup", async () => {
+  const driver = control("unsupported-client");
+  try {
+    await assert.rejects(ready(driver), error => error !== null && typeof error === "object" && "code" in error && error.code === "NATIVE_CLIENT_UNSUPPORTED" && !String(error).includes("private-synthetic-key"));
+    assert.equal((await driver.close()).protocolFailure?.code, "NATIVE_CLIENT_UNSUPPORTED");
   } finally { await driver.close(); }
 });
 

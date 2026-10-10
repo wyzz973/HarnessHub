@@ -162,10 +162,10 @@ test("formal CLI ambiguous controls require explicit selection and unavailable s
   assert.equal(explicit.status, 0, explicit.stderr); await assertClosed(f);
 });
 
-test("formal CLI rejects bad invocation arguments and unsupported Pi without launching", async (t) => {
-  const f = await fixture(t); await manifest(f, "pi-rpc");
+test("formal CLI rejects bad invocation arguments without launching", async (t) => {
+  const f = await fixture(t); await manifest(f, "acp-v1");
   for (const args of [
-    ["unknown"], ["probe", "--harness", "cli-fixture"],
+    ["unknown"],
     ["probe", "--harness", "cli-fixture", "--prompt", "not a probe"],
     ["run", "--harness", "cli-fixture"], ["run", "--harness", "cli-fixture", "--prompt", " "],
     ["probe", "--harness", "unknown"], ["probe", "--harness", "cli-fixture", "--timeout-ms", "99"],
@@ -192,7 +192,8 @@ test("formal CLI default reuses the native host profile without forwarding unrel
   assert.equal(home, f.hostHome); assert.notEqual(cwd, f.root);
   assert.ok("hostSecretPresent" in capture && capture.hostSecretPresent === false);
   assert.ok("bindingValue" in capture && capture.bindingValue === "explicit-binding");
-  for (const [field, suffix] of [["codexHome", ".codex"], ["claudeHome", ".claude"], ["opencodeHome", ".config/opencode"], ["config", ".config"]] as const)
+  assert.equal("claudeHome" in capture, false, "an unset native CLAUDE_CONFIG_DIR must remain unset to preserve ~/.claude.json login");
+  for (const [field, suffix] of [["codexHome", ".codex"], ["opencodeHome", ".config/opencode"], ["config", ".config"]] as const)
     assert.equal(field in capture ? capture[field as keyof typeof capture] : undefined, join(f.hostHome, suffix));
   assert.equal(await readFile(hostConfig, "utf8"), "unchanged private user fixture\n");
   assert.equal((await stat(home)).isDirectory(), true);

@@ -1083,7 +1083,7 @@
         "G007-C02",
         "G007-C03"
       ],
-      "active_slice": "native-models-switching"
+      "active_slice": "native-installation-management"
     },
     {
       "id": "G008",
@@ -1140,7 +1140,7 @@
         "G008-R01",
         "G008-N01"
       ],
-      "active_slice": "native-models-switching"
+      "active_slice": "native-installation-management"
     },
     {
       "id": "G009",
@@ -1262,7 +1262,10 @@
         "tests/unit/management-state.test.ts",
         "tests/integration/management-service.test.ts",
         "src/infrastructure/management/system-version.ts",
-        "tests/integration/management-system-version.test.ts"
+        "tests/integration/management-system-version.test.ts",
+        "src/infrastructure/management/native.ts",
+        "src/infrastructure/management/native-lock.ts",
+        "tests/integration/native-management.test.ts"
       ],
       "requirements": [
         "R03",
@@ -1290,9 +1293,12 @@
         "G011-M02",
         "G011-M03",
         "G011-M04",
-        "G011-L01"
+        "G011-L01",
+        "G011-N01",
+        "G011-N02",
+        "G011-N03"
       ],
-      "active_slice": "local-openclaw-repair"
+      "active_slice": "native-installation-management"
     },
     {
       "id": "G012",
@@ -1346,7 +1352,7 @@
         "G012-C02",
         "G012-C03"
       ],
-      "active_slice": "catalog-control"
+      "active_slice": "native-installation-management"
     },
     {
       "id": "G013",
@@ -2189,7 +2195,7 @@
         "G031-C03",
         "G031-R01"
       ],
-      "active_slice": "local-openclaw-repair"
+      "active_slice": "native-installation-management"
     },
     {
       "id": "G032",
@@ -2209,7 +2215,11 @@
         "tests/protocol/g032.test.ts",
         "src/adapters/control/acp.ts",
         "tests/protocol/acp.test.ts",
-        "src/adapters/control/factory.ts"
+        "src/adapters/control/factory.ts",
+        "src/adapters/control/native-dependencies.ts",
+        "src/adapters/control/pi.ts",
+        "tests/protocol/pi.test.ts",
+        "tests/fixtures/pi-rpc-peer.mjs"
       ],
       "requirements": [
         "R11",
@@ -2238,9 +2248,11 @@
         "G032-C02",
         "G032-C03",
         "G032-C04",
-        "G032-L01"
+        "G032-L01",
+        "G032-N01",
+        "G032-N02"
       ],
-      "active_slice": "local-openclaw-repair"
+      "active_slice": "native-installation-management"
     },
     {
       "id": "G033",
@@ -2335,7 +2347,7 @@
         "G034-C03",
         "G034-C04"
       ],
-      "active_slice": "native-models-switching"
+      "active_slice": "native-installation-management"
     },
     {
       "id": "G035",
@@ -3045,7 +3057,7 @@
         "G050-P02",
         "G050-R01"
       ],
-      "active_slice": "local-openclaw-repair"
+      "active_slice": "native-installation-management"
     },
     {
       "id": "G051",
@@ -3269,7 +3281,7 @@
         "G054-N01",
         "G054-L01"
       ],
-      "active_slice": "local-openclaw-repair"
+      "active_slice": "native-installation-management"
     },
     {
       "id": "G055",
@@ -3553,7 +3565,7 @@
         "G059-C02",
         "G059-C03"
       ],
-      "active_slice": "local-openclaw-repair"
+      "active_slice": "native-installation-management"
     },
     {
       "id": "G060",
@@ -3616,7 +3628,7 @@
         "G060-M01",
         "G060-S01"
       ],
-      "active_slice": "local-openclaw-repair"
+      "active_slice": "native-installation-management"
     },
     {
       "id": "G061",
@@ -3675,10 +3687,11 @@
         "G061-S01",
         "G061-S02",
         "G061-S03",
+        "G061-L01",
         "G061-N01",
-        "G061-L01"
+        "G061-N02"
       ],
-      "active_slice": "local-openclaw-repair"
+      "active_slice": "native-installation-management"
     },
     {
       "id": "G062",

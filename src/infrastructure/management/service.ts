@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants, lstatSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
-import { access, lstat, realpath } from "node:fs/promises";
+import { access, lstat, realpath, mkdtemp, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { gt, valid } from "semver";
-import { ManagementError, type HarnessManagementView, type InstallCapability, type InstallationJobView, type InstallationLog,
+import { ManagementError, type HarnessManagementView, type InstallCapability, type InstallationJobView, type InstallationLog, type NativeManagementPort, type NativeInstallPlan, type ManagementInstallContext,
   type ManagementInstallerPort, type ManagementMetadataPort, type ManagementRecipe, type ResolvedManagedControl } from "../../contracts/management.js";
 import type { SystemInstallationObservation, SystemVersionProbeOptions } from "../../contracts/management.js";
 import { boundedManagementLimit, installationJobId, managementCommand, managementSlug, parseManagementInput } from "../../contexts/management/domain/input.js";
@@ -12,10 +12,17 @@ import { DefaultManagementInstaller, installedNpmEntry } from "./installer.js";
 import { insideManagement } from "./archive.js";
 import { OfficialManagementMetadata } from "./metadata.js";
 import { boundedManagementFile, managementIdentity, managementStorage, sameManagementIdentity } from "./storage.js";
-import { managementInteger, managementObject, parseInstallationRecord, parseManagementJob, parseManagementLog, parseManagementUpdate, type InstallationRecord } from "../../contexts/management/domain/state.js";
+import { managementInteger, managementObject, parseInstallationRecord, parseManagementJob, parseManagementLog, parseManagementUpdate, parseNativePlan, type InstallationRecord } from "../../contexts/management/domain/state.js";
 import { probeSystemVersion } from "./system-version.js";
+import { NativeManagement } from "./native.js";
+import { NativeInstallationLocks } from "./native-lock.js";
+import type { NativeEnvironment } from "../session/native-environment.js";
 
 export interface ManagementOptions {
+  readonly installationMode?: "native" | "private-fixture";
+  readonly native?: NativeManagementPort;
+  readonly nativeEnvironment?: NativeEnvironment;
+  readonly nativeLocks?: NativeInstallationLocks;
   readonly assertOwner: () => void;
   readonly ownerGeneration: number;
   readonly metadata?: ManagementMetadataPort;
@@ -52,9 +59,12 @@ export class LocalHarnessManagement {
   private readonly npm: string | null;
   private readonly uv: string | null;
   private readonly timeout: number;
+  private readonly native: NativeManagementPort | null;
+  private readonly nativePlans = new Map<string, NativeInstallPlan>();
+  private readonly nativeLocks: NativeInstallationLocks;
   private readonly redactor: (text: string) => string;
   private runner: Promise<void> | null = null;
-  private readonly checks = new Set<Promise<readonly HarnessManagementView[]>>();
+  private readonly checks = new Set<Promise<unknown>>();
   private readonly checkControllers = new Set<AbortController>();
   private readonly system = new Map<string, SystemInstallationObservation>();
   private readonly systemVersions = new Map<string, { fingerprint: string; version: string | null }>();
@@ -68,6 +78,8 @@ export class LocalHarnessManagement {
     this.node = realpathSync(options.nodeExecutable ?? process.execPath); this.npm = options.npmExecutable ?? executable("npm"); this.uv = options.uvExecutable ?? executable("uv");
     this.redactor = options.redactor ?? (text => text); this.recipes = options.recipes ?? builtinManagementRecipes();
     this.metadata = options.metadata ?? new OfficialManagementMetadata();
+    this.native = options.installationMode === "private-fixture" ? null : options.native ?? new NativeManagement(this.npm, this.uv, this.node, options.nativeEnvironment);
+    this.nativeLocks = options.nativeLocks ?? new NativeInstallationLocks();
     this.installer = options.installer ?? new DefaultManagementInstaller({ nodeExecutable: this.node, npmExecutable: this.npm, uvExecutable: this.uv });
     if (openRoots.has(join(realpathSync(root), "management"))) throw new ManagementError("MANAGEMENT_BUSY", "management root already has an owner in this process");
     this.storage = managementStorage(root, options.ownerGeneration);
@@ -126,6 +138,38 @@ export class LocalHarnessManagement {
     const cached = this.systemVersions.get(harnessId); if (cached?.fingerprint === this.systemFingerprint(observation)) return cached.version;
     return observation.packageVersion !== undefined && valid(observation.packageVersion) ? observation.packageVersion : null;
   }
+  /** Resolve local channels after discovery. Inspection never installs packages. */
+  refreshNativeCapabilities(): Promise<void> {
+    this.admission(); const operation = this.refreshNativeOwned(); this.checks.add(operation);
+    void operation.then(() => this.checks.delete(operation), () => this.checks.delete(operation)); return operation;
+  }
+  private async refreshNativeOwned(): Promise<void> {
+    if (!this.native) return;
+    const recipes = this.recipes; let index = 0;
+    await Promise.all(Array.from({ length: 4 }, async () => {
+      for (;;) {
+        const recipe = recipes[index++]; if (!recipe || !this.accepting) return;
+        const observation = this.system.get(recipe.harnessId);
+        let plan: NativeInstallPlan;
+        try { plan = await this.nativeInspection(context => this.native!.describe(recipe, observation?.controlId === recipe.controlId ? observation : undefined, observation?.controlId === recipe.controlId ? this.systemVersion(recipe.harnessId) : null, context)); }
+        catch (error) {
+          if (error instanceof ManagementError && ["OWNER_LOST", "OWNERSHIP_LOST", "MANAGEMENT_CLOSED", "CLEANUP_FAILED", "INVALID_STORAGE"].includes(error.code)) throw error;
+          const entry = observation?.command.executable ?? "";
+          plan = { harnessId: recipe.harnessId, controlId: recipe.controlId, channel: "unsupported", manager: "", prefix: "", entry, actualEntry: entry, beforeVersion: this.systemVersion(recipe.harnessId), reference: recipe.packageName ?? recipe.binName,
+            fingerprint: createHash("sha256").update(JSON.stringify({ recipe: recipe.controlId, entry })).digest("hex"), reason: "无法确认这个本机入口的安装渠道；原程序保留，其他 Harness 可继续使用。" };
+        }
+        this.own(); this.nativePlans.set(recipe.harnessId + ":" + recipe.controlId, parseNativePlan(plan));
+      }
+    }));
+  }
+  private async nativeInspection<T>(action: (context: ManagementInstallContext) => Promise<T>): Promise<T> {
+    const stage = await realpath(await mkdtemp(join(this.storage.root, "native-inspect-"))), identity = managementIdentity(stage, true);
+    const controller = new AbortController(); this.checkControllers.add(controller); const timer = setTimeout(() => controller.abort(), 15000); let quiescent = true;
+    const owned = () => { this.own(); if (!sameManagementIdentity(identity, managementIdentity(stage, true))) throw new ManagementError("OWNERSHIP_LOST", "native inspection directory changed"); };
+    try { return await action({ stage, signal: controller.signal, assertOwned: owned, log: () => {} }); }
+    catch (error) { if (error instanceof ManagementError && error.code === "CLEANUP_FAILED") quiescent = false; throw error; }
+    finally { clearTimeout(timer); this.checkControllers.delete(controller); owned(); if (quiescent) await rm(stage, { recursive: true, force: true }); }
+  }
   listJobs(limit?: number): readonly InstallationJobView[] {
     this.own(); const count = boundedManagementLimit(limit, 1000);
     const total = this.storage.db.prepare("SELECT count(*) AS n FROM management_jobs").get()?.n;
@@ -154,7 +198,7 @@ export class LocalHarnessManagement {
   }
   private payloadBudgets(): void {
     for (const [table, column, size, maximum] of [["management_jobs", "view_json", 65536, 2048], ["management_installations", "record_json", 65536, 2048],
-      ["management_updates", "view_json", 65536, 256], ["management_logs", "entry_json", 32768, 65536]] as const) {
+      ["management_updates", "view_json", 65536, 256], ["management_logs", "entry_json", 32768, 65536], ["management_native_plans", "plan_json", 32768, 2048]] as const) {
       const total = this.storage.db.prepare("SELECT count(*) AS count,coalesce(sum(length(CAST(" + column + " AS BLOB))),0) AS bytes FROM " + table).get();
       if (!total || typeof total.count !== "number" || total.count > maximum || typeof total.bytes !== "number" || total.bytes > 32 * 1024 * 1024)
         throw new ManagementError("STORAGE_LIMIT", "management storage exceeded its row or byte budget");
@@ -181,6 +225,14 @@ export class LocalHarnessManagement {
     for (const row of this.storage.db.prepare("SELECT job_id,seq,entry_json FROM management_logs").all()) {
       const log = parseManagementLog(json(row.entry_json)); if (row.seq !== log.seq || typeof row.job_id !== "string" || !ids.has(row.job_id)) throw new ManagementError("INVALID_DATA", "orphan or inconsistent installation log");
     }
+    const nativeIds = new Set<string>();
+    for (const row of this.storage.db.prepare("SELECT job_id,plan_json FROM management_native_plans").all()) {
+      const plan = parseNativePlan(json(row.plan_json));
+      if (typeof row.job_id !== "string" || !ids.has(row.job_id)) throw new ManagementError("INVALID_DATA", "orphan native installation plan");
+      const job = this.readJob(row.job_id);
+      if (!job.native || job.harnessId !== plan.harnessId || job.controlId !== plan.controlId || job.native.channel !== plan.channel) throw new ManagementError("INVALID_DATA", "native job and plan disagree"); nativeIds.add(job.id);
+    }
+    for (const id of ids) if (this.readJob(id).native && !nativeIds.has(id)) throw new ManagementError("INVALID_DATA", "native job has no frozen plan");
     for (const row of this.storage.db.prepare("SELECT id,harness_id,control_id,record_json FROM management_installations").all()) {
       const record = parseInstallationRecord(json(row.record_json));
       if (record.id !== row.id || record.harnessId !== row.harness_id || record.controlId !== row.control_id) throw new ManagementError("INVALID_DATA", "installation record row identity disagrees");
@@ -226,11 +278,15 @@ export class LocalHarnessManagement {
     this.admission(); this.payloadBudgets(); const request = parseManagementInput(input), recipe = this.recipe(request.harnessId, request.controlId);
     if (!recipe) throw new ManagementError("UNSUPPORTED_MANAGEMENT", "this Harness has no reviewed installation recipe");
     const capability = this.capability(request.harnessId);
-    if (capability?.canInstall === false && capability.controlId === recipe.controlId) throw new ManagementError("UNSUPPORTED_MANAGEMENT", capability.reason ?? "installation is unavailable");
+    if (!this.native && capability?.canInstall === false && capability.controlId === recipe.controlId) throw new ManagementError("UNSUPPORTED_MANAGEMENT", capability.reason ?? "installation is unavailable");
     const fingerprint = createHash("sha256").update(JSON.stringify({ harnessId: request.harnessId, controlId: recipe.controlId, action: request.action,
-      expectedDefaultRevision: request.expectedDefaultRevision ?? null })).digest("hex"), prior = this.storage.db.prepare("SELECT id,fingerprint FROM management_jobs WHERE command_id=?").get(request.commandId);
+      expectedDefaultRevision: request.expectedDefaultRevision ?? null, ...(request.expectedNativeFingerprint === undefined ? {} : { expectedNativeFingerprint: request.expectedNativeFingerprint }) })).digest("hex"), prior = this.storage.db.prepare("SELECT id,fingerprint FROM management_jobs WHERE command_id=?").get(request.commandId);
     if (prior) { if (prior.fingerprint !== fingerprint || typeof prior.id !== "string") throw new ManagementError("COMMAND_CONFLICT", "management command already used different input"); return this.readJob(prior.id); }
-    if (this.system.has(request.harnessId)) throw new ManagementError("NATIVE_UPGRADE_UNSUPPORTED", "Use the installed Harness update command; replacing it with a private copy is not a native upgrade");
+    const nativePlan = this.native ? this.nativePlans.get(request.harnessId + ":" + recipe.controlId) : undefined;
+    if (this.native && (!nativePlan || nativePlan.channel === "unsupported")) throw new ManagementError("UNSUPPORTED_NATIVE_MANAGEMENT", nativePlan?.reason ?? "Refresh the actual native installation before submitting");
+    if (nativePlan?.reason) throw new ManagementError("CONFIGURATION_PROTECTION_UNAVAILABLE", nativePlan.reason);
+    if (nativePlan && request.expectedNativeFingerprint !== nativePlan.fingerprint) throw new ManagementError("NATIVE_INSTALLATION_CHANGED", "native installation differs from the selected observation; refresh before continuing");
+    if (!this.native && this.system.has(request.harnessId)) throw new ManagementError("NATIVE_UPGRADE_UNSUPPORTED", "Use the installed Harness update command; replacing it with a private copy is not a native upgrade");
     if (this.storage.db.prepare("SELECT id FROM management_commands WHERE id=?").get(request.commandId)) throw new ManagementError("COMMAND_CONFLICT", "management command identity already used by cancellation");
     const active = this.storage.db.prepare("SELECT id FROM management_jobs WHERE harness_id=? AND status NOT IN('completed','cancelled','failed','unknown')").get(request.harnessId);
     if (active) throw new ManagementError("MANAGEMENT_BUSY", "this Harness already has an active installation job");
@@ -241,8 +297,14 @@ export class LocalHarnessManagement {
     if (request.expectedDefaultRevision !== undefined && request.expectedDefaultRevision !== revision) throw new ManagementError("DEFAULT_CONFLICT", "managed default changed since it was read");
     const time = this.now(), job: InstallationJobView = { id: "management-" + randomUUID(), harnessId: recipe.harnessId, controlId: recipe.controlId,
       action: request.action, status: "queued", phase: "queued", cancelRequested: false, createdAt: time, updatedAt: time,
-      resolvedVersion: null, installationId: null, error: null, logCursor: 0 };
-    this.storage.db.prepare("INSERT INTO management_jobs(id,harness_id,status,command_id,fingerprint,expected_revision,view_json) VALUES(?,?,?,?,?,?,?)").run(job.id, job.harnessId, job.status, request.commandId, fingerprint, revision, JSON.stringify(job));
+      resolvedVersion: null, installationId: null, error: null, logCursor: 0,
+      ...(nativePlan === undefined ? {} : { native: { channel: nativePlan.channel, location: nativePlan.entry, beforeVersion: nativePlan.beforeVersion, actualVersion: null, dispatched: false, configurationPreserved: null } }) };
+    this.storage.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.storage.db.prepare("INSERT INTO management_jobs(id,harness_id,status,command_id,fingerprint,expected_revision,view_json) VALUES(?,?,?,?,?,?,?)").run(job.id, job.harnessId, job.status, request.commandId, fingerprint, revision, JSON.stringify(job));
+      if (nativePlan) this.storage.db.prepare("INSERT INTO management_native_plans(job_id,plan_json) VALUES(?,?)").run(job.id, JSON.stringify(nativePlan));
+      this.storage.db.exec("COMMIT");
+    } catch (error) { this.storage.db.exec("ROLLBACK"); throw error; }
     this.schedule(); return job;
   }
   cancel(id: string, commandId: string): InstallationJobView {
@@ -285,6 +347,7 @@ export class LocalHarnessManagement {
   private async runJob(id: string): Promise<void> {
     const job = this.readJob(id), recipe = this.recipe(job.harnessId, job.controlId);
     if (!recipe) { this.phase(id, "failed", { error: { code: "RECIPE_CHANGED", message: "installation recipe is unavailable" } }); return; }
+    if (job.native !== undefined) { await this.runNativeJob(job, recipe); return; }
     const controller = new AbortController(), active = { id, controller, timedOut: false }; this.active = active;
     const timer = setTimeout(() => { active.timedOut = true; controller.abort(); }, this.timeout);
     let stage: string | null = null;
@@ -343,6 +406,61 @@ export class LocalHarnessManagement {
         { error: { code: active.timedOut ? "INSTALL_TIMEOUT" : this.redactor(failure.code), message: this.redactor(active.timedOut ? "installation exceeded its deadline" : failure.message) } });
     } finally { clearTimeout(timer); this.active = null; }
   }
+  private async runNativeJob(job: InstallationJobView, recipe: ManagementRecipe): Promise<void> {
+    if (!this.native || !job.native) { this.phase(job.id, "failed", { error: { code: "NATIVE_UNAVAILABLE", message: "native maintenance is unavailable" } }); return; }
+    const row = this.storage.db.prepare("SELECT plan_json FROM management_native_plans WHERE job_id=?").get(job.id);
+    const plan = parseNativePlan(json(row?.plan_json));
+    if (plan.harnessId !== job.harnessId || plan.controlId !== job.controlId) throw new ManagementError("INVALID_DATA", "native plan is not owned by this job");
+    const controller = new AbortController(), active = { id: job.id, controller, timedOut: false }; this.active = active;
+    const timer = setTimeout(() => { active.timedOut = true; controller.abort(); }, this.timeout);
+    let stage: string | undefined, identity: ReturnType<typeof managementIdentity> | undefined;
+    let dispatched = false, verified = false, quiescent = true, lock: ReturnType<NativeInstallationLocks["write"]> | undefined;
+    const owned = () => { this.own(); if (controller.signal.aborted) throw new ManagementError("CANCELLED", "native maintenance was cancelled"); if (!stage || !identity || !sameManagementIdentity(identity, managementIdentity(stage, true))) throw new ManagementError("OWNERSHIP_LOST", "native maintenance directory changed"); lock?.assertOwned(); };
+    try {
+      stage = await realpath(await mkdtemp(join(this.storage.root, "native-job-"))); identity = managementIdentity(stage, true);
+      const context: ManagementInstallContext = { stage, signal: controller.signal, assertOwned: owned, log: (stream, text) => this.log(job.id, stream, text) };
+      this.phase(job.id, "resolving");
+      const observed = this.system.get(job.harnessId);
+      const refreshedPlan = await this.native.describe(recipe, observed?.controlId === job.controlId ? observed : undefined, observed?.controlId === job.controlId ? this.systemVersion(job.harnessId) : null, context);
+      if (refreshedPlan.fingerprint !== plan.fingerprint) throw new ManagementError("NATIVE_INSTALLATION_CHANGED", "native installation changed since submission");
+      const version = await this.native.latest(plan, recipe, context); owned();
+      this.phase(job.id, "installing", { resolvedVersion: version }); lock = this.nativeLocks.write(job.harnessId, job.id);
+      const result = await this.native.execute(plan, recipe, version, { ...context, beginMutation: () => {
+        owned(); if (dispatched) return; const current = this.readJob(job.id); if (!current.native) throw new ManagementError("INVALID_DATA", "native job facts are missing");
+        this.saveJob({ ...current, native: { ...current.native, dispatched: true } }); dispatched = true;
+      } }); owned();
+      this.phase(job.id, "verifying");
+      if (!dispatched || plan.channel !== "native-cli" && result.version !== version || !result.configurationPreserved) throw new ManagementError("NATIVE_VERIFICATION_FAILED", "native result did not match the planned version and configuration protection");
+      const current = this.readJob(job.id); if (!current.native) throw new ManagementError("INVALID_DATA", "native result lost its facts");
+      this.phase(job.id, "completed", { resolvedVersion: result.version, native: { ...current.native, actualVersion: result.version, configurationPreserved: true } }); verified = true;
+      this.systemVersions.delete(job.harnessId); this.nativePlans.delete(job.harnessId + ":" + job.controlId);
+    } catch (error) {
+      this.own(); const failure = error instanceof ManagementError ? error : new ManagementError("NATIVE_FAILED", "native maintenance did not finish");
+      quiescent = failure.code !== "CLEANUP_FAILED";
+      this.phase(job.id, dispatched || !quiescent || failure.code === "OWNERSHIP_LOST" ? "unknown" : controller.signal.aborted ? "cancelled" : "failed", { error: { code: active.timedOut ? "INSTALL_TIMEOUT" : failure.code, message: this.redactor(failure.message) } });
+    } finally {
+      clearTimeout(timer); this.active = null;
+      lock?.release(verified || !dispatched && quiescent);
+      if (quiescent && stage && identity && sameManagementIdentity(identity, managementIdentity(stage, true))) await rm(stage, { recursive: true, force: true });
+    }
+  }
+  /** Explicit inspection verifies the current program without replaying an uncertain mutation. */
+  async inspectNativeResult(id: string): Promise<InstallationJobView> {
+    this.admission(); const job = this.readJob(id);
+    if (job.status !== "unknown" || !job.native || !this.native || job.error?.code === "CLEANUP_FAILED") throw new ManagementError("INSPECTION_UNAVAILABLE", "this native result cannot yet be inspected safely");
+    const operation = this.inspectNativeOwned(job); this.checks.add(operation);
+    void operation.then(() => this.checks.delete(operation), () => this.checks.delete(operation)); return operation;
+  }
+  private async inspectNativeOwned(job: InstallationJobView): Promise<InstallationJobView> {
+    const row = this.storage.db.prepare("SELECT plan_json FROM management_native_plans WHERE job_id=?").get(job.id), plan = parseNativePlan(json(row?.plan_json));
+    const lock = this.nativeLocks.write(job.harnessId, job.id, true); let verified = false;
+    try {
+      const version = await this.nativeInspection(context => this.native!.inspect(plan, context)); lock.assertOwned(); this.own();
+      const current = this.readJob(job.id); if (!current.native || current.status !== "unknown") throw new ManagementError("DEFAULT_CONFLICT", "native result changed during inspection");
+      this.phase(job.id, "failed", { native: { ...current.native, actualVersion: version }, error: { code: "NATIVE_RESULT_INSPECTED", message: "已核实本机当前版本为 " + version + "；原任务未确认为完成，未重跑安装。" } });
+      verified = true; this.systemVersions.delete(job.harnessId); this.nativePlans.delete(job.harnessId + ":" + job.controlId); return this.readJob(job.id);
+    } finally { lock.release(verified); }
+  }
   resolveControl(harnessId: string, controlId: string): ResolvedManagedControl | null {
     this.own(); this.payloadBudgets(); managementSlug(harnessId); managementSlug(controlId);
     const pointer = this.storage.db.prepare("SELECT installation_id,revision FROM management_defaults WHERE harness_id=?").get(harnessId);
@@ -373,6 +491,7 @@ export class LocalHarnessManagement {
       const active = this.storage.db.prepare("SELECT id FROM management_jobs WHERE harness_id=? AND status NOT IN('completed','cancelled','failed','unknown')").get(harness)?.id;
       const system = this.system.has(harness);
       const currentVersion = system || installationId === null ? this.systemVersion(harness) : installedVersion;
+      const nativeRecipe = this.recipe(harness), nativePlan = nativeRecipe ? this.nativePlans.get(harness + ":" + nativeRecipe.controlId) : undefined;
       let updateStatus = checked?.updateStatus ?? (recipe?.canInstall ? "unchecked" : "unsupported");
       if (checked?.latestVersion != null && checked.error === null && ["unchecked", "available", "current"].includes(updateStatus)) {
         const newer = currentVersion !== null && (valid(checked.latestVersion) && valid(currentVersion)
@@ -382,7 +501,11 @@ export class LocalHarnessManagement {
       return { harnessId: harness, recipe, source: system ? "system" : installationId === null ? "missing" : "managed",
         installedVersion: currentVersion, installationId: system ? null : installationId,
         latestVersion: checked?.latestVersion ?? null, updateStatus,
-        checkedAt: checked?.checkedAt ?? null, activeJobId: typeof active === "string" ? active : null, defaultRevision: this.defaultRevision(harness), error: checked?.error ?? null };
+        checkedAt: checked?.checkedAt ?? null, activeJobId: typeof active === "string" ? active : null, defaultRevision: this.defaultRevision(harness), error: checked?.error ?? null,
+        ...(nativePlan === undefined ? {} : { native: { channel: nativePlan.channel, location: nativePlan.entry, fingerprint: nativePlan.fingerprint,
+          canInstall: nativePlan.channel !== "unsupported" && nativePlan.reason === null && !nativePlan.actualEntry,
+          canUpgrade: nativePlan.channel !== "unsupported" && nativePlan.reason === null && nativePlan.beforeVersion !== null && !!nativePlan.actualEntry && !(checked?.latestVersion && valid(checked.latestVersion) && valid(nativePlan.beforeVersion) && !gt(checked.latestVersion, nativePlan.beforeVersion)),
+          reason: nativePlan.reason } }) };
     });
   }
   checkUpdates(harnessIds: readonly string[] = [...new Set(this.recipes.map(item => item.harnessId))]): Promise<readonly HarnessManagementView[]> {
@@ -430,8 +553,12 @@ export class LocalHarnessManagement {
               this.systemVersions.set(id, { fingerprint: this.systemFingerprint(observation), version: observed.version });
             }
           }
-          const spec = await this.metadata.resolve(recipe, controller.signal); this.own();
+          const nativePlan = this.nativePlans.get(id + ":" + recipe.controlId);
+          const spec = this.native && nativePlan
+            ? { version: await this.nativeInspection(context => this.native!.latest(nativePlan, recipe, { ...context, signal: AbortSignal.any([context.signal, controller.signal]) })) }
+            : await this.metadata.resolve(recipe, controller.signal); this.own();
           const installed = this.views([id])[0]!.installedVersion;
+          if (spec.version === "vendor-latest") { this.storeUpdate(id, { latestVersion: null, updateStatus: "unchecked", checkedAt: this.now(), error: null }); continue; }
           const available = installed !== null && (valid(spec.version) && valid(installed) ? gt(spec.version, installed) : spec.version !== installed);
           this.storeUpdate(id, { latestVersion: spec.version, updateStatus: available ? "available" : installed === null ? "unchecked" : "current", checkedAt: this.now(), error: null });
         } catch (error) { this.own(); this.storeUpdate(id, { latestVersion: null, updateStatus: "failed", checkedAt: this.now(), error: { code: error instanceof ManagementError ? error.code : "CHECK_FAILED", message: "latest version could not be checked" } }); }

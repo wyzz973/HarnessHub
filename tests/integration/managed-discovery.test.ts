@@ -25,7 +25,7 @@ async function child(root: string, system: string, manifest?: string, validate =
 test("original system PATH wins over a private copy; absent controls use the local copy and blocked overrides never fall back", async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "harness-managed-discovery-"))), data = join(root, "data"), system = join(root, "system"); await mkdir(system);
   const store = new SqliteSessionStore(data);
-  const manager = new LocalHarnessManagement(data, { assertOwner: () => store.assertOwner(), ownerGeneration: store.ownerGeneration, recipes: [recipe],
+  const manager = new LocalHarnessManagement(data, { installationMode: "private-fixture", assertOwner: () => store.assertOwner(), ownerGeneration: store.ownerGeneration, recipes: [recipe],
     metadata: { resolve: async original => ({ recipe: original, version: "1.0.0", artifactUrl: null, integrity: null, engines: {}, dependencies: [] }) },
     installer: { install: async (spec, context) => {
       const directory = join(context.stage, "node_modules", "@openai", "codex"); await mkdir(directory, { recursive: true });

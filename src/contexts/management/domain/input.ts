@@ -16,14 +16,16 @@ export function parseManagementInput(value: unknown): ManagementJobInput {
   if (value === null || typeof value !== "object" || Array.isArray(value) ||
       Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) throw new ManagementError("INVALID_INPUT", "management request must be a plain object");
   const row = value as Record<string, unknown>;
-  if (Object.keys(row).some(key => !["harnessId", "controlId", "action", "commandId", "expectedDefaultRevision"].includes(key)))
+  if (Object.keys(row).some(key => !["harnessId", "controlId", "action", "commandId", "expectedDefaultRevision", "expectedNativeFingerprint"].includes(key)))
     throw new ManagementError("INVALID_INPUT", "unknown management request fields");
   if (row.action !== "install" && row.action !== "upgrade") throw new ManagementError("INVALID_INPUT", "unsupported management action");
   if (row.expectedDefaultRevision !== undefined && (typeof row.expectedDefaultRevision !== "number" || !Number.isSafeInteger(row.expectedDefaultRevision) || row.expectedDefaultRevision < 0))
     throw new ManagementError("INVALID_INPUT", "invalid expected default revision");
+  if (row.expectedNativeFingerprint !== undefined && (typeof row.expectedNativeFingerprint !== "string" || !/^[a-f0-9]{64}$/u.test(row.expectedNativeFingerprint))) throw new ManagementError("INVALID_INPUT", "invalid native installation fingerprint");
   return { harnessId: managementSlug(row.harnessId), ...(row.controlId === undefined ? {} : { controlId: managementSlug(row.controlId) }),
     action: row.action, commandId: managementCommand(row.commandId),
-    ...(row.expectedDefaultRevision === undefined ? {} : { expectedDefaultRevision: row.expectedDefaultRevision }) };
+    ...(row.expectedDefaultRevision === undefined ? {} : { expectedDefaultRevision: row.expectedDefaultRevision }),
+    ...(row.expectedNativeFingerprint === undefined ? {} : { expectedNativeFingerprint: row.expectedNativeFingerprint }) };
 }
 export function boundedManagementLimit(value: number | undefined, maximum = 100): number {
   const result = value ?? 50;

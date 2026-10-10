@@ -195,7 +195,7 @@ test("formal chat persists one public Session through ACP A→Codex B→ACP A an
   await assertClean(f);
 });
 
-test("Session binding preserves explicitly prepared private configuration and refuses an unimplemented protocol", async t => {
+test("Session binding preserves explicitly prepared private configuration and admits implemented Pi RPC", async t => {
   const f = await fixture(t);
   await writeFile(join(f.home, "prepared-config"), "synthetic private settings");
   const configuration = await prepareConfiguration({ workspace: f.workspace, configHome: f.home, manifestPath: f.manifest, pathOnly: true });
@@ -210,7 +210,7 @@ test("Session binding preserves explicitly prepared private configuration and re
   record(definition.controls[0]).protocol = "pi-rpc";
   await writeFile(f.manifest, JSON.stringify(manifest));
   const changed = await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true });
-  await assert.rejects(factory.validate({ harnessId: "session-a" }, changed), (error: unknown) => record(error).code === "UNSUPPORTED_CONTROL");
+  assert.equal((await factory.validate({ harnessId: "session-a" }, changed)).controlId, "session-a-control");
 });
 
 test("formal chat cancellation remains readable during a running external Harness", async t => {

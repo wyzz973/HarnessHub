@@ -45,6 +45,7 @@ function draftMatches(draft: SelectionDraft, selection: HarnessSelection): boole
 }
 export interface ChatProps {
   nativeModels: NativeModelCatalog | null; nativeModelsLoading: boolean; nativeModelsError: string | null; onRefreshModels: () => void;
+  providerManagement?: boolean;
   session: SessionView | null; sessionRequested: boolean; sessionError: string | null; loading: boolean; draft: SelectionDraft; providers: readonly ProviderView[]; harnesses: readonly HarnessView[];
   workspace: string; mutation: string | null; error: string | null; connectionError: string | null;
   messageDraft: string; onMessageDraft: Dispatch<SetStateAction<string>>;

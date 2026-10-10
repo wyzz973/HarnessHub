@@ -11,7 +11,7 @@
 | S05 自动分配 | 规则式任务/能力过滤与可解释选择 | 用户明确后置，当前不实现 |
 | S06 独立模型选择 | 保持 Harness 改 Provider/模型，实际调用可查 | Provider版本/vault/静止切换已实现，真实Codex双Provider与Gemini本地API通过 |
 | S08 图形工作台 | 对话、Provider配置、Harness检测 | 已重做原生布局/品牌图标/搜索选择与细微动效，实际浏览器验收见对应记录 |
-| S09 Harness管理 | 安装、升级、版本、进度/日志/取消 | ADR012本机私有版本切片；正式结果见管理验证，不以目录数量代替验收 |
+| S09 Harness管理 | 安装、升级、版本、进度/日志/取消 | ADR017生产原渠道管理、配置保护、未知核实；Homebrew升级受本机保护限制，npm适配器有真实安装证据 |
 | S07 在途控制与可靠性 | 权限、取消、busy switch、故障和恢复 | 贯穿前面切片，逐步补齐 |
 
 每个切片完成最小设计与验证再推进。当前开放S01/S02及[ADR-010](../decisions/0010-public-session-mvp.md)的S03/S04限定路径；原生会话与公共Session仍分离。[ADR-011](../decisions/0011-provider-web-mvp.md)另开放Provider资源和HTTP/图形界面；[ADR-012](../decisions/0012-harness-management-workbench.md)另开放本机私有安装/升级/版本及UI重做，当前切片验收已完成；自动路由后置，真实模型和全部厂商组合不能从合成测试推断。
@@ -19,3 +19,5 @@
 S08的[ADR-013](../decisions/0013-live-chat-experience.md)增量已实现：已提交事实的实时SSE、薄客户端投影、重连与紧凑对话组件。首块先于完成、刷新不重派发、部分文本取消与滚动/Markdown通过本机浏览器和真实Codex验证，详见[实时对话验收](../verification/live-chat-2026-10-10.md)。
 
 [ADR-014](../decisions/0014-conversation-failure-recovery.md)已实现S03/S04/S07/S08的故障恢复调整：连接失败不锁死会话，显式恢复不重跑旧任务，会话级故障不停止其他工作区，草稿往返/刷新保留，结束会话明确确认。v3迁移与当前用户旧会话的真实连接恢复分别验证，详见[交互审查与验收](../verification/conversation-recovery-2026-10-10.md)。
+
+[ADR-017](../decisions/0017-native-installation-management.md)将当前生产链路收敛为用户→HarnessHub→本机Harness原配置回复。原npm位置的安装/维护、跨入口使用锁、配置写保护、管理库v2迁移与显式未知核实已实现；Pi原生RPC与Claude原CLI登录接入已实现。各Harness真实回复与能力限制见[本轮验收](../verification/native-management-2026-10-11.md)，不从目录数量或合成测试推断全部兼容。Provider统一管理后置，旧实验能力不默认进入当前对话。

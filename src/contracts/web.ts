@@ -37,6 +37,7 @@ export interface SessionView {
   readonly switches: readonly PublicSwitch[];
 }
 export interface WebState {
+  readonly providerManagement?: boolean;
   readonly workspace: string;
   readonly providers: readonly ProviderView[];
   readonly harnesses: readonly HarnessView[];

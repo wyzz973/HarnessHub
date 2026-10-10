@@ -57,7 +57,7 @@ export class AcpControl implements HarnessControl {
         authenticationMethods: methods, capabilities };
       this.initialized = true;
       return observation;
-    } catch (error) { this.rpc.abort(errorFrom(error)); throw error; }
+    } catch (error) { const failure = this.nativeFailure(error); this.rpc.abort(failure); throw failure; }
   }
   private readModels(response: Record<string, unknown>): void {
     if (response.configOptions !== undefined) {
@@ -116,7 +116,7 @@ export class AcpControl implements HarnessControl {
         }
       }
       return this.conversation;
-    } catch (error) { this.rpc.abort(errorFrom(error)); throw error; }
+    } catch (error) { const failure = this.nativeFailure(error); this.rpc.abort(failure); throw failure; }
     finally { this.opening = false; this.openingMetadata.length = 0; }
   }
   async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void): Promise<ControlRun> {
@@ -140,7 +140,7 @@ export class AcpControl implements HarnessControl {
         return { status, reason };
       }).catch((error: unknown): BackendResult => {
         if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null)
-          return { status: "failed", reason: "request_rejected" };
+          return { status: "failed", reason: "request_rejected", ...(error.remoteFailure ? { error: error.remoteFailure } : {}) };
         this.rpc.abort(errorFrom(error)); throw error;
       });
     void result.then(() => this.settle(active), () => this.settle(active));
@@ -153,6 +153,7 @@ export class AcpControl implements HarnessControl {
     } };
   }
   close(): Promise<CleanupEvidence> { return this.rpc.close(); }
+  private nativeFailure(error: unknown): Error { return error instanceof ControlError && error.remoteFailure ? new ControlError(error.remoteFailure.code, error.remoteFailure.message) : errorFrom(error); }
   private settle(active: ActivePrompt): void { active.settled = true; if (this.active === active) this.active = null; }
   private assertInitialized(): void {
     if (this.failure) throw this.failure;

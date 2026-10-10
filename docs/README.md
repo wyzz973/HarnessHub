@@ -2,7 +2,9 @@
 
 当前以本机MVP切片推进；完整蓝图按各自状态管理。ADR-008/009/010/011/012及对应本机契约已认可，目录、控制和公共Session/静止切换已实现；本机Provider和HTTP/工作台按ADR-011实现；完整未来代理账本/自动路由等仍proposed。
 
-最新本机原安装与OpenClaw修复：[ADR-016](decisions/0016-local-installation-and-openclaw.md)、[真实DeepSeek与当前对话验收](verification/local-openclaw-2026-10-11.md)。本机原安装优先、全局配置只读；原生系统升级尚未完成，私有副本不得冒充本机升级。
+最新本机管理与接入：[ADR-017](decisions/0017-native-installation-management.md)、[原安装/配置保护/原对话验收](verification/native-management-2026-10-11.md)。管理原渠道、保护模型与认证配置、保留未知结果；Homebrew升级限制、开发目录与各Harness真实回复分别说明。统一Provider管理后置。
+
+本机原安装与OpenClaw修复：[ADR-016](decisions/0016-local-installation-and-openclaw.md)、[真实DeepSeek与当前对话验收](verification/local-openclaw-2026-10-11.md)。本机原安装优先，私有副本不得冒充本机升级。
 
 最新原生接入：[ADR-015](decisions/0015-native-harness-models-and-switching.md)、[Multica调研](research/multica-native-models.md)、[真实模型与页面验收](verification/native-models-2026-10-11.md)。所有native入口默认沿用本机配置和登录，模型从原生接口读取，选择后直接切换；明确独立Provider仍属于显式覆盖。
 

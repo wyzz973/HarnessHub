@@ -20,7 +20,7 @@ export async function main(args: readonly string[]): Promise<number> {
     const configuration = await prepareConfiguration({ workspace: resolve(values.cwd ?? process.cwd()), ...(values.manifest === undefined ? {} : { manifestPath: resolve(values.manifest) }),
       ...(values["config-home"] === undefined ? {} : { configHome: resolve(values["config-home"]) }), packageRoots: (values["package-root"] ?? []).map(path => resolve(path)),
       searchDirs: (values["search-dir"] ?? []).map(path => resolve(path)), pathOnly: values["path-only"] ?? false });
-    gateway = await startWebServer({ root: dataRoot(values["data-dir"]), configuration, port: values.port === undefined ? 4317 : Number(values.port),
+    gateway = await startWebServer({ providerManagement: false, root: dataRoot(values["data-dir"]), configuration, port: values.port === undefined ? 4317 : Number(values.port),
       ...(values["assets-dir"] === undefined ? {} : { assetsDirectory: resolve(values["assets-dir"]) }) });
     process.stdout.write("HarnessGateway\n" + gateway.url + "\n");
     await new Promise<void>(done => {

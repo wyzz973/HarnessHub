@@ -30,3 +30,9 @@ test("process output overflow and failed spawn reject without changing the compl
   await assert.rejects(runManagementProcess(process.execPath, ["-e", 'process.stdout.write("x".repeat(10000))'], root, { HOME: root }, context, 100), error => error instanceof ManagementError && error.code === "OUTPUT_LIMIT");
   await assert.rejects(runManagementProcess(join(root, "missing"), [], root, {}, context), error => error instanceof ManagementError && error.code === "PROCESS_START_FAILED");
 }));
+test("bulk short output lines remain valid while one oversized line is rejected", async () => fixture(async (root, _controller, context) => {
+  let lines = 0;
+  const output = await runManagementProcess(process.execPath, ["-e", 'process.stdout.write(("a".repeat(100)+"\\n").repeat(3000))'], root, {}, { ...context, log: () => { lines++; } }, 512 * 1024);
+  assert.equal(lines, 3000); assert.equal(output.length, 303000);
+  await assert.rejects(runManagementProcess(process.execPath, ["-e", 'process.stdout.write("a".repeat(70000)+"\\n")'], root, {}, context, 128 * 1024), error => error instanceof ManagementError && error.code === "OUTPUT_LIMIT");
+}));

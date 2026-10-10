@@ -9,7 +9,7 @@ export function nativeConversationId(value: unknown): NativeConversationId {
   return value as NativeConversationId;
 }
 export interface ControlLaunch extends ResolvedCommand {
-  readonly protocol: "acp-v1" | "codex-app-server";
+  readonly protocol: "acp-v1" | "codex-app-server" | "pi-rpc";
 }
 export interface ControlOptions {
   readonly cwd: string;

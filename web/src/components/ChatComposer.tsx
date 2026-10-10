@@ -113,10 +113,10 @@ export function ChatComposer(props: ComposerProps) {
             const next = harnesses.find(row => row.id === value);
             props.onDraft({ ...draft, harnessId: value, controlId: next?.controls.find(row => row.id === next.defaultControlId && row.available)?.id ?? next?.controls.find(row => row.available)?.id ?? "", model: draft.providerId ? draft.model : "" });
           }}/></div>
-          <div className="composer-chip provider-chip"><SearchPicker label="选择 Provider" value={draft.providerId} placeholder="选择 Provider" options={providerOptions} disabled={disabled} onChange={value => {
+          {props.providerManagement !== false || draft.providerId ? <div className="composer-chip provider-chip"><SearchPicker label="选择 Provider" value={draft.providerId} placeholder="选择 Provider" options={providerOptions} disabled={disabled} onChange={value => {
             const next = providers.find(row => row.id === value);
             props.onDraft({ ...draft, providerId: next?.id ?? "", providerRevision: next?.revision ?? null, model: next?.defaultModel ?? "" });
-          }} footer={<button type="button" className="text-button" onClick={props.onProviders}>管理模型连接 <ArrowRight size={13}/></button>}/></div>
+          }} footer={<button type="button" className="text-button" onClick={props.onProviders}>管理模型连接 <ArrowRight size={13}/></button>}/></div> : <span className="composer-chip provider-chip" title="沿用 Harness 本机模型配置和登录状态">本机配置</span>}
           <div className="composer-chip model-chip"><SearchPicker label="选择模型" value={draft.model} placeholder="选择模型" options={modelOptions} disabled={disabled || !provider && (props.nativeModelsLoading || !props.nativeModels?.canSelect)} onChange={value => props.onDraft({ ...draft, model: value })}
             footer={!provider ? <button type="button" className="text-button" onClick={props.onRefreshModels}>刷新本机模型</button> : undefined}/></div>
         </div>

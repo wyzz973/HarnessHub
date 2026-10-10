@@ -37,7 +37,7 @@ function dependencies(configuration: { version?: () => string; mode?: () => stri
 }
 async function fixture(fn: (root: string, manager: LocalHarnessManagement) => Promise<void>, options: Partial<ManagementOptions> = {}): Promise<void> {
   const root = await realpath(await mkdtemp(join(tmpdir(), "harness-management-test-")));
-  const manager = new LocalHarnessManagement(root, { assertOwner: () => {}, ownerGeneration: 1, recipes: [recipe(), recipe("fixture-b")], ...dependencies(), ...options });
+  const manager = new LocalHarnessManagement(root, { installationMode: "private-fixture", assertOwner: () => {}, ownerGeneration: 1, recipes: [recipe(), recipe("fixture-b")], ...dependencies(), ...options });
   try { await fn(root, manager); } finally { await manager.shutdown(); await rm(root, { recursive: true, force: true }); }
 }
 test("real management Job verifies external process package and publishes one immutable default", async () => fixture(async (_root, manager) => {
@@ -76,7 +76,7 @@ test("management upgrade preserves old slot and switches default only after veri
       db.prepare("UPDATE management_updates SET view_json=? WHERE harness_id='fixture-a'").run(String(original));
     } finally { db.close(); }
     await manager.shutdown();
-    const reopened = new LocalHarnessManagement(root, { assertOwner: () => {}, ownerGeneration: 2, recipes: [recipe(), recipe("fixture-b")], ...external });
+    const reopened = new LocalHarnessManagement(root, { installationMode: "private-fixture", assertOwner: () => {}, ownerGeneration: 2, recipes: [recipe(), recipe("fixture-b")], ...external });
     try { assert.equal(reopened.views(["fixture-a"])[0]?.updateStatus, "current"); assert.equal(reopened.views(["fixture-b"])[0]?.updateStatus, "current"); assert.equal(metadataCalls, 5); }
     finally { await reopened.shutdown(); }
   }, external);
@@ -171,7 +171,7 @@ test("slot marker ownership loss before activation produces unknown and never pu
   } } });
 });
 test("reopen cancels oldest queued and marks oldest active as unknown beyond the display window without replay", async () => {
-  const root = await realpath(await mkdtemp(join(tmpdir(), "harness-management-recovery-"))); const opts: ManagementOptions = { assertOwner: () => {}, ownerGeneration: 1, recipes: [recipe()], ...dependencies() };
+  const root = await realpath(await mkdtemp(join(tmpdir(), "harness-management-recovery-"))); const opts: ManagementOptions = { installationMode: "private-fixture", assertOwner: () => {}, ownerGeneration: 1, recipes: [recipe()], ...dependencies() };
   const initial = new LocalHarnessManagement(root, opts); initial.close();
   const db = new DatabaseSync(join(root, "management", "management.sqlite")), time = new Date().toISOString(), oldest = "management-" + randomUUID(), queued = "management-" + randomUUID();
   try {
@@ -184,17 +184,17 @@ test("reopen cancels oldest queued and marks oldest active as unknown beyond the
       insert.run(id, "fixture-a", status, "history-" + index, "a".repeat(64), 0, JSON.stringify(view));
     } db.exec("COMMIT");
   } finally { db.close(); }
-  const reopened = new LocalHarnessManagement(root, { ...opts, ownerGeneration: 2 });
+  const reopened = new LocalHarnessManagement(root, { installationMode: "private-fixture", ...opts, ownerGeneration: 2 });
   try { assert.equal(reopened.readJob(oldest).status, "unknown"); assert.equal(reopened.readJob(queued).status, "cancelled"); assert.equal(reopened.views(["fixture-a"])[0]?.activeJobId, null); }
   finally { await reopened.shutdown(); await rm(root, { recursive: true, force: true }); }
 });
 test("persisted SQL columns, watermarks and oversized payloads fail explicitly instead of being filtered out", async () => {
   for (const mutation of ["UPDATE management_jobs SET status='queued'", "UPDATE management_jobs SET view_json=json_set(view_json,'$.logCursor',99)", "UPDATE management_jobs SET view_json='" + "x".repeat(65537) + "'"]) {
-    const root = await realpath(await mkdtemp(join(tmpdir(), "harness-management-corrupt-"))), options: ManagementOptions = { assertOwner: () => {}, ownerGeneration: 1, recipes: [recipe()], ...dependencies() };
+    const root = await realpath(await mkdtemp(join(tmpdir(), "harness-management-corrupt-"))), options: ManagementOptions = { installationMode: "private-fixture", assertOwner: () => {}, ownerGeneration: 1, recipes: [recipe()], ...dependencies() };
     const manager = new LocalHarnessManagement(root, options); const job = await settled(manager, manager.submit({ harnessId: "fixture-a", action: "install", commandId: "create" }).id);
     assert.equal(job.status, "completed"); await manager.shutdown(); const db = new DatabaseSync(join(root, "management", "management.sqlite"));
     try { db.exec(mutation); } finally { db.close(); }
-    try { assert.throws(() => new LocalHarnessManagement(root, { ...options, ownerGeneration: 2 }), error => error instanceof ManagementError && error.code === "INVALID_DATA"); }
+    try { assert.throws(() => new LocalHarnessManagement(root, { installationMode: "private-fixture", ...options, ownerGeneration: 2 }), error => error instanceof ManagementError && error.code === "INVALID_DATA"); }
     finally { await rm(root, { recursive: true, force: true }); }
   }
 });

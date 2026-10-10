@@ -4,8 +4,8 @@ import type { SessionSummary } from "../../../src/contracts/web.js";
 import { BrandMark, StatusBadge } from "./common.js";
 
 export type Page = "chat" | "providers" | "harnesses";
-export function Sidebar({ page, sessions, currentId, open, collapsed, interactionBusy, activeJobs, onToggle, onCollapse, onPage, onNew, onSession }: {
-  page: Page; sessions: readonly SessionSummary[]; currentId: string | null; open: boolean; collapsed: boolean; interactionBusy: boolean; activeJobs: number; onToggle: () => void; onCollapse: () => void;
+export function Sidebar({ providerManagement = true, page, sessions, currentId, open, collapsed, interactionBusy, activeJobs, onToggle, onCollapse, onPage, onNew, onSession }: {
+  providerManagement?: boolean; page: Page; sessions: readonly SessionSummary[]; currentId: string | null; open: boolean; collapsed: boolean; interactionBusy: boolean; activeJobs: number; onToggle: () => void; onCollapse: () => void;
   onPage: (page: Page) => void; onNew: () => void; onSession: (id: string) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -37,7 +37,7 @@ export function Sidebar({ page, sessions, currentId, open, collapsed, interactio
       <div className="nav-section-label">工作空间</div>
       <nav className="primary-nav">
         <button disabled={interactionBusy} title="对话" aria-label="对话" aria-current={page === "chat" ? "page" : undefined} className={page === "chat" ? "active" : ""} onClick={() => onPage("chat")}><MessageSquare size={18} aria-hidden="true"/><span>对话</span></button>
-        <button disabled={interactionBusy} title="Providers" aria-label="Providers" aria-current={page === "providers" ? "page" : undefined} className={page === "providers" ? "active" : ""} onClick={() => onPage("providers")}><SlidersHorizontal size={18} aria-hidden="true"/><span>Providers</span></button>
+        <button disabled={interactionBusy || !providerManagement} title={providerManagement ? "Providers" : "统一 Provider 管理将在后续接入"} aria-label="Providers" aria-current={page === "providers" ? "page" : undefined} className={page === "providers" ? "active" : ""} onClick={() => onPage("providers")}><SlidersHorizontal size={18} aria-hidden="true"/><span>Providers</span></button>
         <button disabled={interactionBusy} title="Harnesses" aria-label="Harnesses" aria-current={page === "harnesses" ? "page" : undefined} className={page === "harnesses" ? "active" : ""} onClick={() => onPage("harnesses")}><Layers3 size={18} aria-hidden="true"/><span>Harnesses</span>{activeJobs ? <b className="nav-count">{activeJobs}</b> : null}</button>
       </nav>
       <div className="session-section"><div className="section-eyebrow">最近对话<span>{sessions.length}</span></div>

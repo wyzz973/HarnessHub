@@ -14,8 +14,9 @@ import { SessionError, type HarnessSelection, type PreparedSessionBinding, type 
   type SessionBindingFactory, type SessionConfiguration, type SessionId, type WorkspaceLease,
   type WorkspaceLeaseProvider } from "../../contracts/session.js";
 import { MAX_CATALOG_BYTES, type ControlObservation } from "../../contexts/catalog/domain/catalog.js";
-import { captureNativeEnvironment, referencedNativeValues, nativeValues, type NativeEnvironment } from "./native-environment.js";
+import { captureNativeEnvironment, referencedNativeValues, nativeDescriptorValues, type NativeEnvironment } from "./native-environment.js";
 import type { NativeModelCatalog } from "../../contracts/control.js";
+import type { NativeInstallationLocks, NativeUsageLease } from "../management/native-lock.js";
 
 export interface ConfigurationInput {
   readonly workspace: string;
@@ -99,7 +100,7 @@ async function observe(request: SelectionRequest, configuration: SessionConfigur
   const managedChoices = harness.controls.filter(control => observed.managedBindings.has(control.id));
   const preferred = request.controlId ?? (managedChoices.length === 1 ? managedChoices[0]!.id : undefined);
   const selected = chooseControl(harness.controls, preferred);
-  if (selected.protocol !== "acp-v1" && selected.protocol !== "codex-app-server")
+  if (selected.protocol !== "acp-v1" && selected.protocol !== "codex-app-server" && selected.protocol !== "pi-rpc")
     throw new SessionError("UNSUPPORTED_CONTROL", "this control Driver is not implemented: " + selected.protocol);
   return { harnessId: harness.id, selected, searchPath: observed.searchPath, managed: observed.managedBindings.get(selected.id) ?? null };
 }
@@ -114,7 +115,7 @@ async function privateHome(root: string, configuration: SessionConfiguration): P
 /** Fresh per-Turn control with a real workspace lease; this is public-context rehydration, not native resume. */
 export class DirectorySessionBindingFactory implements SessionBindingFactory {
   constructor(private readonly workspaces: WorkspaceLeaseProvider, private readonly assertOwner: () => void, private readonly providers?: LocalProviderService, private readonly management?: ManagedResolver,
-    private readonly nativeEnvironment: NativeEnvironment = captureNativeEnvironment()) {}
+    private readonly nativeEnvironment: NativeEnvironment = captureNativeEnvironment(), private readonly nativeLocks?: NativeInstallationLocks) {}
   /** Private host observation source; never serialize this into public Session or Web DTOs. */
   get discoveryEnvironment(): NativeEnvironment { return this.nativeEnvironment; }
   async validate(request: SelectionRequest, configuration: SessionConfiguration): Promise<HarnessSelection> {
@@ -138,15 +139,15 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
   async prepare(selection: HarnessSelection, configuration: SessionConfiguration, session: SessionId, run: string): Promise<PreparedSessionBinding> {
     this.assertOwner();
     const lease = this.workspaces.acquire(configuration.workspace, session, run);
-    let root: string | undefined, control: HarnessControl | undefined;
+    let root: string | undefined, control: HarnessControl | undefined, usage: NativeUsageLease | undefined;
     try {
+      usage = this.nativeLocks?.read(selection.harnessId);
       root = await realpath(await mkdtemp(join(tmpdir(), "harness-session-binding-")));
       const observed = await observe(selection, configuration, root, this.management, this.nativeEnvironment);
       if (observed.harnessId !== selection.harnessId || observed.selected.id !== selection.controlId || observed.selected.command === null)
         throw new SessionError("HARNESS_UNAVAILABLE", "the admitted control is no longer available");
       const home = selection.provider === undefined ? configuration.configHome : await privateHome(root, configuration);
-      const environment: Record<string, string> = { ...await referencedNativeValues(this.nativeEnvironment, home, selection.harnessId, configuration.workspace), ...observed.selected.command.env,
-        ...nativeValues(this.nativeEnvironment, home), PATH: observed.managed?.command.env.PATH ? observed.managed.command.env.PATH + ":" + observed.searchPath : observed.searchPath,
+      const environment: Record<string, string> = { ...await referencedNativeValues(this.nativeEnvironment, home, selection.harnessId, configuration.workspace), ...nativeDescriptorValues(this.nativeEnvironment, home, observed.selected.command.env), PATH: observed.managed?.command.env.PATH ? observed.managed.command.env.PATH + ":" + observed.searchPath : observed.searchPath,
         OPENCODE_DISABLE_AUTOUPDATE: "true", TMPDIR: root, PWD: configuration.workspace };
       if (selection.provider !== undefined) {
         if (!this.providers) throw new SessionError("PROVIDER_UNAVAILABLE", "Provider management is unavailable");
@@ -156,19 +157,20 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
         Object.assign(environment, await this.providers.materialize(selection.provider, selection.harnessId, home!));
       }
       const protocol = observed.selected.protocol;
-      if (protocol !== "acp-v1" && protocol !== "codex-app-server") throw new SessionError("UNSUPPORTED_CONTROL", "unsupported control protocol");
+      if (protocol !== "acp-v1" && protocol !== "codex-app-server" && protocol !== "pi-rpc") throw new SessionError("UNSUPPORTED_CONTROL", "unsupported control protocol");
       const launch: ControlLaunch = { ...observed.selected.command, env: environment, protocol };
       const options = { cwd: configuration.workspace, env: environment, requestTimeoutMs: 10000, runTimeoutMs: 30000,
         maxFrameBytes: 2 * 1024 * 1024, maxDiagnosticBytes: 64 * 1024, closeGraceMs: 500 };
       this.assertOwner(); lease.assertOwned();
-      control = createNativeControl(selection.harnessId, launch, options);
+      control = await createNativeControl(selection.harnessId, launch, options);
       if (selection.provider !== undefined && this.providers) control = new RedactedHarnessControl(control, text => this.providers!.redact(text), () => this.providers!.createTextRedactor());
-      return new DirectoryPreparedBinding(control, configuration.workspace, lease, root, this.assertOwner, observed.managed === null ? { source: "system" } : { source: "managed", id: observed.managed.installationId, revision: observed.managed.revision, version: observed.managed.version });
+      return new DirectoryPreparedBinding(control, configuration.workspace, lease, root, this.assertOwner, observed.managed === null ? { source: "system" } : { source: "managed", id: observed.managed.installationId, revision: observed.managed.revision, version: observed.managed.version }, usage);
     } catch (error) {
       let cleanupError: unknown;
       let quiescent = control === undefined;
       if (control) try { await control.close(); quiescent = true; } catch (failure) { cleanupError = failure; }
       try { lease.release(quiescent); } catch (failure) { cleanupError ??= failure; }
+      try { usage?.release(quiescent); } catch (failure) { cleanupError ??= failure; }
       if (root && quiescent) try { await rm(root, { recursive: true, force: true }); } catch (failure) { cleanupError ??= failure; }
       if (cleanupError) throw new SessionError("BINDING_CLEANUP_FAILED", "binding preparation failed and cleanup could not be confirmed");
       throw error;
@@ -178,21 +180,22 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
   async discoverModels(request: SelectionRequest, configuration: SessionConfiguration, signal: AbortSignal): Promise<NativeModelCatalog> {
     this.assertOwner();
     const root = await realpath(await mkdtemp(join(tmpdir(), "harness-native-models-")));
-    let control: HarnessControl | undefined, close: Promise<CleanupEvidence> | null = null;
+    let control: HarnessControl | undefined, close: Promise<CleanupEvidence> | null = null, usage: NativeUsageLease | undefined;
     const abort = () => { if (control) { close ??= control.close(); void close.catch(() => {}); } };
     signal.addEventListener("abort", abort, { once: true });
     try {
       if (signal.aborted) throw new SessionError("CANCELLED", "model discovery was cancelled");
+      usage = this.nativeLocks?.read(request.harnessId);
       const observed = await observe(request, configuration, root, this.management, this.nativeEnvironment);
       if (observed.selected.command === null) throw new SessionError("HARNESS_UNAVAILABLE", "native control is unavailable");
-      const env = { ...await referencedNativeValues(this.nativeEnvironment, configuration.configHome, observed.harnessId, configuration.workspace), ...observed.selected.command.env, ...nativeValues(this.nativeEnvironment, configuration.configHome),
+      const env = { ...await referencedNativeValues(this.nativeEnvironment, configuration.configHome, observed.harnessId, configuration.workspace), ...nativeDescriptorValues(this.nativeEnvironment, configuration.configHome, observed.selected.command.env),
         PATH: observed.managed?.command.env.PATH ? observed.managed.command.env.PATH + ":" + observed.searchPath : observed.searchPath,
         TMPDIR: root, PWD: configuration.workspace, OPENCODE_DISABLE_AUTOUPDATE: "true" };
       const protocol = observed.selected.protocol;
-      if (protocol !== "acp-v1" && protocol !== "codex-app-server") throw new SessionError("UNSUPPORTED_CONTROL", "native model discovery is unavailable");
+      if (protocol !== "acp-v1" && protocol !== "codex-app-server" && protocol !== "pi-rpc") throw new SessionError("UNSUPPORTED_CONTROL", "native model discovery is unavailable");
       const launch: ControlLaunch = { ...observed.selected.command, protocol, env };
       const options = { cwd: configuration.workspace, env, requestTimeoutMs: 10000, runTimeoutMs: 30000, maxFrameBytes: 2 * 1024 * 1024, maxDiagnosticBytes: 64 * 1024, closeGraceMs: 500 };
-      control = createNativeControl(observed.harnessId, launch, options);
+      control = await createNativeControl(observed.harnessId, launch, options);
       if (signal.aborted) { abort(); throw new SessionError("CANCELLED", "model discovery was cancelled"); }
       await control.initialize();
       if (protocol === "acp-v1") await control.open(configuration.workspace);
@@ -202,8 +205,11 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       return catalog;
     } finally {
       signal.removeEventListener("abort", abort);
-      if (control) { close ??= control.close(); await close; }
-      await rm(root, { recursive: true, force: true });
+      let quiescent = control === undefined, cleanupError: unknown;
+      try { if (control) { close ??= control.close(); await close; quiescent = true; } } catch (error) { cleanupError = error; }
+      try { usage?.release(quiescent); } catch (error) { cleanupError ??= error; }
+      if (quiescent) try { await rm(root, { recursive: true, force: true }); } catch (error) { cleanupError ??= error; }
+      if (cleanupError) throw cleanupError;
     }
   }
 }
@@ -211,10 +217,10 @@ class DirectoryPreparedBinding implements PreparedSessionBinding {
   private closing: Promise<CleanupEvidence> | null = null;
   private closed = false;
   constructor(readonly control: HarnessControl, readonly workspace: string, private readonly lease: WorkspaceLease,
-    private readonly root: string, private readonly owner: () => void, readonly installation: NonNullable<PreparedSessionBinding["installation"]>) {}
+    private readonly root: string, private readonly owner: () => void, readonly installation: NonNullable<PreparedSessionBinding["installation"]>, private readonly usage?: NativeUsageLease) {}
   assertOwned(): void {
     if (this.closed || this.closing !== null) throw new SessionError("BINDING_CLOSED", "binding is closing or closed");
-    this.owner(); this.lease.assertOwned();
+    this.owner(); this.lease.assertOwned(); this.usage?.assertOwned();
   }
   close(): Promise<CleanupEvidence> {
     this.closing ??= this.closeOwned();
@@ -225,12 +231,16 @@ class DirectoryPreparedBinding implements PreparedSessionBinding {
     try { evidence = await this.control.close(); }
     catch (error) {
       this.closed = true;
+      this.usage?.release(false);
       try { this.lease.release(false); }
       catch { throw new SessionError("BINDING_CLEANUP_FAILED", "control and workspace lease cleanup both failed"); }
       throw error;
     }
     this.closed = true;
-    this.lease.release(true);
+    let releaseError: unknown;
+    try { this.lease.release(true); } catch (error) { releaseError = error; }
+    try { this.usage?.release(); } catch (error) { releaseError ??= error; }
+    if (releaseError) throw releaseError;
     await rm(this.root, { recursive: true, force: true });
     return evidence;
   }

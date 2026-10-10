@@ -6,7 +6,7 @@ import { LocalHarnessManagement } from "../../dist/src/infrastructure/management
 import { SqliteSessionStore } from "../../dist/src/infrastructure/session/sqlite-store.js";
 const [root, manifest, validate] = process.argv.slice(2);
 const store = new SqliteSessionStore(root);
-const management = new LocalHarnessManagement(root, { assertOwner: () => store.assertOwner(), ownerGeneration: store.ownerGeneration });
+const management = new LocalHarnessManagement(root, { installationMode: "private-fixture", assertOwner: () => store.assertOwner(), ownerGeneration: store.ownerGeneration });
 try {
   const observed = await inventory({ ...(manifest ? { manifest } : {}), searchDirs: [], packageRoots: [], pathOnly: true, managedResolver: management });
   const control = observed.report.harnesses.find(h => h.id === "codex").controls.find(c => c.id === "codex-native");

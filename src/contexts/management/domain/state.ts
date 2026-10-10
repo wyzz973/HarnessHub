@@ -1,5 +1,6 @@
-import { ManagementError, type HarnessManagementView, type InstallationJobStatus, type InstallationJobView, type InstallationLog, type ResolvedManagedControl } from "../../../contracts/management.js";
+import { ManagementError, type HarnessManagementView, type InstallationJobStatus, type InstallationJobView, type InstallationLog, type ResolvedManagedControl, type NativeInstallPlan } from "../../../contracts/management.js";
 import { installationJobId, managementSlug } from "./input.js";
+import { isAbsolute } from "node:path";
 
 export interface InstallationRecord { readonly id: string; readonly harnessId: string; readonly controlId: string; readonly version: string;
   readonly slot: string; readonly command: ResolvedManagedControl["command"]; readonly artifactSha256: string | null; readonly launchSha256: string }
@@ -30,15 +31,33 @@ function jobStatus(value: unknown): InstallationJobStatus {
   throw new ManagementError("INVALID_DATA", "invalid management job status");
 }
 export function parseManagementJob(value: unknown): InstallationJobView {
-  const row = managementObject(value, ["id", "harnessId", "controlId", "action", "status", "phase", "cancelRequested", "createdAt", "updatedAt", "resolvedVersion", "installationId", "error", "logCursor"]);
+  const row = managementObject(value, ["id", "harnessId", "controlId", "action", "status", "phase", "cancelRequested", "createdAt", "updatedAt", "resolvedVersion", "installationId", "error", "logCursor", "native"]);
   const status = jobStatus(row.status), phase = managementString(row.phase, 32);
   if (row.action !== "install" && row.action !== "upgrade" || typeof row.cancelRequested !== "boolean" || (phase !== status && phase !== "interrupted"))
     throw new ManagementError("INVALID_DATA", "management job action/phase/cancellation is inconsistent");
   const resolvedVersion = row.resolvedVersion === null ? null : managementString(row.resolvedVersion, 128), installationId = row.installationId === null ? null : managementInstallationId(row.installationId), error = errorValue(row.error);
-  if (status === "queued" && (resolvedVersion !== null || installationId !== null || error !== null) || status === "completed" && (resolvedVersion === null || installationId === null || error !== null))
+  let native: InstallationJobView["native"];
+  if (row.native !== undefined) {
+    const value = managementObject(row.native, ["channel", "location", "beforeVersion", "actualVersion", "dispatched", "configurationPreserved"]);
+    if (typeof value.dispatched !== "boolean" || value.configurationPreserved !== null && typeof value.configurationPreserved !== "boolean") throw new ManagementError("INVALID_DATA", "native maintenance facts are invalid");
+    native = { channel: managementString(value.channel, 32), location: managementString(value.location, 4096, true), beforeVersion: value.beforeVersion === null ? null : managementString(value.beforeVersion, 128), actualVersion: value.actualVersion === null ? null : managementString(value.actualVersion, 128), dispatched: value.dispatched, configurationPreserved: value.configurationPreserved };
+  }
+  if (status === "queued" && (resolvedVersion !== null || installationId !== null || error !== null || native?.dispatched) || status === "completed" && (resolvedVersion === null || error !== null || native === undefined && installationId === null || native !== undefined && (installationId !== null || !native.dispatched || native.actualVersion !== resolvedVersion || native.configurationPreserved !== true)))
     throw new ManagementError("INVALID_DATA", "management terminal/admission fields are inconsistent");
   return { id: installationJobId(row.id), harnessId: managementSlug(row.harnessId), controlId: managementSlug(row.controlId), action: row.action,
-    status, phase, cancelRequested: row.cancelRequested, createdAt: date(row.createdAt), updatedAt: date(row.updatedAt), resolvedVersion, installationId, error, logCursor: managementInteger(row.logCursor) };
+    status, phase, cancelRequested: row.cancelRequested, createdAt: date(row.createdAt), updatedAt: date(row.updatedAt), resolvedVersion, installationId, error, logCursor: managementInteger(row.logCursor), ...(native === undefined ? {} : { native }) };
+}
+export function parseNativePlan(value: unknown): NativeInstallPlan {
+  const row = managementObject(value, ["harnessId", "controlId", "channel", "manager", "reference", "prefix", "entry", "actualEntry", "beforeVersion", "fingerprint", "reason"]);
+  const channel = row.channel;
+  if (channel !== "npm" && channel !== "brew-formula" && channel !== "brew-cask" && channel !== "uv" && channel !== "archive" && channel !== "native-cli" && channel !== "unsupported" || typeof row.fingerprint !== "string" || !/^[a-f0-9]{64}$/u.test(row.fingerprint)) throw new ManagementError("INVALID_DATA", "native plan channel/fingerprint is invalid");
+  for (const field of ["manager", "prefix", "entry", "actualEntry"] as const) {
+    const path = managementString(row[field], 4096, true);
+    if (path && !isAbsolute(path) || channel !== "unsupported" && field !== "actualEntry" && !(field === "manager" && channel === "archive") && !path) throw new ManagementError("INVALID_DATA", "native plan paths must be absolute");
+  }
+  const reference = managementString(row.reference, 256);
+  if (channel !== "unsupported" && !/^(?:@[a-z0-9._-]+\/)?[a-zA-Z0-9][a-zA-Z0-9._-]*(?:\/[a-zA-Z0-9][a-zA-Z0-9._-]*){0,2}$/u.test(reference)) throw new ManagementError("INVALID_DATA", "native package identity is invalid");
+  return { harnessId: managementSlug(row.harnessId), controlId: managementSlug(row.controlId), channel, manager: managementString(row.manager, 4096, true), reference: managementString(row.reference, 256), prefix: managementString(row.prefix, 4096, true), entry: managementString(row.entry, 4096, true), actualEntry: managementString(row.actualEntry, 4096, true), beforeVersion: row.beforeVersion === null ? null : managementString(row.beforeVersion, 128), fingerprint: row.fingerprint, reason: row.reason === null ? null : managementString(row.reason, 512) };
 }
 export function parseManagementLog(value: unknown): InstallationLog {
   const row = managementObject(value, ["seq", "time", "stream", "text"]);

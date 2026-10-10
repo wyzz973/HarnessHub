@@ -38,10 +38,19 @@ export function managementStorage(root: string, generation: number): { root: str
   descriptor = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600); closeSync(descriptor);
   const databaseIdentity = managementIdentity(path); const db = new DatabaseSync(path);
   try {
-    db.exec("PRAGMA journal_mode=DELETE;PRAGMA synchronous=FULL;PRAGMA busy_timeout=1000");
+    db.exec("PRAGMA journal_mode=DELETE;PRAGMA synchronous=FULL;PRAGMA busy_timeout=1000;PRAGMA foreign_keys=ON");
     const version = db.prepare("PRAGMA user_version").get()?.user_version;
-    if (version !== 0 && version !== 1) throw new ManagementError("INVALID_STORAGE", "unknown management storage schema");
-    db.exec("CREATE TABLE IF NOT EXISTS management_owner (singleton INTEGER PRIMARY KEY CHECK(singleton=1), generation INTEGER NOT NULL) STRICT;CREATE TABLE IF NOT EXISTS management_jobs (id TEXT PRIMARY KEY,harness_id TEXT NOT NULL,status TEXT NOT NULL,command_id TEXT UNIQUE NOT NULL,fingerprint TEXT NOT NULL,expected_revision INTEGER NOT NULL,view_json TEXT NOT NULL) STRICT;CREATE TABLE IF NOT EXISTS management_commands (id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,job_id TEXT NOT NULL) STRICT;CREATE TABLE IF NOT EXISTS management_logs (job_id TEXT NOT NULL,seq INTEGER NOT NULL,entry_json TEXT NOT NULL,PRIMARY KEY(job_id,seq)) STRICT;CREATE TABLE IF NOT EXISTS management_installations (id TEXT PRIMARY KEY,harness_id TEXT NOT NULL,control_id TEXT NOT NULL,record_json TEXT NOT NULL) STRICT;CREATE TABLE IF NOT EXISTS management_defaults (harness_id TEXT PRIMARY KEY,installation_id TEXT NOT NULL,revision INTEGER NOT NULL) STRICT;CREATE TABLE IF NOT EXISTS management_updates (harness_id TEXT PRIMARY KEY,view_json TEXT NOT NULL) STRICT;PRAGMA user_version=1");
+    if (version !== 0 && version !== 1 && version !== 2) throw new ManagementError("INVALID_STORAGE", "unknown management storage schema");
+    db.exec("CREATE TABLE IF NOT EXISTS management_owner (singleton INTEGER PRIMARY KEY CHECK(singleton=1), generation INTEGER NOT NULL) STRICT;CREATE TABLE IF NOT EXISTS management_jobs (id TEXT PRIMARY KEY,harness_id TEXT NOT NULL,status TEXT NOT NULL,command_id TEXT UNIQUE NOT NULL,fingerprint TEXT NOT NULL,expected_revision INTEGER NOT NULL,view_json TEXT NOT NULL) STRICT;CREATE TABLE IF NOT EXISTS management_commands (id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,job_id TEXT NOT NULL) STRICT;CREATE TABLE IF NOT EXISTS management_logs (job_id TEXT NOT NULL,seq INTEGER NOT NULL,entry_json TEXT NOT NULL,PRIMARY KEY(job_id,seq)) STRICT;CREATE TABLE IF NOT EXISTS management_installations (id TEXT PRIMARY KEY,harness_id TEXT NOT NULL,control_id TEXT NOT NULL,record_json TEXT NOT NULL) STRICT;CREATE TABLE IF NOT EXISTS management_defaults (harness_id TEXT PRIMARY KEY,installation_id TEXT NOT NULL,revision INTEGER NOT NULL) STRICT;CREATE TABLE IF NOT EXISTS management_updates (harness_id TEXT PRIMARY KEY,view_json TEXT NOT NULL) STRICT;");
+    // Additive v1→v2 migration preserves private history and introduces frozen native plans.
+    if (version !== 2) {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        db.exec("CREATE TABLE IF NOT EXISTS management_native_plans(job_id TEXT PRIMARY KEY REFERENCES management_jobs(id),plan_json TEXT NOT NULL CHECK(json_valid(plan_json))) STRICT");
+        nativePlanSchema(db); db.exec("PRAGMA user_version=2; COMMIT");
+      } catch (error) { db.exec("ROLLBACK"); throw error; }
+    }
+    nativePlanSchema(db);
     const previous = db.prepare("SELECT generation FROM management_owner WHERE singleton=1").get()?.generation;
     if (typeof previous === "number" && previous > generation) throw new ManagementError("OWNERSHIP_LOST", "management owner generation is stale");
     db.prepare("INSERT INTO management_owner(singleton,generation) VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET generation=excluded.generation").run(generation);
@@ -52,4 +61,10 @@ export function managementStorage(root: string, generation: number): { root: str
         throw new ManagementError("OWNERSHIP_LOST", "management storage ownership changed");
     } };
   } catch (error) { db.close(); throw error; }
+}
+function nativePlanSchema(db: DatabaseSync): void {
+  const table = db.prepare("SELECT type FROM sqlite_schema WHERE name='management_native_plans'").get();
+  const columns = db.prepare("PRAGMA table_info(management_native_plans)").all();
+  if (table?.type !== "table" || columns.length !== 2 || columns[0]?.name !== "job_id" || columns[0]?.type !== "TEXT" || columns[0]?.pk !== 1 || columns[1]?.name !== "plan_json" || columns[1]?.type !== "TEXT" || columns[1]?.notnull !== 1)
+    throw new ManagementError("INVALID_STORAGE", "native management plan schema is invalid");
 }

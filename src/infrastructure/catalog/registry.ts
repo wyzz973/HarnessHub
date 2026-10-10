@@ -5,6 +5,7 @@ import type { CatalogSource, ControlRecipe, HarnessDefinition, PackageIdentity }
 
 const platforms = ["darwin-aarch64", "darwin-x86_64", "linux-aarch64", "linux-x86_64", "windows-aarch64", "windows-x86_64"];
 const productIds: Readonly<Record<string, string>> = { "claude-acp": "claude", "codex-acp": "codex", "pi-acp": "pi", "qwen-code": "qwen" };
+const productNames: Readonly<Record<string, string>> = { claude: "Claude Code" };
 /** Reviewed local commands, not guesses derived from package names. */
 const knownEntries: Readonly<Record<string, readonly string[]>> = {
   auggie: ["auggie"], "claude-acp": ["claude-agent-acp"], cline: ["cline"], "codex-acp": ["codex-acp"],
@@ -97,7 +98,8 @@ function importAgent(value: unknown, repository: string, revision: string, platf
       package: packageIdentity(packageSpec, kind, executableNames), distribution: { kind, packageSpec }, requiredExecutables: upstreamId === "pi-acp" ? ["pi"] : [], source });
   }
   const productId = productIds[upstreamId] ?? upstreamId;
-  return { id: productId, name: text(agent.name, "agent.name", 128), aliases: productId === upstreamId ? [] : [upstreamId], binaryNames: [...observedNames], configHints: configHints[upstreamId] ?? [], controls };
+  const upstreamName = text(agent.name, "agent.name", 128);
+  return { id: productId, name: productNames[productId] ?? upstreamName, aliases: productId === upstreamId ? [] : [upstreamId], binaryNames: [...observedNames], configHints: configHints[upstreamId] ?? [], controls };
 }
 
 /** Import a reviewed, offline stable registry snapshot. Distribution metadata never installs a program. */

@@ -7,13 +7,20 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { DirectorySessionBindingFactory, prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { SqliteWorkspaceLeaseProvider } from "../../src/infrastructure/session/workspace-lease.js";
-import { captureNativeEnvironment, referencedNativeValues } from "../../src/infrastructure/session/native-environment.js";
+import { captureNativeEnvironment, referencedNativeValues, nativeDescriptorValues } from "../../src/infrastructure/session/native-environment.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 import { SessionRuntime } from "../../src/contexts/session/application/runtime.js";
 import { startWebServer } from "../../src/web/server.js";
 import { application } from "../../src/cli/session-application.js";
 
 const peer = fileURLToPath(new URL("../../../tests/fixtures/control-peer.mjs", import.meta.url));
+test("native Claude keeps an unset auth-directory override unset and honors an explicit user's override", () => {
+  const host = captureNativeEnvironment({ HOME: "/tmp/native-host" });
+  assert.equal(nativeDescriptorValues(host, null, { CLAUDE_CONFIG_DIR: "/tmp/foreign" }).CLAUDE_CONFIG_DIR, undefined);
+  const custom = captureNativeEnvironment({ HOME: host.home, CLAUDE_CONFIG_DIR: "/tmp/user-claude" });
+  assert.equal(nativeDescriptorValues(custom, null, {}).CLAUDE_CONFIG_DIR, "/tmp/user-claude");
+  assert.equal(nativeDescriptorValues(host, "/tmp/private-profile", {}).CLAUDE_CONFIG_DIR, "/tmp/private-profile/claude");
+});
 async function setup(t: test.TestContext) {
   const root = await mkdtemp(join(tmpdir(), "native-harness-models-")), home = join(root, "native-home"), workspace = join(root, "workspace"), manifest = join(root, "catalog.json"), trace = join(root, "trace.ndjson");
   await mkdir(home); await mkdir(workspace); await mkdir(join(home, ".codex")); await writeFile(join(home, ".codex", "config.toml"), 'model = "native-model-a"\n[model_providers.fixture]\nenv_key = "CUSTOM_NATIVE_AUTH"\n');
@@ -33,6 +40,14 @@ test("native profile values preserve the actual home and configured credential r
   assert.equal(values.HOME, f.home); assert.equal(values.CUSTOM_NATIVE_AUTH, "synthetic-native-auth"); assert.equal(values.TEST_HOST_SECRET, undefined);
   const privateValues = await referencedNativeValues(f.environment, join(f.root, "private"), "codex", f.workspace);
   assert.equal(privateValues.CUSTOM_NATIVE_AUTH, undefined); assert.deepEqual(await readFile(config), before);
+});
+test("native Pi preserves supported credential variables and explicit model references without unrelated host secrets", async t => {
+  const f = await setup(t); await mkdir(join(f.home, ".pi", "agent"), { recursive: true });
+  await writeFile(join(f.home, ".pi", "agent", "models.json"), '{"providers":{"fixture":{"apiKey":"$CUSTOM_NATIVE_AUTH","literal":"$$TEST_HOST_SECRET $${TEST_HOST_SECRET}"}}}');
+  const source = captureNativeEnvironment({ ...f.environment.values, DEEPSEEK_API_KEY: "synthetic-provider-key" });
+  const values = await referencedNativeValues(source, null, "pi", f.workspace);
+  assert.equal(values.CUSTOM_NATIVE_AUTH, "synthetic-native-auth"); assert.equal(values.DEEPSEEK_API_KEY, "synthetic-provider-key"); assert.equal(values.TEST_HOST_SECRET, undefined);
+  assert.equal((await referencedNativeValues(source, join(f.root, "private"), "pi", f.workspace)).DEEPSEEK_API_KEY, undefined);
 });
 
 test("real Codex/ACP protocol probes enumerate native models without prompts and model selection reaches the original native RPC", async t => {

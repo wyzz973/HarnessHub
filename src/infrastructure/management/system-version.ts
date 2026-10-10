@@ -22,7 +22,8 @@ export function observedPackageVersion(diagnostics: readonly { readonly code: st
   }
   return undefined;
 }
-function fromOutput(output: string): string | null {
+/** Returns one unambiguous CLI version; warnings/runtime banners cannot supply a replacement version. */
+export function systemVersionFromOutput(output: string): string | null {
   const candidates = new Set<string>();
   for (const line of output.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/gu, "").split(/[\r\n]/u)) {
     const text = line.trim();
@@ -78,7 +79,7 @@ export async function probeSystemVersion(entry: SystemInstallationObservation, o
     options.assertOwned();
     const combined = output + "\n" + diagnostics;
     if (combined.includes("\uFFFD")) return { version: null, reason: "Version output could not be decoded reliably" };
-    const detected = fromOutput(combined);
+    const detected = systemVersionFromOutput(combined);
     return detected === null ? { version: null, reason: "Version output did not identify one unambiguous Harness version" } : { version: detected, reason: null };
   } catch (error) {
     const failure = code(error);

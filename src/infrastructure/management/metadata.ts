@@ -17,9 +17,13 @@ async function metadataJson(url: string, signal: AbortSignal): Promise<Record<st
 function version(value: unknown): string {
   if (typeof value !== "string" || !/^[0-9][0-9A-Za-z.+_-]{0,127}$/u.test(value)) throw new ManagementError("INVALID_METADATA", "package version is invalid"); return value;
 }
-async function npm(name: string, signal: AbortSignal): Promise<{ version: string; integrity: string | null; engines: Readonly<Record<string, string>> }> {
-  const data = await metadataJson("https://registry.npmjs.org/" + encodeURIComponent(name) + "/latest", signal);
+async function npm(name: string, signal: AbortSignal, exactVersion?: string): Promise<{ version: string; integrity: string | null; engines: Readonly<Record<string, string>>; binNames: readonly string[] }> {
+  const target = exactVersion === undefined ? "latest" : version(exactVersion);
+  const data = await metadataJson("https://registry.npmjs.org/" + encodeURIComponent(name) + "/" + encodeURIComponent(target), signal);
   if (data.name !== name) throw new ManagementError("INVALID_METADATA", "package metadata identity changed");
+  if (exactVersion !== undefined && data.version !== exactVersion) throw new ManagementError("INVALID_METADATA", "package release version changed");
+  const binNames = typeof data.bin === "string" ? [name.split("/").at(-1)!] : data.bin === undefined ? [] : data.bin !== null && typeof data.bin === "object" && !Array.isArray(data.bin) ? Object.keys(data.bin) : null;
+  if (binNames === null || binNames.length > 64 || binNames.some(bin => !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$/u.test(bin))) throw new ManagementError("INVALID_METADATA", "package executable identities are invalid");
   const distribution = data.dist, engineInput = data.engines;
   const dist = distribution !== null && typeof distribution === "object" && !Array.isArray(distribution) ? distribution as Record<string, unknown> : {};
   const engines: Record<string, string> = {};
@@ -27,10 +31,10 @@ async function npm(name: string, signal: AbortSignal): Promise<{ version: string
     if (engineInput === null || typeof engineInput !== "object" || Array.isArray(engineInput)) throw new ManagementError("INVALID_METADATA", "package engines are invalid");
     for (const [key, value] of Object.entries(engineInput)) { if (typeof value !== "string" || value.length > 512) throw new ManagementError("INVALID_METADATA", "package engines are invalid"); engines[key] = value; }
   }
-  return { version: version(data.version), integrity: typeof dist.integrity === "string" && dist.integrity.length < 1024 ? dist.integrity : null, engines };
+  return { version: version(data.version), integrity: typeof dist.integrity === "string" && dist.integrity.length < 1024 ? dist.integrity : null, engines, binNames };
 }
 export class OfficialManagementMetadata implements ManagementMetadataPort {
-  async resolve(recipe: ManagementRecipe, signal: AbortSignal): Promise<ResolvedInstallSpec> {
+  async resolve(recipe: ManagementRecipe, signal: AbortSignal, exactVersion?: string): Promise<ResolvedInstallSpec> {
     if (recipe.kind === "binary") {
       if (recipe.upstreamId === undefined) throw new ManagementError("UNSUPPORTED_METADATA", "binary recipe has no reviewed upstream metadata identity");
       managementSlug(recipe.upstreamId);
@@ -73,8 +77,8 @@ export class OfficialManagementMetadata implements ManagementMetadataPort {
       const info = raw as Record<string, unknown>;
       return { recipe, version: version(info.version), artifactUrl: null, integrity: null, engines: {}, dependencies: [] };
     }
-    const data = await npm(recipe.packageName, signal), dependencies = [];
+    const data = await npm(recipe.packageName, signal, exactVersion), dependencies = [];
     for (const dependency of recipe.dependencies) { const entry = await npm(dependency.packageName, signal); dependencies.push({ ...dependency, version: entry.version }); }
-    return { recipe, version: data.version, artifactUrl: null, integrity: data.integrity, engines: data.engines, dependencies };
+    return { recipe, version: data.version, artifactUrl: null, integrity: data.integrity, engines: data.engines, binNames: data.binNames, dependencies };
   }
 }
