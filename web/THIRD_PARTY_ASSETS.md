@@ -212,3 +212,23 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
    END OF TERMS AND CONDITIONS
 ~~~
+
+## 本机接入图标补齐（2026-10-11）
+
+Claude Agent/Claude Code目录身份补映射到固定Lobe Icons的Claude Code图标，Pi ACP映射到Pi；其余新增图标来自同一已固定ACP Registry提交。SVG逐项检查元素和属性，拒绝脚本、事件、foreignObject及外部链接，不使用运行时CDN。上游品牌/素材权利不由Registry许可推断。
+
+| 图标 | 固定来源 | SHA256 |
+|---|---|---|
+| agoragentic-acp | [官方Registry](https://raw.githubusercontent.com/agentclientprotocol/registry/c56a2b3f94c98b14f8145eb93d87359470c930d8/agoragentic-acp/icon.svg) | a185cdd875bc41d6b288a639e019391b65f50df75e4d5a8ca07640786704d98b |
+| autohand | [官方Registry](https://raw.githubusercontent.com/agentclientprotocol/registry/c56a2b3f94c98b14f8145eb93d87359470c930d8/autohand/icon.svg) | 6324e552f6c85025642ca9aabf4adddb4bba318a6f9422c7053fd4c610914120 |
+| cortex-code | [官方Registry](https://raw.githubusercontent.com/agentclientprotocol/registry/c56a2b3f94c98b14f8145eb93d87359470c930d8/cortex-code/icon.svg) | 70128bcb28473e73b53f93f9fea286004633acca8d378b9d97846463bdbefee1 |
+| corust-agent | [官方Registry](https://raw.githubusercontent.com/agentclientprotocol/registry/c56a2b3f94c98b14f8145eb93d87359470c930d8/corust-agent/icon.svg) | 41a66ffc695728671a7bed4ebdf0c1c27e4c22f75e1e06f98e39459190e13157 |
+| crow-cli | [官方Registry](https://raw.githubusercontent.com/agentclientprotocol/registry/c56a2b3f94c98b14f8145eb93d87359470c930d8/crow-cli/icon.svg) | e5bf3c1707a3804f57e4ee12dbefd6ac91d03ec461d951b4ae22cc766bb0a411 |
+| deepagents | [官方Registry](https://raw.githubusercontent.com/agentclientprotocol/registry/c56a2b3f94c98b14f8145eb93d87359470c930d8/deepagents/icon.svg) | bb0fed2e9587992e5814c64df443109dd82520559f3527b1a3270477083712e6 |
+| dimcode | [官方Registry](https://raw.githubusercontent.com/agentclientprotocol/registry/c56a2b3f94c98b14f8145eb93d87359470c930d8/dimcode/icon.svg) | 0c8a5019f004e420871e9550e55420edaa5ecbf3e5559176338ef0053f966082 |
+| fast-agent | [官方Registry](https://raw.githubusercontent.com/agentclientprotocol/registry/c56a2b3f94c98b14f8145eb93d87359470c930d8/fast-agent/icon.svg) | f70197d4bfb23053ad3d25db4f1651211776043deaca1f94565e4683ee40216a |
+| harn | [官方Registry](https://raw.githubusercontent.com/agentclientprotocol/registry/c56a2b3f94c98b14f8145eb93d87359470c930d8/harn/icon.svg) | c87bdd7da801e86406f62518071cffc00c37fea99bde41c0dc68b8eba7257356 |
+| kimchi | [官方Registry](https://raw.githubusercontent.com/agentclientprotocol/registry/c56a2b3f94c98b14f8145eb93d87359470c930d8/kimchi/icon.svg) | d246ec242fb714ae57c66ce7cfd4d24a05ec092c50b7320c340cc10bf79c7aa4 |
+| minion-code | [官方Registry](https://raw.githubusercontent.com/agentclientprotocol/registry/c56a2b3f94c98b14f8145eb93d87359470c930d8/minion-code/icon.svg) | a786bb89317134be8211f10826585e14c041016708cbe8d89b18fd7a0f64057c |
+| sigit | [官方Registry](https://raw.githubusercontent.com/agentclientprotocol/registry/c56a2b3f94c98b14f8145eb93d87359470c930d8/sigit/icon.svg) | db67e17540399da6db400cf07c6d0d23161f67a1bf11186ae7fa72c5de8943ee |
+| vtcode | [官方Registry](https://raw.githubusercontent.com/agentclientprotocol/registry/c56a2b3f94c98b14f8145eb93d87359470c930d8/vtcode/icon.svg) | 6f116d7447056cfe38e3512e4957a1360e3be21a72da9589ac702e073513ff5d |

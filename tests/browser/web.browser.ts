@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium, expect, type Browser } from "@playwright/test";
@@ -33,7 +33,7 @@ async function launchFixture() {
     return { command: { executable: process.execPath, args: [join(ctx.stage, "node_modules", spec.recipe.packageName, "entry.mjs"), ...spec.recipe.args], env: {} }, observedVersion: spec.version, artifactSha256: null };
   } };
   const gateway = await startWebServer({ root: join(root, "data"), configuration: await prepareConfiguration({ workspace, manifestPath: manifest, pathOnly: true }), port: 0,
-    application: (data, publish) => application(data, publish, { management: { metadata, installer }, nativeEnvironment: { home: root, values: { HOME: root, PATH: process.env.PATH ?? "/usr/bin:/bin" } } }) });
+    application: (data, publish) => application(data, publish, { management: { metadata, installer }, nativeEnvironment: { home: root, values: { HOME: root, PATH: dirname(process.execPath) + ":/usr/bin:/bin" } } }) });
   return { root, gateway, setVersion: (value: string) => { fixtureVersion = value; }, baseUrl: `http://127.0.0.1:${address.port}/v1`, close: async () => { await gateway.close(); modelServer.closeAllConnections(); await new Promise<void>(done => modelServer.close(() => done())); await rm(root, { recursive: true, force: true }); } };
 }
 
@@ -248,6 +248,9 @@ test("real browser validates Provider management, public chat switching, cancell
   await page.getByRole("button", { name: "重新检测", exact: true }).click();
   await expect(page.getByRole("button", { name: "重新检测", exact: true })).toBeEnabled();
   await expect(page.getByRole("button", { name: "查看 Codex 详情", exact: true })).toBeVisible();
+  const brandImages = page.locator(".harness-table-row img.brand-icon");
+  await expect(brandImages).toHaveCount(await page.locator(".harness-table-row").count());
+  await expect.poll(() => brandImages.evaluateAll(images => images.every(image => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0))).toBe(true);
   const target = page.locator(".harness-table-row").filter({ has: page.getByRole("button", { name: "查看 Autohand Code 详情", exact: true }) });
   await target.getByRole("button", { name: "安装", exact: true }).click();
   const detail = page.getByRole("dialog");

@@ -188,13 +188,15 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   const rescan = (): Promise<readonly HarnessView[]> => {
     if (scan) return scan;
     const pending = inventory({ ...(options.configuration.manifestPath === null ? {} : { manifest: options.configuration.manifestPath }),
+      environment: app.factory.discoveryEnvironment.values, home: app.factory.discoveryEnvironment.home,
       searchDirs: options.configuration.searchDirs, packageRoots: options.configuration.packageRoots, pathOnly: options.configuration.pathOnly,
-      managedResolver: app.management }).then(observed => {
+      managedResolver: app.management }).then(async observed => {
       app.management.setSystemObservations(observed.report.harnesses.flatMap(harness => harness.controls.flatMap(control => {
         if (control.state !== "candidate" || control.command === null || observed.managedBindings.has(control.id)) return [];
         const packageVersion = observedPackageVersion(control.diagnostics);
         return [{ harnessId: harness.id, controlId: control.id, command: control.command, ...(packageVersion === undefined ? {} : { packageVersion }) }];
       })));
+      await app.management.refreshSystemVersions();
       const management = new Map(app.management.views(observed.report.harnesses.map(item => item.id)).map(item => [item.harnessId, item]));
       harnesses = observed.report.harnesses.map(item => {
         const managed = management.get(item.id);
@@ -285,6 +287,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       if (method === "POST") {
         queries(url, []); const input = record(await body(request), ["harnessId", "controlId", "action", "commandId", "expectedDefaultRevision"], ["harnessId", "action", "commandId"]);
         if (input.action !== "install" && input.action !== "upgrade") throw new HttpError(400, "INVALID_INPUT", "Expected install or upgrade action");
+        await rescan();
         json(response, 202, app.management.submit({ harnessId: text(input.harnessId, "Harness identity", 96), action: input.action, commandId: command(input.commandId),
           ...(input.controlId === undefined ? {} : { controlId: text(input.controlId, "control identity", 96) }),
           ...(input.expectedDefaultRevision === undefined ? {} : { expectedDefaultRevision: integer(input.expectedDefaultRevision, 0, Number.MAX_SAFE_INTEGER, "default revision") }) })); return;

@@ -705,7 +705,7 @@
 - 提交前拒绝
 - 内存目录不先更新
 
-场景：G011-C01, G011-C02, G011-C03, G011-M01, G011-M02, G011-M03, G011-M04。
+场景：G011-C01, G011-C02, G011-C03, G011-M01, G011-M02, G011-M03, G011-M04, G011-L01。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1161,6 +1161,7 @@
 - tests/protocol/g032.test.ts
 - src/adapters/control/acp.ts
 - tests/protocol/acp.test.ts
+- src/adapters/control/factory.ts
 
 验收：
 - 各事实关联正确Attempt与generation
@@ -1168,7 +1169,7 @@
 - 明确拒绝，不空会话fallback
 - 不把结果称官方认证
 
-场景：G032-C01, G032-C02, G032-C03, G032-C04。
+场景：G032-C01, G032-C02, G032-C03, G032-C04, G032-L01。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1646,13 +1647,26 @@
 - web/src/components/ChatComposer.tsx
 - web/src/components/ChatMessage.tsx
 - web/src/components/StreamingMarkdown.tsx
+- web/src/assets/agoragentic-acp.svg
+- web/src/assets/autohand.svg
+- web/src/assets/cortex-code.svg
+- web/src/assets/corust-agent.svg
+- web/src/assets/crow-cli.svg
+- web/src/assets/deepagents.svg
+- web/src/assets/dimcode.svg
+- web/src/assets/fast-agent.svg
+- web/src/assets/harn.svg
+- web/src/assets/kimchi.svg
+- web/src/assets/minion-code.svg
+- web/src/assets/sigit.svg
+- web/src/assets/vtcode.svg
 
 验收：
 - 公共Session身份与历史保留
 - 不提前展示新Harness已生效
 - 可操作且不持有独立业务状态
 
-场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01。
+场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1832,7 +1846,7 @@
 - 明确拒绝或幂等，不绕过排空规则
 - 旧执行保留版本，新准入遵循新状态
 
-场景：G061-C01, G061-C02, G061-C03, G061-M01, G061-M02, G061-M03, G061-S01, G061-S02, G061-S03, G061-N01。
+场景：G061-C01, G061-C02, G061-C03, G061-M01, G061-M02, G061-M03, G061-S01, G061-S02, G061-S03, G061-N01, G061-L01。
 
 禁止范围：不修改其他任务所有权文件；契约冻结不表示应用实现或真实链路验收。
 

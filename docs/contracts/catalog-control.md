@@ -17,3 +17,5 @@ ACP原 prompt.stopReason 和Codex匹配turn/completed是后端结果；spawn成�
 CleanupEvidence.closed 只表资源确认关闭，protocolFailure独立保留连接故障。收到completed后再遇重复终态不能把故障抹掉，CLI必须非零。清理结束前保留SIGINT/SIGTERM守护；未确认资源关闭时保留自有临时目录，不删除活跃路径。CLI不继承宿主秘密，描述中的HOME/XDG/CODEX_HOME等不能覆盖隔离配置。
 
 测试分开：领域描述接受/拒绝；真实目录/包/链接；真实子进程和IPC，外部模型用确定性协议对端；编译后CLI；真实Harness的initialize与清理。真实prompt缺模型/认证时记未验证。公共Session、Provider热切换和任务正确性不由Driver证明。
+
+ADR-016：原PATH/显式控制入口优先于旧受管副本；candidate/blocked不被覆盖，只有缺失控制可使用已安装私有入口。OpenClaw专属Driver处理其普通Gateway会话键扩展，ACP有界延迟验证session/new前的初始化元数据；错误身份/早到输出仍拒绝。

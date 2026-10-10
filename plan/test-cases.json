@@ -6263,6 +6263,72 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G032-L01",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R12",
+        "R13",
+        "R25"
+      ],
+      "invariants": [],
+      "layer": "protocol",
+      "scenario": "OpenClaw早到初始化信息与普通Gateway会话键",
+      "expected": "元数据确认后核验身份，错身份/过量/早到输出拒绝；按JSON5配置选择默认agent及规范会话键",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/acp.test.ts"
+    },
+    {
+      "id": "G061-L01",
+      "task": "G061",
+      "requirements": [
+        "R03",
+        "R04",
+        "R17",
+        "R22"
+      ],
+      "invariants": [],
+      "layer": "integration",
+      "scenario": "原PATH入口优先于已存在的私有副本",
+      "expected": "缺失可用已有本地副本；原入口和坏显式覆盖不被替代，多控制需要明确选择",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/managed-discovery.test.ts"
+    },
+    {
+      "id": "G011-L01",
+      "task": "G011",
+      "requirements": [
+        "R03",
+        "R04"
+      ],
+      "invariants": [],
+      "layer": "integration",
+      "scenario": "真实版本与来源、拒绝把替代副本当系统升级",
+      "expected": "实际本机版本保持权威，已安装系统项拒绝未实现的原生升级，不改私有默认遮蔽原安装",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/management-service.test.ts"
+    },
+    {
+      "id": "G054-L01",
+      "task": "G054",
+      "requirements": [
+        "R01",
+        "R02",
+        "R09",
+        "R22"
+      ],
+      "invariants": [],
+      "layer": "e2e",
+      "scenario": "全部Harness品牌SVG实际加载与原生选择流程",
+      "expected": "每行品牌图标加载成功，当前原生切换、窄屏、草稿、停止和重连保持",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
     }
   ]
 }

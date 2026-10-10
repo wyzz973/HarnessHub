@@ -8,8 +8,7 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import type { ControlEvent, ControlLaunch, ControlRun, HarnessControl } from "../contracts/control.js";
 import { DiscoveryInputError } from "../contexts/catalog/domain/discovery.js";
-import { AcpControl } from "../adapters/control/acp.js";
-import { CodexControl } from "../adapters/control/codex.js";
+import { createNativeControl } from "../adapters/control/factory.js";
 import { inventory } from "../infrastructure/catalog/inventory-composition.js";
 
 function timeout(value: string | undefined): number {
@@ -100,7 +99,7 @@ export async function main(args: readonly string[]): Promise<number> {
       PATH: observed.searchPath, OPENCODE_DISABLE_AUTOUPDATE: "true", PWD: cwd };
     const launch: ControlLaunch = { ...selected.command, env: environment, protocol: selected.protocol };
     const options = { cwd, env: environment, requestTimeoutMs: Math.min(10000, budget), runTimeoutMs: budget, maxFrameBytes: 2 * 1024 * 1024, maxDiagnosticBytes: 64 * 1024, closeGraceMs: 500 };
-    control = launch.protocol === "acp-v1" ? new AcpControl(launch, options) : new CodexControl(launch, options);
+    control = createNativeControl(harness.id, launch, options);
     process.on("SIGINT", onSignal); process.on("SIGTERM", onSignal);
     const protocol = await control.initialize();
     if (json) process.stdout.write(JSON.stringify({ type: "protocol", harnessId: harness.id, controlId: selected.id, observation: protocol }) + "\n");

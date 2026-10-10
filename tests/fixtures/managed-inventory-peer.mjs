@@ -14,7 +14,8 @@ try {
   if (validate) {
     const factory = new DirectorySessionBindingFactory(new SqliteWorkspaceLeaseProvider(join(root, "leases")), () => store.assertOwner(), undefined, management);
     const config = await prepareConfiguration({ workspace: dirname(root), pathOnly: true, ...(manifest ? { manifestPath: manifest } : {}) });
-    defaultSelection = (await factory.validate({ harnessId: "codex" }, config)).controlId;
+    try { defaultSelection = (await factory.validate({ harnessId: "codex" }, config)).controlId; }
+    catch (error) { if (!String(error.message).includes("multiple available controls")) throw error; defaultSelection = "requires-explicit-control"; }
     explicitSelection = (await factory.validate({ harnessId: "codex", controlId: "codex-acp-npm" }, config)).controlId;
   }
   process.stdout.write(JSON.stringify({ defaultSelection, explicitSelection, state: control.state, source: control.installation.selected?.source ?? null, command: control.command, managedCount: observed.managedBindings.size }) + "\n");

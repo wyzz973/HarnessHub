@@ -21,7 +21,7 @@ async function child(root: string, system: string, manifest?: string, validate =
     worker.once("close", code => { clearTimeout(timer); if (code !== 0) reject(new Error(diagnostics)); else { try { resolve(record(JSON.parse(output))); } catch (error) { reject(error); } } });
   });
 }
-test("managed catalog entry wins over system PATH; explicit blocked override never falls back", async t => {
+test("original system PATH wins over a private copy; absent controls use the local copy and blocked overrides never fall back", async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "harness-managed-discovery-"))), data = join(root, "data"), system = join(root, "system"); await mkdir(system);
   const store = new SqliteSessionStore(data);
   const manager = new LocalHarnessManagement(data, { assertOwner: () => store.assertOwner(), ownerGeneration: store.ownerGeneration, recipes: [recipe],
@@ -39,12 +39,12 @@ test("managed catalog entry wins over system PATH; explicit blocked override nev
   assert.equal(manager.readJob(job.id).status, "completed"); const managed = manager.resolveControl("codex", "codex-native"); assert.ok(managed);
   await writeFile(join(system, "codex"), "#!/bin/sh\nexit 77\n", { mode: 0o700 });
   await manager.shutdown(); store.close();
-  const located = await child(root, system); assert.equal(located.state, "candidate"); assert.equal(located.source, "managed"); assert.equal(record(located.command).executable, managed.command.executable);
-  assert.deepEqual(record(located.command).args, managed.command.args);
+  const located = await child(root, system); assert.equal(located.state, "candidate"); assert.equal(located.source, "path"); assert.equal(record(located.command).executable, join(system, "codex"));
+  assert.equal(located.managedCount, 0);
   const alternatives = join(root, "alternatives.json");
   await writeFile(alternatives, JSON.stringify({ version: 2, definitions: [], overrides: { "codex-acp-npm": { executable: join(system, "codex") } } }));
   const selected = await child(root, system, alternatives, true);
-  assert.equal(selected.defaultSelection, "codex-native", "published managed default wins over another system control");
+  assert.equal(selected.defaultSelection, "requires-explicit-control", "two local control entries require an explicit selection");
   assert.equal(selected.explicitSelection, "codex-acp-npm", "explicit requested control remains exclusive");
   const blocked = join(root, "blocked"), manifest = join(root, "manifest.json"); await writeFile(blocked, "blocked", { mode: 0o600 });
   await writeFile(manifest, JSON.stringify({ version: 2, definitions: [], overrides: { "codex-native": { executable: blocked } } }));

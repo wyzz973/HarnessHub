@@ -42,6 +42,8 @@ export async function readJsonDocument(path: string, limit: number): Promise<{ r
 }
 
 export interface InventoryInput {
+  readonly environment?: Readonly<Record<string, string>>;
+  readonly home?: string;
   readonly manifest?: string;
   readonly searchDirs: readonly string[];
   readonly packageRoots: readonly string[];
@@ -70,21 +72,22 @@ export async function inventory(input: InventoryInput): Promise<{
   }
   const definitions = [...builtins, ...manifest.definitions];
   validateDefinitions(definitions);
+  const environment = input.environment ?? process.env, home = input.home ?? homedir();
   const search = await discoverSearchDirectories({
-    path: process.env.PATH ?? "", home: homedir(), extra: input.searchDirs,
-    pathOnly: input.pathOnly, environment: process.env,
+    path: environment.PATH ?? "", home, extra: input.searchDirs,
+    pathOnly: input.pathOnly, environment,
   });
   const enumerator = new LocalInstallationEnumerator(search.directories);
   const service = new DiscoverInventory(
     enumerator, new LocalInstalledPackageResolver(input.packageRoots, enumerator),
-    new LocalConfigurationLocator(homedir()), () => new Date(),
+    new LocalConfigurationLocator(home), () => new Date(),
   );
   const initial = await service.execute(definitions, manifest.overrides, manifest.installationOverrides);
   const managedBindings = new Map<string, ResolvedManagedControl>();
   const report: InventoryReport = input.managedResolver === undefined ? initial : { ...initial,
     harnesses: initial.harnesses.map(harness => ({ ...harness, controls: harness.controls.map(control => {
       // User overrides remain exclusive, including invalid or blocked entries. They never fall back.
-      if (manifest.overrides.has(control.id)) return control;
+      if (manifest.overrides.has(control.id) || control.state !== "missing_dependency") return control;
       const managed = input.managedResolver!.resolveControl(harness.id, control.id);
       if (managed === null) return control;
       const path = managed.command.args[0] !== undefined && isAbsolute(managed.command.args[0]) ? managed.command.args[0] : managed.command.executable;

@@ -811,7 +811,7 @@
         "G001-C03",
         "G001-S01"
       ],
-      "active_slice": "chat-stream-experience"
+      "active_slice": "local-openclaw-repair"
     },
     {
       "id": "G002",
@@ -1289,9 +1289,10 @@
         "G011-M01",
         "G011-M02",
         "G011-M03",
-        "G011-M04"
+        "G011-M04",
+        "G011-L01"
       ],
-      "active_slice": "management-workbench"
+      "active_slice": "local-openclaw-repair"
     },
     {
       "id": "G012",
@@ -2188,7 +2189,7 @@
         "G031-C03",
         "G031-R01"
       ],
-      "active_slice": "native-models-switching"
+      "active_slice": "local-openclaw-repair"
     },
     {
       "id": "G032",
@@ -2207,7 +2208,8 @@
         "src/adapters/acp/driver.ts",
         "tests/protocol/g032.test.ts",
         "src/adapters/control/acp.ts",
-        "tests/protocol/acp.test.ts"
+        "tests/protocol/acp.test.ts",
+        "src/adapters/control/factory.ts"
       ],
       "requirements": [
         "R11",
@@ -2235,9 +2237,10 @@
         "G032-C01",
         "G032-C02",
         "G032-C03",
-        "G032-C04"
+        "G032-C04",
+        "G032-L01"
       ],
-      "active_slice": "native-models-switching"
+      "active_slice": "local-openclaw-repair"
     },
     {
       "id": "G033",
@@ -3042,7 +3045,7 @@
         "G050-P02",
         "G050-R01"
       ],
-      "active_slice": "native-models-switching"
+      "active_slice": "local-openclaw-repair"
     },
     {
       "id": "G051",
@@ -3218,7 +3221,20 @@
         "web/src/session-stream.ts",
         "web/src/components/ChatComposer.tsx",
         "web/src/components/ChatMessage.tsx",
-        "web/src/components/StreamingMarkdown.tsx"
+        "web/src/components/StreamingMarkdown.tsx",
+        "web/src/assets/agoragentic-acp.svg",
+        "web/src/assets/autohand.svg",
+        "web/src/assets/cortex-code.svg",
+        "web/src/assets/corust-agent.svg",
+        "web/src/assets/crow-cli.svg",
+        "web/src/assets/deepagents.svg",
+        "web/src/assets/dimcode.svg",
+        "web/src/assets/fast-agent.svg",
+        "web/src/assets/harn.svg",
+        "web/src/assets/kimchi.svg",
+        "web/src/assets/minion-code.svg",
+        "web/src/assets/sigit.svg",
+        "web/src/assets/vtcode.svg"
       ],
       "requirements": [
         "R01",
@@ -3250,9 +3266,10 @@
         "G054-M01",
         "G054-S01",
         "G054-R01",
-        "G054-N01"
+        "G054-N01",
+        "G054-L01"
       ],
-      "active_slice": "native-models-switching"
+      "active_slice": "local-openclaw-repair"
     },
     {
       "id": "G055",
@@ -3536,7 +3553,7 @@
         "G059-C02",
         "G059-C03"
       ],
-      "active_slice": "native-models-switching"
+      "active_slice": "local-openclaw-repair"
     },
     {
       "id": "G060",
@@ -3599,7 +3616,7 @@
         "G060-M01",
         "G060-S01"
       ],
-      "active_slice": "native-models-switching"
+      "active_slice": "local-openclaw-repair"
     },
     {
       "id": "G061",
@@ -3658,9 +3675,10 @@
         "G061-S01",
         "G061-S02",
         "G061-S03",
-        "G061-N01"
+        "G061-N01",
+        "G061-L01"
       ],
-      "active_slice": "native-models-switching"
+      "active_slice": "local-openclaw-repair"
     },
     {
       "id": "G062",

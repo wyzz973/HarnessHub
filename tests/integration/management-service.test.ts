@@ -155,11 +155,11 @@ test("system version check probes a real private CLI, compares primary latest an
     assert.equal(await readFile(count, "utf8"), "2");
   }, dependencies({ version: () => latest }));
 });
-test("a real package version observation needs no process launch and managed default takes precedence over system", async () => fixture(async (root, manager) => {
+test("a real package version observation needs no process launch and the actual local program keeps precedence over a private copy", async () => fixture(async (root, manager) => {
   manager.setSystemObservations([{ harnessId: "fixture-a", controlId: "fixture-a-npm", command: { executable: join(root, "not-launched"), args: [], env: {} }, packageVersion: "0.5.0" }]);
   const checked = (await manager.checkUpdates(["fixture-a"]))[0]!; assert.equal(checked.source, "system"); assert.equal(checked.installedVersion, "0.5.0"); assert.equal(checked.updateStatus, "available");
-  const installed = await settled(manager, manager.submit({ harnessId: "fixture-a", action: "upgrade", commandId: "managed" }).id); assert.equal(installed.status, "completed");
-  assert.equal(manager.views(["fixture-a"])[0]?.source, "managed"); assert.equal(manager.views(["fixture-a"])[0]?.installedVersion, "1.0.0");
+  assert.throws(() => manager.submit({ harnessId: "fixture-a", action: "upgrade", commandId: "managed" }), error => error instanceof Error && "code" in error && error.code === "NATIVE_UPGRADE_UNSUPPORTED");
+  assert.equal(manager.views(["fixture-a"])[0]?.source, "system"); assert.equal(manager.views(["fixture-a"])[0]?.installedVersion, "0.5.0");
 }));
 test("slot marker ownership loss before activation produces unknown and never publishes the damaged package", async () => {
   const base = dependencies();

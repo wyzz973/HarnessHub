@@ -44,6 +44,7 @@
   "dependencies": {
     "@lobehub/icons-static-svg": "1.95.1",
     "@radix-ui/react-popover": "1.2.0",
+    "json5": "2.2.3",
     "lucide-react": "1.54.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",

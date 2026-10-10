@@ -1,6 +1,20 @@
+import brand_agoragentic_acp from "../assets/agoragentic-acp.svg";
+import brand_autohand from "../assets/autohand.svg";
+import brand_cortex_code from "../assets/cortex-code.svg";
+import brand_corust_agent from "../assets/corust-agent.svg";
+import brand_crow_cli from "../assets/crow-cli.svg";
+import brand_deepagents from "../assets/deepagents.svg";
+import brand_dimcode from "../assets/dimcode.svg";
+import brand_fast_agent from "../assets/fast-agent.svg";
+import brand_harn from "../assets/harn.svg";
+import brand_kimchi from "../assets/kimchi.svg";
+import brand_minion_code from "../assets/minion-code.svg";
+import brand_sigit from "../assets/sigit.svg";
+import brand_vtcode from "../assets/vtcode.svg";
 import amp from "@lobehub/icons-static-svg/icons/amp-color.svg";
 import antigravity from "@lobehub/icons-static-svg/icons/antigravity-color.svg";
 import anthropic from "@lobehub/icons-static-svg/icons/anthropic.svg";
+import claudeCode from "@lobehub/icons-static-svg/icons/claudecode-color.svg";
 import claude from "@lobehub/icons-static-svg/icons/claudecode-color.svg";
 import cline from "@lobehub/icons-static-svg/icons/cline.svg";
 import codebuddy from "@lobehub/icons-static-svg/icons/codebuddy-color.svg";
@@ -34,8 +48,22 @@ import stakpak from "../assets/stakpak.svg";
 
 /** Pinned local SVGs identify known products. Initials are explicitly generic for brands without reviewed assets. */
 const assets: Readonly<Record<string, string>> = {
+  "agoragentic-acp": brand_agoragentic_acp,
+  "autohand": brand_autohand,
+  "cortex-code": brand_cortex_code,
+  "corust-agent": brand_corust_agent,
+  "crow-cli": brand_crow_cli,
+  "deepagents": brand_deepagents,
+  "dimcode": brand_dimcode,
+  "fast-agent": brand_fast_agent,
+  "harn": brand_harn,
+  "kimchi": brand_kimchi,
+  "minion-code": brand_minion_code,
+  "sigit": brand_sigit,
+  "vtcode": brand_vtcode,
+
   "amp-acp": amp, "antigravity-acp": antigravity, anthropic, auggie, claude, cline, "codebuddy-code": codebuddy, codex, cursor,
-  deepseek, devin, "factory-droid": factory, gemini, "github-copilot": copilot, "github-copilot-cli": copilot, "glm-acp-agent": glm, goose, "grok-build": grok,
+  "claude-acp": claudeCode, "claude-code": claudeCode, "pi-acp": pi, deepseek, devin, "factory-droid": factory, gemini, "github-copilot": copilot, "github-copilot-cli": copilot, "glm-acp-agent": glm, goose, "grok-build": grok,
   dirac, junie, kilo, kimi, "minimax-code": minimax, "mistral-vibe": mistral, nova, openai, openclaw, opencode, openrouter, pi, poolside, qoder, qwen, "qwen-code": qwen, stakpak,
 };
 export function BrandIcon({ brand, name, size = 24 }: { brand: string; name: string; size?: number }) {

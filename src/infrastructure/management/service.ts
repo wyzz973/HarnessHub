@@ -230,6 +230,7 @@ export class LocalHarnessManagement {
     const fingerprint = createHash("sha256").update(JSON.stringify({ harnessId: request.harnessId, controlId: recipe.controlId, action: request.action,
       expectedDefaultRevision: request.expectedDefaultRevision ?? null })).digest("hex"), prior = this.storage.db.prepare("SELECT id,fingerprint FROM management_jobs WHERE command_id=?").get(request.commandId);
     if (prior) { if (prior.fingerprint !== fingerprint || typeof prior.id !== "string") throw new ManagementError("COMMAND_CONFLICT", "management command already used different input"); return this.readJob(prior.id); }
+    if (this.system.has(request.harnessId)) throw new ManagementError("NATIVE_UPGRADE_UNSUPPORTED", "Use the installed Harness update command; replacing it with a private copy is not a native upgrade");
     if (this.storage.db.prepare("SELECT id FROM management_commands WHERE id=?").get(request.commandId)) throw new ManagementError("COMMAND_CONFLICT", "management command identity already used by cancellation");
     const active = this.storage.db.prepare("SELECT id FROM management_jobs WHERE harness_id=? AND status NOT IN('completed','cancelled','failed','unknown')").get(request.harnessId);
     if (active) throw new ManagementError("MANAGEMENT_BUSY", "this Harness already has an active installation job");
@@ -370,15 +371,16 @@ export class LocalHarnessManagement {
       const update = this.storage.db.prepare("SELECT view_json FROM management_updates WHERE harness_id=? AND length(CAST(view_json AS BLOB))<=65536").get(harness);
       const checked = update ? parseManagementUpdate(json(update.view_json)) : null;
       const active = this.storage.db.prepare("SELECT id FROM management_jobs WHERE harness_id=? AND status NOT IN('completed','cancelled','failed','unknown')").get(harness)?.id;
-      const currentVersion = installationId === null ? this.systemVersion(harness) : installedVersion;
+      const system = this.system.has(harness);
+      const currentVersion = system || installationId === null ? this.systemVersion(harness) : installedVersion;
       let updateStatus = checked?.updateStatus ?? (recipe?.canInstall ? "unchecked" : "unsupported");
       if (checked?.latestVersion != null && checked.error === null && ["unchecked", "available", "current"].includes(updateStatus)) {
         const newer = currentVersion !== null && (valid(checked.latestVersion) && valid(currentVersion)
           ? gt(checked.latestVersion, currentVersion) : checked.latestVersion !== currentVersion);
         updateStatus = currentVersion === null ? "unchecked" : newer ? "available" : "current";
       }
-      return { harnessId: harness, recipe, source: installationId === null ? this.system.has(harness) ? "system" : "missing" : "managed",
-        installedVersion: currentVersion, installationId,
+      return { harnessId: harness, recipe, source: system ? "system" : installationId === null ? "missing" : "managed",
+        installedVersion: currentVersion, installationId: system ? null : installationId,
         latestVersion: checked?.latestVersion ?? null, updateStatus,
         checkedAt: checked?.checkedAt ?? null, activeJobId: typeof active === "string" ? active : null, defaultRevision: this.defaultRevision(harness), error: checked?.error ?? null };
     });
@@ -386,6 +388,28 @@ export class LocalHarnessManagement {
   checkUpdates(harnessIds: readonly string[] = [...new Set(this.recipes.map(item => item.harnessId))]): Promise<readonly HarnessManagementView[]> {
     this.admission(); if (this.checks.size >= 4) return Promise.reject(new ManagementError("CHECK_LIMIT", "too many update checks are already active"));
     const operation = this.checkOwned(harnessIds); this.checks.add(operation); void operation.then(() => this.checks.delete(operation), () => this.checks.delete(operation)); return operation;
+  }
+  /** Read the selected local program's version without downloading releases or changing its configuration. */
+  refreshSystemVersions(): Promise<readonly HarnessManagementView[]> {
+    this.admission();
+    const operation = this.readSystemVersions(); this.checks.add(operation);
+    void operation.then(() => this.checks.delete(operation), () => this.checks.delete(operation)); return operation;
+  }
+  private async readSystemVersions(): Promise<readonly HarnessManagementView[]> {
+    const entries = [...this.system.entries()]; let index = 0;
+    await Promise.all(Array.from({ length: Math.min(4, entries.length) }, async () => {
+      for (;;) {
+        const entry = entries[index++]; if (!entry || !this.accepting) return;
+        const [id, observation] = entry, fingerprint = this.systemFingerprint(observation);
+        if (this.systemVersions.get(id)?.fingerprint === fingerprint) continue;
+        const controller = new AbortController(); this.checkControllers.add(controller);
+        try {
+          const result = await (this.options.systemVersionProbe ?? probeSystemVersion)(observation, { signal: controller.signal, assertOwned: () => this.own(), redact: this.redactor }); this.own();
+          if (this.system.get(id) === observation) this.systemVersions.set(id, { fingerprint, version: result.version });
+        } finally { this.checkControllers.delete(controller); }
+      }
+    }));
+    return this.views(entries.map(([id]) => id));
   }
   private async checkOwned(ids: readonly string[]): Promise<readonly HarnessManagementView[]> {
     if (ids.length > 256) throw new ManagementError("INVALID_INPUT", "too many update targets");
@@ -399,7 +423,7 @@ export class LocalHarnessManagement {
         const controller = new AbortController(); this.checkControllers.add(controller); const timer = setTimeout(() => controller.abort(), 15000);
         this.storeUpdate(id, { latestVersion: null, updateStatus: "checking", checkedAt: null, error: null });
         try {
-          if (this.defaultRevision(id) === 0) {
+          if (this.system.has(id)) {
             const observation = this.system.get(id);
             if (observation) {
               const observed = await (this.options.systemVersionProbe ?? probeSystemVersion)(observation, { signal: controller.signal, assertOwned: () => this.own(), redact: this.redactor }); this.own();

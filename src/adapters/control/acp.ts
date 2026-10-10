@@ -25,6 +25,7 @@ export class AcpControl implements HarnessControl {
   private catalog: NativeModelCatalog = { models: [], defaultModel: null, authentication: "unknown", canSelect: false };
   private modelConfigId: string | null = null;
   private legacyModels = false;
+  private readonly openingMetadata: Record<string, unknown>[] = [];
 
   constructor(launch: ControlLaunch, private readonly options: ControlOptions) {
     if (launch.protocol !== "acp-v1") throw new ControlError("INVALID_INPUT", "ACP control requires an ACP launch");
@@ -92,15 +93,17 @@ export class AcpControl implements HarnessControl {
     }
   }
   async models(): Promise<NativeModelCatalog> { this.assertInitialized(); if (this.conversation === null) throw new ControlError("INVALID_STATE", "ACP model catalog requires a session"); return this.catalog; }
+  protected async sessionParameters(cwd: string): Promise<Readonly<Record<string, unknown>>> { return { cwd, mcpServers: [] }; }
   async open(cwd: string, model?: string): Promise<NativeConversationId> {
     this.assertInitialized();
     if (!isAbsolute(cwd)) throw new ControlError("INVALID_INPUT", "conversation cwd must be absolute");
     if (this.conversation !== null || this.opening) throw new ControlError("INVALID_STATE", "this connection already owns a conversation");
     this.opening = true;
     try {
-      const response = object(await this.rpc.request("session/new", { cwd, mcpServers: [] }), "session/new result");
+      const response = object(await this.rpc.request("session/new", await this.sessionParameters(cwd)), "session/new result");
       this.conversation = nativeConversationId(response.sessionId);
       this.readModels(response);
+      for (const params of this.openingMetadata.splice(0)) this.notification("session/update", params);
       if (model !== undefined) {
         if (!this.catalog.canSelect || !this.catalog.models.some(row => row.id === model)) throw new ControlError("MODEL_UNAVAILABLE", "selected model is unavailable in this Harness");
         if (this.modelConfigId !== null) {
@@ -114,7 +117,7 @@ export class AcpControl implements HarnessControl {
       }
       return this.conversation;
     } catch (error) { this.rpc.abort(errorFrom(error)); throw error; }
-    finally { this.opening = false; }
+    finally { this.opening = false; this.openingMetadata.length = 0; }
   }
   async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void): Promise<ControlRun> {
     this.assertInitialized();
@@ -166,9 +169,15 @@ export class AcpControl implements HarnessControl {
       this.active?.event({ type: "diagnostic", message: `Unsupported ACP notification: ${method}` });
       return;
     }
-    const params = object(raw, "ACP notification params"); this.scope(params);
+    const params = object(raw, "ACP notification params");
     const update = object(params.update, "ACP session update");
     const kind = string(update.sessionUpdate, "ACP update kind");
+    if (this.opening && this.conversation === null && metadataUpdates.has(kind)) {
+      string(params.sessionId, "ACP session identity");
+      if (this.openingMetadata.length >= 128) throw new ControlError("WIRE_LIMIT", "ACP opening metadata exceeds its budget");
+      this.openingMetadata.push(params); return;
+    }
+    this.scope(params);
     if (kind === "config_option_update") { this.readModels(update); return; }
     if (metadataUpdates.has(kind)) return;
     const active = this.active;

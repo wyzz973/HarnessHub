@@ -29,7 +29,13 @@ Providers仍支持用户明确配置的独立连接覆盖：保存后“测试�
 
 详见[工作台与Provider契约](docs/contracts/provider-web-mvp.md)、[取舍](docs/decisions/0011-provider-web-mvp.md)、[实际验证](docs/verification/provider-web-2026-10-09.md)。
 
-## Harness 集中安装与升级
+## 本机原安装与版本管理
+
+2026-10-11起，已发现的本机PATH/显式入口优先，原安装和既有配置/登录作为当前执行来源，旧私有副本不能覆盖它。页面读取实际版本，OpenClaw原安装2026.3.23-2已通过DeepSeek及当前公共对话接续。已安装程序的原生升级配方尚未完成，本轮不执行系统升级；界面/HTTP已阻止以“更新并管理”创建副本冒充原生升级。详见[ADR-016](docs/decisions/0016-local-installation-and-openclaw.md)与[验收](docs/verification/local-openclaw-2026-10-11.md)。
+
+Provider统一管理仍是用户→HarnessHub→不同Harness→Provider统一管理的后续环节；当前原生接入直接使用各Harness已配置模型，不通过本项目Provider来完成DeepSeek测试。
+
+### 旧私有安装切片（保留历史实现与证据）
 
 在 Harnesses 查看全部支持目录、已安装、待安装或可更新项。点击安装会在后台执行已审核配方；详情中查看实际阶段、日志和取消。安装完成后验证包/入口/版本并重新发现，才启用受管默认；不会把打开下载页面或exit 0算作成功。
 

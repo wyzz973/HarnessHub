@@ -6,8 +6,7 @@ import { constants } from "node:fs";
 import { lstat, mkdir, mkdtemp, open, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { AcpControl } from "../../adapters/control/acp.js";
-import { CodexControl } from "../../adapters/control/codex.js";
+import { createNativeControl } from "../../adapters/control/factory.js";
 import { chooseControl } from "../../contexts/catalog/application/select-control.js";
 import { inventory } from "../catalog/inventory-composition.js";
 import type { CleanupEvidence, ControlLaunch, HarnessControl } from "../../contracts/control.js";
@@ -78,7 +77,7 @@ export async function prepareConfiguration(input: ConfigurationInput): Promise<S
 }
 interface ManagedResolver { resolveControl(harnessId: string, controlId: string): ResolvedManagedControl | null }
 interface Observation { readonly harnessId: string; readonly selected: ControlObservation; readonly searchPath: string; readonly managed: ResolvedManagedControl | null }
-async function observe(request: SelectionRequest, configuration: SessionConfiguration, root: string, managedResolver?: ManagedResolver): Promise<Observation> {
+async function observe(request: SelectionRequest, configuration: SessionConfiguration, root: string, managedResolver?: ManagedResolver, source?: NativeEnvironment): Promise<Observation> {
   await pinnedDirectory(configuration.workspace, "workspace");
   if (configuration.configHome !== null) await pinnedDirectory(configuration.configHome, "configuration home");
   for (const path of configuration.packageRoots) await pinnedDirectory(path, "package root");
@@ -91,6 +90,7 @@ async function observe(request: SelectionRequest, configuration: SessionConfigur
     await writeFile(snapshot, bytes, { flag: "wx", mode: 0o600 });
   } else if (configuration.manifestSha256 !== null) throw new SessionError("INVALID_INPUT", "manifest fingerprint requires a manifest reference");
   const observed = await inventory({ ...(snapshot === undefined ? {} : { manifest: snapshot }),
+    ...(source === undefined ? {} : { environment: source.values, home: source.home }),
     packageRoots: configuration.packageRoots, searchDirs: configuration.searchDirs, pathOnly: configuration.pathOnly, ...(managedResolver === undefined ? {} : { managedResolver }) });
   const harness = observed.report.harnesses.find(item => item.id === request.harnessId || item.aliases.includes(request.harnessId));
   if (!harness) throw new SessionError("HARNESS_UNAVAILABLE", "unknown Harness: " + request.harnessId);
@@ -115,11 +115,13 @@ async function privateHome(root: string, configuration: SessionConfiguration): P
 export class DirectorySessionBindingFactory implements SessionBindingFactory {
   constructor(private readonly workspaces: WorkspaceLeaseProvider, private readonly assertOwner: () => void, private readonly providers?: LocalProviderService, private readonly management?: ManagedResolver,
     private readonly nativeEnvironment: NativeEnvironment = captureNativeEnvironment()) {}
+  /** Private host observation source; never serialize this into public Session or Web DTOs. */
+  get discoveryEnvironment(): NativeEnvironment { return this.nativeEnvironment; }
   async validate(request: SelectionRequest, configuration: SessionConfiguration): Promise<HarnessSelection> {
     this.assertOwner();
     const root = await realpath(await mkdtemp(join(tmpdir(), "harness-session-validation-")));
     try {
-      const { harnessId, selected } = await observe(request, configuration, root, this.management);
+      const { harnessId, selected } = await observe(request, configuration, root, this.management, this.nativeEnvironment);
       this.assertOwner();
       if (request.provider !== undefined && request.provider !== null) {
         if (!this.providers) throw new SessionError("PROVIDER_UNAVAILABLE", "Provider management is unavailable");
@@ -139,7 +141,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
     let root: string | undefined, control: HarnessControl | undefined;
     try {
       root = await realpath(await mkdtemp(join(tmpdir(), "harness-session-binding-")));
-      const observed = await observe(selection, configuration, root, this.management);
+      const observed = await observe(selection, configuration, root, this.management, this.nativeEnvironment);
       if (observed.harnessId !== selection.harnessId || observed.selected.id !== selection.controlId || observed.selected.command === null)
         throw new SessionError("HARNESS_UNAVAILABLE", "the admitted control is no longer available");
       const home = selection.provider === undefined ? configuration.configHome : await privateHome(root, configuration);
@@ -159,7 +161,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       const options = { cwd: configuration.workspace, env: environment, requestTimeoutMs: 10000, runTimeoutMs: 30000,
         maxFrameBytes: 2 * 1024 * 1024, maxDiagnosticBytes: 64 * 1024, closeGraceMs: 500 };
       this.assertOwner(); lease.assertOwned();
-      control = protocol === "acp-v1" ? new AcpControl(launch, options) : new CodexControl(launch, options);
+      control = createNativeControl(selection.harnessId, launch, options);
       if (selection.provider !== undefined && this.providers) control = new RedactedHarnessControl(control, text => this.providers!.redact(text), () => this.providers!.createTextRedactor());
       return new DirectoryPreparedBinding(control, configuration.workspace, lease, root, this.assertOwner, observed.managed === null ? { source: "system" } : { source: "managed", id: observed.managed.installationId, revision: observed.managed.revision, version: observed.managed.version });
     } catch (error) {
@@ -181,7 +183,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
     signal.addEventListener("abort", abort, { once: true });
     try {
       if (signal.aborted) throw new SessionError("CANCELLED", "model discovery was cancelled");
-      const observed = await observe(request, configuration, root, this.management);
+      const observed = await observe(request, configuration, root, this.management, this.nativeEnvironment);
       if (observed.selected.command === null) throw new SessionError("HARNESS_UNAVAILABLE", "native control is unavailable");
       const env = { ...await referencedNativeValues(this.nativeEnvironment, configuration.configHome, observed.harnessId, configuration.workspace), ...observed.selected.command.env, ...nativeValues(this.nativeEnvironment, configuration.configHome),
         PATH: observed.managed?.command.env.PATH ? observed.managed.command.env.PATH + ":" + observed.searchPath : observed.searchPath,
@@ -190,7 +192,7 @@ export class DirectorySessionBindingFactory implements SessionBindingFactory {
       if (protocol !== "acp-v1" && protocol !== "codex-app-server") throw new SessionError("UNSUPPORTED_CONTROL", "native model discovery is unavailable");
       const launch: ControlLaunch = { ...observed.selected.command, protocol, env };
       const options = { cwd: configuration.workspace, env, requestTimeoutMs: 10000, runTimeoutMs: 30000, maxFrameBytes: 2 * 1024 * 1024, maxDiagnosticBytes: 64 * 1024, closeGraceMs: 500 };
-      control = protocol === "acp-v1" ? new AcpControl(launch, options) : new CodexControl(launch, options);
+      control = createNativeControl(observed.harnessId, launch, options);
       if (signal.aborted) { abort(); throw new SessionError("CANCELLED", "model discovery was cancelled"); }
       await control.initialize();
       if (protocol === "acp-v1") await control.open(configuration.workspace);
