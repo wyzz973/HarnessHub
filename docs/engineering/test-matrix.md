@@ -313,3 +313,9 @@
 | G054-M01 | G054 | e2e | 新版搜索品牌选择器/模型切换/安装升级日志与响应丢失 | 真UI/HTTP/SQLite/进程，条件按真实状态，幂等不重复；桌面/小屏无溢出、reduced-motion | planned |
 | G011-M03 | G011 | integration | 系统包版本观察与明确检查时的有界版本探测 | 已观察package无需启动；native/Node入口分开；未知/期限/预算/取消/owner丢失有真实进程证据 | planned |
 | G011-M04 | G011 | integration | 已检查最新版本之后安装/升级与重开缓存比较 | 默认版本变化后可更新状态重新派生，checking/failed保持事实；相同已安装版显示current | planned |
+| G061-S02 | G061 | integration | 真实HTTP/SSE已提交首块先于完成、断连与重连事实恢复 | 无命令重派发；身份/水位、连接/背压/心跳/关闭有界；网络错误不取消Run | planned |
+| G061-S01 | G061 | unit | UTF8/SSE字节分片、协议预算、取消及canonical消息投影 | 任意合法分片保持文本；错身份/水位/半帧明确失败；旧消息不追加重复 | planned |
+| G054-S01 | G054 | e2e | 真实生产UI逐段显示、生成中取消、重载续接、Markdown和阅读滚动 | 输出在后端结束前可见；停止保留部分文本；编辑只填草稿；IME/窄屏/reducedmotion保持 | planned |
+| G001-S01 | G001 | unit | 工程文档扫描与根运行数据/第三方安装文档分离 | 忽略根data/artifacts，但docs/data坏链接仍拒绝，必需检查非零失败 | planned |
+| G061-S03 | G061 | unit | 已接收命令的ACK正文断流、写请求期限与错误归属 | 正文transport失败不接受半JSON；business4xx保留；错session/不完整receipt拒绝；写请求不无限挂起 | planned |
+| G060-S01 | G060 | e2e | 真实Codex/私有模型配置/正式HTTP事实流在本地模型未完成前输出首块 | 真实Harness与DB/HTTP/Driver；首文本先于模型及Run终态；断线恢复不重复派发，最终原文完整且cleanup独立确认 | planned |

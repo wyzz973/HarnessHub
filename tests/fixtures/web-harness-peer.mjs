@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, watch } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 let active = null, counter = 0;
@@ -18,6 +18,27 @@ createInterface({ input: process.stdin }).on("line", line => {
     const model = JSON.parse(config.match(/^model = (.+)$/mu)[1]);
     active = { id: "browser-turn-" + ++counter };
     notify("turn/started", { threadId: native, turn: { id: active.id, status: "inProgress" } }); reply(value.id, { turn: { id: active.id, status: "inProgress" } });
+    if (text.startsWith("STREAM_RENDER") || text.startsWith("STREAM_CANCEL")) {
+      const emit = delta => notify("item/agentMessage/delta", { threadId: native, turnId: active.id, itemId: "browser-message", delta });
+      let phase = "first";
+      active.watcher = watch(process.cwd(), (_event, filename) => {
+        if (filename !== "stream-control.json" || active === null) return;
+        let command;
+        try { command = JSON.parse(readFileSync(join(process.cwd(), "stream-control.json"), "utf8")); }
+        catch (error) { if (error.code === "ENOENT") return; throw error; }
+        if (command.stage === "second" && phase === "first") {
+          phase = "second";
+          emit('tial";\n```\n\n| 项目 | 状态 |\n| --- | --- |\n| SSE | 进行中 |\n\n第二段正在生成。');
+        } else if (command.stage === "finish") {
+          active.watcher.close();
+          emit("\n\n第三段完成。<script>window.__unsafeChatScript=true</script>\n\n![外部图片](https://example.invalid/chat-image.png)");
+          notify("turn/completed", { threadId: native, turn: { id: active.id, status: "completed" } }); active = null;
+        }
+      });
+      const paragraphs = Array.from({ length: 22 }, (_, index) => `实际到达的内容 ${index + 1}：这段内容用于验证阅读位置保持，用户查看前面的消息时，继续生成不会将视图拉到底部。`).join("\n\n");
+      emit('第一段已经到达。\n\n'+paragraphs+'\n\n## 流式标题\n\n```typescript\nconst answer = "par');
+      return;
+    }
     const answer = `已由 **${model}** 处理：${text}\n\n这是浏览器验收使用的外部 Harness 对端。公共历史包含 ${context.history.length} 轮。`;
     // Deliberately split the synthetic injected key across chunks to verify the actual wrapper.
     const key = process.env.HARNESS_GATEWAY_PROVIDER_KEY ?? "";
@@ -27,5 +48,5 @@ createInterface({ input: process.stdin }).on("line", line => {
     if (!text.includes("等待取消")) { notify("turn/completed", { threadId: native, turn: { id: active.id, status: "completed" } }); active = null; }
     return;
   }
-  if (value.method === "turn/interrupt") { reply(value.id, {}); if (active) notify("turn/completed", { threadId: native, turn: { id: active.id, status: "interrupted" } }); active = null; }
+  if (value.method === "turn/interrupt") { active?.watcher?.close(); reply(value.id, {}); if (active) notify("turn/completed", { threadId: native, turn: { id: active.id, status: "interrupted" } }); active = null; }
 });

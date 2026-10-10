@@ -10,6 +10,8 @@
 
 [ADR-012](0012-harness-management-workbench.md)按用户授权采纳本机Harness安装/升级与品牌化原生工作台，默认私有受管目录，自动择优不变。
 
+[ADR-013](0013-live-chat-experience.md)按实际对话反馈采纳实时会话SSE及紧凑聊天组件；不改变Run/选择/重试语义。
+
 | ADR | 建议 | 替代/代价 | 关闭条件 |
 |---|---|---|---|
 | ADR-001 | 公共 Session 与原生 BackendBinding 分离 | 直接暴露原生 ID 简单，但锁定 Harness，无法承载公共连续性 | D-02 与 D-04 冻结 |

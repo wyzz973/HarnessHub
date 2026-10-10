@@ -226,6 +226,34 @@
       ],
       "implementation_state": "implemented",
       "verification_record": "docs/verification/harness-management-2026-10-10.md"
+    },
+    {
+      "id": "chat-stream-experience",
+      "status": "accepted",
+      "scope": "真实已提交会话SSE/重连、薄客户端投影与对话组件/动效重做，不变更执行或选择语义",
+      "task_ids": [
+        "G050",
+        "G054",
+        "G061",
+        "G001",
+        "G060"
+      ],
+      "decision": "docs/decisions/0013-live-chat-experience.md",
+      "allowed_files": [
+        "src/web/session-stream.ts",
+        "web/src/session-stream.ts",
+        "web/src/components/ChatComposer.tsx",
+        "web/src/components/ChatMessage.tsx",
+        "web/src/components/StreamingMarkdown.tsx",
+        "tests/integration/web-session-stream.test.ts",
+        "tests/unit/web-session-stream.test.ts",
+        "tools/check_design.py",
+        "tools/test_check_design.py",
+        "tests/unit/web-api.test.ts",
+        "tests/real/live-web-stream.real.ts"
+      ],
+      "implementation_state": "implemented",
+      "verification_record": "docs/verification/live-chat-2026-10-10.md"
     }
   ]
 }

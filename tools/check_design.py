@@ -173,6 +173,9 @@ def check_files(root: Path, views: dict[str, str], verify_cache: bool) -> list[s
         if not file.exists() or file.read_text() != expected:
             errors.append("missing/stale generated view: " + relative)
     for file in root.rglob("*.md"):
+        # Root runtime namespaces contain third-party installed documentation, not repository docs.
+        if file.relative_to(root).parts[0] in {"data", "artifacts"}:
+            continue
         if any(part in {".git", ".research-cache", ".tmp", "node_modules"} for part in file.parts):
             continue
         content = file.read_text()

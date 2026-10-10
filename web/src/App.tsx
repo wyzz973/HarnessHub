@@ -5,6 +5,7 @@ import type { ProviderView, ProviderWriteInput } from "../../src/contracts/provi
 import type { HarnessView, SessionView, WebState } from "../../src/contracts/web.js";
 import type { InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
 import { sessionId as validateSessionId } from "../../src/contracts/session.js";
+import { applySessionStreamFrame } from "./session-stream.js";
 import { ApiError, errorMessage, GatewayApi, requestKey } from "./api.js";
 import { ChatPage, effectiveProviderProblem, EMPTY_SELECTION, selectionDraft, selectionProblem, selectionRequest } from "./components/ChatPage.js";
 import type { SelectionDraft } from "./components/ChatPage.js";
@@ -47,6 +48,7 @@ export function App() {
   const [mutation, setMutation] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [streamAttempt, setStreamAttempt] = useState(0);
   const [editor, setEditor] = useState<ProviderView | "new" | null>(null);
   const [editorDirty, setEditorDirty] = useState(false);
   const [leaveAction, setLeaveAction] = useState<(() => void) | null>(null);
@@ -64,6 +66,7 @@ export function App() {
   const viewGeneration = useRef(0);
   const liveState = useRef<WebState | null>(null); liveState.current = state;
   const sessionIdRef = useRef<string | null>(initialRoute.id);
+  const liveSession = useRef<SessionView | null>(null);
   const operation = useRef(false);
   const pendingMessage = useRef<PendingMessage | null>(null);
   const pendingSwitchWrite = useRef<{ sessionId: string; selection: SelectionRequest; key: string } | null>(null);
@@ -95,6 +98,9 @@ export function App() {
   }, [api]);
   const acceptSession = useCallback((value: SessionView) => {
     if (!mounted.current || sessionIdRef.current !== value.id) return;
+    const live = liveSession.current;
+    if (live?.id === value.id && (live.version > value.version || live.lastSeq > value.lastSeq)) return;
+    liveSession.current = value;
     if (observedVersion.current?.id === value.id && observedVersion.current.version > value.version) return;
     observedVersion.current = { id: value.id, version: value.version };
     setSession(current => current && current.id === value.id && current.version > value.version ? current : value);
@@ -104,38 +110,57 @@ export function App() {
     const key = `${value.id}:${value.epoch}`;
     if (observedSelection.current !== key) { observedSelection.current = key; setDraft(selectionDraft(value.selection)); }
     if (pendingMessage.current?.sessionId === value.id && value.runs.some(run => run.commandId === pendingMessage.current?.sendKey)) pendingMessage.current.committed = true;
-    setState(current => current ? { ...current, sessions: current.sessions.map(summary => summary.id === value.id
-      ? { ...summary, selection: value.selection, status: value.status, activeRunId: value.activeRunId, updatedSeq: value.lastSeq,
-          title: value.messages.find(message => message.role === "user")?.text.slice(0, 80) ?? summary.title }
-      : summary) } : current);
+    setState(current => {
+      if (!current) return current;
+      const summary = { id: value.id, title: value.messages.find(message => message.role === "user")?.text.slice(0, 80) ?? "新对话",
+        status: value.status, workspace: value.workspace, selection: value.selection, updatedSeq: value.lastSeq, activeRunId: value.activeRunId };
+      return { ...current, sessions: current.sessions.some(item => item.id === value.id)
+        ? current.sessions.map(item => item.id === value.id ? summary : item) : [summary, ...current.sessions].slice(0, 1000) };
+    });
   }, []);
   useEffect(() => {
     if (!sessionId || !state) return;
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let failures = 0;
+    let stopped = false, failures = 0, animation: number | null = null, pending: SessionView | null = null;
     const controller = new AbortController();
-    const poll = async () => {
-      let delay = 2000;
-      try {
-        const value = await api.session(sessionId, AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]));
-        if (stopped) return;
-        failures = 0; setConnectionError(null); acceptSession(value);
-        delay = value.activeRunId || value.pendingSwitchId || value.runs.some(run => run.status === "queued") ? 500 : 2000;
-      } catch (failure: unknown) {
-        if (stopped) return;
-        if (failure instanceof ApiError && failure.code.includes("NOT_FOUND")) {
-          setSessionError(errorMessage(failure)); setSessionLoading(false); setConnectionError(null); return;
-        }
-        failures += 1; setConnectionError(errorMessage(failure));
-        delay = Math.min(15_000, 1000 * 2 ** Math.min(failures, 4));
-      }
-      if (!stopped) timer = setTimeout(() => void poll(), document.hidden ? Math.max(delay, 10_000) : delay);
+    const flush = () => { animation = null; const value = pending; pending = null; if (!stopped && sessionIdRef.current === sessionId && value) acceptSession(value); };
+    const stage = (value: SessionView) => {
+      liveSession.current = value; pending = value;
+      if (animation === null) animation = requestAnimationFrame(flush);
     };
-    void poll();
-    return () => { stopped = true; if (timer !== null) clearTimeout(timer); controller.abort(); };
-    // State is needed only to start after authentication. Snapshot revisions do not restart the polling owner.
-  }, [api, sessionId, state !== null, acceptSession]);
+    const wait = (ms: number): Promise<void> => new Promise(resolve => {
+      const finish = () => { clearTimeout(timer); controller.signal.removeEventListener("abort", finish); resolve(); };
+      const timer = setTimeout(finish, ms); controller.signal.addEventListener("abort", finish, { once: true });
+      if (controller.signal.aborted) finish();
+    });
+    void (async () => {
+      while (!stopped) {
+        try {
+          const current = liveSession.current, started = performance.now();
+          await api.streamSession(sessionId, current?.id === sessionId ? current.lastSeq : 0, controller.signal, frame => {
+            if (stopped || sessionIdRef.current !== sessionId) return;
+            const base = liveSession.current?.id === sessionId ? liveSession.current : null;
+            const next = applySessionStreamFrame(base, frame, sessionId);
+            setConnectionError(null); stage(next);
+          });
+          if (!stopped) {
+            if (performance.now() - started < 45_000) throw new ApiError("STREAM_EARLY_EOF", "实时连接提前结束。");
+            failures = 0; await wait(250);
+          }
+        } catch (failure: unknown) {
+          if (stopped || sessionIdRef.current !== sessionId) return;
+          if (failure instanceof ApiError && failure.code.includes("NOT_FOUND")) {
+            setSessionError(errorMessage(failure)); setSessionLoading(false); setConnectionError(null); return;
+          }
+          failures += 1;
+          const terminal = failures >= 8 || failure instanceof ApiError && ["AUTH_REQUIRED", "HOST_REJECTED", "ORIGIN_REJECTED"].includes(failure.code);
+          setConnectionError(terminal ? "实时连接未能恢复，历史和草稿已保留。点击重新连接可再试。" : "实时连接暂时中断，正在恢复；历史和草稿已保留。");
+          if (terminal) { setSessionLoading(false); return; }
+          await wait(Math.min(15000, 500 * 2 ** Math.min(failures, 5)));
+        }
+      }
+    })();
+    return () => { stopped = true; controller.abort(); if (animation !== null) cancelAnimationFrame(animation); pending = null; };
+  }, [api, sessionId, state !== null, streamAttempt, acceptSession]);
   useEffect(() => {
     if (!state) return;
     let stopped = false, failures = 0;
@@ -175,17 +200,17 @@ export function App() {
   };
   const navigate = (next: Page) => leave(() => { setPage(next); setEditor(null); setEditorDirty(false); setSidebarOpen(false); setError(null); });
   const newChat = () => leave(() => {
-    sessionIdRef.current = null; observedSelection.current = ""; pendingMessage.current = null;
+    sessionIdRef.current = null; liveSession.current = null; observedSelection.current = ""; pendingMessage.current = null;
     writeSessionRoute(null); setSessionId(null); setSession(null); setSessionLoading(false); setSessionError(null); setDraft({ ...EMPTY_SELECTION }); setMessageDraft(""); setChatKey(value => value + 1);
     setPage("chat"); setEditor(null); setEditorDirty(false); setSidebarOpen(false); setError(null); setConnectionError(null);
   });
   const selectSession = (id: string) => leave(() => {
-    if (sessionIdRef.current !== id) { sessionIdRef.current = id; observedSelection.current = ""; pendingMessage.current = null; writeSessionRoute(id); setSessionId(id); setSession(null); setSessionLoading(true); setSessionError(null); setMessageDraft(""); setChatKey(value => value + 1); }
+    if (sessionIdRef.current !== id) { sessionIdRef.current = id; liveSession.current = null; observedSelection.current = ""; pendingMessage.current = null; writeSessionRoute(id); setSessionId(id); setSession(null); setSessionLoading(true); setSessionError(null); setMessageDraft(""); setChatKey(value => value + 1); }
     setPage("chat"); setEditor(null); setEditorDirty(false); setSidebarOpen(false); setError(null); setConnectionError(null);
   });
   const chooseHarness = (harness: HarnessView) => leave(() => {
     const control = harness.controls.find(row => row.id === harness.defaultControlId && row.available) ?? harness.controls.find(row => row.available); if (!control) return;
-    sessionIdRef.current = null; observedSelection.current = ""; pendingMessage.current = null;
+    sessionIdRef.current = null; liveSession.current = null; observedSelection.current = ""; pendingMessage.current = null;
     writeSessionRoute(null); setSessionId(null); setSession(null); setSessionLoading(false); setSessionError(null); setDraft({ ...EMPTY_SELECTION, harnessId: harness.id, controlId: control.id }); setMessageDraft("");
     setChatKey(value => value + 1); setPage("chat"); setSidebarOpen(false); setError(null); setConnectionError(null);
   });
@@ -213,27 +238,39 @@ export function App() {
         id = created.id; request.sessionId = id; sessionIdRef.current = id; writeSessionRoute(id); setSessionId(id); acceptSession(created);
       }
       if (!request.committed) { await api.send(id, value, request.sendKey); request.committed = true; }
-      acceptSession(await api.session(id, AbortSignal.timeout(15_000)));
-      await refreshState();
       pendingMessage.current = null;
+      // The command ACK releases the draft. Durable facts arrive on the independently owned stream.
+      void api.session(id, AbortSignal.timeout(15_000)).then(acceptSession).catch(() => {
+        if (mounted.current && sessionIdRef.current === id) setConnectionError("消息已接收，正在恢复实时回复连接。历史和草稿已保留。");
+      });
     } catch (failure: unknown) {
-      if (failure instanceof ApiError && !["NETWORK_ERROR", "INVALID_RESPONSE", "UNCONFIRMED_REQUEST"].includes(failure.code) && !pendingMessage.current?.committed) pendingMessage.current = null;
+      const pending = pendingMessage.current, live = liveSession.current;
+      if (failure instanceof ApiError && ["NETWORK_ERROR", "INVALID_RESPONSE", "REQUEST_TIMEOUT"].includes(failure.code) && pending !== null && live !== null && pending.sessionId === live.id &&
+          live.runs.some(run => run.commandId === pending.sendKey && run.input === pending.text)) {
+        pendingMessage.current = null; setError(null); return;
+      }
+      if (failure instanceof ApiError && !["NETWORK_ERROR", "INVALID_RESPONSE", "REQUEST_TIMEOUT", "UNCONFIRMED_REQUEST"].includes(failure.code) && !pendingMessage.current?.committed) pendingMessage.current = null;
       if (mounted.current) setError(errorMessage(failure)); throw failure;
     } finally { endOperation(); }
   };
   const applySelection = async () => {
     if (!sessionId || !startOperation("switching")) return;
+    let submittedKey: string | null = null;
     try {
       const target = selectionRequest(draft), previous = pendingSwitchWrite.current;
       if (previous?.sessionId === sessionId && JSON.stringify(previous.selection) !== JSON.stringify(target))
         throw new ApiError("UNCONFIRMED_REQUEST", "上一次切换的接收结果还未确认。请保留原选择重试，或等待对话更新。");
       const request = previous?.sessionId === sessionId ? previous : { sessionId, selection: target, key: requestKey() };
-      pendingSwitchWrite.current = request;
+      pendingSwitchWrite.current = request; submittedKey = request.key;
       await api.switchSelection(sessionId, request.selection, request.key); pendingSwitchWrite.current = null;
       acceptSession(await api.session(sessionId, AbortSignal.timeout(15_000)));
     }
     catch (failure: unknown) {
-      if (failure instanceof ApiError && !["NETWORK_ERROR", "INVALID_RESPONSE", "UNCONFIRMED_REQUEST"].includes(failure.code)) pendingSwitchWrite.current = null;
+      if (failure instanceof ApiError && ["NETWORK_ERROR", "INVALID_RESPONSE", "REQUEST_TIMEOUT"].includes(failure.code) && liveSession.current?.id === sessionId &&
+          liveSession.current.switches.some(item => item.commandId === submittedKey)) {
+        pendingSwitchWrite.current = null; setError(null); return;
+      }
+      if (failure instanceof ApiError && !["NETWORK_ERROR", "INVALID_RESPONSE", "REQUEST_TIMEOUT", "UNCONFIRMED_REQUEST"].includes(failure.code)) pendingSwitchWrite.current = null;
       setError(errorMessage(failure));
     }
     finally { endOperation(); }
@@ -265,7 +302,7 @@ export function App() {
       pendingProviderWrite.current = null; setEditorDirty(false); setEditor(null);
     }
     catch (failure: unknown) {
-      if (failure instanceof ApiError && !["NETWORK_ERROR", "INVALID_RESPONSE", "UNCONFIRMED_REQUEST"].includes(failure.code)) pendingProviderWrite.current = null;
+      if (failure instanceof ApiError && !["NETWORK_ERROR", "INVALID_RESPONSE", "REQUEST_TIMEOUT", "UNCONFIRMED_REQUEST"].includes(failure.code)) pendingProviderWrite.current = null;
       setError(errorMessage(failure)); throw failure;
     }
     finally { endOperation(); }
@@ -293,7 +330,7 @@ export function App() {
       setUnconfirmedInstallations(current => current.filter(item => item.harnessId !== input.harnessId));
     } catch (failure: unknown) {
       const message = errorMessage(failure);
-      if (failure instanceof ApiError && !["NETWORK_ERROR", "INVALID_RESPONSE"].includes(failure.code)) { installationWrites.current.delete(input.harnessId); setError(message); }
+      if (failure instanceof ApiError && !["NETWORK_ERROR", "INVALID_RESPONSE", "REQUEST_TIMEOUT"].includes(failure.code)) { installationWrites.current.delete(input.harnessId); setError(message); }
       else setUnconfirmedInstallations(current => [{ harnessId: input.harnessId, action: input.action, message }, ...current.filter(item => item.harnessId !== input.harnessId)]);
     } finally { installationRequests.current.delete(input.harnessId); if (mounted.current) setSubmittingInstallations(current => current.filter(id => id !== input.harnessId)); }
   };
@@ -311,7 +348,7 @@ export function App() {
     cancellationRequests.current.add(job.id); setCancellingInstallations(current => [...current, job.id]); setError(null);
     const key = installationCancels.current.get(job.id) ?? requestKey(); installationCancels.current.set(job.id, key);
     try { acceptInstallation(await api.cancelInstallation(job.id, key)); installationCancels.current.delete(job.id); }
-    catch (failure: unknown) { if (failure instanceof ApiError && !["NETWORK_ERROR", "INVALID_RESPONSE"].includes(failure.code)) installationCancels.current.delete(job.id); setError(errorMessage(failure)); }
+    catch (failure: unknown) { if (failure instanceof ApiError && !["NETWORK_ERROR", "INVALID_RESPONSE", "REQUEST_TIMEOUT"].includes(failure.code)) installationCancels.current.delete(job.id); setError(errorMessage(failure)); }
     finally { cancellationRequests.current.delete(job.id); if (mounted.current) setCancellingInstallations(current => current.filter(id => id !== job.id)); }
   };
   const checkUpdates = async (ids?: readonly string[]) => {
@@ -323,9 +360,9 @@ export function App() {
   };
   const dirtyChanged = useCallback((dirty: boolean) => setEditorDirty(dirty), []);
   if (!state) return <div className="boot-screen"><BrandMark/><h1>Harness<span>Hub</span></h1>{bootError ? <><div className="boot-error" role="alert"><AlertCircle size={18}/><p>{bootError}</p></div><p className="boot-help">请使用本机网关启动时提供的入口链接。验证完成后，页面会自动隐藏链接中的令牌。</p><button className="button secondary" onClick={() => setBootAttempt(value => value + 1)}><RefreshCw size={15}/>重新连接</button></> : <div className="boot-progress" role="status"><Spinner/>正在连接你的工作空间</div>}</div>;
-  return <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}><a className="skip-link" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>跳到主要内容</a><Sidebar page={page} sessions={state.sessions} currentId={sessionId} open={sidebarOpen} collapsed={sidebarCollapsed} activeJobs={state.jobs.filter(installationActive).length} interactionBusy={mutation !== null} onCollapse={() => setSidebarCollapsed(value => !value)} onToggle={() => setSidebarOpen(value => !value)} onPage={navigate} onNew={newChat} onSession={selectSession}/>
+  return <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`} data-page={page}><a className="skip-link" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>跳到主要内容</a><Sidebar page={page} sessions={state.sessions} currentId={sessionId} open={sidebarOpen} collapsed={sidebarCollapsed} activeJobs={state.jobs.filter(installationActive).length} interactionBusy={mutation !== null} onCollapse={() => setSidebarCollapsed(value => !value)} onToggle={() => setSidebarOpen(value => !value)} onPage={navigate} onNew={newChat} onSession={selectSession}/>
     <main id="main-content" className="app-main" tabIndex={-1}>
-      {page === "chat" ? <ChatPage key={chatKey} session={session} sessionRequested={sessionId !== null} sessionError={sessionError} loading={sessionLoading} draft={draft} messageDraft={messageDraft} onMessageDraft={setMessageDraft} providers={state.providers} harnesses={state.harnesses} workspace={workspace} mutation={mutation} error={error} connectionError={connectionError} onDraft={setDraft} onWorkspace={setWorkspace} onSend={send} onApply={() => void applySelection()} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => setError(null)} onProviders={() => navigate("providers")} onNew={newChat} onMenu={() => setSidebarOpen(value => !value)}/>
+      {page === "chat" ? <ChatPage key={chatKey} session={session} sessionRequested={sessionId !== null} sessionError={sessionError} loading={sessionLoading} draft={draft} messageDraft={messageDraft} onMessageDraft={setMessageDraft} providers={state.providers} harnesses={state.harnesses} workspace={workspace} mutation={mutation} error={error} connectionError={connectionError} onRetryConnection={() => setStreamAttempt(value => value + 1)} onDraft={setDraft} onWorkspace={setWorkspace} onSend={send} onApply={() => void applySelection()} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => setError(null)} onProviders={() => navigate("providers")} onNew={newChat} onMenu={() => setSidebarOpen(value => !value)}/>
         : page === "providers" ? <ProvidersPage providers={state.providers} editor={editor} saving={mutation === "saving"} probes={probes} error={error} onEdit={provider => { setEditor(provider); setError(null); }} onBack={() => leave(() => { setEditor(null); setEditorDirty(false); setError(null); })} onSave={saveProvider} onProbe={provider => void probeProvider(provider)} onDirty={dirtyChanged} onDismissError={() => setError(null)} onMenu={() => setSidebarOpen(value => !value)}/>
           : <HarnessesPage api={api} harnesses={state.harnesses} jobs={state.jobs} scanning={mutation === "scanning"} checking={checkingUpdates} submitting={submittingInstallations} cancelling={cancellingInstallations} unconfirmed={unconfirmedInstallations} error={error} connectionError={managementConnectionError} onRescan={() => void rescan()} onCheckUpdates={ids => void checkUpdates(ids)} onInstall={install} onConfirm={confirmInstallation} onCancelJob={job => void cancelInstallation(job)} onDismissError={() => setError(null)} onMenu={() => setSidebarOpen(value => !value)} onChoose={chooseHarness}/>}
     </main>

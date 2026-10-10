@@ -6027,6 +6027,94 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/integration/management-service.test.ts"
+    },
+    {
+      "id": "G061-S02",
+      "task": "G061",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [],
+      "layer": "integration",
+      "scenario": "真实HTTP/SSE已提交首块先于完成、断连与重连事实恢复",
+      "expected": "无命令重派发；身份/水位、连接/背压/心跳/关闭有界；网络错误不取消Run",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/web-session-stream.test.ts"
+    },
+    {
+      "id": "G061-S01",
+      "task": "G061",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [],
+      "layer": "unit",
+      "scenario": "UTF8/SSE字节分片、协议预算、取消及canonical消息投影",
+      "expected": "任意合法分片保持文本；错身份/水位/半帧明确失败；旧消息不追加重复",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/unit/web-session-stream.test.ts"
+    },
+    {
+      "id": "G054-S01",
+      "task": "G054",
+      "requirements": [
+        "R01",
+        "R02",
+        "R09",
+        "R22"
+      ],
+      "invariants": [],
+      "layer": "e2e",
+      "scenario": "真实生产UI逐段显示、生成中取消、重载续接、Markdown和阅读滚动",
+      "expected": "输出在后端结束前可见；停止保留部分文本；编辑只填草稿；IME/窄屏/reducedmotion保持",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G001-S01",
+      "task": "G001",
+      "requirements": [
+        "R19",
+        "R23"
+      ],
+      "invariants": [],
+      "layer": "unit",
+      "scenario": "工程文档扫描与根运行数据/第三方安装文档分离",
+      "expected": "忽略根data/artifacts，但docs/data坏链接仍拒绝，必需检查非零失败",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tools/test_check_design.py"
+    },
+    {
+      "id": "G061-S03",
+      "task": "G061",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [],
+      "layer": "unit",
+      "scenario": "已接收命令的ACK正文断流、写请求期限与错误归属",
+      "expected": "正文transport失败不接受半JSON；business4xx保留；错session/不完整receipt拒绝；写请求不无限挂起",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/unit/web-api.test.ts"
+    },
+    {
+      "id": "G060-S01",
+      "task": "G060",
+      "requirements": [
+        "R20"
+      ],
+      "invariants": [],
+      "layer": "e2e",
+      "scenario": "真实Codex/私有模型配置/正式HTTP事实流在本地模型未完成前输出首块",
+      "expected": "真实Harness与DB/HTTP/Driver；首文本先于模型及Run终态；断线恢复不重复派发，最终原文完整且cleanup独立确认",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/real/live-web-stream.real.ts"
     }
   ]
 }

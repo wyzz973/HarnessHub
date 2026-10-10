@@ -785,7 +785,9 @@
         "tsconfig.json",
         "eslint.config.mjs",
         "tests/integration/g001.test.ts",
-        "tests/security/g001.test.ts"
+        "tests/security/g001.test.ts",
+        "tools/check_design.py",
+        "tools/test_check_design.py"
       ],
       "requirements": [
         "R19",
@@ -806,9 +808,10 @@
       "test_cases": [
         "G001-C01",
         "G001-C02",
-        "G001-C03"
+        "G001-C03",
+        "G001-S01"
       ],
-      "active_slice": "catalog-discovery"
+      "active_slice": "chat-stream-experience"
     },
     {
       "id": "G002",
@@ -2999,7 +3002,8 @@
         "src/contracts/web.ts",
         "src/web/server.ts",
         "src/cli/web.ts",
-        "tests/integration/web-server.test.ts"
+        "tests/integration/web-server.test.ts",
+        "src/web/session-stream.ts"
       ],
       "requirements": [
         "R01",
@@ -3030,7 +3034,7 @@
         "G050-P01",
         "G050-P02"
       ],
-      "active_slice": "provider-web"
+      "active_slice": "chat-stream-experience"
     },
     {
       "id": "G051",
@@ -3202,7 +3206,11 @@
         "web/src/assets/auggie.svg",
         "web/src/assets/dirac.svg",
         "web/src/assets/nova.svg",
-        "web/src/assets/stakpak.svg"
+        "web/src/assets/stakpak.svg",
+        "web/src/session-stream.ts",
+        "web/src/components/ChatComposer.tsx",
+        "web/src/components/ChatMessage.tsx",
+        "web/src/components/StreamingMarkdown.tsx"
       ],
       "requirements": [
         "R01",
@@ -3231,9 +3239,10 @@
         "G054-C03",
         "G054-P01",
         "G054-P02",
-        "G054-M01"
+        "G054-M01",
+        "G054-S01"
       ],
-      "active_slice": "management-workbench"
+      "active_slice": "chat-stream-experience"
     },
     {
       "id": "G055",
@@ -3541,7 +3550,8 @@
         "tests/real/gemini-provider.real.ts",
         "tests/real/harness-provider-switch.real.ts",
         "tests/fixtures/managed-inventory-peer.mjs",
-        "tests/real/managed-install.real.ts"
+        "tests/real/managed-install.real.ts",
+        "tests/real/live-web-stream.real.ts"
       ],
       "requirements": [
         "R04",
@@ -3576,9 +3586,10 @@
         "G060-C05",
         "G060-P01",
         "G060-P02",
-        "G060-M01"
+        "G060-M01",
+        "G060-S01"
       ],
-      "active_slice": "public-session"
+      "active_slice": "chat-stream-experience"
     },
     {
       "id": "G061",
@@ -3600,7 +3611,10 @@
         "src/infrastructure/http/harness-routes.ts",
         "tests/integration/g061.test.ts",
         "tests/integration/web-management.test.ts",
-        "tests/integration/managed-discovery.test.ts"
+        "tests/integration/managed-discovery.test.ts",
+        "tests/integration/web-session-stream.test.ts",
+        "tests/unit/web-session-stream.test.ts",
+        "tests/unit/web-api.test.ts"
       ],
       "requirements": [
         "R03",
@@ -3629,9 +3643,12 @@
         "G061-C03",
         "G061-M01",
         "G061-M02",
-        "G061-M03"
+        "G061-M03",
+        "G061-S01",
+        "G061-S02",
+        "G061-S03"
       ],
-      "active_slice": "management-workbench"
+      "active_slice": "chat-stream-experience"
     },
     {
       "id": "G062",

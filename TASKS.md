@@ -462,13 +462,15 @@
 - eslint.config.mjs
 - tests/integration/g001.test.ts
 - tests/security/g001.test.ts
+- tools/check_design.py
+- tools/test_check_design.py
 
 验收：
 - 固定版本可复现且不修改锁文件
 - 必需检查非零拒绝
 - 变量和HOME隔离，秘密不被继承
 
-场景：G001-C01, G001-C02, G001-C03。
+场景：G001-C01, G001-C02, G001-C03, G001-S01。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1534,6 +1536,7 @@
 - src/web/server.ts
 - src/cli/web.ts
 - tests/integration/web-server.test.ts
+- src/web/session-stream.ts
 
 验收：
 - 复用应用语义，202只表受理
@@ -1637,13 +1640,17 @@
 - web/src/assets/dirac.svg
 - web/src/assets/nova.svg
 - web/src/assets/stakpak.svg
+- web/src/session-stream.ts
+- web/src/components/ChatComposer.tsx
+- web/src/components/ChatMessage.tsx
+- web/src/components/StreamingMarkdown.tsx
 
 验收：
 - 公共Session身份与历史保留
 - 不提前展示新Harness已生效
 - 可操作且不持有独立业务状态
 
-场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01。
+场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1789,6 +1796,7 @@
 - tests/real/harness-provider-switch.real.ts
 - tests/fixtures/managed-inventory-peer.mjs
 - tests/real/managed-install.real.ts
+- tests/real/live-web-stream.real.ts
 
 验收：
 - 记录通过/失败/未覆盖，不能称全协议认证
@@ -1797,7 +1805,7 @@
 - 真实HTTP/Store/IPC/原生进程与产物/清理完整可核对
 - 真实HTTP/Store/IPC/原生进程与产物/清理完整可核对
 
-场景：G060-C01, G060-C02, G060-C03, G060-C04, G060-C05, G060-P01, G060-P02, G060-M01。
+场景：G060-C01, G060-C02, G060-C03, G060-C04, G060-C05, G060-P01, G060-P02, G060-M01, G060-S01。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1812,13 +1820,16 @@
 - tests/integration/g061.test.ts
 - tests/integration/web-management.test.ts
 - tests/integration/managed-discovery.test.ts
+- tests/integration/web-session-stream.test.ts
+- tests/unit/web-session-stream.test.ts
+- tests/unit/web-api.test.ts
 
 验收：
 - 操作复用Catalog服务且管理身份正确
 - 明确拒绝或幂等，不绕过排空规则
 - 旧执行保留版本，新准入遵循新状态
 
-场景：G061-C01, G061-C02, G061-C03, G061-M01, G061-M02, G061-M03。
+场景：G061-C01, G061-C02, G061-C03, G061-M01, G061-M02, G061-M03, G061-S01, G061-S02, G061-S03。
 
 禁止范围：不修改其他任务所有权文件；契约冻结不表示应用实现或真实链路验收。
 

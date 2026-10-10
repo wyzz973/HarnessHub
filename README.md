@@ -17,6 +17,8 @@ pnpm web --cwd /absolute/workspace --data-dir data --port 4317
 
 将工作目录换成已有目录，打开启动时打印的一次性链接。服务只监听127.0.0.1；链接中的认证令牌兑换后从地址栏移除，刷新使用本机cookie。当前对话ID保留在页面fragment；关页面不取消任务，Ctrl+C等待清理并保留历史。服务独占该data-dir；直接使用CLI同数据根前先停止服务。
 
+对话现通过已提交事实的SSE实时显示回复，刷新或重连不会重新执行消息。消息区支持流式Markdown、生成反馈、阅读时暂停滚动、复制与执行详情；停止后保留部分内容。输入区为自动增长文本框和紧凑选择器，高级配置按需展开。短回复若模型几乎同时返回，仍可能一次显示；没有人工打字延迟。验收见[实时对话记录](docs/verification/live-chat-2026-10-10.md)，可单独运行 `pnpm test:real:stream` 验证真实Codex和本地确定性Provider的首块/重连。
+
 在 Providers 添加名称、协议、Base URL、模型 ID/默认模型与API Key，保存后“测试连接”只验证模型目录可达。新对话选择Harness、Provider、Model再发送。中途改选需点击“应用选择”，当前一轮收敛后才下一轮生效；编辑Provider不会自动改变已有会话的固定版本，可显式“使用最新”再应用。
 
 当前受管组合为 **Codex + OpenAI Responses**、**Gemini CLI + Gemini（API Key）**。其他产品继续检测，但协议/受管配置能力单独标明。OpenAI/Anthropic连接地址通常含/v1；Gemini填写API服务根。密钥只写入本机加密vault，不回显到UI/Session；同OS用户可访问主密钥，本版不宣称系统钥匙串隔离。

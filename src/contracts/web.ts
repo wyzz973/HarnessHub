@@ -48,6 +48,10 @@ export interface EventPage {
   readonly nextSeq: number;
   readonly hasMore: boolean;
 }
+/** Canonical committed UI facts. Message frames replace the full message; they are not append-only deltas. */
+export type SessionStreamFrame =
+  | { readonly type: "snapshot"; readonly session: SessionView }
+  | { readonly type: "message"; readonly sessionId: string; readonly version: number; readonly lastSeq: number; readonly message: PublicMessage };
 export interface InstallationLogPage {
   readonly entries: readonly InstallationLog[];
   readonly nextSeq: number;

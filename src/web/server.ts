@@ -13,6 +13,7 @@ import { inventory } from "../infrastructure/catalog/inventory-composition.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
 import { supportedProviderProtocols } from "../contexts/provider/domain/provider.js";
 import { observedPackageVersion } from "../infrastructure/management/system-version.js";
+import { SessionStreamError, SessionStreamHub } from "./session-stream.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -118,7 +119,7 @@ function view(snapshot: SessionSnapshot): SessionView {
     messages: snapshot.messages, runs: snapshot.runs, switches: snapshot.switches };
 }
 function publicFailure(error: unknown): { readonly status: number; readonly code: string; readonly message: string } {
-  if (error instanceof HttpError) return error;
+  if (error instanceof HttpError || error instanceof SessionStreamError) return error;
   if (error instanceof SessionError || error instanceof ProviderError || error instanceof ManagementError) {
     const code = error.code;
     const status = code.includes("NOT_FOUND") ? 404 : code === "INVALID_INPUT" ? 400 : code.includes("LIMIT") || code === "QUEUE_FULL" ? 429
@@ -168,7 +169,12 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT") return assetPath;
     throw error;
   });
-  const app = (options.application ?? composeApplication)(options.root, () => {});
+  let app: ReturnType<typeof composeApplication>;
+  const streams = new SessionStreamHub(id => view(app.runtime.read(id)), {}, failure => {
+    const fault = publicFailure(failure.error);
+    process.stderr.write("HarnessGateway: SESSION_STREAM_READ_FAILED (" + app.providers.redact(fault.code).slice(0, 128) + ")\n");
+  });
+  app = (options.application ?? composeApplication)(options.root, event => streams.publish(event));
   let origin = "", host = "", running = 0, stopping = false, closing: Promise<void> | null = null;
   const bootstrap = randomBytes(32).toString("hex"), bootstrapExpires = Date.now() + BOOTSTRAP_MS;
   let bootstrapAvailable = true;
@@ -300,6 +306,20 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         json(response, 201, view(await app.runtime.create(configuration, select(input.selection), command(input.commandId)))); return;
       }
     }
+    const streamRoute = /^\/api\/v1\/sessions\/([^/]+)\/events\/stream$/u.exec(path);
+    if (streamRoute && method === "GET") {
+      queries(url, ["afterSeq"]);
+      const queryCursor = url.searchParams.get("afterSeq"), headerCursor = request.headers["last-event-id"];
+      if (headerCursor !== undefined && typeof headerCursor !== "string") throw new HttpError(400, "INVALID_INPUT", "Invalid Last-Event-ID");
+      if (queryCursor !== null && headerCursor !== undefined && queryCursor !== headerCursor) throw new HttpError(400, "INVALID_INPUT", "Conflicting session stream cursors");
+      const after = cursor(queryCursor ?? headerCursor ?? null, 0, 0, Number.MAX_SAFE_INTEGER);
+      streams.open(sessionId(streamRoute[1]!), after, login.expires, response, () => {
+        headers(response); response.statusCode = 200; response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+        response.setHeader("Cache-Control", "no-cache, no-transform"); response.setHeader("Connection", "keep-alive"); response.setHeader("X-Accel-Buffering", "no");
+        response.flushHeaders();
+      });
+      return;
+    }
     const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|cancel|close|events))?$/u.exec(path);
     if (sessionRoute) {
       const id = sessionId(sessionRoute[1]!), action = sessionRoute[2];
@@ -333,12 +353,13 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   const close = (): Promise<void> => {
     if (closing) return closing;
     stopping = true;
+    streams.close();
     closing = (async () => {
       const listener = new Promise<void>((done, reject) => server.close(error => error ? reject(error) : done()));
       // Bound even sockets that have not completed their headers; durable execution is closed separately.
       const deadline = setTimeout(() => server.closeAllConnections(), 12000); deadline.unref();
       server.closeIdleConnections();
-      let failure: unknown;
+      let failure: unknown = streams.readFailure?.error ?? streams.diagnosticFailure;
       try { await app.runtime.close(); } catch (error) { failure = error; }
       try { await listener; } catch (error) { failure ??= error; } finally { clearTimeout(deadline); }
       try { await app.management.shutdown(); } catch (error) { failure ??= error; }
@@ -357,6 +378,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     host = "127.0.0.1:" + address.port; origin = "http://" + host;
     return { url: origin + "/#token=" + bootstrap, close };
   } catch (error) {
+    streams.close();
     try { await app.runtime.close(); } finally { try { await app.management.shutdown(); } finally { try { await app.providers.shutdown(); } finally { app.store.close(); } } }
     throw error;
   }

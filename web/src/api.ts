@@ -1,5 +1,6 @@
+import { consumeSessionEventStream, SessionStreamError } from "./session-stream.js";
 import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
-import type { AuthSession, HarnessView, InstallationLogPage, SessionSummary, SessionView, WebState } from "../../src/contracts/web.js";
+import type { AuthSession, HarnessView, InstallationLogPage, SessionSummary, SessionView, SessionStreamFrame, WebState } from "../../src/contracts/web.js";
 import type { HarnessManagementView, InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
 import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
 import { commandId, messageId, runId, switchId } from "../../src/contracts/session.js";
@@ -101,12 +102,32 @@ export function decodeSession(value: unknown): SessionView {
     workspace: text(row.workspace), selection: selection(row.selection), activeRunId: nullableText(row.activeRunId), pendingSwitchId: nullableText(row.pendingSwitchId),
     messages: list(row.messages, decodeMessage, 1024), runs: list(row.runs, decodeRun, 256), switches: list(row.switches, decodeSwitch, 1024) };
 }
+/** Decodes only canonical public facts; stream framing and projection validate their watermarks. */
+export function decodeSessionStreamFrame(value: unknown): SessionStreamFrame {
+  const row = record(value);
+  const keys = row.type === "snapshot" ? ["type", "session"] : ["type", "sessionId", "version", "lastSeq", "message"];
+  if (Object.keys(row).some(key => !keys.includes(key)) || keys.some(key => !(key in row))) return invalid();
+  if (row.type === "snapshot") return { type: "snapshot", session: decodeSession(row.session) };
+  if (row.type !== "message") return invalid();
+  const version = number(row.version), lastSeq = number(row.lastSeq), message = decodeMessage(row.message);
+  if (version < 1 || lastSeq < 0 || message.role !== "assistant" || message.seq < 0 || message.seq > lastSeq) return invalid();
+  return { type: "message", sessionId: text(row.sessionId), version, lastSeq, message };
+}
 function decodeState(value: unknown): WebState {
   const row = record(value);
   return { workspace: text(row.workspace), providers: list(row.providers, decodeProvider, 256), harnesses: list(row.harnesses, decodeHarness, 256), sessions: list(row.sessions, decodeSummary, 1000), jobs: list(row.jobs, decodeInstallationJob, 100) };
 }
 function decodeAuth(value: unknown): AuthSession { return { csrfToken: text(record(value).csrfToken) }; }
-function acknowledge(value: unknown): void { record(value); }
+function acknowledge(value: unknown, session: string, result: "runId" | "switchId" | "target"): void {
+  const row = record(value);
+  if (row.sessionId !== session || Object.keys(row).some(key => !["sessionId", result, "replayed"].includes(key))) return invalid();
+  bool(row.replayed);
+  try {
+    if (result === "switchId") switchId(text(row.switchId));
+    else if (result === "runId") runId(text(row.runId));
+    else if (row.target !== null) runId(text(row.target));
+  } catch { return invalid(); }
+}
 
 let pageBootstrapToken: string | null | undefined;
 function bootstrapToken(): string | null {
@@ -150,16 +171,46 @@ export class GatewayApi {
   }
   state(signal?: AbortSignal): Promise<WebState> { return this.request("/state", "GET", undefined, decodeState, signal); }
   session(id: string, signal?: AbortSignal): Promise<SessionView> { return this.request(`/sessions/${encodeURIComponent(id)}`, "GET", undefined, decodeSession, signal); }
+  /** Owns one cancellable fact stream; reconnecting never submits a conversation command. */
+  async streamSession(id: string, afterSeq: number, signal: AbortSignal, onFrame: (frame: SessionStreamFrame) => void): Promise<void> {
+    const deadline = new AbortController();
+    const timeout = setTimeout(() => deadline.abort(new DOMException("Session stream deadline exceeded", "TimeoutError")), 75_000);
+    const attempt = AbortSignal.any([signal, deadline.signal]);
+    try {
+      let response: Response;
+      try {
+        response = await fetch(`/api/v1/sessions/${encodeURIComponent(id)}/events/stream?afterSeq=${afterSeq}`, {
+          method: "GET", credentials: "same-origin", cache: "no-store", redirect: "error", signal: attempt, headers: { Accept: "text/event-stream" },
+        });
+      } catch (error: unknown) {
+        if (attempt.aborted) throw error;
+        throw new ApiError("NETWORK_ERROR", "实时回复连接中断，历史和草稿已保留。");
+      }
+      if (!response.ok) {
+        const error = publicError(await readBoundedJson(response));
+        throw new ApiError(error?.code ?? "REQUEST_FAILED", error?.message ?? "实时回复连接未能建立。");
+      }
+      if (!response.headers.get("Content-Type")?.toLowerCase().startsWith("text/event-stream") || response.body === null) {
+        await response.body?.cancel(); return invalid();
+      }
+      let opened = false;
+      await consumeSessionEventStream(response.body, { signal: attempt, decode: decodeSessionStreamFrame, maxFrameBytes: 8 * 1024 * 1024, onFrame: frame => {
+        if (!opened && frame.type !== "snapshot") throw new ApiError("STREAM_PROTOCOL", "实时连接缺少起始会话事实。");
+        opened = true; onFrame(frame);
+      } });
+      if (!opened) throw new ApiError("STREAM_PROTOCOL", "实时连接没有返回会话事实。");
+    } finally { clearTimeout(timeout); }
+  }
   createSession(workspace: string, selection: SelectionRequest, key: string): Promise<SessionView> {
     return this.request("/sessions", "POST", { workspace, selection, commandId: key }, decodeSession);
   }
   async send(id: string, value: string, key: string): Promise<void> {
-    await this.request(`/sessions/${encodeURIComponent(id)}/messages`, "POST", { text: value, commandId: key }, acknowledge);
+    await this.request(`/sessions/${encodeURIComponent(id)}/messages`, "POST", { text: value, commandId: key }, value => acknowledge(value, id, "runId"));
   }
   async switchSelection(id: string, selection: SelectionRequest, key: string): Promise<void> {
-    await this.request(`/sessions/${encodeURIComponent(id)}/switches`, "POST", { selection, commandId: key }, acknowledge);
+    await this.request(`/sessions/${encodeURIComponent(id)}/switches`, "POST", { selection, commandId: key }, value => acknowledge(value, id, "switchId"));
   }
-  async cancel(id: string, key: string): Promise<void> { await this.request(`/sessions/${encodeURIComponent(id)}/cancel`, "POST", { commandId: key }, acknowledge); }
+  async cancel(id: string, key: string): Promise<void> { await this.request(`/sessions/${encodeURIComponent(id)}/cancel`, "POST", { commandId: key }, value => acknowledge(value, id, "target")); }
   closeSession(id: string, key: string): Promise<SessionView> { return this.request(`/sessions/${encodeURIComponent(id)}/close`, "POST", { commandId: key }, decodeSession); }
   writeProvider(input: ProviderWriteInput, key: string, current?: ProviderView): Promise<ProviderView> {
     return this.request(current ? `/providers/${encodeURIComponent(current.id)}` : "/providers", current ? "PATCH" : "POST",
@@ -181,22 +232,25 @@ export class GatewayApi {
   cancelInstallation(id: string, key: string): Promise<InstallationJobView> { return this.request(`/installation-jobs/${encodeURIComponent(id)}/cancel`, "POST", { commandId: key }, decodeInstallationJob); }
   installationLogs(id: string, afterSeq: number, signal?: AbortSignal): Promise<InstallationLogPage> { return this.request(`/installation-jobs/${encodeURIComponent(id)}/logs?afterSeq=${afterSeq}&limit=50`, "GET", undefined, decodeLogPage, signal); }
   private async request<T>(path: string, method: "GET" | "POST" | "PATCH", body: unknown, decode: (value: unknown) => T, signal?: AbortSignal): Promise<T> {
-    let response: Response;
+    const deadline = new AbortController();
+    const timeout = setTimeout(() => deadline.abort(new DOMException("Request deadline exceeded", "TimeoutError")), 15_000);
+    const attempt = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
     try {
-      response = await fetch("/api/v1" + path, { method, credentials: "same-origin", ...(signal ? { signal } : {}),
+      const response = await fetch("/api/v1" + path, { method, credentials: "same-origin", signal: attempt,
         headers: { Accept: "application/json", ...(body === undefined ? {} : { "Content-Type": "application/json" }),
           ...(this.csrfToken === null || method === "GET" ? {} : { "X-CSRF-Token": this.csrfToken }) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      const payload = await readBoundedJson(response);
+      if (!response.ok) {
+        const error = publicError(payload);
+        throw new ApiError(error?.code ?? "REQUEST_FAILED", error?.message ?? "请求未能完成。");
+      }
+      return decode(payload);
     } catch (error: unknown) {
-      if (signal?.aborted) throw error;
+      if (signal?.aborted || error instanceof ApiError) throw error;
+      if (deadline.signal.aborted) throw new ApiError("REQUEST_TIMEOUT", "请求响应超时，请确认已接收的结果后重试。");
       throw new ApiError("NETWORK_ERROR", "暂时无法连接本机网关。请确认服务仍在运行，再试一次。");
-    }
-    const payload = await readBoundedJson(response);
-    if (!response.ok) {
-      const error = publicError(payload);
-      throw new ApiError(error?.code ?? "REQUEST_FAILED", error?.message ?? "请求未能完成。");
-    }
-    return decode(payload);
+    } finally { clearTimeout(timeout); }
   }
 }
 async function readBoundedJson(response: Response): Promise<unknown> {
@@ -219,6 +273,7 @@ async function readBoundedJson(response: Response): Promise<unknown> {
 }
 export function requestKey(): string { return "web-" + crypto.randomUUID(); }
 export function errorMessage(error: unknown): string {
+  if (error instanceof SessionStreamError) return "实时回复状态暂时无法同步，历史和草稿已保留。";
   if (error instanceof DOMException && error.name === "TimeoutError") return "网关响应超时，请稍后重试。";
   return error instanceof Error ? error.message : "请求未能完成，请重试。";
 }

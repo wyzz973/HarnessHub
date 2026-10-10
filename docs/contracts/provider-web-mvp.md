@@ -34,7 +34,17 @@ Provider 保存名称、协议、Base URL、模型列表、默认模型、启用
 
 服务只绑定127.0.0.1，同源静态页面与/api/v1。一次性启动链接fragment token不进入HTTP URL，兑换HttpOnly/SameSite=Strict cookie；写需要精确Origin与CSRF/JSON，精确Host防重绑定。刷新凭cookie重新取得内存CSRF；浏览器不保存Provider key。
 
-Web DTO屏蔽commands/fingerprints与私有configuration引用，保留Run/switch/selection/messaging事实。认证失败不可继续；运行前需实际可用control；错误保留可读说明，未知/blocked不能自动恢复。关闭页面不会取消Run。游标轮询从已提交seq读取1..100个事件，或者前端有界轮询实际Session；失败不造成功状态。
+Web DTO屏蔽commands/fingerprints与私有configuration引用，保留Run/switch/selection/messaging事实。认证失败不可继续；运行前需实际可用control；错误保留可读说明，未知/blocked不能自动恢复。关闭页面不会取消Run。JSON事件查询仍从已提交seq读取1..100个事件；正常对话通过下述事实流更新，失败不造成功状态。
+
+### 实时对话事实流（ADR-013）
+
+同源认证 `GET /api/v1/sessions/:id/events/stream` 接受 `afterSeq` 或 `Last-Event-ID`，同时提供时必须一致；负数、非规范整数和未来水位明确拒绝。每条SSE的事件名为 `session`，id等于已提交的lastSeq；首连和重连发送当前完整公共Session快照，独立文本提交发送完整canonical消息及version/lastSeq，状态变化发送快照。客户端按身份和水位替换事实，不重复追加文本；缺帧通过新快照补齐，不重新发送消息命令。
+
+订阅先登记再读快照；默认同时最多8条流、每帧最多8MiB、15秒心跳、单连接最多60秒且不超过登录有效期。写背压只保留一个“需要最新快照”标记，drain后读持久事实；10秒仍未drain则关闭该订阅。HTTP关闭先关闭所有订阅，再等待执行与存储关闭。网络错误只影响订阅，权威读取错误保持原来的fail-closed责任并可在关闭时报告。
+
+浏览器验证UTF-8/帧字节、JSON字段、消息归属和递增水位；按浏览器刷新周期合并显示，原始文本仍来自真实提交。异常连接最多连续尝试8次，退避有上限且可取消；认证失败停止，用户可显式重新连接。连接正常到期则重新读取快照。500ms完整Session轮询退出对话更新路径，目录和安装状态仍独立刷新。
+
+消息区使用有界阅读宽度、流式Markdown和生成反馈；自动跟随最新回复，用户上滚后暂停跟随。复制取得原始Markdown，编辑只放回草稿；执行详情按需展开，正常结束不常驻每轮页脚。失败、停止和unknown保留已收到的内容；closed/blocked只读，辅助技术状态也不能宣称可继续执行。输入框自动增长，选择器为紧凑chip，高级控制入口与固定Provider版本放入披露面板；IME、窄屏和reduced-motion分别验证。依据与实际结果见[ADR-013](../decisions/0013-live-chat-experience.md)和[验收记录](../verification/live-chat-2026-10-10.md)。
 
 HTTP body≤128KiB、response≤8MiB、资产≤4MiB、并发请求≤16、连接≤32；body10s和半包连接关闭均有界。进程关闭等待Run停止/资源清理、HTTP请求、Provider探测，再关闭业务Store。停止服务保留Session历史。
 

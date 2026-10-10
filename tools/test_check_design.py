@@ -135,6 +135,22 @@ class DesignChecks(unittest.TestCase):
         errors = self.file_fixture_errors(lambda root, views: (root / "broken.md").write_text("[bad](missing.md)\n"))
         self.assertTrue(any("missing local link" in item for item in errors))
 
+    def test_runtime_vendor_docs_do_not_enter_repository_link_checks(self):
+        def mutate(root, views):
+            for directory in ["data/vendor", "artifacts/fixture"]:
+                file = root / directory / "README.md"
+                file.parent.mkdir(parents=True)
+                file.write_text("[vendor omitted file](absent.md)\n")
+        self.assertEqual(self.file_fixture_errors(mutate), [])
+
+    def test_named_data_directory_in_docs_still_rejects_dead_links(self):
+        def mutate(root, views):
+            file = root / "docs/data/README.md"
+            file.parent.mkdir(parents=True)
+            file.write_text("[bad](absent.md)\n")
+        errors = self.file_fixture_errors(mutate)
+        self.assertTrue(any("missing local link" in item for item in errors))
+
     def test_rejects_link_outside_project(self):
         errors = self.file_fixture_errors(lambda root, views: (root / "broken.md").write_text("[bad](../foreign.md)\n"))
         self.assertTrue(any("leaves project" in item for item in errors))
