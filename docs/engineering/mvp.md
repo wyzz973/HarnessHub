@@ -17,3 +17,5 @@
 每个切片完成最小设计与验证再推进。当前开放S01/S02及[ADR-010](../decisions/0010-public-session-mvp.md)的S03/S04限定路径；原生会话与公共Session仍分离。[ADR-011](../decisions/0011-provider-web-mvp.md)另开放Provider资源和HTTP/图形界面；[ADR-012](../decisions/0012-harness-management-workbench.md)另开放本机私有安装/升级/版本及UI重做，当前切片验收已完成；自动路由后置，真实模型和全部厂商组合不能从合成测试推断。
 
 S08的[ADR-013](../decisions/0013-live-chat-experience.md)增量已实现：已提交事实的实时SSE、薄客户端投影、重连与紧凑对话组件。首块先于完成、刷新不重派发、部分文本取消与滚动/Markdown通过本机浏览器和真实Codex验证，详见[实时对话验收](../verification/live-chat-2026-10-10.md)。
+
+[ADR-014](../decisions/0014-conversation-failure-recovery.md)已实现S03/S04/S07/S08的故障恢复调整：连接失败不锁死会话，显式恢复不重跑旧任务，会话级故障不停止其他工作区，草稿往返/刷新保留，结束会话明确确认。v3迁移与当前用户旧会话的真实连接恢复分别验证，详见[交互审查与验收](../verification/conversation-recovery-2026-10-10.md)。

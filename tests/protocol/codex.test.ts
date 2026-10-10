@@ -118,3 +118,12 @@ test("Codex duplicate completion retains first backend fact but exposes connecti
     assert.equal(cleanup.protocolFailure?.code, "INVALID_STATE");
   } finally { await driver.close(); }
 });
+
+test("an explicit Codex rejection before a turn exists fails the request without manufacturing an unknown execution", async () => {
+  const driver = control("prompt-rejected");
+  try {
+    const id = await ready(driver), output: ControlEvent[] = [], run = await driver.startText(id, "rejected request", value => output.push(value));
+    assert.deepEqual(await run.result, { status: "failed", reason: "request_rejected" }); assert.deepEqual(output, []);
+    assert.equal((await driver.close()).protocolFailure, null);
+  } finally { await driver.close(); }
+});

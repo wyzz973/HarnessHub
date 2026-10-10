@@ -27,8 +27,11 @@ export function ChatComposer(props: ComposerProps) {
   const provider = providers.find(row => row.id === draft.providerId);
   const controls = harness?.controls.filter(control => control.available) ?? [];
   const selectedControl = harness?.controls.find(control => control.id === draft.controlId);
-  const disabled = props.mutation !== null || props.loading || props.sessionError !== null || pending || blocked;
-  const disableSend = disabled || active !== null || dirty || problem !== null || bytes > 64 * 1024 || !props.messageDraft.trim();
+  const readonly = session?.status === "closed";
+  const disabled = props.mutation !== null || props.loading || props.sessionError !== null || pending || readonly;
+  const disableSend = disabled || blocked || active !== null || dirty || problem !== null || bytes > 64 * 1024 || !props.messageDraft.trim();
+  const unknown = session?.runs.filter(run => run.status === "unknown") ?? [];
+  const resourcesUnconfirmed = unknown.some(run => run.cleanup?.closed !== true);
   const outdated = provider !== undefined && draft.providerRevision !== null && provider.revision !== draft.providerRevision;
   useLayoutEffect(() => {
     const element = inputRef.current;
@@ -62,7 +65,7 @@ export function ChatComposer(props: ComposerProps) {
       disabled: !available, reason: row.installed ? "已发现程序，控制入口尚未就绪" : "尚未安装，请在 Harnesses 中管理",
     };
   }).sort((a, b) => Number(Boolean(a.disabled)) - Number(Boolean(b.disabled)));
-  const providerOptions: PickerOption[] = [{ value: "", label: "Harness 当前配置", description: "沿用执行者自己的模型设置", icon: <BrandMark small/> }, ...providers.map(row => {
+  const providerOptions: PickerOption[] = [{ value: "", label: "Harness 原生连接", description: "由 Harness 提供模型连接，需要完成相应认证", icon: <BrandMark small/> }, ...providers.map(row => {
     const supported = !harness || harness.providerProtocols.includes(row.protocol);
     const missingKey = row.protocol === "gemini" && !row.hasCredential;
     return {
@@ -79,16 +82,17 @@ export function ChatComposer(props: ComposerProps) {
   const noteDanger = bytes > 64 * 1024 || problem !== null && !onboarding;
   const note = bytes > 64 * 1024 ? "单条消息不能超过 64 KiB，请缩短内容。"
     : active?.cancelRequested ? "停止已受理，正在等待执行结束和资源清理。"
-    : pending ? "选择切换等待生效，暂时停止发送。"
+    : blocked && !readonly ? resourcesUnconfirmed ? "资源停止还未确认。你可以编辑草稿、查看历史；核实后再恢复执行。" : "选择可用的 Harness 后，检查连接并继续这次对话。"
+    : pending ? active ? "当前回复结束后应用新选择，草稿已保留。" : "正在连接并验证新选择，草稿已保留。"
     : dirty ? problem ?? "应用选择后，继续这次对话。"
     : problem;
 
   return <div className="composer-wrap">
     <form className={`composer ${blocked ? "unavailable" : ""}`} onSubmit={event => { event.preventDefault(); void send(); }}>
       <label className="sr-only" htmlFor="message-input">发送消息</label>
-      <textarea id="message-input" ref={inputRef} rows={1} value={props.messageDraft} disabled={blocked}
+      <textarea id="message-input" ref={inputRef} rows={1} value={props.messageDraft} disabled={readonly}
         aria-describedby={note ? "composer-notice" : "composer-keyboard-hint"}
-        placeholder={blocked ? "这个对话暂时无法继续发送消息" : session ? "继续这次对话…" : "说说你想完成的事…"}
+        placeholder={readonly ? "对话已关闭，历史仍可查看" : blocked ? "先写下想继续的内容，恢复后发送…" : session ? "继续这次对话…" : "说说你想完成的事…"}
         onChange={event => props.onMessageDraft(event.target.value)} onKeyDown={event => {
           if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
             event.preventDefault();
@@ -113,14 +117,14 @@ export function ChatComposer(props: ComposerProps) {
             {controls.length > 1 ? <div className="advanced-control"><SearchPicker label="选择控制入口" value={draft.controlId} placeholder="控制入口" options={controls.map(control => ({ value: control.id, label: protocolLabel(control.protocol), description: control.id }))} disabled={disabled} onChange={value => props.onDraft({ ...draft, controlId: value })}/></div>
               : <div className="execution-setting"><span>控制入口</span><strong>{selectedControl ? protocolLabel(selectedControl.protocol) : "尚未选择"}</strong>{draft.controlId ? <code>{draft.controlId}</code> : null}</div>}
             {provider && draft.providerRevision !== null ? <div className="execution-setting"><span>Provider 配置</span><strong>{provider.name} · v{draft.providerRevision}</strong>{outdated ? <button type="button" className="revision-update" disabled={disabled} onClick={() => props.onDraft({ ...draft, providerRevision: provider.revision, model: provider.models.includes(draft.model) ? draft.model : provider.defaultModel })}>使用最新 v{provider.revision} <ArrowRight size={12}/></button> : <small>会话固定使用这个版本。</small>}</div>
-              : <p className="settings-native-note">模型与凭据沿用 Harness 自己的配置。</p>}
+              : <p className="settings-native-note">使用 Harness 的原生模型连接。安装完成后仍可能需要单独配置或认证。</p>}
             <p className="settings-help">更改选择后，请先应用。正在执行的任务继续使用原配置。</p>
           </Popover.Content></Popover.Portal>
         </Popover.Root>
         {active ? <button type="button" className="send-button stop-button" aria-label="停止当前回复" title="停止当前回复" disabled={active.cancelRequested || props.mutation !== null} onClick={props.onCancel}>{props.mutation === "cancelling" || active.cancelRequested ? <Spinner label="正在停止"/> : <Square size={13} fill="currentColor"/>}</button>
           : <button type="submit" className="send-button" aria-label="发送消息" title="发送消息" disabled={disableSend}>{props.mutation === "sending" ? <Spinner/> : <ArrowUp size={19}/>}</button>}
       </div>
-      {dirty || pending ? <div className="composer-change" role="status">{pending ? <><Spinner/><span>当前任务结束后生效</span></> : <><span>执行选择尚未应用</span><button type="button" className="apply-selection" onClick={props.onApply} disabled={disabled || problem !== null}>{props.mutation === "switching" ? <Spinner/> : <RefreshCw size={12}/>}应用选择</button></>}</div> : null}
+      {dirty || pending || blocked && !readonly ? <div className="composer-change" role="status">{pending ? <><Spinner/><span>{active ? "当前回复结束后生效" : "正在验证新选择"}</span></> : <><span>{blocked ? "恢复会检查连接，不会重跑旧任务" : "执行选择尚未应用"}</span><button type="button" className="apply-selection" onClick={props.onApply} disabled={disabled || problem !== null || resourcesUnconfirmed}>{props.mutation === "switching" ? <Spinner/> : <RefreshCw size={12}/>} {blocked ? unknown.length ? "确认保留未知结果并继续" : "检查连接并恢复对话" : "应用选择"}</button></>}</div> : null}
     </form>
     {note ? <p id="composer-notice" className={`composer-note ${noteDanger ? "error-text" : ""}`} role={problem || bytes > 64 * 1024 ? "status" : undefined}>{note}</p> : null}
     <span id="composer-keyboard-hint" className="sr-only">Enter 发送，Shift 加 Enter 换行。</span>

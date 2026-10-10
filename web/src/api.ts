@@ -210,6 +210,9 @@ export class GatewayApi {
   async switchSelection(id: string, selection: SelectionRequest, key: string): Promise<void> {
     await this.request(`/sessions/${encodeURIComponent(id)}/switches`, "POST", { selection, commandId: key }, value => acknowledge(value, id, "switchId"));
   }
+  async resumeSelection(id: string, selection: SelectionRequest, key: string, acknowledgeUnknown: boolean): Promise<void> {
+    await this.request(`/sessions/${encodeURIComponent(id)}/resume`, "POST", { selection, commandId: key, acknowledgeUnknown }, value => acknowledge(value, id, "switchId"));
+  }
   async cancel(id: string, key: string): Promise<void> { await this.request(`/sessions/${encodeURIComponent(id)}/cancel`, "POST", { commandId: key }, value => acknowledge(value, id, "target")); }
   closeSession(id: string, key: string): Promise<SessionView> { return this.request(`/sessions/${encodeURIComponent(id)}/close`, "POST", { commandId: key }, decodeSession); }
   writeProvider(input: ProviderWriteInput, key: string, current?: ProviderView): Promise<ProviderView> {
@@ -275,7 +278,21 @@ export function requestKey(): string { return "web-" + crypto.randomUUID(); }
 export function errorMessage(error: unknown): string {
   if (error instanceof SessionStreamError) return "实时回复状态暂时无法同步，历史和草稿已保留。";
   if (error instanceof DOMException && error.name === "TimeoutError") return "网关响应超时，请稍后重试。";
-  return error instanceof Error ? error.message : "请求未能完成，请重试。";
+  return error instanceof ApiError ? failureMessage(error) : error instanceof Error ? error.message : "请求未能完成，请重试。";
+}
+/** Product copy for stable public failures; raw diagnostics never become recovery instructions. */
+export function failureMessage(failure: { readonly code: string; readonly message: string }): string {
+  const labels: Readonly<Record<string, string>> = {
+    GATEWAY_AUTH_REQUIRED: "这个 Harness 尚未配置 Gateway 认证。请补充连接配置，或选择另一个 Harness 继续。",
+    PROCESS_EXITED: "Harness 提前退出了。历史已保留，可以重试或选择其他 Harness。",
+    REMOTE_ERROR: "Harness 拒绝了这次请求。请检查连接配置，或选择其他 Harness。",
+    SWITCH_NOT_EFFECTIVE: "这条消息尚未执行，因为选择切换失败。重新选择后，可明确重发这条消息。",
+    HARNESS_UNAVAILABLE: "这个 Harness 当前不可用。请选择其他 Harness，或到 Harnesses 检查安装。",
+    PROVIDER_DISABLED: "所选 Provider 已停用。请选择其他连接，或到 Providers 启用它。",
+    WORKSPACE_BUSY: "工作区正被另一项任务使用。可以等待它结束，或为新对话选择其他工作区。",
+    WORKSPACE_QUARANTINED: "工作区仍有未核实的执行资源。请先核实并停止相关进程；历史和草稿已保留。",
+  };
+  return labels[failure.code] ?? failure.message;
 }
 export function protocolLabel(protocol: ProviderProtocol | string): string {
   const labels: Record<string, string> = { "openai-responses": "OpenAI Responses", "openai-chat-completions": "OpenAI Chat", "anthropic-messages": "Anthropic Messages", gemini: "Gemini", "acp-v1": "ACP", "codex-app-server": "Codex 原生", "pi-rpc": "Pi RPC" };

@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { sessionId, SessionError } from "../contracts/session.js";
 import { SqliteSessionReader } from "../infrastructure/session/sqlite-store.js";
-import { application, dataRoot, errorRecord, newCommand } from "./session-application.js";
+import { application, dataRoot, errorRecord, newCommand, selection } from "./session-application.js";
 import { boundedWrite } from "./bounded-streams.js";
 
 function integer(value: string | undefined, fallback: number, minimum: number, maximum: number): number {
@@ -16,17 +16,24 @@ export async function main(args: readonly string[]): Promise<number> {
   let code = 0;
   try {
     const action = args[0];
-    if (!["list", "show", "events", "close"].includes(action ?? "")) throw new SessionError("INVALID_INPUT", "expected list/show/events/close");
+    if (!["list", "show", "events", "close", "resume"].includes(action ?? "")) throw new SessionError("INVALID_INPUT", "expected list/show/events/close/resume");
     const { values } = parseArgs({ args: [...args.slice(1)], options: {
       "data-dir": { type: "string" }, session: { type: "string" }, json: { type: "boolean" },
       "after-seq": { type: "string" }, limit: { type: "string" }, "command-id": { type: "string" }, help: { type: "boolean", short: "h" },
+      harness: { type: "string" }, "acknowledge-unknown": { type: "boolean" },
     }, strict: true, allowPositionals: false });
-    if (values.help) { process.stdout.write("HarnessGateway sessions list/show/events/close --data-dir <path> [--session <id>] [--json]\n读操作不取得writer owner；close持久停止公共Session准入，保留历史。\n"); return 0; }
+    if (values.help) { process.stdout.write("HarnessGateway sessions list/show/events/close/resume --data-dir <path> [--session <id>] [--json]\n读操作不取得writer owner；close保留历史。resume检查关闭证据并验证目标；可用--harness指定目标，结果未知时另需--acknowledge-unknown，不重跑旧任务。\n"); return 0; }
     if (action !== "list" && values.session === undefined) throw new SessionError("INVALID_INPUT", "--session is required");
     if (action !== "events" && values["after-seq"] !== undefined) throw new SessionError("INVALID_INPUT", "--after-seq is only used with events");
+    if (action !== "resume" && (values.harness !== undefined || values["acknowledge-unknown"] !== undefined)) throw new SessionError("INVALID_INPUT", "recovery options are only used with resume");
     const root = dataRoot(values["data-dir"]), limit = integer(values.limit, 50, 1, 100);
     let output: unknown;
-    if (action === "close") {
+    if (action === "resume") {
+      app = application(root, () => {});
+      const id = sessionId(values.session), current = app.runtime.read(id);
+      output = app.runtime.resume(id, values.harness === undefined ? current.selection : selection(values.harness), values["command-id"] ?? newCommand("resume"), values["acknowledge-unknown"] ?? false);
+      await app.runtime.wait(id);
+    } else if (action === "close") {
       app = application(root, () => {});
       output = await app.runtime.closeSession(sessionId(values.session), values["command-id"] ?? newCommand("close"));
     } else {

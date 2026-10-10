@@ -254,6 +254,56 @@
       ],
       "implementation_state": "implemented",
       "verification_record": "docs/verification/live-chat-2026-10-10.md"
+    },
+    {
+      "id": "conversation-recovery",
+      "status": "accepted",
+      "scope": "当前交互逻辑审查，失败与资源责任分离、同对话显式恢复和草稿保持；未知不重跑、真实owner故障不降级",
+      "task_ids": [
+        "G004",
+        "G028",
+        "G031",
+        "G032",
+        "G034",
+        "G050",
+        "G054",
+        "G059",
+        "G061",
+        "G060",
+        "G008"
+      ],
+      "decision": "docs/decisions/0014-conversation-failure-recovery.md",
+      "allowed_files": [
+        "src/contracts/session.ts",
+        "src/contexts/session/domain/state.ts",
+        "src/contexts/session/application/runtime.ts",
+        "src/infrastructure/control/json-rpc-process.ts",
+        "src/adapters/control/acp.ts",
+        "src/adapters/control/codex.ts",
+        "src/web/server.ts",
+        "src/cli/sessions.ts",
+        "tests/unit/session-state.test.ts",
+        "tests/integration/session-runtime.test.ts",
+        "tests/integration/web-server.test.ts",
+        "tests/protocol/process.test.ts",
+        "tests/protocol/acp.test.ts",
+        "tests/protocol/codex.test.ts",
+        "tests/fixtures/control-peer.mjs",
+        "tests/fixtures/web-harness-peer.mjs",
+        "tests/browser/web.browser.ts",
+        "web/src/App.tsx",
+        "web/src/api.ts",
+        "web/src/components/ChatPage.tsx",
+        "web/src/components/ChatComposer.tsx",
+        "web/src/components/ChatMessage.tsx",
+        "web/src/styles.css",
+        "src/infrastructure/session/sqlite-store.ts",
+        "tests/integration/session-store.test.ts",
+        "tests/fixtures/session-store-peer.mjs",
+        "tests/integration/session-io.test.ts"
+      ],
+      "implementation_state": "implemented",
+      "verification_record": "docs/verification/conversation-recovery-2026-10-10.md"
     }
   ]
 }

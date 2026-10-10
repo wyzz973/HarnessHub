@@ -133,7 +133,7 @@ function unique(values: readonly string[], label: string): void {
 export function parseSession(value: unknown): SessionSnapshot {
   const item = record(value, "Session");
   keys(item, ["schemaVersion", "id", "version", "lastSeq", "epoch", "status", "configuration", "selection", "activeRunId", "pendingSwitchId", "runs", "messages", "switches", "commands"], "Session");
-  if (item.schemaVersion !== 1 && item.schemaVersion !== 2) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
+  if (item.schemaVersion !== 1 && item.schemaVersion !== 2 && item.schemaVersion !== 3) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
   if (item.status !== "open" && item.status !== "closed" && item.status !== "blocked") throw new SessionError("INVALID_DATA", "unknown Session status");
   const result: SessionSnapshot = { schemaVersion: item.schemaVersion, id: sessionId(item.id), version: number(item.version, "version"), lastSeq: number(item.lastSeq, "lastSeq"),
     epoch: number(item.epoch, "epoch", 1), status: item.status, configuration: parseConfiguration(item.configuration), selection: parseSelection(item.selection),
@@ -151,7 +151,9 @@ export function parseSession(value: unknown): SessionSnapshot {
   if (active.length > 1 || (result.activeRunId === null ? active.length !== 0 : active.length !== 1 || active[0]?.id !== result.activeRunId)) throw new SessionError("INVALID_DATA", "active Run ownership is inconsistent");
   if (result.runs.filter(run => run.status === "queued").length > MAX_QUEUE) throw new SessionError("QUEUE_FULL", "Session queued input limit reached");
   if (result.status === "closed" && (result.activeRunId !== null || result.pendingSwitchId !== null || result.runs.some(run => run.status === "queued"))) throw new SessionError("INVALID_DATA", "closed Session still admits work");
-  if (result.status === "open" && result.runs.some(run => run.status === "unknown")) throw new SessionError("INVALID_DATA", "unknown execution requires a blocked Session");
+  if (result.status === "open" && result.runs.some(run => run.status === "unknown" && (result.schemaVersion !== 3 || run.cleanup?.closed !== true ||
+      !result.switches.some(sw => sw.status === "effective" && sw.sourceRunIds.includes(run.id)))))
+    throw new SessionError("INVALID_DATA", "unknown execution requires a blocked Session or explicit quiescent recovery");
   const pending = result.switches.filter(entry => entry.status === "requested" || entry.status === "validated");
   if (pending.length > 1 || (result.pendingSwitchId === null ? pending.length !== 0 : pending.length !== 1 || pending[0]?.id !== result.pendingSwitchId)) throw new SessionError("INVALID_DATA", "pending switch ownership is inconsistent");
   for (const message of result.messages) {
@@ -204,7 +206,10 @@ function same(left: unknown, right: unknown): boolean { return JSON.stringify(le
 /** Persisted history is append-only; an application bug cannot silently erase prior public facts. */
 export function assertSessionTransition(before: SessionSnapshot, after: SessionSnapshot): void {
   if (before.schemaVersion !== after.schemaVersion || before.id !== after.id || !same(before.configuration, after.configuration)) throw new SessionError("INVALID_TRANSITION", "Session identity/configuration reference is immutable");
-  if ((before.status === "closed" && after.status !== "closed") || (before.status === "blocked" && after.status === "open")) throw new SessionError("INVALID_TRANSITION", "closed or blocked Session cannot reopen implicitly");
+  if ((before.status === "closed" && after.status !== "closed") || (before.status === "blocked" && after.status === "open" &&
+      (after.epoch !== before.epoch + 1 || !after.switches.some(sw => sw.id === before.pendingSwitchId && sw.status === "effective") ||
+       after.runs.some(run => run.status === "unknown" && run.cleanup?.closed !== true))))
+    throw new SessionError("INVALID_TRANSITION", "closed or blocked Session cannot reopen implicitly");
   if (after.epoch < before.epoch || after.epoch > before.epoch + 1 ||
       (after.epoch === before.epoch && !same(before.selection, after.selection))) throw new SessionError("INVALID_TRANSITION", "selection can change only with one effective switch epoch");
   for (const [oldItems, newItems, label] of [

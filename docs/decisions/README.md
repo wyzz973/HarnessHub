@@ -12,6 +12,8 @@
 
 [ADR-013](0013-live-chat-experience.md)按实际对话反馈采纳实时会话SSE及紧凑聊天组件；不改变Run/选择/重试语义。
 
+[ADR-014](0014-conversation-failure-recovery.md)按用户审查要求区分连接失败/执行未知/清理未知，保留对话与草稿，加入显式恢复和结束确认；存储v3保留历史与未知事实，未知任务不自动重跑。
+
 | ADR | 建议 | 替代/代价 | 关闭条件 |
 |---|---|---|---|
 | ADR-001 | 公共 Session 与原生 BackendBinding 分离 | 直接暴露原生 ID 简单，但锁定 Harness，无法承载公共连续性 | D-02 与 D-04 冻结 |

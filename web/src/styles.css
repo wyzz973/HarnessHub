@@ -3851,3 +3851,13 @@ a {
     scroll-behavior:auto!important
   }
 }
+.selection-failure { margin: 0 20px 12px; padding: 14px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); font-size: 13px; line-height: 1.6; }
+.selection-failure p { margin: 4px 0; }
+.selection-failure .text-button { margin-top: 6px; }
+.blocked-notice { display: flex; flex-direction: column; gap: 4px; }
+.retry-response { opacity: 1; }
+.close-conversation-dialog { width: min(440px, calc(100vw - 32px)); border: 1px solid var(--line); border-radius: 16px; padding: 24px; background: var(--surface); color: var(--ink); }
+.close-conversation-dialog::backdrop { background: rgb(0 0 0 / 25%); }
+.close-conversation-dialog h2 { font-size: 18px; margin: 0 0 12px; }
+.close-conversation-dialog p { font-size: 14px; line-height: 1.7; }
+.close-conversation-dialog > div { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }

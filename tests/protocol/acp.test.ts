@@ -128,3 +128,12 @@ test("ACP duplicate terminal response retains first backend fact but exposes con
     assert.equal(cleanup.protocolFailure?.code, "UNKNOWN_RESPONSE");
   } finally { await driver.close(); }
 });
+
+test("an explicit ACP prompt rejection is a failed backend result with a cleanly owned connection", async () => {
+  const driver = control("prompt-rejected");
+  try {
+    const id = await ready(driver), output: ControlEvent[] = [], run = await driver.startText(id, "rejected request", value => output.push(value));
+    assert.deepEqual(await run.result, { status: "failed", reason: "request_rejected" }); assert.deepEqual(output, []);
+    assert.equal((await driver.close()).protocolFailure, null);
+  } finally { await driver.close(); }
+});

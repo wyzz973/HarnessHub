@@ -1,4 +1,4 @@
-import { readFileSync, watch } from "node:fs";
+import { existsSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 let active = null, counter = 0;
@@ -45,7 +45,11 @@ createInterface({ input: process.stdin }).on("line", line => {
     const output = answer + "\n\n凭据过滤验证：" + key;
     const split = output.length - Math.floor(key.length / 2);
     for (const delta of [output.slice(0, split), output.slice(split)]) notify("item/agentMessage/delta", { threadId: native, turnId: active.id, itemId: "browser-message", delta });
-    if (!text.includes("等待取消")) { notify("turn/completed", { threadId: native, turn: { id: active.id, status: "completed" } }); active = null; }
+    if (!text.includes("等待取消")) {
+      const failOnce = text.startsWith("FAIL_ONCE") && !existsSync(join(process.cwd(), "failed-once.txt"));
+      if (failOnce) writeFileSync(join(process.cwd(), "failed-once.txt"), "external fixture failed one reply\n");
+      notify("turn/completed", { threadId: native, turn: { id: active.id, status: failOnce ? "failed" : "completed" } }); active = null;
+    }
     return;
   }
   if (value.method === "turn/interrupt") { active?.watcher?.close(); reply(value.id, {}); if (active) notify("turn/completed", { threadId: native, turn: { id: active.id, status: "interrupted" } }); active = null; }

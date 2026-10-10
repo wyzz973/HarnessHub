@@ -19,7 +19,7 @@ function directory(t: TestContext): string {
 function draft(type = "session.created"): readonly EventDraft[] { return [{ type, data: {} }]; }
 function initial(root: string, suffix = "one", key = "create-one", fingerprint = "a".repeat(64)): SessionSnapshot {
   const id = sessionId("session-" + suffix);
-  return { schemaVersion: 2, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
+  return { schemaVersion: 3, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
     configuration: { workspace: root, manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: false },
     selection: { harnessId: "fixture", controlId: "fixture-acp" }, activeRunId: null, pendingSwitchId: null,
     runs: [], messages: [], switches: [], commands: [{ id: commandId(key), kind: "create", fingerprint, resultId: id }] };
@@ -38,7 +38,7 @@ function completedHistory(store: SqliteSessionStore, root: string): SessionSnaps
   }, events: [{ type: "message.accepted", data: { runId: run } }, { type: "run.ended", data: { runId: run, status: "completed", fixtureOnly: true } }] })).session;
 }
 
-test("numbered v1-to-v2 migration preserves public identities, history, commands and event cursors", t => {
+test("numbered v1-to-v2-to-v3 migration preserves public identities, history, commands and event cursors", t => {
   const root = directory(t), original = new SqliteSessionStore(root);
   const state = completedHistory(original, root), events = original.events(state.id, 0); original.close();
   const legacy = { ...state, schemaVersion: 1 };
@@ -47,10 +47,10 @@ test("numbered v1-to-v2 migration preserves public identities, history, commands
   const reader = new SqliteSessionReader(root); assert.equal(reader.get(state.id).schemaVersion, 1); reader.close();
   const upgraded = new SqliteSessionStore(root);
   try {
-    assert.deepEqual(upgraded.get(state.id), { ...state, schemaVersion: 2 });
+    assert.deepEqual(upgraded.get(state.id), { ...state, schemaVersion: 3 });
     assert.deepEqual(upgraded.events(state.id, 0), events);
     assert.equal(upgraded.findByCreateKey(commandId("create-one"))?.id, state.id);
-    const verify = database(root); assert.equal(verify.prepare("PRAGMA user_version").get()?.user_version, 2); verify.close();
+    const verify = database(root); assert.equal(verify.prepare("PRAGMA user_version").get()?.user_version, 3); verify.close();
   } finally { upgraded.close(); }
 });
 
@@ -296,7 +296,7 @@ test("SQLite event write failure rolls back snapshot and disables new operations
 test("corrupt persisted aggregate and unknown migration version never become empty Sessions", t => {
   const root = directory(t), store = new SqliteSessionStore(root), created = store.create(initial(root), draft()); store.close();
   const outsider = database(root);
-  outsider.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify({ ...created.session, schemaVersion: 3 }), created.session.id); outsider.close();
+  outsider.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify({ ...created.session, schemaVersion: 4 }), created.session.id); outsider.close();
   assert.throws(() => new SqliteSessionStore(root), code("INVALID_DATA"));
   const badVersion = database(root); badVersion.exec("PRAGMA user_version=99"); badVersion.close();
   assert.throws(() => new SqliteSessionReader(root), code("INVALID_DATA"));
@@ -377,4 +377,27 @@ test("SQL byte preflight rejects oversized persisted snapshot before decoding it
   outsider.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify({ text: "x".repeat(8 * 1024 * 1024 + 1) }), created.session.id);
   assert.throws(() => store.get(created.session.id), code("INVALID_DATA"));
   const reader = new SqliteSessionReader(root); assert.throws(() => reader.get(created.session.id), code("INVALID_DATA")); reader.close(); outsider.close(); store.close();
+});
+
+test("v2-to-v3 migration preserves blocked history and does not implicitly reopen a falsely blocked conversation", t => {
+  const root = directory(t), original = new SqliteSessionStore(root), prior = completedHistory(original, root);
+  const blocked = original.transact(prior.id, prior.version, current => ({ next: { ...current, status: "blocked" }, events: [{ type: "session.blocked", data: { reason: "legacy state remains explicit" } }] })).session;
+  const events = original.events(prior.id, 0); original.close();
+  const db = database(root); db.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify({ ...blocked, schemaVersion: 2 }), blocked.id); db.exec("PRAGMA user_version=2"); db.close();
+  const read = new SqliteSessionReader(root); assert.equal(read.get(blocked.id).schemaVersion, 2); read.close();
+  const upgraded = new SqliteSessionStore(root);
+  try { assert.deepEqual(upgraded.get(blocked.id), blocked); assert.deepEqual(upgraded.events(blocked.id, 0), events); assert.equal(upgraded.get(blocked.id).status, "blocked"); }
+  finally { upgraded.close(); }
+});
+
+test("invalid v2 history rolls back the entire v3 migration rather than repairing or dropping it", t => {
+  const root = directory(t), original = new SqliteSessionStore(root);
+  const one = original.create(initial(root), draft()).session, two = original.create(initial(root, "two", "create-two"), draft()).session; original.close();
+  const db = database(root);
+  db.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify({ ...one, schemaVersion: 2 }), one.id);
+  db.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify({ ...two, schemaVersion: 2, unexpected: true }), two.id); db.exec("PRAGMA user_version=2"); db.close();
+  assert.throws(() => new SqliteSessionStore(root), code("INVALID_DATA"));
+  const verify = database(root); assert.equal(verify.prepare("PRAGMA user_version").get()?.user_version, 2);
+  assert.equal(JSON.parse(String(verify.prepare("SELECT snapshot FROM sessions WHERE id=?").get(one.id)?.snapshot)).schemaVersion, 2);
+  assert.equal(verify.prepare("SELECT COUNT(*) AS total FROM events").get()?.total, 2); verify.close();
 });

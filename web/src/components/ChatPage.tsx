@@ -4,7 +4,7 @@ import type { Dispatch, SetStateAction } from "react";
 import type { ProviderView } from "../../../src/contracts/provider.js";
 import type { HarnessSelection, SelectionRequest } from "../../../src/contracts/session.js";
 import type { HarnessView, SessionView } from "../../../src/contracts/web.js";
-import { runStatusLabel } from "../api.js";
+import { failureMessage, runStatusLabel } from "../api.js";
 import { BrandMark, EmptyState, ErrorNotice, Spinner, StatusBadge } from "./common.js";
 import { MobileMenu } from "./Sidebar.js";
 import { BrandIcon } from "./BrandIcon.js";
@@ -54,6 +54,9 @@ export interface ChatProps {
 export function ChatPage(props: ChatProps) {
   const { session, draft, harnesses, providers, mutation, error } = props;
   const [followBottom, setFollowBottom] = useState(true);
+  const [dismissedSwitch, setDismissedSwitch] = useState<string | null>(null);
+  const [confirmClose, setConfirmClose] = useState(false);
+  const closeDialog = useRef<HTMLDialogElement>(null);
   const following = useRef(true);
   const mounted = useRef(true);
   const viewport = useRef({ width: 0, height: 0 });
@@ -63,9 +66,13 @@ export function ChatPage(props: ChatProps) {
   const textarea = useRef<HTMLTextAreaElement>(null);
   const active = session?.runs.find(run => run.id === session.activeRunId) ?? null;
   const dirty = session !== null && !draftMatches(draft, session.selection);
-  const problem = session !== null && !dirty ? effectiveProviderProblem(session.selection, providers) : selectionProblem(draft, harnesses, providers);
+  const problem = (session !== null && !dirty ? effectiveProviderProblem(session.selection, providers) : null) ?? selectionProblem(draft, harnesses, providers);
   const pending = session?.pendingSwitchId !== null && session?.pendingSwitchId !== undefined;
   const blocked = session !== null && session.status !== "open";
+  const latestSwitch = session?.switches.at(-1);
+  const failedSwitch = latestSwitch?.status === "failed" && latestSwitch.id !== dismissedSwitch && !session?.runs.some(run =>
+    run.status === "completed" && session.messages.some(message => message.runId === run.id && message.role === "user" && message.seq > latestSwitch.requestedSeq)) ? latestSwitch : null;
+  const canRetry = session?.status === "open" && active === null && !dirty && !pending && problem === null && mutation === null;
   const title = session?.messages.find(message => message.role === "user")?.text ?? (props.sessionRequested || props.sessionError ? "打开对话" : "新对话");
   const runs = useMemo(() => new Map(session?.runs.map(run => [run.id, run])), [session?.runs]);
   const assistantRuns = useMemo(() => new Set(session?.messages.filter(message => message.role === "assistant").map(message => message.runId)), [session?.messages]);
@@ -119,17 +126,24 @@ export function ChatPage(props: ChatProps) {
     }
   };
   const composer = <ChatComposer {...props} onSend={send} active={active} dirty={dirty} pending={pending} problem={problem} blocked={blocked} inputRef={textarea}/>;
+  useEffect(() => {
+    const dialog = closeDialog.current;
+    if (!dialog) return;
+    if (confirmClose && !dialog.open) dialog.showModal();
+    else if (!confirmClose && dialog.open) dialog.close();
+  }, [confirmClose]);
 
   return <section className="chat-page" aria-labelledby="chat-title">
     <header className="workspace-header">
       <MobileMenu onClick={props.onMenu}/>
       <div className="chat-heading"><h1 id="chat-title" title={title}>{title}</h1>{session && session.status !== "open" ? <span className="session-caption">{session.status === "closed" ? "已关闭" : "需要核实"}</span> : null}</div>
       <label className="header-workspace"><FolderOpen size={14} aria-hidden="true"/>{session ? <span title={session.workspace}>{session.workspace.split(/[\\/]/u).filter(Boolean).at(-1) ?? session.workspace}</span> : <input aria-label="新对话工作目录" value={props.workspace} onChange={event => props.onWorkspace(event.target.value)} placeholder="工作目录的绝对路径" title={props.workspace}/>}</label>
-      {session?.status === "open" ? <button className="icon-button close-chat" aria-label="关闭这个对话" title="关闭对话后保留历史，不再接收消息" disabled={mutation !== null} onClick={props.onClose}><X size={18}/></button> : null}
+      {session && session.status !== "closed" ? <button className="icon-button close-chat" aria-label="关闭这个对话" title="结束会话，保留历史" disabled={mutation !== null} onClick={() => setConfirmClose(true)}><X size={18}/></button> : null}
     </header>
     {error ? <div className="chat-error"><ErrorNotice message={error} onDismiss={props.onDismissError}/></div> : null}
     {props.connectionError ? <div className="connection-notice" role="status"><span>{props.connectionError}</span>{props.onRetryConnection ? <button type="button" onClick={props.onRetryConnection}>重新连接</button> : null}</div> : null}
-    {session?.status === "blocked" ? <div className="blocked-notice" role="status">上一次执行的结果或资源状态尚未核实。你可以查看历史，这个会话暂时不能继续执行。</div> : null}
+    {session?.status === "blocked" ? <div className="blocked-notice" role="status"><strong>执行已暂停，对话历史和草稿仍保留。</strong><span>{session.runs.some(run => run.status === "unknown") ? "上一轮结果未知，不会自动重跑。资源确认停止后，可以明确继续新的任务。" : "可以重新选择 Harness，并检查连接后尝试恢复。所有权或存储故障需要先处理本机服务。"}</span></div> : null}
+    {failedSwitch && session?.status === "open" ? <div className="selection-failure" role="status"><strong>未能切换到 {harnesses.find(harness => harness.id === failedSwitch.requested.harnessId)?.name ?? failedSwitch.requested.harnessId}</strong><p>{failedSwitch.error ? failureMessage(failedSwitch.error) : "目标连接没有通过验证。"}</p><p>当前选择仍是 {harnesses.find(harness => harness.id === session.selection.harnessId)?.name ?? session.selection.harnessId}。</p><button className="text-button" type="button" disabled={mutation !== null || pending} onClick={() => { props.onDraft(selectionDraft(session.selection)); setDismissedSwitch(failedSwitch.id); }}>继续使用当前选择</button></div> : null}
     <div className={`chat-scroll ${session === null ? "welcome-scroll" : ""}`} ref={scroll} onScroll={() => {
       const element = scroll.current;
       if (!element || viewport.current.width !== element.clientWidth || viewport.current.height !== element.clientHeight) return;
@@ -154,13 +168,17 @@ export function ChatPage(props: ChatProps) {
         </div>
         : <div className="transcript" ref={transcript} role="log" aria-label="对话历史" aria-live="off">
           {session.messages.length === 0 ? <div className="conversation-empty"><BrandMark/><h2>对话准备好了</h2><p>发出第一条消息，开始这次协作。</p></div> : session.messages.map(message => <Fragment key={message.id}>
-            <ChatMessage message={message} run={runs.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft}/>
-            {message.role === "user" && !assistantRuns.has(message.runId) && runs.has(message.runId) ? <ChatMessage message={undefined} run={runs.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft}/> : null}
+            <ChatMessage message={message} run={runs.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft} onRetry={canRetry ? text => { void send(text).catch(() => {}); } : undefined}/>
+            {message.role === "user" && !assistantRuns.has(message.runId) && runs.has(message.runId) ? <ChatMessage message={undefined} run={runs.get(message.runId)} harnesses={harnesses} providers={providers} onEdit={fillDraft} onRetry={canRetry ? text => { void send(text).catch(() => {}); } : undefined}/> : null}
           </Fragment>)}
           {session.switches.length > 0 ? <details className="selection-history"><summary>选择记录 <span>{session.switches.length}</span></summary>{session.switches.map(item => <div className={`switch-record ${item.status}`} key={item.id}><span>{harnesses.find(harness => harness.id === item.requested.harnessId)?.name ?? item.requested.harnessId}</span><StatusBadge tone={item.status === "failed" ? "danger" : item.status === "effective" ? "success" : "warning"}>{item.status === "effective" ? "已生效" : item.status === "failed" ? "切换失败" : "等待生效"}</StatusBadge>{item.requested.provider ? <small>{providers.find(provider => provider.id === item.requested.provider?.providerId)?.name ?? "Provider"} · {item.requested.provider.model}</small> : null}{item.error ? <small className="error-text">{item.error.message}</small> : null}</div>)}</details> : null}
         </div>}
     </div>
     {session !== null && !props.loading ? <footer className="chat-composer-footer">{!followBottom ? <button className="follow-stream" onClick={resumeFollowing} aria-label="回到最新回复"><ArrowDown size={14} aria-hidden="true"/><span>回到最新回复</span></button> : null}{composer}</footer> : null}
-    <div className="sr-only" role="status" aria-live="polite">{props.loading ? "正在读取对话" : props.sessionError ? "对话读取失败" : session?.status === "blocked" ? "这个会话需要核实，暂时不能继续对话" : session?.status === "closed" ? "对话已关闭，可查看历史" : active ? active.cancelRequested ? "正在停止回复" : runStatusLabel(active.status) : pending ? "等待选择切换生效" : session ? "可以继续对话" : "选择执行者后开始新对话"}</div>
+    <div className="sr-only" role="status" aria-live="polite">{props.loading ? "正在读取对话" : props.sessionError ? "对话读取失败" : session?.status === "blocked" ? "执行暂时暂停，可以编辑草稿和检查恢复连接" : session?.status === "closed" ? "对话已关闭，可查看历史" : active ? active.cancelRequested ? "正在停止回复" : runStatusLabel(active.status) : pending ? "等待选择切换生效" : session ? "可以继续对话" : "选择执行者后开始新对话"}</div>
+    <dialog ref={closeDialog} className="close-conversation-dialog" aria-labelledby="close-dialog-title" onCancel={() => setConfirmClose(false)}>
+      <h2 id="close-dialog-title">结束这次会话？</h2><p>历史会保留。这次会话将不再接收新消息；之后可以新建对话。</p>{active || pending ? <p>当前执行或待生效的选择会停止，已经产生的内容与文件会保留。</p> : null}
+      <div><button type="button" className="button secondary" onClick={() => setConfirmClose(false)} autoFocus>继续对话</button><button type="button" className="button primary" onClick={() => { setConfirmClose(false); props.onClose(); }}>结束会话</button></div>
+    </dialog>
   </section>;
 }

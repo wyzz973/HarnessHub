@@ -319,3 +319,9 @@
 | G001-S01 | G001 | unit | 工程文档扫描与根运行数据/第三方安装文档分离 | 忽略根data/artifacts，但docs/data坏链接仍拒绝，必需检查非零失败 | planned |
 | G061-S03 | G061 | unit | 已接收命令的ACK正文断流、写请求期限与错误归属 | 正文transport失败不接受半JSON；business4xx保留；错session/不完整receipt拒绝；写请求不无限挂起 | planned |
 | G060-S01 | G060 | e2e | 真实Codex/私有模型配置/正式HTTP事实流在本地模型未完成前输出首块 | 真实Harness与DB/HTTP/Driver；首文本先于模型及Run终态；断线恢复不重复派发，最终原文完整且cleanup独立确认 | planned |
+| G028-R01 | G028 | integration | 启动或目标切换失败且已关闭，不阻塞同Session后续显式输入 | 原选择保留，等待失败切换的输入不误发，其他Session继续执行 | planned |
+| G028-R02 | G028 | integration | 未知执行的显式恢复与不可信清理拒绝 | 同Session新epoch；unknown终态不改写，旧队列不重跑，清理/owner/pub故障拒绝 | planned |
+| G008-R01 | G008 | integration | v2到v3的真实SQLite升级和损坏回滚 | 身份/历史/命令/事件字节保持；blocked不自动重开；坏数据整笔回滚 | planned |
+| G050-R01 | G050 | integration | 认证HTTP恢复旧误阻塞会话与幂等/无效输入 | 202对应新switch，验证无prompt，CSRF与不安全恢复拒绝 | planned |
+| G031-R01 | G031 | protocol | Gateway认证缺失分类、RPC业务拒绝和清理证据分离 | 已知错误有稳定码，凭据不反射；explicit rejection为failed，close仍独立确认 | planned |
+| G054-R01 | G054 | e2e | 失败Harness选择后原对话可用、重试和草稿/结束确认 | 同Session继续，未知不一键重跑，往返/刷新草稿保留，结束需明确选择 | planned |

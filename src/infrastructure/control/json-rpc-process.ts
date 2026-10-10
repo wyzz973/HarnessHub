@@ -140,12 +140,18 @@ export class JsonRpcProcess {
     });
     child.on("exit", (code, signal) => {
       this.exitCode = code; this.exitSignal = signal;
-      if (!this.closing) this.abort(new ControlError("PROCESS_EXITED", `process exited before connection close (${code ?? signal})`));
+      if (!this.closing) this.abort(this.exitFailure(code ?? signal));
     });
     child.on("close", (code, signal) => {
       this.closeObserved = true; this.exitCode = code; this.exitSignal = signal;
       if (!this.closing) this.abort(new ControlError("PROCESS_EXITED", "process closed unexpectedly"));
     });
+  }
+  private exitFailure(status: number | NodeJS.Signals | null): ControlError {
+    // Classify known startup failures without forwarding arbitrary stderr or credentials.
+    if (/unauthorized:\s*gateway token missing|gateway auth.*token.*missing/iu.test(this.diagnostics))
+      return new ControlError("GATEWAY_AUTH_REQUIRED", "Harness Gateway authentication is required; configure its connection or choose another Harness");
+    return new ControlError("PROCESS_EXITED", `process exited before connection close (${status})`);
   }
   private async write(message: Record<string, unknown>): Promise<void> {
     const wire = JSON.stringify(this.launch.protocol === "acp-v1" ? { jsonrpc: "2.0", ...message } : message);
@@ -217,7 +223,7 @@ export class JsonRpcProcess {
       if (!Number.isSafeInteger(remote.code) || typeof remote.message !== "string")
         throw new ControlError("INVALID_PROTOCOL", "RPC error payload is invalid");
       this.pending.delete(responseKey); clearTimeout(pending.timer);
-      pending.reject(new ControlError("REMOTE_ERROR", `peer error ${remote.code}: ${remote.message.slice(0, 512)}`));
+      pending.reject(new ControlError("REMOTE_ERROR", `Harness rejected the protocol request (${remote.code})`));
     } else {
       this.pending.delete(responseKey); clearTimeout(pending.timer); pending.resolve(message.result);
     }

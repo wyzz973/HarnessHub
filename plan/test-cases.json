@@ -6115,6 +6115,104 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/real/live-web-stream.real.ts"
+    },
+    {
+      "id": "G028-R01",
+      "task": "G028",
+      "requirements": [
+        "R07",
+        "R11",
+        "R14"
+      ],
+      "invariants": [],
+      "layer": "integration",
+      "scenario": "启动或目标切换失败且已关闭，不阻塞同Session后续显式输入",
+      "expected": "原选择保留，等待失败切换的输入不误发，其他Session继续执行",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/session-runtime.test.ts"
+    },
+    {
+      "id": "G028-R02",
+      "task": "G028",
+      "requirements": [
+        "R07",
+        "R11",
+        "R14"
+      ],
+      "invariants": [],
+      "layer": "integration",
+      "scenario": "未知执行的显式恢复与不可信清理拒绝",
+      "expected": "同Session新epoch；unknown终态不改写，旧队列不重跑，清理/owner/pub故障拒绝",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/session-runtime.test.ts"
+    },
+    {
+      "id": "G008-R01",
+      "task": "G008",
+      "requirements": [
+        "R07",
+        "R14",
+        "R19"
+      ],
+      "invariants": [],
+      "layer": "integration",
+      "scenario": "v2到v3的真实SQLite升级和损坏回滚",
+      "expected": "身份/历史/命令/事件字节保持；blocked不自动重开；坏数据整笔回滚",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/session-store.test.ts"
+    },
+    {
+      "id": "G050-R01",
+      "task": "G050",
+      "requirements": [
+        "R01",
+        "R07",
+        "R09",
+        "R19",
+        "R22"
+      ],
+      "invariants": [],
+      "layer": "integration",
+      "scenario": "认证HTTP恢复旧误阻塞会话与幂等/无效输入",
+      "expected": "202对应新switch，验证无prompt，CSRF与不安全恢复拒绝",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/web-server.test.ts"
+    },
+    {
+      "id": "G031-R01",
+      "task": "G031",
+      "requirements": [
+        "R25",
+        "R26"
+      ],
+      "invariants": [],
+      "layer": "protocol",
+      "scenario": "Gateway认证缺失分类、RPC业务拒绝和清理证据分离",
+      "expected": "已知错误有稳定码，凭据不反射；explicit rejection为failed，close仍独立确认",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/process.test.ts"
+    },
+    {
+      "id": "G054-R01",
+      "task": "G054",
+      "requirements": [
+        "R01",
+        "R02",
+        "R09",
+        "R22"
+      ],
+      "invariants": [],
+      "layer": "e2e",
+      "scenario": "失败Harness选择后原对话可用、重试和草稿/结束确认",
+      "expected": "同Session继续，未知不一键重跑，往返/刷新草稿保留，结束需明确选择",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
     }
   ]
 }

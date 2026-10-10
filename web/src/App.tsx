@@ -2,6 +2,7 @@ import { AlertCircle, ArrowRight, RefreshCw, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SelectionRequest } from "../../src/contracts/session.js";
 import type { ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
+import { parseProviderTarget } from "../../src/contracts/provider.js";
 import type { HarnessView, SessionView, WebState } from "../../src/contracts/web.js";
 import type { InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
 import { sessionId as validateSessionId } from "../../src/contracts/session.js";
@@ -18,6 +19,49 @@ import type { Page } from "./components/Sidebar.js";
 import { BrandMark, Spinner } from "./components/common.js";
 
 interface PendingMessage { text: string; createKey: string; sessionId: string | null; sendKey: string; committed: boolean }
+interface PendingSelection { sessionId: string; selection: SelectionRequest; key: string; recovery: boolean; acknowledgeUnknown: boolean }
+interface ChatDraft { message: string; selection: SelectionDraft; epoch: number | null; messageIntent: PendingMessage | null; selectionIntent: PendingSelection | null }
+function draftStorageKey(workspace: string, id: string): string { return "harnessgateway:chat-draft:" + workspace + ":" + id; }
+function savedChatDraft(workspace: string, id: string): ChatDraft | null {
+  try {
+    const raw = sessionStorage.getItem(draftStorageKey(workspace, id));
+    if (raw === null || new TextEncoder().encode(raw).byteLength > 256 * 1024) return null;
+    const value: unknown = JSON.parse(raw);
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+    const row = value as Record<string, unknown>, selected = row.selection;
+    if (Object.keys(row).some(key => !["message", "selection", "epoch", "messageIntent", "selectionIntent"].includes(key)) || typeof row.message !== "string" ||
+        !(row.epoch === null || typeof row.epoch === "number" && Number.isSafeInteger(row.epoch) && row.epoch > 0) || selected === null || typeof selected !== "object" || Array.isArray(selected)) return null;
+    const selection = selected as Record<string, unknown>;
+    if (Object.keys(selection).some(key => !["harnessId", "controlId", "providerId", "providerRevision", "model"].includes(key)) ||
+        !["harnessId", "controlId", "providerId", "model"].every(key => typeof selection[key] === "string" && selection[key].length <= 1024) ||
+        !(selection.providerRevision === null || typeof selection.providerRevision === "number" && Number.isSafeInteger(selection.providerRevision) && selection.providerRevision > 0)) return null;
+    const parseMessage = (input: unknown): PendingMessage | null => {
+      if (input === null) return null;
+      if (typeof input !== "object" || Array.isArray(input)) throw new Error("invalid stored message intent");
+      const item = input as Record<string, unknown>;
+      if (Object.keys(item).some(key => !["text", "createKey", "sessionId", "sendKey", "committed"].includes(key)) || typeof item.text !== "string" || typeof item.committed !== "boolean" ||
+          ![item.createKey, item.sendKey].every(key => typeof key === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(key)) ||
+          !(item.sessionId === null || typeof item.sessionId === "string" && item.sessionId === id)) throw new Error("invalid stored message intent");
+      return { text: item.text, createKey: String(item.createKey), sessionId: item.sessionId, sendKey: String(item.sendKey), committed: false };
+    };
+    // A saved receipt is never authoritative; canonical Session facts confirm it after reload.
+    let selectionIntent: PendingSelection | null = null;
+    if (row.selectionIntent !== null) {
+      if (row.selectionIntent === undefined || typeof row.selectionIntent !== "object" || Array.isArray(row.selectionIntent)) return null;
+      const item = row.selectionIntent as Record<string, unknown>, input = item.selection;
+      if (Object.keys(item).some(key => !["sessionId", "selection", "key", "recovery", "acknowledgeUnknown"].includes(key)) || item.sessionId !== id || typeof item.key !== "string" ||
+          !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(item.key) || typeof item.recovery !== "boolean" || typeof item.acknowledgeUnknown !== "boolean" ||
+          input === null || typeof input !== "object" || Array.isArray(input)) return null;
+      const target = input as Record<string, unknown>;
+      if (Object.keys(target).some(key => !["harnessId", "controlId", "provider"].includes(key)) || typeof target.harnessId !== "string" || !/^[a-z][a-z0-9-]{0,95}$/u.test(target.harnessId) ||
+          typeof target.controlId !== "string" || !/^[a-z][a-z0-9-]{0,95}$/u.test(target.controlId)) return null;
+      selectionIntent = { sessionId: id, selection: { harnessId: target.harnessId, controlId: target.controlId,
+        ...(target.provider === undefined ? {} : { provider: target.provider === null ? null : parseProviderTarget(target.provider) }) }, key: item.key, recovery: item.recovery, acknowledgeUnknown: item.acknowledgeUnknown };
+    }
+    return { message: row.message, selection: { harnessId: String(selection.harnessId), controlId: String(selection.controlId), providerId: String(selection.providerId),
+      providerRevision: selection.providerRevision, model: String(selection.model) }, epoch: row.epoch, messageIntent: parseMessage(row.messageIntent), selectionIntent };
+  } catch { return null; }
+}
 interface PendingProviderWrite { input: ProviderWriteInput; key: string; current: ProviderView | undefined }
 function sessionRoute(): { id: string | null; error: string | null } {
   const value = new URLSearchParams(window.location.hash.slice(1)).get("session");
@@ -49,6 +93,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [streamAttempt, setStreamAttempt] = useState(0);
+  const [draftStorageError, setDraftStorageError] = useState<string | null>(null);
   const [editor, setEditor] = useState<ProviderView | "new" | null>(null);
   const [editorDirty, setEditorDirty] = useState(false);
   const [leaveAction, setLeaveAction] = useState<(() => void) | null>(null);
@@ -69,7 +114,8 @@ export function App() {
   const liveSession = useRef<SessionView | null>(null);
   const operation = useRef(false);
   const pendingMessage = useRef<PendingMessage | null>(null);
-  const pendingSwitchWrite = useRef<{ sessionId: string; selection: SelectionRequest; key: string } | null>(null);
+  const pendingSwitchWrite = useRef<PendingSelection | null>(null);
+  const chatDrafts = useRef(new Map<string, ChatDraft>());
   const pendingProviderWrite = useRef<PendingProviderWrite | null>(null);
   const observedSelection = useRef("");
   const observedVersion = useRef<{ id: string; version: number } | null>(null);
@@ -85,7 +131,11 @@ export function App() {
         await api.authenticate();
         if (ignored) return;
         const snapshot = await api.state(AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]));
-        if (!ignored) { snapshot.jobs.filter(job => job.status === "completed").forEach(job => completedInstallations.current.add(job.id)); setState(snapshot); setWorkspace(snapshot.workspace); }
+        if (!ignored) {
+          snapshot.jobs.filter(job => job.status === "completed").forEach(job => completedInstallations.current.add(job.id)); setState(snapshot); setWorkspace(snapshot.workspace);
+          const key = sessionIdRef.current ?? "new", saved = savedChatDraft(snapshot.workspace, key);
+          if (saved && !chatDrafts.current.has(key)) { chatDrafts.current.set(key, saved); setMessageDraft(saved.message); setDraft(saved.selection); pendingMessage.current = saved.messageIntent; pendingSwitchWrite.current = saved.selectionIntent; }
+        }
       } catch (failure: unknown) { if (!ignored) setBootError(errorMessage(failure)); }
     })();
     return () => { ignored = true; controller.abort(); };
@@ -108,7 +158,11 @@ export function App() {
     const intent = pendingSwitchWrite.current;
     if (intent?.sessionId === value.id && value.switches.some(item => item.commandId === intent.key)) pendingSwitchWrite.current = null;
     const key = `${value.id}:${value.epoch}`;
-    if (observedSelection.current !== key) { observedSelection.current = key; setDraft(selectionDraft(value.selection)); }
+    if (observedSelection.current !== key) {
+      observedSelection.current = key;
+      const saved = chatDrafts.current.get(value.id);
+      setDraft(saved?.epoch === value.epoch ? saved.selection : selectionDraft(value.selection));
+    }
     if (pendingMessage.current?.sessionId === value.id && value.runs.some(run => run.commandId === pendingMessage.current?.sendKey)) pendingMessage.current.committed = true;
     setState(current => {
       if (!current) return current;
@@ -199,17 +253,38 @@ export function App() {
     finish();
   };
   const navigate = (next: Page) => leave(() => { setPage(next); setEditor(null); setEditorDirty(false); setSidebarOpen(false); setError(null); });
+  const saveChatDraft = () => {
+    chatDrafts.current.set(sessionIdRef.current ?? "new", { message: messageDraft, selection: draft,
+      epoch: session?.epoch ?? null, messageIntent: pendingMessage.current, selectionIntent: pendingSwitchWrite.current });
+    try {
+      const saved = chatDrafts.current.get(sessionIdRef.current ?? "new")!;
+      const serialized = JSON.stringify(saved);
+      if (new TextEncoder().encode(serialized).byteLength > 256 * 1024) throw new Error("draft byte budget exceeded");
+      sessionStorage.setItem(draftStorageKey(state?.workspace ?? workspace, sessionIdRef.current ?? "new"), serialized); setDraftStorageError(null);
+    } catch { setDraftStorageError("浏览器暂时无法保存草稿。内容仍在当前页面，请暂时保留此页面。"); }
+  };
+  useEffect(() => { if (state && !sessionLoading && !sessionError) saveChatDraft(); }, [messageDraft, draft, session?.epoch, mutation, state !== null, sessionLoading, sessionError]);
   const newChat = () => leave(() => {
+    saveChatDraft(); const saved = chatDrafts.current.get("new"); pendingSwitchWrite.current = saved?.selectionIntent ?? null;
     sessionIdRef.current = null; liveSession.current = null; observedSelection.current = ""; pendingMessage.current = null;
-    writeSessionRoute(null); setSessionId(null); setSession(null); setSessionLoading(false); setSessionError(null); setDraft({ ...EMPTY_SELECTION }); setMessageDraft(""); setChatKey(value => value + 1);
+    pendingMessage.current = saved?.messageIntent ?? null;
+    writeSessionRoute(null); setSessionId(null); setSession(null); setSessionLoading(false); setSessionError(null); setDraft(saved?.selection ?? { ...EMPTY_SELECTION }); setMessageDraft(saved?.message ?? ""); setChatKey(value => value + 1);
     setPage("chat"); setEditor(null); setEditorDirty(false); setSidebarOpen(false); setError(null); setConnectionError(null);
   });
   const selectSession = (id: string) => leave(() => {
-    if (sessionIdRef.current !== id) { sessionIdRef.current = id; liveSession.current = null; observedSelection.current = ""; pendingMessage.current = null; writeSessionRoute(id); setSessionId(id); setSession(null); setSessionLoading(true); setSessionError(null); setMessageDraft(""); setChatKey(value => value + 1); }
+    if (sessionIdRef.current !== id) {
+      saveChatDraft(); const saved = chatDrafts.current.get(id) ?? savedChatDraft(state?.workspace ?? workspace, id);
+      if (saved) chatDrafts.current.set(id, saved);
+      sessionIdRef.current = id; liveSession.current = null; observedSelection.current = "";
+      pendingMessage.current = saved?.messageIntent ?? null; pendingSwitchWrite.current = saved?.selectionIntent ?? null;
+      writeSessionRoute(id); setSessionId(id); setSession(null); setSessionLoading(true); setSessionError(null);
+      setMessageDraft(saved?.message ?? ""); if (saved) setDraft(saved.selection); setChatKey(value => value + 1);
+    }
     setPage("chat"); setEditor(null); setEditorDirty(false); setSidebarOpen(false); setError(null); setConnectionError(null);
   });
   const chooseHarness = (harness: HarnessView) => leave(() => {
     const control = harness.controls.find(row => row.id === harness.defaultControlId && row.available) ?? harness.controls.find(row => row.available); if (!control) return;
+    saveChatDraft(); pendingSwitchWrite.current = null;
     sessionIdRef.current = null; liveSession.current = null; observedSelection.current = ""; pendingMessage.current = null;
     writeSessionRoute(null); setSessionId(null); setSession(null); setSessionLoading(false); setSessionError(null); setDraft({ ...EMPTY_SELECTION, harnessId: harness.id, controlId: control.id }); setMessageDraft("");
     setChatKey(value => value + 1); setPage("chat"); setSidebarOpen(false); setError(null); setConnectionError(null);
@@ -227,15 +302,18 @@ export function App() {
     if (!state || !startOperation("sending")) return;
     try {
       const isEffective = session !== null && JSON.stringify(draft) === JSON.stringify(selectionDraft(session.selection));
-      const problem = isEffective && session ? effectiveProviderProblem(session.selection, state.providers) : selectionProblem(draft, state.harnesses, state.providers); if (problem) throw new ApiError("INVALID_SELECTION", problem);
+      const problem = (isEffective && session ? effectiveProviderProblem(session.selection, state.providers) : null) ?? selectionProblem(draft, state.harnesses, state.providers); if (problem) throw new ApiError("INVALID_SELECTION", problem);
       const previous = pendingMessage.current;
       if (previous && !previous.committed && previous.text !== value) throw new ApiError("UNCONFIRMED_REQUEST", "上一条消息的接收结果还未确认。请保留原消息重试，或等待历史更新后再发送新内容。");
       const request = previous?.text === value ? previous : { text: value, createKey: requestKey(), sessionId: sessionIdRef.current, sendKey: requestKey(), committed: false };
       pendingMessage.current = request;
+      saveChatDraft();
       let id = request.sessionId;
       if (id === null) {
         const created = await api.createSession(workspace, selectionRequest(draft), request.createKey);
-        id = created.id; request.sessionId = id; sessionIdRef.current = id; writeSessionRoute(id); setSessionId(id); acceptSession(created);
+        id = created.id; request.sessionId = id; chatDrafts.current.delete("new");
+        try { sessionStorage.removeItem(draftStorageKey(state.workspace, "new")); } catch { /* The owned in-memory draft remains available. */ }
+        sessionIdRef.current = id; writeSessionRoute(id); setSessionId(id); acceptSession(created);
       }
       if (!request.committed) { await api.send(id, value, request.sendKey); request.committed = true; }
       pendingMessage.current = null;
@@ -260,9 +338,13 @@ export function App() {
       const target = selectionRequest(draft), previous = pendingSwitchWrite.current;
       if (previous?.sessionId === sessionId && JSON.stringify(previous.selection) !== JSON.stringify(target))
         throw new ApiError("UNCONFIRMED_REQUEST", "上一次切换的接收结果还未确认。请保留原选择重试，或等待对话更新。");
-      const request = previous?.sessionId === sessionId ? previous : { sessionId, selection: target, key: requestKey() };
+      const recovery = session?.status === "blocked", acknowledgeUnknown = recovery && session.runs.some(run => run.status === "unknown");
+      const request = previous?.sessionId === sessionId ? previous : { sessionId, selection: target, key: requestKey(), recovery, acknowledgeUnknown };
       pendingSwitchWrite.current = request; submittedKey = request.key;
-      await api.switchSelection(sessionId, request.selection, request.key); pendingSwitchWrite.current = null;
+      saveChatDraft();
+      if (request.recovery) await api.resumeSelection(sessionId, request.selection, request.key, request.acknowledgeUnknown);
+      else await api.switchSelection(sessionId, request.selection, request.key);
+      pendingSwitchWrite.current = null;
       acceptSession(await api.session(sessionId, AbortSignal.timeout(15_000)));
     }
     catch (failure: unknown) {
@@ -362,7 +444,7 @@ export function App() {
   if (!state) return <div className="boot-screen"><BrandMark/><h1>Harness<span>Hub</span></h1>{bootError ? <><div className="boot-error" role="alert"><AlertCircle size={18}/><p>{bootError}</p></div><p className="boot-help">请使用本机网关启动时提供的入口链接。验证完成后，页面会自动隐藏链接中的令牌。</p><button className="button secondary" onClick={() => setBootAttempt(value => value + 1)}><RefreshCw size={15}/>重新连接</button></> : <div className="boot-progress" role="status"><Spinner/>正在连接你的工作空间</div>}</div>;
   return <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`} data-page={page}><a className="skip-link" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>跳到主要内容</a><Sidebar page={page} sessions={state.sessions} currentId={sessionId} open={sidebarOpen} collapsed={sidebarCollapsed} activeJobs={state.jobs.filter(installationActive).length} interactionBusy={mutation !== null} onCollapse={() => setSidebarCollapsed(value => !value)} onToggle={() => setSidebarOpen(value => !value)} onPage={navigate} onNew={newChat} onSession={selectSession}/>
     <main id="main-content" className="app-main" tabIndex={-1}>
-      {page === "chat" ? <ChatPage key={chatKey} session={session} sessionRequested={sessionId !== null} sessionError={sessionError} loading={sessionLoading} draft={draft} messageDraft={messageDraft} onMessageDraft={setMessageDraft} providers={state.providers} harnesses={state.harnesses} workspace={workspace} mutation={mutation} error={error} connectionError={connectionError} onRetryConnection={() => setStreamAttempt(value => value + 1)} onDraft={setDraft} onWorkspace={setWorkspace} onSend={send} onApply={() => void applySelection()} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => setError(null)} onProviders={() => navigate("providers")} onNew={newChat} onMenu={() => setSidebarOpen(value => !value)}/>
+      {page === "chat" ? <ChatPage key={chatKey} session={session} sessionRequested={sessionId !== null} sessionError={sessionError} loading={sessionLoading} draft={draft} messageDraft={messageDraft} onMessageDraft={setMessageDraft} providers={state.providers} harnesses={state.harnesses} workspace={workspace} mutation={mutation} error={error ?? draftStorageError} connectionError={connectionError} onRetryConnection={() => setStreamAttempt(value => value + 1)} onDraft={setDraft} onWorkspace={setWorkspace} onSend={send} onApply={() => void applySelection()} onCancel={() => void cancel()} onClose={() => void close()} onDismissError={() => { setError(null); setDraftStorageError(null); }} onProviders={() => navigate("providers")} onNew={newChat} onMenu={() => setSidebarOpen(value => !value)}/>
         : page === "providers" ? <ProvidersPage providers={state.providers} editor={editor} saving={mutation === "saving"} probes={probes} error={error} onEdit={provider => { setEditor(provider); setError(null); }} onBack={() => leave(() => { setEditor(null); setEditorDirty(false); setError(null); })} onSave={saveProvider} onProbe={provider => void probeProvider(provider)} onDirty={dirtyChanged} onDismissError={() => setError(null)} onMenu={() => setSidebarOpen(value => !value)}/>
           : <HarnessesPage api={api} harnesses={state.harnesses} jobs={state.jobs} scanning={mutation === "scanning"} checking={checkingUpdates} submitting={submittingInstallations} cancelling={cancellingInstallations} unconfirmed={unconfirmedInstallations} error={error} connectionError={managementConnectionError} onRescan={() => void rescan()} onCheckUpdates={ids => void checkUpdates(ids)} onInstall={install} onConfirm={confirmInstallation} onCancelJob={job => void cancelInstallation(job)} onDismissError={() => setError(null)} onMenu={() => setSidebarOpen(value => !value)} onChoose={chooseHarness}/>}
     </main>

@@ -82,7 +82,7 @@ export interface CommandRecord {
   readonly resultId: string;
 }
 export interface SessionSnapshot {
-  readonly schemaVersion: 1 | 2;
+  readonly schemaVersion: 1 | 2 | 3;
   readonly id: SessionId;
   readonly version: number;
   readonly lastSeq: number;

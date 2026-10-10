@@ -68,7 +68,7 @@ class PeerFactory implements SessionBindingFactory {
     let close: Promise<CleanupEvidence> | null = null;
     return { control, workspace: configuration.workspace, assertOwned: () => lease.assertOwned(), close: () => {
       close ??= (async () => { let evidence: CleanupEvidence | null = null; try { evidence = await control.close(); return evidence; }
-        finally { lease.release(evidence !== null && evidence.protocolFailure === null); entry.closed = true; } })();
+        finally { lease.release(evidence?.closed === true); entry.closed = true; } })();
       return close;
     } };
   }
@@ -247,14 +247,16 @@ test("unconfirmed cleanup blocks next writer and does not rerun or activate pend
   assert.equal(final.selection.harnessId, "alpha"); assert.throws(() => app.send(state.id, "retry", "retry"), /disabled/);
 });
 
-test("late protocol failure retains completed backend evidence but blocks public completion and later work", async (t) => {
+test("late protocol failure retains backend evidence, fails the reply and leaves a quiescent conversation usable", async (t) => {
   const f = await fixture(t), factory = new PeerFactory(f.root, "duplicate-complete"), app = runtime(f, factory);
   t.after(async () => { try { await app.close(); } catch {} });
   const state = await app.create(f.configuration, { harnessId: "alpha" }, "create"); app.send(state.id, "duplicate terminal", "send");
-  await assert.rejects(() => app.wait(state.id), /disabled/);
+  await app.wait(state.id);
   const final = app.read(state.id), run = final.runs[0]!;
   assert.equal(run.backend?.status, "completed"); assert.equal(run.cleanup?.closed, true); assert.notEqual(run.cleanup?.protocolFailure, null);
-  assert.equal(run.status, "unknown"); assert.equal(final.status, "blocked"); assert.equal(factory.prepared.length, 1);
+  assert.equal(run.status, "failed"); assert.equal(final.status, "open"); assert.equal(factory.prepared.length, 1);
+  app.switch(state.id, { harnessId: "bravo" }, "next-selection"); await app.wait(state.id);
+  assert.equal(app.read(state.id).selection.harnessId, "bravo");
 });
 
 test("publication exception occurs after commit, stops resources and records blocked without publishing uncommitted facts", async (t) => {
@@ -475,4 +477,77 @@ test("Harness-only switch inherits Provider and an explicit null clears managed 
   assert.deepEqual(factory.prepared[0]?.selection.provider, providerA);
   app.switch(state.id, { harnessId: "alpha", provider: null }, "clear-switch"); await app.wait(state.id);
   assert.equal(app.read(state.id).selection.provider, undefined);
+});
+
+test("initialization failure with confirmed close fails only that reply and permits another selection in the same Session", async t => {
+  const f = await fixture(t), broken = controlled({ holdInitialize: true }), factory = new ControlledFactory([broken]), app = runtime(f, factory);
+  const state = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  app.send(state.id, "before initialization", "first"); await broken.initialized.promise;
+  broken.initialize!.reject(new SessionError("GATEWAY_AUTH_REQUIRED", "synthetic missing Gateway token"));
+  await app.wait(state.id);
+  const failed = app.read(state.id); assert.equal(failed.status, "open"); assert.equal(failed.runs[0]!.status, "failed");
+  assert.equal(failed.runs[0]!.backend, null); assert.equal(failed.runs[0]!.cleanup?.closed, true);
+  app.switch(state.id, { harnessId: "bravo" }, "choose-working"); await app.wait(state.id);
+  app.send(state.id, "explicit next request", "next"); await app.wait(state.id);
+  const final = app.read(state.id); assert.equal(final.id, state.id); assert.equal(final.runs[1]!.status, "completed");
+  assert.equal(final.messages[0]!.text, "before initialization"); assert.equal(factory.prepared.length, 3);
+});
+
+test("a Session with unknown execution cannot poison a different workspace or admit unconfirmed automatic retries", async t => {
+  const f = await fixture(t), unknown = controlled({ holdResult: true }), factory = new ControlledFactory([unknown]), app = runtime(f, factory);
+  const blocked = await app.create(f.configuration, { harnessId: "alpha" }, "create-unknown");
+  app.send(blocked.id, "unknown first request", "first"); await unknown.started.promise;
+  unknown.result.reject(new SessionError("CONTROL_FAILED", "synthetic transport loss"));
+  await assert.rejects(() => app.wait(blocked.id), /disabled for this Session/);
+  const other = await app.create({ ...f.configuration, workspace: join(f.root, "other-workspace") }, { harnessId: "alpha" }, "create-other");
+  app.send(other.id, "another workspace request", "other"); await app.wait(other.id);
+  assert.equal(app.read(other.id).runs[0]!.status, "completed"); assert.equal(app.read(blocked.id).status, "blocked");
+  assert.throws(() => app.send(blocked.id, "implicit retry", "bad-retry"), /disabled/);
+  await app.closeSession(blocked.id, "archive-unknown"); assert.equal(app.read(blocked.id).status, "closed");
+  assert.equal(app.read(blocked.id).runs[0]!.status, "unknown");
+});
+
+test("explicit recovery preserves unknown facts, cancels queued inputs and starts only the user's new request", async t => {
+  const f = await fixture(t), first = controlled({ holdResult: true }), factory = new ControlledFactory([first]), app = runtime(f, factory);
+  const state = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  app.send(state.id, "result is unknown", "first"); app.send(state.id, "queued input must never be replayed", "queued");
+  await first.started.promise; first.result.reject(new SessionError("CONTROL_FAILED", "transport ended without settlement"));
+  await assert.rejects(() => app.wait(state.id), /disabled/);
+  const before = app.read(state.id);
+  assert.throws(() => app.resume(state.id, { harnessId: "bravo" }, "resume", false), error => error instanceof SessionError && error.code === "RECOVERY_ACK_REQUIRED");
+  const receipt = app.resume(state.id, { harnessId: "bravo" }, "resume", true); await app.wait(state.id);
+  const resumed = app.read(state.id); assert.equal(resumed.status, "open"); assert.equal(resumed.epoch, 2);
+  assert.deepEqual(resumed.runs[0], before.runs[0]); assert.equal(resumed.runs[1]!.status, "cancelled");
+  assert.equal(factory.prepared.length, 2, "recovery only initializes a fresh connection");
+  assert.equal(app.resume(state.id, { harnessId: "bravo" }, "resume", true).switchId, receipt.switchId);
+  assert.throws(() => app.switch(state.id, { harnessId: "bravo" }, "resume"), /another request/);
+  app.send(state.id, "new explicit input", "new"); await app.wait(state.id);
+  assert.equal(factory.prepared.length, 3); assert.equal(app.read(state.id).runs[2]!.status, "completed");
+  assert.equal(app.read(state.id).runs[0]!.status, "unknown");
+});
+
+test("legacy falsely blocked switch resumes with the same Session and immutable failed-switch evidence", async t => {
+  const f = await fixture(t), bad = controlled({ holdInitialize: true }), factory = new ControlledFactory([bad]), app = runtime(f, factory);
+  const state = await app.create(f.configuration, { harnessId: "alpha" }, "create"), failed = app.switch(state.id, { harnessId: "bravo" }, "bad-switch");
+  await bad.initialized.promise; bad.initialize!.reject(new SessionError("GATEWAY_AUTH_REQUIRED", "synthetic missing authentication")); await app.wait(state.id);
+  const cleanFailure = app.read(state.id);
+  f.store.transact(state.id, cleanFailure.version, current => ({ next: { ...current, status: "blocked" }, events: [{ type: "session.blocked", data: { switchId: failed.switchId } }] }));
+  app.resume(state.id, { harnessId: "alpha" }, "recover"); await app.wait(state.id);
+  const current = app.read(state.id); assert.equal(current.id, state.id); assert.equal(current.status, "open");
+  assert.deepEqual(current.switches[0], cleanFailure.switches[0]); assert.equal(current.selection.harnessId, "alpha");
+  assert.ok(f.store.events(state.id, 0, 100).some(value => value.type === "switch.effective" && value.data.recovered === true));
+});
+
+test("recovery refuses unconfirmed cleanup, authoritative failure and a closed Session without acquiring another binding", async t => {
+  const f = await fixture(t), first = controlled({ holdClose: true }), factory = new ControlledFactory([first]), app = runtime(f, factory);
+  const state = await app.create(f.configuration, { harnessId: "alpha" }, "create"); app.send(state.id, "unconfirmed resources", "first");
+  await first.closing.promise; first.closed.reject(new SessionError("CLEANUP_FAILED", "synthetic cleanup failure"));
+  await assert.rejects(() => app.wait(state.id), /disabled/);
+  assert.throws(() => app.resume(state.id, { harnessId: "bravo" }, "resume", true), error => error instanceof SessionError && error.code === "RECOVERY_UNSAFE");
+  assert.equal(factory.prepared.length, 1);
+  const separate = await app.create(f.configuration, { harnessId: "alpha" }, "separate");
+  f.store.transact(separate.id, separate.version, current => ({ next: { ...current, status: "blocked" }, events: [{ type: "session.blocked", data: { error: { code: "PUBLICATION_FAILED" } } }] }));
+  assert.throws(() => app.resume(separate.id, { harnessId: "alpha" }, "unsafe-owner"), error => error instanceof SessionError && error.code === "RECOVERY_UNSAFE");
+  await app.closeSession(separate.id, "close");
+  assert.throws(() => app.resume(separate.id, { harnessId: "alpha" }, "closed"), error => error instanceof SessionError && error.code === "RECOVERY_UNAVAILABLE");
 });

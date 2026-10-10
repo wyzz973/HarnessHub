@@ -102,7 +102,11 @@ export class CodexControl implements HarnessControl {
         if (!["inProgress", "completed", "interrupted", "failed"].includes(status)) throw new ControlError("INVALID_PROTOCOL", "unknown turn status");
         active.signalStarted();
       } catch (error) { this.rpc.abort(errorFrom(error)); }
-    }, error => this.rpc.abort(errorFrom(error)));
+    }, (error: unknown) => {
+      if (error instanceof ControlError && error.code === "REMOTE_ERROR" && active.turnId === null && this.rpc.failure === null) {
+        this.settleTurn(active); active.resolve({ status: "failed", reason: "request_rejected" });
+      } else this.rpc.abort(errorFrom(error));
+    });
     return { result, requestStop: () => {
       if (active.stop) return active.stop;
       if (active.settled || this.active !== active) return Promise.reject(new ControlError("INVALID_STATE", "turn has already ended"));

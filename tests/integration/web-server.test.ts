@@ -9,6 +9,8 @@ import test from "node:test";
 import { prepareConfiguration } from "../../src/infrastructure/session/binding-factory.js";
 import { startWebServer, type WebServer } from "../../src/web/server.js";
 import type { SessionView } from "../../src/contracts/web.js";
+import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
+import { sessionId } from "../../src/contracts/session.js";
 
 const peer = fileURLToPath(new URL("../../../tests/fixtures/session-peer.mjs", import.meta.url));
 function row(value: unknown): Record<string, unknown> {
@@ -147,17 +149,18 @@ test("failed switch does not dispatch later messages on the old Harness", async 
   assert.equal((await trace(f)).filter(item => item.kind === "prompt").length, 1);
 });
 
-test("target protocol failure blocks admission and does not dispatch waiting messages on the old Harness", async t => {
+test("target startup failure preserves the conversation and never dispatches waiting messages on the old Harness", async t => {
   const f = await fixture(t, "hold"); await auth(f); const id = await create(f);
   await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "first", commandId: "first" }); await waitFor(f, id, value => value.messages.some(message => message.role === "assistant"));
   await call(f, `/api/v1/sessions/${id}/switches`, "POST", { selection: { harnessId: "web-bad" }, commandId: "bad-switch" });
   await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "second", commandId: "second" });
   await call(f, `/api/v1/sessions/${id}/cancel`, "POST", { commandId: "cancel-first" });
-  const ended = await waitFor(f, id, value => value.status === "blocked"); assert.equal(ended.switches[0]?.status, "failed");
-  f.expectedShutdownError = true;
+  const ended = await waitFor(f, id, value => value.runs[1]?.status === "failed"); assert.equal(ended.switches[0]?.status, "failed");
+  assert.equal(ended.status, "open");
   assert.equal(ended.runs[1]?.backend, null); assert.equal(ended.runs[1]?.cleanup, null); assert.equal(ended.selection.harnessId, "web-a");
   assert.equal((await trace(f)).filter(item => item.kind === "prompt").length, 1);
-  assert.equal((await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "third", commandId: "third" })).status, 409);
+  assert.equal((await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "third", commandId: "third" })).status, 202);
+  await call(f, `/api/v1/sessions/${id}/cancel`, "POST", { commandId: "stop-third" });
 });
 
 test("Provider HTTP create and revision update redact keys and preserve optimistic/idempotent identities", async t => {
@@ -247,4 +250,30 @@ test("closing the web owner waits for the running Harness cleanup and releases t
   for (const child of (await trace(f)).filter(item => item.kind === "spawn")) assert.throws(() => process.kill(Number(child.pid), 0), (error: unknown) => row(error).code === "ESRCH");
   const reopened = await startWebServer({ root: f.data, configuration: await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true }), port: 0, assetsDirectory: f.assets });
   f.gateway = reopened;
+});
+
+test("authenticated recovery restores a legacy blocked conversation without rewriting history or sending a prompt", async t => {
+  const f = await fixture(t); await auth(f); const id = await create(f);
+  await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "first", commandId: "first" });
+  await waitFor(f, id, value => value.runs[0]?.status === "completed");
+  await call(f, `/api/v1/sessions/${id}/switches`, "POST", { selection: { harnessId: "web-bad" }, commandId: "broken" });
+  const failed = await waitFor(f, id, value => value.switches[0]?.status === "failed");
+  await f.gateway.close();
+  const store = new SqliteSessionStore(f.data), snapshot = store.get(sessionId(id));
+  store.transact(snapshot.id, snapshot.version, current => ({ next: { ...current, status: "blocked" }, events: [{ type: "session.blocked", data: { switchId: current.switches[0]!.id } }] }));
+  store.close();
+  f.gateway = await startWebServer({ root: f.data, configuration: await prepareConfiguration({ workspace: f.workspace, manifestPath: f.manifest, pathOnly: true }), port: 0, assetsDirectory: f.assets });
+  const launch = new URL(f.gateway.url); f.origin = launch.origin; f.token = new URLSearchParams(launch.hash.slice(1)).get("token")!; await auth(f);
+  const count = (await trace(f)).filter(item => item.kind === "prompt").length;
+  const input = { selection: { harnessId: "web-b" }, commandId: "resume" };
+  assert.equal((await call(f, `/api/v1/sessions/${id}/resume`, "POST", { ...input, acknowledgeUnknown: "yes" })).status, 400);
+  const accepted = await call(f, `/api/v1/sessions/${id}/resume`, "POST", input); assert.equal(accepted.status, 202, accepted.text);
+  const resumed = await waitFor(f, id, value => value.status === "open");
+  assert.equal(resumed.id, id); assert.deepEqual(resumed.runs, failed.runs); assert.deepEqual(resumed.messages, failed.messages);
+  assert.deepEqual(resumed.switches[0], failed.switches[0]); assert.equal(resumed.selection.harnessId, "web-b");
+  assert.equal((await trace(f)).filter(item => item.kind === "prompt").length, count);
+  const replay = await call(f, `/api/v1/sessions/${id}/resume`, "POST", input); assert.equal(replay.status, 202); assert.equal(row(replay.data).replayed, true);
+  await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "second", commandId: "second" });
+  await waitFor(f, id, value => value.runs[1]?.status === "completed");
+  const incompatible = await call(f, `/api/v1/sessions/${id}/resume`, "POST", { selection: { harnessId: "web-a" }, commandId: "already-open" }); assert.equal(incompatible.status, 409);
 });

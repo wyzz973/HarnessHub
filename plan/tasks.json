@@ -947,7 +947,7 @@
         "G004-C02",
         "G004-C03"
       ],
-      "active_slice": "public-session"
+      "active_slice": "conversation-recovery"
     },
     {
       "id": "G005",
@@ -1136,9 +1136,10 @@
         "G008-C04",
         "G008-C05",
         "G008-P01",
-        "G008-P02"
+        "G008-P02",
+        "G008-R01"
       ],
-      "active_slice": "public-session"
+      "active_slice": "conversation-recovery"
     },
     {
       "id": "G009",
@@ -2037,9 +2038,11 @@
         "G028-C01",
         "G028-C02",
         "G028-C03",
-        "G028-C04"
+        "G028-C04",
+        "G028-R01",
+        "G028-R02"
       ],
-      "active_slice": "public-session"
+      "active_slice": "conversation-recovery"
     },
     {
       "id": "G029",
@@ -2180,9 +2183,10 @@
       "test_cases": [
         "G031-C01",
         "G031-C02",
-        "G031-C03"
+        "G031-C03",
+        "G031-R01"
       ],
-      "active_slice": "catalog-control"
+      "active_slice": "conversation-recovery"
     },
     {
       "id": "G032",
@@ -2231,7 +2235,7 @@
         "G032-C03",
         "G032-C04"
       ],
-      "active_slice": "catalog-control"
+      "active_slice": "conversation-recovery"
     },
     {
       "id": "G033",
@@ -2326,7 +2330,7 @@
         "G034-C03",
         "G034-C04"
       ],
-      "active_slice": "catalog-control"
+      "active_slice": "conversation-recovery"
     },
     {
       "id": "G035",
@@ -3032,9 +3036,10 @@
         "G050-C02",
         "G050-C03",
         "G050-P01",
-        "G050-P02"
+        "G050-P02",
+        "G050-R01"
       ],
-      "active_slice": "chat-stream-experience"
+      "active_slice": "conversation-recovery"
     },
     {
       "id": "G051",
@@ -3240,9 +3245,10 @@
         "G054-P01",
         "G054-P02",
         "G054-M01",
-        "G054-S01"
+        "G054-S01",
+        "G054-R01"
       ],
-      "active_slice": "chat-stream-experience"
+      "active_slice": "conversation-recovery"
     },
     {
       "id": "G055",
@@ -3526,7 +3532,7 @@
         "G059-C02",
         "G059-C03"
       ],
-      "active_slice": "public-session"
+      "active_slice": "conversation-recovery"
     },
     {
       "id": "G060",
@@ -3589,7 +3595,7 @@
         "G060-M01",
         "G060-S01"
       ],
-      "active_slice": "chat-stream-experience"
+      "active_slice": "conversation-recovery"
     },
     {
       "id": "G061",
@@ -3648,7 +3654,7 @@
         "G061-S02",
         "G061-S03"
       ],
-      "active_slice": "chat-stream-experience"
+      "active_slice": "conversation-recovery"
     },
     {
       "id": "G062",

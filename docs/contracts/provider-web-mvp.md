@@ -28,7 +28,7 @@ Provider 保存名称、协议、Base URL、模型列表、默认模型、启用
 
 已知密钥在公开 control metadata、事件、诊断、错误与结算中清洗；文本跨delta分片使用前缀缓冲，不能通过分片逃逸。模型探测禁止redirect，响应≤1MiB，期限5s，同时≤16；shutdown停止准入、取消并等待所有探测，才释放vault/database。
 
-业务SQLite user_version1→2在独占owner内全事务升级经验证的旧快照schemaVersion，保留全部命令、fingerprint、events、水位和业务version；坏数据整笔回滚。新Session必须v2，未知格式拒绝；只读Reader不迁移。旧Session无法凭空获得模型目标，需要显式切换。
+业务SQLite在独占owner内全事务执行既有user_version1→2以及新增2→3迁移，保留全部命令、fingerprint、events、水位和业务version；坏数据整笔回滚。新Session必须v3，未知格式拒绝；只读Reader支持已知旧版本但不迁移。旧Session无法凭空获得模型目标，需要显式切换。旧程序不能读取v3；回退前停止服务并恢复升级前备份。
 
 ## HTTP 与浏览器
 
@@ -44,7 +44,15 @@ Web DTO屏蔽commands/fingerprints与私有configuration引用，保留Run/switc
 
 浏览器验证UTF-8/帧字节、JSON字段、消息归属和递增水位；按浏览器刷新周期合并显示，原始文本仍来自真实提交。异常连接最多连续尝试8次，退避有上限且可取消；认证失败停止，用户可显式重新连接。连接正常到期则重新读取快照。500ms完整Session轮询退出对话更新路径，目录和安装状态仍独立刷新。
 
-消息区使用有界阅读宽度、流式Markdown和生成反馈；自动跟随最新回复，用户上滚后暂停跟随。复制取得原始Markdown，编辑只放回草稿；执行详情按需展开，正常结束不常驻每轮页脚。失败、停止和unknown保留已收到的内容；closed/blocked只读，辅助技术状态也不能宣称可继续执行。输入框自动增长，选择器为紧凑chip，高级控制入口与固定Provider版本放入披露面板；IME、窄屏和reduced-motion分别验证。依据与实际结果见[ADR-013](../decisions/0013-live-chat-experience.md)和[验收记录](../verification/live-chat-2026-10-10.md)。
+消息区使用有界阅读宽度、流式Markdown和生成反馈；自动跟随最新回复，用户上滚后暂停跟随。复制取得原始Markdown，编辑只放回草稿；执行详情按需展开，正常结束不常驻每轮页脚。失败、停止和unknown保留已收到的内容。closed只读；blocked仍可写草稿、改选择、检查恢复或明确结束，普通发送等待恢复成功。输入框自动增长，选择器为紧凑chip，高级控制入口与固定Provider版本放入披露面板；IME、窄屏和reduced-motion分别验证。流式依据见[ADR-013](../decisions/0013-live-chat-experience.md)与[验收](../verification/live-chat-2026-10-10.md)，故障/恢复调整由下节和ADR-014拥有。
+
+### 可恢复的对话交互（ADR-014）
+
+`POST /api/v1/sessions/:id/resume` 接收selection/commandId及可选布尔acknowledgeUnknown，返回202/SwitchReceipt。新恢复命令在blocked状态检查持久关闭证据；未知结果需明确承认，无法确认资源或所有权故障返回409。验证目标和工作区租约后才生效；不发送prompt、不重跑Run、不清租约，普通switch命令不能冒充恢复。请求幂等，失败恢复仍可修改选择再试。
+
+失败的目标切换保留原有效选择/epoch，立即显示可读原因及“继续使用当前选择”动作；失败等待输入不自动交给旧目标。正在切换时区分等待活动回复和验证新连接。失败/停止的回复可由用户明确重试为新Run，unknown不提供一键重跑；历史和部分内容保留。
+
+草稿按当前标签页的工作区/对话保存在sessionStorage，含未确认命令身份，刷新/导航后恢复。不保存Provider表单/密钥，存储字段/字节严格校验；保存的committed标记不能代替服务端事实，写受理仍用canonical命令身份确认。浏览器不能保存时保留内存并提示，不清空用户内容。明确结束会话前显示原生焦点约束对话框，取消不发close；确认后保留历史并停止在途准入/执行。安装/入口发现与原生连接认证分开说明。实际审查与验收见[恢复记录](../verification/conversation-recovery-2026-10-10.md)。
 
 HTTP body≤128KiB、response≤8MiB、资产≤4MiB、并发请求≤16、连接≤32；body10s和半包连接关闭均有界。进程关闭等待Run停止/资源清理、HTTP请求、Provider探测，再关闭业务Store。停止服务保留Session历史。
 

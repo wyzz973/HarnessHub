@@ -86,7 +86,11 @@ export class AcpControl implements HarnessControl {
           default: throw new ControlError("INVALID_PROTOCOL", "unknown ACP stop reason");
         }
         return { status, reason };
-      }).catch(error => { this.rpc.abort(errorFrom(error)); throw error; });
+      }).catch((error: unknown): BackendResult => {
+        if (error instanceof ControlError && error.code === "REMOTE_ERROR" && this.rpc.failure === null)
+          return { status: "failed", reason: "request_rejected" };
+        this.rpc.abort(errorFrom(error)); throw error;
+      });
     void result.then(() => this.settle(active), () => this.settle(active));
     return { result, requestStop: () => {
       if (active.stop) return active.stop;

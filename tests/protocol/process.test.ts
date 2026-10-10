@@ -32,7 +32,7 @@ test("request deadline closes a peer that never replies", async () => {
 });
 test("remote error is a rejection rather than a successful payload", async () => {
   const rpc = peer("remote-error");
-  try { await assert.rejects(rpc.request("initialize", {}), /peer error -32001/); } finally { await closed(rpc); }
+  try { await assert.rejects(rpc.request("initialize", {}), error => error instanceof ControlError && error.code === "REMOTE_ERROR" && error.message.includes("-32001") && !error.message.includes("test remote error")); } finally { await closed(rpc); }
 });
 test("stderr capture is bounded while protocol operation continues", async () => {
   const rpc = peer("stderr");
@@ -106,4 +106,13 @@ test("normal owner close has no protocol failure and preserves bounded failure s
   const failed = peer("basic"); failed.abort(new Error("x".repeat(10000)));
   const cleanup = await failed.close(); assert.equal(cleanup.closed, true);
   assert.equal(cleanup.protocolFailure?.code, "CONTROL_FAILED"); assert.equal(cleanup.protocolFailure?.message.length, 512);
+});
+
+test("Gateway authentication failure is classified from private stderr without reflecting its credential text", async () => {
+  const rpc = peer("gateway-auth-failure");
+  try { await assert.rejects(rpc.request("initialize", {}), error => error instanceof ControlError && error.code === "GATEWAY_AUTH_REQUIRED" && !error.message.includes("never-public")); }
+  finally {
+    const evidence = await rpc.close(); assert.equal(evidence.closed, true); assert.equal(evidence.exitCode, 1);
+    assert.equal(evidence.protocolFailure?.code, "GATEWAY_AUTH_REQUIRED"); assert.equal(JSON.stringify(evidence).includes("never-public"), false);
+  }
 });

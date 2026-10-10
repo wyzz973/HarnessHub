@@ -19,6 +19,8 @@ pnpm web --cwd /absolute/workspace --data-dir data --port 4317
 
 对话现通过已提交事实的SSE实时显示回复，刷新或重连不会重新执行消息。消息区支持流式Markdown、生成反馈、阅读时暂停滚动、复制与执行详情；停止后保留部分内容。输入区为自动增长文本框和紧凑选择器，高级配置按需展开。短回复若模型几乎同时返回，仍可能一次显示；没有人工打字延迟。验收见[实时对话记录](docs/verification/live-chat-2026-10-10.md)，可单独运行 `pnpm test:real:stream` 验证真实Codex和本地确定性Provider的首块/重连。
 
+Harness连接或目标切换失败时，历史与原选择保留，可继续使用当前选择或明确重试。草稿在当前标签页按对话保存，刷新也可恢复。旧blocked会话可选择Harness并“检查连接并恢复对话”；未知结果需明确确认，清理未确认仍需先处理资源，不自动重跑旧任务。结束会话前说明后果并确认。审查见[对话恢复记录](docs/verification/conversation-recovery-2026-10-10.md)。本轮业务存储升级为v3；更新前备份本机data，回退旧程序前停止服务并恢复旧备份。
+
 在 Providers 添加名称、协议、Base URL、模型 ID/默认模型与API Key，保存后“测试连接”只验证模型目录可达。新对话选择Harness、Provider、Model再发送。中途改选需点击“应用选择”，当前一轮收敛后才下一轮生效；编辑Provider不会自动改变已有会话的固定版本，可显式“使用最新”再应用。
 
 当前受管组合为 **Codex + OpenAI Responses**、**Gemini CLI + Gemini（API Key）**。其他产品继续检测，但协议/受管配置能力单独标明。OpenAI/Anthropic连接地址通常含/v1；Gemini填写API服务根。密钥只写入本机加密vault，不回显到UI/Session；同OS用户可访问主密钥，本版不宣称系统钥匙串隔离。
@@ -82,6 +84,7 @@ pnpm sessions list --data-dir data --json
 pnpm sessions show --session session-ID --data-dir data --json
 pnpm sessions events --session session-ID --data-dir data --after-seq 0 --limit 50 --json
 pnpm sessions close --session session-ID --data-dir data
+pnpm sessions resume --session session-ID --data-dir data --harness codex
 ~~~
 
 将示例路径/Session ID替换为自己的值。新会话输出公共Session ID；续接使用相同数据根。真实模型调用仍需要自己准备私有配置根，Codex配置在该根的codex目录；没有配置时默认临时隔离环境可能需要登录/模型配置，不能借用个人默认登录冒充验收。

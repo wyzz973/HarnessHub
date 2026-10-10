@@ -18,8 +18,9 @@ async function launchFixture() {
   const root = await realpath(await mkdtemp(join(tmpdir(), "harness-web-browser-")));
   const workspace = join(root, "workspace"), shim = join(root, "codex-fixture.mjs"); await mkdir(workspace);
   await writeFile(shim, "#!" + process.execPath + "\nimport " + JSON.stringify(pathToFileURL(peer).href) + ";\n", { mode: 0o700 });
-  const manifest = join(root, "catalog.json");
-  await writeFile(manifest, JSON.stringify({ version: 2, definitions: [], overrides: { "codex-native": { executable: shim } } }));
+  const manifest = join(root, "catalog.json"), authShim = join(root, "gateway-auth-fixture.mjs");
+  await writeFile(authShim, "#!" + process.execPath + "\nprocess.stderr.write('unauthorized: gateway token missing\\n');process.exit(1);\n", { mode: 0o700 });
+  await writeFile(manifest, JSON.stringify({ version: 2, definitions: [], overrides: { "codex-native": { executable: shim }, "openclaw-native": { executable: authShim } } }));
   const modelServer = createServer((req, res) => { assert.equal(req.method, "GET"); assert.equal(req.url, "/v1/models"); res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ data: [{ id: "model-a" }, { id: "model-b" }] })); });
   await new Promise<void>(done => modelServer.listen(0, "127.0.0.1", done));
   const address = modelServer.address(); assert.ok(address && typeof address === "object");
@@ -405,6 +406,11 @@ test("live chat renders committed partial Markdown before completion, respects r
   }); assert.ok(motion.every(value => value <= 1));
   await page.screenshot({ path: join(artifact, "chat-cancelled-943.png"), fullPage: true, animations: "disabled" });
   await page.getByRole("button", { name: "关闭这个对话", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "结束这次会话？", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "继续对话", exact: true }).click();
+  assert.equal((await current()).snapshot.status, "open");
+  await page.getByRole("button", { name: "关闭这个对话", exact: true }).click();
+  await page.getByRole("button", { name: "结束会话", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "发送消息", exact: true })).toBeDisabled();
   await expect(page.getByRole("status").filter({ hasText: "对话已关闭，可查看历史" })).toBeVisible();
   await expect(page.getByText("可以继续对话", { exact: true })).toHaveCount(0);
@@ -415,4 +421,71 @@ test("live chat renders committed partial Markdown before completion, respects r
   await expect(page.getByText("可以继续对话", { exact: true })).toHaveCount(0);
   assert.deepEqual(errors, []); assert.equal(expectedMessageAckErrors, 1);
   assert.ok(!(await page.locator("body").innerText()).includes("synthetic-stream-fixture-key"));
+});
+
+test("failed Harness selection keeps the same conversation usable, shows recovery actions and preserves per-chat drafts", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 943, height: 1079 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  const launch = new URL(fixture.gateway.url), origin = launch.origin;
+  const boot = await context.request.post(origin + "/api/v1/auth/bootstrap", { headers: { Origin: origin }, data: { token: new URLSearchParams(launch.hash.slice(1)).get("token") } });
+  assert.equal(boot.status(), 200); const auth = await boot.json();
+  const provider = await context.request.post(origin + "/api/v1/providers", { headers: { Origin: origin, "X-CSRF-Token": String(auth.csrfToken) }, data: { commandId: "recovery-provider", input: {
+    name: "可用模型连接", protocol: "openai-responses", baseUrl: fixture.baseUrl, models: ["model-a"], defaultModel: "model-a", enabled: true, apiKey: "synthetic-recovery-key",
+  } } }); assert.equal(provider.status(), 201);
+  await page.goto(origin);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
+  const pick = async (label: string, value: string) => { await page.getByRole("button", { name: label, exact: true }).click(); await page.getByRole("option", { name: value, exact: true }).click(); };
+  const current = async () => {
+    const id = new URL(page.url()).hash.slice(1).split("session=")[1]; assert.ok(id);
+    const response = await context.request.get(origin + "/api/v1/sessions/" + id); assert.equal(response.status(), 200); return await response.json();
+  };
+  await pick("选择 Harness", "Codex"); await pick("选择 Provider", "可用模型连接");
+  await composer.fill("FIRST_CONVERSATION"); await composer.press("Enter"); await expect(log).toContainText("已由");
+  await expect.poll(async () => (await current()).runs[0].status).toBe("completed"); const first = await current();
+  await composer.fill("选择失败也要保留这条草稿");
+  await pick("选择 Harness", "OpenClaw"); await pick("选择 Provider", "Harness 原生连接");
+  await page.getByRole("button", { name: "应用选择", exact: true }).click();
+  await expect(page.getByText("未能切换到 OpenClaw", { exact: true })).toBeVisible();
+  await expect(page.getByText(/尚未配置 Gateway 认证/)).toBeVisible();
+  await expect(composer).toBeEnabled(); await expect(composer).toHaveValue("选择失败也要保留这条草稿");
+  const failed = await current(); assert.equal(failed.id, first.id); assert.equal(failed.status, "open"); assert.equal(failed.runs.length, 1);
+  assert.equal(failed.selection.harnessId, "codex"); assert.equal(failed.switches[0].error.code, "GATEWAY_AUTH_REQUIRED");
+  await page.screenshot({ path: join(artifact, "harness-selection-failed.png"), fullPage: true, animations: "disabled" });
+  await page.getByRole("button", { name: "继续使用当前选择", exact: true }).click();
+  await expect(page.getByRole("button", { name: "选择 Harness", exact: true })).toContainText("Codex");
+  await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled();
+  await composer.press("Enter"); await expect.poll(async () => (await current()).runs[1]?.status).toBe("completed");
+  assert.equal((await current()).id, first.id);
+  await composer.fill("FAIL_ONCE：由用户明确重试"); await composer.press("Enter");
+  await expect.poll(async () => (await current()).runs[2]?.status).toBe("failed");
+  await page.locator(".assistant-message").last().hover(); await page.getByRole("button", { name: "重试回复", exact: true }).last().click();
+  await expect.poll(async () => (await current()).runs[3]?.status).toBe("completed");
+  const retried = await current(); assert.equal(retried.runs[2].status, "failed"); assert.notEqual(retried.runs[2].id, retried.runs[3].id);
+  await composer.fill("第一段对话的未发送草稿");
+  await page.getByRole("button", { name: "新对话", exact: true }).click();
+  await pick("选择 Harness", "Codex"); await pick("选择 Provider", "可用模型连接");
+  await composer.fill("SECOND_CONVERSATION"); await composer.press("Enter"); await expect(page).toHaveURL(/#session=/u); await expect.poll(async () => (await current()).runs[0]?.status).toBe("completed");
+  const second = await current(); assert.notEqual(second.id, first.id); await composer.fill("第二段对话的未发送草稿");
+  await page.getByRole("button", { name: "FIRST_CONVERSATION", exact: true }).click();
+  await expect(composer).toHaveValue("第一段对话的未发送草稿"); assert.equal((await current()).runs.length, 4);
+  await page.getByRole("button", { name: "SECOND_CONVERSATION", exact: true }).click();
+  await expect(composer).toHaveValue("第二段对话的未发送草稿"); assert.equal((await current()).runs.length, 1);
+  await page.reload(); await expect(composer).toHaveValue("第二段对话的未发送草稿"); assert.equal((await current()).runs.length, 1);
+  await page.getByRole("button", { name: "新对话", exact: true }).click(); await composer.fill("新对话尚未发送的草稿");
+  await page.getByRole("button", { name: "FIRST_CONVERSATION", exact: true }).click();
+  await page.getByRole("button", { name: "新对话", exact: true }).click(); await expect(composer).toHaveValue("新对话尚未发送的草稿");
+  await page.reload(); await expect(composer).toHaveValue("新对话尚未发送的草稿");
+  assert.deepEqual(errors, []);
+  await page.screenshot({ path: join(artifact, "preserved-chat-drafts.png"), fullPage: true, animations: "disabled" });
+  await expect.poll(() => page.evaluate(() => Object.entries(sessionStorage).some(([key, value]) => key.startsWith("harnessgateway:chat-draft:") && key.endsWith(":new") && JSON.parse(value).message === "新对话尚未发送的草稿"))).toBe(true);
+  await page.evaluate(() => {
+    const entry = Object.entries(sessionStorage).find(([key]) => key.startsWith("harnessgateway:chat-draft:") && key.endsWith(":new")); if (!entry) throw new Error("owned draft was not saved");
+    const value = JSON.parse(entry[1]); value.unrecognizedCredential = "synthetic-untrusted-cache-value"; sessionStorage.setItem(entry[0], JSON.stringify(value));
+  });
+  await page.reload(); await expect(composer).toHaveValue("");
+  const unchanged = await (await context.request.get(origin + "/api/v1/sessions")).json(); assert.equal(unchanged.length, 2, "invalid cached drafts cannot create or submit a conversation");
+  assert.deepEqual(errors, []);
 });

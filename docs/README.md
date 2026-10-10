@@ -2,6 +2,8 @@
 
 当前以本机MVP切片推进；完整蓝图按各自状态管理。ADR-008/009/010/011/012及对应本机契约已认可，目录、控制和公共Session/静止切换已实现；本机Provider和HTTP/工作台按ADR-011实现；完整未来代理账本/自动路由等仍proposed。
 
+最新故障与可用性审查：[ADR-014](decisions/0014-conversation-failure-recovery.md)、[对话恢复契约](contracts/provider-web-mvp.md#可恢复的对话交互adr-014)、[审查与验收](verification/conversation-recovery-2026-10-10.md)。连接失败不锁死对话，真正未知仍保留证据和资源检查；存储v3升级需保留备份。
+
 最新实时对话：[ADR-013](decisions/0013-live-chat-experience.md)、[事实流与交互契约](contracts/provider-web-mvp.md#实时对话事实流adr-013)、[验收](verification/live-chat-2026-10-10.md)。已提交SSE、重连及聊天组件在本机验证；真实Codex使用本地确定性模型服务，云模型与其他Harness组合分别验收。
 
 最新Harness管理与UI重做：[ADR-012](decisions/0012-harness-management-workbench.md)、[管理调研](research/harness-management.md)、[实际验证](verification/harness-management-2026-10-10.md)。本机私有安装、升级与动态图形操作作为新切片，完整自动择优仍后置。

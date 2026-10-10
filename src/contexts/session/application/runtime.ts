@@ -4,7 +4,7 @@ import {
   SessionError, commandId, messageId, runId, sessionId, switchId,
   type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicRun,
   type SelectionRequest, type SendReceipt, type SessionBindingFactory, type SessionCommit, type SessionConfiguration,
-  type SessionId, type SessionMutation, type SessionRuntimeOptions, type SessionSnapshot, type SessionStore, type SwitchReceipt,
+  type SessionId, type SessionEvent, type SessionMutation, type SessionRuntimeOptions, type SessionSnapshot, type SessionStore, type SwitchReceipt,
 } from "../../../contracts/session.js";
 import { buildPublicContext } from "../domain/context.js";
 import { MAX_COMMANDS, MAX_OUTPUT_BYTES, MAX_QUEUE, MAX_RUNS, assertInput, parseConfiguration, replayCommand, terminal, utf8Bytes } from "../domain/state.js";
@@ -81,7 +81,7 @@ export class SessionRuntime {
     const concurrent = this.store.findByCreateKey(command);
     if (concurrent) { replayCommand(concurrent, command, "create", fingerprint); return concurrent; }
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 2, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
+    const state: SessionSnapshot = { schemaVersion: 3, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
       configuration: config, selection: validated, activeRunId: null, pendingSwitchId: null,
       runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }] };
     try {
@@ -112,17 +112,27 @@ export class SessionRuntime {
   }
 
   switch(id: SessionId, selection: SelectionRequest, key: string): SwitchReceipt {
-    this.admit(); const request = requested(selection), command = commandId(key), fingerprint = this.fingerprint({ kind: "switch", selection: request });
+    return this.requestSwitch(id, selection, key, false, false);
+  }
+  /** Explicit recovery checks durable closure, then validates a fresh target without replaying any Run. */
+  resume(id: SessionId, selection: SelectionRequest, key: string, acknowledgeUnknown = false): SwitchReceipt {
+    return this.requestSwitch(id, selection, key, true, acknowledgeUnknown);
+  }
+  private requestSwitch(id: SessionId, selection: SelectionRequest, key: string, recovery: boolean, acknowledgeUnknown: boolean): SwitchReceipt {
+    this.admit(); const request = requested(selection), command = commandId(key), fingerprint = this.fingerprint({ kind: "switch", selection: request,
+      ...(recovery ? { recovery: true, acknowledgeUnknown } : {}) });
     const state = this.load(id), prior = replayCommand(state, command, "switch", fingerprint);
     if (prior) return { sessionId: id, switchId: switchId(prior.resultId), replayed: true };
-    this.open(state); this.commandBudget(state);
+    if (recovery) this.recoverable(state, acknowledgeUnknown); else this.open(state);
+    this.commandBudget(state);
     if (state.pendingSwitchId !== null) throw new SessionError("SWITCH_PENDING", "one switch request is already pending");
     const nextId = switchId("switch-" + this.options.id());
-    this.commit(id, current => ({ next: { ...current, pendingSwitchId: nextId,
+    this.commit(id, current => ({ next: { ...(recovery ? this.cancelPending(current) : current), pendingSwitchId: nextId,
       switches: [...current.switches, { id: nextId, commandId: command, requested: request, requestedSeq: current.lastSeq + 1, target: null,
         status: "requested", throughSeq: 0, sourceRunIds: current.runs.filter(run => terminal(run.status) || run.id === current.activeRunId).map(run => run.id), error: null }],
       commands: [...current.commands, { id: command, kind: "switch", fingerprint, resultId: nextId }] },
-      events: [event("switch.requested", { switchId: nextId, requested: request, mode: "wait_current" })] }));
+      events: [event("switch.requested", { switchId: nextId, requested: request, mode: "wait_current", ...(recovery ? { recovery: true, acknowledgeUnknown,
+        cancelledRunIds: current.runs.filter(run => run.status === "queued").map(run => run.id) } : {}) })] }));
     this.schedule(id); return { sessionId: id, switchId: nextId, replayed: false };
   }
 
@@ -137,6 +147,7 @@ export class SessionRuntime {
       if (running) await running;
       if (this.runner !== null || this.work.has(id) || this.active?.sessionId === id) continue;
       if (this.fatal) throw this.fatal;
+      if (this.load(id).status === "blocked" && !this.closingSessions.has(id)) throw new SessionError("SESSION_BLOCKED", "this Session needs recovery; new dispatch is disabled for this Session");
       return;
     }
   }
@@ -221,7 +232,47 @@ export class SessionRuntime {
     if (this.fatal) throw this.fatal;
   }
   private open(state: SessionSnapshot): void {
-    if (state.status !== "open" || this.closingSessions.has(state.id)) throw new SessionError("SESSION_UNAVAILABLE", "Session is closed or blocked");
+    if (state.status !== "open" || this.closingSessions.has(state.id)) throw new SessionError("SESSION_UNAVAILABLE", "Session is closed or blocked; new dispatch is disabled for this Session");
+  }
+  private recoverySwitch(state: SessionSnapshot): boolean {
+    const pending = state.switches.find(sw => sw.id === state.pendingSwitchId);
+    if (!pending) return false;
+    const request = this.store.events(state.id, pending.requestedSeq - 1, 1)[0];
+    return request?.type === "switch.requested" && request.data.switchId === pending.id && request.data.recovery === true;
+  }
+  private recoverable(state: SessionSnapshot, acknowledgeUnknown: boolean): void {
+    if (state.status !== "blocked" || state.activeRunId !== null || state.pendingSwitchId !== null || this.closingSessions.has(state.id))
+      throw new SessionError("RECOVERY_UNAVAILABLE", "当前对话无法执行恢复检查，请等待当前操作结束。");
+    const unknown = state.runs.filter(run => run.status === "unknown");
+    if (unknown.some(run => run.cleanup?.closed !== true || this.unknownOwnership(run.error)))
+      throw new SessionError("RECOVERY_UNSAFE", "上次执行的资源还未确认停止，请先核实工作区中的进程。历史和草稿仍可查看与编辑。");
+    if (unknown.length && !acknowledgeUnknown)
+      throw new SessionError("RECOVERY_ACK_REQUIRED", "上次执行结果未知。确认保留该结果并只开始新的任务后，才能继续。");
+    let after = 0;
+    let block: SessionEvent | undefined;
+    const failedSwitches = new Map<string, SessionEvent>();
+    while (after < state.lastSeq) {
+      const page = this.store.events(state.id, after, 100);
+      if (!page.length) throw new SessionError("INVALID_DATA", "recovery facts have a missing event page");
+      for (const item of page) {
+        if (item.type === "switch.failed" && typeof item.data.switchId === "string") failedSwitches.set(item.data.switchId, item);
+        if (item.type === "session.blocked") block = item;
+      }
+      after = page.at(-1)!.seq;
+    }
+    if (block === undefined || block.data.error !== undefined ||
+        (typeof block.data.runId !== "string" && typeof block.data.switchId !== "string"))
+      throw new SessionError("RECOVERY_UNSAFE", "对话因所有权或存储故障暂停，无法直接恢复执行。请先恢复本机服务；历史和草稿已保留。");
+    if (typeof block.data.runId === "string") {
+      const run = state.runs.find(run => run.id === block.data.runId);
+      if (run?.cleanup?.closed !== true || this.unknownOwnership(run.error))
+        throw new SessionError("RECOVERY_UNSAFE", "上次执行的资源还未确认停止，无法恢复同一工作区的执行。");
+    } else {
+      const failedSwitch = typeof block.data.switchId === "string" ? failedSwitches.get(block.data.switchId) : undefined;
+      const cleanup = failedSwitch?.data.cleanup;
+      if (failedSwitch?.data.switchId !== block.data.switchId || cleanup === null || typeof cleanup !== "object" || !("closed" in cleanup) || cleanup.closed !== true)
+        throw new SessionError("RECOVERY_UNSAFE", "失败切换缺少资源关闭证据，无法恢复同一工作区的执行。");
+    }
   }
   private commandBudget(state: SessionSnapshot): void {
     if (state.commands.length >= MAX_COMMANDS) throw new SessionError("COMMAND_LIMIT", "Session command budget exhausted");
@@ -286,7 +337,7 @@ export class SessionRuntime {
       const id = this.work.values().next().value!; this.work.delete(id);
       if (this.fatal) { this.work.clear(); return; }
       const state = this.load(id);
-      if (state.status !== "open" || this.closingSessions.has(id) || !this.accepting) continue;
+      if ((state.status !== "open" && !(state.status === "blocked" && this.recoverySwitch(state))) || this.closingSessions.has(id) || !this.accepting) continue;
       try {
         if (state.pendingSwitchId !== null) {
           const pending = state.switches.find(sw => sw.id === state.pendingSwitchId)!;
@@ -423,18 +474,18 @@ export class SessionRuntime {
       try {
         this.store.assertOwner();
         const current = this.load(id), run = current.runs.find(run => run.id === target)!;
-        const unsafe = (execution.dispatched && backend === null) || (execution.binding !== null && cleanup === null) || cleanup?.protocolFailure != null || this.fatal !== null || this.unknownOwnership(problem);
-        const status = unsafe ? "unknown" : run.cancelRequested || problem?.code === "CANCELLED" ? "cancelled" : problem ? "failed" : backend?.status ?? "failed";
+        const unsafe = (execution.dispatched && backend === null) || (execution.binding !== null && cleanup === null) || this.fatal !== null || this.unknownOwnership(problem);
+        const failure = problem ?? cleanup?.protocolFailure ?? null;
+        const status = unsafe ? "unknown" : run.cancelRequested || problem?.code === "CANCELLED" ? "cancelled" : failure ? "failed" : backend?.status ?? "failed";
         this.commit(id, current => {
           let next: SessionSnapshot = { ...updatedRun(current, target, { status, backend, cleanup,
-            error: cleanup?.protocolFailure ?? problem }), activeRunId: null, status: unsafe ? "blocked" : current.status };
+            error: failure }), activeRunId: null, status: unsafe ? "blocked" : current.status };
           const cancelSwitch = (!this.accepting || this.closingSessions.has(id)) && next.pendingSwitchId !== null;
           if (cancelSwitch) next = this.cancelPending(next);
-          return { next, events: [event("run.ended", { runId: target, status, backend, cleanup, error: cleanup?.protocolFailure ?? problem }),
+          return { next, events: [event("run.ended", { runId: target, status, backend, cleanup, error: failure }),
             ...(cancelSwitch ? [event("switch.failed", { switchId: current.pendingSwitchId, reason: "cancelled by close" })] : []),
             ...(unsafe ? [event("session.blocked", { runId: target, reason: "execution or cleanup could not be safely confirmed" })] : [])] };
         });
-        if (unsafe) this.fatal ??= new SessionError("SESSION_BLOCKED", "execution or cleanup is unknown; new dispatch is disabled");
       } catch (error) { this.fail(error); }
       this.active = null;
     }
@@ -444,6 +495,7 @@ export class SessionRuntime {
     let binding: PreparedSessionBinding | null = null, cleanup: CleanupEvidence | null = null;
     let problem: ReturnType<typeof fault> | null = null;
     const initial = this.load(id), pending = initial.switches.find(sw => sw.id === targetId);
+    const recovery = this.recoverySwitch(initial);
     if (!pending || initial.pendingSwitchId !== targetId || initial.activeRunId !== null) return;
     try {
       const request = pending.requested.provider === undefined && initial.selection.provider !== undefined
@@ -473,21 +525,20 @@ export class SessionRuntime {
     }
     const current = this.load(id);
     if (current.pendingSwitchId !== targetId) return;
-    const unsafe = (binding !== null && cleanup === null) || cleanup?.protocolFailure != null || this.fatal !== null || this.unknownOwnership(problem);
-    if (problem || unsafe || this.closingSessions.has(id) || !this.accepting) {
-      const error = cleanup?.protocolFailure ?? problem ?? { code: "CANCELLED", message: "switch cancelled before activation" };
+    const unsafe = (binding !== null && cleanup === null) || this.fatal !== null || this.unknownOwnership(problem);
+    if (problem || cleanup?.protocolFailure || unsafe || this.closingSessions.has(id) || !this.accepting) {
+      const error = problem ?? cleanup?.protocolFailure ?? { code: "CANCELLED", message: "switch cancelled before activation" };
       this.commit(id, state => ({ next: { ...state, pendingSwitchId: null, status: unsafe ? "blocked" : state.status,
         switches: state.switches.map(sw => sw.id === targetId ? { ...sw, status: "failed", error } : sw) },
         events: [event("switch.failed", { switchId: targetId, error, cleanup }), ...(unsafe ? [event("session.blocked", { switchId: targetId })] : [])] }));
-      if (unsafe) this.fatal ??= new SessionError("SESSION_BLOCKED", "switch cleanup is unknown; new dispatch is disabled");
       return;
     }
     const target = current.switches.find(sw => sw.id === targetId)!.target;
     if (target === null) throw new SessionError("INVALID_DATA", "validated switch has no target");
-    this.commit(id, state => ({ next: { ...state, pendingSwitchId: null, selection: target, epoch: state.epoch + 1,
+    this.commit(id, state => ({ next: { ...state, pendingSwitchId: null, selection: target, epoch: state.epoch + 1, ...(recovery ? { status: "open" as const } : {}),
       switches: state.switches.map(sw => sw.id === targetId ? { ...sw, status: "effective", throughSeq: state.lastSeq } : sw) },
       events: [event("switch.effective", { switchId: targetId, target, epoch: state.epoch + 1, throughSeq: state.lastSeq,
-        sourceRunIds: state.switches.find(sw => sw.id === targetId)!.sourceRunIds, cleanup, continuity: "public_context_rehydrate" })] }));
+        sourceRunIds: state.switches.find(sw => sw.id === targetId)!.sourceRunIds, cleanup, continuity: "public_context_rehydrate", ...(recovery ? { recovered: true } : {}) })] }));
   }
   private unknownOwnership(problem: ReturnType<typeof fault> | null): boolean {
     return problem !== null && ["OWNER_LOST", "OWNERSHIP_LOST", "WORKSPACE_OWNERSHIP_LOST", "BINDING_CLEANUP_FAILED", "CLEANUP_FAILED", "WORKSPACE_QUARANTINED"].includes(problem.code);

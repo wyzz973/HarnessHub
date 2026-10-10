@@ -52,6 +52,7 @@ lines.on("line", line => {
   const message = JSON.parse(line);
   if (process.env.FIXTURE_TRACE) appendFileSync(process.env.FIXTURE_TRACE, `${JSON.stringify(message)}\n`);
   if (message.method === "initialize") {
+    if (scenario === "gateway-auth-failure") { process.stderr.write("unauthorized: gateway token missing\nprivate synthetic credential: never-public\n"); process.exit(1); }
     if (scenario === "timeout" || scenario === "resist") return;
     if (scenario === "bad-json") { process.stdout.write("not-json\n"); return; }
     if (scenario === "bad-utf8") { process.stdout.write(Buffer.from([0xff, 0x0a])); return; }
@@ -90,6 +91,7 @@ lines.on("line", line => {
   }
   if (message.method === "ping") { answer(message.id, { echoed: message.params }); return; }
   if (message.method === "session/prompt" || message.method === "turn/start") {
+    if (scenario === "prompt-rejected") { emit({ id: message.id, error: { code: -32001, message: "private rejected request synthetic-key" } }); return; }
     promptId = message.id; turn += 1;
     if (scenario === "exit-zero") { process.exit(0); }
     if (scenario === "unknown-method") {

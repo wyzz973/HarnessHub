@@ -1,9 +1,9 @@
-import { Check, Copy, Info, PencilLine } from "lucide-react";
+import { Check, Copy, Info, PencilLine, RotateCcw } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import type { ProviderView } from "../../../src/contracts/provider.js";
 import type { PublicMessage, PublicRun, RunStatus } from "../../../src/contracts/session.js";
 import type { HarnessView } from "../../../src/contracts/web.js";
-import { runStatusLabel } from "../api.js";
+import { failureMessage, runStatusLabel } from "../api.js";
 import { BrandIcon } from "./BrandIcon.js";
 import { StreamingMarkdown } from "./StreamingMarkdown.js";
 
@@ -13,6 +13,7 @@ interface MessageProps {
   harnesses: readonly HarnessView[];
   providers: readonly ProviderView[];
   onEdit: (text: string) => void;
+  onRetry: ((text: string) => void) | undefined;
 }
 function finished(status: RunStatus): boolean {
   return status === "completed" || status === "cancelled" || status === "failed" || status === "unknown";
@@ -32,7 +33,7 @@ function activityLabel(run: PublicRun | undefined, status: RunStatus): string {
   }
 }
 
-export const ChatMessage = memo(function ChatMessage({ message, run, harnesses, providers, onEdit }: MessageProps) {
+export const ChatMessage = memo(function ChatMessage({ message, run, harnesses, providers, onEdit, onRetry }: MessageProps) {
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const [details, setDetails] = useState(false);
@@ -72,14 +73,16 @@ export const ChatMessage = memo(function ChatMessage({ message, run, harnesses, 
     {text && status === "cancelled" ? <p className="response-ended" role="status">已停止</p> : null}
     {status === "unknown" && text ? <p className="response-ended is-error" role="status">执行结果尚未核实</p> : null}
     {status === "failed" && text ? <p className="response-ended is-error" role="status">回复未能完成</p> : null}
-    {run?.error && (status === "failed" || status === "unknown") ? <div className="run-error" role="status">{run.error.message}</div> : null}
+    {run?.error && (status === "failed" || status === "unknown") ? <div className="run-error" role="status">{failureMessage(run.error)}</div> : null}
     <div className={`message-actions ${details || copied || copyFailed ? "is-revealed" : ""}`}>
       {text ? <button type="button" className="message-action" onClick={() => void copy()} aria-label={copied ? "已复制回复" : "复制回复"} title={copied ? "已复制" : "复制回复"}>{copied ? <Check size={14}/> : <Copy size={14}/>}<span className="sr-only">{copied ? "已复制" : "复制回复"}</span></button> : null}
       {run ? <button type="button" className="message-action" aria-label="执行详情" title="执行详情" aria-expanded={details} aria-controls={detailsId} onClick={() => setDetails(value => !value)}><Info size={14}/><span className="sr-only">执行详情</span></button> : null}
+      {run && onRetry && (status === "failed" || status === "cancelled") ? <button type="button" className="message-action retry-response" onClick={() => onRetry(run.input)}><RotateCcw size={14}/><span>重试回复</span></button> : null}
       {copyFailed ? <span className="copy-error" role="status">无法使用剪贴板，可选中文本后复制。</span> : copied ? <span className="copy-feedback" role="status">已复制</span> : null}
     </div>
     {details && run ? <div className="execution-details" id={detailsId}>
-      <dl><div><dt>执行者</dt><dd>{harness}</dd></div><div><dt>模型连接</dt><dd>{provider?.name ?? (run.selection.provider ? "Provider" : "Harness 当前配置")}</dd></div>{run.selection.provider ? <><div><dt>模型</dt><dd>{run.selection.provider.model}</dd></div><div><dt>配置版本</dt><dd>v{run.selection.provider.revision}</dd></div></> : null}<div><dt>控制入口</dt><dd><code>{run.selection.controlId}</code></dd></div><div><dt>执行状态</dt><dd>{runStatusLabel(status)}</dd></div><div><dt>执行标识</dt><dd><code>{run.id}</code></dd></div></dl>
+      <dl><div><dt>执行者</dt><dd>{harness}</dd></div><div><dt>模型连接</dt><dd>{provider?.name ?? (run.selection.provider ? "Provider" : "Harness 原生连接")}</dd></div>{run.selection.provider ? <><div><dt>模型</dt><dd>{run.selection.provider.model}</dd></div><div><dt>配置版本</dt><dd>v{run.selection.provider.revision}</dd></div></> : null}<div><dt>控制入口</dt><dd><code>{run.selection.controlId}</code></dd></div><div><dt>执行状态</dt><dd>{runStatusLabel(status)}</dd></div><div><dt>执行标识</dt><dd><code>{run.id}</code></dd></div></dl>
+      {run.error ? <p>错误代码：<code>{run.error.code}</code></p> : null}
       {status === "unknown" ? <p>请先核实执行结果。这个请求不会自动重新执行。</p> : status === "completed" ? <p>本轮执行已结束，结果仍需由你确认。</p> : null}
     </div> : null}
   </article>;

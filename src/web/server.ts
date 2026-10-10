@@ -123,7 +123,7 @@ function publicFailure(error: unknown): { readonly status: number; readonly code
   if (error instanceof SessionError || error instanceof ProviderError || error instanceof ManagementError) {
     const code = error.code;
     const status = code.includes("NOT_FOUND") ? 404 : code === "INVALID_INPUT" ? 400 : code.includes("LIMIT") || code === "QUEUE_FULL" ? 429
-      : code.includes("UNAVAILABLE") || code.includes("CLOSED") || code.includes("BLOCKED") || code.includes("CONFLICT") || code.includes("PENDING") || code.includes("REVISION") || code.includes("UNSUPPORTED") || code.includes("BUSY") || code.includes("ACTIVE") || code === "STALE_DEFAULT" || code === "DEFAULT_CHANGED" ? 409 : 502;
+      : code.startsWith("RECOVERY_") || code.includes("UNAVAILABLE") || code.includes("CLOSED") || code.includes("BLOCKED") || code.includes("CONFLICT") || code.includes("PENDING") || code.includes("REVISION") || code.includes("UNSUPPORTED") || code.includes("BUSY") || code.includes("ACTIVE") || code === "STALE_DEFAULT" || code === "DEFAULT_CHANGED" ? 409 : 502;
     return { status, code, message: error.message.slice(0, 512) };
   }
   return { status: 500, code: "GATEWAY_FAILED", message: "Gateway operation failed" };
@@ -320,7 +320,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       });
       return;
     }
-    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|cancel|close|events))?$/u.exec(path);
+    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|resume|cancel|close|events))?$/u.exec(path);
     if (sessionRoute) {
       const id = sessionId(sessionRoute[1]!), action = sessionRoute[2];
       if (action === undefined && method === "GET") { queries(url, []); json(response, 200, view(app.runtime.read(id))); return; }
@@ -333,6 +333,11 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         queries(url, []);
         if (action === "messages") { const input = record(await body(request), ["text", "commandId"], ["text", "commandId"]); if (typeof input.text !== "string") throw new HttpError(400, "INVALID_INPUT", "Message text required"); json(response, 202, app.runtime.send(id, input.text, command(input.commandId))); return; }
         if (action === "switches") { const input = record(await body(request), ["selection", "commandId"], ["selection", "commandId"]); json(response, 202, app.runtime.switch(id, select(input.selection), command(input.commandId))); return; }
+        if (action === "resume") {
+          const input = record(await body(request), ["selection", "commandId", "acknowledgeUnknown"], ["selection", "commandId"]);
+          if (input.acknowledgeUnknown !== undefined && typeof input.acknowledgeUnknown !== "boolean") throw new HttpError(400, "INVALID_INPUT", "Invalid unknown-result acknowledgement");
+          json(response, 202, app.runtime.resume(id, select(input.selection), command(input.commandId), input.acknowledgeUnknown === true)); return;
+        }
         if (action === "cancel") { const input = record(await body(request), ["runId", "commandId"], ["commandId"]); json(response, 202, app.runtime.cancel(id, command(input.commandId), input.runId === undefined ? undefined : text(input.runId, "Run identity", 128))); return; }
         if (action === "close") { const input = record(await body(request), ["commandId"], ["commandId"]); json(response, 200, view(await app.runtime.closeSession(id, command(input.commandId)))); return; }
       }
