@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { LocalHarnessManagement } from "../../src/infrastructure/management/service.js";
 import { SqliteSessionStore } from "../../src/infrastructure/session/sqlite-store.js";
 import type { ManagementRecipe } from "../../src/contracts/management.js";
+import { inventory } from "../../src/infrastructure/catalog/inventory-composition.js";
 const peer = fileURLToPath(new URL("../../../tests/fixtures/managed-inventory-peer.mjs", import.meta.url));
 const recipe: ManagementRecipe = { harnessId: "codex", controlId: "codex-native", kind: "npm", packageName: "@openai/codex", referenceVersion: "1.0.0", binName: "codex", args: ["app-server", "--listen", "stdio://"], archiveUrl: null, archiveSha256: null, relativeExecutable: null, dependencies: [] };
 function record(value: unknown): Record<string, unknown> { assert.ok(value !== null && typeof value === "object" && !Array.isArray(value)); return value as Record<string, unknown>; }
@@ -50,4 +51,20 @@ test("original system PATH wins over a private copy; absent controls use the loc
   await writeFile(manifest, JSON.stringify({ version: 2, definitions: [], overrides: { "codex-native": { executable: blocked } } }));
   const exclusive = await child(root, system, manifest); assert.equal(exclusive.state, "blocked"); assert.equal(exclusive.command, null); assert.equal(exclusive.managedCount, 0);
   assert.ok((await readFile(managed.command.args[0]!)).includes(Buffer.from("discovery must not execute")));
+});
+test("an original local control with a missing dependency is not replaced by a different private installation", async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "native-missing-runtime-"))), entry = join(root, "native-only"), manifest = join(root, "catalog.json");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(entry, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  await writeFile(manifest, JSON.stringify({ version: 2, definitions: [{ id: "native-fixture", name: "Native fixture", aliases: [], binaryNames: ["native-only"], configHints: [], controls: [{
+    id: "native-fixture-control", protocol: "acp-v1", executableNames: ["native-only"], args: [], env: {}, package: null, distribution: null, requiredExecutables: ["missing-fixture-runtime"],
+    source: { repository: "fixture", revision: "pinned", upstreamId: "fixture", url: "https://example.invalid/source" } }] }] }));
+  let replacementReads = 0;
+  const observed = await inventory({ manifest, environment: { PATH: root }, home: root, pathOnly: true, searchDirs: [], packageRoots: [], managedResolver: { resolveControl: (_harness, id) => {
+    if (id !== "native-fixture-control") return null; replacementReads++;
+    return { installationId: "installation-private", revision: 1, version: "2.0.0", command: { executable: process.execPath, args: ["--version"], env: {} } };
+  } } });
+  const selected = observed.report.harnesses.find(row => row.id === "native-fixture")!.controls[0]!;
+  assert.equal(selected.state, "missing_dependency"); assert.equal(selected.command, null); assert.equal(selected.installation.selected?.resolvedPath, entry);
+  assert.equal(replacementReads, 0); assert.equal(observed.managedBindings.has(selected.id), false);
 });

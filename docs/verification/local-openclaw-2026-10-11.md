@@ -19,7 +19,7 @@ OpenClaw原生配置已经默认使用deepseek/deepseek-chat，原auth-profiles�
 | `openclaw --version` | 2026.3.23-2（7ffe7e4），原安装未升级 |
 | `openclaw config validate --json`、`openclaw health --json` | 原配置valid、已有Gateway健康；原Gateway进程未重启 |
 | `pnpm build`、`pnpm web:build` | 严格类型与生产构建通过 |
-| `node --test dist/tests/*/*.test.js` | 431通过，0失败/跳过，约18.3s；`.tmp/local-openclaw-tests-final.log` |
+| `node --test dist/tests/*/*.test.js` | 432通过，0失败/跳过，约18s；`.tmp/local-openclaw-tests-final.log` |
 | `node --test dist/tests/browser/web.browser.js` | 4通过，0失败/跳过，约23.5s；全部Harness行有已加载的SVG图标，另覆盖选择、草稿、停止、重连、窄屏；`.tmp/local-openclaw-browser-final.log` |
 | `node --test dist/tests/real/codex-session.real.js dist/tests/real/harness-provider-switch.real.js dist/tests/real/live-web-stream.real.js` | 3通过，0失败/跳过，约5.3s；真实Codex/Gemini与本地确定性模型，不读个人云凭据；`.tmp/local-openclaw-real-regression.log` |
 | 正式CLI `run:harness`，原OpenClaw+原DeepSeek | 文本OPENCLAW_CONFIRMED_DEEPSEEK_OK、backend completed/end_turn、cleanup.closed=true/protocolFailure=null；`.tmp/openclaw-confirmed-deepseek-run.jsonl` |

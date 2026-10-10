@@ -87,7 +87,7 @@ export async function inventory(input: InventoryInput): Promise<{
   const report: InventoryReport = input.managedResolver === undefined ? initial : { ...initial,
     harnesses: initial.harnesses.map(harness => ({ ...harness, controls: harness.controls.map(control => {
       // User overrides remain exclusive, including invalid or blocked entries. They never fall back.
-      if (manifest.overrides.has(control.id) || control.state !== "missing_dependency") return control;
+      if (manifest.overrides.has(control.id) || control.state !== "missing_dependency" || control.installation.selected !== null) return control;
       const managed = input.managedResolver!.resolveControl(harness.id, control.id);
       if (managed === null) return control;
       const path = managed.command.args[0] !== undefined && isAbsolute(managed.command.args[0]) ? managed.command.args[0] : managed.command.executable;
