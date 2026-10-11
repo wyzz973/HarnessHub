@@ -43,7 +43,7 @@ test("ACP handshake, sequential prompts and exact client capability declaration"
     assert.deepEqual(events.filter(event => event.type === "text"), [{ type: "text", text: "你好 fixture" }, { type: "text", text: "你好 fixture" }]);
     const messages: unknown[] = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line));
     // Only session notice/compaction updates are requested; filesystem and terminal capabilities stay undeclared.
-    assert.ok(messages.some(message => JSON.stringify(message).includes('"clientCapabilities":{"session":{"notices":{},"compaction":{}}}')));
+    assert.ok(messages.some(message => JSON.stringify(message).includes('"clientCapabilities":{"session":{"notices":{},"compaction":{}},"elicitation":{"form":{}}}')));
     assert.ok(messages.some(message => JSON.stringify(message).includes('"mcpServers":[]')));
   } finally { await driver.close(); await rm(directory, { recursive: true, force: true }); }
 });
@@ -511,4 +511,31 @@ test("ACP lists the agent's own sessions of this workspace and reads one by repl
     await assert.rejects(openclaw.nativeSessions(), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_SESSION_LIST_UNAVAILABLE");
     await assert.rejects(openclaw.importSession(), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_SESSION_LIST_UNAVAILABLE");
   } finally { await openclaw.close(); }
+});
+
+test("ACP forms are asked field by field: a choice, a typed answer for its Other box, skip and cancel, and unsupported fields declined", async () => {
+  const ask = async (scenario: string, answers: readonly (readonly [string, string?])[], interactive = true) => {
+    const driver = control(scenario), events: ControlEvent[] = [];
+    try {
+      const id = await ready(driver); if (interactive) driver.enablePermissions();
+      let asked = 0;
+      const run = await driver.startText(id, "ask me", event => {
+        events.push(event);
+        if (event.type === "permission_requested") { const [option, input] = answers[asked++]!; void driver.decidePermission(event.id, option, input); }
+      });
+      const result = await run.result, reply = events.flatMap(event => event.type === "text" ? [event.text] : []).join("");
+      return { result, reply: JSON.parse(reply.replace(/^form /u, "")) as unknown, questions: events.filter(event => event.type === "permission_requested") };
+    } finally { await driver.close(); }
+  };
+  const picked = await ask("elicitation", [["answer-1"], ["submit", "XL"]]);
+  assert.deepEqual(picked.reply, { action: "accept", content: { question_0: "Blue", question_1_custom: "XL" } });
+  assert.deepEqual(picked.questions.map(event => event.type === "permission_requested" ? [event.title, event.detail ?? null, event.options.map(option => option.id), event.input?.kind ?? null] : []), [
+    ["Which color?", "Red：warm\nBlue：cool", ["answer-0", "answer-1", "submit", "skip", "cancel"], "text"],
+    ["Which sizes?", null, ["answer-0", "answer-1", "submit", "skip", "cancel"], "text"]]);
+  assert.deepEqual((await ask("elicitation", [["submit", "Green"], ["answer-0"]])).reply, { action: "accept", content: { question_0_custom: "Green", question_1: ["S"] } }, "a typed answer goes to the Other box; a multi-select pick is a list");
+  assert.deepEqual((await ask("elicitation", [["skip"]])).reply, { action: "decline" });
+  assert.deepEqual((await ask("elicitation", [["answer-0"], ["cancel"]])).reply, { action: "cancel" });
+  const number = await ask("elicitation-number", []);
+  assert.deepEqual(number.reply, { action: "decline" }); assert.equal(number.questions.length, 0);
+  assert.deepEqual((await ask("elicitation", [], false)).reply, { action: "decline" }, "without an interactive chat nobody can answer, so the form is declined");
 });

@@ -113,7 +113,8 @@ export class AcpControl implements HarnessControl {
   private failure: Error | null = null;
   private catalog: NativeModelCatalog = { models: [], defaultModel: null, authentication: "unknown", canSelect: false };
   private interactivePermissions = false;
-  private readonly permissions = new Map<string, { options: readonly string[]; resolve: (value: unknown) => void }>();
+  /** Pending native interactions; `reply` maps the user's choice for a form question, otherwise the option is selected. */
+  private readonly permissions = new Map<string, { options: readonly string[]; resolve: (value: unknown) => void; reply?: (option: string, input?: string) => unknown }>();
   private configuredDefault: string | null = null;
   private modelConfigId: string | null = null;
   private legacyModels = false;
@@ -144,7 +145,8 @@ export class AcpControl implements HarnessControl {
     try {
       const response = object(await this.rpc.request("initialize", {
         // Notices and compaction arrive as their own updates instead of being folded into reply text or fake tools.
-        protocolVersion: 1, clientCapabilities: { session: { notices: {}, compaction: {} } },
+        // elicitation.form lets an agent ask the user through a form (Claude's AskUserQuestion); the chat asks it field by field.
+        protocolVersion: 1, clientCapabilities: { session: { notices: {}, compaction: {} }, elicitation: { form: {} } },
         clientInfo: { name: "harnessgateway", title: "HarnessGateway", version: "0.0.0" },
       }), "ACP initialize result");
       if (response.protocolVersion !== 1) throw new ControlError("PROTOCOL_VERSION", "peer did not negotiate ACP v1");
@@ -430,11 +432,11 @@ export class AcpControl implements HarnessControl {
     } };
   }
   enablePermissions(): void { this.interactivePermissions = true; }
-  async decidePermission(id: string, option: string): Promise<void> {
+  async decidePermission(id: string, option: string, input?: string): Promise<void> {
     const pending = this.permissions.get(id); if (!pending || !pending.options.includes(option)) throw new ControlError("PERMISSION_UNAVAILABLE", "permission or actual option unavailable");
-    this.permissions.delete(id); pending.resolve({ outcome: { outcome: "selected", optionId: option } });
+    this.permissions.delete(id); pending.resolve(pending.reply ? pending.reply(option, input) : { outcome: { outcome: "selected", optionId: option } });
   }
-  private cancelPermissions(): void { for (const pending of this.permissions.values()) pending.resolve({ outcome: { outcome: "cancelled" } }); this.permissions.clear(); }
+  private cancelPermissions(): void { for (const pending of this.permissions.values()) pending.resolve(pending.reply ? pending.reply("cancel") : { outcome: { outcome: "cancelled" } }); this.permissions.clear(); }
   close(): Promise<CleanupEvidence> { this.cancelPermissions(); return this.rpc.close(); }
   private nativeFailure(error: unknown): Error { return error instanceof ControlError && error.remoteFailure ? new ControlError(error.remoteFailure.code, error.remoteFailure.message) : errorFrom(error); }
   private settle(active: ActivePrompt): void { this.cancelPermissions(); active.settled = true; if (this.active === active) this.active = null; }
@@ -536,7 +538,62 @@ export class AcpControl implements HarnessControl {
     }
     active.event({ type: "diagnostic", message: `Unsupported ACP session update: ${kind}` });
   }
+  /**
+   * A native form (Claude's AskUserQuestion, or an MCP server's form passed on by the agent), asked field by field like a
+   * native question: a choice, a free-text answer (a select's "_custom" companion becomes its "提交回答"), yes/no, or several
+   * picks. "跳过" declines the whole form and "取消" cancels it. A form with fields the chat cannot ask is declined, not guessed.
+   */
+  private async elicitation(request: RpcRequest): Promise<unknown> {
+    const params = object(request.params, "ACP elicitation"); this.scope(params);
+    const active = this.active;
+    if (!active || active.settled || active.stopping || !this.interactivePermissions || (params.mode !== undefined && params.mode !== "form")) { if (active && !active.settled) active.event({ type: "permission", id: String(request.id), decision: "denied" }); return { action: "decline" }; }
+    const schema = object(params.requestedSchema, "elicitation schema"), properties = object(schema.properties, "elicitation fields"), keys = Object.keys(properties);
+    if (!keys.length || keys.length > 64) throw new ControlError("INVALID_PROTOCOL", "invalid elicitation fields");
+    const message = typeof params.message === "string" ? params.message.slice(0, 4096) : "";
+    const companions = new Set(keys.filter(key => key.endsWith("_custom") && keys.includes(key.slice(0, -7)) && object(properties[key], "elicitation field").type === "string"));
+    type Field = { key: string; title: string; kind: "choice" | "multi" | "text" | "boolean"; choices: { value: unknown; label: string; description?: string }[]; custom: string | null };
+    const fields: Field[] = []; let unsupported = false;
+    const choicesOf = (value: unknown): Field["choices"] | null => {
+      const field = value !== null && typeof value === "object" ? value as Record<string, unknown> : {}, listed = Array.isArray(field.oneOf) ? field.oneOf : Array.isArray(field.anyOf) ? field.anyOf : null;
+      if (listed) return listed.slice(0, 128).flatMap(item => { const row = object(item, "elicitation choice"); return typeof row.const === "string" ? [{ value: row.const, label: typeof row.title === "string" ? row.title.slice(0, 1024) : row.const, ...(typeof row.description === "string" ? { description: row.description.slice(0, 1024) } : {}) }] : []; });
+      if (Array.isArray(field.enum)) { const names = Array.isArray(field.enumNames) ? field.enumNames : []; return field.enum.slice(0, 128).flatMap((item, index) => typeof item === "string" ? [{ value: item, label: typeof names[index] === "string" ? names[index] as string : item }] : []); }
+      return null;
+    };
+    for (const key of keys) {
+      if (companions.has(key)) continue;
+      const field = object(properties[key], "elicitation field"), custom = companions.has(key + "_custom") ? key + "_custom" : null;
+      const title = (keys.length - companions.size === 1 && message ? message : typeof field.description === "string" ? field.description : typeof field.title === "string" ? field.title : message || key).slice(0, 4096);
+      if (field.type === "string") { const choices = choicesOf(field); fields.push({ key, title, kind: choices?.length ? "choice" : "text", choices: choices ?? [], custom }); }
+      else if (field.type === "boolean") fields.push({ key, title, kind: "boolean", choices: [{ value: true, label: "是" }, { value: false, label: "否" }], custom: null });
+      else if (field.type === "array") { const choices = choicesOf(field.items); if (choices?.length) fields.push({ key, title, kind: "multi", choices, custom }); else unsupported = true; }
+      else unsupported = true;
+    }
+    if (unsupported) { active.event({ type: "notice", severity: "warning", title: "原生表单含无法在对话中填写的字段，已拒绝" }); return { action: "decline" }; }
+    const content: Record<string, unknown> = {};
+    for (const [index, field] of fields.entries()) {
+      if (this.active !== active || active.settled || active.stopping) return { action: "cancel" };
+      if (this.permissions.size >= 32) throw new ControlError("PERMISSION_LIMIT", "too many native permission requests");
+      const id = String(request.id) + ":" + index, text = field.kind === "text" || field.custom !== null;
+      const options = [...field.choices.map((choice, position) => ({ id: "answer-" + position, name: choice.label })), ...(text ? [{ id: "submit", name: "提交回答" }] : []), { id: "skip", name: "跳过" }, { id: "cancel", name: "取消" }];
+      const detail = field.choices.filter(choice => choice.description).map(choice => choice.label + "：" + choice.description).join("\n").slice(0, 4096);
+      type Answer = { readonly kind: "value"; readonly value: unknown; readonly typed: boolean } | { readonly kind: "skip" } | { readonly kind: "cancel" };
+      const answer = await new Promise<unknown>(resolve => {
+        this.permissions.set(id, { options: options.map(option => option.id), resolve, reply: (option, input) => {
+          if (option === "cancel" || option === "skip") return { kind: option };
+          if (option === "submit") return { kind: "value", value: typeof input === "string" ? input : "", typed: true };
+          return { kind: "value", value: field.choices[Number(option.slice(7))]?.value ?? null, typed: false };
+        } });
+        active.event({ type: "permission_requested", id, title: field.title, ...(detail ? { detail } : {}), options, ...(text ? { input: { kind: "text", value: "" } } : {}) });
+      }) as Answer;
+      if (answer.kind === "cancel") return { action: "cancel" };
+      if (answer.kind === "skip") return { action: "decline" };
+      if (answer.typed && field.custom !== null) content[field.custom] = answer.value;
+      else content[field.key] = field.kind === "multi" ? [answer.value] : answer.value;
+    }
+    return { action: "accept", content };
+  }
   private serverRequest(request: RpcRequest): unknown {
+    if (request.method === "elicitation/create") return this.elicitation(request);
     if (request.method !== "session/request_permission") {
       // Unadvertised client methods (OpenCode fs/write_text_file after an approved edit, Cursor extensions) get -32601; the Run keeps an audit line.
       if (this.active && !this.active.settled) this.active.event({ type: "diagnostic", message: "Harness called unsupported client method " + label(request.method, "unknown", 128) });

@@ -594,11 +594,14 @@
         "questions": {
           "native": "yes",
           "source": "AskUserQuestion/MCP 表单经 elicitation/create，需客户端声明 elicitation.form",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": "未声明能力时原程序禁用 AskUserQuestion"
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-question-claude.json",
+            "docs/verification/native-questions-2026-10-11.md"
+          ],
+          "note": "声明 elicitation.form 后 AskUserQuestion 可用：表单逐题在对话中提问（选项、自填、跳过、取消）；多选题以单个选项加自填回答；含数字等字段的表单整表拒绝"
         },
         "input-image": {
           "native": "yes",

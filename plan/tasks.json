@@ -2297,7 +2297,8 @@
         "G032-NC15",
         "G032-NC16",
         "G032-NC17",
-        "G032-NC18"
+        "G032-NC18",
+        "G032-NC19"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3676,7 +3677,8 @@
         "tests/real/native-extensions.real.ts",
         "tests/real/native-config.real.ts",
         "tests/real/native-import.real.ts",
-        "tests/real/native-subagent.real.ts"
+        "tests/real/native-subagent.real.ts",
+        "tests/real/native-question.real.ts"
       ],
       "requirements": [
         "R04",
@@ -3723,7 +3725,8 @@
         "G060-NC7",
         "G060-NC8",
         "G060-NC9",
-        "G060-NC10"
+        "G060-NC10",
+        "G060-NC11"
       ],
       "active_slice": "native-installation-management"
     },

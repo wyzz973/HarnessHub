@@ -17,7 +17,7 @@
 | 执行可见性 | 计划 | ✕ | ✕ | — | — | — | ✕ | — |
 | 执行可见性 | 用量/上下文/费用 | ✅ | ✅ | ✅ | ◐ | ✕ | — | ✅ |
 | 交互 | 工具审批 | ✅ | ✅ | ✅ | ○ | ✕ | ✕ | ◐ |
-| 交互 | 原生提问与表单 | ◑ | ○ | ？ | — | ？ | ◑ | ◐ |
+| 交互 | 原生提问与表单 | ◑ | ✅ | ？ | — | ？ | ◑ | ◐ |
 | 输入输出 | 图片输入 | ✅ | ✅ | ✅ | ◐ | ✕ | ✕ | ✅ |
 | 输入输出 | 音频输入 | ✕ | — | — | — | ✕ | — | — |
 | 输入输出 | 文件/文档输入 | ◐ | ◐ | ✅ | ◐ | ✕ | ✕ | ◐ |
@@ -37,7 +37,7 @@
 | Harness | ✅ | ◐ | ◑ | ○ | ✕ | — | ？ |
 |---|---|---|---|---|---|---|---|
 | Codex | 13 | 3 | 6 | 2 | 2 | 1 | 0 |
-| Claude Code | 15 | 3 | 3 | 3 | 1 | 2 | 0 |
+| Claude Code | 16 | 3 | 3 | 2 | 1 | 2 | 0 |
 | OpenCode | 9 | 6 | 3 | 2 | 0 | 2 | 5 |
 | OpenClaw | 5 | 5 | 4 | 6 | 0 | 7 | 0 |
 | Gemini CLI | 0 | 0 | 2 | 1 | 12 | 6 | 6 |
@@ -95,7 +95,7 @@
 | 计划 | 具备 | plan 全量快照（TodoWrite/Task*） | 已接出 | 通过 | 受阻 | .tmp/cc-native-activity-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | 本机 claude-agent-acp 0.89.1 会话里模型没有 TodoWrite 类计划工具（模型自述），无法产生计划；协议映射已测试 |
 | 用量/上下文/费用 | 具备 | usage_update {used,size,cost USD}、PromptResponse.usage | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | 回合 token、上下文占用（窗口 1,000,000）与会话费用（USD） |
 | 工具审批 | 具备 | session/request_permission（allow_once/allow_always/reject_once，ExitPlanMode 选项） | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-claude-approval.json；.tmp/cc-native-activity-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | 手动模式下编辑请求审批并一次允许；审批卡显示将要修改的差异；allow_always 会由原程序写入项目设置，验收只选一次允许 |
-| 原生提问与表单 | 具备 | AskUserQuestion/MCP 表单经 elicitation/create，需客户端声明 elicitation.form | 未接出 | 未接出 | 未接出 | — | 未声明能力时原程序禁用 AskUserQuestion |
+| 原生提问与表单 | 具备 | AskUserQuestion/MCP 表单经 elicitation/create，需客户端声明 elicitation.form | 已接出 | 通过 | 通过 | .tmp/cc-native-question-claude.json；docs/verification/native-questions-2026-10-11.md | 声明 elicitation.form 后 AskUserQuestion 可用：表单逐题在对话中提问（选项、自填、跳过、取消）；多选题以单个选项加自填回答；含数字等字段的表单整表拒绝 |
 | 图片输入 | 具备 | promptCapabilities.image；image block base64 | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | 红色图片真实识别 |
 | 音频输入 | 不提供 | 未声明 audio，音频块被静默丢弃 | 不适用 | 不适用 | 不适用 | — | — |
 | 文件/文档输入 | 部分 | 文本 resource 以 <context> 注入；blob 被丢弃；resource_link 只成链接文本 | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | 小文本文件以嵌入资源发送并真实读取（文件内标记被答出）；其余为文件链接 |

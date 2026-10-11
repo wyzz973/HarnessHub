@@ -342,6 +342,17 @@ lines.on("line", line => {
         : { id: "permission-1", method: "item/commandExecution/requestApproval", params: { threadId: "thread-fixture", turnId: `turn-${turn}`, itemId: "tool-1" } };
       emit(permission); if (scenario === "duplicate-permission") emit(permission); return;
     }
+    // Claude's AskUserQuestion form: a single select with its "Other" companion and a multi-select; or a form with a number field.
+    if (scenario === "elicitation" || scenario === "elicitation-number") {
+      const option = (label, description) => ({ const: label, title: label, ...(description ? { description } : {}) });
+      const properties = scenario === "elicitation-number" ? { count: { type: "number", title: "How many?" } } : {
+        question_0: { type: "string", title: "Color", description: "Which color?", oneOf: [option("Red", "warm"), option("Blue", "cool")] },
+        question_0_custom: { type: "string", title: "Other", description: "Type your own answer" },
+        question_1: { type: "array", title: "Sizes", description: "Which sizes?", items: { anyOf: [option("S"), option("M")] } },
+        question_1_custom: { type: "string", title: "Other", description: "Type your own answer" } };
+      emit({ id: "elicit-1", method: "elicitation/create", params: { mode: "form", sessionId: message.params.sessionId, toolCallId: "ask-1", message: "Please answer the following questions.", requestedSchema: { type: "object", properties } } });
+      return;
+    }
     // A sub-agent call whose own tool runs flattened in the root session, stamped with the parent call (Claude's default).
     if (scenario === "subagent") {
       const sessionId = message.params.sessionId, update = value => notification("session/update", { sessionId, update: value });
@@ -373,6 +384,7 @@ lines.on("line", line => {
     }
     setTimeout(() => finish(true), 50); return;
   }
+  if (message.id === "elicit-1") { notification("session/update", { sessionId: "session-fixture", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "form " + JSON.stringify(message.result) } } }); finish(); return; }
   if (message.id === "late-permission" || message.id === "child-approval" || message.id === "unrelated-approval") return;
   if (message.id === "permission-1" || message.id === "unsupported" || message.id === "native-question") {
     if (protocol === "acp-v1") acpOutput(); else codexOutput();

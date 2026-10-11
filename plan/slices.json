@@ -697,7 +697,8 @@
         "web/src/components/NativeSessions.tsx",
         "tests/unit/session-redaction.test.ts",
         "tests/real/native-subagent.real.ts",
-        "web/src/tool-tree.ts"
+        "web/src/tool-tree.ts",
+        "tests/real/native-question.real.ts"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/complete-native-capabilities-2026-10-11.md"

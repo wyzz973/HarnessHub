@@ -7753,6 +7753,42 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/real/native-subagent.real.ts"
+    },
+    {
+      "id": "G032-NC19",
+      "task": "G032",
+      "requirements": [
+        "R11",
+        "R25"
+      ],
+      "invariants": [
+        "INV-04"
+      ],
+      "layer": "protocol",
+      "scenario": "ACP原生表单（elicitation/create）逐字段提问",
+      "expected": "初始化声明elicitation.form；单选、自填（Other伴随字段并入提交回答）、多选按列表返回、是否题；跳过即decline、取消即cancel；含数字等无法显示的字段整表拒绝并提示；非交互时拒绝",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/acp.test.ts"
+    },
+    {
+      "id": "G060-NC11",
+      "task": "G060",
+      "requirements": [
+        "R04",
+        "R24",
+        "R12"
+      ],
+      "invariants": [
+        "INV-16",
+        "INV-09"
+      ],
+      "layer": "e2e",
+      "scenario": "本机原安装用自己的提问工具向用户提问",
+      "expected": "问题以对话中的原生提问显示；选择第二个选项后原程序按该回答回复；原配置不变",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/real/native-question.real.ts"
     }
   ]
 }
