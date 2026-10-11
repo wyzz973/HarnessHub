@@ -23,6 +23,7 @@ import { HarnessModels } from "./harness-models.js";
 import { buildRevision, NativeCatalogCache, type NativeReadiness } from "./native-catalog-cache.js";
 import { conversationMarkdown } from "./conversation-export.js";
 import { runDiagnostics, scrubDiagnostics } from "./run-diagnostics.js";
+import { nativeResume } from "../infrastructure/management/verified-versions.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -577,7 +578,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         scrub: value => scrubDiagnostics(value, { redact: text => app.providers.redact(text), user }) });
       json(response, 200, { text, includesContent: includeContent }); return;
     }
-    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|resume|cancel|close|events|export|fork|retention|end-process))?$/u.exec(path);
+    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|resume|cancel|close|events|export|fork|retention|end-process|native-resume))?$/u.exec(path);
     if (sessionRoute) {
       const id = sessionId(sessionRoute[1]!), action = sessionRoute[2];
       if (action === undefined && method === "GET") { queries(url, []); json(response, 200, sessionView(app.runtime.read(id), app.runtime.permissionRequests(id))); return; }
@@ -593,6 +594,13 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         response.setHeader("Content-Type", format === "json" ? "application/json; charset=utf-8" : "text/markdown; charset=utf-8"); response.setHeader("Content-Length", bytes.length);
         response.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" + encodeURIComponent("harnesshub-" + id + (format === "json" ? ".json" : ".md")));
         response.end(bytes); return;
+      }
+      // How to continue the current native session in the Harness's own program (ADR-039); read on demand, never exported.
+      if (action === "native-resume" && method === "GET") {
+        queries(url, []); const snapshot = app.runtime.read(id), selection = snapshot.selection;
+        const binding = selection.provider === undefined ? snapshot.nativeBindings?.find(item => item.harnessId === selection.harnessId && item.controlId === selection.controlId && item.status === "ready") : undefined;
+        const verification = binding === undefined ? null : (await rescan()).find(harness => harness.id === selection.harnessId)?.management.verification ?? null;
+        json(response, 200, { resume: binding === undefined ? null : nativeResume(selection.harnessId, binding.checkpoint, verification) }); return;
       }
       if (action === "events" && method === "GET") {
         queries(url, ["afterSeq", "limit"]); const after = cursor(url.searchParams.get("afterSeq"), 0, 0, Number.MAX_SAFE_INTEGER), limit = cursor(url.searchParams.get("limit"), 50, 1, 100);

@@ -57,6 +57,23 @@ export interface HarnessReadinessView {
   /** Median time from starting the program to its open native session over this entry's latest Runs (up to five). */
   readonly startupMs?: number;
 }
+/**
+ * How to continue a conversation's native session in the Harness's own program (ADR-039). It is read on demand and is not
+ * part of the conversation's view or its export; HarnessHub never runs these commands.
+ */
+export interface NativeResumeView {
+  readonly harnessId: string;
+  /** The native session's own identifier; absent for a program whose reference is private (Pi's session file). */
+  readonly nativeId?: string;
+  /** The interactive command as the installed version's help gives it, run in the conversation's workspace. */
+  readonly interactive?: string;
+  /** The one-question command a real Turn verified, with a question placeholder. */
+  readonly once?: string;
+  /** Where the program lists its own sessions, for one whose reference is private. */
+  readonly list?: string;
+  /** Why no command is given: the installed version is not one HarnessHub verified, or this program's resume never was. */
+  readonly note?: "version-unverified" | "not-verified";
+}
 /** A native session reference as the chat shows it; never the private checkpoint. */
 export interface NativeStateView {
   readonly harnessId: string;

@@ -335,6 +335,27 @@ test("attachments upload as raw bytes for this workspace, go to the Harness with
   assert.equal((await state(f, id)).runs.length, 1);
 });
 
+test("a conversation's native session is offered for continuing in its own program on request, and never in its view or export", async t => {
+  const f = await fixture(t);
+  assert.equal((await fetch(f.origin + "/api/v1/sessions/session-unknown/native-resume")).status, 401, "a login is required");
+  await auth(f);
+  // A Codex-protocol entry always keeps its native thread.
+  const created = await call(f, "/api/v1/sessions", "POST", { selection: { harnessId: "web-b" }, commandId: "create-native-resume" }); assert.equal(created.status, 201, created.text);
+  const id = String(row(created.data).id);
+  assert.deepEqual((await call(f, `/api/v1/sessions/${id}/native-resume`)).data, { resume: null }, "nothing before a native session exists");
+  assert.equal((await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "hello", commandId: "native-resume-send" })).status, 202);
+  await waitFor(f, id, value => value.runs[0]?.status === "completed");
+  const resume = await call(f, `/api/v1/sessions/${id}/native-resume`);
+  assert.equal(resume.status, 200);
+  // A Harness whose resume HarnessHub never verified: its own identifier, and why there is no command.
+  const nativeId = String(row(row(resume.data).resume).nativeId);
+  assert.deepEqual(resume.data, { resume: { harnessId: "web-b", nativeId, note: "not-verified" } }); assert.match(nativeId, /^[A-Za-z0-9][A-Za-z0-9_-]*$/u);
+  assert.equal(JSON.stringify((await call(f, "/api/v1/sessions/" + id)).data).includes(nativeId), false, "the view does not carry it");
+  const exported = await fetch(f.origin + `/api/v1/sessions/${id}/export?format=json`, { headers: { Cookie: f.cookie } });
+  assert.equal((await exported.text()).includes(nativeId), false, "the export does not carry it");
+  assert.equal((await call(f, `/api/v1/sessions/${id}/native-resume?extra=1`)).status, 400);
+});
+
 test("the public conversation exports as Markdown or JSON without private native state", async t => {
   const f = await fixture(t); await auth(f); const id = await create(f);
   assert.equal((await call(f, `/api/v1/sessions/${id}/messages`, "POST", { text: "first\n```\nquoted", commandId: "export-first" })).status, 202);

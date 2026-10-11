@@ -718,7 +718,8 @@
         "src/infrastructure/management/verified-versions.ts",
         "tests/unit/verified-versions.test.ts",
         "src/infrastructure/management/service.ts",
-        "src/contracts/management.ts"
+        "src/contracts/management.ts",
+        "web/src/components/NativeResume.tsx"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/complete-native-capabilities-2026-10-11.md"

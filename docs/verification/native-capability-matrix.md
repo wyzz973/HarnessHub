@@ -73,7 +73,7 @@
 | Skills | 具备 | skills/list、UserInput.skill | 已接出 | 通过 | 通过 | .tmp/cc-native-extensions.json；docs/verification/native-extensions-2026-10-11.md | skills/list 列出用户、系统与工作区技能（真实 173 项）；启用的技能以 /skill:名称 作为 Codex 自己的 skill 输入调用，工作区技能真实调用成功 |
 | MCP | 具备 | 用户 MCP 按原配置加载；mcpServerStatus/list、mcpServer/oauth/login | 部分 | 通过 | 通过 | .tmp/cc-native-extensions.json；docs/verification/native-extensions-2026-10-11.md | 原生扩展面板只读显示 MCP 服务器状态、认证与工具数（真实 14 个）；登录与重载在原程序中进行 |
 | 插件/扩展 | 具备 | plugin/list\|install、app/list | 部分 | 通过 | 通过 | .tmp/cc-native-extensions.json；docs/verification/native-extensions-2026-10-11.md | 只读显示已安装插件（真实 46 个）；安装与启停在原程序中进行 |
-| 原生会话恢复 | 具备 | thread/resume(excludeTurns)；跨 Hub 进程重启 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；docs/verification/complete-native-capabilities-2026-10-11.md | — |
+| 原生会话恢复 | 具备 | thread/resume(excludeTurns)；跨 Hub 进程重启 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；docs/verification/complete-native-capabilities-2026-10-11.md；.tmp/cc-native-resume-commands-2026-10-12.json | 在原程序中继续：`codex resume <id>`（help 确认），以 `codex exec --skip-git-repo-check resume <id> "…"` 真实验证答出标记（ADR-039） |
 | 原生会话列表/接续 | 具备 | thread/list（cwd、来源、归档过滤）、thread/read、thread/turns/list（itemsView full） | 已接出 | 通过 | 通过 | .tmp/cc-native-import-codex.json；docs/verification/native-session-import-2026-10-11.md | 本机输入框“本机会话”列出本工作区线程并接续：引用最近消息，下一条输入直接进入原线程；同一线程只能被一个对话持有 |
 | 原生分支 | 具备 | thread/fork {lastTurnId} | 已接出 | 通过 | 通过 | .tmp/cc-native-branch-codex-acp.json；docs/verification/native-branch-2026-10-11.md | 从最新回复分支时 thread/fork 建立原生副本；更早位置以公共历史分支 |
 | 上下文压缩 | 具备 | thread/compact/start → contextCompaction item | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-pi-codex.json；docs/verification/native-session-actions-2026-10-11.md | /compact 调用 thread/compact/start 并以活动展示；压缩后原生会话仍记得先前事实 |
@@ -107,7 +107,7 @@
 | Skills | 具备 | skills 出现在原生命令目录并按原配置加载 | 部分 | 通过 | 未接出 | — | 通过原生命令执行；无独立技能管理界面 |
 | MCP | 具备 | 用户/项目/插件 MCP 默认加载；MCP OAuth 需 elicitation.url | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无状态/OAuth 界面 |
 | 插件/扩展 | 具备 | 已启用插件、hooks 按 settingSources 加载 | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无管理界面 |
-| 原生会话恢复 | 具备 | session/resume（不回放） | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | 第二回合以原生会话恢复，未注入公共上下文并答对 |
+| 原生会话恢复 | 具备 | session/resume（不回放） | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md；.tmp/cc-native-resume-commands-2026-10-12.json | 第二回合以原生会话恢复，未注入公共上下文并答对；在原程序中继续：`claude --resume <id>`（help 确认），以 `claude -p --resume <id> "…"` 真实验证答出标记（ADR-039） |
 | 原生会话列表/接续 | 具备 | session/list（含 CLI/TUI 会话）、session/load 回放 | 已接出 | 通过 | 通过 | .tmp/cc-native-import-claude.json；docs/verification/native-session-import-2026-10-11.md | 通用 ACP 实现；claude -p 在新工作区创建的会话被列出、接续并答出标记 |
 | 原生分支 | 具备 | session/fork 复制转录后需 resume | 已接出 | 通过 | 通过 | .tmp/cc-native-branch-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | session/fork 建立原生副本：分支答出源标记，源对话不知道分支标记 |
 | 上下文压缩 | 具备 | /compact 触发原生压缩；compaction_update 需 session.compaction 能力 | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | /compact 原生命令执行，compaction_update 以活动显示完成；压缩后仍记得先前事实 |
@@ -141,7 +141,7 @@
 | Skills | 具备 | skills 出现在原生命令目录 | 部分 | 通过 | 未接出 | — | 通过原生命令执行 |
 | MCP | 具备 | 用户 MCP 配置按原程序加载 | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无状态界面 |
 | 插件/扩展 | 具备 | 插件按原配置加载 | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无管理界面 |
-| 原生会话恢复 | 具备 | session/resume（不回放）；跨 Hub 进程重启 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；.tmp/cc-opencode-native-resume.json | — |
+| 原生会话恢复 | 具备 | session/resume（不回放）；跨 Hub 进程重启 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；.tmp/cc-opencode-native-resume.json；.tmp/cc-native-resume-commands-2026-10-12.json | 在原程序中继续：`opencode -s <id>`（help 确认），以 `opencode run -s <id> "…"` 真实验证答出标记（ADR-039） |
 | 原生会话列表/接续 | 具备 | session/list（每页 100，根会话）、session/load 回放全部历史 | 已接出 | 通过 | 通过 | .tmp/cc-native-import-opencode.json；docs/verification/native-session-import-2026-10-11.md | 通用 ACP 实现；opencode run 在新工作区创建的会话被列出、接续并答出标记 |
 | 原生分支 | 具备 | session/fork | 已接出 | 通过 | 通过 | .tmp/cc-native-branch-codex-acp.json；docs/verification/native-branch-2026-10-11.md | session/fork 建立原生副本，复制历史的回放不归属；更早位置以公共历史分支 |
 | 上下文压缩 | 具备 | /compact 原生命令 | 未接出 | 未接出 | 未接出 | — | OpenCode 的 ACP 命令目录没有压缩命令（真实目录 104 项），压缩只能在原 TUI 中执行 |
@@ -175,7 +175,7 @@
 | Skills | 具备 | Gateway skills.status 与技能命令 | 部分 | 通过 | 通过 | .tmp/cc-native-extensions-openclaw.json；docs/verification/native-extensions-2026-10-11.md | “原生扩展”面板列出 Gateway skills.status 的技能（124 个，105 个可用）；技能由原程序按需使用，Hub 不单独调用（桥未提供 /skill 命令） |
 | MCP | 不提供 | ACP 桥不使用 mcpServers | 不适用 | 不适用 | 不适用 | — | — |
 | 插件/扩展 | 部分 | Gateway tools.catalog/skills；无插件管理接口 | 部分 | 通过 | 通过 | .tmp/cc-native-extensions-openclaw.json；docs/verification/native-extensions-2026-10-11.md | 列出 tools.catalog 中的插件工具组（本机 1 个）；只读，不调用插件工具 |
-| 原生会话恢复 | 具备 | session/load + Hub 自有会话键 requireExistingSession | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；.tmp/native-complete-real-combined.json；docs/verification/complete-native-capabilities-2026-10-11.md | — |
+| 原生会话恢复 | 具备 | session/load + Hub 自有会话键 requireExistingSession | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；.tmp/native-complete-real-combined.json；docs/verification/complete-native-capabilities-2026-10-11.md | 在原程序中继续：不显示（会话在用户自己的 OpenClaw Gateway 中，Hub 不读取其目录，ADR-039） |
 | 原生会话列表/接续 | 部分 | 桥对 session/list 返回 Method not found；Gateway sessions.list 含渠道与其他代理的会话 | 未接出 | 未接出 | 未接出 | docs/verification/native-session-import-2026-10-11.md | 按设计不接续：其他会话属于渠道与代理，Hub 不向其中写入，只继续 Hub 自己创建的会话；明确拒绝已有协议测试 |
 | 原生分支 | 不提供 | 无原生分支 | 不适用 | 不适用 | 不适用 | — | — |
 | 上下文压缩 | 具备 | /compact 文本命令（sessions.compact 只截断） | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-acp.json；docs/verification/native-session-actions-2026-10-11.md | 原生 /compact 命令真实执行，压缩后仍记得先前事实；桥不发压缩活动 |
@@ -209,7 +209,7 @@
 | Skills | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
 | MCP | 具备 | 用户 MCP/扩展按原配置加载 | 部分 | 未接出 | 未接出 | — | 原程序加载 |
 | 插件/扩展 | 具备 | Gemini 扩展按原配置加载 | 部分 | 未接出 | 未接出 | — | 原程序加载 |
-| 原生会话恢复 | 具备 | session/load（响应后继续流式回放，已加静默窗口） | 已接出 | 通过 | 受阻 | — | Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻 |
+| 原生会话恢复 | 具备 | session/load（响应后继续流式回放，已加静默窗口） | 已接出 | 通过 | 受阻 | .tmp/cc-native-resume-commands-2026-10-12.json | Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻；在原程序中继续未验证：`--resume` 只接受 latest 或序号，测试回合被服务端拒绝（ADR-039） |
 | 原生会话列表/接续 | 不提供 | 无 session/list | 不适用 | 不适用 | 不适用 | — | — |
 | 原生分支 | 不提供 | 无 fork | 不适用 | 不适用 | 不适用 | — | — |
 | 上下文压缩 | 不提供 | ACP 下 /compress 不可用 | 不适用 | 不适用 | 不适用 | — | — |
@@ -243,7 +243,7 @@
 | Skills | 具备 | skills 出现在原生命令目录 | 部分 | 通过 | 未接出 | — | 通过原生命令执行 |
 | MCP | 具备 | ~/.cursor/mcp.json 与项目 mcp.json；本轮修复后才按原配置目录加载 | 部分 | 未接出 | 未接出 | — | 原程序加载 |
 | 插件/扩展 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
-| 原生会话恢复 | 具备 | session/load（完整回放） | 已接出 | 通过 | 受阻 | — | Cursor 账号套餐限制，原公共对话返回升级提示，生成任务无法验收 |
+| 原生会话恢复 | 具备 | session/load（完整回放） | 已接出 | 通过 | 受阻 | .tmp/cc-native-resume-commands-2026-10-12.json | Cursor 账号套餐限制，原公共对话返回升级提示，生成任务无法验收；在原程序中继续未验证：`-p --resume` 要求工作区信任（`--trust`），为不写用户配置未加；ACP 会话存放在 ~/.cursor/acp-sessions，只显示 ID（ADR-039） |
 | 原生会话列表/接续 | 具备 | session/list（unstable，无分页） | 已接出 | 通过 | 受阻 | docs/verification/native-session-import-2026-10-11.md | 通用 ACP 实现；账号计划受限，未做真实验收 |
 | 原生分支 | 不提供 | fork 路由未实现 | 不适用 | 不适用 | 不适用 | — | — |
 | 上下文压缩 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
@@ -277,7 +277,7 @@
 | Skills | 具备 | /skill:name 经 prompt 展开 | 已接出 | 通过 | 部分通过 | .tmp/cc-native-extensions.json；docs/verification/native-extensions-2026-10-11.md | 命令目录中的 skill:名称 列为技能（真实 69 项）并按原生命令调用；新工作区的项目技能需 Pi 信任才加载，技能调用未真实验收 |
 | MCP | 不提供 | 无内置 MCP（仅扩展） | 不适用 | 不适用 | 不适用 | — | — |
 | 插件/扩展 | 具备 | extensions/packages 按原配置加载（项目资源需信任） | 部分 | 通过 | 通过 | .tmp/cc-native-extensions.json；docs/verification/native-extensions-2026-10-11.md | 只读显示扩展命令来源的扩展（真实 1 个）；安装与启停在原程序中进行 |
-| 原生会话恢复 | 具备 | --session 原会话文件 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1-pi.json；.tmp/native-complete-real-combined.json；docs/verification/complete-native-capabilities-2026-10-11.md | 首个助手消息前恢复仍会失败（原程序延迟创建文件） |
+| 原生会话恢复 | 具备 | --session 原会话文件 | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1-pi.json；.tmp/native-complete-real-combined.json；docs/verification/complete-native-capabilities-2026-10-11.md | 首个助手消息前恢复仍会失败（原程序延迟创建文件）；在原程序中继续：会话标识是文件路径，只显示“见 Pi 自己的会话列表”（ADR-039） |
 | 原生会话列表/接续 | 不提供 | RPC 无会话列表 | 不适用 | 不适用 | 不适用 | — | — |
 | 原生分支 | 具备 | fork {entryId}、clone、get_fork_messages | 已接出 | 通过 | 通过 | .tmp/cc-native-branch-codex-pi.json；docs/verification/native-branch-2026-10-11.md | 恢复源会话文件后 clone 为新会话文件；更早位置以公共历史分支 |
 | 上下文压缩 | 具备 | compact {customInstructions} | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-pi.json；docs/verification/native-session-actions-2026-10-11.md | /compact 调用 RPC compact（无同名扩展命令时）；会话过小时如实失败并显示原因 |
@@ -311,7 +311,7 @@
 | Skills | 部分 | skills_list、skill_view、skill_manage 工具与 ~/.hermes/skills；ACP 没有技能列表（toolsets.py） | 未接出 | 未接出 | 未接出 | — | — |
 | MCP | 部分 | config.yaml 的 mcp_servers 在启动时注册，会话也可附加 MCP 服务器；ACP 没有列表（acp_adapter/entry.py、server.py） | 未接出 | 未接出 | 未接出 | — | — |
 | 插件/扩展 | 部分 | plugins/ 插件机制；ACP 没有对应接口 | 未接出 | 未接出 | 未接出 | — | — |
-| 原生会话恢复 | 具备 | session/load 从 ~/.hermes/state.db 恢复（未知标识返回 null）；session/resume 对未知标识会静默新建（acp_adapter/session.py、server.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-resume.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | Hub 只用 session/load；历史回放在响应之后，等待窗口从响应开始计算 |
+| 原生会话恢复 | 具备 | session/load 从 ~/.hermes/state.db 恢复（未知标识返回 null）；session/resume 对未知标识会静默新建（acp_adapter/session.py、server.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-resume.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md；.tmp/cc-native-resume-commands-2026-10-12.json | Hub 只用 session/load；历史回放在响应之后，等待窗口从响应开始计算；在原程序中继续：`hermes --resume <id>`（help 确认，回合结束时 Hermes 自己也打印），以 `hermes chat --resume <id> -q "…"` 真实验证答出标记（ADR-039） |
 | 原生会话列表/接续 | 具备 | session/list（按 cwd 过滤、游标分页，只列有消息的 ACP 会话）与 session/load 回放（acp_adapter/server.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-import.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 只列出经 ACP 创建的会话（编辑器等），CLI、TUI 与消息网关中的会话不在其中 |
 | 原生分支 | 具备 | session/fork（acp_adapter/session.py fork_session） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-branch.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
 | 上下文压缩 | 具备 | /compact 命令（acp_adapter/server.py _cmd_compact） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-commands.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
@@ -345,7 +345,7 @@
 | Skills | 部分 | skill 插件；ACP 没有技能列表 | 未接出 | 未接出 | 未接出 | — | — |
 | MCP | 部分 | session/new 可挂载 stdio/HTTP MCP；ACP 不列出用户自己的 MCP（packages/acp/acp/README.md、src/mcp.ts） | 未接出 | 未接出 | 未接出 | — | — |
 | 插件/扩展 | 部分 | profile bundles 插件机制（dsh plugin）；ACP 没有列表 | 未接出 | 未接出 | 未接出 | — | — |
-| 原生会话恢复 | 具备 | session/resume 恢复持久会话，不回放旧更新（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-resume.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
+| 原生会话恢复 | 具备 | session/resume 恢复持久会话，不回放旧更新（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-resume.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md；.tmp/cc-native-resume-commands-2026-10-12.json | 在原程序中继续：`dsh tui --resume <id>`（help 确认），以 `dsh headless --session-id <id> "…"` 真实验证答出标记（ADR-039） |
 | 原生会话列表/接续 | 具备 | session/list：从新到旧列出持久根会话（无标题、无时间），可按 cwd 过滤（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-import.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 不支持 session/load，接续时没有历史可引用（如实标出），接续后由原生会话回答 |
 | 原生分支 | 不提供 | 不支持 fork（packages/acp/acp/README.md） | 不适用 | 不适用 | 不适用 | — | — |
 | 上下文压缩 | 部分 | 自动压缩插件（compaction-basic、tool-result-pruner）；ACP 没有压缩命令或更新 | 未接出 | 未接出 | 未接出 | — | — |

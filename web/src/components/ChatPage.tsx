@@ -88,6 +88,8 @@ export interface ChatProps {
   attention?: readonly import("../../../src/contracts/session.js").AttentionItem[] | null;
   /** Cancels a Turn still waiting for its workspace; resolves once the cancellation is recorded or refused. */
   onCancelQueued?: (runId: string) => Promise<void>;
+  /** How to continue the conversation's native session in its own program (ADR-039), read when shown. */
+  onLoadNativeResume?: ((signal: AbortSignal) => Promise<import("../../../src/contracts/web.js").NativeResumeView | null>) | undefined;
   /** Reads the selected Harness's native skills, MCP servers and plugins on demand. */
   onLoadExtensions?: (signal: AbortSignal) => Promise<import("../../../src/contracts/control.js").NativeExtensions | null>;
   /** `probes` includes the sessions that catalog reads opened, which are left out otherwise. */

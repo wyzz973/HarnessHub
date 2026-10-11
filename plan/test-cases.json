@@ -6464,6 +6464,22 @@
       "planned_file": "tests/unit/verified-versions.test.ts"
     },
     {
+      "id": "G011-NC2",
+      "task": "G011",
+      "requirements": [
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "unit",
+      "scenario": "在原程序中继续的命令只给验证过的产品与版本",
+      "expected": "验证过的产品在验证版本上给出交互命令与已验证的非交互命令；版本未验证或未知只给 ID 并注明；从未验证的产品只给 ID；Pi 只指向它的会话列表；OpenClaw 不给；含空格、引号、分号、$( 或以 - 开头等非普通标识符的引用既不显示也不进入命令",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/unit/verified-versions.test.ts"
+    },
+    {
       "id": "G060-N04",
       "task": "G060",
       "requirements": [
@@ -7369,6 +7385,23 @@
       "planned_file": "tests/integration/web-server.test.ts"
     },
     {
+      "id": "G050-NC8",
+      "task": "G050",
+      "requirements": [
+        "R01",
+        "R22"
+      ],
+      "invariants": [
+        "INV-17"
+      ],
+      "layer": "integration",
+      "scenario": "按需读取在原程序中继续的信息",
+      "expected": "未登录 401；原生会话建立前为 null；之后返回原生会话 ID 与未验证说明；会话视图与 JSON 导出不含这个 ID；多余的查询参数 400",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/web-server.test.ts"
+    },
+    {
       "id": "G061-NC6",
       "task": "G061",
       "requirements": [
@@ -7973,6 +8006,22 @@
       "layer": "e2e",
       "scenario": "未经验证的版本在 Harness 列表与选择器中提示",
       "expected": "安装不在验证范围内的版本后，列表显示“未经验证”并在悬停与详情中说明验证过的版本；选择器写“未经验证的版本”且仍可选择；从未验证的 Harness 不显示标记",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G054-NC13",
+      "task": "G054",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "e2e",
+      "scenario": "执行配置显示原生会话与在原程序中继续",
+      "expected": "打开执行配置后显示原生会话 ID 与复制按钮；版本未验证时说明恢复命令未在此版本验证，不给复制命令的按钮",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/browser/web.browser.ts"

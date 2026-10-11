@@ -371,9 +371,10 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-resume-batch1.json",
-            "docs/verification/complete-native-capabilities-2026-10-11.md"
+            "docs/verification/complete-native-capabilities-2026-10-11.md",
+            ".tmp/cc-native-resume-commands-2026-10-12.json"
           ],
-          "note": ""
+          "note": "在原程序中继续：`codex resume <id>`（help 确认），以 `codex exec --skip-git-repo-check resume <id> \"…\"` 真实验证答出标记（ADR-039）"
         },
         "session-list": {
           "native": "yes",
@@ -696,9 +697,10 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-resume-claude.json",
-            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md",
+            ".tmp/cc-native-resume-commands-2026-10-12.json"
           ],
-          "note": "第二回合以原生会话恢复，未注入公共上下文并答对"
+          "note": "第二回合以原生会话恢复，未注入公共上下文并答对；在原程序中继续：`claude --resume <id>`（help 确认），以 `claude -p --resume <id> \"…\"` 真实验证答出标记（ADR-039）"
         },
         "session-list": {
           "native": "yes",
@@ -1005,9 +1007,10 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-resume-batch1.json",
-            ".tmp/cc-opencode-native-resume.json"
+            ".tmp/cc-opencode-native-resume.json",
+            ".tmp/cc-native-resume-commands-2026-10-12.json"
           ],
-          "note": ""
+          "note": "在原程序中继续：`opencode -s <id>`（help 确认），以 `opencode run -s <id> \"…\"` 真实验证答出标记（ADR-039）"
         },
         "session-list": {
           "native": "yes",
@@ -1308,7 +1311,7 @@
             ".tmp/native-complete-real-combined.json",
             "docs/verification/complete-native-capabilities-2026-10-11.md"
           ],
-          "note": ""
+          "note": "在原程序中继续：不显示（会话在用户自己的 OpenClaw Gateway 中，Hub 不读取其目录，ADR-039）"
         },
         "session-list": {
           "native": "partial",
@@ -1565,8 +1568,10 @@
           "hub": "done",
           "protocol": "pass",
           "real": "blocked",
-          "evidence": [],
-          "note": "Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻"
+          "evidence": [
+            ".tmp/cc-native-resume-commands-2026-10-12.json"
+          ],
+          "note": "Gemini 个人账号客户端被服务端停用（NATIVE_CLIENT_UNSUPPORTED），真实链路受阻；在原程序中继续未验证：`--resume` 只接受 latest 或序号，测试回合被服务端拒绝（ADR-039）"
         },
         "session-list": {
           "native": "no",
@@ -1821,8 +1826,10 @@
           "hub": "done",
           "protocol": "pass",
           "real": "blocked",
-          "evidence": [],
-          "note": "Cursor 账号套餐限制，原公共对话返回升级提示，生成任务无法验收"
+          "evidence": [
+            ".tmp/cc-native-resume-commands-2026-10-12.json"
+          ],
+          "note": "Cursor 账号套餐限制，原公共对话返回升级提示，生成任务无法验收；在原程序中继续未验证：`-p --resume` 要求工作区信任（`--trust`），为不写用户配置未加；ACP 会话存放在 ~/.cursor/acp-sessions，只显示 ID（ADR-039）"
         },
         "session-list": {
           "native": "yes",
@@ -2112,7 +2119,7 @@
             ".tmp/native-complete-real-combined.json",
             "docs/verification/complete-native-capabilities-2026-10-11.md"
           ],
-          "note": "首个助手消息前恢复仍会失败（原程序延迟创建文件）"
+          "note": "首个助手消息前恢复仍会失败（原程序延迟创建文件）；在原程序中继续：会话标识是文件路径，只显示“见 Pi 自己的会话列表”（ADR-039）"
         },
         "session-list": {
           "native": "no",
@@ -2395,9 +2402,10 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-hermes-dsh-resume.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md",
+            ".tmp/cc-native-resume-commands-2026-10-12.json"
           ],
-          "note": "Hub 只用 session/load；历史回放在响应之后，等待窗口从响应开始计算"
+          "note": "Hub 只用 session/load；历史回放在响应之后，等待窗口从响应开始计算；在原程序中继续：`hermes --resume <id>`（help 确认，回合结束时 Hermes 自己也打印），以 `hermes chat --resume <id> -q \"…\"` 真实验证答出标记（ADR-039）"
         },
         "session-list": {
           "native": "yes",
@@ -2673,8 +2681,10 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-hermes-dsh-resume.json",
-            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
-          ]
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md",
+            ".tmp/cc-native-resume-commands-2026-10-12.json"
+          ],
+          "note": "在原程序中继续：`dsh tui --resume <id>`（help 确认），以 `dsh headless --session-id <id> \"…\"` 真实验证答出标记（ADR-039）"
         },
         "session-list": {
           "native": "yes",

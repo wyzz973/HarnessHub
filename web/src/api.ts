@@ -1,7 +1,7 @@
 import { consumeSessionEventStream, SessionStreamError } from "./session-stream.js";
 import { readSseBlocks } from "./attention.js";
 import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
-import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, WebState } from "../../src/contracts/web.js";
+import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, WebState } from "../../src/contracts/web.js";
 import type { HarnessManagementView, InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
 import type { AttentionItem, HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
 import type { NativeExtensions, NativeInputs, NativeOption, NativeModelCatalog } from "../../src/contracts/control.js";
@@ -285,6 +285,15 @@ export class GatewayApi {
       if (row.sessions === null) return { sessions: null, nextCursor: null };
       return { nextCursor: next, ...(row.hiddenProbes === undefined ? {} : { hiddenProbes: number(row.hiddenProbes) }), sessions: list(row.sessions, value => { const item = record(value);
         return { id: text(item.id), title: nullableText(item.title), updatedAt: item.updatedAt === null ? null : number(item.updatedAt), ...(item.source === undefined ? {} : { source: text(item.source) }), ...(item.conversationId === undefined ? {} : { conversationId: text(item.conversationId) }) }; }, 1000) };
+    }, signal);
+  }
+  /** How to continue the conversation's native session in its own program (ADR-039); null when there is nothing to show. */
+  nativeResume(id: string, signal?: AbortSignal): Promise<NativeResumeView | null> {
+    return this.request(`/sessions/${encodeURIComponent(id)}/native-resume`, "GET", undefined, value => {
+      const row = record(value); if (row.resume === null) return null;
+      const resume = record(row.resume), optional = (key: "nativeId" | "interactive" | "once" | "list") => resume[key] === undefined ? {} : { [key]: text(resume[key]) };
+      return { harnessId: text(resume.harnessId), ...optional("nativeId"), ...optional("interactive"), ...optional("once"), ...optional("list"),
+        ...(resume.note === undefined ? {} : { note: choice(resume.note, ["version-unverified", "not-verified"]) }) };
     }, signal);
   }
   /** Continues one listed native session as a new conversation; nothing is sent until the next message. */

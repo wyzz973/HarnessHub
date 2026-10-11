@@ -1114,3 +1114,25 @@ test("a Harness version HarnessHub has not run for real is marked in the Harness
   await expect(page.getByRole("button", { name: "选择 Harness", exact: true })).toContainText("Gemini CLI");
   assert.deepEqual(errors, []);
 });
+
+test("the execution settings name the native session and, without a verified version, say no resume command is offered", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true }), log = page.getByRole("log", { name: "对话历史" });
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await composer.fill("hello"); await composer.press("Enter");
+  await expect(log.locator("[data-run-status=completed]")).toHaveCount(1, { timeout: 15000 });
+  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  const resume = page.getByLabel("在原程序中继续");
+  await expect(resume.locator(".native-resume-row code")).toHaveText(/^browser-native-\d+$/u);
+  // The fixture's Codex reports no version HarnessHub verified, so only the identifier is given.
+  await expect(resume).toContainText("恢复命令未在此版本验证。");
+  await expect(resume.getByRole("button", { name: "复制恢复命令", exact: true })).toHaveCount(0);
+  await expect(resume.getByRole("button", { name: "复制原生会话 ID", exact: true })).toBeVisible();
+  await page.screenshot({ path: join(artifact, "native-resume.png"), animations: "disabled" });
+  assert.deepEqual(errors, []);
+});

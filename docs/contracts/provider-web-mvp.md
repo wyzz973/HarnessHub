@@ -89,3 +89,5 @@ ADR-036（2026-10-12）追加：每个回合有执行预算（默认300秒，从
 ADR-037（2026-10-12）追加：`GET /api/v1/sessions/:id/runs/:runId/diagnostics?content=0|1`返回`{text, includesContent}`：本轮的诊断纯文本（不超过64 KiB），服务端在请求时拼装、不保存；首行说明是否含对话内容，默认不含，`content=1`时只加入该轮提示词与回复。来自原程序的文字先经Provider脱敏器，再隐去密钥样式字符串、环境变量值、路径与本机账户名。stderr只取本轮最后4 KiB，只在当前服务内存中保留最近64轮。参数无效400，回合不存在404。
 
 ADR-038（2026-10-12）追加：Harness 的管理视图在产品版本已知、且这个 Harness 有真实验证记录时带`verification: {state: "verified"|"unverified", program, adapter?}`，`program`与`adapter`为验证过的版本（单个版本或“起–止”）。这只是提示，不影响选择、发送、安装或升级。
+
+ADR-039（2026-10-12）追加：`GET /api/v1/sessions/:id/native-resume`返回当前选择的已就绪原生会话`{resume: {harnessId, nativeId?, interactive?, once?, list?, note?} | null}`：`nativeId`只在是普通标识符时给出；`interactive`与`once`只给验证过的产品，并且已安装版本须在验证范围内（ADR-038）；`note`为`version-unverified`或`not-verified`；`list`用于会话标识是私有路径的程序。按需读取，不进入会话视图和导出；需要登录，查询参数无效时返回400。

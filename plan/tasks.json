@@ -1318,7 +1318,8 @@
         "G011-N01",
         "G011-N02",
         "G011-N03",
-        "G011-NC1"
+        "G011-NC1",
+        "G011-NC2"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3143,7 +3144,8 @@
         "G050-NC4",
         "G050-NC5",
         "G050-NC6",
-        "G050-NC7"
+        "G050-NC7",
+        "G050-NC8"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3341,7 +3343,8 @@
         "web/src/components/BranchOrigin.tsx",
         "web/src/components/NativeExtensions.tsx",
         "web/src/components/NativeSessions.tsx",
-        "web/src/tool-tree.ts"
+        "web/src/tool-tree.ts",
+        "web/src/components/NativeResume.tsx"
       ],
       "requirements": [
         "R01",
@@ -3386,7 +3389,8 @@
         "G054-NC9",
         "G054-NC10",
         "G054-NC11",
-        "G054-NC12"
+        "G054-NC12",
+        "G054-NC13"
       ],
       "active_slice": "native-installation-management"
     },

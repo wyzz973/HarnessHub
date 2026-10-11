@@ -8,6 +8,7 @@ import type { HarnessReadinessView, HarnessView } from "../../../src/contracts/w
 import { BrandIcon, providerBrand } from "./BrandIcon.js";
 import { BrandMark, Spinner } from "./common.js";
 import { SearchPicker } from "./SearchPicker.js";
+import { NativeResume } from "./NativeResume.js";
 import type { PickerOption } from "./SearchPicker.js";
 import type { ChatProps } from "./ChatPage.js";
 import { attachmentProblem, ComposerAttachments } from "./Attachments.js";
@@ -229,7 +230,8 @@ export function ChatComposer(props: ComposerProps) {
               <small>开启后，回合结束时不关闭原程序：它在后台运行的任务可以继续，下一条消息也不必重新启动它。空闲 30 分钟后结束，同时最多保留 4 个。</small>
               {session?.retention?.process ? <><small className="native-observed">原生进程保留中 · 后台活动 {session.retention.process.backgroundUpdates} 条 · {Math.max(1, Math.round((session.retention.process.idleEndsAt - Date.now()) / 60000))} 分钟后结束</small>
                 <button type="button" className="text-button" disabled={props.mutation !== null} onClick={props.onEndProcess}>结束后台进程</button></> : null}</div> : null}
-            {nativeState ? <div className="execution-setting"><span>原生会话</span><strong>{nativeState.status === "ready" ? "继续已有会话" : "状态待确认"}</strong>{nativeState.observed ? <small className="native-observed">原生当前：{describeNative(nativeState.observed.model ?? undefined, nativeState.observed.options) || "未报告"}</small> : null}<small>公共历史与旧原生记录保留；原生内部状态重新建立。</small><button type="button" className="text-button" disabled={disabled || dirty || pending || active !== null} onClick={props.onNativeBranch}>重新建立原生会话</button></div> : null}
+            {nativeState ? <div className="execution-setting"><span>原生会话</span><strong>{nativeState.status === "ready" ? "继续已有会话" : "状态待确认"}</strong>{nativeState.observed ? <small className="native-observed">原生当前：{describeNative(nativeState.observed.model ?? undefined, nativeState.observed.options) || "未报告"}</small> : null}<small>公共历史与旧原生记录保留；原生内部状态重新建立。</small><button type="button" className="text-button" disabled={disabled || dirty || pending || active !== null} onClick={props.onNativeBranch}>重新建立原生会话</button>
+              {nativeState.status === "ready" && !dirty && session && props.onLoadNativeResume ? <NativeResume key={session.id + ":" + nativeState.harnessId + ":" + nativeState.controlId} load={props.onLoadNativeResume}/> : null}</div> : null}
             <p className="settings-help">选择后直接切换；当前回复继续使用原配置，下一次发送使用新选择。</p>
           </Popover.Content></Popover.Portal>
         </Popover.Root>

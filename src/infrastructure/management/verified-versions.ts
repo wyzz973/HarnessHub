@@ -1,5 +1,6 @@
 import { gte, lte, valid } from "semver";
 import type { HarnessVersionVerification } from "../../contracts/management.js";
+import type { NativeResumeView } from "../../contracts/web.js";
 
 /** Both ends had a recorded real verification; a version that is not semver is compared exactly. */
 type VersionRange = readonly [from: string, to: string];
@@ -35,4 +36,39 @@ export function versionVerification(harnessId: string, programVersion: string | 
   const adapter = verified.adapter !== undefined && entryVersion !== null && entryVersion !== programVersion ? entryVersion : null;
   const inside = within(programVersion, verified.program) && (adapter === null || within(adapter, verified.adapter!));
   return { state: inside ? "verified" : "unverified", program: described(verified.program), ...(verified.adapter === undefined ? {} : { adapter: described(verified.adapter) }) };
+}
+
+/** The question placeholder of a one-question command; the user replaces it. */
+const QUESTION = "\"你的问题\"";
+/**
+ * How each Harness's own program continues one of its sessions (ADR-039): the interactive command exactly as the installed
+ * version's help gives it, and the one-question command that a real Turn verified on the version in VERIFIED_VERSIONS.
+ * Pi's session reference is a file path, so it is only pointed to; OpenClaw's sessions live in the user's own OpenClaw
+ * Gateway, so nothing is shown. Changed together with VERIFIED_VERSIONS and the verification record.
+ */
+const RESUME_COMMANDS: Readonly<Record<string, { readonly interactive: (id: string) => string; readonly once: (id: string) => string } | { readonly list: string } | { readonly hidden: true }>> = {
+  claude: { interactive: id => `claude --resume ${id}`, once: id => `claude -p --resume ${id} ${QUESTION}` },
+  codex: { interactive: id => `codex resume ${id}`, once: id => `codex exec --skip-git-repo-check resume ${id} ${QUESTION}` },
+  opencode: { interactive: id => `opencode -s ${id}`, once: id => `opencode run -s ${id} ${QUESTION}` },
+  hermes: { interactive: id => `hermes --resume ${id}`, once: id => `hermes chat --resume ${id} -q ${QUESTION}` },
+  dsh: { interactive: id => `dsh tui --resume ${id}`, once: id => `dsh headless --session-id ${id} ${QUESTION}` },
+  pi: { list: "见 Pi 自己的会话列表" },
+  openclaw: { hidden: true },
+};
+/** Only a plain identifier is shown or put into a command; anything else the program reported stays private. */
+const PLAIN_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
+/**
+ * How the user can continue a conversation's native session in the Harness's own program (ADR-039), from its native
+ * reference and whether the installed version was verified. Commands are given only for a verified version and a plain
+ * identifier; otherwise the identifier alone, with why. Null for a hidden program and for a reference that is no plain
+ * identifier. Nothing here runs a program.
+ */
+export function nativeResume(harnessId: string, reference: string, verification: HarnessVersionVerification | null): NativeResumeView | null {
+  const commands = Object.hasOwn(RESUME_COMMANDS, harnessId) ? RESUME_COMMANDS[harnessId]! : null;
+  if (commands !== null && "hidden" in commands) return null;
+  if (commands !== null && "list" in commands) return { harnessId, list: commands.list };
+  if (!PLAIN_ID.test(reference)) return null;
+  if (commands === null) return { harnessId, nativeId: reference, note: "not-verified" };
+  if (verification?.state !== "verified") return { harnessId, nativeId: reference, note: "version-unverified" };
+  return { harnessId, nativeId: reference, interactive: commands.interactive(reference), once: commands.once(reference) };
 }

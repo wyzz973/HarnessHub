@@ -1144,6 +1144,48 @@ a {
   font-weight:500
 }
 
+/* Continuing the native session in the Harness's own program (ADR-039): commands to copy, never run here. */
+.native-resume {
+  display:grid;
+  gap:6px;
+  margin-top:4px;
+  padding-top:8px;
+  border-top:1px solid #ece6dc
+}
+
+.native-resume-row {
+  display:grid;
+  grid-template-columns:1fr auto;
+  align-items:center;
+  column-gap:6px
+}
+
+.native-resume-row>small {
+  grid-column:1 / -1
+}
+
+.native-resume-row code {
+  padding:4px 6px;
+  border-radius:4px;
+  background:#f4f0e9;
+  color:#4f4a42
+}
+
+.native-resume-copy {
+  width:24px;
+  height:24px
+}
+
+.native-resume-once summary {
+  cursor:pointer;
+  color:#777066;
+  font-size:12px
+}
+
+.native-resume-once .native-resume-row {
+  margin-top:4px
+}
+
 .execution-setting code {
   font-size:11px;
   color:#777066;
