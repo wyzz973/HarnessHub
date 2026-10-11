@@ -25,12 +25,12 @@ function keys(value: unknown): string[] { return value !== null && typeof value 
 
 test("installed Harnesses report their native capabilities and catalogs without a prompt", { timeout: 10 * 60 * 1000 }, async () => {
   assert.ok(harnesses.length, "set HH_REAL_HARNESSES"); assert.ok(evidencePath, "set HH_REAL_EVIDENCE");
-  const root = await realpath(await mkdtemp(join(tmpdir(), "hh-native-catalog-"))), before = await Promise.all(watched.map(digest));
+  const root = await realpath(await mkdtemp(join(process.env.HH_REAL_TMP ?? tmpdir(), "hh-native-catalog-"))), before = await Promise.all(watched.map(digest));
   const app = application(join(root, "data"), () => {}), results: Record<string, unknown>[] = [];
   try {
     for (const harnessId of harnesses) {
       const workspace = join(root, harnessId); await mkdir(workspace);
-      const configuration = await prepareConfiguration({ workspace });
+      const configuration = await prepareConfiguration({ workspace, ...(process.env.HH_REAL_MANIFEST ? { manifestPath: process.env.HH_REAL_MANIFEST } : {}) });
       const proof: Record<string, unknown> = { harnessId, observedAt: new Date().toISOString() };
       let binding: Awaited<ReturnType<typeof app.factory.prepare>> | null = null;
       try {

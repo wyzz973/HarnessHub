@@ -4,35 +4,37 @@
 
 图例：✅ 完整；◐ 已接出并通过协议测试，真实原安装未验收；◑ 部分接出；○ 原接口具备但Hub未接出；✕ 真实验收失败或受阻；— 原接口不提供；？ 未核实。
 
-| 分组 | 能力 | Codex | Claude Code | OpenCode | OpenClaw | Gemini CLI | Cursor | Pi |
-|---|---|---|---|---|---|---|---|---|
-| 配置与模型 | 模型目录与选择 | ✅ | ✅ | ◐ | ✅ | ✕ | ◑ | ✅ |
-| 配置与模型 | 思考档位 | ✅ | ✅ | ✕ | ✅ | — | ○ | ✅ |
-| 配置与模型 | 模式与原生设置 | ◑ | ✅ | ✅ | ◐ | ✕ | ◐ | — |
-| 配置与模型 | 原生命令目录与执行 | — | ✅ | ✅ | ✅ | ✕ | ◐ | ◐ |
-| 配置与模型 | 原生命令改配置后的同步 | ◑ | ✅ | ？ | ◐ | ？ | ✕ | ✕ |
-| 执行可见性 | 思考输出 | ◐ | ✕ | ✅ | ◑ | ✕ | ✕ | ✅ |
-| 执行可见性 | 工具状态 | ✅ | ✅ | ✅ | ◑ | ✕ | ✕ | ✅ |
-| 执行可见性 | 工具输入/输出/差异 | ✅ | ✅ | ✅ | ◑ | ✕ | ✕ | ✅ |
-| 执行可见性 | 计划 | ✕ | ✕ | — | — | — | ✕ | — |
-| 执行可见性 | 用量/上下文/费用 | ✅ | ✅ | ✅ | ◐ | ✕ | — | ✅ |
-| 交互 | 工具审批 | ✅ | ✅ | ✅ | ○ | ✕ | ✕ | ◐ |
-| 交互 | 原生提问与表单 | ◑ | ✅ | ？ | — | ？ | ◑ | ◐ |
-| 输入输出 | 图片输入 | ✅ | ✅ | ✅ | ◐ | ✕ | ✕ | ✅ |
-| 输入输出 | 音频输入 | ✕ | — | — | — | ✕ | — | — |
-| 输入输出 | 文件/文档输入 | ◐ | ◐ | ✅ | ◐ | ✕ | ✕ | ◐ |
-| 输入输出 | 非文本输出 | ◐ | ◐ | ◐ | — | — | ✕ | ○ |
-| 扩展 | Skills | ✅ | ◑ | ◑ | ◑ | ？ | ◑ | ◐ |
-| 扩展 | MCP | ◑ | ◑ | ◑ | — | ◑ | ◑ | — |
-| 扩展 | 插件/扩展 | ◑ | ◑ | ◑ | ◑ | ◑ | ？ | ◑ |
-| 会话 | 原生会话恢复 | ✅ | ✅ | ✅ | ✅ | ✕ | ✕ | ✅ |
-| 会话 | 原生会话列表/接续 | ✅ | ✅ | ✅ | ○ | — | ✕ | — |
-| 会话 | 原生分支 | ✅ | ✅ | ✅ | — | — | — | ✅ |
-| 会话 | 上下文压缩 | ✅ | ✅ | ○ | ✅ | — | ？ | ✅ |
-| 会话 | 回滚/回退 | ○ | — | ？ | — | ○ | — | ○ |
-| 并发与后台 | 子 Agent | ✅ | ✅ | ○ | ○ | ？ | ○ | — |
-| 并发与后台 | 后台任务 | ○ | ○ | ？ | ○ | ？ | ？ | — |
-| 产物 | 导出与产物 | ✅ | ◐ | ？ | ○ | ？ | — | ✅ |
+证据中的 .tmp/ 路径相对于主检出 HarnessGateway（本机运行服务的检出），该目录被忽略、不入库；可复核的命令、版本、结果与局限写在 docs/verification/ 的验收记录中。
+
+| 分组 | 能力 | Codex | Claude Code | OpenCode | OpenClaw | Gemini CLI | Cursor | Pi | Hermes Agent | DeepSeek Harness |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 配置与模型 | 模型目录与选择 | ✅ | ✅ | ◐ | ✅ | ✕ | ◑ | ✅ | ✅ | ✅ |
+| 配置与模型 | 思考档位 | ✅ | ✅ | ✕ | ✅ | — | ○ | ✅ | — | ✅ |
+| 配置与模型 | 模式与原生设置 | ◑ | ✅ | ✅ | ◐ | ✕ | ◐ | — | — | — |
+| 配置与模型 | 原生命令目录与执行 | — | ✅ | ✅ | ✅ | ✕ | ◐ | ◐ | ✅ | — |
+| 配置与模型 | 原生命令改配置后的同步 | ◑ | ✅ | ？ | ◐ | ？ | ✕ | ✕ | ✅ | — |
+| 执行可见性 | 思考输出 | ◐ | ✕ | ✅ | ◑ | ✕ | ✕ | ✅ | ✅ | ✅ |
+| 执行可见性 | 工具状态 | ✅ | ✅ | ✅ | ◑ | ✕ | ✕ | ✅ | ✅ | ✅ |
+| 执行可见性 | 工具输入/输出/差异 | ✅ | ✅ | ✅ | ◑ | ✕ | ✕ | ✅ | ✅ | ◐ |
+| 执行可见性 | 计划 | ✕ | ✕ | — | — | — | ✕ | — | ○ | — |
+| 执行可见性 | 用量/上下文/费用 | ✅ | ✅ | ✅ | ◐ | ✕ | — | ✅ | ✅ | ◐ |
+| 交互 | 工具审批 | ✅ | ✅ | ✅ | ○ | ✕ | ✕ | ◐ | ✕ | ✕ |
+| 交互 | 原生提问与表单 | ◑ | ✅ | ？ | — | ？ | ◑ | ◐ | — | — |
+| 输入输出 | 图片输入 | ✅ | ✅ | ✅ | ◐ | ✕ | ✕ | ✅ | ✕ | ✕ |
+| 输入输出 | 音频输入 | ✕ | — | — | — | ✕ | — | — | — | — |
+| 输入输出 | 文件/文档输入 | ◐ | ◐ | ✅ | ◐ | ✕ | ✕ | ◐ | ◐ | ✅ |
+| 输入输出 | 非文本输出 | ◐ | ◐ | ◐ | — | — | ✕ | ○ | — | ◐ |
+| 扩展 | Skills | ✅ | ◑ | ◑ | ◑ | ？ | ◑ | ◐ | ○ | ○ |
+| 扩展 | MCP | ◑ | ◑ | ◑ | — | ◑ | ◑ | — | ○ | ○ |
+| 扩展 | 插件/扩展 | ◑ | ◑ | ◑ | ◑ | ◑ | ？ | ◑ | ○ | ○ |
+| 会话 | 原生会话恢复 | ✅ | ✅ | ✅ | ✅ | ✕ | ✕ | ✅ | ✅ | ✅ |
+| 会话 | 原生会话列表/接续 | ✅ | ✅ | ✅ | ○ | — | ✕ | — | ◐ | ◐ |
+| 会话 | 原生分支 | ✅ | ✅ | ✅ | — | — | — | ✅ | ✅ | — |
+| 会话 | 上下文压缩 | ✅ | ✅ | ○ | ✅ | — | ？ | ✅ | ✅ | ○ |
+| 会话 | 回滚/回退 | ○ | — | ？ | — | ○ | — | ○ | — | — |
+| 并发与后台 | 子 Agent | ✅ | ✅ | ○ | ○ | ？ | ○ | — | ◑ | ◑ |
+| 并发与后台 | 后台任务 | ○ | ○ | ？ | ○ | ？ | ？ | — | ○ | ○ |
+| 产物 | 导出与产物 | ✅ | ◐ | ？ | ○ | ？ | — | ✅ | ○ | ○ |
 
 | Harness | ✅ | ◐ | ◑ | ○ | ✕ | — | ？ |
 |---|---|---|---|---|---|---|---|
@@ -43,6 +45,8 @@
 | Gemini CLI | 0 | 0 | 2 | 1 | 12 | 6 | 6 |
 | Cursor | 0 | 2 | 4 | 2 | 11 | 5 | 3 |
 | Pi | 11 | 5 | 1 | 2 | 1 | 7 | 0 |
+| Hermes Agent | 10 | 2 | 1 | 6 | 2 | 6 | 0 |
+| DeepSeek Harness | 6 | 4 | 1 | 6 | 2 | 8 | 0 |
 
 ## Codex
 
@@ -281,3 +285,71 @@
 | 子 Agent | 不提供 | 无内置子 Agent（仅扩展工具） | 不适用 | 不适用 | 不适用 | — | — |
 | 后台任务 | 不提供 | 无内置后台任务 | 不适用 | 不适用 | 不适用 | — | — |
 | 导出与产物 | 具备 | export_html {outputPath} | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-pi.json；docs/verification/native-session-actions-2026-10-11.md | /export 调用 export_html 写入临时目录后作为产物；会话为空时明确失败 |
+
+## Hermes Agent
+
+原安装：Hermes Agent 0.12.0（官方安装方式：~/.hermes/hermes-agent，启动器 ~/.local/bin/hermes；本机 DeepSeek deepseek-v4-pro）；控制入口：acp-v1（hermes acp）。
+
+| 能力 | 原接口 | 来源 | Hub | 协议 | 真实原安装 | 证据 | 说明 |
+|---|---|---|---|---|---|---|---|
+| 模型目录与选择 | 具备 | session/new·session/load 返回 models（提供方精选目录，标识为 <提供方>:<模型>），session/set_model 切换（acp_adapter/server.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-catalog.json；.tmp/cc-hermes-config.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
+| 思考档位 | 不提供 | ACP 不公布推理档位：没有 configOptions，set_config_option 只保存不生效（acp_adapter/server.py） | 不适用 | 不适用 | 不适用 | — | — |
+| 模式与原生设置 | 不提供 | 不公布 modes；set_session_mode 只记录不生效（acp_adapter/server.py） | 不适用 | 不适用 | 不适用 | — | — |
+| 原生命令目录与执行 | 具备 | available_commands_update：help、model、tools、context、reset、compact、steer、queue、version，由 Hermes 在本地处理（acp_adapter/server.py _handle_slash_command） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-catalog.json；.tmp/cc-hermes-commands.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
+| 原生命令改配置后的同步 | 具备 | /model <名称> 在本地切换会话模型，只回固定文本，不发 ACP 更新（acp_adapter/server.py _cmd_model） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-config.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | Hub 只在提示词本身是 /model 命令时读取它的回复，并把新模型记为会话当前模型 |
+| 思考输出 | 具备 | 提供方推理增量 → agent_thought_chunk（acp_adapter/events.py make_thinking_cb） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-thinking.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
+| 工具状态 | 具备 | tool_call / tool_call_update（acp_adapter/events.py、tools.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-activity.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
+| 工具输入/输出/差异 | 具备 | 标题、类型、位置、patch/write_file 差异、结果文本；常用工具不带 rawInput/rawOutput（acp_adapter/tools.py _POLISHED_TOOLS） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-activity.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 常用工具的输入只出现在标题和开始内容里 |
+| 计划 | 部分 | todo 工具只以展示文本出现在工具卡片，ACP 没有 plan 更新（acp_adapter/tools.py） | 未接出 | 未接出 | 未接出 | — | 未把 todo 文本解析为计划 |
+| 用量/上下文/费用 | 具备 | session/prompt 结果的 usage（输入、输出、思考、缓存）与 usage_update（上下文 size/used）（acp_adapter/server.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-activity.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
+| 工具审批 | 具备 | 危险命令经 session/request_permission 审批（允许一次、始终允许、拒绝），60 秒未答自动拒绝（acp_adapter/permissions.py） | 已接出 | 通过 | 受阻 | .tmp/cc-hermes-approval.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 本机 Hermes 0.12.0 的缺陷：tools/approval.py 调用审批回调时传入 allow_permanent，ACP 适配层回调不接受（TypeError），危险命令一律按拒绝处理，审批请求根本不会发出；需要用户升级 Hermes（本机落后上游 18332 个提交）。Hub 的 60 秒期限处理已有协议测试 |
+| 原生提问与表单 | 不提供 | hermes-acp 工具集不含 clarify（toolsets.py） | 不适用 | 不适用 | 不适用 | — | — |
+| 图片输入 | 具备 | promptCapabilities.image；图片转为 OpenAI image_url 交给模型（acp_adapter/server.py） | 已接出 | 通过 | 受阻 | .tmp/cc-hermes-dsh-attachments.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | Hermes 公布并转发图片，但本机模型 deepseek-v4-pro 回复看不到图片 |
+| 音频输入 | 不提供 | 未公布 audio，音频块被丢弃（acp_adapter/server.py _content_blocks_to_openai_user_content） | 不适用 | 不适用 | 不适用 | — | — |
+| 文件/文档输入 | 部分 | resource_link 与嵌入资源不会交给模型（acp_adapter/server.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-attachments.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | Hub 改为在提示词中附上只读副本路径，由 Hermes 用自己的文件工具读取 |
+| 非文本输出 | 不提供 | agent_message_chunk 只发文本（acp_adapter/events.py）；hermes-acp 工具集不含图像生成 | 不适用 | 不适用 | 不适用 | — | — |
+| Skills | 部分 | skills_list、skill_view、skill_manage 工具与 ~/.hermes/skills；ACP 没有技能列表（toolsets.py） | 未接出 | 未接出 | 未接出 | — | — |
+| MCP | 部分 | config.yaml 的 mcp_servers 在启动时注册，会话也可附加 MCP 服务器；ACP 没有列表（acp_adapter/entry.py、server.py） | 未接出 | 未接出 | 未接出 | — | — |
+| 插件/扩展 | 部分 | plugins/ 插件机制；ACP 没有对应接口 | 未接出 | 未接出 | 未接出 | — | — |
+| 原生会话恢复 | 具备 | session/load 从 ~/.hermes/state.db 恢复（未知标识返回 null）；session/resume 对未知标识会静默新建（acp_adapter/session.py、server.py） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-resume.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | Hub 只用 session/load；历史回放在响应之后，等待窗口从响应开始计算 |
+| 原生会话列表/接续 | 具备 | session/list（按 cwd 过滤、游标分页，只列有消息的 ACP 会话）与 session/load 回放（acp_adapter/server.py） | 已接出 | 通过 | 未接出 | — | — |
+| 原生分支 | 具备 | session/fork（acp_adapter/session.py fork_session） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-branch.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
+| 上下文压缩 | 具备 | /compact 命令（acp_adapter/server.py _cmd_compact） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-commands.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
+| 回滚/回退 | 不提供 | 只有 /reset 清空整段历史，没有回退到某一轮 | 不适用 | 不适用 | 不适用 | — | — |
+| 子 Agent | 部分 | delegate_task 在进程内运行子 Agent；子 Agent 的活动不经 ACP 发出（acp_adapter/tools.py） | 部分 | 未接出 | 未接出 | — | 只显示 delegate_task 工具本身 |
+| 后台任务 | 具备 | process 工具管理后台进程；随每回合结束的 ACP 进程一起结束（toolsets.py） | 未接出 | 未接出 | 未接出 | — | 等待 ADR-030 |
+| 导出与产物 | 具备 | hermes sessions export - --session-id <id> 输出 JSONL（hermes_cli/main.py） | 未接出 | 未接出 | 未接出 | — | — |
+
+## DeepSeek Harness
+
+原安装：DeepSeek Harness 0.2.1-alpha.1（本机源码构建，经显式入口；官方分发为 npm 包 @deepseek-ai/dsh）；控制入口：acp-v1（dsh --profile acp）。
+
+| 能力 | 原接口 | 来源 | Hub | 协议 | 真实原安装 | 证据 | 说明 |
+|---|---|---|---|---|---|---|---|
+| 模型目录与选择 | 具备 | session/new 的 model 配置项（实时服务目录）与 session/set_config_option（packages/acp/acp/src/model-control.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-catalog.json；.tmp/cc-dsh-options.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
+| 思考档位 | 具备 | reasoning_effort 配置项（category thought_level，模型声明推理选项时提供）（packages/acp/acp/src/model-control.ts） | 已接出 | 通过 | 通过 | .tmp/cc-dsh-options.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
+| 模式与原生设置 | 不提供 | ACP 自动化界面不提供 mode（packages/acp/acp/README.md） | 不适用 | 不适用 | 不适用 | — | — |
+| 原生命令目录与执行 | 不提供 | ACP 自动化界面不提供命令（packages/acp/acp/README.md） | 不适用 | 不适用 | 不适用 | — | — |
+| 原生命令改配置后的同步 | 不提供 | 没有原生命令；配置只经 session/set_config_option 改变 | 不适用 | 不适用 | 不适用 | — | — |
+| 思考输出 | 具备 | 已提交的 reasoning 块 → agent_thought_chunk（packages/acp/acp/src/updates.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-thinking.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 按整块到达，不是逐字增量 |
+| 工具状态 | 具备 | tool/call、tool/result → tool_call（in_progress）与 tool_call_update（completed/failed）（packages/acp/acp/src/updates.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-activity.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
+| 工具输入/输出/差异 | 部分 | 工具名、rawInput、结果内容；kind 恒为 other，没有差异和位置（packages/acp/acp/src/updates.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-activity.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
+| 计划 | 不提供 | ACP 界面不提供计划与 todo（packages/acp/acp/README.md） | 不适用 | 不适用 | 不适用 | — | — |
+| 用量/上下文/费用 | 部分 | usage_update（上下文占用与窗口）；session/prompt 结果不带用量（packages/acp/acp/src/updates.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-resume.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
+| 工具审批 | 具备 | session/request_permission（允许一次、拒绝）（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 受阻 | .tmp/cc-hermes-dsh-activity.json；.tmp/cc-dsh-options.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 用户 dsh 的默认权限预设为 danger-full-access，dsh 不发审批请求；ACP 没有可切换预设的配置项，Hub 不改用户配置 |
+| 原生提问与表单 | 不提供 | 不提供 elicitation（packages/acp/acp/README.md） | 不适用 | 不适用 | 不适用 | — | — |
+| 图片输入 | 部分 | 只有挂载持久附件存储且路由支持图片时才公布 promptCapabilities.image（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 受阻 | .tmp/cc-hermes-dsh-attachments.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | 本机 acp profile 未公布图片输入；Hub 在派发前拒绝图片已在真实环境确认 |
+| 音频输入 | 不提供 | promptCapabilities.audio=false（packages/acp/acp/src/index.ts） | 不适用 | 不适用 | 不适用 | — | — |
+| 文件/文档输入 | 具备 | resource_link 以 [resource_link name=… uri=…] 交给模型，由它的工具读取（packages/acp/acp/README.md、src/content.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-attachments.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
+| 非文本输出 | 具备 | assistant 图片块经附件存储转为 ACP image（packages/acp/acp/src/content.ts assistantBlockToAcp） | 已接出 | 通过 | 未接出 | — | — |
+| Skills | 部分 | skill 插件；ACP 没有技能列表 | 未接出 | 未接出 | 未接出 | — | — |
+| MCP | 部分 | session/new 可挂载 stdio/HTTP MCP；ACP 不列出用户自己的 MCP（packages/acp/acp/README.md、src/mcp.ts） | 未接出 | 未接出 | 未接出 | — | — |
+| 插件/扩展 | 部分 | profile bundles 插件机制（dsh plugin）；ACP 没有列表 | 未接出 | 未接出 | 未接出 | — | — |
+| 原生会话恢复 | 具备 | session/resume 恢复持久会话，不回放旧更新（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-dsh-resume.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
+| 原生会话列表/接续 | 具备 | session/list：从新到旧列出持久根会话（无标题、无时间），可按 cwd 过滤（packages/acp/acp/src/index.ts） | 已接出 | 通过 | 未接出 | — | 不支持 session/load，接续时显示不了以前的历史 |
+| 原生分支 | 不提供 | 不支持 fork（packages/acp/acp/README.md） | 不适用 | 不适用 | 不适用 | — | — |
+| 上下文压缩 | 部分 | 自动压缩插件（compaction-basic、tool-result-pruner）；ACP 没有压缩命令或更新 | 未接出 | 未接出 | 未接出 | — | — |
+| 回滚/回退 | 不提供 | ACP 界面不提供（packages/acp/acp/README.md） | 不适用 | 不适用 | 不适用 | — | — |
+| 子 Agent | 部分 | subagent 插件；子会话 origin=subagent 不在列表中，ACP 只发父会话的工具调用（packages/acp/acp/src/index.ts） | 部分 | 未接出 | 未接出 | — | 只显示调用子 Agent 的工具本身 |
+| 后台任务 | 部分 | jobs、schedule、goal 等自主工作；没有进行中的 ACP 提示词时，session/cancel 取消自主工作（packages/acp/acp/README.md） | 未接出 | 未接出 | 未接出 | — | — |
+| 导出与产物 | 部分 | 会话日志保存在 $DSH_HOME/sessions；ACP 没有导出 | 未接出 | 未接出 | 未接出 | — | — |

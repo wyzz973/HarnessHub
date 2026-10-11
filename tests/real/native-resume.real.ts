@@ -24,6 +24,8 @@ const configFiles: Readonly<Record<string, readonly string[]>> = {
   pi: [join(home, ".pi", "agent", "settings.json"), join(home, ".pi", "agent", "models.json")],
   cursor: [join(home, ".cursor", "cli-config.json")],
   gemini: [join(home, ".gemini", "settings.json")],
+  hermes: [join(home, ".hermes", "config.yaml")],
+  dsh: [join(home, ".dsh", "settings.yaml"), join(home, ".dsh", "profiles", "acp", "cordis.patch.yml")],
 };
 async function digest(path: string): Promise<string> {
   try { return createHash("sha256").update(await readFile(path)).digest("hex"); }
@@ -40,7 +42,7 @@ function runSummary(run: PublicRun, reply: string): Record<string, unknown> {
 test("installed Harness resumes its own native session across a Hub owner restart", { timeout: 15 * 60 * 1000 }, async () => {
   assert.ok(harnesses.length, "set HH_REAL_HARNESSES to the installed Harness identities under acceptance");
   assert.ok(evidencePath, "set HH_REAL_EVIDENCE to an ignored evidence file path");
-  const root = await realpath(await mkdtemp(join(tmpdir(), "hh-native-resume-")));
+  const root = await realpath(await mkdtemp(join(process.env.HH_REAL_TMP ?? tmpdir(), "hh-native-resume-")));
   const results: Record<string, unknown>[] = [];
   try {
     for (const harnessId of harnesses) {
@@ -48,7 +50,7 @@ test("installed Harness resumes its own native session across a Hub owner restar
       const before = await Promise.all(files.map(digest));
       const data = join(root, harnessId + "-data"), workspace = join(root, harnessId + "-workspace");
       await mkdir(workspace);
-      const configuration = await prepareConfiguration({ workspace });
+      const configuration = await prepareConfiguration({ workspace, ...(process.env.HH_REAL_MANIFEST ? { manifestPath: process.env.HH_REAL_MANIFEST } : {}) });
       const tag = "HH_NATIVE_" + randomUUID().slice(0, 8).toUpperCase();
       const proof: Record<string, unknown> = { harnessId, startedAt: new Date().toISOString() };
       let app: App | null = application(data, () => {});

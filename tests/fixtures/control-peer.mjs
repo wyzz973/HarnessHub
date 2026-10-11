@@ -26,6 +26,8 @@ function nativeConfiguration() { return [
  { id:"native-fast",name:"Native fast",type:"select",currentValue:fast,options:[{value:"off",name:"Off"},{value:"on",name:"On"}] }
 ]; }
 
+// Hermes lists `<provider>:<model>` choices from its curated catalogue (unstable session model state).
+function hermesModels() { return { currentModelId: "deepseek:deepseek-v4-pro", availableModels: [{ modelId: "deepseek:deepseek-v4-pro", name: "deepseek-v4-pro" }, { modelId: "deepseek:deepseek-v4-flash", name: "deepseek-v4-flash" }] }; }
 // The OpenClaw bridge's session presentation: six select options and the same thinking levels again as modes.
 const openclawLevels = ["off", "minimal", "low", "medium", "high", "adaptive"].map(value => ({ value, name: value }));
 function openclawPresentation() { return { configOptions: [
@@ -91,7 +93,7 @@ lines.on("line", line => {
     if (scenario === "remote-error") { emit({ id: message.id, error: { code: -32001, message: "test remote error" } }); return; }
     if (scenario === "stderr") process.stderr.write("diagnostic".repeat(100000));
     const result = protocol === "acp-v1"
-      ? { protocolVersion: scenario === "version" ? 2 : 1, agentCapabilities: { loadSession: ["native-resume", "resume-fails", "resume-wrong-identity", "load-trailing-replay", "native-config", "openclaw-settings", "session-list"].includes(scenario), ...(scenario === "session-list" ? { sessionCapabilities: { list: {} } } : {}), ...(scenario === "attachments" || scenario === "openclaw-settings" ? { promptCapabilities: { image: true, audio: true, embeddedContext: true } } : {}), ...(scenario === "forkable" ? { sessionCapabilities: { fork: {} } } : {}) }, authMethods: [{ id: "fixture-login", name: "Fixture Login" }], agentInfo: { name: "fixture", version: "1.0" } }
+      ? { protocolVersion: scenario === "version" ? 2 : 1, agentCapabilities: { loadSession: ["native-resume", "resume-fails", "resume-wrong-identity", "load-trailing-replay", "native-config", "openclaw-settings", "session-list", "hermes"].includes(scenario), ...(scenario === "hermes" ? { sessionCapabilities: { resume: {}, list: {}, fork: {} }, promptCapabilities: { image: true } } : {}), ...(scenario === "session-list" ? { sessionCapabilities: { list: {} } } : {}), ...(scenario === "attachments" || scenario === "openclaw-settings" ? { promptCapabilities: { image: true, audio: true, embeddedContext: true } } : {}), ...(scenario === "forkable" ? { sessionCapabilities: { fork: {} } } : {}) }, authMethods: [{ id: "fixture-login", name: "Fixture Login" }], agentInfo: { name: "fixture", version: "1.0" } }
       : { userAgent: "fixture-codex/1.0", codexHome: process.cwd(), platformFamily: "unix", platformOs: process.platform };
     answer(message.id, result);
     if (scenario === "flood") {
@@ -120,6 +122,7 @@ lines.on("line", line => {
     answer(message.id, { marketplaces: scenario === "skills" ? [{ name: "openai-curated", plugins: [{ name: "github", installed: true, enabled: true, localVersion: "1.2.0" }, { name: "not-here", installed: false, enabled: false }] }] : [], marketplaceLoadErrors: [] }); return;
   }
   if (message.method === "model/list") { answer(message.id, { data: ["native-model-a", "native-model-b"].map(model => ({ model, displayName: model, ...(scenario === "attachments" ? { inputModalities: model === "native-model-a" ? ["text", "image", "audio"] : ["text"] } : {}) })), nextCursor: null }); return; }
+  if (scenario === "hermes" && message.method === "session/new") { answer(message.id, { sessionId: "session-fixture", models: hermesModels() }); return; }
   if (message.method === "session/new" && scenario === "attachments") {
     answer(message.id, { sessionId: "session-fixture", configOptions: [{ id: "model", category: "model", type: "select", currentValue: "native/model-a", options: [{ value: "native/model-a", name: "Model A" }, { value: "native/model-b", name: "Model B" }] }] }); return;
   }
@@ -167,6 +170,19 @@ lines.on("line", line => {
     if (scenario === "unlisted-model") { answer(message.id, { sessionId: "session-fixture", configOptions: [{ id: "native-model", category: "model", type: "select", currentValue: "resumed-unlisted", options: [{ value: "native-model-a", name: "Native A" }] }] }); return; }
     answer(message.id, { sessionId: "session-fixture", ...(scenario === "native-models" ? { configOptions: [{ id: "native-model", category: "model", type: "select", currentValue: selectedModel, options: [{ value: "native-model-a", name: "Native A" }, { value: "native-model-b", name: "Native B" }] }] } : {}),
     ...(["legacy-configured-model", "duplicate-models"].includes(scenario) ? { models: { currentModelId: "configured-model", availableModels: [{ modelId: "suggested-model", name: "Suggested" }, ...(scenario === "duplicate-models" ? [{ modelId: "suggested-model", name: "Duplicate" }] : [])] } } : {}) }); return; }
+  if (scenario === "hermes" && message.method === "session/load") {
+    // Hermes: an identity it does not have answers null; a known one restores slowly and replays history after the response.
+    if (message.params.sessionId === "missing-session") { answer(message.id, null); return; }
+    setTimeout(() => {
+      answer(message.id, { models: hermesModels() });
+      const replay = (kind, text) => notification("session/update", { sessionId: message.params.sessionId, update: { sessionUpdate: kind, content: { type: "text", text } } });
+      setTimeout(() => replay("user_message_chunk", "earlier question"), 20); setTimeout(() => replay("agent_message_chunk", "old replayed answer"), 60);
+    }, 300);
+    return;
+  }
+  if (scenario === "hermes" && message.method === "session/list") { answer(message.id, { sessions: [{ sessionId: "session-fixture", cwd: message.params.cwd, title: "Hermes work", updatedAt: "2026-10-11T10:00:00Z" }] }); return; }
+  // Hermes starts a new session for an unknown identity without saying so; a client must not rely on it.
+  if (scenario === "hermes" && message.method === "session/resume") { answer(message.id, {}); return; }
   if (message.method === "session/load" && scenario === "load-trailing-replay") {
     // Gemini-style: the load response returns first and history keeps streaming afterwards.
     answer(message.id, {});
@@ -341,6 +357,17 @@ lines.on("line", line => {
       }, 10);
       return;
     }
+    if (scenario === "hermes") {
+      // A dangerous command asks Hermes's approval bridge; otherwise the reply arrives after a pause, as a model turn does.
+      // Hermes handles its own /model command locally and only answers in text.
+      if (JSON.stringify(message.params.prompt).includes("/model deepseek-v4-flash")) { notification("session/update", { sessionId: message.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Model switched to: deepseek-v4-flash\nProvider: deepseek" } } }); finish(); return; }
+      if (JSON.stringify(message.params.prompt).includes("approve")) {
+        emit({ id: "hermes-permission", method: "session/request_permission", params: { sessionId: message.params.sessionId, toolCall: { toolCallId: "perm-check", title: "rm -rf build", kind: "execute" },
+          options: [{ optionId: "allow_once", kind: "allow_once", name: "Allow once" }, { optionId: "allow_always", kind: "allow_always", name: "Allow always" }, { optionId: "deny", kind: "reject_once", name: "Deny" }] } });
+        return;
+      }
+      setTimeout(() => { acpOutput(message.params.sessionId); finish(); }, 150); return;
+    }
     if (scenario === "passive") notification("fixture/passive", { privateSecret: "must-not-leak" });
     if (scenario === "native-question") {
       pendingPermission = true;
@@ -402,6 +429,7 @@ lines.on("line", line => {
     }
     setTimeout(() => finish(true), 50); return;
   }
+  if (message.id === "hermes-permission") { notification("session/update", { sessionId: "session-fixture", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "permission " + JSON.stringify(message.result) } } }); finish(); return; }
   if (message.id === "elicit-1") { notification("session/update", { sessionId: "session-fixture", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "form " + JSON.stringify(message.result) } } }); finish(); return; }
   if (message.id === "late-permission" || message.id === "child-approval" || message.id === "unrelated-approval") return;
   if (message.id === "permission-1" || message.id === "unsupported" || message.id === "native-question") {

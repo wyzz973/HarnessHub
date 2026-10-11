@@ -25,6 +25,8 @@ const configFiles: Readonly<Record<string, readonly string[]>> = {
   pi: [join(home, ".pi", "agent", "settings.json"), join(home, ".pi", "agent", "models.json")],
   cursor: [join(home, ".cursor", "cli-config.json")],
   gemini: [join(home, ".gemini", "settings.json")],
+  hermes: [join(home, ".hermes", "config.yaml")],
+  dsh: [join(home, ".dsh", "settings.yaml"), join(home, ".dsh", "profiles", "acp", "cordis.patch.yml")],
 };
 /** HH_REAL_APPROVAL=1: the workspace's own project configuration asks before edits and commands (never the user's global file). */
 const approvalConfig: Readonly<Record<string, { readonly file: string; readonly text: string }>> = {
@@ -67,7 +69,7 @@ async function settle(app: App, id: SessionId, permissions: Record<string, unkno
 test("installed Harness tool activity is committed with stored, readable details", { timeout: 20 * 60 * 1000 }, async () => {
   assert.ok(harnesses.length, "set HH_REAL_HARNESSES to the installed Harness identities under acceptance");
   assert.ok(evidencePath, "set HH_REAL_EVIDENCE to an ignored evidence file path");
-  const root = await realpath(await mkdtemp(join(tmpdir(), "hh-native-activity-")));
+  const root = await realpath(await mkdtemp(join(process.env.HH_REAL_TMP ?? tmpdir(), "hh-native-activity-")));
   const results: Record<string, unknown>[] = [], failures: string[] = [];
   try {
     for (const harnessId of harnesses) {
@@ -83,7 +85,7 @@ test("installed Harness tool activity is committed with stored, readable details
         assert.ok(project, "no workspace-level approval configuration is known for " + harnessId);
         await writeFile(join(workspace, project.file), project.text);
       }
-      const configuration = await prepareConfiguration({ workspace });
+      const configuration = await prepareConfiguration({ workspace, ...(process.env.HH_REAL_MANIFEST ? { manifestPath: process.env.HH_REAL_MANIFEST } : {}) });
       const proof: Record<string, unknown> = { harnessId, startedAt: new Date().toISOString() };
       const permissions: Record<string, unknown>[] = [];
       proof.permissions = permissions;
@@ -130,6 +132,8 @@ test("installed Harness tool activity is committed with stored, readable details
         proof.checks = checks;
         for (const [name, passed] of Object.entries(checks)) if (!passed) failures.push(harnessId + ": " + name);
       } catch (error) {
+        // The last Run's own outcome explains a blocked Session (for example cleanup that could not be confirmed).
+        try { const last = app.runtime.read([...app.store.list(10)][0]!.id).runs.at(-1); if (last) proof.lastRun = { status: last.status, error: last.error, cleanup: last.cleanup ?? null }; } catch { /* the Session itself may be unreadable */ }
         proof.failure = { code: error !== null && typeof error === "object" && "code" in error ? String(error.code) : "ASSERTION", message: error instanceof Error ? error.message.slice(0, 512) : "failed" };
         failures.push(harnessId + ": " + (proof.failure as { code: string }).code);
       } finally {

@@ -205,6 +205,20 @@ test("npm resolution accepts actual installed version differences while reportin
   assert.ok(report.diagnostics.some((entry) => entry.code === "package_version_observed" && entry.detail?.includes("catalog-reference=1.0.0")));
 });
 
+test("a copy left in npm's npx cache is never an installation, as in comparable products", async (t) => {
+  const home = await fixture(t), bin = join(home, "bin");
+  await executable(join(bin, "node"));
+  // `npx @deepseek-ai/dsh web`, the README's way to run it, leaves the package here without a `dsh` command.
+  await packageAt(join(home, ".npm", "_npx", "0123456789abcdef"), "@deepseek-ai/dsh", "0.2.1-alpha.2", { dsh: "dist/cli.js" });
+  const { inventory } = await import("../../src/infrastructure/catalog/inventory-composition.js");
+  const observed = await inventory({ home, environment: { PATH: bin }, searchDirs: [], packageRoots: [], pathOnly: false });
+  const control = observed.report.harnesses.find(harness => harness.id === "dsh")?.controls[0];
+  assert.ok(control);
+  // A dsh installed on this host may still be found in a standard directory; the npx cache never supplies one.
+  assert.ok(![control.command?.executable ?? "", ...(control.command?.args ?? [])].some(part => part.includes("_npx")));
+  if (control.installation.selected === null) assert.equal(control.state, "missing_dependency");
+});
+
 test("a package manager without the target package is not an installation", async (t) => {
   const root = await fixture(t);
   await executable(join(root, "bin/node")); await executable(join(root, "bin/npx")); await executable(join(root, "bin/uvx"));

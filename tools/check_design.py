@@ -244,6 +244,7 @@ def render_capabilities(matrix: dict) -> str:
              "生成自 plan/native-capabilities.json；使用 python3 tools/check_design.py --write 更新。设计检查要求每个Harness覆盖全部能力项，"
              "完整（✅）必须同时满足原接口具备、Hub契约/执行/界面已接出、协议测试通过和本机原安装真实验收通过；其余状态均不算完整接入。", "",
              "图例：✅ 完整；◐ 已接出并通过协议测试，真实原安装未验收；◑ 部分接出；○ 原接口具备但Hub未接出；✕ 真实验收失败或受阻；— 原接口不提供；？ 未核实。", "",
+             "证据中的 .tmp/ 路径相对于主检出 HarnessGateway（本机运行服务的检出），该目录被忽略、不入库；可复核的命令、版本、结果与局限写在 docs/verification/ 的验收记录中。", "",
              "| 分组 | 能力 | " + " | ".join(cell(item["name"]) for item in harnesses) + " |",
              "|---|---|" + "---|" * len(harnesses)]
     for feature in features:

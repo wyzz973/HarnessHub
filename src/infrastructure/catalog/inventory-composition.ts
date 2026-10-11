@@ -4,6 +4,7 @@ import { open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { loadBuiltinCatalog } from "../../adapters/catalog.js";
+export { officialInstallation } from "../../adapters/catalog.js";
 import { migrateLegacyManifest, parseCatalogManifest, validateDefinitions } from "../../contexts/catalog/domain/catalog-parser.js";
 import { MAX_CATALOG_BYTES, type CatalogManifest, type HarnessDefinition, type InventoryReport } from "../../contexts/catalog/domain/catalog.js";
 import { MAX_MANIFEST_BYTES, DiscoveryInputError, parseDiscoveryManifest } from "../../contexts/catalog/domain/discovery.js";
@@ -58,6 +59,8 @@ export async function inventory(input: InventoryInput): Promise<{
   readonly report: InventoryReport;
   readonly searchDiagnostics: Awaited<ReturnType<typeof discoverSearchDirectories>>["diagnostics"];
   readonly searchPath: string;
+  /** Control identities given an explicit custom entry by the discovery manifest. */
+  readonly customEntries: ReadonlySet<string>;
 }> {
   const builtins = loadBuiltinCatalog(catalogTarget());
   if (input.manifest === "") throw new DiscoveryInputError("--manifest must name a file");
@@ -101,5 +104,6 @@ export async function inventory(input: InventoryInput): Promise<{
     managedBindings, definitions, report,
     searchDiagnostics: search.diagnostics,
     searchPath: search.directories.map((directory) => directory.path).join(":") ,
+    customEntries: new Set(manifest.overrides.keys()),
   };
 }

@@ -16,18 +16,18 @@ async function fixture(t: test.TestContext) {
 function invoke(cli: string, args: readonly string[], root: string) {
   return spawnSync(process.execPath, [cli, ...args], { env: { PATH: root, HOME: root }, encoding: "utf8", timeout: 5000, maxBuffer: 4 * 1024 * 1024 });
 }
-test("compiled default catalog/discovery includes 43 products and 47 controls without launching candidates", async (t) => {
+test("compiled default catalog/discovery includes 45 products and 49 controls without launching candidates", async (t) => {
   const root = await fixture(t), sentinel = join(root, "started");
   await writeFile(join(root, "codex"), "#!/bin/sh\nprintf started > '" + sentinel + "'\n"); await chmod(join(root, "codex"), 0o700);
   const listed = invoke(catalog, ["--json"], root); assert.equal(listed.status, 0, listed.stderr);
   const catalogData: unknown = JSON.parse(listed.stdout);
   assert.ok(catalogData && typeof catalogData === "object" && "definitions" in catalogData && Array.isArray(catalogData.definitions));
-  assert.equal(catalogData.definitions.length, 43);
+  assert.equal(catalogData.definitions.length, 45);
   const observed = invoke(discover, ["--json", "--path-only"], root); assert.equal(observed.status, 0, observed.stderr);
   const data: unknown = JSON.parse(observed.stdout);
   assert.ok(data && typeof data === "object" && "schemaVersion" in data && "harnesses" in data && Array.isArray(data.harnesses));
-  assert.equal(data.schemaVersion, 2); assert.equal(data.harnesses.length, 43);
-  assert.equal(data.harnesses.reduce((n: number, item: { controls: unknown[] }) => n + item.controls.length, 0), 47);
+  assert.equal(data.schemaVersion, 2); assert.equal(data.harnesses.length, 45);
+  assert.equal(data.harnesses.reduce((n: number, item: { controls: unknown[] }) => n + item.controls.length, 0), 49);
   assert.match(observed.stdout, /"id": "codex-native"/); assert.match(observed.stdout, /"probe": "not_run"/);
   await assert.rejects(() => readFile(sentinel), { code: "ENOENT" });
 });

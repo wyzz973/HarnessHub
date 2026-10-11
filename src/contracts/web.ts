@@ -2,15 +2,24 @@ import type { ProviderView } from "./provider.js";
 import type { HarnessManagementView, InstallationJobView, InstallationLog } from "./management.js";
 import type { HarnessSelection, PublicMessage, PublicRun, PublicSwitch, SelectionRequest, SessionEvent, SessionSnapshot } from "./session.js";
 
+/**
+ * Where a control entry was found: on PATH or in a standard directory like comparable products search, as an explicit
+ * custom entry from the discovery manifest, in an explicit package root, or as a HarnessHub-managed installation.
+ */
+export type HarnessEntrySource = "path" | "standard-directory" | "custom-entry" | "package-root" | "managed";
 /** Browser-safe observations. Available means resolved control, not task acceptance. */
 export interface HarnessView {
   readonly id: string;
   readonly name: string;
   readonly installed: boolean;
   readonly defaultControlId: string | null;
-  readonly controls: readonly { readonly id: string; readonly protocol: string; readonly available: boolean; readonly reason: string | null }[];
+  readonly controls: readonly { readonly id: string; readonly protocol: string; readonly available: boolean; readonly reason: string | null;
+    /** Where the entry was found; its path stays on the Gateway like every other command detail. */
+    readonly entry: { readonly source: HarnessEntrySource } | null }[];
   readonly providerProtocols: readonly string[];
   readonly management: HarnessManagementView;
+  /** The product's own documented way to install it, shown when it is missing; HarnessHub never runs it. */
+  readonly install: { readonly command: string; readonly docs: string } | null;
 }
 export interface SessionSummary {
   readonly id: string;

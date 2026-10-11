@@ -22,6 +22,8 @@ const configFiles: Readonly<Record<string, readonly string[]>> = {
   pi: [join(home, ".pi", "agent", "settings.json"), join(home, ".pi", "agent", "models.json")],
   opencode: [join(home, ".config", "opencode", "opencode.json")],
   openclaw: [join(home, ".openclaw", "openclaw.json")],
+  hermes: [join(home, ".hermes", "config.yaml")],
+  dsh: [join(home, ".dsh", "settings.yaml"), join(home, ".dsh", "profiles", "acp", "cordis.patch.yml")],
 };
 const TERMINAL = new Set<PublicRun["status"]>(["completed", "failed", "cancelled", "unknown"]);
 const SKILL = "---\nname: hh-echo\ndescription: Replies with a fixed acceptance word.\n---\nWhen this skill is used, reply with exactly HH-SKILL-OK and nothing else. Do not run any tools.\n";
@@ -37,7 +39,7 @@ async function closeApp(app: App): Promise<void> {
 
 test("installed Harness lists its native extensions and runs a workspace skill through its command", { timeout: 15 * 60 * 1000 }, async () => {
   assert.ok(harnesses.length, "set HH_REAL_HARNESSES"); assert.ok(evidencePath, "set HH_REAL_EVIDENCE");
-  const root = await realpath(await mkdtemp(join(tmpdir(), "hh-native-extensions-")));
+  const root = await realpath(await mkdtemp(join(process.env.HH_REAL_TMP ?? tmpdir(), "hh-native-extensions-")));
   const results: Record<string, unknown>[] = [], failures: string[] = [];
   try {
     for (const harnessId of harnesses) {
@@ -45,7 +47,7 @@ test("installed Harness lists its native extensions and runs a workspace skill t
       const data = join(root, harnessId + "-data"), workspace = join(root, harnessId + "-workspace");
       await mkdir(join(workspace, ".agents", "skills", "hh-echo"), { recursive: true });
       await writeFile(join(workspace, ".agents", "skills", "hh-echo", "SKILL.md"), SKILL);
-      const configuration = await prepareConfiguration({ workspace });
+      const configuration = await prepareConfiguration({ workspace, ...(process.env.HH_REAL_MANIFEST ? { manifestPath: process.env.HH_REAL_MANIFEST } : {}) });
       const proof: Record<string, unknown> = { harnessId, startedAt: new Date().toISOString() };
       const app = application(data, () => {});
       try {

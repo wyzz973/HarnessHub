@@ -700,8 +700,11 @@
         "web/src/tool-tree.ts",
         "tests/real/native-question.real.ts",
         "src/adapters/control/claude.ts",
+        "src/adapters/control/hermes.ts",
         "tests/real/native-thinking.real.ts",
-        "tests/real/native-options.real.ts"
+        "tests/real/native-options.real.ts",
+        "src/web/harness-entry.ts",
+        "tests/unit/harness-entry.test.ts"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/complete-native-capabilities-2026-10-11.md"

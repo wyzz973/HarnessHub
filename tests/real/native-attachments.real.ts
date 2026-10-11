@@ -25,6 +25,8 @@ const configFiles: Readonly<Record<string, readonly string[]>> = {
   openclaw: [join(home, ".openclaw", "openclaw.json")],
   pi: [join(home, ".pi", "agent", "settings.json"), join(home, ".pi", "agent", "models.json")],
   gemini: [join(home, ".gemini", "settings.json")],
+  hermes: [join(home, ".hermes", "config.yaml")],
+  dsh: [join(home, ".dsh", "settings.yaml"), join(home, ".dsh", "profiles", "acp", "cordis.patch.yml")],
 };
 const TERMINAL = new Set<PublicRun["status"]>(["completed", "failed", "cancelled", "unknown"]);
 async function digest(path: string): Promise<string> {
@@ -67,14 +69,14 @@ async function* bytes(value: Buffer) { yield value; }
 test("installed Harness reads a text attachment, sees an image it declares, and an undeclared image is refused before dispatch", { timeout: 20 * 60 * 1000 }, async () => {
   assert.ok(harnesses.length, "set HH_REAL_HARNESSES to the installed Harness identities under acceptance");
   assert.ok(evidencePath, "set HH_REAL_EVIDENCE to an ignored evidence file path");
-  const root = await realpath(await mkdtemp(join(tmpdir(), "hh-native-attachments-")));
+  const root = await realpath(await mkdtemp(join(process.env.HH_REAL_TMP ?? tmpdir(), "hh-native-attachments-")));
   const results: Record<string, unknown>[] = [], failures: string[] = [];
   try {
     for (const harnessId of harnesses) {
       const files = configFiles[harnessId] ?? [], before = await Promise.all(files.map(digest));
       const data = join(root, harnessId + "-data"), workspace = join(root, harnessId + "-workspace");
       await mkdir(workspace);
-      const configuration = await prepareConfiguration({ workspace });
+      const configuration = await prepareConfiguration({ workspace, ...(process.env.HH_REAL_MANIFEST ? { manifestPath: process.env.HH_REAL_MANIFEST } : {}) });
       const proof: Record<string, unknown> = { harnessId, startedAt: new Date().toISOString() };
       const app = application(data, () => {});
       try {

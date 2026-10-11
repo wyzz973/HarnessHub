@@ -20,6 +20,8 @@ const configFiles: Readonly<Record<string, readonly string[]>> = {
   claude: [join(home, ".claude", "settings.json")],
   codex: [join(home, ".codex", "config.toml")],
   opencode: [join(home, ".config", "opencode", "opencode.json")],
+  hermes: [join(home, ".hermes", "config.yaml")],
+  dsh: [join(home, ".dsh", "settings.yaml"), join(home, ".dsh", "profiles", "acp", "cordis.patch.yml")],
 };
 const TERMINAL = new Set<PublicRun["status"]>(["completed", "failed", "cancelled", "unknown"]);
 async function digest(path: string): Promise<string> {
@@ -49,14 +51,14 @@ async function settle(app: App, id: SessionId, deadline: number): Promise<Public
 
 test("installed Harness delegates to its own sub-agent and the Hub links the sub-agent's tools to that call", { timeout: 15 * 60 * 1000 }, async () => {
   assert.ok(harnesses.length, "set HH_REAL_HARNESSES"); assert.ok(evidencePath, "set HH_REAL_EVIDENCE");
-  const root = await realpath(await mkdtemp(join(tmpdir(), "hh-native-subagent-")));
+  const root = await realpath(await mkdtemp(join(process.env.HH_REAL_TMP ?? tmpdir(), "hh-native-subagent-")));
   const results: Record<string, unknown>[] = [], failures: string[] = [];
   try {
     for (const harnessId of harnesses) {
       const files = configFiles[harnessId] ?? [], before = await Promise.all(files.map(digest));
       const data = join(root, harnessId + "-data"), workspace = join(root, harnessId + "-workspace");
       await mkdir(workspace);
-      const configuration = await prepareConfiguration({ workspace });
+      const configuration = await prepareConfiguration({ workspace, ...(process.env.HH_REAL_MANIFEST ? { manifestPath: process.env.HH_REAL_MANIFEST } : {}) });
       const proof: Record<string, unknown> = { harnessId, startedAt: new Date().toISOString() };
       const app = application(data, () => {});
       try {

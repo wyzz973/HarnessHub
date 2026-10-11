@@ -10,7 +10,8 @@ import { ManagementError } from "../contracts/management.js";
 import { SessionError, parseNativeOptions, sessionId, type SelectionRequest, type SessionConfiguration, type SessionSnapshot } from "../contracts/session.js";
 import { MAX_CONTENT_BYTES, MAX_RUN_ATTACHMENTS } from "../contracts/content.js";
 import type { EventPage, HarnessView, InstallationLogPage, NativeSessionListView, SessionSummary, SessionView, WebState } from "../contracts/web.js";
-import { inventory } from "../infrastructure/catalog/inventory-composition.js";
+import { inventory, officialInstallation } from "../infrastructure/catalog/inventory-composition.js";
+import { harnessEntry } from "./harness-entry.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
 import { supportedProviderProtocols } from "../contexts/provider/domain/provider.js";
 import { carriedNativeConfiguration } from "../contexts/session/domain/state.js";
@@ -265,9 +266,11 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         const defaultControlId = managedControls.length === 1 ? managedControls[0]!.id : managedControls.length === 0 && available.length === 1 ? available[0]!.id : null;
         return { id: item.id, name: item.name, installed, defaultControlId,
         controls: item.controls.map(control => ({ id: control.id, protocol: control.protocol, available: control.state === "candidate" && (control.protocol === "acp-v1" || control.protocol === "codex-app-server" || control.protocol === "pi-rpc"),
-          reason: control.state === "candidate" ? (control.protocol === "acp-v1" || control.protocol === "codex-app-server" || control.protocol === "pi-rpc" ? null : "Control Driver is not implemented") : control.missingDependencies.length ? "Missing: " + control.missingDependencies.join(", ") : "Control entry unavailable" })),
+          reason: control.state === "candidate" ? (control.protocol === "acp-v1" || control.protocol === "codex-app-server" || control.protocol === "pi-rpc" ? null : "Control Driver is not implemented")
+            : observed.customEntries.has(control.id) ? "发现清单中的自定义入口不可用（不存在或不可执行）" : control.missingDependencies.length ? "Missing: " + control.missingDependencies.join(", ") : "Control entry unavailable",
+          entry: harnessEntry(control, observed.managedBindings.has(control.id)) })),
         providerProtocols: item.controls.some(control => control.state === "candidate" && ((item.id === "codex" && control.protocol === "codex-app-server") || (item.id === "gemini" && control.protocol === "acp-v1"))) ? supportedProviderProtocols(item.id) : [],
-        management: { ...managed, source: managed.source === "managed" ? "managed" : installed ? "system" : "missing" } };
+        management: { ...managed, source: managed.source === "managed" ? "managed" : installed ? "system" : "missing" }, install: officialInstallation(item.id) };
       });
       return harnesses;
     });

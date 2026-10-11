@@ -27,6 +27,7 @@ import copilot from "@lobehub/icons-static-svg/icons/githubcopilot.svg";
 import glm from "@lobehub/icons-static-svg/icons/chatglm-color.svg";
 import goose from "@lobehub/icons-static-svg/icons/goose.svg";
 import grok from "@lobehub/icons-static-svg/icons/grok.svg";
+import hermes from "@lobehub/icons-static-svg/icons/hermesagent.svg";
 import junie from "@lobehub/icons-static-svg/icons/junie-color.svg";
 import kilo from "@lobehub/icons-static-svg/icons/kilocode.svg";
 import kimi from "@lobehub/icons-static-svg/icons/kimi-color.svg";
@@ -63,7 +64,7 @@ const assets: Readonly<Record<string, string>> = {
   "vtcode": brand_vtcode,
 
   "amp-acp": amp, "antigravity-acp": antigravity, anthropic, auggie, claude, cline, "codebuddy-code": codebuddy, codex, cursor,
-  "claude-acp": claudeCode, "claude-code": claudeCode, "pi-acp": pi, deepseek, devin, "factory-droid": factory, gemini, "github-copilot": copilot, "github-copilot-cli": copilot, "glm-acp-agent": glm, goose, "grok-build": grok,
+  "claude-acp": claudeCode, "claude-code": claudeCode, "pi-acp": pi, deepseek, dsh: deepseek, devin, hermes, "factory-droid": factory, gemini, "github-copilot": copilot, "github-copilot-cli": copilot, "glm-acp-agent": glm, goose, "grok-build": grok,
   dirac, junie, kilo, kimi, "minimax-code": minimax, "mistral-vibe": mistral, nova, openai, openclaw, opencode, openrouter, pi, poolside, qoder, qwen, "qwen-code": qwen, stakpak,
 };
 export function BrandIcon({ brand, name, size = 24 }: { brand: string; name: string; size?: number }) {

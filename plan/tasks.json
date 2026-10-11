@@ -2251,7 +2251,8 @@
         "src/infrastructure/control/unified-diff.ts",
         "src/infrastructure/control/attachments.ts",
         "src/adapters/control/opencode.ts",
-        "src/adapters/control/claude.ts"
+        "src/adapters/control/claude.ts",
+        "src/adapters/control/hermes.ts"
       ],
       "requirements": [
         "R11",
@@ -3086,7 +3087,9 @@
         "tests/integration/web-server.test.ts",
         "src/web/session-stream.ts",
         "src/web/harness-models.ts",
-        "src/web/conversation-export.ts"
+        "src/web/conversation-export.ts",
+        "src/web/harness-entry.ts",
+        "tests/unit/harness-entry.test.ts"
       ],
       "requirements": [
         "R01",

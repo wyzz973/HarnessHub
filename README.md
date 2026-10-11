@@ -2,7 +2,7 @@
 
 工作名，2026-10-09 建立。目标是一个统一的 Harness 聚合网关：用户通过一个入口持续对话或发送命令，网关管理不同 Harness 的接入、选择、执行和交接；公共 Session 不绑定某个厂商的原生会话。
 
-当前先做本机核心 MVP。已实现目录/安装发现、ACP/Codex控制、持久公共Session、多轮历史、同Session手动切换Harness、取消与有界命令行入口。默认目录含43产品/47控制描述，数量不代表全部已可执行。已实现Provider管理/不可变配置版本/静止切换与本机图形工作台。自动择优按用户要求暂缓。已验证真实Codex→Gemini→Codex的同Session接续，模型端点为本地确定性服务；真实云模型不由此推断。
+当前先做本机核心 MVP。已实现目录/安装发现、ACP/Codex控制、持久公共Session、多轮历史、同Session手动切换Harness、取消与有界命令行入口。默认目录含45产品/49控制描述，数量不代表全部已可执行。已实现Provider管理/不可变配置版本/静止切换与本机图形工作台。自动择优按用户要求暂缓。已验证真实Codex→Gemini→Codex的同Session接续，模型端点为本地确定性服务；真实云模型不由此推断。
 
 ## 图形工作台
 
@@ -19,11 +19,11 @@ pnpm web --cwd /absolute/workspace --data-dir data --port 4317
 
 对话现通过已提交事实的SSE实时显示回复，刷新或重连不会重新执行消息。消息区支持流式Markdown、生成反馈、阅读时暂停滚动、复制与执行详情；停止后保留部分内容。输入区为自动增长文本框和紧凑选择器，高级配置按需展开。短回复若模型几乎同时返回，仍可能一次显示；没有人工打字延迟。验收见[实时对话记录](docs/verification/live-chat-2026-10-10.md)，可单独运行 `pnpm test:real:stream` 验证真实Codex和本地确定性Provider的首块/重连。
 
-Harness连接或目标切换失败时，历史与原选择保留，可继续使用当前选择或明确重试。草稿在当前标签页按对话保存，刷新也可恢复。旧blocked会话可选择Harness并“检查连接并恢复对话”；未知结果需明确确认，清理未确认仍需先处理资源，不自动重跑旧任务。结束会话前说明后果并确认。审查见[对话恢复记录](docs/verification/conversation-recovery-2026-10-10.md)。当前业务存储为v8（保留v1→v2→v3→v4→v5→v6→v7→v8事务迁移）；更新前备份本机data，回退旧程序前停止服务并恢复旧备份。
+Harness连接或目标切换失败时，历史与原选择保留，可继续使用当前选择或明确重试。草稿在当前标签页按对话保存，刷新也可恢复。旧blocked会话可选择Harness并“检查连接并恢复对话”；未知结果需明确确认，清理未确认仍需先处理资源，不自动重跑旧任务。结束会话前说明后果并确认。审查见[对话恢复记录](docs/verification/conversation-recovery-2026-10-10.md)。当前业务存储为v9（保留v1→v2→v3→v4→v5→v6→v7→v8→v9事务迁移）；更新前备份本机data，回退旧程序前停止服务并恢复旧备份。
 
 所有接入的Harness使用本机已安装入口，默认沿用本机模型配置和登录。模型列表由所选Harness原生接口读取，未指定时跟随其本机默认；不写全局模型配置，不创建空native HOME。选择Harness、Provider或模型后直接提出切换，不再点“应用”；当前回复保持原选择，新消息等待最后一次选择生效。配置验证失败保留原选择与草稿，快速改选只推进最新未受理选择。普通切换不启动目标进程，effective表示下一轮配置选择已保存；原生连接、认证与额度在发送时分别核实。
 
-当前生产页面只使用各Harness本机已配置的模型，统一Provider管理后置。旧Provider接口与实验验收保留，已有显式Provider会话不会静默改成原生模式。原生模型选择/直接切换见[ADR-015](docs/decisions/0015-native-harness-models-and-switching.md)、[Multica调研](docs/research/multica-native-models.md)及[验收](docs/verification/native-models-2026-10-11.md)。业务格式现为v8，升级前备份，回退旧程序前恢复旧备份。
+当前生产页面只使用各Harness本机已配置的模型，统一Provider管理后置。旧Provider接口与实验验收保留，已有显式Provider会话不会静默改成原生模式。原生模型选择/直接切换见[ADR-015](docs/decisions/0015-native-harness-models-and-switching.md)、[Multica调研](docs/research/multica-native-models.md)及[验收](docs/verification/native-models-2026-10-11.md)。业务格式现为v9，升级前备份，回退旧程序前恢复旧备份。
 
 当前受管组合为 **Codex + OpenAI Responses**、**Gemini CLI + Gemini（API Key）**。其他产品继续检测，但协议/受管配置能力单独标明。OpenAI/Anthropic连接地址通常含/v1；Gemini填写API服务根。密钥只写入本机加密vault，不回显到UI/Session；同OS用户可访问主密钥，本版不宣称系统钥匙串隔离。
 
@@ -31,9 +31,9 @@ Harness连接或目标切换失败时，历史与原选择保留，可继续使�
 
 ## 本机原安装与版本管理
 
-已发现的本机PATH/显式入口优先，原安装和既有配置/登录作为当前执行来源，旧私有副本不能覆盖它。生产管理任务使用原npm/uv位置或已审核用户程序目录，真实CLI版本、原配置保护与未知结果分别记录。macOS Homebrew升级通过原SDK创建一个可认证的继承沙箱，模型/登录/shell配置与Homebrew仓库均拒绝写入；没有对应SDK时明确不可用。用户开发目录不自动替换。管理库v1→v2追加冻结计划，先备份业务库和管理库；业务会话为v8。旧私有版本槽只保留历史及显式测试模式。详见[ADR-017](docs/decisions/0017-native-installation-management.md)与[本轮验收](docs/verification/native-management-2026-10-11.md)。
+已发现的本机PATH/显式入口优先，原安装和既有配置/登录作为当前执行来源，旧私有副本不能覆盖它。生产管理任务使用原npm/uv位置或已审核用户程序目录，真实CLI版本、原配置保护与未知结果分别记录。macOS Homebrew升级通过原SDK创建一个可认证的继承沙箱，模型/登录/shell配置与Homebrew仓库均拒绝写入；没有对应SDK时明确不可用。用户开发目录不自动替换。管理库v1→v2追加冻结计划，先备份业务库和管理库；业务会话为v9。旧私有版本槽只保留历史及显式测试模式。详见[ADR-017](docs/decisions/0017-native-installation-management.md)与[本轮验收](docs/verification/native-management-2026-10-11.md)。
 
-原版OpenClaw2026.3.23-2、Codex0.162.1、OpenCode1.18.35、Pi0.85.1已通过本机真实模型回复；OpenClaw/Pi使用原生DeepSeek。Claude接入口绑定原Claude Code2.1.296及既有登录，账号周额度已用完。Cursor原安装已升级至2026.10.01-e373342，沿用本机登录、44项原生模型目录并通过独立短提示回复；原公共对话实测仍返回账号套餐升级提示，不能算该对话回复通过。Gemini0.62.0的个人登录被服务端停用，直连DeepSeek实际返回404（Google GenAI协议与DeepSeek接口不匹配），不能算回复通过。所有接入口版本与原程序版本分开解释，不把ACP适配器版本当原CLI版本。
+原版OpenClaw2026.3.23-2、Codex0.162.1、OpenCode1.18.35、Pi0.85.1已通过本机真实模型回复；OpenClaw/Pi使用原生DeepSeek。Hermes Agent 0.12.0（官方安装方式）与 DeepSeek Harness（`dsh`，本机为源码构建 0.2.1-alpha.1，经发现清单的自定义入口接入）经各自内置 ACP 接入，已通过真实回复、跨 Hub 重启的原生恢复、思考与工具活动验收，见[ADR-031](docs/decisions/0031-hermes-and-deepseek-harness.md)与[验收记录](docs/verification/hermes-dsh-onboarding-2026-10-11.md)。Harness 发现与同类产品一致：PATH 与标准安装目录中的官方命令，非标准安装用显式自定义入口。Claude接入口绑定原Claude Code2.1.296及既有登录，账号周额度已用完。Cursor原安装已升级至2026.10.01-e373342，沿用本机登录、44项原生模型目录并通过独立短提示回复；原公共对话实测仍返回账号套餐升级提示，不能算该对话回复通过。Gemini0.62.0的个人登录被服务端停用，直连DeepSeek实际返回404（Google GenAI协议与DeepSeek接口不匹配），不能算回复通过。所有接入口版本与原程序版本分开解释，不把ACP适配器版本当原CLI版本。
 
 Provider统一管理仍是用户→HarnessHub→不同Harness→Provider统一管理的后续环节；当前原生接入直接使用各Harness已配置模型，不通过本项目Provider来完成DeepSeek测试。
 

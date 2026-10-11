@@ -19,7 +19,34 @@ const nativeDefinitions: readonly HarnessDefinition[] = [
     controls: [{ id: "openclaw-native", protocol: "acp-v1", executableNames: ["openclaw"], args: ["acp"], env: {}, package: null, distribution: null, requiredExecutables: [],
       source: { repository: "openclaw/acpx", revision: "b3cd84337952e0d2cadd094f564612e89d71daa5", upstreamId: "openclaw", url: "https://github.com/openclaw/acpx/blob/b3cd84337952e0d2cadd094f564612e89d71daa5/src/agent-registry.ts" } }],
   },
+  {
+    id: "hermes", name: "Hermes Agent", aliases: [], binaryNames: ["hermes"], configHints: [".hermes"],
+    controls: [{ id: "hermes-native", protocol: "acp-v1", executableNames: ["hermes"], args: ["acp"], env: {}, package: null, distribution: null, requiredExecutables: [],
+      source: { repository: "NousResearch/hermes-agent", revision: "a0556b861f2667a49ded048c9cfac88defff8c5f", upstreamId: "hermes-agent", url: "https://github.com/NousResearch/hermes-agent/blob/a0556b861f2667a49ded048c9cfac88defff8c5f/acp_registry/agent.json" } }],
+  },
+  {
+    // The ACP profile is the automation surface of `dsh`; dsh initialises it from its bundled template on first use.
+    id: "dsh", name: "DeepSeek Harness", aliases: [], binaryNames: ["dsh"], configHints: [".dsh"],
+    // Found like other agent CLIs: `dsh` on PATH or in a standard directory (npm -g, the Desktop app's registered command,
+    // the Python SDK). npx caches are not installations; a source checkout is an explicit entry in the discovery manifest.
+    controls: [{ id: "dsh-native", protocol: "acp-v1", executableNames: ["dsh"], args: ["--profile", "acp"], env: {},
+      package: { kind: "npm", name: "@deepseek-ai/dsh", version: "0.2.1-alpha.1", binNames: ["dsh"] }, distribution: null, requiredExecutables: [],
+      source: { repository: "deepseek-ai/deepseek-harness", revision: "5badb15009ae1756c3afe0ae0cef1faafc290ccc", upstreamId: "dsh", url: "https://github.com/deepseek-ai/deepseek-harness/blob/5badb15009ae1756c3afe0ae0cef1faafc290ccc/packages/acp/acp/README.md" } }],
+  },
 ];
+
+/**
+ * Each product's own documented installation, shown when it is missing. Only entries reviewed against the product's
+ * official instructions are listed; HarnessHub never runs them.
+ */
+const officialInstallations: Readonly<Record<string, { readonly command: string; readonly docs: string }>> = {
+  hermes: { command: "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash",
+    docs: "https://github.com/NousResearch/hermes-agent/blob/a0556b861f2667a49ded048c9cfac88defff8c5f/README.md" },
+  dsh: { command: "npm install -g @deepseek-ai/dsh", docs: "https://github.com/deepseek-ai/deepseek-harness/blob/5badb15009ae1756c3afe0ae0cef1faafc290ccc/README.md" },
+};
+export function officialInstallation(harnessId: string): { readonly command: string; readonly docs: string } | null {
+  return officialInstallations[harnessId] ?? null;
+}
 
 /** Build the offline catalog. Only reviewed product mappings combine control entries. */
 export function loadBuiltinCatalog(platform: string): readonly HarnessDefinition[] {

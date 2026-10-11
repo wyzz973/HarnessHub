@@ -22,6 +22,8 @@ const configFiles: Readonly<Record<string, readonly string[]>> = {
   codex: [join(home, ".codex", "config.toml")],
   opencode: [join(home, ".config", "opencode", "opencode.json")],
   claude: [join(home, ".claude", "settings.json")],
+  hermes: [join(home, ".hermes", "config.yaml")],
+  dsh: [join(home, ".dsh", "settings.yaml"), join(home, ".dsh", "profiles", "acp", "cordis.patch.yml")],
 };
 /** How each installed program starts a session of its own in a directory, outside the Hub. */
 const nativeStart: Readonly<Record<string, (prompt: string) => readonly [string, readonly string[]]>> = {
@@ -56,7 +58,7 @@ async function turn(app: App, id: SessionId, text: string): Promise<{ run: Publi
 
 test("installed Harness continues its own session of the workspace in the Hub, which then answers from that session", { timeout: 25 * 60 * 1000 }, async () => {
   assert.ok(harnesses.length, "set HH_REAL_HARNESSES"); assert.ok(evidencePath, "set HH_REAL_EVIDENCE");
-  const root = await realpath(await mkdtemp(join(tmpdir(), "hh-native-import-")));
+  const root = await realpath(await mkdtemp(join(process.env.HH_REAL_TMP ?? tmpdir(), "hh-native-import-")));
   const results: Record<string, unknown>[] = [], failures: string[] = [];
   try {
     for (const harnessId of harnesses) {
@@ -71,7 +73,7 @@ test("installed Harness continues its own session of the workspace in the Hub, w
         const [command, args] = start("请记住标记 " + tag + "。只回复“好的”，不要调用任何工具。");
         // A start that the account refuses (Claude's exhausted quota) can still leave a native session to list and read.
         try { await run(command, args, workspace); proof.nativeStart = "completed"; } catch (error) { proof.nativeStart = error instanceof Error ? error.message.split("\n").at(-2)?.slice(0, 200) ?? "failed" : "failed"; }
-        const configuration = await prepareConfiguration({ workspace });
+        const configuration = await prepareConfiguration({ workspace, ...(process.env.HH_REAL_MANIFEST ? { manifestPath: process.env.HH_REAL_MANIFEST } : {}) });
         const page = await app.factory.listNativeSessions({ harnessId }, configuration, AbortSignal.timeout(120_000));
         proof.listed = page === null ? null : { sessions: page.sessions.length, titled: page.sessions.filter(row => row.title !== null).length, sources: page.sessions.map(row => row.source ?? null) };
         const native = page?.sessions[0];

@@ -55,10 +55,12 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
 
 - [ADR-026：原生扩展的只读视图与技能调用](0026-native-extensions.md)（accepted）：Codex/Pi 技能、MCP 与插件按需只读列出；Codex 技能以原生 skill 输入经命令调用。
 
-- [ADR-027：OpenClaw 回合按原生转录对账](0027-openclaw-transcript-reconciliation.md)（accepted）：桥结束后读取本会话本轮追加的原生转录，补记工具、思考与用量并修正真实停止原因；直连 Gateway 待用户决定。
+- [ADR-027：OpenClaw 回合按原生转录对账](0027-openclaw-transcript-reconciliation.md)（accepted）：桥结束后读取本会话本轮追加的原生转录，补记工具、思考与用量并修正真实停止原因；直连 Gateway 暂缓（条件见正文）。
 
 - [ADR-028：原生命令改设置后的同步](0028-native-configuration-sync.md)（accepted）：回合后记录原生回报的模型与选项；同一纪元下一回合按原生值应用被改动的所选值，显式切换才按所选；Session v9。
 
 - [ADR-029：在 Hub 中接续本机原生会话](0029-continue-native-sessions.md)（accepted）：列出原程序在本工作区的会话，接续为带引用历史的新对话并直接继续原生会话；一个原生会话只有一个持有者；OpenClaw 不接续渠道会话。
 
-- [ADR-030：在回合之间保留原生进程以运行后台任务](0030-retained-native-processes.md)（proposed，待用户决定）：保留的进程与工作区唯一写入者约束之间的取舍；建议按对话显式开启、占用时由用户决定是否结束。
+- [ADR-030：在回合之间保留原生进程以运行后台任务](0030-retained-native-processes.md)（accepted，分阶段、本阶段最后）：采纳“需要时由用户选择结束后台进程”；按对话显式开启、默认关闭，空闲 30 分钟结束，最多保留 4 个。
+
+- [ADR-031：接入 Hermes Agent 与 DeepSeek Harness](0031-hermes-and-deepseek-harness.md)（accepted）：两者经内置 ACP 接入；Hermes 恢复只用 session/load、文件改为文本指针、60 秒审批期限、/model 回复同步；通用 ACP 的 load 回放窗口从响应开始；发现只走 PATH/标准目录与显式自定义入口。

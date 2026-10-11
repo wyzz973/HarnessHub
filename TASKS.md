@@ -1181,6 +1181,7 @@
 - src/infrastructure/control/attachments.ts
 - src/adapters/control/opencode.ts
 - src/adapters/control/claude.ts
+- src/adapters/control/hermes.ts
 
 验收：
 - 各事实关联正确Attempt与generation
@@ -1560,6 +1561,8 @@
 - src/web/session-stream.ts
 - src/web/harness-models.ts
 - src/web/conversation-export.ts
+- src/web/harness-entry.ts
+- tests/unit/harness-entry.test.ts
 
 验收：
 - 复用应用语义，202只表受理

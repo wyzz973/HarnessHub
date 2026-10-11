@@ -7,7 +7,7 @@ import { ControlError, errorFrom, JsonRpcProcess, object, string, text, type Rpc
 import { unifiedDiff } from "../../infrastructure/control/unified-diff.js";
 import { MAX_NATIVE_SESSIONS, type NativeOutput, type NativeSessionImport, type NativeSessionPage, type NativeToolDetail, type NativeUsage } from "../../contracts/control.js";
 import { MAX_CONTENT_BYTES, textual, type ContentRef, type ControlAttachment } from "../../contracts/content.js";
-import { checkInputs, readAttachment } from "../../infrastructure/control/attachments.js";
+import { checkInputs, fileMentions, readAttachment } from "../../infrastructure/control/attachments.js";
 
 interface ActivePrompt {
   readonly event: (event: ControlEvent) => void;
@@ -21,8 +21,13 @@ const metadataUpdates = new Set(["plan", "available_commands_update", "current_m
 /** Long agentic turns flatten subagent tools into the root session; budgets bound memory, not normal work. */
 const MAX_PROMPT_TOOLS = 4096;
 const MAX_NATIVE_COMMANDS = 2048;
-/** Some agents keep streaming session/load history after the load response; the prompt waits for that replay to go quiet. */
+/**
+ * Some agents keep streaming session/load history after the load response (Gemini, Hermes); the prompt waits until that
+ * replay has been quiet this long, counted from the response at the earliest so a slow load cannot skip the wait.
+ */
 const REPLAY_QUIET_MS = 150;
+/** An agent's own approval deadline is honoured this much early, so a choice made at its last second is never sent too late. */
+const APPROVAL_DEADLINE_MARGIN_MS = 2000;
 /** Agents announce their commands just after session creation; a catalog read waits this long for that announcement. */
 const COMMANDS_WAIT_MS = 1500;
 /** Text files up to this size travel as embedded resources when the agent declares embedded context. */
@@ -97,6 +102,11 @@ function outputOf(content: Record<string, unknown>): NativeOutput | null {
   return null;
 }
 function count(value: unknown): number | undefined { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined; }
+/** A session/load result. An agent that answers an identity it does not have with null (Hermes) has no such session. */
+function loaded(value: unknown): Record<string, unknown> {
+  if (value === null) throw new ControlError("NATIVE_SESSION_NOT_FOUND", "the Harness has no session with this identity");
+  return object(value, "native session load result");
+}
 
 /** ACP v1 anti-corruption layer. Client filesystem and terminal capabilities are not advertised. */
 export class AcpControl implements HarnessControl {
@@ -290,9 +300,9 @@ export class AcpControl implements HarnessControl {
     this.collected = { messages: [], bytes: 0, dropped: 0 };
     try {
       const setup = Math.max(this.options.requestTimeoutMs, Math.min(SESSION_SETUP_MS, this.options.runTimeoutMs));
-      const response = object(await this.rpc.request("session/load", { ...await this.sessionParameters(cwd), sessionId: id }, setup), "native session load result");
+      const response = loaded(await this.rpc.request("session/load", { ...await this.sessionParameters(cwd), sessionId: id }, setup));
       if (response.sessionId !== undefined && response.sessionId !== id) throw new ControlError("IDENTITY_MISMATCH", "native load changed the session identity");
-      for (const deadline = Date.now() + REPLAY_SETTLE_MS; Date.now() - this.lastReplay < REPLAY_QUIET_MS && Date.now() < deadline;) await new Promise(resolve => setTimeout(resolve, REPLAY_QUIET_MS));
+      await this.replaySettled();
       const collected = this.collected;
       return { checkpoint: id, title, history: collected.messages.map(message => ({ role: message.role, text: message.text })), omitted: collected.dropped, complete: true, historyRead: true };
     } catch (error) { const failure = this.nativeFailure(error); this.rpc.abort(failure); throw failure; }
@@ -341,6 +351,22 @@ export class AcpControl implements HarnessControl {
     return { type: "resource_link", uri, name: file.name, mimeType: file.mediaType, size: file.bytes };
   }
   protected async sessionParameters(cwd: string): Promise<Readonly<Record<string, unknown>>> { return { cwd, mcpServers: [] }; }
+  /** Recovery uses session/load even when session/resume is declared, for an agent whose resume of an unknown identity starts a new session. */
+  protected get restoreByLoad(): boolean { return false; }
+  /** How long the agent itself waits for an approval before refusing it, or null when it waits for the user. */
+  protected get approvalDeadlineMs(): number | null { return null; }
+  /** Whether the agent hands ACP file blocks to its model; when it drops them, files travel as text pointers it reads with its own tools. */
+  protected get fileBlocks(): boolean { return true; }
+  /** A model the agent switched to on its own (its own command) without announcing it; reported as the session's model from now on. */
+  protected adoptModel(id: string): void {
+    if (!this.catalog.canSelect || !id || id.length > 1024 || /[\0\r\n]/u.test(id)) return;
+    this.catalog = { ...this.catalog, models: this.catalog.models.some(row => row.id === id) ? this.catalog.models : [...this.catalog.models, { id, name: id }], defaultModel: id };
+  }
+  /** Waits for history replayed around a session/load response to go quiet; the window starts at the response. */
+  private async replaySettled(): Promise<void> {
+    this.lastReplay = Date.now();
+    for (const deadline = Date.now() + REPLAY_SETTLE_MS; Date.now() - this.lastReplay < REPLAY_QUIET_MS && Date.now() < deadline;) await new Promise(resolve => setTimeout(resolve, REPLAY_QUIET_MS));
+  }
   async checkpoint(): Promise<string | null> {
     const session = this.capabilities.sessionCapabilities == null ? {} : object(this.capabilities.sessionCapabilities, "native session capabilities");
     return this.conversation !== null && (this.capabilities.loadSession === true || session.resume !== undefined) ? this.conversation : null;
@@ -354,16 +380,18 @@ export class AcpControl implements HarnessControl {
       let method = "session/new";
       if (checkpoint !== undefined) {
         const session = this.capabilities.sessionCapabilities == null ? {} : object(this.capabilities.sessionCapabilities, "native session capabilities");
-        method = session.resume !== undefined ? "session/resume" : this.capabilities.loadSession === true ? "session/load" : "";
+        const load = this.capabilities.loadSession === true;
+        method = session.resume !== undefined && !(this.restoreByLoad && load) ? "session/resume" : load ? "session/load" : "";
         if (!method) throw new ControlError("NATIVE_RESUME_UNAVAILABLE", "installed Harness did not advertise native recovery");
         this.conversation = nativeConversationId(checkpoint); this.replaying = true; this.lastReplay = Date.now();
       }
       const setup = Math.max(this.options.requestTimeoutMs, Math.min(SESSION_SETUP_MS, this.options.runTimeoutMs));
-      const response = object(await this.rpc.request(method, { ...await this.sessionParameters(cwd), ...(checkpoint === undefined ? {} : { sessionId: this.conversation }) }, setup), "native session setup result");
+      const raw = await this.rpc.request(method, { ...await this.sessionParameters(cwd), ...(checkpoint === undefined ? {} : { sessionId: this.conversation }) }, setup);
+      const response = method === "session/load" ? loaded(raw) : object(raw, "native session setup result");
       if (checkpoint === undefined) this.conversation = nativeConversationId(response.sessionId);
       else if (response.sessionId !== undefined && response.sessionId !== this.conversation) throw new ControlError("IDENTITY_MISMATCH", "native restore changed the owned session identity");
       if (this.conversation === null) throw new ControlError("IDENTITY_MISMATCH", "native setup did not establish an owned conversation");
-      if (method === "session/load") for (const deadline = Date.now() + REPLAY_SETTLE_MS; Date.now() - this.lastReplay < REPLAY_QUIET_MS && Date.now() < deadline;) await new Promise(resolve => setTimeout(resolve, REPLAY_QUIET_MS));
+      if (method === "session/load") await this.replaySettled();
       this.replaying = false;
       this.readModels(response); this.configuredDefault=this.catalog.defaultModel;
       for (const params of this.openingMetadata.splice(0)) this.notification("session/update", params);
@@ -394,8 +422,9 @@ export class AcpControl implements HarnessControl {
     if (!this.conversation || id !== this.conversation) throw new ControlError("IDENTITY_MISMATCH", "conversation is not owned by this connection");
     if (this.active !== null) throw new ControlError("INVALID_STATE", "a prompt is already active");
     if (typeof prompt !== "string" || prompt.length === 0) throw new ControlError("INVALID_INPUT", "prompt must contain text");
-    const blocks: Record<string, unknown>[] = [{ type: "text", text: prompt }];
-    for (const file of attachments) blocks.push(await this.promptBlock(file));
+    const pointers = this.fileBlocks ? [] : attachments.filter(file => file.kind === "file");
+    const blocks: Record<string, unknown>[] = [{ type: "text", text: prompt + fileMentions(pointers) }];
+    for (const file of attachments) if (!pointers.includes(file)) blocks.push(await this.promptBlock(file));
     if (this.active !== null) throw new ControlError("INVALID_STATE", "a prompt is already active");
     const active: ActivePrompt = { event: onEvent, tools: new Map(), compaction: new Map(), stopping: false, settled: false, stop: null };
     this.active = active;
@@ -613,12 +642,26 @@ export class AcpControl implements HarnessControl {
     });
     if (new Set(options.map(option => option.id)).size !== options.length)
       throw new ControlError("INVALID_PROTOCOL", "duplicate permission option identities");
+    const reject = options.find(option => option.kind === "reject_once") ?? options.find(option => option.kind === "reject_always");
     if (this.interactivePermissions && !active.stopping) {
       if (this.permissions.size >= 32) throw new ControlError("PERMISSION_LIMIT", "too many native permission requests");
-      const id = String(request.id), detail = permissionDetail(tool);
-      return new Promise<unknown>(resolve => { this.permissions.set(id, { options: options.map(option => option.id), resolve }); active.event({ type: "permission_requested", id, title: typeof tool.title === "string" ? tool.title.slice(0,4096) : "Harness 请求执行工具", ...(detail ? { detail } : {}), options: options.map(({ id, name }) => ({ id, name })) }); });
+      const id = String(request.id), deadline = this.approvalDeadlineMs, seconds = deadline === null ? 0 : Math.round(deadline / 1000);
+      const detail = [permissionDetail(tool), deadline === null ? "" : `原程序最多等待 ${seconds} 秒，超时会自动拒绝。`].filter(Boolean).join("\n");
+      return new Promise<unknown>(resolve => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const settle = (value: unknown): void => { clearTimeout(timer); resolve(value); };
+        this.permissions.set(id, { options: options.map(option => option.id), resolve: settle });
+        active.event({ type: "permission_requested", id, title: typeof tool.title === "string" ? tool.title.slice(0,4096) : "Harness 请求执行工具", ...(detail ? { detail } : {}), options: options.map(({ id, name }) => ({ id, name })) });
+        // The agent refuses on its own at its deadline; the public request closes just before, so no late choice looks applied.
+        if (deadline !== null) timer = setTimeout(() => {
+          if (this.permissions.get(id)?.resolve !== settle || this.active !== active || active.settled) return;
+          this.permissions.delete(id);
+          active.event({ type: "notice", severity: "warning", title: "审批已超时", detail: `原程序等待审批的 ${seconds} 秒已到，按它的规则拒绝了这次请求。` });
+          active.event({ type: "permission", id, decision: "denied" });
+          settle(reject ? { outcome: { outcome: "selected", optionId: reject.id } } : { outcome: { outcome: "cancelled" } });
+        }, Math.max(0, deadline - APPROVAL_DEADLINE_MARGIN_MS));
+      });
     }
-    const reject = options.find(option => option.kind === "reject_once") ?? options.find(option => option.kind === "reject_always");
     if (active.stopping || !reject) {
       active.event({ type: "permission", id: String(request.id), decision: "cancelled" });
       return { outcome: { outcome: "cancelled" } };

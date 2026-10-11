@@ -11,6 +11,7 @@ import { OpenClawControl } from "../../src/adapters/control/factory.js";
 import { CursorControl } from "../../src/adapters/control/cursor.js";
 import { OpenCodeControl, parseOpenCodeModels } from "../../src/adapters/control/opencode.js";
 import { ClaudeControl } from "../../src/adapters/control/claude.js";
+import { HermesControl } from "../../src/adapters/control/hermes.js";
 import { ControlError } from "../../src/infrastructure/control/json-rpc-process.js";
 import { bindNativeDependencies } from "../../src/adapters/control/native-dependencies.js";
 import { contentId } from "../../src/contracts/content.js";
@@ -318,6 +319,74 @@ function attachment(directory: string, name: string, mediaType: string, kind: "i
   const path = join(directory, name); writeFileSync(path, data);
   return { id: contentId("content-" + name.replace(/[^a-z0-9]/giu, "")), name, mediaType, kind, bytes: data.length, sha256: "0".repeat(64), path };
 }
+function hermes(trace: string): ConstructorParameters<typeof HermesControl>[0] {
+  return { protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "hermes"], env: { FIXTURE_TRACE: trace } };
+}
+test("Hermes restores by session/load, keeps history replayed after a slow load out of the reply, and refuses an unknown identity", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
+  const driver = new HermesControl(hermes(trace), { ...options, runTimeoutMs: 5000 });
+  try {
+    await driver.initialize(); const id = await driver.open(process.cwd(), undefined, undefined, "session-fixture"), events: ControlEvent[] = [];
+    assert.equal((await (await driver.startText(id, "hello", event => events.push(event))).result).status, "completed");
+    // The fixture answers the load after 300 ms and replays 20 and 60 ms later, while the reply itself takes 150 ms.
+    assert.deepEqual(events.filter(event => event.type === "text").map(event => event.type === "text" ? event.text : ""), ["你好 fixture"]);
+    const methods = (await readFile(trace, "utf8")).trim().split("\n").map(line => (JSON.parse(line) as { method?: string }).method);
+    assert.ok(methods.includes("session/load")); assert.ok(!methods.includes("session/resume"));
+  } finally { await driver.close(); }
+  // Hermes answers an identity it does not have with a null result; that is a missing session, never a new one.
+  const missing = new HermesControl(hermes(trace), options);
+  try {
+    await missing.initialize();
+    await assert.rejects(missing.open(process.cwd(), undefined, undefined, "missing-session"), (error: unknown) => error instanceof ControlError && error.code === "NATIVE_SESSION_NOT_FOUND");
+  } finally { await missing.close(); }
+});
+test("Hermes reports a model its own /model command switched to, and only that command's reply is read", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
+  const driver = new HermesControl(hermes(trace), { ...options, runTimeoutMs: 5000 });
+  try {
+    await driver.initialize(); const id = await driver.open(process.cwd());
+    assert.equal((await driver.nativeConfig()).model, "deepseek:deepseek-v4-pro");
+    // An ordinary turn never changes the reported model, whatever its reply says.
+    assert.equal((await (await driver.startText(id, "hello", () => {})).result).status, "completed");
+    assert.equal((await driver.nativeConfig()).model, "deepseek:deepseek-v4-pro");
+    const events: ControlEvent[] = [];
+    assert.equal((await (await driver.startText(id, "/model deepseek-v4-flash", event => events.push(event))).result).status, "completed");
+    assert.ok(events.some(event => event.type === "text" && event.text.startsWith("Model switched to:")));
+    assert.equal((await driver.nativeConfig()).model, "deepseek:deepseek-v4-flash");
+  } finally { await driver.close(); }
+});
+test("Hermes continues a listed session with the history it replays after the load response", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
+  const reader = new HermesControl(hermes(trace), { ...options, runTimeoutMs: 5000 });
+  try {
+    await reader.initialize();
+    assert.deepEqual(await reader.importSession("session-fixture", process.cwd()), { checkpoint: "session-fixture", title: "Hermes work",
+      history: [{ role: "user", text: "earlier question" }, { role: "assistant", text: "old replayed answer" }], omitted: 0, complete: true, historyRead: true });
+  } finally { await reader.close(); }
+});
+test("Hermes closes an approval at its own deadline and hands files over as text pointers", async t => {
+  // Hermes denies after its wait; the public request closes the margin earlier (2.3 s - 2 s here).
+  class QuickHermes extends HermesControl { protected override get approvalDeadlineMs(): number | null { return 2300; } }
+  const directory = await mkdtemp(join(tmpdir(), "gateway-hermes-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
+  const png = attachment(directory, "shot.png", "image/png", "image", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]));
+  const notes = attachment(directory, "notes.md", "text/markdown", "file", Buffer.from("# 标题\n"));
+  const driver = new QuickHermes(hermes(trace), { ...options, runTimeoutMs: 5000 });
+  try {
+    await driver.initialize(); driver.enablePermissions(); const id = await driver.open(process.cwd()), events: ControlEvent[] = [];
+    assert.equal((await (await driver.startText(id, "approve this", event => events.push(event))).result).status, "completed");
+    const requested = events.find(event => event.type === "permission_requested");
+    assert.ok(requested?.type === "permission_requested" && requested.title === "rm -rf build" && requested.detail?.includes("最多等待 2 秒") === true);
+    assert.ok(events.some(event => event.type === "notice" && event.title === "审批已超时"));
+    assert.ok(events.some(event => event.type === "permission" && event.id === requested.id && event.decision === "denied"));
+    assert.ok(events.some(event => event.type === "text" && event.text.includes('"optionId":"deny"')));
+    await assert.rejects(driver.decidePermission(requested.id, "allow_once"), /unavailable/);
+    assert.deepEqual((await driver.models()).inputs, { image: true, audio: false, file: true });
+    assert.equal((await (await driver.startText(id, "read", () => {}, [png, notes])).result).status, "completed");
+    const prompt = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line)).filter(row => row.method === "session/prompt").at(-1).params.prompt;
+    assert.equal(prompt.length, 2); assert.equal(prompt[1].type, "image");
+    assert.equal(prompt[0].text, "read\n\n[Attached file] notes.md (text/markdown, 9 bytes, read-only copy): " + notes.path);
+  } finally { await driver.close(); }
+});
 test("ACP sends attachments as native content blocks within the agent's declared prompt capabilities", async t => {
   const directory = await mkdtemp(join(tmpdir(), "gateway-acp-attachments-")), trace = join(directory, "trace"); t.after(() => rm(directory, { recursive: true, force: true }));
   const png = attachment(directory, "shot.png", "image/png", "image", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]));

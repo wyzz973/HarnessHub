@@ -66,8 +66,12 @@ export function decodeProvider(value: unknown): ProviderView {
 }
 function decodeHarness(value: unknown): HarnessView {
   const row = record(value);
+  const install = row.install === null ? null : record(row.install);
   return { id: text(row.id), name: text(row.name), installed: bool(row.installed), defaultControlId: nullableText(row.defaultControlId), providerProtocols: list(row.providerProtocols, text, 16), management: decodeManagement(row.management),
-    controls: list(row.controls, value => { const control = record(value); return { id: text(control.id), protocol: text(control.protocol), available: bool(control.available), reason: nullableText(control.reason) }; }, 64) };
+    controls: list(row.controls, value => { const control = record(value), entry = control.entry === null ? null : record(control.entry);
+      return { id: text(control.id), protocol: text(control.protocol), available: bool(control.available), reason: nullableText(control.reason),
+        entry: entry === null ? null : { source: choice(entry.source, ["path", "standard-directory", "custom-entry", "package-root", "managed"]) } }; }, 64),
+    install: install === null ? null : { command: text(install.command), docs: text(install.docs) } };
 }
 function decodeManagement(value: unknown): HarnessManagementView {
   const row = record(value), recipe = row.recipe === null ? null : record(row.recipe);

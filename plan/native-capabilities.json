@@ -2173,6 +2173,541 @@
           "note": "/export 调用 export_html 写入临时目录后作为产物；会话为空时明确失败"
         }
       }
+    },
+    {
+      "id": "hermes",
+      "name": "Hermes Agent",
+      "installation": "Hermes Agent 0.12.0（官方安装方式：~/.hermes/hermes-agent，启动器 ~/.local/bin/hermes；本机 DeepSeek deepseek-v4-pro）",
+      "control": "acp-v1（hermes acp）",
+      "capabilities": {
+        "models": {
+          "native": "yes",
+          "source": "session/new·session/load 返回 models（提供方精选目录，标识为 <提供方>:<模型>），session/set_model 切换（acp_adapter/server.py）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-hermes-dsh-catalog.json",
+            ".tmp/cc-hermes-config.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ]
+        },
+        "thought-level": {
+          "native": "no",
+          "source": "ACP 不公布推理档位：没有 configOptions，set_config_option 只保存不生效（acp_adapter/server.py）",
+          "hub": "n/a",
+          "protocol": "n/a",
+          "real": "n/a",
+          "evidence": []
+        },
+        "modes-settings": {
+          "native": "no",
+          "source": "不公布 modes；set_session_mode 只记录不生效（acp_adapter/server.py）",
+          "hub": "n/a",
+          "protocol": "n/a",
+          "real": "n/a",
+          "evidence": []
+        },
+        "commands": {
+          "native": "yes",
+          "source": "available_commands_update：help、model、tools、context、reset、compact、steer、queue、version，由 Hermes 在本地处理（acp_adapter/server.py _handle_slash_command）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-hermes-dsh-catalog.json",
+            ".tmp/cc-hermes-commands.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ]
+        },
+        "config-sync": {
+          "native": "yes",
+          "source": "/model <名称> 在本地切换会话模型，只回固定文本，不发 ACP 更新（acp_adapter/server.py _cmd_model）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-hermes-config.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ],
+          "note": "Hub 只在提示词本身是 /model 命令时读取它的回复，并把新模型记为会话当前模型"
+        },
+        "thinking": {
+          "native": "yes",
+          "source": "提供方推理增量 → agent_thought_chunk（acp_adapter/events.py make_thinking_cb）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-hermes-dsh-thinking.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ]
+        },
+        "tool-status": {
+          "native": "yes",
+          "source": "tool_call / tool_call_update（acp_adapter/events.py、tools.py）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-hermes-activity.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ]
+        },
+        "tool-detail": {
+          "native": "yes",
+          "source": "标题、类型、位置、patch/write_file 差异、结果文本；常用工具不带 rawInput/rawOutput（acp_adapter/tools.py _POLISHED_TOOLS）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-hermes-activity.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ],
+          "note": "常用工具的输入只出现在标题和开始内容里"
+        },
+        "plan": {
+          "native": "partial",
+          "source": "todo 工具只以展示文本出现在工具卡片，ACP 没有 plan 更新（acp_adapter/tools.py）",
+          "hub": "none",
+          "protocol": "none",
+          "real": "none",
+          "evidence": [],
+          "note": "未把 todo 文本解析为计划"
+        },
+        "usage": {
+          "native": "yes",
+          "source": "session/prompt 结果的 usage（输入、输出、思考、缓存）与 usage_update（上下文 size/used）（acp_adapter/server.py）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-hermes-activity.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ]
+        },
+        "approvals": {
+          "native": "yes",
+          "source": "危险命令经 session/request_permission 审批（允许一次、始终允许、拒绝），60 秒未答自动拒绝（acp_adapter/permissions.py）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
+          "evidence": [
+            ".tmp/cc-hermes-approval.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ],
+          "note": "本机 Hermes 0.12.0 的缺陷：tools/approval.py 调用审批回调时传入 allow_permanent，ACP 适配层回调不接受（TypeError），危险命令一律按拒绝处理，审批请求根本不会发出；需要用户升级 Hermes（本机落后上游 18332 个提交）。Hub 的 60 秒期限处理已有协议测试"
+        },
+        "questions": {
+          "native": "no",
+          "source": "hermes-acp 工具集不含 clarify（toolsets.py）",
+          "hub": "n/a",
+          "protocol": "n/a",
+          "real": "n/a",
+          "evidence": []
+        },
+        "input-image": {
+          "native": "yes",
+          "source": "promptCapabilities.image；图片转为 OpenAI image_url 交给模型（acp_adapter/server.py）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
+          "evidence": [
+            ".tmp/cc-hermes-dsh-attachments.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ],
+          "note": "Hermes 公布并转发图片，但本机模型 deepseek-v4-pro 回复看不到图片"
+        },
+        "input-audio": {
+          "native": "no",
+          "source": "未公布 audio，音频块被丢弃（acp_adapter/server.py _content_blocks_to_openai_user_content）",
+          "hub": "n/a",
+          "protocol": "n/a",
+          "real": "n/a",
+          "evidence": []
+        },
+        "input-file": {
+          "native": "partial",
+          "source": "resource_link 与嵌入资源不会交给模型（acp_adapter/server.py）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-hermes-dsh-attachments.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ],
+          "note": "Hub 改为在提示词中附上只读副本路径，由 Hermes 用自己的文件工具读取"
+        },
+        "output-media": {
+          "native": "no",
+          "source": "agent_message_chunk 只发文本（acp_adapter/events.py）；hermes-acp 工具集不含图像生成",
+          "hub": "n/a",
+          "protocol": "n/a",
+          "real": "n/a",
+          "evidence": []
+        },
+        "skills": {
+          "native": "partial",
+          "source": "skills_list、skill_view、skill_manage 工具与 ~/.hermes/skills；ACP 没有技能列表（toolsets.py）",
+          "hub": "none",
+          "protocol": "none",
+          "real": "none",
+          "evidence": []
+        },
+        "mcp": {
+          "native": "partial",
+          "source": "config.yaml 的 mcp_servers 在启动时注册，会话也可附加 MCP 服务器；ACP 没有列表（acp_adapter/entry.py、server.py）",
+          "hub": "none",
+          "protocol": "none",
+          "real": "none",
+          "evidence": []
+        },
+        "plugins": {
+          "native": "partial",
+          "source": "plugins/ 插件机制；ACP 没有对应接口",
+          "hub": "none",
+          "protocol": "none",
+          "real": "none",
+          "evidence": []
+        },
+        "resume": {
+          "native": "yes",
+          "source": "session/load 从 ~/.hermes/state.db 恢复（未知标识返回 null）；session/resume 对未知标识会静默新建（acp_adapter/session.py、server.py）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-hermes-dsh-resume.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ],
+          "note": "Hub 只用 session/load；历史回放在响应之后，等待窗口从响应开始计算"
+        },
+        "session-list": {
+          "native": "yes",
+          "source": "session/list（按 cwd 过滤、游标分页，只列有消息的 ACP 会话）与 session/load 回放（acp_adapter/server.py）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "none",
+          "evidence": []
+        },
+        "fork": {
+          "native": "yes",
+          "source": "session/fork（acp_adapter/session.py fork_session）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-hermes-dsh-branch.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ]
+        },
+        "compaction": {
+          "native": "yes",
+          "source": "/compact 命令（acp_adapter/server.py _cmd_compact）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-hermes-commands.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ]
+        },
+        "rollback": {
+          "native": "no",
+          "source": "只有 /reset 清空整段历史，没有回退到某一轮",
+          "hub": "n/a",
+          "protocol": "n/a",
+          "real": "n/a",
+          "evidence": []
+        },
+        "subagents": {
+          "native": "partial",
+          "source": "delegate_task 在进程内运行子 Agent；子 Agent 的活动不经 ACP 发出（acp_adapter/tools.py）",
+          "hub": "partial",
+          "protocol": "none",
+          "real": "none",
+          "evidence": [],
+          "note": "只显示 delegate_task 工具本身"
+        },
+        "background": {
+          "native": "yes",
+          "source": "process 工具管理后台进程；随每回合结束的 ACP 进程一起结束（toolsets.py）",
+          "hub": "none",
+          "protocol": "none",
+          "real": "none",
+          "evidence": [],
+          "note": "等待 ADR-030"
+        },
+        "export": {
+          "native": "yes",
+          "source": "hermes sessions export - --session-id <id> 输出 JSONL（hermes_cli/main.py）",
+          "hub": "none",
+          "protocol": "none",
+          "real": "none",
+          "evidence": []
+        }
+      }
+    },
+    {
+      "id": "dsh",
+      "name": "DeepSeek Harness",
+      "installation": "DeepSeek Harness 0.2.1-alpha.1（本机源码构建，经显式入口；官方分发为 npm 包 @deepseek-ai/dsh）",
+      "control": "acp-v1（dsh --profile acp）",
+      "capabilities": {
+        "models": {
+          "native": "yes",
+          "source": "session/new 的 model 配置项（实时服务目录）与 session/set_config_option（packages/acp/acp/src/model-control.ts）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-hermes-dsh-catalog.json",
+            ".tmp/cc-dsh-options.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ]
+        },
+        "thought-level": {
+          "native": "yes",
+          "source": "reasoning_effort 配置项（category thought_level，模型声明推理选项时提供）（packages/acp/acp/src/model-control.ts）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-dsh-options.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ]
+        },
+        "modes-settings": {
+          "native": "no",
+          "source": "ACP 自动化界面不提供 mode（packages/acp/acp/README.md）",
+          "hub": "n/a",
+          "protocol": "n/a",
+          "real": "n/a",
+          "evidence": []
+        },
+        "commands": {
+          "native": "no",
+          "source": "ACP 自动化界面不提供命令（packages/acp/acp/README.md）",
+          "hub": "n/a",
+          "protocol": "n/a",
+          "real": "n/a",
+          "evidence": []
+        },
+        "config-sync": {
+          "native": "no",
+          "source": "没有原生命令；配置只经 session/set_config_option 改变",
+          "hub": "n/a",
+          "protocol": "n/a",
+          "real": "n/a",
+          "evidence": []
+        },
+        "thinking": {
+          "native": "yes",
+          "source": "已提交的 reasoning 块 → agent_thought_chunk（packages/acp/acp/src/updates.ts）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-hermes-dsh-thinking.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ],
+          "note": "按整块到达，不是逐字增量"
+        },
+        "tool-status": {
+          "native": "yes",
+          "source": "tool/call、tool/result → tool_call（in_progress）与 tool_call_update（completed/failed）（packages/acp/acp/src/updates.ts）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-hermes-dsh-activity.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ]
+        },
+        "tool-detail": {
+          "native": "partial",
+          "source": "工具名、rawInput、结果内容；kind 恒为 other，没有差异和位置（packages/acp/acp/src/updates.ts）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-hermes-dsh-activity.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ]
+        },
+        "plan": {
+          "native": "no",
+          "source": "ACP 界面不提供计划与 todo（packages/acp/acp/README.md）",
+          "hub": "n/a",
+          "protocol": "n/a",
+          "real": "n/a",
+          "evidence": []
+        },
+        "usage": {
+          "native": "partial",
+          "source": "usage_update（上下文占用与窗口）；session/prompt 结果不带用量（packages/acp/acp/src/updates.ts）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-hermes-dsh-resume.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ]
+        },
+        "approvals": {
+          "native": "yes",
+          "source": "session/request_permission（允许一次、拒绝）（packages/acp/acp/src/index.ts）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
+          "evidence": [
+            ".tmp/cc-hermes-dsh-activity.json",
+            ".tmp/cc-dsh-options.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ],
+          "note": "用户 dsh 的默认权限预设为 danger-full-access，dsh 不发审批请求；ACP 没有可切换预设的配置项，Hub 不改用户配置"
+        },
+        "questions": {
+          "native": "no",
+          "source": "不提供 elicitation（packages/acp/acp/README.md）",
+          "hub": "n/a",
+          "protocol": "n/a",
+          "real": "n/a",
+          "evidence": []
+        },
+        "input-image": {
+          "native": "partial",
+          "source": "只有挂载持久附件存储且路由支持图片时才公布 promptCapabilities.image（packages/acp/acp/src/index.ts）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "blocked",
+          "evidence": [
+            ".tmp/cc-hermes-dsh-attachments.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ],
+          "note": "本机 acp profile 未公布图片输入；Hub 在派发前拒绝图片已在真实环境确认"
+        },
+        "input-audio": {
+          "native": "no",
+          "source": "promptCapabilities.audio=false（packages/acp/acp/src/index.ts）",
+          "hub": "n/a",
+          "protocol": "n/a",
+          "real": "n/a",
+          "evidence": []
+        },
+        "input-file": {
+          "native": "yes",
+          "source": "resource_link 以 [resource_link name=… uri=…] 交给模型，由它的工具读取（packages/acp/acp/README.md、src/content.ts）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-hermes-dsh-attachments.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ]
+        },
+        "output-media": {
+          "native": "yes",
+          "source": "assistant 图片块经附件存储转为 ACP image（packages/acp/acp/src/content.ts assistantBlockToAcp）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "none",
+          "evidence": []
+        },
+        "skills": {
+          "native": "partial",
+          "source": "skill 插件；ACP 没有技能列表",
+          "hub": "none",
+          "protocol": "none",
+          "real": "none",
+          "evidence": []
+        },
+        "mcp": {
+          "native": "partial",
+          "source": "session/new 可挂载 stdio/HTTP MCP；ACP 不列出用户自己的 MCP（packages/acp/acp/README.md、src/mcp.ts）",
+          "hub": "none",
+          "protocol": "none",
+          "real": "none",
+          "evidence": []
+        },
+        "plugins": {
+          "native": "partial",
+          "source": "profile bundles 插件机制（dsh plugin）；ACP 没有列表",
+          "hub": "none",
+          "protocol": "none",
+          "real": "none",
+          "evidence": []
+        },
+        "resume": {
+          "native": "yes",
+          "source": "session/resume 恢复持久会话，不回放旧更新（packages/acp/acp/src/index.ts）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-hermes-dsh-resume.json",
+            "docs/verification/hermes-dsh-onboarding-2026-10-11.md"
+          ]
+        },
+        "session-list": {
+          "native": "yes",
+          "source": "session/list：从新到旧列出持久根会话（无标题、无时间），可按 cwd 过滤（packages/acp/acp/src/index.ts）",
+          "hub": "done",
+          "protocol": "pass",
+          "real": "none",
+          "evidence": [],
+          "note": "不支持 session/load，接续时显示不了以前的历史"
+        },
+        "fork": {
+          "native": "no",
+          "source": "不支持 fork（packages/acp/acp/README.md）",
+          "hub": "n/a",
+          "protocol": "n/a",
+          "real": "n/a",
+          "evidence": []
+        },
+        "compaction": {
+          "native": "partial",
+          "source": "自动压缩插件（compaction-basic、tool-result-pruner）；ACP 没有压缩命令或更新",
+          "hub": "none",
+          "protocol": "none",
+          "real": "none",
+          "evidence": []
+        },
+        "rollback": {
+          "native": "no",
+          "source": "ACP 界面不提供（packages/acp/acp/README.md）",
+          "hub": "n/a",
+          "protocol": "n/a",
+          "real": "n/a",
+          "evidence": []
+        },
+        "subagents": {
+          "native": "partial",
+          "source": "subagent 插件；子会话 origin=subagent 不在列表中，ACP 只发父会话的工具调用（packages/acp/acp/src/index.ts）",
+          "hub": "partial",
+          "protocol": "none",
+          "real": "none",
+          "evidence": [],
+          "note": "只显示调用子 Agent 的工具本身"
+        },
+        "background": {
+          "native": "partial",
+          "source": "jobs、schedule、goal 等自主工作；没有进行中的 ACP 提示词时，session/cancel 取消自主工作（packages/acp/acp/README.md）",
+          "hub": "none",
+          "protocol": "none",
+          "real": "none",
+          "evidence": []
+        },
+        "export": {
+          "native": "partial",
+          "source": "会话日志保存在 $DSH_HOME/sessions；ACP 没有导出",
+          "hub": "none",
+          "protocol": "none",
+          "real": "none",
+          "evidence": []
+        }
+      }
     }
   ]
 }

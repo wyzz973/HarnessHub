@@ -897,6 +897,16 @@ a {
   flex:0 1 auto
 }
 
+/* A label, not a picker: the toolbar keeps it on one line at the pickers' size. */
+.composer-chip.static-chip {
+  flex:none;
+  padding:0 6px;
+  color:#8c867c;
+  font-size:12px;
+  line-height:30px;
+  white-space:nowrap
+}
+
 .composer-chip .selection-trigger {
   width:100%;
   min-height:30px;
@@ -2856,6 +2866,18 @@ a {
 .detail-section code {
   font-family:"SFMono-Regular",Consolas,monospace;
   font-size:12px
+}
+
+/* A command the user runs in their own terminal: one selectable block that wraps instead of overflowing. */
+.detail-section .detail-command {
+  display:block;
+  margin:8px 0;
+  padding:9px 10px;
+  border-radius:8px;
+  background:#f4f2ec;
+  color:#3f3b35;
+  overflow-wrap:anywhere;
+  user-select:all
 }
 
 .detail-limitation {

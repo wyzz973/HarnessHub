@@ -19,6 +19,8 @@ const home = process.env.HOME ?? homedir();
 const configFiles: Readonly<Record<string, readonly string[]>> = {
   claude: [join(home, ".claude", "settings.json")],
   codex: [join(home, ".codex", "config.toml")],
+  hermes: [join(home, ".hermes", "config.yaml")],
+  dsh: [join(home, ".dsh", "settings.yaml"), join(home, ".dsh", "profiles", "acp", "cordis.patch.yml")],
 };
 const TERMINAL = new Set<PublicRun["status"]>(["completed", "failed", "cancelled", "unknown"]);
 async function digest(path: string): Promise<string> {
@@ -32,14 +34,14 @@ async function closeApp(app: App): Promise<void> {
 
 test("installed Harness asks the user through its own question tool and acts on the chosen answer", { timeout: 15 * 60 * 1000 }, async () => {
   assert.ok(harnesses.length, "set HH_REAL_HARNESSES"); assert.ok(evidencePath, "set HH_REAL_EVIDENCE");
-  const root = await realpath(await mkdtemp(join(tmpdir(), "hh-native-question-")));
+  const root = await realpath(await mkdtemp(join(process.env.HH_REAL_TMP ?? tmpdir(), "hh-native-question-")));
   const results: Record<string, unknown>[] = [], failures: string[] = [];
   try {
     for (const harnessId of harnesses) {
       const files = configFiles[harnessId] ?? [], before = await Promise.all(files.map(digest));
       const data = join(root, harnessId + "-data"), workspace = join(root, harnessId + "-workspace");
       await mkdir(workspace);
-      const configuration = await prepareConfiguration({ workspace });
+      const configuration = await prepareConfiguration({ workspace, ...(process.env.HH_REAL_MANIFEST ? { manifestPath: process.env.HH_REAL_MANIFEST } : {}) });
       const proof: Record<string, unknown> = { harnessId, startedAt: new Date().toISOString() }, questions: Record<string, unknown>[] = [];
       proof.questions = questions;
       const app = application(data, () => {});
