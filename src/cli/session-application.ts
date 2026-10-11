@@ -3,7 +3,7 @@ import { LocalHarnessManagement, type ManagementOptions } from "../infrastructur
 import { LocalProviderService } from "../infrastructure/provider/service.js";
 import { createHash, randomUUID } from "node:crypto";
 import { lstatSync, mkdirSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { isAbsolute, join, normalize, resolve } from "node:path";
 import { SessionError, type SelectionRequest, type SessionEvent } from "../contracts/session.js";
 import { SessionRuntime } from "../contexts/session/application/runtime.js";
 import { SqliteSessionStore } from "../infrastructure/session/sqlite-store.js";
@@ -31,9 +31,19 @@ export function newCommand(prefix = "command"): string { return prefix + "-" + r
 export function errorRecord(error: unknown): { readonly code: string; readonly message: string } {
   return error instanceof SessionError ? { code: error.code, message: error.message } : { code: "GATEWAY_FAILED", message: error instanceof Error ? error.message.slice(0, 512) : "gateway operation failed" };
 }
-function workspaceLockRoot(): string {
+/**
+ * Where Gateways record which workspace each one is writing (the workspace leases), decided once here. By default it is one
+ * private directory per user under /tmp that every Gateway of the user shares, so two of them never write one workspace at
+ * once. An explicit directory must be a normalized absolute path: a Gateway given its own directory no longer excludes the
+ * Gateways that use another one, so it is only for isolated tests or deliberately separate instances. Either way a missing
+ * directory is created private, and one that is not a real directory owned by this user and closed to others is refused
+ * with INVALID_STORAGE; an explicit path that is not absolute is refused with INVALID_INPUT before anything is created.
+ */
+export function resolveWorkspaceLockRoot(explicit?: string): string {
   if (process.platform === "win32" || process.getuid === undefined) throw new SessionError("UNSUPPORTED_PLATFORM", "this session slice requires the current POSIX owner host");
-  const uid = process.getuid(), path = join("/tmp", "harnessgateway-workspaces-" + uid);
+  if (explicit !== undefined && (!isAbsolute(explicit) || normalize(explicit) !== explicit || explicit.length > 4096 || /[\0\r\n]/u.test(explicit)))
+    throw new SessionError("INVALID_INPUT", "the workspace lock root must be a normalized absolute path");
+  const uid = process.getuid(), path = explicit ?? join("/tmp", "harnessgateway-workspaces-" + uid);
   mkdirSync(path, { recursive: true, mode: 0o700 });
   const info = lstatSync(path);
   if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== uid || (info.mode & 0o077) !== 0) throw new SessionError("INVALID_STORAGE", "workspace lock namespace is not privately owned");
@@ -41,12 +51,14 @@ function workspaceLockRoot(): string {
 }
 export function application(root: string, publish: (event: SessionEvent) => void, options: { readonly management?: Pick<ManagementOptions, "metadata" | "installer" | "recipes" | "installationMode" | "native" | "nativeLocks">; readonly nativeEnvironment?: NativeEnvironment;
   /** The Turn budgets this Gateway was configured with (ADR-036); the defaults otherwise. */
-  readonly budgets?: { readonly executionBudgetMs: number; readonly waitBudgetMs: number } } = {}): { readonly management: LocalHarnessManagement; readonly providers: LocalProviderService; readonly store: SqliteSessionStore; readonly content: LocalContentStore; readonly factory: DirectorySessionBindingFactory; readonly runtime: SessionRuntime } {
+  readonly budgets?: { readonly executionBudgetMs: number; readonly waitBudgetMs: number };
+  /** The workspace lock namespace, resolved by `resolveWorkspaceLockRoot`; the per-user default shared by every Gateway otherwise. */
+  readonly workspaceLockRoot?: string } = {}): { readonly management: LocalHarnessManagement; readonly providers: LocalProviderService; readonly store: SqliteSessionStore; readonly content: LocalContentStore; readonly factory: DirectorySessionBindingFactory; readonly runtime: SessionRuntime } {
   const store = new SqliteSessionStore(root);
   let providers: LocalProviderService | undefined;
   let management: LocalHarnessManagement | undefined;
   try {
-    const workspaces = new SqliteWorkspaceLeaseProvider(workspaceLockRoot());
+    const workspaces = new SqliteWorkspaceLeaseProvider(resolveWorkspaceLockRoot(options.workspaceLockRoot));
     providers = new LocalProviderService(root, () => store.assertOwner());
     const nativeLocks = options.management?.installationMode === "private-fixture" ? undefined : options.management?.nativeLocks ?? new NativeInstallationLocks();
     management = new LocalHarnessManagement(root, { ...options.management, ...(nativeLocks === undefined ? {} : { nativeLocks }), ...(options.nativeEnvironment === undefined ? {} : { nativeEnvironment: options.nativeEnvironment }), assertOwner: () => store.assertOwner(), ownerGeneration: store.ownerGeneration, redactor: text => providers!.redact(text) });

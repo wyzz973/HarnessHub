@@ -62,7 +62,7 @@ test("real Codex switches managed Provider A to B to edited A with pinned key/mo
   }
   const a = await provider("A"), b = await provider("B");
   await writeFile(manifest, JSON.stringify({ version: 2, definitions: [], overrides: { "codex-native": { executable } } }));
-  const app = application(data, () => {});
+  const app = application(data, () => {}, { workspaceLockRoot: join(root, "locks") });
   t.after(async () => { release.resolve(); try { await app.runtime.close(); } finally { await app.management.shutdown(); await app.providers.shutdown(); app.store.close(); a.server.closeAllConnections(); b.server.closeAllConnections(); await Promise.all([new Promise<void>(r => a.server.close(() => r())), new Promise<void>(r => b.server.close(() => r()))]); await rm(root, { recursive: true, force: true }); } });
   const config = await prepareConfiguration({ workspace, manifestPath: manifest, searchDirs: [join(executable, "..")], pathOnly: true });
   const make = (name: string, baseUrl: string, model: string, apiKey: string) => ({ name, protocol: "openai-responses", baseUrl, models: [model], defaultModel: model, enabled: true, apiKey });

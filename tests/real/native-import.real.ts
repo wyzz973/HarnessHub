@@ -90,7 +90,7 @@ test("installed Harness continues its own session of the workspace in the Hub, w
       const data = join(root, harnessId + "-data"), workspace = join(root, harnessId + "-workspace");
       await mkdir(workspace);
       const proof: Record<string, unknown> = { harnessId, startedAt: new Date().toISOString() };
-      const app = application(data, () => {});
+      const app = application(data, () => {}, { workspaceLockRoot: join(root, "locks") });
       try {
         assert.ok(start || acpStarted.has(harnessId), "no native session starter for " + harnessId);
         const tag = "T-" + randomUUID().slice(0, 6).toUpperCase(), prompt = "请记住标记 " + tag + "。只回复“好的”，不要调用任何工具，也不要保存到长期记忆。";

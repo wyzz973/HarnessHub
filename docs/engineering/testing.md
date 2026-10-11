@@ -31,6 +31,8 @@
 
 ## 4. 平台与组合
 
+测试隔离：组合应用、启动 Gateway 或运行 `chat`、`sessions`、`web` 命令的测试，必须使用测试自己的临时工作区租约目录（`workspaceLockRoot` 或 `--workspace-lock-root`），不得写入每个本机用户共用的 `/tmp/harnessgateway-workspaces-<uid>`（[ADR-041](../decisions/0041-workspace-lock-root.md)）。检查方式：人工审查新增的组合点；完整测试前后对比共享目录的文件数。尚无自动检查。
+
 macOS/Linux：进程组、脱离组后代、父进程先退出、中文/空格路径、软链接与权限。Windows：Job Objects、breakaway、cmd/PowerShell argv、孙进程、DPAPI/ACL、中文路径、取消启动中/运行中、重启清理。没有宿主不能把 skipped 当通过。
 
 真实组合按 Harness、Adapter、protocol/SDK、Provider/模型、OS/架构、权限/工具、恢复等级记录。至少验证两个 Harness 与两个兼容模型目标的独立切换，包含 A→B→A。

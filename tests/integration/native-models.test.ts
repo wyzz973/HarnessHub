@@ -88,7 +88,7 @@ test("real Codex/ACP protocol probes enumerate native models without prompts and
 test("authenticated native models endpoint accepts workspace queries, projects no credentials and owns probe shutdown", async t => {
   const f = await setup(t);
   const gateway = await startWebServer({ root: join(f.root, "web-data"), configuration: f.config, port: 0,
-    application: (root, publish) => application(root, publish, { nativeEnvironment: f.environment }) });
+    application: (root, publish) => application(root, publish, { nativeEnvironment: f.environment, workspaceLockRoot: join(f.root, "locks") }) });
   f.close.push(() => gateway.close());
   const launch = new URL(gateway.url), origin = launch.origin;
   const boot = await fetch(origin + "/api/v1/auth/bootstrap", { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ token: new URLSearchParams(launch.hash.slice(1)).get("token") }) });
@@ -109,7 +109,7 @@ test("a native catalog read is reused across restarts while its fingerprint hold
   const config = await prepareConfiguration({ workspace: f.workspace, manifestPath: manifest, pathOnly: true }), data = join(f.root, "web-data");
   const opened = async (id: keyof typeof traces) => { try { return (await readFile(traces[id], "utf8")).trim().split("\n").filter(line => (JSON.parse(line) as { method?: string }).method === "session/new").length; } catch { return 0; } };
   const start = async () => {
-    const gateway = await startWebServer({ root: data, configuration: config, port: 0, application: (root, publish) => application(root, publish, { nativeEnvironment: f.environment }) });
+    const gateway = await startWebServer({ root: data, configuration: config, port: 0, application: (root, publish) => application(root, publish, { nativeEnvironment: f.environment, workspaceLockRoot: join(f.root, "locks") }) });
     const launch = new URL(gateway.url), origin = launch.origin;
     const boot = await fetch(origin + "/api/v1/auth/bootstrap", { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ token: new URLSearchParams(launch.hash.slice(1)).get("token") }) });
     assert.equal(boot.status, 200); const cookie = boot.headers.get("set-cookie")!.split(";", 1)[0]!;

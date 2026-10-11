@@ -46,7 +46,7 @@ test("installed Harness thinking is kept on the Run apart from its reply", { tim
       await mkdir(workspace);
       const configuration = await prepareConfiguration({ workspace, ...(process.env.HH_REAL_MANIFEST ? { manifestPath: process.env.HH_REAL_MANIFEST } : {}) });
       const proof: Record<string, unknown> = { harnessId, startedAt: new Date().toISOString() };
-      const app = application(data, () => {});
+      const app = application(data, () => {}, { workspaceLockRoot: join(root, "locks") });
       try {
         const requested = process.env["HH_REAL_MODEL_" + harnessId.toUpperCase()], optionsText = process.env["HH_REAL_OPTIONS_" + harnessId.toUpperCase()];
         const nativeOptions = optionsText === undefined ? undefined : JSON.parse(optionsText) as Record<string, string>;

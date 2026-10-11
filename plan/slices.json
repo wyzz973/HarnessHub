@@ -618,7 +618,8 @@
         "G006",
         "G026",
         "G011",
-        "G012"
+        "G012",
+        "G047"
       ],
       "decision": "docs/decisions/0020-complete-native-harness-capabilities.md",
       "allowed_files": [
@@ -724,7 +725,15 @@
         "tests/fixtures/hermes-cli.mjs",
         "src/infrastructure/discovery/login-shell.ts",
         "tests/integration/login-shell.test.ts",
-        "src/cli/web.ts"
+        "src/cli/web.ts",
+        "src/cli/chat.ts",
+        "src/cli/sessions.ts",
+        "tests/integration/native-management.test.ts",
+        "tests/real/codex-session.real.ts",
+        "tests/real/gemini-provider.real.ts",
+        "tests/real/harness-provider-switch.real.ts",
+        "tests/real/live-web-stream.real.ts",
+        "tests/real/provider-switch.real.ts"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/complete-native-capabilities-2026-10-11.md"

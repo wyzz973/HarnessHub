@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -88,7 +88,7 @@ test("over HTTP, reading the login shell adds only new directories to discovery 
   await writeFile(shell, `#!/bin/sh\n[ "$1" = "-l" ] && [ "$2" = "-c" ] || exit 9\nPATH="${f.bin}:${f.other}:/usr/bin" exec /bin/sh -c "$3"\n`); await chmod(shell, 0o700);
   await writeFile(f.shells, shell + "\n");
   const start = async (loginShell: Parameters<typeof startWebServer>[0]["loginShell"]) => {
-    const gateway = await startWebServer({ root: join(data, loginShell === undefined ? "off" : "on"), configuration, port: 0, assetsDirectory: assets, ...(loginShell === undefined ? {} : { loginShell }) });
+    const gateway = await startWebServer({ root: join(data, loginShell === undefined ? "off" : "on"), configuration, port: 0, assetsDirectory: assets, workspaceLockRoot: join(data, "locks"), ...(loginShell === undefined ? {} : { loginShell }) });
     t.after(() => gateway.close());
     const url = new URL(gateway.url), origin = url.origin;
     const boot = await fetch(origin + "/api/v1/auth/bootstrap", { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ token: new URLSearchParams(url.hash.slice(1)).get("token") }) });
@@ -136,7 +136,7 @@ test("whether the login shell is offered is decided once at the web command: nev
   const help = spawnSync(process.execPath, [web, "--help"], { env, encoding: "utf8", timeout: 10000 });
   assert.equal(help.status, 0); assert.match(help.stdout, /\[--no-login-shell\]/u);
   const offered = async (flags: readonly string[], data: string) => {
-    const child = spawn(process.execPath, [web, "--cwd", workspace, "--data-dir", join(root, data), "--port", "0", "--manifest", manifest, "--path-only", "--assets-dir", assets, ...flags], { env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(process.execPath, [web, "--cwd", workspace, "--data-dir", join(root, data), "--port", "0", "--manifest", manifest, "--path-only", "--assets-dir", assets, "--workspace-lock-root", join(root, "locks"), ...flags], { env, stdio: ["ignore", "pipe", "pipe"] });
     const exited = new Promise<number | null>(done => child.once("exit", code => done(code)));
     let output = "", errors = "", view: Record<string, unknown> = {}, code: number | null = null;
     child.stderr.on("data", (chunk: Buffer) => { errors += chunk.toString("utf8"); });
@@ -156,4 +156,5 @@ test("whether the login shell is offered is decided once at the web command: nev
   };
   assert.deepEqual(await offered([], "on"), { available: true, shell: "sh", dirs: [], readAt: null });
   assert.deepEqual(await offered(["--no-login-shell"], "off"), { available: false, dirs: [], readAt: null });
+  assert.ok((await stat(join(root, "locks"))).isDirectory(), "the web command uses the workspace lock root it was given");
 });

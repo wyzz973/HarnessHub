@@ -89,7 +89,7 @@ test("installed Harness tool activity is committed with stored, readable details
       const proof: Record<string, unknown> = { harnessId, startedAt: new Date().toISOString() };
       const permissions: Record<string, unknown>[] = [];
       proof.permissions = permissions;
-      const app = application(data, () => {});
+      const app = application(data, () => {}, { workspaceLockRoot: join(root, "locks") });
       try {
         const requested = process.env["HH_REAL_MODEL_" + harnessId.toUpperCase()];
         const created = await app.runtime.create(configuration, { harnessId, ...(requested === undefined ? {} : { nativeModel: requested }), ...(nativeOptions === undefined ? {} : { nativeOptions }) }, "create-" + randomUUID());

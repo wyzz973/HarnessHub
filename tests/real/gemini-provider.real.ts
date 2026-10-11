@@ -80,7 +80,7 @@ test("real Gemini uses a managed private Provider endpoint, explicit model/key a
   const control = loadBuiltinCatalog(catalogTarget()).find(item => item.id === "gemini")?.controls.find(item => item.protocol === "acp-v1");
   assert.ok(control, "built-in catalog must expose a Gemini ACP recipe");
   await writeFile(manifest, JSON.stringify({ version: 2, definitions: [], overrides: { [control.id]: { executable: binary } } }));
-  const app = ownedApplication = application(data, event => { events.push(event); });
+  const app = ownedApplication = application(data, event => { events.push(event); }, { workspaceLockRoot: join(root, "locks") });
   const provider = app.providers.create({ name: "Managed Gemini fixture", protocol: "gemini", baseUrl: `http://127.0.0.1:${address.port}`,
     models: [MODEL], defaultModel: MODEL, enabled: true, apiKey: KEY }, "real-gemini-provider");
   const configuration = await prepareConfiguration({ workspace, manifestPath: manifest, searchDirs: [dirname(binary)], pathOnly: true });

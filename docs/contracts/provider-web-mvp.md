@@ -93,3 +93,5 @@ ADR-038（2026-10-12）追加：Harness 的管理视图在产品版本已知、�
 ADR-039（2026-10-12）追加：`GET /api/v1/sessions/:id/native-resume`返回当前选择的已就绪原生会话`{resume: {harnessId, nativeId?, interactive?, once?, list?, note?} | null}`：`nativeId`只在是普通标识符时给出；`interactive`与`once`只给验证过的产品，并且已安装版本须在验证范围内（ADR-038）；`note`为`version-unverified`或`not-verified`；`list`用于会话标识是私有路径的程序。按需读取，不进入会话视图和导出；需要登录，查询参数无效时返回400。
 
 ADR-040（2026-10-12）追加：`GET /api/v1/discovery/login-shell`返回`{available, shell?, dirs, readAt}`；`POST /api/v1/discovery/login-shell`（`{commandId}`）以`$SHELL -l -c`读取一次登录 shell 的 PATH（须列在`/etc/shells`，3 秒、64 KiB），只保存这个 Gateway 尚未搜索的目录并重新检测；`POST /api/v1/discovery/login-shell/remove`（`{dir, commandId}`）移除一个目录。不提供时为409 `LOGIN_SHELL_UNAVAILABLE`，读取失败为502 `LOGIN_SHELL_FAILED`。`web`命令带`--no-login-shell`时，与设置了`CI`或在Windows上一样不提供（`available: false`）。
+
+ADR-041（2026-10-12）追加：`web`、`chat`、`sessions`命令支持`--workspace-lock-root <绝对目录>`，默认仍为每个本机用户共用的`/tmp/harnessgateway-workspaces-<uid>`。显式目录须为规范化绝对路径（否则`INVALID_INPUT`），且为当前用户私有的真实目录（否则`INVALID_STORAGE`）。另用目录的 Gateway 不再与本机其他 Gateway 互斥同一工作区，只用于隔离的测试或刻意独立的实例。

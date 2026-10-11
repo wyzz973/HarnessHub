@@ -49,7 +49,7 @@ test("installed Harness lists its native extensions and runs a workspace skill t
       await writeFile(join(workspace, ".agents", "skills", "hh-echo", "SKILL.md"), SKILL);
       const configuration = await prepareConfiguration({ workspace, ...(process.env.HH_REAL_MANIFEST ? { manifestPath: process.env.HH_REAL_MANIFEST } : {}) });
       const proof: Record<string, unknown> = { harnessId, startedAt: new Date().toISOString() };
-      const app = application(data, () => {});
+      const app = application(data, () => {}, { workspaceLockRoot: join(root, "locks") });
       try {
         const extensions = await app.factory.discoverExtensions({ harnessId }, configuration, new AbortController().signal);
         const local = extensions?.skills.find(skill => skill.name === "hh-echo");

@@ -51,6 +51,8 @@ export interface WebServerOptions {
    * (CI, sandboxes and tests that do not name a fixture shell).
    */
   readonly loginShell?: { readonly shell: string | null; readonly shells: string } | false;
+  /** The workspace lock namespace (`resolveWorkspaceLockRoot`) when this server composes its own application; the default otherwise. */
+  readonly workspaceLockRoot?: string;
 }
 export interface WebServer { readonly url: string; close(): Promise<void> }
 function record(value: unknown, allowed: readonly string[], required: readonly string[] = []): Record<string, unknown> {
@@ -284,7 +286,8 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   // Waiting approvals and questions of every conversation, refreshed after each published event (ADR-035). A page with a
   // conversation open gets them on that conversation's stream; a page without one subscribes to them alone.
   const attention = new AttentionStreamHub(() => app.runtime.attention(), {}, frame => streams.attentionChanged(frame));
-  app = (options.application ?? ((root, publish) => composeApplication(root, publish, options.budgets === undefined ? {} : { budgets: options.budgets })))(options.root, event => {
+  app = (options.application ?? ((root, publish) => composeApplication(root, publish, { ...(options.budgets === undefined ? {} : { budgets: options.budgets }),
+    ...(options.workspaceLockRoot === undefined ? {} : { workspaceLockRoot: options.workspaceLockRoot }) })))(options.root, event => {
     try { streams.publish(event); } finally { if (app !== undefined) attention.changed(); }
   });
   // This build: every compiled Gateway file by name and content (ADR-033), also named in a Turn's diagnostics (ADR-037).

@@ -3684,7 +3684,8 @@
       "test_cases": [
         "G059-C01",
         "G059-C02",
-        "G059-C03"
+        "G059-C03",
+        "G059-NC1"
       ],
       "active_slice": "native-installation-management"
     },

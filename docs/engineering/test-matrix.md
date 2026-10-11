@@ -65,7 +65,7 @@
 | G012-C02 | G012 | security | 恶意manifest/链接/相同ID | 拒绝歧义和越界 | planned |
 | G012-C03 | G012 | integration | 缺Adapter或不可执行文件 | 明确原因，不联网下载或调用模型 | planned |
 | G012-NC1 | G012 | integration | 由用户读取登录 shell 的 PATH 补充发现目录 | 只运行列在系统 shell 列表中的绝对路径 shell，用 -l -c 在首尾标记之间读取 PATH；只保留存在的绝对目录且去重；超过 3 秒、超过 64 KiB、没有标记或退出码非零都明确失败，登录配置留在进程组中的任务随之结束；经 HTTP 读取后只加入 Gateway 尚未搜索的目录，原先找不到的 Harness 被发现，用户移除目录后不再发现；未提供时 409；保存的目录重启后仍在，无法读取的文件当作没有 | planned |
-| G012-NC2 | G012 | integration | web 命令集中决定是否提供读取登录 shell | 带 --no-login-shell、设置了 CI（即使为空）或在 Windows 上时不提供，否则使用 $SHELL（未设置时没有可读的 shell）；从正式 web 命令启动：不带参数时接口返回可读取，带 --no-login-shell 时返回不提供，帮助列出这个参数，拼错的参数在启动前被拒绝并以非零退出 | planned |
+| G012-NC2 | G012 | integration | web 命令集中决定是否提供读取登录 shell | 带 --no-login-shell、设置了 CI（即使为空）或在 Windows 上时不提供，否则使用 $SHELL（未设置时没有可读的 shell）；从正式 web 命令启动：不带参数时接口返回可读取，带 --no-login-shell 时返回不提供，帮助列出这个参数，拼错的参数在启动前被拒绝并以非零退出；带 --workspace-lock-root 时使用给定的租约目录 | planned |
 | G013-C01 | G013 | protocol | 初始化宣告与受控探测结果 | 分别保存declared/observed证据 | planned |
 | G013-C02 | G013 | protocol | 未公布可选方法/版本不匹配 | 不试探调用未支持能力 | planned |
 | G013-C03 | G013 | integration | Harness或Adapter升级 | 旧validated不自动迁移 | planned |
@@ -212,6 +212,7 @@
 | G059-C01 | G059 | integration | 正式构建启动与关闭 | 端口注入、owner lease和资源等待完整 | planned |
 | G059-C02 | G059 | integration | 没有可用Harness/Provider或初始化失败 | 服务状态明确，不演示fallback | planned |
 | G059-C03 | G059 | integration | 第二个Adapter接入 | 核心业务入口不按厂商名称分支 | planned |
+| G059-NC1 | G059 | integration | 工作区租约目录的默认值与显式指定 | 不指定时为每个本机用户共用的 /tmp/harnessgateway-workspaces-<uid>；显式目录必须是规范化的绝对路径，相对或含 .. 的路径在创建任何内容之前以 INVALID_INPUT 拒绝，不存在时以 0700 创建，权限对他人开放或是符号链接时以 INVALID_STORAGE 拒绝；使用同一目录的两个应用互斥同一工作区，使用另一目录的不互斥；chat 命令拒绝相对目录且不启动 Harness，sessions 与 web 命令使用给定的目录；测试一律使用自己的临时租约目录 | planned |
 | G060-C01 | G060 | protocol | 固定ACP TCK与native协议客户端 | 记录通过/失败/未覆盖，不能称全协议认证 | planned |
 | G060-C02 | G060 | platform | macOS/Linux/Windows原生进程与权限 | 平台证据独立，缺宿主不能算通过 | deferred |
 | G060-C03 | G060 | e2e | 真实双Harness/双Provider权限文件恢复 | 指定版本组合验收，真实凭据不入仓库 | planned |

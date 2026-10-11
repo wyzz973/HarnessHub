@@ -78,7 +78,7 @@ test("installed Harness reads a text attachment, sees an image it declares, and 
       await mkdir(workspace);
       const configuration = await prepareConfiguration({ workspace, ...(process.env.HH_REAL_MANIFEST ? { manifestPath: process.env.HH_REAL_MANIFEST } : {}) });
       const proof: Record<string, unknown> = { harnessId, startedAt: new Date().toISOString() };
-      const app = application(data, () => {});
+      const app = application(data, () => {}, { workspaceLockRoot: join(root, "locks") });
       try {
         const requested = process.env["HH_REAL_MODEL_" + harnessId.toUpperCase()];
         const catalog = await app.factory.discoverModels({ harnessId }, configuration, new AbortController().signal);

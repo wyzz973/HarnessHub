@@ -48,12 +48,12 @@ export async function main(args: readonly string[]): Promise<number> {
       "data-dir": { type: "string" }, cwd: { type: "string" }, manifest: { type: "string" },
       "config-home": { type: "string" }, "package-root": { type: "string", multiple: true },
       "search-dir": { type: "string", multiple: true }, "path-only": { type: "boolean" },
-      prompt: { type: "string" }, "command-id": { type: "string" },
+      prompt: { type: "string" }, "command-id": { type: "string" }, "workspace-lock-root": { type: "string" },
       json: { type: "boolean" }, help: { type: "boolean", short: "h" },
     }, strict: true, allowPositionals: false });
     json = values.json ?? false;
     if (values.help) {
-      writeOutput("HarnessGateway chat --harness <id> [--session <public-id>]\n--data-dir <path> 持久数据；--cwd <path> 工作区；--manifest <file> 目录\n--config-home <path> 私有配置；--json NDJSON公共事实\n--prompt <text> 单条消息；--command-id <key> 单条消息幂等key\n交互命令：:harness id[:control]、:cancel、:history、:quit\n:quit仅结束本次入口；持久关闭用sessions close。跨Harness接续等级是public_context_rehydrate。\n"); return 0;
+      writeOutput("HarnessGateway chat --harness <id> [--session <public-id>]\n--data-dir <path> 持久数据；--cwd <path> 工作区；--manifest <file> 目录\n--config-home <path> 私有配置；--json NDJSON公共事实\n--prompt <text> 单条消息；--command-id <key> 单条消息幂等key\n--workspace-lock-root <绝对目录> 另用工作区租约目录，不再与本机其他 Gateway 互斥同一工作区，只用于隔离的测试或刻意独立的实例\n交互命令：:harness id[:control]、:cancel、:history、:quit\n:quit仅结束本次入口；持久关闭用sessions close。跨Harness接续等级是public_context_rehydrate。\n"); return 0;
     }
     if (values.session === undefined && values.harness === undefined) throw new SessionError("INVALID_INPUT", "a new chat requires --harness; continuing requires --session");
     if (values.control !== undefined && values.harness === undefined) throw new SessionError("INVALID_INPUT", "--control requires --harness");
@@ -67,7 +67,7 @@ export async function main(args: readonly string[]): Promise<number> {
           "type" in event.data.event && event.data.event.type === "text" && "text" in event.data.event && typeof event.data.event.text === "string") writeOutput(event.data.event.text);
       else if (event.type === "run.ended" || event.type === "switch.effective" || event.type === "switch.failed" || event.type === "session.blocked")
         writeOutput("\n[" + event.type + "] " + JSON.stringify(event.data) + "\n");
-    });
+    }, values["workspace-lock-root"] === undefined ? {} : { workspaceLockRoot: values["workspace-lock-root"] });
     if (values.session !== undefined) {
       current = app.runtime.read(sessionId(values.session));
       if ([values.cwd, values.manifest, values["config-home"], values["package-root"], values["search-dir"], values["path-only"]].some(value => value !== undefined)) {

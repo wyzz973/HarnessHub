@@ -52,7 +52,7 @@ async function fixture(t: test.TestContext, largeHistory: boolean): Promise<Fixt
 }
 interface ProcessResult { readonly code: number | null; readonly signal: string | null; readonly stderr: string }
 function start(f: Fixture, json = true): { readonly child: ChildProcessWithoutNullStreams; readonly result: Promise<ProcessResult>; readonly stderr: (pattern: RegExp) => Promise<void> } {
-  const child = spawn(process.execPath, [chatCli, "--session", f.state.id, "--data-dir", f.data, ...(json ? ["--json"] : [])],
+  const child = spawn(process.execPath, [chatCli, "--session", f.state.id, "--data-dir", f.data, "--workspace-lock-root", join(f.root, "locks"), ...(json ? ["--json"] : [])],
     { cwd: f.root, env: { PATH: join(f.root, "empty-path"), HOME: f.home, TMPDIR: f.temporary, LANG: "C" }, stdio: ["pipe", "pipe", "pipe"] });
   f.children.add(child); child.stdin.on("error", () => {});
   let stderr = "";

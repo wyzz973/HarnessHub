@@ -1148,7 +1148,7 @@
       ],
       "layer": "integration",
       "scenario": "web 命令集中决定是否提供读取登录 shell",
-      "expected": "带 --no-login-shell、设置了 CI（即使为空）或在 Windows 上时不提供，否则使用 $SHELL（未设置时没有可读的 shell）；从正式 web 命令启动：不带参数时接口返回可读取，带 --no-login-shell 时返回不提供，帮助列出这个参数，拼错的参数在启动前被拒绝并以非零退出",
+      "expected": "带 --no-login-shell、设置了 CI（即使为空）或在 Windows 上时不提供，否则使用 $SHELL（未设置时没有可读的 shell）；从正式 web 命令启动：不带参数时接口返回可读取，带 --no-login-shell 时返回不提供，帮助列出这个参数，拼错的参数在启动前被拒绝并以非零退出；带 --workspace-lock-root 时使用给定的租约目录",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/integration/login-shell.test.ts"
@@ -4008,6 +4008,27 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/integration/g059.test.ts"
+    },
+    {
+      "id": "G059-NC1",
+      "task": "G059",
+      "requirements": [
+        "R01",
+        "R11",
+        "R22",
+        "R25"
+      ],
+      "invariants": [
+        "INV-06",
+        "INV-25",
+        "INV-26"
+      ],
+      "layer": "integration",
+      "scenario": "工作区租约目录的默认值与显式指定",
+      "expected": "不指定时为每个本机用户共用的 /tmp/harnessgateway-workspaces-<uid>；显式目录必须是规范化的绝对路径，相对或含 .. 的路径在创建任何内容之前以 INVALID_INPUT 拒绝，不存在时以 0700 创建，权限对他人开放或是符号链接时以 INVALID_STORAGE 拒绝；使用同一目录的两个应用互斥同一工作区，使用另一目录的不互斥；chat 命令拒绝相对目录且不启动 Harness，sessions 与 web 命令使用给定的目录；测试一律使用自己的临时租约目录",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/session-cli.test.ts"
     },
     {
       "id": "G060-C01",

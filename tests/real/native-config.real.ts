@@ -61,7 +61,7 @@ test("installed Harness keeps a setting its own command changed, until an explic
       await mkdir(workspace);
       const configuration = await prepareConfiguration({ workspace, ...(process.env.HH_REAL_MANIFEST ? { manifestPath: process.env.HH_REAL_MANIFEST } : {}) });
       const proof: Record<string, unknown> = { harnessId, option, from, to, startedAt: new Date().toISOString() };
-      const app = application(data, () => {});
+      const app = application(data, () => {}, { workspaceLockRoot: join(root, "locks") });
       try {
         const requested = process.env["HH_REAL_MODEL_" + harnessId.toUpperCase()];
         const byModel = option === "model", selection = byModel ? { harnessId, nativeModel: from } : { harnessId, ...(requested === undefined ? {} : { nativeModel: requested }), nativeOptions: { [option]: from } };

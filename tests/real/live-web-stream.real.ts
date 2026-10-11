@@ -89,7 +89,7 @@ test("real Codex delivers partial text over authenticated web SSE before model c
   });
   await new Promise<void>(done => provider.listen(0, "127.0.0.1", done)); const address = provider.address(); assert.ok(address && typeof address !== "string");
   await writeFile(manifest, JSON.stringify({ version: 2, definitions: [], overrides: { "codex-native": { executable } } }));
-  gateway = await startWebServer({ root: data, configuration: await prepareConfiguration({ workspace, manifestPath: manifest, searchDirs: [dirname(executable)], pathOnly: true }), port: 0 });
+  gateway = await startWebServer({ root: data, configuration: await prepareConfiguration({ workspace, manifestPath: manifest, searchDirs: [dirname(executable)], pathOnly: true }), port: 0, workspaceLockRoot: join(root, "locks") });
   const startup = new URL(gateway.url), origin = startup.origin;
   const boot = await fetch(origin + "/api/v1/auth/bootstrap", { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ token: new URLSearchParams(startup.hash.slice(1)).get("token") }) }); assert.equal(boot.status, 200);
   const cookie = boot.headers.get("set-cookie")!.split(";", 1)[0]!, csrf = String(record(await boot.json()).csrfToken);

@@ -53,7 +53,7 @@ test("installed Harness resumes its own native session across a Hub owner restar
       const configuration = await prepareConfiguration({ workspace, ...(process.env.HH_REAL_MANIFEST ? { manifestPath: process.env.HH_REAL_MANIFEST } : {}) });
       const tag = "HH_NATIVE_" + randomUUID().slice(0, 8).toUpperCase();
       const proof: Record<string, unknown> = { harnessId, startedAt: new Date().toISOString() };
-      let app: App | null = application(data, () => {});
+      let app: App | null = application(data, () => {}, { workspaceLockRoot: join(root, "locks") });
       let id: SessionId | null = null;
       try {
         const catalog = await app.factory.discoverModels({ harnessId }, configuration, new AbortController().signal);
@@ -73,7 +73,7 @@ test("installed Harness resumes its own native session across a Hub owner restar
         assert.ok(state.nativeBindings?.some(binding => binding.harnessId === harnessId && binding.status === "ready"), "first turn must leave a ready native binding");
         // A new owner of the same data root: no in-memory connection, process, or prompt history survives.
         await closeApp(app); app = null;
-        app = application(data, () => {});
+        app = application(data, () => {}, { workspaceLockRoot: join(root, "locks") });
         app.runtime.send(id, "上一条用户消息里的标记是什么？只原样回复那个标记，不要调用任何工具。", "second-" + randomUUID());
         await app.runtime.wait(id);
         state = app.runtime.read(id);

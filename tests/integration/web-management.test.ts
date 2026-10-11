@@ -26,7 +26,7 @@ async function fixture(t: test.TestContext, compose?: WebServerOptions["applicat
   const root = await mkdtemp(join(tmpdir(), "harness-web-management-")), workspace = join(root, "workspace"), assets = join(root, "assets"), data = join(root, "data");
   await mkdir(workspace); await mkdir(assets); await writeFile(join(assets, "index.html"), "<!doctype html><title>Management fixture</title>");
   const configuration = await prepareConfiguration({ workspace, pathOnly: true });
-  const gateway = await startWebServer({ root: data, configuration, assetsDirectory: assets, ...(compose === undefined ? {} : { application: compose }) });
+  const gateway = await startWebServer({ root: data, configuration, assetsDirectory: assets, ...(compose === undefined ? { workspaceLockRoot: join(root, "locks") } : { application: compose }) });
   const f: Fixture = { root, data, workspace: configuration.workspace, gateway, origin: new URL(gateway.url).origin, cookie: "", csrf: "", expectedCloseCode: null };
   t.after(async () => {
     try { if (f.expectedCloseCode === null) await f.gateway.close(); else await assert.rejects(f.gateway.close(), (error: unknown) => record(error).code === f.expectedCloseCode); }

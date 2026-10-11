@@ -94,3 +94,7 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
   - 只加入 Gateway 尚未搜索的目录，用于发现与新对话，可逐项移除；不写入 Gateway 环境。
   - CI 与 Windows 不提供。
   - G(i)（DSH Desktop 的命令位置）因没有官方证据而取消。
+- [ADR-041：显式指定工作区租约目录，测试不再写入共享目录](0041-workspace-lock-root.md)（accepted）：
+  - `web`、`chat`、`sessions` 支持 `--workspace-lock-root <绝对目录>`，默认仍为每个本机用户共用的 `/tmp/harnessgateway-workspaces-<uid>`。
+  - 显式目录必须是规范化的绝对路径，私有且属于当前用户；另用目录会失去与本机其他 Gateway 的互斥，只用于隔离的测试或刻意独立的实例。
+  - 测试一律使用自己的临时租约目录。已有文件的清理和 `/tmp` 不耐久的问题，下一阶段先写提案。

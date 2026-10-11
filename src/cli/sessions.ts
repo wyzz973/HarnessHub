@@ -20,21 +20,21 @@ export async function main(args: readonly string[]): Promise<number> {
     const { values } = parseArgs({ args: [...args.slice(1)], options: {
       "data-dir": { type: "string" }, session: { type: "string" }, json: { type: "boolean" },
       "after-seq": { type: "string" }, limit: { type: "string" }, "command-id": { type: "string" }, help: { type: "boolean", short: "h" },
-      harness: { type: "string" }, "acknowledge-unknown": { type: "boolean" },
+      harness: { type: "string" }, "acknowledge-unknown": { type: "boolean" }, "workspace-lock-root": { type: "string" },
     }, strict: true, allowPositionals: false });
-    if (values.help) { process.stdout.write("HarnessGateway sessions list/show/events/close/resume --data-dir <path> [--session <id>] [--json]\n读操作不取得writer owner；close保留历史。resume检查关闭证据并验证目标；可用--harness指定目标，结果未知时另需--acknowledge-unknown，不重跑旧任务。\n"); return 0; }
+    if (values.help) { process.stdout.write("HarnessGateway sessions list/show/events/close/resume --data-dir <path> [--session <id>] [--json] [--workspace-lock-root <绝对目录>]\n读操作不取得writer owner；close保留历史。resume检查关闭证据并验证目标；可用--harness指定目标，结果未知时另需--acknowledge-unknown，不重跑旧任务。\n"); return 0; }
     if (action !== "list" && values.session === undefined) throw new SessionError("INVALID_INPUT", "--session is required");
     if (action !== "events" && values["after-seq"] !== undefined) throw new SessionError("INVALID_INPUT", "--after-seq is only used with events");
     if (action !== "resume" && (values.harness !== undefined || values["acknowledge-unknown"] !== undefined)) throw new SessionError("INVALID_INPUT", "recovery options are only used with resume");
     const root = dataRoot(values["data-dir"]), limit = integer(values.limit, 50, 1, 100);
     let output: unknown;
     if (action === "resume") {
-      app = application(root, () => {});
+      app = application(root, () => {}, values["workspace-lock-root"] === undefined ? {} : { workspaceLockRoot: values["workspace-lock-root"] });
       const id = sessionId(values.session), current = app.runtime.read(id);
       output = app.runtime.resume(id, values.harness === undefined ? current.selection : selection(values.harness), values["command-id"] ?? newCommand("resume"), values["acknowledge-unknown"] ?? false);
       await app.runtime.wait(id);
     } else if (action === "close") {
-      app = application(root, () => {});
+      app = application(root, () => {}, values["workspace-lock-root"] === undefined ? {} : { workspaceLockRoot: values["workspace-lock-root"] });
       output = await app.runtime.closeSession(sessionId(values.session), values["command-id"] ?? newCommand("close"));
     } else {
       reader = new SqliteSessionReader(root);
