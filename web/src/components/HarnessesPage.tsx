@@ -1,6 +1,6 @@
 import { ArrowRight, ArrowUpRight, Check, CheckCheck, ChevronRight, CircleAlert, Clock3, Download, Layers3, Package, RefreshCw, Search, ShieldCheck, Square, Terminal, X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
-import type { HarnessEntrySource, HarnessView } from "../../../src/contracts/web.js";
+import type { HarnessEntrySource, HarnessView, LoginShellView } from "../../../src/contracts/web.js";
 import type { InstallationJobView, InstallationLog } from "../../../src/contracts/management.js";
 import { errorMessage, GatewayApi, protocolLabel } from "../api.js";
 import { BrandIcon } from "./BrandIcon.js";
@@ -41,6 +41,24 @@ function adapterVersion(harness: HarnessView): string | null {
 function actionFor(harness: HarnessView): "install" | "upgrade" { return harness.management.native ? harness.management.native.canInstall ? "install" : "upgrade" : missing(harness) ? "install" : "upgrade"; }
 function canManage(harness: HarnessView): boolean { return harness.management.native ? harness.management.native.canInstall || harness.management.native.canUpgrade : harness.management.source !== "system" && (harness.management.recipe?.canInstall ?? false); }
 function channelLabel(channel: string): string { return ({npm:"npm 全局安装", "brew-formula":"Homebrew", "brew-cask":"Homebrew", uv:"uv 工具", archive:"本机程序目录", "native-cli":"程序官方更新器"} as Record<string,string>)[channel] ?? "原安装渠道"; }
+/**
+ * Directories from the login shell's PATH (G(ii)): read only when the user asks, since that runs the shell's login
+ * configuration; kept for discovery until the user removes them. Hidden where it is not offered and nothing was added.
+ */
+function LoginShellPanel({ api, onChanged }: { readonly api: GatewayApi; readonly onChanged: () => void }) {
+  const [view, setView] = useState<LoginShellView | null>(null), [busy, setBusy] = useState(false), [problem, setProblem] = useState<string | null>(null);
+  useEffect(() => { const controller = new AbortController(); api.loginShell(controller.signal).then(setView, () => {}); return () => controller.abort(); }, [api]);
+  if (view === null || (!view.available && !view.dirs.length)) return null;
+  const change = (operation: Promise<LoginShellView>) => { setBusy(true); setProblem(null); operation.then(next => { setView(next); onChanged(); }, failure => setProblem(errorMessage(failure))).finally(() => setBusy(false)); };
+  return <section className="login-shell-panel" aria-label="来自登录 shell 的目录">
+    <div className="login-shell-heading"><div><strong>从登录 shell 补充搜索目录</strong>
+      <p>会执行你的 shell 登录配置{view.shell ? `（${view.shell} -l）` : ""}来读取 PATH；新增的目录只用于发现 Harness，不改变 HarnessHub 自己的环境。</p></div>
+      {view.available ? <button type="button" className="button secondary" disabled={busy} onClick={() => change(api.readLoginShell(crypto.randomUUID()))}>{busy ? <Spinner/> : <RefreshCw size={15}/>}读取并重新检测</button> : null}</div>
+    {view.dirs.length ? <ul>{view.dirs.map(dir => <li key={dir}><code>{dir}</code><button type="button" className="text-button" disabled={busy} onClick={() => change(api.removeLoginShellDirectory(dir, crypto.randomUUID()))}>移除</button></li>)}</ul>
+      : view.readAt !== null ? <small>登录 shell 的 PATH 没有带来新的目录。</small> : null}
+    {problem ? <p className="error-text" role="status">{problem}</p> : null}
+  </section>;
+}
 export function HarnessesPage(props: HarnessProps) {
   const { harnesses, jobs } = props;
   const [query, setQuery] = useState("");
@@ -70,6 +88,7 @@ export function HarnessesPage(props: HarnessProps) {
             {busy ? <button className="button secondary" onClick={() => setSelectedId(harness.id)}><Spinner/>{job ? installationStatus(job) : "提交中"}</button> : needsAction && installable ? <button className={missing(harness) ? "button primary" : "button secondary"} onClick={() => { setSelectedId(harness.id); props.onInstall(harness, actionFor(harness)); }}>{missing(harness) ? <Download size={15}/> : <ArrowUpRight size={15}/>} {actionFor(harness) === "install" ? harness.installed ? "安装适配器" : "安装" : "升级"}</button> : available ? <button className="button secondary" onClick={() => props.onChoose(harness)}>开始对话<ArrowRight size={14}/></button> : <button className="button subtle" onClick={() => setSelectedId(harness.id)}>查看安装详情</button>}
             <button className="icon-button" aria-label={`${harness.name} 的详情`} onClick={() => setSelectedId(harness.id)}><ChevronRight size={17}/></button></div></article>;
       })}</div> : <EmptyState icon={<Layers3 size={28}/>} title={query ? "没有匹配的 Harness" : "这个分类中暂无 Harness"} action={<button className="button secondary" onClick={() => { setQuery(""); setFilter("all"); }}>查看全部目录</button>}>试试其他名称或切换分类。</EmptyState>}
+      <LoginShellPanel api={props.api} onChanged={props.onRescan}/>
       <div className="management-footnote"><ShieldCheck size={16}/><span>本机安装升级沿用原渠道。执行期间暂停对应程序的新任务；模型配置、登录状态与对话历史保留。</span></div>
     </div>
     {selected ? <HarnessDrawer {...props} harness={selected} onClose={() => setSelectedId(null)}/> : null}

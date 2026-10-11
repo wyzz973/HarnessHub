@@ -245,6 +245,8 @@ test("a process kept under an owner that was killed is ended at the next start, 
   const { app, factory, lost } = nextOwner(t, root, () => { try { process.kill(-crashed.leader, "SIGKILL"); } catch { /* already ended */ } });
   assert.equal(crashed.retained?.process?.group, crashed.leader, "the recorded group is the one the kept program leads");
   assert.ok(alive(crashed.member!), "the background task outlived its owner");
+  // The program itself leaves once its input closes; its group lives on in the background task.
+  assert.ok(await settle(() => !alive(crashed.leader)), "the program exits when its input closes");
   assert.notEqual(app.read(crashed.session).retained, undefined, "recovery keeps the record for the reaper");
 
   assert.deepEqual(await app.reapKept(), [{ sessionId: crashed.session, outcome: "terminated", leaseReleased: true }], "the outcomes it reports");

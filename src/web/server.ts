@@ -3,7 +3,7 @@ import { constants, realpathSync } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { release, userInfo } from "node:os";
-import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { application as composeApplication } from "../cli/session-application.js";
 import { ProviderError } from "../contracts/provider.js";
@@ -24,6 +24,7 @@ import { buildRevision, NativeCatalogCache, type NativeReadiness } from "./nativ
 import { conversationMarkdown } from "./conversation-export.js";
 import { runDiagnostics, scrubDiagnostics } from "./run-diagnostics.js";
 import { nativeResume } from "../infrastructure/management/verified-versions.js";
+import { LoginShellStore, readLoginShellPath, type LoginShellDirectories } from "../infrastructure/discovery/login-shell.js";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -45,6 +46,11 @@ export interface WebServerOptions {
   readonly application?: typeof composeApplication;
   /** The Turn budgets (ADR-036), resolved by `resolveTurnBudgets`; the defaults otherwise. */
   readonly budgets?: { readonly executionBudgetMs: number; readonly waitBudgetMs: number };
+  /**
+   * The login shell the user may ask to read PATH from (G(ii)) and the system's shell list; absent or false: not offered
+   * (CI, sandboxes and tests that do not name a fixture shell).
+   */
+  readonly loginShell?: { readonly shell: string | null; readonly shells: string } | false;
 }
 export interface WebServer { readonly url: string; close(): Promise<void> }
 function record(value: unknown, allowed: readonly string[], required: readonly string[] = []): Record<string, unknown> {
@@ -262,12 +268,12 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     throw error;
   });
   let app: ReturnType<typeof composeApplication>;
-  // A conversation's view with the live state of the native process it keeps (ADR-030).
   // A Turn waits for its workspace or, when every slot is taken, for a slot (ADR-036).
   const queueOf = (id: SessionSnapshot["id"]): NonNullable<SessionView["queue"]> | null => {
     const workspace = app.runtime.queueState(id), slot = workspace === null ? app.runtime.slotWait(id) : null;
     return workspace !== null ? { kind: "workspace", ...workspace } : slot !== null ? { kind: "slot", ...slot } : null;
   };
+  // A conversation's view with the live state of the native process it keeps (ADR-030).
   const sessionView = (snapshot: SessionSnapshot, permissions: SessionView["permissions"] = []): SessionView => view(snapshot, permissions, app.runtime.keptProcess(snapshot.id), app.runtime.keptLoss(snapshot.id),
     queueOf(snapshot.id), Object.fromEntries(snapshot.runs.flatMap(run => { const holder = app.runtime.busyHolderOf(run.id); return holder === null ? [] : [[run.id, holder]]; })),
     app.runtime.keptOutside(snapshot.id));
@@ -287,22 +293,30 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
   // the build that read them (every compiled Gateway file), since its drivers decide what a catalog contains.
   const nativeModels = new HarnessModels(app.factory, new NativeCatalogCache(realpathSync(options.root), { assertOwner: () => app.store.assertOwner(),
     report: problem => process.stderr.write("HarnessGateway: NATIVE_CATALOG_CACHE_UNAVAILABLE (" + problem + ")\n"), revision }));
+  // Directories the user took from the login shell's PATH (G(ii)) extend discovery and new conversations until removed.
+  const loginShells = new LoginShellStore(realpathSync(options.root));
+  let loginDirs: LoginShellDirectories | null = await loginShells.load();
+  const searchDirs = (): readonly string[] => [...options.configuration.searchDirs, ...(loginDirs?.dirs ?? []).filter(dir => !options.configuration.searchDirs.includes(dir))];
+  const loginShellView = () => ({ available: options.loginShell !== undefined && options.loginShell !== false && options.loginShell.shell !== null,
+    ...(options.loginShell && options.loginShell.shell !== null ? { shell: basename(options.loginShell.shell) } : {}), dirs: loginDirs?.dirs ?? [], readAt: loginDirs?.readAt ?? null });
   /** A request's workspace with this Gateway's catalog, configuration home and search settings. */
   const workspaceConfiguration = (workspace: string) => prepareConfiguration({ workspace,
     ...(options.configuration.configHome === null ? {} : { configHome: options.configuration.configHome }),
     ...(options.configuration.manifestPath === null ? {} : { manifestPath: options.configuration.manifestPath }),
-    packageRoots: options.configuration.packageRoots, searchDirs: options.configuration.searchDirs, pathOnly: options.configuration.pathOnly });
+    packageRoots: options.configuration.packageRoots, searchDirs: searchDirs(), pathOnly: options.configuration.pathOnly });
   let origin = "", host = "", running = 0, stopping = false, closing: Promise<void> | null = null;
   const bootstrap = randomBytes(32).toString("hex"), bootstrapExpires = Date.now() + BOOTSTRAP_MS;
   let bootstrapAvailable = true;
   const logins = new Map<string, Login>();
   let harnesses: readonly HarnessView[] = [];
   let scan: Promise<readonly HarnessView[]> | null = null;
+  /** A scan with the current search directories, after any scan still running with the previous ones. */
+  const rescanWith = async (): Promise<void> => { if (scan) await scan.catch(() => []); scan = null; await rescan(); };
   const rescan = (): Promise<readonly HarnessView[]> => {
     if (scan) return scan;
     const pending = inventory({ ...(options.configuration.manifestPath === null ? {} : { manifest: options.configuration.manifestPath }),
       environment: app.factory.discoveryEnvironment.values, home: app.factory.discoveryEnvironment.home,
-      searchDirs: options.configuration.searchDirs, packageRoots: options.configuration.packageRoots, pathOnly: options.configuration.pathOnly,
+      searchDirs: searchDirs(), packageRoots: options.configuration.packageRoots, pathOnly: options.configuration.pathOnly,
       managedResolver: app.management }).then(async observed => {
       app.management.setSystemObservations(observed.report.harnesses.flatMap(harness => harness.controls.flatMap(control => {
         if (control.state !== "candidate" || control.command === null || observed.managedBindings.has(control.id)) return [];
@@ -372,6 +386,26 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         readiness: readinessViews(nativeModels.readiness(), snapshots) }; json(response, 200, output); return;
     }
     if (path === "/api/v1/harnesses" && method === "GET") { queries(url, []); json(response, 200, await rescan()); return; }
+    // The login shell's PATH, read once on the user's request: it runs the shell's login configuration (G(ii)).
+    if (path === "/api/v1/discovery/login-shell") {
+      if (method === "GET") { queries(url, []); json(response, 200, loginShellView()); return; }
+      if (method === "POST") {
+        queries(url, []); record(await body(request), ["commandId"], ["commandId"]);
+        const setting = options.loginShell;
+        if (!setting || setting.shell === null) throw new HttpError(409, "LOGIN_SHELL_UNAVAILABLE", "reading the login shell is not offered here");
+        const values = app.factory.discoveryEnvironment.values, env = Object.fromEntries(["HOME", "USER", "LOGNAME", "LANG", "TMPDIR"].flatMap(name => values[name] === undefined ? [] : [[name, values[name]!]]));
+        // Only what the login shell adds: directories this Gateway already searches are not listed again.
+        const known = new Set([...(values.PATH ?? "").split(":"), ...options.configuration.searchDirs]);
+        loginDirs = { shell: setting.shell, readAt: Date.now(), dirs: (await readLoginShellPath(setting.shell, { shells: setting.shells, env })).filter(dir => !known.has(dir)) };
+        await loginShells.save(loginDirs); await rescanWith();
+        json(response, 200, loginShellView()); return;
+      }
+    }
+    if (path === "/api/v1/discovery/login-shell/remove" && method === "POST") {
+      queries(url, []); const input = record(await body(request), ["dir", "commandId"], ["dir", "commandId"]), dir = text(input.dir, "directory", 4096);
+      if (loginDirs !== null && loginDirs.dirs.includes(dir)) { loginDirs = { ...loginDirs, dirs: loginDirs.dirs.filter(item => item !== dir) }; await loginShells.save(loginDirs); await rescanWith(); }
+      json(response, 200, loginShellView()); return;
+    }
     // Read-only: what the latest catalog reads and Runs showed; nothing is started.
     if (path === "/api/v1/harnesses/readiness" && method === "GET") { queries(url, []); json(response, 200, { readiness: readinessViews(nativeModels.readiness(), app.store.list(100)) }); return; }
     if (path === "/api/v1/attachments" && method === "POST") {
@@ -433,7 +467,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       const configuration = workspace === null ? options.configuration : await prepareConfiguration({ workspace,
         ...(options.configuration.configHome === null ? {} : { configHome: options.configuration.configHome }),
         ...(options.configuration.manifestPath === null ? {} : { manifestPath: options.configuration.manifestPath }),
-        packageRoots: options.configuration.packageRoots, searchDirs: options.configuration.searchDirs, pathOnly: options.configuration.pathOnly });
+        packageRoots: options.configuration.packageRoots, searchDirs: searchDirs(), pathOnly: options.configuration.pathOnly });
       const selected = select({ harnessId: extensionsRoute[1], ...(controlId === null ? {} : { controlId }) });
       try { json(response, 200, { extensions: await nativeModels.extensions(selected, configuration) }); }
       catch (error) {
@@ -450,7 +484,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       const configuration = workspace === null ? options.configuration : await prepareConfiguration({ workspace,
         ...(options.configuration.configHome === null ? {} : { configHome: options.configuration.configHome }),
         ...(options.configuration.manifestPath === null ? {} : { manifestPath: options.configuration.manifestPath }),
-        packageRoots: options.configuration.packageRoots, searchDirs: options.configuration.searchDirs, pathOnly: options.configuration.pathOnly });
+        packageRoots: options.configuration.packageRoots, searchDirs: searchDirs(), pathOnly: options.configuration.pathOnly });
       const selected = select({ harnessId: modelsRoute[1], ...(controlId === null ? {} : { controlId }), ...(url.searchParams.get("nativeModel") === null ? {} : {nativeModel:url.searchParams.get("nativeModel")}) });
       try { json(response, 200, await nativeModels.read(selected, configuration, refresh === "1")); }
       catch (error) {
@@ -524,7 +558,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
         const configuration = input.workspace === undefined ? options.configuration : await prepareConfiguration({ workspace: text(input.workspace, "workspace"),
           ...(options.configuration.manifestPath === null ? {} : { manifestPath: options.configuration.manifestPath }),
           ...(options.configuration.configHome === null ? {} : { configHome: options.configuration.configHome }),
-          packageRoots: options.configuration.packageRoots, searchDirs: options.configuration.searchDirs, pathOnly: options.configuration.pathOnly });
+          packageRoots: options.configuration.packageRoots, searchDirs: searchDirs(), pathOnly: options.configuration.pathOnly });
         json(response, 201, sessionView(await app.runtime.create(configuration, select(input.selection), command(input.commandId)))); return;
       }
     }

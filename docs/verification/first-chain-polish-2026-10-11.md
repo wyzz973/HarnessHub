@@ -738,3 +738,48 @@ G(i) 取消：网络检索（[Ollama 文档](https://docs.ollama.com/integration
 未验证：
 - 真实程序中仍在运行大于 0 的情况（只在集成测试和浏览器测试中验证）。
 - Windows。
+
+## 从登录 shell 补充搜索目录（审批代理排序 G(ii)，ADR-040）
+
+交付（依据 [ADR-040](../decisions/0040-login-shell-search-directories.md)）：
+- Harnesses 页的面板写明“会执行你的 shell 登录配置（`<shell> -l`）来读取 PATH”，用户点击“读取并重新检测”时才运行一次。
+- `$SHELL` 必须是绝对路径、文件存在，并且列在 `/etc/shells` 中。运行方式与限制：
+  - 用 `-l -c` 在首尾标记之间读取 PATH；
+  - 3 秒期限，64 KiB 上限；
+  - shell 退出即结束整个进程组，包括登录配置留下、可能占住输出的任务。
+- 只保留这个 Gateway 尚未搜索的、存在的绝对目录。它们用于发现和之后新建的对话，可以逐项移除，保存在数据目录中（0600，只记 shell 名称）。
+- 设置了 `CI` 或在 Windows 上时不提供。不写入 Gateway 自己的环境。
+- G(i) 已取消，原因见上一节与 ADR-040。
+
+检查：
+
+| 命令 | 结果 |
+|---|---|
+| `pnpm build` 与 `node --test dist/tests/*/*.test.js` | 634 通过、0 失败、0 跳过 |
+| `pnpm web:build` 与 `node --test dist/tests/browser/web.browser.js` | 23 通过 |
+| `python3 tools/check_design.py --write` 与默认检查 | 通过；计划场景 438 |
+
+新增测试：
+- 集成测试（G012-NC1），使用夹具 shell，不执行用户真实的登录配置：
+  - 标记之间的 PATH：只保留存在的绝对目录并去重，登录配置自己的输出被忽略；
+  - 拒绝的情况：相对路径的 shell，以及不在 shell 列表中的 shell；
+  - 失败的情况：超过 3 秒（在自身期限内结束）、超过 64 KiB、没有 PATH、退出码非零；
+  - 登录配置留在进程组中、占住输出的后台任务，在读取结束时已不存在；
+  - 保存的目录重启后仍在，无法读取的文件当作没有；
+  - 经 HTTP：未提供时为 409。读取后只加入两个新目录（`/usr/bin` 已被搜索）。原先找不到、只存在于新目录中的 Harness 被发现；移除那个目录后又找不到。
+- 浏览器测试（G054-NC15）：面板说明、点击后列出新增目录、逐项移除后显示“登录 shell 的 PATH 没有带来新的目录”。
+- 原有的保留进程接管测试改为先等原程序自行退出，再接管，使“无法枚举”的结果确定。之前在整套测试的负载下，原程序有时尚未退出，结果偶尔为“0 个”。
+
+调试中的发现与处理：
+- 最初按输出关闭判断 shell 结束。登录配置留下的后台任务继承了标准输出，导致一直等到超时。现在改为在 shell 退出时立即结束整个进程组。
+- 调试时，几次用 `perl alarm` 限时的测试运行留下了 6 个测试子进程。已按核对过的命令行逐个结束，也没有残留的临时目录。
+
+真实验证（开发实例，本机 `/bin/zsh`；证据 `.tmp/cc-login-shell-2026-10-12.json` 与 `.tmp/cc-login-shell-real.png`）：
+- 点击“读取并重新检测”，加入两个 Gateway 原本没有搜索的目录：`/Library/TeX/texbin` 与 `/Applications/VMware Fusion.app/Contents/Public`，来自 `/etc/paths.d`。其中没有 Harness，所以发现结果不变。
+- 登录 shell 在一个 100 毫秒采样间隔内结束，之后没有残留进程。
+- 在页面上逐项移除两个目录后，保存的文件为空列表。
+
+未验证：
+- 其他 shell（bash、fish）的真实读取。
+- 从图形界面启动、PATH 明显较短的环境。
+- Windows（不提供）。

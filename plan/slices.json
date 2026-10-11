@@ -617,7 +617,8 @@
         "G029",
         "G006",
         "G026",
-        "G011"
+        "G011",
+        "G012"
       ],
       "decision": "docs/decisions/0020-complete-native-harness-capabilities.md",
       "allowed_files": [
@@ -720,7 +721,10 @@
         "src/infrastructure/management/service.ts",
         "src/contracts/management.ts",
         "web/src/components/NativeResume.tsx",
-        "tests/fixtures/hermes-cli.mjs"
+        "tests/fixtures/hermes-cli.mjs",
+        "src/infrastructure/discovery/login-shell.ts",
+        "tests/integration/login-shell.test.ts",
+        "src/cli/web.ts"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/complete-native-capabilities-2026-10-11.md"

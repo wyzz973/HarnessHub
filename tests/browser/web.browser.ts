@@ -15,7 +15,7 @@ import { prepareConfiguration } from "../../src/infrastructure/session/binding-f
 const peer = fileURLToPath(new URL("../../../tests/fixtures/web-harness-peer.mjs", import.meta.url));
 const artifact = resolve("artifacts/chat-v3");
 async function launchFixture(providerManagement = true, nativeAcp: { readonly name: string; readonly scenario: string; readonly env?: Readonly<Record<string, string>> } | null = null, nativeCodex: { readonly name: string; readonly scenario: string } | null = null, hermes = false,
-  budgets?: { readonly executionBudgetMs: number; readonly waitBudgetMs: number }) {
+  budgets?: { readonly executionBudgetMs: number; readonly waitBudgetMs: number }, loginShell?: { readonly shell: string; readonly shells: string }) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "harness-web-browser-")));
   const workspace = join(root, "workspace"), shim = join(root, "codex-fixture.mjs"); await mkdir(workspace);
   await writeFile(shim, "#!" + process.execPath + "\nimport " + JSON.stringify(pathToFileURL(peer).href) + ";\n", { mode: 0o700 });
@@ -46,7 +46,7 @@ async function launchFixture(providerManagement = true, nativeAcp: { readonly na
     await runManagementProcess(process.execPath, ["--input-type=module", "-e", code, ctx.stage, spec.recipe.packageName, spec.version, spec.recipe.binName], ctx.stage, { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: ctx.stage }, ctx);
     return { command: { executable: process.execPath, args: [join(ctx.stage, "node_modules", spec.recipe.packageName, "entry.mjs"), ...spec.recipe.args], env: {} }, observedVersion: spec.version, artifactSha256: null };
   } };
-  const gateway = await startWebServer({ root: join(root, "data"), configuration: await prepareConfiguration({ workspace, manifestPath: manifest, pathOnly: true }), port: 0, providerManagement,
+  const gateway = await startWebServer({ root: join(root, "data"), configuration: await prepareConfiguration({ workspace, manifestPath: manifest, pathOnly: true }), port: 0, providerManagement, ...(loginShell === undefined ? {} : { loginShell }),
     application: (data, publish) => application(data, publish, { management: { installationMode: "private-fixture", metadata, installer }, nativeEnvironment: { home: root, values: { HOME: root, PATH: dirname(process.execPath) + ":/usr/bin:/bin" } }, ...(budgets === undefined ? {} : { budgets }) }) });
   return { root, gateway, setVersion: (value: string) => { fixtureVersion = value; }, baseUrl: `http://127.0.0.1:${address.port}/v1`, close: async () => { await gateway.close(); modelServer.closeAllConnections(); await new Promise<void>(done => modelServer.close(() => done())); await rm(root, { recursive: true, force: true }); } };
 }
@@ -1168,5 +1168,29 @@ test("ending a kept process says once that its background tasks outside its grou
   await composer.fill("second"); await composer.press("Enter");
   await expect(log.locator("[data-run-status=completed]")).toHaveCount(2, { timeout: 15000 });
   await expect(page.getByText("原程序的后台任务可能仍在运行", { exact: false })).toHaveCount(0);
+  assert.deepEqual(errors, []);
+});
+
+test("the Harnesses page reads the login shell's PATH only when asked, says it runs the login configuration, and lets each added directory go", { skip: process.platform === "win32" ? "login shells are POSIX" : false, timeout: 120000 }, async t => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "harness-login-browser-"))), bin = join(directory, "tools"), shell = join(directory, "login-sh"), shells = join(directory, "shells");
+  await mkdir(bin);
+  await writeFile(shell, `#!/bin/sh\n[ "$1" = "-l" ] && [ "$2" = "-c" ] || exit 9\nPATH="${bin}:/usr/bin" exec /bin/sh -c "$3"\n`, { mode: 0o700 });
+  await writeFile(shells, shell + "\n");
+  const fixture = await launchFixture(false, null, null, false, undefined, { shell, shells }); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); await rm(directory, { recursive: true, force: true }); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  await page.getByRole("button", { name: "Harnesses", exact: true }).click();
+  const panel = page.getByRole("region", { name: "来自登录 shell 的目录" });
+  await expect(panel).toContainText("会执行你的 shell 登录配置（login-sh -l）来读取 PATH");
+  await expect(panel.locator("li")).toHaveCount(0); await expect(panel).not.toContainText("没有带来新的目录");
+  await panel.getByRole("button", { name: "读取并重新检测" }).click();
+  await expect(panel.locator("li code")).toHaveText([bin], { timeout: 30000 });
+  await page.screenshot({ path: join(artifact, "login-shell-panel.png"), animations: "disabled" });
+  await panel.locator("li").getByRole("button", { name: "移除" }).click();
+  await expect(panel.locator("li")).toHaveCount(0, { timeout: 30000 });
+  await expect(panel).toContainText("登录 shell 的 PATH 没有带来新的目录。");
   assert.deepEqual(errors, []);
 });

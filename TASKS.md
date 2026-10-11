@@ -742,13 +742,15 @@
 - tests/integration/discovery-v2.test.ts
 - tests/unit/inventory.test.ts
 - tests/integration/discovery-cli.test.ts
+- src/infrastructure/discovery/login-shell.ts
+- tests/integration/login-shell.test.ts
 
 验收：
 - 返回安装观察，不自动注册
 - 拒绝歧义和越界
 - 明确原因，不联网下载或调用模型
 
-场景：G012-C01, G012-C02, G012-C03。
+场景：G012-C01, G012-C02, G012-C03, G012-NC1。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 
@@ -1708,7 +1710,7 @@
 - 不提前展示新Harness已生效
 - 可操作且不持有独立业务状态
 
-场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4, G054-NC5, G054-NC6, G054-NC7, G054-NC8, G054-NC9, G054-NC10, G054-NC11, G054-NC12, G054-NC13, G054-NC14。
+场景：G054-C01, G054-C02, G054-C03, G054-P01, G054-P02, G054-M01, G054-S01, G054-R01, G054-N01, G054-L01, G054-NC1, G054-NC2, G054-NC3, G054-NC4, G054-NC5, G054-NC6, G054-NC7, G054-NC8, G054-NC9, G054-NC10, G054-NC11, G054-NC12, G054-NC13, G054-NC14, G054-NC15。
 
 禁止范围：不修改其他任务所有权文件；不把局部通过提升为完整链路或真实Harness通过。
 

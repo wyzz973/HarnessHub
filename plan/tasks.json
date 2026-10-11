@@ -1351,7 +1351,9 @@
         "src/infrastructure/discovery/configuration.ts",
         "tests/integration/discovery-v2.test.ts",
         "tests/unit/inventory.test.ts",
-        "tests/integration/discovery-cli.test.ts"
+        "tests/integration/discovery-cli.test.ts",
+        "src/infrastructure/discovery/login-shell.ts",
+        "tests/integration/login-shell.test.ts"
       ],
       "requirements": [
         "R03",
@@ -1373,7 +1375,8 @@
       "test_cases": [
         "G012-C01",
         "G012-C02",
-        "G012-C03"
+        "G012-C03",
+        "G012-NC1"
       ],
       "active_slice": "native-installation-management"
     },
@@ -3395,7 +3398,8 @@
         "G054-NC11",
         "G054-NC12",
         "G054-NC13",
-        "G054-NC14"
+        "G054-NC14",
+        "G054-NC15"
       ],
       "active_slice": "native-installation-management"
     },

@@ -1,7 +1,7 @@
 import { consumeSessionEventStream, SessionStreamError } from "./session-stream.js";
 import { readSseBlocks } from "./attention.js";
 import type { ProviderProtocol, ProviderTarget, ProviderView, ProviderWriteInput } from "../../src/contracts/provider.js";
-import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, WebState } from "../../src/contracts/web.js";
+import type { AttentionFrame, AuthSession, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, LoginShellView, NativeResumeView, NativeSessionListView, SessionSummary, SessionView, SessionStreamFrame, WebState } from "../../src/contracts/web.js";
 import type { HarnessManagementView, InstallationJobView, ManagementJobInput } from "../../src/contracts/management.js";
 import type { AttentionItem, HarnessSelection, PublicMessage, PublicRun, PublicSwitch, RunStatus, SelectionRequest } from "../../src/contracts/session.js";
 import type { NativeExtensions, NativeInputs, NativeOption, NativeModelCatalog } from "../../src/contracts/control.js";
@@ -73,6 +73,10 @@ function decodeHarness(value: unknown): HarnessView {
       return { id: text(control.id), protocol: text(control.protocol), available: bool(control.available), reason: nullableText(control.reason),
         entry: entry === null ? null : { source: choice(entry.source, ["path", "standard-directory", "custom-entry", "package-root", "managed"]) } }; }, 64),
     install: install === null ? null : { command: text(install.command), docs: text(install.docs) } };
+}
+function decodeLoginShell(value: unknown): LoginShellView {
+  const row = record(value);
+  return { available: bool(row.available), ...(row.shell === undefined ? {} : { shell: text(row.shell) }), dirs: list(row.dirs, text).slice(0, 64), readAt: row.readAt === null ? null : number(row.readAt) };
 }
 function decodeManagement(value: unknown): HarnessManagementView {
   const row = record(value), recipe = row.recipe === null ? null : record(row.recipe);
@@ -288,6 +292,11 @@ export class GatewayApi {
         return { id: text(item.id), title: nullableText(item.title), updatedAt: item.updatedAt === null ? null : number(item.updatedAt), ...(item.source === undefined ? {} : { source: text(item.source) }), ...(item.conversationId === undefined ? {} : { conversationId: text(item.conversationId) }) }; }, 1000) };
     }, signal);
   }
+  /** The login shell's directories added to discovery (G(ii)). */
+  loginShell(signal?: AbortSignal): Promise<LoginShellView> { return this.request("/discovery/login-shell", "GET", undefined, decodeLoginShell, signal); }
+  /** Runs the login shell once to read its PATH, then rediscovers; this runs the user's shell login configuration. */
+  readLoginShell(key: string): Promise<LoginShellView> { return this.request("/discovery/login-shell", "POST", { commandId: key }, decodeLoginShell); }
+  removeLoginShellDirectory(dir: string, key: string): Promise<LoginShellView> { return this.request("/discovery/login-shell/remove", "POST", { dir, commandId: key }, decodeLoginShell); }
   /** How to continue the conversation's native session in its own program (ADR-039); null when there is nothing to show. */
   nativeResume(id: string, signal?: AbortSignal): Promise<NativeResumeView | null> {
     return this.request(`/sessions/${encodeURIComponent(id)}/native-resume`, "GET", undefined, value => {

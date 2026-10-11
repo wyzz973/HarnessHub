@@ -4168,3 +4168,51 @@ a {
 .run-diagnostics label { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted) }
 .run-diagnostics p { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.5 }
 .diagnostics-copy { width: auto; padding: 4px 10px; border: 1px solid #ded8cc; border-radius: 7px }
+
+/* Directories from the login shell's PATH (G(ii)), added to discovery on the user's request. */
+.login-shell-panel {
+  display:grid;
+  gap:10px;
+  margin:18px 0 0;
+  padding:14px 16px;
+  border:1px solid #ece6dc;
+  border-radius:10px;
+  background:#fbf9f5;
+  font-size:13px
+}
+
+.login-shell-heading {
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:12px;
+  flex-wrap:wrap
+}
+
+.login-shell-heading p {
+  margin:4px 0 0;
+  color:#777066;
+  font-size:12px;
+  line-height:1.6
+}
+
+.login-shell-panel ul {
+  display:grid;
+  gap:6px;
+  margin:0;
+  padding:0;
+  list-style:none
+}
+
+.login-shell-panel li {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px
+}
+
+.login-shell-panel code {
+  overflow-wrap:anywhere;
+  font-size:12px;
+  color:#4f4a42
+}

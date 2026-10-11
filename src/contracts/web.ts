@@ -57,6 +57,15 @@ export interface HarnessReadinessView {
   /** Median time from starting the program to its open native session over this entry's latest Runs (up to five). */
   readonly startupMs?: number;
 }
+/** The login shell's PATH directories the user added to discovery (G(ii)), and whether reading them is offered here. */
+export interface LoginShellView {
+  readonly available: boolean;
+  /** The shell's name, without its path. */
+  readonly shell?: string;
+  readonly dirs: readonly string[];
+  /** Milliseconds since the epoch of the last read; null before any. */
+  readonly readAt: number | null;
+}
 /**
  * How to continue a conversation's native session in the Harness's own program (ADR-039). It is read on demand and is not
  * part of the conversation's view or its export; HarnessHub never runs these commands.

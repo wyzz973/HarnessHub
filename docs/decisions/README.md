@@ -89,3 +89,8 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
   - 交互形式按已安装版本的帮助给出，恢复机制以非交互形式真实验证；版本在验证范围内才给出命令。
   - Cursor 与 Gemini 未验证，只显示 ID；Pi 指向它自己的会话列表；OpenClaw 不显示。
   - 不进入会话视图和导出，Hub 不执行这些命令。
+- [ADR-040：从登录 shell 补充搜索目录](0040-login-shell-search-directories.md)（accepted）：
+  - 用户在 Harnesses 页触发时，才以 `$SHELL -l -c` 读取一次 PATH；shell 须列在 `/etc/shells`，限 3 秒、64 KiB，结束整个进程组。
+  - 只加入 Gateway 尚未搜索的目录，用于发现与新对话，可逐项移除；不写入 Gateway 环境。
+  - CI 与 Windows 不提供。
+  - G(i)（DSH Desktop 的命令位置）因没有官方证据而取消。

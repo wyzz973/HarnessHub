@@ -91,3 +91,5 @@ ADR-037（2026-10-12）追加：`GET /api/v1/sessions/:id/runs/:runId/diagnostic
 ADR-038（2026-10-12）追加：Harness 的管理视图在产品版本已知、且这个 Harness 有真实验证记录时带`verification: {state: "verified"|"unverified", program, adapter?}`，`program`与`adapter`为验证过的版本（单个版本或“起–止”）。这只是提示，不影响选择、发送、安装或升级。
 
 ADR-039（2026-10-12）追加：`GET /api/v1/sessions/:id/native-resume`返回当前选择的已就绪原生会话`{resume: {harnessId, nativeId?, interactive?, once?, list?, note?} | null}`：`nativeId`只在是普通标识符时给出；`interactive`与`once`只给验证过的产品，并且已安装版本须在验证范围内（ADR-038）；`note`为`version-unverified`或`not-verified`；`list`用于会话标识是私有路径的程序。按需读取，不进入会话视图和导出；需要登录，查询参数无效时返回400。
+
+ADR-040（2026-10-12）追加：`GET /api/v1/discovery/login-shell`返回`{available, shell?, dirs, readAt}`；`POST /api/v1/discovery/login-shell`（`{commandId}`）以`$SHELL -l -c`读取一次登录 shell 的 PATH（须列在`/etc/shells`，3 秒、64 KiB），只保存这个 Gateway 尚未搜索的目录并重新检测；`POST /api/v1/discovery/login-shell/remove`（`{dir, commandId}`）移除一个目录。不提供时为409 `LOGIN_SHELL_UNAVAILABLE`，读取失败为502 `LOGIN_SHELL_FAILED`。

@@ -22,7 +22,9 @@ export async function main(args: readonly string[]): Promise<number> {
     const configuration = await prepareConfiguration({ workspace: resolve(values.cwd ?? process.cwd()), ...(values.manifest === undefined ? {} : { manifestPath: resolve(values.manifest) }),
       ...(values["config-home"] === undefined ? {} : { configHome: resolve(values["config-home"]) }), packageRoots: (values["package-root"] ?? []).map(path => resolve(path)),
       searchDirs: (values["search-dir"] ?? []).map(path => resolve(path)), pathOnly: values["path-only"] ?? false });
-    gateway = await startWebServer({ providerManagement: false, root: dataRoot(values["data-dir"]), configuration, port: values.port === undefined ? 4317 : Number(values.port), budgets,
+    // Reading the login shell's PATH is offered on the user's request only, never in CI and not on Windows (G(ii)).
+    const loginShell = process.env.CI !== undefined || process.platform === "win32" ? false as const : { shell: process.env.SHELL ?? null, shells: "/etc/shells" };
+    gateway = await startWebServer({ providerManagement: false, root: dataRoot(values["data-dir"]), configuration, port: values.port === undefined ? 4317 : Number(values.port), budgets, loginShell,
       ...(values["assets-dir"] === undefined ? {} : { assetsDirectory: resolve(values["assets-dir"]) }) });
     process.stdout.write("HarnessGateway\n" + gateway.url + "\n");
     // What this service runs with (ADR-036), so its log says it without reading the code.

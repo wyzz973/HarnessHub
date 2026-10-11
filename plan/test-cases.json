@@ -1120,6 +1120,23 @@
       "planned_file": "tests/integration/g012.test.ts"
     },
     {
+      "id": "G012-NC1",
+      "task": "G012",
+      "requirements": [
+        "R03",
+        "R04"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "integration",
+      "scenario": "由用户读取登录 shell 的 PATH 补充发现目录",
+      "expected": "只运行列在系统 shell 列表中的绝对路径 shell，用 -l -c 在首尾标记之间读取 PATH；只保留存在的绝对目录且去重；超过 3 秒、超过 64 KiB、没有标记或退出码非零都明确失败，登录配置留在进程组中的任务随之结束；经 HTTP 读取后只加入 Gateway 尚未搜索的目录，原先找不到的 Harness 被发现，用户移除目录后不再发现；未提供时 409；保存的目录重启后仍在，无法读取的文件当作没有",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/login-shell.test.ts"
+    },
+    {
       "id": "G013-C01",
       "task": "G013",
       "requirements": [
@@ -8072,6 +8089,22 @@
       "layer": "e2e",
       "scenario": "结束保留进程后提示仍在运行的组外后台任务",
       "expected": "结束后台进程后输入框下方说明“原程序的后台任务可能仍在运行（N 个进程）”，发送下一条消息后消失",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/browser/web.browser.ts"
+    },
+    {
+      "id": "G054-NC15",
+      "task": "G054",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [
+        "INV-16"
+      ],
+      "layer": "e2e",
+      "scenario": "Harnesses 页从登录 shell 补充搜索目录",
+      "expected": "面板说明会执行 shell 登录配置；只在点击时读取；读取后列出新增目录并可逐项移除，移除后说明没有带来新的目录",
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/browser/web.browser.ts"
