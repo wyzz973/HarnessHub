@@ -114,6 +114,13 @@ export interface PublicRun {
   /** User attachments admitted with this input; the bytes stay in the content store. */
   readonly attachments?: readonly ContentRef[];
   readonly timing?: RunTiming;
+  /**
+   * The Run's native process was handed to its conversation instead of being closed (ADR-030, v11): `cleanup` stays null and
+   * the conversation records the process's own close. Only for a completed Run.
+   */
+  readonly retained?: true;
+  /** The Run ran on the process its conversation kept, without starting the program again (ADR-030, v11). */
+  readonly reused?: true;
   readonly stopRequested: boolean;
   readonly awaitingSwitchId: SwitchId | null;
 }
@@ -130,7 +137,7 @@ export interface PublicSwitch {
 }
 export interface CommandRecord {
   readonly id: CommandId;
-  readonly kind: "create" | "send" | "switch" | "cancel" | "close" | "permission" | "native-reset";
+  readonly kind: "create" | "send" | "switch" | "cancel" | "close" | "permission" | "native-reset" | "retention" | "native-close";
   readonly fingerprint: string;
   readonly resultId: string;
 }
@@ -184,8 +191,17 @@ export interface ImportOrigin {
   readonly historyRead: boolean;
   readonly history: readonly ForkedMessage[];
 }
+/** The native process a conversation keeps between Turns (ADR-030, v11), held since its last Run handed it over. */
+export interface RetainedProcess {
+  readonly harnessId: string;
+  readonly controlId: string;
+  /** The Run that handed the process over most recently. */
+  readonly runId: RunId;
+  /** When the conversation first took the process (milliseconds since the epoch). */
+  readonly since: number;
+}
 export interface SessionSnapshot {
-  readonly schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
+  readonly schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
   readonly id: SessionId;
   readonly version: number;
   readonly lastSeq: number;
@@ -202,6 +218,10 @@ export interface SessionSnapshot {
   readonly nativeBindings?: readonly NativeSessionBinding[];
   /** Present on a branched Session (v8): the public history it was branched from. */
   readonly origin?: SessionOrigin;
+  /** v11: the user chose to keep this conversation's native process between Turns for background work (ADR-030). */
+  readonly retainNative?: true;
+  /** v11: the native process this conversation holds now; cleared when it is closed. */
+  readonly retained?: RetainedProcess;
 }
 export interface EventDraft { readonly type: string; readonly data: Readonly<Record<string, unknown>> }
 export interface SessionEvent extends EventDraft {
@@ -249,6 +269,8 @@ export interface SessionRuntimeOptions {
   readonly fingerprint: (value: string) => string;
   /** Stores native outputs and tool details; without it those facts stay summaries/diagnostics. */
   readonly content?: ContentPort;
+  /** How long a kept native process may stay without a Turn before it is closed (ADR-030); 30 minutes unless shortened. */
+  readonly keptIdleMs?: number;
 }
 export interface SendReceipt { readonly sessionId: SessionId; readonly runId: RunId; readonly replayed: boolean }
 export interface SwitchReceipt { readonly sessionId: SessionId; readonly switchId: SwitchId; readonly replayed: boolean }

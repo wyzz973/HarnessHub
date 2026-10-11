@@ -2036,7 +2036,8 @@
         "src/infrastructure/storage/outbox.ts",
         "tests/integration/g028.test.ts",
         "src/contexts/session/application/runtime.ts",
-        "tests/integration/session-runtime.test.ts"
+        "tests/integration/session-runtime.test.ts",
+        "tests/integration/kept-process.test.ts"
       ],
       "requirements": [
         "R07",

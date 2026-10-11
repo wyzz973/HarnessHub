@@ -41,7 +41,7 @@ test("Run timing is bounded, ordered and exists only from Session v10", () => {
 test("unknown schemas, properties and inconsistent public ownership are rejected", () => {
   const state = seed();
   assert.equal(parseSession({ ...state, schemaVersion: 3 }).schemaVersion, 3);
-  for (const value of [null, {}, { ...state, schemaVersion: 11 }, { ...state, secret: "not-a-field" },
+  for (const value of [null, {}, { ...state, schemaVersion: 12 }, { ...state, secret: "not-a-field" },
     { ...state, activeRunId: "run-one" }, { ...state, lastSeq: 3 }, { ...state, status: "unknown" },
     { ...state, configuration: { ...state.configuration, workspace: "relative" } }]) assert.throws(() => parseSession(value), SessionError);
 });
@@ -207,4 +207,28 @@ test("v9 continued native sessions quote bounded history and keep the reference 
   // An unread history quotes nothing and is never complete; the origin stays immutable.
   assert.equal(parseSession({ ...state, origin: { ...imported, history: [], historyRead: false, complete: false } }).origin?.kind, "import");
   assert.throws(() => assertSessionTransition(parseSession(state), parseSession({ ...state, version: state.version + 1, origin: { ...imported, title: "renamed" } })), /origin is immutable/u);
+});
+
+test("a conversation keeps its native process only from Session v11, through the completed Run that handed it over", () => {
+  const state = seed(), [one, two] = state.runs as ReturnType<typeof run>[];
+  const handed = { ...two!, cleanup: null, retained: true };
+  const kept = (extra: Record<string, unknown>, schemaVersion = 11) => ({ ...state, schemaVersion, runs: [one, handed], retainNative: true,
+    retained: { harnessId: selection.harnessId, controlId: selection.controlId, runId: handed.id, since: 5 }, ...extra });
+  const valid = parseSession(kept({}));
+  assert.equal(valid.retainNative, true); assert.equal(valid.runs[1]?.retained, true); assert.equal(valid.retained?.runId, handed.id);
+  // The native session is ready through that Run even though the Run did not close the process itself.
+  const ready = { harnessId: selection.harnessId, controlId: selection.controlId, checkpoint: "native-1", throughRunId: handed.id, status: "ready" };
+  assert.equal(parseSession(kept({ nativeBindings: [ready] })).nativeBindings?.[0]?.status, "ready");
+  assert.throws(() => parseSession({ ...state, schemaVersion: 11, nativeBindings: [{ ...ready, throughRunId: two!.id }], runs: [one, { ...two!, cleanup: null }] }), /cleanup evidence/u);
+  for (const invalid of [kept({}, 10), { ...state, schemaVersion: 10, retainNative: true }, kept({ retainNative: false }),
+    kept({ runs: [one, { ...handed, status: "failed" }] }), kept({ runs: [one, { ...handed, cleanup: { closed: true, exitCode: 0, signal: null, protocolFailure: null } }] }),
+    kept({ runs: [one, { ...handed, retained: false }] }), kept({ retained: { harnessId: selection.harnessId, controlId: selection.controlId, runId: one!.id, since: 5 } }),
+    kept({ retained: { harnessId: "other", controlId: selection.controlId, runId: handed.id, since: 5 } }), kept({ retained: { harnessId: selection.harnessId, controlId: selection.controlId, runId: handed.id, since: 0 } }),
+    kept({ commands: [...state.commands, { id: "retention-1", kind: "retention", fingerprint, resultId: "session-unit" }] }, 10)])
+    assert.throws(() => parseSession(invalid), SessionError);
+  // A process the previous owner kept is not held after recovery; nothing else changes.
+  const recovered = recoverSession(valid)!;
+  assert.equal(recovered.next.retained, undefined); assert.equal(recovered.next.retainNative, true); assert.equal(recovered.next.status, "open");
+  assert.deepEqual(recovered.events, [{ type: "native.process_lost", data: { runId: handed.id, harnessId: selection.harnessId, controlId: selection.controlId, reason: "owner_ended" } }]);
+  assert.equal(recoverSession(parseSession({ ...state, schemaVersion: 11, retainNative: true })), null);
 });

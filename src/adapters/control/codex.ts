@@ -180,6 +180,10 @@ export class CodexControl implements HarnessControl {
   private foreignUpdates = 0;
   /** Latest thread token totals, including historical totals reported on resume. */
   private lastTotal: Tokens | null = null;
+  /** Notifications that arrived outside any turn of this connection. */
+  private unattributed = 0;
+  get unattributedUpdates(): number { return this.unattributed; }
+  healthy(): boolean { return this.initialized && this.failure === null && this.rpc.failure === null; }
 
   constructor(launch: ControlLaunch, private readonly options: ControlOptions) {
     if (launch.protocol !== "codex-app-server") throw new ControlError("INVALID_INPUT", "Codex control requires an app-server launch");
@@ -593,6 +597,7 @@ export class CodexControl implements HarnessControl {
     return active;
   }
   private notification(method: string, raw: unknown): void {
+    if (this.active === null || this.active.settled) this.unattributed++;
     const params = raw === undefined ? {} : object(raw, "Codex notification params");
     if (method === "thread/started") {
       const thread = object(params.thread, "started thread"); const id = nativeConversationId(thread.id);

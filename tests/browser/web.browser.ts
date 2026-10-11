@@ -832,3 +832,41 @@ test("Codex plan mode answers with its plan, and a thread that follows the nativ
   assert.equal((await current()).nativeStates[0].observed.options.collaboration_mode, "default");
   assert.deepEqual(errors, []);
 });
+
+test("a conversation keeps its native process between Turns, shows it, and ends it on request", { timeout: 120000 }, async t => {
+  const fixture = await launchFixture(false, { name: "Kept Agent", scenario: "hermes" }); let browser: Browser | null = null;
+  t.after(async () => { try { await browser?.close(); } finally { await fixture.close(); } });
+  browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } }), page = await context.newPage(), errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message)); page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await page.goto(fixture.gateway.url);
+  const composer = page.getByRole("textbox", { name: "发送消息", exact: true });
+  const origin = new URL(fixture.gateway.url).origin;
+  const current = async () => { const id = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session"); assert.ok(id); return (await context.request.get(origin + "/api/v1/sessions/" + id)).json(); };
+  const reply = async (text: string, count: number) => {
+    await composer.fill(text); await expect(page.getByRole("button", { name: "发送消息", exact: true })).toBeEnabled(); await composer.press("Enter");
+    await expect.poll(async () => { if (!new URLSearchParams(new URL(page.url()).hash.slice(1)).get("session")) return null; const value = await current(); return value.runs.length === count && value.activeRunId === null && value.runs.at(-1).status; }, { timeout: 15000 }).toBe("completed");
+  };
+  await page.getByRole("button", { name: "选择 Harness", exact: true }).click(); await page.getByRole("option", { name: "Kept Agent", exact: true }).click();
+  // Off by default; a new conversation can choose it before its first message, so even the first Turn's process is kept.
+  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  const keep = page.getByRole("checkbox", { name: "保持原生进程" });
+  await expect(keep).not.toBeChecked(); await keep.click(); await expect(keep).toBeChecked();
+  await page.keyboard.press("Escape");
+  await reply("first", 1);
+  const first = await current();
+  assert.equal(first.retention.enabled, true); assert.equal(first.runs[0].retained, true); assert.equal(first.retention.process?.harnessId, "native-acp");
+  await reply("second", 2);
+  const reused = await current();
+  assert.equal(reused.runs[1].reused, true); assert.equal(reused.runs[1].retained, true); assert.equal(reused.runs[1].cleanup, null);
+  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  await expect(page.locator(".kept-setting")).toContainText("原生进程保留中");
+  await page.screenshot({ path: join(artifact, "kept-process-panel.png"), animations: "disabled" });
+  await page.locator(".kept-setting").getByRole("button", { name: "结束后台进程", exact: true }).click();
+  await expect(page.locator(".kept-setting")).not.toContainText("原生进程保留中");
+  const ended = await current();
+  assert.equal(ended.retention.process, null); assert.equal(ended.retention.enabled, true, "ending the process keeps the choice for later Turns");
+  const events = await (await context.request.get(origin + "/api/v1/sessions/" + ended.id + "/events?afterSeq=0&limit=100")).json();
+  assert.deepEqual(events.events.filter((event: { type: string }) => event.type === "native.process_closed").map((event: { data: { reason: string; cleanup: { closed: boolean } } }) => [event.data.reason, event.data.cleanup.closed]), [["ended_by_user", true]]);
+  assert.deepEqual(errors, []);
+});

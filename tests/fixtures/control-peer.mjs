@@ -192,7 +192,8 @@ lines.on("line", line => {
   }
   if (scenario === "hermes" && message.method === "session/list") { answer(message.id, { sessions: [{ sessionId: "session-fixture", cwd: message.params.cwd, title: "Hermes work", updatedAt: "2026-10-11T10:00:00Z" }] }); return; }
   // Hermes starts a new session for an unknown identity without saying so; a client must not rely on it.
-  if (scenario === "hermes" && message.method === "session/resume") { answer(message.id, {}); return; }
+  // Hermes 0.12 answers resume with nothing; FIXTURE_RESUME_MODELS stands in for an agent that reports its models there too.
+  if (scenario === "hermes" && message.method === "session/resume") { answer(message.id, process.env.FIXTURE_RESUME_MODELS ? { models: hermesModels() } : {}); return; }
   if (message.method === "session/load" && scenario === "load-trailing-replay") {
     // Gemini-style: the load response returns first and history keeps streaming afterwards.
     answer(message.id, {});

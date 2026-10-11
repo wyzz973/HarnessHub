@@ -57,6 +57,14 @@ export interface ChatProps {
   onApply: () => void; onCancel: () => void; onClose: () => void; onDismissError: () => void; onProviders: () => void; onNew: () => void; onMenu: () => void;
   onPermission?: (id: string, option: string, input?: string) => void;
   onNativeBranch?: () => void;
+  /** Keeps this conversation's native process between Turns (ADR-030), or stops keeping it; before a new conversation exists, records the choice for it. */
+  onRetention?: (enabled: boolean) => void;
+  /** A new conversation's choice to keep its native process, applied when its first message creates it. */
+  retainNew?: boolean;
+  /** Ends this conversation's kept native process. */
+  onEndProcess?: () => void;
+  /** Ends the kept process of the conversation that holds this workspace, then sends the refused message again. */
+  onFreeWorkspace?: (run: import("../../../src/contracts/session.js").PublicRun) => Promise<void>;
   onRetryConnection?: () => void;
   onToolDetail?: import("./NativeActivity.js").ToolDetailLoader;
   attachments: readonly import("./Attachments.js").AttachmentDraft[];
@@ -165,7 +173,13 @@ export function ChatPage(props: ChatProps) {
       resumeFollowing();
     }
   };
-  const composer = <>{session?.permissions?.map(request => <NativeQuestion key={request.id} request={request} busy={mutation!==null} onDecision={(option,input)=>props.onPermission?.(request.id,option,input)}/>)}<ChatComposer {...props} onSend={send} active={active} dirty={dirty} pending={pending} problem={problem} blocked={blocked} inputRef={textarea}/></>;
+  // The latest message was refused because another conversation's kept process holds this workspace (ADR-030, option C).
+  const refused = session?.runs.at(-1)?.status === "failed" && session.runs.at(-1)?.error?.code === "WORKSPACE_KEPT" ? session.runs.at(-1)! : null;
+  const [freeing, setFreeing] = useState(false);
+  const composer = <>{session?.permissions?.map(request => <NativeQuestion key={request.id} request={request} busy={mutation!==null} onDecision={(option,input)=>props.onPermission?.(request.id,option,input)}/>)}
+    {refused && props.onFreeWorkspace ? <div className="native-permission kept-conflict" role="status"><strong>工作区正被另一个对话占用</strong><p>那个对话保留着原生进程，它的后台任务可能还在运行。可以结束它的后台进程后重试这条消息，也可以稍后再试。</p><div>
+      <button type="button" disabled={freeing || mutation !== null} onClick={() => { setFreeing(true); void props.onFreeWorkspace!(refused).finally(() => setFreeing(false)); }}>{freeing ? "正在结束…" : "结束那个对话的后台进程并重试"}</button></div></div> : null}
+    <ChatComposer {...props} onSend={send} active={active} dirty={dirty} pending={pending} problem={problem} blocked={blocked} inputRef={textarea}/></>;
   useEffect(() => {
     const dialog = closeDialog.current;
     if (!dialog) return;

@@ -4049,3 +4049,20 @@ a {
 
 .native-tools.is-nested { margin: 2px 0 4px 14px; padding-left: 8px; border-left: 1px solid var(--line, #e6e1d8); }
 .native-tool-agent { color: var(--muted); font-size: 11px; white-space: nowrap; }
+
+.setting-toggle {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  font-size:13px;
+  color:var(--ink)
+}
+
+.setting-toggle input {
+  accent-color:var(--accent);
+  margin:0
+}
+
+.kept-setting {
+  margin-top:10px
+}

@@ -187,6 +187,13 @@ export interface HarnessControl {
   /** Native skills, MCP servers and plugins; absent when the interface cannot list them. */
   extensions?(): Promise<NativeExtensions>;
   /**
+   * Whether this connection can still take a Turn: initialized, without a protocol failure, its process still running. A
+   * conversation that keeps its process (ADR-030) checks it before reusing it; absent means it cannot tell.
+   */
+  healthy?(): boolean;
+  /** Updates the native side sent outside any Turn of this connection (background work, autonomous follow-ups); counted only. */
+  readonly unattributedUpdates?: number;
+  /**
    * The installed Harness's own sessions whose working directory is `cwd`, newest first, on a connection that opens none
    * of them. Absent when the interface cannot list sessions; NATIVE_SESSION_LIST_UNAVAILABLE when it declares but refuses.
    */

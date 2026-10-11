@@ -1077,6 +1077,7 @@
 - tests/integration/g028.test.ts
 - src/contexts/session/application/runtime.ts
 - tests/integration/session-runtime.test.ts
+- tests/integration/kept-process.test.ts
 
 验收：
 - 同一意图只取得一次有效执行权

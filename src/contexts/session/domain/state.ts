@@ -3,6 +3,7 @@ import {
   SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId,
   type CommandRecord, type HarnessSelection, type PublicMessage, type PublicRun, type RunTiming,
   type PublicSwitch, type RunStatus, type SessionConfiguration, type SessionMutation, type SessionSnapshot, type NativeSessionBinding, type ForkedMessage, type SessionOrigin, type NativeConfiguration,
+  type RetainedProcess,
 } from "../../../contracts/session.js";
 import type { BackendResult, CleanupEvidence, NativeOptions, NativeUsage } from "../../../contracts/control.js";
 import { MAX_RUN_OUTPUTS, parseAttachmentRefs, parseContentRef } from "../../../contracts/content.js";
@@ -161,7 +162,7 @@ function runTiming(value: unknown): RunTiming {
 }
 function publicRun(value: unknown): PublicRun {
   const item = record(value, "Run");
-  keys(item, ["id", "commandId", "input", "userMessageId", "assistantMessageId", "selection", "epoch", "status", "cancelRequested", "contextThroughSeq", "sourceRunIds", "backend", "cleanup", "error", "stopRequested", "awaitingSwitchId", "thinking", "tools", "plan", "usage", "notices", "activities", "outputs", "attachments", "timing"], "Run");
+  keys(item, ["id", "commandId", "input", "userMessageId", "assistantMessageId", "selection", "epoch", "status", "cancelRequested", "contextThroughSeq", "sourceRunIds", "backend", "cleanup", "error", "stopRequested", "awaitingSwitchId", "thinking", "tools", "plan", "usage", "notices", "activities", "outputs", "attachments", "timing", "retained", "reused"], "Run");
   return { id: runId(item.id), commandId: commandId(item.commandId), input: text(item.input, "Run input", MAX_INPUT_BYTES),
     userMessageId: messageId(item.userMessageId), assistantMessageId: messageId(item.assistantMessageId), selection: parseSelection(item.selection),
     epoch: number(item.epoch, "Run epoch", 1), status: status(item.status), cancelRequested: boolean(item.cancelRequested, "cancelRequested"),
@@ -182,6 +183,8 @@ function publicRun(value: unknown): PublicRun {
     ...(item.outputs === undefined ? {} : { outputs: array(item.outputs, "native outputs", MAX_RUN_OUTPUTS, publicOutput) }),
     ...(item.attachments === undefined ? {} : { attachments: (() => { const refs = parseAttachmentRefs(item.attachments); if (!refs.length) throw new SessionError("INVALID_DATA", "an empty attachment list is omitted"); return refs; })() }),
     ...(item.timing === undefined ? {} : { timing: runTiming(item.timing) }),
+    ...(item.retained === undefined ? {} : { retained: item.retained === true ? true : (() => { throw new SessionError("INVALID_DATA", "a retained Run is marked true"); })() }),
+    ...(item.reused === undefined ? {} : { reused: item.reused === true ? true : (() => { throw new SessionError("INVALID_DATA", "a reusing Run is marked true"); })() }),
     awaitingSwitchId: item.awaitingSwitchId === null ? null : switchId(item.awaitingSwitchId) };
 }
 function publicMessage(value: unknown): PublicMessage {
@@ -205,10 +208,16 @@ function publicSwitch(value: unknown): PublicSwitch {
 }
 function command(value: unknown): CommandRecord {
   const item = record(value, "command"); keys(item, ["id", "kind", "fingerprint", "resultId"], "command");
-  if (item.kind !== "create" && item.kind !== "send" && item.kind !== "switch" && item.kind !== "cancel" && item.kind !== "close" && item.kind !== "permission" && item.kind !== "native-reset") throw new SessionError("INVALID_DATA", "unknown command kind");
+  if (item.kind !== "create" && item.kind !== "send" && item.kind !== "switch" && item.kind !== "cancel" && item.kind !== "close" && item.kind !== "permission" && item.kind !== "native-reset" && item.kind !== "retention" && item.kind !== "native-close") throw new SessionError("INVALID_DATA", "unknown command kind");
   const fingerprint = text(item.fingerprint, "command fingerprint", 64);
   if (!/^[a-f0-9]{64}$/u.test(fingerprint)) throw new SessionError("INVALID_DATA", "invalid command fingerprint");
   return { id: commandId(item.id), kind: item.kind, fingerprint, resultId: text(item.resultId, "command resultId", 128) };
+}
+function retainedProcess(value: unknown): RetainedProcess {
+  const item = record(value, "kept native process"); keys(item, ["harnessId", "controlId", "runId", "since"], "kept native process");
+  const harnessId = text(item.harnessId, "kept native Harness", 96), controlId = text(item.controlId, "kept native control", 96);
+  if (![harnessId, controlId].every(id => /^[a-z][a-z0-9-]*$/u.test(id))) throw new SessionError("INVALID_DATA", "invalid kept native process identity");
+  return { harnessId, controlId, runId: runId(item.runId), since: number(item.since, "kept native process time", 1) };
 }
 function nativeBinding(value: unknown): NativeSessionBinding {
   const item = record(value, "native binding");
@@ -262,15 +271,17 @@ function unique(values: readonly string[], label: string): void {
 /** Single persisted schema boundary. Malformed state never becomes an empty conversation. */
 export function parseSession(value: unknown): SessionSnapshot {
   const item = record(value, "Session");
-  keys(item, ["schemaVersion", "id", "version", "lastSeq", "epoch", "status", "configuration", "selection", "activeRunId", "pendingSwitchId", "runs", "messages", "switches", "commands", "nativeBindings", "origin"], "Session");
-  if (item.schemaVersion !== 1 && item.schemaVersion !== 2 && item.schemaVersion !== 3 && item.schemaVersion !== 4 && item.schemaVersion !== 5 && item.schemaVersion !== 6 && item.schemaVersion !== 7 && item.schemaVersion !== 8 && item.schemaVersion !== 9 && item.schemaVersion !== 10) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
+  keys(item, ["schemaVersion", "id", "version", "lastSeq", "epoch", "status", "configuration", "selection", "activeRunId", "pendingSwitchId", "runs", "messages", "switches", "commands", "nativeBindings", "origin", "retainNative", "retained"], "Session");
+  if (item.schemaVersion !== 1 && item.schemaVersion !== 2 && item.schemaVersion !== 3 && item.schemaVersion !== 4 && item.schemaVersion !== 5 && item.schemaVersion !== 6 && item.schemaVersion !== 7 && item.schemaVersion !== 8 && item.schemaVersion !== 9 && item.schemaVersion !== 10 && item.schemaVersion !== 11) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
   if (item.status !== "open" && item.status !== "closed" && item.status !== "blocked") throw new SessionError("INVALID_DATA", "unknown Session status");
   const result: SessionSnapshot = { schemaVersion: item.schemaVersion, id: sessionId(item.id), version: number(item.version, "version"), lastSeq: number(item.lastSeq, "lastSeq"),
     epoch: number(item.epoch, "epoch", 1), status: item.status, configuration: parseConfiguration(item.configuration), selection: parseSelection(item.selection),
     activeRunId: item.activeRunId === null ? null : runId(item.activeRunId), pendingSwitchId: item.pendingSwitchId === null ? null : switchId(item.pendingSwitchId),
     runs: array(item.runs, "runs", MAX_RUNS, publicRun), messages: array(item.messages, "messages", MAX_RUNS * 2, publicMessage),
     switches: array(item.switches, "switches", MAX_COMMANDS, publicSwitch), commands: array(item.commands, "commands", MAX_COMMANDS, command), ...(item.nativeBindings === undefined ? {} : { nativeBindings: array(item.nativeBindings, "native bindings", MAX_RUNS, nativeBinding) }),
-    ...(item.origin === undefined ? {} : { origin: origin(item.origin) }) };
+    ...(item.origin === undefined ? {} : { origin: origin(item.origin) }),
+    ...(item.retainNative === undefined ? {} : { retainNative: item.retainNative === true ? true : (() => { throw new SessionError("INVALID_DATA", "kept native processes are marked true"); })() }),
+    ...(item.retained === undefined ? {} : { retained: retainedProcess(item.retained) }) };
   // Branches and their pending native forks exist only from v8; a fork reference always belongs to a branched Session.
   if (result.schemaVersion < 8 && (result.origin !== undefined || result.nativeBindings?.some(binding => binding.status === "fork-pending" || binding.status === "forking"))) throw new SessionError("INVALID_DATA", "branched Sessions require Session v8");
   if (result.nativeBindings?.some(binding => (binding.status === "fork-pending" || binding.status === "forking") && (result.origin?.kind !== "fork" || binding.throughRunId !== null))) throw new SessionError("INVALID_DATA", "a native fork reference needs its branch origin");
@@ -279,6 +290,17 @@ export function parseSession(value: unknown): SessionSnapshot {
   if (imported && (result.schemaVersion < 9 || !result.nativeBindings?.some(binding => binding.harnessId === imported.harnessId)))
     throw new SessionError("INVALID_DATA", "a continued native session requires Session v9 and its native reference");
   if (result.schemaVersion < 10 && result.runs.some(run => run.timing !== undefined)) throw new SessionError("INVALID_DATA", "Run timing requires Session v10");
+  // A conversation that keeps its native process (ADR-030) exists only from v11; the process it holds was handed over by a
+  // completed Run of the same entry, whose process was not closed.
+  if (result.schemaVersion < 11 && (result.retainNative !== undefined || result.retained !== undefined || result.runs.some(run => run.retained !== undefined || run.reused !== undefined) || result.commands.some(command => command.kind === "retention" || command.kind === "native-close")))
+    throw new SessionError("INVALID_DATA", "kept native processes require Session v11");
+  if (result.runs.some(run => run.retained === true && (run.status !== "completed" || run.cleanup !== null || run.backend === null))) throw new SessionError("INVALID_DATA", "only a completed Run without its own cleanup hands its process over");
+  if (result.runs.some(run => run.reused === true && (run.status === "queued" || run.selection.provider !== undefined))) throw new SessionError("INVALID_DATA", "only a started native Run reuses a kept process");
+  if (result.retained !== undefined) {
+    const handed = result.runs.find(run => run.id === result.retained!.runId);
+    if (!handed || handed.retained !== true || handed.selection.provider !== undefined || handed.selection.harnessId !== result.retained.harnessId || handed.selection.controlId !== result.retained.controlId)
+      throw new SessionError("INVALID_DATA", "a kept native process belongs to the Run that handed it over");
+  }
   if (result.schemaVersion < 9 && result.nativeBindings?.some(binding => binding.observed !== undefined)) throw new SessionError("INVALID_DATA", "observed native configuration requires Session v9");
   if (result.origin?.kind === "fork" && result.origin.sessionId === result.id) throw new SessionError("INVALID_DATA", "a Session cannot be branched from itself");
   if (result.schemaVersion < 6 && (result.nativeBindings !== undefined || result.commands.some(command => command.kind === "native-reset"))) throw new SessionError("INVALID_DATA", "native bindings require Session v6");
@@ -290,7 +312,8 @@ export function parseSession(value: unknown): SessionSnapshot {
     if (binding.throughRunId === null) continue;
     const run = result.runs.find(run => run.id === binding.throughRunId);
     if (!run || !terminal(run.status) || run.selection.provider !== undefined || run.selection.harnessId !== binding.harnessId || run.selection.controlId !== binding.controlId) throw new SessionError("INVALID_DATA", "native cursor is not owned by a finished native Run");
-    if (binding.status === "ready" && (run.backend === null || run.cleanup?.closed !== true || run.cleanup.protocolFailure !== null)) throw new SessionError("INVALID_DATA", "native binding lacks settlement and cleanup evidence");
+    // A Run that handed its process to the conversation has no cleanup of its own; the conversation records the close.
+    if (binding.status === "ready" && (run.backend === null || run.retained !== true && (run.cleanup?.closed !== true || run.cleanup.protocolFailure !== null))) throw new SessionError("INVALID_DATA", "native binding lacks settlement and cleanup evidence");
   }
   if (item.schemaVersion === 1 && (result.selection.provider !== undefined || result.runs.some(run => run.selection.provider !== undefined) ||
       result.switches.some(entry => entry.requested.provider !== undefined || entry.target?.provider !== undefined)))
@@ -330,7 +353,8 @@ export function parseSession(value: unknown): SessionSnapshot {
     if (run.sourceRunIds.some(id => id === run.id || !result.runs.some(source => source.id === id && terminal(source.status) &&
       result.messages.some(message => message.id === source.userMessageId && message.seq < user.seq)))) throw new SessionError("INVALID_DATA", "Run context sources are inconsistent or from future input");
     if (result.messages.some(message => run.sourceRunIds.includes(message.runId) && message.seq > run.contextThroughSeq)) throw new SessionError("INVALID_DATA", "Run source message exceeds its context watermark");
-    if (run.status === "completed" && (run.backend?.status !== "completed" || run.cleanup?.closed !== true || run.cleanup.protocolFailure !== null)) throw new SessionError("INVALID_DATA", "completed Run lacks backend and clean closure");
+    // A Run that handed its process to the conversation (v11) has no closure of its own; the conversation records it.
+    if (run.status === "completed" && (run.backend?.status !== "completed" || run.retained !== true && (run.cleanup?.closed !== true || run.cleanup.protocolFailure !== null))) throw new SessionError("INVALID_DATA", "completed Run lacks backend and clean closure");
   }
   for (const entry of result.switches) {
     const preparingSwitch = entry.status === "requested" || entry.status === "validated";
@@ -436,12 +460,20 @@ export function assertSessionTransition(before: SessionSnapshot, after: SessionS
 export function recoverSession(state: SessionSnapshot): SessionMutation | null {
   const unfinished = state.runs.filter(run => !terminal(run.status));
   const pending = state.pendingSwitchId !== null;
-  if (unfinished.length === 0 && !pending) return null;
+  // A process kept by the previous owner is not this owner's: it ended with that owner, or it is an orphan whose workspace
+  // lease stays quarantined until its process group is confirmed gone. Either way it is no longer held here.
+  if (unfinished.length === 0 && !pending) {
+    if (state.retained === undefined) return null;
+    const { retained, ...rest } = state;
+    return { next: rest, events: [{ type: "native.process_lost", data: { runId: retained.runId, harnessId: retained.harnessId, controlId: retained.controlId, reason: "owner_ended" } }] };
+  }
   const unknown = unfinished.some(run => run.status !== "queued");
   const runs = state.runs.map(run => terminal(run.status) ? run : { ...run, status: run.status === "queued" ? "cancelled" as const : "unknown" as const,
     error: { code: "OWNER_ENDED", message: "previous owner ended without confirmed settlement; input was not replayed" } });
   const messages = state.messages.map(message => ({ ...message, status: runs.find(run => run.id === message.runId)!.status }));
   const switches = state.switches.map(entry => entry.id === state.pendingSwitchId ? { ...entry, status: "failed" as const, error: { code: "OWNER_ENDED", message: "pending switch was not activated after owner exit" } } : entry);
-  return { next: { ...state, status: unknown ? "blocked" : state.status, activeRunId: null, pendingSwitchId: null, runs, messages, switches },
-    events: [{ type: "session.recovered", data: { unknownRunIds: runs.filter(run => run.status === "unknown").map(run => run.id), cancelledRunIds: unfinished.filter(run => run.status === "queued").map(run => run.id), replayed: false } }] };
+  const { retained, ...kept } = state;
+  return { next: { ...kept, status: unknown ? "blocked" : state.status, activeRunId: null, pendingSwitchId: null, runs, messages, switches },
+    events: [{ type: "session.recovered", data: { unknownRunIds: runs.filter(run => run.status === "unknown").map(run => run.id), cancelledRunIds: unfinished.filter(run => run.status === "queued").map(run => run.id), replayed: false } },
+      ...(retained === undefined ? [] : [{ type: "native.process_lost", data: { runId: retained.runId, harnessId: retained.harnessId, controlId: retained.controlId, reason: "owner_ended" } }])] };
 }

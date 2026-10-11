@@ -142,6 +142,7 @@ export class AcpControl implements HarnessControl {
   private commandsAnnounced!: () => void;
   private readonly commandsArrived = new Promise<void>(resolve => { this.commandsAnnounced = resolve; });
   get unattributedUpdates(): number { return this.unattributed; }
+  healthy(): boolean { return this.initialized && this.failure === null && this.rpc.failure === null; }
 
   constructor(launch: ControlLaunch, private readonly options: ControlOptions) {
     if (launch.protocol !== "acp-v1") throw new ControlError("INVALID_INPUT", "ACP control requires an ACP launch");

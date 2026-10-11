@@ -81,9 +81,23 @@ export interface SessionView {
   readonly nativeStates?: readonly NativeStateView[];
   /** The public history a branched conversation started from. */
   readonly origin?: import("./session.js").SessionOrigin;
+  /**
+   * Whether the conversation keeps its native process between Turns (ADR-030), and the process it keeps now: when it was
+   * first kept, its last Turn, when it ends unless used, and how many updates it sent outside Turns (counted, not shown).
+   */
+  readonly retention?: { readonly enabled: boolean; readonly process: KeptProcessView | null };
   readonly messages: readonly PublicMessage[];
   readonly runs: readonly PublicRun[];
   readonly switches: readonly PublicSwitch[];
+}
+/** A conversation's kept native process as the chat shows it; times are milliseconds since the epoch. */
+export interface KeptProcessView {
+  readonly harnessId: string;
+  readonly controlId: string;
+  readonly since: number;
+  readonly lastUsedAt: number;
+  readonly idleEndsAt: number;
+  readonly backgroundUpdates: number;
 }
 export interface WebState {
   readonly providerManagement?: boolean;

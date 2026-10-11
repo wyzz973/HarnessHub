@@ -223,7 +223,7 @@ export class SqliteSessionStore implements SessionStore {
     try {
       this.assertPaths();
       const version = this.database.prepare("PRAGMA user_version").get();
-      if (!version || version.user_version !== 10) throw new SessionError("OWNER_LOST", "business database schema no longer matches this owner");
+      if (!version || version.user_version !== 11) throw new SessionError("OWNER_LOST", "business database schema no longer matches this owner");
       const metadata = this.readOwner();
       if (!metadata.active || metadata.generation !== this.ownerGeneration || metadata.token !== this.token || metadata.pid !== process.pid) throw new SessionError("OWNER_LOST", "persistent owner generation no longer belongs to this process");
     } catch (error) {
@@ -234,7 +234,7 @@ export class SqliteSessionStore implements SessionStore {
 
   create(snapshot: SessionSnapshot, events: readonly EventDraft[]): SessionCommit {
     this.assertOwner();
-    if (snapshot.schemaVersion !== 10 || snapshot.version !== 0 || snapshot.lastSeq !== 0) throw new SessionError("INVALID_INPUT", "new Session must use schema v10 and start at version and cursor zero");
+    if (snapshot.schemaVersion !== 11 || snapshot.version !== 0 || snapshot.lastSeq !== 0) throw new SessionError("INVALID_INPUT", "new Session must use schema v11 and start at version and cursor zero");
     const entries = drafts(events), next = parseSession({ ...snapshot, version: 1, lastSeq: entries.length });
     const create = next.commands.find(entry => entry.kind === "create");
     if (!create) throw new SessionError("INVALID_DATA", "Session create command is missing");
@@ -349,7 +349,7 @@ export class SqliteSessionStore implements SessionStore {
     try {
       const versionRow = object(db.prepare("PRAGMA user_version").get(), "database schema version");
       const version = integer(versionRow.user_version, "database schema version");
-      if (version !== 0 && version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 6 && version !== 7 && version !== 8 && version !== 9 && version !== 10) throw new SessionError("INVALID_DATA", "unknown business database schema version");
+      if (version !== 0 && version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 6 && version !== 7 && version !== 8 && version !== 9 && version !== 10 && version !== 11) throw new SessionError("INVALID_DATA", "unknown business database schema version");
       if (version === 0) {
         const tables = db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
         if (tables.length !== 0) throw new SessionError("INVALID_DATA", "unversioned business database already contains data");
@@ -359,7 +359,7 @@ export class SqliteSessionStore implements SessionStore {
           CREATE TABLE sessions(id TEXT PRIMARY KEY,version INTEGER NOT NULL CHECK(version>=1),last_seq INTEGER NOT NULL CHECK(last_seq>=0),snapshot TEXT NOT NULL CHECK(json_valid(snapshot))) STRICT;
           CREATE TABLE create_keys(command_id TEXT PRIMARY KEY,session_id TEXT NOT NULL UNIQUE REFERENCES sessions(id),fingerprint TEXT NOT NULL) STRICT;
           CREATE TABLE events(session_id TEXT NOT NULL REFERENCES sessions(id),seq INTEGER NOT NULL CHECK(seq>=1),owner_generation INTEGER NOT NULL CHECK(owner_generation>=1),event_json TEXT NOT NULL CHECK(json_valid(event_json)),PRIMARY KEY(session_id,seq)) STRICT;
-          PRAGMA user_version=10;
+          PRAGMA user_version=11;
         `);
       }
       const prior = this.readOwner();
@@ -450,6 +450,15 @@ export class SqliteSessionStore implements SessionStore {
         }
         db.exec("PRAGMA user_version=10");
       }
+      // v11 lets a conversation keep its native process between Turns (ADR-030); existing Sessions only change version.
+      if (version >= 1 && version <= 10) {
+        for (const row of db.prepare("SELECT id FROM sessions ORDER BY rowid").all()) {
+          const state = this.readSession(sessionId(row.id));
+          if (state.schemaVersion !== 10) throw new SessionError("INVALID_DATA", "database v10 contains a non-v10 Session");
+          db.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify(parseSession({ ...state, schemaVersion: 11 })), state.id);
+        }
+        db.exec("PRAGMA user_version=11");
+      }
       const generation = prior.generation + 1;
       if (!Number.isSafeInteger(generation)) throw new SessionError("INVALID_DATA", "owner generation exhausted");
       db.prepare("UPDATE owner_metadata SET owner_generation=?,owner_pid=?,owner_token=?,owner_active=1 WHERE singleton=1").run(generation, process.pid, this.token);
@@ -531,7 +540,7 @@ export class SqliteSessionReader {
     this.database = new DatabaseSync(this.databasePath, { readOnly: true, timeout: 0, allowExtension: false, enableForeignKeyConstraints: true });
     try {
       const version = this.database.prepare("PRAGMA user_version").get();
-      if (!version || (version.user_version !== 1 && version.user_version !== 2 && version.user_version !== 3 && version.user_version !== 4 && version.user_version !== 5 && version.user_version !== 6 && version.user_version !== 7 && version.user_version !== 8 && version.user_version !== 9 && version.user_version !== 10)) throw new SessionError("INVALID_DATA", "unknown business database schema version");
+      if (!version || (version.user_version !== 1 && version.user_version !== 2 && version.user_version !== 3 && version.user_version !== 4 && version.user_version !== 5 && version.user_version !== 6 && version.user_version !== 7 && version.user_version !== 8 && version.user_version !== 9 && version.user_version !== 10 && version.user_version !== 11)) throw new SessionError("INVALID_DATA", "unknown business database schema version");
       this.assertReadable();
     } catch (error) { this.database.close(); throw error instanceof SessionError ? error : storageFailure(error); }
   }
@@ -549,7 +558,7 @@ export class SqliteSessionReader {
     try {
       if (!this.database.isOpen || !sameFile(this.rootIdentity, pathIdentity(this.root, true)) || !sameFile(this.markerIdentity, pathIdentity(this.markerPath)) || !sameFile(this.databaseIdentity, pathIdentity(this.databasePath))) throw new SessionError("STORAGE_CHANGED", "read-only storage path identity changed");
       const version = this.database.prepare("PRAGMA user_version").get();
-      if (!version || (version.user_version !== 1 && version.user_version !== 2 && version.user_version !== 3 && version.user_version !== 4 && version.user_version !== 5 && version.user_version !== 6 && version.user_version !== 7 && version.user_version !== 8 && version.user_version !== 9 && version.user_version !== 10)) throw new SessionError("INVALID_DATA", "unknown business database schema version");
+      if (!version || (version.user_version !== 1 && version.user_version !== 2 && version.user_version !== 3 && version.user_version !== 4 && version.user_version !== 5 && version.user_version !== 6 && version.user_version !== 7 && version.user_version !== 8 && version.user_version !== 9 && version.user_version !== 10 && version.user_version !== 11)) throw new SessionError("INVALID_DATA", "unknown business database schema version");
     } catch (error) { this.failed = error instanceof SessionError ? error : storageFailure(error); throw this.failed; }
   }
   private read<T>(read: () => T): T {

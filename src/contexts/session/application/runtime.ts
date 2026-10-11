@@ -1,9 +1,9 @@
 import { parseProviderTarget } from "../../../contracts/provider.js";
-import { TOOL_DIFF_BYTES, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlRun, type NativeToolDetail, type NativeUsage } from "../../../contracts/control.js";
+import { TOOL_DIFF_BYTES, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type BackendResult, type CleanupEvidence, type ControlEvent, type ControlRun, type NativeConversationId, type NativeToolDetail, type NativeUsage } from "../../../contracts/control.js";
 import { MAX_RUN_ATTACHMENTS, MAX_RUN_OUTPUTS, type ContentRef, type ControlAttachment } from "../../../contracts/content.js";
 import {
   SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId,
-  type ForkedMessage, type NativeConfiguration, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicRun, type RunTiming,
+  type ForkedMessage, type HarnessSelection, type NativeConfiguration, type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicRun, type RunTiming,
   type SelectionRequest, type SendReceipt, type SessionBindingFactory, type SessionCommit, type SessionConfiguration,
   type SessionId, type SessionEvent, type SessionMutation, type SessionRuntimeOptions, type SessionSnapshot, type SessionStore, type SwitchReceipt,
 } from "../../../contracts/session.js";
@@ -25,6 +25,28 @@ interface ActiveExecution {
   /** Sequential content writes owned by this Turn; drained before its binding closes. */
   writes: Promise<void>;
   writeFailure: unknown;
+}
+/** A conversation's kept native process (ADR-030): the binding of its last Run, idle between Turns and owned by the runtime. */
+interface KeptProcess {
+  readonly binding: PreparedSessionBinding;
+  readonly selection: HarnessSelection;
+  readonly conversation: NativeConversationId;
+  readonly runId: PublicRun["id"];
+  readonly since: number;
+  /** Updates the process had sent outside its Turns when it was handed over; later ones are its background activity. */
+  readonly baseline: number;
+  readonly lastUsed: number;
+  readonly timer: ReturnType<typeof setTimeout>;
+}
+/** Why a kept process was closed; each close is recorded for its conversation. */
+type KeptRelease = "idle" | "disabled" | "ended_by_user" | "selection_changed" | "conversation_closed" | "native_reset" | "branched" | "exited" | "gateway_shutdown";
+/** At most this many processes are kept at once (ADR-030). */
+const KEPT_LIMIT = 4;
+/** A kept process without a Turn for this long is closed (ADR-030). */
+export const KEPT_IDLE_MS = 30 * 60 * 1000;
+function sameSelection(left: HarnessSelection, right: HarnessSelection): boolean {
+  return left.harnessId === right.harnessId && left.controlId === right.controlId && JSON.stringify(left.provider ?? null) === JSON.stringify(right.provider ?? null)
+    && (left.nativeModel ?? null) === (right.nativeModel ?? null) && JSON.stringify(Object.entries(left.nativeOptions ?? {}).sort()) === JSON.stringify(Object.entries(right.nativeOptions ?? {}).sort());
 }
 const TERMINAL_TOOL = new Set(["completed", "failed", "declined", "cancelled", "interrupted", "error"]);
 /** Byte-bounded UTF-8 text; the tail is kept for streams whose end carries the result. */
@@ -92,8 +114,16 @@ function phase(state: SessionSnapshot, id: PublicRun["id"], name: Exclude<keyof 
   return { timing: { ...timing, [name]: Math.max(now, ...Object.values(timing).filter((value): value is number => typeof value === "number")) } };
 }
 
-/** One global writer, durable admission, and a new explicitly rehydrated native connection per Turn. */
+/**
+ * One global writer, durable admission, and a new explicitly rehydrated native connection per Turn, unless the conversation
+ * keeps its native process between Turns (ADR-030): then the next Turn with the same selection reuses it, and every close
+ * of a kept process (idle, switch, close, reset, branch, shutdown, or the user) is recorded for its conversation.
+ */
 export class SessionRuntime {
+  /** Native processes that conversations keep between Turns, owned here until closed. */
+  private readonly kept = new Map<SessionId, KeptProcess>();
+  /** Kept processes to close; the single writer closes them before its next Turn or switch. */
+  private readonly releases = new Map<SessionId, { readonly reason: KeptRelease; readonly done: Promise<void>; readonly resolve: () => void }>();
   private accepting = true;
   private readonly closingSessions = new Set<SessionId>();
   private readonly managedSessions = new Set<SessionId>();
@@ -155,7 +185,7 @@ export class SessionRuntime {
     const concurrent = this.store.findByCreateKey(command);
     if (concurrent) { replayCommand(concurrent, command, "create", fingerprint); return concurrent; }
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 10, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
+    const state: SessionSnapshot = { schemaVersion: 11, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
       configuration: config, selection: validated, activeRunId: null, pendingSwitchId: null,
       runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }] };
     try {
@@ -215,7 +245,7 @@ export class SessionRuntime {
     }
     const title = typeof read.title === "string" && read.title.trim() ? read.title.replace(/[\0-\x1f\x7f]+/gu, " ").trim().slice(0, 200) : null;
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 10, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration: config, selection: validated,
+    const state: SessionSnapshot = { schemaVersion: 11, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration: config, selection: validated,
       activeRunId: null, pendingSwitchId: null, runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }],
       origin: { kind: "import", harnessId: validated.harnessId, title, omitted, complete: read.historyRead === true && read.complete === true, historyRead: read.historyRead === true, history: quoted },
       nativeBindings: [{ harnessId: validated.harnessId, controlId: validated.controlId, checkpoint, throughRunId: null, status: "ready" }] };
@@ -291,10 +321,13 @@ export class SessionRuntime {
     if (state.status === "closed" || state.activeRunId !== null || state.pendingSwitchId !== null || state.runs.some(run => !terminal(run.status))) throw new SessionError("NATIVE_SESSION_BUSY", "native state can be branched only while idle");
     if (epoch !== state.epoch || state.selection.provider !== undefined) throw new SessionError("NATIVE_SELECTION_CONFLICT", "the selected native Harness changed");
     if (state.runs.some(run => run.status === "unknown" && run.cleanup?.closed !== true)) throw new SessionError("RECOVERY_CLEANUP_REQUIRED", "native resources must be confirmed before branching");
-    return this.commit(id, current => ({ next: { ...current,
+    const committed = this.commit(id, current => ({ next: { ...current,
       nativeBindings: current.nativeBindings?.map(binding => binding.harnessId === current.selection.harnessId && binding.controlId === current.selection.controlId && binding.status !== "archived" ? { ...binding, status: "archived" as const } : binding) ?? [],
       commands: [...current.commands, { id: command, kind: "native-reset", fingerprint, resultId: id }],
-    }, events: [event("native.branch_requested", { harnessId: current.selection.harnessId, controlId: current.selection.controlId, historyPreserved: true, previousBindingPreserved: true })] })).session;
+    }, events: [event("native.branch_requested", { harnessId: current.selection.harnessId, controlId: current.selection.controlId, historyPreserved: true, previousBindingPreserved: true })] }));
+    // The kept process runs the archived native session; it is closed before the next Turn opens a new one (ADR-030).
+    if (this.kept.has(id)) void this.requestRelease(id, "native_reset");
+    return committed.session;
   }
   /**
    * Branches a Session after a finished Run. The branch quotes the public history through that Run and starts with the
@@ -319,13 +352,15 @@ export class SessionRuntime {
     const native = source.selection.provider === undefined ? source.nativeBindings?.find(binding => binding.harnessId === source.selection.harnessId && binding.controlId === source.selection.controlId && binding.status === "ready") : undefined;
     const nativeFork = native !== undefined && native.throughRunId === through.id;
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 10, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration: source.configuration, selection: source.selection,
+    const state: SessionSnapshot = { schemaVersion: 11, id, version: 0, lastSeq: 0, epoch: 1, status: "open", configuration: source.configuration, selection: source.selection,
       activeRunId: null, pendingSwitchId: null, runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }],
       origin: { kind: "fork", sessionId: sourceId, throughRunId: through.id, history },
       ...(nativeFork ? { nativeBindings: [{ harnessId: native.harnessId, controlId: native.controlId, checkpoint: native.checkpoint, throughRunId: null, status: "fork-pending" as const }] } : {}) };
     try {
       const committed = this.store.create(state, [event("session.created", { selection: state.selection, continuity: nativeFork ? "native_fork" : "public_context_rehydrate", origin: { sessionId: sourceId, throughRunId: through.id, messages: history.length, nativeFork } })]);
       this.managedSessions.add(id); this.publish(committed);
+      // The source's kept process holds the native session the branch forks; it is closed first (ADR-030).
+      if (this.kept.has(sourceId)) void this.requestRelease(sourceId, "branched");
       if (nativeFork) this.schedule(id);
       return committed.session;
     } catch (error) { this.fail(error, id); throw error; }
@@ -342,6 +377,93 @@ export class SessionRuntime {
     }
   }
 
+  /**
+   * Opts this conversation in or out of keeping its native process between Turns (ADR-030). Off by default; turning it off
+   * closes a kept process before the next Turn. Idempotent by command key.
+   */
+  setRetention(id: SessionId, enabled: boolean, key: string): SessionSnapshot {
+    this.admit(); const state = this.load(id), command = commandId(key), fingerprint = this.fingerprint({ kind: "retention", enabled });
+    if (replayCommand(state, command, "retention", fingerprint)) return state;
+    this.commandBudget(state);
+    if (state.status === "closed") throw new SessionError("SESSION_CLOSED", "a closed Session keeps no native process");
+    const committed = this.commit(id, current => {
+      const { retainNative, ...rest } = current;
+      return { next: { ...rest, ...(enabled ? { retainNative: true as const } : {}), commands: [...current.commands, { id: command, kind: "retention", fingerprint, resultId: id }] },
+        events: [event("session.retention_changed", { enabled })] };
+    }).session;
+    if (!enabled && this.kept.has(id)) void this.requestRelease(id, "disabled");
+    return committed;
+  }
+  /** Closes this conversation's kept process at the user's request, with the normal stop chain; resolves once it is recorded. */
+  async endKept(id: SessionId, key: string): Promise<SessionSnapshot> {
+    this.admit(); const state = this.load(id), command = commandId(key), fingerprint = this.fingerprint({ kind: "native-close" });
+    if (!replayCommand(state, command, "native-close", fingerprint)) {
+      this.commandBudget(state);
+      this.commit(id, current => ({ next: { ...current, commands: [...current.commands, { id: command, kind: "native-close", fingerprint, resultId: id }] }, events: [event("native.process_close_requested", {})] }));
+    }
+    if (this.kept.has(id) || this.releases.has(id)) await this.requestRelease(id, "ended_by_user");
+    return this.load(id);
+  }
+  /** This conversation's kept process as the chat shows it; null when it keeps none. */
+  keptProcess(id: SessionId): { readonly harnessId: string; readonly controlId: string; readonly since: number; readonly lastUsedAt: number; readonly idleEndsAt: number; readonly backgroundUpdates: number } | null {
+    const kept = this.kept.get(id);
+    return kept === undefined ? null : { harnessId: kept.selection.harnessId, controlId: kept.selection.controlId, since: kept.since, lastUsedAt: kept.lastUsed,
+      idleEndsAt: kept.lastUsed + (this.options.keptIdleMs ?? KEPT_IDLE_MS), backgroundUpdates: this.background(kept) };
+  }
+  /** Every kept process with the workspace it holds, for telling a conversation which one occupies its workspace. */
+  keptProcesses(): readonly { readonly sessionId: SessionId; readonly workspace: string; readonly harnessId: string }[] {
+    return [...this.kept].map(([sessionId, kept]) => ({ sessionId, workspace: kept.binding.workspace, harnessId: kept.selection.harnessId }));
+  }
+  private background(kept: KeptProcess): number { return Math.max(0, (kept.binding.control.unattributedUpdates ?? kept.baseline) - kept.baseline); }
+  /** Asks the single writer to close a kept process before its next Turn or switch; resolves once the close is recorded. */
+  private requestRelease(id: SessionId, reason: KeptRelease): Promise<void> {
+    const pending = this.releases.get(id);
+    if (pending) return pending.done;
+    let resolve!: () => void; const done = new Promise<void>(next => { resolve = next; });
+    this.releases.set(id, { reason, done, resolve });
+    this.schedule(id); return done;
+  }
+  private async drainReleases(): Promise<void> {
+    for (const [id, request] of [...this.releases]) {
+      this.releases.delete(id);
+      try { await this.release(id, request.reason); } catch (error) { this.fail(error, id); } finally { request.resolve(); }
+    }
+  }
+  /**
+   * Closes a kept process with the normal stop chain (request stop, wait, SIGTERM/SIGKILL) and records the close and its
+   * evidence for the conversation. A close that cannot be confirmed leaves the workspace lease quarantined.
+   */
+  private async release(id: SessionId, reason: KeptRelease): Promise<void> {
+    const kept = this.kept.get(id);
+    if (kept === undefined) return;
+    this.kept.delete(id); clearTimeout(kept.timer);
+    const backgroundUpdates = this.background(kept);
+    let cleanup: CleanupEvidence | null = null, problem: ReturnType<typeof fault> | null = null;
+    try { cleanup = await kept.binding.close(); } catch (error) { problem = fault(error); }
+    this.commit(id, current => {
+      const { retained, ...rest } = current;
+      return { next: rest, events: [event("native.process_closed", { runId: kept.runId, reason, backgroundUpdates, cleanup, ...(problem === null ? {} : { error: problem }) })] };
+    });
+  }
+  /** The process this conversation kept, when it can take a Turn with `selection`; a kept process that cannot is closed first. */
+  private async takeKept(id: SessionId, selection: HarnessSelection): Promise<KeptProcess | null> {
+    const kept = this.kept.get(id);
+    if (kept === undefined) return null;
+    if (!sameSelection(kept.selection, selection)) { await this.release(id, "selection_changed"); return null; }
+    if (kept.binding.control.healthy?.() !== true) { await this.release(id, "exited"); return null; }
+    this.kept.delete(id); clearTimeout(kept.timer); return kept;
+  }
+  /** Whether a finished Turn hands its process to the conversation: opted in, completed cleanly, confirmed, and under the limit. */
+  private keepable(id: SessionId, execution: ActiveExecution, backend: BackendResult | null, problem: unknown, confirmed: boolean): { readonly keep: boolean; readonly skipped?: "limit" } {
+    try {
+      const state = this.load(id), run = state.runs.find(row => row.id === execution.runId);
+      if (state.retainNative !== true || run === undefined || run.cancelRequested || run.selection.provider !== undefined || !confirmed || problem !== null || backend?.status !== "completed"
+        || execution.stop !== null || execution.earlyClose !== null || !this.accepting || this.fatal !== null || this.closingSessions.has(id) || this.releases.has(id)
+        || execution.binding?.control.healthy?.() !== true) return { keep: false };
+      return this.kept.size >= KEPT_LIMIT ? { keep: false, skipped: "limit" } : { keep: true };
+    } catch { return { keep: false }; }
+  }
+
   async closeSession(id: SessionId, key: string): Promise<SessionSnapshot> {
     this.admit(); const command = commandId(key), fingerprint = this.fingerprint({ kind: "close" });
     const state = this.load(id), prior = replayCommand(state, command, "close", fingerprint);
@@ -355,6 +477,7 @@ export class SessionRuntime {
       });
       if (this.active?.sessionId === id) this.stop(this.active);
       if (this.switchBinding?.sessionId === id) this.stopSwitch();
+      if (this.kept.has(id)) void this.requestRelease(id, "conversation_closed");
       await this.wait(id);
       return this.commit(id, current => ({ next: { ...current, status: "closed" }, events: [event("session.closed", {})] })).session;
     } finally { this.closingSessions.delete(id); }
@@ -381,6 +504,9 @@ export class SessionRuntime {
     if (this.active) this.stop(this.active);
     this.stopSwitch();
     if (this.runner) await this.runner;
+    // Kept processes end with their owner; each close is recorded for its conversation (ADR-030).
+    try { await this.drainReleases(); for (const id of [...this.kept.keys()]) await this.release(id, "gateway_shutdown"); }
+    catch (error) { problem ??= error; this.fail(error); }
     const creating = await Promise.allSettled([...this.creating]);
     for (const result of creating) if (result.status === "rejected" && !(result.reason instanceof SessionError && result.reason.code === "RUNTIME_CLOSED")) {
       problem ??= result.reason; this.fail(result.reason);
@@ -524,7 +650,10 @@ export class SessionRuntime {
       error => { this.fail(error); if (this.runner === running) this.runner = null; this.work.clear(); });
   }
   private async pump(): Promise<void> {
-    while (this.work.size) {
+    while (this.work.size || this.releases.size) {
+      // Kept processes to close go first, so a Turn or switch never meets a lease that is about to be released.
+      await this.drainReleases();
+      if (!this.work.size) continue;
       const id = this.work.values().next().value!; this.work.delete(id);
       if (this.fatal) { this.work.clear(); return; }
       let state = this.load(id);
@@ -730,6 +859,8 @@ export class SessionRuntime {
     let previousNative: NativeSessionBinding | undefined;
     // What the native session reported after this Turn; `reported` means the binding's earlier report is replaced (ADR-028).
     let observed: NativeConfiguration | undefined, reported = false;
+    // The process the conversation kept and this Turn reuses (ADR-030); null when the Turn starts the program itself.
+    let reusing: KeptProcess | null = null, opened: NativeConversationId | null = null;
     try {
       this.commit(id, current => ({ next: { ...updatedRun(current, target, { status: "preparing", selection: pinned, epoch: waitedSwitch ? current.epoch : queued.epoch, ...phase(current, target, "preparingAt", this.options.now().getTime()) }), activeRunId: target },
         events: [event("run.preparing", { runId: target, selection: state.selection, epoch: state.epoch })] }));
@@ -742,19 +873,40 @@ export class SessionRuntime {
       }
       this.commit(id, current => ({ next: updatedRun(current, target, { contextThroughSeq: context.throughSeq, sourceRunIds: context.sourceRunIds }),
         events: [event("run.context_prepared", { runId: target, throughSeq: context.throughSeq, sourceRunIds: context.sourceRunIds, continuity: context.continuity })] }));
-      execution.binding = await this.factory.prepare(run.selection, current.configuration, id, target);
-      this.continue(execution);
-      if (execution.binding.installation !== undefined) {
-        const installation = execution.binding.installation;
-        this.commit(id, current => ({ next: current, events: [event("run.installation_resolved", { runId: target, installation })] }));
+      // A process the conversation kept takes the Turn when it still runs this selection; any other kept process is closed
+      // first and the Turn starts the program as usual (ADR-030).
+      reusing = run.selection.provider === undefined ? await this.takeKept(id, run.selection) : null;
+      let native: NativeConversationId;
+      if (reusing !== null) {
+        const kept = reusing, now = this.options.now().getTime();
+        execution.binding = kept.binding; native = kept.conversation;
+        this.commit(id, current => {
+          const { retained, ...rest } = current;
+          return { next: updatedRun(rest, target, { reused: true }), events: [event("native.process_reused", { runId: target, previousRunId: kept.runId, idleMs: Math.max(0, now - kept.lastUsed), backgroundUpdates: this.background(kept) })] };
+        });
+        this.continue(execution);
+      } else {
+        try { execution.binding = await this.factory.prepare(run.selection, current.configuration, id, target); }
+        catch (error) {
+          // Another conversation's kept process holds the workspace: the user decides whether to end it (ADR-030, option C).
+          if (error instanceof SessionError && error.code === "WORKSPACE_BUSY" && [...this.kept].some(([holder, kept]) => holder !== id && kept.binding.workspace === current.configuration.workspace))
+            throw new SessionError("WORKSPACE_KEPT", "another conversation keeps a native process in this workspace");
+          throw error;
+        }
+        this.continue(execution);
+        if (execution.binding.installation !== undefined) {
+          const installation = execution.binding.installation;
+          this.commit(id, current => ({ next: current, events: [event("run.installation_resolved", { runId: target, installation })] }));
+        }
+        const observation = await execution.binding.control.initialize(); this.continue(execution);
+        this.commit(id, current => ({ next: current, events: [event("run.protocol", { runId: target, observation })] }));
+        // A requested value the native session changed itself is applied as it is now instead of being reverted (ADR-028).
+        const carried = carriedNativeConfiguration(current, run.selection, run.epoch);
+        if (carried !== null) this.commit(id, current => ({ next: current, events: [event("native.config_carried", { runId: target, ...carried })] }));
+        const nativeOptions = carried?.options === undefined ? run.selection.nativeOptions : { ...run.selection.nativeOptions, ...carried.options };
+        native = await execution.binding.control.open(execution.binding.workspace, carried?.model ?? run.selection.nativeModel, nativeOptions, previousNative?.checkpoint); this.continue(execution);
       }
-      const observation = await execution.binding.control.initialize(); this.continue(execution);
-      this.commit(id, current => ({ next: current, events: [event("run.protocol", { runId: target, observation })] }));
-      // A requested value the native session changed itself is applied as it is now instead of being reverted (ADR-028).
-      const carried = carriedNativeConfiguration(current, run.selection, run.epoch);
-      if (carried !== null) this.commit(id, current => ({ next: current, events: [event("native.config_carried", { runId: target, ...carried })] }));
-      const nativeOptions = carried?.options === undefined ? run.selection.nativeOptions : { ...run.selection.nativeOptions, ...carried.options };
-      const native = await execution.binding.control.open(execution.binding.workspace, carried?.model ?? run.selection.nativeModel, nativeOptions, previousNative?.checkpoint); this.continue(execution);
+      opened = native;
       if (run.selection.provider === undefined && execution.binding.control.checkpoint) {
         checkpoint = await execution.binding.control.checkpoint(); this.continue(execution);
         if (checkpoint !== null && (typeof checkpoint !== "string" || !checkpoint || Buffer.byteLength(checkpoint) > 8192 || /[\0\r\n]/u.test(checkpoint))) throw new SessionError("INVALID_NATIVE_CHECKPOINT", "invalid original Harness recovery reference");
@@ -826,20 +978,30 @@ export class SessionRuntime {
       if (execution.binding && execution.earlyClose === null) {
         try { await this.flushNative(execution); } catch (error) { problem ??= fault(error); }
       }
-      if (execution.binding) {
+      // A finished Turn of a conversation that keeps its process hands the process over instead of closing it (ADR-030).
+      const keep = execution.binding === null || opened === null ? { keep: false } : this.keepable(id, execution, backend, problem, checkpointStored && nativeConfirmed);
+      if (execution.binding && !keep.keep) {
         try { execution.earlyClose ??= execution.binding.close(); cleanup = await execution.earlyClose; }
         catch (error) { problem = fault(error); }
+      }
+      let handed = false;
+      const endedAt = this.options.now().getTime(), idleMs = this.options.keptIdleMs ?? KEPT_IDLE_MS;
+      // Registered before the hand-over is committed, so the view published with that commit already shows the kept process.
+      if (keep.keep && execution.binding !== null && opened !== null) {
+        const binding = execution.binding, timer = setTimeout(() => { void this.requestRelease(id, "idle"); }, idleMs); timer.unref?.();
+        this.kept.set(id, { binding, selection: pinned, conversation: opened, runId: target, since: reusing?.since ?? endedAt, baseline: binding.control.unattributedUpdates ?? 0, lastUsed: endedAt, timer });
       }
       try {
         this.store.assertOwner();
         const current = this.load(id), run = current.runs.find(run => run.id === target)!;
-        const unsafe = (execution.dispatched && backend === null) || (execution.binding !== null && cleanup === null) || this.fatal !== null || this.unknownOwnership(problem);
+        const unsafe = (execution.dispatched && backend === null) || (execution.binding !== null && cleanup === null && !keep.keep) || this.fatal !== null || this.unknownOwnership(problem);
         const failure = problem ?? cleanup?.protocolFailure ?? backend?.error ?? null;
         const status = unsafe ? "unknown" : run.cancelRequested || problem?.code === "CANCELLED" ? "cancelled" : failure ? "failed" : backend?.status ?? "failed";
         this.commit(id, current => {
           let next: SessionSnapshot = { ...updatedRun(current, target, { status, backend, cleanup,
-            error: failure, ...phase(current, target, "endedAt", this.options.now().getTime()) }), activeRunId: null, status: unsafe ? "blocked" : current.status };
-          if (checkpointStored && checkpoint !== null && cleanup?.closed === true && cleanup.protocolFailure === null && (!execution.dispatched || nativeConfirmed && backend !== null)) {
+            error: failure, ...phase(current, target, "endedAt", endedAt), ...(keep.keep ? { retained: true as const } : {}) }), activeRunId: null, status: unsafe ? "blocked" : current.status,
+            ...(keep.keep ? { retained: { harnessId: pinned.harnessId, controlId: pinned.controlId, runId: target, since: reusing?.since ?? endedAt } } : {}) };
+          if (checkpointStored && checkpoint !== null && (keep.keep || cleanup?.closed === true && cleanup.protocolFailure === null) && (!execution.dispatched || nativeConfirmed && backend !== null)) {
             next = { ...next, nativeBindings: next.nativeBindings?.map(binding => {
               if (binding.harnessId !== pinned.harnessId || binding.controlId !== pinned.controlId || binding.status === "archived") return binding;
               const { observed: earlier, ...rest } = binding, latest = reported ? observed : earlier;
@@ -849,10 +1011,18 @@ export class SessionRuntime {
           const cancelSwitch = (!this.accepting || this.closingSessions.has(id)) && next.pendingSwitchId !== null;
           if (cancelSwitch) next = this.cancelPending(next);
           return { next, events: [event("run.ended", { runId: target, status, backend, cleanup, error: failure }),
+            ...(keep.keep ? [event("native.process_retained", { runId: target, idleEndsAt: endedAt + idleMs })] : keep.skipped ? [event("native.retention_skipped", { runId: target, reason: keep.skipped })] : []),
             ...(cancelSwitch ? [event("switch.failed", { switchId: current.pendingSwitchId, reason: "cancelled by close" })] : []),
             ...(unsafe ? [event("session.blocked", { runId: target, reason: "execution or cleanup could not be safely confirmed" })] : [])] };
         });
+        handed = keep.keep;
       } catch (error) { this.fail(error); }
+      if (keep.keep && !handed) {
+        // The hand-over was not recorded, so the process is not kept: it is closed like any other Turn's.
+        const unrecorded = this.kept.get(id);
+        if (unrecorded !== undefined) { this.kept.delete(id); clearTimeout(unrecorded.timer); }
+        if (execution.binding !== null) try { await execution.binding.close(); } catch (error) { this.fail(error, id); }
+      }
       this.active = null;
     }
   }
@@ -900,6 +1070,9 @@ export class SessionRuntime {
       const request = pending.requested.provider === undefined && initial.selection.provider !== undefined
         ? { ...pending.requested, provider: initial.selection.provider } : pending.requested;
       const target = await this.factory.validate(request, initial.configuration);
+      // A kept process runs the previous selection; it is closed before the switch takes effect (ADR-030).
+      const kept = this.kept.get(id);
+      if (kept !== undefined && !sameSelection(kept.selection, target)) await this.release(id, "selection_changed");
       this.store.assertOwner(); let current = this.load(id);
       if (current.pendingSwitchId !== targetId || this.closingSessions.has(id) || !this.accepting) return;
       const sources = current.runs.filter(run => terminal(run.status) && current.messages.some(message => message.id === run.userMessageId && message.seq < pending.requestedSeq)).map(run => run.id);

@@ -436,11 +436,14 @@
         "background": {
           "native": "yes",
           "source": "command/exec；后台终端 thread/backgroundTerminals/* 需 experimentalApi",
-          "hub": "none",
-          "protocol": "none",
+          "hub": "done",
+          "protocol": "pass",
           "real": "none",
-          "evidence": [],
-          "note": "每轮关闭控制进程，需长期资源所有者设计；需要回合之间保留原生进程，涉及工作区唯一写入者约束，见待决的 ADR-030"
+          "evidence": [
+            "docs/decisions/0030-retained-native-processes.md",
+            "docs/verification/first-chain-polish-2026-10-11.md"
+          ],
+          "note": "同一保留机制：回合之间保留 app-server 进程，下一回合复用（测试替身经正式运行时验证）；后台终端的列出与清理需 experimentalApi，未接出；真实后台终端未验证"
         },
         "export": {
           "native": "yes",
@@ -754,11 +757,15 @@
         "background": {
           "native": "yes",
           "source": "后台 shell 与自主后续回合；async_task_* 仅 AIR",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": "每轮关闭进程会终止后台任务；需要回合之间保留原生进程，涉及工作区唯一写入者约束，见待决的 ADR-030"
+          "hub": "done",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-kept-process-2026-10-12.json",
+            "docs/decisions/0030-retained-native-processes.md",
+            "docs/verification/first-chain-polish-2026-10-11.md"
+          ],
+          "note": "按对话开启“保持原生进程”（默认关闭，新对话可在首条消息前开启）；回合之间保留 claude-agent-acp 进程，后台 shell 继续运行，下一回合复用进程读取其输出（真实通过：启动 7 毫秒，读到后台输出）；回合外更新只计数；空闲 30 分钟、切换、关闭、重建、分支与服务关闭时先结束并留证"
         },
         "export": {
           "native": "partial",
@@ -2442,11 +2449,14 @@
         "background": {
           "native": "yes",
           "source": "process 工具管理后台进程；随每回合结束的 ACP 进程一起结束（toolsets.py）",
-          "hub": "none",
-          "protocol": "none",
+          "hub": "done",
+          "protocol": "pass",
           "real": "none",
-          "evidence": [],
-          "note": "等待 ADR-030"
+          "evidence": [
+            "docs/decisions/0030-retained-native-processes.md",
+            "docs/verification/first-chain-polish-2026-10-11.md"
+          ],
+          "note": "同一保留机制：开启后回合之间保留 ACP 进程，后台工作随进程继续（ACP 测试替身经正式运行时验证）；真实后台任务未验证"
         },
         "export": {
           "native": "yes",
@@ -2707,10 +2717,14 @@
         "background": {
           "native": "partial",
           "source": "jobs、schedule、goal 等自主工作；没有进行中的 ACP 提示词时，session/cancel 取消自主工作（packages/acp/acp/README.md）",
-          "hub": "none",
-          "protocol": "none",
+          "hub": "done",
+          "protocol": "pass",
           "real": "none",
-          "evidence": []
+          "evidence": [
+            "docs/decisions/0030-retained-native-processes.md",
+            "docs/verification/first-chain-polish-2026-10-11.md"
+          ],
+          "note": "同一保留机制：开启后回合之间保留 ACP 进程，后台工作随进程继续（ACP 测试替身经正式运行时验证）；真实后台任务未验证"
         },
         "export": {
           "native": "partial",

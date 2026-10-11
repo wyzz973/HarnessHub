@@ -33,20 +33,20 @@
 | 会话 | 上下文压缩 | ✅ | ✅ | ○ | ✅ | — | ？ | ✅ | ✅ | ○ |
 | 会话 | 回滚/回退 | ○ | — | ？ | — | ○ | — | ○ | — | — |
 | 并发与后台 | 子 Agent | ✅ | ✅ | ○ | ○ | ？ | ○ | — | ◑ | ◑ |
-| 并发与后台 | 后台任务 | ○ | ○ | ？ | ○ | ？ | ？ | — | ○ | ○ |
+| 并发与后台 | 后台任务 | ◐ | ✅ | ？ | ○ | ？ | ？ | — | ◐ | ◐ |
 | 产物 | 导出与产物 | ✅ | ◐ | ？ | ○ | ？ | — | ✅ | ○ | ○ |
 
 | Harness | ✅ | ◐ | ◑ | ○ | ✕ | — | ？ |
 |---|---|---|---|---|---|---|---|
-| Codex | 14 | 3 | 5 | 2 | 2 | 1 | 0 |
-| Claude Code | 16 | 3 | 3 | 1 | 2 | 2 | 0 |
+| Codex | 14 | 4 | 5 | 1 | 2 | 1 | 0 |
+| Claude Code | 17 | 3 | 3 | 0 | 2 | 2 | 0 |
 | OpenCode | 12 | 2 | 3 | 2 | 1 | 2 | 5 |
 | OpenClaw | 5 | 5 | 5 | 5 | 0 | 7 | 0 |
 | Gemini CLI | 0 | 0 | 2 | 1 | 12 | 6 | 6 |
 | Cursor | 0 | 2 | 4 | 2 | 11 | 5 | 3 |
 | Pi | 11 | 5 | 1 | 2 | 1 | 7 | 0 |
-| Hermes Agent | 11 | 1 | 1 | 6 | 2 | 6 | 0 |
-| DeepSeek Harness | 7 | 3 | 1 | 6 | 2 | 8 | 0 |
+| Hermes Agent | 11 | 2 | 1 | 5 | 2 | 6 | 0 |
+| DeepSeek Harness | 7 | 4 | 1 | 5 | 2 | 8 | 0 |
 
 ## Codex
 
@@ -79,7 +79,7 @@
 | 上下文压缩 | 具备 | thread/compact/start → contextCompaction item | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-pi-codex.json；docs/verification/native-session-actions-2026-10-11.md | /compact 调用 thread/compact/start 并以活动展示；压缩后原生会话仍记得先前事实 |
 | 回滚/回退 | 具备 | thread/revert {beforeTurnId}（只回退历史，不回退文件） | 未接出 | 未接出 | 未接出 | — | — |
 | 子 Agent | 具备 | collabAgentToolCall、subAgentActivity；子线程自动附着连接 | 已接出 | 通过 | 通过 | .tmp/cc-native-subagent-codex-threads.json；.tmp/cc-native-subagent-codex.json；docs/verification/native-subagents-2026-10-11.md | 子线程以 subAgentActivity/协作调用识别（已安装版本不为子线程发 thread/started）；子线程的工具嵌套在“子 Agent”条目下，最终回复作为条目输出；子线程文字不进入主回复 |
-| 后台任务 | 具备 | command/exec；后台终端 thread/backgroundTerminals/* 需 experimentalApi | 未接出 | 未接出 | 未接出 | — | 每轮关闭控制进程，需长期资源所有者设计；需要回合之间保留原生进程，涉及工作区唯一写入者约束，见待决的 ADR-030 |
+| 后台任务 | 具备 | command/exec；后台终端 thread/backgroundTerminals/* 需 experimentalApi | 已接出 | 通过 | 未接出 | docs/decisions/0030-retained-native-processes.md；docs/verification/first-chain-polish-2026-10-11.md | 同一保留机制：回合之间保留 app-server 进程，下一回合复用（测试替身经正式运行时验证）；后台终端的列出与清理需 experimentalApi，未接出；真实后台终端未验证 |
 | 导出与产物 | 具备 | thread/read(includeTurns)、Thread.path rollout 路径 | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-pi-codex.json；docs/verification/native-session-actions-2026-10-11.md | /export 读取线程自己的 rollout JSONL 作为产物；临时线程明确失败 |
 
 ## Claude Code
@@ -113,7 +113,7 @@
 | 上下文压缩 | 具备 | /compact 触发原生压缩；compaction_update 需 session.compaction 能力 | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | /compact 原生命令执行，compaction_update 以活动显示完成；压缩后仍记得先前事实 |
 | 回滚/回退 | 不提供 | 非 JetBrains AIR 客户端无指定消息回退 | 不适用 | 不适用 | 不适用 | — | — |
 | 子 Agent | 具备 | 子会话 subagent_spawned/state_update 需 subagents 能力；否则工具带 parentToolUseId | 已接出 | 通过 | 通过 | .tmp/cc-native-subagent-claude.json；docs/verification/native-subagents-2026-10-11.md | 未协商原生子会话时，子 Agent 工具平铺在根会话并带 parentToolUseId；Hub 记录关联并在 Agent 调用下嵌套显示，子 Agent 文字不进入主回复 |
-| 后台任务 | 具备 | 后台 shell 与自主后续回合；async_task_* 仅 AIR | 未接出 | 未接出 | 未接出 | — | 每轮关闭进程会终止后台任务；需要回合之间保留原生进程，涉及工作区唯一写入者约束，见待决的 ADR-030 |
+| 后台任务 | 具备 | 后台 shell 与自主后续回合；async_task_* 仅 AIR | 已接出 | 通过 | 通过 | .tmp/cc-kept-process-2026-10-12.json；docs/decisions/0030-retained-native-processes.md；docs/verification/first-chain-polish-2026-10-11.md | 按对话开启“保持原生进程”（默认关闭，新对话可在首条消息前开启）；回合之间保留 claude-agent-acp 进程，后台 shell 继续运行，下一回合复用进程读取其输出（真实通过：启动 7 毫秒，读到后台输出）；回合外更新只计数；空闲 30 分钟、切换、关闭、重建、分支与服务关闭时先结束并留证 |
 | 导出与产物 | 部分 | ACP 无导出方法；转录在 <CLAUDE_CONFIG_DIR 或 ~/.claude>/projects/<项目>/<会话>.jsonl（claude-agent-acp 也在此查找） | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-claude-export.json；docs/verification/claude-export-2026-10-11.md | 代理没有自己的 export 命令时 Hub 提供 /export：只读复制本会话转录作为产物；找不到转录时明确失败 |
 
 ## OpenCode
@@ -317,7 +317,7 @@
 | 上下文压缩 | 具备 | /compact 命令（acp_adapter/server.py _cmd_compact） | 已接出 | 通过 | 通过 | .tmp/cc-hermes-commands.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | — |
 | 回滚/回退 | 不提供 | 只有 /reset 清空整段历史，没有回退到某一轮 | 不适用 | 不适用 | 不适用 | — | — |
 | 子 Agent | 部分 | delegate_task 在进程内运行子 Agent；子 Agent 的活动不经 ACP 发出（acp_adapter/tools.py） | 部分 | 未接出 | 部分通过 | .tmp/cc-hermes-subagent.json；docs/verification/hermes-dsh-onboarding-2026-10-11.md | delegate_task 只显示为一个 execute 工具（无工具名，标题为“delegate: …”）；子 Agent 自己的工具不经 ACP 发出，无法挂到调用下 |
-| 后台任务 | 具备 | process 工具管理后台进程；随每回合结束的 ACP 进程一起结束（toolsets.py） | 未接出 | 未接出 | 未接出 | — | 等待 ADR-030 |
+| 后台任务 | 具备 | process 工具管理后台进程；随每回合结束的 ACP 进程一起结束（toolsets.py） | 已接出 | 通过 | 未接出 | docs/decisions/0030-retained-native-processes.md；docs/verification/first-chain-polish-2026-10-11.md | 同一保留机制：开启后回合之间保留 ACP 进程，后台工作随进程继续（ACP 测试替身经正式运行时验证）；真实后台任务未验证 |
 | 导出与产物 | 具备 | hermes sessions export - --session-id <id> 输出 JSONL（hermes_cli/main.py） | 未接出 | 未接出 | 未接出 | — | — |
 
 ## DeepSeek Harness
@@ -351,5 +351,5 @@
 | 上下文压缩 | 部分 | 自动压缩插件（compaction-basic、tool-result-pruner）；ACP 没有压缩命令或更新 | 未接出 | 未接出 | 未接出 | — | — |
 | 回滚/回退 | 不提供 | ACP 界面不提供（packages/acp/acp/README.md） | 不适用 | 不适用 | 不适用 | — | — |
 | 子 Agent | 部分 | subagent 插件；子会话 origin=subagent 不在列表中，ACP 只发父会话的工具调用（packages/acp/acp/src/index.ts） | 部分 | 未接出 | 未接出 | — | 只显示调用子 Agent 的工具本身 |
-| 后台任务 | 部分 | jobs、schedule、goal 等自主工作；没有进行中的 ACP 提示词时，session/cancel 取消自主工作（packages/acp/acp/README.md） | 未接出 | 未接出 | 未接出 | — | — |
+| 后台任务 | 部分 | jobs、schedule、goal 等自主工作；没有进行中的 ACP 提示词时，session/cancel 取消自主工作（packages/acp/acp/README.md） | 已接出 | 通过 | 未接出 | docs/decisions/0030-retained-native-processes.md；docs/verification/first-chain-polish-2026-10-11.md | 同一保留机制：开启后回合之间保留 ACP 进程，后台工作随进程继续（ACP 测试替身经正式运行时验证）；真实后台任务未验证 |
 | 导出与产物 | 部分 | 会话日志保存在 $DSH_HOME/sessions；ACP 没有导出 | 未接出 | 未接出 | 未接出 | — | — |

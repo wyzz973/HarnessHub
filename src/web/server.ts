@@ -9,7 +9,7 @@ import { ProviderError } from "../contracts/provider.js";
 import { ManagementError } from "../contracts/management.js";
 import { SessionError, parseNativeOptions, sessionId, type SelectionRequest, type SessionConfiguration, type SessionSnapshot } from "../contracts/session.js";
 import { MAX_CONTENT_BYTES, MAX_RUN_ATTACHMENTS } from "../contracts/content.js";
-import type { EventPage, HarnessReadinessView, HarnessView, InstallationLogPage, NativeSessionListView, SessionSummary, SessionView, WebState } from "../contracts/web.js";
+import type { EventPage, HarnessReadinessView, HarnessView, InstallationLogPage, KeptProcessView, NativeSessionListView, SessionSummary, SessionView, WebState } from "../contracts/web.js";
 import { inventory, officialInstallation } from "../infrastructure/catalog/inventory-composition.js";
 import { harnessEntry, productCommand } from "./harness-entry.js";
 import { prepareConfiguration } from "../infrastructure/session/binding-factory.js";
@@ -127,7 +127,8 @@ function readinessViews(observed: readonly NativeReadiness[], snapshots: readonl
   const samples = new Map<string, { readonly at: number; readonly ms: number }[]>();
   for (const snapshot of snapshots) for (const run of snapshot.runs) {
     const timing = run.timing;
-    if (timing?.preparingAt === undefined || timing.readyAt === undefined || timing.readyAt < timing.preparingAt) continue;
+    // A Turn on a kept process did not start the program, so it says nothing about startup (ADR-030).
+    if (run.reused === true || timing?.preparingAt === undefined || timing.readyAt === undefined || timing.readyAt < timing.preparingAt) continue;
     const key = run.selection.harnessId + "\0" + run.selection.controlId;
     samples.set(key, [...samples.get(key) ?? [], { at: timing.preparingAt, ms: timing.readyAt - timing.preparingAt }]);
   }
@@ -151,7 +152,7 @@ function summary(snapshot: SessionSnapshot): SessionSummary {
   return { id: snapshot.id, title: first ? first.slice(0, 80) : inherited ? inherited.slice(0, 80) : "新对话", status: snapshot.status, workspace: snapshot.configuration.workspace,
     selection: snapshot.selection, updatedSeq: snapshot.lastSeq, activeRunId: snapshot.activeRunId };
 }
-function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"] = []): SessionView {
+function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"] = [], kept: KeptProcessView | null = null): SessionView {
   return { id: snapshot.id, version: snapshot.version, lastSeq: snapshot.lastSeq, epoch: snapshot.epoch, status: snapshot.status,
     workspace: snapshot.configuration.workspace, selection: snapshot.selection, activeRunId: snapshot.activeRunId, pendingSwitchId: snapshot.pendingSwitchId,
     permissions, nativeStates: snapshot.nativeBindings?.flatMap(binding => {
@@ -160,7 +161,8 @@ function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"]
       return [{ harnessId: binding.harnessId, controlId: binding.controlId, status: binding.status === "fork-pending" || binding.status === "forking" ? "forking" as const : binding.status,
         ...(binding.observed === undefined ? {} : { observed: binding.observed }), ...(carried === null ? {} : { carried }) }];
     }) ?? [],
-    ...(snapshot.origin === undefined ? {} : { origin: snapshot.origin }), messages: snapshot.messages, runs: snapshot.runs, switches: snapshot.switches };
+    ...(snapshot.origin === undefined ? {} : { origin: snapshot.origin }),
+    ...(snapshot.schemaVersion < 11 ? {} : { retention: { enabled: snapshot.retainNative === true, process: kept } }), messages: snapshot.messages, runs: snapshot.runs, switches: snapshot.switches };
 }
 function publicFailure(error: unknown): { readonly status: number; readonly code: string; readonly message: string } {
   if (error instanceof HttpError || error instanceof SessionStreamError) return error;
@@ -253,7 +255,9 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     throw error;
   });
   let app: ReturnType<typeof composeApplication>;
-  const streams = new SessionStreamHub(id => view(app.runtime.read(id), app.runtime.permissionRequests(id)), {}, failure => {
+  // A conversation's view with the live state of the native process it keeps (ADR-030).
+  const sessionView = (snapshot: SessionSnapshot, permissions: SessionView["permissions"] = []): SessionView => view(snapshot, permissions, app.runtime.keptProcess(snapshot.id));
+  const streams = new SessionStreamHub(id => sessionView(app.runtime.read(id), app.runtime.permissionRequests(id)), {}, failure => {
     const fault = publicFailure(failure.error);
     process.stderr.write("HarnessGateway: SESSION_STREAM_READ_FAILED (" + app.providers.redact(fault.code).slice(0, 128) + ")\n");
   });
@@ -377,7 +381,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (nativeBranch && method === "POST") {
       queries(url, []); const input = record(await body(request), ["epoch", "commandId"], ["epoch", "commandId"]);
       if (typeof input.epoch !== "number" || !Number.isSafeInteger(input.epoch) || input.epoch < 1) throw new HttpError(400, "INVALID_INPUT", "invalid native branch epoch");
-      json(response, 200, view(app.runtime.resetNative(sessionId(nativeBranch[1]), text(input.commandId, "commandId", 128), input.epoch))); return;
+      json(response, 200, sessionView(app.runtime.resetNative(sessionId(nativeBranch[1]), text(input.commandId, "commandId", 128), input.epoch))); return;
     }
     if (permissionRoute && method === "POST") { queries(url, []); const input = record(await body(request), ["optionId", "commandId", "input"], ["optionId", "commandId"]); const id = sessionId(permissionRoute[1]); json(response, 200, await app.runtime.decidePermission(id, permissionRoute[2]!, text(input.optionId, "optionId", 512), text(input.commandId, "commandId", 128), input.input===undefined?undefined:(typeof input.input==="string"&&Buffer.byteLength(input.input)<=65536&&!input.input.includes("\0")?input.input:(()=>{throw new HttpError(400,"INVALID_INPUT","invalid native UI input")})()))); return; }
     const nativeSessionsRoute = /^\/api\/v1\/harnesses\/([a-z][a-z0-9-]{0,95})\/native-sessions$/u.exec(path);
@@ -488,7 +492,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     if (path === "/api/v1/sessions/import" && method === "POST") {
       queries(url, []); const input = record(await body(request), ["workspace", "selection", "nativeId", "commandId"], ["selection", "nativeId", "commandId"]);
       const configuration = input.workspace === undefined ? options.configuration : await workspaceConfiguration(text(input.workspace, "workspace"));
-      try { json(response, 201, view(await app.runtime.importNative(configuration, select(input.selection), text(input.nativeId, "native session", 1024), command(input.commandId)))); }
+      try { json(response, 201, sessionView(await app.runtime.importNative(configuration, select(input.selection), text(input.nativeId, "native session", 1024), command(input.commandId)))); }
       catch (error) { throw importFailure(error); }
       return;
     }
@@ -500,7 +504,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
           ...(options.configuration.manifestPath === null ? {} : { manifestPath: options.configuration.manifestPath }),
           ...(options.configuration.configHome === null ? {} : { configHome: options.configuration.configHome }),
           packageRoots: options.configuration.packageRoots, searchDirs: options.configuration.searchDirs, pathOnly: options.configuration.pathOnly });
-        json(response, 201, view(await app.runtime.create(configuration, select(input.selection), command(input.commandId)))); return;
+        json(response, 201, sessionView(await app.runtime.create(configuration, select(input.selection), command(input.commandId)))); return;
       }
     }
     const streamRoute = /^\/api\/v1\/sessions\/([^/]+)\/events\/stream$/u.exec(path);
@@ -517,15 +521,17 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
       });
       return;
     }
-    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|resume|cancel|close|events|export|fork))?$/u.exec(path);
+    // Which conversations keep a native process and in which workspace, for the choice when one occupies a workspace (ADR-030).
+    if (path === "/api/v1/kept-processes" && method === "GET") { queries(url, []); json(response, 200, { processes: app.runtime.keptProcesses() }); return; }
+    const sessionRoute = /^\/api\/v1\/sessions\/([^/]+)(?:\/(messages|switches|resume|cancel|close|events|export|fork|retention|end-process))?$/u.exec(path);
     if (sessionRoute) {
       const id = sessionId(sessionRoute[1]!), action = sessionRoute[2];
-      if (action === undefined && method === "GET") { queries(url, []); json(response, 200, view(app.runtime.read(id), app.runtime.permissionRequests(id))); return; }
+      if (action === undefined && method === "GET") { queries(url, []); json(response, 200, sessionView(app.runtime.read(id), app.runtime.permissionRequests(id))); return; }
       if (action === "export" && method === "GET") {
         // A download of the public conversation; private native state and stored bytes stay out.
         queries(url, ["format"]); const format = url.searchParams.get("format") ?? "markdown";
         if (format !== "markdown" && format !== "json") throw new HttpError(400, "INVALID_INPUT", "export format must be markdown or json");
-        const current = view(app.runtime.read(id)), now = new Date(), names = new Map((await rescan()).map(harness => [harness.id, harness.name]));
+        const current = sessionView(app.runtime.read(id)), now = new Date(), names = new Map((await rescan()).map(harness => [harness.id, harness.name]));
         const bytes = Buffer.from(format === "json" ? JSON.stringify({ application: "HarnessHub", exportedAt: now.toISOString(), session: current }, null, 2) + "\n" : conversationMarkdown(current, harnessId => names.get(harnessId) ?? harnessId, now));
         if (bytes.length > MAX_RESPONSE_BYTES) throw new HttpError(413, "RESPONSE_LIMIT", "Conversation export exceeds its byte budget");
         if (response.destroyed || response.writableEnded) return;
@@ -551,7 +557,7 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
           const input = record(await body(request), ["commandId", "throughRunId"], ["commandId"]);
           if (input.throughRunId !== undefined && typeof input.throughRunId !== "string") throw new HttpError(400, "INVALID_INPUT", "Invalid branch point");
           const branch = app.runtime.fork(id, command(input.commandId), input.throughRunId as string | undefined);
-          json(response, 201, view(branch, app.runtime.permissionRequests(branch.id))); return;
+          json(response, 201, sessionView(branch, app.runtime.permissionRequests(branch.id))); return;
         }
         if (action === "resume") {
           const input = record(await body(request), ["selection", "commandId", "acknowledgeUnknown"], ["selection", "commandId"]);
@@ -559,7 +565,14 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
           json(response, 202, app.runtime.resume(id, select(input.selection), command(input.commandId), input.acknowledgeUnknown === true)); return;
         }
         if (action === "cancel") { const input = record(await body(request), ["runId", "commandId"], ["commandId"]); json(response, 202, app.runtime.cancel(id, command(input.commandId), input.runId === undefined ? undefined : text(input.runId, "Run identity", 128))); return; }
-        if (action === "close") { const input = record(await body(request), ["commandId"], ["commandId"]); json(response, 200, view(await app.runtime.closeSession(id, command(input.commandId)))); return; }
+        if (action === "close") { const input = record(await body(request), ["commandId"], ["commandId"]); json(response, 200, sessionView(await app.runtime.closeSession(id, command(input.commandId)))); return; }
+        if (action === "retention") {
+          const input = record(await body(request), ["enabled", "commandId"], ["enabled", "commandId"]);
+          if (typeof input.enabled !== "boolean") throw new HttpError(400, "INVALID_INPUT", "Expected whether to keep the native process");
+          json(response, 200, sessionView(app.runtime.setRetention(id, input.enabled, command(input.commandId)), app.runtime.permissionRequests(id))); return;
+        }
+        // Ends the kept process with the normal stop chain; answers once its close is recorded.
+        if (action === "end-process") { const input = record(await body(request), ["commandId"], ["commandId"]); json(response, 200, sessionView(await app.runtime.endKept(id, command(input.commandId)), app.runtime.permissionRequests(id))); return; }
       }
     }
     throw new HttpError(404, "NOT_FOUND", "API route not found");
