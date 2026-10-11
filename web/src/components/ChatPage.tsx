@@ -52,12 +52,13 @@ export interface ChatProps {
   onDraft: (draft: SelectionDraft) => void; onWorkspace: (workspace: string) => void; onSend: (text: string) => Promise<void>;
   onApply: () => void; onCancel: () => void; onClose: () => void; onDismissError: () => void; onProviders: () => void; onNew: () => void; onMenu: () => void;
   onPermission?: (id: string, option: string, input?: string) => void;
+  onNativeBranch?: () => void;
   onRetryConnection?: () => void;
 }
 
 function NativeQuestion({request,busy,onDecision}:{request:NonNullable<SessionView["permissions"]>[number];busy:boolean;onDecision:(option:string,input?:string)=>void}) {
   const [input,setInput]=useState(request.input?.value??"");
-  return <section className="native-permission" aria-label={request.input?"Harness 交互":"工具审批"}><strong>{request.title}</strong>{request.detail?<p>{request.detail}</p>:null}{request.input?<textarea aria-label={request.title} value={input} rows={request.input.kind==="editor"?6:2} disabled={busy||request.decided} onChange={event=>setInput(event.target.value)}/>:null}<div>{request.options.map(option=><button type="button" key={option.id} disabled={busy||request.decided} onClick={()=>onDecision(option.id,request.input&&option.id==="submit"?input:undefined)}>{option.name}</button>)}</div>{request.decided?<small>决定已记录，等待 Harness 继续。</small>:null}</section>;
+  return <section className="native-permission" aria-label={request.input?"Harness 交互":"工具审批"}><strong>{request.title}</strong>{request.detail?<p>{request.detail}</p>:null}{request.input?.kind === "secret" ? <input type="password" autoComplete="off" aria-label={request.title} value={input} disabled={busy||request.decided} onChange={event=>setInput(event.target.value)}/> : request.input?<textarea aria-label={request.title} value={input} rows={request.input.kind==="editor"?6:2} disabled={busy||request.decided} onChange={event=>setInput(event.target.value)}/>:null}<div>{request.options.map(option=><button type="button" key={option.id} disabled={busy||request.decided} onClick={()=>onDecision(option.id,request.input&&option.id==="submit"?input:undefined)}>{option.name}</button>)}</div>{request.decided?<small>决定已记录，等待 Harness 继续。</small>:null}</section>;
 }
 export function ChatPage(props: ChatProps) {
   const { session, draft, harnesses, providers, mutation, error } = props;

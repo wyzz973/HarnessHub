@@ -16,6 +16,7 @@ if (scenario === "descendant") {
 }
 const lines = createInterface({ input: process.stdin });
 let promptId = null, turn = 0, initialized = false, pendingPermission = false;
+let resumedThread = false;
 let selectedModel = "native-model-a", thinking = "low", fast = "off";
 function nativeConfiguration() { return [
  { id:"native-model",category:"model",type:"select",currentValue:selectedModel,options:[{value:"native-model-a",name:"Native A"},{value:"native-model-b",name:"Native B"}] },
@@ -81,7 +82,7 @@ lines.on("line", line => {
     if (scenario === "remote-error") { emit({ id: message.id, error: { code: -32001, message: "test remote error" } }); return; }
     if (scenario === "stderr") process.stderr.write("diagnostic".repeat(100000));
     const result = protocol === "acp-v1"
-      ? { protocolVersion: scenario === "version" ? 2 : 1, agentCapabilities: { loadSession: false }, authMethods: [{ id: "fixture-login", name: "Fixture Login" }], agentInfo: { name: "fixture", version: "1.0" } }
+      ? { protocolVersion: scenario === "version" ? 2 : 1, agentCapabilities: { loadSession: ["native-resume", "resume-fails", "resume-wrong-identity"].includes(scenario) }, authMethods: [{ id: "fixture-login", name: "Fixture Login" }], agentInfo: { name: "fixture", version: "1.0" } }
       : { userAgent: "fixture-codex/1.0", codexHome: process.cwd(), platformFamily: "unix", platformOs: process.platform };
     answer(message.id, result);
     if (scenario === "flood") {
@@ -114,12 +115,21 @@ lines.on("line", line => {
     }
     answer(message.id, { sessionId: "session-fixture", ...(scenario === "native-models" ? { configOptions: [{ id: "native-model", category: "model", type: "select", currentValue: selectedModel, options: [{ value: "native-model-a", name: "Native A" }, { value: "native-model-b", name: "Native B" }] }] } : {}),
     ...(["legacy-configured-model", "duplicate-models"].includes(scenario) ? { models: { currentModelId: "configured-model", availableModels: [{ modelId: "suggested-model", name: "Suggested" }, ...(scenario === "duplicate-models" ? [{ modelId: "suggested-model", name: "Duplicate" }] : [])] } } : {}) }); return; }
+  if (message.method === "session/load") {
+    if (scenario === "resume-fails") { emit({ id: message.id, error: { code: -32001, message: "Original native state unavailable" } }); return; }
+    const sessionId = scenario === "resume-wrong-identity" ? "another-session" : message.params.sessionId;
+    notification("session/update", { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "previous native reply" } } });
+    notification("session/update", { sessionId, update: { sessionUpdate: "tool_call", toolCallId: "old-tool", title: "Native history tool", status: "completed" } });
+    answer(message.id, {}); return;
+  }
   if (message.method === "session/set_model") { selectedModel = message.params.modelId; answer(message.id, {}); return; }
   if (message.method === "session/set_config_option") { selectedModel = message.params.value; answer(message.id, { configOptions: [{ id: "native-model", category: "model", type: "select", currentValue: selectedModel, options: [{ value: "native-model-a", name: "Native A" }, { value: "native-model-b", name: "Native B" }] }] }); return; }
-  if (message.method === "thread/start") {
+  if (message.method === "thread/start" || message.method === "thread/resume") {
+    resumedThread = message.method === "thread/resume";
     if (!initialized) { emit({ id: message.id, error: { code: -32600, message: "Not initialized" } }); return; }
-    notification("thread/started", { thread: { id: "thread-fixture" } });
-    answer(message.id, { thread: { id: "thread-fixture" } }); return;
+    const id = scenario === "resume-wrong-identity" && message.method === "thread/resume" ? "thread-replacement" : "thread-fixture";
+    notification("thread/started", { thread: { id } });
+    answer(message.id, { thread: { id } }); return;
   }
   if (message.method === "ping") { answer(message.id, { echoed: message.params }); return; }
   if (message.method === "session/prompt" || message.method === "turn/start") {
@@ -132,6 +142,7 @@ lines.on("line", line => {
       pendingPermission = true;
     }
     if (protocol === "codex-app-server") {
+      if (resumedThread) notification("thread/tokenUsage/updated", { threadId: "thread-fixture", turnId: "previous-native-turn", tokenUsage: {} });
       notification("turn/started", { threadId: "thread-fixture", turn: { id: `turn-${turn}`, status: "inProgress" } });
       if (scenario !== "early-complete" && scenario !== "slow-start") answer(message.id, { turn: { id: `turn-${turn}`, status: "inProgress" } });
     }
@@ -141,6 +152,14 @@ lines.on("line", line => {
     }
     if (scenario === "wrong-turn") { codexOutput("another-turn"); return; }
     if (scenario === "passive") notification("fixture/passive", { privateSecret: "must-not-leak" });
+    if (scenario === "native-question") {
+      pendingPermission = true;
+      notification("item/reasoning/summaryTextDelta", { threadId: "thread-fixture", turnId: `turn-${turn}`, itemId: "native-reasoning", summaryIndex: 0, delta: "native reasoning summary" });
+      emit({ id: "native-question", method: "item/tool/requestUserInput", params: { threadId: "thread-fixture", turnId: `turn-${turn}`, itemId: "native-question-tool", isBlocking: true, questions: [
+        { id: "native-choice", header: "Native choice", question: "选择原生计划", options: [{ label: "First", description: "native first" }, { label: "Second", description: "native second" }] },
+        { id: "native-text", header: "Native input", question: "输入原生问题答案", isSecret: true, options: null },
+      ] } }); return;
+    }
     if (scenario === "permission" || scenario === "duplicate-permission") {
       pendingPermission = true;
       const permission = protocol === "acp-v1"
@@ -171,7 +190,7 @@ lines.on("line", line => {
     }
     setTimeout(() => finish(true), 50); return;
   }
-  if (message.id === "permission-1" || message.id === "unsupported") {
+  if (message.id === "permission-1" || message.id === "unsupported" || message.id === "native-question") {
     if (protocol === "acp-v1") acpOutput(); else codexOutput();
     pendingPermission = false; finish();
   }

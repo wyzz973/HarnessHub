@@ -62,3 +62,19 @@ for (const [scenario,option,input,field,expected] of [["ui-input","submit","type
     const wire=(await readFile(trace,"utf8")).trim().split("\n").map(line=>JSON.parse(line));assert.equal(wire.find(row=>row.type==="extension_ui_response")[field],expected);
   } finally {assert.equal((await driver.close()).closed,true);}
 });
+
+test("Pi recovers its original session file and rejects a replacement session", async t => {
+  const root = await mkdtemp(join(tmpdir(), "pi-native-recovery-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const path = join(root, "native.jsonl");
+  const create = (scenario = "basic") => new PiControl({ executable: process.execPath, args: [resolve("tests/fixtures/pi-rpc-peer.mjs"), scenario], env: { FIXTURE_SESSION_FILE: path }, protocol: "pi-rpc" }, { cwd: process.cwd(), env: {}, requestTimeoutMs: 1000, runTimeoutMs: 1000, closeGraceMs: 100, maxFrameBytes: 65536, maxDiagnosticBytes: 4096 });
+  const first = create(); let saved: string | null = null;
+  try { await first.initialize(); const id = await first.open(process.cwd(), "native/two"); await (await first.startText(id, "first", () => {})).result; saved = await first.checkpoint(); }
+  finally { await first.close(); }
+  assert.ok(saved); assert.deepEqual(JSON.parse(saved), { path, id: "pi-fixture" });
+  const restored = create();
+  try { await restored.initialize(); const id = await restored.open(process.cwd(), "native/two", undefined, saved); assert.equal((await (await restored.startText(id, "second", () => {})).result).status, "completed"); assert.equal(await restored.checkpoint(), saved); }
+  finally { await restored.close(); }
+  const wrong = create("restore-wrong");
+  try { await wrong.initialize(); await assert.rejects(wrong.open(process.cwd(), undefined, undefined, saved), /owned session file/); }
+  finally { await wrong.close(); }
+});

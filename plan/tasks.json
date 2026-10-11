@@ -1139,7 +1139,8 @@
         "G008-P02",
         "G008-R01",
         "G008-N01",
-        "G008-X02"
+        "G008-X02",
+        "G008-NC1"
       ],
       "active_slice": "native-installation-management"
     },
@@ -2051,7 +2052,8 @@
         "G028-C03",
         "G028-C04",
         "G028-R01",
-        "G028-R02"
+        "G028-R02",
+        "G028-NC2"
       ],
       "active_slice": "native-models-switching"
     },
@@ -2351,7 +2353,8 @@
         "G034-C01",
         "G034-C02",
         "G034-C03",
-        "G034-C04"
+        "G034-C04",
+        "G034-NC3"
       ],
       "active_slice": "native-installation-management"
     },

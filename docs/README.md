@@ -1,5 +1,7 @@
 # 工程文档与阅读顺序
 
+最新全部Harness原生能力标准：[ADR-020](decisions/0020-complete-native-harness-capabilities.md)、[逐Harness能力清单与本轮恢复证据](verification/complete-native-capabilities-2026-10-11.md)。完整能力仍进行中，原生绑定/增量恢复已实现，业务库为v6。
+
 当前以本机MVP切片推进；完整蓝图按各自状态管理。ADR-008/009/010/011/012及对应本机契约已认可，目录、控制和公共Session/静止切换已实现；本机Provider和HTTP/工作台按ADR-011实现；完整未来代理账本/自动路由等仍proposed。
 
 最新快速选择与原生会话能力：[ADR-019](decisions/0019-native-session-experience.md)、[切换时延、模型/档位、审批与原对话证据](verification/native-session-experience-2026-10-11.md)。普通选择不再建立控制连接；公共库为v5。统一界面按各Harness原接口接出功能，原生checkpoint、多模态与持久后台任务仍按未验证边界记录。

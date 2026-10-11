@@ -24,7 +24,7 @@ test("Codex initialization acknowledgement, original thread policies, streaming 
     const messages = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line));
     assert.deepEqual(messages[0].params.capabilities, { experimentalApi: false, requestAttestation: false });
     assert.equal(messages[1].method, "initialized");
-    assert.deepEqual(messages[2].params, { cwd: process.cwd(), ephemeral: true });
+    assert.deepEqual(messages[2].params, { cwd: process.cwd(), ephemeral: false });
     assert.deepEqual(messages[3].params.input, [{ type: "text", text: "hello", text_elements: [] }]);
   } finally { await driver.close(); await rm(directory, { recursive: true, force: true }); }
 });
@@ -126,4 +126,34 @@ test("an explicit Codex rejection before a turn exists fails the request without
     assert.deepEqual(await run.result, { status: "failed", reason: "request_rejected" }); assert.deepEqual(output, []);
     assert.equal((await driver.close()).protocolFailure, null);
   } finally { await driver.close(); }
+});
+
+test("Codex resumes the original durable thread and rejects replacement identity", async () => {
+  const first = control(); let checkpoint: string | null = null;
+  try { const id = await ready(first); await (await first.startText(id, "first", () => {})).result; checkpoint = await first.checkpoint(); }
+  finally { await first.close(); }
+  assert.ok(checkpoint);
+  const restored = control();
+  try { await restored.initialize(); const id = await restored.open(process.cwd(), undefined, undefined, checkpoint); assert.equal(id, checkpoint); assert.equal((await (await restored.startText(id, "second", () => {})).result).status, "completed"); }
+  finally { await restored.close(); }
+  const wrong = control("resume-wrong-identity");
+  try { await wrong.initialize(); await assert.rejects(wrong.open(process.cwd(), undefined, undefined, checkpoint), error => error !== null && typeof error === "object" && "code" in error && error.code === "IDENTITY_MISMATCH"); }
+  finally { await wrong.close(); }
+});
+
+test("Codex native questions return actual option labels and freeform values, and native reasoning stays visible", async () => {
+  const root = await mkdtemp(join(tmpdir(), "codex-native-question-")), trace = join(root, "trace"), driver = control("native-question", { FIXTURE_TRACE: trace });
+  const events: ControlEvent[] = [], decisions: Promise<void>[] = [];
+  try {
+    const id = await ready(driver); driver.enablePermissions();
+    const run = await driver.startText(id, "native questions", event => {
+      events.push(event);
+      if (event.type === "permission_requested") decisions.push(driver.decidePermission(event.id, event.input ? "submit" : "answer-1", event.input ? "synthetic answer\nsecond line" : undefined));
+    });
+    assert.equal((await run.result).status, "completed"); await Promise.all(decisions);
+    assert.ok(events.some(event => event.type === "thinking" && event.text === "native reasoning summary"));
+    assert.ok(events.some(event => event.type === "permission_requested" && event.input?.kind === "secret"));
+    const frames = (await readFile(trace, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+    assert.deepEqual(frames.find(frame => frame.id === "native-question").result, { answers: { "native-choice": { answers: ["Second"] }, "native-text": { answers: ["synthetic answer\nsecond line"] } } });
+  } finally { await driver.close(); await rm(root, { recursive: true, force: true }); }
 });

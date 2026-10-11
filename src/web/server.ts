@@ -120,7 +120,7 @@ function summary(snapshot: SessionSnapshot): SessionSummary {
 function view(snapshot: SessionSnapshot, permissions: SessionView["permissions"] = []): SessionView {
   return { id: snapshot.id, version: snapshot.version, lastSeq: snapshot.lastSeq, epoch: snapshot.epoch, status: snapshot.status,
     workspace: snapshot.configuration.workspace, selection: snapshot.selection, activeRunId: snapshot.activeRunId, pendingSwitchId: snapshot.pendingSwitchId,
-    permissions, messages: snapshot.messages, runs: snapshot.runs, switches: snapshot.switches };
+    permissions, nativeStates: snapshot.nativeBindings?.flatMap(binding => binding.status === "archived" ? [] : [{ harnessId: binding.harnessId, controlId: binding.controlId, status: binding.status }]) ?? [], messages: snapshot.messages, runs: snapshot.runs, switches: snapshot.switches };
 }
 function publicFailure(error: unknown): { readonly status: number; readonly code: string; readonly message: string } {
   if (error instanceof HttpError || error instanceof SessionStreamError) return error;
@@ -257,6 +257,12 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     }
     if (path === "/api/v1/harnesses" && method === "GET") { queries(url, []); json(response, 200, await rescan()); return; }
     const permissionRoute = /^\/api\/v1\/sessions\/(session-[a-zA-Z0-9-]+)\/permissions\/(permission-[a-zA-Z0-9-]+)$/u.exec(path);
+    const nativeBranch = /^\/api\/v1\/sessions\/(session-[a-zA-Z0-9-]+)\/native-branch$/u.exec(path);
+    if (nativeBranch && method === "POST") {
+      queries(url, []); const input = record(await body(request), ["epoch", "commandId"], ["epoch", "commandId"]);
+      if (typeof input.epoch !== "number" || !Number.isSafeInteger(input.epoch) || input.epoch < 1) throw new HttpError(400, "INVALID_INPUT", "invalid native branch epoch");
+      json(response, 200, view(app.runtime.resetNative(sessionId(nativeBranch[1]), text(input.commandId, "commandId", 128), input.epoch))); return;
+    }
     if (permissionRoute && method === "POST") { queries(url, []); const input = record(await body(request), ["optionId", "commandId", "input"], ["optionId", "commandId"]); const id = sessionId(permissionRoute[1]); json(response, 200, await app.runtime.decidePermission(id, permissionRoute[2]!, text(input.optionId, "optionId", 512), text(input.commandId, "commandId", 128), input.input===undefined?undefined:(typeof input.input==="string"&&Buffer.byteLength(input.input)<=65536&&!input.input.includes("\0")?input.input:(()=>{throw new HttpError(400,"INVALID_INPUT","invalid native UI input")})()))); return; }
     const modelsRoute = /^\/api\/v1\/harnesses\/([a-z][a-z0-9-]{0,95})\/models$/u.exec(path);
     if (modelsRoute && method === "GET") {

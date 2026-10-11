@@ -58,8 +58,8 @@ export class PiControl implements HarnessControl {
     if (launch.protocol !== "pi-rpc") throw new ControlError("INVALID_INPUT", "Pi control requires Pi RPC");
     this.rpc = this.connection();
   }
-  private connection(selected?: ReturnType<typeof model>): JsonRpcProcess {
-    return new JsonRpcProcess({ ...this.launch, args: [...this.launch.args, "--no-session", ...(selected ? ["--provider", selected.provider, "--model", selected.modelId] : [])] }, this.options, {
+  private connection(selected?: ReturnType<typeof model>, persist = false, sessionPath?: string): JsonRpcProcess {
+    return new JsonRpcProcess({ ...this.launch, args: [...this.launch.args, ...(sessionPath === undefined ? persist ? [] : ["--no-session"] : ["--session", sessionPath]), ...(selected ? ["--provider", selected.provider, "--model", selected.modelId] : [])] }, this.options, {
       notification: (_method, event) => this.notification(object(event, "Pi event")),
       request: () => { throw new ControlError("METHOD_NOT_FOUND", "Pi does not use inbound JSON-RPC requests"); },
       failure: error => { this.failure = error; this.rejectActive(error); },
@@ -100,7 +100,7 @@ export class PiControl implements HarnessControl {
       return { id, name, ...(options ? { options } : {}) };
     });
     if (current && !ready) models.push({ id: current.id, name: current.name });
-    this.catalog = { models, defaultModel: current?.id ?? null, canSelect: this.entries.length > 0, authentication: ready ? "ready" : this.entries.length === 0 ? "missing" : "unknown" };
+    this.catalog = { ...this.catalog, models, defaultModel: current?.id ?? null, canSelect: this.entries.length > 0, authentication: ready ? "ready" : this.entries.length === 0 ? "missing" : "unknown" };
   }
   private async initializeOnce(): Promise<ProtocolObservation> {
     try {
@@ -111,17 +111,34 @@ export class PiControl implements HarnessControl {
       return { protocol: "pi-rpc", protocolVersion: null, agentName: "pi", agentVersion: null, authenticationMethods: [], capabilities: { nativeModels: true, settlement: "agent_settled" } };
     } catch (error) { this.rpc.abort(errorFrom(error)); throw error; }
   }
-  async open(cwd: string, selected?: string, native?: NativeOptions): Promise<NativeConversationId> {
+  async checkpoint(): Promise<string | null> {
+    if (this.conversation === null || this.closed) return null;
+    const state = object(await this.rpc.request("get_state", {}), "native Pi checkpoint");
+    if (state.sessionFile == null) return null;
+    const path = string(state.sessionFile, "native Pi session file", 4096), id = string(state.sessionId, "native Pi session identity");
+    if (!isAbsolute(path) || /[\0\r\n]/u.test(path)) throw new ControlError("INVALID_CHECKPOINT", "invalid native Pi session file");
+    this.conversation = nativeConversationId(id);
+    return JSON.stringify({ path, id });
+  }
+  async open(cwd: string, selected?: string, native?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
     if (!this.initialized || this.closed || this.failure) throw this.failure ?? new ControlError("INVALID_STATE", "Pi is not initialized");
     if (this.conversation || !isAbsolute(cwd) || cwd !== this.options.cwd) throw new ControlError("INVALID_STATE", "Pi owns one conversation in its launch workspace");
-    if (selected !== undefined && selected !== this.catalog.defaultModel) {
-      const entry = this.entries.find(row => row.id === selected);
-      if (!entry) throw new ControlError("MODEL_UNAVAILABLE", "selected model is unavailable in native Pi");
+    let restored: { path: string; id: string } | undefined;
+    if (checkpoint !== undefined) {
+      let parsed: unknown; try { parsed = JSON.parse(checkpoint); } catch { throw new ControlError("INVALID_CHECKPOINT", "invalid Pi recovery reference"); }
+      const value = object(parsed, "Pi recovery reference"), path = string(value.path, "Pi recovery file", 4096), id = string(value.id, "Pi recovery identity");
+      if (Object.keys(value).some(key => !["path", "id"].includes(key)) || !isAbsolute(path) || /[\0\r\n]/u.test(path)) throw new ControlError("INVALID_CHECKPOINT", "invalid native Pi recovery reference");
+      restored = { path, id };
+    }
+    const entry = this.entries.find(row => row.id === (selected ?? this.catalog.defaultModel));
+    if (selected !== undefined && !entry) throw new ControlError("MODEL_UNAVAILABLE", "selected model is unavailable in native Pi");
+    {
       const cleanup = await this.rpc.close();
       if (cleanup.protocolFailure) throw new ControlError("PROTOCOL_FAILED", "Pi model probe failed before model launch");
       this.failure = null;
-      this.rpc = this.connection(entry); await this.readState();
-      if (this.catalog.defaultModel !== selected) throw new ControlError("MODEL_MISMATCH", "native Pi did not apply the requested model");
+      this.rpc = this.connection(entry, true, restored?.path); await this.readState();
+      if (selected !== undefined && this.catalog.defaultModel !== selected) throw new ControlError("MODEL_MISMATCH", "native Pi did not apply the requested model");
+      if (restored !== undefined && (this.state.sessionId !== restored.id || this.state.sessionFile !== restored.path)) throw new ControlError("IDENTITY_MISMATCH", "native Pi recovery did not restore the owned session file");
     }
     for (const [key, value] of Object.entries(native ?? {})) {
       if (key !== "thinking_level" || !this.catalog.models.find(row => row.id === (selected ?? this.catalog.defaultModel))?.options?.find(option => option.id === key)?.values.some(option => option.value === value)) throw new ControlError("NATIVE_OPTION_UNAVAILABLE", "thinking level unavailable for native Pi model");

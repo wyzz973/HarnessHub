@@ -6510,6 +6510,54 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/protocol/pi.test.ts"
+    },
+    {
+      "id": "G008-NC1",
+      "task": "G008",
+      "requirements": [
+        "R07"
+      ],
+      "invariants": [
+        "INV-06"
+      ],
+      "layer": "integration",
+      "scenario": "原生绑定恢复、待确认和归属保护；旧v5事务升级到v6及无效回滚",
+      "expected": "正式存储/IPC和原生身份保留；无效或未知明确拒绝，无自动fallback；输入/恢复并不冒充后端达标",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/session-store.test.ts"
+    },
+    {
+      "id": "G028-NC2",
+      "task": "G028",
+      "requirements": [
+        "R07"
+      ],
+      "invariants": [
+        "INV-02"
+      ],
+      "layer": "integration",
+      "scenario": "原生进程重开、A→B→A增量历史、重启、未知拒绝恢复及显式重建",
+      "expected": "正式存储/IPC和原生身份保留；无效或未知明确拒绝，无自动fallback；输入/恢复并不冒充后端达标",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/session-runtime.test.ts"
+    },
+    {
+      "id": "G034-NC3",
+      "task": "G034",
+      "requirements": [
+        "R10"
+      ],
+      "invariants": [
+        "INV-04"
+      ],
+      "layer": "protocol",
+      "scenario": "ACP恢复回放、Codex历史用量不绑定新Turn、Pi原文件恢复和原生问答",
+      "expected": "正式存储/IPC和原生身份保留；无效或未知明确拒绝，无自动fallback；输入/恢复并不冒充后端达标",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/protocol/codex.test.ts"
     }
   ]
 }

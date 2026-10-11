@@ -34,7 +34,7 @@ Provider 保存名称、协议、Base URL、模型列表、默认模型、启用
 
 已知密钥在公开 control metadata、事件、诊断、错误与结算中清洗；文本跨delta分片使用前缀缓冲，不能通过分片逃逸。模型探测禁止redirect，响应≤1MiB，期限5s，同时≤16；shutdown停止准入、取消并等待所有探测，才释放vault/database。
 
-业务SQLite在独占owner内全事务执行既有user_version1→2→3及新增3→4→5迁移，保留全部命令、fingerprint、events、水位和业务version；坏数据整笔回滚。新Session必须v5，未知格式拒绝；只读Reader支持已知旧版本但不迁移。旧Session无法凭空获得模型目标，需要明确选择。旧程序不能读取v5；回退前停止服务并恢复升级前备份。
+业务SQLite在独占owner内全事务执行既有user_version1→2→3及新增3→4→5→6迁移，保留全部命令、fingerprint、events、水位和业务version；坏数据整笔回滚。新Session必须v6，未知格式拒绝；只读Reader支持已知旧版本但不迁移。旧Session无法凭空获得模型目标，需要明确选择。旧程序不能读取v6；回退前停止服务并恢复升级前备份。
 
 ## HTTP 与浏览器
 
@@ -69,3 +69,5 @@ HTTP body≤128KiB、response≤8MiB、资产≤4MiB、并发请求≤16、连�
 选择追加nativeOptions，仅接受有界原生枚举ID/值，不能与managed Provider并用。界面按原Harness实际模型显示思考档位，其他select设置放入高级配置，命令目录填入输入框；不能编造统一档位。切回Harness保留本对话最后的模型/选项，模型变化重新确认模型相关设置。
 
 `POST /api/v1/sessions/:id/permissions/:permissionId`接受optionId、commandId和可选input，使用既有Origin/CSRF保护。只有当前Run实际待决的原生选项可回复；公开DTO包含待决requests，刷新/SSE恢复同一问题。用户决定先持久记录，命令重试不重复回传；无后端确认时明确backendAcknowledged=false。取消、结束和关闭释放问题。Pi confirm/select/input/editor在统一界面呈现；原生思考/工具活动来自实际事件。文本之外的输入、原生checkpoint和持久后台任务尚未完整验收。
+
+ADR-020追加`POST /api/v1/sessions/:id/native-branch`，接受epoch/commandId；仅空闲及资源已核实的所选原生Harness允许重新建立。原生私有引用保留，公开历史不删除；接口不是原生fork。Web仅投影nativeStates的身份/status，checkpoint隐藏。恢复后的历史回放不创造公共回复，thread级用量元数据不绑定当前Turn。Codex原生问答和密码输入通过既有交互往返，回答正文不写权限事件。

@@ -32,7 +32,7 @@ export type ControlEvent =
   | { readonly type: "text"; readonly text: string }
   | { readonly type: "thinking"; readonly text: string }
   | { readonly type: "tool"; readonly id: string; readonly title: string; readonly status: string }
-  | { readonly type: "permission_requested"; readonly id: string; readonly title: string; readonly detail?: string; readonly input?: {readonly kind:"text"|"editor";readonly value:string}; readonly options: readonly { readonly id: string; readonly name: string }[] }
+  | { readonly type: "permission_requested"; readonly id: string; readonly title: string; readonly detail?: string; readonly input?: {readonly kind:"text"|"editor"|"secret";readonly value:string}; readonly options: readonly { readonly id: string; readonly name: string }[] }
   | { readonly type: "permission"; readonly id: string; readonly decision: "denied" | "cancelled" }
   | { readonly type: "diagnostic"; readonly message: string };
 export interface BackendResult {
@@ -74,7 +74,9 @@ export interface ControlRun {
 /** One native conversation and active run per connection; all resources are owned by close(). */
 export interface HarnessControl {
   initialize(): Promise<ProtocolObservation>;
-  open(cwd: string, model?: string, options?: NativeOptions): Promise<NativeConversationId>;
+  open(cwd: string, model?: string, options?: NativeOptions, checkpoint?: string): Promise<NativeConversationId>;
+  /** Private Driver-owned recovery reference, never credentials. Null means the current native interface cannot resume. */
+  checkpoint?(): Promise<string | null>;
   models?(): Promise<NativeModelCatalog>;
   startText(id: NativeConversationId, text: string, onEvent: (event: ControlEvent) => void): Promise<ControlRun>;
   /** Enables interactive requests for a public Run. Standalone probes keep their explicit deny default. */

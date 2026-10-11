@@ -256,12 +256,12 @@ export class JsonRpcProcess {
   private groupAlive(): boolean {
     if (this.pid === null) return false;
     try { process.kill(-this.pid, 0); return true; }
-    catch (error) { if (object(error, "signal error").code === "ESRCH" || object(error,"signal error").code==="EPERM"&&this.closeObserved&&darwinExitedGroupIsQuiescent(this.pid)) return false; throw error; }
+    catch (error) { if (object(error, "signal error").code === "ESRCH") return false; if (object(error,"signal error").code === "EPERM" && this.closeObserved) return !darwinExitedGroupIsQuiescent(this.pid); throw error; }
   }
   private signalGroup(signal: NodeJS.Signals): void {
     if (this.pid === null) return;
     try { process.kill(-this.pid, signal); }
-    catch (error) { if (object(error, "signal error").code !== "ESRCH" && !(object(error,"signal error").code==="EPERM"&&this.closeObserved&&darwinExitedGroupIsQuiescent(this.pid))) throw error; }
+    catch (error) { if (object(error, "signal error").code !== "ESRCH" && !(object(error,"signal error").code==="EPERM"&&this.closeObserved)) throw error; }
   }
   private async waitClosed(): Promise<boolean> {
     const end = performance.now() + this.options.closeGraceMs;

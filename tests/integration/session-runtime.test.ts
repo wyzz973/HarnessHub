@@ -22,25 +22,26 @@ class Gate<T> {
   reject!: (error: unknown) => void;
   constructor() { this.promise = new Promise((resolve, reject) => { this.resolve = resolve; this.reject = reject; }); }
 }
-interface Fixture { readonly root: string; readonly store: SqliteSessionStore; readonly configuration: SessionConfiguration; readonly runtimes: SessionRuntime[] }
+interface Fixture { readonly root: string; readonly store: SqliteSessionStore; readonly stores: SqliteSessionStore[]; readonly configuration: SessionConfiguration; readonly runtimes: SessionRuntime[] }
 async function fixture(t: test.TestContext): Promise<Fixture> {
   const root = await mkdtemp(join(tmpdir(), "harness-session-runtime-"));
   const workspace = join(root, "workspace"); await mkdir(workspace);
   const store = new SqliteSessionStore(join(root, "data"));
+  const stores = [store];
   const runtimes: SessionRuntime[] = [];
   t.after(async () => {
     for (const app of runtimes) {
       try { await app.close(); }
       catch (error) { if (!(error instanceof SessionError) || !["SESSION_BLOCKED", "PUBLICATION_FAILED", "STORAGE_UNAVAILABLE"].includes(error.code)) throw error; }
     }
-    try { store.close(); } catch { /* A fault test may already poison its Store. */ }
+    for (const owned of stores) try { owned.close(); } catch { /* A fault test may already poison its Store. */ }
     await rm(root, { recursive: true, force: true });
   });
-  return { root, store, runtimes, configuration: { workspace, manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: true } };
+  return { root, store, stores, runtimes, configuration: { workspace, manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: true } };
 }
-function runtime(f: Fixture, factory: SessionBindingFactory, publish: (event: SessionEvent) => void = () => {}): SessionRuntime {
+function runtime(f: Fixture, factory: SessionBindingFactory, publish: (event: SessionEvent) => void = () => {}, idPrefix = ""): SessionRuntime {
   let id = 0;
-  const app = new SessionRuntime(f.store, factory, { id: () => String(++id), now: () => new Date("2026-10-09T00:00:00Z"), publish,
+  const app = new SessionRuntime(f.store, factory, { id: () => idPrefix + String(++id), now: () => new Date("2026-10-09T00:00:00Z"), publish,
     fingerprint: value => createHash("sha256").update(value).digest("hex") });
   f.runtimes.push(app); return app;
 }
@@ -577,4 +578,59 @@ test("recovery refuses unconfirmed cleanup, authoritative failure and a closed S
   assert.throws(() => app.resume(separate.id, { harnessId: "alpha" }, "unsafe-owner"), error => error instanceof SessionError && error.code === "RECOVERY_UNSAFE");
   await app.closeSession(separate.id, "close");
   assert.throws(() => app.resume(separate.id, { harnessId: "alpha" }, "closed"), error => error instanceof SessionError && error.code === "RECOVERY_UNAVAILABLE");
+});
+
+test("native bindings survive process owners, A to B to A sends only unseen public facts, and explicit branches retain old state", async t => {
+  const f = await fixture(t), peers = Array.from({ length: 5 }, () => controlled()), factory = new ControlledFactory(peers);
+  const prepare = factory.prepare.bind(factory), resumes: (string | undefined)[] = [];
+  factory.prepare = async (...args) => {
+    const binding = await prepare(...args), original = binding.control.open;
+    return { ...binding, control: { ...binding.control,
+      open: async (cwd, model, options, checkpoint) => { resumes.push(checkpoint); return original(cwd, model, options, checkpoint); },
+      checkpoint: async () => "private-native-" + args[0].harnessId,
+    } };
+  };
+  const app = runtime(f, factory), session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  app.send(session.id, "first", "one"); await app.wait(session.id);
+  app.send(session.id, "second", "two"); await app.wait(session.id);
+  assert.equal(await peers[1]!.started.promise, "second");
+  app.switch(session.id, { harnessId: "bravo" }, "to-b"); await app.wait(session.id);
+  app.send(session.id, "third from bravo", "three"); await app.wait(session.id);
+  app.switch(session.id, { harnessId: "alpha" }, "to-a"); await app.wait(session.id);
+  app.send(session.id, "fourth", "four"); await app.wait(session.id);
+  const delta = JSON.parse((await peers[3]!.started.promise).split("\n").slice(1).join("\n")) as {history:{user:{text:string}}[]};
+  assert.deepEqual(delta.history.map(row => row.user.text), ["third from bravo"]);
+  assert.deepEqual(resumes, [undefined, "private-native-alpha", undefined, "private-native-alpha"]);
+  const saved = app.read(session.id); assert.equal(saved.nativeBindings?.length, 2);
+  await app.close(); f.store.close();
+  const reopened = new SqliteSessionStore(join(f.root, "data")); f.stores.push(reopened);
+  const next = runtime({ ...f, store: reopened }, factory, () => {}, "restart-");
+  next.send(session.id, "after owner restart", "five"); await next.wait(session.id);
+  assert.equal(await peers[4]!.started.promise, "after owner restart"); assert.equal(resumes.at(-1), "private-native-alpha");
+  assert.equal(next.read(session.id).nativeBindings?.filter(binding => binding.status === "ready").length, 2);
+  const epoch = next.read(session.id).epoch;
+  assert.throws(() => next.resetNative(session.id, "bad-epoch", epoch - 1), /changed/);
+  const branched = next.resetNative(session.id, "branch", epoch);
+  assert.equal(branched.messages.length, saved.messages.length + 2); assert.equal(branched.nativeBindings?.[0]?.status, "archived");
+  assert.deepEqual(next.resetNative(session.id, "branch", epoch), branched);
+  assert.throws(() => reopened.transact(session.id, branched.version, current => ({next:{...current,nativeBindings:[]},events:[{type:"invalid.erase",data:{}}]})), /silently erased/);
+});
+
+test("uncertain native dispatch cannot be silently restored after public recovery", async t => {
+  const f = await fixture(t), first = controlled({ holdResult: true }), factory = new ControlledFactory([first]);
+  const prepare = factory.prepare.bind(factory);
+  factory.prepare = async (...args) => { const binding = await prepare(...args); return { ...binding, control: { ...binding.control, checkpoint: async () => "private-native-alpha" } }; };
+  const app = runtime(f, factory), session = await app.create(f.configuration, { harnessId: "alpha" }, "create");
+  app.send(session.id, "first unknown", "one"); await first.started.promise;
+  first.result.reject(new Error("external connection lost")); await assert.rejects(app.wait(session.id), /needs recovery/);
+  assert.equal(app.read(session.id).nativeBindings?.[0]?.status, "unconfirmed");
+  app.resume(session.id, { harnessId: "alpha" }, "resume", true); await app.wait(session.id);
+  const count = factory.prepared.length;
+  app.send(session.id, "must not create empty native state", "two"); await app.wait(session.id);
+  assert.equal(factory.prepared.length, count); assert.equal(app.read(session.id).runs.at(-1)?.error?.code, "NATIVE_STATE_UNCONFIRMED");
+  const state = app.read(session.id); app.resetNative(session.id, "explicit-branch", state.epoch);
+  app.send(session.id, "explicit new native branch", "three"); await app.wait(session.id);
+  assert.equal(app.read(session.id).nativeBindings?.[0]?.status, "archived");
+  assert.equal(app.read(session.id).nativeBindings?.[1]?.status, "ready");
+  assert.equal(app.read(session.id).runs[0]?.status, "unknown");
 });

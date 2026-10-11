@@ -18,8 +18,11 @@ export class AcpControl implements HarnessControl {
   private readonly rpc: JsonRpcProcess;
   private initializing: Promise<ProtocolObservation> | null = null;
   private initialized = false;
+  private capabilities: Record<string, unknown> = {};
   private conversation: NativeConversationId | null = null;
   private opening = false;
+  private replaying = false;
+  private replayBytes = 0;
   private active: ActivePrompt | null = null;
   private failure: Error | null = null;
   private catalog: NativeModelCatalog = { models: [], defaultModel: null, authentication: "unknown", canSelect: false };
@@ -51,6 +54,7 @@ export class AcpControl implements HarnessControl {
       }), "ACP initialize result");
       if (response.protocolVersion !== 1) throw new ControlError("PROTOCOL_VERSION", "peer did not negotiate ACP v1");
       const capabilities = object(response.agentCapabilities, "ACP agent capabilities");
+      this.capabilities = capabilities;
       if (!Array.isArray(response.authMethods)) throw new ControlError("INVALID_PROTOCOL", "authMethods must be an array");
       const methods = response.authMethods.map(method => string(object(method, "auth method").id, "auth method id"));
       const info = response.agentInfo == null ? null : object(response.agentInfo, "agentInfo");
@@ -78,7 +82,7 @@ export class AcpControl implements HarnessControl {
       if (new Set(settings.map(option => option.id)).size !== settings.length) throw new ControlError("INVALID_PROTOCOL", "duplicate native settings");
       this.catalog = { ...this.catalog, options: [...settings, ...(!settings.some(option=>option.category==="mode") ? (this.catalog.options??[]).filter(option=>option.id==="__mode") : [])] };
     }
-    if (response.modes !== undefined && !this.catalog.options?.some(option => ["mode", "thought_level"].includes(option.category))) {
+    if (response.modes !== undefined && !this.catalog.options?.some(option => option.category === "mode")) {
       const modes = object(response.modes, "native modes"); if (!Array.isArray(modes.availableModes) || modes.availableModes.length > 128) throw new ControlError("INVALID_PROTOCOL", "invalid native modes");
       const values = modes.availableModes.map(value => { const row = object(value, "native mode"); return { value: string(row.id, "mode id", 128), name: string(row.name, "mode name", 1024) }; });
       const currentValue = string(modes.currentModeId, "current mode", 128);
@@ -122,14 +126,28 @@ export class AcpControl implements HarnessControl {
   }
   async models(): Promise<NativeModelCatalog> { this.assertInitialized(); if (this.conversation === null) throw new ControlError("INVALID_STATE", "ACP model catalog requires a session"); return { ...this.catalog, defaultModel: this.configuredDefault }; }
   protected async sessionParameters(cwd: string): Promise<Readonly<Record<string, unknown>>> { return { cwd, mcpServers: [] }; }
-  async open(cwd: string, model?: string, options?: NativeOptions): Promise<NativeConversationId> {
+  async checkpoint(): Promise<string | null> {
+    const session = this.capabilities.sessionCapabilities == null ? {} : object(this.capabilities.sessionCapabilities, "native session capabilities");
+    return this.conversation !== null && (this.capabilities.loadSession === true || session.resume !== undefined) ? this.conversation : null;
+  }
+  async open(cwd: string, model?: string, options?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
     this.assertInitialized();
     if (!isAbsolute(cwd)) throw new ControlError("INVALID_INPUT", "conversation cwd must be absolute");
     if (this.conversation !== null || this.opening) throw new ControlError("INVALID_STATE", "this connection already owns a conversation");
     this.opening = true;
     try {
-      const response = object(await this.rpc.request("session/new", await this.sessionParameters(cwd)), "session/new result");
-      this.conversation = nativeConversationId(response.sessionId);
+      let method = "session/new";
+      if (checkpoint !== undefined) {
+        const session = this.capabilities.sessionCapabilities == null ? {} : object(this.capabilities.sessionCapabilities, "native session capabilities");
+        method = session.resume !== undefined ? "session/resume" : this.capabilities.loadSession === true ? "session/load" : "";
+        if (!method) throw new ControlError("NATIVE_RESUME_UNAVAILABLE", "installed Harness did not advertise native recovery");
+        this.conversation = nativeConversationId(checkpoint); this.replaying = true;
+      }
+      const response = object(await this.rpc.request(method, { ...await this.sessionParameters(cwd), ...(checkpoint === undefined ? {} : { sessionId: this.conversation }) }), "native session setup result");
+      if (checkpoint === undefined) this.conversation = nativeConversationId(response.sessionId);
+      else if (response.sessionId !== undefined && response.sessionId !== this.conversation) throw new ControlError("IDENTITY_MISMATCH", "native restore changed the owned session identity");
+      if (this.conversation === null) throw new ControlError("IDENTITY_MISMATCH", "native setup did not establish an owned conversation");
+      this.replaying = false;
       this.readModels(response); this.configuredDefault=this.catalog.defaultModel;
       for (const params of this.openingMetadata.splice(0)) this.notification("session/update", params);
       if (model !== undefined) {
@@ -151,7 +169,7 @@ export class AcpControl implements HarnessControl {
       }
       return this.conversation;
     } catch (error) { const failure = this.nativeFailure(error); if (!(failure instanceof ControlError && ["MODEL_UNAVAILABLE","NATIVE_OPTION_UNAVAILABLE"].includes(failure.code))) this.rpc.abort(failure); throw failure; }
-    finally { this.opening = false; this.openingMetadata.length = 0; }
+    finally { this.opening = false; this.replaying = false; this.openingMetadata.length = 0; }
   }
   async startText(id: NativeConversationId, prompt: string, onEvent: (event: ControlEvent) => void): Promise<ControlRun> {
     this.assertInitialized();
@@ -219,6 +237,11 @@ export class AcpControl implements HarnessControl {
       this.openingMetadata.push(params); return;
     }
     this.scope(params);
+    if (this.replaying) {
+      this.replayBytes += Buffer.byteLength(JSON.stringify(params));
+      if (this.replayBytes > 64 * 1024 * 1024) throw new ControlError("REPLAY_LIMIT", "native history replay exceeded its budget");
+      if (!metadataUpdates.has(kind)) return;
+    }
     if (kind === "config_option_update") { this.readModels(update); return; }
     if (kind === "available_commands_update") {
       if (!Array.isArray(update.availableCommands) || update.availableCommands.length > 256) throw new ControlError("INVALID_PROTOCOL", "native commands exceed their budget");

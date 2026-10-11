@@ -2,7 +2,7 @@ import { existsSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 let active = null, counter = 0, nativeModel = null;
-const native = "browser-native-" + process.pid;
+let native = "browser-native-" + process.pid;
 const send = value => process.stdout.write(JSON.stringify(value) + "\n");
 const reply = (id, result) => send({ id, result });
 const notify = (method, params) => send({ method, params });
@@ -18,8 +18,10 @@ createInterface({ input: process.stdin }).on("line", line => {
   if (value.method === "account/read") return reply(value.id, { account: { type: "chatgpt" }, requiresOpenaiAuth: true });
   if (value.method === "model/list") return reply(value.id, { data: [{ model: "native-a", displayName: "Native A", defaultReasoningEffort:"low",supportedReasoningEfforts:[{reasoningEffort:"low"},{reasoningEffort:"high"}] }, { model: "native-b", displayName: "Native B", defaultReasoningEffort:"low",supportedReasoningEfforts:[{reasoningEffort:"low"},{reasoningEffort:"high"}] }], nextCursor: null });
   if (value.method === "thread/start") { nativeModel = value.params.model ?? null; notify("thread/started", { thread: { id: native } }); return reply(value.id, { thread: { id: native } }); }
+  if (value.method === "thread/resume") { native = value.params.threadId; nativeModel = value.params.model ?? null; notify("thread/started", { thread: { id: native } }); return reply(value.id, { thread: { id: native } }); }
   if (value.method === "turn/start") {
-    const context = JSON.parse(value.params.input[0].text.split("\n").slice(1).join("\n"));
+    const input = value.params.input[0].text;
+    const context = input.startsWith("HarnessGateway public conversation context.") ? JSON.parse(input.split("\n").slice(1).join("\n")) : { history: [], currentInput: { text: input } };
     const text = context.currentInput.text;
     const config = process.env.HARNESS_GATEWAY_PROVIDER_KEY ? readFileSync(join(process.env.CODEX_HOME, "config.toml"), "utf8") : null;
     const model = nativeModel ?? (config ? JSON.parse(config.match(/^model = (.+)$/mu)[1]) : "native-a");

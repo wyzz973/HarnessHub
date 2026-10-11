@@ -2,7 +2,7 @@ import { parseProviderTarget } from "../../../contracts/provider.js";
 import type { BackendResult, CleanupEvidence, ControlEvent, ControlRun } from "../../../contracts/control.js";
 import {
   SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId,
-  type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicRun,
+  type NativeSessionBinding, type PermissionRequest, type CancelReceipt, type CommandId, type EventDraft, type PreparedSessionBinding, type PublicRun,
   type SelectionRequest, type SendReceipt, type SessionBindingFactory, type SessionCommit, type SessionConfiguration,
   type SessionId, type SessionEvent, type SessionMutation, type SessionRuntimeOptions, type SessionSnapshot, type SessionStore, type SwitchReceipt,
 } from "../../../contracts/session.js";
@@ -109,7 +109,7 @@ export class SessionRuntime {
     const concurrent = this.store.findByCreateKey(command);
     if (concurrent) { replayCommand(concurrent, command, "create", fingerprint); return concurrent; }
     const id = sessionId("session-" + this.options.id());
-    const state: SessionSnapshot = { schemaVersion: 5, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
+    const state: SessionSnapshot = { schemaVersion: 6, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
       configuration: config, selection: validated, activeRunId: null, pendingSwitchId: null,
       runs: [], messages: [], switches: [], commands: [{ id: command, kind: "create", fingerprint, resultId: id }] };
     try {
@@ -168,6 +168,19 @@ export class SessionRuntime {
     this.admit(); return this.cancelInternal(id, commandId(key), target === undefined ? undefined : runId(target));
   }
   read(id: SessionId): SessionSnapshot { return this.load(id); }
+  resetNative(id: SessionId, key: string, epoch: number): SessionSnapshot {
+    this.admit(); const state = this.load(id), command = commandId(key);
+    const fingerprint = this.fingerprint({ kind: "native-reset", epoch });
+    if (replayCommand(state, command, "native-reset", fingerprint)) return state;
+    this.commandBudget(state);
+    if (state.status === "closed" || state.activeRunId !== null || state.pendingSwitchId !== null || state.runs.some(run => !terminal(run.status))) throw new SessionError("NATIVE_SESSION_BUSY", "native state can be branched only while idle");
+    if (epoch !== state.epoch || state.selection.provider !== undefined) throw new SessionError("NATIVE_SELECTION_CONFLICT", "the selected native Harness changed");
+    if (state.runs.some(run => run.status === "unknown" && run.cleanup?.closed !== true)) throw new SessionError("RECOVERY_CLEANUP_REQUIRED", "native resources must be confirmed before branching");
+    return this.commit(id, current => ({ next: { ...current,
+      nativeBindings: current.nativeBindings?.map(binding => binding.harnessId === current.selection.harnessId && binding.controlId === current.selection.controlId && binding.status !== "archived" ? { ...binding, status: "archived" as const } : binding) ?? [],
+      commands: [...current.commands, { id: command, kind: "native-reset", fingerprint, resultId: id }],
+    }, events: [event("native.branch_requested", { harnessId: current.selection.harnessId, controlId: current.selection.controlId, historyPreserved: true, previousBindingPreserved: true })] })).session;
+  }
   async wait(id: SessionId): Promise<void> {
     this.load(id);
     for (;;) {
@@ -477,10 +490,18 @@ export class SessionRuntime {
     if (this.active) throw new SessionError("OWNERSHIP_LOST", "another global writer is active");
     this.active = execution;
     let backend: BackendResult | null = null, cleanup: CleanupEvidence | null = null, problem: ReturnType<typeof fault> | null = null;
+    let checkpoint: string | null = null, checkpointStored = false, nativeConfirmed = false;
+    let previousNative: NativeSessionBinding | undefined;
     try {
       this.commit(id, current => ({ next: { ...updatedRun(current, target, { status: "preparing", selection: pinned, epoch: waitedSwitch ? current.epoch : queued.epoch }), activeRunId: target },
         events: [event("run.preparing", { runId: target, selection: state.selection, epoch: state.epoch })] }));
       let current = this.owned(execution), run = this.continue(execution), context = buildPublicContext(current, run);
+      previousNative = run.selection.provider === undefined ? current.nativeBindings?.find(binding => binding.harnessId === run.selection.harnessId && binding.controlId === run.selection.controlId && binding.status !== "archived") : undefined;
+      if (previousNative?.status === "unconfirmed") throw new SessionError("NATIVE_STATE_UNCONFIRMED", "原生会话状态尚未确认；可以切换其他 Harness，或明确建立新的原生分支。公共历史会保留。");
+      if (previousNative !== undefined) {
+        const through = previousNative.throughRunId === null ? -1 : current.runs.findIndex(run => run.id === previousNative!.throughRunId);
+        context = buildPublicContext(current, run, context.sourceRunIds.filter(id => current.runs.findIndex(run => run.id === id) > through));
+      }
       this.commit(id, current => ({ next: updatedRun(current, target, { contextThroughSeq: context.throughSeq, sourceRunIds: context.sourceRunIds }),
         events: [event("run.context_prepared", { runId: target, throughSeq: context.throughSeq, sourceRunIds: context.sourceRunIds, continuity: context.continuity })] }));
       execution.binding = await this.factory.prepare(run.selection, current.configuration, id, target);
@@ -491,11 +512,22 @@ export class SessionRuntime {
       }
       const observation = await execution.binding.control.initialize(); this.continue(execution);
       this.commit(id, current => ({ next: current, events: [event("run.protocol", { runId: target, observation })] }));
-      const native = await execution.binding.control.open(execution.binding.workspace, run.selection.nativeModel, run.selection.nativeOptions); this.continue(execution);
+      const native = await execution.binding.control.open(execution.binding.workspace, run.selection.nativeModel, run.selection.nativeOptions, previousNative?.checkpoint); this.continue(execution);
+      if (run.selection.provider === undefined && execution.binding.control.checkpoint) {
+        checkpoint = await execution.binding.control.checkpoint(); this.continue(execution);
+        if (checkpoint !== null && (typeof checkpoint !== "string" || !checkpoint || Buffer.byteLength(checkpoint) > 8192 || /[\0\r\n]/u.test(checkpoint))) throw new SessionError("INVALID_NATIVE_CHECKPOINT", "invalid original Harness recovery reference");
+        if (previousNative !== undefined && checkpoint === null) throw new SessionError("NATIVE_RESUME_UNAVAILABLE", "original Harness cannot confirm its recovered state; no replacement session was dispatched");
+        if (checkpoint !== null) {
+          const reference: NativeSessionBinding = { harnessId: run.selection.harnessId, controlId: run.selection.controlId, checkpoint, throughRunId: previousNative?.throughRunId ?? null, status: "unconfirmed" };
+          this.commit(id, current => ({ next: { ...current, nativeBindings: previousNative === undefined ? [...(current.nativeBindings ?? []), reference] : current.nativeBindings?.map(binding => binding.harnessId === reference.harnessId && binding.controlId === reference.controlId && binding.status !== "archived" ? reference : binding) ?? [reference] },
+            events: [event("native.binding_prepared", { runId: target, harnessId: reference.harnessId, controlId: reference.controlId, resumed: previousNative !== undefined })] }));
+          checkpointStored = true;
+        }
+      }
       this.commit(id, current => ({ next: updatedRun(current, target, { status: "running" }), events: [event("run.authorized", { runId: target, epoch: run.epoch })] }));
       this.continue(execution);
       execution.binding.control.enablePermissions?.();
-      let input = context.text;
+      let input = previousNative !== undefined && context.sourceRunIds.length === 0 ? run.input : context.text;
       if (run.input.startsWith("/") && execution.binding.control.models) {
         const catalog = await execution.binding.control.models(); const name = run.input.slice(1).split(/\s/u)[0];
         this.continue(execution);
@@ -510,6 +542,11 @@ export class SessionRuntime {
       backend = await execution.run.result; execution.backendSettled = true;
       this.owned(execution);
       this.commit(id, current => ({ next: updatedRun(current, target, { status: "settling", backend }), events: [event("run.backend_settled", { runId: target, backend })] }));
+      if (checkpointStored) {
+        const after = await execution.binding.control.checkpoint!(); this.owned(execution);
+        if (after === null || typeof after !== "string" || !after || Buffer.byteLength(after) > 8192 || /[\0\r\n]/u.test(after)) throw new SessionError("INVALID_NATIVE_CHECKPOINT", "original Harness lost its owned session reference");
+        checkpoint = after; nativeConfirmed = true;
+      }
     } catch (error) { problem = fault(error); }
     finally {
       const abandoned = [...this.permissions.entries()].filter(([, permission]) => permission.execution === execution);
@@ -531,6 +568,9 @@ export class SessionRuntime {
         this.commit(id, current => {
           let next: SessionSnapshot = { ...updatedRun(current, target, { status, backend, cleanup,
             error: failure }), activeRunId: null, status: unsafe ? "blocked" : current.status };
+          if (checkpointStored && checkpoint !== null && cleanup?.closed === true && cleanup.protocolFailure === null && (!execution.dispatched || nativeConfirmed && backend !== null)) {
+            next = { ...next, nativeBindings: next.nativeBindings?.map(binding => binding.harnessId === pinned.harnessId && binding.controlId === pinned.controlId && binding.status !== "archived" ? { ...binding, checkpoint: checkpoint!, status: "ready" as const, throughRunId: execution.dispatched ? run.id : binding.throughRunId } : binding) ?? [] };
+          }
           const cancelSwitch = (!this.accepting || this.closingSessions.has(id)) && next.pendingSwitchId !== null;
           if (cancelSwitch) next = this.cancelPending(next);
           return { next, events: [event("run.ended", { runId: target, status, backend, cleanup, error: failure }),

@@ -40,3 +40,5 @@ V008 必须核对每条核心 ADR 的 accepted/proposed 状态、契约/版本/�
 - [0018：原生CLI认证与Homebrew单沙箱恢复](0018-native-cli-recovery.md)（accepted）：原Homebrew SDK配置保护恢复、Cursor原生更新/登录和Gemini直连协议边界。
 
 - [0019：快速选择与原生会话能力](0019-native-session-experience.md)（accepted）：选择与连接分离；本机配置/思考/命令/审批及v5迁移。统一聊天界面承载各Harness原生功能。
+
+- [ADR-020：全部接入的Harness按原生能力接出](0020-complete-native-harness-capabilities.md)：所有Harness的完整接入标准、原生绑定与恢复、能力缺口及逐项验收。

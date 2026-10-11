@@ -86,12 +86,20 @@ export interface PublicSwitch {
 }
 export interface CommandRecord {
   readonly id: CommandId;
-  readonly kind: "create" | "send" | "switch" | "cancel" | "close" | "permission";
+  readonly kind: "create" | "send" | "switch" | "cancel" | "close" | "permission" | "native-reset";
   readonly fingerprint: string;
   readonly resultId: string;
 }
+/** Private original-Harness state. Waiting/archived references are never silently resumed or replaced. */
+export interface NativeSessionBinding {
+  readonly harnessId: string;
+  readonly controlId: string;
+  readonly checkpoint: string;
+  readonly throughRunId: RunId | null;
+  readonly status: "ready" | "unconfirmed" | "archived";
+}
 export interface SessionSnapshot {
-  readonly schemaVersion: 1 | 2 | 3 | 4 | 5;
+  readonly schemaVersion: 1 | 2 | 3 | 4 | 5 | 6;
   readonly id: SessionId;
   readonly version: number;
   readonly lastSeq: number;
@@ -105,6 +113,7 @@ export interface SessionSnapshot {
   readonly messages: readonly PublicMessage[];
   readonly switches: readonly PublicSwitch[];
   readonly commands: readonly CommandRecord[];
+  readonly nativeBindings?: readonly NativeSessionBinding[];
 }
 export interface EventDraft { readonly type: string; readonly data: Readonly<Record<string, unknown>> }
 export interface SessionEvent extends EventDraft {
@@ -156,7 +165,7 @@ export interface PermissionRequest {
   readonly title: string;
   readonly options: readonly { readonly id: string; readonly name: string }[];
   readonly detail?: string;
-  readonly input?: {readonly kind:"text"|"editor";readonly value:string};
+  readonly input?: {readonly kind:"text"|"editor"|"secret";readonly value:string};
   readonly decided: boolean;
 }
 export type PersistedControlEvent = ControlEvent;

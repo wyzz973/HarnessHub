@@ -28,7 +28,8 @@ export class RedactedHarnessControl implements HarnessControl {
       agentVersion: value.agentVersion === null ? null : this.redact(value.agentVersion),
       authenticationMethods: value.authenticationMethods.map(item => this.redact(item)), capabilities: capabilities as Readonly<Record<string, unknown>> };
   }
-  open(cwd: string, model?: string, options?: NativeOptions): Promise<NativeConversationId> { return this.safe(() => this.inner.open(cwd, model, options)); }
+  open(cwd: string, model?: string, options?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> { return this.safe(() => this.inner.open(cwd, model, options, checkpoint)); }
+  checkpoint(): Promise<string | null> { return this.safe(async () => this.inner.checkpoint ? this.inner.checkpoint() : null); }
   enablePermissions(): void { this.inner.enablePermissions?.(); }
   decidePermission(id: string, option: string, input?: string): Promise<void> {
     if (!this.inner.decidePermission) return Promise.reject(new SessionError("UNSUPPORTED_PERMISSION", "native permission decisions unavailable"));

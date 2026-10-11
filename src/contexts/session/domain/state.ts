@@ -2,7 +2,7 @@ import { parseProviderTarget, type ProviderTarget } from "../../../contracts/pro
 import {
   SessionError, parseNativeOptions, commandId, messageId, runId, sessionId, switchId,
   type CommandRecord, type HarnessSelection, type PublicMessage, type PublicRun,
-  type PublicSwitch, type RunStatus, type SessionConfiguration, type SessionMutation, type SessionSnapshot,
+  type PublicSwitch, type RunStatus, type SessionConfiguration, type SessionMutation, type SessionSnapshot, type NativeSessionBinding,
 } from "../../../contracts/session.js";
 import type { BackendResult, CleanupEvidence } from "../../../contracts/control.js";
 
@@ -128,10 +128,19 @@ function publicSwitch(value: unknown): PublicSwitch {
 }
 function command(value: unknown): CommandRecord {
   const item = record(value, "command"); keys(item, ["id", "kind", "fingerprint", "resultId"], "command");
-  if (item.kind !== "create" && item.kind !== "send" && item.kind !== "switch" && item.kind !== "cancel" && item.kind !== "close" && item.kind !== "permission") throw new SessionError("INVALID_DATA", "unknown command kind");
+  if (item.kind !== "create" && item.kind !== "send" && item.kind !== "switch" && item.kind !== "cancel" && item.kind !== "close" && item.kind !== "permission" && item.kind !== "native-reset") throw new SessionError("INVALID_DATA", "unknown command kind");
   const fingerprint = text(item.fingerprint, "command fingerprint", 64);
   if (!/^[a-f0-9]{64}$/u.test(fingerprint)) throw new SessionError("INVALID_DATA", "invalid command fingerprint");
   return { id: commandId(item.id), kind: item.kind, fingerprint, resultId: text(item.resultId, "command resultId", 128) };
+}
+function nativeBinding(value: unknown): NativeSessionBinding {
+  const item = record(value, "native binding");
+  keys(item, ["harnessId", "controlId", "checkpoint", "throughRunId", "status"], "native binding");
+  const harnessId = text(item.harnessId, "native Harness", 96), controlId = text(item.controlId, "native control", 96);
+  if (![harnessId, controlId].every(id => /^[a-z][a-z0-9-]*$/u.test(id)) || !["ready", "unconfirmed", "archived"].includes(String(item.status))) throw new SessionError("INVALID_DATA", "invalid native binding identity or state");
+  const checkpoint = text(item.checkpoint, "native checkpoint", 8192);
+  if (/[\r\n]/u.test(checkpoint)) throw new SessionError("INVALID_DATA", "invalid native checkpoint");
+  return { harnessId, controlId, checkpoint, throughRunId: item.throughRunId === null ? null : runId(item.throughRunId), status: item.status as NativeSessionBinding["status"] };
 }
 function unique(values: readonly string[], label: string): void {
   if (new Set(values).size !== values.length) throw new SessionError("INVALID_DATA", "duplicate " + label);
@@ -139,14 +148,23 @@ function unique(values: readonly string[], label: string): void {
 /** Single persisted schema boundary. Malformed state never becomes an empty conversation. */
 export function parseSession(value: unknown): SessionSnapshot {
   const item = record(value, "Session");
-  keys(item, ["schemaVersion", "id", "version", "lastSeq", "epoch", "status", "configuration", "selection", "activeRunId", "pendingSwitchId", "runs", "messages", "switches", "commands"], "Session");
-  if (item.schemaVersion !== 1 && item.schemaVersion !== 2 && item.schemaVersion !== 3 && item.schemaVersion !== 4 && item.schemaVersion !== 5) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
+  keys(item, ["schemaVersion", "id", "version", "lastSeq", "epoch", "status", "configuration", "selection", "activeRunId", "pendingSwitchId", "runs", "messages", "switches", "commands", "nativeBindings"], "Session");
+  if (item.schemaVersion !== 1 && item.schemaVersion !== 2 && item.schemaVersion !== 3 && item.schemaVersion !== 4 && item.schemaVersion !== 5 && item.schemaVersion !== 6) throw new SessionError("INVALID_DATA", "unknown Session schemaVersion");
   if (item.status !== "open" && item.status !== "closed" && item.status !== "blocked") throw new SessionError("INVALID_DATA", "unknown Session status");
   const result: SessionSnapshot = { schemaVersion: item.schemaVersion, id: sessionId(item.id), version: number(item.version, "version"), lastSeq: number(item.lastSeq, "lastSeq"),
     epoch: number(item.epoch, "epoch", 1), status: item.status, configuration: parseConfiguration(item.configuration), selection: parseSelection(item.selection),
     activeRunId: item.activeRunId === null ? null : runId(item.activeRunId), pendingSwitchId: item.pendingSwitchId === null ? null : switchId(item.pendingSwitchId),
     runs: array(item.runs, "runs", MAX_RUNS, publicRun), messages: array(item.messages, "messages", MAX_RUNS * 2, publicMessage),
-    switches: array(item.switches, "switches", MAX_COMMANDS, publicSwitch), commands: array(item.commands, "commands", MAX_COMMANDS, command) };
+    switches: array(item.switches, "switches", MAX_COMMANDS, publicSwitch), commands: array(item.commands, "commands", MAX_COMMANDS, command), ...(item.nativeBindings === undefined ? {} : { nativeBindings: array(item.nativeBindings, "native bindings", MAX_RUNS, nativeBinding) }) };
+  if (result.schemaVersion < 6 && (result.nativeBindings !== undefined || result.commands.some(command => command.kind === "native-reset"))) throw new SessionError("INVALID_DATA", "native bindings require Session v6");
+  const activeBindings = (result.nativeBindings ?? []).filter(binding => binding.status !== "archived");
+  unique(activeBindings.map(binding => binding.harnessId + ":" + binding.controlId), "active native binding");
+  for (const binding of result.nativeBindings ?? []) {
+    if (binding.throughRunId === null) continue;
+    const run = result.runs.find(run => run.id === binding.throughRunId);
+    if (!run || !terminal(run.status) || run.selection.provider !== undefined || run.selection.harnessId !== binding.harnessId || run.selection.controlId !== binding.controlId) throw new SessionError("INVALID_DATA", "native cursor is not owned by a finished native Run");
+    if (binding.status === "ready" && (run.backend === null || run.cleanup?.closed !== true || run.cleanup.protocolFailure !== null)) throw new SessionError("INVALID_DATA", "native binding lacks settlement and cleanup evidence");
+  }
   if (item.schemaVersion === 1 && (result.selection.provider !== undefined || result.runs.some(run => run.selection.provider !== undefined) ||
       result.switches.some(entry => entry.requested.provider !== undefined || entry.target?.provider !== undefined)))
     throw new SessionError("INVALID_DATA", "legacy Session schema cannot contain Provider targets");
@@ -218,6 +236,16 @@ function same(left: unknown, right: unknown): boolean { return JSON.stringify(le
 /** Persisted history is append-only; an application bug cannot silently erase prior public facts. */
 export function assertSessionTransition(before: SessionSnapshot, after: SessionSnapshot): void {
   if (before.schemaVersion !== after.schemaVersion || before.id !== after.id || !same(before.configuration, after.configuration)) throw new SessionError("INVALID_TRANSITION", "Session identity/configuration reference is immutable");
+  const oldBindings = before.nativeBindings ?? [], newBindings = after.nativeBindings ?? [];
+  if (newBindings.length < oldBindings.length) throw new SessionError("INVALID_TRANSITION", "native state references cannot be silently erased");
+  for (let index = 0; index < newBindings.length; index++) {
+    const old = oldBindings[index], next = newBindings[index]!;
+    if (old !== undefined && same(old, next)) continue;
+    if (old?.status === "archived" || old !== undefined && (old.harnessId !== next.harnessId || old.controlId !== next.controlId)) throw new SessionError("INVALID_TRANSITION", "native state ownership or archived state changed");
+    const writer = after.runs.find(run => run.id === (before.activeRunId ?? after.activeRunId));
+    const reset = old !== undefined && next.status === "archived" && next.checkpoint === old.checkpoint && next.throughRunId === old.throughRunId && after.selection.harnessId === next.harnessId && after.selection.controlId === next.controlId && after.commands.slice(before.commands.length).some(command => command.kind === "native-reset");
+    if (!reset && (!writer || writer.selection.provider !== undefined || writer.selection.harnessId !== next.harnessId || writer.selection.controlId !== next.controlId || next.throughRunId !== null && next.throughRunId !== old?.throughRunId && next.throughRunId !== writer.id)) throw new SessionError("INVALID_TRANSITION", "native state changed without its original Run owner");
+  }
   if ((before.status === "closed" && after.status !== "closed") || (before.status === "blocked" && after.status === "open" &&
       (after.epoch !== before.epoch + 1 || !after.switches.some(sw => sw.id === before.pendingSwitchId && sw.status === "effective") ||
        after.runs.some(run => run.status === "unknown" && run.cleanup?.closed !== true))))

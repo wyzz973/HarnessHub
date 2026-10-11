@@ -13,6 +13,7 @@ import { string } from "../../infrastructure/control/json-rpc-process.js";
 export class OpenClawControl extends AcpControl {
   private configuredModel: string | null = null;
   private sessionKey: string | null = null;
+  private restoredKey: string | null = null;
   private readonly abort = new AbortController();
   private readonly commands = new Set<Promise<unknown>>();
   private nativeModels: Promise<NativeModelCatalog["models"]> | null = null;
@@ -41,8 +42,8 @@ export class OpenClawControl extends AcpControl {
     const primary = typeof model === "string" ? model : model == null ? null : object(model, "native model").primary;
     if (primary != null && (typeof primary !== "string" || !primary.trim() || primary.length > 1024 || /[\0\r\n]/u.test(primary))) throw new ControlError("NATIVE_CONFIGURATION_INVALID", "invalid native configured model");
     this.configuredModel = primary ?? null;
-    this.sessionKey = "agent:" + agent.toLowerCase() + ":harnesshub:" + randomUUID();
-    return { ...await super.sessionParameters(cwd), _meta: { sessionKey: this.sessionKey } };
+    this.sessionKey = this.restoredKey ?? "agent:" + agent.toLowerCase() + ":harnesshub:" + randomUUID();
+    return { ...await super.sessionParameters(cwd), _meta: { sessionKey: this.sessionKey, ...(this.restoredKey === null ? {} : { requireExistingSession: true, resetSession: false }) } };
   }
   private call(method: "models.list" | "sessions.patch", params: Readonly<Record<string, unknown>>): Promise<unknown> {
     if (this.nativeRequest) return this.nativeRequest(method, params);
@@ -61,8 +62,19 @@ export class OpenClawControl extends AcpControl {
     });
     return this.nativeModels;
   }
-  override async open(cwd: string, model?: string, options?: NativeOptions): Promise<NativeConversationId> {
-    const id = await super.open(cwd, undefined, options);
+  override async checkpoint(): Promise<string | null> {
+    const conversation = await super.checkpoint();
+    return conversation !== null && this.sessionKey !== null ? JSON.stringify({ conversation, key: this.sessionKey }) : null;
+  }
+  override async open(cwd: string, model?: string, options?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
+    let conversation: string | undefined;
+    if (checkpoint !== undefined) {
+      let parsed: unknown; try { parsed = JSON.parse(checkpoint); } catch { throw new ControlError("INVALID_CHECKPOINT", "invalid native recovery reference"); }
+      const value = object(parsed, "OpenClaw recovery reference");
+      if (Object.keys(value).some(key => !["conversation", "key"].includes(key)) || typeof value.key !== "string" || !/^agent:[a-z0-9_-]+:harnesshub:[a-f0-9-]+$/u.test(value.key)) throw new ControlError("INVALID_CHECKPOINT", "native key is not a Hub-owned conversation");
+      this.restoredKey = value.key; conversation = string(value.conversation, "native conversation");
+    }
+    const id = await super.open(cwd, undefined, options, conversation);
     if (model !== undefined) {
       if (!(await this.readNativeModels()).some(row => row.id === model)) throw new ControlError("MODEL_UNAVAILABLE", "model unavailable in original OpenClaw catalog");
       if (this.sessionKey === null || !/^agent:[a-z0-9_-]+:harnesshub:[a-f0-9-]+$/u.test(this.sessionKey)) throw new ControlError("IDENTITY_MISMATCH", "OpenClaw session override has no owned key");

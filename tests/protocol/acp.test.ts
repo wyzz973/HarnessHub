@@ -202,3 +202,23 @@ test("OpenClaw uses the configured default agent and a canonical normal chat nam
     assert.match(sent.params._meta.sessionKey, /^agent:chosen:harnesshub:[0-9a-f-]{36}$/u); assert.equal(wire.includes("synthetic-private-secret"), false);
   } finally { await driver.close(); await rm(root, { recursive: true, force: true }); }
 });
+
+test("ACP restores native state in another original process without duplicating replayed output", async () => {
+  const first = control("native-resume"); let checkpoint: string | null = null;
+  try { const id = await ready(first); await (await first.startText(id, "first", () => {})).result; checkpoint = await first.checkpoint(); }
+  finally { await first.close(); }
+  assert.ok(checkpoint);
+  const restored = control("native-resume");
+  try {
+    await restored.initialize(); const id = await restored.open(process.cwd(), undefined, undefined, checkpoint);
+    assert.equal(await restored.checkpoint(), checkpoint);
+    const events: ControlEvent[] = []; await (await restored.startText(id, "second", event => events.push(event))).result;
+    assert.deepEqual(events.filter(event => event.type === "text").map(event => event.text), ["你好 fixture"]);
+    assert.equal(events.filter(event => event.type === "tool").length, 0);
+  } finally { await restored.close(); }
+});
+for (const scenario of ["basic", "resume-fails", "resume-wrong-identity"]) test(`ACP ${scenario} refuses unavailable or misowned restore without a new conversation`, async () => {
+  const driver = control(scenario);
+  try { await driver.initialize(); await assert.rejects(driver.open(process.cwd(), undefined, undefined, "session-fixture")); }
+  finally { assert.equal((await driver.close()).closed, true); }
+});

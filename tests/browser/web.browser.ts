@@ -543,4 +543,11 @@ test("native settings switch without Apply and approvals survive refresh or canc
   await page.getByRole("button", { name: "停止当前回复", exact: true }).click();
   await expect.poll(async () => (await current()).runs[4]?.status).toBe("cancelled");
   await expect(approval).toHaveCount(0); assert.equal((await current()).status, "open");
+  const beforeBranch = await current();
+  await page.getByRole("button", { name: "高级配置", exact: true }).click();
+  await expect(page.getByText("继续已有会话", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "重新建立原生会话", exact: true }).click();
+  await expect.poll(async () => (await current()).nativeStates.length).toBe(0);
+  assert.equal((await current()).messages.length, beforeBranch.messages.length);
+  assert.ok(!JSON.stringify(await current()).includes("checkpoint"), "private native recovery references never enter the Web DTO");
 });

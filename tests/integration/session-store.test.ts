@@ -19,7 +19,7 @@ function directory(t: TestContext): string {
 function draft(type = "session.created"): readonly EventDraft[] { return [{ type, data: {} }]; }
 function initial(root: string, suffix = "one", key = "create-one", fingerprint = "a".repeat(64)): SessionSnapshot {
   const id = sessionId("session-" + suffix);
-  return { schemaVersion: 5, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
+  return { schemaVersion: 6, id, version: 0, lastSeq: 0, epoch: 1, status: "open",
     configuration: { workspace: root, manifestPath: null, manifestSha256: null, configHome: null, packageRoots: [], searchDirs: [], pathOnly: false },
     selection: { harnessId: "fixture", controlId: "fixture-acp" }, activeRunId: null, pendingSwitchId: null,
     runs: [], messages: [], switches: [], commands: [{ id: commandId(key), kind: "create", fingerprint, resultId: id }] };
@@ -47,10 +47,10 @@ test("numbered v1-to-v2-to-v3 migration preserves public identities, history, co
   const reader = new SqliteSessionReader(root); assert.equal(reader.get(state.id).schemaVersion, 1); reader.close();
   const upgraded = new SqliteSessionStore(root);
   try {
-    assert.deepEqual(upgraded.get(state.id), { ...state, schemaVersion: 5 });
+    assert.deepEqual(upgraded.get(state.id), { ...state, schemaVersion: 6 });
     assert.deepEqual(upgraded.events(state.id, 0), events);
     assert.equal(upgraded.findByCreateKey(commandId("create-one"))?.id, state.id);
-    const verify = database(root); assert.equal(verify.prepare("PRAGMA user_version").get()?.user_version, 5); verify.close();
+    const verify = database(root); assert.equal(verify.prepare("PRAGMA user_version").get()?.user_version, 6); verify.close();
   } finally { upgraded.close(); }
 });
 
@@ -296,7 +296,7 @@ test("SQLite event write failure rolls back snapshot and disables new operations
 test("corrupt persisted aggregate and unknown migration version never become empty Sessions", t => {
   const root = directory(t), store = new SqliteSessionStore(root), created = store.create(initial(root), draft()); store.close();
   const outsider = database(root);
-  outsider.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify({ ...created.session, schemaVersion: 6 }), created.session.id); outsider.close();
+  outsider.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify({ ...created.session, schemaVersion: 7 }), created.session.id); outsider.close();
   assert.throws(() => new SqliteSessionStore(root), code("INVALID_DATA"));
   const badVersion = database(root); badVersion.exec("PRAGMA user_version=99"); badVersion.close();
   assert.throws(() => new SqliteSessionReader(root), code("INVALID_DATA"));
@@ -416,4 +416,16 @@ test("v4-to-v5 preserves history and events, while malformed native options roll
   const upgraded=new SqliteSessionStore(root);assert.deepEqual(upgraded.get(current.id),current);assert.deepEqual(upgraded.events(current.id,0),events);upgraded.close();
   const broken=database(root);broken.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify({...current,schemaVersion:4,selection:{...current.selection,nativeOptions:{effort:"high"}}}),current.id);broken.exec("PRAGMA user_version=4");broken.close();
   assert.throws(()=>new SqliteSessionStore(root),code("INVALID_DATA"));const verify=database(root);assert.equal(verify.prepare("PRAGMA user_version").get()?.user_version,4);assert.equal(JSON.parse(String(verify.prepare("SELECT snapshot FROM sessions WHERE id=?").get(current.id)?.snapshot)).schemaVersion,4);verify.close();
+});
+
+test("v5 to v6 migrates every old fact and rejects illegal recovery fields atomically", t => {
+  const root = directory(t), original = new SqliteSessionStore(root), state = completedHistory(original, root), oldEvents = original.events(state.id, 0); original.close();
+  const legacy = { ...state, schemaVersion: 5 }, db = database(root);
+  db.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify(legacy), state.id); db.exec("PRAGMA user_version=5"); db.close();
+  const reader = new SqliteSessionReader(root); assert.equal(reader.get(state.id).schemaVersion, 5); reader.close();
+  const upgraded = new SqliteSessionStore(root);
+  assert.deepEqual(upgraded.get(state.id), state); assert.deepEqual(upgraded.events(state.id, 0), oldEvents); upgraded.close();
+  const invalid = database(root); invalid.prepare("UPDATE sessions SET snapshot=? WHERE id=?").run(JSON.stringify({ ...legacy, nativeBindings: [] }), state.id); invalid.exec("PRAGMA user_version=5"); invalid.close();
+  assert.throws(() => new SqliteSessionStore(root), code("INVALID_DATA"));
+  const verify = database(root); assert.equal(verify.prepare("PRAGMA user_version").get()?.user_version, 5); assert.equal(JSON.parse(String(verify.prepare("SELECT snapshot FROM sessions WHERE id=?").get(state.id)?.snapshot)).schemaVersion, 5); verify.close();
 });

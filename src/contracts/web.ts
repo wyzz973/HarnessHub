@@ -33,6 +33,7 @@ export interface SessionView {
   readonly activeRunId: string | null;
   readonly pendingSwitchId: string | null;
   readonly permissions?: readonly import("./session.js").PermissionRequest[];
+  readonly nativeStates?: readonly { readonly harnessId: string; readonly controlId: string; readonly status: "ready" | "unconfirmed" }[];
   readonly messages: readonly PublicMessage[];
   readonly runs: readonly PublicRun[];
   readonly switches: readonly PublicSwitch[];

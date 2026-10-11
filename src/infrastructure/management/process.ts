@@ -16,7 +16,7 @@ export function runManagementProcess(executable: string, args: readonly string[]
     let pipeTimer: ReturnType<typeof setTimeout> | null = null;
     const kill = (signal: "SIGTERM" | "SIGKILL"): void => {
       try { if (process.platform !== "win32" && child.pid) process.kill(-child.pid, signal); else child.kill(signal); }
-      catch (error) { if (error!==null&&typeof error==="object"&&"code"in error&&error.code==="EPERM"&&child.pid&&(child.exitCode!==null||child.signalCode!==null)&&darwinExitedGroupIsQuiescent(child.pid))return; if (error === null || typeof error !== "object" || !("code" in error) || error.code !== "ESRCH") failure ??= new ManagementError("CLEANUP_FAILED", "installer process cleanup could not be confirmed"); }
+      catch (error) { if (error!==null&&typeof error==="object"&&"code"in error&&error.code==="EPERM"&&child.pid&&(child.exitCode!==null||child.signalCode!==null))return; if (error === null || typeof error !== "object" || !("code" in error) || error.code !== "ESRCH") failure ??= new ManagementError("CLEANUP_FAILED", "installer process cleanup could not be confirmed"); }
     };
     const stop = (): void => {
       if (stopping) return; stopping = true; kill("SIGTERM"); killTimer = setTimeout(() => kill("SIGKILL"), 500);

@@ -111,7 +111,8 @@ export function decodeSession(value: unknown): SessionView {
   const row = record(value);
   return { id: text(row.id), version: number(row.version), lastSeq: number(row.lastSeq), epoch: number(row.epoch), status: choice(row.status, SESSION_STATES),
     workspace: text(row.workspace), selection: selection(row.selection), activeRunId: nullableText(row.activeRunId), pendingSwitchId: nullableText(row.pendingSwitchId),
-    ...(row.permissions===undefined?{}:{permissions:list(row.permissions, value => { const request=record(value);return {id:text(request.id),runId:text(request.runId),title:text(request.title),decided:bool(request.decided), ...(request.detail===undefined?{}:{detail:text(request.detail)}),...(request.input===undefined?{}:{input:(()=>{const value=record(request.input);return {kind:choice(value.kind,["text","editor"]),value:text(value.value)};})()}),options:list(request.options,value=>{const option=record(value);return {id:text(option.id),name:text(option.name)};},128)};},32)}), messages: list(row.messages, decodeMessage, 1024), runs: list(row.runs, decodeRun, 256), switches: list(row.switches, decodeSwitch, 1024) };
+    ...(row.nativeStates === undefined ? {} : { nativeStates: list(row.nativeStates, value => { const state = record(value); return { harnessId: text(state.harnessId), controlId: text(state.controlId), status: choice(state.status, ["ready", "unconfirmed"]) }; }, 256) }),
+    ...(row.permissions===undefined?{}:{permissions:list(row.permissions, value => { const request=record(value);return {id:text(request.id),runId:text(request.runId),title:text(request.title),decided:bool(request.decided), ...(request.detail===undefined?{}:{detail:text(request.detail)}),...(request.input===undefined?{}:{input:(()=>{const value=record(request.input);return {kind:choice(value.kind,["text","editor","secret"]),value:text(value.value)};})()}),options:list(request.options,value=>{const option=record(value);return {id:text(option.id),name:text(option.name)};},128)};},32)}), messages: list(row.messages, decodeMessage, 1024), runs: list(row.runs, decodeRun, 256), switches: list(row.switches, decodeSwitch, 1024) };
 }
 /** Decodes only canonical public facts; stream framing and projection validate their watermarks. */
 export function decodeSessionStreamFrame(value: unknown): SessionStreamFrame {
@@ -235,6 +236,7 @@ export class GatewayApi {
   }
   async cancel(id: string, key: string): Promise<void> { await this.request(`/sessions/${encodeURIComponent(id)}/cancel`, "POST", { commandId: key }, value => acknowledge(value, id, "target")); }
   closeSession(id: string, key: string): Promise<SessionView> { return this.request(`/sessions/${encodeURIComponent(id)}/close`, "POST", { commandId: key }, decodeSession); }
+  branchNative(id: string, epoch: number, key: string): Promise<SessionView> { return this.request(`/sessions/${encodeURIComponent(id)}/native-branch`, "POST", { epoch, commandId: key }, decodeSession); }
   writeProvider(input: ProviderWriteInput, key: string, current?: ProviderView): Promise<ProviderView> {
     return this.request(current ? `/providers/${encodeURIComponent(current.id)}` : "/providers", current ? "PATCH" : "POST",
       { input, commandId: key, ...(current ? { expectedRevision: current.revision } : {}) }, decodeProvider);

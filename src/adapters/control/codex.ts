@@ -32,7 +32,7 @@ export class CodexControl implements HarnessControl {
   private opening = false;
   private effort: string | undefined;
   private interactivePermissions = false;
-  private readonly permissions = new Map<string, { options: readonly string[]; resolve: (value: unknown) => void }>();
+  private readonly permissions = new Map<string, { options: readonly string[]; resolve: (value: unknown) => void; reply: (option: string, input?: string) => unknown }>();
   private active: ActiveTurn | null = null;
   private failure: Error | null = null;
   private readonly turnIds = new Set<string>();
@@ -98,7 +98,8 @@ export class CodexControl implements HarnessControl {
     if (defaultModel !== null && !seen.has(defaultModel)) models.unshift({ id: defaultModel, name: defaultModel });
     return { models, defaultModel, canSelect: models.length > 0, authentication: account.requiresOpenaiAuth === false || account.account != null ? "ready" : account.requiresOpenaiAuth === true ? "missing" : "unknown" };
   }
-  async open(cwd: string, model?: string, native?: NativeOptions): Promise<NativeConversationId> {
+  async checkpoint(): Promise<string | null> { return this.conversation; }
+  async open(cwd: string, model?: string, native?: NativeOptions, checkpoint?: string): Promise<NativeConversationId> {
     this.assertInitialized();
     if (!isAbsolute(cwd)) throw new ControlError("INVALID_INPUT", "conversation cwd must be absolute");
     if (this.conversation || this.opening) throw new ControlError("INVALID_STATE", "this connection already owns a thread");
@@ -112,11 +113,13 @@ export class CodexControl implements HarnessControl {
           this.effort = value;
         }
       }
-      const response = object(await this.rpc.request("thread/start", {
-        cwd, ephemeral: true, ...(model === undefined ? {} : { model }),
-      }), "thread/start result");
+      if (checkpoint !== undefined) this.conversation = nativeConversationId(checkpoint);
+      const response = object(await this.rpc.request(checkpoint === undefined ? "thread/start" : "thread/resume", {
+        cwd, ...(checkpoint === undefined ? { ephemeral: false } : { threadId: nativeConversationId(checkpoint), excludeTurns: true }), ...(model === undefined ? {} : { model }),
+      }), "native thread setup result");
       const thread = object(response.thread, "Codex thread");
       const received = nativeConversationId(thread.id);
+      if (checkpoint !== undefined && received !== checkpoint) throw new ControlError("IDENTITY_MISMATCH", "native restore returned a different thread");
       if (this.conversation && this.conversation !== received) throw new ControlError("IDENTITY_MISMATCH", "thread/start response does not match thread/started");
       this.conversation = received;
       return received;
@@ -185,12 +188,15 @@ export class CodexControl implements HarnessControl {
   private scope(params: Record<string, unknown>, requireTurn = false): ActiveTurn | null {
     if (!this.conversation || string(params.threadId, "Codex thread identity") !== this.conversation)
       throw new ControlError("IDENTITY_MISMATCH", "Codex message belongs to another thread");
-    if (requireTurn || params.turnId !== undefined) {
+    // Thread accounting can refer to a historical turn immediately after native resume.
+    // Only turn-owned output/control may bind the current turn's identity.
+    if (requireTurn) {
       const active = this.active;
       if (!active || active.settled) throw new ControlError("INVALID_STATE", "Codex output arrived without an active turn");
       this.bindTurn(active, string(params.turnId, "Codex turn identity"));
       return active;
     }
+    if (params.turnId !== undefined) string(params.turnId, "Codex metadata turn identity");
     return this.active;
   }
   private notification(method: string, raw: unknown): void {
@@ -231,6 +237,12 @@ export class CodexControl implements HarnessControl {
       active.deltaItems.add(itemId);
       active.event({ type: "text", text: text(params.delta, "agent message delta") }); return;
     }
+    if (method === "item/reasoning/summaryTextDelta" || method === "item/reasoning/textDelta") {
+      const active = this.scope(params, true);
+      if (!active) throw new ControlError("INVALID_STATE", "native thinking arrived without an active turn");
+      string(params.itemId, "native reasoning item");
+      active.event({ type: "thinking", text: text(params.delta, "native reasoning delta") }); return;
+    }
     if (method === "item/started" || method === "item/completed") {
       const active = this.scope(params, true);
       if (!active) throw new ControlError("INVALID_STATE", "no active turn");
@@ -253,9 +265,10 @@ export class CodexControl implements HarnessControl {
     this.active?.event({ type: "diagnostic", message: `Unsupported Codex notification: ${method}` });
   }
   enablePermissions(): void { this.interactivePermissions = true; }
-  async decidePermission(id: string, option: string): Promise<void> { const pending = this.permissions.get(id); if (!pending || !pending.options.includes(option)) throw new ControlError("PERMISSION_UNAVAILABLE", "native approval unavailable"); this.permissions.delete(id); pending.resolve({ decision: option }); }
-  private cancelPermissions(): void { for (const pending of this.permissions.values()) pending.resolve({ decision: "cancel" }); this.permissions.clear(); }
+  async decidePermission(id: string, option: string, input?: string): Promise<void> { const pending = this.permissions.get(id); if (!pending || !pending.options.includes(option)) throw new ControlError("PERMISSION_UNAVAILABLE", "native approval unavailable"); const response = pending.reply(option, input); this.permissions.delete(id); pending.resolve(response); }
+  private cancelPermissions(): void { for (const pending of this.permissions.values()) pending.resolve(pending.reply("cancel")); this.permissions.clear(); }
   private serverRequest(request: RpcRequest): unknown {
+    if (request.method === "item/tool/requestUserInput") return this.userInput(request);
     if (!["item/commandExecution/requestApproval", "item/fileChange/requestApproval"].includes(request.method))
       throw new ControlError("METHOD_NOT_FOUND", "client capability is not implemented");
     const params = object(request.params, "Codex approval params");
@@ -268,11 +281,42 @@ export class CodexControl implements HarnessControl {
       const choices = available.filter((value): value is string => typeof value === "string" && ["accept", "acceptForSession", "decline", "cancel"].includes(value));
       if (!choices.length || new Set(choices).size !== choices.length) throw new ControlError("INVALID_PROTOCOL", "no supported native approval decisions");
       const id = String(request.id);
-      return new Promise<unknown>(resolve => { this.permissions.set(id, { options: choices, resolve }); active.event({ type: "permission_requested", id, title: typeof params.command === "string" ? params.command.slice(0,4096) : request.method.includes("fileChange") ? "Codex 请求修改文件" : "Codex 请求执行命令", options: choices.map(id => ({ id, name: ({ accept: "允许一次", acceptForSession: "本次会话允许", decline: "拒绝", cancel: "取消" } as Record<string,string>)[id]! })) }); });
+      return new Promise<unknown>(resolve => { this.permissions.set(id, { options: choices, resolve, reply: decision => ({ decision }) }); active.event({ type: "permission_requested", id, title: typeof params.command === "string" ? params.command.slice(0,4096) : request.method.includes("fileChange") ? "Codex 请求修改文件" : "Codex 请求执行命令", options: choices.map(id => ({ id, name: ({ accept: "允许一次", acceptForSession: "本次会话允许", decline: "拒绝", cancel: "取消" } as Record<string,string>)[id]! })) }); });
     }
     const decision = active.stopping ? "cancel" : "decline";
     active.event({ type: "permission", id: String(request.id), decision: active.stopping ? "cancelled" : "denied" });
     return { decision };
+  }
+  private async userInput(request: RpcRequest): Promise<unknown> {
+    const params = object(request.params, "Codex native questions"), active = this.scope(params, true);
+    if (!active) throw new ControlError("INVALID_STATE", "native question arrived without an active turn");
+    if (!Array.isArray(params.questions) || !params.questions.length || params.questions.length > 32) throw new ControlError("INVALID_PROTOCOL", "invalid native question list");
+    const questions = params.questions.map((value, index) => {
+      const row = object(value, "native question"), id = string(row.id, "native question id", 128), title = string(row.question, "native question", 4096);
+      const choices = row.options == null ? [] : row.options;
+      if (!Array.isArray(choices) || choices.length > 128 || row.isOther !== undefined && typeof row.isOther !== "boolean" || row.isSecret !== undefined && typeof row.isSecret !== "boolean") throw new ControlError("INVALID_PROTOCOL", "invalid native question options");
+      return { id, title, requestId: String(request.id) + ":" + index, secret: row.isSecret === true, freeform: row.isOther === true || choices.length === 0,
+        choices: choices.map(value => { const option = object(value, "native question choice"); return string(option.label, "native question choice", 1024); }) };
+    });
+    if (new Set(questions.map(question => question.id)).size !== questions.length) throw new ControlError("INVALID_PROTOCOL", "duplicate native question identities");
+    const answers = new Map<string, { answers: readonly string[] }>();
+    for (const question of questions) {
+      if (!this.interactivePermissions || active.stopping || active.settled || this.active !== active) return { answers: {} };
+      if (this.permissions.size >= 32) throw new ControlError("PERMISSION_LIMIT", "native interactions exceeded their budget");
+      const choices = [...question.choices.map((name, index) => ({ id: "answer-" + index, name })), ...(question.freeform ? [{ id: "submit", name: "提交回答" }] : []), { id: "cancel", name: "取消" }];
+      const answer = await new Promise<unknown>(resolve => {
+        this.permissions.set(question.requestId, { options: choices.map(choice => choice.id), resolve, reply: (option, input) => {
+          if (option === "cancel") return null;
+          if (option === "submit") { if (typeof input !== "string" || Buffer.byteLength(input) > 65536 || input.includes("\0")) throw new ControlError("INVALID_INPUT", "invalid native input answer"); return input; }
+          const index = Number(option.slice(7)); if (!Number.isSafeInteger(index) || !question.choices[index]) throw new ControlError("INVALID_INPUT", "invalid native answer choice"); return question.choices[index];
+        } });
+        active.event({ type: "permission_requested", id: question.requestId, title: question.title, options: choices,
+          ...(question.freeform ? { input: { kind: question.secret ? "secret" : "text", value: "" } } : {}) });
+      });
+      if (answer === null) return { answers: {} };
+      answers.set(question.id, { answers: [text(answer, "native answer")] });
+    }
+    return { answers: Object.fromEntries(answers) };
   }
   private settleTurn(active: ActiveTurn): void {
     this.cancelPermissions();
