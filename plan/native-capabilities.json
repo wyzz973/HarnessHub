@@ -1243,10 +1243,13 @@
           "native": "yes",
           "source": "Gateway skills.status 与技能命令",
           "hub": "partial",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": "可经原生命令触发"
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-extensions-openclaw.json",
+            "docs/verification/native-extensions-2026-10-11.md"
+          ],
+          "note": "“原生扩展”面板列出 Gateway skills.status 的技能（124 个，105 个可用）；技能由原程序按需使用，Hub 不单独调用（桥未提供 /skill 命令）"
         },
         "mcp": {
           "native": "no",
@@ -1260,11 +1263,14 @@
         "plugins": {
           "native": "partial",
           "source": "Gateway tools.catalog/skills；无插件管理接口",
-          "hub": "none",
-          "protocol": "none",
-          "real": "none",
-          "evidence": [],
-          "note": ""
+          "hub": "partial",
+          "protocol": "pass",
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-extensions-openclaw.json",
+            "docs/verification/native-extensions-2026-10-11.md"
+          ],
+          "note": "列出 tools.catalog 中的插件工具组（本机 1 个）；只读，不调用插件工具"
         },
         "resume": {
           "native": "yes",

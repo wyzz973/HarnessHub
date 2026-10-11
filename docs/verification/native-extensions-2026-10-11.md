@@ -43,3 +43,13 @@
 2026-10-11 19:13–19:14，服务空闲（唯一会话无在途 Run 与待决切换，部署后无新使用）时部署分支与原生扩展：核实 PID 与命令行后 SIGTERM 正常退出；以 APFS 克隆冷备份 `data/` 到 `.tmp/backup-data-v7-20261011-191351/`（逐项比较一致）；在副本上演练 v7→v8（会话 open、14 个 Run、27 条消息、OpenClaw 绑定 ready 全部保留）；主检出快进到 `b0b6bdd`，离线安装依赖并构建；经登录 shell（无代理变量）重启，输出写入私有 `.tmp/service-4317.log`。
 
 部署后核对：业务库 `user_version=8`，原会话 schema 8、open、14 个 Run、27 条消息、OpenClaw 绑定 ready；静态页 200、未登录 API 401。一次性启动链接只在私有日志中，未使用、未展开。回退：停止服务后用 v7 备份替换 `data/`，检出 `c0555f9` 重新构建。
+
+## OpenClaw 技能与插件（同日补充）
+
+OpenClaw 的 ACP 桥不提供扩展列表；驱动改为读取 Gateway 自己的只读报告：`skills.status`（技能名称、说明、来源与是否可用——需同时满足资格、未停用、未被白名单阻止）与 `tools.catalog {includePlugins:true}` 中来源为插件的工具组。OpenClaw 没有 MCP 服务器。面板只读：技能由原程序按需使用，插件工具不被调用。
+
+| 验收 | 结果 | 证据 |
+|---|---|---|
+| 协议测试 | 技能可用性映射、插件工具组、只请求两个只读方法 | `tests/protocol/acp.test.ts` |
+| 本机 OpenClaw | 124 个技能（105 个可用；bundled 50、personal 66、workspace 4、extra 4），1 个插件工具组，无 MCP；openclaw.json 不变 | `.tmp/cc-native-extensions-openclaw.json` |
+

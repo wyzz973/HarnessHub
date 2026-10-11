@@ -3,7 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import JSON5 from "json5";
-import { TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type NativeSessionImport, type NativeSessionPage, type BackendResult, type ControlEvent, type ControlRun, type ControlLaunch, type ControlOptions, type NativeConversationId, type NativeModelCatalog, type NativeOptions, type NativeToolDetail, type CleanupEvidence } from "../../contracts/control.js";
+import { MAX_NATIVE_EXTENSIONS, TOOL_INPUT_BYTES, TOOL_OUTPUT_BYTES, type NativeExtensions, type NativeSessionImport, type NativeSessionPage, type BackendResult, type ControlEvent, type ControlRun, type ControlLaunch, type ControlOptions, type NativeConversationId, type NativeModelCatalog, type NativeOptions, type NativeToolDetail, type CleanupEvidence } from "../../contracts/control.js";
 import { AcpControl } from "./acp.js";
 import { classifyRemoteFailure, ControlError, object } from "../../infrastructure/control/json-rpc-process.js";
 import { nativeCommand } from "../../infrastructure/control/native-command.js";
@@ -11,7 +11,7 @@ import { string } from "../../infrastructure/control/json-rpc-process.js";
 import { checkInputs } from "../../infrastructure/control/attachments.js";
 import type { ContentRef, ControlAttachment } from "../../contracts/content.js";
 
-type OpenClawMethod = "models.list" | "sessions.patch" | "sessions.get" | "sessions.list" | "chat.history";
+type OpenClawMethod = "models.list" | "sessions.patch" | "sessions.get" | "sessions.list" | "chat.history" | "skills.status" | "tools.catalog";
 /** A Gateway session row's model in the catalog's provider/model form. */
 function rowModel(row: Record<string, unknown>): string | null {
   return typeof row.modelProvider === "string" && typeof row.model === "string" && row.modelProvider && row.model && (row.modelProvider + "/" + row.model).length <= 1024 && !/[\0\r\n]/u.test(row.modelProvider + row.model) ? row.modelProvider + "/" + row.model : null;
@@ -138,6 +138,21 @@ export class OpenClawControl extends AcpControl {
    */
   override async nativeSessions(): Promise<NativeSessionPage> { throw new ControlError("NATIVE_SESSION_LIST_UNAVAILABLE", "OpenClaw sessions are not continued from the Hub"); }
   override async importSession(): Promise<NativeSessionImport> { throw new ControlError("NATIVE_SESSION_LIST_UNAVAILABLE", "OpenClaw sessions are not continued from the Hub"); }
+  /**
+   * The Gateway's own read-only reports: the workspace skill status (eligible, disabled or blocked by the allowlist) and the
+   * plugin tool groups of the tool catalog. OpenClaw has no MCP servers. The agent uses its skills itself; nothing is invoked.
+   */
+  async extensions(): Promise<NativeExtensions> {
+    const [status, catalog] = await Promise.all([this.call("skills.status", {}), this.call("tools.catalog", { includePlugins: true })]);
+    const skills = object(status, "OpenClaw skill status").skills, groups = object(catalog, "OpenClaw tool catalog").groups;
+    if (!Array.isArray(skills) || !Array.isArray(groups)) throw new ControlError("INVALID_NATIVE_METADATA", "invalid OpenClaw extension report");
+    const listed = skills.slice(0, MAX_NATIVE_EXTENSIONS).map(value => { const row = object(value, "OpenClaw skill");
+      return { name: string(row.name, "skill name", 256), description: typeof row.description === "string" ? row.description.slice(0, 1024) : "", ...(typeof row.source === "string" ? { scope: row.source.slice(0, 64) } : {}),
+        enabled: row.eligible === true && row.disabled !== true && row.blockedByAllowlist !== true }; });
+    const plugins = groups.map(value => object(value, "OpenClaw tool group")).filter(group => group.source === "plugin").slice(0, MAX_NATIVE_EXTENSIONS).map(group => ({
+      name: typeof group.label === "string" ? group.label.slice(0, 256) : string(group.id, "plugin group", 256), enabled: true, source: (Array.isArray(group.tools) ? group.tools.length : 0) + " 个工具" }));
+    return { skills: listed, mcpServers: [], plugins, ...(skills.length > MAX_NATIVE_EXTENSIONS ? { truncated: true } : {}) };
+  }
   /** The installed bridge answers session/fork with Method not found even where it declares session capabilities. */
   override async fork(): Promise<string> { throw new ControlError("NATIVE_FORK_UNAVAILABLE", "the OpenClaw ACP bridge cannot fork sessions"); }
   /** OpenClaw's Gateway drops image attachments above 5,000,000 bytes with only a log line; refuse them up front instead. */

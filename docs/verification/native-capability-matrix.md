@@ -24,7 +24,7 @@
 | 输入输出 | 非文本输出 | ◐ | ◐ | ◐ | — | — | ✕ | ○ |
 | 扩展 | Skills | ✅ | ◑ | ◑ | ◑ | ？ | ◑ | ◐ |
 | 扩展 | MCP | ◑ | ◑ | ◑ | — | ◑ | ◑ | — |
-| 扩展 | 插件/扩展 | ◑ | ◑ | ◑ | ○ | ◑ | ？ | ◑ |
+| 扩展 | 插件/扩展 | ◑ | ◑ | ◑ | ◑ | ◑ | ？ | ◑ |
 | 会话 | 原生会话恢复 | ✅ | ✅ | ✅ | ✅ | ✕ | ✕ | ✅ |
 | 会话 | 原生会话列表/接续 | ✅ | ✅ | ✅ | ○ | — | ✕ | — |
 | 会话 | 原生分支 | ✅ | ✅ | ✅ | — | — | — | ✅ |
@@ -39,7 +39,7 @@
 | Codex | 14 | 3 | 5 | 2 | 2 | 1 | 0 |
 | Claude Code | 16 | 3 | 3 | 1 | 2 | 2 | 0 |
 | OpenCode | 10 | 5 | 3 | 2 | 0 | 2 | 5 |
-| OpenClaw | 5 | 5 | 4 | 6 | 0 | 7 | 0 |
+| OpenClaw | 5 | 5 | 5 | 5 | 0 | 7 | 0 |
 | Gemini CLI | 0 | 0 | 2 | 1 | 12 | 6 | 6 |
 | Cursor | 0 | 2 | 4 | 2 | 11 | 5 | 3 |
 | Pi | 11 | 5 | 1 | 2 | 1 | 7 | 0 |
@@ -168,9 +168,9 @@
 | 音频输入 | 不提供 | 音频块被丢弃 | 不适用 | 不适用 | 不适用 | — | — |
 | 文件/文档输入 | 部分 | 文本 resource 追加为文本；blob 丢弃；resource_link 成文本 | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-opencode-openclaw.json；docs/verification/native-attachments-2026-10-11.md | 文本资源由桥展开为文本；文件链接成为文本路径 |
 | 非文本输出 | 不提供 | 桥不转发图片/媒体；MEDIA: 行以原文出现 | 不适用 | 不适用 | 不适用 | — | — |
-| Skills | 具备 | Gateway skills.status 与技能命令 | 部分 | 未接出 | 未接出 | — | 可经原生命令触发 |
+| Skills | 具备 | Gateway skills.status 与技能命令 | 部分 | 通过 | 通过 | .tmp/cc-native-extensions-openclaw.json；docs/verification/native-extensions-2026-10-11.md | “原生扩展”面板列出 Gateway skills.status 的技能（124 个，105 个可用）；技能由原程序按需使用，Hub 不单独调用（桥未提供 /skill 命令） |
 | MCP | 不提供 | ACP 桥不使用 mcpServers | 不适用 | 不适用 | 不适用 | — | — |
-| 插件/扩展 | 部分 | Gateway tools.catalog/skills；无插件管理接口 | 未接出 | 未接出 | 未接出 | — | — |
+| 插件/扩展 | 部分 | Gateway tools.catalog/skills；无插件管理接口 | 部分 | 通过 | 通过 | .tmp/cc-native-extensions-openclaw.json；docs/verification/native-extensions-2026-10-11.md | 列出 tools.catalog 中的插件工具组（本机 1 个）；只读，不调用插件工具 |
 | 原生会话恢复 | 具备 | session/load + Hub 自有会话键 requireExistingSession | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-batch1.json；.tmp/native-complete-real-combined.json；docs/verification/complete-native-capabilities-2026-10-11.md | — |
 | 原生会话列表/接续 | 部分 | 桥对 session/list 返回 Method not found；Gateway sessions.list 含渠道与其他代理的会话 | 未接出 | 未接出 | 未接出 | docs/verification/native-session-import-2026-10-11.md | 按设计不接续：其他会话属于渠道与代理，Hub 不向其中写入，只继续 Hub 自己创建的会话；明确拒绝已有协议测试 |
 | 原生分支 | 不提供 | 无原生分支 | 不适用 | 不适用 | 不适用 | — | — |

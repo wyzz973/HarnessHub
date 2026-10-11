@@ -563,3 +563,26 @@ test("Claude /export copies the session's own Claude Code transcript as an outpu
     assert.equal(result.status, "failed"); assert.equal(result.error?.code, "NATIVE_EXPORT_UNAVAILABLE");
   } finally { await missing.close(); }
 });
+
+test("OpenClaw lists its workspace skills and plugin tool groups from the Gateway's own read-only reports", async t => {
+  const root = await mkdtemp(join(tmpdir(), "openclaw-extensions-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const config = join(root, "openclaw.json"); await writeFile(config, '{agents:{list:[{id:"main",default:true}]}}');
+  const env = { HOME: root, OPENCLAW_CONFIG_PATH: config }, calls: string[] = [];
+  const driver = new OpenClawControl({ protocol: "acp-v1", executable: process.execPath, args: [resolve("tests/fixtures/control-peer.mjs"), "acp-v1", "basic"], env }, { ...options, env }, async (method, params) => {
+    calls.push(method + " " + JSON.stringify(params));
+    if (method === "skills.status") return { workspaceDir: "/w", skills: [
+      { name: "weather", description: "Look up the weather", source: "openclaw-bundled", eligible: true, disabled: false, blockedByAllowlist: false },
+      { name: "deploy", description: "Ship it", source: "openclaw-workspace", eligible: false, disabled: false },
+      { name: "blocked", description: "", source: "agents-skills-personal", eligible: true, blockedByAllowlist: true }] };
+    if (method === "tools.catalog") return { groups: [{ id: "fs", label: "Files", source: "core", tools: [{}, {}] }, { id: "plugin:feishu", label: "feishu", source: "plugin", pluginId: "feishu", tools: [{}, {}, {}] }] };
+    throw new Error("unexpected " + method);
+  });
+  try {
+    await driver.initialize();
+    assert.deepEqual(await driver.extensions(), { mcpServers: [], skills: [
+      { name: "weather", description: "Look up the weather", scope: "openclaw-bundled", enabled: true },
+      { name: "deploy", description: "Ship it", scope: "openclaw-workspace", enabled: false },
+      { name: "blocked", description: "", scope: "agents-skills-personal", enabled: false }], plugins: [{ name: "feishu", enabled: true, source: "3 个工具" }] });
+    assert.deepEqual(calls, ["skills.status {}", "tools.catalog {\"includePlugins\":true}"], "only read-only reports are requested");
+  } finally { await driver.close(); }
+});

@@ -2300,7 +2300,8 @@
         "G032-NC17",
         "G032-NC18",
         "G032-NC19",
-        "G032-NC20"
+        "G032-NC20",
+        "G032-NC21"
       ],
       "active_slice": "native-installation-management"
     },

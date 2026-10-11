@@ -21,6 +21,7 @@ const configFiles: Readonly<Record<string, readonly string[]>> = {
   claude: [join(home, ".claude", "settings.json")],
   pi: [join(home, ".pi", "agent", "settings.json"), join(home, ".pi", "agent", "models.json")],
   opencode: [join(home, ".config", "opencode", "opencode.json")],
+  openclaw: [join(home, ".openclaw", "openclaw.json")],
 };
 const TERMINAL = new Set<PublicRun["status"]>(["completed", "failed", "cancelled", "unknown"]);
 const SKILL = "---\nname: hh-echo\ndescription: Replies with a fixed acceptance word.\n---\nWhen this skill is used, reply with exactly HH-SKILL-OK and nothing else. Do not run any tools.\n";
