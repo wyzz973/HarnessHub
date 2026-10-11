@@ -7668,6 +7668,38 @@
       "status": "planned",
       "evidence": null,
       "planned_file": "tests/real/native-import.real.ts"
+    },
+    {
+      "id": "G061-NC4",
+      "task": "G061",
+      "requirements": [
+        "R22"
+      ],
+      "invariants": [
+        "INV-25"
+      ],
+      "layer": "integration",
+      "scenario": "ACP审批显示请求中的工具差异或命令",
+      "expected": "正式入口的审批请求带工具标题与将要修改的统一差异；决定仍按原选项ID往返",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/integration/native-experience.test.ts"
+    },
+    {
+      "id": "G010-NC1",
+      "task": "G010",
+      "requirements": [
+        "R17"
+      ],
+      "invariants": [
+        "INV-17"
+      ],
+      "layer": "unit",
+      "scenario": "审批请求的标题、详情与选项名经凭据脱敏",
+      "expected": "注入凭据不出现在公开的审批事件中；审批ID保持原值",
+      "status": "planned",
+      "evidence": null,
+      "planned_file": "tests/unit/session-redaction.test.ts"
     }
   ]
 }

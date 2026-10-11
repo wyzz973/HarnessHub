@@ -69,6 +69,13 @@ function toolDetail(update: Record<string, unknown>): NativeToolDetail | undefin
     ...(input ? { input } : {}), ...(output ? { output } : {}), ...(diffs.length ? { diff: diffs.join("") } : {}), ...(locations.length ? { locations } : {}) };
   return Object.keys(detail).length ? detail : undefined;
 }
+/** What an approval would allow, as the request describes it: the proposed diff, else the command or input, and where. */
+function permissionDetail(tool: Record<string, unknown>): string {
+  const described = toolDetail(tool), command = field(tool.rawInput, "command");
+  const action = described?.diff ?? (typeof command === "string" ? "命令：" + command : described?.input ?? "");
+  const where = !described?.diff && described?.locations?.length ? "位置：" + described.locations.join("、") : "";
+  return [action, where].filter(Boolean).join("\n").slice(0, 4096);
+}
 function decoded(data: string): Uint8Array | null {
   if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(data) || data.length > Math.ceil(MAX_CONTENT_BYTES / 3) * 4) return null;
   const bytes = Buffer.from(data, "base64"); return bytes.length > 0 && bytes.length <= MAX_CONTENT_BYTES ? bytes : null;
@@ -551,8 +558,8 @@ export class AcpControl implements HarnessControl {
       throw new ControlError("INVALID_PROTOCOL", "duplicate permission option identities");
     if (this.interactivePermissions && !active.stopping) {
       if (this.permissions.size >= 32) throw new ControlError("PERMISSION_LIMIT", "too many native permission requests");
-      const id = String(request.id);
-      return new Promise<unknown>(resolve => { this.permissions.set(id, { options: options.map(option => option.id), resolve }); active.event({ type: "permission_requested", id, title: typeof tool.title === "string" ? tool.title.slice(0,4096) : "Harness 请求执行工具", options: options.map(({ id, name }) => ({ id, name })) }); });
+      const id = String(request.id), detail = permissionDetail(tool);
+      return new Promise<unknown>(resolve => { this.permissions.set(id, { options: options.map(option => option.id), resolve }); active.event({ type: "permission_requested", id, title: typeof tool.title === "string" ? tool.title.slice(0,4096) : "Harness 请求执行工具", ...(detail ? { detail } : {}), options: options.map(({ id, name }) => ({ id, name })) }); });
     }
     const reject = options.find(option => option.kind === "reject_once") ?? options.find(option => option.kind === "reject_always");
     if (active.stopping || !reject) {

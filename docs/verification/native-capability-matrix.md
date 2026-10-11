@@ -6,29 +6,29 @@
 
 | 分组 | 能力 | Codex | Claude Code | OpenCode | OpenClaw | Gemini CLI | Cursor | Pi |
 |---|---|---|---|---|---|---|---|---|
-| 配置与模型 | 模型目录与选择 | ✅ | ✕ | ◐ | ✅ | ✕ | ◑ | ✅ |
-| 配置与模型 | 思考档位 | ✅ | ✕ | ◐ | ✅ | — | ○ | ✅ |
-| 配置与模型 | 模式与原生设置 | ◑ | ✕ | ◐ | ◐ | ✕ | ◐ | — |
-| 配置与模型 | 原生命令目录与执行 | — | ✕ | ◐ | ✅ | ✕ | ◐ | ◐ |
-| 配置与模型 | 原生命令改配置后的同步 | ◑ | ✕ | ？ | ◐ | ？ | ✕ | ✕ |
-| 执行可见性 | 思考输出 | ◐ | ✕ | ◐ | ◑ | ✕ | ✕ | ◐ |
-| 执行可见性 | 工具状态 | ✅ | ✕ | ✅ | ◑ | ✕ | ✕ | ✅ |
-| 执行可见性 | 工具输入/输出/差异 | ✅ | ✕ | ✅ | ◑ | ✕ | ✕ | ✅ |
+| 配置与模型 | 模型目录与选择 | ✅ | ✅ | ◐ | ✅ | ✕ | ◑ | ✅ |
+| 配置与模型 | 思考档位 | ✅ | ✅ | ◐ | ✅ | — | ○ | ✅ |
+| 配置与模型 | 模式与原生设置 | ◑ | ✅ | ◐ | ◐ | ✕ | ◐ | — |
+| 配置与模型 | 原生命令目录与执行 | — | ✅ | ◐ | ✅ | ✕ | ◐ | ◐ |
+| 配置与模型 | 原生命令改配置后的同步 | ◑ | ✅ | ？ | ◐ | ？ | ✕ | ✕ |
+| 执行可见性 | 思考输出 | ◐ | ◐ | ◐ | ◑ | ✕ | ✕ | ◐ |
+| 执行可见性 | 工具状态 | ✅ | ✅ | ✅ | ◑ | ✕ | ✕ | ✅ |
+| 执行可见性 | 工具输入/输出/差异 | ✅ | ✅ | ✅ | ◑ | ✕ | ✕ | ✅ |
 | 执行可见性 | 计划 | ✕ | ✕ | — | — | — | ✕ | — |
-| 执行可见性 | 用量/上下文/费用 | ✅ | ✕ | ✅ | ◐ | ✕ | — | ✅ |
-| 交互 | 工具审批 | ✅ | ✕ | ✅ | ○ | ✕ | ✕ | ◐ |
+| 执行可见性 | 用量/上下文/费用 | ✅ | ✅ | ✅ | ◐ | ✕ | — | ✅ |
+| 交互 | 工具审批 | ✅ | ✅ | ✅ | ○ | ✕ | ✕ | ◐ |
 | 交互 | 原生提问与表单 | ◑ | ○ | ？ | — | ？ | ◑ | ◐ |
-| 输入输出 | 图片输入 | ✅ | ✕ | ✅ | ◐ | ✕ | ✕ | ✅ |
+| 输入输出 | 图片输入 | ✅ | ✅ | ✅ | ◐ | ✕ | ✕ | ✅ |
 | 输入输出 | 音频输入 | ✕ | — | — | — | ✕ | — | — |
-| 输入输出 | 文件/文档输入 | ◐ | ✕ | ✅ | ◐ | ✕ | ✕ | ◐ |
-| 输入输出 | 非文本输出 | ◐ | ✕ | ◐ | — | — | ✕ | ○ |
+| 输入输出 | 文件/文档输入 | ◐ | ◐ | ✅ | ◐ | ✕ | ✕ | ◐ |
+| 输入输出 | 非文本输出 | ◐ | ◐ | ◐ | — | — | ✕ | ○ |
 | 扩展 | Skills | ✅ | ◑ | ◑ | ◑ | ？ | ◑ | ◐ |
 | 扩展 | MCP | ◑ | ◑ | ◑ | — | ◑ | ◑ | — |
 | 扩展 | 插件/扩展 | ◑ | ◑ | ◑ | ○ | ◑ | ？ | ◑ |
-| 会话 | 原生会话恢复 | ✅ | ✕ | ✅ | ✅ | ✕ | ✕ | ✅ |
+| 会话 | 原生会话恢复 | ✅ | ✅ | ✅ | ✅ | ✕ | ✕ | ✅ |
 | 会话 | 原生会话列表/接续 | ✅ | ✅ | ✅ | ○ | — | ✕ | — |
-| 会话 | 原生分支 | ✅ | ✕ | ✅ | — | — | — | ✅ |
-| 会话 | 上下文压缩 | ✅ | ✕ | ○ | ✅ | — | ？ | ✅ |
+| 会话 | 原生分支 | ✅ | ✅ | ✅ | — | — | — | ✅ |
+| 会话 | 上下文压缩 | ✅ | ✅ | ○ | ✅ | — | ？ | ✅ |
 | 会话 | 回滚/回退 | ○ | — | ？ | — | ○ | — | ○ |
 | 并发与后台 | 子 Agent | ◑ | ○ | ○ | ○ | ？ | ○ | — |
 | 并发与后台 | 后台任务 | ○ | ○ | ？ | ○ | ？ | ？ | — |
@@ -37,7 +37,7 @@
 | Harness | ✅ | ◐ | ◑ | ○ | ✕ | — | ？ |
 |---|---|---|---|---|---|---|---|
 | Codex | 13 | 3 | 6 | 2 | 2 | 1 | 0 |
-| Claude Code | 1 | 0 | 3 | 4 | 17 | 2 | 0 |
+| Claude Code | 14 | 3 | 3 | 4 | 1 | 2 | 0 |
 | OpenCode | 9 | 6 | 3 | 2 | 0 | 2 | 5 |
 | OpenClaw | 5 | 5 | 4 | 6 | 0 | 7 | 0 |
 | Gemini CLI | 0 | 0 | 2 | 1 | 12 | 6 | 6 |
@@ -80,33 +80,33 @@
 
 ## Claude Code
 
-原安装：Claude Code 2.1.296 + claude-agent-acp 0.89.1（本机登录）；控制入口：acp-v1（claude-agent-acp）。
+原安装：Claude Code 2.1.296 + claude-agent-acp 0.89.1（本机登录；2026-10-11 晚账号额度已恢复）；控制入口：acp-v1（claude-agent-acp）。
 
 | 能力 | 原接口 | 来源 | Hub | 协议 | 真实原安装 | 证据 | 说明 |
 |---|---|---|---|---|---|---|---|
-| 模型目录与选择 | 具备 | configOptions category=model（含别名） | 已接出 | 通过 | 受阻 | .tmp/cc-native-catalog.json | Claude 账号周额度用完，真实生成无法验收；目录真实读取 13 个模型 |
-| 思考档位 | 具备 | configOptions effort(thought_level) | 已接出 | 通过 | 受阻 | .tmp/cc-native-catalog.json | Claude 账号周额度用完，真实生成无法验收 |
-| 模式与原生设置 | 具备 | mode(default/acceptEdits/plan/auto/bypassPermissions)、fast、agent | 已接出 | 通过 | 受阻 | .tmp/cc-native-catalog.json | Claude 账号周额度用完，真实生成无法验收 |
-| 原生命令目录与执行 | 具备 | available_commands_update（内置、自定义、skills、插件、MCP prompt），/compact /model 等原生处理 | 已接出 | 通过 | 受阻 | .tmp/cc-native-catalog.json | Claude 账号周额度用完，真实生成无法验收；目录真实读取 223 条命令 |
-| 原生命令改配置后的同步 | 具备 | /model、ExitPlanMode、回退模型后发送 config_option_update/current_mode_update | 已接出 | 通过 | 受阻 | docs/verification/native-config-sync-2026-10-11.md | 通用 ACP：回合后按代理宣告的当前值记录；同一选择下一回合应用原生值（ADR-028）；账号周额度用完，未做真实验收 |
-| 思考输出 | 具备 | agent_thought_chunk（新模型可能只有签名不出文本） | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收 |
-| 工具状态 | 具备 | tool_call/tool_call_update | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收 |
-| 工具输入/输出/差异 | 具备 | kind、content(diff/console)、locations、rawInput/rawOutput、_meta.claudeCode.toolResponse | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收 |
-| 计划 | 具备 | plan 全量快照（TodoWrite/Task*） | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收 |
-| 用量/上下文/费用 | 具备 | usage_update {used,size,cost USD}、PromptResponse.usage | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收 |
-| 工具审批 | 具备 | session/request_permission（allow_once/allow_always/reject_once，ExitPlanMode 选项） | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收；allow_always 会由原程序写入项目设置 |
+| 模型目录与选择 | 具备 | configOptions category=model（含别名） | 已接出 | 通过 | 通过 | .tmp/cc-native-catalog-claude.json；.tmp/cc-native-resume-claude.json；.tmp/cc-native-config-claude-model.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | 目录真实读取 13 个模型；本会话选择 haiku、sonnet 真实生效（只作用于 Hub 会话，不改全局配置） |
+| 思考档位 | 具备 | configOptions effort(thought_level) | 已接出 | 通过 | 通过 | .tmp/cc-native-config-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | effort 选项按所选应用并由代理回报确认（medium）；原生 /effort 命令后代理不宣告变化 |
+| 模式与原生设置 | 具备 | mode(default/acceptEdits/plan/auto/bypassPermissions)、fast、agent | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | mode=default（手动审批）真实生效：编辑前请求审批 |
+| 原生命令目录与执行 | 具备 | available_commands_update（内置、自定义、skills、插件、MCP prompt），/compact /model 等原生处理 | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-claude.json；.tmp/cc-native-config-claude-model.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | 目录真实读取 223 条命令；/compact、/model 作为原生命令真实执行 |
+| 原生命令改配置后的同步 | 具备 | /model、ExitPlanMode、回退模型后发送 config_option_update/current_mode_update | 已接出 | 通过 | 通过 | .tmp/cc-native-config-claude-model.json；.tmp/cc-native-config-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | /model haiku 后代理宣告新模型，下一回合沿用、显式切换后恢复所选；/effort 不被宣告，因此不沿用 |
+| 思考输出 | 具备 | agent_thought_chunk（新模型可能只有签名不出文本） | 已接出 | 通过 | 未接出 | docs/verification/claude-real-and-approval-detail-2026-10-11.md | 账号额度已恢复；思考输出尚未单独真实验收 |
+| 工具状态 | 具备 | tool_call/tool_call_update | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | Bash、Read、Edit、ToolSearch 工具真实回合 |
+| 工具输入/输出/差异 | 具备 | kind、content(diff/console)、locations、rawInput/rawOutput、_meta.claudeCode.toolResponse | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | 命令输入输出、读取位置与编辑差异真实存储为可读详情 |
+| 计划 | 具备 | plan 全量快照（TodoWrite/Task*） | 已接出 | 通过 | 受阻 | .tmp/cc-native-activity-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | 本机 claude-agent-acp 0.89.1 会话里模型没有 TodoWrite 类计划工具（模型自述），无法产生计划；协议映射已测试 |
+| 用量/上下文/费用 | 具备 | usage_update {used,size,cost USD}、PromptResponse.usage | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | 回合 token、上下文占用（窗口 1,000,000）与会话费用（USD） |
+| 工具审批 | 具备 | session/request_permission（allow_once/allow_always/reject_once，ExitPlanMode 选项） | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-claude-approval.json；.tmp/cc-native-activity-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | 手动模式下编辑请求审批并一次允许；审批卡显示将要修改的差异；allow_always 会由原程序写入项目设置，验收只选一次允许 |
 | 原生提问与表单 | 具备 | AskUserQuestion/MCP 表单经 elicitation/create，需客户端声明 elicitation.form | 未接出 | 未接出 | 未接出 | — | 未声明能力时原程序禁用 AskUserQuestion |
-| 图片输入 | 具备 | promptCapabilities.image；image block base64 | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收 |
+| 图片输入 | 具备 | promptCapabilities.image；image block base64 | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | 红色图片真实识别 |
 | 音频输入 | 不提供 | 未声明 audio，音频块被静默丢弃 | 不适用 | 不适用 | 不适用 | — | — |
-| 文件/文档输入 | 部分 | 文本 resource 以 <context> 注入；blob 被丢弃；resource_link 只成链接文本 | 已接出 | 通过 | 受阻 | — | 小文本文件以嵌入资源发送，其余为文件链接；Claude 账号周额度用完，真实生成无法验收 |
-| 非文本输出 | 部分 | assistant 图片块（少见）与工具结果中的图片 | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收 |
+| 文件/文档输入 | 部分 | 文本 resource 以 <context> 注入；blob 被丢弃；resource_link 只成链接文本 | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | 小文本文件以嵌入资源发送并真实读取（文件内标记被答出）；其余为文件链接 |
+| 非文本输出 | 部分 | assistant 图片块（少见）与工具结果中的图片 | 已接出 | 通过 | 未接出 | docs/verification/claude-real-and-approval-detail-2026-10-11.md | 账号额度已恢复；非文本输出尚未单独真实验收 |
 | Skills | 具备 | skills 出现在原生命令目录并按原配置加载 | 部分 | 通过 | 未接出 | — | 通过原生命令执行；无独立技能管理界面 |
 | MCP | 具备 | 用户/项目/插件 MCP 默认加载；MCP OAuth 需 elicitation.url | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无状态/OAuth 界面 |
 | 插件/扩展 | 具备 | 已启用插件、hooks 按 settingSources 加载 | 部分 | 未接出 | 未接出 | — | 原程序加载；Hub 无管理界面 |
-| 原生会话恢复 | 具备 | session/resume（不回放） | 已接出 | 通过 | 受阻 | — | Claude 账号周额度用完，真实生成无法验收 |
+| 原生会话恢复 | 具备 | session/resume（不回放） | 已接出 | 通过 | 通过 | .tmp/cc-native-resume-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | 第二回合以原生会话恢复，未注入公共上下文并答对 |
 | 原生会话列表/接续 | 具备 | session/list（含 CLI/TUI 会话）、session/load 回放 | 已接出 | 通过 | 通过 | .tmp/cc-native-import-claude.json；docs/verification/native-session-import-2026-10-11.md | 通用 ACP 实现；claude -p 在新工作区创建的会话被列出、接续并答出标记 |
-| 原生分支 | 具备 | session/fork 复制转录后需 resume | 已接出 | 通过 | 受阻 | — | 按声明的 session/fork 建立原生副本；Claude 账号周额度用完，真实生成无法验收 |
-| 上下文压缩 | 具备 | /compact 触发原生压缩；compaction_update 需 session.compaction 能力 | 部分 | 通过 | 受阻 | — | 可经原生命令执行；ACP compaction_update 以活动展示；Claude 账号周额度用完，真实生成无法验收 |
+| 原生分支 | 具备 | session/fork 复制转录后需 resume | 已接出 | 通过 | 通过 | .tmp/cc-native-branch-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | session/fork 建立原生副本：分支答出源标记，源对话不知道分支标记 |
+| 上下文压缩 | 具备 | /compact 触发原生压缩；compaction_update 需 session.compaction 能力 | 已接出 | 通过 | 通过 | .tmp/cc-native-commands-claude.json；docs/verification/claude-real-and-approval-detail-2026-10-11.md | /compact 原生命令执行，compaction_update 以活动显示完成；压缩后仍记得先前事实 |
 | 回滚/回退 | 不提供 | 非 JetBrains AIR 客户端无指定消息回退 | 不适用 | 不适用 | 不适用 | — | — |
 | 子 Agent | 具备 | 子会话 subagent_spawned/state_update 需 subagents 能力；否则工具带 parentToolUseId | 未接出 | 未接出 | 未接出 | — | — |
 | 后台任务 | 具备 | 后台 shell 与自主后续回合；async_task_* 仅 AIR | 未接出 | 未接出 | 未接出 | — | 每轮关闭进程会终止后台任务 |
@@ -128,7 +128,7 @@
 | 工具输入/输出/差异 | 具备 | rawInput/rawOutput、diff、图片附件 | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-opencode.json；docs/verification/native-activity-2026-10-11.md | 命令/读取/编辑详情与差异真实存储；标题为原程序给出的路径 |
 | 计划 | 不提供 | 不发送 plan 更新 | 不适用 | 不适用 | 不适用 | — | 原程序 todowrite 以工具（N todos）显示，不发 ACP plan |
 | 用量/上下文/费用 | 具备 | 每轮 usage_update {used,size,cost}、PromptResponse.usage | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-opencode.json；docs/verification/native-activity-2026-10-11.md | 本轮 token、上下文与会话累计费用（原程序报告） |
-| 工具审批 | 具备 | session/request_permission(once/always/reject) | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-opencode-approval.json；docs/verification/native-activity-2026-10-11.md | 工作区级 opencode.json 要求询问时真实审批（允许一次）；批准编辑后原程序调用未宣告的 fs/write_text_file，Hub 回 -32601 并留审计行，编辑仍由原程序完成 |
+| 工具审批 | 具备 | session/request_permission(once/always/reject) | 已接出 | 通过 | 通过 | .tmp/cc-native-activity-opencode-approval.json；docs/verification/native-activity-2026-10-11.md；docs/verification/claude-real-and-approval-detail-2026-10-11.md | 工作区级 opencode.json 要求询问时真实审批（允许一次）；批准编辑后原程序调用未宣告的 fs/write_text_file，Hub 回 -32601 并留审计行，编辑仍由原程序完成；审批卡显示命令或将要修改的差异 |
 | 原生提问与表单 | 未核实 | — | 未接出 | 未接出 | 未接出 | — | — |
 | 图片输入 | 具备 | promptCapabilities.image | 已接出 | 通过 | 通过 | .tmp/cc-native-attachments-opencode-vision.json；.tmp/cc-native-attachments-opencode-openclaw.json；docs/verification/native-attachments-2026-10-11.md | 代理级声明再按 opencode models --verbose 的模型输入细化；mimo-v2.6-flash-free 真实识别图片，默认 big-pickle 在派发前拒绝 |
 | 音频输入 | 不提供 | 未声明 audio | 不适用 | 不适用 | 不适用 | — | — |

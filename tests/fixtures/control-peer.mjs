@@ -335,7 +335,10 @@ lines.on("line", line => {
     if (scenario === "permission" || scenario === "duplicate-permission") {
       pendingPermission = true;
       const permission = protocol === "acp-v1"
-        ? { id: "permission-1", method: "session/request_permission", params: { sessionId: "session-fixture", toolCall: { toolCallId: "tool-1" }, options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }, { optionId: "reject", kind: "reject_once", name: "Reject" }] } }
+        ? { id: "permission-1", method: "session/request_permission", params: { sessionId: "session-fixture", toolCall: { toolCallId: "tool-1",
+          // The proposed change travels with the request, as Claude and OpenCode send it for an edit.
+          ...(scenario === "duplicate-permission" ? {} : { title: "Edit notes.txt", kind: "edit", content: [{ type: "diff", path: "/w/notes.txt", oldText: "alpha\nbravo\n", newText: "alpha\ndelta\n" }], locations: [{ path: "/w/notes.txt" }] }) },
+          options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }, { optionId: "reject", kind: "reject_once", name: "Reject" }] } }
         : { id: "permission-1", method: "item/commandExecution/requestApproval", params: { threadId: "thread-fixture", turnId: `turn-${turn}`, itemId: "tool-1" } };
       emit(permission); if (scenario === "duplicate-permission") emit(permission); return;
     }

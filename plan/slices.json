@@ -694,7 +694,8 @@
         "tests/real/native-extensions.real.ts",
         "tests/real/native-config.real.ts",
         "tests/real/native-import.real.ts",
-        "web/src/components/NativeSessions.tsx"
+        "web/src/components/NativeSessions.tsx",
+        "tests/unit/session-redaction.test.ts"
       ],
       "implementation_state": "in_progress",
       "verification_record": "docs/verification/complete-native-capabilities-2026-10-11.md"

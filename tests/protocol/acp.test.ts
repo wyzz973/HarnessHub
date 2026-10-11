@@ -370,7 +370,10 @@ test("OpenCode refines agent image support with each model's input kinds from th
   // An executable that is the original CLI for both `acp` and `models --verbose`.
   const shim = join(root, "opencode-fixture.mjs");
   await writeFile(shim, `#!${process.execPath}\nif (process.argv[2] === "models") { process.stdout.write(${JSON.stringify(verbose("native/model-a", false) + verbose("native/model-b", true))}); }\nelse { process.argv.splice(2, process.argv.length, "acp-v1", "attachments"); await import(${JSON.stringify(pathToFileURL(resolve("tests/fixtures/control-peer.mjs")).href)}); }\n`, { mode: 0o700 });
-  const driver = new OpenCodeControl({ protocol: "acp-v1", executable: shim, args: ["acp"], env: {} }, options);
+  // The catalog command starts another Node process; a 1 s request budget is too tight for that under load (a slow
+  // command only drops the per-model refinement, which is exactly what this test asserts on).
+  const cliOptions = { ...options, requestTimeoutMs: 10000 };
+  const driver = new OpenCodeControl({ protocol: "acp-v1", executable: shim, args: ["acp"], env: {} }, cliOptions);
   const image = attachment(root, "shot.png", "image/png", "image", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
   try {
     await ready(driver);
@@ -378,7 +381,7 @@ test("OpenCode refines agent image support with each model's input kinds from th
     assert.deepEqual(catalog.models.map(row => [row.id, row.inputs?.image]), [["native/model-a", false], ["native/model-b", true]]);
     await assert.rejects(driver.checkAttachments([image]), (error: unknown) => error instanceof ControlError && error.code === "ATTACHMENT_UNSUPPORTED", "the configured model cannot see images");
   } finally { await driver.close(); }
-  const vision = new OpenCodeControl({ protocol: "acp-v1", executable: shim, args: ["acp"], env: {} }, options);
+  const vision = new OpenCodeControl({ protocol: "acp-v1", executable: shim, args: ["acp"], env: {} }, cliOptions);
   try { await vision.initialize(); await vision.open(process.cwd(), "native/model-b"); await vision.checkAttachments([image]); }
   finally { await vision.close(); }
   // Without the original catalog the agent-level declaration stands.

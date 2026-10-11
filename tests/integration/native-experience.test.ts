@@ -71,6 +71,8 @@ test("native approvals round-trip actual option IDs after durable decisions and 
   await f.call(`/sessions/${id}/messages`,{text:"fixture approval",commandId:"send"});
   const waiting=await f.until(`/sessions/${id}`,row=>Array.isArray(row.permissions)&&row.permissions.length===1),permission=(waiting.permissions as {id:string;options:{id:string}[]}[])[0]!;
   assert.ok(permission.options.some(option=>option.id==="allow"));
+  // The approval shows what it would allow: the proposed diff from the request's tool call.
+  const shown=permission as unknown as {title:string;detail?:string};assert.equal(shown.title,"Edit notes.txt");assert.match(String(shown.detail),/-bravo\n\+delta/u);
   assert.equal((await f.call(`/sessions/${id}/permissions/${permission.id}`,{optionId:"fabricated",commandId:"bad-decision"})).status,409);
   assert.equal((await f.wire()).filter(row=>row.id==="permission-1"&&row.result!==undefined).length,0);
   const input={optionId:"allow",commandId:"decision"};assert.equal((await f.call(`/sessions/${id}/permissions/${permission.id}`,input)).status,200);

@@ -1243,7 +1243,8 @@
         "G010-C01",
         "G010-C02",
         "G010-C03",
-        "G010-C04"
+        "G010-C04",
+        "G010-NC1"
       ],
       "active_slice": "native-models-switching"
     },
@@ -3786,7 +3787,8 @@
         "G061-X01",
         "G061-NC1",
         "G061-NC2",
-        "G061-NC3"
+        "G061-NC3",
+        "G061-NC4"
       ],
       "active_slice": "native-installation-management"
     },

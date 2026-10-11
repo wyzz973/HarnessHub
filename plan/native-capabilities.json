@@ -449,7 +449,7 @@
     {
       "id": "claude",
       "name": "Claude Code",
-      "installation": "Claude Code 2.1.296 + claude-agent-acp 0.89.1（本机登录）",
+      "installation": "Claude Code 2.1.296 + claude-agent-acp 0.89.1（本机登录；2026-10-11 晚账号额度已恢复）",
       "control": "acp-v1（claude-agent-acp）",
       "capabilities": {
         "models": {
@@ -457,82 +457,99 @@
           "source": "configOptions category=model（含别名）",
           "hub": "done",
           "protocol": "pass",
-          "real": "blocked",
+          "real": "pass",
           "evidence": [
-            ".tmp/cc-native-catalog.json"
+            ".tmp/cc-native-catalog-claude.json",
+            ".tmp/cc-native-resume-claude.json",
+            ".tmp/cc-native-config-claude-model.json",
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
           ],
-          "note": "Claude 账号周额度用完，真实生成无法验收；目录真实读取 13 个模型"
+          "note": "目录真实读取 13 个模型；本会话选择 haiku、sonnet 真实生效（只作用于 Hub 会话，不改全局配置）"
         },
         "thought-level": {
           "native": "yes",
           "source": "configOptions effort(thought_level)",
           "hub": "done",
           "protocol": "pass",
-          "real": "blocked",
+          "real": "pass",
           "evidence": [
-            ".tmp/cc-native-catalog.json"
+            ".tmp/cc-native-config-claude.json",
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
           ],
-          "note": "Claude 账号周额度用完，真实生成无法验收"
+          "note": "effort 选项按所选应用并由代理回报确认（medium）；原生 /effort 命令后代理不宣告变化"
         },
         "modes-settings": {
           "native": "yes",
           "source": "mode(default/acceptEdits/plan/auto/bypassPermissions)、fast、agent",
           "hub": "done",
           "protocol": "pass",
-          "real": "blocked",
+          "real": "pass",
           "evidence": [
-            ".tmp/cc-native-catalog.json"
+            ".tmp/cc-native-activity-claude.json",
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
           ],
-          "note": "Claude 账号周额度用完，真实生成无法验收"
+          "note": "mode=default（手动审批）真实生效：编辑前请求审批"
         },
         "commands": {
           "native": "yes",
           "source": "available_commands_update（内置、自定义、skills、插件、MCP prompt），/compact /model 等原生处理",
           "hub": "done",
           "protocol": "pass",
-          "real": "blocked",
+          "real": "pass",
           "evidence": [
-            ".tmp/cc-native-catalog.json"
+            ".tmp/cc-native-commands-claude.json",
+            ".tmp/cc-native-config-claude-model.json",
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
           ],
-          "note": "Claude 账号周额度用完，真实生成无法验收；目录真实读取 223 条命令"
+          "note": "目录真实读取 223 条命令；/compact、/model 作为原生命令真实执行"
         },
         "config-sync": {
           "native": "yes",
           "source": "/model、ExitPlanMode、回退模型后发送 config_option_update/current_mode_update",
           "hub": "done",
           "protocol": "pass",
-          "real": "blocked",
+          "real": "pass",
           "evidence": [
-            "docs/verification/native-config-sync-2026-10-11.md"
+            ".tmp/cc-native-config-claude-model.json",
+            ".tmp/cc-native-config-claude.json",
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
           ],
-          "note": "通用 ACP：回合后按代理宣告的当前值记录；同一选择下一回合应用原生值（ADR-028）；账号周额度用完，未做真实验收"
+          "note": "/model haiku 后代理宣告新模型，下一回合沿用、显式切换后恢复所选；/effort 不被宣告，因此不沿用"
         },
         "thinking": {
           "native": "yes",
           "source": "agent_thought_chunk（新模型可能只有签名不出文本）",
           "hub": "done",
           "protocol": "pass",
-          "real": "blocked",
-          "evidence": [],
-          "note": "Claude 账号周额度用完，真实生成无法验收"
+          "real": "none",
+          "evidence": [
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+          ],
+          "note": "账号额度已恢复；思考输出尚未单独真实验收"
         },
         "tool-status": {
           "native": "yes",
           "source": "tool_call/tool_call_update",
           "hub": "done",
           "protocol": "pass",
-          "real": "blocked",
-          "evidence": [],
-          "note": "Claude 账号周额度用完，真实生成无法验收"
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-activity-claude.json",
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+          ],
+          "note": "Bash、Read、Edit、ToolSearch 工具真实回合"
         },
         "tool-detail": {
           "native": "yes",
           "source": "kind、content(diff/console)、locations、rawInput/rawOutput、_meta.claudeCode.toolResponse",
           "hub": "done",
           "protocol": "pass",
-          "real": "blocked",
-          "evidence": [],
-          "note": "Claude 账号周额度用完，真实生成无法验收"
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-activity-claude.json",
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+          ],
+          "note": "命令输入输出、读取位置与编辑差异真实存储为可读详情"
         },
         "plan": {
           "native": "yes",
@@ -540,26 +557,36 @@
           "hub": "done",
           "protocol": "pass",
           "real": "blocked",
-          "evidence": [],
-          "note": "Claude 账号周额度用完，真实生成无法验收"
+          "evidence": [
+            ".tmp/cc-native-activity-claude.json",
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+          ],
+          "note": "本机 claude-agent-acp 0.89.1 会话里模型没有 TodoWrite 类计划工具（模型自述），无法产生计划；协议映射已测试"
         },
         "usage": {
           "native": "yes",
           "source": "usage_update {used,size,cost USD}、PromptResponse.usage",
           "hub": "done",
           "protocol": "pass",
-          "real": "blocked",
-          "evidence": [],
-          "note": "Claude 账号周额度用完，真实生成无法验收"
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-activity-claude.json",
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+          ],
+          "note": "回合 token、上下文占用（窗口 1,000,000）与会话费用（USD）"
         },
         "approvals": {
           "native": "yes",
           "source": "session/request_permission（allow_once/allow_always/reject_once，ExitPlanMode 选项）",
           "hub": "done",
           "protocol": "pass",
-          "real": "blocked",
-          "evidence": [],
-          "note": "Claude 账号周额度用完，真实生成无法验收；allow_always 会由原程序写入项目设置"
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-activity-claude-approval.json",
+            ".tmp/cc-native-activity-claude.json",
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+          ],
+          "note": "手动模式下编辑请求审批并一次允许；审批卡显示将要修改的差异；allow_always 会由原程序写入项目设置，验收只选一次允许"
         },
         "questions": {
           "native": "yes",
@@ -575,9 +602,12 @@
           "source": "promptCapabilities.image；image block base64",
           "hub": "done",
           "protocol": "pass",
-          "real": "blocked",
-          "evidence": [],
-          "note": "Claude 账号周额度用完，真实生成无法验收"
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-attachments-claude.json",
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+          ],
+          "note": "红色图片真实识别"
         },
         "input-audio": {
           "native": "no",
@@ -593,18 +623,23 @@
           "source": "文本 resource 以 <context> 注入；blob 被丢弃；resource_link 只成链接文本",
           "hub": "done",
           "protocol": "pass",
-          "real": "blocked",
-          "evidence": [],
-          "note": "小文本文件以嵌入资源发送，其余为文件链接；Claude 账号周额度用完，真实生成无法验收"
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-attachments-claude.json",
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+          ],
+          "note": "小文本文件以嵌入资源发送并真实读取（文件内标记被答出）；其余为文件链接"
         },
         "output-media": {
           "native": "partial",
           "source": "assistant 图片块（少见）与工具结果中的图片",
           "hub": "done",
           "protocol": "pass",
-          "real": "blocked",
-          "evidence": [],
-          "note": "Claude 账号周额度用完，真实生成无法验收"
+          "real": "none",
+          "evidence": [
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+          ],
+          "note": "账号额度已恢复；非文本输出尚未单独真实验收"
         },
         "skills": {
           "native": "yes",
@@ -638,9 +673,12 @@
           "source": "session/resume（不回放）",
           "hub": "done",
           "protocol": "pass",
-          "real": "blocked",
-          "evidence": [],
-          "note": "Claude 账号周额度用完，真实生成无法验收"
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-resume-claude.json",
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+          ],
+          "note": "第二回合以原生会话恢复，未注入公共上下文并答对"
         },
         "session-list": {
           "native": "yes",
@@ -659,18 +697,24 @@
           "source": "session/fork 复制转录后需 resume",
           "hub": "done",
           "protocol": "pass",
-          "real": "blocked",
-          "evidence": [],
-          "note": "按声明的 session/fork 建立原生副本；Claude 账号周额度用完，真实生成无法验收"
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-branch-claude.json",
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+          ],
+          "note": "session/fork 建立原生副本：分支答出源标记，源对话不知道分支标记"
         },
         "compaction": {
           "native": "yes",
           "source": "/compact 触发原生压缩；compaction_update 需 session.compaction 能力",
-          "hub": "partial",
+          "hub": "done",
           "protocol": "pass",
-          "real": "blocked",
-          "evidence": [],
-          "note": "可经原生命令执行；ACP compaction_update 以活动展示；Claude 账号周额度用完，真实生成无法验收"
+          "real": "pass",
+          "evidence": [
+            ".tmp/cc-native-commands-claude.json",
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
+          ],
+          "note": "/compact 原生命令执行，compaction_update 以活动显示完成；压缩后仍记得先前事实"
         },
         "rollback": {
           "native": "no",
@@ -826,9 +870,10 @@
           "real": "pass",
           "evidence": [
             ".tmp/cc-native-activity-opencode-approval.json",
-            "docs/verification/native-activity-2026-10-11.md"
+            "docs/verification/native-activity-2026-10-11.md",
+            "docs/verification/claude-real-and-approval-detail-2026-10-11.md"
           ],
-          "note": "工作区级 opencode.json 要求询问时真实审批（允许一次）；批准编辑后原程序调用未宣告的 fs/write_text_file，Hub 回 -32601 并留审计行，编辑仍由原程序完成"
+          "note": "工作区级 opencode.json 要求询问时真实审批（允许一次）；批准编辑后原程序调用未宣告的 fs/write_text_file，Hub 回 -32601 并留审计行，编辑仍由原程序完成；审批卡显示命令或将要修改的差异"
         },
         "questions": {
           "native": "unknown",

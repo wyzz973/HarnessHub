@@ -73,3 +73,5 @@ OpenClaw 回合的工具、用量与真实停止原因按原生转录对账，�
 原生命令修改设置后的同步见[原生配置同步验收](native-config-sync-2026-10-11.md)（业务库升级为v9）。
 
 列出并接续原程序在本工作区的会话见[本机会话接续验收](native-session-import-2026-10-11.md)。
+
+Claude 额度恢复后的真实补测与 ACP 审批详情见[Claude 真实验收补测](claude-real-and-approval-detail-2026-10-11.md)。

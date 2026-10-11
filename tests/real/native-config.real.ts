@@ -14,7 +14,7 @@ import { prepareConfiguration } from "../../src/infrastructure/session/binding-f
  * explicit switch to the same selection applies the selection again. Evidence keeps statuses and option values only.
  *
  * HH_REAL_HARNESSES=openclaw HH_REAL_CONFIG_OPTION=thought_level HH_REAL_CONFIG_FROM=low HH_REAL_CONFIG_TO=high
- * HH_REAL_CONFIG_COMMAND="/think high" HH_REAL_EVIDENCE=<file>
+ * HH_REAL_CONFIG_COMMAND="/think high" HH_REAL_EVIDENCE=<file>. HH_REAL_CONFIG_OPTION=model selects and observes the model instead.
  */
 const harnesses = (process.env.HH_REAL_HARNESSES ?? "").split(",").map(value => value.trim()).filter(Boolean);
 const evidencePath = process.env.HH_REAL_EVIDENCE;
@@ -22,6 +22,7 @@ const option = process.env.HH_REAL_CONFIG_OPTION, from = process.env.HH_REAL_CON
 const home = process.env.HOME ?? homedir();
 const configFiles: Readonly<Record<string, readonly string[]>> = {
   codex: [join(home, ".codex", "config.toml")],
+  claude: [join(home, ".claude", "settings.json")],
   opencode: [join(home, ".config", "opencode", "opencode.json")],
   openclaw: [join(home, ".openclaw", "openclaw.json")],
   pi: [join(home, ".pi", "agent", "settings.json"), join(home, ".pi", "agent", "models.json")],
@@ -61,15 +62,15 @@ test("installed Harness keeps a setting its own command changed, until an explic
       const app = application(data, () => {});
       try {
         const requested = process.env["HH_REAL_MODEL_" + harnessId.toUpperCase()];
-        const selection = { harnessId, ...(requested === undefined ? {} : { nativeModel: requested }), nativeOptions: { [option]: from } };
+        const byModel = option === "model", selection = byModel ? { harnessId, nativeModel: from } : { harnessId, ...(requested === undefined ? {} : { nativeModel: requested }), nativeOptions: { [option]: from } };
         const session = await app.runtime.create(configuration, selection, "create-" + randomUUID());
-        const observed = () => app.runtime.read(session.id).nativeBindings?.find(binding => binding.status === "ready")?.observed?.options[option] ?? null;
+        const observed = () => { const reported = app.runtime.read(session.id).nativeBindings?.find(binding => binding.status === "ready")?.observed; return (byModel ? reported?.model : reported?.options[option]) ?? null; };
         const turn = async (text: string) => { const count = app.runtime.read(session.id).runs.length + 1; app.runtime.send(session.id, text, "send-" + randomUUID()); const run = await settle(app, session.id, count); return { status: run.status, error: run.error?.code ?? null, observed: observed() }; };
         const ask = "只回复“好的”，不要调用任何工具。";
         proof.first = await turn(ask);
         proof.command = await turn(command);
         proof.next = await turn(ask);
-        const carried = app.store.events(session.id, 0, 100).filter(row => row.type === "native.config_carried").map(row => (row.data as { options?: Record<string, string> }).options?.[option] ?? null);
+        const carried = app.store.events(session.id, 0, 100).filter(row => row.type === "native.config_carried").map(row => { const data = row.data as { model?: string; options?: Record<string, string> }; return (byModel ? data.model : data.options?.[option]) ?? null; });
         proof.carried = carried;
         app.runtime.switch(session.id, selection, "reassert-" + randomUUID()); await app.runtime.wait(session.id);
         proof.epoch = app.runtime.read(session.id).epoch;

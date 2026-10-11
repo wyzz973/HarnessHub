@@ -18,6 +18,7 @@ const evidencePath = process.env.HH_REAL_EVIDENCE;
 const home = process.env.HOME ?? homedir();
 const configFiles: Readonly<Record<string, readonly string[]>> = {
   codex: [join(home, ".codex", "config.toml")],
+  claude: [join(home, ".claude", "settings.json")],
   pi: [join(home, ".pi", "agent", "settings.json"), join(home, ".pi", "agent", "models.json")],
   opencode: [join(home, ".config", "opencode", "opencode.json")],
 };

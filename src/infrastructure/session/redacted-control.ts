@@ -12,7 +12,7 @@ function sanitize(value: unknown, redact: (text: string) => string): unknown {
 function publicEvent(event: ControlEvent, redact: (text: string) => string): ControlEvent {
   switch (event.type) {
     case "text": case "thinking": return { ...event, text: redact(event.text) };
-    case "permission_requested": return { ...event, title: redact(event.title), options: event.options.map(option => ({ id: option.id, name: redact(option.name) })) };
+    case "permission_requested": return { ...event, title: redact(event.title), ...(event.detail === undefined ? {} : { detail: redact(event.detail) }), options: event.options.map(option => ({ id: option.id, name: redact(option.name) })) };
     case "diagnostic": return { ...event, message: redact(event.message) };
     case "tool": return { ...event, id: redact(event.id), title: redact(event.title), status: redact(event.status), ...(event.detail === undefined ? {} : { detail: sanitize(event.detail, redact) as NativeToolDetail }) };
     case "permission": return { ...event, id: redact(event.id) };

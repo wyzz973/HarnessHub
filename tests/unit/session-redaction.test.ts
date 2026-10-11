@@ -57,6 +57,7 @@ test("Redacted control preserves native identity and caller inputs while cleanin
       emit({ type: "tool", id: keyA, title: "tool " + keyB, status: keyA });
       emit({ type: "permission", id: keyB, decision: "denied" });
       emit({ type: "permission", id: keyA, decision: "cancelled" });
+      emit({ type: "permission_requested", id: "ask", title: "Edit " + keyA, detail: "-old " + keyB + "\n+new", options: [{ id: "allow", name: "Allow " + keyA }] });
       emit({ type: "diagnostic", message: "private " + keyA + " " + keyB });
       return { result: Promise.resolve({ status: "completed", reason: "result " + keyB }), requestStop: async () => ({ requested: true }) };
     } });
@@ -65,6 +66,7 @@ test("Redacted control preserves native identity and caller inputs while cleanin
   assert.equal(receivedCwd, "/owned/workspace"); assert.equal(receivedPrompt, "literal user input"); noKeys(events); noKeys(backend);
   assert.deepEqual(events, [{ type: "tool", id: "[redacted]", title: "tool [redacted]", status: "[redacted]" },
     { type: "permission", id: "[redacted]", decision: "denied" }, { type: "permission", id: "[redacted]", decision: "cancelled" },
+    { type: "permission_requested", id: "ask", title: "Edit [redacted]", detail: "-old [redacted]\n+new", options: [{ id: "allow", name: "Allow [redacted]" }] },
     { type: "diagnostic", message: "private [redacted] [redacted]" }]);
   assert.deepEqual(backend, { status: "completed", reason: "result [redacted]" });
 }));
